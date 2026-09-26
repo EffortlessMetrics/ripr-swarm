@@ -6,15 +6,71 @@ use super::*;
 
 /// Tokenize an expression string into identifier tokens longer than 3 chars.
 ///
-/// Only ASCII alphanumeric / underscore segments are kept; dot-qualifier and
-/// `::` segments are excluded so that shared qualifiers (e.g. `"amount"` from
-/// both `amount * 9` and an unrelated `amount * 2`) do not spuriously confirm.
+/// Only ASCII alphanumeric / underscore segments are kept. Segments adjacent
+/// to a dot (`.`) or path separator (`:`) are excluded — both the qualifier
+/// and the qualified member — so that shared names (e.g. `"amount"` from both
+/// `props.amount * 9` and an unrelated bare `amount * 2`) do not spuriously
+/// confirm: a dot-qualified name may belong to a different receiver.
 fn identifier_tokens(expr: &str) -> Vec<String> {
-    expr.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-        .filter(|tok| tok.len() > 3)
-        .map(|tok| tok.to_string())
-        .collect()
+    let mut tokens = Vec::new();
+    let mut start: Option<usize> = None;
+    for (idx, ch) in expr.char_indices() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            if start.is_none() {
+                start = Some(idx);
+            }
+        } else if let Some(segment_start) = start.take() {
+            push_identifier_token(expr, segment_start, idx, &mut tokens);
+        }
+    }
+    if let Some(segment_start) = start {
+        push_identifier_token(expr, segment_start, expr.len(), &mut tokens);
+    }
+    tokens
 }
+
+/// Push `expr[segment_start..segment_end]` as a confirmation token unless it
+/// is dot/path-adjacent (see [`identifier_tokens`]) or too short.
+fn push_identifier_token(
+    expr: &str,
+    segment_start: usize,
+    segment_end: usize,
+    tokens: &mut Vec<String>,
+) {
+    let preceded_by_qualifier = expr[..segment_start]
+        .chars()
+        .next_back()
+        .is_some_and(|ch| ch == '.' || ch == ':');
+    let followed_by_qualifier = expr[segment_end..]
+        .chars()
+        .next()
+        .is_some_and(|ch| ch == '.' || ch == ':');
+    if preceded_by_qualifier || followed_by_qualifier {
+        return;
+    }
+    let token = &expr[segment_start..segment_end];
+    if token.len() > 3 {
+        tokens.push(token.to_string());
+    }
+}
+
+/// Synthesized template words that `typescript_call_effect_discriminator`
+/// interpolates into its English-sentence discriminator (`call … includes …`,
+/// `call … occurs`, `mock interaction … is called`, `log contains …`). They
+/// are generator vocabulary, not changed code, so they must never serve as
+/// confirmation tokens for the RIPR-SPEC-0098 observation guard.
+const CALL_EFFECT_TEMPLATE_WORDS: &[&str] = &[
+    "includes",
+    "occurs",
+    "matching",
+    "called",
+    "interaction",
+    "contains",
+    "mock",
+    "with",
+    "call",
+    "log",
+];
 
 /// Strip the synthesized prefix that `typescript_missing_discriminator_value`
 /// adds so we recover the raw changed sub-expression.
@@ -60,9 +116,11 @@ fn strip_synthesized_prefix(discriminator_value: &str) -> &str {
 ///    (`MockExpectation` | `Snapshot` | `WholeObjectEquality`) — these capture
 ///    mock-call expectations, serialized snapshots, or persisted whole-object
 ///    state, all of which observe side effects directly; OR
-/// 2. It carries an `observed_expression` that either contains a changed token
-///    (> 3 chars) or names a side-channel (an expression that does NOT name the
-///    owner — e.g. a closure-local side-effect variable or a captured mock).
+/// 2. It carries an `observed_expression` that either shares an exact changed
+///    identifier token (> 3 chars, dot/path-adjacent segments excluded, same
+///    `identifier_tokens` rules on both sides) or names a side-channel (an
+///    expression that does NOT name the owner — e.g. a closure-local
+///    side-effect variable or a captured mock).
 ///
 /// Value-shaped strong oracles (`ExactValue` / `ExactErrorVariant`) that observe
 /// the owner's RETURN VALUE do NOT witness a `console.log`/side-effect change, so
@@ -70,7 +128,34 @@ fn strip_synthesized_prefix(discriminator_value: &str) -> &str {
 /// observed-expression metadata is available to prove a side-channel), the guard
 /// **fails closed** and returns `false`, downgrading to WeaklyExposed.
 ///
-/// For all other families the guard always returns `true` (pre-guard behaviour).
+/// ### Value families (ReturnValue / FieldConstruction)
+///
+/// A strong assertion confirms (returns `true`, stays Exposed) only when it
+/// actually observes the changed sink:
+/// 1. Its `oracle_kind` matches the seam family (the same filter
+///    `strongest_family_matching_oracle` applies); AND
+/// 2. Its `observed_expression` either references the owner (the owner name or
+///    an owner call, e.g. `expect(applyDiscount(100, 10))`) or contains a
+///    changed token from the changed sub-expression.
+///
+/// One-hop local aliasing: a bare-local observed_expression
+/// (`t.is(result, 3)`) also confirms when the test body initializes that
+/// local from an expression referencing the owner or a changed token
+/// (`const result = add(1, 2)`). Without this credit the guard would
+/// falsely downgrade the canonical assert-the-return-value pattern and emit
+/// repair packets for tests that already observe the changed sink — the
+/// exact over-correction the RIPR-SPEC-0108 `must_stay_exposed` corpus
+/// controls (`ts_ava_t_is_exact_value`, `ts_tape_equal_exact_value`) pin.
+///
+/// An assertion on an UNRELATED expression (`expect(formatDate(now))`, or a
+/// local initialized from an unrelated call) does not witness
+/// `return amount - 12;`: the changed value never escapes into the observed
+/// expression, so the guard fails closed and the finding downgrades to
+/// WeaklyExposed. This mirrors the sink-alignment evidence the Python
+/// adapter already surfaces.
+///
+/// For all other families the guard always returns `true` (pre-guard
+/// behaviour). SideEffect / CallDeletion behaviour is pinned and unchanged.
 ///
 /// ### Fail-closed default (RIPR-SPEC-0098 hardening, #1235)
 ///
@@ -87,12 +172,19 @@ pub(crate) fn ts_changed_value_is_observed(
     owner_name: &str,
     candidates: &[TypeScriptRelatedCandidate<'_>],
 ) -> bool {
-    // Only apply the guard to SideEffect / CallDeletion families.
-    // All other families keep the pre-guard (always-confirmed) behaviour.
-    if !matches!(
+    // Apply the guard to effect families (SideEffect / CallDeletion) and value
+    // families (ReturnValue / FieldConstruction). All other families keep the
+    // pre-guard (always-confirmed) behaviour.
+    let value_family = matches!(
         probe_shape.family,
-        ProbeFamily::SideEffect | ProbeFamily::CallDeletion
-    ) {
+        ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
+    );
+    if !value_family
+        && !matches!(
+            probe_shape.family,
+            ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+        )
+    {
         return true;
     }
 
@@ -101,15 +193,18 @@ pub(crate) fn ts_changed_value_is_observed(
     let changed_tokens: Vec<String> = if let Some(ref disc) = raw_discriminator {
         let raw_expr = strip_synthesized_prefix(disc);
         identifier_tokens(raw_expr)
+            .into_iter()
+            .filter(|tok| !CALL_EFFECT_TEMPLATE_WORDS.contains(&tok.as_str()))
+            .collect()
     } else {
         Vec::new()
     };
 
     // Fail-CLOSED: confirmation must be affirmatively established by at least one
-    // strong assertion that actually witnesses a call effect. We scan every
+    // strong assertion that actually witnesses the changed sink. We scan every
     // strong assertion in the oracle-eligible candidates and return `true` the
-    // moment one of them qualifies. If none qualify, we downgrade — including the
-    // case where no `observed_expression` metadata is available at all (the
+    // moment one of them qualifies. If none qualify, we downgrade — including
+    // the case where no `observed_expression` metadata is available at all (the
     // former fail-OPEN `return true` fallback is deliberately gone: absence of
     // proof is not proof of observation).
     for candidate in candidates {
@@ -118,6 +213,49 @@ pub(crate) fn ts_changed_value_is_observed(
         }
         for assertion in &candidate.test.assertions {
             if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() {
+                continue;
+            }
+            if value_family {
+                // Value families (ReturnValue / FieldConstruction): the strong
+                // assertion must MATCH the seam family (the same filter applied
+                // to `strongest_strength`) and its observed_expression must
+                // reference the owner (owner name or its call) or contain a
+                // changed token from the changed sub-expression. An assertion
+                // on an unrelated expression does not observe the changed
+                // sink; absence of observed_expression fails closed too.
+                if !ts_oracle_kind_matches_seam(&assertion.oracle_kind, &probe_shape.family) {
+                    continue;
+                }
+                let Some(ref observed) = assertion.observed_expression else {
+                    continue;
+                };
+                if observed.contains(owner_name) {
+                    return true;
+                }
+                if !changed_tokens.is_empty()
+                    && changed_tokens
+                        .iter()
+                        .any(|tok| observed.contains(tok.as_str()))
+                {
+                    return true;
+                }
+                // One-hop local aliasing (RIPR-SPEC-0108 must_stay_exposed
+                // controls): `const result = add(1, 2)` asserted via
+                // `t.is(result, 3)` still observes the changed sink — the
+                // local is initialized from the owner call. Without this
+                // credit the guard falsely downgrades the canonical
+                // assert-the-return-value pattern.
+                if ts_observed_local_aliases_owner(
+                    observed,
+                    owner_name,
+                    &changed_tokens,
+                    &candidate.test.body_text,
+                ) {
+                    return true;
+                }
+                // This family-matching strong assertion observes an unrelated
+                // expression: it does NOT witness the changed sink. Keep
+                // scanning for a qualifying assertion.
                 continue;
             }
             // (1) Effect-shape oracle kinds confirm unconditionally: these ARE
@@ -136,14 +274,20 @@ pub(crate) fn ts_changed_value_is_observed(
             // extractor retained the `expect(<expr>)` argument text. These can
             // only ADD confirmations; their absence never re-promotes.
             if let Some(ref observed) = assertion.observed_expression {
-                // Token match: a changed token appears in the observed
-                // expression → this assertion observes the changed value.
-                if !changed_tokens.is_empty()
-                    && changed_tokens
+                // Token match: tokenize the observed expression with the SAME
+                // `identifier_tokens` rules and require EXACT token equality.
+                // A raw substring `observed.contains(tok)` false-confirms on
+                // synthesized template words (e.g. a `.includes(...)` call in
+                // the test) and on tokens merely embedded in a larger
+                // identifier.
+                if !changed_tokens.is_empty() {
+                    let observed_tokens = identifier_tokens(observed);
+                    if changed_tokens
                         .iter()
-                        .any(|tok| observed.contains(tok.as_str()))
-                {
-                    return true;
+                        .any(|tok| observed_tokens.contains(tok))
+                    {
+                        return true;
+                    }
                 }
                 // Side-channel: the observed expression does NOT name the owner,
                 // so it is asserting something other than the owner return value
@@ -161,25 +305,108 @@ pub(crate) fn ts_changed_value_is_observed(
         }
     }
 
-    // No strong assertion witnessed the call effect: fail closed → downgrade.
+    // No strong assertion witnessed the changed sink: fail closed → downgrade.
+    false
+}
+
+/// One-hop local aliasing credit for the value-family observation guard.
+///
+/// Test code conventionally captures the owner call in a local and asserts
+/// that local (`const result = add(1, 2); t.is(result, 3)`). The bare-local
+/// `observed_expression` carries no owner reference, but the changed value
+/// flows into it through the initializer, so treating it as unobserved
+/// would be a false downgrade that also flips `repair_packet_ready` on for
+/// tests that already assert the changed value (the over-correction pinned
+/// by the RIPR-SPEC-0108 `must_stay_exposed` corpus controls).
+///
+/// Conservatism: only a bare identifier qualifies (member or call
+/// expressions were already decided by the direct owner / changed-token
+/// checks), the assignment match requires whole-word identifier boundaries
+/// and a single `=` (not `==` / `=>`), the initializer is read only up to
+/// the next `;` or newline, and only the FIRST matching assignment in the
+/// test body is considered. Any failure to resolve keeps the guard's
+/// fail-closed downgrade.
+fn ts_observed_local_aliases_owner(
+    observed: &str,
+    owner_name: &str,
+    changed_tokens: &[String],
+    test_body: &str,
+) -> bool {
+    fn is_ident_byte(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+    }
+    let ident = observed.trim();
+    let ident_bytes = ident.as_bytes();
+    let ident_is_bare = !ident_bytes.is_empty()
+        && (ident_bytes[0].is_ascii_alphabetic()
+            || ident_bytes[0] == b'_'
+            || ident_bytes[0] == b'$')
+        && ident_bytes.iter().all(|&b| is_ident_byte(b));
+    if !ident_is_bare {
+        return false;
+    }
+    let body = test_body.as_bytes();
+    let mut search_from = 0;
+    while let Some(pos) = test_body
+        .get(search_from..)
+        .and_then(|rest| rest.find(ident))
+    {
+        let abs = search_from + pos;
+        let before_ok = abs == 0 || !is_ident_byte(body[abs - 1]);
+        let after = abs + ident.len();
+        let after_ok = after >= body.len() || !is_ident_byte(body[after]);
+        if before_ok && after_ok {
+            let mut i = after;
+            while i < body.len() && body[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            // A single `=`: reject `==` / `===` / `=>`.
+            if i < body.len() && body[i] == b'=' && body.get(i + 1) != Some(&b'=') {
+                let rhs_start = i + 1;
+                let rhs_end = test_body[rhs_start..]
+                    .find([';', '\n'])
+                    .map(|p| rhs_start + p)
+                    .unwrap_or(test_body.len());
+                let rhs = &test_body[rhs_start..rhs_end];
+                if rhs.contains(owner_name)
+                    || changed_tokens.iter().any(|tok| rhs.contains(tok.as_str()))
+                {
+                    return true;
+                }
+            }
+        }
+        search_from = after.max(abs + 1);
+    }
     false
 }
 
 /// Build the named limitation message for the RIPR-SPEC-0098 downgrade arm.
 ///
-/// Only fires for SideEffect / CallDeletion families (the guard is scoped to
-/// effect families only). Emits a `propagation_unknown` limitation.
+/// Fires for SideEffect / CallDeletion families (effect sink swallowed by
+/// value-shaped oracles) and for ReturnValue / FieldConstruction families
+/// (strong assertions that observe an unrelated expression, not the changed
+/// sink). Emits a `propagation_unknown` limitation.
 pub(crate) fn ts_observation_guard_limitation(
     probe_shape: &TypeScriptProbeShape,
     line_text: &str,
 ) -> String {
-    // Describe the non-escaping sink where possible.
     let sink_hint = typescript_missing_discriminator_value(&probe_shape.family, line_text)
         .map(|disc| {
             let raw = strip_synthesized_prefix(&disc);
             format!(" (`{raw}`)")
         })
         .unwrap_or_default();
+    if matches!(
+        probe_shape.family,
+        ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
+    ) {
+        return format!(
+            "propagation_unknown: changed value sinks to the owner return value or constructed object{sink_hint}; \
+             all strong assertions observe an unrelated expression, not the changed sink; \
+             propagation unknown"
+        );
+    }
+    // Describe the non-escaping sink where possible.
     format!(
         "propagation_unknown: changed value sinks to a non-escaping call effect{sink_hint}; \
          all strong assertions observe the owner return value, not this call effect; \
@@ -215,11 +442,19 @@ pub(crate) fn ts_observation_guard_limitation(
 /// Observation keys on `observed_expression` (the `expect(<expr>)` argument).
 /// When it is absent, or names a local such as `result`, the witness fails
 /// closed; the finding then takes the existing weak path.
+///
+/// Receiver resolution: a member match (`pricing.applyDiscount(...)`) only
+/// counts when the receiver is bound to the owner's own module in this test
+/// (a namespace import such as `import * as pricing from "../src/pricing"`).
+/// A same-named method on an unrelated receiver (`other.total(50)`) never
+/// witnesses, even when its arguments carry the boundary literal.
 pub(crate) fn ts_predicate_boundary_is_witnessed(
     probe_shape: &TypeScriptProbeShape,
     line_text: &str,
-    owner_name: &str,
+    owner: &TypeScriptOwner,
     candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
 ) -> bool {
     // An ambiguous fallback shape (`}`, an unrecognised statement) never names
     // a behavior an assertion could be shown to observe.
@@ -244,6 +479,8 @@ pub(crate) fn ts_predicate_boundary_is_witnessed(
         if !candidate.relation.uses_oracle() {
             continue;
         }
+        let owner_receivers =
+            owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
         for assertion in &candidate.test.assertions {
             if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
                 || !ts_oracle_kind_matches_seam(&assertion.oracle_kind, &ProbeFamily::Predicate)
@@ -253,7 +490,7 @@ pub(crate) fn ts_predicate_boundary_is_witnessed(
             let Some(observed) = assertion.observed_expression.as_deref() else {
                 continue;
             };
-            for arguments in owner_call_arguments(observed, owner_name) {
+            for arguments in owner_call_arguments(observed, &owner.name, &owner_receivers) {
                 let witnessed = if literals.is_empty() {
                     call_has_identical_arguments(&arguments)
                         || object_argument_pins_operands_equal(&arguments, left, right)
@@ -328,17 +565,82 @@ fn numeric_literal_value(token: &str) -> Option<String> {
 
 /// Return the argument lists (one per call) of every `<owner_name>(...)` call
 /// inside `observed`, split at top-level commas.
-fn owner_call_arguments(observed: &str, owner_name: &str) -> Vec<Vec<String>> {
+/// Receiver names in `test` that bind to the owner's own module through a
+/// namespace import (`import * as pricing from "../src/pricing"`). A member
+/// call on such a receiver (`pricing.applyDiscount(...)`) IS an owner call,
+/// while a same-named method on any other receiver (`other.total(...)`) is
+/// not — this is the receiver resolution that keeps genuine namespace-import
+/// witnesses credited without crediting unrelated receivers.
+fn owner_namespace_receivers(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<String> {
+    test.imports_in_file
+        .iter()
+        .filter(|import| {
+            import.namespace
+                && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
+        })
+        .map(|import| import.local.clone())
+        .collect()
+}
+
+/// The trailing identifier segment immediately before the final `.` of
+/// `before_match` — the receiver of a member call (`expect(pricing.` →
+/// `pricing`).
+fn receiver_before_dot(before_match: &str) -> String {
+    let trimmed = before_match.trim_end();
+    let without_dot = trimmed.strip_suffix('.').unwrap_or(trimmed);
+    without_dot
+        .chars()
+        .rev()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
+}
+
+/// Return the argument lists (one per call) of every `<owner_name>(...)` call
+/// inside `observed`, split at top-level commas.
+///
+/// A member match (`pricing.applyDiscount(...)`) is kept only when the
+/// receiver is bound to the owner's own module via a namespace import
+/// (`owner_receivers`); otherwise the match is a same-named method on an
+/// unrelated receiver and is skipped.
+fn owner_call_arguments(
+    observed: &str,
+    owner_name: &str,
+    owner_receivers: &[String],
+) -> Vec<Vec<String>> {
     let mut calls = Vec::new();
     if owner_name.is_empty() {
         return calls;
     }
     for (idx, _) in observed.match_indices(owner_name) {
-        let preceded_by_identifier = observed
-            .get(..idx)
-            .and_then(|before| before.chars().next_back())
+        // Skip matches embedded in a longer identifier (`otherShippingFee`):
+        // the match must start at a real owner call.
+        let Some(before) = observed.get(..idx) else {
+            continue;
+        };
+        let preceded_by_identifier = before
+            .chars()
+            .next_back()
             .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$');
         if preceded_by_identifier {
+            continue;
+        }
+        // Member access (`receiver.owner(...)`): keep only when the receiver
+        // resolves to the owner's own module (namespace import); a same-named
+        // method on an unrelated receiver (`other.total(50)`) must not
+        // witness the owner's boundary.
+        if before.trim_end().ends_with('.')
+            && !owner_receivers
+                .iter()
+                .any(|receiver| receiver == &receiver_before_dot(before))
+        {
             continue;
         }
         let Some(inner) = observed
@@ -638,7 +940,8 @@ pub(crate) fn classify_change(
     let related = find_related_tests(owner, all_tests, workspace_root, reexport_index, alias_map);
     let bun_array_buffer_facts = collect_related_bun_array_buffer_facts(&related_candidates);
     let bun_bridge_hints = collect_related_bun_bridge_hints(&bun_array_buffer_facts);
-    let mock_paths = collect_related_mock_paths(owner, all_tests);
+    let mock_paths =
+        collect_related_mock_paths(owner, all_tests, workspace_root, reexport_index, alias_map);
     let static_limit = static_limit_for_change(line_text, owner, &mock_paths);
 
     // Collect named TS-specific limitations (RIPR-SPEC-0085 §PR4 taxonomy).
@@ -726,8 +1029,10 @@ pub(crate) fn classify_change(
         || ts_predicate_boundary_is_witnessed(
             &probe_shape,
             line_text,
-            &owner.name,
+            owner,
             &related_candidates,
+            alias_map,
+            workspace_root,
         );
     let observation_confirmed = strong_oracle_present
         && boundary_witnessed

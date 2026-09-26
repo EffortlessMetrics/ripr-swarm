@@ -870,7 +870,7 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
         let oracle_kind = display_label(test.oracle_kind.as_str());
         let mut value = format!(
             "related test {}:{} {} uses {} {} oracle",
-            test.file.display(),
+            crate::output::path::display_path(&test.file),
             test.line,
             test.name,
             test.oracle_strength.as_str(),
@@ -1617,6 +1617,103 @@ mod harness_projection_tests {
             .ok_or("limitations array missing")?;
         assert_eq!(limitations[0]["code"], "dynamic_trial_name");
         assert_eq!(limitations[0]["line"], 17);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod evidence_path_separator_tests {
+    use super::evidence_path_values;
+    use crate::domain::{
+        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, OracleKind,
+        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, SymbolId,
+    };
+    use std::path::PathBuf;
+
+    fn finding_with_related(file: &str) -> Finding {
+        Finding {
+            id: "probe:src_lib_rs:9:error_path".to_string(),
+            canonical_gap: None,
+            probe: Probe {
+                id: ProbeId("probe:src_lib_rs:9:error_path".to_string()),
+                location: SourceLocation::new("src/lib.rs", 9, 1),
+                owner: Some(SymbolId("crate::sample".to_string())),
+                family: ProbeFamily::Predicate,
+                delta: DeltaKind::Control,
+                before: None,
+                after: None,
+                expression: "x >= 0".to_string(),
+                expected_sinks: vec![],
+                required_oracles: vec![],
+            },
+            class: ExposureClass::WeaklyExposed,
+            ripr: RiprEvidence {
+                reach: StageEvidence::new(StageState::Yes, Confidence::Medium, "reach"),
+                infect: StageEvidence::new(StageState::Yes, Confidence::Medium, "infect"),
+                propagate: StageEvidence::new(StageState::Yes, Confidence::Medium, "propagate"),
+                reveal: RevealEvidence {
+                    observe: StageEvidence::new(StageState::Yes, Confidence::Medium, "observe"),
+                    discriminate: StageEvidence::new(
+                        StageState::Yes,
+                        Confidence::Medium,
+                        "discriminate",
+                    ),
+                },
+            },
+            confidence: 0.5,
+            evidence: vec![],
+            missing: vec![],
+            flow_sinks: vec![],
+            activation: ActivationEvidence::default(),
+            stop_reasons: vec![],
+            related_tests: vec![RelatedTest {
+                name: "applies the discount".to_string(),
+                file: PathBuf::from(file),
+                line: 4,
+                oracle: None,
+                oracle_kind: OracleKind::ExactValue,
+                oracle_strength: OracleStrength::Strong,
+                relation_reason: None,
+                relation_confidence: None,
+            }],
+            recommended_next_step: None,
+            language: None,
+            language_status: None,
+            owner_kind: None,
+            static_limit_kind: None,
+            changed_sink: None,
+            observed_sink: None,
+            oracle_alignment: None,
+            alignment_reason: None,
+            source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
+        }
+    }
+
+    fn related_line(file: &str) -> Result<String, String> {
+        evidence_path_values(&finding_with_related(file))
+            .into_iter()
+            .find(|line| line.starts_with("related test "))
+            .ok_or_else(|| format!("missing related-test evidence for {file}"))
+    }
+
+    #[test]
+    fn related_test_paths_use_stable_slashes() -> Result<(), String> {
+        let windows = related_line("tests\\discount.test.ts")?;
+        if windows.contains('\\') {
+            return Err(format!("evidence_path kept a backslash: {windows}"));
+        }
+        if windows
+            != "related test tests/discount.test.ts:4 applies the discount uses strong exact value oracle"
+        {
+            return Err(format!("unexpected evidence_path line: {windows}"));
+        }
+        let posix = related_line("tests/discount.test.ts")?;
+        if posix
+            != "related test tests/discount.test.ts:4 applies the discount uses strong exact value oracle"
+        {
+            return Err(format!("posix path must stay slash-separated: {posix}"));
+        }
         Ok(())
     }
 }

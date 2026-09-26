@@ -30,6 +30,11 @@ pub(crate) struct ReExportIndex {
 impl ReExportIndex {
     /// Construct an empty index (no re-export tracing).
     /// Used by unit-test callers that do not exercise the re-export path.
+    ///
+    /// Test-only: production callers (the live pipeline and the mock-path
+    /// collector) always thread the real index through, so an empty index is
+    /// never constructed outside `cfg(test)`.
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self::default()
     }
@@ -42,11 +47,17 @@ impl ReExportIndex {
     /// star-re-exports (`export * from`) and non-relative sources are ignored
     /// (fail-closed).
     ///
+    /// `sources` is the Phase-1 workspace source cache: every file is read at
+    /// most once per analysis run. Files absent from the cache (unreadable or
+    /// over the read caps) are skipped here; their limitation disclosure is
+    /// owned by the read pipeline.
+    ///
     /// `alias_map` is forwarded to `normalized_relative_import_module` so that
     /// tsconfig.json-aliased sources (e.g. `@/owner`) can be followed through
     /// re-exports when `resolve_tsconfig_paths` is enabled.
     pub(crate) fn build(
         workspace_files: &[PathBuf],
+        sources: &HashMap<PathBuf, String>,
         workspace_root: &Path,
         alias_map: Option<&TsAliasMap>,
         is_test: impl Fn(&Path) -> bool,
@@ -58,8 +69,7 @@ impl ReExportIndex {
             if is_test(relative) {
                 continue;
             }
-            let absolute = workspace_root.join(relative);
-            let Ok(source) = std::fs::read_to_string(&absolute) else {
+            let Some(source) = sources.get(relative) else {
                 continue;
             };
             // Parse on the guarded large-stack worker (#4101): the recursive
@@ -875,7 +885,7 @@ fn import_references_owner_call(
         && contains_call_name(body_text, &import.local)
 }
 
-fn import_source_matches_owner(
+pub(crate) fn import_source_matches_owner(
     import: &TypeScriptImport,
     test_file: &Path,
     owner: &TypeScriptOwner,
@@ -936,7 +946,7 @@ fn normalized_module_path(path: &Path) -> String {
 }
 
 fn strip_typescript_module_extension(path: &str) -> String {
-    for suffix in [".tsx", ".ts", ".jsx", ".js"] {
+    for suffix in [".tsx", ".mts", ".cts", ".ts", ".jsx", ".mjs", ".cjs", ".js"] {
         if let Some(stripped) = path.strip_suffix(suffix) {
             return stripped.to_string();
         }

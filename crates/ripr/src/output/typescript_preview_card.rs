@@ -239,7 +239,7 @@ fn changed_behavior(finding: &Finding) -> String {
     format!(
         "{} changed at {}:{}: `{expression}`",
         finding.probe.family.as_str(),
-        finding.probe.location.file.display(),
+        crate::output::path::display_path(&finding.probe.location.file),
         finding.probe.location.line
     )
 }
@@ -247,7 +247,7 @@ fn changed_behavior(finding: &Finding) -> String {
 fn related_test_card(test: &RelatedTest) -> TypeScriptPreviewCardRelatedTest {
     TypeScriptPreviewCardRelatedTest {
         name: test.name.clone(),
-        file: test.file.display().to_string(),
+        file: crate::output::path::display_path(&test.file),
         line: test.line,
     }
 }

@@ -13491,7 +13491,7 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
     assert!(markdown.contains("Full top-3 capture cases: 1 / 1 evals"));
     assert!(markdown.contains("TypeScript Preview Repair-Loop Receipts"));
     assert!(markdown.contains("TypeScript False-Actionable Audit"));
-    assert!(markdown.contains("False actionable: 0 / 14 checked rows"));
+    assert!(markdown.contains("False actionable: 0 / 15 checked rows"));
     assert!(markdown.contains("Bun UB Cross-Language Witness Receipts"));
     assert!(markdown.contains("bun_blob_31648_known_good"));
     assert!(markdown.contains("User Surface Projection Alignment Receipts"));
@@ -13871,7 +13871,7 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
         typescript_false_actionable_summary
             .get("cases")
             .and_then(Value::as_u64),
-        Some(14)
+        Some(15)
     );
     assert_eq!(
         typescript_false_actionable_summary
@@ -13885,7 +13885,7 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
             .get("false_actionable_rate")
             .and_then(|value| value.get("checked"))
             .and_then(Value::as_u64),
-        Some(14)
+        Some(15)
     );
     assert_eq!(
         typescript_false_actionable_summary
@@ -13898,7 +13898,7 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
         .get("cases")
         .and_then(Value::as_array)
         .ok_or_else(|| "typescript_false_actionable_audit cases missing".to_string())?;
-    assert_eq!(typescript_false_actionable_cases.len(), 14);
+    assert_eq!(typescript_false_actionable_cases.len(), 15);
     assert!(
         typescript_false_actionable_cases
             .iter()
@@ -18489,8 +18489,8 @@ fn dogfood_typescript_false_actionable_audit_summary_flags_packet_ready_rows() -
         let cases = super::typescript_preview_false_actionable_audit_cases();
         let summary = super::dogfood_typescript_false_actionable_audit_summary(&cases);
         assert_eq!(summary.gate_status, "pass");
-        assert_eq!(summary.cases, 14);
-        assert_eq!(summary.must_remain_non_actionable, 14);
+        assert_eq!(summary.cases, 15);
+        assert_eq!(summary.must_remain_non_actionable, 15);
         assert_eq!(summary.false_actionable, 0);
         assert_eq!(summary.repair_packet_ready_true, 0);
 

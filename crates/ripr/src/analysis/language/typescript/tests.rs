@@ -1354,9 +1354,56 @@ fn accepts_ts_jsx_paths() {
     assert!(adapter.accepts_path(Path::new("src/component.tsx")));
     assert!(adapter.accepts_path(Path::new("src/index.js")));
     assert!(adapter.accepts_path(Path::new("src/component.jsx")));
+    // Modern ESM/CJS extensions route to this adapter as well.
+    assert!(adapter.accepts_path(Path::new("src/module.mts")));
+    assert!(adapter.accepts_path(Path::new("src/module.cts")));
+    assert!(adapter.accepts_path(Path::new("src/module.mjs")));
+    assert!(adapter.accepts_path(Path::new("src/module.cjs")));
+    // `.d.ts` declaration files keep routing here via "ts" and stay accepted.
+    assert!(adapter.accepts_path(Path::new("src/types.d.ts")));
     assert!(!adapter.accepts_path(Path::new("src/lib.rs")));
     assert!(!adapter.accepts_path(Path::new("scripts/run.py")));
     assert!(!adapter.accepts_path(Path::new("README.md")));
+}
+
+#[test]
+fn esm_cjs_extensions_parse_with_module_correct_source_type() {
+    // `.mts` is TypeScript ESM: type annotations must parse, `import` must
+    // be legal module syntax. `.cts` is TypeScript CJS: `require` must parse.
+    assert!(
+        parse_error_reason(
+            Path::new("src/cart.mts"),
+            "export function f(x: number): number { return x; }\n"
+        )
+        .is_none(),
+        ".mts source with type annotations must parse"
+    );
+    assert!(
+        parse_error_reason(
+            Path::new("src/tool.cts"),
+            "const path = require('node:path');\n"
+        )
+        .is_none(),
+        ".cts source with require must parse"
+    );
+    assert!(
+        parse_error_reason(Path::new("src/tool.mjs"), "export const value = 1;\n").is_none(),
+        ".mjs source must parse"
+    );
+    assert!(
+        parse_error_reason(Path::new("src/tool.cjs"), "module.exports = 1;\n").is_none(),
+        ".cjs source with module.exports must parse"
+    );
+    // And each routed extension still surfaces parser errors instead of
+    // silently dropping the file.
+    assert!(
+        parse_error_reason(
+            Path::new("src/cart.mts"),
+            "this is not :: valid +++ typescript"
+        )
+        .is_some(),
+        ".mts parse errors must be reported, not swallowed"
+    );
 }
 
 #[test]
@@ -1377,6 +1424,19 @@ fn parse_error_reason_reports_parser_errors() {
     assert!(reason.is_some());
     let reason = reason.unwrap_or_default();
     assert!(reason.contains("parser error"));
+}
+
+#[test]
+fn parse_error_reason_includes_first_parser_message() {
+    // The reason must carry the first oxc message, not just a bare count,
+    // so the limitation is actionable.
+    let reason = parse_error_reason(Path::new("src/index.ts"), "const x = ;").unwrap_or_default();
+    assert!(
+        reason.starts_with("1 parser error(s): "),
+        "reason must include the first parser message: {reason}"
+    );
+    let message = reason.trim_start_matches("1 parser error(s): ");
+    assert!(!message.is_empty(), "parser message must be non-empty");
 }
 
 #[test]
@@ -1407,7 +1467,12 @@ fn is_test_file_matches_test_and_spec_suffixes() {
     assert!(is_test_file(Path::new("tests/lib.test.ts")));
     assert!(is_test_file(Path::new("src/Header.spec.tsx")));
     assert!(is_test_file(Path::new("legacy.test.js")));
+    // Modern ESM/CJS extensions follow the same suffix conventions.
+    assert!(is_test_file(Path::new("tests/lib.test.mts")));
+    assert!(is_test_file(Path::new("tests/lib.spec.mjs")));
+    assert!(is_test_file(Path::new("tests/lib.test.cjs")));
     assert!(!is_test_file(Path::new("src/lib.ts")));
+    assert!(!is_test_file(Path::new("src/lib.mts")));
     assert!(!is_test_file(Path::new("README.md")));
 }
 
@@ -4099,9 +4164,59 @@ fn analyze_diff_returns_zero_findings_and_counts_accepted_files() -> Result<(), 
 }
 
 #[test]
+fn invalid_utf8_source_produces_no_finding_or_is_disclosed() -> Result<(), String> {
+    // PINS CURRENT BEHAVIOR (agentic-trust failure-mode audit): a changed
+    // TypeScript file whose bytes are not valid UTF-8 hits the
+    // `read_to_string` guard in `analyze_diff` and is skipped silently — no
+    // finding is emitted and no static limit is disclosed. Lane
+    // ts-d-silent-gaps owns adding that disclosure; this test must be
+    // updated when the disclosure lands.
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let root = std::env::temp_dir().join(format!("ripr-ts-utf8-{stamp}"));
+    let _ = fs::create_dir_all(root.join("src"));
+    // 0xFE 0xFF is never valid UTF-8.
+    let _ = fs::write(
+        root.join("src").join("broken.ts"),
+        [0xFE_u8, 0xFF, 0x20, 0x3B],
+    );
+
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![changed("src/broken.ts")];
+    let result = adapter.analyze_diff(&options, &policy, &changed_files)?;
+    assert!(
+        result
+            .findings
+            .iter()
+            .all(|finding| finding.probe.location.file.as_path() != Path::new("src/broken.ts")),
+        "invalid UTF-8 source must not produce a finding for src/broken.ts (silently skipped today; disclosure owned by lane ts-d-silent-gaps)"
+    );
+    Ok(())
+}
+
+#[test]
 fn analyze_diff_splits_changed_files_into_typescript_and_javascript() -> Result<(), String> {
-    // #2103 review: this adapter covers .js/.jsx as javascript; the summary
-    // must not attribute JS files to typescript.
+    // #2103 review: this adapter covers .js/.jsx/.mjs/.cjs as javascript;
+    // the summary must not attribute JS files to typescript.
     let adapter = TypeScriptAdapter;
     let options = AnalysisOptions {
         root: PathBuf::from("/nonexistent_workspace"),
@@ -4122,22 +4237,238 @@ fn analyze_diff_splits_changed_files_into_typescript_and_javascript() -> Result<
         changed("src/index.ts"),
         changed("src/app.js"),
         changed("src/Header.jsx"),
+        changed("src/module.mts"),
+        changed("src/module.cts"),
+        changed("src/app.mjs"),
+        changed("src/app.cjs"),
         changed("src/lib.rs"),
     ];
     let result = adapter.analyze_diff(&options, &policy, &changed_files)?;
-    assert_eq!(result.changed_files, 3);
+    assert_eq!(result.changed_files, 7);
     assert_eq!(
         result.changed_files_by_language,
         vec![
-            (crate::analysis::language::LanguageId::TypeScript, 1),
-            (crate::analysis::language::LanguageId::JavaScript, 2),
+            (crate::analysis::language::LanguageId::TypeScript, 3),
+            (crate::analysis::language::LanguageId::JavaScript, 4),
         ]
     );
     Ok(())
 }
 
+/// A `.mts` source file must be discovered, parsed, and analyzed — before
+/// this lane the router dropped `.mts`/`.cts`/`.mjs`/`.cjs` entirely, so
+/// half of a modern ESM/CJS tree was silently unread with no limitation.
 #[test]
-fn analyze_repo_returns_empty_scaffold() -> Result<(), String> {
+fn analyze_diff_discovers_and_analyzes_mts_sources() -> Result<(), String> {
+    let root = ts_unique_tempdir("mts-analysis")?;
+
+    ts_write_file(
+        &root.join("package.json"),
+        r#"{"name":"pkg","scripts":{"test":"vitest"},"devDependencies":{"vitest":"^1.0.0"}}"#,
+    )?;
+    ts_write_file(
+        &root.join("src/cart.mts"),
+        "export function cartTotal(items: number[]): number {\n  return items.reduce((a, b) => a + b, 0);\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/cart.test.mts"),
+        "import { cartTotal } from '../src/cart.mjs';\ntest('totals items', () => {\n  const result = cartTotal([1, 2]);\n  expect(result).toBe(3);\n});\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("src/cart.mts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 1,
+            new_side_line: 1,
+            text: "export function cartTotal(items: number[]): number {".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+
+    let result = adapter.analyze_diff(&options, &policy, &changed_files);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+
+    assert_eq!(
+        result.changed_files, 1,
+        "the .mts change must be counted as analyzed"
+    );
+    assert!(
+        !result.findings.is_empty(),
+        "expected at least one finding for the .mts owner; got none"
+    );
+    assert!(
+        result
+            .findings
+            .iter()
+            .any(|f| f.language == Some(DomainLanguageId::TypeScript)),
+        "the .mts finding must be attributed to typescript; findings={:?}",
+        result.findings.len()
+    );
+    Ok(())
+}
+
+#[test]
+fn analyze_diff_surfaces_over_limit_read_as_named_limitation() -> Result<(), String> {
+    // A workspace file larger than the 16 MiB default per-file cap must not be
+    // silently skipped: it surfaces as a named limitation whose recovery names
+    // the env knob (bounded_read.rs contract).
+    let root = ts_unique_tempdir("capped-read")?;
+    ts_write_file(&root.join("src/ok.ts"), "export const ok = 1;\n")?;
+    let over_limit = vec![b'x'; (DEFAULT_TS_MAX_FILE_READ_BYTES + 1) as usize];
+    std::fs::write(root.join("src/huge.ts"), over_limit)
+        .map_err(|err| format!("write huge fixture: {err}"))?;
+
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &[]);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+
+    let capped = result.limitations.iter().find(|limitation| {
+        limitation
+            .bounded_detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("file_read_capped"))
+    });
+    let capped = capped.ok_or_else(|| {
+        format!(
+            "expected a named limitation for the over-limit file; got {:?}",
+            result
+                .limitations
+                .iter()
+                .map(|limitation| limitation.bounded_detail.clone())
+                .collect::<Vec<_>>()
+        )
+    })?;
+    assert_eq!(capped.path.as_deref(), Some("src/huge.ts"));
+    assert!(matches!(
+        capped.kind,
+        AnalysisLimitationKind::LanguageScopeUnsupported
+    ));
+    assert!(
+        matches!(
+            capped.recovery.kind,
+            AnalysisRecoveryKind::IncreaseConfiguredLimit
+        ),
+        "recovery must name the configured limit, got {:?}",
+        capped.recovery.kind
+    );
+    assert!(
+        capped
+            .recovery
+            .detail
+            .contains("RIPR_TS_MAX_FILE_READ_BYTES"),
+        "recovery must name the env knob: {}",
+        capped.recovery.detail
+    );
+    Ok(())
+}
+
+#[test]
+fn analyze_diff_surfaces_over_limit_tsconfig_read_as_named_limitation() -> Result<(), String> {
+    // An over-limit tsconfig.json must fail-close the alias map AND surface a
+    // named limitation naming the env knob, so the missing alias resolution is
+    // not silent (bounded_read.rs disclosure contract).
+    let root = ts_unique_tempdir("capped-tsconfig-read")?;
+    ts_write_file(&root.join("src/ok.ts"), "export const ok = 1;\n")?;
+    let over_limit = vec![b'{'; (DEFAULT_TS_MAX_FILE_READ_BYTES + 1) as usize];
+    std::fs::write(root.join("tsconfig.json"), over_limit)
+        .map_err(|err| format!("write over-limit tsconfig fixture: {err}"))?;
+
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: true,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &[]);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+
+    let capped = result.limitations.iter().find(|limitation| {
+        limitation
+            .bounded_detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("file_read_capped"))
+    });
+    let capped = capped.ok_or_else(|| {
+        format!(
+            "expected a named limitation for the over-limit tsconfig; got {:?}",
+            result
+                .limitations
+                .iter()
+                .map(|limitation| limitation.bounded_detail.clone())
+                .collect::<Vec<_>>()
+        )
+    })?;
+    assert!(
+        capped
+            .path
+            .as_deref()
+            .is_some_and(|path| path.ends_with("tsconfig.json")),
+        "limitation path must name tsconfig.json, got {:?}",
+        capped.path
+    );
+    assert!(
+        matches!(
+            capped.recovery.kind,
+            AnalysisRecoveryKind::IncreaseConfiguredLimit
+        ),
+        "recovery must name the configured limit, got {:?}",
+        capped.recovery.kind
+    );
+    assert!(
+        capped
+            .recovery
+            .detail
+            .contains("RIPR_TS_MAX_FILE_READ_BYTES"),
+        "recovery must name the env knob: {}",
+        capped.recovery.detail
+    );
+    Ok(())
+}
+
+#[test]
+fn analyze_repo_discloses_partial_run_instead_of_silent_empty() -> Result<(), String> {
     let adapter = TypeScriptAdapter;
     let options = AnalysisOptions {
         root: PathBuf::from("/nonexistent_workspace"),
@@ -4157,6 +4488,170 @@ fn analyze_repo_returns_empty_scaffold() -> Result<(), String> {
     let result = adapter.analyze_repo(&options, &policy)?;
     assert!(result.findings.is_empty());
     assert_eq!(result.production_files, 0);
+    // The stub discloses the partial run on the shared channel (the
+    // pipeline records a `Partial` language run from `partial_reason`),
+    // so repo-mode output is not a silently clean result.
+    assert_eq!(
+        result.partial_reason.as_deref(),
+        Some("typescript_repo_mode_not_implemented_diff_first")
+    );
+    Ok(())
+}
+
+/// Two identical added lines in the same owner collide on the
+/// content-addressed probe id (path/family/owner/normalized expression,
+/// no line number — classifier.rs). The adapter's post-hoc ordinal pass
+/// must keep both findings distinct: the first keeps its id, the second
+/// gets the `.2` suffix (mirror of the Rust path's `dedup_probe_ids`),
+/// so the packet projection's `finding.id` dedupe fingerprint cannot
+/// collapse two distinct changed lines into one.
+#[test]
+fn analyze_diff_dedups_colliding_probe_ids_for_identical_added_lines() -> Result<(), String> {
+    let root = ts_unique_tempdir("probe-dedup")?;
+
+    // Two identical `if (x > 0) {` guards in one owner function.
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export function classify(x: number): number {\n  if (x > 0) {\n    return 1;\n  }\n  if (x > 0) {\n    return 2;\n  }\n  return 0;\n}\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("src/lib.ts"),
+        added_lines: vec![
+            crate::analysis::diff::ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: "  if (x > 0) {".to_string(),
+            },
+            crate::analysis::diff::ChangedLine {
+                line: 5,
+                new_side_line: 5,
+                text: "  if (x > 0) {".to_string(),
+            },
+        ],
+        removed_lines: Vec::new(),
+    }];
+
+    let result = adapter.analyze_diff(&options, &policy, &changed_files);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+
+    assert_eq!(
+        result.findings.len(),
+        2,
+        "both identical added lines must produce a finding each"
+    );
+    let first = &result.findings[0];
+    let second = &result.findings[1];
+    assert_eq!(first.probe.location.line, 2, "findings stay in diff order");
+    assert_eq!(second.probe.location.line, 5);
+    assert_ne!(
+        first.id, second.id,
+        "colliding probe ids must be de-duped into distinct identities"
+    );
+    // Second occurrence carries the ordinal suffix on probe and finding id.
+    let expected_second = format!("{}.2", first.probe.id.0);
+    assert_eq!(
+        second.probe.id.0, expected_second,
+        "second occurrence must append the .2 collision suffix"
+    );
+    assert_eq!(
+        second.id, second.probe.id.0,
+        "finding id must track the de-duped probe id"
+    );
+    // First occurrence keeps its ordinal-1 id: the fp8 hex tail carries no
+    // `.N` suffix (the id legitimately contains '.' from the file name, so
+    // only the last colon-separated segment is checked).
+    let tail = first.probe.id.0.rsplit(':').next().unwrap_or("");
+    assert!(
+        !tail.contains('.'),
+        "ordinal-1 id must stay suffix-free, got {}",
+        first.probe.id.0
+    );
+    Ok(())
+}
+
+/// Single-occurrence findings keep their ordinal-1 ids: the de-dup pass
+/// must not perturb ids that occur once. This pins the stability of the
+/// existing TS fixture goldens (e.g. `fixtures/typescript_strong_oracle`
+/// pins `probe:src_discount.ts:typescript_preview:2396aec1`).
+#[test]
+fn analyze_diff_keeps_single_occurrence_probe_ids_stable() -> Result<(), String> {
+    let root = ts_unique_tempdir("probe-stable")?;
+
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export function applyDiscount(amount: number, threshold: number): number {\n  if (amount >= threshold) {\n    return amount - 10;\n  }\n  return amount;\n}\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("src/lib.ts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "  if (amount >= threshold) {".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+
+    let result = adapter.analyze_diff(&options, &policy, &changed_files);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+
+    assert_eq!(result.findings.len(), 1);
+    let finding = &result.findings[0];
+    let owner = finding
+        .probe
+        .owner
+        .as_ref()
+        .ok_or_else(|| "expected a resolved owner".to_string())?;
+    // Recompute the content-addressed id exactly as the adapter does;
+    // ordinal 1 means no collision suffix.
+    let expected = fingerprint_probe_id(
+        "probe",
+        "src_lib.ts",
+        "typescript_preview",
+        owner.0.as_str(),
+        &normalize_expression("  if (amount >= threshold) {"),
+        1,
+    );
+    assert_eq!(
+        finding.probe.id, expected,
+        "single-occurrence probe id must stay exactly the ordinal-1 id"
+    );
+    assert_eq!(finding.id, expected.0);
     Ok(())
 }
 
@@ -4712,7 +5207,7 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             imports_in_file: Vec::new(),
         },
     ];
-    let paths = collect_related_mock_paths(&owner, &tests);
+    let paths = collect_related_mock_paths(&owner, &tests, None, &ReExportIndex::empty(), None);
     assert_eq!(paths, vec!["./api".to_string()]);
 }
 
@@ -4739,7 +5234,7 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
         mocks_in_file: vec!["./api".to_string()],
         imports_in_file: Vec::new(),
     }];
-    let paths = collect_related_mock_paths(&owner, &tests);
+    let paths = collect_related_mock_paths(&owner, &tests, None, &ReExportIndex::empty(), None);
     assert!(paths.is_empty());
 }
 
@@ -4766,7 +5261,7 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
         mocks_in_file: vec!["./api".to_string()],
         imports_in_file: Vec::new(),
     }];
-    let paths = collect_related_mock_paths(&owner, &tests);
+    let paths = collect_related_mock_paths(&owner, &tests, None, &ReExportIndex::empty(), None);
     assert!(paths.is_empty());
 }
 
@@ -4820,6 +5315,112 @@ fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
     assert_eq!(
         finding.static_limit_kind,
         Some(StaticLimitKind::MockedModule)
+    );
+    Ok(())
+}
+
+/// Cross-package negative control: a test in `packages/b` that mocks a path
+/// resolving to the owner's module in `packages/a` must NOT surface a
+/// `mocked_module` static limit on the `packages/a` finding. The package-local
+/// filter excludes the test from the credited relation set; the mock
+/// collector must not re-admit it (a `mocked_module` limit forces
+/// `gap_state: static_limitation` with empty missing fields, so this would be
+/// a wrong actionable signal built from a deliberately excluded test).
+#[test]
+fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> Result<(), String> {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let root = std::env::temp_dir().join(format!("ripr-mock-cross-pkg-{stamp}"));
+    let pkg_a = root.join("packages").join("pkg-a");
+    let pkg_b = root.join("packages").join("pkg-b");
+    let _ = fs::create_dir_all(pkg_a.join("src"));
+    let _ = fs::create_dir_all(pkg_b.join("tests"));
+    let _ = fs::write(pkg_a.join("package.json"), r#"{"name":"pkg-a"}"#);
+    let _ = fs::write(pkg_b.join("package.json"), r#"{"name":"pkg-b"}"#);
+
+    let owner = TypeScriptOwner {
+        name: "doWork".to_string(),
+        file: pkg_a.join("src").join("work.ts"),
+        start_line: 1,
+        end_line: 10,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    // The test body calls the owner (it would be credited without the
+    // package-local filter) and mocks a path resolving to the owner's module.
+    let tests = vec![TypeScriptTest {
+        name: "cross-package doWork test".to_string(),
+        local_name: "cross-package doWork test".to_string(),
+        describe_names: Vec::new(),
+        file: pkg_b.join("tests").join("work.test.ts"),
+        line: 1,
+        body_text: "doWork();".to_string(),
+        assertions: Vec::new(),
+        mocks_in_file: vec!["./work".to_string()],
+        imports_in_file: Vec::new(),
+    }];
+
+    // Live pipeline (workspace_root supplied): the cross-package test is
+    // excluded from the credited relation set, so no `mocked_module` limit.
+    let finding = classify_change(
+        &pkg_a.join("src").join("work.ts"),
+        2,
+        "    return doWorkImpl();",
+        &[owner],
+        &tests,
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding for the changed line".to_string())?;
+    assert!(
+        finding.static_limit_kind != Some(StaticLimitKind::MockedModule),
+        "cross-package mock must not surface a `mocked_module` limit, got {:?}",
+        finding.static_limit_kind
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("static_limit mocked_module:")),
+        "cross-package mock must not emit a `mocked_module` evidence line"
+    );
+
+    // Removal/known-wrong control: without the package-local filter (the
+    // single-package path), the same fixtures DO credit the test and surface
+    // the limit — proving the negative control exercises the real producer.
+    let owner = TypeScriptOwner {
+        name: "doWork".to_string(),
+        file: pkg_a.join("src").join("work.ts"),
+        start_line: 1,
+        end_line: 10,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let unfiltered = classify_change(
+        &pkg_a.join("src").join("work.ts"),
+        2,
+        "    return doWorkImpl();",
+        &[owner],
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding for the changed line".to_string())?;
+    assert_eq!(
+        unfiltered.static_limit_kind,
+        Some(StaticLimitKind::MockedModule),
+        "without the package-local filter the cross-package test is credited \
+         and the `mocked_module` limit must fire (non-vacuous control)"
     );
     Ok(())
 }
@@ -6282,6 +6883,290 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
     Ok(())
 }
 
+/// Repro control (RIPR-SPEC-0098 value-sink extension): a ReturnValue seam
+/// whose confirming strong assertion observes an UNRELATED expression.
+/// The test calls the changed owner (`applyDiscount(100, 10);` →
+/// DirectOwnerCall relation) but its only strong assertion is
+/// `expect(formatDate(now)).toBe('2024-01-01')` — neither the owner name nor
+/// a changed token (`amount`) appears in the observed_expression. Before the
+/// value-sink extension this classified `exposed`; now the observation guard
+/// MUST fail closed and downgrade to `weakly_exposed` with a
+/// `propagation_unknown` limitation.
+#[test]
+fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/discount.ts"),
+        start_line: 1,
+        end_line: 8,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let test = TypeScriptTest {
+        name: "discount side checks".to_string(),
+        local_name: "discount side checks".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/discount.test.ts"),
+        line: 1,
+        body_text: "applyDiscount(100, 10);\nexpect(formatDate(now)).toBe('2024-01-01');"
+            .to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "toBe".to_string(),
+            argument_count: 1,
+            line: 2,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            // Unrelated expression: no owner name, no changed token (`amount`).
+            observed_expression: Some("formatDate(now)".to_string()),
+            expected_value_or_variant: Some("'2024-01-01'".to_string()),
+            has_dynamic_matcher_arg: false,
+            oracle_confidence: OracleConfidence::High,
+        }],
+        mocks_in_file: Vec::new(),
+        imports_in_file: Vec::new(),
+    };
+    let finding = classify_change(
+        Path::new("src/discount.ts"),
+        3,
+        "  return amount - 12;",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    // MUST downgrade: the strong assertion observes an unrelated expression.
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "expected WeaklyExposed (unrelated strong assertion on ReturnValue), got {:?}",
+        finding.class
+    );
+    assert!(
+        !matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
+        "discriminate must not be Yes after value-sink observation guard, got {:?}",
+        finding.ripr.reveal.discriminate.state
+    );
+    let all_text: String = finding.missing.join("\n");
+    assert!(
+        all_text.contains("propagation_unknown"),
+        "expected propagation_unknown in missing, got: {all_text:?}"
+    );
+    Ok(())
+}
+
+/// Over-correction control (RIPR-SPEC-0098 value-sink extension): the exact
+/// audit repro — changed line `return amount - 12;` — but this time the test
+/// asserts the OWNER CALL (`expect(applyDiscount(100, 10)).toBe(88)`), so the
+/// observed_expression references the owner and the guard MUST confirm. The
+/// finding stays `class:exposed, discriminate:yes`.
+#[test]
+fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/discount.ts"),
+        start_line: 1,
+        end_line: 8,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let test = TypeScriptTest {
+        name: "applies discount".to_string(),
+        local_name: "applies discount".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/discount.test.ts"),
+        line: 1,
+        body_text: "expect(applyDiscount(100, 10)).toBe(88);".to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "toBe".to_string(),
+            argument_count: 1,
+            line: 2,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            // Owner name is IN the observed_expression — confirms ReturnValue.
+            observed_expression: Some("applyDiscount(100, 10)".to_string()),
+            expected_value_or_variant: Some("88".to_string()),
+            has_dynamic_matcher_arg: false,
+            oracle_confidence: OracleConfidence::High,
+        }],
+        mocks_in_file: Vec::new(),
+        imports_in_file: Vec::new(),
+    };
+    let finding = classify_change(
+        Path::new("src/discount.ts"),
+        3,
+        "  return amount - 12;",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    // MUST stay exposed — the owner-call observation confirms the return value.
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "expected Exposed (owner-call observation on ReturnValue), got {:?}",
+        finding.class
+    );
+    assert!(
+        matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
+        "expected discriminate==Yes, got {:?}",
+        finding.ripr.reveal.discriminate.state
+    );
+    Ok(())
+}
+
+/// One-hop aliasing control (RIPR-SPEC-0108 `must_stay_exposed` controls):
+/// the canonical assert-the-return-value pattern captures the owner call in
+/// a local and asserts the local — `const result = applyDiscount(100, 10);
+/// expect(result).toBe(88)`. The bare-local `observed_expression` (`result`)
+/// carries no owner reference, but the initializer does, so the guard MUST
+/// confirm via the one-hop aliasing credit and keep the finding
+/// `class:exposed, discriminate:yes` (no repair packet, no receipt command).
+#[test]
+fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/discount.ts"),
+        start_line: 1,
+        end_line: 8,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let test = TypeScriptTest {
+        name: "applies discount".to_string(),
+        local_name: "applies discount".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/discount.test.ts"),
+        line: 1,
+        body_text: "const result = applyDiscount(100, 10);\nexpect(result).toBe(88);".to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "toBe".to_string(),
+            argument_count: 1,
+            line: 2,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            // Bare local — no owner name, no changed token in the expression
+            // itself; only the initializer aliases the owner call.
+            observed_expression: Some("result".to_string()),
+            expected_value_or_variant: Some("88".to_string()),
+            has_dynamic_matcher_arg: false,
+            oracle_confidence: OracleConfidence::High,
+        }],
+        mocks_in_file: Vec::new(),
+        imports_in_file: Vec::new(),
+    };
+    let finding = classify_change(
+        Path::new("src/discount.ts"),
+        3,
+        "  return amount - 12;",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    // MUST stay exposed — the aliased local observes the changed sink.
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "expected Exposed (owner-aliased local observation on ReturnValue), got {:?}",
+        finding.class
+    );
+    assert!(
+        matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
+        "expected discriminate==Yes, got {:?}",
+        finding.ripr.reveal.discriminate.state
+    );
+    Ok(())
+}
+
+/// Aliasing negative control: a bare-local observed_expression whose
+/// initializer is an UNRELATED call (`const other = formatDate(now)`) does
+/// not observe the changed sink, even when the test body also calls the
+/// owner (`applyDiscount(100, 10);` establishes reach). The one-hop credit
+/// must NOT fire, the guard fails closed, and the finding downgrades to
+/// `weakly_exposed`.
+#[test]
+fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/discount.ts"),
+        start_line: 1,
+        end_line: 8,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let test = TypeScriptTest {
+        name: "discount side checks".to_string(),
+        local_name: "discount side checks".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/discount.test.ts"),
+        line: 1,
+        body_text: "applyDiscount(100, 10);\nconst other = formatDate(now);\nexpect(other).toBe('2024-01-01');"
+            .to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "toBe".to_string(),
+            argument_count: 1,
+            line: 2,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            // Bare local, but the initializer names neither the owner nor a
+            // changed token — the aliasing credit must not fire.
+            observed_expression: Some("other".to_string()),
+            expected_value_or_variant: Some("'2024-01-01'".to_string()),
+            has_dynamic_matcher_arg: false,
+            oracle_confidence: OracleConfidence::High,
+        }],
+        mocks_in_file: Vec::new(),
+        imports_in_file: Vec::new(),
+    };
+    let finding = classify_change(
+        Path::new("src/discount.ts"),
+        3,
+        "  return amount - 12;",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    // MUST downgrade — the aliased local does not observe the changed sink.
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "expected WeaklyExposed (unrelated aliased local on ReturnValue), got {:?}",
+        finding.class
+    );
+    assert!(
+        !matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
+        "discriminate must not be Yes after value-sink observation guard, got {:?}",
+        finding.ripr.reveal.discriminate.state
+    );
+    Ok(())
+}
+
 /// Conservative no-downgrade (RIPR-SPEC-0098 §fixture-3): a SideEffect where
 /// the test body has TWO strong assertions — one asserting the owner return
 /// value (`observed_expression = "trackAction(...)"`) AND one asserting a
@@ -6435,6 +7320,82 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
     Ok(())
 }
 
+/// FieldConstruction downgrade mirror (Droid Auto Review confirmed finding
+/// on #4095): the value-family guard branch is shared between ReturnValue
+/// and FieldConstruction, so this control pins the sibling seam directly
+/// instead of inferring it from the ReturnValue control. A FieldConstruction
+/// change (`timeout: 5000,`) reached by a test whose only strong assertion
+/// observes an UNRELATED expression MUST downgrade to `weakly_exposed` with
+/// a `propagation_unknown` limitation — symmetric to
+/// `ts_returnvalue_unrelated_strong_assertion_downgrades`.
+#[test]
+fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "buildConfig".to_string(),
+        file: PathBuf::from("src/config.ts"),
+        start_line: 1,
+        end_line: 10,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let test = TypeScriptTest {
+        name: "config side checks".to_string(),
+        local_name: "config side checks".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/config.test.ts"),
+        line: 1,
+        body_text: "buildConfig();\nexpect(formatDate(now)).toBe('2024-01-01');".to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "toBe".to_string(),
+            argument_count: 1,
+            line: 2,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            // Unrelated expression: no owner name, no changed token (`timeout`).
+            observed_expression: Some("formatDate(now)".to_string()),
+            expected_value_or_variant: Some("'2024-01-01'".to_string()),
+            has_dynamic_matcher_arg: false,
+            oracle_confidence: OracleConfidence::High,
+        }],
+        mocks_in_file: Vec::new(),
+        imports_in_file: Vec::new(),
+    };
+    // Changed line: a field value assignment (FieldConstruction).
+    let finding = classify_change(
+        Path::new("src/config.ts"),
+        3,
+        "  timeout: 5000,",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    // MUST downgrade: the strong assertion observes an unrelated expression.
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "expected WeaklyExposed (unrelated strong assertion on FieldConstruction), got {:?}",
+        finding.class
+    );
+    assert!(
+        !matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
+        "discriminate must not be Yes after value-sink observation guard, got {:?}",
+        finding.ripr.reveal.discriminate.state
+    );
+    let all_text: String = finding.missing.join("\n");
+    assert!(
+        all_text.contains("propagation_unknown"),
+        "expected propagation_unknown in missing, got: {all_text:?}"
+    );
+    Ok(())
+}
+
 /// LIVE-pipeline guard test (RIPR-SPEC-0098 §fixture-5, #1235): exercises the
 /// REAL oracle extractor end-to-end. Source and test text are parsed by
 /// `extract_owners` / `extract_tests`, so the assertions carry whatever
@@ -6565,6 +7526,86 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
         matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
         "expected discriminate==Yes for MockExpectation, got {:?}",
         finding.ripr.reveal.discriminate.state
+    );
+    Ok(())
+}
+
+/// Should-stay-`weakly_exposed` control (RIPR-SPEC-0098 false-confirmation
+/// family): a SideEffect seam whose discriminator is the call-effect sentence
+/// `call tracker.record includes event` must NOT be confirmed by a strong
+/// assertion that merely happens to call `.includes(...)` on the owner return
+/// value. Before this control, the raw substring check
+/// `observed.contains("includes")` promoted the swallowed side effect to
+/// `Exposed`. Template vocabulary (`includes` / `occurs` / …) is generator
+/// wording, not changed code, and dot-adjacent segments (`tracker`, `record`)
+/// name a different receiver's members; none of them may confirm.
+#[test]
+fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "trackLogin".to_string(),
+        file: PathBuf::from("src/tracker.ts"),
+        start_line: 1,
+        end_line: 10,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    // The observed expression names the owner (so the side-channel arm does
+    // not fire) but only "confirms" via the substring `includes` — which is
+    // synthesized discriminator vocabulary, not a changed token.
+    let test = TypeScriptTest {
+        name: "tracks login and checks the label".to_string(),
+        local_name: "tracks login and checks the label".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/tracker.test.ts"),
+        line: 1,
+        body_text: "expect(trackLogin(\"login\").includes(payload)).toBe(true);".to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "toBe".to_string(),
+            argument_count: 1,
+            line: 2,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            observed_expression: Some("trackLogin(\"login\").includes(payload)".to_string()),
+            expected_value_or_variant: Some("true".to_string()),
+            has_dynamic_matcher_arg: false,
+            oracle_confidence: OracleConfidence::High,
+        }],
+        mocks_in_file: Vec::new(),
+        imports_in_file: Vec::new(),
+    };
+    // Changed line: SideEffect member call — the effect never escapes.
+    let finding = classify_change(
+        Path::new("src/tracker.ts"),
+        4,
+        "    tracker.record(event);",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    // The `.includes(...)` assertion does NOT observe the call effect: it
+    // must fail closed to weakly_exposed with a propagation_unknown limitation.
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "expected WeaklyExposed (template word must not confirm), got {:?}",
+        finding.class
+    );
+    assert!(
+        !matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
+        "discriminate must not be Yes when only a template word matched, got {:?}",
+        finding.ripr.reveal.discriminate.state
+    );
+    let all_text: String = finding.missing.join("\n");
+    assert!(
+        all_text.contains("propagation_unknown"),
+        "expected propagation_unknown in missing, got: {all_text:?}"
     );
     Ok(())
 }
@@ -6879,6 +7920,116 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
 
     // `cloneDeep` != `applyDiscount` → no alias-gap limitation must fire.
     assert_evidence_lacks(&finding, "typescript_path_alias_unresolved");
+    Ok(())
+}
+
+/// RIPR-SPEC-0099 test 5 — DEFAULT-IMPORT NEGATIVE CONTROL:
+/// `import React from 'react'` is recorded as `imported: "default"`, which is
+/// NOT the owner's exported name. The limitation must NOT fire: a default
+/// import only plausibly targets the owner when the LOCAL binding name matches
+/// (`React` != `applyDiscount`). Before the local-binding check, any default
+/// import from any non-relative package false-fired this limitation.
+#[test]
+fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/owner.ts"),
+        start_line: 1,
+        end_line: 5,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    // Test only imports the React default binding — unrelated to the owner.
+    let test = TypeScriptTest {
+        name: "renders the app".to_string(),
+        local_name: "renders the app".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("src/app.test.tsx"),
+        line: 1,
+        body_text: "const view = renderApp();\nexpect(view).toBeTruthy();".to_string(),
+        assertions: vec![strong_be_assertion()],
+        mocks_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "react".to_string(),
+            imported: Some("default".to_string()),
+            local: "React".to_string(),
+            namespace: false,
+        }],
+    };
+    let all_owners = [owner];
+    let all_tests = [test];
+
+    let finding = classify_change(
+        Path::new("src/owner.ts"),
+        1,
+        "return a - b;",
+        &all_owners,
+        &all_tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    // `React` (local) != `applyDiscount` (owner) → no alias-gap limitation.
+    assert_evidence_lacks(&finding, "typescript_path_alias_unresolved");
+    Ok(())
+}
+
+/// RIPR-SPEC-0099 test 6 — DEFAULT-IMPORT POSITIVE CONTROL:
+/// `import applyDiscount from '@/applyDiscount'` records `imported: "default"`
+/// but the LOCAL binding name matches the owner — the import plausibly targets
+/// the owner, so the limitation MUST still fire when resolution fails.
+#[test]
+fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/owner.ts"),
+        start_line: 1,
+        end_line: 5,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let test = TypeScriptTest {
+        name: "default import test".to_string(),
+        local_name: "default import test".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("src/owner.test.ts"),
+        line: 1,
+        body_text: "const result = applyDiscount(100);\nexpect(result).toBe(90);".to_string(),
+        assertions: vec![strong_be_assertion()],
+        mocks_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "@/owner".to_string(),
+            imported: Some("default".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
+    };
+    let all_owners = [owner];
+    let all_tests = [test];
+
+    let finding = classify_change(
+        Path::new("src/owner.ts"),
+        1,
+        "return a - b;",
+        &all_owners,
+        &all_tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    // Local binding == owner name → alias-gap limitation must fire.
+    assert_evidence_contains(
+        &finding,
+        "typescript_limitation: typescript_path_alias_unresolved",
+    );
     Ok(())
 }
 
@@ -7572,6 +8723,108 @@ fn delta5_verify_command_stays_in_missing_list_when_runner_unresolved() -> Resul
     Ok(())
 }
 
+/// Mocha fail-closed control: a detected mocha framework has NO file-target
+/// command mapping, so with no lockfile/runner evidence the inferred command
+/// is `None`. The evidence MUST carry
+/// `typescript_package_limitation: typescript_test_runner_unresolved` (the
+/// limitation fires whenever the command is unresolved — even though a
+/// framework WAS detected) and MUST NOT invent a `typescript_verify_command`.
+#[test]
+fn mocha_no_lockfile_emits_runner_unresolved_limitation() -> Result<(), String> {
+    let root = ts_unique_tempdir("mocha-no-lockfile")?;
+
+    // package.json with mocha in devDependencies; NO lockfile → no runner
+    // evidence and no file-target mocha command.
+    ts_write_file(
+        &root.join("package.json"),
+        r#"{"name":"pkg","scripts":{"test":"mocha"},"devDependencies":{"mocha":"^10.0.0"}}"#,
+    )?;
+
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export function applyDiscount(amount: number, threshold: number): number {\n  if (amount >= threshold) {\n    return amount - 10;\n  }\n  return amount;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/lib.test.ts"),
+        "import { applyDiscount } from '../src/lib';\ntest('applies discount', () => {\n  const result = applyDiscount(50, 100);\n  expect(result).toBeTruthy();\n});\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("src/lib.ts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "  if (amount >= threshold) {".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+
+    let result = adapter.analyze_diff(&options, &policy, &changed_files);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+
+    if result.findings.is_empty() {
+        return Err(format!(
+            "expected at least one finding; got none (changed_files={})",
+            result.changed_files
+        ));
+    }
+    let finding = &result.findings[0];
+
+    // Framework WAS detected — the runner name line must be present.
+    let has_runner_name = finding
+        .evidence
+        .iter()
+        .any(|ev| ev == "typescript_test_runner: mocha");
+    if !has_runner_name {
+        return Err(format!(
+            "expected typescript_test_runner: mocha evidence; evidence={:?}",
+            finding.evidence
+        ));
+    }
+
+    // No command must be invented.
+    let invented_cmd = finding
+        .evidence
+        .iter()
+        .find(|ev| ev.starts_with("typescript_verify_command:"));
+    if let Some(cmd) = invented_cmd {
+        return Err(format!(
+            "mocha without lockfile: no command should be invented, but got: {cmd:?}"
+        ));
+    }
+
+    // The unresolved limitation MUST fire even though a framework was detected.
+    let has_limitation = finding
+        .evidence
+        .iter()
+        .any(|ev| ev == "typescript_package_limitation: typescript_test_runner_unresolved");
+    if !has_limitation {
+        return Err(format!(
+            "expected typescript_test_runner_unresolved limitation when the inferred command is None; evidence={:?}",
+            finding.evidence
+        ));
+    }
+
+    Ok(())
+}
+
 /// Control 3 (cockpit delta #5, issue #1245 — unchanged-case guard):
 /// `remove_field_from_missing_list` unit tests: correct removal, idempotency,
 /// and leave-alone for non-matching input.
@@ -7871,6 +9124,92 @@ fn spec_0027_boundary_witness_fails_closed_without_strong_owner_call_at_boundary
                 .collect::<Vec<_>>()
         );
     }
+    Ok(())
+}
+
+/// Should-stay-`weakly_exposed` control (RIPR-SPEC-0027 false-witness family):
+/// a strong assertion that calls a SAME-NAMED method on a DIFFERENT receiver
+/// (`expect(other.total(50)).toBe(120)`) must not witness the changed
+/// predicate boundary of owner `total`. The literal `50` is present, but the
+/// observed call sits on `other`, not on the owner, so the boundary is not
+/// witnessed and the finding must fail closed to `weakly_exposed`.
+#[test]
+fn spec_0027_same_named_method_on_other_receiver_does_not_witness() -> Result<(), String> {
+    // The first test anchors the owner relation with a real owner call that
+    // is NOT at the boundary literal (`60` vs boundary `50`). The second
+    // asserts on a same-named method of a DIFFERENT receiver at the literal;
+    // its namespace import binds `other` to `src/other-lib`, NOT to the
+    // owner's module, so it is a related, oracle-eligible test whose only
+    // boundary-shaped assertion must still be rejected.
+    let mut foreign = exact_value_test("total", "other.total(50)", "120");
+    foreign.imports_in_file = vec![TypeScriptImport {
+        source: "../src/other-lib".to_string(),
+        imported: None,
+        local: "other".to_string(),
+        namespace: true,
+    }];
+    let tests = [exact_value_test("total", "total(60)", "120"), foreign];
+    let finding = classify_boundary_line("total", "  if (total >= 50) {", &tests)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a same-named method on a different receiver must not witness the boundary"
+    );
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("changed predicate boundary `total == 50`")),
+        "boundary limitation must be named: {:?}",
+        finding.missing
+    );
+    Ok(())
+}
+
+/// Over-correction control (RIPR-SPEC-0027 receiver resolution): a member
+/// call whose receiver is a NAMESPACE IMPORT of the owner's own module
+/// (`import * as pricing from "../src/pricing"` observing
+/// `pricing.applyDiscount(100, 100)`) IS a genuine owner call. With the
+/// boundary `amount == threshold` (no literal operands), the two identical
+/// arguments `(100, 100)` witness the boundary and the finding MUST stay
+/// `exposed`. This pins the namespace-import witness that a blanket dot-skip
+/// would have falsely downgraded.
+#[test]
+fn spec_0027_namespace_import_member_call_witnesses_boundary() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/pricing.ts"),
+        start_line: 1,
+        end_line: 10,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let mut test = exact_value_test("applyDiscount", "pricing.applyDiscount(100, 100)", "90");
+    test.file = PathBuf::from("tests/pricing.test.ts");
+    test.imports_in_file = vec![TypeScriptImport {
+        source: "../src/pricing".to_string(),
+        imported: None,
+        local: "pricing".to_string(),
+        namespace: true,
+    }];
+    let finding = classify_change(
+        Path::new("src/pricing.ts"),
+        2,
+        "  if (amount >= threshold) {",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a namespace-import member call on the owner's module must witness the boundary"
+    );
     Ok(())
 }
 
@@ -8259,4 +9598,270 @@ it("tiers", () => {
                 .collect::<Vec<_>>()
         );
     }
+}
+
+// ── Silent-gap disclosure: unreadable files, test-file parse errors, ────────
+// ── and partial test extraction (typescript_test_extraction_partial) ────────
+//
+// Spec: a workspace file that cannot be read, a changed test file that cannot
+// be parsed, or a recognized test file whose registrations the extractor
+// silently drops must produce typed limitations (or at least a real
+// `skipped_files` count) instead of vanishing with zero disclosure. Without
+// this, owners whose only tests live in those files get a confident false
+// `no_static_path` and the advice "add a test that calls the changed owner"
+// points at tests that already exist.
+
+fn ts_analysis_options(root: PathBuf) -> AnalysisOptions {
+    AnalysisOptions {
+        root,
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    }
+}
+
+/// (a) An unreadable CHANGED file must be disclosed with its path and the
+/// read failure, and `skipped_files` must report the real count — including
+/// unreadable files that are not part of the diff (counted, not disclosed).
+#[test]
+fn analyze_diff_discloses_unreadable_changed_file_with_real_skipped_count() -> Result<(), String> {
+    let root = ts_unique_tempdir("readfail")?;
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+    )?;
+    // Invalid UTF-8 CHANGED file: its added lines can never be classified.
+    std::fs::write(
+        root.join("src/evil.ts"),
+        b"export function evil(): number {\n  \xff\xfe\n}\n",
+    )
+    .map_err(|err| format!("write invalid-utf8 changed file: {err}"))?;
+    // Invalid UTF-8 UNCHANGED file: counted in skipped_files, no limitation.
+    std::fs::write(
+        root.join("src/stale.ts"),
+        b"export function stale(): number {\n  \xff\xfe\n}\n",
+    )
+    .map_err(|err| format!("write invalid-utf8 unchanged file: {err}"))?;
+
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed("src/evil.ts")],
+    )?;
+    assert_eq!(
+        result.skipped_files, 2,
+        "both unreadable files must be counted in skipped_files"
+    );
+    let read_limits = result
+        .limitations
+        .iter()
+        .filter(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.starts_with("read failed:"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        read_limits.len(),
+        1,
+        "only the CHANGED unreadable file is disclosed, got {:?}",
+        result.limitations
+    );
+    let limitation = read_limits[0];
+    assert_eq!(limitation.path.as_deref(), Some("src/evil.ts"));
+    let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("read failed:"),
+        "detail must name the read failure, got {detail:?}"
+    );
+    Ok(())
+}
+
+/// A CHANGED test file with a parse error must produce a limitation just like
+/// a changed production file — its tests would otherwise vanish from
+/// `all_tests` and flip owners to false `no_static_path` with no trace.
+#[test]
+fn analyze_diff_discloses_changed_test_file_parse_error() -> Result<(), String> {
+    let root = ts_unique_tempdir("testparse")?;
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+    )?;
+    // Unclosed arrow body → parser error.
+    ts_write_file(
+        &root.join("tests/lib.test.ts"),
+        "test(\"adds\", () => {\n  expect(add(1, 2)).toBe(3);\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed("tests/lib.test.ts")],
+    )?;
+    assert!(
+        result.limitations.iter().any(|limitation| {
+            limitation.path.as_deref() == Some("tests/lib.test.ts")
+                && limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("parser error"))
+        }),
+        "expected a parse-error limitation naming the changed test file, got {:?}",
+        result.limitations
+    );
+    Ok(())
+}
+
+/// (b) A recognized test file that parses but registers a test with a
+/// template-literal title must emit `typescript_test_extraction_partial`.
+#[test]
+fn analyze_diff_emits_test_extraction_partial_for_template_literal_title() -> Result<(), String> {
+    let root = ts_unique_tempdir("tmpltitle")?;
+    ts_write_file(
+        &root.join("src/calc.ts"),
+        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/calc.test.ts"),
+        "import { add } from '../src/calc';\nit(`adds ${1} and ${2}`, () => {\n  expect(add(1, 2)).toBe(3);\n});\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed("src/calc.ts")],
+    )?;
+    assert!(
+        result.limitations.iter().any(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+        }),
+        "expected a typescript_test_extraction_partial limitation, got {:?}",
+        result.limitations
+    );
+    Ok(())
+}
+
+/// (c) Negative control: a normal, fully extracted test file (plain titles,
+/// describe nesting, array-form `.each`) must NOT emit the new limitation.
+#[test]
+fn analyze_diff_no_extraction_partial_for_fully_extracted_test_file() -> Result<(), String> {
+    let root = ts_unique_tempdir("full-extract")?;
+    ts_write_file(
+        &root.join("src/calc.ts"),
+        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/calc.test.ts"),
+        "import { add } from '../src/calc';\n\
+         describe(\"add\", () => {\n\
+         \x20 it(\"adds two numbers\", () => {\n\
+         \x20   expect(add(1, 2)).toBe(3);\n\
+         \x20 });\n\
+         \x20 test.each([[1, 2, 3]])(\"row %#\", (row) => {\n\
+         \x20   expect(add(row[0], row[1])).toBe(row[2]);\n\
+         \x20 });\n\
+         });\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed("src/calc.ts")],
+    )?;
+    assert!(
+        !result.limitations.iter().any(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+        }),
+        "fully extracted test file must NOT emit typescript_test_extraction_partial, got {:?}",
+        result.limitations
+    );
+    Ok(())
+}
+
+/// Detector unit shape: tagged-template `.each` in callee position is flagged.
+#[test]
+fn detect_partial_flags_tagged_template_each() -> Result<(), String> {
+    let file = Path::new("tests/table.test.ts");
+    let source =
+        "test.each`\n a | b\n 1 | 2\n`('row %#', ({ a, b }) => {\n  expect(a).toBe(b);\n});\n";
+    let extracted = extract_tests(file, source);
+    assert!(
+        extracted.is_empty(),
+        "tagged-template .each is not extractable by design, got {extracted:?}"
+    );
+    let gap = detect_partial_test_extraction(file, source, &extracted)
+        .ok_or_else(|| "tagged-template .each must be disclosed".to_string())?;
+    assert_eq!(gap.shape, "tagged-template .each");
+    assert_eq!(gap.sample_line, 1);
+    Ok(())
+}
+
+/// Detector unit shape: `it(...)` generated inside a loop body is flagged.
+#[test]
+fn detect_partial_flags_test_registered_in_loop() -> Result<(), String> {
+    let file = Path::new("tests/loop.test.ts");
+    let source = "for (const n of [1, 2]) {\n  it(\"case \" + n, () => {\n    expect(n).toBe(1);\n  });\n}\n";
+    let extracted = extract_tests(file, source);
+    assert!(
+        extracted.is_empty(),
+        "loop-generated tests are not extractable by design, got {extracted:?}"
+    );
+    let gap = detect_partial_test_extraction(file, source, &extracted)
+        .ok_or_else(|| "loop-generated test must be disclosed".to_string())?;
+    assert_eq!(gap.shape, "test/it call in loop/callback/nested body");
+    assert_eq!(gap.sample_line, 2);
+    Ok(())
+}
+
+/// Detector unit shape: template-literal `it(`/`test(` titles are flagged.
+#[test]
+fn detect_partial_flags_template_literal_title() -> Result<(), String> {
+    let file = Path::new("tests/tmpl.test.ts");
+    let source = "it(`adds ${1}`, () => {\n  expect(1 + 1).toBe(2);\n});\n";
+    let extracted = extract_tests(file, source);
+    assert!(
+        extracted.is_empty(),
+        "template-literal titles are not extractable by design, got {extracted:?}"
+    );
+    let gap = detect_partial_test_extraction(file, source, &extracted)
+        .ok_or_else(|| "template-literal title must be disclosed".to_string())?;
+    assert_eq!(gap.shape, "template-literal title");
+    assert_eq!(gap.sample_line, 1);
+    Ok(())
+}
+
+/// Detector negative control: a fully extracted file reports no gap.
+#[test]
+fn detect_partial_none_when_every_test_extracted() {
+    let file = Path::new("tests/plain.test.ts");
+    let source = "describe(\"suite\", () => {\n  it(\"works\", () => {\n    expect(1).toBe(1);\n  });\n  test.each([[1]])(\"row %#\", (n) => {\n    expect(n).toBe(1);\n  });\n});\n";
+    let extracted = extract_tests(file, source);
+    assert_eq!(extracted.len(), 2, "both registrations extract");
+    assert!(
+        detect_partial_test_extraction(file, source, &extracted).is_none(),
+        "fully extracted file must not report a partial-extraction gap"
+    );
 }

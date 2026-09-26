@@ -22,8 +22,8 @@ Start here:
   Analyzer limit: Static limit `unsupported_syntax`: malformed TypeScript/JavaScript prevented syntax-first owner, test, and probe extraction for `src/broken.ts`. Repair route: fix or isolate the un…
   Next step: TypeScript preview advisory: static limit `unsupported_syntax`; Repair route: fix or isolate the unsupported syntax before relying on repair guidance; no actionable repair packet i…
   Evidence:
-    - reach unknown: TypeScript preview parser could not build syntax facts for `src/broken.ts`: 1 parser error(s)
-    - infection unknown: TypeScript preview parser could not build syntax facts for `src/broken.ts`: 1 parser error(s)
+    - reach unknown: TypeScript preview parser could not build syntax facts for `src/broken.ts`: 1 parser error(s): Unexpected token
+    - infection unknown: TypeScript preview parser could not build syntax facts for `src/broken.ts`: 1 parser error(s): Unexpected token
     - 6 more evidence line(s) hidden
 
 Next: drill into the top finding:
