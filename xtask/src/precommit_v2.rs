@@ -348,7 +348,7 @@ fn fail_with_report(
                 .push(format!("Clippy for {package} was not run"));
         }
     }
-    record_failure(report, &command, &detail, kind);
+    record_failure(report, &command, &detail);
     let report_error = write_report(root, report).err();
     match report_error {
         Some(error) => Err(format!(
@@ -896,15 +896,10 @@ fn record_pass(report: &mut PrecommitReport, command: &str) {
     });
 }
 
-fn record_failure(
-    report: &mut PrecommitReport,
-    command: &str,
-    detail: &str,
-    kind: PrecommitFailureKind,
-) {
+fn record_failure(report: &mut PrecommitReport, command: &str, detail: &str) {
     report.commands.push(CommandResult {
         command: command.to_string(),
-        outcome: kind.status().to_string(),
+        outcome: "failed".to_string(),
         detail: Some(detail.to_string()),
     });
 }
@@ -1097,12 +1092,7 @@ mod tests {
     {
         let mut report = sample_report("running");
         record_pass(&mut report, "earlier gate");
-        record_failure(
-            &mut report,
-            "cargo clippy",
-            "could not start",
-            PrecommitFailureKind::Infrastructure,
-        );
+        record_failure(&mut report, "cargo clippy", "could not start");
         report.failure_kind = Some(PrecommitFailureKind::Infrastructure);
         report.status = PrecommitFailureKind::Infrastructure.status().to_string();
         report
@@ -1110,8 +1100,9 @@ mod tests {
             .push("later package Clippy not run".to_string());
         let markdown = report_markdown(&report);
         require(
-            markdown.contains("`cargo clippy`: `infrastructure_failure`"),
-            "infrastructure was shown as a policy failure",
+            markdown.contains("`cargo clippy`: `failed`")
+                && markdown.contains("no policy violation was established"),
+            "infrastructure summary could be read as a policy violation",
         )?;
         require(
             markdown.contains("later package Clippy not run"),
@@ -1125,13 +1116,13 @@ mod tests {
             matches!(failure.kind, PrecommitFailureKind::SourceOrPolicy),
             "real nonzero exit was not a gate failure",
         )?;
-        record_failure(&mut report, "actual gate", &failure.message, failure.kind);
+        record_failure(&mut report, "actual gate", &failure.message);
         require(
             report
                 .commands
                 .last()
-                .is_some_and(|entry| entry.outcome == "source_or_policy_failure"),
-            "real gate failure was not rendered distinctly",
+                .is_some_and(|entry| entry.outcome == "failed"),
+            "real gate failure changed the command outcome vocabulary",
         )
     }
 
