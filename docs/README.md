@@ -25,7 +25,9 @@ GitHub Actions, and agent paths, including honest no-action and limited results.
 - [Behavioral specifications](specs/README.md) — normative product contracts.
 - [Architecture decisions](adr/README.md) — durable design choices and rationale.
 - [Verification](VERIFICATION.md) — evidence, badges, and non-claim boundaries.
+- [LSP repair workflow](LSP_AGENT_REPAIR_WORKFLOW.md) — deeper editor/server repair orchestration after the first-use path.
 - [Capability matrix](CAPABILITY_MATRIX.md) and [metrics](METRICS.md) — detailed implementation and evidence state.
+- [Sibling-tool contracts](interop/sibling-tools.md) — interoperability boundaries and shared learning.
 
 ## Contributing and repository operation
 
@@ -34,5 +36,6 @@ GitHub Actions, and agent paths, including honest no-action and limited results.
 - [PR automation](PR_AUTOMATION.md) — repository review and integration mechanics.
 - [Agent context](agent-context/README.md) — repository map, review invariants, and validation guidance.
 - [Source-of-truth doctrine](source-of-truth/README.md) — proposals, specs, ADRs, plans, policy, proof, and closeout.
+- [Spec/proposal system](SPEC_PROPOSAL_SYSTEM.md) — how proposals become reviewed specifications and implementation work.
 - [Documentation system](DOCUMENTATION.md) — document roles and maintenance rules.
 - [Knowledge library](LIBRARY.md) — curated reusable learnings.
