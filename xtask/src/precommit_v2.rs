@@ -338,10 +338,14 @@ fn fail_with_report(
     report.failure_kind = Some(kind);
     report.limitations.push(detail.clone());
     if !command.contains("clippy") && report.impact_plan.workspace_clippy {
-        report.skipped.push("workspace Clippy was not run".to_string());
+        report
+            .skipped
+            .push("workspace Clippy was not run".to_string());
     } else if !command.contains("clippy") {
         for package in &report.impact_plan.impacted_packages {
-            report.skipped.push(format!("Clippy for {package} was not run"));
+            report
+                .skipped
+                .push(format!("Clippy for {package} was not run"));
         }
     }
     record_failure(report, &command, &detail, kind);
@@ -372,7 +376,9 @@ fn run_clippy(
         }
         Err(error) => {
             for package in remaining_packages {
-                report.skipped.push(format!("Clippy for {package} was not run"));
+                report
+                    .skipped
+                    .push(format!("Clippy for {package} was not run"));
             }
             fail_with_report(root, report, error.kind, command, error.message)
         }
@@ -1010,7 +1016,10 @@ fn report_markdown(report: &PrecommitReport) -> String {
     for command in &report.commands {
         out.push_str(&format!("- `{}`: `{}`\n", command.command, command.outcome));
     }
-    if matches!(report.failure_kind, Some(PrecommitFailureKind::Infrastructure)) {
+    if matches!(
+        report.failure_kind,
+        Some(PrecommitFailureKind::Infrastructure)
+    ) {
         out.push_str("\nThe run stopped for an infrastructure reason; completed commands above passed, and no policy violation was established by the interrupted command. See Skipped for named work not run.\n");
     }
     out.push_str("\n## Skipped\n\n");
