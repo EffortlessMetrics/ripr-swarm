@@ -18,61 +18,72 @@ const SCHEMA_FILE_SUFFIX: &str = ".json";
 
 // Each published RIPR schema has one producer/version authority. Keep this
 // inventory exhaustive: a newly published schema needs an explicit owner.
-const VERSION_AUTHORITIES: &[(&str, &str, &str)] = &[
+const VERSION_AUTHORITIES: &[(&str, &str, &str, usize)] = &[
     (
         "check",
         "crates/ripr/src/app.rs",
         "const CHECK_OUTPUT_SCHEMA_VERSION: &str = \"",
+        1,
     ),
     (
         "gate-decision",
         "crates/ripr/src/output/gate.rs",
         "const SCHEMA_VERSION: &str = \"",
+        1,
     ),
     (
         "pr-evidence",
         "xtask/src/reports/pr_evidence.rs",
-        "\"schema_version\": \"",
+        "json!({\n        \"schema_version\": \"",
+        2, // Success and error packets each pin the public envelope.
     ),
     (
         "repair-assurance",
         "crates/ripr/src/domain/verification_result.rs",
         "pub const VERIFICATION_EXECUTION_RESULT_SCHEMA_VERSION: &str = \"",
+        1,
     ),
     (
         "repair-attempt",
         "crates/ripr/src/app/repair_attempt.rs",
         "const REPAIR_ATTEMPT_SCHEMA_VERSION: &str = \"",
+        1,
     ),
     (
         "review-comments",
         "crates/ripr/src/output/review_comments.rs",
         "const REVIEW_COMMENTS_SCHEMA_VERSION: &str = \"",
+        1,
     ),
     (
         "ripr-agent-capability",
         "crates/ripr/src/lsp/agent_protocol.rs",
         "const RIPR_AGENT_SCHEMA_VERSION: &str = \"",
+        1,
     ),
     (
         "ripr-agent-error",
         "crates/ripr/src/lsp/agent_protocol.rs",
         "const RIPR_AGENT_SCHEMA_VERSION: &str = \"",
+        1,
     ),
     (
         "ripr-agent-request",
         "crates/ripr/src/lsp/agent_protocol.rs",
         "const RIPR_AGENT_SCHEMA_VERSION: &str = \"",
+        1,
     ),
     (
         "ripr-agent-success",
         "crates/ripr/src/lsp/agent_protocol.rs",
         "const RIPR_AGENT_SCHEMA_VERSION: &str = \"",
+        1,
     ),
     (
         "rust-repair-trust-corpus",
         "xtask/src/reports/rust_repair_trust.rs",
         "get(\"schema_version\").and_then(Value::as_str) == Some(\"",
+        1,
     ),
 ];
 
@@ -473,7 +484,7 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
     // Audit the disk inventory in both directions, then compare the producer,
     // published schema, and the consumer-facing version table for each row.
     let mut registered = BTreeSet::new();
-    for (name, source_path, prefix) in VERSION_AUTHORITIES {
+    for (name, source_path, prefix, occurrences) in VERSION_AUTHORITIES {
         if !registered.insert(*name) {
             violations.push(format!("duplicate schema version authority: {name}"));
         }
@@ -486,7 +497,7 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
         let pinned = schema.pointer("/properties/schema_version/const").and_then(Value::as_str);
         let source = read_text(root.join(source_path))?;
         if let Some(violation) = version_mismatch(
-            &schema_path, pinned, source_path, &source, prefix, &version_doc,
+            &schema_path, pinned, source_path, &source, prefix, *occurrences, &version_doc,
         ) {
             violations.push(violation);
         }
@@ -549,12 +560,14 @@ fn version_mismatch(
     source_path: &str,
     source: &str,
     prefix: &str,
+    expected_occurrences: usize,
     version_doc: &str,
 ) -> Option<String> {
-    let producer = source
-        .split_once(prefix)
-        .and_then(|(_, rest)| rest.split_once('"'))
-        .map(|(version, _)| version);
+    let producers = source
+        .split(prefix)
+        .skip(1)
+        .filter_map(|rest| rest.split_once('"').map(|(version, _)| version))
+        .collect::<Vec<_>>();
     let doc_row_prefix = format!("| `{schema_path}` | `");
     let documented = version_doc
         .lines()
@@ -564,11 +577,16 @@ fn version_mismatch(
                 .map(|(version, _)| version)
         })
         .collect::<Vec<_>>();
-    if pinned == producer && documented.len() == 1 && documented[0] == pinned.unwrap_or("") {
+    if pinned.is_some()
+        && producers.len() == expected_occurrences
+        && producers.iter().all(|version| Some(*version) == pinned)
+        && documented.len() == 1
+        && documented[0] == pinned.unwrap_or("")
+    {
         None
     } else {
         Some(format!(
-            "{schema_path} version mismatch: schema={pinned:?}, {source_path}={producer:?}, docs/OUTPUT_SCHEMA.md={documented:?}"
+            "{schema_path} version mismatch: schema={pinned:?}, {source_path}={producers:?} (expected {expected_occurrences} producer occurrences), docs/OUTPUT_SCHEMA.md={documented:?}"
         ))
     }
 }
@@ -1235,7 +1253,9 @@ mod tests {
         let prefix = "const VERSION: &str = \"";
         let source = "const VERSION: &str = \"0.1\";";
         let doc = "| `schemas/ripr/example.schema.json` | `0.1` | producer |";
-        let check = |pinned, source, doc| version_mismatch(path, pinned, source_path, source, prefix, doc);
+        let check = |pinned, source, doc| {
+            version_mismatch(path, pinned, source_path, source, prefix, 1, doc)
+        };
 
         assert!(check(Some("0.1"), source, doc).is_none());
         assert!(check(Some("0.2"), source, doc).is_some());
@@ -1249,6 +1269,17 @@ mod tests {
         assert!(check(Some("0.1"), source, "").is_some());
         assert!(check(Some("0.1"), source, &format!("{doc}\n{doc}")).is_some());
         assert!(check(None, source, doc).is_some());
+        assert!(check(Some("0.1"), &format!("{source}\n{source}"), doc).is_some());
+        assert!(version_mismatch(
+            path,
+            Some("0.1"),
+            source_path,
+            &format!("{source}\nconst VERSION: &str = \"0.2\";"),
+            prefix,
+            2,
+            doc,
+        )
+        .is_some());
     }
 
     #[test]
