@@ -391,7 +391,12 @@ fn remaining_steps(root: &Path, report: &PrecommitReport, failed: &str) -> Vec<S
     }
     planned
         .into_iter()
-        .filter(|step| !report.commands.iter().any(|completed| completed.command == *step))
+        .filter(|step| {
+            !report
+                .commands
+                .iter()
+                .any(|completed| completed.command == *step)
+        })
         .collect()
 }
 
@@ -1075,7 +1080,11 @@ fn report_markdown(report: &PrecommitReport) -> String {
         out.push_str("- none\n");
     }
     out.push_str("\n## Interrupted or failed step\n\n");
-    if let Some(failure) = report.commands.iter().find(|command| command.outcome == "failed") {
+    if let Some(failure) = report
+        .commands
+        .iter()
+        .find(|command| command.outcome == "failed")
+    {
         out.push_str(&format!(
             "- `{}`: {}\n",
             failure.command,
@@ -1424,8 +1433,16 @@ mod tests {
         #[cfg(windows)]
         let (program, slow_success, slow_failure) = (
             "powershell",
-            vec!["-NoProfile", "-Command", "Start-Sleep -Milliseconds 100; exit 0"],
-            vec!["-NoProfile", "-Command", "Start-Sleep -Milliseconds 100; exit 7"],
+            vec![
+                "-NoProfile",
+                "-Command",
+                "Start-Sleep -Milliseconds 100; exit 0",
+            ],
+            vec![
+                "-NoProfile",
+                "-Command",
+                "Start-Sleep -Milliseconds 100; exit 7",
+            ],
         );
         #[cfg(not(windows))]
         let (program, slow_success, slow_failure) = (
@@ -1433,9 +1450,15 @@ mod tests {
             vec!["-c", "sleep 0.1; exit 0"],
             vec!["-c", "sleep 0.1; exit 7"],
         );
-        let args = slow_success.into_iter().map(str::to_string).collect::<Vec<_>>();
+        let args = slow_success
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
         run_status(program, &args).map_err(|error| error.message)?;
-        let args = slow_failure.into_iter().map(str::to_string).collect::<Vec<_>>();
+        let args = slow_failure
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
         let violation = run_status(program, &args)
             .err()
             .ok_or_else(|| "real nonzero gate exit passed".to_string())?;
@@ -1479,9 +1502,15 @@ mod tests {
     fn interrupted_report_names_completed_failed_and_unrun_steps() -> Result<(), String> {
         let fixture = TestRepo::new()?;
         let mut report = sample_report("running");
-        report.impact_plan.impacted_packages.push("xtask".to_string());
+        report
+            .impact_plan
+            .impacted_packages
+            .push("xtask".to_string());
         record_pass(&mut report, "existing repository policy precommit");
-        let first = format!("git diff --check {}...HEAD", report.merge_base_sha.as_deref().unwrap_or(""));
+        let first = format!(
+            "git diff --check {}...HEAD",
+            report.merge_base_sha.as_deref().unwrap_or("")
+        );
         record_pass(&mut report, &first);
         let failure = "git diff --cached --check";
         let result = fail_with_report(
@@ -1504,8 +1533,14 @@ mod tests {
             "interrupted summary omitted its classification or step accounting",
         )?;
         require(
-            report.skipped.iter().all(|step| step != failure && step != &first)
-                && report.skipped.iter().any(|step| step.contains("cargo clippy")),
+            report
+                .skipped
+                .iter()
+                .all(|step| step != failure && step != &first)
+                && report
+                    .skipped
+                    .iter()
+                    .any(|step| step.contains("cargo clippy")),
             "completed or interrupted step was marked not run, or clippy was lost",
         )
     }
