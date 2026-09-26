@@ -73,7 +73,8 @@ suite('Standard LSP compatibility probe', () => {
   // The server advertises explicit incremental textDocumentSync options with a
   // didSave that does not require text. A probe that only accepted the bare
   // `Full` shorthand would reject the real server, so the incremental shape is
-  // proven here, and the sync shapes the client cannot work with are rejected.
+  // demonstrated here, and the sync shapes the client cannot work with are
+  // rejected.
   test('admits the incremental saved-workspace textDocumentSync the server advertises', async () => {
     const fake = fakeServer('valid');
     const result = await probeStandardLspCompatibility(fake.command, fake.useShell, fakeProbeTimeoutMs);

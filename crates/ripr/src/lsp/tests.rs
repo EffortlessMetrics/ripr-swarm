@@ -7242,7 +7242,7 @@ async fn did_save_without_text_records_no_identity_after_an_invalid_incremental_
         let documents = backend
             .documents
             .lock()
-            .map_err(|_| "document store unavailable".to_string())?;
+            .map_err(|_poison| "document store unavailable".to_string())?;
         let state = documents
             .state_for_uri(&uri)
             .ok_or_else(|| "expected retained document".to_string())?;
@@ -7290,7 +7290,7 @@ async fn did_save_without_text_records_no_identity_after_an_invalid_incremental_
     let documents = backend
         .documents
         .lock()
-        .map_err(|_| "document store unavailable".to_string())?;
+        .map_err(|_poison| "document store unavailable".to_string())?;
     let state = documents
         .state_for_uri(&uri)
         .ok_or_else(|| "expected retained document".to_string())?;
