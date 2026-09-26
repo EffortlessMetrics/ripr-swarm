@@ -11,7 +11,8 @@ selected scope?
 
 Two scopes use the same labels but have different subjects and audiences:
 
-- **diff scope** is a pull-request artifact derived from one governed Git range;
+- **diff scope** is a pull-request or local artifact derived from one selected
+  diff; the repository-owned producer binds that diff to a governed Git range;
 - **repo scope** is the public README/store signal derived from the repository
   baseline.
 
@@ -31,8 +32,8 @@ This policy pairs with [RIPR-SPEC-0056](specs/RIPR-SPEC-0056-public-actionable-p
 A measured `ripr` badge counts unresolved static repair items under the selected
 scope and basis.
 
-- In **diff scope**, it counts selected exposure-class findings in the governed
-  change range.
+- In **diff scope**, it counts selected exposure-class findings in the supplied
+  change surface.
 - In **repo scope**, it counts unresolved canonical actionable gaps eligible for
   public projection.
 
@@ -50,10 +51,10 @@ not be published or enforced as a real count.
 
 | Scope | Primary producers | Subject | Basis | Use |
 | --- | --- | --- | --- | --- |
-| `diff` | `ripr check --format badge-*`; `cargo xtask badge-artifacts` | One resolved base-to-head range | `finding_exposure` | PR summary and retained CI artifacts |
+| `diff` | `ripr check --format badge-*`; `cargo xtask badge-artifacts` | A selected diff; the repository wrapper uses one resolved base-to-head range | `finding_exposure` | PR summary and retained CI artifacts |
 | `repo` | `ripr check --format repo-badge-*`; `cargo xtask repo-badge-artifacts` | Full repository baseline | `canonical_actionable_gap` or explicit `gap_decision_ledger` | README, crate, marketplace, or store endpoint |
 
-### Diff scope uses one governed Git subject
+### The repository diff producer uses one governed Git subject
 
 `cargo xtask badge-artifacts` does not hardcode `origin/main` and does not
 assemble an ambient `git diff` command.
@@ -107,6 +108,11 @@ ripr check --format badge-json
 ripr check --base <base-ref> --format badge-json
 ```
 
+Direct CLI use may instead select an explicit `--diff` or immutable candidate
+tree. Those inputs remain diff-scoped, but they do not acquire the
+`badge-artifacts` base/head identity receipt merely by selecting a badge format;
+the caller must preserve the explicit subject and its provenance.
+
 `origin/main` is one possible repository ref, not the badge contract.
 
 ### Repo scope does not use a diff
@@ -135,7 +141,7 @@ Every native badge names the basis used to compute its count.
 | Basis | Scope | Public headline? | Meaning |
 | --- | --- | :---: | --- |
 | `canonical_actionable_gap` | repo | yes | Unresolved canonical repair items with an actionable route, safe verification command, receipt path, and public-projection eligibility. |
-| `finding_exposure` | diff | no | PR-local `Finding` / `ExposureClass` aggregation from the governed change range. |
+| `finding_exposure` | diff | no | PR-local `Finding` / `ExposureClass` aggregation from the selected change surface. |
 | `seam_native` | repo inventory | no | Internal seam inventory and static-limitation pressure. It is broader than the public repair queue. |
 | `gap_decision_ledger` | repo projection | explicit bridge | Policy-selected `GapRecord` projection targets supplied by release or repository tooling. |
 
@@ -213,7 +219,7 @@ when the producer changes them.
 | `strong_discriminator` | no | Strong check with no demoting condition. |
 | `useful_but_broad` | no by default | A meaningful but broad check. |
 | `smoke_only` | yes, unless intentional or suppressed | Smoke-strength check such as startup, `is_ok`, `unwrap`, or `expect`. |
-| `likely_vacuous` | yes | No detected assertion. |
+| `likely_vacuous` | yes, unless intentional or suppressed | No detected assertion. |
 | `possibly_circular` | yes, unless intentional or suppressed | Expected value is computed through the detected owner path. |
 | `duplicative` | yes, unless intentional or suppressed | Duplicate owner, activation, and oracle shape within the supported grouping contract. |
 | `opaque` | no | Static analysis could not resolve the reached owner. |
@@ -472,21 +478,30 @@ runtime mutation results.
 
 ## Self-hosted dogfood endpoint
 
-The current first-party dogfood pattern stores two generated Shields payloads
-on the repository’s public branch:
+The published first-party endpoint lives on the source repository’s `main`
+branch:
 
 ```text
-badges/ripr.json
-badges/ripr-plus.json
+EffortlessMetrics/ripr
+  badges/ripr.json
+  badges/ripr-plus.json
 ```
 
-Only these endpoint projections are public badge files. Native reports,
-Markdown summaries, diff-scoped artifacts, and `target/` snapshots remain
-review evidence rather than public endpoints.
+The public README resolves those payloads through:
 
-Shields reads the endpoint files through `raw.githubusercontent.com`. The
-checked-in files are generated projections, not audit artifacts or hand-authored
-status copy.
+```text
+https://raw.githubusercontent.com/EffortlessMetrics/ripr/main/badges/ripr.json
+https://raw.githubusercontent.com/EffortlessMetrics/ripr/main/badges/ripr-plus.json
+```
+
+Only those source-repository endpoint projections are public badge authority.
+Equivalent files and generation runs in `ripr-swarm` are development rehearsal
+and evidence until they move through the governed source-integration path.
+Native reports, Markdown summaries, diff-scoped artifacts, and `target/`
+snapshots remain review evidence rather than public endpoints.
+
+The checked-in files are generated Shields projections, not audit artifacts or
+hand-authored status copy.
 
 ### Why checked-in JSON, not GitHub Pages
 
