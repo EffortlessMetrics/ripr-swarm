@@ -298,7 +298,9 @@ fn assert_doc_command_routes(doc: &str) -> Result<(), String> {
             .next()
             .ok_or_else(|| format!("command guide lost task row `{task}`"))?;
         if matches.next().is_some() {
-            return Err(format!("command guide has duplicate task rows for `{task}`"));
+            return Err(format!(
+                "command guide has duplicate task rows for `{task}`"
+            ));
         }
         let correct_command = cell
             .split('`')
@@ -359,7 +361,9 @@ fn docs_keep_the_canonical_role_vocabulary() -> Result<(), String> {
     ] {
         let section = doc_section(QUICKSTART_DOC, heading)?;
         if first_bash_block(&section)? != command {
-            return Err(format!("Quickstart `{heading}` must start with `{command}`"));
+            return Err(format!(
+                "Quickstart `{heading}` must start with `{command}`"
+            ));
         }
     }
     let repair = doc_section(QUICKSTART_DOC, "## Agent Or Reviewer First Hour")?;
@@ -403,10 +407,13 @@ fn doc_routes_reject_missing_wrong_and_duplicate_tasks() -> Result<(), String> {
         "| Inspect one change | `ripr check` |",
         "| Inspect one change | `ripr pilot` |",
     );
-    let duplicate = format!(
-        "{COMMAND_HIERARCHY_DOC}\n| Inspect one change | `ripr check` | Duplicate. |\n"
-    );
-    for (case, changed) in [("missing", missing), ("wrong", wrong), ("duplicate", duplicate)] {
+    let duplicate =
+        format!("{COMMAND_HIERARCHY_DOC}\n| Inspect one change | `ripr check` | Duplicate. |\n");
+    for (case, changed) in [
+        ("missing", missing),
+        ("wrong", wrong),
+        ("duplicate", duplicate),
+    ] {
         if assert_doc_command_routes(&changed).is_ok() {
             return Err(format!("doc route guard accepted the {case} task mutation"));
         }
