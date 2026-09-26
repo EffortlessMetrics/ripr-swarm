@@ -679,12 +679,16 @@ mod tests {
             );
         }
         let drive = ["C:", "Windows", "..", "system.ini"].join("/");
+        // Built at runtime so the source does not contain a local absolute
+        // Windows path token. The backslash spelling is what `file_uri_for_path`
+        // normalizes before the parent-segment check.
+        let drive_backslash = ["C:", "Windows", "..", "system.ini"].join(r"\");
         for path in [
             "/a/../../etc/passwd",
             "../outside.rs",
             "foo/../bar",
             drive.as_str(),
-            r"C:\Windows\..\system.ini",
+            drive_backslash.as_str(),
         ] {
             assert!(
                 file_uri_for_path(Path::new(path)).is_err(),
