@@ -3091,7 +3091,9 @@ pub(crate) fn dogfood_language_preview_scenarios() -> Vec<DogfoodLanguagePreview
             1usize,
             0usize,
             1usize,
-            vec!["exposed"],
+            // #4103: the vi.mock'd owner module holds the finding at
+            // weakly_exposed with the mocked_module limit disclosed.
+            vec!["weakly_exposed"],
             vec!["mocked_module"],
             true,
             "TypeScript preview finding keeps preview metadata and mocked-module static limit.",
@@ -3103,7 +3105,9 @@ pub(crate) fn dogfood_language_preview_scenarios() -> Vec<DogfoodLanguagePreview
             1usize,
             0usize,
             1usize,
-            vec!["exposed"],
+            // #4103: the unanchored bare-call relation holds at
+            // weakly_exposed with the missing anchor disclosed.
+            vec!["weakly_exposed"],
             Vec::new(),
             true,
             "JavaScript preview finding keeps separate JavaScript preview metadata through the TypeScript-family adapter.",
