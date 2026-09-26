@@ -137,7 +137,7 @@ pub(crate) fn owner_extraction_partial_limitation(
         name: "typescript_owner_extraction_partial",
         sample_source: format!("{}:{}", normalized_path(&gap.file), gap.sample_line),
         why_not_actionable: format!(
-            "the changed file `{}` contains changed lines inside an owner shape the syntax-first extractor does not index ({shape}: `{snippet}`); those lines produce no finding, so a zero-finding complete result here can mean an unsupported owner shape rather than an untested seam",
+            "the changed file `{}` contains changed lines inside an owner shape the syntax-first extractor does not index ({shape}: `{snippet}`); those lines produce no finding, so a zero-finding complete result here can mean an unsupported owner shape rather than a seam the current tests discriminate",
             normalized_path(&gap.file),
             shape = gap.shape,
             snippet = gap.snippet,
