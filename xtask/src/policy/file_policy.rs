@@ -106,16 +106,12 @@ struct CoveredBySpawn {
 /// Warm a cold compile under the build budget, then list under the list cap.
 ///
 /// Ordinary `cargo test` pointers warm with `--no-run`. `cargo test --doc`
-/// rejects `--no-run` (`can't skip running doc tests with --no-run`), so that
-/// pointer is warmed by its own list command under the build budget and then
-/// listed again. The second spawn is the one whose five-minute cap must not
-/// include a cold compile (#4141).
+/// rejects `--no-run` (`can't skip running doc tests with --no-run`), and a
+/// second `cargo test --doc -- --list` still runs `rustdoc --test` after the
+/// library is fresh. That pointer is therefore enumerated once, under the
+/// compile budget. A second spawn would put the doctest compile back inside
+/// the five-minute list cap (#4141).
 fn enumeration_spawns(args: &[String]) -> Vec<CoveredBySpawn> {
-    let list = CoveredBySpawn {
-        args: args.to_vec(),
-        timeout: TEST_COVERED_BY_LIST_TIMEOUT,
-        description: "test-valued covered_by enumeration",
-    };
     if let Some(build_args) = build_args_before_list(args) {
         vec![
             CoveredBySpawn {
@@ -123,25 +119,27 @@ fn enumeration_spawns(args: &[String]) -> Vec<CoveredBySpawn> {
                 timeout: TEST_COVERED_BY_BUILD_TIMEOUT,
                 description: "test-valued covered_by build",
             },
-            list,
-        ]
-    } else {
-        vec![
             CoveredBySpawn {
                 args: args.to_vec(),
-                timeout: TEST_COVERED_BY_BUILD_TIMEOUT,
-                description: "test-valued covered_by doc build",
+                timeout: TEST_COVERED_BY_LIST_TIMEOUT,
+                description: "test-valued covered_by enumeration",
             },
-            list,
         ]
+    } else {
+        vec![CoveredBySpawn {
+            args: args.to_vec(),
+            timeout: TEST_COVERED_BY_BUILD_TIMEOUT,
+            description: "test-valued covered_by doc enumeration",
+        }]
     }
 }
 
 /// Build args for `cargo test … --no-run`, or `None` when Cargo rejects
 /// that combination. `cargo test --doc --no-run` is an error, so a
 /// documentation-test pointer is not given a `--no-run` spawn.
-/// [`enumeration_spawns`] warms that pointer under the build budget instead
-/// of charging the compile against the list cap.
+/// [`enumeration_spawns`] enumerates that pointer once under the build
+/// budget. Cargo recompiles doctests on every listing, so a follow-up list
+/// would charge that compile against the list cap.
 fn build_args_before_list(args: &[String]) -> Option<Vec<String>> {
     let mut build_args = Vec::new();
     for arg in args {
@@ -462,7 +460,8 @@ mod tests {
     }
 
     #[test]
-    fn test_covered_by_doc_pointer_warms_under_the_build_budget() -> Result<(), String> {
+    fn test_covered_by_doc_pointer_is_enumerated_once_under_the_build_budget() -> Result<(), String>
+    {
         let args = [
             "test",
             "--workspace",
@@ -474,31 +473,26 @@ mod tests {
         ]
         .map(str::to_string);
         let spawns = enumeration_spawns(&args);
-        if spawns.len() != 2 {
+        if spawns.len() != 1 {
             return Err(format!(
-                "doc pointer lost its warm-up step ({} spawns)",
+                "doc pointer spawned twice, which recompiles doctests ({})",
                 spawns.len()
             ));
         }
         if spawns[0].timeout != TEST_COVERED_BY_BUILD_TIMEOUT {
             return Err(
-                "doc warm-up was charged against the list cap instead of the build budget"
+                "doc enumeration was charged against the list cap instead of the build budget"
                     .to_string(),
             );
         }
         if spawns[0].args.iter().any(|arg| arg == "--no-run") {
-            return Err("doc warm-up appended --no-run, which Cargo rejects".to_string());
+            return Err("doc enumeration appended --no-run, which Cargo rejects".to_string());
         }
-        if spawns[0].args != args || spawns[1].args != args {
-            return Err("doc warm-up changed the list command".to_string());
+        if spawns[0].args != args {
+            return Err("doc enumeration changed the list command".to_string());
         }
-        if spawns[1].timeout != TEST_COVERED_BY_LIST_TIMEOUT {
-            return Err("doc list lost the five-minute cap after the warm-up".to_string());
-        }
-        if spawns[1].description != "test-valued covered_by enumeration" {
-            return Err(
-                "doc list spawn is no longer the enumeration that counts tests".to_string(),
-            );
+        if spawns[0].description != "test-valued covered_by doc enumeration" {
+            return Err("doc enumeration is no longer the spawn that counts tests".to_string());
         }
         Ok(())
     }
