@@ -849,7 +849,7 @@ mod tests {
                 ],
             ),
             ("gate", GATE_HELP, &["--pr-guidance", "--mode"]),
-            ("doctor", DOCTOR_HELP, &["--root", "--json"]),
+            ("doctor", DOCTOR_HELP, &["--root", "--json", "--source-build"]),
             ("config validate", CONFIG_HELP, &["--root"]),
             (
                 "pilot",

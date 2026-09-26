@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
     let mut json_output = false;
+    let mut profile = output::doctor::DoctorProfile::Analysis;
     let mut root_args: Vec<&str> = Vec::new();
     for arg in args {
         match arg.as_str() {
@@ -24,6 +25,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
                 return Ok(());
             }
             "--json" => json_output = true,
+            "--source-build" => profile = output::doctor::DoctorProfile::SourceBuild,
             _ => root_args.push(arg.as_str()),
         }
     }
@@ -35,12 +37,12 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
     };
 
     if json_output {
-        return doctor_json(&root);
+        return doctor_json_with_profile(&root, profile);
     }
 
     // Human-readable path.
     let core_evaluation =
-        output::doctor::evaluate_doctor_core_with_config(&root, &detect_languages(&root));
+        output::doctor::evaluate_doctor_core_with_profile(&root, &detect_languages(&root), profile);
     let mut report = core_evaluation.report;
     let core_report = &report;
     let mut ok = matches!(core_report.status, output::doctor::DoctorStatus::Pass);
@@ -79,9 +81,17 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
 /// probes as structured values. Deeper sub-checks (cache, Perl, and test
 /// surfaces) remain on the human-oriented path for a follow-up PR to type
 /// individually. See #1771 / #1614.
+#[cfg(test)]
 fn doctor_json(root: &Path) -> Result<(), String> {
+    doctor_json_with_profile(root, output::doctor::DoctorProfile::Analysis)
+}
+
+fn doctor_json_with_profile(
+    root: &Path,
+    profile: output::doctor::DoctorProfile,
+) -> Result<(), String> {
     let evaluation =
-        output::doctor::evaluate_doctor_core_with_config(root, &detect_languages(root));
+        output::doctor::evaluate_doctor_core_with_profile(root, &detect_languages(root), profile);
     let mut report = evaluation.report;
     let enabled_languages = enabled_languages(&evaluation.config);
     let _ =
@@ -108,6 +118,7 @@ fn report_doctor_core_check(report: &output::doctor::DoctorReport, name: &str) -
         output::doctor::DoctorCheckStatus::Pass => "✓",
         output::doctor::DoctorCheckStatus::Fail => "!",
         output::doctor::DoctorCheckStatus::Skipped => "-",
+        output::doctor::DoctorCheckStatus::Advisory => "-",
     };
     println!(
         "{marker} {}",

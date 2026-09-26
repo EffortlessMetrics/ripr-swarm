@@ -23,10 +23,10 @@ Rust 1.95 is RIPR's build/install MSRV, not a minimum compiler version for the
 repository being analyzed. An already-built CLI or bundled server can perform
 static analysis for a repository that pins an older Rust toolchain. Project
 verification still uses that repository's selected toolchain and can succeed,
-fail, or be unavailable independently. Current 0.11 development builds can
-still report an older workspace compiler as a `doctor` failure; that is a known
-pre-release defect, not evidence that `ripr check` invoked or required that
-compiler.
+fail, or be unavailable independently. `ripr doctor` reports unavailable
+workspace tools or a compiler below RIPR's build MSRV as advisory for installed
+binary analysis. Use `ripr doctor --source-build` to check whether that
+workspace's toolchain can build or install RIPR from source.
 
 The latest GitHub release is [0.10.0](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0).
 This guide describes **0.11 development**, including `--worktree`, bounded
@@ -208,7 +208,7 @@ PR-facing packet. It does not run analysis or repair the code. See
 | Symptom | Next step |
 | --- | --- |
 | Cargo installation fails. | Check the first Cargo error and `rustc --version` (Rust 1.95 or newer). Fix the reported build or download problem before retrying. |
-| ripr is installed, but repository setup fails. | Run `ripr doctor` and inspect its individual capability results. In current 0.11 development builds, an older workspace compiler can still be misreported as a RIPR build failure even though static analysis does not invoke it. |
+| ripr is installed, but repository setup fails. | Run `ripr doctor` and inspect its individual capability results. An older or missing workspace compiler limits source builds or project verification independently of static analysis. |
 | `check` sees no change after an edit. | In a development build, use `--worktree` for staged and unstaged edits. Otherwise inspect a committed change using your installed version's supported options. |
 | The wrong base is selected. | Use `--base REF` with an existing reference in this repository. |
 | Configuration is rejected. | Run `ripr config validate` and fix the named setting. Configuration is optional, but an invalid file is not ignored. |

@@ -224,6 +224,16 @@ pub(crate) enum DoctorCheckStatus {
     Fail,
     /// The check does not apply to this root and was not run.
     Skipped,
+    /// Observed limitation for a capability outside the selected profile.
+    Advisory,
+}
+
+/// Select the capability whose prerequisites determine the doctor exit status.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DoctorProfile {
+    Analysis,
+    SourceBuild,
 }
 
 impl From<DoctorStatus> for DoctorCheckStatus {
@@ -275,6 +285,7 @@ pub(crate) struct DoctorRuntimeProbe {
 pub(crate) struct DoctorReport {
     pub(crate) schema_version: &'static str,
     pub(crate) tool: &'static str,
+    pub(crate) profile: DoctorProfile,
     pub(crate) root: String,
     pub(crate) status: DoctorStatus,
     pub(crate) checks: Vec<DoctorCheck>,
@@ -287,12 +298,13 @@ pub(crate) struct DoctorReport {
 }
 
 impl DoctorReport {
-    pub(crate) const SCHEMA_VERSION: &'static str = "0.2";
+    pub(crate) const SCHEMA_VERSION: &'static str = "0.3";
 
     pub(crate) fn new(root: &str) -> Self {
         Self {
             schema_version: Self::SCHEMA_VERSION,
             tool: "ripr",
+            profile: DoctorProfile::Analysis,
             root: root.to_string(),
             status: DoctorStatus::Pass,
             checks: Vec::new(),
@@ -320,6 +332,14 @@ impl DoctorReport {
         self.checks.push(DoctorCheck {
             name: name.to_string(),
             status: DoctorCheckStatus::Skipped,
+            evidence: Some(evidence),
+        });
+    }
+
+    pub(crate) fn add_advisory_check(&mut self, name: &str, evidence: String) {
+        self.checks.push(DoctorCheck {
+            name: name.to_string(),
+            status: DoctorCheckStatus::Advisory,
             evidence: Some(evidence),
         });
     }
@@ -369,6 +389,7 @@ impl DoctorReport {
                 DoctorCheckStatus::Pass => "✓",
                 DoctorCheckStatus::Fail => "!",
                 DoctorCheckStatus::Skipped => "-",
+                DoctorCheckStatus::Advisory => "-",
             };
             if let Some(evidence) = &check.evidence {
                 out.push_str(&format!("{icon} {evidence}\n"));
@@ -514,21 +535,45 @@ fn is_inside_work_tree(root: &Path) -> Option<bool> {
 /// without going through the redacted JSON evidence. `detected` is the
 /// caller's marker scan of the root, used only to decide whether the Rust
 /// toolchain checks apply (see [`rust_toolchain_scope`]).
+#[cfg(test)]
 pub(crate) fn evaluate_doctor_core_with_config(
     root: &Path,
     detected: &[LanguageId],
 ) -> DoctorCoreEvaluation {
-    evaluate_doctor_core_with_probe(root, detected, doctor_tool_check_for_root)
+    evaluate_doctor_core_with_profile(root, detected, DoctorProfile::Analysis)
 }
 
+pub(crate) fn evaluate_doctor_core_with_profile(
+    root: &Path,
+    detected: &[LanguageId],
+    profile: DoctorProfile,
+) -> DoctorCoreEvaluation {
+    evaluate_doctor_core_with_probe_profile(root, detected, profile, doctor_tool_check_for_root)
+}
+
+#[cfg(test)]
 fn evaluate_doctor_core_with_probe(
     root: &Path,
     detected: &[LanguageId],
+    probe_tool: impl FnMut(&str, &Path) -> (DoctorStatus, String),
+) -> DoctorCoreEvaluation {
+    evaluate_doctor_core_with_probe_profile(root, detected, DoctorProfile::Analysis, probe_tool)
+}
+
+fn evaluate_doctor_core_with_probe_profile(
+    root: &Path,
+    detected: &[LanguageId],
+    profile: DoctorProfile,
     mut probe_tool: impl FnMut(&str, &Path) -> (DoctorStatus, String),
 ) -> DoctorCoreEvaluation {
     let mut report = DoctorReport::new(&root.display().to_string());
+    report.profile = profile;
     let config = load_for_root(root);
-    let rust_scope = rust_toolchain_scope(&config, detected);
+    let rust_scope = if profile == DoctorProfile::SourceBuild {
+        RustToolchainScope::Required
+    } else {
+        rust_toolchain_scope(&config, detected)
+    };
     if root.is_dir() {
         report.add_check(
             "root_directory",
@@ -545,7 +590,12 @@ fn evaluate_doctor_core_with_probe(
             )),
         );
     }
-    if let RustToolchainScope::NotInScope(reason) = &rust_scope {
+    if profile == DoctorProfile::SourceBuild && !root.join("Cargo.toml").exists() {
+        report.add_skipped_check(
+            "cargo_toml",
+            "Cargo.toml check skipped: source-build checks the selected toolchain, not whether this target workspace is a Cargo project".to_string(),
+        );
+    } else if let RustToolchainScope::NotInScope(reason) = &rust_scope {
         report.add_skipped_check("cargo_toml", format!("Cargo.toml check skipped: {reason}"));
     } else if root.join("Cargo.toml").exists() {
         report.add_check(
@@ -613,7 +663,36 @@ fn evaluate_doctor_core_with_probe(
             }
             _ => {
                 let (status, evidence) = probe_tool(tool, root);
-                report.add_check(&name, status, Some(evidence));
+                if RUST_TOOLCHAIN_TOOLS.contains(&tool) && profile == DoctorProfile::Analysis {
+                    // Cargo/rustc availability governs project verification and
+                    // source installation, not this binary's static analysis.
+                    // Preserve the observed failure without failing analysis.
+                    if status == DoctorStatus::Fail {
+                        report.add_advisory_check(
+                            &name,
+                            format!("{evidence}; project verification and building ripr from source may be unavailable; built-in static analysis does not require {tool}"),
+                        );
+                    } else if tool == "rustc"
+                        && matches!(
+                            validate_rustc_version(&evidence),
+                            RustcVersionVerdict::BelowBuildMinimum(_)
+                        )
+                    {
+                        report.add_advisory_check(&name, evidence);
+                    } else {
+                        report.add_check(&name, status, Some(evidence));
+                    }
+                } else if tool == "rustc"
+                    && profile == DoctorProfile::SourceBuild
+                    && matches!(
+                        validate_rustc_version(&evidence),
+                        RustcVersionVerdict::BelowBuildMinimum(_)
+                    )
+                {
+                    report.add_check(&name, DoctorStatus::Fail, Some(evidence));
+                } else {
+                    report.add_check(&name, status, Some(evidence));
+                }
             }
         }
     }
@@ -1108,7 +1187,7 @@ mod tests {
         let below = below_minimum_rustc_output()?;
         let rustc = doctor_tool_check_success("rustc", below.as_bytes());
         let mut report = DoctorReport::new("/workspace");
-        report.add_check("tool_rustc", rustc.status, Some(rustc.evidence.clone()));
+        report.add_advisory_check("tool_rustc", rustc.evidence.clone());
 
         if report.status != DoctorStatus::Pass {
             return Err(format!("below-minimum advisory must pass: {report:?}"));
@@ -1138,8 +1217,8 @@ mod tests {
                 "unexpected doctor JSON status projection: {parsed}"
             ));
         }
-        if parsed["checks"][0]["status"] != "pass" {
-            return Err(format!("rustc check must render as pass: {parsed}"));
+        if parsed["checks"][0]["status"] != "advisory" {
+            return Err(format!("rustc build-only limitation must render as advisory: {parsed}"));
         }
         let evidence = parsed["checks"][0]["evidence"]
             .as_str()
@@ -1509,7 +1588,7 @@ mod tests {
     }
 
     #[test]
-    fn rust_root_with_missing_cargo_still_fails() -> Result<(), String> {
+    fn rust_root_with_missing_cargo_keeps_analysis_available() -> Result<(), String> {
         let root = doctor_scope_root(
             "scope-rust-no-cargo",
             &[
@@ -1518,18 +1597,61 @@ mod tests {
             ],
         )?;
         let (report, _probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::Rust]);
-        let _ = std::fs::remove_dir_all(&root);
         if check(&report, "cargo_toml")?.status != DoctorCheckStatus::Pass {
             return Err(format!("Cargo.toml must pass: {:?}", report.checks));
         }
         for tool in ["tool_cargo", "tool_rustc"] {
-            let failed = check(&report, tool)?;
-            if failed.status != DoctorCheckStatus::Fail {
-                return Err(format!("{tool} must fail on a Rust root: {failed:?}"));
+            let advisory = check(&report, tool)?;
+            if advisory.status != DoctorCheckStatus::Advisory {
+                return Err(format!("{tool} must be advisory for analysis: {advisory:?}"));
             }
         }
-        if report.status != DoctorStatus::Fail {
-            return Err("missing cargo must fail a Rust root".to_string());
+        // The fixture is not a Git repository, so Git still fails this
+        // report. Toolchain checks themselves must not add a failure.
+        let source_report = evaluate_doctor_core_with_probe_profile(
+            &root, &[LanguageId::Rust], DoctorProfile::SourceBuild,
+            |tool, _| (DoctorStatus::Fail, format!("{tool} not available")),
+        ).report;
+        for tool in ["tool_cargo", "tool_rustc"] {
+            if check(&source_report, tool)?.status != DoctorCheckStatus::Fail {
+                return Err(format!("source-build must fail {tool}: {:?}", source_report.checks));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn old_workspace_compiler_is_advisory_for_analysis_and_fails_source_build() -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-old-rustc",
+            &[("Cargo.toml", "[package]\nname = \"probe\"\n")],
+        )?;
+        let initialized = std::process::Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(&root)
+            .status()
+            .map_err(|error| format!("initialize doctor fixture: {error}"))?;
+        if !initialized.success() {
+            return Err(format!("initialize doctor fixture returned {initialized}"));
+        }
+        let below = below_minimum_rustc_output()?;
+        let evaluate = |profile| evaluate_doctor_core_with_probe_profile(
+            &root, &[LanguageId::Rust], profile,
+            |tool, _| match tool {
+                "rustc" => doctor_tool_check_success(tool, below.as_bytes()).into_public(),
+                _ => (DoctorStatus::Pass, format!("{tool} version 1.0")),
+            },
+        ).report;
+        let analysis = evaluate(DoctorProfile::Analysis);
+        let source = evaluate(DoctorProfile::SourceBuild);
+        let _ = std::fs::remove_dir_all(&root);
+        if check(&analysis, "tool_rustc")?.status != DoctorCheckStatus::Advisory
+            || analysis.status != DoctorStatus::Pass
+            || check(&source, "tool_rustc")?.status != DoctorCheckStatus::Fail
+            || source.status != DoctorStatus::Fail
+        {
+            return Err(format!("profile boundary lost: analysis={analysis:?}, source={source:?}"));
         }
         Ok(())
     }
@@ -1538,7 +1660,7 @@ mod tests {
     /// excuse a missing Rust toolchain.
     #[test]
     #[cfg(feature = "lang-python")]
-    fn mixed_rust_and_python_root_keeps_rust_toolchain_required() -> Result<(), String> {
+    fn mixed_rust_and_python_root_reports_missing_rust_toolchain_as_advisory() -> Result<(), String> {
         let root = doctor_scope_root(
             "scope-mixed",
             &[
@@ -1549,11 +1671,10 @@ mod tests {
         let (report, _probed) =
             evaluate_without_rust_toolchain(&root, &[LanguageId::Rust, LanguageId::Python]);
         let _ = std::fs::remove_dir_all(&root);
-        if check(&report, "tool_cargo")?.status != DoctorCheckStatus::Fail
-            || report.status != DoctorStatus::Fail
+        if check(&report, "tool_cargo")?.status != DoctorCheckStatus::Advisory
         {
             return Err(format!(
-                "mixed root must require cargo: {:?}",
+                "mixed root must report missing cargo: {:?}",
                 report.checks
             ));
         }
@@ -1665,7 +1786,7 @@ mod tests {
         let json = report.render_json()?;
         let parsed: serde_json::Value =
             serde_json::from_str(&json).map_err(|e| format!("invalid JSON: {e}"))?;
-        assert_eq!(parsed["schema_version"], "0.2");
+        assert_eq!(parsed["schema_version"], "0.3");
         assert_eq!(parsed["tool"], "ripr");
         assert_eq!(parsed["status"], "pass");
         assert_eq!(parsed["checks"][0]["name"], "root_directory");

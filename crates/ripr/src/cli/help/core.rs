@@ -307,11 +307,12 @@ Performance:
 "#;
 pub(super) const DOCTOR_HELP: &str = r#"Diagnose the local ripr setup (workspace, config, toolchains, paths).
 
-Usage: ripr doctor [--root PATH] [--json]
+Usage: ripr doctor [--root PATH] [--json] [--source-build]
 
 Options:
   --root PATH  Diagnose the selected workspace (defaults to `.`).
   --json       Emit the core checks as stable JSON and use the same exit status.
+  --source-build  Require the selected toolchain to build RIPR from source.
 
 The JSON report is machine-readable advisory setup evidence. A `fail` status or
 non-zero exit means at least one core check failed; it is not a release or gate
@@ -321,7 +322,14 @@ Checks:
   - root directory exists
   - Cargo.toml is present at the selected root (when Rust is in scope)
   - ripr.toml load status and effective defaults are visible
-  - git is available; cargo and rustc are available (when Rust is in scope)
+  - git is available; cargo and rustc availability is reported separately
+
+An installed RIPR binary runs built-in static analysis without cargo or rustc.
+Missing project tools or a workspace compiler below RIPR's build MSRV are
+advisory for default doctor. Project verification uses the workspace's own
+toolchain and can still fail independently. Use --source-build to check whether
+this environment can build or install RIPR from source; missing tools and a
+compiler below RIPR's build MSRV then fail doctor.
 
 Rust is in scope when it is enabled and Cargo.toml or .rs files are detected,
 or when no other language is detected or enabled. Otherwise (for example a
