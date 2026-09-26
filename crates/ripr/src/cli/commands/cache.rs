@@ -1,6 +1,7 @@
 use crate::analysis::seam_cache::{
     CACHE_DIR_ENV, CacheStatus, cache_base_dir_from_env, inspect_cache_dir,
 };
+use crate::cache_layers::OWNED_CACHE_LAYERS;
 use crate::cli::suggest::unknown_argument;
 use serde_json::json;
 use std::ffi::OsStr;
@@ -31,22 +32,6 @@ root). The cache root and unrelated sibling files or directories are preserved.
   --dry-run   Report what would be removed and remove nothing.
   --force     Required to remove cache layers that hold entries.
 "#;
-
-/// Directory names `ripr` itself creates under the cache base directory.
-///
-/// `clear` is deliberately bounded to these direct children. A path suffix or
-/// one known child never grants ownership of the configured parent (#3843).
-/// This list mirrors the cache layers in `analysis::seam_cache`; a layer added
-/// there but missed here makes `clear` more conservative, never less.
-const CACHE_ROOT_MARKERS: &[&str] = &[
-    "repo-seam-facts",
-    "repo-seam-facts-sharded",
-    "repo-compact-classified-seams",
-    "repo-compact-classified-seams-sharded",
-    "repo-corpus-fingerprint",
-    "repo-file-facts",
-    "repo-seam-counts",
-];
 
 /// Whether the resolved cache root exists on disk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -248,7 +233,8 @@ fn layer_from_status(
 
 fn build_clear_plan(cache_dir: &Path) -> Result<ClearPlan, String> {
     let mut plan = ClearPlan::default();
-    for &marker in CACHE_ROOT_MARKERS {
+    for layer in OWNED_CACHE_LAYERS {
+        let marker = layer.name();
         let layer_path = cache_dir.join(marker);
         match std::fs::symlink_metadata(&layer_path) {
             Ok(metadata) if metadata.file_type().is_symlink() => {

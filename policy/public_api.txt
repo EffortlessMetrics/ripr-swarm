@@ -93,6 +93,11 @@ pub mod ripr::analysis
 pub mod ripr::app
 pub mod ripr::app::pr_evidence
 pub mod ripr::app::pr_summary
+# Issue #3928 lane: owner cache-layer registry; reason: xtask consumes the
+# producer-owned cache names so relocated-root recognition and CLI deletion
+# cannot drift; covered_by: cargo test -p ripr --lib cache_layers,
+# cargo xtask check-public-api.
+pub mod ripr::cache_layers
 pub mod ripr::cli
 pub mod ripr::config
 pub mod ripr::domain

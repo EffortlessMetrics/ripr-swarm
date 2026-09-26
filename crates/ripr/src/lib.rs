@@ -55,6 +55,8 @@
 // deliberately carry the contract.
 mod analysis_outcome;
 mod atomic_file;
+#[doc(hidden)]
+pub mod cache_layers;
 // Staged RepairAttempt edit-cage contract. #3163 connects the repository
 // baseline/delta producer before any public receipt projection consumes it.
 #[cfg_attr(
