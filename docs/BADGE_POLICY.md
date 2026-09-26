@@ -246,7 +246,8 @@ Expired or malformed suppressions must not silently hide debt.
 Native badge JSON uses schema version `0.8`. It is the audit artifact and source
 of truth. The Shields response is a four-field projection.
 
-A native repo badge has this shape at minimum:
+A representative native repo badge contains the full count, reason, policy, and
+public-projection fields:
 
 ```json
 {
@@ -263,16 +264,40 @@ A native repo badge has this shape at minimum:
   "counts": {
     "unsuppressed_exposure_gaps": 0,
     "unsuppressed_test_efficiency_findings": 0,
+    "intentional_test_efficiency_findings": 0,
     "suppressed_exposure_gaps": 0,
     "suppressed_test_efficiency_findings": 0,
     "unknowns": 0,
-    "unknowns_test_efficiency": 0
+    "unknowns_test_efficiency": 0,
+    "analyzed_findings": 0,
+    "analyzed_seams": 120,
+    "analyzed_gap_records": 0,
+    "analyzed_tests": 0
+  },
+  "reason_counts": {
+    "no_assertion_detected": 0,
+    "smoke_oracle_only": 0,
+    "relational_oracle": 0,
+    "broad_oracle": 0,
+    "assertion_may_not_match_detected_owner": 0,
+    "opaque_helper_or_fixture_boundary": 0,
+    "no_activation_literal_detected": 0,
+    "expected_value_computed_from_detected_owner_path": 0,
+    "duplicate_activation_and_oracle_shape": 0
+  },
+  "policy": {
+    "include_unknowns": false,
+    "fail_on_nonzero": false,
+    "test_intent_path": ".ripr/test_intent.toml",
+    "suppressions_path": ".ripr/suppressions.toml"
   },
   "warnings": [],
   "preview_skipped": [],
   "public_projection": {
     "state": "zero_actionable",
+    "message": "0 actionable",
     "run_status": "full",
+    "generated_at": "2026-06-20T00:00:00Z",
     "actionable_count": 0,
     "limited_reason": null,
     "stale_age_secs": 0,
@@ -280,6 +305,10 @@ A native repo badge has this shape at minimum:
   }
 }
 ```
+
+`kind` is `ripr` or `ripr_plus`. Diff-scoped badges use the same native schema,
+carry their typed analysis outcome and completeness state, and omit the
+repo-only public projection.
 
 The closed public-projection states are:
 
@@ -368,6 +397,17 @@ ripr check --root . --mode ready --format repo-badge-plus-json
 ripr check --root . --mode ready --format repo-badge-plus-shields
 ```
 
+When a gap decision ledger is the explicit projection authority, pass it rather
+than recalculating from another basis:
+
+```bash
+ripr check \
+  --root . \
+  --mode ready \
+  --format repo-badge-json \
+  --gap-ledger target/ripr/reports/gap-decision-ledger.json
+```
+
 The `*-plus-*` formats require
 `target/ripr/reports/test-efficiency.json`. See
 [Badge adoption](BADGE_ADOPTION.md) for the downstream portability boundary.
@@ -383,6 +423,7 @@ cargo xtask badge-basis
 cargo xtask badges
 cargo xtask badges --check
 cargo xtask check-badge-diff-policy
+cargo xtask check-badge-endpoints
 ```
 
 `badge-artifacts` is diff-scoped. `repo-badge-artifacts` and `badges` are
@@ -411,7 +452,21 @@ cargo xtask badges
 cargo xtask badges --check
 ```
 
+For a policy-backed endpoint refresh, provide the same explicit ledger to both
+commands:
+
+```bash
+cargo xtask badges \
+  --gap-ledger target/ripr/reports/gap-decision-ledger.json
+cargo xtask badges --check \
+  --gap-ledger target/ripr/reports/gap-decision-ledger.json
+```
+
 `cargo xtask check-badge-diff-policy` enforces the endpoint ownership boundary.
+`cargo xtask check-badge-endpoints` compares committed endpoints with a fresh
+repo-scoped generation; it is an explicit freshness check rather than a default
+requirement for every product PR.
+
 A public badge refresh still does not authorize release publication or establish
 runtime mutation results.
 
@@ -425,8 +480,13 @@ badges/ripr.json
 badges/ripr-plus.json
 ```
 
-Shields reads them through `raw.githubusercontent.com`. The checked-in files are
-endpoint projections, not the audit artifacts and not hand-authored status copy.
+Only these endpoint projections are public badge files. Native reports,
+Markdown summaries, diff-scoped artifacts, and `target/` snapshots remain
+review evidence rather than public endpoints.
+
+Shields reads the endpoint files through `raw.githubusercontent.com`. The
+checked-in files are generated projections, not audit artifacts or hand-authored
+status copy.
 
 ### Why checked-in JSON, not GitHub Pages
 
@@ -482,6 +542,7 @@ For repo-scoped endpoint work, retain and review:
 cargo xtask repo-badge-artifacts
 cargo xtask badge-basis
 cargo xtask badges --check
+cargo xtask check-badge-endpoints
 ```
 
 Before integration, also run the repository’s normal documentation and PR gate
