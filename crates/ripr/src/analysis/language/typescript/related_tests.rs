@@ -974,11 +974,10 @@ pub(crate) fn find_related_tests(
     related_test_candidates(owner, all_tests, workspace_root, reexport_index, alias_map)
         .into_iter()
         .map(|candidate| {
-            let strongest = candidate
-                .relation
-                .uses_oracle()
-                .then(|| strongest_assertion(&candidate.test.assertions))
-                .flatten();
+            let strongest =
+                candidate_observes_owner_call(&candidate, owner, alias_map, workspace_root)
+                    .then(|| strongest_assertion(&candidate.test.assertions))
+                    .flatten();
             let (oracle_kind, oracle_strength, oracle_text) = match strongest {
                 Some(assertion) => (
                     assertion.oracle_kind.clone(),
@@ -1001,6 +1000,43 @@ pub(crate) fn find_related_tests(
             }
         })
         .collect()
+}
+
+/// Whether this candidate's test observes an owner-name call whose assertion
+/// classification may be read independently of relation credit.
+///
+/// Oracle facts and relation credit are orthogonal (RIPR-SPEC-0027):
+/// the #4102/#4103 relation gates decide whether a test's call may CREDIT
+/// exposure, not whether the test's assertion shape may be CLASSIFIED. A
+/// broad `toThrow` is broad-error/weak evidence and a smoke call is smoke
+/// evidence regardless of whether the relation to the owner is anchored.
+///
+/// Trusted relations observe the owner by construction. A relation denied by
+/// the gates still contains an owner-name call unless a gate found POSITIVE
+/// evidence that the name does not reach the owner: a body-local declaration,
+/// an unrelated import/destructure shadow, an owner-module mock, or a spy
+/// fabrication all make the assertion observe a different function or a
+/// fabricated value, so those assertions stay unclassified for the owner. A
+/// missing declaration anchor alone is unproven rather than disproven — the
+/// test really calls a function of the owner's name — so its assertion shape
+/// stays readable while the finding discloses the uncertain relation and
+/// withholds exposure credit.
+pub(crate) fn candidate_observes_owner_call(
+    candidate: &TypeScriptRelatedCandidate<'_>,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    if candidate.relation.uses_oracle() {
+        return true;
+    }
+    let test = candidate.test;
+    contains_call_name(&test.body_text, &owner.name)
+        && !local_identifier_declared_in_test_body(&test.body_text, &owner.name)
+        && !owner_name_shadowed_by_unrelated_import(test, owner, alias_map, workspace_root)
+        && !owner_name_destructured_from_unrelated_source(test, owner, alias_map, workspace_root)
+        && !test_mocks_owner_module(test, owner, alias_map, workspace_root)
+        && !test_spies_owner_with_fabrication(test, &owner.name)
 }
 
 /// Map a `TypeScriptRelationKind` to the domain `(RelationReason, RelationConfidence)`.

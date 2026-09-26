@@ -395,3 +395,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_effect_probe_shapes (5)
+
+Reason:
+RIPR-SPEC-0027: the unanchored bare owner call keeps its advisory repair intent with the missing discriminator proof named; the heuristic-only relation stays disclosed and exposure stays weakly_exposed
+
+Command:
+`cargo xtask goldens bless typescript_effect_probe_shapes --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

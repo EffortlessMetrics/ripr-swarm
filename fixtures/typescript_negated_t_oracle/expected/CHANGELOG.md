@@ -216,3 +216,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_negated_t_oracle (5)
+
+Reason:
+RIPR-SPEC-0027: oracle classification is independent of relation credit - the unanchored bare owner call still classifies its negated t.not assertion (relational_check/weak) and the actionability names the incomplete packet contract; exposure stays weakly_exposed under the #4103 anchor gate
+
+Command:
+`cargo xtask goldens bless typescript_negated_t_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

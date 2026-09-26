@@ -455,3 +455,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_static_limit_taxonomy (5)
+
+Reason:
+RIPR-SPEC-0027: oracle classification is independent of relation credit - the unanchored bare owner call still classifies its smoke assertion (smoke_only/smoke) while the dynamic_dispatch static limit holds and exposure stays weakly_exposed
+
+Command:
+`cargo xtask goldens bless typescript_static_limit_taxonomy --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

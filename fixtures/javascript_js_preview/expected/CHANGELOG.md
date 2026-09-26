@@ -407,3 +407,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — javascript_js_preview (5)
+
+Reason:
+RIPR-SPEC-0027: oracle classification is independent of relation credit — the unanchored bare owner call still classifies its exact-value assertion (exact_value/strong) and the recommendation names the missing proof; exposure stays weakly_exposed under the #4103 anchor gate
+
+Command:
+`cargo xtask goldens bless javascript_js_preview --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

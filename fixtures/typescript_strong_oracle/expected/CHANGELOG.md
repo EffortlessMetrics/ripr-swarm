@@ -433,3 +433,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_strong_oracle (5)
+
+Reason:
+RIPR-SPEC-0027: oracle classification is independent of relation credit - the unanchored bare owner call still classifies its exact-value assertion (exact_value/strong) and the actionability names the incomplete packet contract; exposure stays weakly_exposed under the #4103 anchor gate (corrects the prior blessing claim that evidence lines were unchanged)
+
+Command:
+`cargo xtask goldens bless typescript_strong_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

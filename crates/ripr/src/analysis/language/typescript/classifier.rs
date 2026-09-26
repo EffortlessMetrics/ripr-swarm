@@ -1557,16 +1557,25 @@ pub(crate) fn ts_oracle_kind_matches_seam(
 /// Returns `(rank: u8, kind: OracleKind)` where rank is the
 /// `oracle_strength.rank()` of the best matching assertion, and kind is its
 /// `oracle_kind`. Returns `(0, OracleKind::Unknown)` when there are no
-/// oracle-eligible candidates or no family-matching assertion.
+/// candidates observing an owner call or no family-matching assertion.
+///
+/// Candidates qualify via `candidate_observes_owner_call`: trusted relations
+/// by construction, and gate-denied relations whose test still contains an
+/// owner-name call. Oracle classification is independent of relation credit —
+/// the exposure decision separately consumes `has_oracle_eligible_relation`,
+/// so a heuristic-only relation can never promote here.
 pub(crate) fn strongest_family_matching_oracle(
     probe_family: &ProbeFamily,
     candidates: &[TypeScriptRelatedCandidate<'_>],
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
 ) -> (u8, OracleKind) {
     let mut best_rank: u8 = 0;
     let mut best_kind = OracleKind::Unknown;
 
     for candidate in candidates {
-        if !candidate.relation.uses_oracle() {
+        if !candidate_observes_owner_call(candidate, owner, alias_map, workspace_root) {
             continue;
         }
         for assertion in &candidate.test.assertions {
@@ -1671,16 +1680,30 @@ pub(crate) fn classify_change(
     let named_limitations_from_oracle =
         named_limitations_for_oracle_candidates(owner, &related_candidates);
     // Oracle metadata evidence lines (RIPR-SPEC-0085 §PR5).
-    // Emitted from the strongest oracle-eligible assertion across candidates.
-    // ADDITIVE: does not change oracle_kind, oracle_strength, static_limit_kind,
-    // or repair_packet_ready. At most one assertion's metadata is emitted
-    // (the strongest, by oracle_strength rank) to avoid redundant evidence.
+    // Emitted from the strongest owner-call-observing assertion across
+    // candidates. ADDITIVE: does not change oracle_kind, oracle_strength,
+    // static_limit_kind, or repair_packet_ready. At most one assertion's
+    // metadata is emitted (the strongest, by oracle_strength rank) to avoid
+    // redundant evidence.
     let probe_shape = classify_probe_shape_detail(line_text);
-    let oracle_metadata_lines: Vec<String> =
-        collect_oracle_metadata_evidence_lines(&probe_shape.family, &related_candidates);
+    let oracle_metadata_lines: Vec<String> = collect_oracle_metadata_evidence_lines(
+        &probe_shape.family,
+        &related_candidates,
+        owner,
+        alias_map,
+        workspace_root,
+    );
     let has_oracle_eligible_relation = related_candidates
         .iter()
         .any(|candidate| candidate.relation.uses_oracle());
+    // Owner-call evidence is broader than trusted relation credit: a test
+    // whose relation was denied by the #4102/#4103 gates still observes an
+    // owner-name call, so its oracle classification and missing-discriminator
+    // messaging stay readable. Only the exposure/boundary-witness decision
+    // above consumes `has_oracle_eligible_relation`.
+    let has_owner_call_evidence = related_candidates.iter().any(|candidate| {
+        candidate_observes_owner_call(candidate, owner, alias_map, workspace_root)
+    });
 
     // RIPR-SPEC-0104: compute strongest_strength/strongest_kind at the
     // ASSERTION level, filtered by probe_family↔oracle_kind match.
@@ -1697,8 +1720,13 @@ pub(crate) fn classify_change(
     // slice) and filter each assertion by `ts_oracle_kind_matches_seam`. This
     // lets a multi-assertion test contribute its family-matching assertion even
     // when its overall-strongest assertion is wrong-family (anti-over-correction).
-    let (strongest_strength, strongest_kind) =
-        strongest_family_matching_oracle(&probe_shape.family, &related_candidates);
+    let (strongest_strength, strongest_kind) = strongest_family_matching_oracle(
+        &probe_shape.family,
+        &related_candidates,
+        owner,
+        alias_map,
+        workspace_root,
+    );
     let mock_payload_oracle = related_mock_payload_oracle(&related);
 
     // Move flow_sink computation here so it is available to the observation
@@ -1794,7 +1822,7 @@ pub(crate) fn classify_change(
     }
 
     let missing_discriminators = if matches!(class, ExposureClass::WeaklyExposed)
-        && has_oracle_eligible_relation
+        && has_owner_call_evidence
         && static_limit.is_none()
     {
         typescript_missing_discriminators(&probe_shape, line, line_text, flow_sink.as_ref())
@@ -1844,7 +1872,7 @@ pub(crate) fn classify_change(
     let actionability = typescript_actionability_for(
         &class,
         static_limit.as_ref(),
-        has_oracle_eligible_relation,
+        has_owner_call_evidence,
         &missing_discriminators,
         observed_evidence_label(&related),
     );
@@ -1917,15 +1945,20 @@ pub(crate) fn classify_change(
         ExposureClass::NoStaticPath => {
             no_static_path_recommendation(owner)
         }
-        _ if !has_oracle_eligible_relation => {
-            "TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target.".to_string()
-        }
+        // Owner-call evidence with a named missing discriminator takes
+        // precedence over the relation note: the oracle classification is
+        // independent of relation credit, so the next step names the proof
+        // the related test still lacks. The relation uncertainty stays
+        // disclosed in `missing` and the related-test evidence lines.
         _ if let Some(discriminator) = missing_discriminators.first() => {
             weak_oracle_recommendation(
                 &strongest_kind,
                 &discriminator.value,
                 mock_payload_oracle.as_deref(),
             )
+        }
+        _ if !has_oracle_eligible_relation => {
+            "TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target.".to_string()
         }
         _ if owner.owner_kind == OwnerKind::ModuleFunction => {
             format!(

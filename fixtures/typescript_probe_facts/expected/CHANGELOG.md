@@ -431,3 +431,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_probe_facts (5)
+
+Reason:
+RIPR-SPEC-0027: oracle classification is independent of relation credit - the unanchored bare owner call still classifies its toBeTruthy smoke assertion (smoke_only/smoke) and the recommendation names the exact-value upgrade; exposure stays weakly_exposed under the #4103 anchor gate
+
+Command:
+`cargo xtask goldens bless typescript_probe_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

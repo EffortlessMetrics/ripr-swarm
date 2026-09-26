@@ -10470,6 +10470,13 @@ pub(crate) fn dogfood_typescript_preview_repair_loop_run(
                 .to_string(),
         );
     }
+    if scenario.outcome == "unanchored_relation_holds_advisory" && scenario.gap_state != "advisory"
+    {
+        errors.push(
+            "unanchored_relation_holds_advisory requires gap_state advisory: the #4103 anchor gate withholds exposure credit, so the case must not claim already_observed"
+                .to_string(),
+        );
+    }
     if scenario.outcome == "resolved" {
         dogfood_typescript_preview_repair_loop_check_closed_receipt(scenario, &mut errors);
     }
@@ -10841,6 +10848,7 @@ pub(crate) fn typescript_preview_repair_loop_allowed_outcomes() -> &'static [&'s
         "weak_oracle_downgraded",
         "static_limitation_recorded",
         "already_observed_unchanged",
+        "unanchored_relation_holds_advisory",
         "intentionally_skipped",
         "resolved",
     ]
