@@ -47,8 +47,14 @@ mod tests {
         for (state, wire) in cases {
             let encoded = format!("\"{wire}\"");
             assert_eq!(state.as_str(), wire);
-            assert_eq!(serde_json::to_string(&state).ok().as_deref(), Some(encoded.as_str()));
-            assert_eq!(serde_json::from_str::<EvidenceState>(&encoded).ok(), Some(state));
+            assert_eq!(
+                serde_json::to_string(&state).ok().as_deref(),
+                Some(encoded.as_str())
+            );
+            assert_eq!(
+                serde_json::from_str::<EvidenceState>(&encoded).ok(),
+                Some(state)
+            );
         }
         assert!(serde_json::from_str::<EvidenceState>("\"unsupported\"").is_err());
         assert!(EvidenceState::Actionable.is_actionable());
