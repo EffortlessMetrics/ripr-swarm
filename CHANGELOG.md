@@ -531,8 +531,10 @@ are scoped or reviewed.
 
 - The LSP local file-URI decoder refuses a parent-directory segment (`..`),
   including one written with percent-encoding or backslashes, instead of
-  admitting it as an absolute path. The saved-content digest read therefore
-  cannot follow that spelling. Filenames that only contain two dots
+  admitting it as an absolute path. Saved-content digest reads use only an
+  admitted path, so a refused URI's display fallback is not opened even when
+  the working directory contains a `file:` directory that would let that
+  relative string follow `..`. Filenames that only contain two dots
   (`foo..bar`, `..hidden`) stay ordinary local paths. This refuses the read;
   it is not a claim that a client can disclose the bytes
   ([#4145](https://github.com/EffortlessMetrics/ripr-swarm/issues/4145)).
