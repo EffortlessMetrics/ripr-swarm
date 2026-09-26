@@ -223,10 +223,11 @@ fn has_parent_directory_segment(path: &str) -> bool {
 }
 
 /// Collapse `.` and `..` so an emitted URI has no parent segment.
-/// Absolute `..` at the root is a no-op (`/..` stays `/`, `C:/..` stays on
-/// that drive). A relative `..` that escapes the path's own prefix is `None`.
-/// An empty relative result is the relative root; the encoder roots that at
-/// `/`, matching how relative paths are already published.
+/// Absolute `..` at the root is a no-op: a leading slash stays `/`, and a
+/// drive prefix stays on that drive. A relative `..` that escapes the path's
+/// own prefix is `None`. An empty relative result is the relative root; the
+/// encoder roots that at `/`, matching how relative paths are already
+/// published.
 pub(super) fn collapse_parent_segments(path: &str) -> Option<String> {
     if !has_parent_directory_segment(path) {
         return Some(path.to_string());
