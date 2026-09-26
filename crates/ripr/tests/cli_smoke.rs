@@ -1,11629 +1,1847 @@
-#![expect(
-    clippy::unwrap_used,
-    reason = "CLI smoke test: unwrap on Command::output() and CARGO_MANIFEST_DIR's parent chain is the canonical fail-fast pattern for binary integration tests; receipted via policy/no-panic-allowlist.toml entries for crates/ripr/tests/cli_smoke.rs."
-)]
-
-use sha2::{Digest, Sha256};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use std::sync::atomic::{AtomicU64, Ordering};
-
-#[path = "common/mod.rs"]
-mod common;
-
-// All plain fixture-setup git invocations below route through the shared
-// hardened helper (deadline + one idempotent retry + commit reconcile,
-// #3742 Slice 1). Raw `run_command("git", â€¦)` remains only where a test
-// needs the raw `Output` (commit identity probes, failure-shape asserts).
-use common::fixture_git::fixture_git_ok as run_git;
-
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-fn run_ripr(args: &[&str]) -> Output {
-    let bin = env!("CARGO_BIN_EXE_ripr");
-    Command::new(bin).args(args).output().unwrap()
-}
-
-fn run_ripr_in_workspace(args: &[&str]) -> Result<Output, std::io::Error> {
-    let bin = env!("CARGO_BIN_EXE_ripr");
-    let root = workspace_root();
-    run_command(bin, Some(&root), args)
-}
-
-fn run_command(
-    program: &str,
-    current_dir: Option<&Path>,
-    args: &[&str],
-) -> Result<Output, std::io::Error> {
-    spawn_command(program, current_dir, args, &[])
-}
-
-/// The single process spawn point for this harness. Both `run_command` and
-/// `run_command_with_env` route through here so the suite keeps one tracked
-/// spawn site rather than one per calling convention.
-fn spawn_command(
-    program: &str,
-    current_dir: Option<&Path>,
-    args: &[&str],
-    env: &[(&str, &str)],
-) -> Result<Output, std::io::Error> {
-    let mut command = Command::new(program);
-    if let Some(current_dir) = current_dir {
-        command.current_dir(current_dir);
-    }
-    for (name, value) in env {
-        command.env(name, value);
-    }
-    command.args(args).output()
-}
-
-/// Run a command with extra environment variables set, so tests can plant an
-/// ambient-secret canary in the parent and assert it does not cross a process
-/// boundary.
-fn run_command_with_env(
-    program: &str,
-    current_dir: &Path,
-    args: &[&str],
-    env: &[(&str, &str)],
-) -> Result<Output, std::io::Error> {
-    spawn_command(program, Some(current_dir), args, env)
-}
-
-fn run_isolated_binary(
-    binary: &Path,
-    current_dir: &Path,
-    args: &[&str],
-    coverage_profile: Option<&Path>,
-) -> Result<Output, std::io::Error> {
-    let mut command = Command::new(binary);
-    command.current_dir(current_dir).env_clear();
-    if let Ok(path) = std::env::var("PATH") {
-        command.env("PATH", path);
-    }
-    if let Some(profile) = coverage_profile {
-        command.env("LLVM_PROFILE_FILE", profile);
-    }
-    command.args(args).output()
-}
-
-fn cleanup_temp_dir(path: Option<&Path>) -> Result<(), std::io::Error> {
-    if let Some(path) = path
-        && path.exists()
-    {
-        std::fs::remove_dir_all(path)?;
-    }
-    Ok(())
-}
-
-/// Best-effort temp-dir teardown. The `io::Result` is matched with `if let`
-/// so a `#[must_use]` cleanup failure is an explicit ignore.
-fn ignore_remove_dir_all(path: &Path) {
-    if let Ok(()) = std::fs::remove_dir_all(path) {}
-}
-
-fn inherited_coverage_is_enabled() -> bool {
-    std::env::var_os("LLVM_PROFILE_FILE").is_some() || std::env::var_os("CARGO_LLVM_COV").is_some()
-}
-
-fn snapshot_tree(root: &Path) -> Result<Vec<String>, std::io::Error> {
-    fn visit(root: &Path, path: &Path, entries: &mut Vec<String>) -> Result<(), std::io::Error> {
-        for entry in std::fs::read_dir(path)? {
-            let entry = entry?;
-            let child = entry.path();
-            let relative = child
-                .strip_prefix(root)
-                .map_err(std::io::Error::other)?
-                .to_string_lossy()
-                .replace('\\', "/");
-            let metadata = entry.metadata()?;
-            if metadata.is_dir() {
-                entries.push(format!("dir:{relative}"));
-                visit(root, &child, entries)?;
-            } else if metadata.is_file() {
-                let content = std::fs::read(&child)?;
-                entries.push(format!("file:{relative}:{}", sha256_hex_bytes(&content)));
-            } else {
-                entries.push(format!("other:{relative}"));
-            }
-        }
-        Ok(())
-    }
-
-    let mut entries = Vec::new();
-    visit(root, root, &mut entries)?;
-    entries.sort();
-    Ok(entries)
-}
-
-fn snapshot_diff(before: &[String], after: &[String]) -> String {
-    let removed = before
-        .iter()
-        .filter(|entry| !after.contains(entry))
-        .map(|entry| format!("- {entry}"))
-        .collect::<Vec<_>>();
-    let added = after
-        .iter()
-        .filter(|entry| !before.contains(entry))
-        .map(|entry| format!("+ {entry}"))
-        .collect::<Vec<_>>();
-    removed
-        .into_iter()
-        .chain(added)
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn is_concrete_commit_id(value: &str) -> bool {
-    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
-fn bounded_command_text(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).chars().take(512).collect()
-}
-
-fn strip_optional_git_line_ending(bytes: &[u8]) -> &[u8] {
-    bytes
-        .strip_suffix(b"\r\n")
-        .or_else(|| bytes.strip_suffix(b"\n"))
-        .unwrap_or(bytes)
-}
-
-fn select_fixture_repository_head(
-    git_succeeded: bool,
-    stdout: &[u8],
-    stderr: &[u8],
-    actions_fallback: Option<&str>,
-) -> Result<String, String> {
-    let candidate = String::from_utf8_lossy(strip_optional_git_line_ending(stdout)).to_string();
-    if git_succeeded {
-        if is_concrete_commit_id(&candidate) {
-            return Ok(candidate.to_ascii_lowercase());
-        }
-        return Err(format!(
-            "git rev-parse --verify HEAD^{{commit}} returned non-concrete repository HEAD `{candidate}`"
-        ));
-    }
-
-    if let Some(fallback) = actions_fallback
-        && is_concrete_commit_id(fallback)
-    {
-        return Ok(fallback.to_ascii_lowercase());
-    }
-
-    Err(format!(
-        "git rev-parse --verify HEAD^{{commit}} failed; stdout: {}; stderr: {}",
-        bounded_command_text(stdout),
-        bounded_command_text(stderr)
-    ))
-}
-
-fn concrete_fixture_repository_head(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
-    let output = run_command(
-        "git",
-        Some(root),
-        &["rev-parse", "--verify", "HEAD^{commit}"],
-    )?;
-    let root_is_workspace = root
-        .canonicalize()
-        .ok()
-        .zip(workspace_root().canonicalize().ok())
-        .is_some_and(|(root, workspace)| root == workspace);
-    let actions_fallback =
-        if root_is_workspace && std::env::var("GITHUB_ACTIONS").ok().as_deref() == Some("true") {
-            std::env::var("GITHUB_SHA").ok()
-        } else {
-            None
-        };
-    select_fixture_repository_head(
-        output.status.success(),
-        &output.stdout,
-        &output.stderr,
-        actions_fallback.as_deref(),
-    )
-    .map_err(Into::into)
-}
-
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .unwrap()
-        .to_path_buf()
-}
-
-fn sample_diff() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample/example.diff")
-}
-
-fn unique_temp_workspace(label: &str) -> PathBuf {
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let pid = std::process::id();
-    let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("ripr-{label}-{stamp}-{pid}-{counter}"))
-}
-
-fn unique_external_workspace(label: &str) -> Result<PathBuf, String> {
-    let workspace = workspace_root()
-        .canonicalize()
-        .map_err(|error| format!("canonicalize workspace root: {error}"))?;
-    let candidate = unique_temp_workspace(label);
-    let parent = workspace
-        .parent()
-        .ok_or_else(|| "workspace root has no parent".to_string())?;
-    let name = candidate
-        .file_name()
-        .ok_or_else(|| "temporary fixture has no file name".to_string())?;
-    Ok(parent.join(name))
-}
-
-fn assert_success(output: &Output) {
-    assert!(
-        output.status.success(),
-        "expected command to succeed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-fn assert_failure(output: &Output) {
-    assert!(
-        !output.status.success(),
-        "expected command to fail\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-fn normalize_newlines(value: &str) -> String {
-    value.replace("\r\n", "\n")
-}
-
-/// Issue #3872: CLI-rendered command redirects anchor at the resolved --root
-/// â€” the child process working directory, which is the workspace root for
-/// `run_ripr_in_workspace`. Project that machine prefix to `<cwd>/` before
-/// comparing so the fixture pins the anchored shape, never a machine
-/// directory (same placeholder rule as the lib-test projections).
-fn assert_anchored_stdout_matches_fixture(
-    output: &Output,
-    fixture_path: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    assert_success(output);
-    let expected = std::fs::read_to_string(workspace_root().join(fixture_path))?;
-    let actual = String::from_utf8(output.stdout.clone())?;
-    let prefix = format!("{}/", workspace_root().to_string_lossy().replace('\\', "/"));
-    assert_eq!(
-        normalize_newlines(&actual).replace(&prefix, "<cwd>/"),
-        normalize_newlines(&expected),
-        "stdout drifted from {fixture_path}"
-    );
-    Ok(())
-}
-
-fn write_bound_repo_exposure_fixture(
-    root: &Path,
-    path: &Path,
-    seam_json: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let head = concrete_fixture_repository_head(root)?;
-    let root_identity = root.canonicalize()?.to_string_lossy().replace('\\', "/");
-    let placeholder = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
-    let raw = format!(
-        r#"{{
-  "schema_version": "0.3",
-  "artifact": {{
-    "kind": "repo_exposure",
-    "schema_version": "1",
-    "canonicalization": "raw_json_placeholder_v1",
-    "producer": {{"tool": "ripr", "version": "0.11.0"}},
-    "repository": {{"root": "{root_identity}", "head": "{head}"}},
-    "analysis": {{"format": "repo-exposure-json", "mode": "draft", "base_revision": null, "input_identity": "input:v4:fnv1a64:00000000000000f1", "command": "ripr check --format repo-exposure-json", "profile": "draft", "worktree": "clean"}},
-    "snapshot_identity": "snapshot:input:v4:fnv1a64:00000000000000f1;revision:{head}",
-    "content_sha256": "{placeholder}"
-  }},
-  "scope": "repo",
-  "run_status": "complete",
-  "seams": [{seam_json}]
-}}"#
-    );
-    let mut hasher = Sha256::new();
-    hasher.update(raw.as_bytes());
-    let digest = hasher.finalize();
-    let digest = format!(
-        "sha256:{}",
-        digest
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    );
-    // Exact-one rule (#2921): the placeholder must appear only as the
-    // governed `artifact.content_sha256` value before the global replace is
-    // safe. A second placeholder-shaped string would be silently rewritten.
-    let placeholder_occurrences = raw.matches(placeholder).count();
-    assert_eq!(
-        placeholder_occurrences, 1,
-        "bound repo-exposure fixture must contain exactly one content_sha256 placeholder"
-    );
-    std::fs::write(path, raw.replace(placeholder, &digest))?;
-    Ok(())
-}
-
-fn write_fabricated_agent_verify_json(
-    path: &Path,
-    before: &Path,
-    after: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let before_display = before.display().to_string().replace('\\', "/");
-    let after_display = after.display().to_string().replace('\\', "/");
-    std::fs::write(
-        path,
-        format!(
-            r#"{{
-  "schema_version": "0.3",
-  "tool": "ripr",
-  "status": "advisory",
-  "inputs": {{"before": "{}", "after": "{}"}},
-  "summary": {{"improved": 1, "changed": 0, "regressed": 0, "unchanged": 0, "new": 0, "resolved": 0}},
-  "changed_seams": [{{"seam_id":"seam-a","seam_kind":"predicate_boundary","file":"src/pricing.rs","line":42,"before":"weakly_gripped","after":"strongly_gripped","change":"improved","evidence_delta":[]}}],
-  "unchanged_seams": [], "new_gaps": [], "resolved_gaps": []
-}}"#,
-            before_display, after_display
-        ),
-    )?;
-    Ok(())
-}
-
-fn init_git_fixture_repo(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    std::fs::write(root.join("marker.txt"), "fixture\n")?;
-    run_git(root, &["init"])?;
-    run_git(root, &["add", "marker.txt"])?;
-    let commit = run_command(
-        "git",
-        Some(root),
-        &[
-            "-c",
-            "user.name=RIPR test",
-            "-c",
-            "user.email=ripr@example.invalid",
-            "commit",
-            "-m",
-            "fixture",
-        ],
-    )?;
-    assert!(commit.status.success(), "fixture commit failed: {commit:?}");
-    Ok(())
-}
-
-fn init_producer_fixture_repo(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    std::fs::create_dir_all(root.join("src"))?;
-    std::fs::create_dir_all(root.join("tests"))?;
-    let fixture_root =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/boundary_gap/input");
-    for relative in ["Cargo.toml", "src/lib.rs", "tests/pricing.rs"] {
-        std::fs::copy(fixture_root.join(relative), root.join(relative))?;
-    }
-    run_git(root, &["init"])?;
-    run_git(
-        root,
-        &["add", "Cargo.toml", "src/lib.rs", "tests/pricing.rs"],
-    )?;
-    let commit = run_command(
-        "git",
-        Some(root),
-        &[
-            "-c",
-            "user.name=RIPR test",
-            "-c",
-            "user.email=ripr@example.invalid",
-            "commit",
-            "-m",
-            "fixture",
-        ],
-    )?;
-    assert!(
-        commit.status.success(),
-        "producer fixture commit failed: {commit:?}"
-    );
-    Ok(())
-}
-
-/// Move the fixture repository to a new empty commit so a later-bound
-/// repo-exposure artifact is lineage-ordered after an earlier one (#2922).
-fn advance_fixture_head(root: &Path, message: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let commit = run_command(
-        "git",
-        Some(root),
-        &[
-            "-c",
-            "user.name=RIPR test",
-            "-c",
-            "user.email=ripr@example.invalid",
-            "commit",
-            "--allow-empty",
-            "-m",
-            message,
-        ],
-    )?;
-    assert!(
-        commit.status.success(),
-        "movement commit failed: {commit:?}"
-    );
-    Ok(())
-}
-
-fn recommit_repo_exposure_json(mut raw: String) -> String {
-    let placeholder = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
-    let key = "\"content_sha256\"";
-    if let Some(key_start) = raw.find(key) {
-        let value_search_start = key_start + key.len();
-        if let Some(value_offset) = raw[value_search_start..].find('"') {
-            let value_start = value_search_start + value_offset + 1;
-            if let Some(end_offset) = raw[value_start..].find('"') {
-                raw.replace_range(value_start..value_start + end_offset, placeholder);
-            }
-        }
-    }
-    let mut hasher = Sha256::new();
-    hasher.update(raw.as_bytes());
-    let digest = hasher.finalize();
-    let digest = format!(
-        "sha256:{}",
-        digest
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    );
-    raw = raw.replace(placeholder, &digest);
-    raw
-}
-
-/// The validated content commitment declared by a bound repo-exposure
-/// artifact. Tamper-control cases retain this digest pair (original vs
-/// mutated) in their failure messages (#2922 PR B).
-fn repo_exposure_artifact_content_digest(
-    path: &Path,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
-    value
-        .pointer("/artifact/content_sha256")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| {
-            format!(
-                "artifact {} is missing artifact.content_sha256",
-                path.display()
-            )
-            .into()
-        })
-}
-
-fn sha256_hex_bytes(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    let digest = hasher.finalize();
-    format!(
-        "sha256:{}",
-        digest
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    )
-}
-
-fn bind_repo_exposure_fixture_with_worktree(
-    root: &Path,
-    source: &Path,
-    destination: &Path,
-    worktree: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(source)?)?;
-    value["schema_version"] = serde_json::Value::String("0.3".to_string());
-    value["run_status"] = serde_json::Value::String("complete".to_string());
-    let head = concrete_fixture_repository_head(root)?;
-    let root_identity = root.canonicalize()?.to_string_lossy().replace('\\', "/");
-    let placeholder = serde_json::Value::String(
-        "sha256:0000000000000000000000000000000000000000000000000000000000000000".to_string(),
-    );
-    value["artifact"] = serde_json::json!({
-        "kind": "repo_exposure",
-        "schema_version": "1",
-        "canonicalization": "raw_json_placeholder_v1",
-        "producer": {"tool": "ripr", "version": "0.11.0"},
-        "repository": {"root": root_identity, "head": head},
-        "analysis": {"format": "repo-exposure-json", "mode": "draft", "base_revision": null, "input_identity": "input:v4:fnv1a64:00000000000000f1", "command": "ripr check --format repo-exposure-json", "profile": "draft", "worktree": worktree},
-        "snapshot_identity": format!("snapshot:input:v4:fnv1a64:00000000000000f1;revision:{head}"),
-        "content_sha256": placeholder,
-    });
-    let raw = serde_json::to_string_pretty(&value)?;
-    std::fs::write(destination, recommit_repo_exposure_json(raw))?;
-    Ok(())
-}
-
-fn normalize_generated_at(text: String) -> String {
-    text.lines()
-        .map(|line| {
-            if line.trim_start().starts_with("\"generated_at\":") {
-                "  \"generated_at\": \"2026-05-09T12:00:00Z\",".to_string()
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn normalize_agent_verify_fixture(text: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let mut value: serde_json::Value = serde_json::from_str(text)?;
-    // The bound artifact content commitments embed the live repository head
-    // (#2922 PR B), so the golden cannot pin them; normalize both sides.
-    if let Some(inputs) = value
-        .get_mut("inputs")
-        .and_then(serde_json::Value::as_object_mut)
-    {
-        for key in ["before_content_sha256", "after_content_sha256"] {
-            if inputs.contains_key(key) {
-                inputs.insert(
-                    key.to_string(),
-                    serde_json::Value::String("<content_sha256>".to_string()),
-                );
-            }
-        }
-    }
-    let mut rendered = serde_json::to_string_pretty(&value)?;
-    rendered.push('\n');
-    Ok(rendered)
-}
-
-fn normalize_agent_receipt_fixture(text: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let mut value: serde_json::Value = serde_json::from_str(text)?;
-    if let Some(provenance) = value
-        .get_mut("provenance")
-        .and_then(serde_json::Value::as_object_mut)
-    {
-        provenance.insert(
-            "generated_at".to_string(),
-            serde_json::Value::String("<generated_at>".to_string()),
-        );
-        provenance.insert(
-            "ripr_version".to_string(),
-            serde_json::Value::String("<ripr_version>".to_string()),
-        );
-        for artifact in ["before_artifact", "after_artifact", "verify_artifact"] {
-            if let Some(artifact) = provenance
-                .get_mut(artifact)
-                .and_then(serde_json::Value::as_object_mut)
-            {
-                artifact.insert(
-                    "sha256".to_string(),
-                    serde_json::Value::String("<sha256>".to_string()),
-                );
-            }
-        }
-    }
-    let object = value
-        .as_object_mut()
-        .ok_or("agent receipt fixture should be a JSON object")?;
-    if object.contains_key("analysis_outcome_error") {
-        object.insert(
-            "analysis_outcome_error".to_string(),
-            serde_json::Value::String("<analysis_outcome_error>".to_string()),
-        );
-    }
-    // Only `analysis_outcome.analysis_complete` is asserted separately below;
-    // the counts and semantic digest are source-sensitive, while this fixture
-    // pins the receipt envelope and projection status.
-    if object.contains_key("analysis_outcome") {
-        object.insert("analysis_outcome".to_string(), serde_json::Value::Null);
-    }
-    let mut rendered = serde_json::to_string_pretty(&value)?;
-    rendered.push('\n');
-    Ok(rendered)
-}
-
-fn normalize_unchanged_repo_exposure_producer_fixture(
-    mut value: serde_json::Value,
-) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    let fixture_root = workspace_root().join("fixtures/boundary_gap/input");
-    let canonical_root = fixture_root
-        .canonicalize()?
-        .to_string_lossy()
-        .replace('\\', "/");
-    let produced_root = json_pointer_str(&value, "/artifact/repository/root")?;
-    assert_ne!(
-        produced_root, ".",
-        "the production repo-exposure route must emit a canonical absolute root"
-    );
-    assert_eq!(produced_root, canonical_root);
-
-    let stable_head = "8a00693e680c8ad5172d5191bbb08484cbd5e300";
-    value["artifact"]["repository"]["root"] = serde_json::json!(".");
-    value["artifact"]["repository"]["head"] = serde_json::json!(stable_head);
-    value["artifact"]["analysis"]["worktree"] = serde_json::json!("dirty");
-    let input_identity = json_pointer_str(&value, "/artifact/analysis/input_identity")?;
-    value["artifact"]["snapshot_identity"] =
-        serde_json::json!(format!("snapshot:{input_identity};revision:{stable_head}"));
-    let mut raw = serde_json::to_string_pretty(&value)?;
-    raw.push('\n');
-    serde_json::from_str(&recommit_repo_exposure_json(raw)).map_err(Into::into)
-}
-
-fn assert_repo_exposure_rejects_mutation(
-    snapshot: &serde_json::Value,
-    mutate: impl FnOnce(&mut serde_json::Value),
-    expected_error: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let name = unique_temp_workspace("unchanged-producer-mutation")
-        .file_name()
-        .ok_or("mutation fixture name should exist")?
-        .to_owned();
-    let root = workspace_root().join("target/ripr").join(name);
-    std::fs::create_dir_all(&root)?;
-    let before = root.join("before.repo-exposure.json");
-    let after = root.join("after.repo-exposure.json");
-    std::fs::write(&before, serde_json::to_string_pretty(snapshot)?)?;
-    let mut mutated = snapshot.clone();
-    mutate(&mut mutated);
-    std::fs::write(&after, serde_json::to_string_pretty(&mutated)?)?;
-    let output = run_ripr_in_workspace(&[
-        "agent",
-        "verify",
-        "--root",
-        ".",
-        "--before",
-        before.to_str().ok_or("before path should be utf-8")?,
-        "--after",
-        after.to_str().ok_or("after path should be utf-8")?,
-        "--json",
-    ])?;
-    assert_failure(&output);
-    let stderr = String::from_utf8(output.stderr)?;
-    assert!(
-        stderr.contains(expected_error),
-        "unexpected rejection: {stderr}"
-    );
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn normalize_agent_receipt_fixture_rejects_non_object_json() -> Result<(), String> {
-    for fixture in ["[]", "null"] {
-        if normalize_agent_receipt_fixture(fixture).is_ok() {
-            return Err(format!("non-object fixture should be rejected: {fixture}"));
-        }
-    }
-    Ok(())
-}
-
-fn json_string_field(text: &str, field: &str) -> Option<String> {
-    let pattern = format!("\"{field}\": \"");
-    let start = text.find(&pattern)? + pattern.len();
-    let end = text[start..].find('"')?;
-    Some(text[start..start + end].to_string())
-}
-
-fn json_pointer_str<'a>(
-    value: &'a serde_json::Value,
-    pointer: &str,
-) -> Result<&'a str, Box<dyn std::error::Error>> {
-    value
-        .pointer(pointer)
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| format!("expected string at JSON pointer `{pointer}`").into())
-}
-
-fn json_pointer_bool(
-    value: &serde_json::Value,
-    pointer: &str,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    value
-        .pointer(pointer)
-        .and_then(serde_json::Value::as_bool)
-        .ok_or_else(|| format!("expected bool at JSON pointer `{pointer}`").into())
-}
-
-fn agent_brief_sample_workspace(
-    label: &str,
-) -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace(label);
-    // Keep the sample tree representative of a Cargo package.  The source
-    // and integration-test files intentionally live in different directories;
-    // without a manifest the authority model must treat them as distinct
-    // manifest-less packages, so the packet cannot recover the related test.
-    std::fs::create_dir_all(&root)?;
-    std::fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"agent-brief-sample\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-    )?;
-    std::fs::create_dir_all(root.join("src"))?;
-    std::fs::create_dir_all(root.join("tests"))?;
-    std::fs::copy(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample/src/lib.rs"),
-        root.join("src/lib.rs"),
-    )?;
-    std::fs::copy(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample/tests/pricing.rs"),
-        root.join("tests/pricing.rs"),
-    )?;
-    let diff = root.join("change.diff");
-    std::fs::write(
-        &diff,
-        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -8,1 +8,1 @@\n-old\n+new\n",
-    )?;
-    Ok((root, diff))
-}
-
-#[test]
-fn concrete_fixture_repository_head_matches_a_committed_fixture()
--> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("concrete-head");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let actual = concrete_fixture_repository_head(&root)?;
-    let expected = run_command(
-        "git",
-        Some(&root),
-        &["rev-parse", "--verify", "HEAD^{commit}"],
-    )?;
-    if !expected.status.success() {
-        return Err(format!(
-            "fixture rev-parse failed: {}",
-            bounded_command_text(&expected.stderr)
-        )
-        .into());
-    }
-    let expected = String::from_utf8(expected.stdout)?
-        .trim()
-        .to_ascii_lowercase();
-    std::fs::remove_dir_all(&root)?;
-    if actual != expected {
-        return Err(format!("fixture HEAD mismatch: actual={actual} expected={expected}").into());
-    }
-    Ok(())
-}
-
-#[test]
-fn fixture_repository_head_rejects_unresolved_head_and_malformed_actions_fallback()
--> Result<(), String> {
-    let result = select_fixture_repository_head(
-        false,
-        b"HEAD\n",
-        b"fatal: ambiguous argument 'HEAD'",
-        Some("not-a-commit"),
-    );
-    let Err(error) = result else {
-        return Err("unresolved HEAD unexpectedly became fixture authority".to_string());
-    };
-    if !error.contains("stdout: HEAD") || !error.contains("fatal: ambiguous argument") {
-        return Err(format!("fixture HEAD error lost command context: {error}"));
-    }
-    Ok(())
-}
-
-#[test]
-fn fixture_repository_head_accepts_valid_actions_checkout_fallback_after_git_failure()
--> Result<(), String> {
-    let fallback = "0123456789abcdef0123456789abcdef01234567";
-    let actual = select_fixture_repository_head(
-        false,
-        b"HEAD\n",
-        b"fatal: ambiguous argument 'HEAD'",
-        Some(fallback),
-    )?;
-    if actual != fallback {
-        return Err(format!(
-            "valid Actions checkout fallback changed: actual={actual} expected={fallback}"
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn fixture_repository_head_does_not_replace_malformed_success_output_with_fallback()
--> Result<(), String> {
-    let fallback = "0123456789abcdef0123456789abcdef01234567";
-    let result = select_fixture_repository_head(true, b"HEAD\n", b"", Some(fallback));
-    let Err(error) = result else {
-        return Err("successful but symbolic git output used the Actions fallback".to_string());
-    };
-    if !error.contains("non-concrete repository HEAD `HEAD`") {
-        return Err(format!("unexpected non-concrete HEAD error: {error}"));
-    }
-    Ok(())
-}
-
-#[test]
-fn fixture_repository_head_accepts_only_an_optional_git_line_ending() -> Result<(), String> {
-    let commit = "0123456789abcdef0123456789abcdef01234567";
-    for stdout in [
-        commit.to_string(),
-        format!("{commit}\n"),
-        format!("{commit}\r\n"),
-    ] {
-        let actual = select_fixture_repository_head(true, stdout.as_bytes(), b"", None)?;
-        if actual != commit {
-            return Err(format!(
-                "optional line ending changed commit identity: {actual}"
-            ));
-        }
-    }
-    Ok(())
-}
-
-#[test]
-fn fixture_repository_head_rejects_whitespace_padded_success_output() -> Result<(), String> {
-    let commit = "0123456789abcdef0123456789abcdef01234567";
-    for stdout in [
-        format!(" {commit}\n"),
-        format!("{commit} \n"),
-        format!("{commit}\n\n"),
-    ] {
-        let result = select_fixture_repository_head(true, stdout.as_bytes(), b"", None);
-        if result.is_ok() {
-            return Err(format!(
-                "whitespace-padded commit became authority: {stdout:?}"
-            ));
-        }
-    }
-    Ok(())
-}
-
-#[test]
-fn version_is_exact_and_precedes_help_or_output_flags() {
-    let expected = format!("ripr {}\n", env!("CARGO_PKG_VERSION"));
-    for args in [
-        &["--version"][..],
-        &["-V"][..],
-        &["--version", "--json"][..],
-        &["--json", "--version"][..],
-        &["--version", "--help"][..],
-        &["--verbose", "--version"][..],
-        &["--version", "--verbose"][..],
-    ] {
-        let output = run_ripr(args);
-        assert_success(&output);
-        assert_eq!(
-            String::from_utf8_lossy(&output.stdout),
-            expected,
-            "version argv {args:?} must emit only the package version"
-        );
-        assert!(
-            output.stderr.is_empty(),
-            "version argv {args:?} emitted diagnostics: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    let lsp = run_ripr(&["lsp", "--version"]);
-    assert_success(&lsp);
-    assert_eq!(
-        String::from_utf8_lossy(&lsp.stdout),
-        format!("ripr-lsp {}\n", env!("CARGO_PKG_VERSION")),
-        "command-local LSP version must retain its public output"
-    );
-    assert!(lsp.stderr.is_empty());
-}
-
-#[test]
-fn isolated_installed_binary_version_contract_is_side_effect_free() -> Result<(), String> {
-    let root = unique_temp_workspace("version-installed");
-    // Coverage runtimes own only this external directory; the product prefix
-    // below remains a strict snapshot and rejects every non-harness mutation.
-    let coverage_root =
-        inherited_coverage_is_enabled().then(|| unique_temp_workspace("version-installed-profile"));
-    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(profile_root) = &coverage_root {
-            std::fs::create_dir_all(profile_root)?;
-        }
-        let bin_dir = root.join("bin");
-        std::fs::create_dir_all(&bin_dir)?;
-        let source_binary = std::path::Path::new(env!("CARGO_BIN_EXE_ripr"));
-        let installed_binary = bin_dir.join(if cfg!(windows) { "ripr.exe" } else { "ripr" });
-        std::fs::copy(source_binary, &installed_binary)?;
-
-        let config_path = root.join("ripr.toml");
-        std::fs::write(&config_path, "this is not valid TOML\n")?;
-        let config_before = std::fs::read(&config_path)?;
-        let before = snapshot_tree(&root)?;
-        let artifact_path = root.join("target/ripr/reports/version.json");
-        let expected_version = format!("ripr {}\n", env!("CARGO_PKG_VERSION"));
-        let expected_lsp_version = format!("ripr-lsp {}\n", env!("CARGO_PKG_VERSION"));
-        let workspace_text = workspace_root().to_string_lossy().to_string();
-        let cases = [
-            vec!["--version"],
-            vec!["-V"],
-            vec!["--help", "--version"],
-            vec!["-v", "--version"],
-            vec!["--version", "-v"],
-            vec!["check", "--version"],
-            vec!["check", "--diff", "--version"],
-            vec!["lsp", "--version"],
-        ];
-
-        for args in cases {
-            let args = args.as_slice();
-            let profile = coverage_root
-                .as_ref()
-                .map(|root| root.join("ripr-%p-%m.profraw"));
-            let output = run_isolated_binary(&installed_binary, &root, args, profile.as_deref())?;
-            let stdout = String::from_utf8(output.stdout.clone())?;
-            let stderr = String::from_utf8(output.stderr.clone())?;
-            if args[0] == "lsp" {
-                if !output.status.success() || stdout != expected_lsp_version || !stderr.is_empty()
-                {
-                    return Err(format!(
-                        "isolated lsp version contract failed for {args:?}: status={:?}, stdout={stdout:?}, stderr={stderr:?}",
-                        output.status.code()
-                    )
-                    .into());
-                }
-            } else if args[0] == "check" {
-                let is_diff_file_case = args.len() == 3 && args[1] == "--diff";
-                let has_config_error = stderr.contains("invalid ripr.toml");
-                if output.status.success()
-                    || stdout.contains("ripr â€”")
-                    || stdout.contains(expected_version.trim_end())
-                    || stderr.contains(expected_version.trim_end())
-                {
-                    return Err(format!(
-                        "check version-like input escaped its command boundary for {args:?}: status={:?}, stdout={stdout:?}, stderr={stderr:?}",
-                        output.status.code()
-                    )
-                    .into());
-                }
-                if is_diff_file_case
-                    && !has_config_error
-                    && (!stderr.contains("resolved workspace root to ")
-                        || !stderr.contains("failed to read diff file --version"))
-                {
-                    return Err(format!(
-                        "check --diff --version did not report the expected workspace/diff diagnostic: status={:?}, stderr={stderr:?}",
-                        output.status.code()
-                    )
-                    .into());
-                }
-            } else if !output.status.success() || stdout != expected_version || !stderr.is_empty() {
-                return Err(format!(
-                    "isolated top-level version contract failed for {args:?}: status={:?}, stdout={stdout:?}, stderr={stderr:?}",
-                    output.status.code()
-                )
-                .into());
-            }
-
-            let after = snapshot_tree(&root)?;
-            if after != before {
-                return Err(format!(
-                    "version-like input changed the isolated cwd for {args:?}:\n{}",
-                    snapshot_diff(&before, &after)
-                )
-                .into());
-            }
-            if !config_path.exists() || artifact_path.exists() {
-                return Err(format!(
-                    "version-like input changed config/artifact paths for {args:?}"
-                )
-                .into());
-            }
-            let config_after = std::fs::read(&config_path)?;
-            if config_after != config_before {
-                return Err(format!(
-                    "version-like input changed the pre-existing config for {args:?}"
-                )
-                .into());
-            }
-            let is_diff_file_case = args.len() == 3 && args[1] == "--diff";
-            if !is_diff_file_case
-                && (stdout.contains(&workspace_text) || stderr.contains(&workspace_text))
-            {
-                return Err(format!(
-                    "version-like input depended on the workspace path for {args:?}"
-                )
-                .into());
-            }
-        }
-        Ok(())
-    })();
-    let cleanup = std::fs::remove_dir_all(&root);
-    let profile_cleanup = cleanup_temp_dir(coverage_root.as_deref());
-    match (result, cleanup, profile_cleanup) {
-        (Ok(()), Ok(()), Ok(())) => Ok(()),
-        (Err(error), Ok(()), Ok(())) => Err(error.to_string()),
-        (Ok(()), Err(error), Ok(())) => Err(format!("cleanup failed: {error}")),
-        (Ok(()), Ok(()), Err(error)) => Err(format!("coverage cleanup failed: {error}")),
-        (Err(error), Err(cleanup_error), Ok(())) => Err(format!(
-            "version contract failed: {error}; cleanup failed: {cleanup_error}"
-        )),
-        (Err(error), Ok(()), Err(profile_error)) => Err(format!(
-            "version contract failed: {error}; coverage cleanup failed: {profile_error}"
-        )),
-        (Ok(()), Err(cleanup_error), Err(profile_error)) => Err(format!(
-            "cleanup failed: {cleanup_error}; coverage cleanup failed: {profile_error}"
-        )),
-        (Err(error), Err(cleanup_error), Err(profile_error)) => Err(format!(
-            "version contract failed: {error}; cleanup failed: {cleanup_error}; coverage cleanup failed: {profile_error}"
-        )),
-    }
-}
-
-#[test]
-fn help_runs() {
-    let output = run_ripr(&["--help"]);
-    assert_success(&output);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("find changed Rust code where nearby tests"));
-    assert!(stdout.contains("Usage:"));
-}
-
-/// The default screen is a first screen, not the catalog. Substring checks alone
-/// would still pass if it grew back into the 91-line command dump it used to be,
-/// so this pins the four things a first-time reader must get without opting in:
-/// a bounded screen, one runnable first action, the advisory boundary, and the
-/// route to the rest (#1613).
-#[test]
-fn help_leads_with_a_bounded_first_screen_that_routes_onward() {
-    let output = run_ripr(&["--help"]);
-    assert_success(&output);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    let lines = stdout.lines().count();
-    assert!(
-        lines <= 40,
-        "the default help screen should stay scannable, got {lines} lines:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("ripr doctor"),
-        "the first screen should name a runnable first action, got:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("does not run mutants"),
-        "the advisory boundary must not be behind --all, got:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("ripr help --all"),
-        "the first screen should route to the full reference, got:\n{stdout}"
-    );
-}
-
-/// `--all` is the escape hatch the bounded screen promises, so it has to be
-/// reachable from the binary and actually carry the commands the short screen
-/// drops.
-#[test]
-fn help_all_prints_the_full_command_reference() {
-    let output = run_ripr(&["help", "--all"]);
-    assert_success(&output);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    let short = run_ripr(&["--help"]);
-    assert_success(&short);
-    let short_stdout = String::from_utf8_lossy(&short.stdout);
-    assert!(
-        stdout.lines().count() > short_stdout.lines().count(),
-        "help --all should be longer than the default screen, got {} vs {} lines",
-        stdout.lines().count(),
-        short_stdout.lines().count()
-    );
-
-    for command in ["ripr pr-summary", "ripr annotations", "ripr gate evaluate"] {
-        assert!(
-            stdout.contains(command),
-            "help --all should document `{command}`, got:\n{stdout}"
-        );
-    }
-}
-
-#[test]
-fn unknown_command_typo_reports_nearest_known_command() {
-    let output = run_ripr(&["chekc"]);
-    assert_failure(&output);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("unknown command \"chekc\". Did you mean `check`? Run `ripr --help`."),
-        "stderr should include a typo recovery hint, got:
-{stderr}"
-    );
-}
-
-#[test]
-fn check_human_output_reports_sample_findings() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff();
-    assert!(diff.exists());
-
-    let diff = diff.display().to_string();
-    let output = run_ripr(&["check", "--root", &root, "--diff", &diff]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Summary: 4 probe(s)"));
-    assert!(stdout.contains("Start here:"));
-    assert!(stdout.contains("Static exposure: weakly_exposed"));
-    assert!(stdout.contains("Evidence:"));
-    assert!(stdout.contains("Missing discriminator:"));
-    assert!(stdout.contains("Next step:"));
-    assert!(stdout.contains("lower-priority finding(s) omitted"));
-    assert!(stdout.contains("--format human-full"));
-}
-
-#[test]
-fn check_from_a_subcrate_discloses_workspace_root_and_honors_explicit_root() -> Result<(), String> {
-    let bin = env!("CARGO_BIN_EXE_ripr");
-    let subcrate = workspace_root().join("crates/ripr");
-    let implicit = run_command(
-        bin,
-        Some(&subcrate),
-        &["check", "--base", "HEAD", "--format", "json"],
-    )
-    .map_err(|error| format!("run implicit-root check: {error}"))?;
-    assert_success(&implicit);
-    let expected_root = workspace_root()
-        .canonicalize()
-        .map_err(|error| format!("canonicalize workspace root: {error}"))?;
-    let expected_disclosure = format!(
-        "ripr: resolved workspace root to {} (Cargo.toml contains [workspace])",
-        expected_root.display()
-    );
-    assert!(
-        String::from_utf8_lossy(&implicit.stderr).contains(&expected_disclosure),
-        "stderr:\n{}",
-        String::from_utf8_lossy(&implicit.stderr)
-    );
-
-    let root = workspace_root().display().to_string();
-    let explicit = run_command(
-        bin,
-        Some(&subcrate),
-        &[
-            "check", "--root", &root, "--base", "HEAD", "--format", "json",
-        ],
-    )
-    .map_err(|error| format!("run explicit-root check: {error}"))?;
-    assert_success(&explicit);
-    assert!(
-        !String::from_utf8_lossy(&explicit.stderr).contains("resolved workspace root to"),
-        "explicit --root must skip implicit resolution; stderr:\n{}",
-        String::from_utf8_lossy(&explicit.stderr)
-    );
-    Ok(())
-}
-
-#[test]
-fn check_from_a_directory_without_a_workspace_does_not_disclose_resolution() -> Result<(), String> {
-    let bin = env!("CARGO_BIN_EXE_ripr");
-    let root = unique_external_workspace("check-no-workspace")?;
-    std::fs::create_dir_all(root.join("src"))
-        .map_err(|error| format!("create fixture source: {error}"))?;
-    std::fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"check-no-workspace\"\nversion = \"0.1.0\"\n",
-    )
-    .map_err(|error| format!("write fixture manifest: {error}"))?;
-    std::fs::write(root.join("src/lib.rs"), "pub fn value() -> i32 { 1 }\n")
-        .map_err(|error| format!("write fixture source: {error}"))?;
-    let diff = root.join("change.diff");
-    std::fs::write(
-        &diff,
-        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn value() -> i32 { 1 }\n+pub fn value() -> i32 { 2 }\n",
-    )
-    .map_err(|error| format!("write fixture diff: {error}"))?;
-
-    let diff_arg = diff.display().to_string();
-    let output = run_command(
-        bin,
-        Some(&root),
-        &["check", "--diff", &diff_arg, "--format", "json"],
-    )
-    .map_err(|error| format!("run no-workspace check: {error}"))?;
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let success = output.status.success();
-    let no_disclosure = !stderr.contains("resolved workspace root to");
-    std::fs::remove_dir_all(&root).map_err(|error| format!("remove fixture: {error}"))?;
-    if !success {
-        return Err(format!(
-            "no-workspace check failed\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            stderr
-        ));
-    }
-    if !no_disclosure {
-        return Err(format!(
-            "no-workspace check unexpectedly disclosed resolution\nstderr:\n{stderr}"
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn config_validate_discovers_parent_config_from_nested_directory() -> Result<(), String> {
-    let bin = env!("CARGO_BIN_EXE_ripr");
-    let root = unique_external_workspace("config-validate-parent")?;
-    let nested = root.join("crates/member");
-    std::fs::create_dir_all(&nested)
-        .map_err(|error| format!("create nested config directory: {error}"))?;
-    let config_path = root.join("ripr.toml");
-    std::fs::write(&config_path, "[analysis]\nmode = \"not-a-mode\"\n")
-        .map_err(|error| format!("write invalid parent config: {error}"))?;
-    let expected_config_path = config_path
-        .canonicalize()
-        .map_err(|error| format!("canonicalize parent config: {error}"))?;
-
-    let output = run_command(bin, Some(&nested), &["config", "validate"])
-        .map_err(|error| format!("run nested config validate: {error}"))?;
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    let success = output.status.success();
-    std::fs::remove_dir_all(&root).map_err(|error| format!("remove config fixture: {error}"))?;
-    if success {
-        return Err(format!(
-            "nested config validate unexpectedly accepted invalid parent config\nstdout:\n{}\nstderr:\n{stderr}",
-            String::from_utf8_lossy(&output.stdout)
-        ));
-    }
-    if !stderr.contains(&expected_config_path.display().to_string()) {
-        return Err(format!(
-            "nested config validate did not report parent config path {}\nstderr:\n{stderr}",
-            expected_config_path.display()
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
-    let root = ".";
-    let diff = "crates/ripr/examples/sample/example.diff";
-    let output = run_ripr_in_workspace(&["check", "--root", root, "--diff", diff])
-        .map_err(|err| err.to_string())?;
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let explain_line = stdout
-        .lines()
-        .find(|line| line.starts_with("  ripr explain "))
-        .ok_or_else(|| format!("check output omitted explain command:\n{stdout}"))?;
-    let context_line = stdout
-        .lines()
-        .find(|line| line.starts_with("  ripr context "))
-        .ok_or_else(|| format!("check output omitted context command:\n{stdout}"))?;
-    let explain_args = explain_line.split_whitespace().collect::<Vec<_>>();
-    let context_args = context_line.split_whitespace().collect::<Vec<_>>();
-    if explain_args.first() != Some(&"ripr") || context_args.first() != Some(&"ripr") {
-        return Err(format!(
-            "unexpected navigation commands:\n{explain_line}\n{context_line}"
-        ));
-    }
-
-    let explain = run_ripr_in_workspace(&explain_args[1..]).map_err(|err| err.to_string())?;
-    assert_success(&explain);
-    let selector = explain_args
-        .last()
-        .copied()
-        .ok_or_else(|| "explain command omitted selector".to_string())?;
-    let context = run_ripr_in_workspace(&context_args[1..]).map_err(|err| err.to_string())?;
-    assert_success(&context);
-    if !String::from_utf8_lossy(&explain.stdout).contains(&format!(
-        "Next: ripr context --root {root} --diff {diff} --at {selector}"
-    )) {
-        return Err("explain output omitted its scope-preserving context command".to_string());
-    }
-    if !String::from_utf8_lossy(&context.stdout).contains("\"version\": \"1.0\"") {
-        return Err("context command did not return its JSON packet".to_string());
-    }
-    Ok(())
-}
-
-#[test]
-fn check_navigation_replays_explicit_draft_over_configured_ready() -> Result<(), String> {
-    let (root, diff) =
-        agent_brief_sample_workspace("navigation-explicit-draft").map_err(|err| err.to_string())?;
-    std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"ready\"\n")
-        .map_err(|err| format!("write ripr.toml: {err}"))?;
-    let root_arg = root.display().to_string();
-    let diff_arg = diff.display().to_string();
-    let output = run_ripr(&[
-        "check", "--root", &root_arg, "--diff", &diff_arg, "--mode", "draft",
-    ]);
-    assert_success(&output);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let explain_line = stdout
-        .lines()
-        .find(|line| line.starts_with("  ripr explain "))
-        .ok_or_else(|| format!("check output omitted explain command:\n{stdout}"))?;
-    let context_line = stdout
-        .lines()
-        .find(|line| line.starts_with("  ripr context "))
-        .ok_or_else(|| format!("check output omitted context command:\n{stdout}"))?;
-    if !explain_line.contains("--mode draft") || !context_line.contains("--mode draft") {
-        return Err(format!(
-            "explicit draft override was omitted:\n{explain_line}\n{context_line}"
-        ));
-    }
-    // #2816: Do NOT split_whitespace the Bash-rendered display line into argv.
-    // On Windows, backslash paths are POSIX-single-quoted by the shell_arg
-    // encoder; split_whitespace preserves those quotes as literal bytes,
-    // producing an invalid path (OS error 123). Instead, construct the argv
-    // from known typed values and extract only the finding selector from the
-    // display (it is a simple `probe:...` token with no shell quoting).
-    let selector = explain_line
-        .split_whitespace()
-        .find(|token| token.starts_with("probe:"))
-        .ok_or_else(|| format!("explain line has no probe selector:\n{explain_line}"))?
-        .to_string();
-    let explain_args: Vec<&str> = vec![
-        "explain", "--root", &root_arg, "--diff", &diff_arg, "--mode", "draft", &selector,
-    ];
-    let explain = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &explain_args)
-        .map_err(|err| format!("run explicit-draft explain command: {err}"))?;
-    assert_success(&explain);
-    let context_args: Vec<&str> = vec![
-        "context", "--root", &root_arg, "--diff", &diff_arg, "--mode", "draft", "--at", &selector,
-    ];
-    let context = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &context_args)
-        .map_err(|err| format!("run explicit-draft context command: {err}"))?;
-    assert_success(&context);
-    Ok(())
-}
-
-#[test]
-fn check_json_output_has_stable_contract_fields() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&["check", "--root", &root, "--diff", &diff, "--json"]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schema_version": "0.2""#));
-    assert!(stdout.contains(r#""classification": "weakly_exposed""#));
-    assert!(stdout.contains(r#""evidence_path""#));
-    assert!(stdout.contains(r#""flow_sinks""#));
-    assert!(stdout.contains(r#""assertion_texts""#));
-    assert!(stdout.contains(r#""activation""#));
-    assert!(stdout.contains(r#""missing_discriminators""#));
-    assert!(stdout.contains(r#""oracle_kind""#));
-    assert!(stdout.contains(r#""recommended_next_step""#));
-    assert!(stdout.contains(r#""suggested_next_action""#));
-}
-
-// â”€â”€ `check --suppression-policy` (#1441) â”€â”€
-
-fn write_suppression_policy(label: &str, text: &str) -> Result<PathBuf, String> {
-    let dir = unique_temp_workspace(label);
-    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
-    let path = dir.join("ripr-suppressions.toml");
-    std::fs::write(&path, text).map_err(|err| format!("write {}: {err}", path.display()))?;
-    Ok(path)
-}
-
-#[test]
-fn check_json_suppression_policy_marks_findings_and_adjusts_summary() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let policy = write_suppression_policy(
-        "suppression-json",
-        "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"crates/ripr/examples/sample/**\"\nreason = \"sample surface accepted for this smoke test\"\nowner = \"repo-owner\"\n",
-    )?;
-    let policy_arg = policy.display().to_string();
-
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--json",
-        "--suppression-policy",
-        &policy_arg,
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let value: serde_json::Value = serde_json::from_str(&stdout)
-        .map_err(|err| format!("check JSON should parse: {err}\n{stdout}"))?;
-
-    let findings = value["findings"]
-        .as_array()
-        .ok_or("findings must be an array")?;
-    assert!(!findings.is_empty(), "sample diff must produce findings");
-    for finding in findings {
-        assert_eq!(
-            finding["suppressed"], true,
-            "every sample finding lives under the suppressed glob"
-        );
-        assert_eq!(finding["suppressed_by"], "crates/ripr/examples/sample/**");
-    }
-    assert_eq!(
-        value["summary"]["suppressed_by_policy"].as_u64(),
-        Some(findings.len() as u64)
-    );
-    // Per-class buckets count unsuppressed findings only.
-    assert_eq!(value["summary"]["weakly_exposed"].as_u64(), Some(0));
-    // `findings` stays the total rendered count.
-    assert_eq!(
-        value["summary"]["findings"].as_u64(),
-        Some(findings.len() as u64)
-    );
-    assert_eq!(value["suppression_policy"]["path"], policy_arg.as_str());
-    assert_eq!(
-        value["suppression_policy"]["warnings"]
-            .as_array()
-            .map(Vec::len),
-        Some(0)
-    );
-    Ok(())
-}
-
-#[test]
-fn check_human_suppression_policy_lists_suppressed_findings_compactly() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let policy = write_suppression_policy(
-        "suppression-human",
-        "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"crates/ripr/examples/sample/**\"\nreason = \"sample surface accepted for this smoke test\"\nowner = \"repo-owner\"\n",
-    )?;
-    let policy_arg = policy.display().to_string();
-
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--suppression-policy",
-        &policy_arg,
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("Suppressed by policy"),
-        "human output must disclose policy application: {stdout}"
-    );
-    assert!(stdout.contains("(selector: crates/ripr/examples/sample/**)"));
-    assert!(
-        !stdout.contains("Next step\n"),
-        "suppressed findings must not render detailed blocks: {stdout}"
-    );
-    Ok(())
-}
-
-#[test]
-fn check_suppression_policy_missing_file_fails_closed() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--json",
-        "--suppression-policy",
-        "does/not/exist.toml",
-    ]);
-    assert_failure(&output);
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("failed to read suppression policy"),
-        "stderr: {stderr}"
-    );
-}
-
-#[test]
-fn check_suppression_policy_rejects_unsupported_formats() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let policy = write_suppression_policy(
-        "suppression-sarif",
-        "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"crates/**\"\nreason = \"unused\"\nowner = \"repo-owner\"\n",
-    )?;
-    let policy_arg = policy.display().to_string();
-
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--format",
-        "sarif",
-        "--suppression-policy",
-        &policy_arg,
-    ]);
-    assert_failure(&output);
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("--suppression-policy applies to the findings-based check formats"),
-        "stderr: {stderr}"
-    );
-    Ok(())
-}
-
-// â”€â”€ `gate evaluate --exception-policy` (#1442) â”€â”€
-
-const SMOKE_PR_GUIDANCE_JSON: &str = r#"{
-  "schema_version": "0.1",
-  "summary": {"unchanged_tests": true},
-  "comments": [],
-  "summary_only": [],
-  "suppressed": []
-}"#;
-
-const SMOKE_COMPLETE_GAP_LEDGER_JSON: &str = r#"{
-  "gap_records": [
-    {
-      "gap_id": "gap:pricing",
-      "source_currentness": "candidate_current",
-      "canonical_gap_id": "pricing::discount::threshold",
-      "seam_id": "seam-pricing-threshold",
-      "kind": "MissingBoundaryAssertion",
-      "language": "rust",
-      "language_status": "stable",
-      "scope": "pr_local",
-      "evidence_class": "weakly_exposed",
-      "gap_state": "actionable",
-      "policy_state": "new",
-      "repairability": "repairable",
-      "repair_route": {
-        "route_kind": "AddBoundaryAssertion",
-        "target_file": "tests/pricing.rs",
-        "target_line": 12,
-        "related_test": "tests/pricing.rs::above_threshold_gets_discount",
-        "assertion_shape": "assert_eq!(price(threshold), discounted)",
-        "missing_discriminator": "amount == discount_threshold",
-        "changed_behavior": "amount == discount_threshold",
-        "inspection_command": "ripr agent brief --root . --seam-id seam-pricing-threshold --json"
-      },
-      "anchor": {
-        "file": "src/pricing.rs",
-        "line": 88,
-        "owner": "price",
-        "dedupe_fingerprint": "gap:pricing"
-      },
-      "evidence_ids": ["seam-pricing"],
-      "projection_eligibility": {
-        "gate_candidate": {
-          "eligible": true,
-          "reason": "new_repairable_pr_local_gap"
-        }
-      },
-      "verification_commands": ["cargo xtask fixtures boundary_gap"],
-      "receipt_command": "ripr receipt write --gap pricing::discount::threshold",
-      "safe_gate_predicate": {
-        "policy_target_enabled": true,
-        "suppressed": false,
-        "waived": false,
-        "acknowledged_only": false,
-        "baseline_known": false,
-        "preview_language": false,
-        "static_unknown_only": false
-      }
-    }
-  ]
-}"#;
-
-fn write_exception_ledger(
-    dir: &std::path::Path,
-    review_after: &str,
-    expires: &str,
-) -> Result<PathBuf, String> {
-    let path = dir.join("quality-gate-exceptions.toml");
-    let ledger = format!(
-        "schema_version = 1\npolicy = \"quality-gate-exceptions\"\nstatus = \"active\"\ndue_review = \"fail\"\n\n[[exception]]\nid = \"total-burndown\"\nkind = \"temporary_burndown\"\nscope = \"ripr_plus_total\"\nowner = \"proof-lane\"\nreason = \"Pre-existing gaps predate the gate.\"\nfinal_target = \"unresolved total = 0\"\nevidence = \"target/receipts/quality/ripr-plus.json\"\nremoval_criteria = \"final mode requires zero\"\ncreated = \"2026-01-01\"\nreview_after = \"{review_after}\"\nexpires = \"{expires}\"\n"
-    );
-    std::fs::write(&path, ledger).map_err(|err| format!("write {}: {err}", path.display()))?;
-    Ok(path)
-}
-
-#[test]
-fn gate_evaluate_exception_policy_active_ledger_reports_and_passes() -> Result<(), String> {
-    let dir = unique_temp_workspace("gate-exception-active");
-    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
-    let guidance = dir.join("comments.json");
-    std::fs::write(&guidance, SMOKE_PR_GUIDANCE_JSON)
-        .map_err(|err| format!("write guidance: {err}"))?;
-    let ledger = write_exception_ledger(&dir, "9999-01-01", "9999-12-31")?;
-    let out = dir.join("gate-decision.json");
-
-    let output = run_ripr(&[
-        "gate",
-        "evaluate",
-        "--pr-guidance",
-        &guidance.display().to_string(),
-        "--exception-policy",
-        &ledger.display().to_string(),
-        "--out",
-        &out.display().to_string(),
-    ]);
-    assert_success(&output);
-
-    let decision = std::fs::read_to_string(&out).map_err(|err| format!("read out: {err}"))?;
-    let value: serde_json::Value = serde_json::from_str(&decision)
-        .map_err(|err| format!("gate decision should parse: {err}\n{decision}"))?;
-    assert_eq!(value["exception_policy"]["active_count"], 1);
-    assert_eq!(
-        value["exception_policy"]["violations"]
-            .as_array()
-            .map(Vec::len),
-        Some(0)
-    );
-    assert_ne!(value["status"], "blocked");
-    Ok(())
-}
-
-#[test]
-fn gate_evaluate_exception_policy_expired_ledger_blocks_with_nonzero_exit() -> Result<(), String> {
-    let dir = unique_temp_workspace("gate-exception-expired");
-    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
-    let guidance = dir.join("comments.json");
-    std::fs::write(&guidance, SMOKE_PR_GUIDANCE_JSON)
-        .map_err(|err| format!("write guidance: {err}"))?;
-    let ledger = write_exception_ledger(&dir, "2000-01-01", "2000-06-01")?;
-    let out = dir.join("gate-decision.json");
-
-    let output = run_ripr(&[
-        "gate",
-        "evaluate",
-        "--pr-guidance",
-        &guidance.display().to_string(),
-        "--exception-policy",
-        &ledger.display().to_string(),
-        "--out",
-        &out.display().to_string(),
-    ]);
-    assert_failure(&output);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("quality_exception_expired"),
-        "stderr should include the blocking exception-policy detail: {stderr}"
-    );
-
-    let decision = std::fs::read_to_string(&out).map_err(|err| format!("read out: {err}"))?;
-    let value: serde_json::Value = serde_json::from_str(&decision)
-        .map_err(|err| format!("gate decision should parse: {err}\n{decision}"))?;
-    assert_eq!(value["status"], "blocked");
-    assert!(
-        value["exception_policy"]["violations"]
-            .as_array()
-            .is_some_and(|violations| violations
-                .iter()
-                .any(|violation| violation["kind"] == "quality_exception_expired")),
-        "decision: {decision}"
-    );
-    Ok(())
-}
-
-#[test]
-fn gate_evaluate_exception_policy_missing_ledger_is_config_error() -> Result<(), String> {
-    let dir = unique_temp_workspace("gate-exception-missing");
-    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
-    let guidance = dir.join("comments.json");
-    std::fs::write(&guidance, SMOKE_PR_GUIDANCE_JSON)
-        .map_err(|err| format!("write guidance: {err}"))?;
-    let out = dir.join("gate-decision.json");
-
-    let output = run_ripr(&[
-        "gate",
-        "evaluate",
-        "--pr-guidance",
-        &guidance.display().to_string(),
-        "--exception-policy",
-        &dir.join("does-not-exist.toml").display().to_string(),
-        "--out",
-        &out.display().to_string(),
-    ]);
-    assert_failure(&output);
-    // A config error means the evaluation could not complete: exit 2, the
-    // same code as any other usage or operational failure.
-    assert_eq!(
-        output.status.code(),
-        Some(2),
-        "a config error must exit with code 2"
-    );
-
-    let decision = std::fs::read_to_string(&out).map_err(|err| format!("read out: {err}"))?;
-    assert!(
-        decision.contains("failed to read exception policy"),
-        "decision: {decision}"
-    );
-    Ok(())
-}
-
-#[test]
-fn gate_evaluate_complete_gap_ledger_blocks_only_in_explicit_blocking_mode() -> Result<(), String> {
-    let dir = unique_temp_workspace("gate-gap-ledger-cli-blocking");
-    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
-    let ledger = dir.join("gap-ledger.json");
-    std::fs::write(&ledger, SMOKE_COMPLETE_GAP_LEDGER_JSON)
-        .map_err(|err| format!("write gap ledger: {err}"))?;
-    let out = dir.join("gate-decision.json");
-
-    let output = run_ripr(&[
-        "gate",
-        "evaluate",
-        "--root",
-        &dir.display().to_string(),
-        "--gap-ledger",
-        &ledger.display().to_string(),
-        "--mode",
-        "acknowledgeable",
-        "--out",
-        &out.display().to_string(),
-    ]);
-    assert_failure(&output);
-    // A blocked gate decision is a successful evaluation reaching its blocking
-    // decision: the process exits 3, never the could-not-complete code 2.
-    assert_eq!(
-        output.status.code(),
-        Some(3),
-        "a blocked gate decision must exit with code 3"
-    );
-
-    let decision = std::fs::read_to_string(&out).map_err(|err| format!("read out: {err}"))?;
-    let value: serde_json::Value = serde_json::from_str(&decision)
-        .map_err(|err| format!("gate decision should parse: {err}\n{decision}"))?;
-    assert_eq!(value["status"], "blocked");
-    assert_eq!(value["summary"]["blocking"], 1);
-    assert_eq!(value["decisions"][0]["source"], "gap_decision_ledger");
-    assert_eq!(
-        value["decisions"][0]["repair_route"]["seam_id"],
-        "seam-pricing-threshold"
-    );
-    assert_eq!(
-        value["decisions"][0]["repair_route"]["inspection_command"],
-        "ripr agent brief --root . --seam-id seam-pricing-threshold --json"
-    );
-    assert!(decision.contains("static_ripr_evidence_only"));
-    Ok(())
-}
-
-#[test]
-fn gate_evaluate_complete_gap_ledger_is_advisory_in_visible_only_mode() -> Result<(), String> {
-    let dir = unique_temp_workspace("gate-gap-ledger-cli-visible");
-    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
-    let ledger = dir.join("gap-ledger.json");
-    std::fs::write(&ledger, SMOKE_COMPLETE_GAP_LEDGER_JSON)
-        .map_err(|err| format!("write gap ledger: {err}"))?;
-    let out = dir.join("gate-decision.json");
-
-    let output = run_ripr(&[
-        "gate",
-        "evaluate",
-        "--root",
-        &dir.display().to_string(),
-        "--gap-ledger",
-        &ledger.display().to_string(),
-        "--mode",
-        "visible-only",
-        "--out",
-        &out.display().to_string(),
-    ]);
-    assert_success(&output);
-
-    let decision = std::fs::read_to_string(&out).map_err(|err| format!("read out: {err}"))?;
-    let value: serde_json::Value = serde_json::from_str(&decision)
-        .map_err(|err| format!("gate decision should parse: {err}\n{decision}"))?;
-    assert_eq!(value["status"], "advisory");
-    assert_eq!(value["summary"]["blocking"], 0);
-    assert_eq!(value["summary"]["advisory"], 1);
-    assert_eq!(value["decisions"][0]["decision"], "advisory");
-    assert_eq!(value["decisions"][0]["source"], "gap_decision_ledger");
-    assert_eq!(
-        value["decisions"][0]["repair_route"]["seam_id"],
-        "seam-pricing-threshold"
-    );
-    assert_eq!(
-        value["decisions"][0]["repair_route"]["inspection_command"],
-        "ripr agent brief --root . --seam-id seam-pricing-threshold --json"
-    );
-    assert!(decision.contains("static_ripr_evidence_only"));
-    Ok(())
-}
-
-#[test]
-fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr_with_env(
-        &["check", "--root", &root, "--diff", &diff, "--json"],
-        &[("RIPR_MAX_DIFF_CHANGED_RUST_LINES", "1")],
-    );
-    assert_failure(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let value: serde_json::Value = serde_json::from_str(&stdout)
-        .map_err(|err| format!("limited stdout should parse as JSON: {err}\n{stdout}"))?;
-    assert_eq!(value["schema_version"], "0.2");
-    assert_eq!(
-        value["analysis_scope"]["run_status"],
-        "diff_scope_oversized"
-    );
-    assert_eq!(value["analysis_scope"]["downstream_consumable"], false);
-    assert_eq!(
-        value["run_limitations"][0]["category"],
-        "diff_scope_oversized"
-    );
-    assert_eq!(value["run_limitations"][0]["downstream_consumable"], false);
-    assert_eq!(value["findings"].as_array().map(Vec::len), Some(0));
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("diff_scope_oversized"),
-        "stderr should still report failed analysis: {stderr}"
-    );
-    Ok(())
-}
-
-#[test]
-fn diff_json_reports_changed_surface_before_full_repo_context() -> Result<(), String> {
-    let workspace = unique_temp_workspace("diff-first");
-    std::fs::create_dir_all(workspace.join("src")).map_err(|e| format!("create src dir: {e}"))?;
-    std::fs::write(
-        workspace.join("Cargo.toml"),
-        "[package]\nname=\"ripr-diff-first-fixture\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
-    )
-    .map_err(|e| format!("write Cargo.toml: {e}"))?;
-    std::fs::write(
-        workspace.join("src/lib.rs"),
-        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
-    )
-    .map_err(|e| format!("write base src/lib.rs: {e}"))?;
-    run_git(&workspace, &["init"])?;
-    run_git(
-        &workspace,
-        &["config", "user.email", "ripr@example.invalid"],
-    )?;
-    run_git(&workspace, &["config", "user.name", "RIPR Test"])?;
-    run_git(&workspace, &["add", "."])?;
-    run_git(&workspace, &["commit", "-m", "base"])?;
-    run_git(
-        &workspace,
-        &["update-ref", "refs/remotes/origin/main", "HEAD"],
-    )?;
-    std::fs::write(
-        workspace.join("src/lib.rs"),
-        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n",
-    )
-    .map_err(|e| format!("write changed src/lib.rs: {e}"))?;
-    run_git(&workspace, &["add", "src/lib.rs"])?;
-    run_git(&workspace, &["commit", "-m", "change threshold boundary"])?;
-
-    let root = workspace.display().to_string();
-    let output = run_ripr(&[
-        "diff",
-        "--root",
-        &root,
-        "--base",
-        "refs/remotes/origin/main",
-        "--head",
-        "HEAD",
-        "--json",
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let report: serde_json::Value =
-        serde_json::from_str(&stdout).map_err(|e| format!("parse diff JSON: {e}\n{stdout}"))?;
-    assert_eq!(
-        json_pointer_str(&report, "/kind").map_err(|e| e.to_string())?,
-        "ripr_diff"
-    );
-    assert_eq!(
-        json_pointer_str(&report, "/run_status").map_err(|e| e.to_string())?,
-        "diff_complete_full_repo_limited"
-    );
-    assert_eq!(
-        json_pointer_str(&report, "/runtime_status/diff/state").map_err(|e| e.to_string())?,
-        "diff_complete"
-    );
-    assert_eq!(
-        json_pointer_str(&report, "/runtime_status/full_repo_context/state")
-            .map_err(|e| e.to_string())?,
-        "full_repo_limited"
-    );
-    assert!(
-        !json_pointer_bool(
-            &report,
-            "/runtime_status/full_repo_context/downstream_consumable",
-        )
-        .map_err(|e| e.to_string())?
-    );
-    assert_eq!(
-        json_pointer_str(&report, "/changed_files/0/path").map_err(|e| e.to_string())?,
-        "src/lib.rs"
-    );
-    assert_eq!(
-        json_pointer_str(&report, "/receipt/outcome_hint").map_err(|e| e.to_string())?,
-        "diff_complete/full_repo_limited"
-    );
-    assert!(
-        json_pointer_str(&report, "/receipt/path")
-            .map_err(|e| e.to_string())?
-            .contains("diff-first")
-    );
-    let changed_seams = report
-        .pointer("/changed_seams")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| "expected changed_seams array".to_string())?;
-    assert!(
-        !changed_seams.is_empty(),
-        "diff-first report should preserve changed-seam evidence: {stdout}"
-    );
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn agent_brief_diff_scope_outputs_json() -> Result<(), Box<dyn std::error::Error>> {
-    let (root, diff) = agent_brief_sample_workspace("agent-brief-root")?;
-    let root_path = root.display().to_string();
-    let diff = diff.display().to_string();
-    let output = run_ripr(&[
-        "agent",
-        "brief",
-        "--root",
-        &root_path,
-        "--diff",
-        &diff,
-        "--json",
-        "--max-seams",
-        "2",
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schema_version": "0.1""#));
-    assert!(stdout.contains(r#""scope": "working_set""#));
-    assert!(stdout.contains(r#""source": "diff""#));
-    assert!(stdout.contains(r#""returned": 2"#));
-    assert!(stdout.contains(r#""changed_line_intersects_seam""#));
-    assert!(stdout.contains(r#""agent-seam-packets-json""#));
-    assert!(stdout.contains("repo-exposure-json"));
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn test_oracle_assistant_proof_cli_writes_canonical_report()
--> Result<(), Box<dyn std::error::Error>> {
-    let workspace = unique_temp_workspace("assistant-loop-proof");
-    std::fs::create_dir_all(&workspace)?;
-    let out = workspace.join("test-oracle-assistant-proof.json");
-    let out_md = workspace.join("test-oracle-assistant-proof.md");
-    let out_arg = out.display().to_string();
-    let out_md_arg = out_md.display().to_string();
-    let output = run_ripr_in_workspace(&[
-        "assistant-loop",
-        "proof",
-        "--pr-guidance",
-        "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-guidance.json",
-        "--agent-packet",
-        "fixtures/boundary_gap/expected/editor-agent-loop/agent-brief.json",
-        "--before",
-        "fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json",
-        "--after",
-        "fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json",
-        "--receipt",
-        "fixtures/boundary_gap/expected/editor-agent-loop/agent-receipt.json",
-        "--ledger",
-        "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-evidence-ledger.json",
-        "--out",
-        &out_arg,
-        "--out-md",
-        &out_md_arg,
-    ])?;
-    assert_success(&output);
-
-    let fixture = workspace_root()
-        .join("fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical");
-    let expected_json = std::fs::read_to_string(fixture.join("test-oracle-assistant-proof.json"))?;
-    let actual_json = std::fs::read_to_string(&out)?;
-    assert_eq!(
-        normalize_newlines(actual_json.trim_end()),
-        normalize_newlines(expected_json.trim_end()),
-        "assistant-loop proof JSON fixture drifted"
-    );
-    let expected_md = std::fs::read_to_string(fixture.join("test-oracle-assistant-proof.md"))?;
-    let actual_md = std::fs::read_to_string(&out_md)?;
-    assert_eq!(
-        normalize_newlines(&actual_md),
-        normalize_newlines(&expected_md),
-        "assistant-loop proof Markdown fixture drifted"
-    );
-    std::fs::remove_dir_all(workspace)?;
-    Ok(())
-}
-
-#[test]
-fn test_oracle_assistant_proof_cli_writes_unchanged_control()
--> Result<(), Box<dyn std::error::Error>> {
-    let workspace = unique_temp_workspace("assistant-loop-proof-unchanged");
-    std::fs::create_dir_all(&workspace)?;
-    let out = workspace.join("assistant-proof.json");
-    let out_md = workspace.join("assistant-proof.md");
-    let output = run_ripr_in_workspace(&[
-        "assistant-loop",
-        "proof",
-        "--root",
-        ".",
-        "--pr-guidance",
-        "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-guidance.json",
-        "--agent-packet",
-        "fixtures/boundary_gap/expected/editor-agent-loop/agent-brief.json",
-        "--before",
-        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
-        "--after",
-        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
-        "--receipt",
-        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json",
-        "--out",
-        &out.display().to_string(),
-        "--out-md",
-        &out_md.display().to_string(),
-    ])?;
-    assert_success(&output);
-
-    let expected = workspace_root().join(
-        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/assistant-proof.json",
-    );
-    assert_eq!(
-        normalize_newlines(std::fs::read_to_string(out)?.trim_end()),
-        normalize_newlines(std::fs::read_to_string(expected)?.trim_end()),
-        "unchanged assistant-proof fixture drifted"
-    );
-    let markdown = std::fs::read_to_string(out_md)?;
-    assert!(markdown.contains("After: weakly_gripped"));
-    assert!(markdown.contains("State: unchanged"));
-    assert!(markdown.contains("PR ledger: not available"));
-    std::fs::remove_dir_all(workspace)?;
-    Ok(())
-}
-
-#[test]
-fn assistant_loop_health_cli_writes_multi_proof_report() -> Result<(), Box<dyn std::error::Error>> {
-    let workspace = unique_temp_workspace("assistant-loop-health");
-    std::fs::create_dir_all(&workspace)?;
-    let out = workspace.join("assistant-loop-health.json");
-    let out_md = workspace.join("assistant-loop-health.md");
-    let out_arg = out.display().to_string();
-    let out_md_arg = out_md.display().to_string();
-    let output = run_ripr_in_workspace(&[
-        "assistant-loop",
-        "health",
-        "--proof",
-        "fixtures/boundary_gap/expected/assistant-loop-health/proofs/complete-improved-proof.json",
-        "--proof",
-        "fixtures/boundary_gap/expected/assistant-loop-health/proofs/unchanged-proof.json",
-        "--proof",
-        "fixtures/boundary_gap/expected/assistant-loop-health/proofs/missing-required-proof.json",
-        "--out",
-        &out_arg,
-        "--out-md",
-        &out_md_arg,
-    ])?;
-    assert_success(&output);
-
-    let fixture =
-        workspace_root().join("fixtures/boundary_gap/expected/assistant-loop-health/multi-proof");
-    let expected_json = std::fs::read_to_string(fixture.join("assistant-loop-health.json"))?;
-    let actual_json = std::fs::read_to_string(&out)?;
-    assert_eq!(
-        normalize_generated_at(normalize_newlines(actual_json.trim_end())),
-        normalize_newlines(expected_json.trim_end()),
-        "assistant-loop health JSON fixture drifted"
-    );
-    let expected_md = std::fs::read_to_string(fixture.join("assistant-loop-health.md"))?;
-    let actual_md = std::fs::read_to_string(&out_md)?;
-    assert_eq!(
-        normalize_newlines(&actual_md),
-        normalize_newlines(&expected_md),
-        "assistant-loop health Markdown fixture drifted"
-    );
-    std::fs::remove_dir_all(workspace)?;
-    Ok(())
-}
-
-#[test]
-fn first_action_cli_writes_actionable_report() -> Result<(), Box<dyn std::error::Error>> {
-    let workspace = unique_temp_workspace("first-action");
-    std::fs::create_dir_all(&workspace)?;
-    let out = workspace.join("first-useful-action.json");
-    let out_md = workspace.join("first-useful-action.md");
-    let out_arg = out.display().to_string();
-    let out_md_arg = out_md.display().to_string();
-    let output = run_ripr_in_workspace(&[
-        "first-action",
-        "--root",
-        "fixtures/boundary_gap/input",
-        "--pr-guidance",
-        "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-guidance.json",
-        "--assistant-proof",
-        "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/test-oracle-assistant-proof.json",
-        "--ledger",
-        "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-evidence-ledger.json",
-        "--out",
-        &out_arg,
-        "--out-md",
-        &out_md_arg,
-    ])?;
-    assert_success(&output);
-
-    let report: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&out)?)?;
-    assert_eq!(json_pointer_str(&report, "/schema_version")?, "0.1");
-    assert_eq!(json_pointer_str(&report, "/kind")?, "first_useful_action");
-    assert_eq!(json_pointer_str(&report, "/status")?, "actionable");
-    assert_eq!(
-        json_pointer_str(&report, "/action_kind")?,
-        "write_focused_test"
-    );
-    assert_eq!(
-        json_pointer_str(&report, "/selected/seam_id")?,
-        "67fc764ba37d77bd"
-    );
-    assert_eq!(
-        json_pointer_str(&report, "/commands/verify")?,
-        "ripr agent verify --root fixtures/boundary_gap/input --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
-    );
-    assert_eq!(
-        json_pointer_str(&report, "/target/suggested_test_name")?,
-        "discounted_total_boundary_discriminator"
-    );
-    assert_eq!(
-        json_pointer_str(&report, "/inputs/assistant_proof")?,
-        "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/test-oracle-assistant-proof.json"
-    );
-
-    let markdown = std::fs::read_to_string(&out_md)?;
-    assert!(markdown.contains("# RIPR First Useful Action"));
-    assert!(markdown.contains("Status: actionable"));
-    assert!(markdown.contains("Action: write_focused_test"));
-    assert!(markdown.contains("Does not run mutation testing."));
-    std::fs::remove_dir_all(workspace)?;
-    Ok(())
-}
-
-#[test]
-fn first_action_cli_preserves_unchanged_control_identity() -> Result<(), Box<dyn std::error::Error>>
-{
-    let workspace = unique_temp_workspace("first-action-unchanged");
-    std::fs::create_dir_all(&workspace)?;
-    let out = workspace.join("first-useful-action.json");
-    let out_md = workspace.join("first-useful-action.md");
-    let output = run_ripr_in_workspace(&[
-        "first-action",
-        "--root",
-        "fixtures/boundary_gap/input",
-        "--pr-guidance",
-        "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-guidance.json",
-        "--assistant-proof",
-        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/assistant-proof.json",
-        "--receipt",
-        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json",
-        "--out",
-        &out.display().to_string(),
-        "--out-md",
-        &out_md.display().to_string(),
-    ])?;
-    assert_success(&output);
-
-    let rendered = std::fs::read_to_string(out)?;
-    assert!(rendered.contains(r#""status": "missing_required_artifact""#));
-    assert!(rendered.contains("receipt movement `unchanged` is not promotable"));
-    assert!(std::fs::read_to_string(out_md)?.contains("missing_required_artifact"));
-    std::fs::remove_dir_all(workspace)?;
-    Ok(())
-}
-
-#[test]
-fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Error>> {
-    let workspace = unique_temp_workspace("first-pr");
-    let reports = workspace.join("target/ripr/reports");
-    std::fs::create_dir_all(&reports)?;
-    let reports_arg = reports.display().to_string();
-    let output = run_ripr_in_workspace(&[
-        "first-pr",
-        "--root",
-        ".",
-        "--base",
-        "HEAD",
-        "--head",
-        "HEAD",
-        "--gap-ledger",
-        "fixtures/first_successful_pr/boundary-gap/inputs/reports/gap-decision-ledger.json",
-        "--out-dir",
-        &reports_arg,
-    ])?;
-    assert_success(&output);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("ripr first-pr - side effects and cost disclosure"));
-    assert!(stdout.contains("cost class:      varies with diff and workspace size"));
-    assert!(stdout.contains(&format!("writes to:       {reports_arg}/")));
-    assert!(stdout.contains("cache location:  target/ripr/cache/"));
-    assert!(stdout.contains("git reads:       yes (diff between base and head)"));
-    assert!(stdout.contains("network:         none"));
-    assert!(stdout.contains("Start here:"));
-    // Summary and Wrote lines render the resolved locations with stable
-    // separators on every host (display_path, not Path::display).
-    let wrote_base = reports_arg.replace('\\', "/");
-    assert!(stdout.contains(&format!("Start here: {wrote_base}/start-here.md")));
-    assert!(stdout.contains(&format!("Wrote {wrote_base}/start-here.json")));
-    assert!(stdout.contains(&format!("Wrote {wrote_base}/start-here.md")));
-    assert!(stdout.contains("State: top_gap"));
-    assert!(stdout.contains("Safe next action: repair one named gap"));
-    assert!(stdout.contains("Top actionable gap: missing boundary assertion"));
-    assert!(stdout.contains("Changed behavior: `amount >= threshold`"));
-    assert!(
-        stdout
-            .contains("Current evidence strength: Static evidence found related Rust test context")
-    );
-    assert!(
-        stdout.contains(
-            "Missing discriminator: Equality-boundary assertion for the changed behavior."
-        )
-    );
-    assert!(
-        stdout.contains(
-            "Focused proof intent: Add a focused boundary assertion in `tests/pricing.rs`"
-        )
-    );
-    assert!(stdout.contains(
-        "Why this matters: A related Rust test reaches this change, but no equality-boundary assertion was found for the changed behavior."
-    ));
-    assert!(stdout.contains("Verify after the test edit: `cargo xtask fixtures boundary_gap`"));
-    assert!(stdout.contains("Receipt after verify: `ripr receipt write --gap "));
-    assert!(stdout.contains("Receipt path: `target/ripr/receipts/"));
-    assert!(stdout.contains("Boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval."));
-
-    let json_path = reports.join("start-here.json");
-    let md_path = reports.join("start-here.md");
-    let report: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&json_path)?)?;
-    assert_eq!(json_pointer_str(&report, "/schema_version")?, "0.1");
-    assert_eq!(json_pointer_str(&report, "/kind")?, "first_pr_start_here");
-    assert_eq!(json_pointer_str(&report, "/status")?, "actionable");
-    assert_eq!(json_pointer_str(&report, "/selected/state")?, "top_gap");
-    assert_eq!(
-        json_pointer_str(&report, "/selected/kind")?,
-        "MissingBoundaryAssertion"
-    );
-    assert_eq!(
-        json_pointer_str(&report, "/selected/repair/route")?,
-        "AddBoundaryAssertion"
-    );
-    assert_eq!(
-        json_pointer_str(&report, "/selected/static_evidence_boundary")?,
-        "static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval."
-    );
-    assert_eq!(
-        json_pointer_str(&report, "/selected/why")?,
-        "A related Rust test reaches this change, but no equality-boundary assertion was found for the changed behavior."
-    );
-    assert_eq!(json_pointer_str(&report, "/inputs/base")?, "HEAD");
-    assert_eq!(json_pointer_str(&report, "/inputs/head")?, "HEAD");
-    assert_eq!(json_pointer_str(&report, "/preflight/mode")?, "write");
-    assert!(
-        report
-            .pointer("/preflight/checks")
-            .is_some_and(|value| value.is_array())
-    );
-    assert_eq!(
-        json_pointer_str(&report, "/commands/verify")?,
-        "cargo xtask fixtures boundary_gap"
-    );
-
-    let markdown = std::fs::read_to_string(&md_path)?;
-    assert!(markdown.contains("# RIPR First PR Start Here"));
-    assert!(markdown.contains("Status: advisory"));
-    assert!(markdown.contains("## Preflight"));
-    assert!(markdown.contains("- Top actionable gap: missing boundary assertion"));
-    assert!(
-        markdown.contains(
-            "- Current evidence strength: Static evidence found related Rust test context"
-        )
-    );
-    assert!(markdown.contains("- Missing discriminator: Equality-boundary assertion"));
-    assert!(markdown.contains("- Receipt after verify: `ripr receipt write --gap "));
-    assert!(markdown.contains("- Receipt path: `target/ripr/receipts/"));
-    assert!(markdown.contains("Pass/fail authority remains with explicit gate-decision artifacts"));
-    let check_output = run_ripr_in_workspace(&[
-        "start-here",
-        "--root",
-        ".",
-        "--base",
-        "HEAD",
-        "--head",
-        "HEAD",
-        "--gap-ledger",
-        "fixtures/first_successful_pr/boundary-gap/inputs/reports/gap-decision-ledger.json",
-        "--out-dir",
-        &reports_arg,
-        "--check",
-    ])?;
-    assert_success(&check_output);
-    let check_stdout = String::from_utf8_lossy(&check_output.stdout);
-    assert!(check_stdout.contains("Start here:"));
-    assert!(check_stdout.contains("State: top_gap"));
-    assert!(check_stdout.contains("First PR start-here packet ok:"));
-    // --check validates without rewriting, so the disclosure must not claim writes.
-    assert!(
-        check_stdout
-            .contains("writes to:       none (--check validates an existing start-here packet)")
-    );
-    std::fs::remove_dir_all(workspace)?;
-    Ok(())
-}
-
-#[test]
-fn first_pr_check_missing_packet_suggests_rooted_out_dir() -> Result<(), Box<dyn std::error::Error>>
-{
-    let workspace = make_temp_workspace(None)?;
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["first-pr", "--root", &root, "--check"]);
-    assert_failure(&output);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("it does not create one"));
-    // The suggested recovery must reproduce the exact directory `--check`
-    // validated: rooted at `--root`, never CWD-relative, with stable
-    // separators on every host.
-    let expected_out_dir = workspace
-        .join("target/ripr/reports")
-        .display()
-        .to_string()
-        .replace('\\', "/");
-    let plain = format!("--out-dir {expected_out_dir}");
-    let quoted = format!("--out-dir '{expected_out_dir}'");
-    assert!(stderr.contains(&plain) || stderr.contains(&quoted));
-    assert!(!stderr.contains("--out-dir target/ripr/reports"));
-    assert!(!stderr.contains("--out-dir 'target/ripr/reports'"));
-    // The missing path renders with stable separators even on Windows.
-    assert!(stderr.contains(&format!("Missing:\n  {expected_out_dir}/start-here.json")));
-    std::fs::remove_dir_all(workspace)?;
-    Ok(())
-}
-
-#[test]
-fn report_packet_index_cli_writes_packet_index() -> Result<(), Box<dyn std::error::Error>> {
-    let workspace = unique_temp_workspace("report-packet-index");
-    let reports = workspace.join("target/ripr/reports");
-    let review = workspace.join("target/ripr/review");
-    std::fs::create_dir_all(&reports)?;
-    std::fs::create_dir_all(&review)?;
-    std::fs::write(
-        reports.join("pr-review-front-panel.md"),
-        "Status: blocked\n",
-    )?;
-    std::fs::write(
-        reports.join("pr-review-front-panel.json"),
-        r#"{"status":"blocked"}"#,
-    )?;
-    std::fs::write(reports.join("gate-decision.md"), "Status: blocked\n")?;
-    std::fs::write(
-        reports.join("gate-decision.json"),
-        r#"{"decision":"blocked"}"#,
-    )?;
-    std::fs::write(reports.join("first-useful-action.md"), "Status: pass\n")?;
-    std::fs::write(review.join("comments.md"), "comments\n")?;
-
-    let out = workspace.join("target/ripr/reports/index.json");
-    let out_md = workspace.join("target/ripr/reports/index.md");
-    let reports_arg = reports.display().to_string();
-    let review_arg = review.display().to_string();
-    let out_arg = out.display().to_string();
-    let out_md_arg = out_md.display().to_string();
-
-    let output = run_ripr(&[
-        "reports",
-        "index",
-        "--reports-dir",
-        &reports_arg,
-        "--review-dir",
-        &review_arg,
-        "--out",
-        &out_arg,
-        "--out-md",
-        &out_md_arg,
-    ]);
-    assert_success(&output);
-
-    let report: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&out)?)?;
-    assert_eq!(json_pointer_str(&report, "/schema_version")?, "0.1");
-    assert_eq!(json_pointer_str(&report, "/kind")?, "report_packet_index");
-    assert_eq!(json_pointer_str(&report, "/status")?, "fail");
-    assert_eq!(
-        json_pointer_str(&report, "/summary/gate_authority")?,
-        "target/ripr/reports/gate-decision.md"
-    );
-    assert!(std::fs::read_to_string(&out_md)?.contains("Gate authority:"));
-
-    std::fs::remove_dir_all(workspace)?;
-    Ok(())
-}
-
-#[test]
-fn agent_brief_diff_scope_omits_configured_off_seams() -> Result<(), Box<dyn std::error::Error>> {
-    let (root, diff) = agent_brief_sample_workspace("agent-brief-config-off")?;
-    std::fs::write(
-        root.join("ripr.toml"),
-        "[severity.seams]\nweakly_gripped = \"off\"\n",
-    )?;
-    let root_path = root.display().to_string();
-    let diff = diff.display().to_string();
-    let output = run_ripr(&[
-        "agent", "brief", "--root", &root_path, "--diff", &diff, "--json",
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""returned": 0"#));
-    assert!(stdout.contains("configured off for weakly_gripped seams"));
-    assert!(!stdout.contains(r#""severity": "off""#));
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_packet_expands_one_brief_seam_by_id() -> Result<(), Box<dyn std::error::Error>> {
-    let (root, diff) = agent_brief_sample_workspace("agent-packet-root")?;
-    let root_path = root.display().to_string();
-    let diff = diff.display().to_string();
-    let brief = run_ripr(&[
-        "agent", "brief", "--root", &root_path, "--diff", &diff, "--json",
-    ]);
-    assert_success(&brief);
-    let brief_stdout = String::from_utf8_lossy(&brief.stdout);
-    let seam_id = json_string_field(&brief_stdout, "seam_id")
-        .ok_or("expected brief output to include a seam_id")?;
-
-    let packet = run_ripr(&[
-        "agent",
-        "packet",
-        "--root",
-        &root_path,
-        "--seam-id",
-        &seam_id,
-        "--json",
-    ]);
-    assert_success(&packet);
-
-    let packet_stdout = String::from_utf8_lossy(&packet.stdout);
-    assert!(packet_stdout.contains(r#""schema_version": "0.4""#));
-    assert!(packet_stdout.contains(r#""analysis_outcome_status": "not_applicable""#));
-    assert!(packet_stdout.contains(r#""packets_total": 1"#));
-    assert!(packet_stdout.contains(&format!(r#""seam_id": "{seam_id}""#)));
-    assert!(packet_stdout.contains(r#""task": "write_targeted_test""#));
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn editor_agent_loop_fixture_outputs_match_expected() -> Result<(), Box<dyn std::error::Error>> {
-    let base = "fixtures/boundary_gap/expected/editor-agent-loop";
-    let seam_id = "67fc764ba37d77bd";
-
-    let packet = run_ripr_in_workspace(&[
-        "agent",
-        "packet",
-        "--root",
-        "fixtures/boundary_gap/input",
-        "--seam-id",
-        seam_id,
-        "--json",
-    ])?;
-    assert_anchored_stdout_matches_fixture(&packet, &format!("{base}/agent-packet.json"))?;
-
-    let brief = run_ripr_in_workspace(&[
-        "agent",
-        "brief",
-        "--root",
-        "fixtures/boundary_gap/input",
-        "--seam-id",
-        seam_id,
-        "--json",
-    ])?;
-    assert_anchored_stdout_matches_fixture(&brief, &format!("{base}/agent-brief.json"))?;
-
-    let artifact_dir = workspace_root().join("target/ripr/test-agent-verify");
-    std::fs::create_dir_all(&artifact_dir)?;
-    let before_artifact = artifact_dir.join("before.repo-exposure.json");
-    let after_artifact = artifact_dir.join("after.repo-exposure.json");
-    bind_repo_exposure_fixture_with_worktree(
-        &workspace_root(),
-        &workspace_root()
-            .join("fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json"),
-        &before_artifact,
-        "dirty",
-    )?;
-    bind_repo_exposure_fixture_with_worktree(
-        &workspace_root(),
-        &workspace_root()
-            .join("fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json"),
-        &after_artifact,
-        "dirty",
-    )?;
-    let before_artifact_path = "target/ripr/test-agent-verify/before.repo-exposure.json";
-    let after_artifact_path = "target/ripr/test-agent-verify/after.repo-exposure.json";
-    let verify = run_ripr_in_workspace(&[
-        "agent",
-        "verify",
-        "--root",
-        ".",
-        "--before",
-        before_artifact_path,
-        "--after",
-        after_artifact_path,
-        "--json",
-    ])?;
-    assert_success(&verify);
-    // The verify JSON binds the exact artifact content commitments (#2922
-    // PR B), which embed the live repository head, so the static golden can
-    // only pin the digest-normalized shape.
-    let expected_verify =
-        std::fs::read_to_string(workspace_root().join(format!("{base}/agent-verify.json")))?;
-    let actual_verify = String::from_utf8(verify.stdout.clone())?;
-    assert_eq!(
-        normalize_agent_verify_fixture(&actual_verify)?,
-        normalize_agent_verify_fixture(&expected_verify)?,
-        "agent verify fixture drifted"
-    );
-    // The receipt path re-binds the exact artifact bytes, so it must consume
-    // the live canonical verify output â€” never the digest-normalized golden.
-    let verify_artifact_path = "target/ripr/test-agent-verify/agent-verify.json";
-    std::fs::write(artifact_dir.join("agent-verify.json"), &verify.stdout)?;
-    let analysis_outcome = run_ripr_in_workspace(&[
-        "check", "--root", ".", "--mode", "draft", "--base", "HEAD", "--format", "json",
-    ])?;
-    assert_success(&analysis_outcome);
-    std::fs::write(
-        artifact_dir.join("analysis-outcome.json"),
-        &analysis_outcome.stdout,
-    )?;
-
-    let out_dir = unique_temp_workspace("agent-receipt-fixture");
-    std::fs::create_dir_all(&out_dir)?;
-    let receipt_path = out_dir.join("agent-receipt.json");
-    let receipt = run_ripr_in_workspace(&[
-        "agent",
-        "receipt",
-        "--root",
-        ".",
-        "--verify-json",
-        verify_artifact_path,
-        "--seam-id",
-        seam_id,
-        "--json",
-        "--out",
-        receipt_path
-            .to_str()
-            .ok_or("receipt path should be utf-8")?,
-    ])?;
-    assert_success(&receipt);
-    let expected_receipt =
-        std::fs::read_to_string(workspace_root().join(base).join("agent-receipt.json"))?;
-    let actual_receipt = std::fs::read_to_string(&receipt_path)?;
-    let actual_receipt_value: serde_json::Value = serde_json::from_str(&actual_receipt)?;
-    assert_eq!(actual_receipt_value["status"], "advisory");
-    assert_eq!(actual_receipt_value["analysis_outcome_status"], "complete");
-    assert_eq!(
-        actual_receipt_value["analysis_outcome"]["analysis_complete"],
-        true
-    );
-    assert_eq!(
-        normalize_agent_receipt_fixture(&actual_receipt)?,
-        normalize_agent_receipt_fixture(&expected_receipt)?,
-        "agent receipt fixture drifted"
-    );
-    let first_action_out = out_dir.join("first-action.json");
-    let first_action_md = out_dir.join("first-action.md");
-    let first_action = run_ripr_in_workspace(&[
-        "first-action",
-        "--root",
-        ".",
-        "--receipt",
-        receipt_path
-            .to_str()
-            .ok_or("receipt path should be utf-8")?,
-        "--out",
-        first_action_out
-            .to_str()
-            .ok_or("first-action output path should be utf-8")?,
-        "--out-md",
-        first_action_md
-            .to_str()
-            .ok_or("first-action markdown path should be utf-8")?,
-    ])?;
-    assert_success(&first_action);
-    let first_action_json = std::fs::read_to_string(first_action_out)?;
-    assert!(
-        first_action_json.contains(r#""status": "already_improved""#),
-        "valid receipt was not promoted: {first_action_json}"
-    );
-    assert!(first_action_json.contains(seam_id));
-    // A receipt with a valid verify pair but no producer analysis outcome is
-    // not promotable, even though the verify artifact itself is canonical.
-    let analysis_outcome_path = artifact_dir.join("analysis-outcome.json");
-    let analysis_outcome_bytes = std::fs::read(&analysis_outcome_path)?;
-    std::fs::remove_file(&analysis_outcome_path)?;
-    let missing_analysis_out = out_dir.join("missing-analysis.json");
-    let missing_analysis_md = out_dir.join("missing-analysis.md");
-    let missing_analysis = run_ripr_in_workspace(&[
-        "first-action",
-        "--root",
-        ".",
-        "--receipt",
-        receipt_path
-            .to_str()
-            .ok_or("receipt path should be utf-8")?,
-        "--out",
-        missing_analysis_out
-            .to_str()
-            .ok_or("output path should be utf-8")?,
-        "--out-md",
-        missing_analysis_md
-            .to_str()
-            .ok_or("markdown path should be utf-8")?,
-    ])?;
-    assert_success(&missing_analysis);
-    let missing_analysis_json = std::fs::read_to_string(missing_analysis_out)?;
-    assert!(missing_analysis_json.contains("missing_required_artifact"));
-    assert!(!missing_analysis_json.contains(r#""status": "already_improved""#));
-    std::fs::write(&analysis_outcome_path, &analysis_outcome_bytes)?;
-
-    let different_cwd = unique_temp_workspace("first-action-cwd");
-    std::fs::create_dir_all(&different_cwd)?;
-    let mut absolute_analysis: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&analysis_outcome_path)?)?;
-    absolute_analysis["root"] =
-        serde_json::Value::String(workspace_root().display().to_string().replace('\\', "/"));
-    std::fs::write(
-        &analysis_outcome_path,
-        serde_json::to_vec_pretty(&absolute_analysis)?,
-    )?;
-    let cwd_out = different_cwd.join("first-action.json");
-    let cwd_md = different_cwd.join("first-action.md");
-    let cwd_root = workspace_root().display().to_string();
-    let cwd_result = run_command(
-        env!("CARGO_BIN_EXE_ripr"),
-        Some(&different_cwd),
-        &[
-            "first-action",
-            "--root",
-            &cwd_root,
-            "--receipt",
-            receipt_path
-                .to_str()
-                .ok_or("receipt path should be utf-8")?,
-            "--out",
-            cwd_out.to_str().ok_or("output path should be utf-8")?,
-            "--out-md",
-            cwd_md.to_str().ok_or("markdown path should be utf-8")?,
-        ],
-    )?;
-    assert_success(&cwd_result);
-    assert!(std::fs::read_to_string(cwd_out)?.contains(r#""status": "already_improved""#));
-    std::fs::remove_dir_all(different_cwd)?;
-    let original_receipt: serde_json::Value = serde_json::from_str(&actual_receipt)?;
-    // The producer records its non-dot relative `--root` argument.  A
-    // consumer invoked from that argument's parent must resolve it once, not
-    // append it to the already-selected root (`repo/repo`).
-    let mut relative_root_receipt = original_receipt.clone();
-    let relative_root_name = workspace_root()
-        .file_name()
-        .ok_or("workspace root should have a name")?
-        .to_string_lossy()
-        .to_string();
-    relative_root_receipt["provenance"]["repo_root"] =
-        serde_json::Value::String(relative_root_name.clone());
-    let relative_root_receipt_path = out_dir.join("relative-root.json");
-    std::fs::write(
-        &relative_root_receipt_path,
-        serde_json::to_string_pretty(&relative_root_receipt)?,
-    )?;
-    let mut relative_analysis: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&analysis_outcome_path)?)?;
-    relative_analysis["root"] = serde_json::Value::String(relative_root_name.clone());
-    std::fs::write(
-        &analysis_outcome_path,
-        serde_json::to_vec_pretty(&relative_analysis)?,
-    )?;
-    let workspace_root_for_parent = workspace_root();
-    let parent_cwd = workspace_root_for_parent
-        .parent()
-        .ok_or("workspace should have parent")?;
-    let relative_root_out = out_dir.join("relative-root-first-action.json");
-    let relative_root_md = out_dir.join("relative-root-first-action.md");
-    let relative_root_result = run_command(
-        env!("CARGO_BIN_EXE_ripr"),
-        Some(parent_cwd),
-        &[
-            "first-action",
-            "--root",
-            &relative_root_name,
-            "--receipt",
-            relative_root_receipt_path
-                .to_str()
-                .ok_or("relative receipt path should be utf-8")?,
-            "--out",
-            relative_root_out
-                .to_str()
-                .ok_or("relative output path should be utf-8")?,
-            "--out-md",
-            relative_root_md
-                .to_str()
-                .ok_or("relative markdown path should be utf-8")?,
-        ],
-    )?;
-    assert_success(&relative_root_result);
-    assert!(
-        std::fs::read_to_string(relative_root_out)?.contains(r#""status": "already_improved""#)
-    );
-    std::fs::write(&analysis_outcome_path, &analysis_outcome_bytes)?;
-
-    let original_analysis: serde_json::Value = serde_json::from_slice(&analysis_outcome_bytes)?;
-    let mut swapped_analysis = original_analysis.clone();
-    swapped_analysis["analysis_outcome"]["outcome"]["identity"]["repository_identity"] =
-        serde_json::Value::String("swapped-repository-identity".to_string());
-    std::fs::write(
-        &analysis_outcome_path,
-        serde_json::to_vec_pretty(&swapped_analysis)?,
-    )?;
-    let swapped_sidecar_out = out_dir.join("swapped-analysis-sidecar.json");
-    let swapped_sidecar_md = out_dir.join("swapped-analysis-sidecar.md");
-    let swapped_sidecar = run_ripr_in_workspace(&[
-        "first-action",
-        "--root",
-        ".",
-        "--receipt",
-        receipt_path
-            .to_str()
-            .ok_or("receipt path should be utf-8")?,
-        "--out",
-        swapped_sidecar_out
-            .to_str()
-            .ok_or("swapped sidecar output path should be utf-8")?,
-        "--out-md",
-        swapped_sidecar_md
-            .to_str()
-            .ok_or("swapped sidecar markdown path should be utf-8")?,
-    ])?;
-    assert_success(&swapped_sidecar);
-    let swapped_sidecar_rendered = std::fs::read_to_string(swapped_sidecar_out)?;
-    let swapped_sidecar_value: serde_json::Value = serde_json::from_str(&swapped_sidecar_rendered)?;
-    assert_eq!(
-        swapped_sidecar_value["status"], "missing_required_artifact",
-        "swapped analysis sidecar changed status: {swapped_sidecar_rendered}"
-    );
-    assert_eq!(
-        swapped_sidecar_value["action_kind"], "generate_missing_artifact",
-        "swapped analysis sidecar changed action: {swapped_sidecar_rendered}"
-    );
-    let swapped_warnings = swapped_sidecar_value["warnings"]
-        .as_array()
-        .ok_or("swapped sidecar warnings should be an array")?;
-    assert!(
-        swapped_warnings.iter().any(|warning| {
-            warning.as_str().is_some_and(|warning| {
-                warning.contains("analysis outcome semantic digest commitment")
-            })
-        }),
-        "swapped analysis sidecar warning lost: {swapped_sidecar_rendered}"
-    );
-    std::fs::write(&analysis_outcome_path, &analysis_outcome_bytes)?;
-
-    let original_verify = std::fs::read_to_string(artifact_dir.join("agent-verify.json"))?;
-    let assert_not_promoted = |label: &str,
-                               expected_reason: &str,
-                               receipt: serde_json::Value|
-     -> Result<(), Box<dyn std::error::Error>> {
-        let receipt_text = serde_json::to_string_pretty(&receipt)?;
-        std::fs::write(&receipt_path, receipt_text)?;
-        let out = out_dir.join(format!("{label}.json"));
-        let md = out_dir.join(format!("{label}.md"));
-        let result = run_ripr_in_workspace(&[
-            "first-action",
-            "--root",
-            ".",
-            "--receipt",
-            receipt_path
-                .to_str()
-                .ok_or("receipt path should be utf-8")?,
-            "--out",
-            out.to_str().ok_or("output path should be utf-8")?,
-            "--out-md",
-            md.to_str().ok_or("markdown path should be utf-8")?,
-        ])?;
-        assert_success(&result);
-        let rendered = std::fs::read_to_string(out)?;
-        let value: serde_json::Value = serde_json::from_str(&rendered)?;
-        assert_eq!(
-            value["status"], "missing_required_artifact",
-            "{label} changed status: {rendered}"
-        );
-        assert_eq!(
-            value["action_kind"], "generate_missing_artifact",
-            "{label} changed action: {rendered}"
-        );
-        assert!(
-            value["warnings"].as_array().is_some_and(|warnings| {
-                warnings.iter().any(|warning| {
-                    warning
-                        .as_str()
-                        .is_some_and(|warning| warning.contains(expected_reason))
-                })
-            }),
-            "{label} lacked expected rejection `{expected_reason}`: {rendered}"
-        );
-        Ok(())
-    };
-    let mut malformed = original_receipt.clone();
-    let malformed_path = "target/ripr/test-agent-verify/3408-malformed.json";
-    std::fs::write(workspace_root().join(malformed_path), "{not json")?;
-    malformed["inputs"]["agent_verify_json"] =
-        serde_json::Value::String(malformed_path.to_string());
-    malformed["provenance"]["verify_artifact"]["path"] =
-        serde_json::Value::String(malformed_path.to_string());
-    malformed["provenance"]["verify_artifact"]["sha256"] =
-        serde_json::Value::String(sha256_hex_bytes(b"{not json"));
-    assert_not_promoted("malformed", "[malformed]", malformed)?;
-    std::fs::write(artifact_dir.join("agent-verify.json"), &original_verify)?;
-    std::fs::write(&analysis_outcome_path, b"{not json")?;
-    assert_not_promoted(
-        "malformed-analysis",
-        "analysis outcome artifact is unavailable",
-        original_receipt.clone(),
-    )?;
-    std::fs::write(&analysis_outcome_path, &analysis_outcome_bytes)?;
-    let mut noncanonical_currentness = original_receipt.clone();
-    let noncanonical_currentness_path =
-        "target/ripr/test-agent-verify/3408-noncanonical-currentness.json";
-    let mut noncanonical_verify: serde_json::Value = serde_json::from_str(&original_verify)?;
-    noncanonical_verify["artifact_currentness"] =
-        serde_json::Value::String("historical_noncurrent".to_string());
-    let noncanonical_text = serde_json::to_string_pretty(&noncanonical_verify)?;
-    std::fs::write(
-        workspace_root().join(noncanonical_currentness_path),
-        &noncanonical_text,
-    )?;
-    noncanonical_currentness["inputs"]["agent_verify_json"] =
-        serde_json::Value::String(noncanonical_currentness_path.to_string());
-    noncanonical_currentness["provenance"]["verify_artifact"]["path"] =
-        serde_json::Value::String(noncanonical_currentness_path.to_string());
-    noncanonical_currentness["provenance"]["verify_artifact"]["sha256"] =
-        serde_json::Value::String(sha256_hex_bytes(noncanonical_text.as_bytes()));
-    assert_not_promoted(
-        "noncanonical-currentness",
-        "[not_canonical]",
-        noncanonical_currentness,
-    )?;
-    let mut swapped = original_receipt.clone();
-    let after_path = swapped["provenance"]["after_artifact"]["path"]
-        .as_str()
-        .ok_or("after path")?
-        .to_string();
-    let after_sha = swapped["provenance"]["after_artifact"]["sha256"].clone();
-    swapped["provenance"]["before_artifact"]["path"] = serde_json::Value::String(after_path);
-    swapped["provenance"]["before_artifact"]["sha256"] = after_sha;
-    assert_not_promoted("swapped", "receipt artifact paths do not match", swapped)?;
-    let mut wrong_root = original_receipt.clone();
-    wrong_root["provenance"]["repo_root"] = serde_json::Value::String("..".to_string());
-    assert_not_promoted("wrong-root", "receipt repo_root does not match", wrong_root)?;
-    let mut wrong_seam = original_receipt.clone();
-    wrong_seam["provenance"]["seam_id"] = serde_json::Value::String("forged-seam".to_string());
-    assert_not_promoted("wrong-seam", "verify artifact has no", wrong_seam)?;
-    let mut forged = original_receipt.clone();
-    let forged_path = "target/ripr/test-agent-verify/3408-forged.json";
-    let mut forged_verify: serde_json::Value = serde_json::from_str(&original_verify)?;
-    forged_verify["changed_seams"][0]["seam_id"] =
-        serde_json::Value::String("forged-seam".to_string());
-    let forged_text = serde_json::to_string_pretty(&forged_verify)?;
-    std::fs::write(workspace_root().join(forged_path), &forged_text)?;
-    forged["inputs"]["agent_verify_json"] = serde_json::Value::String(forged_path.to_string());
-    forged["provenance"]["verify_artifact"]["path"] =
-        serde_json::Value::String(forged_path.to_string());
-    forged["provenance"]["verify_artifact"]["sha256"] =
-        serde_json::Value::String(sha256_hex_bytes(forged_text.as_bytes()));
-    assert_not_promoted("forged", "[not_canonical]", forged)?;
-    let mut forged_grip = original_receipt.clone();
-    forged_grip["seam"]["grip_class"] = serde_json::Value::String("forged_class".to_string());
-    assert_not_promoted("forged-grip", "verify artifact has no", forged_grip)?;
-    let mut forged_strength = original_receipt.clone();
-    forged_strength["current_evidence_strength"] =
-        serde_json::Value::String("forged_strength".to_string());
-    assert_not_promoted("forged-strength", "verify artifact has no", forged_strength)?;
-    std::fs::remove_dir_all(out_dir)?;
-    std::fs::remove_dir_all(artifact_dir)?;
-    Ok(())
-}
-
-#[test]
-fn resolved_receipt_promotes_through_first_action() -> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("first-action-resolved");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let before = root.join("before.repo-exposure.json");
-    let after = root.join("after.repo-exposure.json");
-    write_bound_repo_exposure_fixture(
-        &root,
-        &before,
-        r#"{"seam_id":"resolved-seam","kind":"predicate_boundary","file":"src/lib.rs","line":7,"grip_class":"weakly_gripped"}"#,
-    )?;
-    let mut before_value: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&before)?)?;
-    before_value["artifact"]["analysis"]["worktree"] =
-        serde_json::Value::String("dirty".to_string());
-    std::fs::write(
-        &before,
-        recommit_repo_exposure_json(serde_json::to_string_pretty(&before_value)?),
-    )?;
-    write_bound_repo_exposure_fixture(&root, &after, "")?;
-    let mut after_value: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&after)?)?;
-    after_value["artifact"]["analysis"]["worktree"] =
-        serde_json::Value::String("dirty".to_string());
-    std::fs::write(
-        &after,
-        recommit_repo_exposure_json(serde_json::to_string_pretty(&after_value)?),
-    )?;
-
-    let verify = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root.display().to_string(),
-        "--before",
-        &before.display().to_string(),
-        "--after",
-        &after.display().to_string(),
-        "--json",
-    ]);
-    assert_success(&verify);
-    let verify_value: serde_json::Value = serde_json::from_slice(&verify.stdout)?;
-    let resolved = verify_value["resolved_gaps"]
-        .as_array()
-        .and_then(|items| items.first())
-        .ok_or("verify should emit a resolved gap")?;
-    assert_eq!(resolved["change"], "resolved");
-    let seam_id = resolved["seam_id"].as_str().ok_or("resolved seam id")?;
-    let verify_path = root.join("agent-verify.json");
-    std::fs::write(&verify_path, &verify.stdout)?;
-    let analysis = run_ripr(&[
-        "check",
-        "--root",
-        &root.display().to_string(),
-        "--mode",
-        "draft",
-        "--base",
-        "HEAD",
-        "--format",
-        "json",
-    ]);
-    assert_success(&analysis);
-    std::fs::write(root.join("analysis-outcome.json"), &analysis.stdout)?;
-    let receipt = run_ripr(&[
-        "agent",
-        "receipt",
-        "--root",
-        &root.display().to_string(),
-        "--verify-json",
-        &verify_path.display().to_string(),
-        "--seam-id",
-        seam_id,
-        "--json",
-    ]);
-    assert_success(&receipt);
-    let receipt_path = root.join("agent-receipt.json");
-    std::fs::write(&receipt_path, &receipt.stdout)?;
-    let out = root.join("first-action.json");
-    let md = root.join("first-action.md");
-    let first_action = run_ripr(&[
-        "first-action",
-        "--root",
-        &root.display().to_string(),
-        "--receipt",
-        &receipt_path.display().to_string(),
-        "--out",
-        &out.display().to_string(),
-        "--out-md",
-        &md.display().to_string(),
-    ]);
-    assert_success(&first_action);
-    let rendered = std::fs::read_to_string(&out)?;
-    assert!(
-        rendered.contains(r#""status": "already_improved""#),
-        "{rendered}"
-    );
-    let mut forged_resolved: serde_json::Value = serde_json::from_slice(&receipt.stdout)?;
-    forged_resolved["provenance"]["before_class"] =
-        serde_json::Value::String("forged_class".to_string());
-    std::fs::write(
-        &receipt_path,
-        serde_json::to_string_pretty(&forged_resolved)?,
-    )?;
-    let forged_out = root.join("forged-resolved-first-action.json");
-    let forged_md = root.join("forged-resolved-first-action.md");
-    let forged_first_action = run_ripr(&[
-        "first-action",
-        "--root",
-        &root.display().to_string(),
-        "--receipt",
-        &receipt_path.display().to_string(),
-        "--out",
-        &forged_out.display().to_string(),
-        "--out-md",
-        &forged_md.display().to_string(),
-    ]);
-    assert_success(&forged_first_action);
-    let forged_rendered = std::fs::read_to_string(&forged_out)?;
-    assert!(
-        forged_rendered.contains("missing_required_artifact")
-            && !forged_rendered.contains(r#""status": "already_improved""#),
-        "forged resolved receipt was promoted: {forged_rendered}"
-    );
-    std::fs::remove_dir_all(&root)?;
-    Ok(())
-}
-
-#[test]
-fn test_oracle_assistant_canonical_review_loop_fixture_pins_expected_surfaces()
--> Result<(), Box<dyn std::error::Error>> {
-    let base = "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical";
-    let fixture_dir = workspace_root().join(base);
-    let proof_path = fixture_dir.join("test-oracle-assistant-proof.json");
-    let proof_md_path = fixture_dir.join("test-oracle-assistant-proof.md");
-
-    let proof_text = std::fs::read_to_string(&proof_path)?;
-    let proof: serde_json::Value = serde_json::from_str(&proof_text)?;
-    let seam_id = json_pointer_str(&proof, "/seam/seam_id")?;
-    assert_eq!(seam_id, "67fc764ba37d77bd");
-    assert_eq!(
-        json_pointer_str(&proof, "/kind")?,
-        "test_oracle_assistant_loop"
-    );
-    assert_eq!(json_pointer_str(&proof, "/status")?, "advisory");
-    assert_eq!(
-        json_pointer_str(&proof, "/seam/grip_class")?,
-        "weakly_gripped"
-    );
-    assert_eq!(
-        json_pointer_str(&proof, "/seam/missing_discriminator")?,
-        "discount_threshold (equality boundary)"
-    );
-    assert_eq!(
-        json_pointer_str(&proof, "/recommendation/placement")?,
-        "changed_line"
-    );
-    assert!(
-        json_pointer_str(&proof, "/recommendation/suggested_test")?
-            .contains("amount == discount_threshold")
-    );
-    assert_eq!(
-        json_pointer_str(&proof, "/evidence_movement/state")?,
-        "improved"
-    );
-    assert!(json_pointer_bool(&proof, "/limits/advisory")?);
-    for pointer in [
-        "/limits/source_edits",
-        "/limits/generated_tests",
-        "/limits/external_service",
-        "/limits/runtime_mutation_execution",
-        "/limits/ci_blocking_default",
-    ] {
-        assert!(!json_pointer_bool(&proof, pointer)?);
-    }
-
-    for pointer in [
-        "/inputs/pr_guidance",
-        "/inputs/agent_packet",
-        "/inputs/before",
-        "/inputs/after",
-        "/inputs/receipt",
-        "/inputs/ledger",
-    ] {
-        let path = json_pointer_str(&proof, pointer)?;
-        assert!(
-            workspace_root().join(path).exists(),
-            "expected `{path}` from `{pointer}` to exist"
-        );
-    }
-    assert!(
-        proof
-            .pointer("/inputs/coverage_frontier")
-            .is_some_and(serde_json::Value::is_null)
-    );
-
-    let pr_guidance_path = workspace_root().join(json_pointer_str(&proof, "/inputs/pr_guidance")?);
-    let agent_packet_path =
-        workspace_root().join(json_pointer_str(&proof, "/inputs/agent_packet")?);
-    let receipt_path = workspace_root().join(json_pointer_str(&proof, "/inputs/receipt")?);
-    let ledger_path = workspace_root().join(json_pointer_str(&proof, "/inputs/ledger")?);
-
-    let pr_guidance: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(pr_guidance_path)?)?;
-    let agent_packet: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(agent_packet_path)?)?;
-    let receipt: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(receipt_path)?)?;
-    let ledger: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(ledger_path)?)?;
-
-    assert_eq!(
-        json_pointer_str(&pr_guidance, "/comments/0/seam_id")?,
-        seam_id
-    );
-    assert_eq!(
-        json_pointer_str(&agent_packet, "/top_seams/0/seam_id")?,
-        seam_id
-    );
-    assert_eq!(json_pointer_str(&receipt, "/provenance/seam_id")?, seam_id);
-    assert_eq!(
-        json_pointer_str(&ledger, "/top_repair_route/seam_id")?,
-        seam_id
-    );
-    assert_eq!(
-        json_pointer_str(&ledger, "/repair_receipts/0/seam_id")?,
-        seam_id
-    );
-    assert_eq!(
-        json_pointer_str(&proof, "/evidence_movement/state")?,
-        json_pointer_str(&receipt, "/provenance/movement")?
-    );
-    assert_eq!(
-        json_pointer_str(&ledger, "/repair_receipts/0/static_movement/state")?,
-        json_pointer_str(&proof, "/evidence_movement/state")?
-    );
-    assert_eq!(
-        json_pointer_str(&agent_packet, "/top_seams/0/recommended_test/file")?,
-        "tests/pricing.rs"
-    );
-    assert_eq!(
-        json_pointer_str(&agent_packet, "/top_seams/0/recommended_test/name")?,
-        "discounted_total_boundary_discriminator"
-    );
-    assert_eq!(
-        json_pointer_str(
-            &agent_packet,
-            "/top_seams/0/nearest_strong_test_to_imitate/name"
-        )?,
-        "below_threshold_has_no_discount"
-    );
-
-    let proof_md = std::fs::read_to_string(proof_md_path)?;
-    assert!(proof_md.contains("Status: advisory"));
-    assert!(proof_md.contains("Missing discriminator: discount_threshold (equality boundary)"));
-    assert!(proof_md.contains("After: strongly_gripped"));
-    assert!(proof_md.contains("State: improved"));
-    assert!(proof_md.contains("Gate: not configured"));
-    Ok(())
-}
-
-#[test]
-fn first_useful_action_corpus_pins_routing_cases() -> Result<(), Box<dyn std::error::Error>> {
-    let base = "fixtures/boundary_gap/expected/first-useful-action";
-    let fixture_dir = workspace_root().join(base);
-    let corpus_path = fixture_dir.join("corpus.json");
-    let corpus: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(corpus_path)?)?;
-    assert_eq!(json_pointer_str(&corpus, "/schema_version")?, "0.1");
-    assert_eq!(
-        json_pointer_str(&corpus, "/kind")?,
-        "first_useful_action_corpus"
-    );
-    assert_eq!(json_pointer_str(&corpus, "/spec")?, "RIPR-SPEC-0020");
-
-    let cases = corpus
-        .pointer("/cases")
-        .and_then(serde_json::Value::as_array)
-        .ok_or("expected `/cases` array")?;
-    let expected = [
-        (
-            "actionable",
-            "actionable_pr_local_boundary",
-            "actionable",
-            "write_focused_test",
-        ),
-        (
-            "repair-start",
-            "repair_start_carried",
-            "actionable",
-            "write_focused_test",
-        ),
-        (
-            "stale",
-            "stale_editor_evidence",
-            "stale",
-            "refresh_evidence",
-        ),
-        (
-            "missing-required-artifact",
-            "missing_assistant_proof",
-            "missing_required_artifact",
-            "generate_missing_artifact",
-        ),
-        (
-            "baseline-only",
-            "baseline_only_debt",
-            "baseline_only",
-            "acknowledge_baseline",
-        ),
-        (
-            "acknowledged",
-            "acknowledged_pr_gap",
-            "acknowledged",
-            "inspect_proof_report",
-        ),
-        ("waived", "waived_pr_gap", "waived", "no_action"),
-        (
-            "suppressed",
-            "suppressed_configured_off",
-            "suppressed",
-            "no_action",
-        ),
-        (
-            "no-actionable-seam",
-            "no_actionable_seam_clean",
-            "no_actionable_seam",
-            "no_action",
-        ),
-        (
-            "already-improved",
-            "already_improved_receipt",
-            "already_improved",
-            "no_action",
-        ),
-        (
-            "unchanged-after-attempt",
-            "unchanged_after_attempt",
-            "unchanged_after_attempt",
-            "revise_focused_test",
-        ),
-    ];
-    assert_eq!(cases.len(), expected.len());
-
-    for (case_dir, case_id, status, action_kind) in expected {
-        let Some(case) = cases
-            .iter()
-            .find(|case| case.get("id").and_then(serde_json::Value::as_str) == Some(case_id))
-        else {
-            return Err(format!("missing first useful action case `{case_id}`").into());
-        };
-        assert_eq!(json_pointer_str(case, "/expected/status")?, status);
-        assert_eq!(
-            json_pointer_str(case, "/expected/action_kind")?,
-            action_kind
-        );
-
-        let unchanged_control = if case_id == "unchanged_after_attempt" {
-            let proof_artifact = json_pointer_str(case, "/inputs/assistant_proof/artifact")?;
-            let receipt_artifact = json_pointer_str(case, "/inputs/receipt/artifact")?;
-            assert_eq!(
-                proof_artifact,
-                "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/assistant-proof.json"
-            );
-            assert_eq!(
-                receipt_artifact,
-                "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json"
-            );
-
-            let proof: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
-                workspace_root().join(proof_artifact),
-            )?)?;
-            let receipt: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
-                workspace_root().join(receipt_artifact),
-            )?)?;
-            assert_eq!(
-                json_pointer_str(&proof, "/evidence_movement/state")?,
-                "unchanged"
-            );
-            assert_eq!(
-                json_pointer_str(&proof, "/evidence_movement/after_class")?,
-                "weakly_gripped"
-            );
-            let before_artifact = json_pointer_str(&proof, "/inputs/before")?;
-            let after_artifact = json_pointer_str(&proof, "/inputs/after")?;
-            assert_eq!(
-                before_artifact,
-                "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json"
-            );
-            assert_eq!(
-                after_artifact,
-                "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json"
-            );
-            let before: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
-                workspace_root().join(before_artifact),
-            )?)?;
-            let after: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
-                workspace_root().join(after_artifact),
-            )?)?;
-            let before_bytes = std::fs::read(workspace_root().join(before_artifact))?;
-            let after_bytes = std::fs::read(workspace_root().join(after_artifact))?;
-            let produced = run_ripr_in_workspace(&[
-                "check",
-                "--root",
-                "fixtures/boundary_gap/input",
-                "--format",
-                "repo-exposure-json",
-            ])?;
-            assert_success(&produced);
-            let produced: serde_json::Value = serde_json::from_slice(&produced.stdout)?;
-            let normalized_produced = normalize_unchanged_repo_exposure_producer_fixture(produced)?;
-            assert_eq!(
-                before, normalized_produced,
-                "before snapshot must be the portable normalization of production output"
-            );
-            assert_eq!(
-                after, normalized_produced,
-                "after snapshot must be the portable normalization of production output"
-            );
-            let evidence_record = before
-                .pointer("/seams/0/evidence_record")
-                .ok_or("portable producer fixture must retain evidence_record")?;
-            assert_eq!(
-                json_pointer_str(evidence_record, "/canonical_item/evidence_class")?,
-                "predicate_boundary"
-            );
-            assert_eq!(
-                json_pointer_str(evidence_record, "/canonical_item/gap_state")?,
-                "actionable"
-            );
-            assert_repo_exposure_rejects_mutation(
-                &before,
-                |snapshot| {
-                    if let Some(seam) = snapshot
-                        .pointer_mut("/seams/0")
-                        .and_then(serde_json::Value::as_object_mut)
-                    {
-                        seam.remove("evidence_record");
-                    }
-                },
-                "content commitment mismatch",
-            )?;
-            assert_repo_exposure_rejects_mutation(
-                &before,
-                |snapshot| {
-                    snapshot["seams"][0]["evidence_record"]["canonical_item"]["gap_state"] =
-                        serde_json::json!("suppressed");
-                },
-                "content commitment mismatch",
-            )?;
-            assert_repo_exposure_rejects_mutation(
-                &before,
-                |snapshot| {
-                    snapshot["artifact"]["content_sha256"] = serde_json::json!(
-                        "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-                    );
-                },
-                "content commitment mismatch",
-            )?;
-            let seam_class =
-                |snapshot: &serde_json::Value| -> Result<String, Box<dyn std::error::Error>> {
-                    snapshot
-                        .pointer("/seams")
-                        .and_then(serde_json::Value::as_array)
-                        .and_then(|seams| {
-                            seams.iter().find(|seam| {
-                                seam.pointer("/seam_id").and_then(serde_json::Value::as_str)
-                                    == Some("67fc764ba37d77bd")
-                            })
-                        })
-                        .and_then(|seam| seam.pointer("/grip_class"))
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_string)
-                        .ok_or_else(|| "target seam must have a grip_class".into())
-                };
-            let before_class = seam_class(&before)?;
-            let after_class = seam_class(&after)?;
-            assert_eq!(before_class, "weakly_gripped");
-            assert_eq!(after_class, "weakly_gripped");
-            assert_eq!(
-                before_class, after_class,
-                "scenario snapshots must derive unchanged movement"
-            );
-            assert_eq!(
-                json_pointer_str(&proof, "/evidence_movement/before_class")?,
-                &before_class
-            );
-            assert_eq!(
-                json_pointer_str(&proof, "/evidence_movement/after_class")?,
-                &after_class
-            );
-            assert!(
-                proof
-                    .pointer("/inputs/ledger")
-                    .is_some_and(serde_json::Value::is_null)
-            );
-            assert!(
-                proof
-                    .pointer("/ci_projection/ledger")
-                    .is_some_and(serde_json::Value::is_null)
-            );
-            assert_eq!(json_pointer_str(&receipt, "/seam/change")?, "unchanged");
-            assert_eq!(json_pointer_str(&receipt, "/seam/after")?, "weakly_gripped");
-            assert_eq!(json_pointer_str(&receipt, "/seam/before")?, before_class);
-            assert_eq!(json_pointer_str(&receipt, "/seam/after")?, after_class);
-            assert_eq!(
-                json_pointer_str(&receipt, "/provenance/before_artifact/path")?,
-                before_artifact
-            );
-            assert_eq!(
-                json_pointer_str(&receipt, "/provenance/after_artifact/path")?,
-                after_artifact
-            );
-            assert_eq!(
-                json_pointer_str(&receipt, "/provenance/before_artifact/sha256")?,
-                sha256_hex_bytes(&before_bytes)
-            );
-            assert_eq!(
-                json_pointer_str(&receipt, "/provenance/after_artifact/sha256")?,
-                sha256_hex_bytes(&after_bytes)
-            );
-            let verify_artifact = json_pointer_str(&receipt, "/inputs/agent_verify_json")?;
-            let verify_bytes = std::fs::read(workspace_root().join(verify_artifact))?;
-            let verify: serde_json::Value = serde_json::from_slice(&verify_bytes)?;
-            assert_eq!(
-                json_pointer_str(&receipt, "/provenance/verify_artifact/path")?,
-                verify_artifact
-            );
-            assert_eq!(
-                json_pointer_str(&receipt, "/provenance/verify_artifact/sha256")?,
-                sha256_hex_bytes(&verify_bytes)
-            );
-            assert_eq!(
-                json_pointer_str(&verify, "/inputs/before")?,
-                before_artifact
-            );
-            assert_eq!(json_pointer_str(&verify, "/inputs/after")?, after_artifact);
-            assert_eq!(
-                json_pointer_str(&verify, "/inputs/before_content_sha256")?,
-                json_pointer_str(&before, "/artifact/content_sha256")?
-            );
-            assert_eq!(
-                json_pointer_str(&verify, "/inputs/after_content_sha256")?,
-                json_pointer_str(&after, "/artifact/content_sha256")?
-            );
-            assert_eq!(
-                json_pointer_str(&verify, "/unchanged_seams/0/change")?,
-                "unchanged"
-            );
-            assert_eq!(
-                json_pointer_str(&verify, "/unchanged_seams/0/gap_movement")?,
-                "unchanged"
-            );
-            assert_eq!(
-                verify.pointer("/unchanged_seams/0/observed_values_added"),
-                Some(&serde_json::json!([]))
-            );
-            assert_eq!(
-                verify.pointer("/unchanged_seams/0/observed_values_removed"),
-                Some(&serde_json::json!([]))
-            );
-            assert_eq!(
-                verify.pointer("/unchanged_seams/0/related_test_delta"),
-                Some(&serde_json::json!(0))
-            );
-            assert_eq!(
-                receipt.pointer("/seam/evidence_delta"),
-                verify.pointer("/unchanged_seams/0/evidence_delta")
-            );
-            Some((proof_artifact, receipt_artifact))
-        } else {
-            None
-        };
-
-        let report_path = fixture_dir.join(case_dir).join("first-useful-action.json");
-        let markdown_path = fixture_dir.join(case_dir).join("first-useful-action.md");
-        let report: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(report_path)?)?;
-        assert_eq!(json_pointer_str(&report, "/schema_version")?, "0.1");
-        assert_eq!(json_pointer_str(&report, "/tool")?, "ripr");
-        assert_eq!(json_pointer_str(&report, "/kind")?, "first_useful_action");
-        assert_eq!(json_pointer_str(&report, "/status")?, status);
-        assert_eq!(json_pointer_str(&report, "/action_kind")?, action_kind);
-
-        if let Some((proof_artifact, receipt_artifact)) = unchanged_control {
-            assert_eq!(
-                json_pointer_str(&report, "/inputs/assistant_proof")?,
-                proof_artifact
-            );
-            assert_eq!(
-                json_pointer_str(&report, "/inputs/receipt")?,
-                receipt_artifact
-            );
-            assert!(
-                report
-                    .pointer("/inputs/ledger")
-                    .is_some_and(serde_json::Value::is_null)
-            );
-            assert_eq!(
-                json_pointer_str(&report, "/evidence/assistant_proof")?,
-                proof_artifact
-            );
-            assert_eq!(
-                json_pointer_str(&report, "/evidence/receipt")?,
-                receipt_artifact
-            );
-            assert!(
-                report
-                    .pointer("/evidence/ledger")
-                    .is_some_and(serde_json::Value::is_null)
-            );
-            assert_eq!(
-                json_pointer_str(&report, "/evidence/static_movement")?,
-                "unchanged"
-            );
-        }
-        assert_eq!(
-            json_pointer_str(&report, "/generated_at")?,
-            "2026-05-09T12:00:00Z"
-        );
-
-        let why_first = report
-            .pointer("/why_first")
-            .and_then(serde_json::Value::as_array)
-            .ok_or("expected why_first array")?;
-        assert!(
-            !why_first.is_empty(),
-            "`{case_id}` should explain why the route came first"
-        );
-
-        let limits = report
-            .pointer("/limits")
-            .and_then(serde_json::Value::as_array)
-            .ok_or("expected limits array")?;
-        assert!(
-            limits
-                .iter()
-                .any(|limit| limit.as_str() == Some("Static evidence only.")),
-            "`{case_id}` should preserve the static-evidence limit"
-        );
-
-        if case
-            .pointer("/expected/fallback")
-            .is_some_and(|v| !v.is_null())
-        {
-            assert!(
-                report.pointer("/fallback").is_some_and(|v| !v.is_null()),
-                "`{case_id}` should include a fallback report object"
-            );
-        }
-
-        if case_id == "repair_start_carried" {
-            // #3906: the carried command is the card's own string, byte for byte.
-            let guidance_artifact = json_pointer_str(case, "/inputs/pr_guidance/artifact")?;
-            let guidance: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
-                workspace_root().join(guidance_artifact),
-            )?)?;
-            assert_eq!(
-                json_pointer_str(&report, "/commands/repair")?,
-                json_pointer_str(&guidance, "/comments/0/llm_guidance/repair_command")?
-            );
-            assert_eq!(
-                json_pointer_str(&report, "/selected/seam_id")?,
-                json_pointer_str(&guidance, "/comments/0/seam_id")?
-            );
-            assert!(
-                report
-                    .pointer("/inputs/assistant_proof")
-                    .is_some_and(serde_json::Value::is_null),
-                "`{case_id}` must lead before any assistant proof exists"
-            );
-        }
-
-        if case_id == "missing_assistant_proof" {
-            assert!(
-                report
-                    .pointer("/inputs/assistant_proof")
-                    .is_some_and(serde_json::Value::is_null),
-                "`{case_id}` should not claim a missing assistant proof input is present"
-            );
-        }
-
-        let markdown = std::fs::read_to_string(markdown_path)?;
-        assert!(
-            markdown.contains(&format!("Status: {status}")),
-            "`{case_id}` Markdown should pin status `{status}`"
-        );
-        assert!(
-            markdown.contains(&format!("Action: {action_kind}")),
-            "`{case_id}` Markdown should pin action `{action_kind}`"
-        );
-    }
-    Ok(())
-}
-
-#[test]
-fn agent_start_writes_source_edit_free_workflow_packet() -> Result<(), Box<dyn std::error::Error>> {
-    let seam_id = "67fc764ba37d77bd";
-    let out_dir = unique_temp_workspace("agent-start");
-    let out = out_dir
-        .to_str()
-        .ok_or("workflow output path should be utf-8")?;
-
-    let output = run_ripr_in_workspace(&[
-        "agent",
-        "start",
-        "--root",
-        "fixtures/boundary_gap/input",
-        "--seam-id",
-        seam_id,
-        "--out",
-        out,
-    ])?;
-    assert_success(&output);
-
-    let workflow_json = std::fs::read_to_string(out_dir.join("workflow.json"))?;
-    let commands_md = std::fs::read_to_string(out_dir.join("commands.md"))?;
-    let agent_brief_json = std::fs::read_to_string(out_dir.join("agent-brief.json"))?;
-
-    assert!(workflow_json.contains(r#""schema_version": "0.1""#));
-    assert!(workflow_json.contains(r#""source_edits": false"#));
-    assert!(workflow_json.contains(r#""llm_api_calls": false"#));
-    assert!(workflow_json.contains(seam_id));
-    assert!(workflow_json.contains("ripr agent verify --root fixtures/boundary_gap/input"));
-    assert!(commands_md.contains("# RIPR Agent Workflow"));
-    assert!(commands_md.contains("Does not edit source files."));
-    assert!(commands_md.contains("Does not call an LLM API."));
-    assert!(agent_brief_json.contains(seam_id));
-
-    std::fs::remove_dir_all(out_dir)?;
-    Ok(())
-}
-
-#[test]
-fn agent_start_packet_discloses_that_generated_commands_assume_bash()
--> Result<(), Box<dyn std::error::Error>> {
-    let out_dir = unique_temp_workspace("agent-start-shell-disclosure");
-    let out = out_dir
-        .to_str()
-        .ok_or("workflow output path should be utf-8")?;
-
-    let output = run_ripr_in_workspace(&[
-        "agent",
-        "start",
-        "--root",
-        "fixtures/boundary_gap/input",
-        "--seam-id",
-        "67fc764ba37d77bd",
-        "--out",
-        out,
-    ])?;
-    assert_success(&output);
-
-    let commands_md = std::fs::read_to_string(out_dir.join("commands.md"))?;
-    let workflow_json = std::fs::read_to_string(out_dir.join("workflow.json"))?;
-
-    // The commands are already fenced as ```bash, so a bare `bash` substring is
-    // not evidence. Require the prose disclosure ahead of the first fence.
-    let disclosure = commands_md
-        .find("Each step includes Bash and PowerShell command variants.")
-        .ok_or_else(|| format!("commands.md must disclose the bash assumption:\n{commands_md}"))?;
-    let first_fence = commands_md
-        .find("```bash")
-        .ok_or("commands.md must still fence commands as bash")?;
-    assert!(
-        disclosure < first_fence,
-        "bash disclosure must precede the first copyable command in commands.md"
-    );
-    assert!(
-        commands_md.contains("PowerShell"),
-        "commands.md must name the shells that do not accept these commands:\n{commands_md}"
-    );
-    assert!(
-        workflow_json.contains(r#""command_shell": "bash""#),
-        "workflow.json must name the shell its command strings assume:\n{workflow_json}"
-    );
-
-    std::fs::remove_dir_all(out_dir)?;
-    Ok(())
-}
-
-#[test]
-fn agent_repair_phases_materialize_snapshots_and_verify_json()
--> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-repair-phases");
-    std::fs::create_dir_all(root.join("src"))?;
-    std::fs::create_dir_all(root.join("tests"))?;
-    std::fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"boundary_gap_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[lib]\nname = \"boundary_gap_fixture\"\npath = \"src/lib.rs\"\n",
-    )?;
-    std::fs::write(
-        root.join("src/lib.rs"),
-        "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n",
-    )?;
-    std::fs::write(
-        root.join("tests/pricing.rs"),
-        "use boundary_gap_fixture::discounted_total;\n\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n\n#[test]\nfn far_above_threshold_discounts() {\n    assert_eq!(discounted_total(10_000, 100), 9_990);\n}\n",
-    )?;
-    init_git_fixture_repo(&root)?;
-    run_git(&root, &["add", "Cargo.toml", "src", "tests"])?;
-    let commit = run_command(
-        "git",
-        Some(&root),
-        &[
-            "-c",
-            "user.name=RIPR test",
-            "-c",
-            "user.email=ripr@example.invalid",
-            "commit",
-            "-m",
-            "fixture source",
-        ],
-    )?;
-    assert!(
-        commit.status.success(),
-        "fixture source commit failed: {commit:?}"
-    );
-
-    let root_arg = root.display().to_string();
-    let before = run_ripr(&[
-        "agent",
-        "repair",
-        "--root",
-        &root_arg,
-        "--seam-id",
-        "67fc764ba37d77bd",
-        "--phase",
-        "before",
-    ]);
-    assert_success(&before);
-    // The before phase's stdout is the packet JSON alone, and its narration
-    // names a test-only edit without re-sending the user to take the before
-    // snapshot this phase already wrote.
-    let before_stdout: serde_json::Value = serde_json::from_slice(&before.stdout)?;
-    assert_eq!(before_stdout["packets"][0]["seam_id"], "67fc764ba37d77bd");
-    let before_stdout_text = String::from_utf8_lossy(&before.stdout);
-    assert!(
-        !before_stdout_text.contains("ripr: ") && !before_stdout_text.contains("Next:"),
-        "before phase narration belongs on stderr, not in the packet JSON:\n{before_stdout_text}"
-    );
-    let before_stderr = String::from_utf8_lossy(&before.stderr);
-    assert!(
-        before_stderr
-            .contains("add or strengthen one focused test (leave production code unchanged)"),
-        "before phase must name a test-only edit:\n{before_stderr}"
-    );
-    assert!(
-        !before_stderr.contains("Edit the source code"),
-        "before phase must not ask for a source edit:\n{before_stderr}"
-    );
-    assert!(
-        !before_stderr.contains("Next: ripr check"),
-        "before phase must not re-issue the snapshot it already took:\n{before_stderr}"
-    );
-
-    let before_snapshot = root.join("target/ripr/workflow/before.repo-exposure.json");
-    assert!(before_snapshot.is_file());
-    let packet_path = root.join("target/ripr/workflow/agent-packet.json");
-    let packet: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&packet_path)?)?;
-    assert_eq!(packet["packets_total"], 1);
-    assert_eq!(packet["packets"][0]["seam_id"], "67fc764ba37d77bd");
-
-    let after_snapshot = root.join("target/ripr/workflow/after.repo-exposure.json");
-    let stale_after = serde_json::json!({
-        "stale_marker": "previous repair run",
-        "source": std::fs::read_to_string(&before_snapshot)?,
-    });
-    std::fs::write(&after_snapshot, serde_json::to_vec(&stale_after)?)?;
-
-    // Simulate the agent edit step between phases: the after snapshot must
-    // observe movement, disclosed through the dirty worktree, because a fully
-    // current same-revision pair is rejected as no-movement (#2922).
-    std::fs::write(
-        root.join("tests/pricing.rs"),
-        "use boundary_gap_fixture::discounted_total;\n\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n\n#[test]\nfn far_above_threshold_discounts() {\n    assert_eq!(discounted_total(10_000, 100), 9_990);\n}\n\n#[test]\nfn at_threshold_discounts() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
-    )?;
-
-    let after = run_ripr(&[
-        "agent",
-        "repair",
-        "--root",
-        &root_arg,
-        "--seam-id",
-        "67fc764ba37d77bd",
-        "--phase",
-        "after",
-    ]);
-    assert_success(&after);
-    let after_stderr = String::from_utf8_lossy(&after.stderr);
-    assert!(
-        after_stderr.contains("ripr: result for seam `67fc764ba37d77bd`: weakly_gripped -> "),
-        "after phase must name the seam's movement:\n{after_stderr}"
-    );
-    assert!(
-        !after_stderr.contains("could not read"),
-        "after phase must read the receipt it just wrote:\n{after_stderr}"
-    );
-    assert!(
-        after_stderr.contains("ripr: after phase complete. Receipt: "),
-        "after phase must name the receipt path:\n{after_stderr}"
-    );
-    let after_snapshot_text = std::fs::read_to_string(&after_snapshot)?;
-    assert!(!after_snapshot_text.contains("previous repair run"));
-
-    let verify_json = root.join("target/ripr/workflow/agent-verify.json");
-    assert!(verify_json.is_file());
-    let verify: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(verify_json)?)?;
-    assert_eq!(verify["tool"], "ripr");
-    let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
-    let receipt: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(receipt_path)?)?;
-    assert_eq!(receipt["provenance"]["seam_id"], "67fc764ba37d77bd");
-    assert_eq!(receipt["repair_attempt"]["seam_id"], "67fc764ba37d77bd");
-    assert_eq!(receipt["repair_attempt"]["current"], true);
-    assert_eq!(
-        receipt["repair_attempt"]["edit_cage_verdict"]["status"],
-        "compliant"
-    );
-    assert_eq!(receipt["test_changed"], "tests/pricing.rs");
-    let attempts = std::fs::read_dir(root.join("target/ripr/repair-attempts"))?
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().is_dir())
-        .collect::<Vec<_>>();
-    assert_eq!(attempts.len(), 1);
-    let manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
-        attempts[0].path().join("attempt.json"),
-    )?)?;
-    assert_eq!(manifest["state"], "ready_to_finish");
-    assert_eq!(
-        receipt["repair_attempt"]["attempt_id"],
-        manifest["repair_attempt_id"]
-    );
-    assert_eq!(manifest["after"]["current"], true);
-    let wrong_seam = run_ripr(&[
-        "agent",
-        "receipt",
-        "--root",
-        &root_arg,
-        "--verify-json",
-        "target/ripr/workflow/agent-verify.json",
-        "--seam-id",
-        "wrong-seam",
-        "--json",
-    ]);
-    assert!(!wrong_seam.status.success());
-    let packet_bytes = std::fs::read(&packet_path)?;
-    std::fs::write(&packet_path, b"tampered packet")?;
-    let tampered = run_ripr(&[
-        "agent",
-        "receipt",
-        "--root",
-        &root_arg,
-        "--verify-json",
-        "target/ripr/workflow/agent-verify.json",
-        "--seam-id",
-        "67fc764ba37d77bd",
-        "--json",
-    ]);
-    assert!(!tampered.status.success());
-    std::fs::write(&packet_path, packet_bytes)?;
-    let replay = run_ripr(&[
-        "agent",
-        "repair",
-        "--root",
-        &root_arg,
-        "--seam-id",
-        "67fc764ba37d77bd",
-        "--phase",
-        "after",
-    ]);
-    assert!(!replay.status.success());
-    let manifest_path = attempts[0].path().join("attempt.json");
-    let manifest_bytes = std::fs::read(&manifest_path)?;
-    let mut root_tampered: serde_json::Value = serde_json::from_slice(&manifest_bytes)?;
-    root_tampered["root"] = serde_json::Value::String(root.join("elsewhere").display().to_string());
-    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&root_tampered)?)?;
-    let root_rejected = run_ripr(&[
-        "agent",
-        "receipt",
-        "--root",
-        &root_arg,
-        "--verify-json",
-        "target/ripr/workflow/agent-verify.json",
-        "--seam-id",
-        "67fc764ba37d77bd",
-        "--json",
-    ]);
-    assert!(!root_rejected.status.success());
-    std::fs::write(&manifest_path, &manifest_bytes)?;
-
-    let mut path_tampered: serde_json::Value = serde_json::from_slice(&manifest_bytes)?;
-    path_tampered["artifacts"][0]["path"] = serde_json::Value::String("../outside".to_string());
-    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&path_tampered)?)?;
-    let path_rejected = run_ripr(&[
-        "agent",
-        "receipt",
-        "--root",
-        &root_arg,
-        "--verify-json",
-        "target/ripr/workflow/agent-verify.json",
-        "--seam-id",
-        "67fc764ba37d77bd",
-        "--json",
-    ]);
-    assert!(!path_rejected.status.success());
-    std::fs::write(&manifest_path, &manifest_bytes)?;
-
-    let manifest_value: serde_json::Value = serde_json::from_slice(&manifest_bytes)?;
-    let baseline_rel = manifest_value["artifacts"]
-        .as_array()
-        .and_then(|artifacts| {
-            artifacts
-                .iter()
-                .find(|artifact| artifact["role"] == "edit_cage_baseline")
-        })
-        .and_then(|artifact| artifact["path"].as_str())
-        .ok_or("baseline artifact missing")?;
-    let baseline_path = root.join(baseline_rel);
-    let baseline_bytes = std::fs::read(&baseline_path)?;
-    std::fs::write(&baseline_path, b"tampered baseline")?;
-    let baseline_rejected = run_ripr(&[
-        "agent",
-        "receipt",
-        "--root",
-        &root_arg,
-        "--verify-json",
-        "target/ripr/workflow/agent-verify.json",
-        "--seam-id",
-        "67fc764ba37d77bd",
-        "--json",
-    ]);
-    assert!(!baseline_rejected.status.success());
-    std::fs::write(&baseline_path, baseline_bytes.clone())?;
-    let mut coordinated: serde_json::Value = serde_json::from_slice(&manifest_bytes)?;
-    if let Some(artifact) = coordinated["artifacts"]
-        .as_array_mut()
-        .and_then(|artifacts| {
-            artifacts
-                .iter_mut()
-                .find(|artifact| artifact["role"] == "edit_cage_baseline")
-        })
-    {
-        artifact["sha256"] = serde_json::Value::String(format!("sha256:{}", "0".repeat(64)));
-        artifact["bytes"] = serde_json::Value::from(16_u64);
-    }
-    std::fs::write(&baseline_path, b"coordinated rewrite")?;
-    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&coordinated)?)?;
-    let coordinated_rejected = run_ripr(&[
-        "agent",
-        "receipt",
-        "--root",
-        &root_arg,
-        "--verify-json",
-        "target/ripr/workflow/agent-verify.json",
-        "--seam-id",
-        "67fc764ba37d77bd",
-        "--json",
-    ]);
-    assert!(!coordinated_rejected.status.success());
-    std::fs::write(&baseline_path, baseline_bytes)?;
-    std::fs::write(&manifest_path, &manifest_bytes)?;
-    // The after phase's stdout is exactly one JSON document â€” the versioned
-    // `repair_after_result` envelope holding the verify 0.3 document under
-    // `verify` and the status report under `agent_status` â€” so one
-    // JSON.parse consumes it. The embedded status is `complete` only when the
-    // receipt it issued is `advisory` (improved grip at the current HEAD); an
-    // `invalid` or `incomplete` receipt keeps it at `warning` (F15-4).
-    let expected_status = if receipt["status"] == "advisory" {
-        "complete"
-    } else {
-        "warning"
-    };
-    let after_document: serde_json::Value = serde_json::from_slice(&after.stdout)?;
-    assert_eq!(
-        after_document["schema_version"].as_str(),
-        Some("0.1"),
-        "the after-phase success stdout is the repair_after_result envelope:\n{}",
-        String::from_utf8_lossy(&after.stdout)
-    );
-    assert_eq!(
-        after_document["kind"].as_str(),
-        Some("repair_after_result"),
-        "the after-phase success stdout names its envelope kind:\n{}",
-        String::from_utf8_lossy(&after.stdout)
-    );
-    assert_eq!(
-        after_document["verify"]["schema_version"].as_str(),
-        Some("0.3"),
-        "the envelope carries the verify document intact under `verify`:\n{}",
-        String::from_utf8_lossy(&after.stdout)
-    );
-    assert_eq!(
-        after_document["agent_status"]["status"].as_str(),
-        Some(expected_status),
-        "after phase status must follow the receipt ({}):\n{}",
-        receipt["status"],
-        String::from_utf8_lossy(&after.stdout)
-    );
-    assert_eq!(
-        after_document["verify"]["status"].as_str(),
-        Some("advisory"),
-        "the verify outcome keeps its own top-level status under `verify`:\n{}",
-        String::from_utf8_lossy(&after.stdout)
-    );
-    assert!(String::from_utf8_lossy(&after.stderr).contains("after phase complete"));
-
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-const BOUNDARY_GAP_SEAM_ID: &str = "67fc764ba37d77bd";
-
-const CARGO_BUILD_OUTPUT_FILES: [&str; 3] = [
-    "target/debug/.fingerprint/boundary_gap_fixture-1/invoked.timestamp",
-    "target/debug/deps/pricing-1.d",
-    "target/debug/incremental/pricing-1/s-1/0.o",
-];
-
-fn write_repo_file(
-    root: &Path,
-    relative: &str,
-    contents: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let path = root.join(relative);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(path, contents)?;
-    Ok(())
-}
-
-/// Stand-in for what `cargo test` writes under Cargo's build directory.
-fn write_cargo_build_output(
-    root: &Path,
-    generation: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    for relative in CARGO_BUILD_OUTPUT_FILES {
-        write_repo_file(root, relative, generation)?;
-    }
-    Ok(())
-}
-
-/// A committed boundary-gap crate that ignores Cargo's build output (and a
-/// `notes.log`), with the state a newcomer has after building once: build
-/// output under `target/` and an untracked, generated `Cargo.lock`.
-fn built_repair_fixture(label: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace(label);
-    init_producer_fixture_repo(&root)?;
-    std::fs::write(root.join(".gitignore"), "/target\nnotes.log\n")?;
-    run_git(&root, &["add", ".gitignore"])?;
-    let commit = run_command(
-        "git",
-        Some(&root),
-        &[
-            "-c",
-            "user.name=RIPR test",
-            "-c",
-            "user.email=ripr@example.invalid",
-            "commit",
-            "-m",
-            "ignore build output",
-        ],
-    )?;
-    assert!(commit.status.success(), "ignore commit failed: {commit:?}");
-    write_cargo_build_output(&root, "first build")?;
-    std::fs::write(
-        root.join("Cargo.lock"),
-        "# generated by the first build\nversion = 4\n",
-    )?;
-    Ok(root)
-}
-
-fn run_repair_phase(root: &Path, selector: &[&str], phase: &str) -> Result<Output, std::io::Error> {
-    let root_arg = root.display().to_string();
-    let mut args = vec!["agent", "repair", "--root", root_arg.as_str()];
-    args.extend_from_slice(selector);
-    args.extend(["--phase", phase]);
-    run_command(env!("CARGO_BIN_EXE_ripr"), None, &args)
-}
-
-fn sole_repair_attempt(
-    root: &Path,
-) -> Result<(String, serde_json::Value), Box<dyn std::error::Error>> {
-    let mut attempts = std::fs::read_dir(root.join("target/ripr/repair-attempts"))?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        attempts.len(),
-        1,
-        "expected one repair attempt: {attempts:?}"
-    );
-    let path = attempts.pop().ok_or("missing repair attempt")?;
-    let id = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or("repair attempt directory name is not UTF-8")?
-        .to_string();
-    let manifest = serde_json::from_str(&std::fs::read_to_string(path.join("attempt.json"))?)?;
-    Ok((id, manifest))
-}
-
-/// The seam's focused boundary test, added between the phases.
-fn add_boundary_test(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let path = root.join("tests/pricing.rs");
-    let mut tests = std::fs::read_to_string(&path)?;
-    tests.push_str(
-        "\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
-    );
-    std::fs::write(path, tests)?;
-    Ok(())
-}
-
-#[test]
-fn agent_repair_admits_cargo_build_output_and_unchanged_untracked_lockfile()
--> Result<(), Box<dyn std::error::Error>> {
-    let root = built_repair_fixture("agent-repair-build-output")?;
-    let before = run_repair_phase(&root, &["--seam-id", BOUNDARY_GAP_SEAM_ID], "before")?;
-    assert_success(&before);
-    let (attempt_id, _) = sole_repair_attempt(&root)?;
-
-    // The documented loop: add the focused test, then run the project tests,
-    // which rewrites and adds Cargo build output under the ignored `target/`.
-    add_boundary_test(&root)?;
-    write_cargo_build_output(&root, "rebuilt by cargo test")?;
-    write_repo_file(&root, "target/debug/deps/pricing-2", "new test binary")?;
-
-    let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
-    assert_success(&after);
-    let after_stderr = String::from_utf8_lossy(&after.stderr);
-    assert!(
-        after_stderr.contains(&format!(
-            "result for seam `{BOUNDARY_GAP_SEAM_ID}`: weakly_gripped -> strongly_gripped (improved)"
-        )),
-        "after phase must report the movement:\n{after_stderr}"
-    );
-    let (_, manifest) = sole_repair_attempt(&root)?;
-    assert_eq!(manifest["state"], "ready_to_finish");
-    let receipt: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
-        root.join("target/ripr/reports/agent-receipt.json"),
-    )?)?;
-    let verdict = &receipt["repair_attempt"]["edit_cage_verdict"];
-    assert_eq!(verdict["status"], "compliant", "{verdict}");
-    let changed = verdict["changed_paths"]
-        .as_array()
-        .ok_or("receipt verdict has no changed_paths")?
-        .iter()
-        .filter_map(serde_json::Value::as_str)
-        .collect::<Vec<_>>();
-    assert!(changed.contains(&"tests/pricing.rs"), "{changed:?}");
-    assert!(
-        changed
-            .iter()
-            .all(|path| *path == "tests/pricing.rs" || path.starts_with("target/ripr/")),
-        "only the test edit and command-owned target/ripr writes may be observed: {changed:?}"
-    );
-
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_repair_still_refuses_writes_outside_build_output_and_test_surface()
--> Result<(), Box<dyn std::error::Error>> {
-    let scenarios: [(&str, &str, bool); 3] = [
-        // An ignored path that is not Cargo build output.
-        ("notes.log", "ignored notes\n", false),
-        // A tracked production file.
-        ("src/lib.rs", "", true),
-        // A pre-existing untracked file whose bytes change during the attempt.
-        ("Scratch.md", "rewritten during the attempt\n", false),
-    ];
-    for (offending, contents, append) in scenarios {
-        let root = built_repair_fixture("agent-repair-cage-boundary")?;
-        write_repo_file(&root, "Scratch.md", "pre-existing scratch notes\n")?;
-        let before = run_repair_phase(&root, &["--seam-id", BOUNDARY_GAP_SEAM_ID], "before")?;
-        assert_success(&before);
-        let (attempt_id, _) = sole_repair_attempt(&root)?;
-
-        add_boundary_test(&root)?;
-        write_cargo_build_output(&root, "rebuilt by cargo test")?;
-        if append {
-            let path = root.join(offending);
-            let mut text = std::fs::read_to_string(&path)?;
-            text.push_str("// out-of-cage edit\n");
-            std::fs::write(path, text)?;
-        } else {
-            write_repo_file(&root, offending, contents)?;
-        }
-
-        let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
-        assert_failure(&after);
-        let (_, manifest) = sole_repair_attempt(&root)?;
-        assert_eq!(manifest["state"], "failed", "{offending}: {manifest}");
-        let violations = manifest["after"]["verdict"]["violations"]
-            .as_array()
-            .ok_or("failed attempt has no violations")?;
-        assert!(
-            violations
-                .iter()
-                .any(|violation| violation["path"] == offending),
-            "{offending} must be a violation: {violations:?}"
-        );
-        assert!(
-            violations.iter().all(|violation| !violation["path"]
-                .as_str()
-                .is_some_and(|path| path.starts_with("target/debug/"))),
-            "Cargo build output must not be a violation: {violations:?}"
-        );
-        let stderr = String::from_utf8_lossy(&after.stderr);
-        assert!(
-            stderr.contains(&format!("ripr:   {offending} (")),
-            "the failure must name the refused path:\n{stderr}"
-        );
-        assert!(
-            stderr.contains(&format!(
-                "--seam-id {BOUNDARY_GAP_SEAM_ID} --phase before` while the gap still exists"
-            )),
-            "the failure must name the recovery route:\n{stderr}"
-        );
-        std::fs::remove_dir_all(root)?;
-    }
-    Ok(())
-}
-
-/// Commit in a repair fixture with the suite's fixed identity; `args`
-/// follows `git commit` (for example `["-qam", "message"]`).
-fn commit_repair_fixture(root: &Path, args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
-    let mut command = vec![
-        "-c",
-        "user.name=RIPR test",
-        "-c",
-        "user.email=ripr@example.invalid",
-        "commit",
-    ];
-    command.extend_from_slice(args);
-    let commit = run_command("git", Some(root), &command)?;
-    assert!(commit.status.success(), "fixture commit failed: {commit:?}");
-    Ok(())
-}
-
-fn git_stdout(root: &Path, args: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
-    let output = run_command("git", Some(root), args)?;
-    assert!(output.status.success(), "git {args:?} failed: {output:?}");
-    Ok(String::from_utf8(output.stdout)?.trim().to_string())
-}
-
-/// A committed boundary-gap library crate that ignores Cargo's build output
-/// and has never been built: no `Cargo.lock` exists, as in a fresh clone of
-/// a library that does not commit one.
-fn unbuilt_repair_fixture(label: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace(label);
-    init_producer_fixture_repo(&root)?;
-    std::fs::write(root.join(".gitignore"), "/target\n")?;
-    run_git(&root, &["add", ".gitignore"])?;
-    commit_repair_fixture(&root, &["-qm", "ignore build output"])?;
-    assert!(
-        !root.join("Cargo.lock").exists(),
-        "precondition: the fixture has no Cargo.lock"
-    );
-    assert_eq!(git_stdout(&root, &["ls-files", "--", "Cargo.lock"])?, "");
-    Ok(root)
-}
-
-/// What the first `cargo test` of such a crate writes: build output under
-/// the ignored `target/` and a newly generated, untracked `Cargo.lock`.
-fn simulate_first_cargo_test(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    write_cargo_build_output(root, "first build by cargo test")?;
-    std::fs::write(
-        root.join("Cargo.lock"),
-        "# This file is automatically @generated by Cargo.\nversion = 4\n\n[[package]]\nname = \"boundary_gap_fixture\"\nversion = \"0.1.0\"\n",
-    )?;
-    Ok(())
-}
-
-fn repair_receipt(root: &Path) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    Ok(serde_json::from_str(&std::fs::read_to_string(
-        root.join("target/ripr/reports/agent-receipt.json"),
-    )?)?)
-}
-
-/// `ripr agent receipt` as a developer reruns it from the repository root
-/// after the after phase, spelling `--root` as the phases did.
-fn rerun_repair_receipt(root: &Path, out: bool) -> Result<Output, std::io::Error> {
-    let root_arg = root.display().to_string();
-    let mut args = vec![
-        "agent",
-        "receipt",
-        "--root",
-        root_arg.as_str(),
-        "--verify-json",
-        "target/ripr/workflow/agent-verify.json",
-        "--seam-id",
-        BOUNDARY_GAP_SEAM_ID,
-        "--json",
-    ];
-    if out {
-        args.extend(["--out", "target/ripr/reports/agent-receipt.json"]);
-    }
-    run_command(env!("CARGO_BIN_EXE_ripr"), Some(root), &args)
-}
-
-const INCLUDE_RECEIPT_LINE: &str =
-    "ripr: next: Keep the focused test and include this receipt in review.";
-
-/// F15-1/F15-3: the printed loop on a library crate that does not commit
-/// `Cargo.lock`. The first `cargo test` between the phases creates the
-/// lockfile; the after phase must still compare the pair, and the receipt it
-/// writes must be valid review evidence (`advisory`), with the review line
-/// printed only for that valid receipt.
-#[test]
-fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
--> Result<(), Box<dyn std::error::Error>> {
-    let root = unbuilt_repair_fixture("agent-repair-new-lockfile")?;
-    let before = run_repair_phase(&root, &["--seam-id", BOUNDARY_GAP_SEAM_ID], "before")?;
-    assert_success(&before);
-    let (attempt_id, _) = sole_repair_attempt(&root)?;
-
-    add_boundary_test(&root)?;
-    simulate_first_cargo_test(&root)?;
-    assert_eq!(
-        git_stdout(&root, &["status", "--porcelain", "--", "Cargo.lock"])?,
-        "?? Cargo.lock",
-        "precondition: the lockfile appeared untracked between the phases"
-    );
-
-    let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
-    assert_success(&after);
-    let stderr = String::from_utf8_lossy(&after.stderr);
-    assert!(
-        stderr.contains(&format!(
-            "result for seam `{BOUNDARY_GAP_SEAM_ID}`: weakly_gripped -> strongly_gripped (improved)"
-        )),
-        "{stderr}"
-    );
-    assert!(stderr.contains(INCLUDE_RECEIPT_LINE), "{stderr}");
-    assert!(!stderr.contains("receipt status is"), "{stderr}");
-
-    let (_, manifest) = sole_repair_attempt(&root)?;
-    assert_eq!(manifest["state"], "ready_to_finish", "{manifest}");
-    let receipt = repair_receipt(&root)?;
-    assert_eq!(receipt["status"], "advisory", "{receipt}");
-    assert_eq!(receipt["analysis_outcome_status"], "complete", "{receipt}");
-    assert_eq!(receipt["analysis_outcome_error"], serde_json::Value::Null);
-    assert_eq!(receipt["provenance"]["movement"], "improved");
-    let verdict = &receipt["repair_attempt"]["edit_cage_verdict"];
-    assert_eq!(verdict["status"], "compliant", "{verdict}");
-    assert!(
-        !verdict["changed_paths"]
-            .as_array()
-            .ok_or("receipt verdict has no changed_paths")?
-            .iter()
-            .any(|path| path == "Cargo.lock"),
-        "an untracked, build-generated Cargo.lock is not an edit: {verdict}"
-    );
-    // The producer and the validator agree on the base the scope-less
-    // analysis outcome used.
-    let outcome: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
-        root.join("target/ripr/workflow/analysis-outcome.json"),
-    )?)?;
-    assert!(outcome["base"].is_string(), "{outcome}");
-    assert_eq!(
-        outcome["base"],
-        outcome["analysis_outcome"]["outcome"]["identity"]["base_revision"]
-    );
-
-    // Rerunning the receipt command after the after phase: the receipt the
-    // after phase wrote under target/ripr/reports is command-owned output
-    // written after the finish bound its verdict, not an attempt edit.
-    let bound_paths = verdict["changed_paths"].clone();
-    assert!(
-        !bound_paths
-            .as_array()
-            .ok_or("receipt verdict has no changed_paths")?
-            .iter()
-            .any(|path| path == "target/ripr/reports/agent-receipt.json"),
-        "precondition: the report is written after the finish: {bound_paths}"
-    );
-    for out in [true, false, true] {
-        let rerun = rerun_repair_receipt(&root, out)?;
-        assert_success(&rerun);
-        let rerun: serde_json::Value = if out {
-            repair_receipt(&root)?
-        } else {
-            serde_json::from_slice(&rerun.stdout)?
-        };
-        assert_eq!(rerun["status"], "advisory", "{rerun}");
-        assert_eq!(
-            rerun["repair_attempt"]["edit_cage_verdict"]["changed_paths"], bound_paths,
-            "{rerun}"
-        );
-    }
-    // Discriminating negative: any other movement after the finish still
-    // breaks the binding, and undoing it restores the receipt.
-    std::fs::write(root.join("notes.txt"), "an edit after the after phase\n")?;
-    let moved = rerun_repair_receipt(&root, true)?;
-    assert_failure(&moved);
-    assert!(
-        String::from_utf8_lossy(&moved.stderr)
-            .contains("repair attempt after verdict binding is tampered or stale"),
-        "{}",
-        String::from_utf8_lossy(&moved.stderr)
-    );
-    std::fs::remove_file(root.join("notes.txt"))?;
-    assert_success(&rerun_repair_receipt(&root, true)?);
-
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-/// F15-12: a seam whose only related test lives inline in another crate has
-/// no test file the repair can edit. The before phase refuses before it
-/// writes any workflow artifact and never prints a completion line first, so
-/// neither the phase nor a later `agent status` reads as a started repair.
-#[test]
-fn agent_repair_before_refuses_a_seam_without_a_test_file_before_writing_anything()
--> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-repair-no-test-target");
-    std::fs::create_dir_all(root.join("crates/rates/src"))?;
-    std::fs::write(
-        root.join("Cargo.toml"),
-        "[workspace]\nmembers = [\"crates/rates\"]\nresolver = \"2\"\n",
-    )?;
-    std::fs::write(
-        root.join("crates/rates/Cargo.toml"),
-        "[package]\nname = \"rates\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-    )?;
-    std::fs::write(
-        root.join("crates/rates/src/lib.rs"),
-        "/// Tax in basis points for the given region code.\npub fn tax_bps(region: &str) -> u32 {\n    match region {\n        \"EU\" => 2000,\n        _ => 0,\n    }\n}\n\n/// Orders at or above this many items ship free.\npub fn ships_free(items: u32) -> bool {\n    items >= 10\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn eu_tax() {\n        assert_eq!(tax_bps(\"EU\"), 2000);\n    }\n}\n",
-    )?;
-    std::fs::write(root.join(".gitignore"), "/target\n")?;
-    run_git(&root, &["init", "-q"])?;
-    run_git(&root, &["add", "."])?;
-    commit_repair_fixture(&root, &["-qm", "rates"])?;
-
-    let root_arg = root.display().to_string();
-    let exposure = run_ripr(&[
-        "check",
-        "--root",
-        &root_arg,
-        "--mode",
-        "draft",
-        "--format",
-        "repo-exposure-json",
-    ]);
-    assert_success(&exposure);
-    let exposure: serde_json::Value = serde_json::from_slice(&exposure.stdout)?;
-    let seam = exposure["seams"]
-        .as_array()
-        .ok_or("repo exposure has no seams array")?
-        .iter()
-        .find(|seam| seam["owner"] == "crates/rates/src/lib.rs::ships_free")
-        .ok_or("precondition: the ships_free boundary seam exists")?;
-    let seam_id = seam["seam_id"]
-        .as_str()
-        .ok_or("seam has no id")?
-        .to_string();
-    // Fixture construction: the seam's only related test is the inline one.
-    assert_eq!(seam["related_tests"][0]["file"], "crates/rates/src/lib.rs");
-
-    let before = run_repair_phase(&root, &["--seam-id", &seam_id], "before")?;
-    assert_failure(&before);
-    let stderr = String::from_utf8_lossy(&before.stderr);
-    assert!(
-        stderr.contains(&format!(
-            "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started."
-        )),
-        "the refusal must say why in plain words:\n{stderr}"
-    );
-    assert!(
-        !stderr.contains("before phase complete"),
-        "a refused before phase must not claim completion:\n{stderr}"
-    );
-    for artifact in [
-        "target/ripr/workflow/before.repo-exposure.json",
-        "target/ripr/workflow/agent-packet.json",
-        "target/ripr/workflow/workflow.json",
-    ] {
-        assert!(
-            !root.join(artifact).exists(),
-            "refused before writing {artifact}"
-        );
-    }
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-/// F15-1 boundary: a Git-tracked `Cargo.lock` is an analysis input. Changing
-/// it between the phases, or starting to track a generated one, is refused
-/// with the named cause and a rerun route, and the attempt stays awaiting
-/// the edit so the route works. A manifest-only change names the manifest
-/// and no lockfile untrack route.
-#[test]
-fn agent_repair_refuses_a_tracked_cargo_lock_change_between_the_phases()
--> Result<(), Box<dyn std::error::Error>> {
-    for scenario in [
-        "tracked lockfile modified",
-        "generated lockfile staged",
-        "manifest modified",
-    ] {
-        let root = unbuilt_repair_fixture("agent-repair-tracked-lockfile")?;
-        if scenario == "tracked lockfile modified" {
-            simulate_first_cargo_test(&root)?;
-            run_git(&root, &["add", "Cargo.lock"])?;
-            commit_repair_fixture(&root, &["-qm", "commit the lockfile"])?;
-            assert_eq!(
-                git_stdout(&root, &["ls-files", "--", "Cargo.lock"])?,
-                "Cargo.lock",
-                "precondition: the lockfile is tracked"
-            );
-        }
-        let before = run_repair_phase(&root, &["--seam-id", BOUNDARY_GAP_SEAM_ID], "before")?;
-        assert_success(&before);
-        let (attempt_id, _) = sole_repair_attempt(&root)?;
-
-        add_boundary_test(&root)?;
-        if scenario == "tracked lockfile modified" {
-            let mut lockfile = std::fs::read_to_string(root.join("Cargo.lock"))?;
-            lockfile
-                .push_str("\n[[package]]\nname = \"updated_dependency\"\nversion = \"1.0.1\"\n");
-            std::fs::write(root.join("Cargo.lock"), lockfile)?;
-        } else if scenario == "manifest modified" {
-            let mut manifest = std::fs::read_to_string(root.join("Cargo.toml"))?;
-            manifest.push_str("\n# edited between the repair phases\n");
-            std::fs::write(root.join("Cargo.toml"), manifest)?;
-        } else {
-            simulate_first_cargo_test(&root)?;
-            run_git(&root, &["add", "Cargo.lock"])?;
-        }
-        let changed_input = if scenario == "manifest modified" {
-            "Cargo.toml"
-        } else {
-            "Cargo.lock"
-        };
-
-        let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
-        assert_failure(&after);
-        let stderr = String::from_utf8_lossy(&after.stderr);
-        assert!(
-            stderr.contains(&format!(
-                "ripr: analysis inputs changed after the before phase: {changed_input}."
-            )),
-            "{scenario}: the refusal must name the changed input:\n{stderr}"
-        );
-        // The untrack route is offered only when a lockfile moved.
-        assert_eq!(
-            stderr.contains("git rm --cached Cargo.lock"),
-            changed_input == "Cargo.lock",
-            "{scenario}: untrack advice must follow the changed input:\n{stderr}"
-        );
-        assert!(
-            stderr.contains(
-                "agent verify artifacts are incomparable: analysis input identities differ"
-            ),
-            "{scenario}:\n{stderr}"
-        );
-        assert!(
-            stderr.contains("then rerun `ripr agent repair --root "),
-            "{scenario}: the refusal must give the rerun route:\n{stderr}"
-        );
-        assert!(
-            stderr.contains(&format!("--attempt {attempt_id} --phase after`")),
-            "{scenario}:\n{stderr}"
-        );
-        assert!(
-            !stderr.contains(INCLUDE_RECEIPT_LINE),
-            "{scenario}:\n{stderr}"
-        );
-        let (_, manifest) = sole_repair_attempt(&root)?;
-        assert_eq!(manifest["state"], "awaiting_edit", "{scenario}: {manifest}");
-
-        // The named route recovers the same attempt.
-        if scenario == "tracked lockfile modified" || scenario == "manifest modified" {
-            let head = git_stdout(&root, &["rev-parse", "HEAD"])?;
-            run_git(&root, &["checkout", &head, "--", changed_input])?;
-        } else {
-            run_git(&root, &["rm", "--cached", "-q", "Cargo.lock"])?;
-        }
-        let rerun = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
-        assert_success(&rerun);
-        assert_eq!(repair_receipt(&root)?["status"], "advisory", "{scenario}");
-        std::fs::remove_dir_all(root)?;
-    }
-    Ok(())
-}
-
-/// F15-6: committing the focused test before the after phase is accepted
-/// when HEAD only moved forward and every committed path is inside the edit
-/// cage; a committed out-of-cage change is refused by the same cage, and a
-/// rewritten history is refused before the attempt finishes, with a recovery
-/// that restores the prepared head for the same attempt.
-#[test]
-fn agent_repair_admits_a_focused_test_committed_between_the_phases()
--> Result<(), Box<dyn std::error::Error>> {
-    // Accepted: one commit holding the focused test.
-    let root = unbuilt_repair_fixture("agent-repair-committed-test")?;
-    let before = run_repair_phase(&root, &["--seam-id", BOUNDARY_GAP_SEAM_ID], "before")?;
-    assert_success(&before);
-    let (attempt_id, prepared) = sole_repair_attempt(&root)?;
-    let before_head = prepared["repository_head"]
-        .as_str()
-        .ok_or("attempt has no repository head")?
-        .to_string();
-    add_boundary_test(&root)?;
-    simulate_first_cargo_test(&root)?;
-    commit_repair_fixture(&root, &["-qam", "test: pin the discount boundary"])?;
-    let after_head = git_stdout(&root, &["rev-parse", "HEAD"])?;
-    assert_ne!(after_head, before_head, "precondition: HEAD moved");
-    assert_eq!(
-        git_stdout(&root, &["status", "--porcelain", "--", "tests"])?,
-        ""
-    );
-
-    let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
-    assert_success(&after);
-    let stderr = String::from_utf8_lossy(&after.stderr);
-    assert!(stderr.contains("(improved)"), "{stderr}");
-    assert!(stderr.contains(INCLUDE_RECEIPT_LINE), "{stderr}");
-    assert!(!stderr.contains("is stale"), "{stderr}");
-    let (_, manifest) = sole_repair_attempt(&root)?;
-    assert_eq!(manifest["state"], "ready_to_finish", "{manifest}");
-    let receipt = repair_receipt(&root)?;
-    assert_eq!(receipt["status"], "advisory", "{receipt}");
-    let binding = &receipt["repair_attempt"];
-    assert_eq!(binding["current"], true);
-    assert_eq!(binding["before_head"], before_head.as_str());
-    assert_eq!(binding["after_head"], after_head.as_str());
-    assert_eq!(binding["edit_cage_verdict"]["status"], "compliant");
-    assert!(
-        binding["edit_cage_verdict"]["changed_paths"]
-            .as_array()
-            .ok_or("no changed_paths")?
-            .iter()
-            .any(|path| path == "tests/pricing.rs"),
-        "the committed test is the attempt's edit: {binding}"
-    );
-    std::fs::remove_dir_all(root)?;
-
-    // Refused: a production change committed alongside the test.
-    let root = unbuilt_repair_fixture("agent-repair-committed-production")?;
-    let before = run_repair_phase(&root, &["--seam-id", BOUNDARY_GAP_SEAM_ID], "before")?;
-    assert_success(&before);
-    let (attempt_id, _) = sole_repair_attempt(&root)?;
-    add_boundary_test(&root)?;
-    let mut production = std::fs::read_to_string(root.join("src/lib.rs"))?;
-    production.push_str("// committed out-of-cage edit\n");
-    std::fs::write(root.join("src/lib.rs"), production)?;
-    commit_repair_fixture(&root, &["-qam", "test and production"])?;
-    // The worktree now matches HEAD: only the commit range carries the
-    // production change.
-    assert_eq!(
-        git_stdout(&root, &["status", "--porcelain", "--", "src"])?,
-        ""
-    );
-    let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
-    assert_failure(&after);
-    let (_, manifest) = sole_repair_attempt(&root)?;
-    assert_eq!(manifest["state"], "failed", "{manifest}");
-    let violations = manifest["after"]["verdict"]["violations"]
-        .as_array()
-        .ok_or("failed attempt has no violations")?;
-    assert!(
-        violations
-            .iter()
-            .any(|violation| violation["path"] == "src/lib.rs"),
-        "{violations:?}"
-    );
-    let stderr = String::from_utf8_lossy(&after.stderr);
-    assert!(stderr.contains("ripr:   src/lib.rs ("), "{stderr}");
-    assert!(
-        stderr.contains("uncommit it first (for example `git reset --soft HEAD~1`"),
-        "the recovery must fit a committed edit:\n{stderr}"
-    );
-    assert!(!stderr.contains(INCLUDE_RECEIPT_LINE), "{stderr}");
-    std::fs::remove_dir_all(root)?;
-
-    // Refused before finishing: the prepared commit was amended.
-    let root = unbuilt_repair_fixture("agent-repair-amended-head")?;
-    let before = run_repair_phase(&root, &["--seam-id", BOUNDARY_GAP_SEAM_ID], "before")?;
-    assert_success(&before);
-    let (attempt_id, prepared) = sole_repair_attempt(&root)?;
-    let before_head = prepared["repository_head"]
-        .as_str()
-        .ok_or("attempt has no repository head")?
-        .to_string();
-    add_boundary_test(&root)?;
-    commit_repair_fixture(&root, &["-qa", "--amend", "--no-edit"])?;
-    let amended = git_stdout(&root, &["rev-parse", "HEAD"])?;
-    let ancestry = run_command(
-        "git",
-        Some(&root),
-        &["merge-base", "--is-ancestor", &before_head, &amended],
-    )?;
-    assert!(
-        !ancestry.status.success(),
-        "precondition: history was rewritten"
-    );
-    let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
-    assert_failure(&after);
-    assert_eq!(
-        after.status.code(),
-        Some(3),
-        "a diverged HEAD is a typed refusal, not an operational failure"
-    );
-    let stderr = String::from_utf8_lossy(&after.stderr);
-    assert!(stderr.contains("does not descend from"), "{stderr}");
-    assert!(
-        stderr.contains(&format!(
-            "`git reset --soft {before_head}` restores the prepared head"
-        )),
-        "{stderr}"
-    );
-    let (_, manifest) = sole_repair_attempt(&root)?;
-    assert_eq!(manifest["state"], "awaiting_edit", "{manifest}");
-    // The printed recovery finishes the same attempt.
-    run_git(&root, &["reset", "-q", "--soft", &before_head])?;
-    let rerun = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
-    assert_success(&rerun);
-    assert_eq!(repair_receipt(&root)?["status"], "advisory");
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-/// An operational error after the after phase selected its attempt (here the
-/// retained packet is missing) is an ordinary failure, not a typed refusal:
-/// it maps to exit code 2 even though the attempt was already selected.
-#[test]
-fn agent_repair_operational_error_after_attempt_selection_stays_failure()
--> Result<(), Box<dyn std::error::Error>> {
-    let root = unbuilt_repair_fixture("agent-repair-missing-retained-packet")?;
-    let before = run_repair_phase(&root, &["--seam-id", BOUNDARY_GAP_SEAM_ID], "before")?;
-    assert_success(&before);
-    let (attempt_id, manifest) = sole_repair_attempt(&root)?;
-    let packet_rel = manifest["artifacts"]
-        .as_array()
-        .and_then(|artifacts| {
-            artifacts
-                .iter()
-                .find(|artifact| artifact["role"] == "agent_packet")
-        })
-        .and_then(|artifact| artifact["path"].as_str())
-        .ok_or("attempt manifest has no agent_packet artifact")?;
-    std::fs::remove_file(root.join(packet_rel))?;
-
-    let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
-    assert_failure(&after);
-    assert_eq!(
-        after.status.code(),
-        Some(2),
-        "an unreadable retained packet is operational, not a typed refusal"
-    );
-    let stderr = String::from_utf8_lossy(&after.stderr);
-    assert!(
-        stderr.contains("canonicalize artifact") && stderr.contains("agent-packet.json"),
-        "precondition: the retained packet is unreadable:\n{stderr}"
-    );
-    let (_, manifest) = sole_repair_attempt(&root)?;
-    assert_eq!(manifest["state"], "awaiting_edit", "{manifest}");
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_packet_rejects_configured_off_seam() -> Result<(), Box<dyn std::error::Error>> {
-    let (root, diff) = agent_brief_sample_workspace("agent-packet-config-off")?;
-    let root_path = root.display().to_string();
-    let diff = diff.display().to_string();
-    let brief = run_ripr(&[
-        "agent", "brief", "--root", &root_path, "--diff", &diff, "--json",
-    ]);
-    assert_success(&brief);
-    let brief_stdout = String::from_utf8_lossy(&brief.stdout);
-    let seam_id = json_string_field(&brief_stdout, "seam_id")
-        .ok_or("expected brief output to include a seam_id")?;
-    std::fs::write(
-        root.join("ripr.toml"),
-        "[severity.seams]\nweakly_gripped = \"off\"\n",
-    )?;
-
-    let packet = run_ripr(&[
-        "agent",
-        "packet",
-        "--root",
-        &root_path,
-        "--seam-id",
-        &seam_id,
-        "--json",
-    ]);
-    assert_failure(&packet);
-
-    let stderr = String::from_utf8_lossy(&packet.stderr);
-    let expected = std::fs::read_to_string(
-        workspace_root()
-            .join("fixtures/boundary_gap/expected/llm-work-loop/configured-off/stderr.txt"),
-    )?;
-    assert!(stderr.contains(expected.trim()));
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_verify_compares_before_after_repo_exposure_json() -> Result<(), Box<dyn std::error::Error>>
-{
-    let root = unique_temp_workspace("agent-verify");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let before = root.join("before.repo-exposure.json");
-    let after = root.join("after.repo-exposure.json");
-    write_bound_repo_exposure_fixture(
-        &root,
-        &before,
-        r#"{
-      "seam_id": "seam-a",
-      "kind": "predicate_boundary",
-      "file": "src/pricing.rs",
-      "line": 42,
-      "grip_class": "weakly_gripped",
-      "related_tests": [{"oracle_kind": "exact_value", "oracle_strength": "weak"}],
-      "observed_values": ["50"],
-      "missing_discriminators": [{"value": "threshold equality", "reason": "not observed"}]
-    }"#,
-    )?;
-    // Movement is required for a fully current pair (#2922): advance the
-    // fixture so the after artifact is bound to a descended revision.
-    advance_fixture_head(&root, "after movement")?;
-    write_bound_repo_exposure_fixture(
-        &root,
-        &after,
-        r#"{
-      "seam_id": "seam-a",
-      "kind": "predicate_boundary",
-      "file": "src/pricing.rs",
-      "line": 42,
-      "grip_class": "strongly_gripped",
-      "related_tests": [{"oracle_kind": "exact_value", "oracle_strength": "strong"}],
-      "observed_values": ["50", "100"],
-      "missing_discriminators": []
-    }"#,
-    )?;
-
-    let before_path = before.display().to_string();
-    let after_path = after.display().to_string();
-    let output = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root.display().to_string(),
-        "--before",
-        &before_path,
-        "--after",
-        &after_path,
-        "--json",
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schema_version": "0.3""#));
-    assert!(stdout.contains(r#""improved": 1"#));
-    assert!(stdout.contains(r#""change": "improved""#));
-    assert!(stdout.contains(r#""seam_id": "seam-a""#));
-    assert!(stdout.contains("missing discriminator no longer reported"));
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_verify_rejects_tampered_committed_artifact() -> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-verify-tampered");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let before = root.join("before.repo-exposure.json");
-    let after = root.join("after.repo-exposure.json");
-    let seam = r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#;
-    write_bound_repo_exposure_fixture(&root, &before, seam)?;
-    write_bound_repo_exposure_fixture(&root, &after, seam)?;
-    let mut tampered = std::fs::read_to_string(&before)?;
-    tampered.push(' ');
-    std::fs::write(&before, tampered)?;
-
-    let before_path = before.display().to_string();
-    let after_path = after.display().to_string();
-    let output = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root.display().to_string(),
-        "--before",
-        &before_path,
-        "--after",
-        &after_path,
-        "--json",
-    ]);
-    assert_failure(&output);
-    assert!(String::from_utf8_lossy(&output.stderr).contains("content commitment mismatch"));
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_verify_rejects_plausible_uncommitted_json() -> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-verify-fabricated");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let before = root.join("before.repo-exposure.json");
-    let after = root.join("after.repo-exposure.json");
-    let fabricated =
-        r#"{"schema_version":"0.3","scope":"repo","run_status":"complete","seams":[]}"#;
-    std::fs::write(&before, fabricated)?;
-    std::fs::write(&after, fabricated)?;
-
-    let before_path = before.display().to_string();
-    let after_path = after.display().to_string();
-    let output = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root.display().to_string(),
-        "--before",
-        &before_path,
-        "--after",
-        &after_path,
-        "--json",
-    ]);
-    assert_failure(&output);
-    assert!(String::from_utf8_lossy(&output.stderr).contains("canonical repo-exposure artifact"));
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_verify_rejects_incomparable_analysis_inputs() -> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-verify-incomparable-input");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let before = root.join("before.repo-exposure.json");
-    let after = root.join("after.repo-exposure.json");
-    let seam = r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#;
-    write_bound_repo_exposure_fixture(&root, &before, seam)?;
-    write_bound_repo_exposure_fixture(&root, &after, seam)?;
-    let old_head = concrete_fixture_repository_head(&root)?;
-    std::fs::write(root.join("marker.txt"), "fixture-moved\n")?;
-    run_git(&root, &["add", "marker.txt"])?;
-    let commit = run_command(
-        "git",
-        Some(&root),
-        &[
-            "-c",
-            "user.name=RIPR test",
-            "-c",
-            "user.email=ripr@example.invalid",
-            "commit",
-            "-m",
-            "advance fixture",
-        ],
-    )?;
-    assert!(commit.status.success(), "fixture commit failed: {commit:?}");
-    let new_head = concrete_fixture_repository_head(&root)?;
-    // Tamper the analysis input identity while keeping the after artifact
-    // internally consistent (input identity, declared head, and snapshot
-    // identity must agree under exact snapshot validation) so the pair
-    // comparison â€” not single-artifact validation â€” rejects it.
-    let altered = std::fs::read_to_string(&after)?
-        .replace(
-            &format!("\"head\": \"{old_head}\""),
-            &format!("\"head\": \"{new_head}\""),
-        )
-        .replace(
-            &format!("snapshot:input:v4:fnv1a64:00000000000000f1;revision:{old_head}"),
-            &format!("snapshot:input:v4:fnv1a64:00000000000000f2;revision:{new_head}"),
-        )
-        .replace(
-            "\"input_identity\": \"input:v4:fnv1a64:00000000000000f1\"",
-            "\"input_identity\": \"input:v4:fnv1a64:00000000000000f2\"",
-        );
-    std::fs::write(&after, recommit_repo_exposure_json(altered))?;
-
-    let before_path = before.display().to_string();
-    let after_path = after.display().to_string();
-    let output = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root.display().to_string(),
-        "--before",
-        &before_path,
-        "--after",
-        &after_path,
-        "--json",
-    ]);
-    assert_failure(&output);
-    assert!(String::from_utf8_lossy(&output.stderr).contains("analysis input identities differ"));
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_verify_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::error::Error>> {
-    let cases = [
-        (
-            "producer version",
-            "\"version\": \"0.11.0\"",
-            "\"version\": \"0.10.0\"",
-            "producer versions differ",
-        ),
-        (
-            "analysis mode",
-            "\"mode\": \"draft\", \"base_revision\"",
-            "\"mode\": \"release\", \"base_revision\"",
-            "analysis modes differ",
-        ),
-        (
-            "analysis profile",
-            "\"profile\": \"draft\"",
-            "\"profile\": \"release\"",
-            "analysis profiles differ",
-        ),
-        (
-            "base revision",
-            "\"base_revision\": null",
-            "\"base_revision\": \"base:other\"",
-            "base revisions differ",
-        ),
-    ];
-    for (label, from, to, expected) in cases {
-        let root = unique_temp_workspace(&format!("agent-verify-metadata-{label}"));
-        std::fs::create_dir_all(&root)?;
-        init_git_fixture_repo(&root)?;
-        let before = root.join("before.repo-exposure.json");
-        let after = root.join("after.repo-exposure.json");
-        let seam = r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#;
-        write_bound_repo_exposure_fixture(&root, &before, seam)?;
-        write_bound_repo_exposure_fixture(&root, &after, seam)?;
-        let mut altered = std::fs::read_to_string(&after)?.replace(from, to);
-        if label == "analysis mode" {
-            altered = altered.replace("\"profile\": \"draft\"", "\"profile\": \"release\"");
-        }
-        std::fs::write(&after, recommit_repo_exposure_json(altered))?;
-        let output = run_ripr(&[
-            "agent",
-            "verify",
-            "--root",
-            &root.display().to_string(),
-            "--before",
-            &before.display().to_string(),
-            "--after",
-            &after.display().to_string(),
-            "--json",
-        ]);
-        assert_failure(&output);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let expected = if label == "analysis profile" {
-            "invalid or unknown producer identity"
-        } else {
-            expected
-        };
-        assert!(stderr.contains(expected), "{label}: {stderr}");
-        std::fs::remove_dir_all(root)?;
-    }
-    Ok(())
-}
-
-#[test]
-fn agent_verify_accepts_historical_comparable_pair_with_disclosure()
--> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-verify-historical");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let before = root.join("before.repo-exposure.json");
-    let after = root.join("after.repo-exposure.json");
-    let seam = r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#;
-    write_bound_repo_exposure_fixture(&root, &before, seam)?;
-    write_bound_repo_exposure_fixture(&root, &after, seam)?;
-    std::fs::write(root.join("marker.txt"), "fixture-updated\n")?;
-    run_git(&root, &["add", "marker.txt"])?;
-    let commit = run_command(
-        "git",
-        Some(&root),
-        &[
-            "-c",
-            "user.name=RIPR test",
-            "-c",
-            "user.email=ripr@example.invalid",
-            "commit",
-            "-m",
-            "advance fixture",
-        ],
-    )?;
-    if !commit.status.success() {
-        return Err(format!("historical fixture commit failed: {commit:?}").into());
-    }
-
-    let before_path = before.display().to_string();
-    let after_path = after.display().to_string();
-    let output = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root.display().to_string(),
-        "--before",
-        &before_path,
-        "--after",
-        &after_path,
-        "--json",
-    ]);
-    assert_success(&output);
-    // Both artifacts stayed bound to the superseded revision, so the pair is
-    // (Historical, Historical) (#3027).
-    let verify: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    assert_eq!(
-        json_pointer_str(&verify, "/artifact_currentness")?,
-        "historical_noncurrent"
-    );
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_verify_discloses_current_head_with_dirty_worktree()
--> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-verify-dirty");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let before = root.join("before.repo-exposure.json");
-    let after = root.join("after.repo-exposure.json");
-    let seam = r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#;
-    write_bound_repo_exposure_fixture(&root, &before, seam)?;
-    write_bound_repo_exposure_fixture(&root, &after, seam)?;
-    std::fs::write(root.join("marker.txt"), "unsaved-edit\n")?;
-
-    let before_path = before.display().to_string();
-    let after_path = after.display().to_string();
-    let output = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root.display().to_string(),
-        "--before",
-        &before_path,
-        "--after",
-        &after_path,
-        "--json",
-    ]);
-    assert_success(&output);
-    // Both sides are bound to the live head with a dirty worktree, so the
-    // pair token names both dirty sides (#3027); `dirty_worktree` stays
-    // reserved for per-artifact evidence.
-    let verify: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    assert_eq!(
-        json_pointer_str(&verify, "/artifact_currentness")?,
-        "dirty_both"
-    );
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_verify_and_receipt_disclose_historical_before_current_after_pair()
--> Result<(), Box<dyn std::error::Error>> {
-    // The expected clean before/after transaction (#3027): the repository
-    // moved past the before artifact, so the pair is (Historical, Current) â€”
-    // not a dirty worktree. The receipt path recomputes the same token and
-    // its canonical byte comparison must accept the verify output.
-    let root = unique_temp_workspace("agent-verify-historical-before");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let before = root.join("before.repo-exposure.json");
-    let after = root.join("after.repo-exposure.json");
-    write_bound_repo_exposure_fixture(
-        &root,
-        &before,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
-    )?;
-    advance_fixture_head(&root, "after movement")?;
-    write_bound_repo_exposure_fixture(
-        &root,
-        &after,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
-    )?;
-
-    let output = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root.display().to_string(),
-        "--before",
-        &before.display().to_string(),
-        "--after",
-        &after.display().to_string(),
-        "--json",
-    ]);
-    assert_success(&output);
-    let verify: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    assert_eq!(
-        json_pointer_str(&verify, "/artifact_currentness")?,
-        "historical_before_current_after"
-    );
-
-    let verify_path = root.join("agent-verify.json");
-    std::fs::write(&verify_path, &output.stdout)?;
-    let receipt = root.join("agent-receipt.json");
-    let receipt_output = run_ripr(&[
-        "agent",
-        "receipt",
-        "--root",
-        &root.display().to_string(),
-        "--verify-json",
-        &verify_path.display().to_string(),
-        "--seam-id",
-        "seam-a",
-        "--json",
-        "--out",
-        &receipt.display().to_string(),
-    ]);
-    assert_success(&receipt_output);
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_verify_accepts_current_before_historical_after_descendant_pair()
--> Result<(), Box<dyn std::error::Error>> {
-    // Reachability record for #3229: with the checked-out HEAD at the before
-    // artifact's revision and the after artifact bound to a descendant
-    // revision, the lineage gate passes (the before head is an ancestor of the
-    // after head) and the movement gate passes (distinct revisions), so
-    // `current_before_historical_after` is an accepted advisory verify outcome
-    // â€” the descendant shape is reachable, not always lineage-rejected.
-    let root = unique_temp_workspace("agent-verify-current-before-historical");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let before_head = concrete_fixture_repository_head(&root)?;
-    let before = root.join("before.repo-exposure.json");
-    let after = root.join("after.repo-exposure.json");
-    write_bound_repo_exposure_fixture(
-        &root,
-        &before,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
-    )?;
-    advance_fixture_head(&root, "descendant movement")?;
-    write_bound_repo_exposure_fixture(
-        &root,
-        &after,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
-    )?;
-    // Detach back at the before revision on a clean worktree: the before
-    // artifact becomes current again while the after artifact stays bound to
-    // the descendant head.
-    run_git(&root, &["checkout", "--detach", &before_head])?;
-
-    let output = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root.display().to_string(),
-        "--before",
-        &before.display().to_string(),
-        "--after",
-        &after.display().to_string(),
-        "--json",
-    ]);
-    assert_success(&output);
-    let verify: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    assert_eq!(
-        json_pointer_str(&verify, "/artifact_currentness")?,
-        "current_before_historical_after"
-    );
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_verify_historical_before_token_ignores_declared_dirty_production()
--> Result<(), Box<dyn std::error::Error>> {
-    // Non-certification record for #3229: a before artifact that declares a
-    // dirty worktree in its envelope is classified by head mismatch alone once
-    // the repository moves past it, so the pair token stays
-    // `historical_before_current_after` rather than `dirty_before`. The pair
-    // token is a movement/currentness shape, not a cleanliness certificate
-    // for the historical side.
-    let root = unique_temp_workspace("agent-verify-historical-declared-dirty");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let before = root.join("before.repo-exposure.json");
-    let after = root.join("after.repo-exposure.json");
-    write_bound_repo_exposure_fixture(
-        &root,
-        &before,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
-    )?;
-    let before_content = std::fs::read_to_string(&before)?;
-    let declared_dirty =
-        before_content.replace("\"worktree\": \"clean\"", "\"worktree\": \"dirty\"");
-    assert_ne!(
-        declared_dirty, before_content,
-        "fixture must declare a clean worktree before the flip"
-    );
-    std::fs::write(&before, recommit_repo_exposure_json(declared_dirty))?;
-    advance_fixture_head(&root, "after movement")?;
-    write_bound_repo_exposure_fixture(
-        &root,
-        &after,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
-    )?;
-
-    let output = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root.display().to_string(),
-        "--before",
-        &before.display().to_string(),
-        "--after",
-        &after.display().to_string(),
-        "--json",
-    ]);
-    assert_success(&output);
-    let verify: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    assert_eq!(
-        json_pointer_str(&verify, "/artifact_currentness")?,
-        "historical_before_current_after"
-    );
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_verify_discloses_dirty_before_and_dirty_after_pairs()
--> Result<(), Box<dyn std::error::Error>> {
-    // A declared dirty worktree on exactly one side names that side (#3027).
-    // Both artifacts stay bound to the live head; a single-dirty pair is
-    // admissible at the same revision because the movement gate only rejects
-    // a fully current pair (#2922).
-    for (label, dirty_side, expected) in [
-        ("dirty-before", "before", "dirty_before"),
-        ("dirty-after", "after", "dirty_after"),
-    ] {
-        let root = unique_temp_workspace(&format!("agent-verify-{label}"));
-        std::fs::create_dir_all(&root)?;
-        init_git_fixture_repo(&root)?;
-        let before = root.join("before.repo-exposure.json");
-        let after = root.join("after.repo-exposure.json");
-        let seam = r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#;
-        write_bound_repo_exposure_fixture(&root, &before, seam)?;
-        write_bound_repo_exposure_fixture(&root, &after, seam)?;
-        let dirty_path = if dirty_side == "before" {
-            &before
-        } else {
-            &after
-        };
-        let declared_dirty = std::fs::read_to_string(dirty_path)?
-            .replace("\"worktree\": \"clean\"", "\"worktree\": \"dirty\"");
-        assert_ne!(
-            declared_dirty,
-            std::fs::read_to_string(dirty_path)?,
-            "{label}: fixture must declare a clean worktree before the flip"
-        );
-        std::fs::write(dirty_path, recommit_repo_exposure_json(declared_dirty))?;
-
-        let output = run_ripr(&[
-            "agent",
-            "verify",
-            "--root",
-            &root.display().to_string(),
-            "--before",
-            &before.display().to_string(),
-            "--after",
-            &after.display().to_string(),
-            "--json",
-        ]);
-        assert_success(&output);
-        let verify: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-        assert_eq!(
-            json_pointer_str(&verify, "/artifact_currentness")?,
-            expected,
-            "{label}"
-        );
-        std::fs::remove_dir_all(root)?;
-    }
-    Ok(())
-}
-
-#[test]
-fn agent_verify_rejects_unsupported_repo_exposure_schema() -> Result<(), Box<dyn std::error::Error>>
-{
-    let root = unique_temp_workspace("agent-verify-schema");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let before = root.join("before.repo-exposure.json");
-    let after = root.join("after.repo-exposure.json");
-    let seam = r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#;
-    write_bound_repo_exposure_fixture(&root, &before, seam)?;
-    write_bound_repo_exposure_fixture(&root, &after, seam)?;
-    let altered = std::fs::read_to_string(&before)?
-        .replace("\"schema_version\": \"0.3\"", "\"schema_version\": \"9.0\"");
-    std::fs::write(&before, altered)?;
-
-    let before_path = before.display().to_string();
-    let after_path = after.display().to_string();
-    let output = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root.display().to_string(),
-        "--before",
-        &before_path,
-        "--after",
-        &after_path,
-        "--json",
-    ]);
-    assert_failure(&output);
-    assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported repo-exposure schema"));
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_verify_rejects_malformed_typed_seam() -> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-verify-seam-schema");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let before = root.join("before.repo-exposure.json");
-    let after = root.join("after.repo-exposure.json");
-    let seam = r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#;
-    write_bound_repo_exposure_fixture(&root, &before, seam)?;
-    write_bound_repo_exposure_fixture(&root, &after, seam)?;
-    let altered =
-        std::fs::read_to_string(&before)?.replace("\"line\":42", "\"line\":\"not-a-line\"");
-    std::fs::write(&before, altered)?;
-
-    let before_path = before.display().to_string();
-    let after_path = after.display().to_string();
-    let output = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root.display().to_string(),
-        "--before",
-        &before_path,
-        "--after",
-        &after_path,
-        "--json",
-    ]);
-    assert_failure(&output);
-    assert!(String::from_utf8_lossy(&output.stderr).contains("canonical repo-exposure artifact"));
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_verify_rejects_same_revision_pair_without_movement()
--> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-verify-no-movement");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let before = root.join("before.repo-exposure.json");
-    let after = root.join("after.repo-exposure.json");
-    // Even an apparent grip improvement is unverifiable when both fully
-    // current artifacts are bound to the same clean revision (#2922).
-    write_bound_repo_exposure_fixture(
-        &root,
-        &before,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
-    )?;
-    write_bound_repo_exposure_fixture(
-        &root,
-        &after,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
-    )?;
-
-    let output = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root.display().to_string(),
-        "--before",
-        &before.display().to_string(),
-        "--after",
-        &after.display().to_string(),
-        "--json",
-    ]);
-    assert_failure(&output);
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("no repository movement"),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_verify_rejects_reversed_revision_pair() -> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-verify-reversed");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let earlier = root.join("earlier.repo-exposure.json");
-    let later = root.join("later.repo-exposure.json");
-    let seam = r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#;
-    write_bound_repo_exposure_fixture(&root, &earlier, seam)?;
-    advance_fixture_head(&root, "after movement")?;
-    write_bound_repo_exposure_fixture(&root, &later, seam)?;
-
-    // Both artifacts are individually valid and mutually comparable; only the
-    // lineage check sees that the after input is not descended from the
-    // before input (#2922).
-    let output = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root.display().to_string(),
-        "--before",
-        &later.display().to_string(),
-        "--after",
-        &earlier.display().to_string(),
-        "--json",
-    ]);
-    assert_failure(&output);
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("revisions are reversed"),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_receipt_rejects_lineage_reversed_pair() -> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-receipt-reversed");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let earlier = root.join("earlier.repo-exposure.json");
-    let later = root.join("later.repo-exposure.json");
-    let seam = r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#;
-    write_bound_repo_exposure_fixture(&root, &earlier, seam)?;
-    advance_fixture_head(&root, "after movement")?;
-    write_bound_repo_exposure_fixture(&root, &later, seam)?;
-    // Name the later artifact as the receipt's before input: the receipt path
-    // re-runs the pair lineage authority and must not become a bypass (#2922).
-    let verify = root.join("fabricated-agent-verify.json");
-    write_fabricated_agent_verify_json(&verify, &later, &earlier)?;
-
-    let output = run_ripr(&[
-        "agent",
-        "receipt",
-        "--root",
-        &root.display().to_string(),
-        "--verify-json",
-        &verify.display().to_string(),
-        "--seam-id",
-        "seam-a",
-        "--json",
-    ]);
-    assert_failure(&output);
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("[incomparable_lineage]"),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_receipt_writes_one_seam_handoff_json() -> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-receipt");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"fast\"\n")?;
-    std::fs::create_dir_all(root.join("target/ripr/workflow"))?;
-    let before = root.join("target/ripr/workflow/before.repo-exposure.json");
-    let after = root.join("target/ripr/workflow/after.repo-exposure.json");
-    write_bound_repo_exposure_fixture(
-        &root,
-        &before,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
-    )?;
-    // Movement is required for a fully current pair (#2922): advance the
-    // fixture so the after artifact is bound to a descended revision.
-    advance_fixture_head(&root, "after movement")?;
-    write_bound_repo_exposure_fixture(
-        &root,
-        &after,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
-    )?;
-    let verify = root.join("agent-verify.json");
-    let receipt = root.join("target/ripr/reports/agent-receipt.json");
-    let verify_output = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root.display().to_string(),
-        "--before",
-        &before.display().to_string(),
-        "--after",
-        &after.display().to_string(),
-        "--json",
-    ]);
-    assert_success(&verify_output);
-    std::fs::write(&verify, verify_output.stdout)?;
-
-    let output = run_ripr(&[
-        "agent",
-        "receipt",
-        "--root",
-        &root.display().to_string(),
-        "--verify-json",
-        &verify.display().to_string(),
-        "--seam-id",
-        "seam-a",
-        "--test",
-        "pricing_boundary",
-        "--command",
-        "cargo test pricing_boundary",
-        "--json",
-        "--out",
-        &receipt.display().to_string(),
-    ]);
-    assert_success(&output);
-
-    let text = std::fs::read_to_string(&receipt)?;
-    assert!(text.contains(r#""schema_version": "0.5""#));
-    assert!(text.contains(r#""seam_id": "seam-a""#));
-    assert!(text.contains(r#""change": "improved""#));
-    assert!(text.contains(&format!(
-        r#""ripr_version": "{}""#,
-        env!("CARGO_PKG_VERSION")
-    )));
-    assert!(text.contains(r#""repo_root": "#));
-    assert!(text.contains(r#""config_fingerprint": "fnv1a64:"#));
-    assert!(text.contains(r#""generated_at": "unix_ms:"#));
-    assert!(text.contains(r#""command_template_version": "0.1""#));
-    assert!(text.contains(r#""before_artifact": {"#));
-    assert!(text.contains(r#""after_artifact": {"#));
-    assert!(text.contains(r#""verify_artifact": {"#));
-    assert!(text.contains(r#""sha256": "#));
-    assert!(text.contains(r#""before_class": "weakly_gripped""#));
-    assert!(text.contains(r#""after_class": "strongly_gripped""#));
-    assert!(text.contains(r#""movement": "improved""#));
-    assert!(text.contains(r#""runtime_mutation_execution": false"#));
-    assert!(text.contains(r#""next_action": {"#));
-    assert!(text.contains(r#""kind": "improved""#));
-    assert!(text.contains(r#""test_changed": "pricing_boundary""#));
-    assert!(text.contains(r#""cargo test pricing_boundary""#));
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-/// Issue #3967: a relative `agent receipt --out` anchors at the resolved
-/// `--root`, so the product-rendered command pasted from a foreign
-/// directory writes under the selected root instead of the launch
-/// directory. Runs the full command path with the child process CWD
-/// pinned to a separate launch dir (no in-process CWD change).
-#[test]
-fn agent_receipt_relative_out_anchors_at_root_from_foreign_cwd()
--> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-receipt-out-anchor");
-    let launch = unique_temp_workspace("agent-receipt-out-launch");
-    std::fs::create_dir_all(&root)?;
-    std::fs::create_dir_all(&launch)?;
-    init_git_fixture_repo(&root)?;
-    std::fs::create_dir_all(root.join("target/ripr/workflow"))?;
-    let before = root.join("target/ripr/workflow/before.repo-exposure.json");
-    let after = root.join("target/ripr/workflow/after.repo-exposure.json");
-    write_bound_repo_exposure_fixture(
-        &root,
-        &before,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
-    )?;
-    advance_fixture_head(&root, "after movement")?;
-    write_bound_repo_exposure_fixture(
-        &root,
-        &after,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
-    )?;
-    let verify = root.join("agent-verify.json");
-    let verify_output = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root.display().to_string(),
-        "--before",
-        &before.display().to_string(),
-        "--after",
-        &after.display().to_string(),
-        "--json",
-    ]);
-    assert_success(&verify_output);
-    std::fs::write(&verify, verify_output.stdout)?;
-
-    let bin = env!("CARGO_BIN_EXE_ripr");
-    let output = run_command(
-        bin,
-        Some(&launch),
-        &[
-            "agent",
-            "receipt",
-            "--root",
-            &root.display().to_string(),
-            "--verify-json",
-            &verify.display().to_string(),
-            "--seam-id",
-            "seam-a",
-            "--json",
-            "--out",
-            "target/ripr/reports/agent-receipt.json",
-        ],
-    )?;
-    assert_success(&output);
-
-    let anchored = root.join("target/ripr/reports/agent-receipt.json");
-    let text = std::fs::read_to_string(&anchored)?;
-    assert!(text.contains(r#""seam_id": "seam-a""#));
-    assert!(
-        !launch
-            .join("target/ripr/reports/agent-receipt.json")
-            .exists(),
-        "relative --out must not write under the launch directory"
-    );
-    std::fs::remove_dir_all(root)?;
-    std::fs::remove_dir_all(launch)?;
-    Ok(())
-}
-
-#[test]
-fn agent_receipt_rejects_fabricated_verify_json() -> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-receipt-fabricated");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let before = root.join("before.repo-exposure.json");
-    let after = root.join("after.repo-exposure.json");
-    write_bound_repo_exposure_fixture(
-        &root,
-        &before,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
-    )?;
-    // Movement is required for a fully current pair (#2922): advance the
-    // fixture so the artifact pair stays admissible and the intended
-    // canonical-output check is what rejects the fabricated verify JSON.
-    advance_fixture_head(&root, "after movement")?;
-    write_bound_repo_exposure_fixture(
-        &root,
-        &after,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
-    )?;
-    let verify = root.join("fabricated-agent-verify.json");
-    write_fabricated_agent_verify_json(&verify, &before, &after)?;
-
-    let output = run_ripr(&[
-        "agent",
-        "receipt",
-        "--root",
-        &root.display().to_string(),
-        "--verify-json",
-        &verify.display().to_string(),
-        "--seam-id",
-        "seam-a",
-        "--json",
-    ]);
-    assert_failure(&output);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("not canonical output"), "stderr: {stderr}");
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_receipt_rejects_incomparable_base_revision() -> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-receipt-base-mismatch");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let before = root.join("before.repo-exposure.json");
-    let after = root.join("after.repo-exposure.json");
-    write_bound_repo_exposure_fixture(
-        &root,
-        &before,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
-    )?;
-    write_bound_repo_exposure_fixture(
-        &root,
-        &after,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
-    )?;
-    let altered = std::fs::read_to_string(&after)?.replace(
-        "\"base_revision\": null",
-        "\"base_revision\": \"base:other\"",
-    );
-    std::fs::write(&after, recommit_repo_exposure_json(altered))?;
-    let verify = root.join("fabricated-agent-verify.json");
-    write_fabricated_agent_verify_json(&verify, &before, &after)?;
-
-    let output = run_ripr(&[
-        "agent",
-        "receipt",
-        "--root",
-        &root.display().to_string(),
-        "--verify-json",
-        &verify.display().to_string(),
-        "--seam-id",
-        "seam-a",
-        "--json",
-    ]);
-    assert_failure(&output);
-    assert!(String::from_utf8_lossy(&output.stderr).contains("[incomparable_base_revision]"));
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_receipt_rejects_incomparable_analysis_inputs() -> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-receipt-input-mismatch");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let before = root.join("before.repo-exposure.json");
-    let after = root.join("after.repo-exposure.json");
-    write_bound_repo_exposure_fixture(
-        &root,
-        &before,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
-    )?;
-    write_bound_repo_exposure_fixture(
-        &root,
-        &after,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
-    )?;
-    let old_head = concrete_fixture_repository_head(&root)?;
-    std::fs::write(root.join("marker.txt"), "fixture-moved\n")?;
-    run_git(&root, &["add", "marker.txt"])?;
-    let commit = run_command(
-        "git",
-        Some(&root),
-        &[
-            "-c",
-            "user.name=RIPR test",
-            "-c",
-            "user.email=ripr@example.invalid",
-            "commit",
-            "-m",
-            "advance fixture",
-        ],
-    )?;
-    assert!(commit.status.success(), "fixture commit failed: {commit:?}");
-    let new_head = concrete_fixture_repository_head(&root)?;
-    // Tamper the analysis input identity while keeping the after artifact
-    // internally consistent (input identity, declared head, and snapshot
-    // identity must agree under exact snapshot validation) so the pair
-    // comparison â€” not single-artifact validation â€” rejects it.
-    let altered = std::fs::read_to_string(&after)?
-        .replace(
-            &format!("\"head\": \"{old_head}\""),
-            &format!("\"head\": \"{new_head}\""),
-        )
-        .replace(
-            &format!("snapshot:input:v4:fnv1a64:00000000000000f1;revision:{old_head}"),
-            &format!("snapshot:input:v4:fnv1a64:00000000000000f2;revision:{new_head}"),
-        )
-        .replace(
-            "\"input_identity\": \"input:v4:fnv1a64:00000000000000f1\"",
-            "\"input_identity\": \"input:v4:fnv1a64:00000000000000f2\"",
-        );
-    std::fs::write(&after, recommit_repo_exposure_json(altered))?;
-    let verify = root.join("fabricated-agent-verify.json");
-    write_fabricated_agent_verify_json(&verify, &before, &after)?;
-
-    let output = run_ripr(&[
-        "agent",
-        "receipt",
-        "--root",
-        &root.display().to_string(),
-        "--verify-json",
-        &verify.display().to_string(),
-        "--seam-id",
-        "seam-a",
-        "--json",
-    ]);
-    assert_failure(&output);
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("[incomparable_analysis_inputs]"),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_receipt_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::error::Error>> {
-    let cases = [
-        (
-            "producer version",
-            "\"version\": \"0.11.0\"",
-            "\"version\": \"0.10.0\"",
-        ),
-        (
-            "analysis mode",
-            "\"mode\": \"draft\", \"base_revision\"",
-            "\"mode\": \"release\", \"base_revision\"",
-        ),
-        (
-            "analysis profile",
-            "\"profile\": \"draft\"",
-            "\"profile\": \"release\"",
-        ),
-    ];
-    for (label, from, to) in cases {
-        let root = unique_temp_workspace(&format!("agent-receipt-metadata-{label}"));
-        std::fs::create_dir_all(&root)?;
-        init_git_fixture_repo(&root)?;
-        let before = root.join("before.repo-exposure.json");
-        let after = root.join("after.repo-exposure.json");
-        let seam = r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#;
-        write_bound_repo_exposure_fixture(&root, &before, seam)?;
-        write_bound_repo_exposure_fixture(&root, &after, seam)?;
-        let mut altered = std::fs::read_to_string(&after)?.replace(from, to);
-        if label == "analysis mode" {
-            altered = altered.replace("\"profile\": \"draft\"", "\"profile\": \"release\"");
-        }
-        std::fs::write(&after, recommit_repo_exposure_json(altered))?;
-        let verify = root.join("fabricated-agent-verify.json");
-        write_fabricated_agent_verify_json(&verify, &before, &after)?;
-        let output = run_ripr(&[
-            "agent",
-            "receipt",
-            "--root",
-            &root.display().to_string(),
-            "--verify-json",
-            &verify.display().to_string(),
-            "--seam-id",
-            "seam-a",
-            "--json",
-        ]);
-        assert_failure(&output);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let expected = if label == "analysis profile" {
-            "invalid or unknown producer identity"
-        } else {
-            "[incomparable_analysis_inputs]"
-        };
-        assert!(stderr.contains(expected), "{label}: {stderr}");
-        std::fs::remove_dir_all(root)?;
-    }
-    Ok(())
-}
-
-#[test]
-fn agent_receipt_rejects_tampered_verify_json() -> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-receipt-tampered");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let before = root.join("before.repo-exposure.json");
-    let after = root.join("after.repo-exposure.json");
-    write_bound_repo_exposure_fixture(
-        &root,
-        &before,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
-    )?;
-    // Movement is required for a fully current pair (#2922): advance the
-    // fixture so the after artifact is bound to a descended revision.
-    advance_fixture_head(&root, "after movement")?;
-    write_bound_repo_exposure_fixture(
-        &root,
-        &after,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
-    )?;
-    let verify = root.join("agent-verify.json");
-    let verify_output = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root.display().to_string(),
-        "--before",
-        &before.display().to_string(),
-        "--after",
-        &after.display().to_string(),
-        "--json",
-    ]);
-    assert_success(&verify_output);
-    let mut verify_value: serde_json::Value = serde_json::from_slice(&verify_output.stdout)?;
-    verify_value["changed_seams"][0]["change"] = serde_json::Value::String("resolved".to_string());
-    std::fs::write(&verify, serde_json::to_vec_pretty(&verify_value)?)?;
-
-    let output = run_ripr(&[
-        "agent",
-        "receipt",
-        "--root",
-        &root.display().to_string(),
-        "--verify-json",
-        &verify.display().to_string(),
-        "--seam-id",
-        "seam-a",
-        "--json",
-    ]);
-    assert_failure(&output);
-    assert!(String::from_utf8_lossy(&output.stderr).contains("not canonical output"));
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_receipt_rejects_rerendered_verify_json() -> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-receipt-rerendered");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let before = root.join("before.repo-exposure.json");
-    let after = root.join("after.repo-exposure.json");
-    write_bound_repo_exposure_fixture(
-        &root,
-        &before,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
-    )?;
-    // Movement is required for a fully current pair (#2922): advance the
-    // fixture so the after artifact is bound to a descended revision.
-    advance_fixture_head(&root, "after movement")?;
-    write_bound_repo_exposure_fixture(
-        &root,
-        &after,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
-    )?;
-    let verify = root.join("agent-verify.json");
-    let verify_output = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root.display().to_string(),
-        "--before",
-        &before.display().to_string(),
-        "--after",
-        &after.display().to_string(),
-        "--json",
-    ]);
-    assert_success(&verify_output);
-    // Same semantic values as canonical output, but re-rendered with compact
-    // spacing: parses to an equal Value while differing byte-for-byte.
-    let verify_value: serde_json::Value = serde_json::from_slice(&verify_output.stdout)?;
-    std::fs::write(&verify, serde_json::to_vec(&verify_value)?)?;
-
-    let output = run_ripr(&[
-        "agent",
-        "receipt",
-        "--root",
-        &root.display().to_string(),
-        "--verify-json",
-        &verify.display().to_string(),
-        "--seam-id",
-        "seam-a",
-        "--json",
-    ]);
-    assert_failure(&output);
-    assert!(String::from_utf8_lossy(&output.stderr).contains("not canonical output"));
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-/// Shared setup for the #2922 PR B verify/receipt negative corpus: a
-/// comparable moving before/after pair bound to the fixture repository plus
-/// the authentic canonical agent-verify output captured from the binary.
-/// Returns (before, after, verify JSON path, verify JSON text).
-fn write_moving_pair_and_verify(
-    root: &Path,
-    before_seam_json: &str,
-    after_seam_json: &str,
-) -> Result<(PathBuf, PathBuf, PathBuf, String), Box<dyn std::error::Error>> {
-    let before = root.join("before.repo-exposure.json");
-    let after = root.join("after.repo-exposure.json");
-    write_bound_repo_exposure_fixture(root, &before, before_seam_json)?;
-    advance_fixture_head(root, "after movement")?;
-    write_bound_repo_exposure_fixture(root, &after, after_seam_json)?;
-    let verify = root.join("agent-verify.json");
-    let verify_output = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root.display().to_string(),
-        "--before",
-        &before.display().to_string(),
-        "--after",
-        &after.display().to_string(),
-        "--json",
-    ]);
-    assert_success(&verify_output);
-    std::fs::write(&verify, &verify_output.stdout)?;
-    let verify_text = String::from_utf8(verify_output.stdout)?;
-    Ok((before, after, verify, verify_text))
-}
-
-fn run_agent_receipt_command(
-    root: &Path,
-    verify: &Path,
-    seam_id: &str,
-    out: Option<&Path>,
-) -> Output {
-    let mut args = vec![
-        "agent".to_string(),
-        "receipt".to_string(),
-        "--root".to_string(),
-        root.display().to_string(),
-        "--verify-json".to_string(),
-        verify.display().to_string(),
-        "--seam-id".to_string(),
-        seam_id.to_string(),
-        "--json".to_string(),
-    ];
-    if let Some(out) = out {
-        args.push("--out".to_string());
-        args.push(out.display().to_string());
-    }
-    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    run_ripr(&refs)
-}
-
-#[test]
-fn agent_verify_binds_artifact_content_commitments() -> Result<(), Box<dyn std::error::Error>> {
-    // Positive control for #2922 PR B: canonical verify output is bound to
-    // the exact content commitments of the validated before/after artifacts.
-    let root = unique_temp_workspace("agent-verify-binding");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let (before, after, _verify, verify_text) = write_moving_pair_and_verify(
-        &root,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
-    )?;
-    let verify: serde_json::Value = serde_json::from_str(&verify_text)?;
-    let before_digest = repo_exposure_artifact_content_digest(&before)?;
-    let after_digest = repo_exposure_artifact_content_digest(&after)?;
-    assert_eq!(json_pointer_str(&verify, "/schema_version")?, "0.3");
-    assert_eq!(
-        json_pointer_str(&verify, "/inputs/before_content_sha256")?,
-        before_digest
-    );
-    assert_eq!(
-        json_pointer_str(&verify, "/inputs/after_content_sha256")?,
-        after_digest
-    );
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_receipt_rejects_verify_replayed_against_mutated_pair()
--> Result<(), Box<dyn std::error::Error>> {
-    // Verify replay defense (#2922 PR B): a verify JSON produced for pair
-    // A/B must not receipt pair A/B' when B' differs from B by any byte â€”
-    // even when the mutation is invisible to the movement render.
-    let root = unique_temp_workspace("agent-receipt-replay-mutated");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let (before, after, verify, _verify_text) = write_moving_pair_and_verify(
-        &root,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
-    )?;
-
-    // Positive control: the authentic chain receipts before any mutation.
-    let control_out = root.join("agent-receipt-control.json");
-    let control = run_agent_receipt_command(&root, &verify, "seam-a", Some(&control_out));
-    assert_success(&control);
-
-    // Mutation: change bytes the movement comparison never reads
-    // (`run_status` is not part of the artifact validator's governed fields
-    // or the seam payload), then recommit so the artifact stays valid.
-    let original_digest = repo_exposure_artifact_content_digest(&after)?;
-    let mutation = "set after artifact run_status to `stalled` and recommit its content commitment (invisible to the movement render)";
-    let mutated = std::fs::read_to_string(&after)?.replace(
-        "\"run_status\": \"complete\"",
-        "\"run_status\": \"stalled\"",
-    );
-    assert_ne!(
-        mutated,
-        std::fs::read_to_string(&after)?,
-        "mutation must change the after artifact bytes"
-    );
-    std::fs::write(&after, recommit_repo_exposure_json(mutated))?;
-    let mutated_digest = repo_exposure_artifact_content_digest(&after)?;
-    assert_ne!(
-        original_digest, mutated_digest,
-        "mutation must change the after artifact content commitment"
-    );
-
-    // Control: the mutated pair is still fully valid and verifiable â€” only
-    // the replayed verify JSON is bound to the pre-mutation bytes.
-    let fresh_verify = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root.display().to_string(),
-        "--before",
-        &before.display().to_string(),
-        "--after",
-        &after.display().to_string(),
-        "--json",
-    ]);
-    assert_success(&fresh_verify);
-
-    let replay_out = root.join("agent-receipt-replay.json");
-    let replay = run_agent_receipt_command(&root, &verify, "seam-a", Some(&replay_out));
-    assert_failure(&replay);
-    let stderr = String::from_utf8_lossy(&replay.stderr);
-    assert!(
-        stderr.contains("[not_canonical]"),
-        "mutation: {mutation}; original after digest {original_digest}; mutated after digest {mutated_digest}; expected failure kind [not_canonical]; actual stderr: {stderr}"
-    );
-    assert!(
-        !replay_out.exists(),
-        "a rejected replay must not leave an authoritative receipt artifact at {}",
-        replay_out.display()
-    );
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_receipt_rejects_tampered_pair_binding_fields() -> Result<(), Box<dyn std::error::Error>> {
-    // Verify commitment/tamper negatives (#2922 PR B): the bound artifact
-    // digest and the verify status are governed output; altering either must
-    // fail for one bounded reason.
-    let root = unique_temp_workspace("agent-receipt-binding-tamper");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let (_before, after, _verify, verify_text) = write_moving_pair_and_verify(
-        &root,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
-    )?;
-
-    // Case 1: flip one hex digit of the bound after-artifact digest.
-    let bound_digest = repo_exposure_artifact_content_digest(&after)?;
-    let first_hex = bound_digest
-        .as_bytes()
-        .get(7)
-        .copied()
-        .ok_or("bound digest is too short")? as char;
-    let flipped = format!(
-        "sha256:{}{}",
-        if first_hex == '0' { '1' } else { '0' },
-        &bound_digest[8..]
-    );
-    assert_ne!(bound_digest, flipped, "digest flip must change the digest");
-    let tampered = root.join("agent-verify-tampered-digest.json");
-    std::fs::write(&tampered, verify_text.replace(&bound_digest, &flipped))?;
-    let output = run_agent_receipt_command(&root, &tampered, "seam-a", None);
-    assert_failure(&output);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("[not_canonical]"),
-        "mutation: flipped one hex digit of the verify JSON after_content_sha256; original digest {bound_digest}; mutated digest {flipped}; expected failure kind [not_canonical]; actual stderr: {stderr}"
-    );
-
-    // Case 2: a failed verify cannot be represented as a successful one
-    // (and vice versa): the status field is governed canonical output.
-    let failed = root.join("agent-verify-failed-status.json");
-    std::fs::write(
-        &failed,
-        verify_text.replace("\"status\": \"advisory\"", "\"status\": \"failed\""),
-    )?;
-    let output = run_agent_receipt_command(&root, &failed, "seam-a", None);
-    assert_failure(&output);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("[not_canonical]"),
-        "mutation: rewrote verify JSON status advisory -> failed; expected failure kind [not_canonical]; actual stderr: {stderr}"
-    );
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_receipt_rejects_unsupported_verify_schema() -> Result<(), Box<dyn std::error::Error>> {
-    // Schema-version fail-closed (#2922 PR B, #3027): verify JSON from an
-    // older or newer schema than the canonical 0.3 binding shape is rejected
-    // for one bounded typed reason before any artifact work. A 0.2 document
-    // that is canonical in every other way is NOT recomputed into a valid
-    // 0.3 receipt â€” there is no silent migration.
-    let root = unique_temp_workspace("agent-receipt-schema");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let (_before, _after, verify, verify_text) = write_moving_pair_and_verify(
-        &root,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
-    )?;
-
-    // Positive control: the canonical 0.3 output receipts.
-    let control = run_agent_receipt_command(&root, &verify, "seam-a", None);
-    assert_success(&control);
-
-    for (label, version) in [("older", "0.1"), ("older", "0.2"), ("newer", "9.9")] {
-        let rewritten = root.join(format!("agent-verify-schema-{label}-{version}.json"));
-        std::fs::write(
-            &rewritten,
-            verify_text.replace(
-                "\"schema_version\": \"0.3\"",
-                &format!("\"schema_version\": \"{version}\""),
-            ),
-        )?;
-        let output = run_agent_receipt_command(&root, &rewritten, "seam-a", None);
-        assert_failure(&output);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stderr.contains("[unsupported_schema]"),
-            "mutation: rewrote verify JSON schema_version 0.3 -> {version} ({label} schema); expected failure kind [unsupported_schema]; actual stderr: {stderr}"
-        );
-    }
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_receipt_rejects_stale_verify_after_repository_movement()
--> Result<(), Box<dyn std::error::Error>> {
-    // Stale verify + receipt replay negatives (#2922 PR B): a verify result
-    // produced while the pair was current must not receipt after the
-    // repository moves; the replayed receipt re-validation recomputes
-    // currentness and the canonical comparison fails closed.
-    let root = unique_temp_workspace("agent-receipt-stale-verify");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let (_before, _after, verify, _verify_text) = write_moving_pair_and_verify(
-        &root,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
-        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
-    )?;
-    let verify_head = concrete_fixture_repository_head(&root)?;
-    let verify_digest = sha256_hex_bytes(&std::fs::read(&verify)?);
-
-    // Positive control: the fresh chain receipts.
-    let control_out = root.join("agent-receipt-control.json");
-    let control = run_agent_receipt_command(&root, &verify, "seam-a", Some(&control_out));
-    assert_success(&control);
-
-    // Repository movement after verify: the same verify JSON is now stale.
-    advance_fixture_head(&root, "post-verify movement")?;
-    let replay_head = concrete_fixture_repository_head(&root)?;
-    assert_ne!(
-        verify_head, replay_head,
-        "fixture must move after the verify result was produced"
-    );
-
-    let replay_out = root.join("agent-receipt-replay.json");
-    let replay = run_agent_receipt_command(&root, &verify, "seam-a", Some(&replay_out));
-    assert_failure(&replay);
-    let stderr = String::from_utf8_lossy(&replay.stderr);
-    assert!(
-        stderr.contains("[not_canonical]"),
-        "mutation: repository advanced after verify (head {verify_head} -> {replay_head}); replayed verify digest {verify_digest}; expected failure kind [not_canonical]; actual stderr: {stderr}"
-    );
-    // The human surface cannot strengthen the typed failure: nothing is
-    // rendered to stdout and no receipt artifact is left behind (#2922 PR B).
-    assert!(
-        replay.stdout.is_empty(),
-        "a rejected receipt replay must render nothing to stdout"
-    );
-    assert!(
-        !replay_out.exists(),
-        "a rejected receipt replay must not leave an authoritative receipt artifact at {}",
-        replay_out.display()
-    );
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_receipt_rejects_target_absent_from_both_states() -> Result<(), Box<dyn std::error::Error>>
-{
-    // Movement-outcome cell (#2922): the retained verify target seam does
-    // not exist in either state. Verify compares the presented pair fine;
-    // the receipt for the absent target fails for one bounded reason.
-    let root = unique_temp_workspace("agent-receipt-absent-target");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let (_before, _after, verify, _verify_text) = write_moving_pair_and_verify(
-        &root,
-        r#"{"seam_id":"seam-z","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
-        r#"{"seam_id":"seam-z","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
-    )?;
-
-    let output = run_agent_receipt_command(&root, &verify, "seam-retained-target", None);
-    assert_failure(&output);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains(
-            "agent receipt seam_id seam-retained-target was not found in agent verify JSON"
-        ),
-        "mutation: requested a receipt for a target seam absent from both states; expected the seam-selection rejection; actual stderr: {stderr}"
-    );
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn agent_receipt_keeps_unmoved_target_unchanged_when_another_seam_moves()
--> Result<(), Box<dyn std::error::Error>> {
-    // Movement-outcome cell (#2922): the after state moves seam-y while the
-    // retained verify target seam-x does not move. The typed receipt
-    // projection for seam-x must stay `unchanged`; movement on a different
-    // item can never strengthen the retained target's receipt.
-    let root = unique_temp_workspace("agent-receipt-unmoved-target");
-    std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
-    let (_before, _after, verify, verify_text) = write_moving_pair_and_verify(
-        &root,
-        r#"{"seam_id":"seam-x","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}, {"seam_id":"seam-y","kind":"predicate_boundary","file":"src/report.rs","line":21,"grip_class":"weakly_gripped"}"#,
-        r#"{"seam_id":"seam-x","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}, {"seam_id":"seam-y","kind":"predicate_boundary","file":"src/report.rs","line":21,"grip_class":"strongly_gripped"}"#,
-    )?;
-    // Control: the verify result really did record movement on seam-y only.
-    let verify_value: serde_json::Value = serde_json::from_str(&verify_text)?;
-    let moved: Vec<&str> = verify_value["changed_seams"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|seam| seam["seam_id"].as_str())
-        .collect();
-    assert_eq!(
-        moved,
-        vec!["seam-y"],
-        "control: only seam-y should move in this fixture"
-    );
-
-    let output = run_agent_receipt_command(&root, &verify, "seam-x", None);
-    assert_success(&output);
-    let receipt: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    assert_eq!(
-        json_pointer_str(&receipt, "/seam/change")?,
-        "unchanged",
-        "the unmoved retained target must not be reported as moved"
-    );
-    assert_eq!(
-        json_pointer_str(&receipt, "/seam/before")?,
-        json_pointer_str(&receipt, "/seam/after")?,
-        "the unmoved retained target must keep equal before/after classes"
-    );
-    assert_eq!(
-        json_pointer_str(&receipt, "/summary/receipt_state")?,
-        "receipt_movement_unchanged",
-        "the typed receipt state must not be upgraded by movement on seam-y"
-    );
-    assert_eq!(
-        json_pointer_str(&receipt, "/summary/next_action/kind")?,
-        "unchanged",
-        "the next-action projection must not be upgraded by movement on seam-y"
-    );
-    assert_eq!(
-        json_pointer_str(&receipt, "/provenance/movement")?,
-        "unchanged"
-    );
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn check_badge_json_output_has_native_badge_shape() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--format",
-        "badge-json",
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schema_version": "0.8""#));
-    // Diff-scoped badge JSON never carries a public projection.
-    assert!(!stdout.contains(r#""public_projection""#));
-    assert!(stdout.contains(r#""kind": "ripr""#));
-    assert!(stdout.contains(r#""scope": "diff""#));
-    assert!(stdout.contains(r#""basis": "finding_exposure""#));
-    assert!(stdout.contains(r#""label": "ripr""#));
-    assert!(stdout.contains(r#""counts""#));
-    assert!(stdout.contains(r#""reason_counts""#));
-    assert!(stdout.contains(r#""policy""#));
-    assert!(stdout.contains(r#""unsuppressed_exposure_gaps""#));
-    assert!(stdout.contains(r#""duplicate_activation_and_oracle_shape": 0"#));
-    assert!(!stdout.contains(r#""schemaVersion""#));
-    // The sample diff has 4 weakly_exposed findings after nested call shapes are
-    // excluded; the badge headline reflects the surviving semantic probes.
-    assert!(stdout.contains(r#""message": "4""#));
-    assert!(stdout.contains(r#""status": "warn""#));
-    assert!(stdout.contains(r#""color": "orange""#));
-}
-
-#[test]
-fn check_badge_shields_output_has_exactly_four_top_level_fields() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--format",
-        "badge-shields",
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schemaVersion": 1"#));
-    assert!(stdout.contains(r#""label": "ripr""#));
-    assert!(stdout.contains(r#""message": "4""#));
-    assert!(stdout.contains(r#""color": "orange""#));
-    // Native-JSON-only fields must not leak into the Shields shape.
-    for forbidden in [
-        r#""counts""#,
-        r#""reason_counts""#,
-        r#""policy""#,
-        r#""kind""#,
-        r#""status""#,
-        r#""scope""#,
-        r#""basis""#,
-        r#""schema_version""#,
-    ] {
-        assert!(
-            !stdout.contains(forbidden),
-            "Shields projection must not contain `{forbidden}`: {stdout}"
-        );
-    }
-    // Message has no denominator and no coverage framing.
-    assert!(!stdout.contains('/') || !stdout.contains(r#""message""#));
-    assert!(!stdout.to_ascii_lowercase().contains("coverage"));
-    assert!(!stdout.to_ascii_lowercase().contains("uncovered"));
-}
-
-fn fixture_test_efficiency_report() -> &'static str {
-    // Three-test fixture: one bare smoke_only (counts as actionable), one
-    // smoke_only with declared_intent (counts as intentional, not headline),
-    // one opaque (flows into unknowns_test_efficiency, not headline).
-    r#"{
-  "schema_version": "0.1",
-  "tests": [
-    {"class": "smoke_only"},
-    {"class": "smoke_only", "declared_intent": {"intent": "smoke", "owner": "x", "reason": "y", "source": ".ripr/test_intent.toml"}},
-    {"class": "opaque"}
-  ],
-  "metrics": {
-    "tests_scanned": 3,
-    "reason_counts": {
-      "smoke_oracle_only": 2,
-      "opaque_helper_or_fixture_boundary": 1
-    }
-  }
-}
-"#
-}
-
-fn make_temp_workspace(report: Option<&str>) -> Result<PathBuf, String> {
-    make_temp_workspace_with_suppressions(report, None)
-}
-
-#[test]
-fn doctor_reports_missing_config_defaults() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Config: not found; using built-in defaults"));
-    assert!(stdout.contains("Analysis mode default: draft"));
-    assert!(stdout.contains("LSP seam diagnostics default: true"));
-    assert!(stdout.contains("Suppressions path: .ripr/suppressions.toml"));
-    assert!(stdout.contains("Start-here packet: target/ripr/reports/start-here.md"));
-    assert!(stdout.contains("`ripr first-pr` composes it once analysis evidence exists"));
-    assert!(!stdout.contains("(present; open it first)"));
-    // On a workspace with no artifacts, `first-pr` has nothing to compose: it
-    // returns `missing_artifacts` and answers with a `ripr check` regeneration
-    // command. So the safe next action must route to the analysis command this
-    // screen already recommends, not to the compose command.
-    assert!(stdout.contains("Safe next action: run the recommended first command below"));
-    assert!(
-        !stdout.contains("Safe next action: run `ripr first-pr"),
-        "a fresh workspace must not be sent to the compose command:\n{stdout}"
-    );
-    assert!(stdout.contains("Recovery states: missing artifact, stale evidence, wrong root"));
-    assert!(stdout.contains("Proof rail: verify command, receipt command, and receipt path"));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn doctor_reports_present_start_here_packet() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    let reports = workspace.join("target/ripr/reports");
-    std::fs::create_dir_all(&reports).map_err(|e| format!("create reports dir: {e}"))?;
-    std::fs::write(reports.join("start-here.md"), "# start here\n")
-        .map_err(|e| format!("write start-here.md: {e}"))?;
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Start-here packet: target/ripr/reports/start-here.md"));
-    assert!(stdout.contains("(present; open it first)"));
-    assert!(!stdout.contains("not yet generated"));
-    // With a packet on disk `first-pr` has something to refresh, so naming it
-    // here is a real route rather than a dead end.
-    assert!(stdout.contains("Safe next action: open that packet"));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn doctor_reports_directory_squatting_packet_path_as_not_generated() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    let squat = workspace.join("target/ripr/reports/start-here.md");
-    std::fs::create_dir_all(&squat).map_err(|e| format!("create squat dir: {e}"))?;
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("`ripr first-pr` composes it once analysis evidence exists"));
-    assert!(!stdout.contains("(present; open it first)"));
-    assert!(stdout.contains("Safe next action: run the recommended first command below"));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn check_rejects_missing_and_file_roots_without_leaking_the_git_invocation() -> Result<(), String> {
-    // An explicit --root that is not a directory used to reach the diff loader
-    // and print git's spawn failure with the whole argv. `check` now validates
-    // it through the same authority the other root-taking commands use.
-    let workspace = make_temp_workspace(None)?;
-
-    let missing = workspace.join("missing-root");
-    let missing_string = missing.display().to_string();
-    let missing_output = run_ripr(&["check", "--root", &missing_string, "--base", "HEAD"]);
-    assert_failure(&missing_output);
-    let missing_stderr = String::from_utf8_lossy(&missing_output.stderr).into_owned();
-    assert!(
-        missing_stderr.contains("is not a directory"),
-        "stderr:\n{missing_stderr}"
-    );
-    assert!(
-        missing_stderr.contains(&missing_string),
-        "expected the offending path to be named; stderr:\n{missing_stderr}"
-    );
-    // Discriminator: the git invocation must not reach the user.
-    assert!(
-        !missing_stderr.contains("core.quotePath") && !missing_stderr.contains("failed to run git"),
-        "git invocation leaked into stderr:\n{missing_stderr}"
-    );
-
-    let file_root = workspace.join("root-file");
-    std::fs::write(&file_root, "not a directory\n")
-        .map_err(|error| format!("write file root: {error}"))?;
-    let file_string = file_root.display().to_string();
-    let file_output = run_ripr(&["check", "--root", &file_string, "--base", "HEAD"]);
-    assert_failure(&file_output);
-    assert!(
-        String::from_utf8_lossy(&file_output.stderr).contains("is not a directory"),
-        "stderr:\n{}",
-        String::from_utf8_lossy(&file_output.stderr)
-    );
-
-    // Negative control: a real workspace root is still analyzed. The workspace
-    // gets its own repository and an explicit base because the temp dir is
-    // inside the checkout running the tests (.cargo/config.toml sets TMPDIR to
-    // target/). A bare `check` there would diff the enclosing branch against
-    // its default base and fail on that branch's size, not on this root.
-    run_git(&workspace, &["init"])?;
-    run_git(&workspace, &["config", "user.email", "test@test.com"])?;
-    run_git(&workspace, &["config", "user.name", "Test"])?;
-    run_git(&workspace, &["add", "."])?;
-    run_git(&workspace, &["commit", "-m", "initial"])?;
-    let workspace_string = workspace.display().to_string();
-    let ok_output = run_ripr(&["check", "--root", &workspace_string, "--base", "HEAD"]);
-    assert!(
-        ok_output.status.success(),
-        "expected a valid explicit root to run; stderr:\n{}",
-        String::from_utf8_lossy(&ok_output.stderr)
-    );
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn config_validate_rejects_missing_and_file_roots() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    let missing = workspace.join("missing-root");
-    let missing_string = missing.display().to_string();
-    let missing_output = run_ripr(&["config", "validate", "--root", &missing_string]);
-    assert_failure(&missing_output);
-    assert!(
-        String::from_utf8_lossy(&missing_output.stderr).contains("is not a directory"),
-        "stderr:\n{}",
-        String::from_utf8_lossy(&missing_output.stderr)
-    );
-
-    let file_root = workspace.join("root-file");
-    std::fs::write(&file_root, "not a directory\n")
-        .map_err(|error| format!("write file root: {error}"))?;
-    let file_string = file_root.display().to_string();
-    let file_output = run_ripr(&["config", "validate", "--root", &file_string]);
-    assert_failure(&file_output);
-    assert!(
-        String::from_utf8_lossy(&file_output.stderr).contains("is not a directory"),
-        "stderr:\n{}",
-        String::from_utf8_lossy(&file_output.stderr)
-    );
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn doctor_json_reports_current_schema() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root, "--json"]);
-    assert_success(&output);
-
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|err| format!("doctor JSON did not parse: {err}"))?;
-    assert_eq!(report["schema_version"], "0.2");
-    assert_eq!(report["tool"], "ripr");
-    assert!(
-        report["runtime_probes"].is_array(),
-        "doctor JSON must expose typed runtime probe results: {report}"
-    );
-    std::fs::remove_dir_all(workspace).map_err(|err| format!("remove workspace: {err}"))?;
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "lang-typescript")]
-fn doctor_json_process_fails_for_enabled_missing_node_runtime() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    std::fs::write(
-        workspace.join("ripr.toml"),
-        "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
-    )
-    .map_err(|error| format!("write ripr.toml: {error}"))?;
-
-    let shim_dir = workspace.join("runtime-shims");
-    std::fs::create_dir_all(&shim_dir)
-        .map_err(|error| format!("create runtime shim directory: {error}"))?;
-    #[cfg(windows)]
-    let node_shim = shim_dir.join("node.cmd");
-    #[cfg(not(windows))]
-    let node_shim = shim_dir.join("node");
-    #[cfg(windows)]
-    let shim_contents = "@echo off\r\nexit /b 127\r\n";
-    #[cfg(not(windows))]
-    let shim_contents = "#!/bin/sh\nexit 127\n";
-    std::fs::write(&node_shim, shim_contents)
-        .map_err(|error| format!("write node runtime shim: {error}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut permissions = std::fs::metadata(&node_shim)
-            .map_err(|error| format!("read node runtime shim permissions: {error}"))?
-            .permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&node_shim, permissions)
-            .map_err(|error| format!("make node runtime shim executable: {error}"))?;
-    }
-
-    let search_path = std::env::join_paths([shim_dir])
-        .map_err(|error| format!("build isolated runtime PATH: {error}"))?;
-    let search_path = search_path.to_string_lossy().into_owned();
-    let root = workspace.display().to_string();
-    let output = run_command_with_env(
-        env!("CARGO_BIN_EXE_ripr"),
-        &workspace,
-        &["doctor", "--root", &root, "--json"],
-        &[("PATH", &search_path)],
-    )
-    .map_err(|error| format!("run doctor process: {error}"))?;
-
-    if output.status.success() {
-        return Err(format!(
-            "enabled TypeScript without a working node runtime must fail doctor; stdout: {}",
-            String::from_utf8_lossy(&output.stdout)
-        ));
-    }
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("doctor failure JSON did not parse: {error}"))?;
-    let node_probe = report["runtime_probes"]
-        .as_array()
-        .and_then(|probes| {
-            probes
-                .iter()
-                .find(|probe| probe["language"] == "typescript" && probe["tool"] == "node")
-        })
-        .ok_or_else(|| format!("doctor JSON omitted the required node probe: {report}"))?;
-    if node_probe["required"] != true || node_probe["status"] != "fail" {
-        return Err(format!(
-            "required node probe did not fail closed: {node_probe}"
-        ));
-    }
-
-    std::fs::remove_dir_all(workspace)
-        .map_err(|error| format!("remove doctor runtime fixture: {error}"))?;
-    Ok(())
-}
-
-/// A PATH holding only `git` plus working `node` and `python3` shims â€” no
-/// `cargo` and no `rustc` â€” so doctor's Rust toolchain scope is observable
-/// at the process boundary independent of the host toolchain.
-#[cfg(unix)]
-fn doctor_path_without_rust_toolchain(workspace: &Path) -> Result<String, String> {
-    use std::io::Write;
-    use std::os::unix::fs::PermissionsExt;
-
-    let shims = workspace.join("no-rust-bin");
-    std::fs::create_dir_all(&shims).map_err(|error| format!("create shim dir: {error}"))?;
-    let host_path = std::env::var_os("PATH").ok_or("PATH is not set")?;
-    let git = std::env::split_paths(&host_path)
-        .map(|dir| dir.join("git"))
-        .find(|candidate| candidate.is_file())
-        .ok_or("git is not on PATH")?;
-    std::os::unix::fs::symlink(&git, shims.join("git"))
-        .map_err(|error| format!("link git: {error}"))?;
-    for (tool, version) in [("node", "v22.0.0"), ("python3", "Python 3.12.0")] {
-        // Stage, close, then publish so the executable path is never open
-        // for writing when it is exec'd (#2242).
-        let staged = shims.join(format!(".{tool}.staged"));
-        let mut file = std::fs::File::create(&staged)
-            .map_err(|error| format!("create {tool} shim: {error}"))?;
-        file.write_all(format!("#!/bin/sh\necho '{version}'\n").as_bytes())
-            .map_err(|error| format!("write {tool} shim: {error}"))?;
-        file.set_permissions(std::fs::Permissions::from_mode(0o755))
-            .map_err(|error| format!("chmod {tool} shim: {error}"))?;
-        file.sync_all()
-            .map_err(|error| format!("sync {tool} shim: {error}"))?;
-        drop(file);
-        std::fs::rename(&staged, shims.join(tool))
-            .map_err(|error| format!("publish {tool} shim: {error}"))?;
-    }
-    Ok(shims.display().to_string())
-}
-
-/// Run `ripr doctor` for `root` (human or `--json`) with `path` as PATH.
-#[cfg(unix)]
-fn run_doctor_with_path(root: &Path, path: &str, json: bool) -> Result<Output, String> {
-    let root_arg = root.display().to_string();
-    let mut args = vec!["doctor", "--root", root_arg.as_str()];
-    if json {
-        args.push("--json");
-    }
-    run_command_with_env(env!("CARGO_BIN_EXE_ripr"), root, &args, &[("PATH", path)])
-        .map_err(|error| format!("run doctor: {error}"))
-}
-
-#[cfg(unix)]
-fn doctor_check_status(report: &serde_json::Value, name: &str) -> String {
-    report["checks"]
-        .as_array()
-        .and_then(|checks| checks.iter().find(|check| check["name"] == name))
-        .and_then(|check| check["status"].as_str())
-        .unwrap_or("absent")
-        .to_string()
-}
-
-/// A Python-only or TypeScript-only root is not a Rust project: doctor must
-/// pass without Cargo.toml, cargo, or rustc, and say why those checks were
-/// skipped instead of reporting them as broken setup.
-#[cfg(unix)]
-fn assert_doctor_passes_without_rust_toolchain(
-    root: &Path,
-    path: &str,
-    scope_reason: &str,
-) -> Result<(), String> {
-    let json_output = run_doctor_with_path(root, path, true)?;
-    let report: serde_json::Value = serde_json::from_slice(&json_output.stdout)
-        .map_err(|error| format!("doctor JSON did not parse: {error}"))?;
-    if !json_output.status.success() || report["status"] != "pass" {
-        return Err(format!(
-            "doctor --json must pass without a Rust toolchain: {report}"
-        ));
-    }
-    for name in ["cargo_toml", "tool_cargo", "tool_rustc"] {
-        if doctor_check_status(&report, name) != "skipped" {
-            return Err(format!("{name} must be skipped: {report}"));
-        }
-    }
-    if doctor_check_status(&report, "tool_git") != "pass" {
-        return Err(format!("git stays required and must pass: {report}"));
-    }
-
-    let human = run_doctor_with_path(root, path, false)?;
-    let stdout = String::from_utf8_lossy(&human.stdout);
-    if !human.status.success()
-        || !stdout.contains(&format!("- Cargo.toml check skipped: {scope_reason}"))
-        || !stdout.contains(&format!("- cargo check skipped: {scope_reason}"))
-        || !stdout.contains(&format!("- rustc check skipped: {scope_reason}"))
-        || stdout.contains("! no Cargo.toml")
-        || !stdout.contains("âœ“ doctor checks passed")
-    {
-        return Err(format!(
-            "human doctor must pass and explain the skipped Rust checks:\n{stdout}"
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-#[cfg(all(unix, feature = "lang-python"))]
-fn doctor_passes_python_only_root_without_rust_toolchain() -> Result<(), String> {
-    let workspace = unique_temp_workspace("doctor-python-only");
-    std::fs::create_dir_all(workspace.join("src/textfmt"))
-        .map_err(|error| format!("create python package: {error}"))?;
-    std::fs::write(
-        workspace.join("pyproject.toml"),
-        "[project]\nname = \"textfmt\"\n",
-    )
-    .map_err(|error| format!("write pyproject.toml: {error}"))?;
-    std::fs::write(
-        workspace.join("src/textfmt/__init__.py"),
-        "def shout(text):\n    return text.upper()\n",
-    )
-    .map_err(|error| format!("write python source: {error}"))?;
-    let path = doctor_path_without_rust_toolchain(&workspace)?;
-    let result = assert_doctor_passes_without_rust_toolchain(
-        &workspace,
-        &path,
-        "Rust not detected at this root (no Cargo.toml or .rs files); in scope: python",
-    );
-    ignore_remove_dir_all(&workspace);
-    result
-}
-
-#[test]
-#[cfg(all(unix, feature = "lang-typescript"))]
-fn doctor_passes_typescript_root_without_rust_toolchain() -> Result<(), String> {
-    let workspace = unique_temp_workspace("doctor-typescript-only");
-    std::fs::create_dir_all(workspace.join("src"))
-        .map_err(|error| format!("create src: {error}"))?;
-    std::fs::write(
-        workspace.join("ripr.toml"),
-        "[languages]\nenabled = [\"typescript\"]\n",
-    )
-    .map_err(|error| format!("write ripr.toml: {error}"))?;
-    std::fs::write(workspace.join("package.json"), "{\"name\": \"pricing\"}\n")
-        .map_err(|error| format!("write package.json: {error}"))?;
-    std::fs::write(
-        workspace.join("src/price.ts"),
-        "export const price = (n: number) => n * 2;\n",
-    )
-    .map_err(|error| format!("write ts source: {error}"))?;
-    let path = doctor_path_without_rust_toolchain(&workspace)?;
-    let result = assert_doctor_passes_without_rust_toolchain(
-        &workspace,
-        &path,
-        "Rust is not enabled in [languages]",
-    );
-    ignore_remove_dir_all(&workspace);
-    result
-}
-
-/// Discriminating negative for the two tests above: under the same PATH, a
-/// Rust root still fails on the missing toolchain, and Rust sources without
-/// a Cargo.toml still fail the Cargo.toml check.
-#[test]
-#[cfg(unix)]
-fn doctor_still_fails_rust_roots_without_cargo_or_manifest() -> Result<(), String> {
-    let workspace = unique_temp_workspace("doctor-rust-no-toolchain");
-    let path = doctor_path_without_rust_toolchain(&workspace)?;
-
-    let with_manifest = workspace.join("with-manifest");
-    std::fs::create_dir_all(with_manifest.join("src"))
-        .map_err(|error| format!("create rust root: {error}"))?;
-    std::fs::write(
-        with_manifest.join("Cargo.toml"),
-        "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
-    )
-    .map_err(|error| format!("write Cargo.toml: {error}"))?;
-    std::fs::write(with_manifest.join("src/lib.rs"), "pub fn f() {}\n")
-        .map_err(|error| format!("write lib.rs: {error}"))?;
-    let output = run_doctor_with_path(&with_manifest, &path, true)?;
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("doctor JSON did not parse: {error}"))?;
-    let manifest_result = if output.status.success()
-        || report["status"] != "fail"
-        || doctor_check_status(&report, "cargo_toml") != "pass"
-        || doctor_check_status(&report, "tool_cargo") != "fail"
-        || doctor_check_status(&report, "tool_rustc") != "fail"
-    {
-        Err(format!("a Rust root without cargo must fail: {report}"))
-    } else {
-        Ok(())
-    };
-
-    let sources_only = workspace.join("sources-only");
-    std::fs::create_dir_all(sources_only.join("src"))
-        .map_err(|error| format!("create sources root: {error}"))?;
-    std::fs::write(sources_only.join("src/lib.rs"), "pub fn f() {}\n")
-        .map_err(|error| format!("write lib.rs: {error}"))?;
-    let output = run_doctor_with_path(&sources_only, &path, false)?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let sources_result = if output.status.success() || !stdout.contains("! no Cargo.toml found") {
-        Err(format!(
-            "Rust sources without Cargo.toml must fail the manifest check:\n{stdout}"
-        ))
-    } else {
-        Ok(())
-    };
-
-    ignore_remove_dir_all(&workspace);
-    manifest_result.and(sources_result)
-}
-
-#[test]
-fn doctor_reports_loaded_config_path() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    std::fs::write(
-        workspace.join("ripr.toml"),
-        "[analysis]\nmode = \"deep\"\n\n[lsp]\nseam_diagnostics = true\n",
-    )
-    .map_err(|e| format!("write ripr.toml: {e}"))?;
-
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Config: loaded ripr.toml"));
-    assert!(stdout.contains("Config path:"));
-    assert!(stdout.contains("ripr.toml"));
-    assert!(stdout.contains("Analysis mode default: deep"));
-    assert!(stdout.contains("LSP seam diagnostics default: true"));
-    assert!(!stdout.contains("mode = \"deep\""));
-    assert!(!stdout.contains("seam_diagnostics"));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn doctor_reports_malformed_config_error() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    std::fs::write(workspace.join("ripr.toml"), "[analysis]\nmode = \"slow\"\n")
-        .map_err(|e| format!("write ripr.toml: {e}"))?;
-
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root]);
-    assert!(
-        !output.status.success(),
-        "malformed config should fail doctor\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Config: invalid ripr.toml"));
-    assert!(stdout.contains("ripr.toml"));
-    assert!(stdout.contains("analysis.mode `slow` is not supported"));
-    assert!(!stdout.contains("mode = \"slow\""));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn doctor_reports_language_tiers_and_limitations() -> Result<(), String> {
-    // A workspace with only Rust markers (Cargo.toml + src/lib.rs).
-    let workspace = make_temp_workspace(None)?;
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Section 1: Detected languages â€” rust present with (stable) tier.
-    assert!(
-        stdout.contains("Detected languages:"),
-        "expected 'Detected languages:' in stdout:\n{stdout}"
-    );
-    // The line that contains "Detected languages:" must also contain "rust"
-    // and "(stable)".
-    let detected_line = stdout
-        .lines()
-        .find(|l| l.contains("Detected languages:"))
-        .unwrap_or("");
-    assert!(
-        detected_line.contains("rust"),
-        "expected 'rust' on the Detected languages line:\n{detected_line}"
-    );
-    assert!(
-        detected_line.contains("(stable)"),
-        "expected '(stable)' on the Detected languages line:\n{detected_line}"
-    );
-
-    // Anti-overclaim: a Rust-only workspace must NOT list typescript as detected.
-    assert!(
-        !detected_line.contains("typescript"),
-        "must not list typescript when no TS markers are present:\n{detected_line}"
-    );
-
-    // Section 3: Known limitations.
-    assert!(
-        stdout.contains("Known limitations:"),
-        "expected 'Known limitations:' in stdout:\n{stdout}"
-    );
-    // TypeScript preview line.
-    assert!(
-        stdout.contains("TypeScript/JavaScript/Bun analysis is preview"),
-        "expected TypeScript/JavaScript/Bun preview line in stdout:\n{stdout}"
-    );
-    // Cross-language fail-closed line.
-    assert!(
-        stdout.contains("cross_language_oracle_visibility_unresolved"),
-        "expected cross_language_oracle_visibility_unresolved in stdout:\n{stdout}"
-    );
-
-    // Section 4: Recommended first command. The exact wording is
-    // worktree-state-aware (see doctor_recommends_worktree_check_on_dirty_worktree);
-    // here we only require the diff-first command to be present.
-    assert!(
-        stdout.contains("Recommended first command: ripr check"),
-        "expected the diff-first recommended command in stdout:\n{stdout}"
-    );
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn doctor_reports_perl_preview_section_when_perl_markers_present() -> Result<(), String> {
-    // A workspace with Perl markers (Makefile.PL + lib/*.pm + t/*.t) must
-    // surface the rich "Perl preview:" section (Campaign 31 item 5):
-    // project counts, adapter, producer, perllsp, schema, test roots,
-    // frameworks, runners, and an exact next command.
-    let root = unique_temp_workspace("doctor-perl-preview");
-    std::fs::create_dir_all(root.join("lib")).map_err(|err| err.to_string())?;
-    std::fs::create_dir_all(root.join("t")).map_err(|err| err.to_string())?;
-    std::fs::write(
-        root.join("Makefile.PL"),
-        "use ExtUtils::MakeMaker;\nWriteMakefile(NAME => 'Pricing');\n",
-    )
-    .map_err(|err| err.to_string())?;
-    // A minimal Cargo.toml so the doctor's root check passes (the realistic
-    // scenario is a mixed Rust+Perl repo; a pure-Perl repo would fail the
-    // Cargo.toml check, which is unrelated to the Perl preview).
-    std::fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"mixed-perl\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
-    )
-    .map_err(|err| err.to_string())?;
-    std::fs::write(
-        root.join("lib/Pricing.pm"),
-        "package Pricing;\nuse strict;\nsub discount { return 0; }\n1;\n",
-    )
-    .map_err(|err| err.to_string())?;
-    std::fs::write(
-        root.join("t/pricing.t"),
-        "use Test::More;\nok(1, 'placeholder');\ndone_testing();\n",
-    )
-    .map_err(|err| err.to_string())?;
-
-    let root_str = root.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root_str]);
-    assert_success(&output);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // The Perl preview section heading.
-    assert!(
-        stdout.contains("- Perl preview:"),
-        "expected '- Perl preview:' in stdout:\n{stdout}"
-    );
-    // Each sub-line of the rich preview.
-    assert!(
-        stdout.contains("project:"),
-        "expected 'project:' line:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("adapter:"),
-        "expected 'adapter:' line:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("producer:"),
-        "expected 'producer:' line:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("exporter:"),
-        "expected 'exporter:' line:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("schema:"),
-        "expected 'schema:' line:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("test roots:"),
-        "expected 'test roots:' line:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("frameworks:"),
-        "expected 'frameworks:' line:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("runners:"),
-        "expected 'runners:' line:\n{stdout}"
-    );
-    assert!(stdout.contains("next:"), "expected 'next:' line:\n{stdout}");
-
-    // Schema reports the expected version (single-sourced from app::PERL_FACT_PACKET_SCHEMA).
-    assert!(
-        stdout.contains("ripr-perl-facts-v1 expected"),
-        "expected 'ripr-perl-facts-v1 expected' on the schema line:\n{stdout}"
-    );
-    // Test framework detection: Test::More is present in t/pricing.t.
-    assert!(
-        stdout.contains("Test::More"),
-        "expected 'Test::More' detected:\n{stdout}"
-    );
-    // Test root detection: t/ is present.
-    assert!(
-        stdout.contains("t/ detected"),
-        "expected 't/ detected' on test roots line:\n{stdout}"
-    );
-    // The recursive count_files now reports the real .pm/.pl/.t counts (> 0).
-    let project_line = stdout
-        .lines()
-        .find(|l| l.contains("project:"))
-        .unwrap_or("");
-    assert!(
-        !project_line.contains("1 .pm, 0 .pl, 0 .t") || project_line.contains("1 .pm, 0 .pl, 1 .t"),
-        "project counts must reflect the recursive scan (1 .pm, 1 .t): {project_line}"
-    );
-
-    ignore_remove_dir_all(&root);
-    Ok(())
-}
-
-/// Build a mixed Rust+Perl workspace and a shim directory holding a
-/// `perllsp` stub with the given shell body, plus a `perl-ripr-facts` stub
-/// that fails `--version` so a host-installed canonical exporter cannot
-/// shadow the scenario. Returns (workspace, shim_dir).
-#[cfg(unix)]
-fn perl_doctor_workspace_with_exporter_stub(
-    label: &str,
-    perllsp_body: &str,
-) -> Result<(PathBuf, PathBuf), String> {
-    use std::os::unix::fs::PermissionsExt;
-    let root = unique_temp_workspace(label);
-    std::fs::create_dir_all(root.join("lib")).map_err(|err| err.to_string())?;
-    std::fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"mixed-perl\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
-    )
-    .map_err(|err| err.to_string())?;
-    std::fs::write(root.join("Makefile.PL"), "use ExtUtils::MakeMaker;\n")
-        .map_err(|err| err.to_string())?;
-    std::fs::write(root.join("lib/Pricing.pm"), "package Pricing;\n1;\n")
-        .map_err(|err| err.to_string())?;
-    let shim_dir = root.join("exporter-shims");
-    std::fs::create_dir_all(&shim_dir).map_err(|err| err.to_string())?;
-    for (name, body) in [
-        ("perl-ripr-facts", "#!/bin/sh\nexit 127\n"),
-        ("perllsp", perllsp_body),
-    ] {
-        let path = shim_dir.join(name);
-        std::fs::write(&path, body).map_err(|err| format!("write {name} stub: {err}"))?;
-        let mut permissions = std::fs::metadata(&path)
-            .map_err(|err| format!("stat {name} stub: {err}"))?
-            .permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&path, permissions)
-            .map_err(|err| format!("chmod {name} stub: {err}"))?;
-    }
-    Ok((root, shim_dir))
-}
-
-#[cfg(unix)]
-fn run_doctor_with_shims_first(root: &Path, shim_dir: &Path) -> Result<Output, String> {
-    let mut entries = vec![shim_dir.to_path_buf()];
-    if let Some(path) = std::env::var_os("PATH") {
-        entries.extend(std::env::split_paths(&path));
-    }
-    let search_path =
-        std::env::join_paths(entries).map_err(|err| format!("build shim-first PATH: {err}"))?;
-    let search_path = search_path.to_string_lossy().into_owned();
-    let root_str = root.display().to_string();
-    run_command_with_env(
-        env!("CARGO_BIN_EXE_ripr"),
-        root,
-        &["doctor", "--root", &root_str],
-        &[("PATH", &search_path)],
-    )
-    .map_err(|err| format!("run doctor: {err}"))
-}
-
-#[test]
-#[cfg(unix)]
-fn doctor_reports_version_only_perl_exporter_as_incompatible() -> Result<(), String> {
-    // The published perllsp 0.17.0 answers `--version` but rejects the
-    // managed `ripr-facts` argv with a usage error. Doctor must not call it
-    // a found exporter or route the user to `ripr check` through it, and
-    // the Perl section must stay advisory (doctor still succeeds).
-    let (root, shim_dir) = perl_doctor_workspace_with_exporter_stub(
-        "doctor-perl-incompatible-exporter",
-        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'perllsp 0.17.0'; exit 0; fi\necho 'error: unexpected argument' >&2\nexit 1\n",
-    )?;
-    let output = run_doctor_with_shims_first(&root, &shim_dir)?;
-    assert_success(&output);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let exporter_line = stdout
-        .lines()
-        .find(|line| line.trim_start().starts_with("exporter:"))
-        .unwrap_or("");
-    assert!(
-        exporter_line.contains("perllsp 0.17.0")
-            && exporter_line.contains("does not accept `ripr-facts`")
-            && exporter_line.contains("not a compatible exporter"),
-        "version-only exporter must be reported incompatible: {exporter_line}\n{stdout}"
-    );
-    assert!(
-        !stdout.contains("exporter: found at") && !stdout.contains("exporter: compatible"),
-        "incompatible exporter must not read as found/working:\n{stdout}"
-    );
-    assert!(
-        !stdout.contains("install perllsp"),
-        "doctor must not recommend installing perllsp:\n{stdout}"
-    );
-    let _ = std::fs::remove_dir_all(&root);
-    Ok(())
-}
-
-#[test]
-#[cfg(unix)]
-fn doctor_reports_ripr_facts_capable_exporter_as_compatible() -> Result<(), String> {
-    // Discriminating control for the incompatible case: the same `perllsp`
-    // name, but the stub accepts `ripr-facts --help` and documents
-    // `--schema`, so the probe must report it compatible.
-    let (root, shim_dir) = perl_doctor_workspace_with_exporter_stub(
-        "doctor-perl-compatible-exporter",
-        "#!/bin/sh\ncase \"$1\" in\n  --version) echo 'perllsp 9.9.9' ;;\n  ripr-facts) echo 'Usage: perllsp ripr-facts --schema <SCHEMA> --root <ROOT> --out <OUT>' ;;\n  *) exit 2 ;;\nesac\n",
-    )?;
-    let output = run_doctor_with_shims_first(&root, &shim_dir)?;
-    assert_success(&output);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let exporter_line = stdout
-        .lines()
-        .find(|line| line.trim_start().starts_with("exporter:"))
-        .unwrap_or("");
-    assert!(
-        exporter_line.contains("exporter: compatible")
-            && exporter_line.contains("perllsp 9.9.9")
-            && exporter_line.contains("exporter-shims/perllsp"),
-        "ripr-facts-capable exporter must be reported compatible: {exporter_line}\n{stdout}"
-    );
-    assert!(
-        !stdout.contains("not a compatible exporter"),
-        "compatible control must not be reported incompatible:\n{stdout}"
-    );
-    let _ = std::fs::remove_dir_all(&root);
-    Ok(())
-}
-
-#[test]
-fn doctor_omits_perl_preview_when_no_perl_markers() -> Result<(), String> {
-    // A Rust-only workspace must NOT emit a Perl preview section.
-    let workspace = make_temp_workspace(None)?;
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["doctor", "--root", &root]);
-    assert_success(&output);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        !stdout.contains("- Perl preview:"),
-        "must not emit a Perl preview for a Rust-only workspace:\n{stdout}"
-    );
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn doctor_recommends_worktree_check_on_dirty_worktree() -> Result<(), String> {
-    // First-run honesty: doctor must not route a user with uncommitted edits to
-    // `ripr check --base origin/main`, which analyzes committed history only and
-    // would silently exclude their draft (the RIPR-SPEC-0112 dirty-worktree case).
-    let root = unique_temp_workspace("doctor-dirty-wt");
-    std::fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
-    std::fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"doctor-dirty-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
-    )
-    .map_err(|err| err.to_string())?;
-    std::fs::write(
-        root.join("src/lib.rs"),
-        "pub fn f(a: i32) -> i32 { a + 1 }\n",
-    )
-    .map_err(|err| err.to_string())?;
-    run_git(&root, &["init"])?;
-    run_git(&root, &["config", "user.email", "test@test.com"])?;
-    run_git(&root, &["config", "user.name", "Test"])?;
-    run_git(&root, &["add", "."])?;
-    run_git(&root, &["commit", "-m", "initial"])?;
-    let root_str = root.display().to_string();
-
-    // CLEAN worktree: recommend the diff-first command directly.
-    let clean = run_ripr(&["doctor", "--root", &root_str]);
-    assert_success(&clean);
-    let clean_out = String::from_utf8_lossy(&clean.stdout);
-    assert!(
-        clean_out
-            .lines()
-            .any(|line| line.trim_end() == "- Recommended first command: ripr check"),
-        "clean worktree must recommend the diff-first command directly:\n{clean_out}"
-    );
-    // The base is resolved, not asserted: `origin/main` does not exist in a
-    // repository whose default branch is not `main`, and this fixture has no
-    // remote at all.
-    assert!(
-        !clean_out.contains("Recommended first command: ripr check --base origin/main"),
-        "the recommendation must not hardcode a base this repository may not have:\n{clean_out}"
-    );
-
-    // DIRTY worktree: route the user to the explicit live-worktree diff.
-    std::fs::write(
-        root.join("src/lib.rs"),
-        "pub fn f(a: i32) -> i32 { a + 2 }\n",
-    )
-    .map_err(|err| err.to_string())?;
-    let dirty = run_ripr(&["doctor", "--root", &root_str]);
-    assert_success(&dirty);
-    let dirty_out = String::from_utf8_lossy(&dirty.stdout);
-    assert!(
-        dirty_out.contains("Recommended first command: ripr check --base HEAD --worktree"),
-        "dirty worktree must recommend the worktree command:\n{dirty_out}"
-    );
-    assert!(
-        dirty_out.contains("staged and unstaged tracked edits"),
-        "dirty worktree must disclose the tracked-edit scope:\n{dirty_out}"
-    );
-    assert!(
-        !dirty_out
-            .lines()
-            .any(|line| line.trim_end() == "- Recommended first command: ripr check"),
-        "dirty worktree must NOT give the unconditional clean recommendation:\n{dirty_out}"
-    );
-
-    ignore_remove_dir_all(&root);
-    Ok(())
-}
-
-#[test]
-fn init_writes_conservative_config_and_doctor_loads_it() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["init", "--root", &root]);
-    assert_success(&output);
-
-    let config_path = workspace.join("ripr.toml");
-    let config = std::fs::read_to_string(&config_path)
-        .map_err(|e| format!("read generated ripr.toml: {e}"))?;
-    assert!(config.contains("mode = \"draft\""));
-    assert!(config.contains("include_unchanged_tests = true"));
-    assert!(config.contains("weakly_gripped = \"warning\""));
-    assert!(config.contains("strongly_gripped = \"off\""));
-    assert!(config.contains("intentional = \"off\""));
-    assert!(config.contains("suppressed = \"off\""));
-    assert!(config.contains("seam_diagnostics = true"));
-    assert!(config.contains("max_related_tests = 5"));
-
-    let doctor = run_ripr(&["doctor", "--root", &root]);
-    assert_success(&doctor);
-    let stdout = String::from_utf8_lossy(&doctor.stdout);
-    assert!(stdout.contains("Config: loaded ripr.toml"));
-    assert!(stdout.contains("Analysis mode default: draft"));
-    assert!(stdout.contains("LSP seam diagnostics default: true"));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn init_dry_run_prints_config_without_writing() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["init", "--root", &root, "--dry-run"]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("[analysis]"));
-    assert!(stdout.contains("mode = \"draft\""));
-    assert!(stdout.contains("seam_diagnostics = true"));
-    // #2572: the plan names the target path and the action, and says the run
-    // was a preview. Printing the body alone left the reader guessing which
-    // path it was for and whether anything had been written.
-    assert!(stdout.contains("ripr init plan (dry run â€” nothing was written)"));
-    assert!(stdout.contains("create"));
-    assert!(stdout.contains("ripr.toml"));
-    assert!(stdout.contains("Rerun without --dry-run to apply."));
-    assert!(!workspace.join("ripr.toml").exists());
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-/// #2572: `--dry-run` must predict the run it previews. An existing
-/// `ripr.toml` without `--force` makes the real run fail, so the dry run
-/// fails the same way instead of printing a config it could not write.
-#[test]
-fn init_dry_run_fails_like_the_real_run_when_config_exists_without_force() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    std::fs::write(workspace.join("ripr.toml"), "[analysis]\nmode = \"deep\"\n")
-        .map_err(|e| format!("write existing ripr.toml: {e}"))?;
-    let root = workspace.display().to_string();
-
-    let dry = run_ripr(&["init", "--root", &root, "--dry-run"]);
-    let real = run_ripr(&["init", "--root", &root]);
-
-    assert!(
-        !dry.status.success(),
-        "dry run should fail when the real run fails\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&dry.stdout),
-        String::from_utf8_lossy(&dry.stderr)
-    );
-    assert!(!real.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&dry.stderr),
-        String::from_utf8_lossy(&real.stderr),
-        "dry run and real run must report the same blocker"
-    );
-    assert!(String::from_utf8_lossy(&dry.stderr).contains("already exists"));
-    assert!(String::from_utf8_lossy(&dry.stderr).contains("--force"));
-
-    // The pre-existing config is untouched by either invocation.
-    let config = std::fs::read_to_string(workspace.join("ripr.toml"))
-        .map_err(|e| format!("read existing ripr.toml: {e}"))?;
-    assert!(config.contains("mode = \"deep\""));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-/// #2576 review: a parent that cannot be created is a blocker the plan has to
-/// catch. With `<root>/.github` as a regular file, nothing exists at the
-/// workflow path, so an existence-only check reads it as `create` â€” the dry
-/// run then reports success while the real run writes `ripr.toml` and only
-/// then fails, leaving the repo half-initialized.
-#[test]
-fn init_dry_run_fails_like_the_real_run_when_workflow_parent_is_a_file() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    std::fs::write(workspace.join(".github"), "not a directory\n")
-        .map_err(|e| format!("write .github as a file: {e}"))?;
-    let root = workspace.display().to_string();
-
-    let dry = run_ripr(&["init", "--root", &root, "--ci", "github", "--dry-run"]);
-    let real = run_ripr(&["init", "--root", &root, "--ci", "github"]);
-
-    assert!(
-        !dry.status.success(),
-        "dry run should fail when the real run fails\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&dry.stdout),
-        String::from_utf8_lossy(&dry.stderr)
-    );
-    assert!(!real.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&dry.stderr),
-        String::from_utf8_lossy(&real.stderr),
-        "dry run and real run must report the same blocker"
-    );
-    assert!(
-        String::from_utf8_lossy(&dry.stderr).contains("exists and is not a directory"),
-        "stderr:\n{}",
-        String::from_utf8_lossy(&dry.stderr)
-    );
-
-    // The failing run must not have half-initialized the workspace.
-    assert!(
-        !workspace.join("ripr.toml").exists(),
-        "the real run wrote ripr.toml before failing"
-    );
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-/// #2576 review: `create_new` refuses any occupied path, including a dangling
-/// symlink that `Path::exists()` reports as absent. Planning must ask the same
-/// question the write asks.
-#[cfg(unix)]
-#[test]
-fn init_dry_run_fails_like_the_real_run_for_a_dangling_symlink_target() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    std::os::unix::fs::symlink("/nonexistent-ripr-init-target", workspace.join("ripr.toml"))
-        .map_err(|e| format!("create dangling symlink: {e}"))?;
-    let root = workspace.display().to_string();
-
-    let dry = run_ripr(&["init", "--root", &root, "--dry-run"]);
-    let real = run_ripr(&["init", "--root", &root]);
-
-    assert!(
-        !dry.status.success(),
-        "dry run should fail when the real run fails\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&dry.stdout),
-        String::from_utf8_lossy(&dry.stderr)
-    );
-    assert!(!real.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&dry.stderr),
-        String::from_utf8_lossy(&real.stderr),
-        "dry run and real run must report the same blocker"
-    );
-    assert!(
-        String::from_utf8_lossy(&dry.stderr).contains("already exists"),
-        "stderr:\n{}",
-        String::from_utf8_lossy(&dry.stderr)
-    );
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-/// #2572: the same agreement property for a root that is not a directory.
-#[test]
-fn init_dry_run_fails_like_the_real_run_when_root_is_not_a_directory() -> Result<(), String> {
-    let missing = "/nonexistent-ripr-init-root/xyz";
-
-    let dry = run_ripr(&["init", "--root", missing, "--dry-run"]);
-    let real = run_ripr(&["init", "--root", missing]);
-
-    assert!(
-        !dry.status.success(),
-        "dry run should fail when the real run fails\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&dry.stdout),
-        String::from_utf8_lossy(&dry.stderr)
-    );
-    assert!(!real.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&dry.stderr),
-        String::from_utf8_lossy(&real.stderr),
-        "dry run and real run must report the same blocker"
-    );
-    assert!(
-        String::from_utf8_lossy(&dry.stderr).contains("is not a directory"),
-        "stderr:\n{}",
-        String::from_utf8_lossy(&dry.stderr)
-    );
-
-    Ok(())
-}
-
-/// #2572: when the config exists but `--ci` still has work, the plan reports
-/// `leave existing` for the config and `create` for the workflow â€” matching
-/// what the real run then prints.
-#[test]
-fn init_dry_run_plan_reports_leave_existing_for_untouched_config() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    std::fs::write(workspace.join("ripr.toml"), "[analysis]\nmode = \"deep\"\n")
-        .map_err(|e| format!("write existing ripr.toml: {e}"))?;
-    let root = workspace.display().to_string();
-
-    let output = run_ripr(&["init", "--root", &root, "--ci", "github", "--dry-run"]);
-    assert_success(&output);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("leave existing"), "stdout:\n{stdout}");
-    assert!(stdout.contains("create"), "stdout:\n{stdout}");
-    assert!(stdout.contains("ripr.yml"), "stdout:\n{stdout}");
-    // The untouched config's body is not reprinted â€” there is nothing to review.
-    assert!(
-        !stdout.contains("seam_diagnostics = true"),
-        "stdout:\n{stdout}"
-    );
-    assert!(!workspace.join(".github/workflows/ripr.yml").exists());
-
-    // The real run agrees with the plan.
-    let real = run_ripr(&["init", "--root", &root, "--ci", "github"]);
-    assert_success(&real);
-    let real_stdout = String::from_utf8_lossy(&real.stdout);
-    assert!(real_stdout.contains("Left existing"));
-    assert!(real_stdout.contains("Wrote"));
-    assert!(workspace.join(".github/workflows/ripr.yml").exists());
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["init", "--root", &root, "--ci", "github", "--dry-run"]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // #2572: both body headers now carry the full target path, so the reader
-    // can tell which file each block would be written to. The config header
-    // previously showed the bare file name while the workflow header showed a
-    // full path.
-    assert!(stdout.contains("ripr init plan (dry run â€” nothing was written)"));
-    assert!(stdout.contains(&format!("# {}", workspace.join("ripr.toml").display())));
-    assert!(stdout.contains(&format!(
-        "# {}",
-        workspace.join(".github/workflows/ripr.yml").display()
-    )));
-    assert!(stdout.contains("Rerun without --dry-run to apply."));
-    assert!(stdout.contains(".github"));
-    assert!(stdout.contains("RIPR advisory reports"));
-    assert!(stdout.contains("continue-on-error: true"));
-    assert!(stdout.contains("RIPR_UPLOAD_SARIF"));
-    assert!(stdout.contains("actions/upload-artifact@v7"));
-    assert!(stdout.contains("target/ripr/agent"));
-    assert!(stdout.contains("target/ripr/workflow"));
-    assert!(stdout.contains("target/ripr/review"));
-    assert!(stdout.contains("RIPR advisory summary"));
-    assert!(stdout.contains("target/ripr/review/comments.json"));
-    assert!(stdout.contains("ripr agent start"));
-    // #3906: CI writes only the before side of the repair loop.
-    assert!(!stdout.contains("ripr agent receipt"));
-    assert!(stdout.contains("ripr agent status"));
-    assert!(stdout.contains("ripr agent review-summary"));
-    assert!(stdout.contains("target/ripr/workflow/agent-status.md"));
-    assert!(stdout.contains("target/ripr/workflow/agent-review-summary.md"));
-    assert!(stdout.contains("#### First-run status"));
-    assert!(stdout.contains("Start-here artifact:"));
-    assert!(stdout.contains("missing_start_here"));
-    assert!(stdout.contains("cat target/ripr/reports/start-here.md"));
-    assert!(stdout.contains("### Language preview grouping"));
-    assert!(stdout.contains("github/codeql-action/upload-sarif@v4"));
-    assert!(!workspace.join("ripr.toml").exists());
-    assert!(!workspace.join(".github/workflows/ripr.yml").exists());
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn init_refuses_existing_config_without_force() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    std::fs::write(workspace.join("ripr.toml"), "[analysis]\nmode = \"deep\"\n")
-        .map_err(|e| format!("write existing ripr.toml: {e}"))?;
-
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["init", "--root", &root]);
-    assert!(
-        !output.status.success(),
-        "init should refuse to overwrite without --force\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("already exists"));
-    assert!(stderr.contains("--force"));
-    let config = std::fs::read_to_string(workspace.join("ripr.toml"))
-        .map_err(|e| format!("read existing ripr.toml: {e}"))?;
-    assert!(config.contains("mode = \"deep\""));
-    assert!(!config.contains("seam_diagnostics = true"));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["init", "--root", &root, "--ci", "github"]);
-    assert_success(&output);
-
-    let workflow_path = workspace.join(".github/workflows/ripr.yml");
-    let workflow = std::fs::read_to_string(&workflow_path)
-        .map_err(|e| format!("read generated workflow: {e}"))?;
-    assert!(workspace.join("ripr.toml").exists());
-    assert!(workflow.contains("pull_request:"));
-    assert!(workflow.contains("workflow_dispatch:"));
-    assert!(workflow.contains("cargo install ripr --locked"));
-    assert!(workflow.contains("ripr pilot"));
-    assert!(workflow.contains("--format sarif"));
-    assert!(workflow.contains("--format repo-sarif"));
-    assert!(workflow.contains("--format repo-badge-json"));
-    assert!(workflow.contains("ripr agent start"));
-    assert!(workflow.contains("ripr agent packet"));
-    // #3906 (F60-1): CI has no test edit between snapshots, so it runs no
-    // verify, receipt, or outcome; the repair's after phase writes those.
-    assert!(!workflow.contains("ripr agent receipt"));
-    assert!(!workflow.contains("ripr outcome"));
-    assert!(!workflow.contains("> target/ripr/workflow/agent-verify.json"));
-    assert!(workflow.contains("ripr review-comments"));
-    assert!(workflow.contains("RIPR_COMMENT_MODE"));
-    assert!(workflow.contains("pr-comments plan"));
-    assert!(workflow.contains("target/ripr/review/comment-publish-plan.json"));
-    assert!(workflow.contains("Capture existing RIPR inline comments"));
-    assert!(workflow.contains("Plan RIPR inline comments"));
-    assert!(workflow.contains("Publish RIPR inline comments"));
-    assert!(workflow.contains("ripr agent status"));
-    assert!(workflow.contains("ripr agent review-summary"));
-    assert!(workflow.contains("target/ripr/workflow/agent-packet.json"));
-    assert!(workflow.contains("target/ripr/workflow/agent-brief.json"));
-    assert!(workflow.contains("target/ripr/workflow/agent-verify.json"));
-    assert!(workflow.contains("target/ripr/reports/agent-receipt.json"));
-    assert!(workflow.contains("target/ripr/workflow/agent-status.json"));
-    assert!(workflow.contains("target/ripr/workflow/agent-status.md"));
-    assert!(workflow.contains("target/ripr/workflow/agent-review-summary.json"));
-    assert!(workflow.contains("target/ripr/workflow/agent-review-summary.md"));
-    assert!(workflow.contains("target/ripr/agent/agent-packet.json"));
-    assert!(workflow.contains("target/ripr/agent/agent-brief.json"));
-    assert!(!workflow.contains("target/ripr/agent/agent-verify.json"));
-    assert!(!workflow.contains("target/ripr/agent/agent-receipt.json"));
-    assert!(!workflow.contains("target/ripr/reports/targeted-test-outcome.json"));
-    assert!(workflow.contains("target/ripr/review"));
-    assert!(workflow.contains("target/ripr/review/comments.json"));
-    assert!(workflow.contains("Run RIPR PR guidance report"));
-    assert!(workflow.contains("Emit RIPR PR guidance annotations"));
-    assert!(workflow.contains("Add RIPR advisory summary"));
-    assert!(workflow.contains("## RIPR advisory summary"));
-    assert!(workflow.contains("### Start here"));
-    assert!(workflow.contains("#### First-run status"));
-    assert!(workflow.contains("Start-here artifact:"));
-    assert!(workflow.contains("missing_start_here"));
-    assert!(workflow.contains("cat target/ripr/reports/start-here.md"));
-    assert!(workflow.contains("### Language preview grouping"));
-    assert!(workflow.contains("### SARIF and badge status"));
-    assert!(workflow.contains("### PR guidance annotations"));
-    assert!(workflow.contains("### Known limits"));
-    assert!(!workflow.contains("cargo xtask"));
-    assert!(workflow.contains("continue-on-error: true"));
-    assert!(workflow.contains("actions/upload-artifact@v7"));
-    assert!(workflow.contains("RIPR_UPLOAD_SARIF"));
-    assert!(workflow.contains("github/codeql-action/upload-sarif@v4"));
-    assert!(!workflow.contains("fail-on-new-warning"));
-    assert!(!workflow.contains("RIPR_GATE_MODE: \"acknowledgeable\""));
-    assert!(!workflow.contains("RIPR_GATE_MODE: \"baseline-check\""));
-    assert!(!workflow.contains("RIPR_GATE_MODE: \"calibrated-gate\""));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn init_ci_github_refuses_existing_workflow_without_force() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    let workflow_dir = workspace.join(".github/workflows");
-    std::fs::create_dir_all(&workflow_dir).map_err(|e| format!("create workflow dir: {e}"))?;
-    std::fs::write(workflow_dir.join("ripr.yml"), "name: Existing\n")
-        .map_err(|e| format!("write existing workflow: {e}"))?;
-
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["init", "--root", &root, "--ci", "github"]);
-    assert!(
-        !output.status.success(),
-        "init should refuse to overwrite workflow without --force\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains(".github"));
-    assert!(stderr.contains("--force"));
-    assert!(!workspace.join("ripr.toml").exists());
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn init_force_overwrites_existing_config() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    std::fs::write(workspace.join("ripr.toml"), "[analysis]\nmode = \"deep\"\n")
-        .map_err(|e| format!("write existing ripr.toml: {e}"))?;
-
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["init", "--root", &root, "--force"]);
-    assert_success(&output);
-    let config = std::fs::read_to_string(workspace.join("ripr.toml"))
-        .map_err(|e| format!("read overwritten ripr.toml: {e}"))?;
-    assert!(config.contains("mode = \"draft\""));
-    assert!(config.contains("seam_diagnostics = true"));
-    assert!(!config.contains("mode = \"deep\""));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn baseline_create_writes_reviewed_ledger_and_refuses_overwrite() -> Result<(), String> {
-    let workspace = unique_temp_workspace("baseline-create");
-    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
-    let source = workspace_root().join(
-        "fixtures/boundary_gap/expected/calibrated-gate/visible-only-advisory/gate-decision.json",
-    );
-    let out = workspace.join(".ripr/gate-baseline.json");
-    let source_arg = source.display().to_string();
-    let out_arg = out.display().to_string();
-
-    let output = run_ripr(&[
-        "baseline",
-        "create",
-        "--from",
-        &source_arg,
-        "--out",
-        &out_arg,
-    ]);
-    assert_success(&output);
-
-    let baseline = std::fs::read_to_string(&out).map_err(|e| format!("read baseline: {e}"))?;
-    assert!(baseline.contains("\"kind\": \"gate_baseline\""));
-    assert!(baseline.contains("\"reviewed\": false"));
-    assert!(baseline.contains("\"source_report\""));
-    assert!(baseline.contains("\"seam_id\": \"8f7fa8644fd12280\""));
-    assert!(baseline.contains("\"entries\": 1"));
-
-    let overwrite = run_ripr(&[
-        "baseline",
-        "create",
-        "--from",
-        &source_arg,
-        "--out",
-        &out_arg,
-    ]);
-    assert_failure(&overwrite);
-    let stderr = String::from_utf8_lossy(&overwrite.stderr);
-    assert!(stderr.contains("--force"));
-
-    let dry_run_out = workspace.join(".ripr/dry-run-baseline.json");
-    let dry_run_out_arg = dry_run_out.display().to_string();
-    let dry_run = run_ripr(&[
-        "baseline",
-        "create",
-        "--from",
-        &source_arg,
-        "--out",
-        &dry_run_out_arg,
-        "--dry-run",
-    ]);
-    assert_success(&dry_run);
-    let stdout = String::from_utf8_lossy(&dry_run.stdout);
-    assert!(stdout.contains("\"kind\": \"gate_baseline\""));
-    assert!(!dry_run_out.exists());
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn baseline_diff_writes_debt_delta_json_and_markdown() -> Result<(), String> {
-    let workspace = unique_temp_workspace("baseline-diff");
-    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
-    let current = workspace_root().join(
-        "fixtures/boundary_gap/expected/calibrated-gate/visible-only-advisory/gate-decision.json",
-    );
-    let baseline = workspace.join(".ripr/gate-baseline.json");
-    let out_json = workspace.join("baseline-debt-delta.json");
-    let out_md = workspace.join("baseline-debt-delta.md");
-    let current_arg = current.display().to_string();
-    let baseline_arg = baseline.display().to_string();
-    let out_json_arg = out_json.display().to_string();
-    let out_md_arg = out_md.display().to_string();
-
-    let create = run_ripr(&[
-        "baseline",
-        "create",
-        "--from",
-        &current_arg,
-        "--out",
-        &baseline_arg,
-    ]);
-    assert_success(&create);
-
-    let diff = run_ripr(&[
-        "baseline",
-        "diff",
-        "--baseline",
-        &baseline_arg,
-        "--current",
-        &current_arg,
-        "--out",
-        &out_json_arg,
-        "--out-md",
-        &out_md_arg,
-    ]);
-    assert_success(&diff);
-
-    let json = std::fs::read_to_string(&out_json).map_err(|e| format!("read delta json: {e}"))?;
-    assert!(json.contains("\"kind\": \"baseline_debt_delta\""));
-    assert!(json.contains("\"still_present\": 1"));
-    assert!(json.contains("\"matched_by\": \"canonical_gap_id\""));
-    let md = std::fs::read_to_string(&out_md).map_err(|e| format!("read delta md: {e}"))?;
-    assert!(md.contains("# RIPR Baseline Debt Delta"));
-    assert!(md.contains("| Still present | 1 |"));
-
-    let missing_current = workspace.join("missing-current.json");
-    let missing_out = workspace.join("missing-current-delta.json");
-    let missing_md = workspace.join("missing-current-delta.md");
-    let missing = run_ripr(&[
-        "baseline",
-        "diff",
-        "--baseline",
-        &baseline_arg,
-        "--current",
-        &missing_current.display().to_string(),
-        "--out",
-        &missing_out.display().to_string(),
-        "--out-md",
-        &missing_md.display().to_string(),
-    ]);
-    assert_success(&missing);
-    let missing_json =
-        std::fs::read_to_string(&missing_out).map_err(|e| format!("read missing delta: {e}"))?;
-    assert!(missing_json.contains("\"missing_current_input\": 1"));
-    assert!(missing_json.contains("required current gate-decision input"));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn capped_pr_guidance_baseline_round_trip_preserves_shared_canonical_gap_seams()
--> Result<(), String> {
-    let workspace = unique_temp_workspace("capped-baseline-round-trip");
-    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
-    let guidance =
-        workspace_root().join("fixtures/boundary_gap/expected/pr-guidance/capped/comments.json");
-    let gate = workspace.join("gate-decision.json");
-    let baseline = workspace.join("gate-baseline.json");
-    let delta = workspace.join("baseline-debt-delta.json");
-    let updated = workspace.join("updated-baseline.json");
-    let guidance_arg = guidance.display().to_string();
-    let gate_arg = gate.display().to_string();
-    let baseline_arg = baseline.display().to_string();
-    let delta_arg = delta.display().to_string();
-    let updated_arg = updated.display().to_string();
-
-    let gate_output = run_ripr(&[
-        "gate",
-        "evaluate",
-        "--root",
-        ".",
-        "--pr-guidance",
-        &guidance_arg,
-        "--mode",
-        "visible-only",
-        "--out",
-        &gate_arg,
-    ]);
-    assert_success(&gate_output);
-    let create = run_ripr(&[
-        "baseline",
-        "create",
-        "--from",
-        &gate_arg,
-        "--out",
-        &baseline_arg,
-    ]);
-    assert_success(&create);
-    let baseline_value: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(&baseline).map_err(|e| format!("read baseline: {e}"))?,
-    )
-    .map_err(|e| format!("parse baseline: {e}"))?;
-    let entries = baseline_value
-        .get("entries")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| "baseline entries missing".to_string())?;
-    let entry_count = entries.len();
-    assert!(
-        entry_count > 1,
-        "capped guidance must retain multiple seams"
-    );
-
-    let diff = run_ripr(&[
-        "baseline",
-        "diff",
-        "--baseline",
-        &baseline_arg,
-        "--current",
-        &gate_arg,
-        "--out",
-        &delta_arg,
-    ]);
-    assert_success(&diff);
-    let delta_value: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(&delta).map_err(|e| format!("read delta: {e}"))?,
-    )
-    .map_err(|e| format!("parse delta: {e}"))?;
-    let summary = delta_value
-        .get("delta")
-        .ok_or_else(|| "delta counts missing".to_string())?;
-    assert_eq!(
-        summary
-            .get("still_present")
-            .and_then(serde_json::Value::as_u64),
-        Some(entry_count as u64)
-    );
-    assert_eq!(
-        summary.get("resolved").and_then(serde_json::Value::as_u64),
-        Some(0)
-    );
-    assert_eq!(
-        summary
-            .get("new_policy_eligible")
-            .and_then(serde_json::Value::as_u64),
-        Some(0)
-    );
-    assert_eq!(
-        summary
-            .get("stale_baseline_entry")
-            .and_then(serde_json::Value::as_u64),
-        Some(0)
-    );
-
-    let update = run_ripr(&[
-        "baseline",
-        "update",
-        "--baseline",
-        &baseline_arg,
-        "--current",
-        &gate_arg,
-        "--remove-resolved",
-        "--out",
-        &updated_arg,
-    ]);
-    assert_success(&update);
-    let updated_value: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(&updated).map_err(|e| format!("read updated baseline: {e}"))?,
-    )
-    .map_err(|e| format!("parse updated baseline: {e}"))?;
-    assert_eq!(
-        updated_value
-            .get("entries")
-            .and_then(serde_json::Value::as_array)
-            .map(Vec::len),
-        Some(entry_count)
-    );
-    assert_eq!(
-        updated_value
-            .pointer("/update/removed_resolved")
-            .and_then(serde_json::Value::as_u64),
-        Some(0)
-    );
-    assert!(
-        updated_value
-            .pointer("/update/warnings")
-            .and_then(serde_json::Value::as_array)
-            .is_none_or(Vec::is_empty),
-        "unchanged capped evidence must not produce ambiguous or stale warnings: {updated_value}"
-    );
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn baseline_update_removes_resolved_without_adopting_new_debt() -> Result<(), String> {
-    let workspace = unique_temp_workspace("baseline-update");
-    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
-    let fixture_dir =
-        workspace_root().join("fixtures/boundary_gap/expected/baseline-debt-delta/mixed");
-    let baseline = fixture_dir.join("baseline.json");
-    let current = fixture_dir.join("current-gate-decision.json");
-    let out = workspace.join(".ripr/gate-baseline.json");
-    let baseline_arg = baseline.display().to_string();
-    let current_arg = current.display().to_string();
-    let out_arg = out.display().to_string();
-
-    let update = run_ripr(&[
-        "baseline",
-        "update",
-        "--baseline",
-        &baseline_arg,
-        "--current",
-        &current_arg,
-        "--remove-resolved",
-        "--out",
-        &out_arg,
-    ]);
-    assert_success(&update);
-
-    let json = std::fs::read_to_string(&out).map_err(|e| format!("read updated baseline: {e}"))?;
-    assert!(json.contains("\"kind\": \"gate_baseline\""));
-    assert!(json.contains("\"seam_id\": \"same\""));
-    assert!(!json.contains("\"seam_id\": \"gone\""));
-    assert!(!json.contains("\"seam_id\": \"new\""));
-    assert!(json.contains("\"entries\": 2"));
-    assert!(json.contains("\"removed_resolved\": 1"));
-    assert!(json.contains("\"ignored_new_current\": 3"));
-    assert!(json.contains("preserved malformed baseline entry"));
-
-    let no_mode = run_ripr(&[
-        "baseline",
-        "update",
-        "--baseline",
-        &baseline_arg,
-        "--current",
-        &current_arg,
-        "--out",
-        &out_arg,
-    ]);
-    assert_failure(&no_mode);
-    let stderr = String::from_utf8_lossy(&no_mode.stderr);
-    assert!(stderr.contains("--remove-resolved"));
-    assert!(stderr.contains("adopting new debt is not supported"));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-/// The first-PR workflow and every evidence record's `verify_command` name
-/// pilot's `repo-exposure.json` as the `--before` of `ripr agent verify`
-/// (#3906). Walk that route as a user would: pilot, add the missing boundary
-/// test, take the after snapshot with the exact command pilot prints, verify.
-#[test]
-fn pilot_snapshot_is_the_agent_verify_baseline() -> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("pilot-verify-baseline");
-    std::fs::create_dir_all(&root)?;
-    init_producer_fixture_repo(&root)?;
-    let root_arg = root.display().to_string();
-
-    // From the repository, as a user runs it: pilot's default `--out` is
-    // relative to the working directory.
-    let pilot = run_command(
-        env!("CARGO_BIN_EXE_ripr"),
-        Some(&root),
-        &["pilot", "--root", ".", "--mode", "draft"],
-    )?;
-    assert_success(&pilot);
-    let pilot_dir = root.join("target/ripr/pilot");
-    let before: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
-        pilot_dir.join("repo-exposure.json"),
-    )?)?;
-    assert!(
-        before.pointer("/artifact/content_sha256").is_some(),
-        "pilot repo-exposure.json must carry the producer-owned artifact identity"
-    );
-    let summary: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
-        pilot_dir.join("pilot-summary.json"),
-    )?)?;
-    let after_command = summary
-        .pointer("/next/after_snapshot_command")
-        .and_then(serde_json::Value::as_str)
-        .ok_or("pilot summary names no after-snapshot command")?;
-    // Run the printed command's arguments, not a hand-written equivalent:
-    // a drift between pilot's identity and the command it prints is the bug.
-    let (check_part, redirect) = after_command
-        .split_once(" > ")
-        .ok_or_else(|| format!("after command has no redirect: {after_command}"))?;
-    let check_args: Vec<&str> = check_part
-        .strip_prefix("ripr ")
-        .ok_or_else(|| format!("after command is not a ripr command: {after_command}"))?
-        .split_whitespace()
-        .collect();
-    // Pilot anchors the redirect at the resolved root (#3938), so the printed
-    // target may be absolute; either way it must land in pilot's own out dir.
-    let redirect_path = std::path::Path::new(redirect.trim().trim_matches('\''));
-    let after = if redirect_path.is_absolute() {
-        redirect_path.to_path_buf()
-    } else {
-        root.join(redirect_path)
-    };
-    assert_eq!(
-        after.file_name().and_then(std::ffi::OsStr::to_str),
-        Some("after.repo-exposure.json"),
-        "{after_command}"
-    );
-    let pilot_dir = pilot_dir.canonicalize()?;
-    assert_eq!(
-        after
-            .parent()
-            .ok_or("after snapshot path has no parent")?
-            .canonicalize()?,
-        pilot_dir,
-        "{after_command}"
-    );
-
-    let mut tests = std::fs::read_to_string(root.join("tests/pricing.rs"))?;
-    tests.push_str(
-        "\n#[test]\nfn threshold_equality_discounts() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
-    );
-    std::fs::write(root.join("tests/pricing.rs"), tests)?;
-
-    let check = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &check_args)?;
-    assert_success(&check);
-    std::fs::write(&after, &check.stdout)?;
-
-    let verify = run_ripr(&[
-        "agent",
-        "verify",
-        "--root",
-        &root_arg,
-        "--before",
-        &pilot_dir.join("repo-exposure.json").display().to_string(),
-        "--after",
-        &after.display().to_string(),
-        "--json",
-    ]);
-    assert_success(&verify);
-    let report: serde_json::Value = serde_json::from_slice(&verify.stdout)?;
-    assert_eq!(
-        report.pointer("/summary/improved"),
-        Some(&serde_json::json!(1)),
-        "{report}"
-    );
-    assert_eq!(
-        report.pointer("/summary/gap_movement/closed"),
-        Some(&serde_json::json!(1)),
-        "{report}"
-    );
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-/// When the pilot seam budget truncates the inventory, pilot's snapshot holds
-/// fewer seams than the after snapshot `ripr check` takes. It must not carry
-/// the comparable identity, or verify would compare two populations.
-#[test]
-fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
--> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("pilot-verify-truncated");
-    std::fs::create_dir_all(&root)?;
-    init_producer_fixture_repo(&root)?;
-    let mut lib = std::fs::read_to_string(root.join("src/lib.rs"))?;
-    lib.push_str(
-        "\npub fn shipping_fee(weight: i32, free_limit: i32) -> i32 {\n    if weight > free_limit { 5 } else { 0 }\n}\n",
-    );
-    std::fs::write(root.join("src/lib.rs"), lib)?;
-
-    let pilot = run_command_with_env(
-        env!("CARGO_BIN_EXE_ripr"),
-        &root,
-        &["pilot", "--root", ".", "--mode", "draft"],
-        &[("RIPR_PILOT_SEAM_BUDGET", "1")],
-    )?;
-    assert_success(&pilot);
-    let before: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
-        root.join("target/ripr/pilot/repo-exposure.json"),
-    )?)?;
-    // Precondition: the budget really truncated a larger inventory.
-    let check = run_command(
-        env!("CARGO_BIN_EXE_ripr"),
-        Some(&root),
-        &[
-            "check",
-            "--root",
-            ".",
-            "--mode",
-            "draft",
-            "--format",
-            "repo-exposure-json",
-        ],
-    )?;
-    assert_success(&check);
-    let full: serde_json::Value = serde_json::from_slice(&check.stdout)?;
-    let count = |doc: &serde_json::Value| {
-        doc.get("seams")
-            .and_then(serde_json::Value::as_array)
-            .map_or(0, Vec::len)
-    };
-    assert_eq!(count(&before), 1, "{before}");
-    assert!(
-        count(&full) > 1,
-        "fixture must have more seams than the budget: {full}"
-    );
-    assert!(
-        before.get("artifact").is_none(),
-        "a budget-truncated pilot snapshot must not carry the comparable identity"
-    );
-    std::fs::remove_dir_all(root)?;
-    Ok(())
-}
-
-#[test]
-fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), String> {
-    let root = workspace_root().join("fixtures/boundary_gap/input");
-    let out_dir = unique_temp_workspace("pilot");
-    let output = run_ripr(&[
-        "pilot",
-        "--root",
-        &root.display().to_string(),
-        "--out",
-        &out_dir.display().to_string(),
-    ]);
-    assert_success(&output);
-
-    for file in [
-        "repo-exposure.json",
-        "repo-exposure.md",
-        "agent-seam-packets.json",
-        "pilot-summary.json",
-        "pilot-summary.md",
-    ] {
-        let path = out_dir.join(file);
-        assert!(path.exists(), "pilot output missing {}", path.display());
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("RIPR pilot complete."));
-    assert!(stdout.contains("config: missing, using built-in defaults"));
-    assert!(stdout.contains("Top recommendation:"));
-    assert!(stdout.contains("focused test:"));
-    // #3906: an eligible top seam gets one ordinary route, the repair
-    // transaction, not the manual before/after snapshot pair as well.
-    assert!(stdout.contains("Next, in order:"), "{stdout}");
-    assert!(
-        !stdout.contains("Run after adding the focused test:")
-            && !stdout.contains("ripr outcome --before"),
-        "legacy snapshot choreography must not be offered beside the repair route:\n{stdout}"
-    );
-
-    let summary_json = std::fs::read_to_string(out_dir.join("pilot-summary.json"))
-        .map_err(|e| format!("read pilot summary json: {e}"))?;
-    assert!(summary_json.contains(r#""schema_version": "0.2""#));
-    assert!(summary_json.contains(r#""scope": "repo""#));
-    assert!(summary_json.contains(r#""status": "complete""#));
-    assert!(summary_json.contains(r#""timeout_ms": 30000"#));
-    assert!(summary_json.contains(r#""state": "missing""#));
-    assert!(summary_json.contains(r#""top_actionable_seams""#));
-    assert!(summary_json.contains("ripr outcome --before"));
-
-    let packets = std::fs::read_to_string(out_dir.join("agent-seam-packets.json"))
-        .map_err(|e| format!("read agent seam packets: {e}"))?;
-    assert!(packets.contains(r#""packets_total""#));
-    assert!(packets.contains(r#""task": "write_targeted_test""#));
-
-    // The terminal is the only pilot surface a user sees without opening a
-    // file, and the next documented step is `ripr agent repair --seam-id <id>`,
-    // which accepts a seam id and nothing else. So the screen must carry the
-    // id, and it must be the same id the written packet carries â€” the packet
-    // is produced from the inventory `agent repair` resolves against, so a
-    // mismatch would mean the printed command names a seam the repair
-    // transaction cannot find.
-    let seam_line = stdout
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("inspected seam: "))
-        .ok_or_else(|| format!("pilot terminal printed no inspected-seam line:\n{stdout}"))?;
-    let printed_id = seam_line
-        .split_whitespace()
-        .next()
-        .ok_or_else(|| format!("inspected-seam line carried no id: {seam_line}"))?;
-    assert!(
-        printed_id.len() == 16 && printed_id.chars().all(|ch| ch.is_ascii_hexdigit()),
-        "expected a 16-hex seam id to lead the inspected-seam line, got: {seam_line}"
-    );
-    assert!(
-        packets.contains(&format!(r#""seam_id": "{printed_id}""#)),
-        "the printed seam id {printed_id} is absent from agent-seam-packets.json"
-    );
-    // This fixture's route is actionable, so the paste-ready repair command is
-    // present and names the same id. The root is compared through the same
-    // normalization the renderer applies (`loop_commands::shell_path` â†’
-    // `display_path`, which rewrites `\` as `/`, then `shell_arg`, which may
-    // quote), because `Path::display` keeps native separators and would make
-    // this assertion fail on Windows for a command that is in fact correct.
-    let repair_line = stdout
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("repair this seam: "))
-        .ok_or_else(|| format!("pilot did not print a repair command:\n{stdout}"))?;
-    let tokens: Vec<&str> = repair_line.split_whitespace().collect();
-    let flag_value = |flag: &str| -> Option<&str> {
-        tokens
-            .iter()
-            .position(|token| *token == flag)
-            .and_then(|at| tokens.get(at + 1))
-            .map(|value| value.trim_matches('\''))
-    };
-    assert_eq!(
-        tokens.first().copied(),
-        Some("ripr"),
-        "expected a paste-ready ripr command, got: {repair_line}"
-    );
-    assert_eq!(
-        flag_value("--seam-id"),
-        Some(printed_id),
-        "the repair command must name the seam printed above it: {repair_line}"
-    );
-    assert_eq!(
-        flag_value("--phase"),
-        Some("before"),
-        "expected the opening phase of the repair transaction: {repair_line}"
-    );
-    assert_eq!(
-        flag_value("--root").map(|value| value.replace('\\', "/")),
-        Some(root.display().to_string().replace('\\', "/")),
-        "the repair command must name the analyzed root: {repair_line}"
-    );
-
-    // The closing block, the JSON `next.repair_command`, and the Markdown
-    // Next Commands block all carry that same command (#3906).
-    assert!(
-        stdout.contains(&format!("  1. {repair_line}\n")),
-        "step 1 must be the repair command printed above:\n{stdout}"
-    );
-    let summary: serde_json::Value =
-        serde_json::from_str(&summary_json).map_err(|e| format!("parse pilot summary: {e}"))?;
-    assert_eq!(
-        summary
-            .pointer("/next/repair_command")
-            .and_then(serde_json::Value::as_str),
-        Some(repair_line),
-        "pilot-summary.json next.repair_command"
-    );
-    let summary_md = std::fs::read_to_string(out_dir.join("pilot-summary.md"))
-        .map_err(|e| format!("read pilot summary md: {e}"))?;
-    let next_section = summary_md
-        .split("## Next Commands")
-        .nth(1)
-        .ok_or_else(|| format!("pilot-summary.md has no Next Commands:\n{summary_md}"))?;
-    assert!(
-        next_section.contains(&format!("```bash\n{repair_line}\n```")),
-        "Markdown next command must be the repair command:\n{next_section}"
-    );
-    assert!(
-        !next_section.contains("ripr outcome"),
-        "Markdown must not offer the snapshot pair beside the repair route:\n{next_section}"
-    );
-
-    ignore_remove_dir_all(&out_dir);
-    Ok(())
-}
-
-#[test]
-fn rerun_changed_test_emits_current_state_only_for_boundary_gap_fixture() -> Result<(), String> {
-    let root = workspace_root().join("fixtures/boundary_gap/input");
-    let root_arg = root.to_string_lossy().into_owned();
-    let output = run_ripr(&[
-        "rerun",
-        "--root",
-        &root_arg,
-        "--changed-test",
-        "tests/pricing.rs",
-        "--json",
-    ]);
-    assert_success(&output);
-    let json = String::from_utf8_lossy(&output.stdout);
-    for expected in [
-        r#""schema_version": "ripr-targeted-rerun-v1""#,
-        r#""state": "current_state_only""#,
-        r#""changed_test": "tests/pricing.rs""#,
-        r#""canonical_gap_id": "gap:"#,
-        r#""repair_route_readiness": {"#,
-        r#""state": "ready""#,
-        "gap movement is not inferred",
-    ] {
-        if !json.contains(expected) {
-            return Err(format!("rerun report missing {expected:?}: {json}"));
-        }
-    }
-    for forbidden in ["\"improved\"", "\"closed\"", "\"regressed\""] {
-        if json.contains(forbidden) {
-            return Err(format!(
-                "current-state report must not infer {forbidden}: {json}"
-            ));
-        }
-    }
-    Ok(())
-}
-
-#[test]
-fn rerun_changed_test_check_parity_matches_full_pipeline_for_boundary_gap() -> Result<(), String> {
-    let root = workspace_root().join("fixtures/boundary_gap/input");
-    let root_arg = root.to_string_lossy().into_owned();
-    let output = run_ripr(&[
-        "rerun",
-        "--root",
-        &root_arg,
-        "--changed-test",
-        "tests/pricing.rs",
-        "--check-parity",
-        "--json",
-    ]);
-    assert_success(&output);
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|err| format!("parse parity rerun JSON: {err}"))?;
-    if report["state"] != "current_state_only"
-        || report["parity"]["state"] != "matched"
-        || report["parity"]["selected_seam_count"] != report["parity"]["matched_seam_count"]
-        || report["parity"]["mismatches"] != serde_json::json!([])
-        || report["parity"]["input_mismatches"] != serde_json::json!([])
-        || report["parity"]["selected_seam_count"] != serde_json::json!(1)
-        || !report["cache"]["input_fingerprint"].is_object()
-        || report["cache"]["input_fingerprint"]["workspace_manifests_hash"]
-            .as_str()
-            .is_none()
-        || report["cache"]["input_fingerprint"]["lockfile_hash"]
-            .as_str()
-            .is_none()
-        || report
-            .get("limitation")
-            .is_some_and(|value| !value.is_null())
-        || !report["seams"][0]["related_tests"].is_array()
-        || !report["seams"][0]["missing_discriminators"].is_array()
-    {
-        return Err(format!("unexpected parity rerun receipt: {report}"));
-    }
-    Ok(())
-}
-
-#[test]
-fn rerun_before_receipt_names_toolchain_fingerprint_change() -> Result<(), String> {
-    let root = workspace_root().join("fixtures/boundary_gap/input");
-    let root_arg = root.to_string_lossy().into_owned();
-    let before = run_ripr_with_env(
-        &[
-            "rerun",
-            "--root",
-            &root_arg,
-            "--changed-test",
-            "tests/pricing.rs",
-            "--json",
-        ],
-        &[("RUSTUP_TOOLCHAIN", "toolchain-before")],
-    );
-    assert_success(&before);
-    let workspace = unique_temp_workspace("rerun-input-fingerprint");
-    std::fs::create_dir_all(&workspace)
-        .map_err(|err| format!("create fingerprint workspace: {err}"))?;
-    let before_path = workspace.join("before.json");
-    std::fs::write(&before_path, &before.stdout)
-        .map_err(|err| format!("write fingerprint before receipt: {err}"))?;
-    let before_arg = before_path.to_string_lossy().into_owned();
-    let after = run_ripr_with_env(
-        &[
-            "rerun",
-            "--root",
-            &root_arg,
-            "--changed-test",
-            "tests/pricing.rs",
-            "--before",
-            &before_arg,
-            "--json",
-        ],
-        &[("RUSTUP_TOOLCHAIN", "toolchain-after")],
-    );
-    ignore_remove_dir_all(&workspace);
-    assert_success(&after);
-    let report: serde_json::Value = serde_json::from_slice(&after.stdout)
-        .map_err(|err| format!("parse fingerprint rerun JSON: {err}"))?;
-    if report["cache"]["invalidation_status"] != "workspace_input_changed"
-        || !report["cache"]["recomputation_reasons"]
-            .as_array()
-            .is_some_and(|reasons| {
-                reasons
-                    .iter()
-                    .any(|reason| reason.as_str() == Some("input_changed:toolchain_hash"))
-            })
-    {
-        return Err(format!("unexpected input fingerprint disclosure: {report}"));
-    }
-    Ok(())
-}
-
-#[test]
-fn rerun_gap_before_receipt_names_selector_ledger_change() -> Result<(), String> {
-    let root_arg = "fixtures/boundary_gap/input";
-    let changed = run_ripr_in_workspace(&[
-        "rerun",
-        "--root",
-        root_arg,
-        "--changed-test",
-        "tests/pricing.rs",
-        "--json",
-    ])
-    .map_err(|err| format!("run changed-test rerun: {err}"))?;
-    assert_success(&changed);
-    let changed_json: serde_json::Value = serde_json::from_slice(&changed.stdout)
-        .map_err(|err| format!("parse changed-test rerun JSON: {err}"))?;
-    let seam = changed_json["seams"]
-        .as_array()
-        .and_then(|seams| seams.first())
-        .ok_or_else(|| "changed-test rerun emitted no seam".to_string())?;
-    let canonical_gap_id = seam["canonical_gap_id"]
-        .as_str()
-        .ok_or_else(|| "changed-test rerun seam lacks canonical_gap_id".to_string())?;
-    let file = seam["file"]
-        .as_str()
-        .ok_or_else(|| "changed-test rerun seam lacks file".to_string())?;
-    let owner = seam["owner"]
-        .as_str()
-        .ok_or_else(|| "changed-test rerun seam lacks owner".to_string())?;
-
-    let workspace = unique_temp_workspace("rerun-ledger-fingerprint");
-    std::fs::create_dir_all(&workspace)
-        .map_err(|err| format!("create ledger fingerprint workspace: {err}"))?;
-    let ledger = workspace.join("gap-ledger.json");
-    let ledger_json = serde_json::json!({
-        "kind": "gap_decision_ledger",
-        "root": root_arg,
-        "records": [{
-            "canonical_gap_id": canonical_gap_id,
-            "anchor": { "file": file, "owner": owner },
-            "verification_commands": ["cargo test -p pricing boundary"],
-            "receipt_command": "ripr receipt write --gap first"
-        }]
-    });
-    std::fs::write(
-        &ledger,
-        serde_json::to_vec_pretty(&ledger_json)
-            .map_err(|err| format!("serialize ledger fingerprint input: {err}"))?,
-    )
-    .map_err(|err| format!("write ledger fingerprint input: {err}"))?;
-    let ledger_arg = ledger.to_string_lossy().into_owned();
-    let before = run_ripr_in_workspace(&[
-        "rerun",
-        "--root",
-        root_arg,
-        "--gap",
-        canonical_gap_id,
-        "--gap-ledger",
-        &ledger_arg,
-        "--json",
-    ])
-    .map_err(|err| format!("run ledger fingerprint before rerun: {err}"))?;
-    assert_success(&before);
-    let before_path = workspace.join("before.json");
-    std::fs::write(&before_path, &before.stdout)
-        .map_err(|err| format!("write ledger fingerprint before receipt: {err}"))?;
-
-    let mut changed_ledger = ledger_json;
-    changed_ledger["records"][0]["receipt_command"] =
-        serde_json::Value::String("ripr receipt write --gap second".to_string());
-    std::fs::write(
-        &ledger,
-        serde_json::to_vec_pretty(&changed_ledger)
-            .map_err(|err| format!("serialize changed ledger fingerprint input: {err}"))?,
-    )
-    .map_err(|err| format!("write changed ledger fingerprint input: {err}"))?;
-    let before_arg = before_path.to_string_lossy().into_owned();
-    let after = run_ripr_in_workspace(&[
-        "rerun",
-        "--root",
-        root_arg,
-        "--gap",
-        canonical_gap_id,
-        "--gap-ledger",
-        &ledger_arg,
-        "--before",
-        &before_arg,
-        "--json",
-    ])
-    .map_err(|err| format!("run ledger fingerprint after rerun: {err}"))?;
-    ignore_remove_dir_all(&workspace);
-    assert_success(&after);
-    let report: serde_json::Value = serde_json::from_slice(&after.stdout)
-        .map_err(|err| format!("parse ledger fingerprint after JSON: {err}"))?;
-    if report["cache"]["invalidation_status"] != "workspace_input_changed"
-        || !report["cache"]["recomputation_reasons"]
-            .as_array()
-            .is_some_and(|reasons| {
-                reasons
-                    .iter()
-                    .any(|reason| reason.as_str() == Some("input_changed:selector_ledger_hash"))
-            })
-    {
-        return Err(format!(
-            "unexpected selector ledger fingerprint disclosure: {report}"
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn rerun_check_parity_names_capped_inventory_and_suppresses_movement() -> Result<(), String> {
-    let root = workspace_root().join("fixtures/observation_verified_field_construction/input");
-    let root_arg = root.to_string_lossy().into_owned();
-    let before = run_ripr(&[
-        "rerun",
-        "--root",
-        &root_arg,
-        "--changed-test",
-        "tests/item_tests.rs",
-        "--json",
-    ]);
-    assert_success(&before);
-    let workspace = unique_temp_workspace("parity-before");
-    std::fs::create_dir_all(&workspace).map_err(|err| format!("create before workspace: {err}"))?;
-    let before_path = workspace.join("before.json");
-    std::fs::write(&before_path, &before.stdout)
-        .map_err(|err| format!("write before receipt: {err}"))?;
-    let before_arg = before_path.to_string_lossy().into_owned();
-    let after = run_ripr_with_env(
-        &[
-            "rerun",
-            "--root",
-            &root_arg,
-            "--changed-test",
-            "tests/item_tests.rs",
-            "--before",
-            &before_arg,
-            "--check-parity",
-            "--json",
-        ],
-        &[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")],
-    );
-    ignore_remove_dir_all(&workspace);
-    assert_success(&after);
-    let report: serde_json::Value = serde_json::from_slice(&after.stdout)
-        .map_err(|err| format!("parse capped parity rerun JSON: {err}"))?;
-    if report["state"] != "limited"
-        || report["parity"]["state"] != "limited"
-        || report["limitation"]["kind"] != "full_pipeline_parity_incomplete"
-        || report.get("movement").is_some_and(|value| !value.is_null())
-    {
-        return Err(format!("unexpected capped parity rerun receipt: {report}"));
-    }
-    Ok(())
-}
-
-#[test]
-fn rerun_changed_test_uses_explicit_before_receipt_for_static_movement() -> Result<(), String> {
-    let root = workspace_root().join("fixtures/boundary_gap/input");
-    let root_arg = root.to_string_lossy().into_owned();
-    let before = run_ripr(&[
-        "rerun",
-        "--root",
-        &root_arg,
-        "--changed-test",
-        "tests/pricing.rs",
-        "--json",
-    ]);
-    assert_success(&before);
-    let before_path = workspace_root().join("target").join(format!(
-        "rerun-before-{}-{}.json",
-        std::process::id(),
-        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::write(&before_path, &before.stdout).map_err(|err| {
-        format!(
-            "write explicit before receipt {}: {err}",
-            before_path.display()
-        )
-    })?;
-    let before_arg = before_path.to_string_lossy().into_owned();
-    let displayed_before = before_arg.replace('\\', "/");
-    let after = run_ripr(&[
-        "rerun",
-        "--root",
-        &root_arg,
-        "--changed-test",
-        "tests/pricing.rs",
-        "--before",
-        &before_arg,
-        "--json",
-    ]);
-    if let Ok(()) = std::fs::remove_file(&before_path) {}
-    assert_success(&after);
-    let json: serde_json::Value = serde_json::from_slice(&after.stdout)
-        .map_err(|err| format!("parse targeted rerun movement JSON: {err}"))?;
-    let selected_seam_count = json["seams"].as_array().map_or(0, Vec::len);
-    if json["state"] != "unchanged"
-        || json["movement"]["state"] != "unchanged"
-        || json["movement"]["before"] != displayed_before
-        || json["movement"]["matched_seam_count"] != serde_json::json!(selected_seam_count)
-    {
-        return Err(format!("unexpected explicit-before rerun receipt: {json}"));
-    }
-    Ok(())
-}
-
-#[test]
-fn rerun_gap_recomputes_fixture_anchor_from_explicit_canonical_ledger() -> Result<(), String> {
-    let root_arg = "fixtures/boundary_gap/input";
-    let changed = run_ripr_in_workspace(&[
-        "rerun",
-        "--root",
-        root_arg,
-        "--changed-test",
-        "tests/pricing.rs",
-        "--json",
-    ])
-    .map_err(|err| format!("run changed-test rerun: {err}"))?;
-    assert_success(&changed);
-    let changed_json: serde_json::Value = serde_json::from_slice(&changed.stdout)
-        .map_err(|err| format!("parse changed-test rerun JSON: {err}"))?;
-    let seam = changed_json["seams"]
-        .as_array()
-        .and_then(|seams| seams.first())
-        .ok_or_else(|| "changed-test rerun emitted no seam".to_string())?;
-    let canonical_gap_id = seam["canonical_gap_id"]
-        .as_str()
-        .ok_or_else(|| "changed-test rerun seam lacks canonical_gap_id".to_string())?;
-    let file = seam["file"]
-        .as_str()
-        .ok_or_else(|| "changed-test rerun seam lacks file".to_string())?;
-    let owner = seam["owner"]
-        .as_str()
-        .ok_or_else(|| "changed-test rerun seam lacks owner".to_string())?;
-
-    let ledger_dir = workspace_root().join("target").join(format!(
-        "rerun-gap-ledger-{}-{}",
-        std::process::id(),
-        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&ledger_dir)
-        .map_err(|err| format!("create ledger dir {}: {err}", ledger_dir.display()))?;
-    let ledger = ledger_dir.join("gap-ledger.json");
-    let ledger_json = serde_json::json!({
-        "kind": "gap_decision_ledger",
-        "root": root_arg,
-        "records": [{
-            "canonical_gap_id": canonical_gap_id,
-            "anchor": { "file": file, "owner": owner },
-            "verification_commands": ["cargo test -p pricing boundary"],
-            "receipt_command": "ripr outcome --before before.json --after after.json"
-        }]
-    });
-    std::fs::write(
-        &ledger,
-        serde_json::to_vec_pretty(&ledger_json)
-            .map_err(|err| format!("serialize gap ledger: {err}"))?,
-    )
-    .map_err(|err| format!("write gap ledger {}: {err}", ledger.display()))?;
-    let ledger_arg = ledger
-        .strip_prefix(workspace_root())
-        .map_err(|err| format!("make ledger path relative to workspace: {err}"))?
-        .to_string_lossy()
-        .into_owned();
-
-    let selected = run_ripr_in_workspace(&[
-        "rerun",
-        "--root",
-        root_arg,
-        "--gap",
-        canonical_gap_id,
-        "--gap-ledger",
-        &ledger_arg,
-        "--json",
-    ])
-    .map_err(|err| format!("run canonical gap rerun: {err}"))?;
-    assert_success(&selected);
-    let selected_json: serde_json::Value = serde_json::from_slice(&selected.stdout)
-        .map_err(|err| format!("parse gap rerun JSON: {err}"))?;
-    if selected_json["state"] != "current_state_only"
-        || selected_json["selector"]["kind"] != "canonical_gap"
-        || selected_json["selector"]["canonical_gap_id"] != canonical_gap_id
-        || selected_json["seams"].as_array().is_none_or(Vec::is_empty)
-        || selected_json["route"]["verify_commands"][0] != "cargo test -p pricing boundary"
-    {
-        return Err(format!(
-            "unexpected canonical gap rerun report: {selected_json}"
-        ));
-    }
-
-    let unresolved = run_ripr_in_workspace(&[
-        "rerun",
-        "--root",
-        root_arg,
-        "--gap",
-        "gap:missing",
-        "--gap-ledger",
-        &ledger_arg,
-        "--json",
-    ])
-    .map_err(|err| format!("run unresolved gap rerun: {err}"))?;
-    assert_success(&unresolved);
-    let unresolved_json: serde_json::Value = serde_json::from_slice(&unresolved.stdout)
-        .map_err(|err| format!("parse unresolved gap rerun JSON: {err}"))?;
-    if unresolved_json["state"] != "limited"
-        || unresolved_json["limitation"]["kind"] != "canonical_gap_unresolved"
-        || unresolved_json["seams"] != serde_json::json!([])
-    {
-        return Err(format!(
-            "unexpected unresolved gap rerun report: {unresolved_json}"
-        ));
-    }
-
-    let mut duplicate_ledger = ledger_json.clone();
-    duplicate_ledger["records"]
-        .as_array_mut()
-        .ok_or_else(|| "constructed gap ledger is missing records array".to_string())?
-        .push(ledger_json["records"][0].clone());
-    std::fs::write(
-        &ledger,
-        serde_json::to_vec_pretty(&duplicate_ledger)
-            .map_err(|err| format!("serialize duplicate gap ledger: {err}"))?,
-    )
-    .map_err(|err| format!("write duplicate gap ledger {}: {err}", ledger.display()))?;
-    let duplicate = run_ripr_in_workspace(&[
-        "rerun",
-        "--root",
-        root_arg,
-        "--gap",
-        canonical_gap_id,
-        "--gap-ledger",
-        &ledger_arg,
-        "--json",
-    ])
-    .map_err(|err| format!("run duplicate gap rerun: {err}"))?;
-    assert_success(&duplicate);
-    let duplicate_json: serde_json::Value = serde_json::from_slice(&duplicate.stdout)
-        .map_err(|err| format!("parse duplicate gap rerun JSON: {err}"))?;
-    if duplicate_json["state"] != "current_state_only"
-        || duplicate_json["selector"]["matched_record_count"] != 2
-        || duplicate_json["selector"]["recomputed_scope_count"] != 1
-        || duplicate_json["seams"].as_array().map_or(0, Vec::len) != 1
-    {
-        return Err(format!(
-            "unexpected duplicate gap rerun report: {duplicate_json}"
-        ));
-    }
-
-    let mut mixed_ledger = ledger_json.clone();
-    let stale_record = serde_json::json!({
-        "canonical_gap_id": canonical_gap_id,
-        "anchor": { "file": "tests/pricing.rs", "owner": "missing::owner" },
-        "verification_commands": ["cargo test -p pricing stale"],
-        "receipt_command": "ripr outcome --before before.json --after after.json"
-    });
-    mixed_ledger["records"]
-        .as_array_mut()
-        .ok_or_else(|| "constructed mixed gap ledger is missing records array".to_string())?
-        .push(stale_record);
-    std::fs::write(
-        &ledger,
-        serde_json::to_vec_pretty(&mixed_ledger)
-            .map_err(|err| format!("serialize mixed gap ledger: {err}"))?,
-    )
-    .map_err(|err| format!("write mixed gap ledger {}: {err}", ledger.display()))?;
-    let mixed = run_ripr_in_workspace(&[
-        "rerun",
-        "--root",
-        root_arg,
-        "--gap",
-        canonical_gap_id,
-        "--gap-ledger",
-        &ledger_arg,
-        "--json",
-    ])
-    .map_err(|err| format!("run mixed gap rerun: {err}"))?;
-    assert_success(&mixed);
-    let mixed_json: serde_json::Value = serde_json::from_slice(&mixed.stdout)
-        .map_err(|err| format!("parse mixed gap rerun JSON: {err}"))?;
-    if mixed_json["state"] != "current_state_only"
-        || mixed_json["seams"].as_array().map_or(0, Vec::len) != 1
-        || mixed_json["scope_limitations"]
-            .as_array()
-            .is_none_or(Vec::is_empty)
-        || mixed_json["scope_limitations"][0]["kind"] != "gap_scope_unresolved"
-    {
-        return Err(format!("unexpected mixed gap rerun report: {mixed_json}"));
-    }
-
-    let mut conflict_ledger = ledger_json.clone();
-    let mut conflicting_record = ledger_json["records"][0].clone();
-    conflicting_record["receipt_command"] = serde_json::json!("ripr receipt write --gap conflict");
-    conflict_ledger["records"]
-        .as_array_mut()
-        .ok_or_else(|| "constructed conflict gap ledger is missing records array".to_string())?
-        .push(conflicting_record);
-    std::fs::write(
-        &ledger,
-        serde_json::to_vec_pretty(&conflict_ledger)
-            .map_err(|err| format!("serialize conflict gap ledger: {err}"))?,
-    )
-    .map_err(|err| format!("write conflict gap ledger {}: {err}", ledger.display()))?;
-    let conflict = run_ripr_in_workspace(&[
-        "rerun",
-        "--root",
-        root_arg,
-        "--gap",
-        canonical_gap_id,
-        "--gap-ledger",
-        &ledger_arg,
-        "--json",
-    ])
-    .map_err(|err| format!("run conflict gap rerun: {err}"))?;
-    assert_success(&conflict);
-    let conflict_json: serde_json::Value = serde_json::from_slice(&conflict.stdout)
-        .map_err(|err| format!("parse conflict gap rerun JSON: {err}"))?;
-    if conflict_json["state"] != "current_state_only"
-        || conflict_json["seams"].as_array().map_or(0, Vec::len) != 1
-        || conflict_json["route"].get("receipt_command").is_none()
-        || conflict_json["route"]["receipt_command"] != serde_json::Value::Null
-        || conflict_json["route"]["receipt_command_conflict"]["kind"] != "receipt_command_conflict"
-    {
-        return Err(format!(
-            "unexpected receipt conflict gap rerun report: {conflict_json}"
-        ));
-    }
-
-    let mut stale_ledger = ledger_json;
-    stale_ledger["root"] = serde_json::json!(ledger_dir.join("other-root"));
-    std::fs::write(
-        &ledger,
-        serde_json::to_vec_pretty(&stale_ledger)
-            .map_err(|err| format!("serialize stale gap ledger: {err}"))?,
-    )
-    .map_err(|err| format!("write stale gap ledger {}: {err}", ledger.display()))?;
-    let stale = run_ripr_in_workspace(&[
-        "rerun",
-        "--root",
-        root_arg,
-        "--gap",
-        canonical_gap_id,
-        "--gap-ledger",
-        &ledger_arg,
-        "--json",
-    ])
-    .map_err(|err| format!("run stale gap rerun: {err}"))?;
-    assert_success(&stale);
-    let stale_json: serde_json::Value = serde_json::from_slice(&stale.stdout)
-        .map_err(|err| format!("parse stale gap rerun JSON: {err}"))?;
-    if stale_json["state"] != "limited" || stale_json["limitation"]["kind"] != "stale_gap_ledger" {
-        return Err(format!("unexpected stale gap rerun report: {stale_json}"));
-    }
-
-    ignore_remove_dir_all(&ledger_dir);
-    Ok(())
-}
-
-fn multi_seam_gap_workspace() -> Result<PathBuf, String> {
-    let root = unique_temp_workspace("rerun-multi-gap");
-    std::fs::create_dir_all(root.join("src"))
-        .map_err(|err| format!("create multi-gap src directory: {err}"))?;
-    std::fs::create_dir_all(root.join("tests"))
-        .map_err(|err| format!("create multi-gap test directory: {err}"))?;
-    std::fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"rerun_multi_gap_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
-    )
-    .map_err(|err| format!("write multi-gap Cargo.toml: {err}"))?;
-    std::fs::write(
-        root.join("src/lib.rs"),
-        "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        return amount - 10;\n    }\n    if amount >= threshold {\n        return amount - 20;\n    }\n    amount\n}\n",
-    )
-    .map_err(|err| format!("write multi-gap library: {err}"))?;
-    std::fs::write(
-        root.join("tests/pricing.rs"),
-        "use rerun_multi_gap_fixture::discounted_total;\n\n#[test]\nfn far_above_threshold_discounts() {\n    assert_eq!(discounted_total(10_000, 100), 9_990);\n}\n",
-    )
-    .map_err(|err| format!("write multi-gap test: {err}"))?;
-    Ok(root)
-}
-
-#[test]
-fn rerun_gap_groups_multiple_current_seams() -> Result<(), String> {
-    let root = multi_seam_gap_workspace()?;
-    let root_arg = root.to_string_lossy().into_owned();
-    let changed = run_ripr(&[
-        "rerun",
-        "--root",
-        &root_arg,
-        "--changed-test",
-        "tests/pricing.rs",
-        "--json",
-    ]);
-    assert_success(&changed);
-    let changed_json: serde_json::Value = serde_json::from_slice(&changed.stdout)
-        .map_err(|err| format!("parse multi-seam changed-test rerun JSON: {err}"))?;
-    let seams = changed_json["seams"]
-        .as_array()
-        .ok_or_else(|| format!("multi-seam changed-test report has no seams: {changed_json}"))?;
-    let (canonical_gap_id, matching_seams) = seams
-        .iter()
-        .filter_map(|candidate| candidate["canonical_gap_id"].as_str())
-        .find_map(|candidate_id| {
-            let matching = seams
-                .iter()
-                .filter(|seam| seam["canonical_gap_id"] == candidate_id)
-                .collect::<Vec<_>>();
-            (matching.len() >= 2).then_some((candidate_id.to_string(), matching))
-        })
-        .ok_or_else(|| {
-            format!(
-                "expected two current seams with one canonical gap in multi-seam fixture: {changed_json}"
-            )
-        })?;
-    let records = matching_seams
-        .iter()
-        .map(|seam| {
-            serde_json::json!({
-                "canonical_gap_id": canonical_gap_id,
-                "anchor": {
-                    "file": seam["file"],
-                    "owner": seam["owner"],
-                },
-                "verification_commands": ["cargo test -p rerun_multi_gap_fixture far_above_threshold_discounts"],
-                "receipt_command": "ripr receipt write --gap grouped"
-            })
-        })
-        .collect::<Vec<_>>();
-    let ledger = root.join("gap-ledger.json");
-    std::fs::write(
-        &ledger,
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "kind": "gap_decision_ledger",
-            "root": root_arg.clone(),
-            "records": records.clone(),
-        }))
-        .map_err(|err| format!("serialize multi-seam gap ledger: {err}"))?,
-    )
-    .map_err(|err| format!("write multi-seam gap ledger: {err}"))?;
-    let ledger_arg = ledger.to_string_lossy().into_owned();
-    let grouped = run_ripr(&[
-        "rerun",
-        "--root",
-        &root_arg,
-        "--gap",
-        &canonical_gap_id,
-        "--gap-ledger",
-        &ledger_arg,
-        "--json",
-    ]);
-    assert_success(&grouped);
-    let grouped_json: serde_json::Value = serde_json::from_slice(&grouped.stdout)
-        .map_err(|err| format!("parse grouped multi-seam rerun JSON: {err}"))?;
-    let grouped_seams = grouped_json["seams"]
-        .as_array()
-        .ok_or_else(|| format!("grouped multi-seam report has no seams: {grouped_json}"))?;
-    let unique_seam_ids = grouped_seams
-        .iter()
-        .filter_map(|seam| seam["seam_id"].as_str())
-        .collect::<std::collections::BTreeSet<_>>();
-    if grouped_json["state"] != "current_state_only"
-        || grouped_json["selector"]["matched_record_count"] != serde_json::json!(records.len())
-        || grouped_json["selector"]["recomputed_scope_count"] != 1
-        || grouped_seams.len() != matching_seams.len()
-        || unique_seam_ids.len() != matching_seams.len()
-        || grouped_seams
-            .iter()
-            .any(|seam| seam["canonical_gap_id"] != serde_json::json!(canonical_gap_id))
-    {
-        return Err(format!(
-            "multi-seam canonical grouping was not preserved: {grouped_json}"
-        ));
-    }
-    std::fs::remove_dir_all(&root)
-        .map_err(|err| format!("remove multi-seam workspace {}: {err}", root.display()))?;
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "lang-python")]
-fn pilot_accepts_python_project_without_ripr_config() -> Result<(), String> {
-    let root = workspace_root().join("fixtures/python/basic");
-    let out_dir = unique_temp_workspace("pilot-python-basic");
-    let output = run_ripr(&[
-        "pilot",
-        "--root",
-        &root.display().to_string(),
-        "--out",
-        &out_dir.display().to_string(),
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("RIPR pilot complete."));
-    assert!(stdout.contains("Python preview:"));
-    assert!(out_dir.join("pilot-summary.json").exists());
-
-    ignore_remove_dir_all(&out_dir);
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "lang-python")]
-fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
-    let root = unique_temp_workspace("pilot-python-git");
-    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
-    std::fs::create_dir_all(root.join("tests")).map_err(|err| format!("create tests: {err}"))?;
-    std::fs::write(
-        root.join("pyproject.toml"),
-        "[project]\nname = \"pilot-python-git\"\nversion = \"0.0.0\"\n",
-    )
-    .map_err(|err| format!("write pyproject: {err}"))?;
-    std::fs::write(
-        root.join("src/pricing.py"),
-        "def calculate_discount(amount, threshold):\n    if amount > threshold:\n        return amount - 10\n    return amount\n",
-    )
-    .map_err(|err| format!("write baseline pricing: {err}"))?;
-    std::fs::write(
-        root.join("tests/test_pricing.py"),
-        "from src.pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result\n",
-    )
-    .map_err(|err| format!("write tests: {err}"))?;
-
-    run_git(&root, &["init"])?;
-    run_git(&root, &["config", "user.email", "ripr@example.invalid"])?;
-    run_git(&root, &["config", "user.name", "RIPR Test"])?;
-    run_git(&root, &["add", "."])?;
-    run_git(&root, &["commit", "-m", "base"])?;
-    run_git(&root, &["update-ref", "refs/remotes/origin/main", "HEAD"])?;
-    std::fs::write(
-        root.join("src/pricing.py"),
-        "def calculate_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
-    )
-    .map_err(|err| format!("write changed pricing: {err}"))?;
-    run_git(&root, &["add", "src/pricing.py"])?;
-    run_git(&root, &["commit", "-m", "change threshold boundary"])?;
-
-    let out_dir = unique_temp_workspace("pilot-python-git-out");
-    let output = run_ripr(&[
-        "pilot",
-        "--root",
-        &root.display().to_string(),
-        "--out",
-        &out_dir.display().to_string(),
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for needle in [
-        "Top recommendation:",
-        "language: python (preview)",
-        "repair action: strengthen_existing_test",
-        "changed owner: calculate_discount",
-        "missing discriminator: amount == threshold",
-        "recommended repair: strengthen test_calculate_discount_smoke in tests/test_pricing.py",
-        "verify: pytest tests/test_pricing.py::test_calculate_discount_smoke",
-        "receipt status: unavailable_until_python_gap_ledger",
-    ] {
-        assert!(stdout.contains(needle), "missing stdout needle: {needle}");
-    }
-    assert!(
-        !stdout.contains("none ranked by the default pilot policy"),
-        "Python repair-card pilot should not render the no-recommendation top line"
-    );
-
-    let summary_json = std::fs::read_to_string(out_dir.join("pilot-summary.json"))
-        .map_err(|err| format!("read pilot summary json: {err}"))?;
-    for needle in [
-        r#""python_first_use": {"#,
-        r#""status": "ready""#,
-        r#""language": "python""#,
-        r#""language_status": "preview""#,
-        r#""repair_action": "strengthen_existing_test""#,
-        r#""changed_owner": "calculate_discount""#,
-        r#""missing_discriminator": "amount == threshold""#,
-        r#""suggested_test_file": "tests/test_pricing.py""#,
-        r#""verify_command": "pytest tests/test_pricing.py::test_calculate_discount_smoke""#,
-    ] {
-        assert!(
-            summary_json.contains(needle),
-            "missing summary JSON needle: {needle}"
-        );
-    }
-
-    ignore_remove_dir_all(&root);
-    ignore_remove_dir_all(&out_dir);
-    Ok(())
-}
-
-/// A committed git repository with one base commit, an `origin/main` ref at
-/// that base, and one follow-up commit that applies `change` (#3906 pilot
-/// language-route fixtures).
-fn pilot_language_fixture_repo(
-    label: &str,
-    files: &[(&str, &str)],
-    change: (&str, &str),
-) -> Result<PathBuf, String> {
-    let root = unique_temp_workspace(label);
-    for (path, text) in files {
-        let path = root.join(path);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|err| format!("create {}: {err}", parent.display()))?;
-        }
-        std::fs::write(&path, text).map_err(|err| format!("write {}: {err}", path.display()))?;
-    }
-    run_git(&root, &["init"])?;
-    run_git(&root, &["config", "user.email", "ripr@example.invalid"])?;
-    run_git(&root, &["config", "user.name", "RIPR Test"])?;
-    run_git(&root, &["add", "."])?;
-    run_git(&root, &["commit", "-m", "base"])?;
-    run_git(&root, &["update-ref", "refs/remotes/origin/main", "HEAD"])?;
-    std::fs::write(root.join(change.0), change.1)
-        .map_err(|err| format!("write changed {}: {err}", change.0))?;
-    run_git(&root, &["add", "."])?;
-    run_git(&root, &["commit", "-m", "change"])?;
-    Ok(root)
-}
-
-/// Run `ripr pilot` and return (stdout, pilot-summary.md, pilot-summary.json,
-/// repo-exposure.json).
-fn run_pilot_language_fixture(
-    root: &Path,
-    out_dir: &Path,
-) -> Result<(String, String, serde_json::Value, serde_json::Value), String> {
-    let output = run_ripr(&[
-        "pilot",
-        "--root",
-        &root.display().to_string(),
-        "--out",
-        &out_dir.display().to_string(),
-    ]);
-    assert_success(&output);
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let md = std::fs::read_to_string(out_dir.join("pilot-summary.md"))
-        .map_err(|err| format!("read pilot summary md: {err}"))?;
-    let summary: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
-            .map_err(|err| format!("read pilot summary json: {err}"))?,
-    )
-    .map_err(|err| format!("parse pilot summary json: {err}"))?;
-    let exposure: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(out_dir.join("repo-exposure.json"))
-            .map_err(|err| format!("read repo exposure json: {err}"))?,
-    )
-    .map_err(|err| format!("parse repo exposure json: {err}"))?;
-    Ok((stdout, md, summary, exposure))
-}
-
-/// Precondition for the no-Rust-seam fixtures: pilot's Rust scan really found
-/// nothing to rank, so any route shown is the only signal about the repo.
-fn assert_pilot_found_no_rust_seams(summary: &serde_json::Value, exposure: &serde_json::Value) {
-    assert_eq!(
-        exposure["metrics"]["seams_total"],
-        serde_json::json!(0),
-        "fixture must have zero Rust seams: {exposure}"
-    );
-    assert_eq!(summary["actionable_seams_total"], serde_json::json!(0));
-    assert_eq!(summary["top_actionable_seams"], serde_json::json!([]));
-}
-
-/// The one route pilot reports for `language`, with the `required` state.
-fn required_language_route(
-    summary: &serde_json::Value,
-    language: &str,
-) -> Result<serde_json::Value, String> {
-    let routes = &summary["language_routes"];
-    if routes["state"] != "required" {
-        return Err(format!("language routes must be required: {routes}"));
-    }
-    let matching = routes["routes"]
-        .as_array()
-        .ok_or_else(|| format!("language_routes.routes is not an array: {routes}"))?
-        .iter()
-        .filter(|route| route["language"] == language)
-        .cloned()
-        .collect::<Vec<_>>();
-    match matching.as_slice() {
-        [route] if route["file_count"].as_u64().unwrap_or(0) >= 1 => Ok(route.clone()),
-        _ => Err(format!("expected one detected {language} route: {routes}")),
-    }
-}
-
-/// The empty Rust ranking must not read as a clean pass, and the Rust
-/// repo-exposure snapshot choreography (which can only report "no seams
-/// moved") must not be offered as the follow-up.
-fn assert_pilot_does_not_read_as_clean(stdout: &str, md: &str) {
-    assert!(
-        !stdout.contains("none ranked by the default pilot policy"),
-        "no-Rust-seam pilot must not print the plain no-recommendation line:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("none: pilot ranks Rust seams and found none here"),
-        "{stdout}"
-    );
-    assert!(
-        stdout.contains("Languages outside pilot's Rust seam scan:"),
-        "{stdout}"
-    );
-    assert!(
-        !stdout.contains("ripr outcome --before") && !stdout.contains("repo-exposure-json >"),
-        "Rust snapshot follow-up must not be offered for a repo with no Rust seams:\n{stdout}"
-    );
-    assert!(
-        md.contains("## Languages Outside The Rust Seam Scan"),
-        "{md}"
-    );
-    assert!(md.contains("This is not a clean result"), "{md}");
-    assert!(!md.contains("ripr outcome --before"), "{md}");
-}
-
-#[test]
-#[cfg(feature = "lang-typescript")]
-fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Result<(), String> {
-    let base = "export function discount(amount: number, threshold: number): number {\n  if (amount > threshold) {\n    return amount - 10;\n  }\n  return amount;\n}\n";
-    let root = pilot_language_fixture_repo(
-        "pilot-lang-ts",
-        &[
-            (
-                "package.json",
-                "{\"name\":\"pilot-lang-ts\",\"version\":\"0.0.0\"}\n",
-            ),
-            ("src/pricing.ts", base),
-            (
-                "tests/pricing.test.ts",
-                "import { discount } from \"../src/pricing\";\ntest(\"discount\", () => {\n  expect(discount(125, 100)).toBeTruthy();\n});\n",
-            ),
-        ],
-        (
-            "src/pricing.ts",
-            &base.replace("amount > threshold", "amount >= threshold"),
-        ),
-    )?;
-    let out_dir = unique_temp_workspace("pilot-lang-ts-out");
-    let (stdout, md, summary, exposure) = run_pilot_language_fixture(&root, &out_dir)?;
-
-    assert_pilot_found_no_rust_seams(&summary, &exposure);
-    let route = required_language_route(&summary, "typescript")?;
-    let command = format!("ripr check --root {}", root.display());
-    assert_eq!(route["language_status"], "preview");
-    assert_eq!(route["enabled"], false);
-    assert_eq!(route["route"], "check_diff_first");
-    assert_eq!(route["command"], serde_json::json!(command));
-    // The existing `typescript_diff_first` guidance is surfaced, not reworded.
-    assert_eq!(route["guidance_category"], "typescript_diff_first");
-    assert!(
-        route["guidance"]
-            .as_str()
-            .is_some_and(|text| text.starts_with("TypeScript is analyzed diff-first;")),
-        "{route}"
-    );
-    assert_pilot_does_not_read_as_clean(&stdout, &md);
-    assert!(
-        stdout.contains(
-            "typescript: 2 files (preview, diff-first; not enabled in ripr.toml [languages])"
-        ),
-        "{stdout}"
-    );
-    assert!(
-        stdout.contains(&format!(
-            "not enabled in ripr.toml [languages])\n    route: {command}\n"
-        )),
-        "{stdout}"
-    );
-    assert!(
-        stdout.contains(&format!(
-            "Next, analyze the changed code in these languages:\n  {command}\n"
-        )),
-        "{stdout}"
-    );
-    assert!(md.contains("`typescript_diff_first`: TypeScript is analyzed diff-first;"));
-
-    // With the preview adapter enabled, the route no longer says "not enabled".
-    std::fs::write(
-        root.join("ripr.toml"),
-        "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
-    )
-    .map_err(|err| format!("write ripr.toml: {err}"))?;
-    let (enabled_stdout, _, enabled_summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
-    assert_eq!(
-        required_language_route(&enabled_summary, "typescript")?["enabled"],
-        true
-    );
-    assert!(
-        enabled_stdout.contains("typescript: 2 files (preview, diff-first)\n"),
-        "{enabled_stdout}"
-    );
-
-    ignore_remove_dir_all(&root);
-    ignore_remove_dir_all(&out_dir);
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "lang-python")]
-fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), String> {
-    let base = "def calculate_discount(amount, threshold):\n    if amount > threshold:\n        return amount - 10\n    return amount\n";
-    let root = pilot_language_fixture_repo(
-        "pilot-lang-py",
-        &[
-            (
-                "pyproject.toml",
-                "[project]\nname = \"pilot-lang-py\"\nversion = \"0.0.0\"\n",
-            ),
-            ("src/pricing.py", base),
-            (
-                "tests/test_pricing.py",
-                "from src.pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result\n",
-            ),
-        ],
-        (
-            "src/pricing.py",
-            &base.replace("amount > threshold", "amount >= threshold"),
-        ),
-    )?;
-    let out_dir = unique_temp_workspace("pilot-lang-py-out");
-    let (stdout, md, summary, exposure) = run_pilot_language_fixture(&root, &out_dir)?;
-
-    assert_pilot_found_no_rust_seams(&summary, &exposure);
-    // Python was detected and analyzed through the existing diff-first
-    // projection; the route adds where to rerun it.
-    assert_eq!(summary["python_first_use"]["status"], "ready");
-    let route = required_language_route(&summary, "python")?;
-    let command = format!("ripr check --root {}", root.display());
-    assert_eq!(route["enabled"], true);
-    assert_eq!(route["command"], serde_json::json!(command));
-    assert_eq!(route["guidance_category"], "python_diff_first");
-    assert!(
-        route["guidance"].as_str().is_some_and(|text| {
-            text.contains("does not render Python findings")
-                && text.contains("ripr check --base origin/main")
-        }),
-        "{route}"
-    );
-    let categories = exposure["limitations"]
-        .as_array()
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item["category"].as_str())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    assert!(
-        categories.contains(&"python_diff_first"),
-        "python-only repo exposure must name the seam-inventory limit: {exposure}"
-    );
-    assert_eq!(exposure["metrics"]["seams_total"], 0);
-    assert!(
-        stdout.contains(&format!(
-            "python: 2 files (preview, diff-first)\n    route: {command}\n"
-        )),
-        "{stdout}"
-    );
-    assert!(
-        stdout.contains(&format!(
-            "Next, analyze the changed code in these languages:\n  {command}\n"
-        )),
-        "{stdout}"
-    );
-    assert!(
-        !stdout.contains("ripr outcome --before"),
-        "Python pilot must not end in the Rust repo-exposure outcome route:\n{stdout}"
-    );
-    assert!(md.contains(&format!("  - Route: `{command}`")), "{md}");
-    assert!(md.contains("`python_diff_first`:"), "{md}");
-    assert!(!md.contains("ripr outcome --before"), "{md}");
-
-    // The printed route must analyze the changed Python, not only parse.
-    let root_arg = root.display().to_string();
-    let routed = run_ripr(&["check", "--root", &root_arg]);
-    let routed_stdout = String::from_utf8_lossy(&routed.stdout);
-    assert!(
-        routed.status.code().is_some_and(|code| code <= 1),
-        "routed check failed: {routed:?}"
-    );
-    assert!(
-        routed_stdout.contains("src/pricing.py"),
-        "routed check must report the changed Python file:\n{routed_stdout}"
-    );
-
-    ignore_remove_dir_all(&root);
-    ignore_remove_dir_all(&out_dir);
-    Ok(())
-}
-
-#[test]
-fn pilot_says_perl_is_unavailable_when_repo_has_no_rust_seams() -> Result<(), String> {
-    let base = "package Pricing;\nsub discount {\n    my ($amount, $threshold) = @_;\n    return $amount > $threshold ? $amount - 10 : $amount;\n}\n1;\n";
-    let root = pilot_language_fixture_repo(
-        "pilot-lang-pl",
-        &[("lib/Pricing.pm", base)],
-        (
-            "lib/Pricing.pm",
-            &base.replace("$amount > $threshold", "$amount >= $threshold"),
-        ),
-    )?;
-    let out_dir = unique_temp_workspace("pilot-lang-pl-out");
-    let (stdout, md, summary, exposure) = run_pilot_language_fixture(&root, &out_dir)?;
-
-    assert_pilot_found_no_rust_seams(&summary, &exposure);
-    let route = required_language_route(&summary, "perl")?;
-    assert_eq!(route["file_count"], 1);
-    assert_pilot_does_not_read_as_clean(&stdout, &md);
-    if cfg!(feature = "lang-perl") {
-        assert_eq!(route["language_status"], "preview");
-        assert_eq!(
-            route["command"],
-            serde_json::json!(format!("ripr check --root {}", root.display()))
-        );
-    } else {
-        let notice = "Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`perl-ripr-facts`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it.";
-        assert_eq!(route["language_status"], "unavailable");
-        assert_eq!(route["route"], "unavailable_in_this_binary");
-        assert_eq!(route["command"], serde_json::Value::Null);
-        assert_eq!(route["guidance"], serde_json::json!(notice));
-        assert!(
-            stdout.contains(&format!(
-                "perl: 1 file (not available in this build)\n    {notice}\n"
-            )),
-            "{stdout}"
-        );
-        assert!(
-            stdout.contains(
-                "No follow-up command applies: this ripr binary cannot analyze the languages listed above."
-            ),
-            "{stdout}"
-        );
-        assert!(md.contains(notice), "{md}");
-    }
-
-    ignore_remove_dir_all(&root);
-    ignore_remove_dir_all(&out_dir);
-    Ok(())
-}
-
-/// Rust-only output is untouched by language routing, and adding TypeScript
-/// beside Rust seams leaves the human output byte-identical: the mixed repo
-/// keeps the Rust result and lists the other language in JSON only.
-#[test]
-fn pilot_keeps_rust_output_byte_identical_when_rust_seams_exist() -> Result<(), String> {
-    let root = pilot_language_fixture_repo(
-        "pilot-lang-rs",
-        &[
-            (
-                "Cargo.toml",
-                "[package]\nname = \"pilot-lang-rs\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
-            ),
-            (
-                "src/lib.rs",
-                "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n",
-            ),
-        ],
-        (
-            "src/lib.rs",
-            "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
-        ),
-    )?;
-    let out_dir = unique_temp_workspace("pilot-lang-rs-out");
-    let (rust_stdout, rust_md, rust_summary, rust_exposure) =
-        run_pilot_language_fixture(&root, &out_dir)?;
-
-    assert!(
-        rust_exposure["metrics"]["seams_total"]
-            .as_u64()
-            .unwrap_or(0)
-            >= 1,
-        "Rust fixture must produce Rust seams: {rust_exposure}"
-    );
-    assert_eq!(
-        rust_summary["language_routes"],
-        serde_json::json!({"state": "not_detected", "routes": []})
-    );
-    assert!(rust_stdout.contains("inspected seam: "), "{rust_stdout}");
-    assert!(
-        !rust_stdout.contains("Languages outside pilot's Rust seam scan"),
-        "{rust_stdout}"
-    );
-
-    std::fs::create_dir_all(root.join("web")).map_err(|err| format!("create web: {err}"))?;
-    std::fs::write(
-        root.join("web/pricing.ts"),
-        "export function discount(amount: number): number {\n  return amount - 10;\n}\n",
-    )
-    .map_err(|err| format!("write web/pricing.ts: {err}"))?;
-    run_git(&root, &["add", "."])?;
-    run_git(&root, &["commit", "-m", "add typescript"])?;
-    let (mixed_stdout, mixed_md, mixed_summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
-
-    assert_eq!(
-        mixed_stdout, rust_stdout,
-        "mixed repo changed the Rust terminal output"
-    );
-    assert_eq!(
-        mixed_md, rust_md,
-        "mixed repo changed the Rust markdown output"
-    );
-    assert_eq!(mixed_summary["language_routes"]["state"], "supplementary");
-    let routes = mixed_summary["language_routes"]["routes"]
-        .as_array()
-        .ok_or_else(|| format!("routes is not an array: {mixed_summary}"))?;
-    assert_eq!(routes.len(), 1, "{mixed_summary}");
-    assert_eq!(routes[0]["language"], "typescript");
-    assert_eq!(routes[0]["file_count"], 1);
-    assert_eq!(
-        mixed_summary["top_actionable_seams"], rust_summary["top_actionable_seams"],
-        "mixed repo must keep the Rust ranking"
-    );
-
-    ignore_remove_dir_all(&root);
-    ignore_remove_dir_all(&out_dir);
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "lang-python")]
-fn check_detects_python_project_without_ripr_config() {
-    let root = workspace_root().join("fixtures/python/basic");
-    let diff = root.join("diff.patch");
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root.display().to_string(),
-        "--diff",
-        &diff.display().to_string(),
-        "--json",
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""language": "python""#));
-    assert!(stdout.contains(r#""language_status": "preview""#));
-    assert!(stdout.contains("python_preview"));
-}
-
-#[test]
-fn pilot_honors_explicit_mode_over_repo_config() -> Result<(), String> {
-    let workspace = make_temp_workspace_with_production_seam()?;
-    std::fs::write(
-        workspace.join("ripr.toml"),
-        "[analysis]\nmode = \"ready\"\n\n[lsp]\nseam_diagnostics = true\n",
-    )
-    .map_err(|e| format!("write ripr.toml: {e}"))?;
-    let out_dir = unique_temp_workspace("pilot-mode");
-    let output = run_ripr(&[
-        "pilot",
-        "--root",
-        &workspace.display().to_string(),
-        "--out",
-        &out_dir.display().to_string(),
-        "--mode",
-        "draft",
-    ]);
-    assert_success(&output);
-
-    let summary_json = std::fs::read_to_string(out_dir.join("pilot-summary.json"))
-        .map_err(|e| format!("read pilot summary json: {e}"))?;
-    assert!(summary_json.contains(r#""mode": "draft""#));
-    assert!(summary_json.contains(r#""state": "loaded""#));
-
-    ignore_remove_dir_all(&out_dir);
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn pilot_uses_repo_config_mode_without_explicit_flag() -> Result<(), String> {
-    let workspace = make_temp_workspace_with_production_seam()?;
-    std::fs::write(
-        workspace.join("ripr.toml"),
-        "[analysis]\nmode = \"ready\"\n\n[lsp]\nseam_diagnostics = true\n",
-    )
-    .map_err(|e| format!("write ripr.toml: {e}"))?;
-    let out_dir = unique_temp_workspace("pilot-config-mode");
-    let output = run_ripr(&[
-        "pilot",
-        "--root",
-        &workspace.display().to_string(),
-        "--out",
-        &out_dir.display().to_string(),
-    ]);
-    assert_success(&output);
-
-    let summary_json = std::fs::read_to_string(out_dir.join("pilot-summary.json"))
-        .map_err(|e| format!("read pilot summary json: {e}"))?;
-    assert!(summary_json.contains(r#""mode": "ready""#));
-    assert!(summary_json.contains(r#""state": "loaded""#));
-
-    ignore_remove_dir_all(&out_dir);
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-/// `first-action` and `pr-review front-panel` refuse to run without at least
-/// one artifact input, so their usage lines must not render those inputs the
-/// way an optional flag with a default is rendered.
-///
-/// This binds the claim to the refusal in one test: the same command that the
-/// help describes is executed with no artifact input and must exit 2. A help
-/// line that goes back to bracketing every input, or a command that starts
-/// guessing paths, fails here.
-#[test]
-fn artifact_input_commands_do_not_advertise_defaults_they_refuse_to_use() -> Result<(), String> {
-    let workspace = unique_temp_workspace("artifact-input-required");
-    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
-    let root = workspace.display().to_string();
-
-    let overview = run_ripr(&["help", "--all"]);
-    assert_success(&overview);
-    let overview_stdout = String::from_utf8_lossy(&overview.stdout).to_string();
-
-    let cases: [(&[&str], &str, &str); 2] = [
-        (
-            &["first-action"],
-            "  ripr first-action [--root .] (--pr-guidance",
-            "ripr first-action [--root .] [--pr-guidance",
-        ),
-        (
-            &["pr-review", "front-panel"],
-            "  ripr pr-review front-panel (--pr-guidance",
-            "ripr pr-review front-panel [--pr-guidance",
-        ),
-    ];
-
-    let mut failures: Vec<String> = Vec::new();
-    for (command, required_form, optional_form) in cases {
-        let name = command.join(" ");
-        if !overview_stdout.contains(required_form) {
-            failures.push(format!(
-                "`help --all` does not mark {name}'s inputs required"
-            ));
-        }
-        if overview_stdout.contains(optional_form) {
-            failures.push(format!(
-                "`help --all` still renders {name}'s required inputs as optional defaults"
-            ));
-        }
-
-        let mut args: Vec<&str> = command.to_vec();
-        args.extend_from_slice(&["--root", root.as_str()]);
-        let refused = run_ripr(&args);
-        let stderr = String::from_utf8_lossy(&refused.stderr).to_string();
-        if refused.status.success()
-            || !stderr.contains("requires at least one explicit artifact input")
-        {
-            failures.push(format!(
-                "`ripr {name}` no longer refuses a run with no artifact input: {stderr}"
-            ));
-        }
-
-        let mut help_args: Vec<&str> = command.to_vec();
-        help_args.push("--help");
-        let help = run_ripr(&help_args);
-        assert_success(&help);
-        let help_stdout = String::from_utf8_lossy(&help.stdout).to_string();
-        if !help_stdout.contains("At least one artifact input is required") {
-            failures.push(format!(
-                "`ripr {name} --help` does not state the constraint"
-            ));
-        }
-    }
-
-    ignore_remove_dir_all(&workspace);
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(failures.join("; "))
-    }
-}
-
-#[test]
-fn outcome_prints_markdown_receipt_by_default() -> Result<(), String> {
-    let workspace = unique_temp_workspace("outcome-stdout");
-    std::fs::create_dir_all(&workspace).map_err(|e| format!("create outcome workspace: {e}"))?;
-    write_outcome_snapshots(&workspace)?;
-
-    let output = run_ripr(&[
-        "outcome",
-        "--before",
-        &workspace.join("before.json").display().to_string(),
-        "--after",
-        &workspace.join("after.json").display().to_string(),
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("# ripr targeted-test outcome report"));
-    assert!(stdout.contains("| moved | 1 |"));
-    assert!(stdout.contains("weakly_gripped -> strongly_gripped"));
-    assert!(stdout.contains("does not run mutation testing"));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-/// Give a snapshot the artifact identity that `ripr check --format
-/// repo-exposure-json` writes, so the process-boundary behaviour can be
-/// observed without running an analysis.
-fn stamp_outcome_snapshot_head(path: &Path, head: &str) -> Result<(), String> {
-    let raw = std::fs::read_to_string(path).map_err(|e| format!("read snapshot: {e}"))?;
-    let mut value: serde_json::Value =
-        serde_json::from_str(&raw).map_err(|e| format!("parse snapshot: {e}"))?;
-    value["artifact"] = serde_json::json!({
-        "kind": "repo_exposure",
-        "repository": { "root": "/workspace", "head": head },
-    });
-    std::fs::write(path, value.to_string()).map_err(|e| format!("write snapshot: {e}"))
-}
-
-/// `ripr outcome`'s stderr disclosure must follow the artifacts it was handed,
-/// through the real binary rather than the helper alone. Before this, the line
-/// asserted unconditionally that the artifacts carry no head SHA, which is
-/// false for any snapshot written through the artifact-identity path.
-///
-/// Both arms run in one test so the identity-free pair is a discriminating
-/// control for the identity-carrying pair: a regression that hardcoded either
-/// sentence fails here.
-#[test]
-fn outcome_disclosure_follows_the_artifacts_it_was_given() -> Result<(), String> {
-    let workspace = unique_temp_workspace("outcome-head-disclosure");
-    std::fs::create_dir_all(&workspace).map_err(|e| format!("create outcome workspace: {e}"))?;
-    write_outcome_snapshots(&workspace)?;
-    let before = workspace.join("before.json").display().to_string();
-    let after = workspace.join("after.json").display().to_string();
-
-    // Control: the shape `ripr pilot` writes, with no artifact identity.
-    let without_identity = run_ripr(&["outcome", "--before", &before, "--after", &after]);
-    assert_success(&without_identity);
-    let stderr = String::from_utf8_lossy(&without_identity.stderr).to_string();
-    let missing_head_is_disclosed = stderr.contains("does not carry a head SHA");
-
-    let head = "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21";
-    stamp_outcome_snapshot_head(&workspace.join("before.json"), head)?;
-    stamp_outcome_snapshot_head(&workspace.join("after.json"), head)?;
-    let with_identity = run_ripr(&["outcome", "--before", &before, "--after", &after]);
-    assert_success(&with_identity);
-    let identity_stderr = String::from_utf8_lossy(&with_identity.stderr).to_string();
-
-    ignore_remove_dir_all(&workspace);
-    if !missing_head_is_disclosed {
-        return Err(format!(
-            "identity-free snapshots must still disclose the missing head: {stderr}"
-        ));
-    }
-    if !identity_stderr.contains(head) {
-        return Err(format!(
-            "a snapshot carrying a head must have it named: {identity_stderr}"
-        ));
-    }
-    if identity_stderr.contains("carry a head SHA") {
-        return Err(format!(
-            "must not claim the artifacts lack a head they carry: {identity_stderr}"
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn outcome_writes_json_receipt_when_requested() -> Result<(), String> {
-    let workspace = unique_temp_workspace("outcome-json");
-    std::fs::create_dir_all(&workspace).map_err(|e| format!("create outcome workspace: {e}"))?;
-    write_outcome_snapshots(&workspace)?;
-    let out_path = workspace.join("target/ripr/outcome/targeted-test-outcome.json");
-
-    let output = run_ripr(&[
-        "outcome",
-        "--before",
-        &workspace.join("before.json").display().to_string(),
-        "--after",
-        &workspace.join("after.json").display().to_string(),
-        "--format",
-        "json",
-        "--out",
-        &out_path.display().to_string(),
-    ]);
-    assert_success(&output);
-
-    let json = std::fs::read_to_string(&out_path).map_err(|e| format!("read outcome json: {e}"))?;
-    assert!(json.contains(r#""schema_version": "0.1""#));
-    assert!(json.contains(r#""status": "advisory""#));
-    assert!(json.contains(r#""moved": 1"#));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn calibrate_cargo_mutants_prints_markdown_by_default() {
-    let root = workspace_root();
-    let mutants = root
-        .join("fixtures/boundary_gap/calibration/runtime-mutants.json")
-        .display()
-        .to_string();
-    let repo = root
-        .join("fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json")
-        .display()
-        .to_string();
-
-    let output = run_ripr(&[
-        "calibrate",
-        "cargo-mutants",
-        "--mutants-json",
-        &mutants,
-        "--repo-exposure-json",
-        &repo,
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("# ripr mutation calibration report"));
-    assert!(stdout.contains("Status: advisory"));
-    assert!(stdout.contains("Static/runtime agreement"));
-    assert!(stdout.contains("Runtime Outcome Counts"));
-}
-
-#[test]
-fn calibrate_cargo_mutants_writes_json_when_requested() -> Result<(), String> {
-    let root = workspace_root();
-    let out_dir = unique_temp_workspace("calibrate-json");
-    let out_path = out_dir.join("mutation-calibration.json");
-    let mutants = root
-        .join("fixtures/boundary_gap/calibration/runtime-mutants.json")
-        .display()
-        .to_string();
-    let repo = root
-        .join("fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json")
-        .display()
-        .to_string();
-
-    let output = run_ripr(&[
-        "calibrate",
-        "cargo-mutants",
-        "--mutants-json",
-        &mutants,
-        "--repo-exposure-json",
-        &repo,
-        "--format",
-        "json",
-        "--out",
-        &out_path.display().to_string(),
-    ]);
-    assert_success(&output);
-
-    let json =
-        std::fs::read_to_string(&out_path).map_err(|e| format!("read calibration json: {e}"))?;
-    assert!(json.contains(r#""schema_version": "0.1""#));
-    assert!(json.contains(r#""status": "advisory""#));
-    assert!(json.contains(r#""agreement""#));
-    assert!(json.contains(r#""matches""#));
-
-    ignore_remove_dir_all(&out_dir);
-    Ok(())
-}
-
-#[test]
-fn calibration_runtime_fixture_matches_checked_reports() -> Result<(), String> {
-    let root = workspace_root();
-    let fixture = root.join("fixtures/boundary_gap/calibration/runtime-fixtures-v1");
-    let value = assert_calibration_fixture_matches_checked_reports(&fixture)?;
-
-    assert_eq!(value["agreement"]["static_gap_and_runtime_signal"], 1);
-    assert_eq!(value["agreement"]["static_gap_without_runtime_signal"], 3);
-    assert_eq!(value["agreement"]["runtime_signal_without_static_gap"], 2);
-    assert_eq!(value["agreement"]["static_clean_and_runtime_clean"], 1);
-    assert_eq!(value["agreement"]["runtime_inconclusive"], 2);
-    assert_eq!(value["metrics"]["ambiguous_file_line_total"], 1);
-    assert_eq!(value["metrics"]["unmatched_mutants_total"], 1);
-    assert_eq!(value["metrics"]["static_without_runtime_total"], 1);
-    assert_eq!(value["metrics"]["join_method_counts"]["file_line"], 1);
-    assert_eq!(value["metrics"]["join_method_counts"]["seam_id"], 5);
-
-    Ok(())
-}
-
-#[test]
-fn calibration_runtime_fixture_v2_matches_checked_reports() -> Result<(), String> {
-    let root = workspace_root();
-    let fixture = root.join("fixtures/boundary_gap/calibration/runtime-fixtures-v2");
-    let value = assert_calibration_fixture_matches_checked_reports(&fixture)?;
-
-    assert_eq!(value["agreement"]["static_gap_and_runtime_signal"], 2);
-    assert_eq!(value["agreement"]["static_gap_without_runtime_signal"], 1);
-    assert_eq!(value["agreement"]["runtime_signal_without_static_gap"], 1);
-    assert_eq!(value["agreement"]["static_clean_and_runtime_clean"], 1);
-    assert_eq!(value["agreement"]["runtime_inconclusive"], 1);
-    assert_eq!(value["metrics"]["ambiguous_file_line_total"], 1);
-    assert_eq!(value["metrics"]["unmatched_mutants_total"], 1);
-    assert_eq!(value["metrics"]["static_without_runtime_total"], 0);
-    assert_eq!(value["metrics"]["join_method_counts"]["seam_id"], 4);
-
-    assert_eq!(
-        calibration_match_confidence(&value, "cal-v2-side-effect-observer")?,
-        "supports_static_gap"
-    );
-    assert_eq!(
-        calibration_match_confidence(&value, "cal-v2-mock-expectation")?,
-        "supports_static_clean"
-    );
-    assert_eq!(
-        calibration_match_confidence(&value, "cal-v2-weak-snapshot-oracle")?,
-        "contradicts_static_gap"
-    );
-    assert_eq!(
-        calibration_match_confidence(&value, "cal-v2-opaque-dispatch")?,
-        "supports_static_gap"
-    );
-
-    assert_eq!(
-        value["ambiguous_file_line_matches"][0]["confidence_label"],
-        "ambiguous_runtime_join"
-    );
-    assert_eq!(
-        value["ambiguous_file_line_matches"][0]["candidates"]
-            .as_array()
-            .map(Vec::len),
-        Some(2)
-    );
-    assert_eq!(
-        value["missed_runtime_signals"][0]["confidence_label"],
-        "runtime_only_signal"
-    );
-    assert!(
-        value["missed_runtime_signals"][0]["static"].is_null(),
-        "runtime-only signal must not create a static gap"
-    );
-
-    Ok(())
-}
-
-#[test]
-fn calibration_runtime_fixture_v3_matches_checked_reports() -> Result<(), String> {
-    let root = workspace_root();
-    let fixture = root.join("fixtures/boundary_gap/calibration/runtime-fixtures-v3");
-    let value = assert_calibration_fixture_matches_checked_reports(&fixture)?;
-
-    assert_eq!(value["agreement"]["static_gap_and_runtime_signal"], 2);
-    assert_eq!(value["agreement"]["static_gap_without_runtime_signal"], 2);
-    assert_eq!(value["agreement"]["runtime_signal_without_static_gap"], 2);
-    assert_eq!(value["agreement"]["static_clean_and_runtime_clean"], 1);
-    assert_eq!(value["agreement"]["runtime_inconclusive"], 1);
-    assert_eq!(value["metrics"]["ambiguous_file_line_total"], 1);
-    assert_eq!(value["metrics"]["unmatched_mutants_total"], 1);
-    assert_eq!(value["metrics"]["static_without_runtime_total"], 1);
-    assert_eq!(value["metrics"]["join_method_counts"]["seam_id"], 5);
-
-    assert_eq!(
-        calibration_match_confidence(&value, "cal-v3-custom-helper-outcome")?,
-        "supports_static_gap"
-    );
-    assert_eq!(
-        calibration_match_confidence(&value, "cal-v3-table-boundary-outcome")?,
-        "supports_static_clean"
-    );
-    assert_eq!(
-        calibration_match_confidence(&value, "cal-v3-builder-override-outcome")?,
-        "contradicts_static_gap"
-    );
-    assert_eq!(
-        calibration_match_confidence(&value, "cal-v3-snapshot-field-discriminator")?,
-        "contradicts_static_clean"
-    );
-    assert_eq!(
-        calibration_match_confidence(&value, "cal-v3-mock-expectation-mismatch")?,
-        "supports_static_gap"
-    );
-
-    assert!(
-        value["static_only_findings"]
-            .as_array()
-            .is_some_and(|findings| findings.iter().any(|finding| {
-                finding["confidence_label"] == "no_runtime_data"
-                    && finding["static"]["seam_id"] == "cal-v3-cross-file-constant-boundary"
-            })),
-        "cross-file constant sample must remain no_runtime_data until a joined runtime sample exists"
-    );
-    assert_eq!(
-        value["ambiguous_file_line_matches"][0]["confidence_label"],
-        "ambiguous_runtime_join"
-    );
-    assert_eq!(
-        value["ambiguous_file_line_matches"][0]["candidates"]
-            .as_array()
-            .map(Vec::len),
-        Some(2)
-    );
-    assert!(
-        value["missed_runtime_signals"]
-            .as_array()
-            .is_some_and(|signals| signals.iter().any(|signal| {
-                signal["confidence_label"] == "runtime_only_signal" && signal["static"].is_null()
-            })),
-        "runtime-only signal must stay calibration context without creating a static gap"
-    );
-
-    Ok(())
-}
-
-fn assert_calibration_fixture_matches_checked_reports(
-    fixture: &Path,
-) -> Result<serde_json::Value, String> {
-    let mutants = fixture.join("runtime-mutants.json").display().to_string();
-    let repo = fixture.join("repo-exposure.json").display().to_string();
-
-    let json_output = run_ripr(&[
-        "calibrate",
-        "cargo-mutants",
-        "--mutants-json",
-        &mutants,
-        "--repo-exposure-json",
-        &repo,
-        "--format",
-        "json",
-    ]);
-    assert_success(&json_output);
-    let expected_json = std::fs::read_to_string(fixture.join("mutation-calibration.json"))
-        .map_err(|e| format!("read checked calibration json: {e}"))?;
-    let actual_json = String::from_utf8(json_output.stdout)
-        .map_err(|e| format!("decode calibration json stdout: {e}"))?;
-    assert_eq!(actual_json, expected_json);
-
-    let value: serde_json::Value = serde_json::from_str(&expected_json)
-        .map_err(|e| format!("parse checked calibration json: {e}"))?;
-
-    let md_output = run_ripr(&[
-        "calibrate",
-        "cargo-mutants",
-        "--mutants-json",
-        &mutants,
-        "--repo-exposure-json",
-        &repo,
-        "--format",
-        "md",
-    ]);
-    assert_success(&md_output);
-    let expected_md = std::fs::read_to_string(fixture.join("mutation-calibration.md"))
-        .map_err(|e| format!("read checked calibration markdown: {e}"))?;
-    let actual_md = String::from_utf8(md_output.stdout)
-        .map_err(|e| format!("decode calibration markdown stdout: {e}"))?;
-    assert_eq!(actual_md, expected_md);
-
-    Ok(value)
-}
-
-fn calibration_match_confidence<'a>(
-    value: &'a serde_json::Value,
-    seam_id: &str,
-) -> Result<&'a str, String> {
-    value["matches"]
-        .as_array()
-        .and_then(|matches| {
-            matches.iter().find_map(|record| {
-                (record["static"]["seam_id"] == seam_id)
-                    .then(|| record["confidence_label"].as_str())
-                    .flatten()
-            })
-        })
-        .ok_or_else(|| format!("missing calibration match for seam `{seam_id}`"))
-}
-
-fn write_outcome_snapshots(workspace: &Path) -> Result<(), String> {
-    let before = r#"{
-  "schema_version": "0.2",
-  "scope": "repo",
-  "seams": [
-    {
-      "seam_id": "seam-a",
-      "kind": "predicate_boundary",
-      "file": "src/pricing.rs",
-      "line": 42,
-      "grip_class": "weakly_gripped",
-      "related_tests": [
-        {"oracle_kind": "exact_value", "oracle_strength": "weak"}
-      ],
-      "observed_values": ["50"],
-      "missing_discriminators": [
-        {"value": "threshold equality", "reason": "not observed"}
-      ]
-    }
-  ]
-}"#;
-    let after = r#"{
-  "schema_version": "0.2",
-  "scope": "repo",
-  "seams": [
-    {
-      "seam_id": "seam-a",
-      "kind": "predicate_boundary",
-      "file": "src/pricing.rs",
-      "line": 42,
-      "grip_class": "strongly_gripped",
-      "related_tests": [
-        {"oracle_kind": "exact_value", "oracle_strength": "strong"}
-      ],
-      "observed_values": ["50", "100"],
-      "missing_discriminators": []
-    }
-  ]
-}"#;
-    std::fs::write(workspace.join("before.json"), before)
-        .map_err(|e| format!("write before snapshot: {e}"))?;
-    std::fs::write(workspace.join("after.json"), after)
-        .map_err(|e| format!("write after snapshot: {e}"))
-}
-
-fn make_temp_workspace_with_production_seam() -> Result<PathBuf, String> {
-    make_temp_workspace_with_production_seam_and_report_opt(None)
-}
-
-fn make_temp_workspace_with_production_seam_and_report(report: &str) -> Result<PathBuf, String> {
-    make_temp_workspace_with_production_seam_and_report_opt(Some(report))
-}
-
-fn make_temp_workspace_with_production_seam_and_report_opt(
-    report: Option<&str>,
-) -> Result<PathBuf, String> {
-    let dir = unique_temp_workspace("repo-badge");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create_dir_all: {e}"))?;
-    std::fs::write(
-        dir.join("Cargo.toml"),
-        "[package]\nname=\"ripr-repo-badge-fixture\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
-    )
-    .map_err(|e| format!("write Cargo.toml: {e}"))?;
-    std::fs::create_dir_all(dir.join("src")).map_err(|e| format!("create src: {e}"))?;
-    std::fs::write(
-        dir.join("src/lib.rs"),
-        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
-    )
-    .map_err(|e| format!("write src/lib.rs: {e}"))?;
-    if let Some(text) = report {
-        let reports = dir.join("target/ripr/reports");
-        std::fs::create_dir_all(&reports).map_err(|e| format!("create reports dir: {e}"))?;
-        std::fs::write(reports.join("test-efficiency.json"), text)
-            .map_err(|e| format!("write report: {e}"))?;
-    }
-    Ok(dir)
-}
-
-fn make_temp_workspace_with_suppressions(
-    report: Option<&str>,
-    suppressions: Option<&str>,
-) -> Result<PathBuf, String> {
-    let dir = unique_temp_workspace("badge-plus");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create_dir_all: {e}"))?;
-    std::fs::write(
-        dir.join("Cargo.toml"),
-        "[package]\nname=\"ripr-badge-plus-fixture\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
-    )
-    .map_err(|e| format!("write Cargo.toml: {e}"))?;
-    std::fs::create_dir_all(dir.join("src")).map_err(|e| format!("create src: {e}"))?;
-    std::fs::write(dir.join("src/lib.rs"), "pub fn placeholder() {}\n")
-        .map_err(|e| format!("write src/lib.rs: {e}"))?;
-    if let Some(text) = report {
-        let reports = dir.join("target/ripr/reports");
-        std::fs::create_dir_all(&reports).map_err(|e| format!("create reports dir: {e}"))?;
-        std::fs::write(reports.join("test-efficiency.json"), text)
-            .map_err(|e| format!("write report: {e}"))?;
-    }
-    if let Some(text) = suppressions {
-        let policy_dir = dir.join(".ripr");
-        std::fs::create_dir_all(&policy_dir).map_err(|e| format!("create .ripr dir: {e}"))?;
-        std::fs::write(policy_dir.join("suppressions.toml"), text)
-            .map_err(|e| format!("write suppressions: {e}"))?;
-    }
-    Ok(dir)
-}
-
-#[test]
-fn check_badge_plus_missing_test_efficiency_renders_neutral_badge() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    let root = workspace.display().to_string();
-    let diff = sample_diff().display().to_string();
-
-    for (format, args) in [
-        (
-            "badge-plus-json",
-            vec![
-                "check",
-                "--root",
-                root.as_str(),
-                "--diff",
-                diff.as_str(),
-                "--format",
-                "badge-plus-json",
-            ],
-        ),
-        (
-            "badge-plus-shields",
-            vec![
-                "check",
-                "--root",
-                root.as_str(),
-                "--diff",
-                diff.as_str(),
-                "--format",
-                "badge-plus-shields",
-            ],
-        ),
-        (
-            "repo-badge-plus-json",
-            vec![
-                "check",
-                "--root",
-                root.as_str(),
-                "--format",
-                "repo-badge-plus-json",
-            ],
-        ),
-        (
-            "repo-badge-plus-shields",
-            vec![
-                "check",
-                "--root",
-                root.as_str(),
-                "--format",
-                "repo-badge-plus-shields",
-            ],
-        ),
-    ] {
-        let output = run_ripr(&args);
-        assert_success(&output);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            stdout.contains(r#""message": "needs test-efficiency""#),
-            "stdout must render neutral badge for `{format}`: {stdout}"
-        );
-        assert!(
-            stdout.contains(r#""color": "lightgrey""#),
-            "stdout must render neutral color for `{format}`: {stdout}"
-        );
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stderr.contains("test-efficiency.json"),
-            "stderr must name the missing report for `{format}`: {stderr}"
-        );
-        assert!(
-            stderr.contains("docs/BADGE_ADOPTION.md"),
-            "stderr must point to badge adoption docs for `{format}`: {stderr}"
-        );
-        assert!(
-            !stderr.contains("cargo xtask test-efficiency-report"),
-            "stderr must not hardcode repo-private xtask guidance for `{format}`: {stderr}"
-        );
-    }
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn check_repo_badge_plus_json_emits_native_shape_with_fixture_report() -> Result<(), String> {
-    // Repo scope parses the repo-wide test-efficiency ledger for validation
-    // and reason visibility, but raw test-efficiency debt no longer moves
-    // the public headline until it is lifted into the canonical repair model.
-    let workspace = make_temp_workspace(Some(fixture_test_efficiency_report()))?;
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["check", "--root", &root, "--format", "repo-badge-plus-json"]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schema_version": "0.8""#));
-    assert!(stdout.contains(r#""kind": "ripr_plus""#));
-    assert!(stdout.contains(r#""scope": "repo""#));
-    assert!(stdout.contains(r#""basis": "canonical_actionable_gap""#));
-    assert!(stdout.contains(r#""label": "ripr+""#));
-    assert!(stdout.contains(r#""counts""#));
-    assert!(stdout.contains(r#""reason_counts""#));
-    assert!(stdout.contains(r#""policy""#));
-    // Repo-scoped public badge carries the RIPR-SPEC-0066 projection.
-    assert!(stdout.contains(r#""public_projection""#));
-    assert!(stdout.contains(r#""run_status": "full""#));
-    assert!(stdout.contains(r#""unsuppressed_test_efficiency_findings": 0"#));
-    assert!(stdout.contains(r#""intentional_test_efficiency_findings": 0"#));
-    assert!(stdout.contains(r#""unknowns_test_efficiency": 0"#));
-    assert!(stdout.contains(r#""analyzed_tests": 3"#));
-    // Reason counts include all nine keys, with the fixture values surfacing.
-    assert!(stdout.contains(r#""smoke_oracle_only": 2"#));
-    assert!(stdout.contains(r#""duplicate_activation_and_oracle_shape": 0"#));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn check_badge_plus_shields_emits_four_field_shape_with_fixture_report() -> Result<(), String> {
-    let workspace = make_temp_workspace(Some(fixture_test_efficiency_report()))?;
-    let root = workspace.display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--format",
-        "badge-plus-shields",
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schemaVersion": 1"#));
-    assert!(stdout.contains(r#""label": "ripr+""#));
-    assert!(stdout.contains(r#""color":"#));
-    // Native-only fields must not leak into Shields shape.
-    for forbidden in [
-        r#""counts""#,
-        r#""reason_counts""#,
-        r#""policy""#,
-        r#""kind""#,
-        r#""status""#,
-        r#""scope""#,
-        r#""basis""#,
-        r#""schema_version""#,
-    ] {
-        assert!(
-            !stdout.contains(forbidden),
-            "ripr+ Shields projection must not contain `{forbidden}`: {stdout}"
-        );
-    }
-    // Message has no denominator and no coverage framing.
-    assert!(!stdout.to_ascii_lowercase().contains("coverage"));
-    assert!(!stdout.to_ascii_lowercase().contains("uncovered"));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn check_badge_plus_command_exits_zero_by_default_even_with_nonzero_count() -> Result<(), String> {
-    // Default policy is fail_on_nonzero=false. The fixture reports 1
-    // unsuppressed actionable finding, so the headline is at least 1; the
-    // command must still exit zero so CI artifact pipelines work.
-    let workspace = make_temp_workspace(Some(fixture_test_efficiency_report()))?;
-    let root = workspace.display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--format",
-        "badge-plus-json",
-    ]);
-    assert_success(&output);
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn check_repo_badge_json_emits_repo_scope_metadata() -> Result<(), String> {
-    // Repo scope must NOT consume `--diff`; it analyzes the workspace
-    // baseline through run_repo_analysis. A no-diff invocation that would
-    // produce empty findings under diff scope still produces a real
-    // repo-scoped count under repo scope.
-    let workspace = make_temp_workspace_with_production_seam()?;
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["check", "--root", &root, "--format", "repo-badge-json"]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schema_version": "0.8""#));
-    assert!(stdout.contains(r#""kind": "ripr""#));
-    assert!(stdout.contains(r#""scope": "repo""#));
-    assert!(stdout.contains(r#""basis": "canonical_actionable_gap""#));
-    assert!(
-        !stdout.contains(r#""scope": "diff""#),
-        "repo scope output must not also carry diff scope: {stdout}"
-    );
-    assert!(stdout.contains(r#""label": "ripr""#));
-    assert!(stdout.contains(r#""counts""#));
-    // Repo-scoped public badge carries the RIPR-SPEC-0066 projection.
-    assert!(stdout.contains(r#""public_projection""#));
-    assert!(stdout.contains(r#""source_report": "target/ripr/reports/repo-ripr-badge.json""#));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn check_repo_badge_json_can_use_gap_ledger_targets() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    let ledger = workspace.join("gap-decision-ledger.json");
-    std::fs::write(
-        &ledger,
-        r#"{
-          "gap_records": [
-            {
-              "gap_id": "gap:repo:pricing:reintroduced-boundary",
-              "source_currentness": "candidate_current",
-              "kind": "MissingBoundaryAssertion",
-              "language": "rust",
-              "language_status": "stable",
-              "scope": "repo_scoped",
-              "gap_state": "reintroduced",
-              "policy_state": "reintroduced",
-              "repairability": "repairable",
-              "projection_eligibility": {
-                "ripr_zero_count": {"eligible": true, "reason": "repo_policy_targeted_unresolved_gap"},
-                "ripr_plus_count": {"eligible": true, "reason": "broader_repo_advisory_gap"}
-              }
-            },
-            {
-              "gap_id": "gap:repo:waived",
-              "source_currentness": "candidate_current",
-              "kind": "MissingValueAssertion",
-              "language": "rust",
-              "language_status": "stable",
-              "scope": "repo_scoped",
-              "gap_state": "waived",
-              "policy_state": "waived",
-              "repairability": "no_action",
-              "projection_eligibility": {
-                "ripr_zero_count": {"eligible": false, "reason": "waived"},
-                "ripr_plus_count": {"eligible": false, "reason": "waived"}
-              }
-            }
-          ]
-        }"#,
-    )
-    .map_err(|e| format!("write gap ledger: {e}"))?;
-
-    let root = workspace.display().to_string();
-    let ledger_path = ledger.display().to_string();
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--format",
-        "repo-badge-json",
-        "--gap-ledger",
-        &ledger_path,
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schema_version": "0.8""#));
-    assert!(stdout.contains(r#""basis": "gap_decision_ledger""#));
-    // The gap-ledger repo badge is projected into the closed public vocabulary.
-    assert!(stdout.contains(r#""message": "1 actionable""#));
-    assert!(stdout.contains(r#""analyzed_gap_records": 2"#));
-    assert!(stdout.contains(r#""state": "actionable""#));
-    assert!(stdout.contains(r#""actionable_count": 1"#));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn check_repo_badge_shields_keeps_four_fields_without_scope_leak() -> Result<(), String> {
-    let workspace = make_temp_workspace_with_production_seam()?;
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["check", "--root", &root, "--format", "repo-badge-shields"]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schemaVersion": 1"#));
-    assert!(stdout.contains(r#""label": "ripr""#));
-    assert!(stdout.contains(r#""color""#));
-    // Scope is native-only metadata; Shields stays exactly four fields.
-    assert!(
-        !stdout.contains(r#""scope""#),
-        "repo Shields projection must not include scope: {stdout}"
-    );
-    for forbidden in [
-        r#""counts""#,
-        r#""reason_counts""#,
-        r#""policy""#,
-        r#""kind""#,
-        r#""status""#,
-        r#""basis""#,
-        r#""schema_version""#,
-    ] {
-        assert!(
-            !stdout.contains(forbidden),
-            "repo Shields projection must not contain `{forbidden}`: {stdout}"
-        );
-    }
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn check_repo_badge_plus_json_emits_repo_scope_metadata() -> Result<(), String> {
-    let workspace =
-        make_temp_workspace_with_production_seam_and_report(fixture_test_efficiency_report())?;
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["check", "--root", &root, "--format", "repo-badge-plus-json"]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schema_version": "0.8""#));
-    assert!(stdout.contains(r#""kind": "ripr_plus""#));
-    assert!(stdout.contains(r#""scope": "repo""#));
-    assert!(stdout.contains(r#""basis": "canonical_actionable_gap""#));
-    assert!(stdout.contains(r#""label": "ripr+""#));
-    assert!(stdout.contains(r#""public_projection""#));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn check_repo_exposure_summary_json_emits_bounded_summary() -> Result<(), String> {
-    let workspace = make_temp_workspace_with_production_seam()?;
-    let root = workspace.display().to_string();
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--format",
-        "repo-exposure-summary-json",
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schema_version": "0.1""#));
-    assert!(stdout.contains(r#""format": "repo-exposure-summary-json""#));
-    assert!(stdout.contains(r#""basis": "canonical_actionable_gap""#));
-    assert!(stdout.contains(r#""raw_seams""#));
-    assert!(stdout.contains(r#""unsuppressed_exposure_gaps""#));
-    assert!(stdout.contains(r#""reason_breakdown""#));
-    assert!(stdout.contains(r#""top_files""#));
-    assert!(!stdout.contains(r#""seams": ["#));
-    assert!(!stdout.contains(r#""evidence_record""#));
-    assert!(!stdout.contains(r#""related_tests""#));
-    assert!(!stdout.contains(r#""observed_values""#));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn check_repo_badge_plus_shields_keeps_four_fields() -> Result<(), String> {
-    let workspace =
-        make_temp_workspace_with_production_seam_and_report(fixture_test_efficiency_report())?;
-    let root = workspace.display().to_string();
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--format",
-        "repo-badge-plus-shields",
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schemaVersion": 1"#));
-    assert!(stdout.contains(r#""label": "ripr+""#));
-    assert!(!stdout.contains(r#""scope""#));
-    assert!(!stdout.contains(r#""basis""#));
-    let top_level_keys = stdout
-        .lines()
-        .filter(|line| line.starts_with("  \""))
-        .count();
-    assert_eq!(
-        top_level_keys, 4,
-        "expected exactly 4 top-level Shields fields, got: {stdout}"
-    );
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn check_repo_badge_does_not_consult_diff_arg_when_supplied() -> Result<(), String> {
-    // Pin: even if `--diff` is passed, repo formats analyze the repo
-    // baseline. The diff arg is silently ignored under repo scope rather
-    // than mistakenly mixed into the analysis. This is the regression that
-    // unblocks badge/publish-main-endpoint.
-    let workspace = make_temp_workspace_with_production_seam()?;
-    let root = workspace.display().to_string();
-    let empty_diff = workspace.join("empty.patch");
-    std::fs::write(
-        &empty_diff,
-        r#"diff --git a/src/lib.rs b/src/lib.rs
-index 0000000..1111111 100644
---- a/src/lib.rs
-+++ b/src/lib.rs
-"#,
-    )
-    .map_err(|e| format!("write empty.patch: {e}"))?;
-
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &empty_diff.display().to_string(),
-        "--format",
-        "repo-badge-json",
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""scope": "repo""#));
-    // The temp workspace has a probeable predicate; repo badge scope now
-    // counts classified seams, so analyzed_seams > 0 even when the diff is
-    // empty. Assert the value, not just the key â€” a key check alone would
-    // also pass for `analyzed_seams: 0`, which is exactly the empty-scope
-    // behavior this regression pins against.
-    assert!(
-        stdout.contains(r#""analyzed_seams""#),
-        "repo native JSON must include analyzed_seams: {stdout}"
-    );
-    assert!(
-        !stdout.contains(r#""analyzed_seams": 0"#),
-        "repo badge must find at least one analyzed seam from the workspace \
-         predicate; got analyzed_seams: 0 â€” this suggests empty scope \
-         was used instead: {stdout}"
-    );
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn check_badge_command_exits_zero_even_with_nonzero_count() {
-    // Default policy is fail_on_nonzero=false. The sample diff has gaps but
-    // the command must still exit successfully so CI artifact pipelines work.
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--format",
-        "badge-json",
-    ]);
-    assert_success(&output);
-}
-
-#[test]
-fn explain_returns_targeted_probe_details() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&[
-        "explain",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250",
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("family: error_path"));
-    assert!(stdout.contains("delta:  value"));
-    assert!(stdout.contains("Static exposure\n  weakly_exposed"));
-    assert!(stdout.contains("No exact error variant discriminator was detected"));
-}
-
-#[test]
-fn context_json_returns_probe_and_discriminator_guidance() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&[
-        "context",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--at",
-        "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250",
-        "--json",
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains(
-            r#""id": "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250""#
-        )
-    );
-    assert!(stdout.contains(r#""discriminate": "weak""#));
-    assert!(stdout.contains(r#""missing""#));
-}
-
-#[test]
-fn explain_unknown_probe_fails_with_clear_error() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&[
-        "explain",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "probe:missing:0:not_real",
-    ]);
-    assert!(!output.status.success());
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("no finding matched"));
-}
-
-// -------- check-artifact reuse smoke (RIPR-SPEC-0140, #2107) --------
-
-/// End-to-end three-step flow: `check --write-artifact` once, then
-/// `explain --from` and `context --from` reuse the recorded findings with
-/// no scope flags. Finding detail remains identical while navigation names
-/// the source identity used by each invocation.
-#[test]
-fn check_write_artifact_then_explain_and_context_reuse_preserves_detail_and_source_navigation()
--> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let dir = unique_temp_workspace("check-artifact-reuse");
-    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
-    let artifact = dir.join("last-check.json");
-    let artifact_arg = artifact.display().to_string();
-    let selector = "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250";
-
-    let result = (|| {
-        let check = run_ripr(&[
-            "check",
-            "--root",
-            &root,
-            "--diff",
-            &diff,
-            "--json",
-            "--write-artifact",
-            &artifact_arg,
-        ]);
-        assert_success(&check);
-        let artifact_text = std::fs::read_to_string(&artifact)
-            .map_err(|err| format!("artifact was not written: {err}"))?;
-        assert!(artifact_text.contains("\"ripr-check-artifact-v1\""));
-        assert!(artifact_text.contains("\"identity\""));
-        assert!(artifact_text.contains("\"diff_bytes_hash\""));
-
-        let fresh_explain = run_ripr(&["explain", "--root", &root, "--diff", &diff, selector]);
-        assert_success(&fresh_explain);
-        let reused_explain = run_ripr(&[
-            "explain",
-            "--root",
-            &root,
-            "--from",
-            &artifact_arg,
-            selector,
-        ]);
-        assert_success(&reused_explain);
-        let fresh_explain_text = String::from_utf8_lossy(&fresh_explain.stdout);
-        let reused_explain_text = String::from_utf8_lossy(&reused_explain.stdout);
-        if !fresh_explain_text.contains("Next: ripr context --root")
-            || !fresh_explain_text.contains("--diff")
-            || !reused_explain_text.contains("Next: ripr context --root")
-            || !reused_explain_text.contains("--from")
-        {
-            return Err(
-                "explain navigation did not preserve fresh and artifact sources".to_string(),
-            );
-        }
-
-        let fresh_context = run_ripr(&[
-            "context", "--root", &root, "--diff", &diff, "--at", selector, "--json",
-        ]);
-        assert_success(&fresh_context);
-        let reused_context = run_ripr(&[
-            "context",
-            "--root",
-            &root,
-            "--from",
-            &artifact_arg,
-            "--at",
-            selector,
-        ]);
-        assert_success(&reused_context);
-        assert_eq!(
-            fresh_context.stdout, reused_context.stdout,
-            "context --from output must be byte-identical to the fresh run"
-        );
-        Ok(())
-    })();
-    ignore_remove_dir_all(&dir);
-    result
-}
-
-/// Every identity mismatch class fails closed with a typed error naming the
-/// mismatched field â€” never a silent recompute.
-#[test]
-fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let dir = unique_temp_workspace("check-artifact-tamper");
-    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
-    let artifact = dir.join("last-check.json");
-    let artifact_arg = artifact.display().to_string();
-    let selector = "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250";
-
-    let result = (|| {
-        let check = run_ripr(&[
-            "check",
-            "--root",
-            &root,
-            "--diff",
-            &diff,
-            "--write-artifact",
-            &artifact_arg,
-        ]);
-        assert_success(&check);
-        let original = std::fs::read_to_string(&artifact)
-            .map_err(|err| format!("artifact was not written: {err}"))?;
-
-        // Mode mismatch (tampered recording).
-        let tampered = original.replace("\"mode\": \"draft\"", "\"mode\": \"ready\"");
-        std::fs::write(&artifact, &tampered).map_err(|err| format!("write: {err}"))?;
-        let output = run_ripr(&[
-            "explain",
-            "--root",
-            &root,
-            "--from",
-            &artifact_arg,
-            selector,
-        ]);
-        assert_failure(&output);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stderr.contains("cannot be reused")
-                && stderr.contains("identity mismatch")
-                && stderr.contains("mode"),
-            "mode mismatch must be named:\n{stderr}"
-        );
-
-        // Unsupported schema version.
-        let stale = original.replace("ripr-check-artifact-v1", "ripr-check-artifact-v0");
-        std::fs::write(&artifact, &stale).map_err(|err| format!("write: {err}"))?;
-        let output = run_ripr(&[
-            "explain",
-            "--root",
-            &root,
-            "--from",
-            &artifact_arg,
-            selector,
-        ]);
-        assert_failure(&output);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stderr.contains("unsupported schema_version"),
-            "schema mismatch must be named:\n{stderr}"
-        );
-
-        // A scope flag passed alongside --from is an assertion, not an
-        // override: a different --diff than the recording fails closed.
-        std::fs::write(&artifact, &original).map_err(|err| format!("write: {err}"))?;
-        let other_diff = dir.join("other.diff");
-        std::fs::copy(sample_diff(), &other_diff).map_err(|err| format!("copy: {err}"))?;
-        let other_diff_arg = other_diff.display().to_string();
-        let output = run_ripr(&[
-            "explain",
-            "--root",
-            &root,
-            "--from",
-            &artifact_arg,
-            "--diff",
-            &other_diff_arg,
-            selector,
-        ]);
-        assert_failure(&output);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stderr.contains("asserted scope does not match") && stderr.contains("diff_source"),
-            "asserted --diff mismatch must be named:\n{stderr}"
-        );
-        Ok(())
-    })();
-    ignore_remove_dir_all(&dir);
-    result
-}
-
-/// `--write-artifact` fails closed with a named limitation for run shapes
-/// that have no re-resolvable diff-scoped finding set. (`--worktree` runs
-/// are supported: their base-to-worktree diff source is re-resolvable â€”
-/// see check_worktree_write_artifact_then_explain_reuse_and_drift_fails_closed.)
-#[test]
-fn check_write_artifact_rejects_unsupported_run_shapes() {
-    let root = workspace_root().display().to_string();
-    let dir = unique_temp_workspace("check-artifact-reject");
-    let artifact = dir.join("last-check.json");
-    let artifact_arg = artifact.display().to_string();
-
-    let repo_scoped = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--format",
-        "repo-seams-json",
-        "--write-artifact",
-        &artifact_arg,
-    ]);
-    assert_failure(&repo_scoped);
-    let stderr = String::from_utf8_lossy(&repo_scoped.stderr);
-    assert!(
-        stderr.contains("repo-scoped"),
-        "repo-scope limitation must be named:\n{stderr}"
-    );
-}
-
-/// `check --worktree --write-artifact` records the base-to-worktree diff
-/// source (#2251): `explain --from` reuses it while the worktree matches
-/// the recording, a matching `--base` alongside `--from` is accepted as an
-/// assertion, and worktree drift between write and reuse fails closed
-/// naming diff_bytes_hash.
-#[test]
-fn check_worktree_write_artifact_then_explain_reuse_and_drift_fails_closed() -> Result<(), String> {
-    let root = unique_temp_workspace("worktree-artifact-reuse");
-    let result = (|| {
-        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
-        run_git(&root, &["init"])?;
-        run_git(&root, &["config", "user.email", "test@test.com"])?;
-        run_git(&root, &["config", "user.name", "Test"])?;
-        std::fs::write(
-            root.join("src/lib.rs"),
-            "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
-        )
-        .map_err(|err| format!("write base lib.rs: {err}"))?;
-        std::fs::write(
-            root.join("Cargo.toml"),
-            "[package]\nname = \"spec-0140-worktree-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
-        )
-        .map_err(|err| format!("write Cargo.toml: {err}"))?;
-        run_git(&root, &["add", "."])?;
-        run_git(&root, &["commit", "-m", "initial"])?;
-        std::fs::write(
-            root.join("src/lib.rs"),
-            "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n",
-        )
-        .map_err(|err| format!("write dirty lib.rs: {err}"))?;
-
-        let root_str = root.to_string_lossy().into_owned();
-        let artifact = root.join("last-check.json");
-        let artifact_arg = artifact.display().to_string();
-        let check = run_ripr(&[
-            "check",
-            "--root",
-            &root_str,
-            "--base",
-            "HEAD",
-            "--worktree",
-            "--json",
-            "--write-artifact",
-            &artifact_arg,
-        ]);
-        assert_success(&check);
-        let stdout = String::from_utf8_lossy(&check.stdout);
-        let report: serde_json::Value = serde_json::from_str(&stdout)
-            .map_err(|err| format!("parse check JSON: {err}\n{stdout}"))?;
-        let selector = report
-            .pointer("/findings/0/id")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| format!("expected a finding id in JSON:\n{stdout}"))?
-            .to_string();
-        let artifact_text = std::fs::read_to_string(&artifact)
-            .map_err(|err| format!("artifact was not written: {err}"))?;
-        if !artifact_text.contains("\"worktree\"") {
-            return Err(format!(
-                "artifact must record the worktree diff source:\n{artifact_text}"
-            ));
-        }
-
-        // Matching worktree state: reuse succeeds, with or without the
-        // matching --base assertion.
-        let reused = run_ripr(&[
-            "explain",
-            "--root",
-            &root_str,
-            "--from",
-            &artifact_arg,
-            &selector,
-        ]);
-        assert_success(&reused);
-        let reused_stdout = String::from_utf8_lossy(&reused.stdout);
-        if !reused_stdout.contains("Static exposure") {
-            return Err(format!(
-                "reused explain lost its exposure section:\n{reused_stdout}"
-            ));
-        }
-        let asserted = run_ripr(&[
-            "explain",
-            "--root",
-            &root_str,
-            "--from",
-            &artifact_arg,
-            "--base",
-            "HEAD",
-            &selector,
-        ]);
-        assert_success(&asserted);
-        assert_eq!(
-            reused.stdout, asserted.stdout,
-            "a matching --base assertion must not change reused output"
-        );
-
-        // A mismatched --base assertion fails closed naming diff_source.base.
-        let wrong_base = run_ripr(&[
-            "explain",
-            "--root",
-            &root_str,
-            "--from",
-            &artifact_arg,
-            "--base",
-            "main",
-            &selector,
-        ]);
-        assert_failure(&wrong_base);
-        let stderr = String::from_utf8_lossy(&wrong_base.stderr);
-        if !(stderr.contains("asserted scope does not match")
-            && stderr.contains("diff_source.base"))
-        {
-            return Err(format!(
-                "mismatched --base assertion must be named:\n{stderr}"
-            ));
-        }
-
-        // Worktree drift between write and reuse fails closed naming
-        // diff_bytes_hash â€” never a silent recompute.
-        std::fs::write(
-            root.join("src/lib.rs"),
-            "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold && amount > 0\n}\n",
-        )
-        .map_err(|err| format!("re-dirty lib.rs: {err}"))?;
-        let drifted = run_ripr(&[
-            "explain",
-            "--root",
-            &root_str,
-            "--from",
-            &artifact_arg,
-            &selector,
-        ]);
-        assert_failure(&drifted);
-        let stderr = String::from_utf8_lossy(&drifted.stderr);
-        if !(stderr.contains("cannot be reused") && stderr.contains("diff_bytes_hash")) {
-            return Err(format!("worktree drift must be named:\n{stderr}"));
-        }
-        Ok(())
-    })();
-    ignore_remove_dir_all(&root);
-    result
-}
-
-/// An artifact written with a CLI-only non-default `--mode` is consumable
-/// when the same flag is passed on the reuse side, and fails closed naming
-/// `mode` when it is not. Finding detail remains equivalent while navigation
-/// names the source identity used by each invocation.
-#[test]
-fn explain_from_consumes_artifact_written_with_non_default_mode() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let dir = unique_temp_workspace("check-artifact-mode");
-    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
-    let artifact = dir.join("ready.json");
-    let artifact_arg = artifact.display().to_string();
-    let selector = "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250";
-
-    let check = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--mode",
-        "ready",
-        "--write-artifact",
-        &artifact_arg,
-    ]);
-    assert_success(&check);
-
-    let fresh = run_ripr(&[
-        "explain", "--root", &root, "--diff", &diff, "--mode", "ready", selector,
-    ]);
-    assert_success(&fresh);
-    let reused = run_ripr(&[
-        "explain",
-        "--root",
-        &root,
-        "--from",
-        &artifact_arg,
-        "--mode",
-        "ready",
-        selector,
-    ]);
-    assert_success(&reused);
-    let fresh_text = String::from_utf8_lossy(&fresh.stdout);
-    let reused_text = String::from_utf8_lossy(&reused.stdout);
-    let fresh_detail = fresh_text
-        .lines()
-        .filter(|line| !line.starts_with("Next: ripr context "))
-        .collect::<Vec<_>>();
-    let reused_detail = reused_text
-        .lines()
-        .filter(|line| !line.starts_with("Next: ripr context "))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        fresh_detail, reused_detail,
-        "explain --from --mode ready must preserve finding detail"
-    );
-    assert!(fresh_text.contains("Next: ripr context --root"));
-    assert!(fresh_text.contains("--diff"));
-    assert!(fresh_text.contains("--mode ready"));
-    assert!(reused_text.contains("Next: ripr context --root"));
-    assert!(reused_text.contains("--from"));
-    assert!(reused_text.contains("--mode ready"));
-
-    let without_flag = run_ripr(&[
-        "explain",
-        "--root",
-        &root,
-        "--from",
-        &artifact_arg,
-        selector,
-    ]);
-    assert_failure(&without_flag);
-    let stderr = String::from_utf8_lossy(&without_flag.stderr);
-    assert!(
-        stderr.contains("cannot be reused")
-            && stderr.contains("identity mismatch")
-            && stderr.contains("mode"),
-        "mode mismatch must be named:\n{stderr}"
-    );
-    ignore_remove_dir_all(&dir);
-    Ok(())
-}
-
-/// An artifact written with `--no-unchanged-tests` is consumable with the
-/// same flag (byte-identical) and fails closed naming
-/// `analysis_options.include_unchanged_tests` without it.
-#[test]
-fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let dir = unique_temp_workspace("check-artifact-unchanged");
-    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
-    let artifact = dir.join("no-unchanged.json");
-    let artifact_arg = artifact.display().to_string();
-    let selector = "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250";
-
-    let check = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--no-unchanged-tests",
-        "--write-artifact",
-        &artifact_arg,
-    ]);
-    assert_success(&check);
-
-    let fresh = run_ripr(&[
-        "context",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--no-unchanged-tests",
-        "--at",
-        selector,
-    ]);
-    assert_success(&fresh);
-    let reused = run_ripr(&[
-        "context",
-        "--root",
-        &root,
-        "--from",
-        &artifact_arg,
-        "--no-unchanged-tests",
-        "--at",
-        selector,
-    ]);
-    assert_success(&reused);
-    assert_eq!(
-        fresh.stdout, reused.stdout,
-        "context --from --no-unchanged-tests must be byte-identical to the fresh run"
-    );
-
-    let without_flag = run_ripr(&[
-        "context",
-        "--root",
-        &root,
-        "--from",
-        &artifact_arg,
-        "--at",
-        selector,
-    ]);
-    assert_failure(&without_flag);
-    let stderr = String::from_utf8_lossy(&without_flag.stderr);
-    assert!(
-        stderr.contains("cannot be reused")
-            && stderr.contains("identity mismatch")
-            && stderr.contains("analysis_options.include_unchanged_tests"),
-        "include_unchanged_tests mismatch must be named:\n{stderr}"
-    );
-    ignore_remove_dir_all(&dir);
-    Ok(())
-}
-
-/// Managed `[perl] producer` packet generation cannot join the recorded
-/// identity (the packet is generated inside the analysis run), so
-/// `--write-artifact` fails closed with a named limitation. No producer
-/// process is spawned: the rejection happens before analysis.
-#[test]
-fn check_write_artifact_rejects_managed_perl_producer() -> Result<(), String> {
-    let dir = unique_temp_workspace("check-artifact-producer");
-    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample");
-    let result = (|| {
-        std::fs::create_dir_all(dir.join("src")).map_err(|err| format!("mkdir: {err}"))?;
-        std::fs::create_dir_all(dir.join("tests")).map_err(|err| format!("mkdir: {err}"))?;
-        std::fs::copy(sample.join("example.diff"), dir.join("example.diff"))
-            .map_err(|err| format!("copy: {err}"))?;
-        std::fs::copy(sample.join("src/lib.rs"), dir.join("src/lib.rs"))
-            .map_err(|err| format!("copy: {err}"))?;
-        std::fs::copy(
-            sample.join("tests/pricing.rs"),
-            dir.join("tests/pricing.rs"),
-        )
-        .map_err(|err| format!("copy: {err}"))?;
-        std::fs::write(
-            dir.join("ripr.toml"),
-            "[perl]\nproducer = \"perl-ripr-facts\"\n",
-        )
-        .map_err(|err| format!("write config: {err}"))?;
-
-        let root = dir.display().to_string();
-        let diff = dir.join("example.diff").display().to_string();
-        let artifact = dir.join("a.json");
-        let artifact_arg = artifact.display().to_string();
-        let output = run_ripr(&[
-            "check",
-            "--root",
-            &root,
-            "--diff",
-            &diff,
-            "--write-artifact",
-            &artifact_arg,
-        ]);
-        assert_failure(&output);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stderr.contains("producer packet generation") && stderr.contains("--perl-facts"),
-            "managed producer limitation must be named:\n{stderr}"
-        );
-        assert!(
-            !artifact.exists(),
-            "no artifact may be written for the rejected run shape"
-        );
-        Ok(())
-    })();
-    ignore_remove_dir_all(&dir);
-    result
-}
-
-// -------- suppressions/v1 smoke --------
-
-fn fixture_test_efficiency_with_actionable_test() -> &'static str {
-    // One bare smoke_only entry the suppressions test can target by name.
-    r#"{
-  "schema_version": "0.1",
-  "tests": [
-    {"name": "cli_prints_help", "path": "tests/cli.rs", "class": "smoke_only"}
-  ],
-  "metrics": {
-    "tests_scanned": 1,
-    "reason_counts": {"smoke_oracle_only": 1}
-  }
-}
-"#
-}
-
-fn fixture_test_efficiency_with_unrelated_actionable_test() -> &'static str {
-    // One actionable entry that reaches an owner the placeholder
-    // workspace does not have (and whose name does not appear in any
-    // diff finding's related_tests). Diff-scope `ripr+` must filter it
-    // out; repo-scope public `ripr+` also keeps it out until TE debt is
-    // lifted into the canonical repair / verify / receipt model.
-    r#"{
-  "schema_version": "0.1",
-  "tests": [
-    {
-      "name": "totally_unrelated_test",
-      "path": "tests/elsewhere.rs",
-      "class": "smoke_only",
-      "reached_owners": ["unrelated::module"]
-    }
-  ],
-  "metrics": {
-    "tests_scanned": 1,
-    "reason_counts": {"smoke_oracle_only": 1}
-  }
-}
-"#
-}
-
-#[test]
-fn check_repo_badge_plus_ignores_raw_test_efficiency_suppressions() -> Result<(), String> {
-    let suppressions = r#"schema_version = 1
-
-[[suppressions]]
-kind = "test_efficiency"
-test = "cli_prints_help"
-path = "tests/cli.rs"
-reason = "Intentionally broad CLI smoke test."
-owner = "devtools"
-expires = "2099-09-01"
-"#;
-    let workspace = make_temp_workspace_with_suppressions(
-        Some(fixture_test_efficiency_with_actionable_test()),
-        Some(suppressions),
-    )?;
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["check", "--root", &root, "--format", "repo-badge-plus-json"]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // Raw test-efficiency debt is not part of the public canonical repair
-    // badge basis, so its suppressions do not move public counts.
-    assert!(stdout.contains(r#""unsuppressed_test_efficiency_findings": 0"#));
-    assert!(stdout.contains(r#""suppressed_test_efficiency_findings": 0"#));
-    // intentional remains 0 â€” declared_intent and suppressions are distinct.
-    assert!(stdout.contains(r#""intentional_test_efficiency_findings": 0"#));
-    assert!(stdout.contains(r#""warnings": []"#));
-
-    ignore_remove_dir_all(&workspace);
-    Ok(())
-}
-
-#[test]
-fn check_repo_badge_plus_does_not_promote_expired_raw_te_suppression() -> Result<(), String> {
-    let suppressions = r#"schema_version = 1
-
-[[suppressions]]
-kind = "test_efficiency"
-test = "cli_prints_help"
-path = "tests/cli.rs"
-reason = "Was intentionally broad."
-owner = "devtools"
-expires = "2025-01-01"
-"#;
-    let workspace = make_temp_workspace_with_suppressions(
-        Some(fixture_test_efficiency_with_actionable_test()),
-        Some(suppressions),
-    )?;
-    let root = workspace.display().to_string();
-    let output = run_ripr(&["check", "--root", &root, "--format", "repo-badge-plus-json"]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éíÛM8ßÄèµ©hºÚn¶X§zÍHÈVÙ^XÝ
+ˆÛ\NŽ[Ü˜\Ý\ÙYˆ™X\ÛÛˆHÓHÛ[ÚÙH\Ýˆ[Ü˜\ÛˆÛÛ[X[™Ž›Ý]]
+
+H[™ÐT‘Ó×ÓPS’Q‘TÕÑT‰ÜÈ\™[ÚZ[ˆ\ÈHØ[›ÛšXØ[˜Z[Y˜\Ý]\›ˆ›Üˆš[˜\žH[YÜ˜][Ûˆ\ÝÎÈ™XÙZ\YšXHÛXÞKÛ›Ë\[šXËX[ÝÛ\ÝÛ[[šY\È›ÜˆÜ˜]\ËÜš\‹Ý\ÝËØÛWÜÛ[ÚÙKœœËˆ‚ŠWB‚\ÙHÚLŽŽžÑYÙ\ÝÚLMŸNÂ\ÙHÝŽœ]ŽžÔ]]YŸNÂ\ÙHÝŽœ›ØÙ\ÜÎŽžÐÛÛ[X[™Ý]]NÂ\ÙHÝŽœÞ[˜ÎŽ˜]ÛZXÎŽžÐ]ÛZXÕMÜ™\š[™ßNÂ‚ˆÖÜ]H˜ÛÛ[[Û‹Û[ÙœœÈ—B›[ÙÛÛ[[ÛŽÂ‚‹ËÈ[Z[ˆš^\™K\Ù]\Ú][›ØØ][ÛœÈ™[ÝÈ›Ý]H›ÝYÚHÚ\™Y‹ËÈ\™[™Y[\ˆ
+XY[™H
+ÈÛ™HY[\Ý[™]žH
+ÈÛÛ[Z]™XÛÛ˜Ú[K‹ËÈÌÍÍˆÛXÙHJKˆ˜]È[—ØÛÛ[X[™
+™Ú]‹8 )ŠX™[XZ[œÈÛ›HÚ\™HH\Ý‹ËÈ™YYÈH˜]ÈÝ]]
+ÛÛ[Z]Y[]H›Ø™\Ë˜Z[\™K\Ú\H\ÜÙ\ÊK‚\ÙHÛÛ[[ÛŽŽ™š^\™WÙÚ]Ž™š^\™WÙÚ]ÛÚÈ\È[—ÙÚ]Â‚œÝ]XÈSTÐÓÕS•TŽˆ]ÛZXÕMH]ÛZXÕMŽ›™]Ê
+NÂ‚™›ˆ[—Üš\Š\™ÜÎˆ	–ÉœÝ—JHOˆÝ]]Âˆ]š[ˆH[ˆJÐT‘Ó×Ð’S—ÑVWÜš\ˆŠNÂˆÛÛ[X[™Ž›™]Êš[ŠK˜\™ÜÊ\™ÜÊK›Ý]]
+
+K[Ü˜\
+
+BŸB‚™›ˆ[—Üš\—Ú[—ÝÛÜšÜÜXÙJ\™ÜÎˆ	–ÉœÝ—JHOˆ™\Ý[Ý]]ÝŽš[ÎŽ‘\œ›ÜˆÂˆ]š[ˆH[ˆJÐT‘Ó×Ð’S—ÑVWÜš\ˆŠNÂˆ]›ÛÝHÛÜšÜÜXÙWÜ›ÛÝ
+
+NÂˆ[—ØÛÛ[X[™
+š[‹ÛÛYJ	œ›ÛÝ
+K\™ÜÊBŸB‚™›ˆ[—ØÛÛ[X[™
+ˆ›ÙÜ˜[Nˆ	œÝ‹ˆÝ\œ™[Ù\ŽˆÜ[Û	”]‹ˆ\™ÜÎˆ	–ÉœÝ—KŠHOˆ™\Ý[Ý]]ÝŽš[ÎŽ‘\œ›ÜˆÂˆÜ]Û—ØÛÛ[X[™
+›ÙÜ˜[KÝ\œ™[Ù\‹\™ÜË	–×JBŸB‚‹ËËÈHÚ[™ÛH›ØÙ\ÜÈÜ]ÛˆÚ[›Üˆ\È\›™\ÜËˆ›Ý[—ØÛÛ[X[™[™‹ËËÈ[—ØÛÛ[X[™ÝÚ]Ù[˜›Ý]H›ÝYÚ\™HÛÈHÝZ]HÙY\ÈÛ™H˜XÚÙY‹ËËÈÜ]ÛˆÚ]H˜]\ˆ[ˆÛ™H\ˆØ[[™ÈÛÛ™[[Û‹‚™›ˆÜ]Û—ØÛÛ[X[™
+ˆ›ÙÜ˜[Nˆ	œÝ‹ˆÝ\œ™[Ù\ŽˆÜ[Û	”]‹ˆ\™ÜÎˆ	–ÉœÝ—Kˆ[Žˆ	–Ê	œÝ‹	œÝŠWKŠHOˆ™\Ý[Ý]]ÝŽš[ÎŽ‘\œ›ÜˆÂˆ]]]ÛÛ[X[™HÛÛ[X[™Ž›™]Ê›ÙÜ˜[JNÂˆYˆ]ÛÛYJÝ\œ™[Ù\ŠHHÝ\œ™[Ù\ˆÂˆÛÛ[X[™˜Ý\œ™[Ù\ŠÝ\œ™[Ù\ŠNÂˆBˆ›Üˆ
+˜[YK˜[YJH[ˆ[ˆÂˆÛÛ[X[™™[Š˜[YK˜[YJNÂˆBˆÛÛ[X[™˜\™ÜÊ\™ÜÊK›Ý]]
+
+BŸB‚‹ËËÈ[ˆHÛÛ[X[™Ú]^˜H[š\›Û›Y[˜\šXX›\ÈÙ]ÛÈ\ÝÈØ[ˆ[[‚‹ËËÈ[XšY[\ÙXÜ™]Ø[˜\žH[ˆH\™[[™\ÜÙ\]Ù\È›ÝÜ›ÜÜÈH›ØÙ\ÜÂ‹ËËÈ›Ý[™\žK‚™›ˆ[—ØÛÛ[X[™ÝÚ]Ù[Šˆ›ÙÜ˜[Nˆ	œÝ‹ˆÝ\œ™[Ù\Žˆ	”]ˆ\™ÜÎˆ	–ÉœÝ—Kˆ[Žˆ	–Ê	œÝ‹	œÝŠWKŠHOˆ™\Ý[Ý]]ÝŽš[ÎŽ‘\œ›ÜˆÂˆÜ]Û—ØÛÛ[X[™
+›ÙÜ˜[KÛÛYJÝ\œ™[Ù\ŠK\™ÜË[ŠBŸB‚™›ˆ[—Ú\ÛÛ]YØš[˜\žJˆš[˜\žNˆ	”]ˆÝ\œ™[Ù\Žˆ	”]ˆ\™ÜÎˆ	–ÉœÝ—KˆÛÝ™\˜YÙWÜ›Ùš[NˆÜ[Û	”]‹ŠHOˆ™\Ý[Ý]]ÝŽš[ÎŽ‘\œ›ÜˆÂˆ]]]ÛÛ[X[™HÛÛ[X[™Ž›™]Êš[˜\žJNÂˆÛÛ[X[™˜Ý\œ™[Ù\ŠÝ\œ™[Ù\ŠK™[—ØÛX\Š
+NÂˆYˆ]ÚÊ]
+HHÝŽ™[ŽŽ˜\Š”UŠHÂˆÛÛ[X[™™[Š”U‹]
+NÂˆBˆYˆ]ÛÛYJ›Ùš[JHHÛÝ™\˜YÙWÜ›Ùš[HÂˆÛÛ[X[™™[Š““WÔ“Ñ’SWÑ’SH‹›Ùš[JNÂˆBˆÛÛ[X[™˜\™ÜÊ\™ÜÊK›Ý]]
+
+BŸB‚™›ˆÛX[\Ý[\Ù\Š]ˆÜ[Û	”]ŠHOˆ™\Ý[
+
+KÝŽš[ÎŽ‘\œ›ÜˆÂˆYˆ]ÛÛYJ]
+HH]ˆ	‰ˆ]™^\ÝÊ
+BˆÂˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+]
+OÎÂˆBˆÚÊ
+
+JBŸB‚‹ËËÈ™\ÝYY™›Ü[\Y\ˆX\™ÝÛ‹ˆH[ÎŽ”™\Ý[\ÈX]ÚYÚ]Yˆ]‹ËËÈÛÈHÖÛ]\ÝÝ\ÙWXÛX[\˜Z[\™H\È[ˆ^XÚ]YÛ›Ü™K‚™›ˆYÛ›Ü™WÜ™[[Ý™WÙ\—Ø[
+]ˆ	”]
+HÂˆYˆ]ÚÊ
+
+JHHÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+]
+HßBŸB‚™›ˆ[š\š]YØÛÝ™\˜YÙWÚ\×Ù[˜X›Y
+
+HOˆ›ÛÛÂˆÝŽ™[ŽŽ˜\—ÛÜÊ““WÔ“Ñ’SWÑ’SHŠKš\×ÜÛÛYJ
+HÝŽ™[ŽŽ˜\—ÛÜÊÐT‘Ó×Ó“WÐÓÕˆŠKš\×ÜÛÛYJ
+BŸB‚™›ˆÛ˜\ÚÝÝ™YJ›ÛÝˆ	”]
+HOˆ™\Ý[™XÏÝš[™Ï‹ÝŽš[ÎŽ‘\œ›ÜˆÂˆ›ˆš\Ú]
+›ÛÝˆ	”]]ˆ	”][šY\Îˆ	›]]™XÏÝš[™ÏŠHOˆ™\Ý[
+
+KÝŽš[ÎŽ‘\œ›ÜˆÂˆ›Üˆ[žH[ˆÝŽ™œÎŽœ™XYÙ\Š]
+OÈÂˆ][žHH[žOÎÂˆ]Ú[H[žKœ]
+
+NÂˆ]™[]]™HHÚ[ˆœÝš\Ü™Yš^
+›ÛÝ
+Bˆ›X\Ù\œŠÝŽš[ÎŽ‘\œ›ÜŽŽ›Ý\ŠOÂˆ×ÜÝš[™×ÛÜÜÞJ
+Bˆœ™\XÙJ	×	Ë‹ÈŠNÂˆ]Y]Y]HH[žK›Y]Y]J
+OÎÂˆYˆY]Y]Kš\×Ù\Š
+HÂˆ[šY\Ëœ\Ú
+›Ü›X]J™\ŽžÜ™[]]™_HŠJNÂˆš\Ú]
+›ÛÝ	˜Ú[[šY\ÊOÎÂˆH[ÙHYˆY]Y]Kš\×Ùš[J
+HÂˆ]ÛÛ[HÝŽ™œÎŽœ™XY
+	˜Ú[
+OÎÂˆ[šY\Ëœ\Ú
+›Ü›X]J™š[NžÜ™[]]™_NžßH‹ÚLM—Ú^Øž]\Ê	˜ÛÛ[
+JJNÂˆH[ÙHÂˆ[šY\Ëœ\Ú
+›Ü›X]J›Ý\ŽžÜ™[]]™_HŠJNÂˆBˆBˆÚÊ
+
+JBˆB‚ˆ]]][šY\ÈH™XÎŽ›™]Ê
+NÂˆš\Ú]
+›ÛÝ›ÛÝ	›]][šY\ÊOÎÂˆ[šY\ËœÛÜ
+
+NÂˆÚÊ[šY\ÊBŸB‚™›ˆÛ˜\ÚÝÙY™Š™Y›Ü™Nˆ	–ÔÝš[™×KY\Žˆ	–ÔÝš[™×JHOˆÝš[™ÈÂˆ]™[[Ý™YH™Y›Ü™Bˆš]\Š
+Bˆ™š[\Š[ž_XY\‹˜ÛÛZ[œÊ[žJJBˆ›X\
+[ž_›Ü›X]J‹HÙ[ž_HŠJBˆ˜ÛÛXÝŽ™XÏÏŠ
+NÂˆ]YYHY\‚ˆš]\Š
+Bˆ™š[\Š[ž_X™Y›Ü™K˜ÛÛZ[œÊ[žJJBˆ›X\
+[ž_›Ü›X]JŠÈÙ[ž_HŠJBˆ˜ÛÛXÝŽ™XÏÏŠ
+NÂˆ™[[Ý™Yˆš[×Ú]\Š
+Bˆ˜ÚZ[ŠYY
+Bˆ˜ÛÛXÝŽ™XÏÏŠ
+Bˆš›Ú[Š—ˆŠBŸB‚™›ˆ\×ØÛÛ˜Ü™]WØÛÛ[Z]ÚY
+˜[YNˆ	œÝŠHOˆ›ÛÛÂˆ˜[YK›[Š
+HOH	‰ˆ˜[YK˜ž]\Ê
+K˜[
+ž]_ž]Kš\×Ø\ØÚZWÚ^YÚ]
+
+JBŸB‚™›ˆ›Ý[™YØÛÛ[X[™Ý^
+ž]\Îˆ	–ÝNJHOˆÝš[™ÈÂˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJž]\ÊK˜Ú\œÊ
+KZÙJLLŠK˜ÛÛXÝ
+
+BŸB‚™›ˆÝš\ÛÜ[Û˜[ÙÚ]Û[™WÙ[™[™Êž]\Îˆ	–ÝNJHOˆ	–ÝNHÂˆž]\ÂˆœÝš\ÜÝY™š^
+ˆ——ˆŠBˆ›Ü—Ù[ÙJž]\ËœÝš\ÜÝY™š^
+ˆ—ˆŠJBˆ[Ü˜\ÛÜŠž]\ÊBŸB‚™›ˆÙ[XÝÙš^\™WÜ™\ÜÚ]ÜžWÚXY
+ˆÚ]ÜÝXØÙYYYˆ›ÛÛˆÝÝ]ˆ	–ÝNKˆÝ\œŽˆ	–ÝNKˆXÝ[Ûœ×Ù˜[˜XÚÎˆÜ[Û	œÝ‹ŠHOˆ™\Ý[Ýš[™ËÝš[™ÏˆÂˆ]Ø[™Y]HHÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJÝš\ÛÜ[Û˜[ÙÚ]Û[™WÙ[™[™ÊÝÝ]
+JK×ÜÝš[™Ê
+NÂˆYˆÚ]ÜÝXØÙYYYÂˆYˆ\×ØÛÛ˜Ü™]WØÛÛ[Z]ÚY
+	˜Ø[™Y]JHÂˆ™]\›ˆÚÊØ[™Y]K×Ø\ØÚZWÛÝÙ\˜Ø\ÙJ
+JNÂˆBˆ™]\›ˆ\œŠ›Ü›X]Jˆ™Ú]™]‹\\œÙHK]™\šYžHPQžÞØÛÛ[Z]_H™]\›™Y›Û‹XÛÛ˜Ü™]H™\ÜÚ]ÜžHPQØØ[™Y]_X‚ˆ
+JNÂˆB‚ˆYˆ]ÛÛYJ˜[˜XÚÊHHXÝ[Ûœ×Ù˜[˜XÚÂˆ	‰ˆ\×ØÛÛ˜Ü™]WØÛÛ[Z]ÚY
+˜[˜XÚÊBˆÂˆ™]\›ˆÚÊ˜[˜XÚË×Ø\ØÚZWÛÝÙ\˜Ø\ÙJ
+JNÂˆB‚ˆ\œŠ›Ü›X]Jˆ™Ú]™]‹\\œÙHK]™\šYžHPQžÞØÛÛ[Z]_H˜Z[YÈÝÝ]ˆßNÈÝ\œŽˆßH‹ˆ›Ý[™YØÛÛ[X[™Ý^
+ÝÝ]
+Kˆ›Ý[™YØÛÛ[X[™Ý^
+Ý\œŠBˆ
+JBŸB‚™›ˆÛÛ˜Ü™]WÙš^\™WÜ™\ÜÚ]ÜžWÚXY
+›ÛÝˆ	”]
+HOˆ™\Ý[Ýš[™Ë›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]Ý]]H[—ØÛÛ[X[™
+ˆ™Ú]‹ˆÛÛYJ›ÛÝ
+Kˆ	–Èœ™]‹\\œÙH‹‹K]™\šYžH‹’PQžØÛÛ[Z]H—Kˆ
+OÎÂˆ]›ÛÝÚ\×ÝÛÜšÜÜXÙHH›ÛÝˆ˜Ø[›ÛšXØ[^™J
+Bˆ›ÚÊ
+Bˆžš\
+ÛÜšÜÜXÙWÜ›ÛÝ
+
+K˜Ø[›ÛšXØ[^™J
+K›ÚÊ
+JBˆš\×ÜÛÛYWØ[™
+
+›ÛÝÛÜšÜÜXÙJ_›ÛÝOHÛÜšÜÜXÙJNÂˆ]XÝ[Ûœ×Ù˜[˜XÚÈBˆYˆ›ÛÝÚ\×ÝÛÜšÜÜXÙH	‰ˆÝŽ™[ŽŽ˜\Š‘ÒUP—ÐPÕSÓ”ÈŠK›ÚÊ
+K˜\×Ù\™YŠ
+HOHÛÛYJYHŠHÂˆÝŽ™[ŽŽ˜\Š‘ÒUP—ÔÒHŠK›ÚÊ
+BˆH[ÙHÂˆ›Û™BˆNÂˆÙ[XÝÙš^\™WÜ™\ÜÚ]ÜžWÚXY
+ˆÝ]]œÝ]\ËœÝXØÙ\ÜÊ
+Kˆ	›Ý]]œÝÝ]ˆ	›Ý]]œÝ\œ‹ˆXÝ[Ûœ×Ù˜[˜XÚË˜\×Ù\™YŠ
+Kˆ
+Bˆ›X\Ù\œŠ[ÎŽš[ÊBŸB‚™›ˆÛÜšÜÜXÙWÜ›ÛÝ
+
+HOˆ]YˆÂˆ]Ž›™]Ê[ˆJÐT‘Ó×ÓPS’Q‘TÕÑTˆŠJBˆœ\™[
+
+Bˆ˜[™Ý[Š]Žœ\™[
+Bˆ[Ü˜\
+
+Bˆ×Ü]ØYŠ
+BŸB‚™›ˆØ[\WÙY™Š
+HOˆ]YˆÂˆ]Ž›™]Ê[ˆJÐT‘Ó×ÓPS’Q‘TÕÑTˆŠJKš›Ú[Š™^[\\ËÜØ[\KÙ^[\K™Y™ˆŠBŸB‚™›ˆ[š\]YWÝ[\ÝÛÜšÜÜXÙJX™[ˆ	œÝŠHOˆ]YˆÂˆ]Ý[\HÝŽ[YNŽ”Þ\Ý[U[YNŽ››ÝÊ
+Bˆ™\˜][Û—ÜÚ[˜ÙJÝŽ[YNŽ•S’VÑTÐÒ
+Bˆ›X\
+˜\×Û˜[›ÜÊ
+JBˆ[Ü˜\ÛÜŠ
+NÂˆ]YHÝŽœ›ØÙ\ÜÎŽšY
+
+NÂˆ]ÛÝ[\ˆHSTÐÓÕS•T‹™™]ÚØY
+KÜ™\š[™ÎŽ”™[^Y
+NÂˆÝŽ™[ŽŽ[\Ù\Š
+Kš›Ú[Š›Ü›X]Jœš\‹^ÛX™[K^ÜÝ[\K^ÜYK^ØÛÝ[\ŸHŠJBŸB‚™›ˆ[š\]YWÙ^\›˜[ÝÛÜšÜÜXÙJX™[ˆ	œÝŠHOˆ™\Ý[]Y‹Ýš[™ÏˆÂˆ]ÛÜšÜÜXÙHHÛÜšÜÜXÙWÜ›ÛÝ
+
+Bˆ˜Ø[›ÛšXØ[^™J
+Bˆ›X\Ù\œŠ\œ›ÜŸ›Ü›X]J˜Ø[›ÛšXØ[^™HÛÜšÜÜXÙH›ÛÝˆÙ\œ›ÜŸHŠJOÎÂˆ]Ø[™Y]HH[š\]YWÝ[\ÝÛÜšÜÜXÙJX™[
+NÂˆ]\™[HÛÜšÜÜXÙBˆœ\™[
+
+Bˆ›Ú×ÛÜ—Ù[ÙJÛÜšÜÜXÙH›ÛÝ\È›È\™[‹×ÜÝš[™Ê
+JOÎÂˆ]˜[YHHØ[™Y]Bˆ™š[WÛ˜[YJ
+Bˆ›Ú×ÛÜ—Ù[ÙJ[\Ü˜\žHš^\™H\È›Èš[H˜[YH‹×ÜÝš[™Ê
+JOÎÂˆÚÊ\™[š›Ú[Š˜[YJJBŸB‚™›ˆ\ÜÙ\ÜÝXØÙ\ÜÊÝ]]ˆ	“Ý]]
+HÂˆ\ÜÙ\JˆÝ]]œÝ]\ËœÝXØÙ\ÜÊ
+Kˆ™^XÝYÛÛ[X[™ÈÝXØÙYYœÝÝ]—žßWœÝ\œŽ—žßH‹ˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝÝ]
+KˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝ\œŠBˆ
+NÂŸB‚™›ˆ\ÜÙ\Ù˜Z[\™JÝ]]ˆ	“Ý]]
+HÂˆ\ÜÙ\Jˆ[Ý]]œÝ]\ËœÝXØÙ\ÜÊ
+Kˆ™^XÝYÛÛ[X[™È˜Z[œÝÝ]—žßWœÝ\œŽ—žßH‹ˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝÝ]
+KˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝ\œŠBˆ
+NÂŸB‚™›ˆ›Ü›X[^™WÛ™]Û[™\Ê˜[YNˆ	œÝŠHOˆÝš[™ÈÂˆ˜[YKœ™\XÙJ——ˆ‹—ˆŠBŸB‚‹ËËÈ\ÜÝYHÌÎÌŽˆÓK\™[™\™YÛÛ[X[™™Y\™XÝÈ[˜ÚÜˆ]H™\ÛÛ™YK\›ÛÝ‹ËËÈ8 %HÚ[›ØÙ\ÜÈÛÜšÚ[™È\™XÝÜžKÚXÚ\ÈHÛÜšÜÜXÙH›ÛÝ›Ü‚‹ËËÈ[—Üš\—Ú[—ÝÛÜšÜÜXÙXˆ›Ú™XÝ]XXÚ[™H™Yš^ÈÝÙ‹Ø™Y›Ü™B‹ËËÈÛÛ\\š[™ÈÛÈHš^\™H[œÈH[˜ÚÜ™YÚ\K™]™\ˆHXXÚ[™B‹ËËÈ\™XÝÜžH
+Ø[YHXÙZÛ\ˆ[H\ÈHX‹]\Ý›Ú™XÝ[ÛœÊK‚™›ˆ\ÜÙ\Ø[˜ÚÜ™YÜÝÝ]ÛX]Ú\×Ùš^\™JˆÝ]]ˆ	“Ý]]ˆš^\™WÜ]ˆ	œÝ‹ŠHOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ\ÜÙ\ÜÝXØÙ\ÜÊÝ]]
+NÂˆ]^XÝYHÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[Šš^\™WÜ]
+JOÎÂˆ]XÝX[HÝš[™ÎŽ™œ›ÛWÝ]Ž
+Ý]]œÝÝ]˜ÛÛ™J
+JOÎÂˆ]™Yš^H›Ü›X]JžßKÈ‹ÛÜšÜÜXÙWÜ›ÛÝ
+
+K×ÜÝš[™×ÛÜÜÞJ
+Kœ™\XÙJ	×	Ë‹ÈŠJNÂˆ\ÜÙ\Ù\HJˆ›Ü›X[^™WÛ™]Û[™\Ê	˜XÝX[
+Kœ™\XÙJ	œ™Yš^ÝÙ‹ÈŠKˆ›Ü›X[^™WÛ™]Û[™\Ê	™^XÝY
+KˆœÝÝ]šYYœ›ÛHÙš^\™WÜ]H‚ˆ
+NÂˆÚÊ
+
+JBŸB‚™›ˆÜš]WØ›Ý[™Ü™\×Ù^ÜÝ\™WÙš^\™Jˆ›ÛÝˆ	”]ˆ]ˆ	”]ˆÙX[WÚœÛÛŽˆ	œÝ‹ŠHOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]XYHÛÛ˜Ü™]WÙš^\™WÜ™\ÜÚ]ÜžWÚXY
+›ÛÝ
+OÎÂˆ]›ÛÝÚY[]HH›ÛÝ˜Ø[›ÛšXØ[^™J
+OË×ÜÝš[™×ÛÜÜÞJ
+Kœ™\XÙJ	×	Ë‹ÈŠNÂˆ]XÙZÛ\ˆHœÚLMŽŒŽÂˆ]˜]ÈH›Ü›X]JˆˆÈžÞÂˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒŒÈ‹ˆ˜\Y˜XÝŽˆÞÂˆšÚ[™Žˆœ™\×Ù^ÜÝ\™H‹ˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒH‹ˆ˜Ø[›ÛšXØ[^˜][ÛˆŽˆœ˜]×ÚœÛÛ—ÜXÙZÛ\—ÝŒH‹ˆœ›ÙXÙ\ˆŽˆÞÈÛÛŽˆœš\ˆ‹™\œÚ[ÛˆŽˆŒŒLKŒŸ_Kˆœ™\ÜÚ]ÜžHŽˆÞÈœ›ÛÝŽˆžÜ›ÛÝÚY[]_H‹šXYŽˆžÚXYHŸ_Kˆ˜[˜[\Ú\ÈŽˆÞÈ™›Ü›X]Žˆœ™\ËY^ÜÝ\™KZœÛÛˆ‹›[ÙHŽˆ™˜Y‹˜˜\ÙWÜ™]š\Ú[ÛˆŽˆ[š[œ]ÚY[]HŽˆš[œ]™›ŒXMŒŒH‹˜ÛÛ[X[™Žˆœš\ˆÚXÚÈKY›Ü›X]™\ËY^ÜÝ\™KZœÛÛˆ‹œ›Ùš[HŽˆ™˜Y‹ÛÜšÝ™YHŽˆ˜ÛX[ˆŸ_KˆœÛ˜\ÚÝÚY[]HŽˆœÛ˜\ÚÝš[œ]™›ŒXMŒŒNÜ™]š\Ú[ÛŽžÚXYH‹ˆ˜ÛÛ[ÜÚLMˆŽˆžÜXÙZÛ\ŸH‚ˆ_KˆœØÛÜHŽˆœ™\È‹ˆœ[—ÜÝ]\ÈŽˆ˜ÛÛ\]H‹ˆœÙX[\ÈŽˆÞÜÙX[WÚœÛÛŸWBŸ_HˆÂˆ
+NÂˆ]]]\Ú\ˆHÚLMŽŽ›™]Ê
+NÂˆ\Ú\‹\]J˜]Ë˜\×Øž]\Ê
+JNÂˆ]YÙ\ÝH\Ú\‹™š[˜[^™J
+NÂˆ]YÙ\ÝH›Ü›X]JˆœÚLMŽžßH‹ˆYÙ\Ýˆš]\Š
+Bˆ›X\
+ž]_›Ü›X]JžØž]NŒžHŠJBˆ˜ÛÛXÝŽÝš[™ÏŠ
+Bˆ
+NÂˆËÈ^XÝ[Û™H[H
+ÌŽLŒJNˆHXÙZÛ\ˆ]\Ý\X\ˆÛ›H\ÈBˆËÈÛÝ™\›™Y\Y˜XÝ˜ÛÛ[ÜÚLM˜˜[YH™Y›Ü™HHÛØ˜[™\XÙH\ÂˆËÈØY™KˆHÙXÛÛ™XÙZÛ\‹\Ú\YÝš[™ÈÛÝ[™HÚ[[H™]Üš][‹‚ˆ]XÙZÛ\—ÛØØÝ\œ™[˜Ù\ÈH˜]Ë›X]Ú\ÊXÙZÛ\ŠK˜ÛÝ[
+
+NÂˆ\ÜÙ\Ù\HJˆXÙZÛ\—ÛØØÝ\œ™[˜Ù\ËKˆ˜›Ý[™™\ËY^ÜÝ\™Hš^\™H]\ÝÛÛZ[ˆ^XÝHÛ™HÛÛ[ÜÚLMˆXÙZÛ\ˆ‚ˆ
+NÂˆÝŽ™œÎŽÜš]J]˜]Ëœ™\XÙJXÙZÛ\‹	™YÙ\Ý
+JOÎÂˆÚÊ
+
+JBŸB‚™›ˆÜš]WÙ˜XœšXØ]YØYÙ[Ý™\šYžWÚœÛÛŠˆ]ˆ	”]ˆ™Y›Ü™Nˆ	”]ˆY\Žˆ	”]ŠHOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]™Y›Ü™WÙ\Ü^HH™Y›Ü™K™\Ü^J
+K×ÜÝš[™Ê
+Kœ™\XÙJ	×	Ë‹ÈŠNÂˆ]Y\—Ù\Ü^HHY\‹™\Ü^J
+K×ÜÝš[™Ê
+Kœ™\XÙJ	×	Ë‹ÈŠNÂˆÝŽ™œÎŽÜš]Jˆ]ˆ›Ü›X]JˆˆÈžÞÂˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒŒÈ‹ˆÛÛŽˆœš\ˆ‹ˆœÝ]\ÈŽˆ˜Yš\ÛÜžH‹ˆš[œ]ÈŽˆÞÈ˜™Y›Ü™HŽˆžßH‹˜Y\ˆŽˆžßHŸ_KˆœÝ[[X\žHŽˆÞÈš[\›Ý™YŽˆK˜Ú[™ÙYŽˆœ™YÜ™\ÜÙYŽˆ[˜Ú[™ÙYŽˆ›™]ÈŽˆœ™\ÛÛ™YŽˆ_Kˆ˜Ú[™ÙYÜÙX[\ÈŽˆÞÞÈœÙX[WÚYŽˆœÙX[KXH‹œÙX[WÚÚ[™Žˆœ™YXØ]WØ›Ý[™\žH‹™š[HŽˆœÜ˜ËÜšXÚ[™ËœœÈ‹›[™HŽ‹˜™Y›Ü™HŽˆÙXZÛWÙÜš\Y‹˜Y\ˆŽˆœÝ›Û™ÛWÙÜš\Y‹˜Ú[™ÙHŽˆš[\›Ý™Y‹™]šY[˜ÙWÙ[HŽ–×__WKˆ[˜Ú[™ÙYÜÙX[\ÈŽˆ×K›™]×ÙØ\ÈŽˆ×Kœ™\ÛÛ™YÙØ\ÈŽˆ×BŸ_HˆËˆ™Y›Ü™WÙ\Ü^KY\—Ù\Ü^Bˆ
+Kˆ
+OÎÂˆÚÊ
+
+JBŸB‚™›ˆ[š]ÙÚ]Ùš^\™WÜ™\Ê›ÛÝˆ	”]
+HOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆÝŽ™œÎŽÜš]J›ÛÝš›Ú[Š›X\šÙ\‹ŠK™š^\™WˆŠOÎÂˆ[—ÙÚ]
+›ÛÝ	–Èš[š]—JOÎÂˆ[—ÙÚ]
+›ÛÝ	–È˜Y‹›X\šÙ\‹—JOÎÂˆ]ÛÛ[Z]H[—ØÛÛ[X[™
+ˆ™Ú]‹ˆÛÛYJ›ÛÝ
+Kˆ	–Âˆ‹XÈ‹ˆ\Ù\‹›˜[YOT’Tˆ\Ý‹ˆ‹XÈ‹ˆ\Ù\‹™[XZ[\š\^[\Kš[˜[Y‹ˆ˜ÛÛ[Z]‹ˆ‹[H‹ˆ™š^\™H‹ˆKˆ
+OÎÂˆ\ÜÙ\JÛÛ[Z]œÝ]\ËœÝXØÙ\ÜÊ
+K™š^\™HÛÛ[Z]˜Z[YˆØÛÛ[Z]ßHŠNÂˆÚÊ
+
+JBŸB‚™›ˆ[š]Ü›ÙXÙ\—Ùš^\™WÜ™\Ê›ÛÝˆ	”]
+HOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+›ÛÝš›Ú[ŠœÜ˜ÈŠJOÎÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+›ÛÝš›Ú[Š\ÝÈŠJOÎÂˆ]š^\™WÜ›ÛÝBˆ]Ž›™]Ê[ˆJÐT‘Ó×ÓPS’Q‘TÕÑTˆŠJKš›Ú[Š‹‹‹Ë‹‹Ùš^\™\ËØ›Ý[™\žWÙØ\Ú[œ]ŠNÂˆ›Üˆ™[]]™H[ˆÈØ\™ÛËÛ[‹œÜ˜ËÛX‹œœÈ‹\ÝËÜšXÚ[™ËœœÈ—HÂˆÝŽ™œÎŽ˜ÛÜJš^\™WÜ›ÛÝš›Ú[Š™[]]™JK›ÛÝš›Ú[Š™[]]™JJOÎÂˆBˆ[—ÙÚ]
+›ÛÝ	–Èš[š]—JOÎÂˆ[—ÙÚ]
+ˆ›ÛÝˆ	–È˜Y‹Ø\™ÛËÛ[‹œÜ˜ËÛX‹œœÈ‹\ÝËÜšXÚ[™ËœœÈ—Kˆ
+OÎÂˆ]ÛÛ[Z]H[—ØÛÛ[X[™
+ˆ™Ú]‹ˆÛÛYJ›ÛÝ
+Kˆ	–Âˆ‹XÈ‹ˆ\Ù\‹›˜[YOT’Tˆ\Ý‹ˆ‹XÈ‹ˆ\Ù\‹™[XZ[\š\^[\Kš[˜[Y‹ˆ˜ÛÛ[Z]‹ˆ‹[H‹ˆ™š^\™H‹ˆKˆ
+OÎÂˆ\ÜÙ\JˆÛÛ[Z]œÝ]\ËœÝXØÙ\ÜÊ
+Kˆœ›ÙXÙ\ˆš^\™HÛÛ[Z]˜Z[YˆØÛÛ[Z]ßH‚ˆ
+NÂˆÚÊ
+
+JBŸB‚‹ËËÈ[Ý™HHš^\™H™\ÜÚ]ÜžHÈH™]È[\HÛÛ[Z]ÛÈH]\‹X›Ý[™‹ËËÈ™\ËY^ÜÝ\™H\Y˜XÝ\È[™XYÙK[Ü™\™YY\ˆ[ˆX\›Y\ˆÛ™H
+ÌŽLŒŠK‚™›ˆY˜[˜ÙWÙš^\™WÚXY
+›ÛÝˆ	”]Y\ÜØYÙNˆ	œÝŠHOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]ÛÛ[Z]H[—ØÛÛ[X[™
+ˆ™Ú]‹ˆÛÛYJ›ÛÝ
+Kˆ	–Âˆ‹XÈ‹ˆ\Ù\‹›˜[YOT’Tˆ\Ý‹ˆ‹XÈ‹ˆ\Ù\‹™[XZ[\š\^[\Kš[˜[Y‹ˆ˜ÛÛ[Z]‹ˆ‹KX[ÝËY[\H‹ˆ‹[H‹ˆY\ÜØYÙKˆKˆ
+OÎÂˆ\ÜÙ\JˆÛÛ[Z]œÝ]\ËœÝXØÙ\ÜÊ
+Kˆ›[Ý™[Y[ÛÛ[Z]˜Z[YˆØÛÛ[Z]ßH‚ˆ
+NÂˆÚÊ
+
+JBŸB‚™›ˆ™XÛÛ[Z]Ü™\×Ù^ÜÝ\™WÚœÛÛŠ]]˜]ÎˆÝš[™ÊHOˆÝš[™ÈÂˆ]XÙZÛ\ˆHœÚLMŽŒŽÂˆ]Ù^HH—˜ÛÛ[ÜÚLM—ˆŽÂˆYˆ]ÛÛYJÙ^WÜÝ\
+HH˜]Ë™š[™
+Ù^JHÂˆ]˜[YWÜÙX\˜ÚÜÝ\HÙ^WÜÝ\
+ÈÙ^K›[Š
+NÂˆYˆ]ÛÛYJ˜[YWÛÙ™œÙ]
+HH˜]ÖÝ˜[YWÜÙX\˜ÚÜÝ\‹—K™š[™
+	È‰ÊHÂˆ]˜[YWÜÝ\H˜[YWÜÙX\˜ÚÜÝ\
+È˜[YWÛÙ™œÙ]
+ÈNÂˆYˆ]ÛÛYJ[™ÛÙ™œÙ]
+HH˜]ÖÝ˜[YWÜÝ\‹—K™š[™
+	È‰ÊHÂˆ˜]Ëœ™\XÙWÜ˜[™ÙJ˜[YWÜÝ\‹˜[YWÜÝ\
+È[™ÛÙ™œÙ]XÙZÛ\ŠNÂˆBˆBˆBˆ]]]\Ú\ˆHÚLMŽŽ›™]Ê
+NÂˆ\Ú\‹\]J˜]Ë˜\×Øž]\Ê
+JNÂˆ]YÙ\ÝH\Ú\‹™š[˜[^™J
+NÂˆ]YÙ\ÝH›Ü›X]JˆœÚLMŽžßH‹ˆYÙ\Ýˆš]\Š
+Bˆ›X\
+ž]_›Ü›X]JžØž]NŒžHŠJBˆ˜ÛÛXÝŽÝš[™ÏŠ
+Bˆ
+NÂˆ˜]ÈH˜]Ëœ™\XÙJXÙZÛ\‹	™YÙ\Ý
+NÂˆ˜]ÂŸB‚‹ËËÈH˜[Y]YÛÛ[ÛÛ[Z]Y[XÛ\™YžHH›Ý[™™\ËY^ÜÝ\™B‹ËËÈ\Y˜XÝˆ[\\‹XÛÛ›ÛØ\Ù\È™]Z[ˆ\ÈYÙ\ÝZ\ˆ
+ÜšYÚ[˜[œÂ‹ËËÈ]]]Y
+H[ˆZ\ˆ˜Z[\™HY\ÜØYÙ\È
+ÌŽLŒˆˆŠK‚™›ˆ™\×Ù^ÜÝ\™WØ\Y˜XÝØÛÛ[ÙYÙ\Ý
+ˆ]ˆ	”]ŠHOˆ™\Ý[Ýš[™Ë›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]˜[YNˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê]
+OÊOÎÂˆ˜[YBˆœÚ[\Š‹Ø\Y˜XÝØÛÛ[ÜÚLMˆŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÜÝŠBˆ›X\
+ÝŽŽ×ÜÝš[™ÊBˆ›Ú×ÛÜ—Ù[ÙJÂˆ›Ü›X]Jˆ˜\Y˜XÝßH\ÈZ\ÜÚ[™È\Y˜XÝ˜ÛÛ[ÜÚLMˆ‹ˆ]™\Ü^J
+Bˆ
+Bˆš[Ê
+BˆJBŸB‚™›ˆÚLM—Ú^Øž]\Êž]\Îˆ	–ÝNJHOˆÝš[™ÈÂˆ]]]\Ú\ˆHÚLMŽŽ›™]Ê
+NÂˆ\Ú\‹\]Jž]\ÊNÂˆ]YÙ\ÝH\Ú\‹™š[˜[^™J
+NÂˆ›Ü›X]JˆœÚLMŽžßH‹ˆYÙ\Ýˆš]\Š
+Bˆ›X\
+ž]_›Ü›X]JžØž]NŒžHŠJBˆ˜ÛÛXÝŽÝš[™ÏŠ
+Bˆ
+BŸB‚™›ˆš[™Ü™\×Ù^ÜÝ\™WÙš^\™WÝÚ]ÝÛÜšÝ™YJˆ›ÛÝˆ	”]ˆÛÝ\˜ÙNˆ	”]ˆ\Ý[˜][ÛŽˆ	”]ˆÛÜšÝ™YNˆ	œÝ‹ŠHOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]]]˜[YNˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊÛÝ\˜ÙJOÊOÎÂˆ˜[YVÈœØÚ[XWÝ™\œÚ[Ûˆ—HHÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™ÊŒŒÈ‹×ÜÝš[™Ê
+JNÂˆ˜[YVÈœ[—ÜÝ]\È—HHÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™Ê˜ÛÛ\]H‹×ÜÝš[™Ê
+JNÂˆ]XYHÛÛ˜Ü™]WÙš^\™WÜ™\ÜÚ]ÜžWÚXY
+›ÛÝ
+OÎÂˆ]›ÛÝÚY[]HH›ÛÝ˜Ø[›ÛšXØ[^™J
+OË×ÜÝš[™×ÛÜÜÞJ
+Kœ™\XÙJ	×	Ë‹ÈŠNÂˆ]XÙZÛ\ˆHÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™ÊˆœÚLMŽŒ‹×ÜÝš[™Ê
+Kˆ
+NÂˆ˜[YVÈ˜\Y˜XÝ—HHÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšÚ[™Žˆœ™\×Ù^ÜÝ\™H‹ˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒH‹ˆ˜Ø[›ÛšXØ[^˜][ÛˆŽˆœ˜]×ÚœÛÛ—ÜXÙZÛ\—ÝŒH‹ˆœ›ÙXÙ\ˆŽˆÈÛÛŽˆœš\ˆ‹™\œÚ[ÛˆŽˆŒŒLKŒŸKˆœ™\ÜÚ]ÜžHŽˆÈœ›ÛÝŽˆ›ÛÝÚY[]KšXYŽˆXYKˆ˜[˜[\Ú\ÈŽˆÈ™›Ü›X]Žˆœ™\ËY^ÜÝ\™KZœÛÛˆ‹›[ÙHŽˆ™˜Y‹˜˜\ÙWÜ™]š\Ú[ÛˆŽˆ[š[œ]ÚY[]HŽˆš[œ]™›ŒXMŒŒH‹˜ÛÛ[X[™Žˆœš\ˆÚXÚÈKY›Ü›X]™\ËY^ÜÝ\™KZœÛÛˆ‹œ›Ùš[HŽˆ™˜Y‹ÛÜšÝ™YHŽˆÛÜšÝ™Y_KˆœÛ˜\ÚÝÚY[]HŽˆ›Ü›X]JœÛ˜\ÚÝš[œ]™›ŒXMŒŒNÜ™]š\Ú[ÛŽžÚXYHŠKˆ˜ÛÛ[ÜÚLMˆŽˆXÙZÛ\‹ˆJNÂˆ]˜]ÈHÙ\™WÚœÛÛŽŽ×ÜÝš[™×Ü™]J	˜[YJOÎÂˆÝŽ™œÎŽÜš]J\Ý[˜][Û‹™XÛÛ[Z]Ü™\×Ù^ÜÝ\™WÚœÛÛŠ˜]ÊJOÎÂˆÚÊ
+
+JBŸB‚™›ˆ›Ü›X[^™WÙÙ[™\˜]YØ]
+^ˆÝš[™ÊHOˆÝš[™ÈÂˆ^›[™\Ê
+Bˆ›X\
+[™_ÂˆYˆ[™Kš[WÜÝ\
+
+KœÝ\×ÝÚ]
+—™Ù[™\˜]YØ]ŽˆŠHÂˆˆ™Ù[™\˜]YØ]ŽˆŒŒ‹LKLULŽŒŒ—‹‹×ÜÝš[™Ê
+BˆH[ÙHÂˆ[™K×ÜÝš[™Ê
+BˆBˆJBˆ˜ÛÛXÝŽ™XÏÏŠ
+Bˆš›Ú[Š—ˆŠBŸB‚™›ˆ›Ü›X[^™WØYÙ[Ý™\šYžWÙš^\™J^ˆ	œÝŠHOˆ™\Ý[Ýš[™Ë›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]]]˜[YNˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ^
+OÎÂˆËÈH›Ý[™\Y˜XÝÛÛ[ÛÛ[Z]Y[È[X™YH]™H™\ÜÚ]ÜžHXYˆËÈ
+ÌŽLŒˆˆŠKÛÈHÛÛ[ˆØ[››Ý[ˆ[NÈ›Ü›X[^™H›ÝÚY\Ë‚ˆYˆ]ÛÛYJ[œ]ÊHH˜[YBˆ™Ù]Û]]
+š[œ]ÈŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÛØš™XÝÛ]]
+BˆÂˆ›ÜˆÙ^H[ˆÈ˜™Y›Ü™WØÛÛ[ÜÚLMˆ‹˜Y\—ØÛÛ[ÜÚLMˆ—HÂˆYˆ[œ]Ë˜ÛÛZ[œ×ÚÙ^JÙ^JHÂˆ[œ]Ëš[œÙ\
+ˆÙ^K×ÜÝš[™Ê
+KˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™ÊÛÛ[ÜÚLMˆ‹×ÜÝš[™Ê
+JKˆ
+NÂˆBˆBˆBˆ]]]™[™\™YHÙ\™WÚœÛÛŽŽ×ÜÝš[™×Ü™]J	˜[YJOÎÂˆ™[™\™Yœ\Ú
+	×‰ÊNÂˆÚÊ™[™\™Y
+BŸB‚™›ˆ›Ü›X[^™WØYÙ[Ü™XÙZ\Ùš^\™J^ˆ	œÝŠHOˆ™\Ý[Ýš[™Ë›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]]]˜[YNˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ^
+OÎÂˆYˆ]ÛÛYJ›Ý™[˜[˜ÙJHH˜[YBˆ™Ù]Û]]
+œ›Ý™[˜[˜ÙHŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÛØš™XÝÛ]]
+BˆÂˆ›Ý™[˜[˜ÙKš[œÙ\
+ˆ™Ù[™\˜]YØ]‹×ÜÝš[™Ê
+KˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™ÊÙ[™\˜]YØ]ˆ‹×ÜÝš[™Ê
+JKˆ
+NÂˆ›Ý™[˜[˜ÙKš[œÙ\
+ˆœš\—Ý™\œÚ[Ûˆ‹×ÜÝš[™Ê
+KˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™Êš\—Ý™\œÚ[Ûˆ‹×ÜÝš[™Ê
+JKˆ
+NÂˆ›Üˆ\Y˜XÝ[ˆÈ˜™Y›Ü™WØ\Y˜XÝ‹˜Y\—Ø\Y˜XÝ‹™\šYžWØ\Y˜XÝ—HÂˆYˆ]ÛÛYJ\Y˜XÝ
+HH›Ý™[˜[˜ÙBˆ™Ù]Û]]
+\Y˜XÝ
+Bˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÛØš™XÝÛ]]
+BˆÂˆ\Y˜XÝš[œÙ\
+ˆœÚLMˆ‹×ÜÝš[™Ê
+KˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™ÊÚLMˆ‹×ÜÝš[™Ê
+JKˆ
+NÂˆBˆBˆBˆ]Øš™XÝH˜[YBˆ˜\×ÛØš™XÝÛ]]
+
+Bˆ›Ú×ÛÜŠ˜YÙ[™XÙZ\š^\™HÚÝ[™HH”ÓÓˆØš™XÝŠOÎÂˆYˆØš™XÝ˜ÛÛZ[œ×ÚÙ^J˜[˜[\Ú\×ÛÝ]ÛÛYWÙ\œ›ÜˆŠHÂˆØš™XÝš[œÙ\
+ˆ˜[˜[\Ú\×ÛÝ]ÛÛYWÙ\œ›Üˆ‹×ÜÝš[™Ê
+KˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™Ê[˜[\Ú\×ÛÝ]ÛÛYWÙ\œ›Üˆ‹×ÜÝš[™Ê
+JKˆ
+NÂˆBˆËÈÛ›H[˜[\Ú\×ÛÝ]ÛÛYK˜[˜[\Ú\×ØÛÛ\]X\È\ÜÙ\YÙ\\˜][H™[ÝÎÂˆËÈHÛÝ[È[™Ù[X[XÈYÙ\Ý\™HÛÝ\˜ÙK\Ù[œÚ]]™KÚ[H\Èš^\™BˆËÈ[œÈH™XÙZ\[™[ÜH[™›Ú™XÝ[ÛˆÝ]\Ë‚ˆYˆØš™XÝ˜ÛÛZ[œ×ÚÙ^J˜[˜[\Ú\×ÛÝ]ÛÛYHŠHÂˆØš™XÝš[œÙ\
+˜[˜[\Ú\×ÛÝ]ÛÛYH‹×ÜÝš[™Ê
+KÙ\™WÚœÛÛŽŽ•˜[YNŽ“[
+NÂˆBˆ]]]™[™\™YHÙ\™WÚœÛÛŽŽ×ÜÝš[™×Ü™]J	˜[YJOÎÂˆ™[™\™Yœ\Ú
+	×‰ÊNÂˆÚÊ™[™\™Y
+BŸB‚™›ˆ›Ü›X[^™WÝ[˜Ú[™ÙYÜ™\×Ù^ÜÝ\™WÜ›ÙXÙ\—Ùš^\™Jˆ]]˜[YNˆÙ\™WÚœÛÛŽŽ•˜[YKŠHOˆ™\Ý[Ù\™WÚœÛÛŽŽ•˜[YK›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]š^\™WÜ›ÛÝHÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[Š™š^\™\ËØ›Ý[™\žWÙØ\Ú[œ]ŠNÂˆ]Ø[›ÛšXØ[Ü›ÛÝHš^\™WÜ›ÛÝˆ˜Ø[›ÛšXØ[^™J
+OÂˆ×ÜÝš[™×ÛÜÜÞJ
+Bˆœ™\XÙJ	×	Ë‹ÈŠNÂˆ]›ÙXÙYÜ›ÛÝHœÛÛ—ÜÚ[\—ÜÝŠ	˜[YK‹Ø\Y˜XÝÜ™\ÜÚ]ÜžKÜ›ÛÝŠOÎÂˆ\ÜÙ\Û™HJˆ›ÙXÙYÜ›ÛÝ‹ˆ‹ˆH›ÙXÝ[Ûˆ™\ËY^ÜÝ\™H›Ý]H]\Ý[Z]HØ[›ÛšXØ[XœÛÛ]H›ÛÝ‚ˆ
+NÂˆ\ÜÙ\Ù\HJ›ÙXÙYÜ›ÛÝØ[›ÛšXØ[Ü›ÛÝ
+NÂ‚ˆ]ÝX›WÚXYHŽLŽLÙMŽÎYLMÌ™LNLX˜˜ŒØ™YLÌŽÂˆ˜[YVÈ˜\Y˜XÝ—VÈœ™\ÜÚ]ÜžH—VÈœ›ÛÝ—HHÙ\™WÚœÛÛŽŽšœÛÛˆJ‹ˆŠNÂˆ˜[YVÈ˜\Y˜XÝ—VÈœ™\ÜÚ]ÜžH—VÈšXY—HHÙ\™WÚœÛÛŽŽšœÛÛˆJÝX›WÚXY
+NÂˆ˜[YVÈ˜\Y˜XÝ—VÈ˜[˜[\Ú\È—VÈÛÜšÝ™YH—HHÙ\™WÚœÛÛŽŽšœÛÛˆJ™\HŠNÂˆ][œ]ÚY[]HHœÛÛ—ÜÚ[\—ÜÝŠ	˜[YK‹Ø\Y˜XÝØ[˜[\Ú\ËÚ[œ]ÚY[]HŠOÎÂˆ˜[YVÈ˜\Y˜XÝ—VÈœÛ˜\ÚÝÚY[]H—HBˆÙ\™WÚœÛÛŽŽšœÛÛˆJ›Ü›X]JœÛ˜\ÚÝžÚ[œ]ÚY[]_NÜ™]š\Ú[ÛŽžÜÝX›WÚXYHŠJNÂˆ]]]˜]ÈHÙ\™WÚœÛÛŽŽ×ÜÝš[™×Ü™]J	˜[YJOÎÂˆ˜]Ëœ\Ú
+	×‰ÊNÂˆÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œ™XÛÛ[Z]Ü™\×Ù^ÜÝ\™WÚœÛÛŠ˜]ÊJK›X\Ù\œŠ[ÎŽš[ÊBŸB‚™›ˆ\ÜÙ\Ü™\×Ù^ÜÝ\™WÜ™Z™XÝ×Û]]][ÛŠˆÛ˜\ÚÝˆ	œÙ\™WÚœÛÛŽŽ•˜[YKˆ]]]Nˆ[\›“Û˜ÙJ	›]]Ù\™WÚœÛÛŽŽ•˜[YJKˆ^XÝYÙ\œ›ÜŽˆ	œÝ‹ŠHOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]˜[YHH[š\]YWÝ[\ÝÛÜšÜÜXÙJ[˜Ú[™ÙY\›ÙXÙ\‹[]]][ÛˆŠBˆ™š[WÛ˜[YJ
+Bˆ›Ú×ÛÜŠ›]]][Ûˆš^\™H˜[YHÚÝ[^\ÝŠOÂˆ×ÛÝÛ™Y
+
+NÂˆ]›ÛÝHÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[Š\™Ù]Üš\ˆŠKš›Ú[Š˜[YJNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	œ›ÛÝ
+OÎÂˆ]™Y›Ü™HH›ÛÝš›Ú[Š˜™Y›Ü™Kœ™\ËY^ÜÝ\™KšœÛÛˆŠNÂˆ]Y\ˆH›ÛÝš›Ú[Š˜Y\‹œ™\ËY^ÜÝ\™KšœÛÛˆŠNÂˆÝŽ™œÎŽÜš]J	˜™Y›Ü™KÙ\™WÚœÛÛŽŽ×ÜÝš[™×Ü™]JÛ˜\ÚÝ
+OÊOÎÂˆ]]]]]]YHÛ˜\ÚÝ˜ÛÛ™J
+NÂˆ]]]J	›]]]]]Y
+NÂˆÝŽ™œÎŽÜš]J	˜Y\‹Ù\™WÚœÛÛŽŽ×ÜÝš[™×Ü™]J	›]]]Y
+OÊOÎÂˆ]Ý]]H[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–Âˆ˜YÙ[‹ˆ™\šYžH‹ˆ‹K\›ÛÝ‹ˆ‹ˆ‹ˆ‹KX™Y›Ü™H‹ˆ™Y›Ü™K×ÜÝŠ
+K›Ú×ÛÜŠ˜™Y›Ü™H]ÚÝ[™H]‹NŠOËˆ‹KXY\ˆ‹ˆY\‹×ÜÝŠ
+K›Ú×ÛÜŠ˜Y\ˆ]ÚÝ[™H]‹NŠOËˆ‹KZœÛÛˆ‹ˆJOÎÂˆ\ÜÙ\Ù˜Z[\™J	›Ý]]
+NÂˆ]Ý\œˆHÝš[™ÎŽ™œ›ÛWÝ]Ž
+Ý]]œÝ\œŠOÎÂˆ\ÜÙ\JˆÝ\œ‹˜ÛÛZ[œÊ^XÝYÙ\œ›ÜŠKˆ[™^XÝY™Z™XÝ[ÛŽˆÜÝ\œŸH‚ˆ
+NÂˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+›ÛÝ
+OÎÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆ›Ü›X[^™WØYÙ[Ü™XÙZ\Ùš^\™WÜ™Z™XÝ×Û›Û—ÛØš™XÝÚœÛÛŠ
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ›Üˆš^\™H[ˆÈ–×H‹›[—HÂˆYˆ›Ü›X[^™WØYÙ[Ü™XÙZ\Ùš^\™Jš^\™JKš\×ÛÚÊ
+HÂˆ™]\›ˆ\œŠ›Ü›X]J››Û‹[Øš™XÝš^\™HÚÝ[™H™Z™XÝYˆÙš^\™_HŠJNÂˆBˆBˆÚÊ
+
+JBŸB‚™›ˆœÛÛ—ÜÝš[™×ÙšY[
+^ˆ	œÝ‹šY[ˆ	œÝŠHOˆÜ[ÛÝš[™ÏˆÂˆ]]\›ˆH›Ü›X]J—žÙšY[WŽˆˆŠNÂˆ]Ý\H^™š[™
+	œ]\›ŠOÈ
+È]\›‹›[Š
+NÂˆ][™H^ÜÝ\‹—K™š[™
+	È‰ÊOÎÂˆÛÛYJ^ÜÝ\‹œÝ\
+È[™K×ÜÝš[™Ê
+JBŸB‚™›ˆœÛÛ—ÜÚ[\—ÜÝ	ØOŠˆ˜[YNˆ	‰ØHÙ\™WÚœÛÛŽŽ•˜[YKˆÚ[\Žˆ	œÝ‹ŠHOˆ™\Ý[	‰ØHÝ‹›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ˜[YBˆœÚ[\ŠÚ[\ŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÜÝŠBˆ›Ú×ÛÜ—Ù[ÙJ›Ü›X]J™^XÝYÝš[™È]”ÓÓˆÚ[\ˆÜÚ[\ŸXŠKš[Ê
+JBŸB‚™›ˆœÛÛ—ÜÚ[\—Ø›ÛÛ
+ˆ˜[YNˆ	œÙ\™WÚœÛÛŽŽ•˜[YKˆÚ[\Žˆ	œÝ‹ŠHOˆ™\Ý[›ÛÛ›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ˜[YBˆœÚ[\ŠÚ[\ŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×Ø›ÛÛ
+Bˆ›Ú×ÛÜ—Ù[ÙJ›Ü›X]J™^XÝY›ÛÛ]”ÓÓˆÚ[\ˆÜÚ[\ŸXŠKš[Ê
+JBŸB‚™›ˆYÙ[ØœšYY—ÜØ[\WÝÛÜšÜÜXÙJˆX™[ˆ	œÝ‹ŠHOˆ™\Ý[
+]Y‹]YŠK›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]›ÛÝH[š\]YWÝ[\ÝÛÜšÜÜXÙJX™[
+NÂˆËÈÙY\HØ[\H™YH™\™\Ù[]]™HÙˆHØ\™ÛÈXÚØYÙKˆHÛÝ\˜ÙBˆËÈ[™[YÜ˜][Û‹]\Ýš[\È[[[Û˜[H]™H[ˆY™™\™[\™XÝÜšY\ÎÂˆËÈÚ]Ý]HX[šY™\ÝH]]Üš]H[Ù[]\Ý™X][H\È\Ý[˜ÝˆËÈX[šY™\Ý[\ÜÈXÚØYÙ\ËÛÈHXÚÙ]Ø[››Ý™XÛÝ™\ˆH™[]Y\Ý‚ˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	œ›ÛÝ
+OÎÂˆÝŽ™œÎŽÜš]Jˆ›ÛÝš›Ú[ŠØ\™ÛËÛ[ŠKˆ–ÜXÚØYÙWW›˜[YHH˜YÙ[XœšYY‹\Ø[\W—™\œÚ[ÛˆHŒŒKŒ—™Y][ÛˆHŒŒŒW—ˆ‹ˆ
+OÎÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+›ÛÝš›Ú[ŠœÜ˜ÈŠJOÎÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+›ÛÝš›Ú[Š\ÝÈŠJOÎÂˆÝŽ™œÎŽ˜ÛÜJˆ]Ž›™]Ê[ˆJÐT‘Ó×ÓPS’Q‘TÕÑTˆŠJKš›Ú[Š™^[\\ËÜØ[\KÜÜ˜ËÛX‹œœÈŠKˆ›ÛÝš›Ú[ŠœÜ˜ËÛX‹œœÈŠKˆ
+OÎÂˆÝŽ™œÎŽ˜ÛÜJˆ]Ž›™]Ê[ˆJÐT‘Ó×ÓPS’Q‘TÕÑTˆŠJKš›Ú[Š™^[\\ËÜØ[\KÝ\ÝËÜšXÚ[™ËœœÈŠKˆ›ÛÝš›Ú[Š\ÝËÜšXÚ[™ËœœÈŠKˆ
+OÎÂˆ]Y™ˆH›ÛÝš›Ú[Š˜Ú[™ÙK™Y™ˆŠNÂˆÝŽ™œÎŽÜš]Jˆ	™Y™‹ˆ™Y™ˆKYÚ]KÜÜ˜ËÛX‹œœÈ‹ÜÜ˜ËÛX‹œœ×‹KKHKÜÜ˜ËÛX‹œœ×ŠÊÊÈ‹ÜÜ˜ËÛX‹œœ×NH
+ÎH‹[ÛŠÛ™]×ˆ‹ˆ
+OÎÂˆÚÊ
+›ÛÝY™ŠJBŸB‚ˆÖÝ\ÝB™›ˆÛÛ˜Ü™]WÙš^\™WÜ™\ÜÚ]ÜžWÚXYÛX]Ú\×ØWØÛÛ[Z]YÙš^\™J
+B‹Oˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]›ÛÝH[š\]YWÝ[\ÝÛÜšÜÜXÙJ˜ÛÛ˜Ü™]KZXYŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	œ›ÛÝ
+OÎÂˆ[š]ÙÚ]Ùš^\™WÜ™\Ê	œ›ÛÝ
+OÎÂˆ]XÝX[HÛÛ˜Ü™]WÙš^\™WÜ™\ÜÚ]ÜžWÚXY
+	œ›ÛÝ
+OÎÂˆ]^XÝYH[—ØÛÛ[X[™
+ˆ™Ú]‹ˆÛÛYJ	œ›ÛÝ
+Kˆ	–Èœ™]‹\\œÙH‹‹K]™\šYžH‹’PQžØÛÛ[Z]H—Kˆ
+OÎÂˆYˆY^XÝYœÝ]\ËœÝXØÙ\ÜÊ
+HÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ™š^\™H™]‹\\œÙH˜Z[YˆßH‹ˆ›Ý[™YØÛÛ[X[™Ý^
+	™^XÝYœÝ\œŠBˆ
+Bˆš[Ê
+JNÂˆBˆ]^XÝYHÝš[™ÎŽ™œ›ÛWÝ]Ž
+^XÝYœÝÝ]
+OÂˆš[J
+Bˆ×Ø\ØÚZWÛÝÙ\˜Ø\ÙJ
+NÂˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+	œ›ÛÝ
+OÎÂˆYˆXÝX[OH^XÝYÂˆ™]\›ˆ\œŠ›Ü›X]J™š^\™HPQZ\ÛX]ÚˆXÝX[^ØXÝX[H^XÝY^Ù^XÝYHŠKš[Ê
+JNÂˆBˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆš^\™WÜ™\ÜÚ]ÜžWÚXYÜ™Z™XÝ×Ý[œ™\ÛÛ™YÚXYØ[™ÛX[›Ü›YYØXÝ[Ûœ×Ù˜[˜XÚÊ
+B‹Oˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]™\Ý[HÙ[XÝÙš^\™WÜ™\ÜÚ]ÜžWÚXY
+ˆ˜[ÙKˆˆ’PQˆ‹ˆˆ™˜][ˆ[XšYÝ[Ý\È\™Ý[Y[	ÒPQ	È‹ˆÛÛYJ››ÝXKXÛÛ[Z]ŠKˆ
+NÂˆ]\œŠ\œ›ÜŠHH™\Ý[[ÙHÂˆ™]\›ˆ\œŠ[œ™\ÛÛ™YPQ[™^XÝYH™XØ[YHš^\™H]]Üš]H‹×ÜÝš[™Ê
+JNÂˆNÂˆYˆY\œ›Ü‹˜ÛÛZ[œÊœÝÝ]ˆPQŠHY\œ›Ü‹˜ÛÛZ[œÊ™˜][ˆ[XšYÝ[Ý\È\™Ý[Y[ŠHÂˆ™]\›ˆ\œŠ›Ü›X]J™š^\™HPQ\œ›ÜˆÜÝÛÛ[X[™ÛÛ^ˆÙ\œ›ÜŸHŠJNÂˆBˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆš^\™WÜ™\ÜÚ]ÜžWÚXYØXØÙ\×Ý˜[YØXÝ[Ûœ×ØÚXÚÛÝ]Ù˜[˜XÚ×ØY\—ÙÚ]Ù˜Z[\™J
+B‹Oˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]˜[˜XÚÈHŒLŒÍMÎXX˜ÙYŒLŒÍMÎXX˜ÙYŒLŒÍMÈŽÂˆ]XÝX[HÙ[XÝÙš^\™WÜ™\ÜÚ]ÜžWÚXY
+ˆ˜[ÙKˆˆ’PQˆ‹ˆˆ™˜][ˆ[XšYÝ[Ý\È\™Ý[Y[	ÒPQ	È‹ˆÛÛYJ˜[˜XÚÊKˆ
+OÎÂˆYˆXÝX[OH˜[˜XÚÈÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ˜[YXÝ[ÛœÈÚXÚÛÝ]˜[˜XÚÈÚ[™ÙYˆXÝX[^ØXÝX[H^XÝY^Ù˜[˜XÚßH‚ˆ
+JNÂˆBˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆš^\™WÜ™\ÜÚ]ÜžWÚXYÙÙ\×Û›ÝÜ™\XÙWÛX[›Ü›YYÜÝXØÙ\Ü×ÛÝ]]ÝÚ]Ù˜[˜XÚÊ
+B‹Oˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]˜[˜XÚÈHŒLŒÍMÎXX˜ÙYŒLŒÍMÎXX˜ÙYŒLŒÍMÈŽÂˆ]™\Ý[HÙ[XÝÙš^\™WÜ™\ÜÚ]ÜžWÚXY
+YKˆ’PQˆ‹ˆˆ‹ÛÛYJ˜[˜XÚÊJNÂˆ]\œŠ\œ›ÜŠHH™\Ý[[ÙHÂˆ™]\›ˆ\œŠœÝXØÙ\ÜÙ[]Þ[X›ÛXÈÚ]Ý]]\ÙYHXÝ[ÛœÈ˜[˜XÚÈ‹×ÜÝš[™Ê
+JNÂˆNÂˆYˆY\œ›Ü‹˜ÛÛZ[œÊ››Û‹XÛÛ˜Ü™]H™\ÜÚ]ÜžHPQPQŠHÂˆ™]\›ˆ\œŠ›Ü›X]J[™^XÝY›Û‹XÛÛ˜Ü™]HPQ\œ›ÜŽˆÙ\œ›ÜŸHŠJNÂˆBˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆš^\™WÜ™\ÜÚ]ÜžWÚXYØXØÙ\×ÛÛ›WØ[—ÛÜ[Û˜[ÙÚ]Û[™WÙ[™[™Ê
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]ÛÛ[Z]HŒLŒÍMÎXX˜ÙYŒLŒÍMÎXX˜ÙYŒLŒÍMÈŽÂˆ›ÜˆÝÝ][ˆÂˆÛÛ[Z]×ÜÝš[™Ê
+Kˆ›Ü›X]JžØÛÛ[Z]WˆŠKˆ›Ü›X]JžØÛÛ[Z]W—ˆŠKˆHÂˆ]XÝX[HÙ[XÝÙš^\™WÜ™\ÜÚ]ÜžWÚXY
+YKÝÝ]˜\×Øž]\Ê
+Kˆˆ‹›Û™JOÎÂˆYˆXÝX[OHÛÛ[Z]Âˆ™]\›ˆ\œŠ›Ü›X]Jˆ›Ü[Û˜[[™H[™[™ÈÚ[™ÙYÛÛ[Z]Y[]NˆØXÝX[H‚ˆ
+JNÂˆBˆBˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆš^\™WÜ™\ÜÚ]ÜžWÚXYÜ™Z™XÝ×ÝÚ]\ÜXÙWÜYYÜÝXØÙ\Ü×ÛÝ]]
+
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]ÛÛ[Z]HŒLŒÍMÎXX˜ÙYŒLŒÍMÎXX˜ÙYŒLŒÍMÈŽÂˆ›ÜˆÝÝ][ˆÂˆ›Ü›X]JˆØÛÛ[Z]WˆŠKˆ›Ü›X]JžØÛÛ[Z]HˆŠKˆ›Ü›X]JžØÛÛ[Z]W—ˆŠKˆHÂˆ]™\Ý[HÙ[XÝÙš^\™WÜ™\ÜÚ]ÜžWÚXY
+YKÝÝ]˜\×Øž]\Ê
+Kˆˆ‹›Û™JNÂˆYˆ™\Ý[š\×ÛÚÊ
+HÂˆ™]\›ˆ\œŠ›Ü›X]JˆÚ]\ÜXÙK\YYÛÛ[Z]™XØ[YH]]Üš]NˆÜÝÝ]ßH‚ˆ
+JNÂˆBˆBˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆ™\œÚ[Û—Ú\×Ù^XÝØ[™Ü™XÙY\×Ú[ÛÜ—ÛÝ]]Ù›YÜÊ
+HÂˆ]^XÝYH›Ü›X]Jœš\ˆßWˆ‹[ˆJÐT‘Ó×ÔÑ×Õ‘T”ÒSÓˆŠJNÂˆ›Üˆ\™ÜÈ[ˆÂˆ	–È‹K]™\œÚ[Ûˆ—VË‹—Kˆ	–È‹Uˆ—VË‹—Kˆ	–È‹K]™\œÚ[Ûˆ‹‹KZœÛÛˆ—VË‹—Kˆ	–È‹KZœÛÛˆ‹‹K]™\œÚ[Ûˆ—VË‹—Kˆ	–È‹K]™\œÚ[Ûˆ‹‹KZ[—VË‹—Kˆ	–È‹K]™\˜›ÜÙH‹‹K]™\œÚ[Ûˆ—VË‹—Kˆ	–È‹K]™\œÚ[Ûˆ‹‹K]™\˜›ÜÙH—VË‹—KˆHÂˆ]Ý]]H[—Üš\Š\™ÜÊNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂˆ\ÜÙ\Ù\HJˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝÝ]
+Kˆ^XÝYˆ™\œÚ[Ûˆ\™ÝˆØ\™ÜÎßH]\Ý[Z]Û›HHXÚØYÙH™\œÚ[Ûˆ‚ˆ
+NÂˆ\ÜÙ\JˆÝ]]œÝ\œ‹š\×Ù[\J
+Kˆ™\œÚ[Ûˆ\™ÝˆØ\™ÜÎßH[Z]YXYÛ›ÜÝXÜÎˆßH‹ˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝ\œŠBˆ
+NÂˆB‚ˆ]ÜH[—Üš\Š	–È›Ü‹‹K]™\œÚ[Ûˆ—JNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ü
+NÂˆ\ÜÙ\Ù\HJˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›ÜœÝÝ]
+Kˆ›Ü›X]Jœš\‹[ÜßWˆ‹[ˆJÐT‘Ó×ÔÑ×Õ‘T”ÒSÓˆŠJKˆ˜ÛÛ[X[™[ØØ[Ô™\œÚ[Ûˆ]\Ý™]Z[ˆ]ÈX›XÈÝ]]‚ˆ
+NÂˆ\ÜÙ\JÜœÝ\œ‹š\×Ù[\J
+JNÂŸB‚ˆÖÝ\ÝB™›ˆ\ÛÛ]YÚ[œÝ[YØš[˜\žWÝ™\œÚ[Û—ØÛÛ˜XÝÚ\×ÜÚYWÙY™™XÝÙœ™YJ
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]›ÛÝH[š\]YWÝ[\ÝÛÜšÜÜXÙJ™\œÚ[Û‹Z[œÝ[YŠNÂˆËÈÛÝ™\˜YÙH[[Y\ÈÝÛˆÛ›H\È^\›˜[\™XÝÜžNÈH›ÙXÝ™Yš^ˆËÈ™[ÝÈ™[XZ[œÈHÝšXÝÛ˜\ÚÝ[™™Z™XÝÈ]™\žH›Û‹Z\›™\ÜÈ]]][Û‹‚ˆ]ÛÝ™\˜YÙWÜ›ÛÝBˆ[š\š]YØÛÝ™\˜YÙWÚ\×Ù[˜X›Y
+
+K[Š[š\]YWÝ[\ÝÛÜšÜÜXÙJ™\œÚ[Û‹Z[œÝ[Y\›Ùš[HŠJNÂˆ]™\Ý[H
+Oˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆYˆ]ÛÛYJ›Ùš[WÜ›ÛÝ
+HH	˜ÛÝ™\˜YÙWÜ›ÛÝÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+›Ùš[WÜ›ÛÝ
+OÎÂˆBˆ]š[—Ù\ˆH›ÛÝš›Ú[Š˜š[ˆŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	˜š[—Ù\ŠOÎÂˆ]ÛÝ\˜ÙWØš[˜\žHHÝŽœ]Ž”]Ž›™]Ê[ˆJÐT‘Ó×Ð’S—ÑVWÜš\ˆŠJNÂˆ][œÝ[YØš[˜\žHHš[—Ù\‹š›Ú[ŠYˆÙ™ÈJÚ[™ÝÜÊHÈœš\‹™^HˆH[ÙHÈœš\ˆˆJNÂˆÝŽ™œÎŽ˜ÛÜJÛÝ\˜ÙWØš[˜\žK	š[œÝ[YØš[˜\žJOÎÂ‚ˆ]ÛÛ™šY×Ü]H›ÛÝš›Ú[Šœš\‹Û[ŠNÂˆÝŽ™œÎŽÜš]J	˜ÛÛ™šY×Ü]\È\È›Ý˜[YÓSˆŠOÎÂˆ]ÛÛ™šY×Ø™Y›Ü™HHÝŽ™œÎŽœ™XY
+	˜ÛÛ™šY×Ü]
+OÎÂˆ]™Y›Ü™HHÛ˜\ÚÝÝ™YJ	œ›ÛÝ
+OÎÂˆ]\Y˜XÝÜ]H›ÛÝš›Ú[Š\™Ù]Üš\‹Ü™\ÜËÝ™\œÚ[Û‹šœÛÛˆŠNÂˆ]^XÝYÝ™\œÚ[ÛˆH›Ü›X]Jœš\ˆßWˆ‹[ˆJÐT‘Ó×ÔÑ×Õ‘T”ÒSÓˆŠJNÂˆ]^XÝYÛÜÝ™\œÚ[ÛˆH›Ü›X]Jœš\‹[ÜßWˆ‹[ˆJÐT‘Ó×ÔÑ×Õ‘T”ÒSÓˆŠJNÂˆ]ÛÜšÜÜXÙWÝ^HÛÜšÜÜXÙWÜ›ÛÝ
+
+K×ÜÝš[™×ÛÜÜÞJ
+K×ÜÝš[™Ê
+NÂˆ]Ø\Ù\ÈHÂˆ™XÈVÈ‹K]™\œÚ[Ûˆ—Kˆ™XÈVÈ‹Uˆ—Kˆ™XÈVÈ‹KZ[‹‹K]™\œÚ[Ûˆ—Kˆ™XÈVÈ‹]ˆ‹‹K]™\œÚ[Ûˆ—Kˆ™XÈVÈ‹K]™\œÚ[Ûˆ‹‹]ˆ—Kˆ™XÈVÈ˜ÚXÚÈ‹‹K]™\œÚ[Ûˆ—Kˆ™XÈVÈ˜ÚXÚÈ‹‹KYY™ˆ‹‹K]™\œÚ[Ûˆ—Kˆ™XÈVÈ›Ü‹‹K]™\œÚ[Ûˆ—KˆNÂ‚ˆ›Üˆ\™ÜÈ[ˆØ\Ù\ÈÂˆ]\™ÜÈH\™ÜË˜\×ÜÛXÙJ
+NÂˆ]›Ùš[HHÛÝ™\˜YÙWÜ›ÛÝˆ˜\×Ü™YŠ
+Bˆ›X\
+›ÛÝ›ÛÝš›Ú[Šœš\‹I\I[Kœ›Ùœ˜]ÈŠJNÂˆ]Ý]]H[—Ú\ÛÛ]YØš[˜\žJ	š[œÝ[YØš[˜\žK	œ›ÛÝ\™ÜË›Ùš[K˜\×Ù\™YŠ
+JOÎÂˆ]ÝÝ]HÝš[™ÎŽ™œ›ÛWÝ]Ž
+Ý]]œÝÝ]˜ÛÛ™J
+JOÎÂˆ]Ý\œˆHÝš[™ÎŽ™œ›ÛWÝ]Ž
+Ý]]œÝ\œ‹˜ÛÛ™J
+JOÎÂˆYˆ\™ÜÖÌHOH›ÜˆÂˆYˆ[Ý]]œÝ]\ËœÝXØÙ\ÜÊ
+HÝÝ]OH^XÝYÛÜÝ™\œÚ[Ûˆ\Ý\œ‹š\×Ù[\J
+BˆÂˆ™]\›ˆ\œŠ›Ü›X]Jˆš\ÛÛ]YÜ™\œÚ[ÛˆÛÛ˜XÝ˜Z[Y›ÜˆØ\™ÜÎßNˆÝ]\Ï^ÎßKÝÝ]^ÜÝÝ]ßKÝ\œ^ÜÝ\œŽßH‹ˆÝ]]œÝ]\Ë˜ÛÙJ
+Bˆ
+Bˆš[Ê
+JNÂˆBˆH[ÙHYˆ\™ÜÖÌHOH˜ÚXÚÈˆÂˆ]\×ÙY™—Ùš[WØØ\ÙHH\™ÜË›[Š
+HOHÈ	‰ˆ\™ÜÖÌWHOH‹KYY™ˆŽÂˆ]\×ØÛÛ™šY×Ù\œ›ÜˆHÝ\œ‹˜ÛÛZ[œÊš[˜[Yš\‹Û[ŠNÂˆYˆÝ]]œÝ]\ËœÝXØÙ\ÜÊ
+BˆÝÝ]˜ÛÛZ[œÊœš\ˆ8 %ŠBˆÝÝ]˜ÛÛZ[œÊ^XÝYÝ™\œÚ[Û‹š[WÙ[™
+
+JBˆÝ\œ‹˜ÛÛZ[œÊ^XÝYÝ™\œÚ[Û‹š[WÙ[™
+
+JBˆÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ˜ÚXÚÈ™\œÚ[Û‹[ZÙH[œ]\ØØ\Y]ÈÛÛ[X[™›Ý[™\žH›ÜˆØ\™ÜÎßNˆÝ]\Ï^ÎßKÝÝ]^ÜÝÝ]ßKÝ\œ^ÜÝ\œŽßH‹ˆÝ]]œÝ]\Ë˜ÛÙJ
+Bˆ
+Bˆš[Ê
+JNÂˆBˆYˆ\×ÙY™—Ùš[WØØ\ÙBˆ	‰ˆZ\×ØÛÛ™šY×Ù\œ›Ü‚ˆ	‰ˆ
+\Ý\œ‹˜ÛÛZ[œÊœ™\ÛÛ™YÛÜšÜÜXÙH›ÛÝÈŠBˆ\Ý\œ‹˜ÛÛZ[œÊ™˜Z[YÈ™XYY™ˆš[HK]™\œÚ[ÛˆŠJBˆÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ˜ÚXÚÈKYY™ˆK]™\œÚ[ÛˆY›Ý™\ÜH^XÝYÛÜšÜÜXÙKÙY™ˆXYÛ›ÜÝXÎˆÝ]\Ï^ÎßKÝ\œ^ÜÝ\œŽßH‹ˆÝ]]œÝ]\Ë˜ÛÙJ
+Bˆ
+Bˆš[Ê
+JNÂˆBˆH[ÙHYˆ[Ý]]œÝ]\ËœÝXØÙ\ÜÊ
+HÝÝ]OH^XÝYÝ™\œÚ[Ûˆ\Ý\œ‹š\×Ù[\J
+HÂˆ™]\›ˆ\œŠ›Ü›X]Jˆš\ÛÛ]YÜ[]™[™\œÚ[ÛˆÛÛ˜XÝ˜Z[Y›ÜˆØ\™ÜÎßNˆÝ]\Ï^ÎßKÝÝ]^ÜÝÝ]ßKÝ\œ^ÜÝ\œŽßH‹ˆÝ]]œÝ]\Ë˜ÛÙJ
+Bˆ
+Bˆš[Ê
+JNÂˆB‚ˆ]Y\ˆHÛ˜\ÚÝÝ™YJ	œ›ÛÝ
+OÎÂˆYˆY\ˆOH™Y›Ü™HÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ™\œÚ[Û‹[ZÙH[œ]Ú[™ÙYH\ÛÛ]YÝÙ›ÜˆØ\™ÜÎßN—žßH‹ˆÛ˜\ÚÝÙY™Š	˜™Y›Ü™K	˜Y\ŠBˆ
+Bˆš[Ê
+JNÂˆBˆYˆXÛÛ™šY×Ü]™^\ÝÊ
+H\Y˜XÝÜ]™^\ÝÊ
+HÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ™\œÚ[Û‹[ZÙH[œ]Ú[™ÙYÛÛ™šYËØ\Y˜XÝ]È›ÜˆØ\™ÜÎßH‚ˆ
+Bˆš[Ê
+JNÂˆBˆ]ÛÛ™šY×ØY\ˆHÝŽ™œÎŽœ™XY
+	˜ÛÛ™šY×Ü]
+OÎÂˆYˆÛÛ™šY×ØY\ˆOHÛÛ™šY×Ø™Y›Ü™HÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ™\œÚ[Û‹[ZÙH[œ]Ú[™ÙYH™KY^\Ý[™ÈÛÛ™šYÈ›ÜˆØ\™ÜÎßH‚ˆ
+Bˆš[Ê
+JNÂˆBˆ]\×ÙY™—Ùš[WØØ\ÙHH\™ÜË›[Š
+HOHÈ	‰ˆ\™ÜÖÌWHOH‹KYY™ˆŽÂˆYˆZ\×ÙY™—Ùš[WØØ\ÙBˆ	‰ˆ
+ÝÝ]˜ÛÛZ[œÊ	ÛÜšÜÜXÙWÝ^
+HÝ\œ‹˜ÛÛZ[œÊ	ÛÜšÜÜXÙWÝ^
+JBˆÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ™\œÚ[Û‹[ZÙH[œ]\[™YÛˆHÛÜšÜÜXÙH]›ÜˆØ\™ÜÎßH‚ˆ
+Bˆš[Ê
+JNÂˆBˆBˆÚÊ
+
+JBˆJJ
+NÂˆ]ÛX[\HÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+	œ›ÛÝ
+NÂˆ]›Ùš[WØÛX[\HÛX[\Ý[\Ù\ŠÛÝ™\˜YÙWÜ›ÛÝ˜\×Ù\™YŠ
+JNÂˆX]Ú
+™\Ý[ÛX[\›Ùš[WØÛX[\
+HÂˆ
+ÚÊ
+
+JKÚÊ
+
+JKÚÊ
+
+JJHOˆÚÊ
+
+JKˆ
+\œŠ\œ›ÜŠKÚÊ
+
+JKÚÊ
+
+JJHOˆ\œŠ\œ›Ü‹×ÜÝš[™Ê
+JKˆ
+ÚÊ
+
+JK\œŠ\œ›ÜŠKÚÊ
+
+JJHOˆ\œŠ›Ü›X]J˜ÛX[\˜Z[YˆÙ\œ›ÜŸHŠJKˆ
+ÚÊ
+
+JKÚÊ
+
+JK\œŠ\œ›ÜŠJHOˆ\œŠ›Ü›X]J˜ÛÝ™\˜YÙHÛX[\˜Z[YˆÙ\œ›ÜŸHŠJKˆ
+\œŠ\œ›ÜŠK\œŠÛX[\Ù\œ›ÜŠKÚÊ
+
+JJHOˆ\œŠ›Ü›X]Jˆ™\œÚ[ÛˆÛÛ˜XÝ˜Z[YˆÙ\œ›ÜŸNÈÛX[\˜Z[YˆØÛX[\Ù\œ›ÜŸH‚ˆ
+JKˆ
+\œŠ\œ›ÜŠKÚÊ
+
+JK\œŠ›Ùš[WÙ\œ›ÜŠJHOˆ\œŠ›Ü›X]Jˆ™\œÚ[ÛˆÛÛ˜XÝ˜Z[YˆÙ\œ›ÜŸNÈÛÝ™\˜YÙHÛX[\˜Z[YˆÜ›Ùš[WÙ\œ›ÜŸH‚ˆ
+JKˆ
+ÚÊ
+
+JK\œŠÛX[\Ù\œ›ÜŠK\œŠ›Ùš[WÙ\œ›ÜŠJHOˆ\œŠ›Ü›X]Jˆ˜ÛX[\˜Z[YˆØÛX[\Ù\œ›ÜŸNÈÛÝ™\˜YÙHÛX[\˜Z[YˆÜ›Ùš[WÙ\œ›ÜŸH‚ˆ
+JKˆ
+\œŠ\œ›ÜŠK\œŠÛX[\Ù\œ›ÜŠK\œŠ›Ùš[WÙ\œ›ÜŠJHOˆ\œŠ›Ü›X]Jˆ™\œÚ[ÛˆÛÛ˜XÝ˜Z[YˆÙ\œ›ÜŸNÈÛX[\˜Z[YˆØÛX[\Ù\œ›ÜŸNÈÛÝ™\˜YÙHÛX[\˜Z[YˆÜ›Ùš[WÙ\œ›ÜŸH‚ˆ
+JKˆBŸB‚ˆÖÝ\ÝB™›ˆ[Ü[œÊ
+HÂˆ]Ý]]H[—Üš\Š	–È‹KZ[—JNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂˆ]ÝÝ]HÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝÝ]
+NÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ™š[™Ú[™ÙY\ÝÛÙHÚ\™H™X\˜žH\ÝÈŠJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ•\ØYÙNˆŠJNÂŸB‚‹ËËÈHY˜][ØÜ™Y[ˆ\ÈHš\œÝØÜ™Y[‹›ÝHØ][ÙËˆÝXœÝš[™ÈÚXÚÜÈ[Û™B‹ËËÈÛÝ[Ý[\ÜÈYˆ]Ü™]È˜XÚÈ[ÈHLK[[™HÛÛ[X[™[\]\ÙYÈ™K‹ËËÈÛÈ\È[œÈH›Ý\ˆ[™ÜÈHš\œÝ][YH™XY\ˆ]\ÝÙ]Ú]Ý]Ü[™È[Ž‚‹ËËÈH›Ý[™YØÜ™Y[‹Û™H[›˜X›Hš\œÝXÝ[Û‹HYš\ÛÜžH›Ý[™\žK[™B‹ËËÈ›Ý]HÈH™\Ý
+ÌMŒLÊK‚ˆÖÝ\ÝB™›ˆ[ÛXY×ÝÚ]ØWØ›Ý[™YÙš\œÝÜØÜ™Y[—Ý]Ü›Ý]\×ÛÛØ\™
+
+HÂˆ]Ý]]H[—Üš\Š	–È‹KZ[—JNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂˆ]ÝÝ]HÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝÝ]
+NÂ‚ˆ][™\ÈHÝÝ]›[™\Ê
+K˜ÛÝ[
+
+NÂˆ\ÜÙ\Jˆ[™\ÈHˆHY˜][[ØÜ™Y[ˆÚÝ[Ý^HØØ[›˜X›KÛÝÛ[™\ßH[™\Î—žÜÝÝ]H‚ˆ
+NÂˆ\ÜÙ\JˆÝÝ]˜ÛÛZ[œÊœš\ˆØÝÜˆŠKˆHš\œÝØÜ™Y[ˆÚÝ[˜[YHH[›˜X›Hš\œÝXÝ[Û‹ÛÝ—žÜÝÝ]H‚ˆ
+NÂˆ\ÜÙ\JˆÝÝ]˜ÛÛZ[œÊ™Ù\È›Ý[ˆ]][ÈŠKˆHYš\ÛÜžH›Ý[™\žH]\Ý›Ý™H™Z[™KX[ÛÝ—žÜÝÝ]H‚ˆ
+NÂˆ\ÜÙ\JˆÝÝ]˜ÛÛZ[œÊœš\ˆ[KX[ŠKˆHš\œÝØÜ™Y[ˆÚÝ[›Ý]HÈH[™Y™\™[˜ÙKÛÝ—žÜÝÝ]H‚ˆ
+NÂŸB‚‹ËËÈKX[\ÈH\ØØ\H]ÚH›Ý[™YØÜ™Y[ˆ›ÛZ\Ù\ËÛÈ]\ÈÈ™B‹ËËÈ™XXÚX›Hœ›ÛHHš[˜\žH[™XÝX[HØ\œžHHÛÛ[X[™ÈHÚÜØÜ™Y[‚‹ËËÈ›ÜË‚ˆÖÝ\ÝB™›ˆ[Ø[Üš[×ÝWÙ[ØÛÛ[X[™Ü™Y™\™[˜ÙJ
+HÂˆ]Ý]]H[—Üš\Š	–Èš[‹‹KX[—JNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂˆ]ÝÝ]HÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝÝ]
+NÂ‚ˆ]ÚÜH[—Üš\Š	–È‹KZ[—JNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	œÚÜ
+NÂˆ]ÚÜÜÝÝ]HÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	œÚÜœÝÝ]
+NÂˆ\ÜÙ\JˆÝÝ]›[™\Ê
+K˜ÛÝ[
+
+HˆÚÜÜÝÝ]›[™\Ê
+K˜ÛÝ[
+
+Kˆš[KX[ÚÝ[™HÛ™Ù\ˆ[ˆHY˜][ØÜ™Y[‹ÛÝßHœÈßH[™\È‹ˆÝÝ]›[™\Ê
+K˜ÛÝ[
+
+KˆÚÜÜÝÝ]›[™\Ê
+K˜ÛÝ[
+
+Bˆ
+NÂ‚ˆ›ÜˆÛÛ[X[™[ˆÈœš\ˆ‹\Ý[[X\žH‹œš\ˆ[››Ý][ÛœÈ‹œš\ˆØ]H]˜[X]H—HÂˆ\ÜÙ\JˆÝÝ]˜ÛÛZ[œÊÛÛ[X[™
+Kˆš[KX[ÚÝ[ØÝ[Y[ØÛÛ[X[™XÛÝ—žÜÝÝ]H‚ˆ
+NÂˆBŸB‚ˆÖÝ\ÝB™›ˆ[šÛ›ÝÛ—ØÛÛ[X[™Ý\×Ü™\Ü×Û™X\™\ÝÚÛ›ÝÛ—ØÛÛ[X[™
+
+HÂˆ]Ý]]H[—Üš\Š	–È˜ÚZØÈ—JNÂˆ\ÜÙ\Ù˜Z[\™J	›Ý]]
+NÂˆ]Ý\œˆHÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝ\œŠNÂˆ\ÜÙ\JˆÝ\œ‹˜ÛÛZ[œÊ[šÛ›ÝÛˆÛÛ[X[™˜ÚZØ×‹ˆY[ÝHYX[ˆÚXÚØÈ[ˆš\ˆKZ[ˆŠKˆœÝ\œˆÚÝ[[˜ÛYHH\È™XÛÝ™\žH[ÛÝ‚žÜÝ\œŸH‚ˆ
+NÂŸB‚ˆÖÝ\ÝB™›ˆÚXÚ×Ú[X[—ÛÝ]]Ü™\Ü×ÜØ[\WÙš[™[™ÜÊ
+HÂˆ]›ÛÝHÛÜšÜÜXÙWÜ›ÛÝ
+
+K™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Y™ˆHØ[\WÙY™Š
+NÂˆ\ÜÙ\JY™‹™^\ÝÊ
+JNÂ‚ˆ]Y™ˆHY™‹™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Ý]]H[—Üš\Š	–È˜ÚXÚÈ‹‹K\›ÛÝ‹	œ›ÛÝ‹KYY™ˆ‹	™Y™—JNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂ‚ˆ]ÝÝ]HÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝÝ]
+NÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ”Ý[[X\žNˆ›Ø™JÊHŠJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ”Ý\\™NˆŠJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ”Ý]XÈ^ÜÝ\™NˆÙXZÛWÙ^ÜÙYŠJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ‘]šY[˜ÙNˆŠJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ“Z\ÜÚ[™È\ØÜš[Z[˜]ÜŽˆŠJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ“™^Ý\ˆŠJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ›ÝÙ\‹\š[Üš]Hš[™[™ÊÊHÛZ]YŠJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ‹KY›Ü›X][X[‹Y[ŠJNÂŸB‚ˆÖÝ\ÝB™›ˆÚXÚ×Ùœ›ÛWØWÜÝX˜Ü˜]WÙ\ØÛÜÙ\×ÝÛÜšÜÜXÙWÜ›ÛÝØ[™ÚÛ›Üœ×Ù^XÚ]Ü›ÛÝ
+
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]š[ˆH[ˆJÐT‘Ó×Ð’S—ÑVWÜš\ˆŠNÂˆ]ÝX˜Ü˜]HHÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[Š˜Ü˜]\ËÜš\ˆŠNÂˆ][\XÚ]H[—ØÛÛ[X[™
+ˆš[‹ˆÛÛYJ	œÝX˜Ü˜]JKˆ	–È˜ÚXÚÈ‹‹KX˜\ÙH‹’PQ‹‹KY›Ü›X]‹šœÛÛˆ—Kˆ
+Bˆ›X\Ù\œŠ\œ›ÜŸ›Ü›X]Jœ[ˆ[\XÚ]\›ÛÝÚXÚÎˆÙ\œ›ÜŸHŠJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	š[\XÚ]
+NÂˆ]^XÝYÜ›ÛÝHÛÜšÜÜXÙWÜ›ÛÝ
+
+Bˆ˜Ø[›ÛšXØ[^™J
+Bˆ›X\Ù\œŠ\œ›ÜŸ›Ü›X]J˜Ø[›ÛšXØ[^™HÛÜšÜÜXÙH›ÛÝˆÙ\œ›ÜŸHŠJOÎÂˆ]^XÝYÙ\ØÛÜÝ\™HH›Ü›X]Jˆœš\Žˆ™\ÛÛ™YÛÜšÜÜXÙH›ÛÝÈßH
+Ø\™ÛËÛ[ÛÛZ[œÈÝÛÜšÜÜXÙWJH‹ˆ^XÝYÜ›ÛÝ™\Ü^J
+Bˆ
+NÂˆ\ÜÙ\JˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	š[\XÚ]œÝ\œŠK˜ÛÛZ[œÊ	™^XÝYÙ\ØÛÜÝ\™JKˆœÝ\œŽ—žßH‹ˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	š[\XÚ]œÝ\œŠBˆ
+NÂ‚ˆ]›ÛÝHÛÜšÜÜXÙWÜ›ÛÝ
+
+K™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]^XÚ]H[—ØÛÛ[X[™
+ˆš[‹ˆÛÛYJ	œÝX˜Ü˜]JKˆ	–Âˆ˜ÚXÚÈ‹‹K\›ÛÝ‹	œ›ÛÝ‹KX˜\ÙH‹’PQ‹‹KY›Ü›X]‹šœÛÛˆ‹ˆKˆ
+Bˆ›X\Ù\œŠ\œ›ÜŸ›Ü›X]Jœ[ˆ^XÚ]\›ÛÝÚXÚÎˆÙ\œ›ÜŸHŠJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	™^XÚ]
+NÂˆ\ÜÙ\JˆTÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	™^XÚ]œÝ\œŠK˜ÛÛZ[œÊœ™\ÛÛ™YÛÜšÜÜXÙH›ÛÝÈŠKˆ™^XÚ]K\›ÛÝ]\ÝÚÚ\[\XÚ]™\ÛÛ][ÛŽÈÝ\œŽ—žßH‹ˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	™^XÚ]œÝ\œŠBˆ
+NÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆÚXÚ×Ùœ›ÛWØWÙ\™XÝÜžWÝÚ]Ý]ØWÝÛÜšÜÜXÙWÙÙ\×Û›ÝÙ\ØÛÜÙWÜ™\ÛÛ][ÛŠ
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]š[ˆH[ˆJÐT‘Ó×Ð’S—ÑVWÜš\ˆŠNÂˆ]›ÛÝH[š\]YWÙ^\›˜[ÝÛÜšÜÜXÙJ˜ÚXÚË[›Ë]ÛÜšÜÜXÙHŠOÎÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+›ÛÝš›Ú[ŠœÜ˜ÈŠJBˆ›X\Ù\œŠ\œ›ÜŸ›Ü›X]J˜Ü™X]Hš^\™HÛÝ\˜ÙNˆÙ\œ›ÜŸHŠJOÎÂˆÝŽ™œÎŽÜš]Jˆ›ÛÝš›Ú[ŠØ\™ÛËÛ[ŠKˆ–ÜXÚØYÙWW›˜[YHH˜ÚXÚË[›Ë]ÛÜšÜÜXÙW—™\œÚ[ÛˆHŒŒKŒ—ˆ‹ˆ
+Bˆ›X\Ù\œŠ\œ›ÜŸ›Ü›X]JÜš]Hš^\™HX[šY™\ÝˆÙ\œ›ÜŸHŠJOÎÂˆÝŽ™œÎŽÜš]J›ÛÝš›Ú[ŠœÜ˜ËÛX‹œœÈŠKœXˆ›ˆ˜[YJ
+HOˆLÌˆÈHWˆŠBˆ›X\Ù\œŠ\œ›ÜŸ›Ü›X]JÜš]Hš^\™HÛÝ\˜ÙNˆÙ\œ›ÜŸHŠJOÎÂˆ]Y™ˆH›ÛÝš›Ú[Š˜Ú[™ÙK™Y™ˆŠNÂˆÝŽ™œÎŽÜš]Jˆ	™Y™‹ˆ™Y™ˆKYÚ]KÜÜ˜ËÛX‹œœÈ‹ÜÜ˜ËÛX‹œœ×‹KKHKÜÜ˜ËÛX‹œœ×ŠÊÊÈ‹ÜÜ˜ËÛX‹œœ×LH
+ÌH‹\Xˆ›ˆ˜[YJ
+HOˆLÌˆÈHWŠÜXˆ›ˆ˜[YJ
+HOˆLÌˆÈˆWˆ‹ˆ
+Bˆ›X\Ù\œŠ\œ›ÜŸ›Ü›X]JÜš]Hš^\™HY™ŽˆÙ\œ›ÜŸHŠJOÎÂ‚ˆ]Y™—Ø\™ÈHY™‹™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Ý]]H[—ØÛÛ[X[™
+ˆš[‹ˆÛÛYJ	œ›ÛÝ
+Kˆ	–È˜ÚXÚÈ‹‹KYY™ˆ‹	™Y™—Ø\™Ë‹KY›Ü›X]‹šœÛÛˆ—Kˆ
+Bˆ›X\Ù\œŠ\œ›ÜŸ›Ü›X]Jœ[ˆ›Ë]ÛÜšÜÜXÙHÚXÚÎˆÙ\œ›ÜŸHŠJOÎÂˆ]Ý\œˆHÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝ\œŠNÂˆ]ÝXØÙ\ÜÈHÝ]]œÝ]\ËœÝXØÙ\ÜÊ
+NÂˆ]›×Ù\ØÛÜÝ\™HH\Ý\œ‹˜ÛÛZ[œÊœ™\ÛÛ™YÛÜšÜÜXÙH›ÛÝÈŠNÂˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+	œ›ÛÝ
+K›X\Ù\œŠ\œ›ÜŸ›Ü›X]Jœ™[[Ý™Hš^\™NˆÙ\œ›ÜŸHŠJOÎÂˆYˆ\ÝXØÙ\ÜÈÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ››Ë]ÛÜšÜÜXÙHÚXÚÈ˜Z[YœÝÝ]—žßWœÝ\œŽ—žßH‹ˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝÝ]
+KˆÝ\œ‚ˆ
+JNÂˆBˆYˆ[›×Ù\ØÛÜÝ\™HÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ››Ë]ÛÜšÜÜXÙHÚXÚÈ[™^XÝYH\ØÛÜÙY™\ÛÛ][Û—œÝ\œŽ—žÜÝ\œŸH‚ˆ
+JNÂˆBˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆÛÛ™šY×Ý˜[Y]WÙ\ØÛÝ™\œ×Ü\™[ØÛÛ™šY×Ùœ›ÛWÛ™\ÝYÙ\™XÝÜžJ
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]š[ˆH[ˆJÐT‘Ó×Ð’S—ÑVWÜš\ˆŠNÂˆ]›ÛÝH[š\]YWÙ^\›˜[ÝÛÜšÜÜXÙJ˜ÛÛ™šYË]˜[Y]K\\™[ŠOÎÂˆ]™\ÝYH›ÛÝš›Ú[Š˜Ü˜]\ËÛY[X™\ˆŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	›™\ÝY
+Bˆ›X\Ù\œŠ\œ›ÜŸ›Ü›X]J˜Ü™X]H™\ÝYÛÛ™šYÈ\™XÝÜžNˆÙ\œ›ÜŸHŠJOÎÂˆ]ÛÛ™šY×Ü]H›ÛÝš›Ú[Šœš\‹Û[ŠNÂˆÝŽ™œÎŽÜš]J	˜ÛÛ™šY×Ü]–Ø[˜[\Ú\×W›[ÙHH››ÝXK[[ÙW—ˆŠBˆ›X\Ù\œŠ\œ›ÜŸ›Ü›X]JÜš]H[˜[Y\™[ÛÛ™šYÎˆÙ\œ›ÜŸHŠJOÎÂˆ]^XÝYØÛÛ™šY×Ü]HÛÛ™šY×Ü]ˆ˜Ø[›ÛšXØ[^™J
+Bˆ›X\Ù\œŠ\œ›ÜŸ›Ü›X]J˜Ø[›ÛšXØ[^™H\™[ÛÛ™šYÎˆÙ\œ›ÜŸHŠJOÎÂ‚ˆ]Ý]]H[—ØÛÛ[X[™
+š[‹ÛÛYJ	›™\ÝY
+K	–È˜ÛÛ™šYÈ‹˜[Y]H—JBˆ›X\Ù\œŠ\œ›ÜŸ›Ü›X]Jœ[ˆ™\ÝYÛÛ™šYÈ˜[Y]NˆÙ\œ›ÜŸHŠJOÎÂˆ]Ý\œˆHÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝ\œŠKš[×ÛÝÛ™Y
+
+NÂˆ]ÝXØÙ\ÜÈHÝ]]œÝ]\ËœÝXØÙ\ÜÊ
+NÂˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+	œ›ÛÝ
+K›X\Ù\œŠ\œ›ÜŸ›Ü›X]Jœ™[[Ý™HÛÛ™šYÈš^\™NˆÙ\œ›ÜŸHŠJOÎÂˆYˆÝXØÙ\ÜÈÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ›™\ÝYÛÛ™šYÈ˜[Y]H[™^XÝYHXØÙ\Y[˜[Y\™[ÛÛ™šY×œÝÝ]—žßWœÝ\œŽ—žÜÝ\œŸH‹ˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝÝ]
+Bˆ
+JNÂˆBˆYˆ\Ý\œ‹˜ÛÛZ[œÊ	™^XÝYØÛÛ™šY×Ü]™\Ü^J
+K×ÜÝš[™Ê
+JHÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ›™\ÝYÛÛ™šYÈ˜[Y]HY›Ý™\Ü\™[ÛÛ™šYÈ]ßWœÝ\œŽ—žÜÝ\œŸH‹ˆ^XÝYØÛÛ™šY×Ü]™\Ü^J
+Bˆ
+JNÂˆBˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆÚXÚ×Ú[X[—Û˜]šYØ][Û—ØÛÛ[X[™×Ü™\^WØÝ\ÝÛWÜØÛÜJ
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]›ÛÝH‹ˆŽÂˆ]Y™ˆH˜Ü˜]\ËÜš\‹Ù^[\\ËÜØ[\KÙ^[\K™Y™ˆŽÂˆ]Ý]]H[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–È˜ÚXÚÈ‹‹K\›ÛÝ‹›ÛÝ‹KYY™ˆ‹Y™—JBˆ›X\Ù\œŠ\œŸ\œ‹×ÜÝš[™Ê
+JOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂ‚ˆ]ÝÝ]HÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝÝ]
+NÂˆ]^Z[—Û[™HHÝÝ]ˆ›[™\Ê
+Bˆ™š[™
+[™_[™KœÝ\×ÝÚ]
+ˆš\ˆ^Z[ˆŠJBˆ›Ú×ÛÜ—Ù[ÙJ›Ü›X]J˜ÚXÚÈÝ]]ÛZ]Y^Z[ˆÛÛ[X[™—žÜÝÝ]HŠJOÎÂˆ]ÛÛ^Û[™HHÝÝ]ˆ›[™\Ê
+Bˆ™š[™
+[™_[™KœÝ\×ÝÚ]
+ˆš\ˆÛÛ^ŠJBˆ›Ú×ÛÜ—Ù[ÙJ›Ü›X]J˜ÚXÚÈÝ]]ÛZ]YÛÛ^ÛÛ[X[™—žÜÝÝ]HŠJOÎÂˆ]^Z[—Ø\™ÜÈH^Z[—Û[™KœÜ]ÝÚ]\ÜXÙJ
+K˜ÛÛXÝŽ™XÏÏŠ
+NÂˆ]ÛÛ^Ø\™ÜÈHÛÛ^Û[™KœÜ]ÝÚ]\ÜXÙJ
+K˜ÛÛXÝŽ™XÏÏŠ
+NÂˆYˆ^Z[—Ø\™ÜË™š\œÝ
+
+HOHÛÛYJ	ˆœš\ˆŠHÛÛ^Ø\™ÜË™š\œÝ
+
+HOHÛÛYJ	ˆœš\ˆŠHÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ[™^XÝY˜]šYØ][ÛˆÛÛ[X[™Î—žÙ^Z[—Û[™_WžØÛÛ^Û[™_H‚ˆ
+JNÂˆB‚ˆ]^Z[ˆH[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	™^Z[—Ø\™ÜÖÌK‹—JK›X\Ù\œŠ\œŸ\œ‹×ÜÝš[™Ê
+JOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	™^Z[ŠNÂˆ]Ù[XÝÜˆH^Z[—Ø\™ÜÂˆ›\Ý
+
+Bˆ˜ÛÜYY
+
+Bˆ›Ú×ÛÜ—Ù[ÙJ™^Z[ˆÛÛ[X[™ÛZ]YÙ[XÝÜˆ‹×ÜÝš[™Ê
+JOÎÂˆ]ÛÛ^H[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	˜ÛÛ^Ø\™ÜÖÌK‹—JK›X\Ù\œŠ\œŸ\œ‹×ÜÝš[™Ê
+JOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	˜ÛÛ^
+NÂˆYˆTÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	™^Z[‹œÝÝ]
+K˜ÛÛZ[œÊ	™›Ü›X]Jˆ“™^ˆš\ˆÛÛ^K\›ÛÝÜ›ÛÝHKYY™ˆÙY™ŸHKX]ÜÙ[XÝÜŸH‚ˆ
+JHÂˆ™]\›ˆ\œŠ™^Z[ˆÝ]]ÛZ]Y]ÈØÛÜK\™\Ù\š[™ÈÛÛ^ÛÛ[X[™‹×ÜÝš[™Ê
+JNÂˆBˆYˆTÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	˜ÛÛ^œÝÝ]
+K˜ÛÛZ[œÊ—™\œÚ[Û—ŽˆŒKŒˆŠHÂˆ™]\›ˆ\œŠ˜ÛÛ^ÛÛ[X[™Y›Ý™]\›ˆ]È”ÓÓˆXÚÙ]‹×ÜÝš[™Ê
+JNÂˆBˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆÚXÚ×Û˜]šYØ][Û—Ü™\^\×Ù^XÚ]Ù˜YÛÝ™\—ØÛÛ™šYÝ\™YÜ™XYJ
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]
+›ÛÝY™ŠHBˆYÙ[ØœšYY—ÜØ[\WÝÛÜšÜÜXÙJ›˜]šYØ][Û‹Y^XÚ]Y˜YŠK›X\Ù\œŠ\œŸ\œ‹×ÜÝš[™Ê
+JOÎÂˆÝŽ™œÎŽÜš]J›ÛÝš›Ú[Šœš\‹Û[ŠK–Ø[˜[\Ú\×W›[ÙHHœ™XYW—ˆŠBˆ›X\Ù\œŠ\œŸ›Ü›X]JÜš]Hš\‹Û[ˆÙ\œŸHŠJOÎÂˆ]›ÛÝØ\™ÈH›ÛÝ™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Y™—Ø\™ÈHY™‹™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Ý]]H[—Üš\Š	–Âˆ˜ÚXÚÈ‹‹K\›ÛÝ‹	œ›ÛÝØ\™Ë‹KYY™ˆ‹	™Y™—Ø\™Ë‹K[[ÙH‹™˜Y‹ˆJNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂˆ]ÝÝ]HÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝÝ]
+NÂˆ]^Z[—Û[™HHÝÝ]ˆ›[™\Ê
+Bˆ™š[™
+[™_[™KœÝ\×ÝÚ]
+ˆš\ˆ^Z[ˆŠJBˆ›Ú×ÛÜ—Ù[ÙJ›Ü›X]J˜ÚXÚÈÝ]]ÛZ]Y^Z[ˆÛÛ[X[™—žÜÝÝ]HŠJOÎÂˆ]ÛÛ^Û[™HHÝÝ]ˆ›[™\Ê
+Bˆ™š[™
+[™_[™KœÝ\×ÝÚ]
+ˆš\ˆÛÛ^ŠJBˆ›Ú×ÛÜ—Ù[ÙJ›Ü›X]J˜ÚXÚÈÝ]]ÛZ]YÛÛ^ÛÛ[X[™—žÜÝÝ]HŠJOÎÂˆYˆY^Z[—Û[™K˜ÛÛZ[œÊ‹K[[ÙH˜YŠHXÛÛ^Û[™K˜ÛÛZ[œÊ‹K[[ÙH˜YŠHÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ™^XÚ]˜YÝ™\œšYHØ\ÈÛZ]Y—žÙ^Z[—Û[™_WžØÛÛ^Û[™_H‚ˆ
+JNÂˆBˆËÈÌŽMŽˆÈ“ÕÜ]ÝÚ]\ÜXÙHH˜\Ú\™[™\™Y\Ü^H[™H[È\™Ý‹‚ˆËÈÛˆÚ[™ÝÜË˜XÚÜÛ\Ú]È\™HÔÒV\Ú[™ÛK\][ÝYžHHÚ[Ø\™ÂˆËÈ[˜ÛÙ\ŽÈÜ]ÝÚ]\ÜXÙH™\Ù\™\ÈÜÙH][Ý\È\È]\˜[ž]\ËˆËÈ›ÙXÚ[™È[ˆ[˜[Y]
+ÔÈ\œ›ÜˆLŒÊKˆ[œÝXYÛÛœÝXÝH\™Ý‚ˆËÈœ›ÛHÛ›ÝÛˆ\Y˜[Y\È[™^˜XÝÛ›HHš[™[™ÈÙ[XÝÜˆœ›ÛHBˆËÈ\Ü^H
+]\ÈHÚ[\H›Ø™N‹‹‹˜ÚÙ[ˆÚ]›ÈÚ[][Ý[™ÊK‚ˆ]Ù[XÝÜˆH^Z[—Û[™BˆœÜ]ÝÚ]\ÜXÙJ
+Bˆ™š[™
+ÚÙ[ŸÚÙ[‹œÝ\×ÝÚ]
+œ›Ø™NˆŠJBˆ›Ú×ÛÜ—Ù[ÙJ›Ü›X]J™^Z[ˆ[™H\È›È›Ø™HÙ[XÝÜŽ—žÙ^Z[—Û[™_HŠJOÂˆ×ÜÝš[™Ê
+NÂˆ]^Z[—Ø\™ÜÎˆ™XÏ	œÝˆH™XÈVÂˆ™^Z[ˆ‹‹K\›ÛÝ‹	œ›ÛÝØ\™Ë‹KYY™ˆ‹	™Y™—Ø\™Ë‹K[[ÙH‹™˜Y‹	œÙ[XÝÜ‹ˆNÂˆ]^Z[ˆH[—ØÛÛ[X[™
+[ˆJÐT‘Ó×Ð’S—ÑVWÜš\ˆŠKÛÛYJ	œ›ÛÝ
+K	™^Z[—Ø\™ÜÊBˆ›X\Ù\œŠ\œŸ›Ü›X]Jœ[ˆ^XÚ]Y˜Y^Z[ˆÛÛ[X[™ˆÙ\œŸHŠJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	™^Z[ŠNÂˆ]ÛÛ^Ø\™ÜÎˆ™XÏ	œÝˆH™XÈVÂˆ˜ÛÛ^‹‹K\›ÛÝ‹	œ›ÛÝØ\™Ë‹KYY™ˆ‹	™Y™—Ø\™Ë‹K[[ÙH‹™˜Y‹‹KX]‹	œÙ[XÝÜ‹ˆNÂˆ]ÛÛ^H[—ØÛÛ[X[™
+[ˆJÐT‘Ó×Ð’S—ÑVWÜš\ˆŠKÛÛYJ	œ›ÛÝ
+K	˜ÛÛ^Ø\™ÜÊBˆ›X\Ù\œŠ\œŸ›Ü›X]Jœ[ˆ^XÚ]Y˜YÛÛ^ÛÛ[X[™ˆÙ\œŸHŠJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	˜ÛÛ^
+NÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆÚXÚ×ÚœÛÛ—ÛÝ]]Ú\×ÜÝX›WØÛÛ˜XÝÙšY[Ê
+HÂˆ]›ÛÝHÛÜšÜÜXÙWÜ›ÛÝ
+
+K™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Y™ˆHØ[\WÙY™Š
+K™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Ý]]H[—Üš\Š	–È˜ÚXÚÈ‹‹K\›ÛÝ‹	œ›ÛÝ‹KYY™ˆ‹	™Y™‹‹KZœÛÛˆ—JNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂ‚ˆ]ÝÝ]HÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝÝ]
+NÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊˆÈˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒŒˆˆˆÊJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊˆÈˆ˜Û\ÜÚYšXØ][ÛˆŽˆÙXZÛWÙ^ÜÙYˆˆÊJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊˆÈˆ™]šY[˜ÙWÜ]ˆˆÊJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊˆÈˆ™›Ý×ÜÚ[šÜÈˆˆÊJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊˆÈˆ˜\ÜÙ\[Û—Ý^ÈˆˆÊJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊˆÈˆ˜XÝ]˜][ÛˆˆˆÊJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊˆÈˆ›Z\ÜÚ[™×Ù\ØÜš[Z[˜]ÜœÈˆˆÊJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊˆÈˆ›Ü˜XÛWÚÚ[™ˆˆÊJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊˆÈˆœ™XÛÛ[Y[™YÛ™^ÜÝ\ˆˆÊJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊˆÈˆœÝYÙÙ\ÝYÛ™^ØXÝ[ÛˆˆˆÊJNÂŸB‚‹ËÈ8¥ 8¥ ÚXÚÈK\Ý\™\ÜÚ[Û‹\ÛXÞX
+ÌMJH8¥ 8¥ ‚™›ˆÜš]WÜÝ\™\ÜÚ[Û—ÜÛXÞJX™[ˆ	œÝ‹^ˆ	œÝŠHOˆ™\Ý[]Y‹Ýš[™ÏˆÂˆ]\ˆH[š\]YWÝ[\ÝÛÜšÜÜXÙJX™[
+NÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	™\ŠK›X\Ù\œŠ\œŸ›Ü›X]J›ZÙ\ˆßNˆÙ\œŸH‹\‹™\Ü^J
+JJOÎÂˆ]]H\‹š›Ú[Šœš\‹\Ý\™\ÜÚ[ÛœËÛ[ŠNÂˆÝŽ™œÎŽÜš]J	œ]^
+K›X\Ù\œŠ\œŸ›Ü›X]JÜš]HßNˆÙ\œŸH‹]™\Ü^J
+JJOÎÂˆÚÊ]
+BŸB‚ˆÖÝ\ÝB™›ˆÚXÚ×ÚœÛÛ—ÜÝ\™\ÜÚ[Û—ÜÛXÞWÛX\šÜ×Ùš[™[™Ü×Ø[™ØY\Ý×ÜÝ[[X\žJ
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]›ÛÝHÛÜšÜÜXÙWÜ›ÛÝ
+
+K™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Y™ˆHØ[\WÙY™Š
+K™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]ÛXÞHHÜš]WÜÝ\™\ÜÚ[Û—ÜÛXÞJˆœÝ\™\ÜÚ[Û‹ZœÛÛˆ‹ˆœØÚ[XWÝ™\œÚ[ÛˆHW—–ÖÜÝ\™\ÜÚ[Ûœ×WWšÚ[™H™^ÜÝ\™WÙØ\—œ]H˜Ü˜]\ËÜš\‹Ù^[\\ËÜØ[\KÊŠ——œ™X\ÛÛˆHœØ[\HÝ\™˜XÙHXØÙ\Y›Üˆ\ÈÛ[ÚÙH\Ý—›ÝÛ™\ˆHœ™\Ë[ÝÛ™\——ˆ‹ˆ
+OÎÂˆ]ÛXÞWØ\™ÈHÛXÞK™\Ü^J
+K×ÜÝš[™Ê
+NÂ‚ˆ]Ý]]H[—Üš\Š	–Âˆ˜ÚXÚÈ‹ˆ‹K\›ÛÝ‹ˆ	œ›ÛÝˆ‹KYY™ˆ‹ˆ	™Y™‹ˆ‹KZœÛÛˆ‹ˆ‹K\Ý\™\ÜÚ[Û‹\ÛXÞH‹ˆ	œÛXÞWØ\™ËˆJNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂ‚ˆ]ÝÝ]HÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝÝ]
+NÂˆ]˜[YNˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝÝ]
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]J˜ÚXÚÈ”ÓÓˆÚÝ[\œÙNˆÙ\œŸWžÜÝÝ]HŠJOÎÂ‚ˆ]š[™[™ÜÈH˜[YVÈ™š[™[™ÜÈ—Bˆ˜\×Ø\œ˜^J
+Bˆ›Ú×ÛÜŠ™š[™[™ÜÈ]\Ý™H[ˆ\œ˜^HŠOÎÂˆ\ÜÙ\JYš[™[™ÜËš\×Ù[\J
+KœØ[\HY™ˆ]\Ý›ÙXÙHš[™[™ÜÈŠNÂˆ›Üˆš[™[™È[ˆš[™[™ÜÈÂˆ\ÜÙ\Ù\HJˆš[™[™ÖÈœÝ\™\ÜÙY—KYKˆ™]™\žHØ[\Hš[™[™È]™\È[™\ˆHÝ\™\ÜÙYÛØˆ‚ˆ
+NÂˆ\ÜÙ\Ù\HJš[™[™ÖÈœÝ\™\ÜÙYØžH—K˜Ü˜]\ËÜš\‹Ù^[\\ËÜØ[\KÊŠˆŠNÂˆBˆ\ÜÙ\Ù\HJˆ˜[YVÈœÝ[[X\žH—VÈœÝ\™\ÜÙYØžWÜÛXÞH—K˜\×ÝM
+
+KˆÛÛYJš[™[™ÜË›[Š
+H\ÈM
+Bˆ
+NÂˆËÈ\‹XÛ\ÜÈXÚÙ]ÈÛÝ[[œÝ\™\ÜÙYš[™[™ÜÈÛ›K‚ˆ\ÜÙ\Ù\HJ˜[YVÈœÝ[[X\žH—VÈÙXZÛWÙ^ÜÙY—K˜\×ÝM
+
+KÛÛYJ
+JNÂˆËÈš[™[™ÜØÝ^\ÈHÝ[™[™\™YÛÝ[‚ˆ\ÜÙ\Ù\HJˆ˜[YVÈœÝ[[X\žH—VÈ™š[™[™ÜÈ—K˜\×ÝM
+
+KˆÛÛYJš[™[™ÜË›[Š
+H\ÈM
+Bˆ
+NÂˆ\ÜÙ\Ù\HJ˜[YVÈœÝ\™\ÜÚ[Û—ÜÛXÞH—VÈœ]—KÛXÞWØ\™Ë˜\×ÜÝŠ
+JNÂˆ\ÜÙ\Ù\HJˆ˜[YVÈœÝ\™\ÜÚ[Û—ÜÛXÞH—VÈØ\›š[™ÜÈ—Bˆ˜\×Ø\œ˜^J
+Bˆ›X\
+™XÎŽ›[ŠKˆÛÛYJ
+Bˆ
+NÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆÚXÚ×Ú[X[—ÜÝ\™\ÜÚ[Û—ÜÛXÞWÛ\Ý×ÜÝ\™\ÜÙYÙš[™[™Ü×ØÛÛ\XÝJ
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]›ÛÝHÛÜšÜÜXÙWÜ›ÛÝ
+
+K™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Y™ˆHØ[\WÙY™Š
+K™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]ÛXÞHHÜš]WÜÝ\™\ÜÚ[Û—ÜÛXÞJˆœÝ\™\ÜÚ[Û‹Z[X[ˆ‹ˆœØÚ[XWÝ™\œÚ[ÛˆHW—–ÖÜÝ\™\ÜÚ[Ûœ×WWšÚ[™H™^ÜÝ\™WÙØ\—œ]H˜Ü˜]\ËÜš\‹Ù^[\\ËÜØ[\KÊŠ——œ™X\ÛÛˆHœØ[\HÝ\™˜XÙHXØÙ\Y›Üˆ\ÈÛ[ÚÙH\Ý—›ÝÛ™\ˆHœ™\Ë[ÝÛ™\——ˆ‹ˆ
+OÎÂˆ]ÛXÞWØ\™ÈHÛXÞK™\Ü^J
+K×ÜÝš[™Ê
+NÂ‚ˆ]Ý]]H[—Üš\Š	–Âˆ˜ÚXÚÈ‹ˆ‹K\›ÛÝ‹ˆ	œ›ÛÝˆ‹KYY™ˆ‹ˆ	™Y™‹ˆ‹K\Ý\™\ÜÚ[Û‹\ÛXÞH‹ˆ	œÛXÞWØ\™ËˆJNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂ‚ˆ]ÝÝ]HÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝÝ]
+NÂˆ\ÜÙ\JˆÝÝ]˜ÛÛZ[œÊ”Ý\™\ÜÙYžHÛXÞHŠKˆš[X[ˆÝ]]]\Ý\ØÛÜÙHÛXÞH\XØ][ÛŽˆÜÝÝ]H‚ˆ
+NÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊŠÙ[XÝÜŽˆÜ˜]\ËÜš\‹Ù^[\\ËÜØ[\KÊŠŠHŠJNÂˆ\ÜÙ\Jˆ\ÝÝ]˜ÛÛZ[œÊ“™^Ý\ˆŠKˆœÝ\™\ÜÙYš[™[™ÜÈ]\Ý›Ý™[™\ˆ]Z[Y›ØÚÜÎˆÜÝÝ]H‚ˆ
+NÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆÚXÚ×ÜÝ\™\ÜÚ[Û—ÜÛXÞWÛZ\ÜÚ[™×Ùš[WÙ˜Z[×ØÛÜÙY
+
+HÂˆ]›ÛÝHÛÜšÜÜXÙWÜ›ÛÝ
+
+K™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Y™ˆHØ[\WÙY™Š
+K™\Ü^J
+K×ÜÝš[™Ê
+NÂ‚ˆ]Ý]]H[—Üš\Š	–Âˆ˜ÚXÚÈ‹ˆ‹K\›ÛÝ‹ˆ	œ›ÛÝˆ‹KYY™ˆ‹ˆ	™Y™‹ˆ‹KZœÛÛˆ‹ˆ‹K\Ý\™\ÜÚ[Û‹\ÛXÞH‹ˆ™Ù\ËÛ›ÝÙ^\ÝÛ[‹ˆJNÂˆ\ÜÙ\Ù˜Z[\™J	›Ý]]
+NÂ‚ˆ]Ý\œˆHÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝ\œŠNÂˆ\ÜÙ\JˆÝ\œ‹˜ÛÛZ[œÊ™˜Z[YÈ™XYÝ\™\ÜÚ[ÛˆÛXÞHŠKˆœÝ\œŽˆÜÝ\œŸH‚ˆ
+NÂŸB‚ˆÖÝ\ÝB™›ˆÚXÚ×ÜÝ\™\ÜÚ[Û—ÜÛXÞWÜ™Z™XÝ×Ý[œÝ\ÜYÙ›Ü›X]Ê
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]›ÛÝHÛÜšÜÜXÙWÜ›ÛÝ
+
+K™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Y™ˆHØ[\WÙY™Š
+K™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]ÛXÞHHÜš]WÜÝ\™\ÜÚ[Û—ÜÛXÞJˆœÝ\™\ÜÚ[Û‹\Ø\šYˆ‹ˆœØÚ[XWÝ™\œÚ[ÛˆHW—–ÖÜÝ\™\ÜÚ[Ûœ×WWšÚ[™H™^ÜÝ\™WÙØ\—œ]H˜Ü˜]\ËÊŠ——œ™X\ÛÛˆH[\ÙY—›ÝÛ™\ˆHœ™\Ë[ÝÛ™\——ˆ‹ˆ
+OÎÂˆ]ÛXÞWØ\™ÈHÛXÞK™\Ü^J
+K×ÜÝš[™Ê
+NÂ‚ˆ]Ý]]H[—Üš\Š	–Âˆ˜ÚXÚÈ‹ˆ‹K\›ÛÝ‹ˆ	œ›ÛÝˆ‹KYY™ˆ‹ˆ	™Y™‹ˆ‹KY›Ü›X]‹ˆœØ\šYˆ‹ˆ‹K\Ý\™\ÜÚ[Û‹\ÛXÞH‹ˆ	œÛXÞWØ\™ËˆJNÂˆ\ÜÙ\Ù˜Z[\™J	›Ý]]
+NÂ‚ˆ]Ý\œˆHÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝ\œŠNÂˆ\ÜÙ\JˆÝ\œ‹˜ÛÛZ[œÊ‹K\Ý\™\ÜÚ[Û‹\ÛXÞH\Y\ÈÈHš[™[™ÜËX˜\ÙYÚXÚÈ›Ü›X]ÈŠKˆœÝ\œŽˆÜÝ\œŸH‚ˆ
+NÂˆÚÊ
+
+JBŸB‚‹ËÈ8¥ 8¥ Ø]H]˜[X]HKY^Ù\[Û‹\ÛXÞX
+ÌMŠH8¥ 8¥ ‚˜ÛÛœÝÓSÒÑWÔ—ÑÕRQSÑWÒ”ÓÓŽˆ	œÝˆHˆÈžÂˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒŒH‹ˆœÝ[[X\žHŽˆÈ[˜Ú[™ÙYÝ\ÝÈŽˆY_Kˆ˜ÛÛ[Y[ÈŽˆ×KˆœÝ[[X\žWÛÛ›HŽˆ×KˆœÝ\™\ÜÙYŽˆ×BŸHˆÎÂ‚˜ÛÛœÝÓSÒÑWÐÓÓTUWÑÐTÓQÑT—Ò”ÓÓŽˆ	œÝˆHˆÈžÂˆ™Ø\Ü™XÛÜ™ÈŽˆÂˆÂˆ™Ø\ÚYŽˆ™Ø\œšXÚ[™È‹ˆœÛÝ\˜ÙWØÝ\œ™[™\ÜÈŽˆ˜Ø[™Y]WØÝ\œ™[‹ˆ˜Ø[›ÛšXØ[ÙØ\ÚYŽˆœšXÚ[™ÎŽ™\ØÛÝ[Ž™\ÚÛ‹ˆœÙX[WÚYŽˆœÙX[K\šXÚ[™Ë]™\ÚÛ‹ˆšÚ[™Žˆ“Z\ÜÚ[™Ð›Ý[™\žP\ÜÙ\[Ûˆ‹ˆ›[™ÝXYÙHŽˆœ\Ý‹ˆ›[™ÝXYÙWÜÝ]\ÈŽˆœÝX›H‹ˆœØÛÜHŽˆœ—ÛØØ[‹ˆ™]šY[˜ÙWØÛ\ÜÈŽˆÙXZÛWÙ^ÜÙY‹ˆ™Ø\ÜÝ]HŽˆ˜XÝ[Û˜X›H‹ˆœÛXÞWÜÝ]HŽˆ›™]È‹ˆœ™\Z\˜Xš[]HŽˆœ™\Z\˜X›H‹ˆœ™\Z\—Ü›Ý]HŽˆÂˆœ›Ý]WÚÚ[™ŽˆY›Ý[™\žP\ÜÙ\[Ûˆ‹ˆ\™Ù]Ùš[HŽˆ\ÝËÜšXÚ[™ËœœÈ‹ˆ\™Ù]Û[™HŽˆL‹ˆœ™[]YÝ\ÝŽˆ\ÝËÜšXÚ[™ËœœÎŽ˜X›Ý™WÝ™\ÚÛÙÙ]×Ù\ØÛÝ[‹ˆ˜\ÜÙ\[Û—ÜÚ\HŽˆ˜\ÜÙ\Ù\HJšXÙJ™\ÚÛ
+K\ØÛÝ[Y
+H‹ˆ›Z\ÜÚ[™×Ù\ØÜš[Z[˜]ÜˆŽˆ˜[[Ý[OH\ØÛÝ[Ý™\ÚÛ‹ˆ˜Ú[™ÙYØ™Z]š[ÜˆŽˆ˜[[Ý[OH\ØÛÝ[Ý™\ÚÛ‹ˆš[œÜXÝ[Û—ØÛÛ[X[™Žˆœš\ˆYÙ[œšYYˆK\›ÛÝˆK\ÙX[KZYÙX[K\šXÚ[™Ë]™\ÚÛKZœÛÛˆ‚ˆKˆ˜[˜ÚÜˆŽˆÂˆ™š[HŽˆœÜ˜ËÜšXÚ[™ËœœÈ‹ˆ›[™HŽˆˆ›ÝÛ™\ˆŽˆœšXÙH‹ˆ™Y\WÙš[™Ù\œš[Žˆ™Ø\œšXÚ[™È‚ˆKˆ™]šY[˜ÙWÚYÈŽˆÈœÙX[K\šXÚ[™È—Kˆœ›Ú™XÝ[Û—Ù[YÚXš[]HŽˆÂˆ™Ø]WØØ[™Y]HŽˆÂˆ™[YÚX›HŽˆYKˆœ™X\ÛÛˆŽˆ›™]×Ü™\Z\˜X›WÜ—ÛØØ[ÙØ\‚ˆBˆKˆ™\šYšXØ][Û—ØÛÛ[X[™ÈŽˆÈ˜Ø\™ÛÈ\ÚÈš^\™\È›Ý[™\žWÙØ\—Kˆœ™XÙZ\ØÛÛ[X[™Žˆœš\ˆ™XÙZ\Üš]HKYØ\šXÚ[™ÎŽ™\ØÛÝ[Ž™\ÚÛ‹ˆœØY™WÙØ]WÜ™YXØ]HŽˆÂˆœÛXÞWÝ\™Ù]Ù[˜X›YŽˆYKˆœÝ\™\ÜÙYŽˆ˜[ÙKˆØZ]™YŽˆ˜[ÙKˆ˜XÚÛ›ÝÛYÙYÛÛ›HŽˆ˜[ÙKˆ˜˜\Ù[[™WÚÛ›ÝÛˆŽˆ˜[ÙKˆœ™]šY]×Û[™ÝXYÙHŽˆ˜[ÙKˆœÝ]X×Ý[šÛ›ÝÛ—ÛÛ›HŽˆ˜[ÙBˆBˆBˆBŸHˆÎÂ‚™›ˆÜš]WÙ^Ù\[Û—ÛYÙ\Šˆ\Žˆ	œÝŽœ]Ž”]ˆ™]šY]×ØY\Žˆ	œÝ‹ˆ^\™\Îˆ	œÝ‹ŠHOˆ™\Ý[]Y‹Ýš[™ÏˆÂˆ]]H\‹š›Ú[Šœ]X[]KYØ]KY^Ù\[ÛœËÛ[ŠNÂˆ]YÙ\ˆH›Ü›X]JˆœØÚ[XWÝ™\œÚ[ÛˆHWœÛXÞHHœ]X[]KYØ]KY^Ù\[Ûœ×—œÝ]\ÈH˜XÝ]™W—™YWÜ™]šY]ÈH™˜Z[——–ÖÙ^Ù\[Û—WWšYHÝ[X\›™ÝÛ——šÚ[™H[\Ü˜\žWØ\›™ÝÛ——œØÛÜHHœš\—Ü\×ÝÝ[—›ÝÛ™\ˆHœ›ÛÙ‹[[™W—œ™X\ÛÛˆH”™KY^\Ý[™ÈØ\È™Y]HHØ]K——™š[˜[Ý\™Ù]H[œ™\ÛÛ™YÝ[H—™]šY[˜ÙHH\™Ù]Ü™XÙZ\ËÜ]X[]KÜš\‹\\ËšœÛÛ——œ™[[Ý˜[ØÜš]\šXHH™š[˜[[ÙH™\]Z\™\È™\›×—˜Ü™X]YHŒŒ‹LKLW—œ™]šY]×ØY\ˆHžÜ™]šY]×ØY\ŸW—™^\™\ÈHžÙ^\™\ßW—ˆ‚ˆ
+NÂˆÝŽ™œÎŽÜš]J	œ]YÙ\ŠK›X\Ù\œŠ\œŸ›Ü›X]JÜš]HßNˆÙ\œŸH‹]™\Ü^J
+JJOÎÂˆÚÊ]
+BŸB‚ˆÖÝ\ÝB™›ˆØ]WÙ]˜[X]WÙ^Ù\[Û—ÜÛXÞWØXÝ]™WÛYÙ\—Ü™\Ü×Ø[™Ü\ÜÙ\Ê
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]\ˆH[š\]YWÝ[\ÝÛÜšÜÜXÙJ™Ø]KY^Ù\[Û‹XXÝ]™HŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	™\ŠK›X\Ù\œŠ\œŸ›Ü›X]J›ZÙ\ˆßNˆÙ\œŸH‹\‹™\Ü^J
+JJOÎÂˆ]ÝZY[˜ÙHH\‹š›Ú[Š˜ÛÛ[Y[ËšœÛÛˆŠNÂˆÝŽ™œÎŽÜš]J	™ÝZY[˜ÙKÓSÒÑWÔ—ÑÕRQSÑWÒ”ÓÓŠBˆ›X\Ù\œŠ\œŸ›Ü›X]JÜš]HÝZY[˜ÙNˆÙ\œŸHŠJOÎÂˆ]YÙ\ˆHÜš]WÙ^Ù\[Û—ÛYÙ\Š	™\‹ŽNNNKLKLH‹ŽNNNKLL‹LÌHŠOÎÂˆ]Ý]H\‹š›Ú[Š™Ø]KYXÚ\Ú[Û‹šœÛÛˆŠNÂ‚ˆ]Ý]]H[—Üš\Š	–Âˆ™Ø]H‹ˆ™]˜[X]H‹ˆ‹K\‹YÝZY[˜ÙH‹ˆ	™ÝZY[˜ÙK™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹KY^Ù\[Û‹\ÛXÞH‹ˆ	›YÙ\‹™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹K[Ý]‹ˆ	›Ý]™\Ü^J
+K×ÜÝš[™Ê
+KˆJNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂ‚ˆ]XÚ\Ú[ÛˆHÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	›Ý]
+K›X\Ù\œŠ\œŸ›Ü›X]Jœ™XYÝ]ˆÙ\œŸHŠJOÎÂˆ]˜[YNˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	™XÚ\Ú[ÛŠBˆ›X\Ù\œŠ\œŸ›Ü›X]J™Ø]HXÚ\Ú[ÛˆÚÝ[\œÙNˆÙ\œŸWžÙXÚ\Ú[ÛŸHŠJOÎÂˆ\ÜÙ\Ù\HJ˜[YVÈ™^Ù\[Û—ÜÛXÞH—VÈ˜XÝ]™WØÛÝ[—KJNÂˆ\ÜÙ\Ù\HJˆ˜[YVÈ™^Ù\[Û—ÜÛXÞH—VÈš[Û][ÛœÈ—Bˆ˜\×Ø\œ˜^J
+Bˆ›X\
+™XÎŽ›[ŠKˆÛÛYJ
+Bˆ
+NÂˆ\ÜÙ\Û™HJ˜[YVÈœÝ]\È—K˜›ØÚÙYŠNÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆØ]WÙ]˜[X]WÙ^Ù\[Û—ÜÛXÞWÙ^\™YÛYÙ\—Ø›ØÚÜ×ÝÚ]Û›Ûž™\›×Ù^]
+
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]\ˆH[š\]YWÝ[\ÝÛÜšÜÜXÙJ™Ø]KY^Ù\[Û‹Y^\™YŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	™\ŠK›X\Ù\œŠ\œŸ›Ü›X]J›ZÙ\ˆßNˆÙ\œŸH‹\‹™\Ü^J
+JJOÎÂˆ]ÝZY[˜ÙHH\‹š›Ú[Š˜ÛÛ[Y[ËšœÛÛˆŠNÂˆÝŽ™œÎŽÜš]J	™ÝZY[˜ÙKÓSÒÑWÔ—ÑÕRQSÑWÒ”ÓÓŠBˆ›X\Ù\œŠ\œŸ›Ü›X]JÜš]HÝZY[˜ÙNˆÙ\œŸHŠJOÎÂˆ]YÙ\ˆHÜš]WÙ^Ù\[Û—ÛYÙ\Š	™\‹ŒŒLKLH‹ŒŒL‹LHŠOÎÂˆ]Ý]H\‹š›Ú[Š™Ø]KYXÚ\Ú[Û‹šœÛÛˆŠNÂ‚ˆ]Ý]]H[—Üš\Š	–Âˆ™Ø]H‹ˆ™]˜[X]H‹ˆ‹K\‹YÝZY[˜ÙH‹ˆ	™ÝZY[˜ÙK™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹KY^Ù\[Û‹\ÛXÞH‹ˆ	›YÙ\‹™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹K[Ý]‹ˆ	›Ý]™\Ü^J
+K×ÜÝš[™Ê
+KˆJNÂˆ\ÜÙ\Ù˜Z[\™J	›Ý]]
+NÂˆ]Ý\œˆHÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝ\œŠNÂˆ\ÜÙ\JˆÝ\œ‹˜ÛÛZ[œÊœ]X[]WÙ^Ù\[Û—Ù^\™YŠKˆœÝ\œˆÚÝ[[˜ÛYHH›ØÚÚ[™È^Ù\[Û‹\ÛXÞH]Z[ˆÜÝ\œŸH‚ˆ
+NÂ‚ˆ]XÚ\Ú[ÛˆHÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	›Ý]
+K›X\Ù\œŠ\œŸ›Ü›X]Jœ™XYÝ]ˆÙ\œŸHŠJOÎÂˆ]˜[YNˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	™XÚ\Ú[ÛŠBˆ›X\Ù\œŠ\œŸ›Ü›X]J™Ø]HXÚ\Ú[ÛˆÚÝ[\œÙNˆÙ\œŸWžÙXÚ\Ú[ÛŸHŠJOÎÂˆ\ÜÙ\Ù\HJ˜[YVÈœÝ]\È—K˜›ØÚÙYŠNÂˆ\ÜÙ\Jˆ˜[YVÈ™^Ù\[Û—ÜÛXÞH—VÈš[Û][ÛœÈ—Bˆ˜\×Ø\œ˜^J
+Bˆš\×ÜÛÛYWØ[™
+š[Û][Ûœßš[Û][ÛœÂˆš]\Š
+Bˆ˜[žJš[Û][ÛŸš[Û][Û–ÈšÚ[™—HOHœ]X[]WÙ^Ù\[Û—Ù^\™YŠJKˆ™XÚ\Ú[ÛŽˆÙXÚ\Ú[ÛŸH‚ˆ
+NÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆØ]WÙ]˜[X]WÙ^Ù\[Û—ÜÛXÞWÛZ\ÜÚ[™×ÛYÙ\—Ú\×ØÛÛ™šY×Ù\œ›ÜŠ
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]\ˆH[š\]YWÝ[\ÝÛÜšÜÜXÙJ™Ø]KY^Ù\[Û‹[Z\ÜÚ[™ÈŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	™\ŠK›X\Ù\œŠ\œŸ›Ü›X]J›ZÙ\ˆßNˆÙ\œŸH‹\‹™\Ü^J
+JJOÎÂˆ]ÝZY[˜ÙHH\‹š›Ú[Š˜ÛÛ[Y[ËšœÛÛˆŠNÂˆÝŽ™œÎŽÜš]J	™ÝZY[˜ÙKÓSÒÑWÔ—ÑÕRQSÑWÒ”ÓÓŠBˆ›X\Ù\œŠ\œŸ›Ü›X]JÜš]HÝZY[˜ÙNˆÙ\œŸHŠJOÎÂˆ]Ý]H\‹š›Ú[Š™Ø]KYXÚ\Ú[Û‹šœÛÛˆŠNÂ‚ˆ]Ý]]H[—Üš\Š	–Âˆ™Ø]H‹ˆ™]˜[X]H‹ˆ‹K\‹YÝZY[˜ÙH‹ˆ	™ÝZY[˜ÙK™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹KY^Ù\[Û‹\ÛXÞH‹ˆ	™\‹š›Ú[Š™Ù\Ë[›ÝY^\ÝÛ[ŠK™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹K[Ý]‹ˆ	›Ý]™\Ü^J
+K×ÜÝš[™Ê
+KˆJNÂˆ\ÜÙ\Ù˜Z[\™J	›Ý]]
+NÂˆËÈHÛÛ™šYÈ\œ›ÜˆYX[œÈH]˜[X][ÛˆÛÝ[›ÝÛÛ\]Nˆ^]‹BˆËÈØ[YHÛÙH\È[žHÝ\ˆ\ØYÙHÜˆÜ\˜][Û˜[˜Z[\™K‚ˆ\ÜÙ\Ù\HJˆÝ]]œÝ]\Ë˜ÛÙJ
+KˆÛÛYJŠKˆ˜HÛÛ™šYÈ\œ›Üˆ]\Ý^]Ú]ÛÙHˆ‚ˆ
+NÂ‚ˆ]XÚ\Ú[ÛˆHÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	›Ý]
+K›X\Ù\œŠ\œŸ›Ü›X]Jœ™XYÝ]ˆÙ\œŸHŠJOÎÂˆ\ÜÙ\JˆXÚ\Ú[Û‹˜ÛÛZ[œÊ™˜Z[YÈ™XY^Ù\[ÛˆÛXÞHŠKˆ™XÚ\Ú[ÛŽˆÙXÚ\Ú[ÛŸH‚ˆ
+NÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆØ]WÙ]˜[X]WØÛÛ\]WÙØ\ÛYÙ\—Ø›ØÚÜ×ÛÛ›WÚ[—Ù^XÚ]Ø›ØÚÚ[™×Û[ÙJ
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]\ˆH[š\]YWÝ[\ÝÛÜšÜÜXÙJ™Ø]KYØ\[YÙ\‹XÛKX›ØÚÚ[™ÈŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	™\ŠK›X\Ù\œŠ\œŸ›Ü›X]J›ZÙ\ˆßNˆÙ\œŸH‹\‹™\Ü^J
+JJOÎÂˆ]YÙ\ˆH\‹š›Ú[Š™Ø\[YÙ\‹šœÛÛˆŠNÂˆÝŽ™œÎŽÜš]J	›YÙ\‹ÓSÒÑWÐÓÓTUWÑÐTÓQÑT—Ò”ÓÓŠBˆ›X\Ù\œŠ\œŸ›Ü›X]JÜš]HØ\YÙ\ŽˆÙ\œŸHŠJOÎÂˆ]Ý]H\‹š›Ú[Š™Ø]KYXÚ\Ú[Û‹šœÛÛˆŠNÂ‚ˆ]Ý]]H[—Üš\Š	–Âˆ™Ø]H‹ˆ™]˜[X]H‹ˆ‹K\›ÛÝ‹ˆ	™\‹™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹KYØ\[YÙ\ˆ‹ˆ	›YÙ\‹™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹K[[ÙH‹ˆ˜XÚÛ›ÝÛYÙXX›H‹ˆ‹K[Ý]‹ˆ	›Ý]™\Ü^J
+K×ÜÝš[™Ê
+KˆJNÂˆ\ÜÙ\Ù˜Z[\™J	›Ý]]
+NÂˆËÈH›ØÚÙYØ]HXÚ\Ú[Ûˆ\ÈHÝXØÙ\ÜÙ[]˜[X][Ûˆ™XXÚ[™È]È›ØÚÚ[™ÂˆËÈXÚ\Ú[ÛŽˆH›ØÙ\ÜÈ^]ÈË™]™\ˆHÛÝ[[›ÝXÛÛ\]HÛÙH‹‚ˆ\ÜÙ\Ù\HJˆÝ]]œÝ]\Ë˜ÛÙJ
+KˆÛÛYJÊKˆ˜H›ØÚÙYØ]HXÚ\Ú[Ûˆ]\Ý^]Ú]ÛÙHÈ‚ˆ
+NÂ‚ˆ]XÚ\Ú[ÛˆHÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	›Ý]
+K›X\Ù\œŠ\œŸ›Ü›X]Jœ™XYÝ]ˆÙ\œŸHŠJOÎÂˆ]˜[YNˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	™XÚ\Ú[ÛŠBˆ›X\Ù\œŠ\œŸ›Ü›X]J™Ø]HXÚ\Ú[ÛˆÚÝ[\œÙNˆÙ\œŸWžÙXÚ\Ú[ÛŸHŠJOÎÂˆ\ÜÙ\Ù\HJ˜[YVÈœÝ]\È—K˜›ØÚÙYŠNÂˆ\ÜÙ\Ù\HJ˜[YVÈœÝ[[X\žH—VÈ˜›ØÚÚ[™È—KJNÂˆ\ÜÙ\Ù\HJ˜[YVÈ™XÚ\Ú[ÛœÈ—VÌVÈœÛÝ\˜ÙH—K™Ø\ÙXÚ\Ú[Û—ÛYÙ\ˆŠNÂˆ\ÜÙ\Ù\HJˆ˜[YVÈ™XÚ\Ú[ÛœÈ—VÌVÈœ™\Z\—Ü›Ý]H—VÈœÙX[WÚY—KˆœÙX[K\šXÚ[™Ë]™\ÚÛ‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆ˜[YVÈ™XÚ\Ú[ÛœÈ—VÌVÈœ™\Z\—Ü›Ý]H—VÈš[œÜXÝ[Û—ØÛÛ[X[™—Kˆœš\ˆYÙ[œšYYˆK\›ÛÝˆK\ÙX[KZYÙX[K\šXÚ[™Ë]™\ÚÛKZœÛÛˆ‚ˆ
+NÂˆ\ÜÙ\JXÚ\Ú[Û‹˜ÛÛZ[œÊœÝ]X×Üš\—Ù]šY[˜ÙWÛÛ›HŠJNÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆØ]WÙ]˜[X]WØÛÛ\]WÙØ\ÛYÙ\—Ú\×ØYš\ÛÜžWÚ[—Ýš\ÚX›WÛÛ›WÛ[ÙJ
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]\ˆH[š\]YWÝ[\ÝÛÜšÜÜXÙJ™Ø]KYØ\[YÙ\‹XÛK]š\ÚX›HŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	™\ŠK›X\Ù\œŠ\œŸ›Ü›X]J›ZÙ\ˆßNˆÙ\œŸH‹\‹™\Ü^J
+JJOÎÂˆ]YÙ\ˆH\‹š›Ú[Š™Ø\[YÙ\‹šœÛÛˆŠNÂˆÝŽ™œÎŽÜš]J	›YÙ\‹ÓSÒÑWÐÓÓTUWÑÐTÓQÑT—Ò”ÓÓŠBˆ›X\Ù\œŠ\œŸ›Ü›X]JÜš]HØ\YÙ\ŽˆÙ\œŸHŠJOÎÂˆ]Ý]H\‹š›Ú[Š™Ø]KYXÚ\Ú[Û‹šœÛÛˆŠNÂ‚ˆ]Ý]]H[—Üš\Š	–Âˆ™Ø]H‹ˆ™]˜[X]H‹ˆ‹K\›ÛÝ‹ˆ	™\‹™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹KYØ\[YÙ\ˆ‹ˆ	›YÙ\‹™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹K[[ÙH‹ˆš\ÚX›K[Û›H‹ˆ‹K[Ý]‹ˆ	›Ý]™\Ü^J
+K×ÜÝš[™Ê
+KˆJNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂ‚ˆ]XÚ\Ú[ÛˆHÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	›Ý]
+K›X\Ù\œŠ\œŸ›Ü›X]Jœ™XYÝ]ˆÙ\œŸHŠJOÎÂˆ]˜[YNˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	™XÚ\Ú[ÛŠBˆ›X\Ù\œŠ\œŸ›Ü›X]J™Ø]HXÚ\Ú[ÛˆÚÝ[\œÙNˆÙ\œŸWžÙXÚ\Ú[ÛŸHŠJOÎÂˆ\ÜÙ\Ù\HJ˜[YVÈœÝ]\È—K˜Yš\ÛÜžHŠNÂˆ\ÜÙ\Ù\HJ˜[YVÈœÝ[[X\žH—VÈ˜›ØÚÚ[™È—K
+NÂˆ\ÜÙ\Ù\HJ˜[YVÈœÝ[[X\žH—VÈ˜Yš\ÛÜžH—KJNÂˆ\ÜÙ\Ù\HJ˜[YVÈ™XÚ\Ú[ÛœÈ—VÌVÈ™XÚ\Ú[Ûˆ—K˜Yš\ÛÜžHŠNÂˆ\ÜÙ\Ù\HJ˜[YVÈ™XÚ\Ú[ÛœÈ—VÌVÈœÛÝ\˜ÙH—K™Ø\ÙXÚ\Ú[Û—ÛYÙ\ˆŠNÂˆ\ÜÙ\Ù\HJˆ˜[YVÈ™XÚ\Ú[ÛœÈ—VÌVÈœ™\Z\—Ü›Ý]H—VÈœÙX[WÚY—KˆœÙX[K\šXÚ[™Ë]™\ÚÛ‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆ˜[YVÈ™XÚ\Ú[ÛœÈ—VÌVÈœ™\Z\—Ü›Ý]H—VÈš[œÜXÝ[Û—ØÛÛ[X[™—Kˆœš\ˆYÙ[œšYYˆK\›ÛÝˆK\ÙX[KZYÙX[K\šXÚ[™Ë]™\ÚÛKZœÛÛˆ‚ˆ
+NÂˆ\ÜÙ\JXÚ\Ú[Û‹˜ÛÛZ[œÊœÝ]X×Üš\—Ù]šY[˜ÙWÛÛ›HŠJNÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆÚXÚ×ÚœÛÛ—ÙY™—ÜØÛÜWÛÝ™\œÚ^™YÙ[Z]×Û[Z]YØ\Y˜XÝ
+
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]›ÛÝHÛÜšÜÜXÙWÜ›ÛÝ
+
+K™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Y™ˆHØ[\WÙY™Š
+K™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Ý]]H[—Üš\—ÝÚ]Ù[Šˆ	–È˜ÚXÚÈ‹‹K\›ÛÝ‹	œ›ÛÝ‹KYY™ˆ‹	™Y™‹‹KZœÛÛˆ—Kˆ	–Ê”’T—ÓPVÑQ‘—ÐÒS‘ÑQÔ•TÕÓS‘TÈ‹ŒHŠWKˆ
+NÂˆ\ÜÙ\Ù˜Z[\™J	›Ý]]
+NÂ‚ˆ]ÝÝ]HÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝÝ]
+NÂˆ]˜[YNˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝÝ]
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]J›[Z]YÝÝ]ÚÝ[\œÙH\È”ÓÓŽˆÙ\œŸWžÜÝÝ]HŠJOÎÂˆ\ÜÙ\Ù\HJ˜[YVÈœØÚ[XWÝ™\œÚ[Ûˆ—KŒŒˆŠNÂˆ\ÜÙ\Ù\HJˆ˜[YVÈ˜[˜[\Ú\×ÜØÛÜH—VÈœ[—ÜÝ]\È—Kˆ™Y™—ÜØÛÜWÛÝ™\œÚ^™Y‚ˆ
+NÂˆ\ÜÙ\Ù\HJ˜[YVÈ˜[˜[\Ú\×ÜØÛÜH—VÈ™ÝÛœÝ™X[WØÛÛœÝ[XX›H—K˜[ÙJNÂˆ\ÜÙ\Ù\HJˆ˜[YVÈœ[—Û[Z]][ÛœÈ—VÌVÈ˜Ø]YÛÜžH—Kˆ™Y™—ÜØÛÜWÛÝ™\œÚ^™Y‚ˆ
+NÂˆ\ÜÙ\Ù\HJ˜[YVÈœ[—Û[Z]][ÛœÈ—VÌVÈ™ÝÛœÝ™X[WØÛÛœÝ[XX›H—K˜[ÙJNÂˆ\ÜÙ\Ù\HJ˜[YVÈ™š[™[™ÜÈ—K˜\×Ø\œ˜^J
+K›X\
+™XÎŽ›[ŠKÛÛYJ
+JNÂ‚ˆ]Ý\œˆHÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝ\œŠNÂˆ\ÜÙ\JˆÝ\œ‹˜ÛÛZ[œÊ™Y™—ÜØÛÜWÛÝ™\œÚ^™YŠKˆœÝ\œˆÚÝ[Ý[™\Ü˜Z[Y[˜[\Ú\ÎˆÜÝ\œŸH‚ˆ
+NÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆY™—ÚœÛÛ—Ü™\Ü×ØÚ[™ÙYÜÝ\™˜XÙWØ™Y›Ü™WÙ[Ü™\×ØÛÛ^
+
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]ÛÜšÜÜXÙHH[š\]YWÝ[\ÝÛÜšÜÜXÙJ™Y™‹Yš\œÝŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+ÛÜšÜÜXÙKš›Ú[ŠœÜ˜ÈŠJK›X\Ù\œŠ_›Ü›X]J˜Ü™X]HÜ˜È\ŽˆÙ_HŠJOÎÂˆÝŽ™œÎŽÜš]JˆÛÜšÜÜXÙKš›Ú[ŠØ\™ÛËÛ[ŠKˆ–ÜXÚØYÙWW›˜[YOWœš\‹YY™‹Yš\œÝYš^\™W—™\œÚ[ÛWŒŒKŒ—™Y][ÛWŒŒ—ˆ‹ˆ
+Bˆ›X\Ù\œŠ_›Ü›X]JÜš]HØ\™ÛËÛ[ˆÙ_HŠJOÎÂˆÝŽ™œÎŽÜš]JˆÛÜšÜÜXÙKš›Ú[ŠœÜ˜ËÛX‹œœÈŠKˆœXˆ›ˆÝ™\—Ý™\ÚÛ
+[[Ý[ˆLÌ‹™\ÚÛˆLÌŠHOˆ›ÛÛ×ˆ[[Ý[H™\ÚÛŸWˆ‹ˆ
+Bˆ›X\Ù\œŠ_›Ü›X]JÜš]H˜\ÙHÜ˜ËÛX‹œœÎˆÙ_HŠJOÎÂˆ[—ÙÚ]
+	ÛÜšÜÜXÙK	–Èš[š]—JOÎÂˆ[—ÙÚ]
+ˆ	ÛÜšÜÜXÙKˆ	–È˜ÛÛ™šYÈ‹\Ù\‹™[XZ[‹œš\^[\Kš[˜[Y—Kˆ
+OÎÂˆ[—ÙÚ]
+	ÛÜšÜÜXÙK	–È˜ÛÛ™šYÈ‹\Ù\‹›˜[YH‹”’Tˆ\Ý—JOÎÂˆ[—ÙÚ]
+	ÛÜšÜÜXÙK	–È˜Y‹‹ˆ—JOÎÂˆ[—ÙÚ]
+	ÛÜšÜÜXÙK	–È˜ÛÛ[Z]‹‹[H‹˜˜\ÙH—JOÎÂˆ[—ÙÚ]
+ˆ	ÛÜšÜÜXÙKˆ	–È\]K\™Yˆ‹œ™YœËÜ™[[Ý\ËÛÜšYÚ[‹ÛXZ[ˆ‹’PQ—Kˆ
+OÎÂˆÝŽ™œÎŽÜš]JˆÛÜšÜÜXÙKš›Ú[ŠœÜ˜ËÛX‹œœÈŠKˆœXˆ›ˆÝ™\—Ý™\ÚÛ
+[[Ý[ˆLÌ‹™\ÚÛˆLÌŠHOˆ›ÛÛ×ˆ[[Ý[ˆ™\ÚÛŸWˆ‹ˆ
+Bˆ›X\Ù\œŠ_›Ü›X]JÜš]HÚ[™ÙYÜ˜ËÛX‹œœÎˆÙ_HŠJOÎÂˆ[—ÙÚ]
+	ÛÜšÜÜXÙK	–È˜Y‹œÜ˜ËÛX‹œœÈ—JOÎÂˆ[—ÙÚ]
+	ÛÜšÜÜXÙK	–È˜ÛÛ[Z]‹‹[H‹˜Ú[™ÙH™\ÚÛ›Ý[™\žH—JOÎÂ‚ˆ]›ÛÝHÛÜšÜÜXÙK™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Ý]]H[—Üš\Š	–Âˆ™Y™ˆ‹ˆ‹K\›ÛÝ‹ˆ	œ›ÛÝˆ‹KX˜\ÙH‹ˆœ™YœËÜ™[[Ý\ËÛÜšYÚ[‹ÛXZ[ˆ‹ˆ‹KZXY‹ˆ’PQ‹ˆ‹KZœÛÛˆ‹ˆJNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂ‚ˆ]ÝÝ]HÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝÝ]
+NÂˆ]™\ÜˆÙ\™WÚœÛÛŽŽ•˜[YHBˆÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝÝ]
+K›X\Ù\œŠ_›Ü›X]Jœ\œÙHY™ˆ”ÓÓŽˆÙ_WžÜÝÝ]HŠJOÎÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÚÚ[™ŠK›X\Ù\œŠ_K×ÜÝš[™Ê
+JOËˆœš\—ÙY™ˆ‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹Ü[—ÜÝ]\ÈŠK›X\Ù\œŠ_K×ÜÝš[™Ê
+JOËˆ™Y™—ØÛÛ\]WÙ[Ü™\×Û[Z]Y‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹Ü[[YWÜÝ]\ËÙY™‹ÜÝ]HŠK›X\Ù\œŠ_K×ÜÝš[™Ê
+JOËˆ™Y™—ØÛÛ\]H‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹Ü[[YWÜÝ]\ËÙ[Ü™\×ØÛÛ^ÜÝ]HŠBˆ›X\Ù\œŠ_K×ÜÝš[™Ê
+JOËˆ™[Ü™\×Û[Z]Y‚ˆ
+NÂˆ\ÜÙ\JˆZœÛÛ—ÜÚ[\—Ø›ÛÛ
+ˆ	œ™\Üˆ‹Ü[[YWÜÝ]\ËÙ[Ü™\×ØÛÛ^ÙÝÛœÝ™X[WØÛÛœÝ[XX›H‹ˆ
+Bˆ›X\Ù\œŠ_K×ÜÝš[™Ê
+JOÂˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ØÚ[™ÙYÙš[\ËÌÜ]ŠK›X\Ù\œŠ_K×ÜÝš[™Ê
+JOËˆœÜ˜ËÛX‹œœÈ‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹Ü™XÙZ\ÛÝ]ÛÛYWÚ[ŠK›X\Ù\œŠ_K×ÜÝš[™Ê
+JOËˆ™Y™—ØÛÛ\]KÙ[Ü™\×Û[Z]Y‚ˆ
+NÂˆ\ÜÙ\JˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹Ü™XÙZ\Ü]ŠBˆ›X\Ù\œŠ_K×ÜÝš[™Ê
+JOÂˆ˜ÛÛZ[œÊ™Y™‹Yš\œÝŠBˆ
+NÂˆ]Ú[™ÙYÜÙX[\ÈH™\ÜˆœÚ[\Š‹ØÚ[™ÙYÜÙX[\ÈŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×Ø\œ˜^JBˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYÚ[™ÙYÜÙX[\È\œ˜^H‹×ÜÝš[™Ê
+JOÎÂˆ\ÜÙ\JˆXÚ[™ÙYÜÙX[\Ëš\×Ù[\J
+Kˆ™Y™‹Yš\œÝ™\ÜÚÝ[™\Ù\™HÚ[™ÙY\ÙX[H]šY[˜ÙNˆÜÝÝ]H‚ˆ
+NÂ‚ˆYÛ›Ü™WÜ™[[Ý™WÙ\—Ø[
+	ÛÜšÜÜXÙJNÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆYÙ[ØœšYY—ÙY™—ÜØÛÜWÛÝ]]×ÚœÛÛŠ
+HOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]
+›ÛÝY™ŠHHYÙ[ØœšYY—ÜØ[\WÝÛÜšÜÜXÙJ˜YÙ[XœšYY‹\›ÛÝŠOÎÂˆ]›ÛÝÜ]H›ÛÝ™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Y™ˆHY™‹™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Ý]]H[—Üš\Š	–Âˆ˜YÙ[‹ˆ˜œšYYˆ‹ˆ‹K\›ÛÝ‹ˆ	œ›ÛÝÜ]ˆ‹KYY™ˆ‹ˆ	™Y™‹ˆ‹KZœÛÛˆ‹ˆ‹K[X^\ÙX[\È‹ˆŒˆ‹ˆJNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂ‚ˆ]ÝÝ]HÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝÝ]
+NÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊˆÈˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒŒHˆˆÊJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊˆÈˆœØÛÜHŽˆÛÜšÚ[™×ÜÙ]ˆˆÊJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊˆÈˆœÛÝ\˜ÙHŽˆ™Y™ˆˆˆÊJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊˆÈˆœ™]\›™YŽˆˆˆÊJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊˆÈˆ˜Ú[™ÙYÛ[™WÚ[\œÙXÝ×ÜÙX[HˆˆÊJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊˆÈˆ˜YÙ[\ÙX[K\XÚÙ]ËZœÛÛˆˆˆÊJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊœ™\ËY^ÜÝ\™KZœÛÛˆŠJNÂˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+›ÛÝ
+OÎÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆ\ÝÛÜ˜XÛWØ\ÜÚ\Ý[Ü›ÛÙ—ØÛWÝÜš]\×ØØ[›ÛšXØ[Ü™\Ü
+
+B‹Oˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]ÛÜšÜÜXÙHH[š\]YWÝ[\ÝÛÜšÜÜXÙJ˜\ÜÚ\Ý[[ÛÜ\›ÛÙˆŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	ÛÜšÜÜXÙJOÎÂˆ]Ý]HÛÜšÜÜXÙKš›Ú[Š\Ý[Ü˜XÛKX\ÜÚ\Ý[\›ÛÙ‹šœÛÛˆŠNÂˆ]Ý]ÛYHÛÜšÜÜXÙKš›Ú[Š\Ý[Ü˜XÛKX\ÜÚ\Ý[\›ÛÙ‹›YŠNÂˆ]Ý]Ø\™ÈHÝ]™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Ý]ÛYØ\™ÈHÝ]ÛY™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Ý]]H[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–Âˆ˜\ÜÚ\Ý[[ÛÜ‹ˆœ›ÛÙˆ‹ˆ‹K\‹YÝZY[˜ÙH‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÝ\Ý[Ü˜XÛKX\ÜÚ\Ý[[ÛÜØØ[›ÛšXØ[Ü‹YÝZY[˜ÙKšœÛÛˆ‹ˆ‹KXYÙ[\XÚÙ]‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÙY]Ü‹XYÙ[[ÛÜØYÙ[XœšYY‹šœÛÛˆ‹ˆ‹KX™Y›Ü™H‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\ØØ[Xœ˜][Û‹Ø™Y›Ü™K]\™Ù]Y]\Ýœ™\ËY^ÜÝ\™KšœÛÛˆ‹ˆ‹KXY\ˆ‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\ØØ[Xœ˜][Û‹ØY\‹]\™Ù]Y]\Ýœ™\ËY^ÜÝ\™KšœÛÛˆ‹ˆ‹K\™XÙZ\‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÙY]Ü‹XYÙ[[ÛÜØYÙ[\™XÙZ\šœÛÛˆ‹ˆ‹K[YÙ\ˆ‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÝ\Ý[Ü˜XÛKX\ÜÚ\Ý[[ÛÜØØ[›ÛšXØ[Ü‹Y]šY[˜ÙK[YÙ\‹šœÛÛˆ‹ˆ‹K[Ý]‹ˆ	›Ý]Ø\™Ëˆ‹K[Ý][Y‹ˆ	›Ý]ÛYØ\™ËˆJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂ‚ˆ]š^\™HHÛÜšÜÜXÙWÜ›ÛÝ
+
+Bˆš›Ú[Š™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÝ\Ý[Ü˜XÛKX\ÜÚ\Ý[[ÛÜØØ[›ÛšXØ[ŠNÂˆ]^XÝYÚœÛÛˆHÝŽ™œÎŽœ™XYÝ×ÜÝš[™Êš^\™Kš›Ú[Š\Ý[Ü˜XÛKX\ÜÚ\Ý[\›ÛÙ‹šœÛÛˆŠJOÎÂˆ]XÝX[ÚœÛÛˆHÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	›Ý]
+OÎÂˆ\ÜÙ\Ù\HJˆ›Ü›X[^™WÛ™]Û[™\ÊXÝX[ÚœÛÛ‹š[WÙ[™
+
+JKˆ›Ü›X[^™WÛ™]Û[™\Ê^XÝYÚœÛÛ‹š[WÙ[™
+
+JKˆ˜\ÜÚ\Ý[[ÛÜ›ÛÙˆ”ÓÓˆš^\™HšYY‚ˆ
+NÂˆ]^XÝYÛYHÝŽ™œÎŽœ™XYÝ×ÜÝš[™Êš^\™Kš›Ú[Š\Ý[Ü˜XÛKX\ÜÚ\Ý[\›ÛÙ‹›YŠJOÎÂˆ]XÝX[ÛYHÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	›Ý]ÛY
+OÎÂˆ\ÜÙ\Ù\HJˆ›Ü›X[^™WÛ™]Û[™\Ê	˜XÝX[ÛY
+Kˆ›Ü›X[^™WÛ™]Û[™\Ê	™^XÝYÛY
+Kˆ˜\ÜÚ\Ý[[ÛÜ›ÛÙˆX\šÙÝÛˆš^\™HšYY‚ˆ
+NÂˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+ÛÜšÜÜXÙJOÎÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆ\ÝÛÜ˜XÛWØ\ÜÚ\Ý[Ü›ÛÙ—ØÛWÝÜš]\×Ý[˜Ú[™ÙYØÛÛ›Û
+
+B‹Oˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]ÛÜšÜÜXÙHH[š\]YWÝ[\ÝÛÜšÜÜXÙJ˜\ÜÚ\Ý[[ÛÜ\›ÛÙ‹][˜Ú[™ÙYŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	ÛÜšÜÜXÙJOÎÂˆ]Ý]HÛÜšÜÜXÙKš›Ú[Š˜\ÜÚ\Ý[\›ÛÙ‹šœÛÛˆŠNÂˆ]Ý]ÛYHÛÜšÜÜXÙKš›Ú[Š˜\ÜÚ\Ý[\›ÛÙ‹›YŠNÂˆ]Ý]]H[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–Âˆ˜\ÜÚ\Ý[[ÛÜ‹ˆœ›ÛÙˆ‹ˆ‹K\›ÛÝ‹ˆ‹ˆ‹ˆ‹K\‹YÝZY[˜ÙH‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÝ\Ý[Ü˜XÛKX\ÜÚ\Ý[[ÛÜØØ[›ÛšXØ[Ü‹YÝZY[˜ÙKšœÛÛˆ‹ˆ‹KXYÙ[\XÚÙ]‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÙY]Ü‹XYÙ[[ÛÜØYÙ[XœšYY‹šœÛÛˆ‹ˆ‹KX™Y›Ü™H‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÙš\œÝ]\ÙY[XXÝ[Û‹Ý[˜Ú[™ÙYXY\‹X][\Ø™Y›Ü™Kœ™\ËY^ÜÝ\™KšœÛÛˆ‹ˆ‹KXY\ˆ‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÙš\œÝ]\ÙY[XXÝ[Û‹Ý[˜Ú[™ÙYXY\‹X][\ØY\‹œ™\ËY^ÜÝ\™KšœÛÛˆ‹ˆ‹K\™XÙZ\‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÙš\œÝ]\ÙY[XXÝ[Û‹Ý[˜Ú[™ÙYXY\‹X][\ØYÙ[\™XÙZ\šœÛÛˆ‹ˆ‹K[Ý]‹ˆ	›Ý]™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹K[Ý][Y‹ˆ	›Ý]ÛY™\Ü^J
+K×ÜÝš[™Ê
+KˆJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂ‚ˆ]^XÝYHÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[Šˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÙš\œÝ]\ÙY[XXÝ[Û‹Ý[˜Ú[™ÙYXY\‹X][\Ø\ÜÚ\Ý[\›ÛÙ‹šœÛÛˆ‹ˆ
+NÂˆ\ÜÙ\Ù\HJˆ›Ü›X[^™WÛ™]Û[™\ÊÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊÝ]
+OËš[WÙ[™
+
+JKˆ›Ü›X[^™WÛ™]Û[™\ÊÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê^XÝY
+OËš[WÙ[™
+
+JKˆ[˜Ú[™ÙY\ÜÚ\Ý[\›ÛÙˆš^\™HšYY‚ˆ
+NÂˆ]X\šÙÝÛˆHÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊÝ]ÛY
+OÎÂˆ\ÜÙ\JX\šÙÝÛ‹˜ÛÛZ[œÊY\ŽˆÙXZÛWÙÜš\YŠJNÂˆ\ÜÙ\JX\šÙÝÛ‹˜ÛÛZ[œÊ”Ý]Nˆ[˜Ú[™ÙYŠJNÂˆ\ÜÙ\JX\šÙÝÛ‹˜ÛÛZ[œÊ”ˆYÙ\Žˆ›Ý]˜Z[X›HŠJNÂˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+ÛÜšÜÜXÙJOÎÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆ\ÜÚ\Ý[ÛÛÜÚX[ØÛWÝÜš]\×Û][WÜ›ÛÙ—Ü™\Ü
+
+HOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]ÛÜšÜÜXÙHH[š\]YWÝ[\ÝÛÜšÜÜXÙJ˜\ÜÚ\Ý[[ÛÜZX[ŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	ÛÜšÜÜXÙJOÎÂˆ]Ý]HÛÜšÜÜXÙKš›Ú[Š˜\ÜÚ\Ý[[ÛÜZX[šœÛÛˆŠNÂˆ]Ý]ÛYHÛÜšÜÜXÙKš›Ú[Š˜\ÜÚ\Ý[[ÛÜZX[›YŠNÂˆ]Ý]Ø\™ÈHÝ]™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Ý]ÛYØ\™ÈHÝ]ÛY™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Ý]]H[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–Âˆ˜\ÜÚ\Ý[[ÛÜ‹ˆšX[‹ˆ‹K\›ÛÙˆ‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYØ\ÜÚ\Ý[[ÛÜZX[Ü›ÛÙœËØÛÛ\]KZ[\›Ý™Y\›ÛÙ‹šœÛÛˆ‹ˆ‹K\›ÛÙˆ‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYØ\ÜÚ\Ý[[ÛÜZX[Ü›ÛÙœËÝ[˜Ú[™ÙY\›ÛÙ‹šœÛÛˆ‹ˆ‹K\›ÛÙˆ‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYØ\ÜÚ\Ý[[ÛÜZX[Ü›ÛÙœËÛZ\ÜÚ[™Ë\™\]Z\™Y\›ÛÙ‹šœÛÛˆ‹ˆ‹K[Ý]‹ˆ	›Ý]Ø\™Ëˆ‹K[Ý][Y‹ˆ	›Ý]ÛYØ\™ËˆJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂ‚ˆ]š^\™HBˆÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[Š™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYØ\ÜÚ\Ý[[ÛÜZX[Û][K\›ÛÙˆŠNÂˆ]^XÝYÚœÛÛˆHÝŽ™œÎŽœ™XYÝ×ÜÝš[™Êš^\™Kš›Ú[Š˜\ÜÚ\Ý[[ÛÜZX[šœÛÛˆŠJOÎÂˆ]XÝX[ÚœÛÛˆHÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	›Ý]
+OÎÂˆ\ÜÙ\Ù\HJˆ›Ü›X[^™WÙÙ[™\˜]YØ]
+›Ü›X[^™WÛ™]Û[™\ÊXÝX[ÚœÛÛ‹š[WÙ[™
+
+JJKˆ›Ü›X[^™WÛ™]Û[™\Ê^XÝYÚœÛÛ‹š[WÙ[™
+
+JKˆ˜\ÜÚ\Ý[[ÛÜX[”ÓÓˆš^\™HšYY‚ˆ
+NÂˆ]^XÝYÛYHÝŽ™œÎŽœ™XYÝ×ÜÝš[™Êš^\™Kš›Ú[Š˜\ÜÚ\Ý[[ÛÜZX[›YŠJOÎÂˆ]XÝX[ÛYHÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	›Ý]ÛY
+OÎÂˆ\ÜÙ\Ù\HJˆ›Ü›X[^™WÛ™]Û[™\Ê	˜XÝX[ÛY
+Kˆ›Ü›X[^™WÛ™]Û[™\Ê	™^XÝYÛY
+Kˆ˜\ÜÚ\Ý[[ÛÜX[X\šÙÝÛˆš^\™HšYY‚ˆ
+NÂˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+ÛÜšÜÜXÙJOÎÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆš\œÝØXÝ[Û—ØÛWÝÜš]\×ØXÝ[Û˜X›WÜ™\Ü
+
+HOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]ÛÜšÜÜXÙHH[š\]YWÝ[\ÝÛÜšÜÜXÙJ™š\œÝXXÝ[ÛˆŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	ÛÜšÜÜXÙJOÎÂˆ]Ý]HÛÜšÜÜXÙKš›Ú[Š™š\œÝ]\ÙY[XXÝ[Û‹šœÛÛˆŠNÂˆ]Ý]ÛYHÛÜšÜÜXÙKš›Ú[Š™š\œÝ]\ÙY[XXÝ[Û‹›YŠNÂˆ]Ý]Ø\™ÈHÝ]™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Ý]ÛYØ\™ÈHÝ]ÛY™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Ý]]H[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–Âˆ™š\œÝXXÝ[Ûˆ‹ˆ‹K\›ÛÝ‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ú[œ]‹ˆ‹K\‹YÝZY[˜ÙH‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÝ\Ý[Ü˜XÛKX\ÜÚ\Ý[[ÛÜØØ[›ÛšXØ[Ü‹YÝZY[˜ÙKšœÛÛˆ‹ˆ‹KX\ÜÚ\Ý[\›ÛÙˆ‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÝ\Ý[Ü˜XÛKX\ÜÚ\Ý[[ÛÜØØ[›ÛšXØ[Ý\Ý[Ü˜XÛKX\ÜÚ\Ý[\›ÛÙ‹šœÛÛˆ‹ˆ‹K[YÙ\ˆ‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÝ\Ý[Ü˜XÛKX\ÜÚ\Ý[[ÛÜØØ[›ÛšXØ[Ü‹Y]šY[˜ÙK[YÙ\‹šœÛÛˆ‹ˆ‹K[Ý]‹ˆ	›Ý]Ø\™Ëˆ‹K[Ý][Y‹ˆ	›Ý]ÛYØ\™ËˆJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂ‚ˆ]™\ÜˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	›Ý]
+OÊOÎÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÜØÚ[XWÝ™\œÚ[ÛˆŠOËŒŒHŠNÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÚÚ[™ŠOË™š\œÝÝ\ÙY[ØXÝ[ÛˆŠNÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÜÝ]\ÈŠOË˜XÝ[Û˜X›HŠNÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ØXÝ[Û—ÚÚ[™ŠOËˆÜš]WÙ›ØÝ\ÙYÝ\Ý‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÜÙ[XÝYÜÙX[WÚYŠOËˆÙ˜ÍÍ˜LÍÙÍØ™‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ØÛÛ[X[™ËÝ™\šYžHŠOËˆœš\ˆYÙ[™\šYžHK\›ÛÝš^\™\ËØ›Ý[™\žWÙØ\Ú[œ]KX™Y›Ü™H\™Ù]Üš\‹ÝÛÜšÙ›ÝËØ™Y›Ü™Kœ™\ËY^ÜÝ\™KšœÛÛˆKXY\ˆ\™Ù]Üš\‹ÝÛÜšÙ›ÝËØY\‹œ™\ËY^ÜÝ\™KšœÛÛˆKZœÛÛˆ‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹Ý\™Ù]ÜÝYÙÙ\ÝYÝ\ÝÛ˜[YHŠOËˆ™\ØÛÝ[YÝÝ[Ø›Ý[™\žWÙ\ØÜš[Z[˜]Üˆ‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹Ú[œ]ËØ\ÜÚ\Ý[Ü›ÛÙˆŠOËˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÝ\Ý[Ü˜XÛKX\ÜÚ\Ý[[ÛÜØØ[›ÛšXØ[Ý\Ý[Ü˜XÛKX\ÜÚ\Ý[\›ÛÙ‹šœÛÛˆ‚ˆ
+NÂ‚ˆ]X\šÙÝÛˆHÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	›Ý]ÛY
+OÎÂˆ\ÜÙ\JX\šÙÝÛ‹˜ÛÛZ[œÊˆÈ’Tˆš\œÝ\ÙY[XÝ[ÛˆŠJNÂˆ\ÜÙ\JX\šÙÝÛ‹˜ÛÛZ[œÊ”Ý]\ÎˆXÝ[Û˜X›HŠJNÂˆ\ÜÙ\JX\šÙÝÛ‹˜ÛÛZ[œÊXÝ[ÛŽˆÜš]WÙ›ØÝ\ÙYÝ\ÝŠJNÂˆ\ÜÙ\JX\šÙÝÛ‹˜ÛÛZ[œÊ‘Ù\È›Ý[ˆ]]][Ûˆ\Ý[™ËˆŠJNÂˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+ÛÜšÜÜXÙJOÎÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆš\œÝØXÝ[Û—ØÛWÜ™\Ù\™\×Ý[˜Ú[™ÙYØÛÛ›ÛÚY[]J
+HOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›Ü‚žÂˆ]ÛÜšÜÜXÙHH[š\]YWÝ[\ÝÛÜšÜÜXÙJ™š\œÝXXÝ[Û‹][˜Ú[™ÙYŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	ÛÜšÜÜXÙJOÎÂˆ]Ý]HÛÜšÜÜXÙKš›Ú[Š™š\œÝ]\ÙY[XXÝ[Û‹šœÛÛˆŠNÂˆ]Ý]ÛYHÛÜšÜÜXÙKš›Ú[Š™š\œÝ]\ÙY[XXÝ[Û‹›YŠNÂˆ]Ý]]H[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–Âˆ™š\œÝXXÝ[Ûˆ‹ˆ‹K\›ÛÝ‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ú[œ]‹ˆ‹K\‹YÝZY[˜ÙH‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÝ\Ý[Ü˜XÛKX\ÜÚ\Ý[[ÛÜØØ[›ÛšXØ[Ü‹YÝZY[˜ÙKšœÛÛˆ‹ˆ‹KX\ÜÚ\Ý[\›ÛÙˆ‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÙš\œÝ]\ÙY[XXÝ[Û‹Ý[˜Ú[™ÙYXY\‹X][\Ø\ÜÚ\Ý[\›ÛÙ‹šœÛÛˆ‹ˆ‹K\™XÙZ\‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÙš\œÝ]\ÙY[XXÝ[Û‹Ý[˜Ú[™ÙYXY\‹X][\ØYÙ[\™XÙZ\šœÛÛˆ‹ˆ‹K[Ý]‹ˆ	›Ý]™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹K[Ý][Y‹ˆ	›Ý]ÛY™\Ü^J
+K×ÜÝš[™Ê
+KˆJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂ‚ˆ]™[™\™YHÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊÝ]
+OÎÂˆ\ÜÙ\J™[™\™Y˜ÛÛZ[œÊˆÈˆœÝ]\ÈŽˆ›Z\ÜÚ[™×Ü™\]Z\™YØ\Y˜XÝˆˆÊJNÂˆ\ÜÙ\J™[™\™Y˜ÛÛZ[œÊœ™XÙZ\[Ý™[Y[[˜Ú[™ÙY\È›Ý›Û[ÝX›HŠJNÂˆ\ÜÙ\JÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊÝ]ÛY
+OË˜ÛÛZ[œÊ›Z\ÜÚ[™×Ü™\]Z\™YØ\Y˜XÝŠJNÂˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+ÛÜšÜÜXÙJOÎÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆš\œÝÜ—ØÛWÝÜš]\×ÜÝ\Ú\™WÜXÚÙ]
+
+HOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]ÛÜšÜÜXÙHH[š\]YWÝ[\ÝÛÜšÜÜXÙJ™š\œÝ\ˆŠNÂˆ]™\ÜÈHÛÜšÜÜXÙKš›Ú[Š\™Ù]Üš\‹Ü™\ÜÈŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	œ™\ÜÊOÎÂˆ]™\Ü×Ø\™ÈH™\ÜË™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Ý]]H[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–Âˆ™š\œÝ\ˆ‹ˆ‹K\›ÛÝ‹ˆ‹ˆ‹ˆ‹KX˜\ÙH‹ˆ’PQ‹ˆ‹KZXY‹ˆ’PQ‹ˆ‹KYØ\[YÙ\ˆ‹ˆ™š^\™\ËÙš\œÝÜÝXØÙ\ÜÙ[Ü‹Ø›Ý[™\žKYØ\Ú[œ]ËÜ™\ÜËÙØ\YXÚ\Ú[Û‹[YÙ\‹šœÛÛˆ‹ˆ‹K[Ý]Y\ˆ‹ˆ	œ™\Ü×Ø\™ËˆJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂˆ]ÝÝ]HÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝÝ]
+NÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊœš\ˆš\œÝ\ˆHÚYHY™™XÝÈ[™ÛÜÝ\ØÛÜÝ\™HŠJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ˜ÛÜÝÛ\ÜÎˆ˜\šY\ÈÚ]Y™ˆ[™ÛÜšÜÜXÙHÚ^™HŠJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ	™›Ü›X]JÜš]\ÈÎˆÜ™\Ü×Ø\™ßKÈŠJJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ˜ØXÚHØØ][ÛŽˆ\™Ù]Üš\‹ØØXÚKÈŠJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ™Ú]™XYÎˆY\È
+Y™ˆ™]ÙY[ˆ˜\ÙH[™XY
+HŠJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ›™]ÛÜšÎˆ›Û™HŠJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ”Ý\\™NˆŠJNÂˆËÈÝ[[X\žH[™Ü›ÝH[™\È™[™\ˆH™\ÛÛ™YØØ][ÛœÈÚ]ÝX›BˆËÈÙ\\˜]ÜœÈÛˆ]™\žHÜÝ
+\Ü^WÜ]›Ý]Ž™\Ü^JK‚ˆ]Ü›ÝWØ˜\ÙHH™\Ü×Ø\™Ëœ™\XÙJ	×	Ë‹ÈŠNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ	™›Ü›X]J”Ý\\™NˆÝÜ›ÝWØ˜\Ù_KÜÝ\Z\™K›YŠJJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ	™›Ü›X]J•Ü›ÝHÝÜ›ÝWØ˜\Ù_KÜÝ\Z\™KšœÛÛˆŠJJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ	™›Ü›X]J•Ü›ÝHÝÜ›ÝWØ˜\Ù_KÜÝ\Z\™K›YŠJJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ”Ý]NˆÜÙØ\ŠJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ”ØY™H™^XÝ[ÛŽˆ™\Z\ˆÛ™H˜[YYØ\ŠJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ•ÜXÝ[Û˜X›HØ\ˆZ\ÜÚ[™È›Ý[™\žH\ÜÙ\[ÛˆŠJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊÚ[™ÙY™Z]š[ÜŽˆ[[Ý[H™\ÚÛŠJNÂˆ\ÜÙ\JˆÝÝ]ˆ˜ÛÛZ[œÊÝ\œ™[]šY[˜ÙHÝ™[™ÝˆÝ]XÈ]šY[˜ÙH›Ý[™™[]Y\Ý\ÝÛÛ^ŠBˆ
+NÂˆ\ÜÙ\JˆÝÝ]˜ÛÛZ[œÊˆ“Z\ÜÚ[™È\ØÜš[Z[˜]ÜŽˆ\]X[]KX›Ý[™\žH\ÜÙ\[Ûˆ›ÜˆHÚ[™ÙY™Z]š[Ü‹ˆ‚ˆ
+Bˆ
+NÂˆ\ÜÙ\JˆÝÝ]˜ÛÛZ[œÊˆ‘›ØÝ\ÙY›ÛÙˆ[[ˆYH›ØÝ\ÙY›Ý[™\žH\ÜÙ\[Ûˆ[ˆ\ÝËÜšXÚ[™ËœœØ‚ˆ
+Bˆ
+NÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊˆ•ÚH\ÈX]\œÎˆH™[]Y\Ý\Ý™XXÚ\È\ÈÚ[™ÙK]›È\]X[]KX›Ý[™\žH\ÜÙ\[ÛˆØ\È›Ý[™›ÜˆHÚ[™ÙY™Z]š[Ü‹ˆ‚ˆ
+JNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ•™\šYžHY\ˆH\ÝY]ˆØ\™ÛÈ\ÚÈš^\™\È›Ý[™\žWÙØ\ŠJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ”™XÙZ\Y\ˆ™\šYžNˆš\ˆ™XÙZ\Üš]HKYØ\ŠJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ”™XÙZ\]ˆ\™Ù]Üš\‹Ü™XÙZ\ËÈŠJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ›Ý[™\žNˆÝ]XÈYš\ÛÜžH]šY[˜ÙHÛ›NÈ›Ý[[YH›ÛÙ‹ÛÝ™\˜YÙHY\]XXÞK]]][ÛˆÛÛ™š\›X][Û‹Ø]H\›Ý˜[ÜˆY\™ÙH\›Ý˜[ˆŠJNÂ‚ˆ]œÛÛ—Ü]H™\ÜËš›Ú[ŠœÝ\Z\™KšœÛÛˆŠNÂˆ]YÜ]H™\ÜËš›Ú[ŠœÝ\Z\™K›YŠNÂˆ]™\ÜˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	šœÛÛ—Ü]
+OÊOÎÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÜØÚ[XWÝ™\œÚ[ÛˆŠOËŒŒHŠNÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÚÚ[™ŠOË™š\œÝÜ—ÜÝ\Ú\™HŠNÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÜÝ]\ÈŠOË˜XÝ[Û˜X›HŠNÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÜÙ[XÝYÜÝ]HŠOËÜÙØ\ŠNÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÜÙ[XÝYÚÚ[™ŠOËˆ“Z\ÜÚ[™Ð›Ý[™\žP\ÜÙ\[Ûˆ‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÜÙ[XÝYÜ™\Z\‹Ü›Ý]HŠOËˆY›Ý[™\žP\ÜÙ\[Ûˆ‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÜÙ[XÝYÜÝ]X×Ù]šY[˜ÙWØ›Ý[™\žHŠOËˆœÝ]XÈYš\ÛÜžH]šY[˜ÙHÛ›NÈ›Ý[[YH›ÛÙ‹ÛÝ™\˜YÙHY\]XXÞK]]][ÛˆÛÛ™š\›X][Û‹Ø]H\›Ý˜[ÜˆY\™ÙH\›Ý˜[ˆ‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÜÙ[XÝYÝÚHŠOËˆH™[]Y\Ý\Ý™XXÚ\È\ÈÚ[™ÙK]›È\]X[]KX›Ý[™\žH\ÜÙ\[ÛˆØ\È›Ý[™›ÜˆHÚ[™ÙY™Z]š[Ü‹ˆ‚ˆ
+NÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹Ú[œ]ËØ˜\ÙHŠOË’PQŠNÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹Ú[œ]ËÚXYŠOË’PQŠNÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹Ü™Y›YÚÛ[ÙHŠOËÜš]HŠNÂˆ\ÜÙ\Jˆ™\ÜˆœÚ[\Š‹Ü™Y›YÚØÚXÚÜÈŠBˆš\×ÜÛÛYWØ[™
+˜[Y_˜[YKš\×Ø\œ˜^J
+JBˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ØÛÛ[X[™ËÝ™\šYžHŠOËˆ˜Ø\™ÛÈ\ÚÈš^\™\È›Ý[™\žWÙØ\‚ˆ
+NÂ‚ˆ]X\šÙÝÛˆHÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	›YÜ]
+OÎÂˆ\ÜÙ\JX\šÙÝÛ‹˜ÛÛZ[œÊˆÈ’Tˆš\œÝˆÝ\\™HŠJNÂˆ\ÜÙ\JX\šÙÝÛ‹˜ÛÛZ[œÊ”Ý]\ÎˆYš\ÛÜžHŠJNÂˆ\ÜÙ\JX\šÙÝÛ‹˜ÛÛZ[œÊˆÈÈ™Y›YÚŠJNÂˆ\ÜÙ\JX\šÙÝÛ‹˜ÛÛZ[œÊ‹HÜXÝ[Û˜X›HØ\ˆZ\ÜÚ[™È›Ý[™\žH\ÜÙ\[ÛˆŠJNÂˆ\ÜÙ\JˆX\šÙÝÛ‹˜ÛÛZ[œÊˆ‹HÝ\œ™[]šY[˜ÙHÝ™[™ÝˆÝ]XÈ]šY[˜ÙH›Ý[™™[]Y\Ý\ÝÛÛ^‚ˆ
+Bˆ
+NÂˆ\ÜÙ\JX\šÙÝÛ‹˜ÛÛZ[œÊ‹HZ\ÜÚ[™È\ØÜš[Z[˜]ÜŽˆ\]X[]KX›Ý[™\žH\ÜÙ\[ÛˆŠJNÂˆ\ÜÙ\JX\šÙÝÛ‹˜ÛÛZ[œÊ‹H™XÙZ\Y\ˆ™\šYžNˆš\ˆ™XÙZ\Üš]HKYØ\ŠJNÂˆ\ÜÙ\JX\šÙÝÛ‹˜ÛÛZ[œÊ‹H™XÙZ\]ˆ\™Ù]Üš\‹Ü™XÙZ\ËÈŠJNÂˆ\ÜÙ\JX\šÙÝÛ‹˜ÛÛZ[œÊ”\ÜËÙ˜Z[]]Üš]H™[XZ[œÈÚ]^XÚ]Ø]KYXÚ\Ú[Ûˆ\Y˜XÝÈŠJNÂˆ]ÚXÚ×ÛÝ]]H[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–ÂˆœÝ\Z\™H‹ˆ‹K\›ÛÝ‹ˆ‹ˆ‹ˆ‹KX˜\ÙH‹ˆ’PQ‹ˆ‹KZXY‹ˆ’PQ‹ˆ‹KYØ\[YÙ\ˆ‹ˆ™š^\™\ËÙš\œÝÜÝXØÙ\ÜÙ[Ü‹Ø›Ý[™\žKYØ\Ú[œ]ËÜ™\ÜËÙØ\YXÚ\Ú[Û‹[YÙ\‹šœÛÛˆ‹ˆ‹K[Ý]Y\ˆ‹ˆ	œ™\Ü×Ø\™Ëˆ‹KXÚXÚÈ‹ˆJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	˜ÚXÚ×ÛÝ]]
+NÂˆ]ÚXÚ×ÜÝÝ]HÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	˜ÚXÚ×ÛÝ]]œÝÝ]
+NÂˆ\ÜÙ\JÚXÚ×ÜÝÝ]˜ÛÛZ[œÊ”Ý\\™NˆŠJNÂˆ\ÜÙ\JÚXÚ×ÜÝÝ]˜ÛÛZ[œÊ”Ý]NˆÜÙØ\ŠJNÂˆ\ÜÙ\JÚXÚ×ÜÝÝ]˜ÛÛZ[œÊ‘š\œÝˆÝ\Z\™HXÚÙ]ÚÎˆŠJNÂˆËÈKXÚXÚÈ˜[Y]\ÈÚ]Ý]™]Üš][™ËÛÈH\ØÛÜÝ\™H]\Ý›ÝÛZ[HÜš]\Ë‚ˆ\ÜÙ\JˆÚXÚ×ÜÝÝ]ˆ˜ÛÛZ[œÊÜš]\ÈÎˆ›Û™H
+KXÚXÚÈ˜[Y]\È[ˆ^\Ý[™ÈÝ\Z\™HXÚÙ]
+HŠBˆ
+NÂˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+ÛÜšÜÜXÙJOÎÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆš\œÝÜ—ØÚXÚ×ÛZ\ÜÚ[™×ÜXÚÙ]ÜÝYÙÙ\Ý×Ü›ÛÝYÛÝ]Ù\Š
+HOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›Ü‚žÂˆ]ÛÜšÜÜXÙHHXZÙWÝ[\ÝÛÜšÜÜXÙJ›Û™JOÎÂˆ]›ÛÝHÛÜšÜÜXÙK™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Ý]]H[—Üš\Š	–È™š\œÝ\ˆ‹‹K\›ÛÝ‹	œ›ÛÝ‹KXÚXÚÈ—JNÂˆ\ÜÙ\Ù˜Z[\™J	›Ý]]
+NÂˆ]Ý\œˆHÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝ\œŠNÂˆ\ÜÙ\JÝ\œ‹˜ÛÛZ[œÊš]Ù\È›ÝÜ™X]HÛ™HŠJNÂˆËÈHÝYÙÙ\ÝY™XÛÝ™\žH]\Ý™\›ÙXÙHH^XÝ\™XÝÜžHKXÚXÚØˆËÈ˜[Y]Yˆ›ÛÝY]K\›ÛÝ™]™\ˆÕÑ\™[]]™KÚ]ÝX›BˆËÈÙ\\˜]ÜœÈÛˆ]™\žHÜÝ‚ˆ]^XÝYÛÝ]Ù\ˆHÛÜšÜÜXÙBˆš›Ú[Š\™Ù]Üš\‹Ü™\ÜÈŠBˆ™\Ü^J
+Bˆ×ÜÝš[™Ê
+Bˆœ™\XÙJ	×	Ë‹ÈŠNÂˆ]Z[ˆH›Ü›X]J‹K[Ý]Y\ˆÙ^XÝYÛÝ]Ù\ŸHŠNÂˆ]][ÝYH›Ü›X]J‹K[Ý]Y\ˆ	ÞÙ^XÝYÛÝ]Ù\ŸIÈŠNÂˆ\ÜÙ\JÝ\œ‹˜ÛÛZ[œÊ	œZ[ŠHÝ\œ‹˜ÛÛZ[œÊ	œ][ÝY
+JNÂˆ\ÜÙ\J\Ý\œ‹˜ÛÛZ[œÊ‹K[Ý]Y\ˆ\™Ù]Üš\‹Ü™\ÜÈŠJNÂˆ\ÜÙ\J\Ý\œ‹˜ÛÛZ[œÊ‹K[Ý]Y\ˆ	Ý\™Ù]Üš\‹Ü™\ÜÉÈŠJNÂˆËÈHZ\ÜÚ[™È]™[™\œÈÚ]ÝX›HÙ\\˜]ÜœÈ]™[ˆÛˆÚ[™ÝÜË‚ˆ\ÜÙ\JÝ\œ‹˜ÛÛZ[œÊ	™›Ü›X]J“Z\ÜÚ[™Î—ˆÙ^XÝYÛÝ]Ù\ŸKÜÝ\Z\™KšœÛÛˆŠJJNÂˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+ÛÜšÜÜXÙJOÎÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆ™\ÜÜXÚÙ]Ú[™^ØÛWÝÜš]\×ÜXÚÙ]Ú[™^
+
+HOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]ÛÜšÜÜXÙHH[š\]YWÝ[\ÝÛÜšÜÜXÙJœ™\Ü\XÚÙ]Z[™^ŠNÂˆ]™\ÜÈHÛÜšÜÜXÙKš›Ú[Š\™Ù]Üš\‹Ü™\ÜÈŠNÂˆ]™]šY]ÈHÛÜšÜÜXÙKš›Ú[Š\™Ù]Üš\‹Ü™]šY]ÈŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	œ™\ÜÊOÎÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	œ™]šY]ÊOÎÂˆÝŽ™œÎŽÜš]Jˆ™\ÜËš›Ú[Šœ‹\™]šY]ËYœ›Û\[™[›YŠKˆ”Ý]\Îˆ›ØÚÙYˆ‹ˆ
+OÎÂˆÝŽ™œÎŽÜš]Jˆ™\ÜËš›Ú[Šœ‹\™]šY]ËYœ›Û\[™[šœÛÛˆŠKˆˆÈžÈœÝ]\ÈŽˆ˜›ØÚÙYŸHˆËˆ
+OÎÂˆÝŽ™œÎŽÜš]J™\ÜËš›Ú[Š™Ø]KYXÚ\Ú[Û‹›YŠK”Ý]\Îˆ›ØÚÙYˆŠOÎÂˆÝŽ™œÎŽÜš]Jˆ™\ÜËš›Ú[Š™Ø]KYXÚ\Ú[Û‹šœÛÛˆŠKˆˆÈžÈ™XÚ\Ú[ÛˆŽˆ˜›ØÚÙYŸHˆËˆ
+OÎÂˆÝŽ™œÎŽÜš]J™\ÜËš›Ú[Š™š\œÝ]\ÙY[XXÝ[Û‹›YŠK”Ý]\Îˆ\Ü×ˆŠOÎÂˆÝŽ™œÎŽÜš]J™]šY]Ëš›Ú[Š˜ÛÛ[Y[Ë›YŠK˜ÛÛ[Y[×ˆŠOÎÂ‚ˆ]Ý]HÛÜšÜÜXÙKš›Ú[Š\™Ù]Üš\‹Ü™\ÜËÚ[™^šœÛÛˆŠNÂˆ]Ý]ÛYHÛÜšÜÜXÙKš›Ú[Š\™Ù]Üš\‹Ü™\ÜËÚ[™^›YŠNÂˆ]™\Ü×Ø\™ÈH™\ÜË™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]™]šY]×Ø\™ÈH™]šY]Ë™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Ý]Ø\™ÈHÝ]™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Ý]ÛYØ\™ÈHÝ]ÛY™\Ü^J
+K×ÜÝš[™Ê
+NÂ‚ˆ]Ý]]H[—Üš\Š	–Âˆœ™\ÜÈ‹ˆš[™^‹ˆ‹K\™\ÜËY\ˆ‹ˆ	œ™\Ü×Ø\™Ëˆ‹K\™]šY]ËY\ˆ‹ˆ	œ™]šY]×Ø\™Ëˆ‹K[Ý]‹ˆ	›Ý]Ø\™Ëˆ‹K[Ý][Y‹ˆ	›Ý]ÛYØ\™ËˆJNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂ‚ˆ]™\ÜˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	›Ý]
+OÊOÎÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÜØÚ[XWÝ™\œÚ[ÛˆŠOËŒŒHŠNÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÚÚ[™ŠOËœ™\ÜÜXÚÙ]Ú[™^ŠNÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÜÝ]\ÈŠOË™˜Z[ŠNÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÜÝ[[X\žKÙØ]WØ]]Üš]HŠOËˆ\™Ù]Üš\‹Ü™\ÜËÙØ]KYXÚ\Ú[Û‹›Y‚ˆ
+NÂˆ\ÜÙ\JÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	›Ý]ÛY
+OË˜ÛÛZ[œÊ‘Ø]H]]Üš]NˆŠJNÂ‚ˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+ÛÜšÜÜXÙJOÎÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆYÙ[ØœšYY—ÙY™—ÜØÛÜWÛÛZ]×ØÛÛ™šYÝ\™YÛÙ™—ÜÙX[\Ê
+HOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]
+›ÛÝY™ŠHHYÙ[ØœšYY—ÜØ[\WÝÛÜšÜÜXÙJ˜YÙ[XœšYY‹XÛÛ™šYË[Ù™ˆŠOÎÂˆÝŽ™œÎŽÜš]Jˆ›ÛÝš›Ú[Šœš\‹Û[ŠKˆ–ÜÙ]™\š]KœÙX[\×WÙXZÛWÙÜš\YH›Ù™——ˆ‹ˆ
+OÎÂˆ]›ÛÝÜ]H›ÛÝ™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Y™ˆHY™‹™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Ý]]H[—Üš\Š	–Âˆ˜YÙ[‹˜œšYYˆ‹‹K\›ÛÝ‹	œ›ÛÝÜ]‹KYY™ˆ‹	™Y™‹‹KZœÛÛˆ‹ˆJNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂ‚ˆ]ÝÝ]HÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	›Ý]]œÝÝ]
+NÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊˆÈˆœ™]\›™YŽˆˆÊJNÂˆ\ÜÙ\JÝÝ]˜ÛÛZ[œÊ˜ÛÛ™šYÝ\™YÙ™ˆ›ÜˆÙXZÛWÙÜš\YÙX[\ÈŠJNÂˆ\ÜÙ\J\ÝÝ]˜ÛÛZ[œÊˆÈˆœÙ]™\š]HŽˆ›Ù™ˆˆˆÊJNÂˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+›ÛÝ
+OÎÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆYÙ[ÜXÚÙ]Ù^[™×ÛÛ™WØœšYY—ÜÙX[WØžWÚY
+
+HOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]
+›ÛÝY™ŠHHYÙ[ØœšYY—ÜØ[\WÝÛÜšÜÜXÙJ˜YÙ[\XÚÙ]\›ÛÝŠOÎÂˆ]›ÛÝÜ]H›ÛÝ™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]Y™ˆHY™‹™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]œšYYˆH[—Üš\Š	–Âˆ˜YÙ[‹˜œšYYˆ‹‹K\›ÛÝ‹	œ›ÛÝÜ]‹KYY™ˆ‹	™Y™‹‹KZœÛÛˆ‹ˆJNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	˜œšYYŠNÂˆ]œšYY—ÜÝÝ]HÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	˜œšYY‹œÝÝ]
+NÂˆ]ÙX[WÚYHœÛÛ—ÜÝš[™×ÙšY[
+	˜œšYY—ÜÝÝ]œÙX[WÚYŠBˆ›Ú×ÛÜŠ™^XÝYœšYYˆÝ]]È[˜ÛYHHÙX[WÚYŠOÎÂ‚ˆ]XÚÙ]H[—Üš\Š	–Âˆ˜YÙ[‹ˆœXÚÙ]‹ˆ‹K\›ÛÝ‹ˆ	œ›ÛÝÜ]ˆ‹K\ÙX[KZY‹ˆ	œÙX[WÚYˆ‹KZœÛÛˆ‹ˆJNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	œXÚÙ]
+NÂ‚ˆ]XÚÙ]ÜÝÝ]HÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	œXÚÙ]œÝÝ]
+NÂˆ\ÜÙ\JXÚÙ]ÜÝÝ]˜ÛÛZ[œÊˆÈˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒˆˆÊJNÂˆ\ÜÙ\JXÚÙ]ÜÝÝ]˜ÛÛZ[œÊˆÈˆ˜[˜[\Ú\×ÛÝ]ÛÛYWÜÝ]\ÈŽˆ››ÝØ\XØX›HˆˆÊJNÂˆ\ÜÙ\JXÚÙ]ÜÝÝ]˜ÛÛZ[œÊˆÈˆœXÚÙ]×ÝÝ[ŽˆHˆÊJNÂˆ\ÜÙ\JXÚÙ]ÜÝÝ]˜ÛÛZ[œÊ	™›Ü›X]JˆÈˆœÙX[WÚYŽˆžÜÙX[WÚYHˆˆÊJJNÂˆ\ÜÙ\JXÚÙ]ÜÝÝ]˜ÛÛZ[œÊˆÈˆ\ÚÈŽˆÜš]WÝ\™Ù]YÝ\ÝˆˆÊJNÂˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+›ÛÝ
+OÎÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆY]Ü—ØYÙ[ÛÛÜÙš^\™WÛÝ]]×ÛX]ÚÙ^XÝY
+
+HOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]˜\ÙHH™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÙY]Ü‹XYÙ[[ÛÜŽÂˆ]ÙX[WÚYHÙ˜ÍÍ˜LÍÙÍØ™ŽÂ‚ˆ]XÚÙ]H[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–Âˆ˜YÙ[‹ˆœXÚÙ]‹ˆ‹K\›ÛÝ‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ú[œ]‹ˆ‹K\ÙX[KZY‹ˆÙX[WÚYˆ‹KZœÛÛˆ‹ˆJOÎÂˆ\ÜÙ\Ø[˜ÚÜ™YÜÝÝ]ÛX]Ú\×Ùš^\™J	œXÚÙ]	™›Ü›X]JžØ˜\Ù_KØYÙ[\XÚÙ]šœÛÛˆŠJOÎÂ‚ˆ]œšYYˆH[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–Âˆ˜YÙ[‹ˆ˜œšYYˆ‹ˆ‹K\›ÛÝ‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ú[œ]‹ˆ‹K\ÙX[KZY‹ˆÙX[WÚYˆ‹KZœÛÛˆ‹ˆJOÎÂˆ\ÜÙ\Ø[˜ÚÜ™YÜÝÝ]ÛX]Ú\×Ùš^\™J	˜œšYY‹	™›Ü›X]JžØ˜\Ù_KØYÙ[XœšYY‹šœÛÛˆŠJOÎÂ‚ˆ]\Y˜XÝÙ\ˆHÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[Š\™Ù]Üš\‹Ý\ÝXYÙ[]™\šYžHŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	˜\Y˜XÝÙ\ŠOÎÂˆ]™Y›Ü™WØ\Y˜XÝH\Y˜XÝÙ\‹š›Ú[Š˜™Y›Ü™Kœ™\ËY^ÜÝ\™KšœÛÛˆŠNÂˆ]Y\—Ø\Y˜XÝH\Y˜XÝÙ\‹š›Ú[Š˜Y\‹œ™\ËY^ÜÝ\™KšœÛÛˆŠNÂˆš[™Ü™\×Ù^ÜÝ\™WÙš^\™WÝÚ]ÝÛÜšÝ™YJˆ	ÛÜšÜÜXÙWÜ›ÛÝ
+
+Kˆ	ÛÜšÜÜXÙWÜ›ÛÝ
+
+Bˆš›Ú[Š™š^\™\ËØ›Ý[™\žWÙØ\ØØ[Xœ˜][Û‹Ø™Y›Ü™K]\™Ù]Y]\Ýœ™\ËY^ÜÝ\™KšœÛÛˆŠKˆ	˜™Y›Ü™WØ\Y˜XÝˆ™\H‹ˆ
+OÎÂˆš[™Ü™\×Ù^ÜÝ\™WÙš^\™WÝÚ]ÝÛÜšÝ™YJˆ	ÛÜšÜÜXÙWÜ›ÛÝ
+
+Kˆ	ÛÜšÜÜXÙWÜ›ÛÝ
+
+Bˆš›Ú[Š™š^\™\ËØ›Ý[™\žWÙØ\ØØ[Xœ˜][Û‹ØY\‹]\™Ù]Y]\Ýœ™\ËY^ÜÝ\™KšœÛÛˆŠKˆ	˜Y\—Ø\Y˜XÝˆ™\H‹ˆ
+OÎÂˆ]™Y›Ü™WØ\Y˜XÝÜ]H\™Ù]Üš\‹Ý\ÝXYÙ[]™\šYžKØ™Y›Ü™Kœ™\ËY^ÜÝ\™KšœÛÛˆŽÂˆ]Y\—Ø\Y˜XÝÜ]H\™Ù]Üš\‹Ý\ÝXYÙ[]™\šYžKØY\‹œ™\ËY^ÜÝ\™KšœÛÛˆŽÂˆ]™\šYžHH[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–Âˆ˜YÙ[‹ˆ™\šYžH‹ˆ‹K\›ÛÝ‹ˆ‹ˆ‹ˆ‹KX™Y›Ü™H‹ˆ™Y›Ü™WØ\Y˜XÝÜ]ˆ‹KXY\ˆ‹ˆY\—Ø\Y˜XÝÜ]ˆ‹KZœÛÛˆ‹ˆJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	™\šYžJNÂˆËÈH™\šYžH”ÓÓˆš[™ÈH^XÝ\Y˜XÝÛÛ[ÛÛ[Z]Y[È
+ÌŽLŒ‚ˆËÈˆŠKÚXÚ[X™YH]™H™\ÜÚ]ÜžHXYÛÈHÝ]XÈÛÛ[ˆØ[‚ˆËÈÛ›H[ˆHYÙ\Ý[›Ü›X[^™YÚ\K‚ˆ]^XÝYÝ™\šYžHBˆÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[Š›Ü›X]JžØ˜\Ù_KØYÙ[]™\šYžKšœÛÛˆŠJJOÎÂˆ]XÝX[Ý™\šYžHHÝš[™ÎŽ™œ›ÛWÝ]Ž
+™\šYžKœÝÝ]˜ÛÛ™J
+JOÎÂˆ\ÜÙ\Ù\HJˆ›Ü›X[^™WØYÙ[Ý™\šYžWÙš^\™J	˜XÝX[Ý™\šYžJOËˆ›Ü›X[^™WØYÙ[Ý™\šYžWÙš^\™J	™^XÝYÝ™\šYžJOËˆ˜YÙ[™\šYžHš^\™HšYY‚ˆ
+NÂˆËÈH™XÙZ\]™KXš[™ÈH^XÝ\Y˜XÝž]\ËÛÈ]]\ÝÛÛœÝ[YBˆËÈH]™HØ[›ÛšXØ[™\šYžHÝ]]8 %™]™\ˆHYÙ\Ý[›Ü›X[^™YÛÛ[‹‚ˆ]™\šYžWØ\Y˜XÝÜ]H\™Ù]Üš\‹Ý\ÝXYÙ[]™\šYžKØYÙ[]™\šYžKšœÛÛˆŽÂˆÝŽ™œÎŽÜš]J\Y˜XÝÙ\‹š›Ú[Š˜YÙ[]™\šYžKšœÛÛˆŠK	™\šYžKœÝÝ]
+OÎÂˆ][˜[\Ú\×ÛÝ]ÛÛYHH[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–Âˆ˜ÚXÚÈ‹‹K\›ÛÝ‹‹ˆ‹‹K[[ÙH‹™˜Y‹‹KX˜\ÙH‹’PQ‹‹KY›Ü›X]‹šœÛÛˆ‹ˆJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	˜[˜[\Ú\×ÛÝ]ÛÛYJNÂˆÝŽ™œÎŽÜš]Jˆ\Y˜XÝÙ\‹š›Ú[Š˜[˜[\Ú\Ë[Ý]ÛÛYKšœÛÛˆŠKˆ	˜[˜[\Ú\×ÛÝ]ÛÛYKœÝÝ]ˆ
+OÎÂ‚ˆ]Ý]Ù\ˆH[š\]YWÝ[\ÝÛÜšÜÜXÙJ˜YÙ[\™XÙZ\Yš^\™HŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	›Ý]Ù\ŠOÎÂˆ]™XÙZ\Ü]HÝ]Ù\‹š›Ú[Š˜YÙ[\™XÙZ\šœÛÛˆŠNÂˆ]™XÙZ\H[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–Âˆ˜YÙ[‹ˆœ™XÙZ\‹ˆ‹K\›ÛÝ‹ˆ‹ˆ‹ˆ‹K]™\šYžKZœÛÛˆ‹ˆ™\šYžWØ\Y˜XÝÜ]ˆ‹K\ÙX[KZY‹ˆÙX[WÚYˆ‹KZœÛÛˆ‹ˆ‹K[Ý]‹ˆ™XÙZ\Ü]ˆ×ÜÝŠ
+Bˆ›Ú×ÛÜŠœ™XÙZ\]ÚÝ[™H]‹NŠOËˆJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	œ™XÙZ\
+NÂˆ]^XÝYÜ™XÙZ\BˆÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[Š˜\ÙJKš›Ú[Š˜YÙ[\™XÙZ\šœÛÛˆŠJOÎÂˆ]XÝX[Ü™XÙZ\HÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	œ™XÙZ\Ü]
+OÎÂˆ]XÝX[Ü™XÙZ\Ý˜[YNˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	˜XÝX[Ü™XÙZ\
+OÎÂˆ\ÜÙ\Ù\HJXÝX[Ü™XÙZ\Ý˜[YVÈœÝ]\È—K˜Yš\ÛÜžHŠNÂˆ\ÜÙ\Ù\HJXÝX[Ü™XÙZ\Ý˜[YVÈ˜[˜[\Ú\×ÛÝ]ÛÛYWÜÝ]\È—K˜ÛÛ\]HŠNÂˆ\ÜÙ\Ù\HJˆXÝX[Ü™XÙZ\Ý˜[YVÈ˜[˜[\Ú\×ÛÝ]ÛÛYH—VÈ˜[˜[\Ú\×ØÛÛ\]H—KˆYBˆ
+NÂˆ\ÜÙ\Ù\HJˆ›Ü›X[^™WØYÙ[Ü™XÙZ\Ùš^\™J	˜XÝX[Ü™XÙZ\
+OËˆ›Ü›X[^™WØYÙ[Ü™XÙZ\Ùš^\™J	™^XÝYÜ™XÙZ\
+OËˆ˜YÙ[™XÙZ\š^\™HšYY‚ˆ
+NÂˆ]š\œÝØXÝ[Û—ÛÝ]HÝ]Ù\‹š›Ú[Š™š\œÝXXÝ[Û‹šœÛÛˆŠNÂˆ]š\œÝØXÝ[Û—ÛYHÝ]Ù\‹š›Ú[Š™š\œÝXXÝ[Û‹›YŠNÂˆ]š\œÝØXÝ[ÛˆH[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–Âˆ™š\œÝXXÝ[Ûˆ‹ˆ‹K\›ÛÝ‹ˆ‹ˆ‹ˆ‹K\™XÙZ\‹ˆ™XÙZ\Ü]ˆ×ÜÝŠ
+Bˆ›Ú×ÛÜŠœ™XÙZ\]ÚÝ[™H]‹NŠOËˆ‹K[Ý]‹ˆš\œÝØXÝ[Û—ÛÝ]ˆ×ÜÝŠ
+Bˆ›Ú×ÛÜŠ™š\œÝXXÝ[ÛˆÝ]]]ÚÝ[™H]‹NŠOËˆ‹K[Ý][Y‹ˆš\œÝØXÝ[Û—ÛYˆ×ÜÝŠ
+Bˆ›Ú×ÛÜŠ™š\œÝXXÝ[ÛˆX\šÙÝÛˆ]ÚÝ[™H]‹NŠOËˆJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	™š\œÝØXÝ[ÛŠNÂˆ]š\œÝØXÝ[Û—ÚœÛÛˆHÝŽ™œÎŽœ™XYÝ×ÜÝš[™Êš\œÝØXÝ[Û—ÛÝ]
+OÎÂˆ\ÜÙ\Jˆš\œÝØXÝ[Û—ÚœÛÛ‹˜ÛÛZ[œÊˆÈˆœÝ]\ÈŽˆ˜[™XYWÚ[\›Ý™YˆˆÊKˆ˜[Y™XÙZ\Ø\È›Ý›Û[ÝYˆÙš\œÝØXÝ[Û—ÚœÛÛŸH‚ˆ
+NÂˆ\ÜÙ\Jš\œÝØXÝ[Û—ÚœÛÛ‹˜ÛÛZ[œÊÙX[WÚY
+JNÂˆËÈH™XÙZ\Ú]H˜[Y™\šYžHZ\ˆ]›È›ÙXÙ\ˆ[˜[\Ú\ÈÝ]ÛÛYH\ÂˆËÈ›Ý›Û[ÝX›K]™[ˆÝYÚH™\šYžH\Y˜XÝ]Ù[ˆ\ÈØ[›ÛšXØ[‚ˆ][˜[\Ú\×ÛÝ]ÛÛYWÜ]H\Y˜XÝÙ\‹š›Ú[Š˜[˜[\Ú\Ë[Ý]ÛÛYKšœÛÛˆŠNÂˆ][˜[\Ú\×ÛÝ]ÛÛYWØž]\ÈHÝŽ™œÎŽœ™XY
+	˜[˜[\Ú\×ÛÝ]ÛÛYWÜ]
+OÎÂˆÝŽ™œÎŽœ™[[Ý™WÙš[J	˜[˜[\Ú\×ÛÝ]ÛÛYWÜ]
+OÎÂˆ]Z\ÜÚ[™×Ø[˜[\Ú\×ÛÝ]HÝ]Ù\‹š›Ú[Š›Z\ÜÚ[™ËX[˜[\Ú\ËšœÛÛˆŠNÂˆ]Z\ÜÚ[™×Ø[˜[\Ú\×ÛYHÝ]Ù\‹š›Ú[Š›Z\ÜÚ[™ËX[˜[\Ú\Ë›YŠNÂˆ]Z\ÜÚ[™×Ø[˜[\Ú\ÈH[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–Âˆ™š\œÝXXÝ[Ûˆ‹ˆ‹K\›ÛÝ‹ˆ‹ˆ‹ˆ‹K\™XÙZ\‹ˆ™XÙZ\Ü]ˆ×ÜÝŠ
+Bˆ›Ú×ÛÜŠœ™XÙZ\]ÚÝ[™H]‹NŠOËˆ‹K[Ý]‹ˆZ\ÜÚ[™×Ø[˜[\Ú\×ÛÝ]ˆ×ÜÝŠ
+Bˆ›Ú×ÛÜŠ›Ý]]]ÚÝ[™H]‹NŠOËˆ‹K[Ý][Y‹ˆZ\ÜÚ[™×Ø[˜[\Ú\×ÛYˆ×ÜÝŠ
+Bˆ›Ú×ÛÜŠ›X\šÙÝÛˆ]ÚÝ[™H]‹NŠOËˆJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Z\ÜÚ[™×Ø[˜[\Ú\ÊNÂˆ]Z\ÜÚ[™×Ø[˜[\Ú\×ÚœÛÛˆHÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊZ\ÜÚ[™×Ø[˜[\Ú\×ÛÝ]
+OÎÂˆ\ÜÙ\JZ\ÜÚ[™×Ø[˜[\Ú\×ÚœÛÛ‹˜ÛÛZ[œÊ›Z\ÜÚ[™×Ü™\]Z\™YØ\Y˜XÝŠJNÂˆ\ÜÙ\J[Z\ÜÚ[™×Ø[˜[\Ú\×ÚœÛÛ‹˜ÛÛZ[œÊˆÈˆœÝ]\ÈŽˆ˜[™XYWÚ[\›Ý™YˆˆÊJNÂˆÝŽ™œÎŽÜš]J	˜[˜[\Ú\×ÛÝ]ÛÛYWÜ]	˜[˜[\Ú\×ÛÝ]ÛÛYWØž]\ÊOÎÂ‚ˆ]Y™™\™[ØÝÙH[š\]YWÝ[\ÝÛÜšÜÜXÙJ™š\œÝXXÝ[Û‹XÝÙŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	™Y™™\™[ØÝÙ
+OÎÂˆ]]]XœÛÛ]WØ[˜[\Ú\ÎˆÙ\™WÚœÛÛŽŽ•˜[YHBˆÙ\™WÚœÛÛŽŽ™œ›ÛWÜÛXÙJ	œÝŽ™œÎŽœ™XY
+	˜[˜[\Ú\×ÛÝ]ÛÛYWÜ]
+OÊOÎÂˆXœÛÛ]WØ[˜[\Ú\ÖÈœ›ÛÝ—HBˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™ÊÛÜšÜÜXÙWÜ›ÛÝ
+
+K™\Ü^J
+K×ÜÝš[™Ê
+Kœ™\XÙJ	×	Ë‹ÈŠJNÂˆÝŽ™œÎŽÜš]Jˆ	˜[˜[\Ú\×ÛÝ]ÛÛYWÜ]ˆÙ\™WÚœÛÛŽŽ×Ý™X×Ü™]J	˜XœÛÛ]WØ[˜[\Ú\ÊOËˆ
+OÎÂˆ]ÝÙÛÝ]HY™™\™[ØÝÙš›Ú[Š™š\œÝXXÝ[Û‹šœÛÛˆŠNÂˆ]ÝÙÛYHY™™\™[ØÝÙš›Ú[Š™š\œÝXXÝ[Û‹›YŠNÂˆ]ÝÙÜ›ÛÝHÛÜšÜÜXÙWÜ›ÛÝ
+
+K™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]ÝÙÜ™\Ý[H[—ØÛÛ[X[™
+ˆ[ˆJÐT‘Ó×Ð’S—ÑVWÜš\ˆŠKˆÛÛYJ	™Y™™\™[ØÝÙ
+Kˆ	–Âˆ™š\œÝXXÝ[Ûˆ‹ˆ‹K\›ÛÝ‹ˆ	˜ÝÙÜ›ÛÝˆ‹K\™XÙZ\‹ˆ™XÙZ\Ü]ˆ×ÜÝŠ
+Bˆ›Ú×ÛÜŠœ™XÙZ\]ÚÝ[™H]‹NŠOËˆ‹K[Ý]‹ˆÝÙÛÝ]×ÜÝŠ
+K›Ú×ÛÜŠ›Ý]]]ÚÝ[™H]‹NŠOËˆ‹K[Ý][Y‹ˆÝÙÛY×ÜÝŠ
+K›Ú×ÛÜŠ›X\šÙÝÛˆ]ÚÝ[™H]‹NŠOËˆKˆ
+OÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	˜ÝÙÜ™\Ý[
+NÂˆ\ÜÙ\JÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊÝÙÛÝ]
+OË˜ÛÛZ[œÊˆÈˆœÝ]\ÈŽˆ˜[™XYWÚ[\›Ý™YˆˆÊJNÂˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+Y™™\™[ØÝÙ
+OÎÂˆ]ÜšYÚ[˜[Ü™XÙZ\ˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	˜XÝX[Ü™XÙZ\
+OÎÂˆËÈH›ÙXÙ\ˆ™XÛÜ™È]È›Û‹YÝ™[]]™HK\›ÛÝ\™Ý[Y[ˆBˆËÈÛÛœÝ[Y\ˆ[›ÚÙYœ›ÛH]\™Ý[Y[	ÜÈ\™[]\Ý™\ÛÛ™H]Û˜ÙK›ÝˆËÈ\[™]ÈH[™XYK\Ù[XÝY›ÛÝ
+™\ËÜ™\Ø
+K‚ˆ]]]™[]]™WÜ›ÛÝÜ™XÙZ\HÜšYÚ[˜[Ü™XÙZ\˜ÛÛ™J
+NÂˆ]™[]]™WÜ›ÛÝÛ˜[YHHÛÜšÜÜXÙWÜ›ÛÝ
+
+Bˆ™š[WÛ˜[YJ
+Bˆ›Ú×ÛÜŠÛÜšÜÜXÙH›ÛÝÚÝ[]™HH˜[YHŠOÂˆ×ÜÝš[™×ÛÜÜÞJ
+Bˆ×ÜÝš[™Ê
+NÂˆ™[]]™WÜ›ÛÝÜ™XÙZ\Èœ›Ý™[˜[˜ÙH—VÈœ™\×Ü›ÛÝ—HBˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™Ê™[]]™WÜ›ÛÝÛ˜[YK˜ÛÛ™J
+JNÂˆ]™[]]™WÜ›ÛÝÜ™XÙZ\Ü]HÝ]Ù\‹š›Ú[Šœ™[]]™K\›ÛÝšœÛÛˆŠNÂˆÝŽ™œÎŽÜš]Jˆ	œ™[]]™WÜ›ÛÝÜ™XÙZ\Ü]ˆÙ\™WÚœÛÛŽŽ×ÜÝš[™×Ü™]J	œ™[]]™WÜ›ÛÝÜ™XÙZ\
+OËˆ
+OÎÂˆ]]]™[]]™WØ[˜[\Ú\ÎˆÙ\™WÚœÛÛŽŽ•˜[YHBˆÙ\™WÚœÛÛŽŽ™œ›ÛWÜÛXÙJ	œÝŽ™œÎŽœ™XY
+	˜[˜[\Ú\×ÛÝ]ÛÛYWÜ]
+OÊOÎÂˆ™[]]™WØ[˜[\Ú\ÖÈœ›ÛÝ—HHÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™Ê™[]]™WÜ›ÛÝÛ˜[YK˜ÛÛ™J
+JNÂˆÝŽ™œÎŽÜš]Jˆ	˜[˜[\Ú\×ÛÝ]ÛÛYWÜ]ˆÙ\™WÚœÛÛŽŽ×Ý™X×Ü™]J	œ™[]]™WØ[˜[\Ú\ÊOËˆ
+OÎÂˆ]ÛÜšÜÜXÙWÜ›ÛÝÙ›Ü—Ü\™[HÛÜšÜÜXÙWÜ›ÛÝ
+
+NÂˆ]\™[ØÝÙHÛÜšÜÜXÙWÜ›ÛÝÙ›Ü—Ü\™[ˆœ\™[
+
+Bˆ›Ú×ÛÜŠÛÜšÜÜXÙHÚÝ[]™H\™[ŠOÎÂˆ]™[]]™WÜ›ÛÝÛÝ]HÝ]Ù\‹š›Ú[Šœ™[]]™K\›ÛÝYš\œÝXXÝ[Û‹šœÛÛˆŠNÂˆ]™[]]™WÜ›ÛÝÛYHÝ]Ù\‹š›Ú[Šœ™[]]™K\›ÛÝYš\œÝXXÝ[Û‹›YŠNÂˆ]™[]]™WÜ›ÛÝÜ™\Ý[H[—ØÛÛ[X[™
+ˆ[ˆJÐT‘Ó×Ð’S—ÑVWÜš\ˆŠKˆÛÛYJ\™[ØÝÙ
+Kˆ	–Âˆ™š\œÝXXÝ[Ûˆ‹ˆ‹K\›ÛÝ‹ˆ	œ™[]]™WÜ›ÛÝÛ˜[YKˆ‹K\™XÙZ\‹ˆ™[]]™WÜ›ÛÝÜ™XÙZ\Ü]ˆ×ÜÝŠ
+Bˆ›Ú×ÛÜŠœ™[]]™H™XÙZ\]ÚÝ[™H]‹NŠOËˆ‹K[Ý]‹ˆ™[]]™WÜ›ÛÝÛÝ]ˆ×ÜÝŠ
+Bˆ›Ú×ÛÜŠœ™[]]™HÝ]]]ÚÝ[™H]‹NŠOËˆ‹K[Ý][Y‹ˆ™[]]™WÜ›ÛÝÛYˆ×ÜÝŠ
+Bˆ›Ú×ÛÜŠœ™[]]™HX\šÙÝÛˆ]ÚÝ[™H]‹NŠOËˆKˆ
+OÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	œ™[]]™WÜ›ÛÝÜ™\Ý[
+NÂˆ\ÜÙ\JˆÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê™[]]™WÜ›ÛÝÛÝ]
+OË˜ÛÛZ[œÊˆÈˆœÝ]\ÈŽˆ˜[™XYWÚ[\›Ý™YˆˆÊBˆ
+NÂˆÝŽ™œÎŽÜš]J	˜[˜[\Ú\×ÛÝ]ÛÛYWÜ]	˜[˜[\Ú\×ÛÝ]ÛÛYWØž]\ÊOÎÂ‚ˆ]ÜšYÚ[˜[Ø[˜[\Ú\ÎˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÛXÙJ	˜[˜[\Ú\×ÛÝ]ÛÛYWØž]\ÊOÎÂˆ]]]ÝØ\YØ[˜[\Ú\ÈHÜšYÚ[˜[Ø[˜[\Ú\Ë˜ÛÛ™J
+NÂˆÝØ\YØ[˜[\Ú\ÖÈ˜[˜[\Ú\×ÛÝ]ÛÛYH—VÈ›Ý]ÛÛYH—VÈšY[]H—VÈœ™\ÜÚ]ÜžWÚY[]H—HBˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™ÊœÝØ\Y\™\ÜÚ]ÜžKZY[]H‹×ÜÝš[™Ê
+JNÂˆÝŽ™œÎŽÜš]Jˆ	˜[˜[\Ú\×ÛÝ]ÛÛYWÜ]ˆÙ\™WÚœÛÛŽŽ×Ý™X×Ü™]J	œÝØ\YØ[˜[\Ú\ÊOËˆ
+OÎÂˆ]ÝØ\YÜÚYXØ\—ÛÝ]HÝ]Ù\‹š›Ú[ŠœÝØ\YX[˜[\Ú\Ë\ÚYXØ\‹šœÛÛˆŠNÂˆ]ÝØ\YÜÚYXØ\—ÛYHÝ]Ù\‹š›Ú[ŠœÝØ\YX[˜[\Ú\Ë\ÚYXØ\‹›YŠNÂˆ]ÝØ\YÜÚYXØ\ˆH[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–Âˆ™š\œÝXXÝ[Ûˆ‹ˆ‹K\›ÛÝ‹ˆ‹ˆ‹ˆ‹K\™XÙZ\‹ˆ™XÙZ\Ü]ˆ×ÜÝŠ
+Bˆ›Ú×ÛÜŠœ™XÙZ\]ÚÝ[™H]‹NŠOËˆ‹K[Ý]‹ˆÝØ\YÜÚYXØ\—ÛÝ]ˆ×ÜÝŠ
+Bˆ›Ú×ÛÜŠœÝØ\YÚYXØ\ˆÝ]]]ÚÝ[™H]‹NŠOËˆ‹K[Ý][Y‹ˆÝØ\YÜÚYXØ\—ÛYˆ×ÜÝŠ
+Bˆ›Ú×ÛÜŠœÝØ\YÚYXØ\ˆX\šÙÝÛˆ]ÚÝ[™H]‹NŠOËˆJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	œÝØ\YÜÚYXØ\ŠNÂˆ]ÝØ\YÜÚYXØ\—Ü™[™\™YHÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊÝØ\YÜÚYXØ\—ÛÝ]
+OÎÂˆ]ÝØ\YÜÚYXØ\—Ý˜[YNˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝØ\YÜÚYXØ\—Ü™[™\™Y
+OÎÂˆ\ÜÙ\Ù\HJˆÝØ\YÜÚYXØ\—Ý˜[YVÈœÝ]\È—K›Z\ÜÚ[™×Ü™\]Z\™YØ\Y˜XÝ‹ˆœÝØ\Y[˜[\Ú\ÈÚYXØ\ˆÚ[™ÙYÝ]\ÎˆÜÝØ\YÜÚYXØ\—Ü™[™\™YH‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆÝØ\YÜÚYXØ\—Ý˜[YVÈ˜XÝ[Û—ÚÚ[™—K™Ù[™\˜]WÛZ\ÜÚ[™×Ø\Y˜XÝ‹ˆœÝØ\Y[˜[\Ú\ÈÚYXØ\ˆÚ[™ÙYXÝ[ÛŽˆÜÝØ\YÜÚYXØ\—Ü™[™\™YH‚ˆ
+NÂˆ]ÝØ\YÝØ\›š[™ÜÈHÝØ\YÜÚYXØ\—Ý˜[YVÈØ\›š[™ÜÈ—Bˆ˜\×Ø\œ˜^J
+Bˆ›Ú×ÛÜŠœÝØ\YÚYXØ\ˆØ\›š[™ÜÈÚÝ[™H[ˆ\œ˜^HŠOÎÂˆ\ÜÙ\JˆÝØ\YÝØ\›š[™ÜËš]\Š
+K˜[žJØ\›š[™ßÂˆØ\›š[™Ë˜\×ÜÝŠ
+Kš\×ÜÛÛYWØ[™
+Ø\›š[™ßÂˆØ\›š[™Ë˜ÛÛZ[œÊ˜[˜[\Ú\ÈÝ]ÛÛYHÙ[X[XÈYÙ\ÝÛÛ[Z]Y[ŠBˆJBˆJKˆœÝØ\Y[˜[\Ú\ÈÚYXØ\ˆØ\›š[™ÈÜÝˆÜÝØ\YÜÚYXØ\—Ü™[™\™YH‚ˆ
+NÂˆÝŽ™œÎŽÜš]J	˜[˜[\Ú\×ÛÝ]ÛÛYWÜ]	˜[˜[\Ú\×ÛÝ]ÛÛYWØž]\ÊOÎÂ‚ˆ]ÜšYÚ[˜[Ý™\šYžHHÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê\Y˜XÝÙ\‹š›Ú[Š˜YÙ[]™\šYžKšœÛÛˆŠJOÎÂˆ]\ÜÙ\Û›ÝÜ›Û[ÝYHX™[ˆ	œÝ‹ˆ^XÝYÜ™X\ÛÛŽˆ	œÝ‹ˆ™XÙZ\ˆÙ\™WÚœÛÛŽŽ•˜[Y_ˆOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]™XÙZ\Ý^HÙ\™WÚœÛÛŽŽ×ÜÝš[™×Ü™]J	œ™XÙZ\
+OÎÂˆÝŽ™œÎŽÜš]J	œ™XÙZ\Ü]™XÙZ\Ý^
+OÎÂˆ]Ý]HÝ]Ù\‹š›Ú[Š›Ü›X]JžÛX™[KšœÛÛˆŠJNÂˆ]YHÝ]Ù\‹š›Ú[Š›Ü›X]JžÛX™[K›YŠJNÂˆ]™\Ý[H[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–Âˆ™š\œÝXXÝ[Ûˆ‹ˆ‹K\›ÛÝ‹ˆ‹ˆ‹ˆ‹K\™XÙZ\‹ˆ™XÙZ\Ü]ˆ×ÜÝŠ
+Bˆ›Ú×ÛÜŠœ™XÙZ\]ÚÝ[™H]‹NŠOËˆ‹K[Ý]‹ˆÝ]×ÜÝŠ
+K›Ú×ÛÜŠ›Ý]]]ÚÝ[™H]‹NŠOËˆ‹K[Ý][Y‹ˆY×ÜÝŠ
+K›Ú×ÛÜŠ›X\šÙÝÛˆ]ÚÝ[™H]‹NŠOËˆJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	œ™\Ý[
+NÂˆ]™[™\™YHÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊÝ]
+OÎÂˆ]˜[YNˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œ™[™\™Y
+OÎÂˆ\ÜÙ\Ù\HJˆ˜[YVÈœÝ]\È—K›Z\ÜÚ[™×Ü™\]Z\™YØ\Y˜XÝ‹ˆžÛX™[HÚ[™ÙYÝ]\ÎˆÜ™[™\™YH‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆ˜[YVÈ˜XÝ[Û—ÚÚ[™—K™Ù[™\˜]WÛZ\ÜÚ[™×Ø\Y˜XÝ‹ˆžÛX™[HÚ[™ÙYXÝ[ÛŽˆÜ™[™\™YH‚ˆ
+NÂˆ\ÜÙ\Jˆ˜[YVÈØ\›š[™ÜÈ—K˜\×Ø\œ˜^J
+Kš\×ÜÛÛYWØ[™
+Ø\›š[™ÜßÂˆØ\›š[™ÜËš]\Š
+K˜[žJØ\›š[™ßÂˆØ\›š[™Âˆ˜\×ÜÝŠ
+Bˆš\×ÜÛÛYWØ[™
+Ø\›š[™ßØ\›š[™Ë˜ÛÛZ[œÊ^XÝYÜ™X\ÛÛŠJBˆJBˆJKˆžÛX™[HXÚÙY^XÝY™Z™XÝ[ÛˆÙ^XÝYÜ™X\ÛÛŸXˆÜ™[™\™YH‚ˆ
+NÂˆÚÊ
+
+JBˆNÂˆ]]]X[›Ü›YYHÜšYÚ[˜[Ü™XÙZ\˜ÛÛ™J
+NÂˆ]X[›Ü›YYÜ]H\™Ù]Üš\‹Ý\ÝXYÙ[]™\šYžKÌÍ[X[›Ü›YYšœÛÛˆŽÂˆÝŽ™œÎŽÜš]JÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[ŠX[›Ü›YYÜ]
+KžÛ›ÝœÛÛˆŠOÎÂˆX[›Ü›YYÈš[œ]È—VÈ˜YÙ[Ý™\šYžWÚœÛÛˆ—HBˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™ÊX[›Ü›YYÜ]×ÜÝš[™Ê
+JNÂˆX[›Ü›YYÈœ›Ý™[˜[˜ÙH—VÈ™\šYžWØ\Y˜XÝ—VÈœ]—HBˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™ÊX[›Ü›YYÜ]×ÜÝš[™Ê
+JNÂˆX[›Ü›YYÈœ›Ý™[˜[˜ÙH—VÈ™\šYžWØ\Y˜XÝ—VÈœÚLMˆ—HBˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™ÊÚLM—Ú^Øž]\ÊˆžÛ›ÝœÛÛˆŠJNÂˆ\ÜÙ\Û›ÝÜ›Û[ÝY
+›X[›Ü›YY‹–ÛX[›Ü›YYH‹X[›Ü›YY
+OÎÂˆÝŽ™œÎŽÜš]J\Y˜XÝÙ\‹š›Ú[Š˜YÙ[]™\šYžKšœÛÛˆŠK	›ÜšYÚ[˜[Ý™\šYžJOÎÂˆÝŽ™œÎŽÜš]J	˜[˜[\Ú\×ÛÝ]ÛÛYWÜ]ˆžÛ›ÝœÛÛˆŠOÎÂˆ\ÜÙ\Û›ÝÜ›Û[ÝY
+ˆ›X[›Ü›YYX[˜[\Ú\È‹ˆ˜[˜[\Ú\ÈÝ]ÛÛYH\Y˜XÝ\È[˜]˜Z[X›H‹ˆÜšYÚ[˜[Ü™XÙZ\˜ÛÛ™J
+Kˆ
+OÎÂˆÝŽ™œÎŽÜš]J	˜[˜[\Ú\×ÛÝ]ÛÛYWÜ]	˜[˜[\Ú\×ÛÝ]ÛÛYWØž]\ÊOÎÂˆ]]]›Û˜Ø[›ÛšXØ[ØÝ\œ™[™\ÜÈHÜšYÚ[˜[Ü™XÙZ\˜ÛÛ™J
+NÂˆ]›Û˜Ø[›ÛšXØ[ØÝ\œ™[™\Ü×Ü]Bˆ\™Ù]Üš\‹Ý\ÝXYÙ[]™\šYžKÌÍ[›Û˜Ø[›ÛšXØ[XÝ\œ™[™\ÜËšœÛÛˆŽÂˆ]]]›Û˜Ø[›ÛšXØ[Ý™\šYžNˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	›ÜšYÚ[˜[Ý™\šYžJOÎÂˆ›Û˜Ø[›ÛšXØ[Ý™\šYžVÈ˜\Y˜XÝØÝ\œ™[™\ÜÈ—HBˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™Êš\ÝÜšXØ[Û›Û˜Ý\œ™[‹×ÜÝš[™Ê
+JNÂˆ]›Û˜Ø[›ÛšXØ[Ý^HÙ\™WÚœÛÛŽŽ×ÜÝš[™×Ü™]J	››Û˜Ø[›ÛšXØ[Ý™\šYžJOÎÂˆÝŽ™œÎŽÜš]JˆÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[Š›Û˜Ø[›ÛšXØ[ØÝ\œ™[™\Ü×Ü]
+Kˆ	››Û˜Ø[›ÛšXØ[Ý^ˆ
+OÎÂˆ›Û˜Ø[›ÛšXØ[ØÝ\œ™[™\ÜÖÈš[œ]È—VÈ˜YÙ[Ý™\šYžWÚœÛÛˆ—HBˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™Ê›Û˜Ø[›ÛšXØ[ØÝ\œ™[™\Ü×Ü]×ÜÝš[™Ê
+JNÂˆ›Û˜Ø[›ÛšXØ[ØÝ\œ™[™\ÜÖÈœ›Ý™[˜[˜ÙH—VÈ™\šYžWØ\Y˜XÝ—VÈœ]—HBˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™Ê›Û˜Ø[›ÛšXØ[ØÝ\œ™[™\Ü×Ü]×ÜÝš[™Ê
+JNÂˆ›Û˜Ø[›ÛšXØ[ØÝ\œ™[™\ÜÖÈœ›Ý™[˜[˜ÙH—VÈ™\šYžWØ\Y˜XÝ—VÈœÚLMˆ—HBˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™ÊÚLM—Ú^Øž]\Ê›Û˜Ø[›ÛšXØ[Ý^˜\×Øž]\Ê
+JJNÂˆ\ÜÙ\Û›ÝÜ›Û[ÝY
+ˆ››Û˜Ø[›ÛšXØ[XÝ\œ™[™\ÜÈ‹ˆ–Û›ÝØØ[›ÛšXØ[H‹ˆ›Û˜Ø[›ÛšXØ[ØÝ\œ™[™\ÜËˆ
+OÎÂˆ]]]ÝØ\YHÜšYÚ[˜[Ü™XÙZ\˜ÛÛ™J
+NÂˆ]Y\—Ü]HÝØ\YÈœ›Ý™[˜[˜ÙH—VÈ˜Y\—Ø\Y˜XÝ—VÈœ]—Bˆ˜\×ÜÝŠ
+Bˆ›Ú×ÛÜŠ˜Y\ˆ]ŠOÂˆ×ÜÝš[™Ê
+NÂˆ]Y\—ÜÚHHÝØ\YÈœ›Ý™[˜[˜ÙH—VÈ˜Y\—Ø\Y˜XÝ—VÈœÚLMˆ—K˜ÛÛ™J
+NÂˆÝØ\YÈœ›Ý™[˜[˜ÙH—VÈ˜™Y›Ü™WØ\Y˜XÝ—VÈœ]—HHÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™ÊY\—Ü]
+NÂˆÝØ\YÈœ›Ý™[˜[˜ÙH—VÈ˜™Y›Ü™WØ\Y˜XÝ—VÈœÚLMˆ—HHY\—ÜÚNÂˆ\ÜÙ\Û›ÝÜ›Û[ÝY
+œÝØ\Y‹œ™XÙZ\\Y˜XÝ]ÈÈ›ÝX]Ú‹ÝØ\Y
+OÎÂˆ]]]Ü›Û™×Ü›ÛÝHÜšYÚ[˜[Ü™XÙZ\˜ÛÛ™J
+NÂˆÜ›Û™×Ü›ÛÝÈœ›Ý™[˜[˜ÙH—VÈœ™\×Ü›ÛÝ—HHÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™Ê‹‹ˆ‹×ÜÝš[™Ê
+JNÂˆ\ÜÙ\Û›ÝÜ›Û[ÝY
+Ü›Û™Ë\›ÛÝ‹œ™XÙZ\™\×Ü›ÛÝÙ\È›ÝX]Ú‹Ü›Û™×Ü›ÛÝ
+OÎÂˆ]]]Ü›Û™×ÜÙX[HHÜšYÚ[˜[Ü™XÙZ\˜ÛÛ™J
+NÂˆÜ›Û™×ÜÙX[VÈœ›Ý™[˜[˜ÙH—VÈœÙX[WÚY—HHÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™Ê™›Ü™ÙY\ÙX[H‹×ÜÝš[™Ê
+JNÂˆ\ÜÙ\Û›ÝÜ›Û[ÝY
+Ü›Û™Ë\ÙX[H‹™\šYžH\Y˜XÝ\È›È‹Ü›Û™×ÜÙX[JOÎÂˆ]]]›Ü™ÙYHÜšYÚ[˜[Ü™XÙZ\˜ÛÛ™J
+NÂˆ]›Ü™ÙYÜ]H\™Ù]Üš\‹Ý\ÝXYÙ[]™\šYžKÌÍY›Ü™ÙYšœÛÛˆŽÂˆ]]]›Ü™ÙYÝ™\šYžNˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	›ÜšYÚ[˜[Ý™\šYžJOÎÂˆ›Ü™ÙYÝ™\šYžVÈ˜Ú[™ÙYÜÙX[\È—VÌVÈœÙX[WÚY—HBˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™Ê™›Ü™ÙY\ÙX[H‹×ÜÝš[™Ê
+JNÂˆ]›Ü™ÙYÝ^HÙ\™WÚœÛÛŽŽ×ÜÝš[™×Ü™]J	™›Ü™ÙYÝ™\šYžJOÎÂˆÝŽ™œÎŽÜš]JÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[Š›Ü™ÙYÜ]
+K	™›Ü™ÙYÝ^
+OÎÂˆ›Ü™ÙYÈš[œ]È—VÈ˜YÙ[Ý™\šYžWÚœÛÛˆ—HHÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™Ê›Ü™ÙYÜ]×ÜÝš[™Ê
+JNÂˆ›Ü™ÙYÈœ›Ý™[˜[˜ÙH—VÈ™\šYžWØ\Y˜XÝ—VÈœ]—HBˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™Ê›Ü™ÙYÜ]×ÜÝš[™Ê
+JNÂˆ›Ü™ÙYÈœ›Ý™[˜[˜ÙH—VÈ™\šYžWØ\Y˜XÝ—VÈœÚLMˆ—HBˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™ÊÚLM—Ú^Øž]\Ê›Ü™ÙYÝ^˜\×Øž]\Ê
+JJNÂˆ\ÜÙ\Û›ÝÜ›Û[ÝY
+™›Ü™ÙY‹–Û›ÝØØ[›ÛšXØ[H‹›Ü™ÙY
+OÎÂˆ]]]›Ü™ÙYÙÜš\HÜšYÚ[˜[Ü™XÙZ\˜ÛÛ™J
+NÂˆ›Ü™ÙYÙÜš\ÈœÙX[H—VÈ™Üš\ØÛ\ÜÈ—HHÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™Ê™›Ü™ÙYØÛ\ÜÈ‹×ÜÝš[™Ê
+JNÂˆ\ÜÙ\Û›ÝÜ›Û[ÝY
+™›Ü™ÙYYÜš\‹™\šYžH\Y˜XÝ\È›È‹›Ü™ÙYÙÜš\
+OÎÂˆ]]]›Ü™ÙYÜÝ™[™ÝHÜšYÚ[˜[Ü™XÙZ\˜ÛÛ™J
+NÂˆ›Ü™ÙYÜÝ™[™ÝÈ˜Ý\œ™[Ù]šY[˜ÙWÜÝ™[™Ý—HBˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™Ê™›Ü™ÙYÜÝ™[™Ý‹×ÜÝš[™Ê
+JNÂˆ\ÜÙ\Û›ÝÜ›Û[ÝY
+™›Ü™ÙY\Ý™[™Ý‹™\šYžH\Y˜XÝ\È›È‹›Ü™ÙYÜÝ™[™Ý
+OÎÂˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+Ý]Ù\ŠOÎÂˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+\Y˜XÝÙ\ŠOÎÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆ™\ÛÛ™YÜ™XÙZ\Ü›Û[Ý\×Ý›ÝYÚÙš\œÝØXÝ[ÛŠ
+HOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]›ÛÝH[š\]YWÝ[\ÝÛÜšÜÜXÙJ™š\œÝXXÝ[Û‹\™\ÛÛ™YŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+	œ›ÛÝ
+OÎÂˆ[š]ÙÚ]Ùš^\™WÜ™\Ê	œ›ÛÝ
+OÎÂˆ]™Y›Ü™HH›ÛÝš›Ú[Š˜™Y›Ü™Kœ™\ËY^ÜÝ\™KšœÛÛˆŠNÂˆ]Y\ˆH›ÛÝš›Ú[Š˜Y\‹œ™\ËY^ÜÝ\™KšœÛÛˆŠNÂˆÜš]WØ›Ý[™Ü™\×Ù^ÜÝ\™WÙš^\™Jˆ	œ›ÛÝˆ	˜™Y›Ü™KˆˆÈžÈœÙX[WÚYŽˆœ™\ÛÛ™Y\ÙX[H‹šÚ[™Žˆœ™YXØ]WØ›Ý[™\žH‹™š[HŽˆœÜ˜ËÛX‹œœÈ‹›[™HŽË™Üš\ØÛ\ÜÈŽˆÙXZÛWÙÜš\YŸHˆËˆ
+OÎÂˆ]]]™Y›Ü™WÝ˜[YNˆÙ\™WÚœÛÛŽŽ•˜[YHBˆÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	˜™Y›Ü™JOÊOÎÂˆ™Y›Ü™WÝ˜[YVÈ˜\Y˜XÝ—VÈ˜[˜[\Ú\È—VÈÛÜšÝ™YH—HBˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™Ê™\H‹×ÜÝš[™Ê
+JNÂˆÝŽ™œÎŽÜš]Jˆ	˜™Y›Ü™Kˆ™XÛÛ[Z]Ü™\×Ù^ÜÝ\™WÚœÛÛŠÙ\™WÚœÛÛŽŽ×ÜÝš[™×Ü™]J	˜™Y›Ü™WÝ˜[YJOÊKˆ
+OÎÂˆÜš]WØ›Ý[™Ü™\×Ù^ÜÝ\™WÙš^\™J	œ›ÛÝ	˜Y\‹ˆŠOÎÂˆ]]]Y\—Ý˜[YNˆÙ\™WÚœÛÛŽŽ•˜[YHBˆÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	˜Y\ŠOÊOÎÂˆY\—Ý˜[YVÈ˜\Y˜XÝ—VÈ˜[˜[\Ú\È—VÈÛÜšÝ™YH—HBˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™Ê™\H‹×ÜÝš[™Ê
+JNÂˆÝŽ™œÎŽÜš]Jˆ	˜Y\‹ˆ™XÛÛ[Z]Ü™\×Ù^ÜÝ\™WÚœÛÛŠÙ\™WÚœÛÛŽŽ×ÜÝš[™×Ü™]J	˜Y\—Ý˜[YJOÊKˆ
+OÎÂ‚ˆ]™\šYžHH[—Üš\Š	–Âˆ˜YÙ[‹ˆ™\šYžH‹ˆ‹K\›ÛÝ‹ˆ	œ›ÛÝ™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹KX™Y›Ü™H‹ˆ	˜™Y›Ü™K™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹KXY\ˆ‹ˆ	˜Y\‹™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹KZœÛÛˆ‹ˆJNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	™\šYžJNÂˆ]™\šYžWÝ˜[YNˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÛXÙJ	™\šYžKœÝÝ]
+OÎÂˆ]™\ÛÛ™YH™\šYžWÝ˜[YVÈœ™\ÛÛ™YÙØ\È—Bˆ˜\×Ø\œ˜^J
+Bˆ˜[™Ý[Š][\ß][\Ë™š\œÝ
+
+JBˆ›Ú×ÛÜŠ™\šYžHÚÝ[[Z]H™\ÛÛ™YØ\ŠOÎÂˆ\ÜÙ\Ù\HJ™\ÛÛ™YÈ˜Ú[™ÙH—Kœ™\ÛÛ™YŠNÂˆ]ÙX[WÚYH™\ÛÛ™YÈœÙX[WÚY—K˜\×ÜÝŠ
+K›Ú×ÛÜŠœ™\ÛÛ™YÙX[HYŠOÎÂˆ]™\šYžWÜ]H›ÛÝš›Ú[Š˜YÙ[]™\šYžKšœÛÛˆŠNÂˆÝŽ™œÎŽÜš]J	™\šYžWÜ]	™\šYžKœÝÝ]
+OÎÂˆ][˜[\Ú\ÈH[—Üš\Š	–Âˆ˜ÚXÚÈ‹ˆ‹K\›ÛÝ‹ˆ	œ›ÛÝ™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹K[[ÙH‹ˆ™˜Y‹ˆ‹KX˜\ÙH‹ˆ’PQ‹ˆ‹KY›Ü›X]‹ˆšœÛÛˆ‹ˆJNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	˜[˜[\Ú\ÊNÂˆÝŽ™œÎŽÜš]J›ÛÝš›Ú[Š˜[˜[\Ú\Ë[Ý]ÛÛYKšœÛÛˆŠK	˜[˜[\Ú\ËœÝÝ]
+OÎÂˆ]™XÙZ\H[—Üš\Š	–Âˆ˜YÙ[‹ˆœ™XÙZ\‹ˆ‹K\›ÛÝ‹ˆ	œ›ÛÝ™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹K]™\šYžKZœÛÛˆ‹ˆ	™\šYžWÜ]™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹K\ÙX[KZY‹ˆÙX[WÚYˆ‹KZœÛÛˆ‹ˆJNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	œ™XÙZ\
+NÂˆ]™XÙZ\Ü]H›ÛÝš›Ú[Š˜YÙ[\™XÙZ\šœÛÛˆŠNÂˆÝŽ™œÎŽÜš]J	œ™XÙZ\Ü]	œ™XÙZ\œÝÝ]
+OÎÂˆ]Ý]H›ÛÝš›Ú[Š™š\œÝXXÝ[Û‹šœÛÛˆŠNÂˆ]YH›ÛÝš›Ú[Š™š\œÝXXÝ[Û‹›YŠNÂˆ]š\œÝØXÝ[ÛˆH[—Üš\Š	–Âˆ™š\œÝXXÝ[Ûˆ‹ˆ‹K\›ÛÝ‹ˆ	œ›ÛÝ™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹K\™XÙZ\‹ˆ	œ™XÙZ\Ü]™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹K[Ý]‹ˆ	›Ý]™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹K[Ý][Y‹ˆ	›Y™\Ü^J
+K×ÜÝš[™Ê
+KˆJNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	™š\œÝØXÝ[ÛŠNÂˆ]™[™\™YHÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	›Ý]
+OÎÂˆ\ÜÙ\Jˆ™[™\™Y˜ÛÛZ[œÊˆÈˆœÝ]\ÈŽˆ˜[™XYWÚ[\›Ý™YˆˆÊKˆžÜ™[™\™YH‚ˆ
+NÂˆ]]]›Ü™ÙYÜ™\ÛÛ™YˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÛXÙJ	œ™XÙZ\œÝÝ]
+OÎÂˆ›Ü™ÙYÜ™\ÛÛ™YÈœ›Ý™[˜[˜ÙH—VÈ˜™Y›Ü™WØÛ\ÜÈ—HBˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™Ê™›Ü™ÙYØÛ\ÜÈ‹×ÜÝš[™Ê
+JNÂˆÝŽ™œÎŽÜš]Jˆ	œ™XÙZ\Ü]ˆÙ\™WÚœÛÛŽŽ×ÜÝš[™×Ü™]J	™›Ü™ÙYÜ™\ÛÛ™Y
+OËˆ
+OÎÂˆ]›Ü™ÙYÛÝ]H›ÛÝš›Ú[Š™›Ü™ÙY\™\ÛÛ™YYš\œÝXXÝ[Û‹šœÛÛˆŠNÂˆ]›Ü™ÙYÛYH›ÛÝš›Ú[Š™›Ü™ÙY\™\ÛÛ™YYš\œÝXXÝ[Û‹›YŠNÂˆ]›Ü™ÙYÙš\œÝØXÝ[ÛˆH[—Üš\Š	–Âˆ™š\œÝXXÝ[Ûˆ‹ˆ‹K\›ÛÝ‹ˆ	œ›ÛÝ™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹K\™XÙZ\‹ˆ	œ™XÙZ\Ü]™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹K[Ý]‹ˆ	™›Ü™ÙYÛÝ]™\Ü^J
+K×ÜÝš[™Ê
+Kˆ‹K[Ý][Y‹ˆ	™›Ü™ÙYÛY™\Ü^J
+K×ÜÝš[™Ê
+KˆJNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	™›Ü™ÙYÙš\œÝØXÝ[ÛŠNÂˆ]›Ü™ÙYÜ™[™\™YHÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	™›Ü™ÙYÛÝ]
+OÎÂˆ\ÜÙ\Jˆ›Ü™ÙYÜ™[™\™Y˜ÛÛZ[œÊ›Z\ÜÚ[™×Ü™\]Z\™YØ\Y˜XÝŠBˆ	‰ˆY›Ü™ÙYÜ™[™\™Y˜ÛÛZ[œÊˆÈˆœÝ]\ÈŽˆ˜[™XYWÚ[\›Ý™YˆˆÊKˆ™›Ü™ÙY™\ÛÛ™Y™XÙZ\Ø\È›Û[ÝYˆÙ›Ü™ÙYÜ™[™\™YH‚ˆ
+NÂˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+	œ›ÛÝ
+OÎÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆ\ÝÛÜ˜XÛWØ\ÜÚ\Ý[ØØ[›ÛšXØ[Ü™]šY]×ÛÛÜÙš^\™WÜ[œ×Ù^XÝYÜÝ\™˜XÙ\Ê
+B‹Oˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]˜\ÙHH™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÝ\Ý[Ü˜XÛKX\ÜÚ\Ý[[ÛÜØØ[›ÛšXØ[ŽÂˆ]š^\™WÙ\ˆHÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[Š˜\ÙJNÂˆ]›ÛÙ—Ü]Hš^\™WÙ\‹š›Ú[Š\Ý[Ü˜XÛKX\ÜÚ\Ý[\›ÛÙ‹šœÛÛˆŠNÂˆ]›ÛÙ—ÛYÜ]Hš^\™WÙ\‹š›Ú[Š\Ý[Ü˜XÛKX\ÜÚ\Ý[\›ÛÙ‹›YŠNÂ‚ˆ]›ÛÙ—Ý^HÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	œ›ÛÙ—Ü]
+OÎÂˆ]›ÛÙŽˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œ›ÛÙ—Ý^
+OÎÂˆ]ÙX[WÚYHœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹‹ÜÙX[KÜÙX[WÚYŠOÎÂˆ\ÜÙ\Ù\HJÙX[WÚYÙ˜ÍÍ˜LÍÙÍØ™ŠNÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹‹ÚÚ[™ŠOËˆ\ÝÛÜ˜XÛWØ\ÜÚ\Ý[ÛÛÜ‚ˆ
+NÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹‹ÜÝ]\ÈŠOË˜Yš\ÛÜžHŠNÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹‹ÜÙX[KÙÜš\ØÛ\ÜÈŠOËˆÙXZÛWÙÜš\Y‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹‹ÜÙX[KÛZ\ÜÚ[™×Ù\ØÜš[Z[˜]ÜˆŠOËˆ™\ØÛÝ[Ý™\ÚÛ
+\]X[]H›Ý[™\žJH‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹‹Ü™XÛÛ[Y[™][Û‹ÜXÙ[Y[ŠOËˆ˜Ú[™ÙYÛ[™H‚ˆ
+NÂˆ\ÜÙ\JˆœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹‹Ü™XÛÛ[Y[™][Û‹ÜÝYÙÙ\ÝYÝ\ÝŠOÂˆ˜ÛÛZ[œÊ˜[[Ý[OH\ØÛÝ[Ý™\ÚÛŠBˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹‹Ù]šY[˜ÙWÛ[Ý™[Y[ÜÝ]HŠOËˆš[\›Ý™Y‚ˆ
+NÂˆ\ÜÙ\JœÛÛ—ÜÚ[\—Ø›ÛÛ
+	œ›ÛÙ‹‹Û[Z]ËØYš\ÛÜžHŠOÊNÂˆ›ÜˆÚ[\ˆ[ˆÂˆ‹Û[Z]ËÜÛÝ\˜ÙWÙY]È‹ˆ‹Û[Z]ËÙÙ[™\˜]YÝ\ÝÈ‹ˆ‹Û[Z]ËÙ^\›˜[ÜÙ\šXÙH‹ˆ‹Û[Z]ËÜ[[YWÛ]]][Û—Ù^XÝ][Ûˆ‹ˆ‹Û[Z]ËØÚWØ›ØÚÚ[™×ÙY˜][‹ˆHÂˆ\ÜÙ\JZœÛÛ—ÜÚ[\—Ø›ÛÛ
+	œ›ÛÙ‹Ú[\ŠOÊNÂˆB‚ˆ›ÜˆÚ[\ˆ[ˆÂˆ‹Ú[œ]ËÜ—ÙÝZY[˜ÙH‹ˆ‹Ú[œ]ËØYÙ[ÜXÚÙ]‹ˆ‹Ú[œ]ËØ™Y›Ü™H‹ˆ‹Ú[œ]ËØY\ˆ‹ˆ‹Ú[œ]ËÜ™XÙZ\‹ˆ‹Ú[œ]ËÛYÙ\ˆ‹ˆHÂˆ]]HœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹Ú[\ŠOÎÂˆ\ÜÙ\JˆÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[Š]
+K™^\ÝÊ
+Kˆ™^XÝYÜ]Xœ›ÛHÜÚ[\ŸXÈ^\Ý‚ˆ
+NÂˆBˆ\ÜÙ\Jˆ›ÛÙ‚ˆœÚ[\Š‹Ú[œ]ËØÛÝ™\˜YÙWÙœ›ÛY\ˆŠBˆš\×ÜÛÛYWØ[™
+Ù\™WÚœÛÛŽŽ•˜[YNŽš\×Û[
+Bˆ
+NÂ‚ˆ]—ÙÝZY[˜ÙWÜ]HÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[ŠœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹‹Ú[œ]ËÜ—ÙÝZY[˜ÙHŠOÊNÂˆ]YÙ[ÜXÚÙ]Ü]BˆÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[ŠœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹‹Ú[œ]ËØYÙ[ÜXÚÙ]ŠOÊNÂˆ]™XÙZ\Ü]HÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[ŠœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹‹Ú[œ]ËÜ™XÙZ\ŠOÊNÂˆ]YÙ\—Ü]HÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[ŠœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹‹Ú[œ]ËÛYÙ\ˆŠOÊNÂ‚ˆ]—ÙÝZY[˜ÙNˆÙ\™WÚœÛÛŽŽ•˜[YHBˆÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê—ÙÝZY[˜ÙWÜ]
+OÊOÎÂˆ]YÙ[ÜXÚÙ]ˆÙ\™WÚœÛÛŽŽ•˜[YHBˆÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊYÙ[ÜXÚÙ]Ü]
+OÊOÎÂˆ]™XÙZ\ˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê™XÙZ\Ü]
+OÊOÎÂˆ]YÙ\ŽˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊYÙ\—Ü]
+OÊOÎÂ‚ˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ—ÙÝZY[˜ÙK‹ØÛÛ[Y[ËÌÜÙX[WÚYŠOËˆÙX[WÚYˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	˜YÙ[ÜXÚÙ]‹ÝÜÜÙX[\ËÌÜÙX[WÚYŠOËˆÙX[WÚYˆ
+NÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™XÙZ\‹Ü›Ý™[˜[˜ÙKÜÙX[WÚYŠOËÙX[WÚY
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	›YÙ\‹‹ÝÜÜ™\Z\—Ü›Ý]KÜÙX[WÚYŠOËˆÙX[WÚYˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	›YÙ\‹‹Ü™\Z\—Ü™XÙZ\ËÌÜÙX[WÚYŠOËˆÙX[WÚYˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹‹Ù]šY[˜ÙWÛ[Ý™[Y[ÜÝ]HŠOËˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™XÙZ\‹Ü›Ý™[˜[˜ÙKÛ[Ý™[Y[ŠOÂˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	›YÙ\‹‹Ü™\Z\—Ü™XÙZ\ËÌÜÝ]X×Û[Ý™[Y[ÜÝ]HŠOËˆœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹‹Ù]šY[˜ÙWÛ[Ý™[Y[ÜÝ]HŠOÂˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	˜YÙ[ÜXÚÙ]‹ÝÜÜÙX[\ËÌÜ™XÛÛ[Y[™YÝ\ÝÙš[HŠOËˆ\ÝËÜšXÚ[™ËœœÈ‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	˜YÙ[ÜXÚÙ]‹ÝÜÜÙX[\ËÌÜ™XÛÛ[Y[™YÝ\ÝÛ˜[YHŠOËˆ™\ØÛÝ[YÝÝ[Ø›Ý[™\žWÙ\ØÜš[Z[˜]Üˆ‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠˆ	˜YÙ[ÜXÚÙ]ˆ‹ÝÜÜÙX[\ËÌÛ™X\™\ÝÜÝ›Û™×Ý\ÝÝ×Ú[Z]]KÛ˜[YH‚ˆ
+OËˆ˜™[Ý×Ý™\ÚÛÚ\×Û›×Ù\ØÛÝ[‚ˆ
+NÂ‚ˆ]›ÛÙ—ÛYHÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê›ÛÙ—ÛYÜ]
+OÎÂˆ\ÜÙ\J›ÛÙ—ÛY˜ÛÛZ[œÊ”Ý]\ÎˆYš\ÛÜžHŠJNÂˆ\ÜÙ\J›ÛÙ—ÛY˜ÛÛZ[œÊ“Z\ÜÚ[™È\ØÜš[Z[˜]ÜŽˆ\ØÛÝ[Ý™\ÚÛ
+\]X[]H›Ý[™\žJHŠJNÂˆ\ÜÙ\J›ÛÙ—ÛY˜ÛÛZ[œÊY\ŽˆÝ›Û™ÛWÙÜš\YŠJNÂˆ\ÜÙ\J›ÛÙ—ÛY˜ÛÛZ[œÊ”Ý]Nˆ[\›Ý™YŠJNÂˆ\ÜÙ\J›ÛÙ—ÛY˜ÛÛZ[œÊ‘Ø]Nˆ›ÝÛÛ™šYÝ\™YŠJNÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆš\œÝÝ\ÙY[ØXÝ[Û—ØÛÜœ\×Ü[œ×Ü›Ý][™×ØØ\Ù\Ê
+HOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]˜\ÙHH™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÙš\œÝ]\ÙY[XXÝ[ÛˆŽÂˆ]š^\™WÙ\ˆHÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[Š˜\ÙJNÂˆ]ÛÜœ\×Ü]Hš^\™WÙ\‹š›Ú[Š˜ÛÜœ\ËšœÛÛˆŠNÂˆ]ÛÜœ\ÎˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊÛÜœ\×Ü]
+OÊOÎÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	˜ÛÜœ\Ë‹ÜØÚ[XWÝ™\œÚ[ÛˆŠOËŒŒHŠNÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	˜ÛÜœ\Ë‹ÚÚ[™ŠOËˆ™š\œÝÝ\ÙY[ØXÝ[Û—ØÛÜœ\È‚ˆ
+NÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	˜ÛÜœ\Ë‹ÜÜXÈŠOË”’T‹TÔPËLŒŠNÂ‚ˆ]Ø\Ù\ÈHÛÜœ\ÂˆœÚ[\Š‹ØØ\Ù\ÈŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×Ø\œ˜^JBˆ›Ú×ÛÜŠ™^XÝYØØ\Ù\Ø\œ˜^HŠOÎÂˆ]^XÝYHÂˆ
+ˆ˜XÝ[Û˜X›H‹ˆ˜XÝ[Û˜X›WÜ—ÛØØ[Ø›Ý[™\žH‹ˆ˜XÝ[Û˜X›H‹ˆÜš]WÙ›ØÝ\ÙYÝ\Ý‹ˆ
+Kˆ
+ˆœ™\Z\‹\Ý\‹ˆœ™\Z\—ÜÝ\ØØ\œšYY‹ˆ˜XÝ[Û˜X›H‹ˆÜš]WÙ›ØÝ\ÙYÝ\Ý‹ˆ
+Kˆ
+ˆœÝ[H‹ˆœÝ[WÙY]Ü—Ù]šY[˜ÙH‹ˆœÝ[H‹ˆœ™Yœ™\ÚÙ]šY[˜ÙH‹ˆ
+Kˆ
+ˆ›Z\ÜÚ[™Ë\™\]Z\™YX\Y˜XÝ‹ˆ›Z\ÜÚ[™×Ø\ÜÚ\Ý[Ü›ÛÙˆ‹ˆ›Z\ÜÚ[™×Ü™\]Z\™YØ\Y˜XÝ‹ˆ™Ù[™\˜]WÛZ\ÜÚ[™×Ø\Y˜XÝ‹ˆ
+Kˆ
+ˆ˜˜\Ù[[™K[Û›H‹ˆ˜˜\Ù[[™WÛÛ›WÙX‹ˆ˜˜\Ù[[™WÛÛ›H‹ˆ˜XÚÛ›ÝÛYÙWØ˜\Ù[[™H‹ˆ
+Kˆ
+ˆ˜XÚÛ›ÝÛYÙY‹ˆ˜XÚÛ›ÝÛYÙYÜ—ÙØ\‹ˆ˜XÚÛ›ÝÛYÙY‹ˆš[œÜXÝÜ›ÛÙ—Ü™\Ü‹ˆ
+Kˆ
+ØZ]™Y‹ØZ]™YÜ—ÙØ\‹ØZ]™Y‹››×ØXÝ[ÛˆŠKˆ
+ˆœÝ\™\ÜÙY‹ˆœÝ\™\ÜÙYØÛÛ™šYÝ\™YÛÙ™ˆ‹ˆœÝ\™\ÜÙY‹ˆ››×ØXÝ[Ûˆ‹ˆ
+Kˆ
+ˆ››ËXXÝ[Û˜X›K\ÙX[H‹ˆ››×ØXÝ[Û˜X›WÜÙX[WØÛX[ˆ‹ˆ››×ØXÝ[Û˜X›WÜÙX[H‹ˆ››×ØXÝ[Ûˆ‹ˆ
+Kˆ
+ˆ˜[™XYKZ[\›Ý™Y‹ˆ˜[™XYWÚ[\›Ý™YÜ™XÙZ\‹ˆ˜[™XYWÚ[\›Ý™Y‹ˆ››×ØXÝ[Ûˆ‹ˆ
+Kˆ
+ˆ[˜Ú[™ÙYXY\‹X][\‹ˆ[˜Ú[™ÙYØY\—Ø][\‹ˆ[˜Ú[™ÙYØY\—Ø][\‹ˆœ™]š\ÙWÙ›ØÝ\ÙYÝ\Ý‹ˆ
+KˆNÂˆ\ÜÙ\Ù\HJØ\Ù\Ë›[Š
+K^XÝY›[Š
+JNÂ‚ˆ›Üˆ
+Ø\ÙWÙ\‹Ø\ÙWÚYÝ]\ËXÝ[Û—ÚÚ[™
+H[ˆ^XÝYÂˆ]ÛÛYJØ\ÙJHHØ\Ù\Âˆš]\Š
+Bˆ™š[™
+Ø\Ù_Ø\ÙK™Ù]
+šYŠK˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÜÝŠHOHÛÛYJØ\ÙWÚY
+JBˆ[ÙHÂˆ™]\›ˆ\œŠ›Ü›X]J›Z\ÜÚ[™Èš\œÝ\ÙY[XÝ[ÛˆØ\ÙHØØ\ÙWÚYXŠKš[Ê
+JNÂˆNÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠØ\ÙK‹Ù^XÝYÜÝ]\ÈŠOËÝ]\ÊNÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠØ\ÙK‹Ù^XÝYØXÝ[Û—ÚÚ[™ŠOËˆXÝ[Û—ÚÚ[™ˆ
+NÂ‚ˆ][˜Ú[™ÙYØÛÛ›ÛHYˆØ\ÙWÚYOH[˜Ú[™ÙYØY\—Ø][\ˆÂˆ]›ÛÙ—Ø\Y˜XÝHœÛÛ—ÜÚ[\—ÜÝŠØ\ÙK‹Ú[œ]ËØ\ÜÚ\Ý[Ü›ÛÙ‹Ø\Y˜XÝŠOÎÂˆ]™XÙZ\Ø\Y˜XÝHœÛÛ—ÜÚ[\—ÜÝŠØ\ÙK‹Ú[œ]ËÜ™XÙZ\Ø\Y˜XÝŠOÎÂˆ\ÜÙ\Ù\HJˆ›ÛÙ—Ø\Y˜XÝˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÙš\œÝ]\ÙY[XXÝ[Û‹Ý[˜Ú[™ÙYXY\‹X][\Ø\ÜÚ\Ý[\›ÛÙ‹šœÛÛˆ‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆ™XÙZ\Ø\Y˜XÝˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÙš\œÝ]\ÙY[XXÝ[Û‹Ý[˜Ú[™ÙYXY\‹X][\ØYÙ[\™XÙZ\šœÛÛˆ‚ˆ
+NÂ‚ˆ]›ÛÙŽˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊˆÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[Š›ÛÙ—Ø\Y˜XÝ
+Kˆ
+OÊOÎÂˆ]™XÙZ\ˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊˆÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[Š™XÙZ\Ø\Y˜XÝ
+Kˆ
+OÊOÎÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹‹Ù]šY[˜ÙWÛ[Ý™[Y[ÜÝ]HŠOËˆ[˜Ú[™ÙY‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹‹Ù]šY[˜ÙWÛ[Ý™[Y[ØY\—ØÛ\ÜÈŠOËˆÙXZÛWÙÜš\Y‚ˆ
+NÂˆ]™Y›Ü™WØ\Y˜XÝHœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹‹Ú[œ]ËØ™Y›Ü™HŠOÎÂˆ]Y\—Ø\Y˜XÝHœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹‹Ú[œ]ËØY\ˆŠOÎÂˆ\ÜÙ\Ù\HJˆ™Y›Ü™WØ\Y˜XÝˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÙš\œÝ]\ÙY[XXÝ[Û‹Ý[˜Ú[™ÙYXY\‹X][\Ø™Y›Ü™Kœ™\ËY^ÜÝ\™KšœÛÛˆ‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆY\—Ø\Y˜XÝˆ™š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÙš\œÝ]\ÙY[XXÝ[Û‹Ý[˜Ú[™ÙYXY\‹X][\ØY\‹œ™\ËY^ÜÝ\™KšœÛÛˆ‚ˆ
+NÂˆ]™Y›Ü™NˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊˆÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[Š™Y›Ü™WØ\Y˜XÝ
+Kˆ
+OÊOÎÂˆ]Y\ŽˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊˆÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[ŠY\—Ø\Y˜XÝ
+Kˆ
+OÊOÎÂˆ]™Y›Ü™WØž]\ÈHÝŽ™œÎŽœ™XY
+ÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[Š™Y›Ü™WØ\Y˜XÝ
+JOÎÂˆ]Y\—Øž]\ÈHÝŽ™œÎŽœ™XY
+ÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[ŠY\—Ø\Y˜XÝ
+JOÎÂˆ]›ÙXÙYH[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–Âˆ˜ÚXÚÈ‹ˆ‹K\›ÛÝ‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ú[œ]‹ˆ‹KY›Ü›X]‹ˆœ™\ËY^ÜÝ\™KZœÛÛˆ‹ˆJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	œ›ÙXÙY
+NÂˆ]›ÙXÙYˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÛXÙJ	œ›ÙXÙYœÝÝ]
+OÎÂˆ]›Ü›X[^™YÜ›ÙXÙYH›Ü›X[^™WÝ[˜Ú[™ÙYÜ™\×Ù^ÜÝ\™WÜ›ÙXÙ\—Ùš^\™J›ÙXÙY
+OÎÂˆ\ÜÙ\Ù\HJˆ™Y›Ü™K›Ü›X[^™YÜ›ÙXÙYˆ˜™Y›Ü™HÛ˜\ÚÝ]\Ý™HHÜX›H›Ü›X[^˜][ÛˆÙˆ›ÙXÝ[ÛˆÝ]]‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆY\‹›Ü›X[^™YÜ›ÙXÙYˆ˜Y\ˆÛ˜\ÚÝ]\Ý™HHÜX›H›Ü›X[^˜][ÛˆÙˆ›ÙXÝ[ÛˆÝ]]‚ˆ
+NÂˆ]]šY[˜ÙWÜ™XÛÜ™H™Y›Ü™BˆœÚ[\Š‹ÜÙX[\ËÌÙ]šY[˜ÙWÜ™XÛÜ™ŠBˆ›Ú×ÛÜŠœÜX›H›ÙXÙ\ˆš^\™H]\Ý™]Z[ˆ]šY[˜ÙWÜ™XÛÜ™ŠOÎÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ]šY[˜ÙWÜ™XÛÜ™‹ØØ[›ÛšXØ[Ú][KÙ]šY[˜ÙWØÛ\ÜÈŠOËˆœ™YXØ]WØ›Ý[™\žH‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ]šY[˜ÙWÜ™XÛÜ™‹ØØ[›ÛšXØ[Ú][KÙØ\ÜÝ]HŠOËˆ˜XÝ[Û˜X›H‚ˆ
+NÂˆ\ÜÙ\Ü™\×Ù^ÜÝ\™WÜ™Z™XÝ×Û]]][ÛŠˆ	˜™Y›Ü™KˆÛ˜\ÚÝÂˆYˆ]ÛÛYJÙX[JHHÛ˜\ÚÝˆœÚ[\—Û]]
+‹ÜÙX[\ËÌŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÛØš™XÝÛ]]
+BˆÂˆÙX[Kœ™[[Ý™J™]šY[˜ÙWÜ™XÛÜ™ŠNÂˆBˆKˆ˜ÛÛ[ÛÛ[Z]Y[Z\ÛX]Ú‹ˆ
+OÎÂˆ\ÜÙ\Ü™\×Ù^ÜÝ\™WÜ™Z™XÝ×Û]]][ÛŠˆ	˜™Y›Ü™KˆÛ˜\ÚÝÂˆÛ˜\ÚÝÈœÙX[\È—VÌVÈ™]šY[˜ÙWÜ™XÛÜ™—VÈ˜Ø[›ÛšXØ[Ú][H—VÈ™Ø\ÜÝ]H—HBˆÙ\™WÚœÛÛŽŽšœÛÛˆJœÝ\™\ÜÙYŠNÂˆKˆ˜ÛÛ[ÛÛ[Z]Y[Z\ÛX]Ú‹ˆ
+OÎÂˆ\ÜÙ\Ü™\×Ù^ÜÝ\™WÜ™Z™XÝ×Û]]][ÛŠˆ	˜™Y›Ü™KˆÛ˜\ÚÝÂˆÛ˜\ÚÝÈ˜\Y˜XÝ—VÈ˜ÛÛ[ÜÚLMˆ—HHÙ\™WÚœÛÛŽŽšœÛÛˆJˆœÚLMŽ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ˆ‚ˆ
+NÂˆKˆ˜ÛÛ[ÛÛ[Z]Y[Z\ÛX]Ú‹ˆ
+OÎÂˆ]ÙX[WØÛ\ÜÈBˆÛ˜\ÚÝˆ	œÙ\™WÚœÛÛŽŽ•˜[Y_Oˆ™\Ý[Ýš[™Ë›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆÛ˜\ÚÝˆœÚ[\Š‹ÜÙX[\ÈŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×Ø\œ˜^JBˆ˜[™Ý[ŠÙX[\ßÂˆÙX[\Ëš]\Š
+K™š[™
+ÙX[_ÂˆÙX[KœÚ[\Š‹ÜÙX[WÚYŠK˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÜÝŠBˆOHÛÛYJÙ˜ÍÍ˜LÍÙÍØ™ŠBˆJBˆJBˆ˜[™Ý[ŠÙX[_ÙX[KœÚ[\Š‹ÙÜš\ØÛ\ÜÈŠJBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÜÝŠBˆ›X\
+ÝŽŽ×ÜÝš[™ÊBˆ›Ú×ÛÜ—Ù[ÙJ\™Ù]ÙX[H]\Ý]™HHÜš\ØÛ\ÜÈ‹š[Ê
+JBˆNÂˆ]™Y›Ü™WØÛ\ÜÈHÙX[WØÛ\ÜÊ	˜™Y›Ü™JOÎÂˆ]Y\—ØÛ\ÜÈHÙX[WØÛ\ÜÊ	˜Y\ŠOÎÂˆ\ÜÙ\Ù\HJ™Y›Ü™WØÛ\ÜËÙXZÛWÙÜš\YŠNÂˆ\ÜÙ\Ù\HJY\—ØÛ\ÜËÙXZÛWÙÜš\YŠNÂˆ\ÜÙ\Ù\HJˆ™Y›Ü™WØÛ\ÜËY\—ØÛ\ÜËˆœØÙ[˜\š[ÈÛ˜\ÚÝÈ]\Ý\š]™H[˜Ú[™ÙY[Ý™[Y[‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹‹Ù]šY[˜ÙWÛ[Ý™[Y[Ø™Y›Ü™WØÛ\ÜÈŠOËˆ	˜™Y›Ü™WØÛ\ÜÂˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ›ÛÙ‹‹Ù]šY[˜ÙWÛ[Ý™[Y[ØY\—ØÛ\ÜÈŠOËˆ	˜Y\—ØÛ\ÜÂˆ
+NÂˆ\ÜÙ\Jˆ›ÛÙ‚ˆœÚ[\Š‹Ú[œ]ËÛYÙ\ˆŠBˆš\×ÜÛÛYWØ[™
+Ù\™WÚœÛÛŽŽ•˜[YNŽš\×Û[
+Bˆ
+NÂˆ\ÜÙ\Jˆ›ÛÙ‚ˆœÚ[\Š‹ØÚWÜ›Ú™XÝ[Û‹ÛYÙ\ˆŠBˆš\×ÜÛÛYWØ[™
+Ù\™WÚœÛÛŽŽ•˜[YNŽš\×Û[
+Bˆ
+NÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™XÙZ\‹ÜÙX[KØÚ[™ÙHŠOË[˜Ú[™ÙYŠNÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™XÙZ\‹ÜÙX[KØY\ˆŠOËÙXZÛWÙÜš\YŠNÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™XÙZ\‹ÜÙX[KØ™Y›Ü™HŠOË™Y›Ü™WØÛ\ÜÊNÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™XÙZ\‹ÜÙX[KØY\ˆŠOËY\—ØÛ\ÜÊNÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™XÙZ\‹Ü›Ý™[˜[˜ÙKØ™Y›Ü™WØ\Y˜XÝÜ]ŠOËˆ™Y›Ü™WØ\Y˜XÝˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™XÙZ\‹Ü›Ý™[˜[˜ÙKØY\—Ø\Y˜XÝÜ]ŠOËˆY\—Ø\Y˜XÝˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™XÙZ\‹Ü›Ý™[˜[˜ÙKØ™Y›Ü™WØ\Y˜XÝÜÚLMˆŠOËˆÚLM—Ú^Øž]\Ê	˜™Y›Ü™WØž]\ÊBˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™XÙZ\‹Ü›Ý™[˜[˜ÙKØY\—Ø\Y˜XÝÜÚLMˆŠOËˆÚLM—Ú^Øž]\Ê	˜Y\—Øž]\ÊBˆ
+NÂˆ]™\šYžWØ\Y˜XÝHœÛÛ—ÜÚ[\—ÜÝŠ	œ™XÙZ\‹Ú[œ]ËØYÙ[Ý™\šYžWÚœÛÛˆŠOÎÂˆ]™\šYžWØž]\ÈHÝŽ™œÎŽœ™XY
+ÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[Š™\šYžWØ\Y˜XÝ
+JOÎÂˆ]™\šYžNˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÛXÙJ	™\šYžWØž]\ÊOÎÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™XÙZ\‹Ü›Ý™[˜[˜ÙKÝ™\šYžWØ\Y˜XÝÜ]ŠOËˆ™\šYžWØ\Y˜XÝˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™XÙZ\‹Ü›Ý™[˜[˜ÙKÝ™\šYžWØ\Y˜XÝÜÚLMˆŠOËˆÚLM—Ú^Øž]\Ê	™\šYžWØž]\ÊBˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	™\šYžK‹Ú[œ]ËØ™Y›Ü™HŠOËˆ™Y›Ü™WØ\Y˜XÝˆ
+NÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	™\šYžK‹Ú[œ]ËØY\ˆŠOËY\—Ø\Y˜XÝ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	™\šYžK‹Ú[œ]ËØ™Y›Ü™WØÛÛ[ÜÚLMˆŠOËˆœÛÛ—ÜÚ[\—ÜÝŠ	˜™Y›Ü™K‹Ø\Y˜XÝØÛÛ[ÜÚLMˆŠOÂˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	™\šYžK‹Ú[œ]ËØY\—ØÛÛ[ÜÚLMˆŠOËˆœÛÛ—ÜÚ[\—ÜÝŠ	˜Y\‹‹Ø\Y˜XÝØÛÛ[ÜÚLMˆŠOÂˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	™\šYžK‹Ý[˜Ú[™ÙYÜÙX[\ËÌØÚ[™ÙHŠOËˆ[˜Ú[™ÙY‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	™\šYžK‹Ý[˜Ú[™ÙYÜÙX[\ËÌÙØ\Û[Ý™[Y[ŠOËˆ[˜Ú[™ÙY‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆ™\šYžKœÚ[\Š‹Ý[˜Ú[™ÙYÜÙX[\ËÌÛØœÙ\™YÝ˜[Y\×ØYYŠKˆÛÛYJ	œÙ\™WÚœÛÛŽŽšœÛÛˆJ×JJBˆ
+NÂˆ\ÜÙ\Ù\HJˆ™\šYžKœÚ[\Š‹Ý[˜Ú[™ÙYÜÙX[\ËÌÛØœÙ\™YÝ˜[Y\×Ü™[[Ý™YŠKˆÛÛYJ	œÙ\™WÚœÛÛŽŽšœÛÛˆJ×JJBˆ
+NÂˆ\ÜÙ\Ù\HJˆ™\šYžKœÚ[\Š‹Ý[˜Ú[™ÙYÜÙX[\ËÌÜ™[]YÝ\ÝÙ[HŠKˆÛÛYJ	œÙ\™WÚœÛÛŽŽšœÛÛˆJ
+JBˆ
+NÂˆ\ÜÙ\Ù\HJˆ™XÙZ\œÚ[\Š‹ÜÙX[KÙ]šY[˜ÙWÙ[HŠKˆ™\šYžKœÚ[\Š‹Ý[˜Ú[™ÙYÜÙX[\ËÌÙ]šY[˜ÙWÙ[HŠBˆ
+NÂˆÛÛYJ
+›ÛÙ—Ø\Y˜XÝ™XÙZ\Ø\Y˜XÝ
+JBˆH[ÙHÂˆ›Û™BˆNÂ‚ˆ]™\ÜÜ]Hš^\™WÙ\‹š›Ú[ŠØ\ÙWÙ\ŠKš›Ú[Š™š\œÝ]\ÙY[XXÝ[Û‹šœÛÛˆŠNÂˆ]X\šÙÝÛ—Ü]Hš^\™WÙ\‹š›Ú[ŠØ\ÙWÙ\ŠKš›Ú[Š™š\œÝ]\ÙY[XXÝ[Û‹›YŠNÂˆ]™\ÜˆÙ\™WÚœÛÛŽŽ•˜[YHBˆÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê™\ÜÜ]
+OÊOÎÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÜØÚ[XWÝ™\œÚ[ÛˆŠOËŒŒHŠNÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÝÛÛŠOËœš\ˆŠNÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÚÚ[™ŠOË™š\œÝÝ\ÙY[ØXÝ[ÛˆŠNÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÜÝ]\ÈŠOËÝ]\ÊNÂˆ\ÜÙ\Ù\HJœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ØXÝ[Û—ÚÚ[™ŠOËXÝ[Û—ÚÚ[™
+NÂ‚ˆYˆ]ÛÛYJ
+›ÛÙ—Ø\Y˜XÝ™XÙZ\Ø\Y˜XÝ
+JHH[˜Ú[™ÙYØÛÛ›ÛÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹Ú[œ]ËØ\ÜÚ\Ý[Ü›ÛÙˆŠOËˆ›ÛÙ—Ø\Y˜XÝˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹Ú[œ]ËÜ™XÙZ\ŠOËˆ™XÙZ\Ø\Y˜XÝˆ
+NÂˆ\ÜÙ\Jˆ™\ÜˆœÚ[\Š‹Ú[œ]ËÛYÙ\ˆŠBˆš\×ÜÛÛYWØ[™
+Ù\™WÚœÛÛŽŽ•˜[YNŽš\×Û[
+Bˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹Ù]šY[˜ÙKØ\ÜÚ\Ý[Ü›ÛÙˆŠOËˆ›ÛÙ—Ø\Y˜XÝˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹Ù]šY[˜ÙKÜ™XÙZ\ŠOËˆ™XÙZ\Ø\Y˜XÝˆ
+NÂˆ\ÜÙ\Jˆ™\ÜˆœÚ[\Š‹Ù]šY[˜ÙKÛYÙ\ˆŠBˆš\×ÜÛÛYWØ[™
+Ù\™WÚœÛÛŽŽ•˜[YNŽš\×Û[
+Bˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹Ù]šY[˜ÙKÜÝ]X×Û[Ý™[Y[ŠOËˆ[˜Ú[™ÙY‚ˆ
+NÂˆBˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÙÙ[™\˜]YØ]ŠOËˆŒŒ‹LKLULŽŒŒˆ‚ˆ
+NÂ‚ˆ]ÚWÙš\œÝH™\ÜˆœÚ[\Š‹ÝÚWÙš\œÝŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×Ø\œ˜^JBˆ›Ú×ÛÜŠ™^XÝYÚWÙš\œÝ\œ˜^HŠOÎÂˆ\ÜÙ\Jˆ]ÚWÙš\œÝš\×Ù[\J
+Kˆ˜ØØ\ÙWÚYXÚÝ[^Z[ˆÚHH›Ý]HØ[YHš\œÝ‚ˆ
+NÂ‚ˆ][Z]ÈH™\ÜˆœÚ[\Š‹Û[Z]ÈŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×Ø\œ˜^JBˆ›Ú×ÛÜŠ™^XÝY[Z]È\œ˜^HŠOÎÂˆ\ÜÙ\Jˆ[Z]Âˆš]\Š
+Bˆ˜[žJ[Z][Z]˜\×ÜÝŠ
+HOHÛÛYJ”Ý]XÈ]šY[˜ÙHÛ›KˆŠJKˆ˜ØØ\ÙWÚYXÚÝ[™\Ù\™HHÝ]XËY]šY[˜ÙH[Z]‚ˆ
+NÂ‚ˆYˆØ\ÙBˆœÚ[\Š‹Ù^XÝYÙ˜[˜XÚÈŠBˆš\×ÜÛÛYWØ[™
+Ÿ]‹š\×Û[
+
+JBˆÂˆ\ÜÙ\Jˆ™\ÜœÚ[\Š‹Ù˜[˜XÚÈŠKš\×ÜÛÛYWØ[™
+Ÿ]‹š\×Û[
+
+JKˆ˜ØØ\ÙWÚYXÚÝ[[˜ÛYHH˜[˜XÚÈ™\ÜØš™XÝ‚ˆ
+NÂˆB‚ˆYˆØ\ÙWÚYOHœ™\Z\—ÜÝ\ØØ\œšYYˆÂˆËÈÌÎLŽˆHØ\œšYYÛÛ[X[™\ÈHØ\™	ÜÈÝÛˆÝš[™Ëž]H›Üˆž]K‚ˆ]ÝZY[˜ÙWØ\Y˜XÝHœÛÛ—ÜÚ[\—ÜÝŠØ\ÙK‹Ú[œ]ËÜ—ÙÝZY[˜ÙKØ\Y˜XÝŠOÎÂˆ]ÝZY[˜ÙNˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊˆÛÜšÜÜXÙWÜ›ÛÝ
+
+Kš›Ú[ŠÝZY[˜ÙWØ\Y˜XÝ
+Kˆ
+OÊOÎÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ØÛÛ[X[™ËÜ™\Z\ˆŠOËˆœÛÛ—ÜÚ[\—ÜÝŠ	™ÝZY[˜ÙK‹ØÛÛ[Y[ËÌÛWÙÝZY[˜ÙKÜ™\Z\—ØÛÛ[X[™ŠOÂˆ
+NÂˆ\ÜÙ\Ù\HJˆœÛÛ—ÜÚ[\—ÜÝŠ	œ™\Ü‹ÜÙ[XÝYÜÙX[WÚYŠOËˆœÛÛ—ÜÚ[\—ÜÝŠ	™ÝZY[˜ÙK‹ØÛÛ[Y[ËÌÜÙX[WÚYŠOÂˆ
+NÂˆ\ÜÙ\Jˆ™\ÜˆœÚ[\Š‹Ú[œ]ËØ\ÜÚ\Ý[Ü›ÛÙˆŠBˆš\×ÜÛÛYWØ[™
+Ù\™WÚœÛÛŽŽ•˜[YNŽš\×Û[
+Kˆ˜ØØ\ÙWÚYX]\ÝXY™Y›Ü™H[žH\ÜÚ\Ý[›ÛÙˆ^\ÝÈ‚ˆ
+NÂˆB‚ˆYˆØ\ÙWÚYOH›Z\ÜÚ[™×Ø\ÜÚ\Ý[Ü›ÛÙˆˆÂˆ\ÜÙ\Jˆ™\ÜˆœÚ[\Š‹Ú[œ]ËØ\ÜÚ\Ý[Ü›ÛÙˆŠBˆš\×ÜÛÛYWØ[™
+Ù\™WÚœÛÛŽŽ•˜[YNŽš\×Û[
+Kˆ˜ØØ\ÙWÚYXÚÝ[›ÝÛZ[HHZ\ÜÚ[™È\ÜÚ\Ý[›ÛÙˆ[œ]\È™\Ù[‚ˆ
+NÂˆB‚ˆ]X\šÙÝÛˆHÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊX\šÙÝÛ—Ü]
+OÎÂˆ\ÜÙ\JˆX\šÙÝÛ‹˜ÛÛZ[œÊ	™›Ü›X]J”Ý]\ÎˆÜÝ]\ßHŠJKˆ˜ØØ\ÙWÚYXX\šÙÝÛˆÚÝ[[ˆÝ]\ÈÜÝ]\ßX‚ˆ
+NÂˆ\ÜÙ\JˆX\šÙÝÛ‹˜ÛÛZ[œÊ	™›Ü›X]JXÝ[ÛŽˆØXÝ[Û—ÚÚ[™HŠJKˆ˜ØØ\ÙWÚYXX\šÙÝÛˆÚÝ[[ˆXÝ[ÛˆØXÝ[Û—ÚÚ[™X‚ˆ
+NÂˆBˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆYÙ[ÜÝ\ÝÜš]\×ÜÛÝ\˜ÙWÙY]Ùœ™YWÝÛÜšÙ›Ý×ÜXÚÙ]
+
+HOˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]ÙX[WÚYHÙ˜ÍÍ˜LÍÙÍØ™ŽÂˆ]Ý]Ù\ˆH[š\]YWÝ[\ÝÛÜšÜÜXÙJ˜YÙ[\Ý\ŠNÂˆ]Ý]HÝ]Ù\‚ˆ×ÜÝŠ
+Bˆ›Ú×ÛÜŠÛÜšÙ›ÝÈÝ]]]ÚÝ[™H]‹NŠOÎÂ‚ˆ]Ý]]H[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–Âˆ˜YÙ[‹ˆœÝ\‹ˆ‹K\›ÛÝ‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ú[œ]‹ˆ‹K\ÙX[KZY‹ˆÙX[WÚYˆ‹K[Ý]‹ˆÝ]ˆJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂ‚ˆ]ÛÜšÙ›Ý×ÚœÛÛˆHÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊÝ]Ù\‹š›Ú[ŠÛÜšÙ›ÝËšœÛÛˆŠJOÎÂˆ]ÛÛ[X[™×ÛYHÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊÝ]Ù\‹š›Ú[Š˜ÛÛ[X[™Ë›YŠJOÎÂˆ]YÙ[ØœšYY—ÚœÛÛˆHÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊÝ]Ù\‹š›Ú[Š˜YÙ[XœšYY‹šœÛÛˆŠJOÎÂ‚ˆ\ÜÙ\JÛÜšÙ›Ý×ÚœÛÛ‹˜ÛÛZ[œÊˆÈˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒŒHˆˆÊJNÂˆ\ÜÙ\JÛÜšÙ›Ý×ÚœÛÛ‹˜ÛÛZ[œÊˆÈˆœÛÝ\˜ÙWÙY]ÈŽˆ˜[ÙHˆÊJNÂˆ\ÜÙ\JÛÜšÙ›Ý×ÚœÛÛ‹˜ÛÛZ[œÊˆÈˆ›WØ\WØØ[ÈŽˆ˜[ÙHˆÊJNÂˆ\ÜÙ\JÛÜšÙ›Ý×ÚœÛÛ‹˜ÛÛZ[œÊÙX[WÚY
+JNÂˆ\ÜÙ\JÛÜšÙ›Ý×ÚœÛÛ‹˜ÛÛZ[œÊœš\ˆYÙ[™\šYžHK\›ÛÝš^\™\ËØ›Ý[™\žWÙØ\Ú[œ]ŠJNÂˆ\ÜÙ\JÛÛ[X[™×ÛY˜ÛÛZ[œÊˆÈ’TˆYÙ[ÛÜšÙ›ÝÈŠJNÂˆ\ÜÙ\JÛÛ[X[™×ÛY˜ÛÛZ[œÊ‘Ù\È›ÝY]ÛÝ\˜ÙHš[\ËˆŠJNÂˆ\ÜÙ\JÛÛ[X[™×ÛY˜ÛÛZ[œÊ‘Ù\È›ÝØ[[ˆHTKˆŠJNÂˆ\ÜÙ\JYÙ[ØœšYY—ÚœÛÛ‹˜ÛÛZ[œÊÙX[WÚY
+JNÂ‚ˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+Ý]Ù\ŠOÎÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆYÙ[ÜÝ\ÜXÚÙ]Ù\ØÛÜÙ\×Ý]ÙÙ[™\˜]YØÛÛ[X[™×Ø\ÜÝ[YWØ˜\Ú
+
+B‹Oˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]Ý]Ù\ˆH[š\]YWÝ[\ÝÛÜšÜÜXÙJ˜YÙ[\Ý\\Ú[Y\ØÛÜÝ\™HŠNÂˆ]Ý]HÝ]Ù\‚ˆ×ÜÝŠ
+Bˆ›Ú×ÛÜŠÛÜšÙ›ÝÈÝ]]]ÚÝ[™H]‹NŠOÎÂ‚ˆ]Ý]]H[—Üš\—Ú[—ÝÛÜšÜÜXÙJ	–Âˆ˜YÙ[‹ˆœÝ\‹ˆ‹K\›ÛÝ‹ˆ™š^\™\ËØ›Ý[™\žWÙØ\Ú[œ]‹ˆ‹K\ÙX[KZY‹ˆÙ˜ÍÍ˜LÍÙÍØ™‹ˆ‹K[Ý]‹ˆÝ]ˆJOÎÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	›Ý]]
+NÂ‚ˆ]ÛÛ[X[™×ÛYHÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊÝ]Ù\‹š›Ú[Š˜ÛÛ[X[™Ë›YŠJOÎÂˆ]ÛÜšÙ›Ý×ÚœÛÛˆHÝŽ™œÎŽœ™XYÝ×ÜÝš[™ÊÝ]Ù\‹š›Ú[ŠÛÜšÙ›ÝËšœÛÛˆŠJOÎÂ‚ˆËÈHÛÛ[X[™È\™H[™XYH™[˜ÙY\È˜\ÚÛÈH˜\™H˜\ÚÝXœÝš[™È\ÂˆËÈ›Ý]šY[˜ÙKˆ™\]Z\™HH›ÜÙH\ØÛÜÝ\™HZXYÙˆHš\œÝ™[˜ÙK‚ˆ]\ØÛÜÝ\™HHÛÛ[X[™×ÛYˆ™š[™
+‘XXÚÝ\[˜ÛY\È˜\Ú[™ÝÙ\”Ú[ÛÛ[X[™˜\šX[ËˆŠBˆ›Ú×ÛÜ—Ù[ÙJ›Ü›X]J˜ÛÛ[X[™Ë›Y]\Ý\ØÛÜÙHH˜\Ú\ÜÝ[\[ÛŽ—žØÛÛ[X[™×ÛYHŠJOÎÂˆ]š\œÝÙ™[˜ÙHHÛÛ[X[™×ÛYˆ™š[™
+˜˜\ÚŠBˆ›Ú×ÛÜŠ˜ÛÛ[X[™Ë›Y]\ÝÝ[™[˜ÙHÛÛ[X[™È\È˜\ÚŠOÎÂˆ\ÜÙ\Jˆ\ØÛÜÝ\™Hš\œÝÙ™[˜ÙKˆ˜˜\Ú\ØÛÜÝ\™H]\Ý™XÙYHHš\œÝÛÜXX›HÛÛ[X[™[ˆÛÛ[X[™Ë›Y‚ˆ
+NÂˆ\ÜÙ\JˆÛÛ[X[™×ÛY˜ÛÛZ[œÊ”ÝÙ\”Ú[ŠKˆ˜ÛÛ[X[™Ë›Y]\Ý˜[YHHÚ[È]È›ÝXØÙ\\ÙHÛÛ[X[™Î—žØÛÛ[X[™×ÛYH‚ˆ
+NÂˆ\ÜÙ\JˆÛÜšÙ›Ý×ÚœÛÛ‹˜ÛÛZ[œÊˆÈˆ˜ÛÛ[X[™ÜÚ[Žˆ˜˜\ÚˆˆÊKˆÛÜšÙ›ÝËšœÛÛˆ]\Ý˜[YHHÚ[]ÈÛÛ[X[™Ýš[™ÜÈ\ÜÝ[YN—žÝÛÜšÙ›Ý×ÚœÛÛŸH‚ˆ
+NÂ‚ˆÝŽ™œÎŽœ™[[Ý™WÙ\—Ø[
+Ý]Ù\ŠOÎÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆYÙ[Ü™\Z\—Ü\Ù\×ÛX]\šX[^™WÜÛ˜\ÚÝ×Ø[™Ý™\šYžWÚœÛÛŠ
+B‹Oˆ™\Ý[
+
+K›Þ[ˆÝŽ™\œ›ÜŽŽ‘\œ›ÜˆÂˆ]›ÛÝH[š\]YWÝ[\ÝÛÜšÜÜXÙJ˜YÙ[\™\Z\‹\\Ù\ÈŠNÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+›ÛÝš›Ú[ŠœÜ˜ÈŠJOÎÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+›ÛÝš›Ú[Š\ÝÈŠJOÎÂˆÝŽ™œÎŽÜš]Jˆ›ÛÝš›Ú[ŠØ\™ÛËÛ[ŠKˆ–ÜXÚØYÙWW›˜[YHH˜›Ý[™\žWÙØ\Ùš^\™W—™\œÚ[ÛˆHŒŒKŒ—™Y][ÛˆHŒŒ——–ÛX—W›˜[YHH˜›Ý[™\žWÙØ\Ùš^\™W—œ]HœÜ˜ËÛX‹œœ×—ˆ‹ˆ
+OÎÂˆÝŽ™œÎŽÜš]Jˆ›ÛÝš›Ú[ŠœÜ˜ËÛX‹œœÈŠKˆœXˆ›ˆ\ØÛÝ[YÝÝ[
+[[Ý[ˆLÌ‹\ØÛÝ[Ý™\ÚÛˆLÌŠHOˆLÌˆ×ˆYˆ[[Ý[H\ØÛÝ[Ý™\ÚÛ×ˆ[[Ý[HLˆH[ÙH×ˆ[[Ý[ˆWŸWˆ‹ˆ
+OÎÂˆÝŽ™œÎŽÜš]Jˆ›ÛÝš›Ú[Š\ÝËÜšXÚ[™ËœœÈŠKˆ\ÙH›Ý[™\žWÙØ\Ùš^\™NŽ™\ØÛÝ[YÝÝ[×—ˆÖÝ\ÝW™›ˆ™[Ý×Ý™\ÚÛÚ\×Û›×Ù\ØÛÝ[
+
+H×ˆ\ÜÙ\Ù\HJ\ØÛÝ[YÝÝ[
+LL
+KL
+N×ŸW—ˆÖÝ\ÝW™›ˆ˜\—ØX›Ý™WÝ™\ÚÛÙ\ØÛÝ[Ê
+H×ˆ\ÜÙ\Ù\HJ\ØÛÝ[YÝÝ[
+LÌL
+KWÎNL
+N×ŸWˆ‹ˆ
+OÎÂˆ[š]ÙÚ]Ùš^\™WÜ™\Ê	œ›ÛÝ
+OÎÂˆ[—ÙÚ]
+	œ›ÛÝ	–È˜Y‹Ø\™ÛËÛ[‹œÜ˜È‹\ÝÈ—JOÎÂˆ]ÛÛ[Z]H[—ØÛÛ[X[™
+ˆ™Ú]‹ˆÛÛYJ	œ›ÛÝ
+Kˆ	–Âˆ‹XÈ‹ˆ\Ù\‹›˜[YOT’Tˆ\Ý‹ˆ‹XÈ‹ˆ\Ù\‹™[XZ[\š\^[\Kš[˜[Y‹ˆ˜ÛÛ[Z]‹ˆ‹[H‹ˆ™š^\™HÛÝ\˜ÙH‹ˆKˆ
+OÎÂˆ\ÜÙ\JˆÛÛ[Z]œÝ]\ËœÝXØÙ\ÜÊ
+Kˆ™š^\™HÛÝ\˜ÙHÛÛ[Z]˜Z[YˆØÛÛ[Z]ßH‚ˆ
+NÂ‚ˆ]›ÛÝØ\™ÈH›ÛÝ™\Ü^J
+K×ÜÝš[™Ê
+NÂˆ]™Y›Ü™HH[—Üš\Š	–Âˆ˜YÙ[‹ˆœ™\Z\ˆ‹ˆ‹K\›ÛÝ‹ˆ	œ›ÛÝØ\™Ëˆ‹K\ÙX[KZY‹ˆÙ˜ÍÍ˜LÍÙÍØ™‹ˆ‹K\\ÙH‹ˆ˜™Y›Ü™H‹ˆJNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	˜™Y›Ü™JNÂˆËÈH™Y›Ü™H\ÙIÜÈÝÝ]\ÈHXÚÙ]”ÓÓˆ[Û™K[™]È˜\œ˜][Û‚ˆËÈ˜[Y\ÈH\Ý[Û›HY]Ú]Ý]™K\Ù[™[™ÈH\Ù\ˆÈZÙHH™Y›Ü™BˆËÈÛ˜\ÚÝ\È\ÙH[™XYHÜ›ÝK‚ˆ]™Y›Ü™WÜÝÝ]ˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÛXÙJ	˜™Y›Ü™KœÝÝ]
+OÎÂˆ\ÜÙ\Ù\HJ™Y›Ü™WÜÝÝ]ÈœXÚÙ]È—VÌVÈœÙX[WÚY—KÙ˜ÍÍ˜LÍÙÍØ™ŠNÂˆ]™Y›Ü™WÜÝÝ]Ý^HÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	˜™Y›Ü™KœÝÝ]
+NÂˆ\ÜÙ\JˆX™Y›Ü™WÜÝÝ]Ý^˜ÛÛZ[œÊœš\ŽˆŠH	‰ˆX™Y›Ü™WÜÝÝ]Ý^˜ÛÛZ[œÊ“™^ˆŠKˆ˜™Y›Ü™H\ÙH˜\œ˜][Ûˆ™[Û™ÜÈÛˆÝ\œ‹›Ý[ˆHXÚÙ]”ÓÓŽ—žØ™Y›Ü™WÜÝÝ]Ý^H‚ˆ
+NÂˆ]™Y›Ü™WÜÝ\œˆHÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	˜™Y›Ü™KœÝ\œŠNÂˆ\ÜÙ\Jˆ™Y›Ü™WÜÝ\œ‚ˆ˜ÛÛZ[œÊ˜YÜˆÝ™[™Ý[ˆÛ™H›ØÝ\ÙY\Ý
+X]™H›ÙXÝ[ÛˆÛÙH[˜Ú[™ÙY
+HŠKˆ˜™Y›Ü™H\ÙH]\Ý˜[YHH\Ý[Û›HY]—žØ™Y›Ü™WÜÝ\œŸH‚ˆ
+NÂˆ\ÜÙ\JˆX™Y›Ü™WÜÝ\œ‹˜ÛÛZ[œÊ‘Y]HÛÝ\˜ÙHÛÙHŠKˆ˜™Y›Ü™H\ÙH]\Ý›Ý\ÚÈ›ÜˆHÛÝ\˜ÙHY]—žØ™Y›Ü™WÜÝ\œŸH‚ˆ
+NÂˆ\ÜÙ\JˆX™Y›Ü™WÜÝ\œ‹˜ÛÛZ[œÊ“™^ˆš\ˆÚXÚÈŠKˆ˜™Y›Ü™H\ÙH]\Ý›Ý™KZ\ÜÝYHHÛ˜\ÚÝ][™XYHÛÚÎ—žØ™Y›Ü™WÜÝ\œŸH‚ˆ
+NÂ‚ˆ]™Y›Ü™WÜÛ˜\ÚÝH›ÛÝš›Ú[Š\™Ù]Üš\‹ÝÛÜšÙ›ÝËØ™Y›Ü™Kœ™\ËY^ÜÝ\™KšœÛÛˆŠNÂˆ\ÜÙ\J™Y›Ü™WÜÛ˜\ÚÝš\×Ùš[J
+JNÂˆ]XÚÙ]Ü]H›ÛÝš›Ú[Š\™Ù]Üš\‹ÝÛÜšÙ›ÝËØYÙ[\XÚÙ]šœÛÛˆŠNÂˆ]XÚÙ]ˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	œXÚÙ]Ü]
+OÊOÎÂˆ\ÜÙ\Ù\HJXÚÙ]ÈœXÚÙ]×ÝÝ[—KJNÂˆ\ÜÙ\Ù\HJXÚÙ]ÈœXÚÙ]È—VÌVÈœÙX[WÚY—KÙ˜ÍÍ˜LÍÙÍØ™ŠNÂ‚ˆ]Y\—ÜÛ˜\ÚÝH›ÛÝš›Ú[Š\™Ù]Üš\‹ÝÛÜšÙ›ÝËØY\‹œ™\ËY^ÜÝ\™KšœÛÛˆŠNÂˆ]Ý[WØY\ˆHÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆœÝ[WÛX\šÙ\ˆŽˆœ™]š[Ý\È™\Z\ˆ[ˆ‹ˆœÛÝ\˜ÙHŽˆÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	˜™Y›Ü™WÜÛ˜\ÚÝ
+OËˆJNÂˆÝŽ™œÎŽÜš]J	˜Y\—ÜÛ˜\ÚÝÙ\™WÚœÛÛŽŽ×Ý™XÊ	œÝ[WØY\ŠOÊOÎÂ‚ˆËÈÚ[][]HHYÙ[Y]Ý\™]ÙY[ˆ\Ù\ÎˆHY\ˆÛ˜\ÚÝ]\ÝˆËÈØœÙ\™H[Ý™[Y[\ØÛÜÙY›ÝYÚH\HÛÜšÝ™YK™XØ]\ÙHH[BˆËÈÝ\œ™[Ø[YK\™]š\Ú[ÛˆZ\ˆ\È™Z™XÝY\È›Ë[[Ý™[Y[
+ÌŽLŒŠK‚ˆÝŽ™œÎŽÜš]Jˆ›ÛÝš›Ú[Š\ÝËÜšXÚ[™ËœœÈŠKˆ\ÙH›Ý[™\žWÙØ\Ùš^\™NŽ™\ØÛÝ[YÝÝ[×—ˆÖÝ\ÝW™›ˆ™[Ý×Ý™\ÚÛÚ\×Û›×Ù\ØÛÝ[
+
+H×ˆ\ÜÙ\Ù\HJ\ØÛÝ[YÝÝ[
+LL
+KL
+N×ŸW—ˆÖÝ\ÝW™›ˆ˜\—ØX›Ý™WÝ™\ÚÛÙ\ØÛÝ[Ê
+H×ˆ\ÜÙ\Ù\HJ\ØÛÝ[YÝÝ[
+LÌL
+KWÎNL
+N×ŸW—ˆÖÝ\ÝW™›ˆ]Ý™\ÚÛÙ\ØÛÝ[Ê
+H×ˆ\ÜÙ\Ù\HJ\ØÛÝ[YÝÝ[
+LL
+KL
+N×ŸWˆ‹ˆ
+OÎÂ‚ˆ]Y\ˆH[—Üš\Š	–Âˆ˜YÙ[‹ˆœ™\Z\ˆ‹ˆ‹K\›ÛÝ‹ˆ	œ›ÛÝØ\™Ëˆ‹K\ÙX[KZY‹ˆÙ˜ÍÍ˜LÍÙÍØ™‹ˆ‹K\\ÙH‹ˆ˜Y\ˆ‹ˆJNÂˆ\ÜÙ\ÜÝXØÙ\ÜÊ	˜Y\ŠNÂˆ]Y\—ÜÝ\œˆHÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	˜Y\‹œÝ\œŠNÂˆ\ÜÙ\JˆY\—ÜÝ\œ‹˜ÛÛZ[œÊœš\Žˆ™\Ý[›ÜˆÙX[HÙ˜ÍÍ˜LÍÙÍØ™ˆÙXZÛWÙÜš\YOˆŠKˆ˜Y\ˆ\ÙH]\Ý˜[YHHÙX[IÜÈ[Ý™[Y[—žØY\—ÜÝ\œŸH‚ˆ
+NÂˆ\ÜÙ\JˆXY\—ÜÝ\œ‹˜ÛÛZ[œÊ˜ÛÝ[›Ý™XYŠKˆ˜Y\ˆ\ÙH]\Ý™XYH™XÙZ\]\ÝÜ›ÝN—žØY\—ÜÝ\œŸH‚ˆ
+NÂˆ\ÜÙ\JˆY\—ÜÝ\œ‹˜ÛÛZ[œÊœš\ŽˆY\ˆ\ÙHÛÛ\]Kˆ™XÙZ\ˆŠKˆ˜Y\ˆ\ÙH]\Ý˜[YHH™XÙZ\]—žØY\—ÜÝ\œŸH‚ˆ
+NÂˆ]Y\—ÜÛ˜\ÚÝÝ^HÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê	˜Y\—ÜÛ˜\ÚÝ
+OÎÂˆ\ÜÙ\JXY\—ÜÛ˜\ÚÝÝ^˜ÛÛZ[œÊœ™]š[Ý\È™\Z\ˆ[ˆŠJNÂ‚ˆ]™\šYžWÚœÛÛˆH›ÛÝš›Ú[Š\™Ù]Üš\‹ÝÛÜšÙ›ÝËØYÙ[]™\šYžKšœÛÛˆŠNÂˆ\ÜÙ\J™\šYžWÚœÛÛ‹š\×Ùš[J
+JNÂˆ]™\šYžNˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê™\šYžWÚœÛÛŠOÊOÎÂˆ\ÜÙ\Ù\HJ™\šYžVÈÛÛ—Kœš\ˆŠNÂˆ]™XÙZ\Ü]H›ÛÝš›Ú[Š\™Ù]Üš\‹Ü™\ÜËØYÙ[\™XÙZ\šœÛÛˆŠNÂˆ]™XÙZ\ˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	œÝŽ™œÎŽœ™XYÝ×ÜÝš[™Ê™XÙZ\Ü]
+OÊOÎÂˆ\ÜÙ\Ù\HJ™XÙZ\Èœ›Ý™[˜[˜ÙH—VÈœÙX[WÚY—KÙ˜ÍÍ˜LÍÙÍØ™ŠNÂˆ\ÜÙ\Ù\HJ™XÙZ\Èœ™\Z\—Ø][\—VÈœÙX[WÚY—KÙ˜ÍÍ˜LÍÙÍØ™ŠNÂˆ\ÜÙ\Ù\HJ™XÙZ\Èœ™\Z\—Ø][\—VÈ˜Ý\œ™[—KYJNÂˆ\ÜÙ\Ù\HJˆ™XÙZ\Èœ™\Z\—Ø][\—VÈ™Y]ØØYÙWÝ™\™XÝ—VÈœÝ]\È—Kˆ˜ÛÛ\X[‚ˆ
+NÂˆ\ÜÙ\Ù\HJ™XÙZ\È\ÝØÚ[™ÙY—K\ÝËÜšXÚ[™ËœœÈŠNÂˆ]][\ÈHÝŽ™œÎŽœ™XYÙ\Š›ÛÝš›Ú[Š\™Ù]Üš\‹Ü™\Z\‹X][\ÈŠJOÂˆ™š[\—ÛX\
+™\Ý[Ž›ÚÊBˆ™š[\Š[ž_[žKœ]
+
+Kš\×Ù\Š
+JBˆ˜ÛÛXÝŽ™XÏÏŠ
+NÂˆ\ÜÙ\Ù\HJ][\Ë›[Š
+KJNÂˆ]X[šY™\ÝˆÙ\™WÚœÛÛŽŽ•˜[YHHÙ\™WÚœÛÛµÓN7òÚ$z{-®éÜj×ing::from_utf8_lossy(&output.stdout);
     // Raw test-efficiency debt is not counted in the public repo headline,
     // even when a stale TE suppression exists.
     assert!(stdout.contains(r#""unsuppressed_test_efficiency_findings": 0"#));
@@ -12875,6 +3093,24 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
     if !stdout.contains("contains no changed files") {
         return Err(format!(
             "empty default-base run must keep the no-scope disclosure (base-naming form per #4012); got:\n{stdout}"
+        ));
+    }
+    if !stdout.contains("compared base was `main`") || stdout.contains("--base origin/main") {
+        return Err(format!(
+            "no-origin repo must name its resolved local main rather than suggest a nonexistent remote ref; got:\n{stdout}"
+        ));
+    }
+    let json = run_ripr(&["check", "--root", &root_str, "--json"]);
+    assert_success(&json);
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout)
+        .map_err(|err| format!("parse no-origin check JSON: {err}"))?;
+    if value["base"] != "main"
+        || !value["scope_disclosures"][0]["why"]
+            .as_str()
+            .is_some_and(|why| why.contains("main...HEAD") && !why.contains("origin/main"))
+    {
+        return Err(format!(
+            "no-origin JSON must bind guidance to its resolved local base: {value}"
         ));
     }
 

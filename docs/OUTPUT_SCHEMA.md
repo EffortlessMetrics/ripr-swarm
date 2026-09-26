@@ -1,13153 +1,429 @@
-# Output Schema
-
-`ripr` emits stable JSON for tools, CI systems, editor integrations, and coding
-agents.
-
-## Output streams by command family
-
-The CLI has two intentional output conventions:
-
-- The check-family commands (`check`, `diff`, `explain`, and `context`) write
-  their primary result to stdout. `check`, `diff`, and `context` can emit
-  machine-readable JSON; `explain` emits its human explanation. Warnings and
-  diagnostics go to stderr, so scripts can capture stdout without filtering
-  status text.
-- The gate-family commands write reviewed artifacts to the paths shown by their
-  help text and print human `Wrote ...` status lines to stdout. `gate evaluate`,
-  `baseline diff`, and `zero status` support their documented JSON/Markdown
-  output paths; `baseline create` and `baseline update` support `--out` for the
-  JSON ledger, while `baseline diff` is the baseline subcommand that also
-  supports `--out-md`. `baseline create --dry-run` is the explicit exception:
-  it prints the candidate JSON to stdout without writing a file.
-
-This split is deliberate: check-family output is a direct analysis result,
-while gate-family output is a reviewed, file-backed policy/report artifact.
-The gate evaluator can still return a non-zero status after writing its
-artifacts when the decision is `blocked` or `config_error`; callers should
-inspect both the exit status and the written JSON.
-
-The `ripr check --format json` schema version is:
-
-```text
-0.2
-```
-
-`schema_version` is a per-contract namespace, not a single product-wide number
-(#2075): each output family versions independently. The command-to-version
-map is:
-
-| Output | Field | Current value |
-| --- | --- | --- |
-| `ripr check --format json` | `schema_version` | `0.2` |
-| `ripr check --format sarif` | `version` | `2.1.0` (standard SARIF envelope) |
-| `ripr gate evaluate` | `schema_version` | `0.1` |
-| `ripr doctor --json` | `schema_version` | `0.2` |
-| `ripr agent packet` | `schema_version` | `0.4` |
-| `ripr agent receipt` | `schema_version` | `0.5` |
-| `ripr agent verify` | `schema_version` | `0.3` |
-| `ripr agent repair --phase after` success stdout | `schema_version` | `0.1` |
-| `ripr agent status` | `schema_version` | `0.1` |
-| `ripr agent review-summary` | `schema_version` | `0.1` |
-| `ripr receipt write/check` | `schema_version` | `0.1` |
-| badge JSON | `schema_version` | `0.8` |
-| `ripr cache status --json` | `schema_version` | `0.1` |
-| `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
-| `ripr swarm queue --json` | `schema_version` | `0.2` |
-
-Bump rules below apply per contract: a breaking change to one family bumps
-that family's version only.
-
-`ripr doctor --json` top-level `status` and `runtime_probes[].status` are
-`pass` or `fail`. Each `checks[].status` is `pass`, `fail`, or `skipped`;
-`skipped` (additive in schema `0.2`) marks a check that does not apply to the
-root, such as the `cargo_toml`, `tool_cargo`, and `tool_rustc` checks on a
-root where Rust is not in scope. A skipped check never fails the report, and
-its `evidence` states why it was skipped. See [Exit codes](EXIT_CODES.md).
-
-## JSON object key ordering
-
-JSON object key order is not part of the semantic contract for ordinary
-schema-bearing `ripr` output. The examples below use a stable, readable order,
-but consumers must parse JSON objects by key rather than match raw strings,
-prefixes, or byte offsets. This keeps declaration-order and map-backed
-renderers interoperable.
-
-This guidance does not relax byte-canonical artifact contracts. Inputs to
-`ripr agent verify` and artifacts carrying a `content_sha256` commitment are
-validated as exact canonical bytes; consumers must preserve those bytes rather
-than parse and re-render them before verification.
-
-Individual renderers may emit object keys in different deterministic orders,
-including declaration order or map order. The exact order is an implementation
-detail, not a schema distinction, and this document deliberately does not
-specify which order a renderer must choose. The repository may retain
-byte-oriented golden snapshots as renderer regression tests, but those
-snapshots do not authorize downstream consumers to depend on their key order.
-Changing a renderer's ordering would be a separate output migration and is not
-implied by any schema version.
-
-Schema changes that remove fields, rename fields, or change field meanings
-should bump `schema_version`.
-
-Repository config in `ripr.toml` does not add a new field to the `check`
-schema. It can change the rendered `mode` and configured `severity` values,
-because those fields already describe the effective analysis mode and reporting
-policy for the current run. See [Configuration](CONFIGURATION.md).
-
-SARIF output is governed by
-[RIPR-SPEC-0008](specs/RIPR-SPEC-0008-sarif-ci-policy.md). SARIF uses the
-standard SARIF `version: "2.1.0"` envelope rather than `schema_version: "0.1"`.
-Adding SARIF or GitHub annotation detail must not remove or rename existing
-JSON, badge, LSP, or context fields. Preview-card `surface_scope` values record
-which public advisory surfaces are currently wired.
-
-`ripr check --format github` emits GitHub Actions workflow-command text rather
-than JSON. For Python preview findings, that message may append either an
-eligible repair-card summary or a no-action/static-limit summary. For Perl
-preview findings with strict fact-packet evidence, it may append a compact
-`perl_preview_card.v1` advisory summary with missing discriminator, suggested
-assertion, suggested location, and verify command. GitHub annotation text does
-not expose receipt commands, edit-boundary authority, or agent packets, and
-remains advisory review context rather than verify, receipt, gate, badge, or
-RIPR Zero authority.
-
-`ripr check --format human` is the bounded default terminal surface. It prints
-header and summary counts, then one `Start here:` triage block with a closed
-state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or
-`missing_scope`), one selected finding digest when available, an omitted-finding
-count, and pointers to `--format human-full` and `--format json`.
-`ripr check --format human-full` (alias `text-full`) preserves the exhaustive
-per-finding human report. These human text formats do not change
-`schema_version`; the machine-readable contract remains `--format json`.
-Repo-scoped formats such as `repo-exposure-json`, `repo-exposure-md`,
-`repo-sarif`, and `agent-seam-packets-json` warn on stderr when paired with
-`--base` or `--diff`, because those flags do not bound full-repo formats.
-
-## Check Output
-
-`ripr check --json` emits:
-
-The normative top-level contract is
-[`schemas/ripr/check.schema.json`](../schemas/ripr/check.schema.json). It pins
-`schema_version` (`0.2`), `tool`, `mode`, `root`, `summary`, and `findings`.
-The optional `analysis_outcome` block preserves producer-owned completeness;
-the optional `finding_alignment` block is the typed canonical seam projection.
-Unknown top-level fields are rejected by the verification contract. Nested
-finding and seam details may grow additively within the pinned version.
-
-Top-level `base` records the base ref the diff loader actually used (#3940):
-the explicit `--base` when one was given, the resolved default base
-(RIPR-SPEC-0084) for scope-less runs, and absent when no base was involved
-(diff-file/stdin inputs and repo-scope runs). Base-matching consumers (for
-example `review-comments --check-output`, which requires the envelope `base`
-to equal its own `--base`) may rely on a present `base`; an absent `base`
-means the run cannot be attributed to a base. The typed
-`analysis_outcome.outcome.identity.base_revision` names the same value: a
-scope-less run records the resolved default there too, so the envelope and the
-identity agree and the analysis-outcome validator accepts the artifact.
-
-```json
-{
-  "schema_version": "0.2",
-  "tool": "ripr",
-  "mode": "draft",
-  "root": ".",
-  "base": "origin/main",
-  "summary": {
-    "changed_rust_files": 1,
-    "probes": 1,
-    "findings": 1,
-    "exposed": 0,
-    "weakly_exposed": 1,
-    "reachable_unrevealed": 0,
-    "no_static_path": 0,
-    "infection_unknown": 0,
-    "propagation_unknown": 0,
-    "static_unknown": 0
-  },
-  "analysis_outcome": {
-    "analysis_complete": true,
-    "outcome": {
-      "schema_version": "0.1",
-      "kind": "complete_with_findings",
-      "identity": {
-        "base_revision": "origin/main",
-        "input_identity": "sha256:<diff-bytes>"
-      },
-      "counts": {
-        "changed_file_count": 1,
-        "changed_line_count": 2,
-        "candidate_line_count": 2,
-        "probe_count": 1,
-        "finding_count": 1
-      },
-      "limitations": [],
-      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
-    }
-  },
-  "findings": []
-}
-```
-
-`analysis_outcome` is emitted for diff and worktree analysis. Its
-`analysis_complete` member is derived from `outcome.kind`; consumers must use
-the typed outcome and its `limitations[]` rather than infer completeness from
-`findings` or `probes`. For `unsupported_input` and
-`partial_with_limitations`, zero findings is explicitly not a clean result.
-
-When supported raw findings align to a canonical evidence item, `ripr check
---json` also emits an additive `finding_alignment` section. The section is
-omitted when no supported alignment item is present, so existing consumers can
-continue to read `findings` directly. Raw findings remain unchanged and are
-repeated only as supporting evidence for the canonical item.
-
-When Rust diff-scoped analysis stops at a configured budget before probe
-expansion, `ripr check --json` still exits non-zero, but it writes a limited
-check artifact to stdout before reporting the error on stderr. This artifact
-preserves the normal check envelope (`schema_version`, `tool`, `mode`, `root`,
-`summary`, and `findings`) and adds:
-
-- `analysis_scope.run_status: "diff_scope_oversized"`
-- `analysis_scope.basis: "rust_diff_scope_budget"`
-- `analysis_scope.downstream_consumable: false`
-- `analysis_scope.limitation: "diff_scope_oversized"`
-- `analysis_scope.repair_route: "analysis/diff-scope-budget"`
-- `run_limitations[]` with the same category, run status, repair route, and the
-  budget diagnostic message
-
-Consumers must not treat a limited `diff_scope_oversized` artifact as a clean
-or complete analysis. The zero summary and empty `findings` array mean analysis
-did not run far enough to classify probes, not that the diff has no findings.
-
-```json
-{
-  "finding_alignment": {
-    "scope": "supported_classes",
-    "supported_evidence_classes": ["presentation_text", "config_or_policy_constant"],
-    "summary": {
-      "raw_signals": 2,
-      "canonical_items": 1,
-      "aligned_raw_findings": 2,
-      "unaligned_raw_findings": 0,
-      "raw_to_canonical_ratio": 2.0,
-      "duplicate_groups_total": 1,
-      "actionable_gaps": 0,
-      "already_observed": 0,
-      "internal_no_action": 0,
-      "static_limitations": 1,
-      "unknown": 0,
-      "calibrated_supported": 0,
-      "uncalibrated": 1,
-      "repair_route_coverage": 0,
-      "actionable_items_without_repair_route": 0,
-      "verify_command_coverage": 0,
-      "actionable_items_without_verify_command": 0,
-      "presentation_text_total": 1,
-      "presentation_text_user_visible": 0,
-      "presentation_text_observed": 0,
-      "presentation_text_unobserved": 0,
-      "presentation_text_internal_only": 0,
-      "presentation_text_visibility_unknown": 1,
-      "presentation_text_observer_unknown": 1,
-      "presentation_text_duplicate_groups": 1,
-      "presentation_text_actionable_snapshot": 0,
-      "presentation_text_actionable_output_repairs": 0,
-      "presentation_text_no_action": 0,
-      "presentation_text_static_limitations": 1,
-      "config_policy_constant_total": 0,
-      "config_policy_user_visible": 0,
-      "config_policy_observed": 0,
-      "config_policy_unobserved": 0,
-      "config_policy_internal_only": 0,
-      "config_policy_flow_unknown": 0,
-      "config_policy_observer_unknown": 0,
-      "config_policy_duplicate_groups": 0,
-      "config_policy_actionable_output_observer": 0,
-      "config_policy_actionable_behavior_discriminator": 0,
-      "config_policy_no_action": 0,
-      "config_policy_static_limitations": 0,
-      "config_policy_repair_route_coverage": 0,
-      "config_policy_verify_command_coverage": 0
-    },
-    "items": [
-      {
-        "canonical_gap_id": "presentation_text::APPLE_M3_AIR_DEVICE_LABELS_TEXT",
-        "canonical_item_kind": "limitation",
-        "evidence_class": "presentation_text",
-        "gap_state": "static_limitation",
-        "actionability": "inspect_visibility",
-        "raw_group_size": 2,
-        "group_reason": "declaration_and_literal_same_text_constant",
-        "primary_anchor": {
-          "file": "src/device_labels.rs",
-          "line": 46,
-          "kind": "exposed",
-          "source_id": "probe:src_device_labels_rs:46:decl",
-          "reason": "declaration_line_for_grouped_constant"
-        },
-        "raw_spans": [
-          {
-            "file": "src/device_labels.rs",
-            "start_line": 46,
-            "end_line": 46,
-            "kind": "exposed",
-            "source_id": "probe:src_device_labels_rs:46:decl"
-          },
-          {
-            "file": "src/device_labels.rs",
-            "start_line": 47,
-            "end_line": 47,
-            "kind": "static_unknown",
-            "source_id": "probe:src_device_labels_rs:47:literal"
-          }
-        ],
-        "why": "Changed presentation text could not be traced to or away from a user-visible output sink.",
-        "recommended_repair": "Trace the string constant to a rendered output path or confirm it is internal-only.",
-        "repair_route": null,
-        "related_test": null,
-        "verify_command": "cargo xtask evidence-quality-scorecard",
-        "static_limitations": [
-          {
-            "category": "presentation_text_visibility_unknown",
-            "repair_route": "trace_string_constant_to_output_or_snapshot_test",
-            "user_actionability": "unknown_until_visibility_known"
-          }
-        ],
-        "confidence": {
-          "basis": "fixture_backed",
-          "notes": [
-            "Visibility-unknown presentation text is benchmark-pinned; no user test debt is claimed without an output sink."
-          ]
-        },
-        "raw_findings": [
-          {
-            "file": "src/device_labels.rs",
-            "line": 46,
-            "kind": "exposed",
-            "expression": "pub const APPLE_M3_AIR_DEVICE_LABELS_TEXT: &str =",
-            "probe_kind": "field_construction",
-            "source_id": "probe:src_device_labels_rs:46:decl",
-            "evidence_record_ref": "probe:src_device_labels_rs:46:decl"
-          },
-          {
-            "file": "src/device_labels.rs",
-            "line": 47,
-            "kind": "static_unknown",
-            "expression": "\"apple-m3-air-cpu-neon = M3 MacBook Air Apple CPU/NEON lane\";",
-            "probe_kind": "static_unknown",
-            "source_id": "probe:src_device_labels_rs:47:literal",
-            "evidence_record_ref": "probe:src_device_labels_rs:47:literal"
-          }
-        ],
-        "presentation_text": {
-          "constant_name": "APPLE_M3_AIR_DEVICE_LABELS_TEXT",
-          "text_literal": "apple-m3-air-cpu-neon = M3 MacBook Air Apple CPU/NEON lane",
-          "visibility": "unknown",
-          "observer": "unknown",
-          "actionability": "static_limitation_visibility_unknown",
-          "source_kind": "const_decl",
-          "canonical_group_reason": "declaration_and_literal_same_text_constant",
-          "recommended_observer": "unknown",
-          "repair_kind": "inspect_visibility",
-          "target_test_type": "unknown",
-          "suggested_assertion": "Trace the constant to a supported output sink before adding or updating tests."
-        },
-        "config_policy": null
-      }
-    ]
-  }
-}
-```
-
-Field contract:
-
-- `finding_alignment.scope` - currently `supported_classes`; Lane 1 reports
-  only evidence classes whose grouping behavior is fixture-backed.
-- `finding_alignment.supported_evidence_classes` - evidence classes included
-  in this projection. The current fixture-backed classes are
-  `presentation_text` and `config_or_policy_constant`.
-- `finding_alignment.summary.raw_signals` - total raw findings emitted in the
-  check output.
-- `finding_alignment.summary.canonical_items` - supported canonical evidence
-  items after alignment.
-- `finding_alignment.summary.aligned_raw_findings` and
-  `unaligned_raw_findings` - how many raw findings were attached to supported
-  canonical items versus left as ordinary raw findings.
-- `finding_alignment.summary.raw_to_canonical_ratio` - raw signal count divided
-  by supported canonical item count; this is diagnostic evidence, not a score.
-- `finding_alignment.summary.duplicate_groups_total` - canonical items with
-  more than one supporting raw finding.
-- `finding_alignment.summary.actionable_gaps`,
-  `already_observed`, `internal_no_action`, `static_limitations`, and
-  `unknown` - Lane 1 evidence states. Policy states such as baseline, waiver,
-  acknowledgement, suppression, or reintroduction remain outside this section.
-- `finding_alignment.summary.calibrated_supported` and `uncalibrated` -
-  confidence-basis counts for canonical items. Current presentation-text items
-  are fixture-backed static evidence unless a later checked runtime calibration
-  class supplies calibrated support.
-- `finding_alignment.summary.repair_route_coverage` - count of actionable
-  canonical items that carry a concrete top-level `repair_route` with
-  `repair_kind`, `target_test_type`, and `suggested_assertion`.
-- `finding_alignment.summary.actionable_items_without_repair_route` - count of
-  actionable canonical items that are missing a concrete top-level repair
-  route. Supported fixture-backed classes should keep this at zero; no-action
-  and static-limitation items are not counted as missing user repair routes.
-- `finding_alignment.summary.verify_command_coverage` - count of actionable
-  canonical items that carry a concrete `verify_command`.
-- `finding_alignment.summary.actionable_items_without_verify_command` - count
-  of actionable canonical items missing a concrete verification route. Supported
-  fixture-backed classes should keep this at zero; no-action and
-  static-limitation items are not counted as missing user verification commands.
-- `finding_alignment.summary.presentation_text_*` - presentation-text class
-  counts for visibility, observer status, duplicate grouping, no-action states,
-  static limitations, and output-observer repairs.
-- `finding_alignment.summary.config_policy_*` - config/policy constant class
-  counts for visibility, observer or discriminator status, duplicate grouping,
-  no-action states, static limitations, output-observer repairs,
-  behavior-discriminator repairs, repair-route coverage, and verify-command
-  coverage. Config/policy repair-route coverage uses the same normalized
-  top-level structured `repair_route` contract as the overall summary; prose
-  `recommended_repair` or class-local repair metadata alone does not count.
-  Config/policy verify-command coverage uses the same concrete-command rule as
-  the overall summary; empty, `unknown`, or `verify_command_unknown` values do
-  not count as covered.
-- `finding_alignment.items[]` - canonical evidence items. Downstream surfaces
-  should prefer these items as the user-facing unit and show raw findings as
-  supporting evidence.
-- `finding_alignment.items[].canonical_gap_id` - stable class-scoped grouping
-  key. For presentation text constants this is currently
-  `presentation_text::<CONSTANT_NAME>`, so line movement does not change the
-  identity.
-- `finding_alignment.items[].gap_state` - one of `actionable`,
-  `already_observed`, `internal_only`, `static_limitation`, or `unknown`.
-- `finding_alignment.items[].actionability` - class-scoped action label such
-  as `inspect_visibility`, `add_output_observer`, `already_observed`, or
-  `no_action`. Presentation text does not produce user repair work from text
-  alone.
-- `finding_alignment.items[].primary_anchor` - nullable preferred placement
-  hint for downstream surfaces that need one inline location. Supported
-  declaration-backed items point at the declaration or owner line and include
-  the source ID plus a placement reason.
-- `finding_alignment.items[].raw_spans[]` - source-span summary for every raw
-  finding attached to the canonical item. These spans preserve line-local
-  evidence for expansion/detail views; they do not become separate user
-  actions.
-- `finding_alignment.items[].repair_route` - nullable normalized repair route
-  copied from class-specific evidence. It is required for
-  `gap_state = "actionable"` in supported classes and is `null` for
-  already-observed, internal-only, and static-limitation items.
-- `finding_alignment.items[].static_limitations[]` - analyzer limitation
-  categories and repair routes. `presentation_text_visibility_unknown` means
-  RIPR could not safely trace the text to or away from a user-visible output
-  sink.
-- `finding_alignment.items[].presentation_text` - class-specific visibility,
-  observer, actionability, source-kind, grouping reason, recommended observer,
-  repair kind, target test type, and suggested assertion context. Implemented
-  fixture-backed states include visibility unknown, user-visible unobserved
-  help/report text, user-visible observed report text, and internal-only
-  labels.
-- `finding_alignment.items[].config_policy` - class-specific constant role,
-  source-kind, visibility, observer/discriminator, actionability, repair kind,
-  target test type, and suggested assertion context. Implemented
-  fixture-backed states include internal-only policy metadata, visible
-  unobserved report/config labels, observed schema labels, cross-file flow
-  unknown limitations, and opaque lookup limitations.
-
-## Check Artifact
-
-`ripr check --write-artifact <path>` writes a full-fidelity check artifact
-(RIPR-SPEC-0140) for later `ripr explain --from <path>` /
-`ripr context --from <path>` reuse. This is a separate envelope from
-`check --json`: the findings JSON above is a one-way, lossy render
-projection and is not a reuse source. The artifact is a local, disposable
-derivative of one check run â€” it must never feed a support-tier row, gate,
-badge, or proof route, and it is not portable between machines.
-
-Envelope (`schema_version = "ripr-check-artifact-v1"`):
-
-```json
-{
-  "schema_version": "ripr-check-artifact-v1",
-  "tool": "ripr",
-  "analyzer_version": "0.10.0",
-  "identity": {
-    "diff_source": { "diff_file": { "path": "/abs/path/to/example.diff" } },
-    "diff_bytes_hash": "fnv1a64:0123456789abcdef",
-    "root": "/abs/path/to/workspace",
-    "mode": "draft",
-    "enabled_languages": ["rust"],
-    "analysis_options": {
-      "include_unchanged_tests": true,
-      "perl_facts_path": null,
-      "perl_facts_content_hash": null
-    },
-    "config_identity_version": 1,
-    "config_identity_hash": "fnv1a64:fedcba9876543210"
-  },
-  "findings": [ /* complete Finding set, full fidelity */ ]
-}
-```
-
-- `diff_source` is `{"diff_file": {"path": ...}}` (a canonicalized `--diff`
-  path), `{"base_head": {"base": ..., "head": "HEAD"}}`, or
-  `{"worktree": {"base": ...}}` (a `--worktree` run; `base` is `null` when
-  the producing run used dynamic default-base resolution). At reuse time the
-  recorded source is re-resolved: a recorded `--diff` path is re-read, a
-  recorded base/head pair or worktree diff is re-resolved through git, and
-  the bytes are re-hashed against `diff_bytes_hash`. A dirty or advanced
-  worktree between write and reuse fails closed on `diff_bytes_hash`.
-- `findings` serializes the complete `Finding` set with serde: uncapped
-  `related_tests` (no 8-entry render cap), always-present probe `owner`,
-  and no render-time severity projection.
-- The identity gate is fail-closed: any mismatch on `diff_bytes_hash`,
-  `root`, `mode`, `enabled_languages`, `analysis_options.*`,
-  `config_identity_version`, `config_identity_hash`, or `analyzer_version`
-  is a typed error naming every mismatched field. Scope flags passed
-  alongside `--from` (`--diff`, `--base`) are assertions verified against
-  the recording, never overrides. There is no silent recompute fallback.
-- `config_identity_hash` covers a closed, versioned allowlist of
-  finding-affecting `ripr.toml` fields (`oracles.*`,
-  `typescript.resolve_tsconfig_paths`, `perl.*`), canonically serialized
-  with defaults materialized. Render-only knobs (severity display,
-  `reports.max_related_tests`) are excluded and honored fresh at render
-  time. Adding a finding-affecting config field requires extending the
-  allowlist and bumping `config_identity_version` in the same PR.
-- Writes are atomic: uniquely named temp file in the destination
-  directory, flush + fsync, rename; temp files are unlinked on failure;
-  last writer wins on a repeated write to the same path.
-
-## Finding
-
-The `id` field is content-addressed: `probe:<sanitized_path>:<family>:<fp8>[.<n>]` where `<fp8>` is the first 8 hex chars of SHA-256 over `path\0family\0owner\0expression\0`. This means a suppression tracks the code, not the line â€” the same expression moved to a new line keeps its id (suppression follows it), while changed code at a spot gets a new id (stale suppression invalidates). The `line` field in the `probe` object still gives locality for display.
-
-A finding contains:
-
-```json
-{
-  "id": "probe:src_lib.rs:predicate:bbaa2c25",
-  "classification": "weakly_exposed",
-  "severity": "warning",
-  "confidence": 0.92,
-  "probe": {
-    "id": "probe:src_lib.rs:predicate:bbaa2c25",
-    "family": "predicate",
-    "delta": "control",
-    "file": "src/lib.rs",
-    "line": 88,
-    "expression": "if amount >= discount_threshold {"
-  },
-  "ripr": {
-    "reach": {
-      "state": "yes",
-      "confidence": "medium",
-      "summary": "Related tests appear to reach price: premium_customer_gets_discount"
-    },
-    "infect": {
-      "state": "weak",
-      "confidence": "medium",
-      "summary": "Tests have literals, but no detected value matches changed boundary"
-    },
-    "propagate": {
-      "state": "yes",
-      "confidence": "medium",
-      "summary": "Changed behavior can propagate through a return boundary"
-    },
-    "observe": {
-      "state": "yes",
-      "confidence": "medium",
-      "summary": "A related test observes a value near the changed behavior"
-    },
-    "discriminate": {
-      "state": "weak",
-      "confidence": "high",
-      "summary": "Only weak or smoke oracle found"
-    }
-  },
-  "evidence_path": [
-    "reach yes: Related tests appear to reach price: premium_customer_gets_discount",
-    "propagation yes: Changed behavior appears to influence returned value: amount - discount",
-    "related test tests/pricing.rs:12 premium_customer_gets_discount uses strong exact value oracle: assert_eq!(total, 90)",
-    "observed function argument value amount = 100 at line 12",
-    "missing discriminator amount == discount_threshold: No related test call uses the boundary value"
-  ],
-  "flow_sinks": [
-    {
-      "kind": "return_value",
-      "text": "amount - discount",
-      "line": 89
-    }
-  ],
-  "evidence": [],
-  "missing": [],
-  "assertion_texts": {
-    "12": "assert_eq!(discounted_total(50, 100), 50);"
-  },
-  "activation": {
-    "observed_values": [
-      {
-        "line": 12,
-        "value": "amount = 50",
-        "context": "function_argument"
-      }
-    ],
-    "missing_discriminators": [
-      {
-        "value": "amount == discount_threshold",
-        "reason": "No related test call uses amount equal to discount_threshold",
-        "flow_sink": {
-          "kind": "return_value",
-          "text": "amount - 10",
-          "line": 89
-        }
-      }
-    ]
-  },
-  "observed_values": [
-    {
-      "line": 12,
-      "value": "amount = 50",
-      "context": "function_argument"
-    }
-  ],
-  "missing_discriminators": [
-    {
-      "value": "amount == discount_threshold",
-      "reason": "No related test call uses amount equal to discount_threshold",
-      "flow_sink": {
-        "kind": "return_value",
-        "text": "amount - 10",
-        "line": 89
-      }
-    }
-  ],
-  "related_tests_total": 1,
-  "related_tests": [
-    {
-      "name": "premium_customer_gets_discount",
-      "file": "tests/pricing.rs",
-      "line": 12,
-      "oracle_strength": "strong",
-      "oracle_kind": "exact_value",
-      "oracle": "assert_eq!(total, 90)",
-      "relation_reason": "direct_owner_call",
-      "relation_confidence": "high"
-    }
-  ],
-  "stop_reasons": [],
-  "oracle_kind": "exact_value",
-  "oracle_strength": "strong",
-  "recommended_next_step": "Add boundary tests with exact assertions.",
-  "suggested_next_action": "Add boundary tests with exact assertions.",
-  "language": "rust"
-}
-```
-
-The evidence-first fields are additive in schema `0.2`:
-
-- `evidence_path` is an ordered, human-readable summary of reachability,
-  infection, propagation, observation, discrimination, local flow, related test
-  oracles, observed values, and missing discriminator evidence.
-- `identity.git_candidate_subject` (additive, no `schema_version` bump,
-  #3278) appears in the `analysis_outcome.outcome.identity` object
-  as a non-null object exactly when the run analyzed an immutable Git
-  candidate (`--candidate-tree`); the key itself is always present, and
-  ordinary runs leave it `null`. It binds directly to the resolved producer
-  state â€” `subject_kind` (`tree_to_tree`), `base_tree` and
-  `candidate_tree` object IDs, and `diff_identity` (SHA-256 of the
-  derived baseâ†’candidate unified diff). A consumer compares the emitted
-  `candidate_tree` with its supplied OID without parsing prose;
-  ordinary runs leave the field `null`.
-- `assertion_texts` (added in schema `0.2`) is a finding-level JSON object
-  mapping line-number strings to assertion source text.  Per-value objects in
-  `observed_values` no longer carry a redundant `text` field; downstream
-  consumers recover the assertion source via
-  `finding.assertion_texts[line.to_string()]`.  **Known limitation**: the map
-  is keyed by line number only, so if two assertions in different source files
-  share the same line number within one finding, only one text is retained
-  **in this map** â€” differing texts are retained per-value via the optional
-  `provenance` field described below. This is a low-probability edge case; a
-  future schema could use `"file:line"` composite keys.
-- Per-value objects in `observed_values` carry an **optional `provenance`**
-  field (additive, no `schema_version` bump, #3295 follow-up). It carries
-  the fact's retained source text **whenever it differs from the shared
-  assertion source for its line** â€” the exact texts the line-keyed
-  `assertion_texts` map drops. That includes call-source text for plain
-  `function_argument` facts and, for facts computed by the bounded
-  value-transfer evaluator (`#3295`) or the helper-transfer chain
-  (`#3296`), the full evaluation chain with bound inputs and chain depth
-  (e.g.
-  `assert_eq!(â€¦); | body = "fix" via strip_prefix -> map_or over label = "pre-fix" (chain depth 2)`).
-  Facts whose text **is** the plain assertion source stay deduped and omit
-  the field, so `assertion_texts` remains the recovery path for them.
-- `flow_sinks`, `observed_values`, and `missing_discriminators` promote the
-  nested activation evidence for consumers that want direct finding-level
-  access.
-- `related_tests_total` â€” number of related tests the analyzer matched for
-  this finding (pre-cap, always the true count). The `related_tests` array is
-  **capped** at `MAX_RELATED_TESTS_PER_FINDING_JSON` (currently 8) to bound
-  artifact size on real repos where a high-traffic owner can fan out to
-  hundreds of related tests. This is an additive field (no `schema_version`
-  bump). The cap never affects classification, finding count, or the
-  `oracle_kind`/`oracle_strength` summary â€” those use the full pre-cap vector.
-  Mirrors the `related_tests_total` + cap pattern already in
-  `seams[].related_tests_total` for the `repo-exposure.json` format.
-- `related_tests[].relation_reason` â€” (optional, additive, no `schema_version`
-  bump) the highest-priority static signal that caused this test to be
-  included. Values: `direct_owner_call`, `helper_owner_call`,
-  `assertion_target_affinity`, `same_test_file`, `same_module`,
-  `owner_named_test`, `import_path_affinity`, `fixture_owner_affinity`,
-  `weak_token_substring`. Consumers can filter or de-prioritize entries tagged
-  `weak_token_substring` â€” these are attached via probe-token name matching and
-  cover ~59â€“90% of unrelated tests in real repos. **Membership is unchanged**:
-  all tests that were previously in `related_tests` remain; only the tagging
-  is added. Absent on language adapters (Python, TypeScript) that do not yet
-  compute reason; `null` / omitted in that case.
-- `related_tests[].relation_confidence` â€” (optional, additive) companion
-  confidence level for the `relation_reason`. Values: `high`, `medium`, `low`,
-  `opaque`. `direct_owner_call` â†’ `high`; `assertion_target_affinity`,
-  `owner_named_test`, `same_test_file` â†’ `medium`; `weak_token_substring`,
-  `same_module`, `helper_owner_call` â†’ `low`; other static signals â†’ `opaque`.
-- `oracle_kind` and `oracle_strength` summarize the strongest related oracle
-  currently visible to the finding.
-- `suggested_next_action` mirrors `recommended_next_step` for action-oriented
-  integrations.
-- Both are always present and may be the empty string, which is the producer's
-  "no action to recommend" for this finding. Consumers should treat `""` as an
-  absent recommendation rather than as guidance. Whether an omitted field would
-  say this better than an empty string is a producer-shape question that is not
-  settled here; the published schema describes what the tool emits today.
-- `changed_sink`, `observed_sink`, `oracle_alignment`, and `alignment_reason`
-  are additive optional fields (RIPR-SPEC-0028) that surface the Python
-  classifier's **sink-alignment** decision â€” *why* a strong oracle did or did
-  not credit `exposed`. They are emitted only on `language == "python"` findings
-  and are absent on Rust and TypeScript findings; they do **not** bump
-  `schema_version` (still `0.2`). `changed_sink` is the comma-joined significant
-  tokens of the changed line; `observed_sink` is the strongest related oracle's
-  assertion text; `alignment_reason` is a stable snake_case token. The
-  `oracle_alignment` value is a controlled enum (`ORACLE_ALIGNMENT_VALUES`):
-  - `direct` â€” a strong oracle observes the changed owner by name.
-  - `alias` â€” a strong oracle observes an import alias of the owner.
-  - `changed_sink_token` â€” a strong oracle observes a changed-sink token from
-    the changed line, but not the owner name.
-  - `orthogonal` â€” a strong oracle exists but observes a different sink than the
-    change (the fail-closed `weakly_exposed` branch); `alignment_reason` is
-    `strong_oracle_observes_different_sink`.
-  - `unknown` â€” no strong oracle observed the changed sink (or a `<module>`
-    owner with no usable token).
-
-  Example â€” an `exposed` finding aligned directly, and a `weakly_exposed`
-  finding whose strong oracle is orthogonal:
-
-  ```json
-  { "class": "exposed", "language": "python",
-    "changed_sink": "amount, threshold",
-    "observed_sink": "assert apply_discount(100, 100) == 90",
-    "oracle_alignment": "direct",
-    "alignment_reason": "strong_oracle_observes_owner_name" }
-  { "class": "weakly_exposed", "language": "python",
-    "changed_sink": "amount, threshold",
-    "observed_sink": "assert run_retry(lambda: 'x') == 'x'",
-    "oracle_alignment": "orthogonal",
-    "alignment_reason": "strong_oracle_observes_different_sink" }
-  ```
-- `source_currentness` is an additive per-finding field (#3280, parent #3212)
-  that states which revision owns the finding's actionable source. It is
-  always emitted and does **not** bump `schema_version` (still `0.2`). The
-  value is a controlled enum (`SOURCE_CURRENTNESS_VALUES`):
-  - `candidate_current` â€” the finding's source expression is present in the
-    candidate (head-side) source at the recorded `probe.file`/`probe.line`;
-    the location is a candidate edit target.
-  RIPR-SPEC-0152 routes every actionability surface through this field:
-  badge gaps and unknowns, alignment items, gap records (authority
-  projections only for `candidate_current`), start-here triage, the LSP
-  actionable profile, SARIF results, GitHub annotations, and PR severe-gap
-  counts exclude non-current findings while denominators keep everything;
-  TS/JS/Python findings now resolve `candidate_current` from their
-  head-side probes and Perl stays the explicit unknown.
-  - `base_deleted` â€” the expression was removed on the candidate side. The
-    retained evidence is base-side and the finding is not a candidate edit
-    target; `probe.line` still records the projected new-side coordinate in
-    this slice, and consumer re-coordination of deleted-side evidence is
-    the #3212 projection slice.
-  - `moved_or_renamed` â€” the same expression re-appears elsewhere in the
-    candidate file, but the producer cannot prove the exact candidate
-    identity of the source; not a candidate edit target.
-  - `unresolved_subject` â€” the producing surface does not resolve source
-    currentness (preview-language findings today); the explicit unknown, and
-    the backward-compatibility value when reading artifacts written before
-    the field existed.
-  For Rust diff findings the disposition is resolved from the diff evidence
-  that seeded the probe; repo-mode findings are `candidate_current` by
-  construction (they seed from the current tree). In this slice the field is
-  informational for consumers: gate and actionability policy follow in the
-  #3212 projection slice.
-- `repair_placement` is an additive optional object for preview-language
-  findings that can statically name a bounded test location and command before
-  full repair-card projection. It currently appears for direct weak Python
-  findings with a concrete missing discriminator and a detected pytest or
-  unittest related test. It carries `suggested_test_file`,
-  `suggested_test_name`, optional `suggested_test_node_id`, `verify_command`,
-  and `verify_command_confidence`.
-- `python_repair_card` is an additive optional object for direct weak Python
-  findings that already have a canonical gap, concrete missing discriminator,
-  related-test evidence, placement, and verify command. It is intentionally
-  Python-scoped so it does not collide with the existing GapRecord
-  `repair_card` packet contract. The v1 card carries `card_version`, `source`,
-  `canonical_gap_id`, `language`, `language_status`, `authority_boundary`,
-  `repair_action`, `changed_owner`, `changed_behavior`, `current_test_evidence`,
-  `missing_discriminator`, `recommended_test_shape`, `suggested_assertion`,
-  `suggested_location`, `verify`, `receipt`, `stop_conditions`, and `limits`.
-  `repair_action = "strengthen_existing_test"` means the card and derived
-  packet should strengthen the named weak related test instead of adding a
-  redundant new test.
-  In raw `ripr check` output, `receipt.command` may still be `null` because the
-  renderer does not know where the caller will save before/after check
-  snapshots. Raw check cards include `receipt.guidance`, and pilot projections
-  carry the same text as `receipt_guidance`, so humans and agents can save the
-  check JSON and run `first-pr --check-output` or
-  `reports gap-ledger --check-output`; that bridge can synthesize the concrete
-  receipt route from the supplied check-output path.
-- `preview_actionability` is an additive optional object for TypeScript and
-  JavaScript preview findings. It projects the preview adapter's fail-closed
-  actionability state as structured data while preserving the original
-  `findings[].evidence` strings for compatibility. It is not a repair packet
-  and is not gate, badge, baseline, RIPR Zero, or agent-packet authority.
-  Current fields are `authority_boundary` (`"preview_advisory_only"`),
-  `repair_packet_ready` (boolean; `false` for most preview findings; flips to
-  `true` only for TypeScript findings satisfying the RIPR-SPEC-0087 complete
-  contract â€” see the flip condition below), `gap_state`, `actionability_category`,
-  `why_not_actionable`, `repair_route`, `missing_actionability_fields[]`,
-  `missing_graph_legs[]`, nullable `unlock_condition`,
-  `evidence_needed_to_promote`, and `raw_evidence_refs[]`.
-  `repair_packet_ready` flip condition (RIPR-SPEC-0087 Â§PR7): a TypeScript
-  finding flips `repair_packet_ready: true` iff ALL of the following hold:
-  (a) `actionability_category == "incomplete_repair_packet"` (G-A);
-  (b) `language_status == "preview"` and `language âˆˆ {typescript, javascript}`;
-  (c) `typescript_oracle_expected` is a concrete literal AND
-    `typescript_dynamic_assertion_unresolved` limitation is absent (G-C);
-  (d) related test is oracle-eligible (import-aware/owner-call, not
-    heuristic-only) â€” guaranteed by G-A (G-D);
-  (e) at least one named missing discriminator exists in `missing_discriminators`
-    (G-E);
-  (f) no `route_cross_language_oracle_visibility_limitation` or
-    `typescript_bun_bridge_verdict` evidence present (G-F);
-  AND the shared `validate_agent_gap_record_packet` validator returns `Ok(())`.
-  When flipped: `actionability_category` becomes `"complete_repair_packet"`,
-  `gap_state` becomes `"actionable"`, `missing_actionability_fields` becomes
-  `[]`, and `authority_boundary` stays `"preview_advisory_only"` (TypeScript
-  remains preview). Only `incomplete_repair_packet` is eligible to flip; all
-  other categories stay non-actionable. `schema_version` is unchanged.
-  When flipped, the actionability fields are rewritten to read as actionable
-  (RIPR-SPEC-0088 Â§PR8) so they do not contradict the complete packet:
-  `repair_route` names the actual repair action (the suggested assertion shape
-  or missing discriminator) rather than the blocked-case "only after ...
-  available" text; `evidence_needed_to_promote` is the empty string (nothing is
-  needed); and `why_not_actionable` carries the "why actionable" confirmation
-  naming the resolved contract fields. The JSON keys are kept stable for schema
-  compatibility; the human renderer relabels them to `why actionable` /
-  `repair action` and omits the empty `evidence needed` line for the actionable
-  case.
-  Raw evidence refs carry the original raw string plus parsed `file`, `line`,
-  `kind`, `source_id`, optional `owner`, optional graph `leg`, and optional
-  source `sample` when present.
-- TypeScript preview findings may include additive package-discovery evidence
-  strings inside the existing `findings[].evidence[]` array. These strings are
-  produced by the `analysis/language/typescript/package.rs` manifest resolver
-  (RIPR-SPEC-0085 PR 2 â€” package-root and workspace discovery). They are
-  advisory and do not change `repair_packet_ready`, `preview_advisory_only`,
-  or `language_status`. New evidence strings are:
-  - `typescript_package_root: <path>` â€” nearest ancestor directory that
-    contains a `package.json` (relative to the repo root). Absent when no
-    `package.json` is found.
-  - `typescript_workspace_root: <path>` â€” nearest ancestor with a
-    `pnpm-workspace.yaml` or a `package.json` `"workspaces"` field; falls
-    back to `package_root`. Absent when `package_root` is unresolved.
-  - `typescript_framework_hint: <jest|vitest|bun|mocha|node_test|ava>` â€” test
-    framework detected from `package.json` deps/devDeps. Absent when no
-    evidence-backed framework is found.
-  - `typescript_test_runner: <jest|vitest|bun|mocha|node_test|ava>` â€” dedicated
-    evidence field for the detected test runner name. Always co-emitted with
-    `typescript_framework_hint` when a framework is detected. Absent when no
-    framework is found (fail-closed). Detected from `devDependencies`,
-    `dependencies`, and `scripts.test` value (script-name fallback handles
-    composite scripts like `"xo && npm run build && ava"`). Additive: does not
-    change any existing field. A later item uses this field to infer verify
-    commands for runners not yet handled by `verify_command_for_discovery`
-    (TS must-use roadmap item 3; RIPR-SPEC-0085).
-  - `typescript_runner_hint: <bun|pnpm|yarn|npm>` â€” package runner detected
-    from lockfile presence or `scripts.test`. Absent when no evidence-backed
-    runner is found.
-  - `typescript_package_confidence: <high|medium|low|none>` â€” how much
-    manifest evidence backed the resolution. `high` = framework + runner,
-    `medium` = one of the two, `low` = package found but neither resolved,
-    `none` = no `package.json` found at all.
-  - `typescript_package_limitation: <kind>` â€” named limitation when required
-    evidence is absent. Current kinds:
-    `typescript_package_root_unresolved` (no `package.json` found; value is
-    never fabricated from the file extension alone),
-    `typescript_framework_hint_unresolved`,
-    `typescript_package_manager_unresolved` (framework is known so a verify
-    command IS available via the framework binary, but no lockfile evidence
-    identified the package manager (npm/pnpm/yarn/bun); informational, not
-    blocking; per RIPR-SPEC-0101),
-    `typescript_runner_hint_unresolved` (no framework AND no lockfile/script
-    runner evidence; no verify command can be derived; strong fail-closed case),
-    `typescript_test_runner_unresolved` (neither framework nor runner could be
-    resolved to a bounded verify command; emitted when `verify_command_for_discovery`
-    returns `None`; fail-closed per RIPR-SPEC-0085 Â§"Fail-closed"),
-    `typescript_test_runner_ambiguous` (two or more distinct framework signals
-    matched, e.g. `jest` + `vitest` devDeps; the reported runner is the first
-    match by fixed priority, so confidence is capped at `medium`),
-    `typescript_package_manifest_read_capped` (a `package.json` was found but
-    exceeded the capped read limit, so its manifest evidence could not be
-    inspected; fail-closed, no root and no fabricated values).
-    When `typescript_package_root_unresolved` is present, no
-    `typescript_package_root` line is emitted (fail-closed per RIPR-SPEC-0085).
-  - `typescript_verify_command: <cmd>` â€” evidence-backed verify command for the
-    strongest related test, expressed relative to `package_root`. Emitted only
-    when at least one of `framework_hint` or `runner_hint` is resolved. When
-    emitted, `typescript_preview_card.verify.command` reflects the same value.
-    Command forms (RIPR-SPEC-0085 PR 3):
-    `jest <file>`, `vitest run <file>`, `bun test <file>`,
-    `ava <file>`, `node --test <file>`, `npm test -- <file>`, `pnpm test -- <file>`,
-    `yarn test <file>`.
-  - `typescript_limitation: <name>` â€” ADDITIVE evidence line (RIPR-SPEC-0085
-    Â§PR4, named limitation taxonomy). Emitted only when a REAL detected
-    TypeScript construct triggers the named limitation. No existing field is
-    changed. Current emitted names and their real producers:
-    - `typescript_mock_only_observer` â€” fired by `StaticLimitKind::MockedModule`
-      (a related test file uses `jest.mock()`/`vi.mock()`).
-    - `typescript_import_graph_unresolved` â€” fired by
-      `StaticLimitKind::MissingImportGraph` (the changed line calls an imported
-      symbol whose cross-module implementation is unavailable to the syntax
-      adapter).
-    - `typescript_snapshot_discriminator_unresolved` â€” fired when an
-      oracle-eligible related test assertion has `OracleKind::Snapshot`
-      (`toMatchSnapshot`/`toMatchInlineSnapshot`).
-    - `typescript_custom_matcher_unresolved` â€” fired when an oracle-eligible
-      related test assertion has `OracleKind::Unknown` AND a non-empty matcher
-      name that is not in the recognised matcher set (real oxc-parsed AST
-      evidence).
-    - `typescript_dynamic_assertion_unresolved` â€” fired (RIPR-SPEC-0085 Â§PR5)
-      when an oracle-eligible related test assertion has a non-literal dynamic
-      matcher argument (a variable, function call, or computed expression). The
-      real producer is `oracle.rs::extract_matcher_expected_value`, which sets
-      `has_dynamic_matcher_arg = true` when the argument is not a resolvable
-      literal. The limitation explains that the expected discriminator value
-      cannot be statically resolved.
-    - `typescript_table_case_unresolved` â€” fired when an oracle-eligible
-      `test.each(...)` / `it.each(...)` table case uses a row-derived dynamic
-      matcher argument. The real producer uses table-call test extraction plus
-      `has_dynamic_matcher_arg = true`; the limitation explains that syntax-only
-      preview evidence cannot bind the row to a concrete expected value.
-    - `typescript_oracle_helper_gated` â€” fired when an oracle-eligible related
-      test calls an assertion-shaped helper around the changed owner call but no
-      direct supported assertion is extracted. The limitation explains that the
-      adapter cannot inspect the helper body or prove its oracle semantics from
-      the call site.
-    - `typescript_target_unresolved` â€” fired (RIPR-SPEC-0085 Â§PR6) when a test
-      in a different package references the owner by call name but is excluded by
-      the package-local ownership filter. The real producer is
-      `static_limit.rs::named_limitations_for_unresolved_ownership`, which
-      confirms the cross-package exclusion by comparing candidates with vs.
-      without the package-local filter. Only emitted when `workspace_root` is
-      `Some` (i.e. in production, not in unit tests without a workspace root).
-    - `typescript_path_alias_unresolved` â€” fired (RIPR-SPEC-0099) when a related
-      test imports a symbol name-matched to the owner from a NON-RELATIVE
-      specifier (`@/...`, `#...`, bare package name) that the adapter could not
-      resolve to a unique workspace file, so no credit was given. The real
-      producer is `static_limit.rs::named_limitations_for_alias_unresolved`;
-      it requires all three conditions (non-relative import, imported name
-      matches the owner name, and the import did not credit the owner) and is
-      classification-neutral (additive disclosure only).
-    - `typescript_relative_import_unresolved` â€” fired (#4104-C) when an
-      uncredited related test name-matches the owner through a RELATIVE
-      specifier that resolves to no workspace file (module renamed or moved
-      without updating the import). The real producer is
-      `static_limit.rs::named_limitations_for_relative_import_unresolved`;
-      the exclusion itself is correct (`owner_name_shadowed_by_unrelated_import`),
-      and this limitation discloses why, so `no_static_path` is known to be a
-      possible false negative. Classification-neutral (additive disclosure
-      only).
-  - `typescript_limitation_sample: <name> at <file>:<line>` â€” additive; the
-    `file:line` of the real AST evidence that triggered the named limitation.
-  - `typescript_limitation_why: <name> â€” <why>` â€” additive; human-readable
-    reason why the finding is not actionable for this limitation.
-  - `typescript_limitation_repair_route: <name> â†’ <route>` â€” additive; pointer
-    to the analyzer backlog slice that would resolve this limitation.
-
-#### TypeScript Limitation Leaderboard Report
-
-`ripr reports ts-limitations --check-output <check.json>` writes advisory JSON
-and Markdown reports to:
-
-```text
-target/ripr/reports/typescript-limitations.json
-target/ripr/reports/typescript-limitations.md
-```
-
-The command reads an existing `ripr check --json` artifact. It does not rerun
-analysis, execute TypeScript tests, edit source, generate tests, call providers,
-run mutation testing, publish comments, change gates, or contribute badge
-authority.
-
-JSON fields:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "typescript_limitation_leaderboard",
-  "status": "advisory",
-  "root": ".",
-  "generated_at": "unix_ms:1720000000000",
-  "inputs": {
-    "check_output": "target/ripr/reports/check.json"
-  },
-  "summary": {
-    "findings_total": 4,
-    "typescript_family_findings_total": 4,
-    "limitations_total": 12,
-    "distinct_limitations_total": 6,
-    "top_limitation_kind": "typescript_package_root_unresolved"
-  },
-  "limitations": [
-    {
-      "kind": "typescript_package_root_unresolved",
-      "count": 4,
-      "sources": ["typescript_package_limitation"],
-      "samples": [
-        {
-          "finding_id": "probe:src_dispatch.ts:typescript_preview:dd0f8848",
-          "language": "typescript",
-          "file": "src/dispatch.ts",
-          "line": 2
-        }
-      ]
-    }
-  ],
-  "warnings": [],
-  "limits": [
-    "Advisory TypeScript-family preview limitation counts only.",
-    "Counts come from explicit check JSON evidence; this report does not rerun analysis.",
-    "This report does not execute TypeScript tests, edit source, generate tests, call providers, change gates, or contribute badge authority."
-  ]
-}
-```
-
-- `status` is `advisory` when the supplied check output parsed, even when no
-  TypeScript-family limitation signals were found. It is `blocked` when the
-  artifact is missing, unreadable, malformed, or lacks a `findings` array.
-- `limitations[].kind` is counted once per finding per kind. Duplicate evidence
-  lines in the same finding do not inflate counts.
-- `sources[]` names where the limitation signal came from:
-  `typescript_limitation`, `typescript_package_limitation`, or
-  `static_limit_kind`. Static `missing_import_graph` and `mocked_module`
-  findings are normalized to the corresponding TypeScript named limitation
-  (`typescript_import_graph_unresolved` or `typescript_mock_only_observer`) so
-  the leaderboard groups equivalent signals together.
-  Other TypeScript-family `static_limit_kind` values keep their existing
-  static-limit vocabulary.
-  This normalization is for report grouping only and does not change check JSON.
-  It is not a support-tier, gate, badge, baseline, or RIPR Zero claim.
-  Samples are bounded to three findings per limitation kind and are examples,
-  not exhaustive proof.
-
-#### TypeScript False-Actionable Audit Report
-
-`ripr reports ts-false-actionable --corpus
-fixtures/typescript-preview-false-actionable-audit/corpus.json` writes
-advisory JSON and Markdown reports to:
-
-```text
-target/ripr/reports/typescript-false-actionable-audit.json
-target/ripr/reports/typescript-false-actionable-audit.md
-```
-
-The command reads an existing TypeScript-family preview audit corpus. It does
-not rerun analysis, execute TypeScript tests, edit source, generate tests, call
-providers, run mutation testing, publish comments, change gates, contribute
-badge/baseline/RIPR Zero authority, or promote support tiers.
-
-JSON fields:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "typescript_false_actionable_audit",
-  "status": "advisory",
-  "root": ".",
-  "generated_at": "unix_ms:1720000000000",
-  "inputs": {
-    "corpus": "fixtures/typescript-preview-false-actionable-audit/corpus.json"
-  },
-  "summary": {
-    "cases_total": 14,
-    "must_remain_non_actionable_total": 14,
-    "repair_packet_ready_true_total": 0,
-    "actionable_gap_state_total": 0,
-    "complete_packet_category_total": 0,
-    "false_actionable_total": 0,
-    "false_actionable_denominator": 14,
-    "false_actionable_rate": 0.0,
-    "preview_boundary_violation_total": 0
-  },
-  "disposition_counts": [
-    { "value": "candidate_future_support", "count": 7 }
-  ],
-  "risk_class_counts": [
-    { "value": "mock interaction payload gap", "count": 1 }
-  ],
-  "cases": [
-    {
-      "id": "mock_interaction_without_payload_proof",
-      "language": "typescript",
-      "risk_class": "mock interaction payload gap",
-      "evidence_kind": "mock_interaction",
-      "disposition": "candidate_future_support",
-      "gap_state": "advisory",
-      "actionability_category": "incomplete_repair_packet",
-      "repair_packet_ready": false,
-      "must_remain_non_actionable": true,
-      "authority_boundary": "preview_advisory_only",
-      "false_actionable": false,
-      "source_fixture": "fixtures/typescript_jest_vitest_assertion_facts",
-      "source_finding_id": "probe:src_checkout.ts:typescript_preview:mock"
-    }
-  ],
-  "warnings": [],
-  "limits": [
-    "Advisory TypeScript-family preview audit metric only.",
-    "The false-actionable rate is computed from explicit audit corpus rows; this report does not rerun analysis or execute TypeScript tests.",
-    "This report does not edit source, generate tests, call providers, run mutation testing, change gates, contribute badge authority, or promote support tiers."
-  ]
-}
-```
-
-- `status` is `advisory` when the supplied corpus parsed. It is `blocked` when
-  the artifact is missing, unreadable, malformed, or not the expected
-  `typescript_preview_false_actionable_audit_corpus` shape.
-- `summary.false_actionable_total` counts audit rows marked
-  `must_remain_non_actionable` that also set `repair_packet_ready = true`,
-  `gap_state = "actionable"`, or
-  `actionability_category = "complete_repair_packet"`.
-- `summary.false_actionable_denominator` is the number of
-  `must_remain_non_actionable` rows, not all TypeScript findings.
-- The report is an audit over explicit preview rows. It is not evidence that
-  TypeScript support is usable alpha, gate eligible, badge eligible, baseline
-  eligible, RIPR Zero eligible, or runtime adequate.
-- Oracle metadata evidence lines (RIPR-SPEC-0085 Â§PR5). ADDITIVE: do not change
-  `oracle_kind`, `oracle_strength`, `static_limit_kind`, or `repair_packet_ready`.
-  Emitted from the strongest oracle-eligible assertion across all oracle-eligible
-  related test candidates. Only ONE assertion's metadata is emitted per finding.
-  - `typescript_oracle_observed: <expr>` â€” additive; the `expect(<expr>)` argument
-    as source text, extracted from the oxc AST span. The actual value/expression
-    being observed by the assertion.
-  - `typescript_oracle_expected: <value>` â€” additive; the matcher argument as
-    source text, emitted ONLY when the argument is a concrete resolvable literal
-    (string, number, boolean, null, or a safe all-literal object). NOT emitted
-    for dynamic/non-literal arguments; those trigger
-    `typescript_dynamic_assertion_unresolved` instead.
-  - `typescript_oracle_confidence: <level>` â€” additive; confidence derived from
-    `oracle_strength` plus whether the expected value is a concrete literal.
-    Values: `high` (Strong oracle + literal expected), `medium` (Strong oracle
-    without literal, or Medium oracle), `low` (Weak or Smoke oracle), `unknown`
-    (Unknown oracle kind).
-  - `typescript_oracle_evidence_ref: <file>:<line>` â€” additive; `file:line`
-    back to the `expect(...)` call in the test file, pointing at the AST call
-    site of the assertion.
-- `typescript_preview_card` is an additive optional object for TypeScript and
-  JavaScript preview findings that already have structured
-  `preview_actionability`. It is an advisory card, not a repair packet. The v1
-  card carries `card_version`, `source`, `language`, `language_status`,
-  `authority_boundary`, `owner`, optional `owner_kind`, `probe_family`,
-  `changed_behavior`, optional `related_test`, `oracle_kind`,
-  `oracle_strength`, optional `bun_cross_language_grip`, optional
-  `missing_discriminator`, `suggested_assertion_shape`, `static_limits`,
-  nullable `verify.command`, `why_not_actionable`, `repair_route`,
-  `repair_packet_ready`, and `limits`. The optional
-  `bun_cross_language_grip` object carries one coherent configured Bun bridge
-  profile selected from the related evidence (including Blob,
-  `copy_to_unshared`, and Markdown resizable profiles). It carries `state`,
-  `rust_seam.file`, `rust_seam.owner`,
-  `rust_seam.boundary`, `typescript_evidence.test_file`,
-  `typescript_evidence.verdict`, `typescript_evidence.bridge_confidence`,
-  `typescript_evidence.missing_discriminators[]`, `limitation_category`,
-  `repair_route`, `missing_graph_legs[]`, nullable `unlock_condition`,
-  `raw_evidence_refs[]`, `action`, `suggested_test_file`, optional
-  `placement`, nested `proof_mode`, nested `advisory_packet`, `authority_boundary`, and
-  `repair_packet_ready`. The nested `advisory_packet` is a preview task-shaping
-  packet, not public repair-packet authority. When one finding has multiple
-  configured Bun bridge profiles, the first profile remains in
-  `bun_cross_language_grip` for compatibility and the same object also carries
-  `profiles[]`, containing every full grip in deterministic producer order.
-  Human, JSON, SARIF, and GitHub projections must retain every profile;
-  consumers must not treat the first profile as an exhaustive summary. It carries
-  `packet_version = "bun_cross_language_advisory_packet.v1"`,
-  `cross_language_state`, `rust_file`, `rust_owner`, `rust_boundary`,
-  nullable `ts_test_file`, `missing_discriminators[]`, `suggested_shape`,
-  `bridge_confidence`, `missing_graph_legs[]`, nested `proof_mode`,
-  `next_action`,
-  `authority_boundary`, `repair_packet_ready = false`,
-  `public_repair_packet = false`, `must_not_change[]`, `stop_condition`, and
-  `raw_evidence_refs[]`. The nested `proof_mode` object carries `mode`,
-  `reason`, `authority_boundary = "preview_advisory_only"`,
-  `runtime_execution = false`, `mutation_execution = false`,
-  `miri_execution = false`, and `proof_claim = false`. Current modes are
-  `observable_red_green`, `mutation_plus_miri`, `helper_gated`,
-  `bridge_unknown`, and `static_limitation`; these name an advisory proof
-  strategy only and do not report that any runtime, mutation, Miri, or model
-  proof was executed. The current configured Bun Blob route may name
-  `test/js/web/fetch/blob.test.ts` as advisory placement when
-  shared/resizable boundary discriminators are missing on a configured bridge.
-  Mention-only, partial external-oracle, bridge-unknown, and unresolved target
-  cases stay at
-  `suggested_test_file=not_applicable`, emit no `placement`, no verify or
-  receipt command, no allowed edit surface, and no public repair packet until
-  the full public packet fields exist. Configured bridge evidence is a
-  credited `raw_evidence_refs[].leg = "binding_edge"`; a `bridge_unknown`
-  limitation must omit that credited binding raw ref and instead name
-  `binding_or_ffi_edge` in `missing_graph_legs[]`. It is not a generated test,
-  source edit, runtime command, Rust-test placement, gate, badge, baseline, or
-  repair packet.
-  `repair_packet_ready` remains `false` for this preview slice, and nullable
-  `verify.command` must not be interpreted as a delegated repair route.
-- `typescript_repair_packet` is an additive optional object present only when
-  `typescript_preview_card.repair_packet_ready == true` (i.e., the full RIPR-SPEC-0087
-  contract is satisfied). It is an advisory repair-work packet projected via the shared
-  renderer from the GapRecord computed by `typescript_gap_record_for`. It carries
-  `schema_version` (`"0.4"`), `source` (`"typescript_preview_projection"`),
-  `gap_id`, `canonical_gap_id`, `language`, `language_status` (`"preview"`),
-  `authority_boundary` (`"preview_advisory_only"`), optional `file`, optional `line`,
-  optional `owner`, `verify_command`, optional `receipt_command`, `allowed_edit_surface[]`,
-  `forbidden_files[]`, `must_not_change[]`, optional `assertion_shape`,
-  optional `repair_kind`, optional `target_test`, and optional `missing_discriminator`.
-  When present, `receipt_command` is the canonical RIPR-SPEC-0079
-  `ripr receipt write --gap <canonical_gap_id> --verify-command <verify_command>
-  --status not_run --out target/ripr/receipts/<gap_slug>.json` command built by
-  the shared receipt-write owner â€” the same string the gap decision ledger
-  synthesizes for that gap â€” and never a `ripr outcome` movement command.
-  When absent, the human output contains a named `status: not actionable` limitation
-  section instead. This field is RIPR-SPEC-0088 Â§2.2. It is not a gate, badge, or
-  public repair authority; authority boundary remains `preview_advisory_only`.
-  `assertion_shape` derivation (issue #4105): the shape reuses the observed
-  oracle expression (`typescript_oracle_observed`) only when the observed call
-  input reaches the named missing discriminator, or when that reachability is
-  not statically decidable (non-literal boundaries such as `amount >= threshold`,
-  multi-argument calls without signature evidence, escaped string literals, or
-  callees that do not resolve to the owner). When the observed call input
-  provably does NOT reach the boundary â€” for example the discriminator is
-  `user.length == 3` while the observed call is `login('alice')` (length 5) â€”
-  the shape becomes an explicit boundary placeholder,
-  `login(/* boundary input for user.length == 3 */)`, and the packet fails
-  closed: `repair_packet_ready` stays `false`, `typescript_repair_packet` is
-  not emitted, and the human limitation section shows the shape as
-  `target shape (not delegatable)` together with a stop condition forbidding
-  reuse of the observed call input. A complete packet must not instruct a
-  duplicate of a non-discriminating assertion.
-- `perl_preview_card` is an additive optional object for Perl preview findings
-  that already have strict fact-packet evidence, canonical gap identity,
-  related-test evidence, missing discriminator evidence, verify-command
-  evidence, receipt evidence, stop conditions, must-not-change constraints, and
-  safe repo-relative raw evidence refs. It is a check JSON, human CLI, SARIF,
-  GitHub annotation, and gap-ledger Markdown advisory card, not a public repair
-  packet. **Scope caveat (Campaign 31 #1379):** the renderer is real production
-  code, but in the current state it projects only from synthetic test findings â€”
-  no production Perl source can produce a finding that carries this card,
-  because the Perl adapter module is `#[cfg(test)] mod perl;`, the path router
-  ignores `.pm`/`.pl`/`.t`/`.psgi`, and the upstream `perl-lsp ripr-facts`
-  exporter does not exist yet. Perl's support tier is `scaffold`, not `preview`
-  (see [Support Tiers](status/SUPPORT_TIERS.md)). The card lights up for real
-  Perl source once Campaign 31 lands the production exporter + consumer bridge.
-  The v1 card carries
-  `card_version`, `source`,
-  `language`, `language_status`, `authority_boundary`, `surface_scope`,
-  `public_projection_ready`, `public_repair_packet`, `repair_packet_ready`,
-  `agent_packet_ready`, `gate_candidate`, `badge_candidate`,
-  `ripr_zero_candidate`, `packet_id`, `canonical_gap_id`, `gap_state`,
-  `changed_owner`, `evidence_class`, `repair_route`,
-  `current_test_evidence`, `missing_discriminator`, `target_test_shape`,
-  `suggested_test_location`, `suggested_assertion`, `verify`, `receipt`,
-  `confidence`, `raw_evidence_refs[]`, `stop_if[]`, `must_not_change[]`, and
-  `limits`. For this slice,
-  `surface_scope = "check_json_human_sarif_github_gap_ledger_markdown"`,
-  `public_repair_packet = false`, `repair_packet_ready = false`,
-  `agent_packet_ready = false`, `gate_candidate = false`,
-  `badge_candidate = false`, and `ripr_zero_candidate = false`.
-  `verify.command` is copied from fact evidence with
-  `verify.status = "fact_only_not_delegated"`. `receipt.command` is always
-  `null` even though receipt evidence is required internally, and
-  `receipt.status = "available_not_delegated"`. Perl preview cards are public
-  check JSON, human CLI, diff-scoped SARIF, GitHub annotation, and gap-ledger
-  Markdown advisory context only. Gap-ledger derivation may emit a PR-local
-  preview `GapRecord` with `projection_eligibility.markdown_advisory = true`
-  so the Markdown ledger can show the changed owner, missing discriminator,
-  suggested assertion, suggested test location, and fact-only verify command.
-  That derived record must keep `agent_packet`, `pr_comment`, `gate_candidate`,
-  `ripr_zero_count`, and `ripr_plus_count` ineligible and must not synthesize a
-  receipt command. Perl preview cards do not project allowed edit surfaces,
-  forbidden files, receipt argv, PR, CI, LSP, swarm routing, badge authority,
-  gate authority, or RIPR Zero authority in this slice.
-- `ripr reports gap-ledger --check-output <check.json>` can derive PR-local
-  Python and TypeScript `GapRecord` entries from findings that carry
-  `python_repair_card` or `typescript_repair_packet`. Those records are
-  advisory preview inputs for `ripr agent packet --gap-ledger ... --gap-id ...
-  --json`; they preserve the canonical preview-language gap ID, source anchor,
-  suggested test location, verify command, stop conditions, and preview
-  authority boundary without rerunning analysis or claiming before/after
-  closure.
-- `canonical_gap_id` is an additive optional stable identity for a
-  language-qualified behavioral gap when the producer can name one without
-  relying on line numbers alone. Python preview values use
-  `gap:python:<path>:<owner>:<behavior_kind>:<probe_kind>:<normalized_discriminator>`.
-  Static-limit findings may omit this field until a non-actionable gap-state
-  projection exists.
-- `canonical_gap_group_size` is the number of raw findings in the current
-  report that share the same `canonical_gap_id`, or omitted when no canonical
-  gap identity is assigned.
-- `canonical_gap` is an additive optional object that carries the identity
-  parts used to derive `canonical_gap_id`: `id`, `language`, `file`, `owner`,
-  `behavior_kind`, `probe_kind`, and `normalized_discriminator`.
-- `probe.owner` is an additive optional stable owner identifier emitted when a
-  preview-language adapter populated a changed owner. Python preview owners use
-  `python:<path>::<owner>`, for example
-  `python:src/pricing.py::calculate_discount`. Module-level Python changes use
-  `<module>` as the owner segment.
-- `language` is the per-finding source language reported by the language
-  adapter that produced it (see [RIPR-SPEC-0026](specs/RIPR-SPEC-0026-language-adapter-contract.md)).
-  Values are `rust`, `typescript`, `javascript`, `python`, or `perl`. Omitted
-  when no adapter populated it. Rust findings always carry `language: "rust"`;
-  preview adapters set the preview-language value when configured.
-- `language_status` is the per-finding adapter status. Values are `stable`
-  or `preview`. **Omitted for Rust** per RIPR-SPEC-0026; configured preview
-  adapters set `preview`.
-- `owner_kind` is an additive optional per-finding syntactic owner
-  discriminator. It is omitted when no preview adapter populated a bounded
-  owner. Values are `function`, `method`, `class_method`, `arrow_function`,
-  `component`, or `module_function`.
-- `static_limit_kind` is an additive optional per-finding static limitation
-  discriminator. It is omitted when no structured static limit is known. Values
-  are `dynamic_dispatch`, `metaprogramming`, `missing_import_graph`,
-  `decorator_indirection`, `mocked_module`,
-  `opaque_custom_assertion_helper`, `property_based_test`,
-  `unresolved_pytest_fixture`, `unsupported_syntax`,
-  `cross_language_oracle_visibility_unresolved`,
-  `rust_transitive_reach_unresolved`,
-  `rust_integration_public_api_path_unresolved`, or
-  `rust_macro_reach_unresolved`, or
-  `rust_macro_wrapped_test_call_unresolved`, or
-  `rust_macro_wrapped_assertion_unresolved`, or
-  `rust_value_propagation_unresolved`.
-- `static_limitation` is an additive optional per-finding object emitted only
-  when a finding with `static_limit_kind` also carries a complete structured
-  limitation detail. Current Rust transitive-reach, integration public-API path,
-  macro-reach, direct test macro-call, macro-wrapped assertion, and
-  value-propagation limitations
-  populate it from the same evidence lines rendered in human output. Fields are
-  `kind`, `last_established_edge`, `first_unresolved_edge`, `analyzer_route`,
-  and `non_claim`. The object is absent for static limits that do not have all
-  four detail fields; consumers should keep using `static_limit_kind` as the
-  limitation discriminator and treat `static_limitation` as richer detail when
-  present.
-
-### `preview_languages` (top-level additive advisory, RIPR-SPEC-0082)
-
-Added in schema `0.2` as an additive optional top-level array. Emitted whenever
-preview-language files (TypeScript, JavaScript, or Python) are present in the
-analyzed scope â€” **regardless of whether the preview adapter is enabled** in
-`ripr.toml`. Absent for pure-Rust scopes. Does not bump `schema_version`.
-
-Not-enabled (default) example â€” the #1111 case where a TypeScript change is run
-under the default Rust-only config and was therefore not analyzed:
-
-```json
-"preview_languages": [
-  {
-    "language": "typescript",
-    "file_count": 1,
-    "sample_paths": ["src/utils.ts"],
-    "enabled": false,
-    "analyzed": false,
-    "category": "preview_language_advisory",
-    "why": "preview adapter not enabled; files detected but not analyzed; empty result is not Rust-grade clean; to enable add to ripr.toml: [languages] enabled = [\"rust\", \"typescript\"]"
-  }
-]
-```
-
-Enabled example carries `"enabled": true`, `"analyzed": true`, and a
-`"why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"`.
-
-- `language` â€” stable wire string; one of `typescript`, `javascript`, `python`
-- `file_count` â€” number of files in scope routed to this adapter (real, never fabricated)
-- `sample_paths` â€” up to three normalized (forward-slash) file paths
-- `enabled` â€” whether the preview adapter was enabled (ran) for this analysis
-- `analyzed` â€” whether the files were analyzed (mirrors `enabled`)
-- `category` â€” always `"preview_language_advisory"` for machine filtering
-- `why` â€” advisory rationale string (case-specific)
-
-An empty or absent `preview_languages` array means only stable (Rust) content
-was in scope. A non-empty array is an honesty signal: either the listed
-preview-language files were not analyzed at all (`enabled == false`) or were
-analyzed under advisory preview support that may be incomplete
-(`enabled == true`). In neither case is an empty result a Rust-grade clean
-result.
-
-### `test_harnesses` (top-level additive advisory, #3532)
-
-Added in schema `0.2` as an additive optional top-level array. Emitted only when
-the repository registered test harnesses (`[analysis.test_harnesses]` in
-`ripr.toml`) and the run's analysis carried harness facts. Absent for
-repositories without registrations, so their output is byte-identical to the
-pre-#3532 shape. Does not bump `schema_version`.
-
-The LSP editor surface carries the same registered facts on its analysis
-snapshot (`harness_projections`): registration identity, harness kind,
-adapter generation, exact marker and target, provenance, established
-subjects, and typed limitations.
-
-The editor workspace status discloses a bounded summary of the same
-facts: `harness_registry.registrations[]` with registration id,
-harness kind, adapter, target, established subject count, and typed
-limitation count per registration. The key is Null when the run
-carried no harness facts and is absent from runs of repositories
-without registrations. The snapshot carries them only from
-complete runs whose diff scope included the registered target; limited
-runs (git timeout, oversized diff) disclose the run-status limitation
-instead and repopulate on the next full refresh. This is the
-registered-facts subset â€” it never claims the harness subjects were
-executed (#3605).
-
-Example â€” one registered `harness = false` custom target with one exact trial
-subject and one dynamic-name limitation:
-
-```json
-"test_harnesses": [
-  {
-    "registration_id": "mimic-suite",
-    "harness_kind": "custom_harness",
-    "adapter": "libtest_mimic_v1",
-    "marker": "libtest_mimic",
-    "target": "tests/price_mimic.rs",
-    "provenance": "ripr.toml [analysis.test_harnesses]",
-    "subjects": [
-      {
-        "name": "alpha_parses",
-        "file": "tests/price_mimic.rs",
-        "start_line": 9,
-        "end_line": 9,
-        "selector": "named_unexecuted",
-        "claim": "named_invocation"
-      }
-    ],
-    "limitations": [
-      {
-        "code": "dynamic_trial_name",
-        "file": "tests/price_mimic.rs",
-        "line": 17,
-        "detail": "trial name is not a simple string literal; generated names remain unresolved"
-      }
-    ]
-  }
-]
-```
-
-- `registration_id` â€” the stable identifier from the registration
-- `harness_kind` â€” `custom_harness` or `registered_attribute`
-- `adapter` â€” adapter generation, e.g. `libtest_mimic_v1`, `exact_attribute_v1`
-- `marker` â€” the exact source marker the adapter matched (crate or attribute path)
-- `target` â€” the exact registered target file (workspace-relative, forward-slashed)
-- `provenance` â€” where the authority came from (registration channel)
-- `subjects[].name` â€” stable subject identity (trial name or test fn name)
-- `subjects[].selector` â€” `named_unexecuted` when a selector route is known;
-  a known route is never a selector that ran â€” passive analysis never starts
-  Cargo or a harness
-- `subjects[].claim` â€” `named_invocation` (the invocation is one source-level
-  subject; generated cases are not enumerated) or `named_function` (the
-  function is one executable test). `named_invocation` is a syntactic claim
-  bounded by the registered target: a named trial invocation exists in the
-  registered target. It does not claim the harness registers or executes the
-  trial â€” a constructor in dead construction (an unused helper, an `if false`
-  branch, a collection never passed to the harness's run entry point) still
-  carries the claim. Denominator admission for the subject is decided by the
-  bounded reachability authority (#3636): a construction provably excluded
-  from every resolved run argument keeps this claim but leaves the
-  executable-test denominator and is named by a `registration_unreachable`
-  limitation; a construction the resolver can neither connect nor exclude
-  stays in the denominator under this claim with an aggregate
-  `registration_reachability_unknown` disclosure. There is no per-subject
-  reachability field: the unknown bucket is exactly the case where
-  per-subject attribution is not established.
-- `limitations[]` â€” typed shapes the registration saw but could not classify
-  (`dynamic_trial_name`, `dynamic_trial_registration`, `ambiguous_import`,
-  `unanchored_trial_path`, `unresolved_marker_import`, `duplicate_subject`,
-  `parse_unavailable`). Cargo target metadata conflicts (#3608) use
-  `target_not_declared` (the target matches no Cargo `[[test]]` target,
-  declared or autodiscovered), `harness_flag_conflict` (the Cargo target
-  still has `harness = true`), and `manifest_unavailable` (the owning
-  manifest could not be read or parsed); each records that the
-  registration grants no file-wide evidence role, demotion, or trial
-  subjects and the target keeps its ordinary per-function classification.
-  Reachability limitations (#3636) use `registration_unreachable` (one per
-  trial: the construction provably cannot reach the registered run entry
-  point's argument â€” no supported run entry call exists in the target, or
-  every run argument resolved completely and the trial is not in any of
-  them â€” so the subject keeps its syntactic claim and fact but its
-  executable-test fact does not join the denominator) and
-  `registration_reachability_unknown` (one aggregate disclosure per
-  registration: the bounded resolver could not establish reachability for
-  the named trials, so they remain in the denominator under the syntactic
-  claim and the gap is disclosed here rather than per subject).
-
-An absent `test_harnesses` array means the repository has no harness
-registrations; it is never a claim that custom harnesses do not exist.
-
-### `scope_disclosures` (top-level additive advisory, RIPR-SPEC-0083)
-
-Added as an additive optional top-level array. Emitted only when `ripr check`
-was invoked with **no analysis scope** (no `--diff`, `--base`, or `--mode`
-flag) and the result is empty. Absent when scope was explicitly provided (even
-if the analyzed scope produced 0 findings). Does not bump `schema_version`.
-
-No-scope example â€” the RIPR-SPEC-0083 case where bare `ripr check` analyzes
-nothing yet prints empty:
-
-```json
-"scope_disclosures": [
-  {
-    "scope_status": "no_scope_provided",
-    "category": "no_scope_disclosure",
-    "why": "no analysis scope provided; ripr check is diff-first; empty result does not mean changed behavior is covered; run ripr check --base origin/main or ripr check --root . --mode fast"
-  }
-]
-```
-
-When scope was explicitly provided (`--diff`, `--base`, or `--mode`),
-`scope_disclosures` is absent. A scope-provided empty result is honest and
-requires no disclosure.
-
-- `scope_status` â€” always `"no_scope_provided"` for machine filtering
-- `category` â€” always `"no_scope_disclosure"` for machine filtering
-- `why` â€” advisory rationale string guiding the user to the correct invocation
-
-### `unanalyzed_working_tree` (top-level additive boolean, RIPR-SPEC-0112)
-
-Added as an additive optional top-level boolean. Emitted (as `true`) only when
-ALL of the following are true:
-
-1. The analyzed diff was committed history: `ripr check --base <rev>`, or a
-   bare `ripr check` that resolved the default base (#3888).
-2. None of `--diff <file>`, `--worktree`, or `--candidate-tree` was supplied,
-   and the format is not repo-scope.
-3. The working tree has at least one uncommitted change to a tracked source
-   file, as reported by `git status --porcelain`.
-
-Absent (not emitted) when `false`. Does not bump `schema_version`.
-
-This field closes the false-clean gap where `ripr check --base HEAD` (or a bare
-`ripr check` on the default branch) with an uncommitted `.rs` edit returns 0 probes and exit 0 â€” a result that is honest
-for the committed diff but misleading if the user assumes it covers their
-working-tree change. When `unanalyzed_working_tree: true` is present, the
-result is NOT a clean pass for the uncommitted changes.
-
-Example:
-
-```json
-"unanalyzed_working_tree": true
-```
-
-The field is absent when the worktree is clean, when `--diff <file>` or
-`--candidate-tree` was used, when a repo-scope format was requested, when `--worktree` was used to include staged and unstaged
-tracked edits in the analyzed diff, or when `git status --porcelain` cannot be
-run (fail-closed: no fabricated disclosure).
-
-### `suppression_policy` and suppressed findings (top-level additive, #1441)
-
-Emitted only when `ripr check` is invoked with `--suppression-policy PATH`.
-Absent otherwise, so consumers without a policy see byte-identical output.
-Does not bump `schema_version`.
-
-The policy file uses the `.ripr/suppressions.toml` schema. `exposure_gap`
-entries select findings either by exact `finding_id` (the existing selector)
-or by a `path` glob over root-relative finding paths (`**` spans path
-segments, `*` and `?` stay within one segment), optionally narrowed by
-`static_class` (which must then be one of the seven `classification` values).
-Expired entries are not applied; expired and unmatched selectors surface as
-warnings. A missing or malformed policy fails the run (fail-closed): the run
-never silently emits unfiltered counts as if a policy had been applied.
-
-Three surfaces change when the flag is present:
-
-- `summary.suppressed_by_policy` â€” count of suppressed findings. The
-  per-class `summary` buckets (`exposed` â€¦ `static_unknown`) count
-  unsuppressed findings only; buckets plus `suppressed_by_policy` add back
-  up to `summary.findings`, which stays the total rendered count.
-- `findings[].suppressed` / `findings[].suppressed_by` â€” suppressed findings
-  stay fully rendered (visible, not hidden) and carry `"suppressed": true`
-  plus the selector (`finding_id` or path glob) that matched. The first
-  matching entry in policy-file order names the selector.
-- top-level `suppression_policy` object â€” `path` (as supplied), `suppressed`
-  (count), and `warnings` (expired/unmatched selector strings).
-
-Example:
-
-```json
-"summary": {"findings": 2, "no_static_path": 1, "suppressed_by_policy": 1},
-"findings": [
-  {"id": "probe:docs_gen_a", "suppressed": true, "suppressed_by": "docs/gen/**", ...},
-  {"id": "probe:src_lib", ...}
-],
-"suppression_policy": {
-  "path": "policy/ripr-suppressions.toml",
-  "suppressed": 1,
-  "warnings": []
-}
-```
-
-Scope: the flag applies to the findings-based check formats (`human`,
-`human-full`, `json`, `github`). Human output lists suppressed findings as compact
-one-liners instead of detailed blocks; GitHub-format output skips
-annotations for suppressed findings. SARIF keeps its existing
-`.ripr/suppressions.toml` `finding_id` suppression channel, and badge/repo
-formats keep their own suppression projections â€” `ripr check` rejects the
-flag for those formats instead of silently ignoring it. Date-expiry
-enforcement beyond `expires` (review-after deadlines, required-active
-ledgers) belongs to the gate exception policy (#1442), not check
-suppression.
-
-## Enums
-
-`classification` values:
-
-- `exposed`
-- `weakly_exposed`
-- `reachable_unrevealed`
-- `no_static_path`
-- `infection_unknown`
-- `propagation_unknown`
-- `static_unknown`
-
-`severity` values:
-
-- `info`
-- `warning`
-- `note`
-
-`family` values:
-
-- `predicate`
-- `return_value`
-- `error_path`
-- `call_deletion`
-- `field_construction`
-- `side_effect`
-- `match_arm`
-- `static_unknown`
-
-`delta` values:
-
-- `value`
-- `control`
-- `effect`
-- `unknown`
-
-`static_limit_kind` values:
-
-TypeScript exception: a TypeScript static limit sets `gap_state:
-static_limitation` and blocks the repair packet (`repair_packet_ready:
-false`) but does NOT suppress exposure classification â€” the finding keeps
-its independently-derived classification (e.g. `exposed` with
-`typescript_dynamic_assertion_unresolved` coexisting, as pinned by
-fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
-
-- `dynamic_dispatch`
-- `metaprogramming`
-- `missing_import_graph`
-- `decorator_indirection`
-- `mocked_module`
-- `opaque_custom_assertion_helper`
-- `property_based_test`
-- `unresolved_pytest_fixture`
-- `unsupported_syntax`
-- `cross_language_oracle_visibility_unresolved` â€” The changed Rust seam owner is FFI/binding-exposed; whether an external-language (e.g. TypeScript) test oracle discriminates this behavior is not statically known â€” verify the external oracle rather than adding a Rust test.
-- `rust_transitive_reach_unresolved` â€” (RIPR-SPEC-0114, additive) A test appears to call public API that may transitively reach the changed Rust owner through a pub->pub(crate) helper chain or similar internal call graph, but ripr cannot fully resolve the path (macros, generics, trait dispatch, or depth>5 stop the walk). Classification stays `no_static_path`; this is a named limitation, not a coverage claim.
-
-- `rust_integration_public_api_path_unresolved` -- (RIPR-SPEC-0118, additive) An integration test appears to call crate public API, or a test helper that calls crate public API, along a candidate path toward the changed Rust owner. RIPR cannot fully resolve that integration/public-API path, so classification stays `no_static_path`; this is a named limitation, not a reach, coverage, or oracle claim.
-
-- `rust_macro_reach_unresolved` -- (RIPR-SPEC-0117, additive) A test appears to call a Rust entry point whose path toward the changed owner stops at a same-repo macro invocation. ripr does not expand macros, so classification stays `no_static_path`; this is a named limitation, not a coverage claim.
-
-- `rust_macro_wrapped_test_call_unresolved` -- (RIPR-SPEC-0119, additive) A Rust test directly invokes a same-repo macro whose definition mentions the changed owner. ripr does not expand macros, so classification stays `no_static_path`; this is a named limitation, not a reach, coverage, or oracle claim.
-
-- `rust_macro_wrapped_assertion_unresolved` -- (RIPR-SPEC-0120, additive) A Rust test reaches the changed owner, but its assertion-like custom macro is not classified as an oracle. Classification stays `reachable_unrevealed`; this is a named limitation, not an oracle, coverage, or repair-packet claim.
-
-- `rust_value_propagation_unresolved` -- (RIPR-SPEC-0150, additive) A changed Rust value-producing binding reaches a same-owner equality predicate through a bounded `map_or` shape that ripr cannot fully resolve. Classification stays `static_unknown`; this is a named limitation, not a propagation, coverage, or repair claim.
-
-Reserved `flow_sink` values:
-
-- `return_value`
-- `error_variant`
-- `struct_field`
-- `event_call`
-- `state_write`
-- `persistence`
-- `log_message`
-- `config_change`
-- `call_effect`
-- `match_arm`
-- `unknown`
-
-These labels are internal analysis terms in schema `0.1`. The side-effect
-families are additive refinements of the older generic `call_effect` sink:
-event or outbound calls, state writes, persistence writes, log messages, and
-configuration changes are named when syntax-first analysis can identify them,
-while `call_effect` remains the fallback for other observable calls.
-
-`state` values:
-
-- `yes`
-- `weak`
-- `no`
-- `unknown`
-- `opaque`
-- `not_applicable`
-
-`confidence` values inside RIPR stages:
-
-- `high`
-- `medium`
-- `low`
-- `unknown`
-
-`oracle_strength` values:
-
-- `strong`
-- `medium`
-- `weak`
-- `smoke`
-- `none`
-- `unknown`
-
-`oracle_kind` values:
-
-- `exact_value`
-- `exact_error_variant`
-- `guarded_result_match`
-- `whole_object_equality`
-- `snapshot`
-- `relational_check`
-- `broad_error`
-- `smoke_only`
-- `mock_expectation`
-- `unknown`
-
-`value_context` values:
-
-- `function_argument`
-- `assertion_argument`
-- `builder_method`
-- `table_row`
-- `enum_variant`
-- `return_value`
-- `unknown`
-
-`stop_reason` values:
-
-- `max_depth_reached`
-- `external_crate_boundary`
-- `dynamic_dispatch_unresolved`
-- `proc_macro_opaque`
-- `fixture_opaque`
-- `feature_unknown`
-- `async_boundary_opaque`
-- `no_changed_rust_line`
-- `macro_reach_unresolved`
-- `infection_evidence_unknown`
-- `propagation_evidence_unknown`
-- `static_probe_unknown`
-
-## Badge Output
-
-Badge-native JSON is a separate output contract from `ripr check --json`.
-It is consumed by CI artifacts, public Shields endpoint generation, and
-badge policy tooling. The Shields projection is always exactly four fields;
-the native shape carries the stable metadata consumers need to understand
-scope and count basis.
-
-Formats:
-
-```bash
-ripr check --format badge-json
-ripr check --format badge-plus-json
-ripr check --format repo-badge-json
-ripr check --format repo-badge-plus-json
-ripr check --format repo-badge-json --gap-ledger target/ripr/reports/gap-decision-ledger.json
-```
-
-Native schema `0.8`:
-
-```json
-{
-  "schema_version": "0.8",
-  "kind": "ripr",
-  "scope": "repo",
-  "basis": "canonical_actionable_gap",
-  "label": "ripr",
-  "message": "0 actionable",
-  "status": "pass",
-  "color": "brightgreen",
-  "analysis_complete": null,
-  "analysis_outcome": null,
-  "counts": {
-    "unsuppressed_exposure_gaps": 0,
-    "unsuppressed_test_efficiency_findings": 0,
-    "intentional_test_efficiency_findings": 0,
-    "suppressed_exposure_gaps": 0,
-    "suppressed_test_efficiency_findings": 0,
-    "unknowns": 0,
-    "unknowns_test_efficiency": 0,
-    "analyzed_findings": 0,
-    "analyzed_seams": 120,
-    "analyzed_gap_records": 0,
-    "analyzed_tests": 0
-  },
-  "reason_counts": {
-    "no_assertion_detected": 0,
-    "smoke_oracle_only": 0,
-    "relational_oracle": 0,
-    "broad_oracle": 0,
-    "assertion_may_not_match_detected_owner": 0,
-    "opaque_helper_or_fixture_boundary": 0,
-    "no_activation_literal_detected": 0,
-    "expected_value_computed_from_detected_owner_path": 0,
-    "duplicate_activation_and_oracle_shape": 0
-  },
-  "policy": {
-    "include_unknowns": false,
-    "fail_on_nonzero": false,
-    "test_intent_path": ".ripr/test_intent.toml",
-    "suppressions_path": ".ripr/suppressions.toml"
-  },
-  "warnings": [],
-  "preview_skipped": [],
-  "public_projection": {
-    "state": "zero_actionable",
-    "message": "0 actionable",
-    "run_status": "full",
-    "generated_at": "2026-06-20T00:00:00Z",
-    "actionable_count": 0,
-    "limited_reason": null,
-    "stale_age_secs": 0,
-    "source_report": "target/ripr/reports/repo-ripr-badge.json"
-  }
-}
-```
-
-Field contract:
-
-- `schema_version` â€” currently `"0.8"`. `0.2` added `scope`; `0.3` adds
-  `basis` and `counts.analyzed_seams`; `0.4` adds
-  `basis = "gap_decision_ledger"` and `counts.analyzed_gap_records`;
-  `0.5` adds `basis = "canonical_actionable_gap"` for public repair-item
-  projection; `0.6` adds `preview_skipped`; `0.7` adds the
-  `public_projection` object (RIPR-SPEC-0066) on repo-scoped public badges;
-  `0.8` adds `analysis_complete` and typed `analysis_outcome` on diff-scoped
-  badges. Repo-scoped badges emit both fields as `null` because they do not
-  have a diff completeness denominator.
-- `kind` â€” `"ripr"` or `"ripr_plus"`.
-- `scope` â€” `"diff"` for PR/diff artifacts, `"repo"` for public repo
-  baseline artifacts.
-- `basis` â€” `"finding_exposure"` for legacy Finding/ExposureClass count
-  artifacts, `"canonical_actionable_gap"` for public repo repair-item badge
-  projection, `"seam_native"` for internal RepoSeam/SeamGripClass inventory
-  artifacts, or `"gap_decision_ledger"` when repo badge formats are explicitly
-  rendered from supplied GapRecord projection targets. Diff-scoped badge
-  formats currently use `finding_exposure`; repo-scoped public badge formats
-  use `canonical_actionable_gap` unless `--gap-ledger` is supplied.
-- `message` â€” the headline rendered as a string for Shields compatibility.
-  Diff-scoped and internal badges render the bare count (for example `"5"`).
-  Repo-scoped public badges render the closed RIPR-SPEC-0066 vocabulary
-  (`"0 actionable"`, `"<n> actionable"`, `"limited"`, `"stale"`, or
-  `"unknown"`), combined with the `label` to read as `ripr: <n> actionable`.
-  It is a count or a named state, never a denominator or coverage fraction.
-- `counts.unsuppressed_exposure_gaps` â€” diff scope: unsuppressed
-  `weakly_exposed`, `reachable_unrevealed`, and `no_static_path` Findings;
-  repo public scope: unresolved actionable canonical repair items; seam-native
-  inventory scope: configured-visible headline-eligible seam classes.
-- `counts.unknowns` â€” diff scope: static unknown Finding classes; seam-native
-  inventory scope: configured-visible `opaque` seams. Canonical-actionable
-  public badge projection does not count unknown-only or limitation-only states
-  in the headline.
-- `counts.analyzed_findings` â€” number of Findings considered by the
-  finding-exposure basis; `0` for canonical-actionable and seam-native repo
-  badges.
-- `counts.analyzed_seams` â€” number of classified seams considered by the
-  canonical-actionable or seam-native repo basis; `0` for finding-exposure diff
-  badges.
-- `counts.analyzed_gap_records` â€” number of GapRecord entries considered by
-  the gap-decision-ledger basis, or canonical repair groups considered by the
-  canonical-actionable basis; `0` for finding-exposure and seam-native badges.
-- `warnings` â€” advisory suppressions/config warnings that remain visible in
-  native JSON. The Shields projection never includes warnings.
-- `preview_skipped` â€” (v0.6) array of preview-language adapter names detected
-  in the diff but not enabled; a non-empty list means the result is not a
-  clean Rust-grade result. Always present as an array (possibly empty).
-- `analysis_complete` â€” (v0.8) nullable Boolean derived from the typed
-  diff-scoped `analysis_outcome`; `false` means the badge is not a clean
-  result even when its finding count is zero, while `null` means the badge is
-  repo-scoped or otherwise has no diff outcome.
-- `analysis_outcome` â€” (v0.8) nullable typed `AnalysisOutcome` DTO for
-  diff-scoped badges. It preserves the producer outcome kind, counts,
-  limitations, recovery routes, and semantic input identity. An incomplete
-  outcome downgrades a pass/green diff badge to warning/yellow and names the
-  outcome kind in `message`; an existing failure remains a failure.
-- `public_projection` â€” (v0.7) present only on repo-scoped public badges
-  (`canonical_actionable_gap` or `gap_decision_ledger` basis). The
-  RIPR-SPEC-0066 projection of the badge into one closed public state plus
-  the required sidecar fields. Absent on diff-scoped and internal badges.
-  When present, the native `message` / `status` / `color` are projected from
-  it. Fields:
-  - `state` â€” one of `zero_actionable`, `actionable`, `limited`, `stale`,
-    `unknown`. Selected with fail-closed precedence
-    (`unknown > stale > limited > count`); a degraded input never resolves
-    toward the cleaner-looking state.
-  - `message` â€” the Shields message for the state (label-agnostic, e.g.
-    `0 actionable`, `limited`).
-  - `run_status` â€” Lane-1 completeness state of the source run (`full` or a
-    named `limited_*` value).
-  - `generated_at` â€” RFC3339 UTC timestamp the badge was generated, or `null`.
-  - `actionable_count` â€” unresolved canonical actionable gap count; present
-    only for the count states (`zero_actionable` / `actionable`), `null`
-    alongside any degraded state.
-  - `limited_reason` â€” the `limitation_category` (and repair route) for a
-    `limited` state; `null` otherwise.
-  - `stale_age_secs` â€” age of the artifact relative to its source at
-    evaluation time, in seconds; `null` when `generated_at` is unknown.
-  - `source_report` â€” repo-relative path the badge was projected from, or
-    `null`.
-
-Shields projection:
-
-```json
-{
-  "schemaVersion": 1,
-  "label": "ripr",
-  "message": "0",
-  "color": "brightgreen"
-}
-```
-
-The Shields projection drops native-only fields including `schema_version`,
-`kind`, `scope`, `basis`, `status`, `counts`, `reason_counts`, `policy`, and
-`warnings`.
-
-### Badge-Basis Audit Report
-
-`cargo xtask badge-basis` writes an advisory audit report at:
-
-```text
-target/ripr/reports/badge-basis.json
-target/ripr/reports/badge-basis.md
-```
-
-This report decomposes committed public endpoint values and proves whether the
-public badge basis matches RIPR-SPEC-0056. It does not edit `badges/*.json`.
-
-Required JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "status": "pass",
-  "mode": "advisory",
-  "current_public_endpoints": [
-    {
-      "path": "badges/ripr.json",
-      "label": "ripr",
-      "message": "179",
-      "color": "orange"
-    }
-  ],
-  "current_repo_badges": [
-    {
-      "kind": "ripr",
-      "scope": "repo",
-      "basis": "canonical_actionable_gap",
-      "message": "179",
-      "counts": {}
-    }
-  ],
-  "seam_native": {
-    "status": "pass",
-    "source": "ripr check --root . --format repo-exposure-md",
-    "counts_by_class": {}
-  },
-  "test_efficiency": {
-    "status": "pass",
-    "source": "target/ripr/reports/test-efficiency.json",
-    "counts_by_class": {}
-  },
-  "canonical_actionable_gap": {
-    "status": "available",
-    "source": "repo-badge-artifacts",
-    "ripr_count": 179,
-    "ripr_plus_count": 179
-  },
-  "supporting_signals": {
-    "raw_alignment_signals": { "status": "not_in_current_badge_generator" },
-    "canonical_evidence_items": { "status": "not_in_current_badge_generator" },
-    "static_limitations": { "status": "available" },
-    "suppressed_or_intentional_items": { "status": "available_from_badge_counts" },
-    "no_action_items": { "status": "requires_gap_decision_ledger" }
-  },
-  "recommended_public_projection": {
-    "basis": "canonical_actionable_gap",
-    "rule": "README/store badges should count unresolved actionable static repair gaps using canonical_actionable_gap; ripr+ adds only items projected into the same repair, verify, and receipt model; seam-native inventory stays supporting/internal."
-  },
-  "warnings": [],
-  "non_claims": []
-}
-```
-
-Field contract:
-
-- `current_public_endpoints` mirrors committed Shields endpoint JSON.
-- `current_repo_badges` records the native badge basis used to derive public
-  counts.
-- `canonical_actionable_gap` records the public repair projection counts: the
-  unresolved actionable static repair gaps used for README/store badge
-  headlines.
-- `seam_native` records internal inventory status and per-class counts when
-  collected with `--include-seam-classes`.
-- `test_efficiency` records class counts but does not move the public `ripr+`
-  headline unless those items are projected into the repair / verify / receipt
-  model.
-- `supporting_signals` names supporting or excluded evidence rather than
-  silently dropping it.
-- `recommended_public_projection.basis` must be
-  `canonical_actionable_gap` for public repair badges, and
-  `recommended_public_projection.rule` must keep seam-native inventory
-  supporting/internal rather than a public headline counter.
-
-## SARIF Output
-
-Campaign 5B SARIF formats:
-
-```bash
-ripr check --format sarif
-ripr check --format repo-sarif
-```
-
-`sarif` is the diff-scoped Finding SARIF surface. `repo-sarif` is the
-repo-scoped classified seam SARIF surface. Both use SARIF 2.1.0:
-
-```json
-{
-  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
-  "version": "2.1.0",
-  "runs": [
-    {
-      "tool": {
-        "driver": {
-          "name": "ripr",
-          "rules": []
-        }
-      },
-      "results": []
-    }
-  ]
-}
-```
-
-Rule IDs are stable public integration strings.
-
-Finding rule IDs:
-
-- `ripr.finding.exposed`
-- `ripr.finding.weakly_exposed`
-- `ripr.finding.reachable_unrevealed`
-- `ripr.finding.no_static_path`
-- `ripr.finding.infection_unknown`
-- `ripr.finding.propagation_unknown`
-- `ripr.finding.static_unknown`
-
-Seam rule IDs:
-
-- `ripr.seam.strongly_gripped`
-- `ripr.seam.weakly_gripped`
-- `ripr.seam.ungripped`
-- `ripr.seam.reachable_unrevealed`
-- `ripr.seam.activation_unknown`
-- `ripr.seam.propagation_unknown`
-- `ripr.seam.observation_unknown`
-- `ripr.seam.discrimination_unknown`
-- `ripr.seam.opaque`
-- `ripr.seam.intentional`
-- `ripr.seam.suppressed`
-
-Configured severity maps into SARIF as:
-
-| `ripr.toml` severity | SARIF result behavior |
-| --- | --- |
-| `warning` | emit `level: "warning"` |
-| `info` | emit `level: "note"` |
-| `note` | emit `level: "note"` |
-| `off` | omit the result |
-
-SARIF v1 does not emit `level: "error"`. CI blocking is a separate opt-in
-policy decision, not a property of the static SARIF renderer.
-
-Diff-scoped SARIF also carries additive run-level `properties` when the
-producer supplies an `AnalysisOutcome`: `run_status` is `"complete"` or
-`"incomplete"`, `analysis_complete` is the derived Boolean, and
-`analysis_outcome` is the typed DTO. These properties keep an empty `results`
-array from being misread as a clean analysis. Repo-scoped seam SARIF retains
-its existing limitation properties and does not invent a diff outcome.
-
-Every result carries:
-
-- `ruleId`;
-- `level`;
-- a primary physical location when file and line are known;
-- `partialFingerprints.riprFingerprintV1`;
-- `properties.kind` (`finding` or `seam`);
-- stable IDs (`finding_id`, `probe_id`, or `seam_id`) when available;
-- class metadata (`classification`, `probe_family`, `grip_class`, or
-  `seam_kind`) when available.
-- diff-scoped preview-language Finding results may also carry additive
-  `properties.language`, `properties.language_status`, `properties.owner_kind`,
-  `properties.static_limit_kind`, `properties.preview_actionability`, and
-  `properties.typescript_preview_card`. The `preview_actionability` and
-  TypeScript preview-card shapes match `ripr check --format json` and remain
-  advisory preview context, not SARIF policy decisions or repair packets.
-- Direct weak Python preview Findings with an eligible `python_repair_card` in
-  `ripr check --format json` also carry additive
-  `properties.python_repair_card` in diff-scoped SARIF. The nested card keeps
-  the same preview/advisory boundary, canonical gap ID, missing discriminator,
-  suggested location, verify command, receipt status/guidance, stop
-  conditions, and limits. This is code-scanning context only; it does not make
-  SARIF a repair executor, receipt authority, or gate.
-- Python preview Findings that are not repair-card eligible because they are
-  already observed, have no safe related-test route, are heuristic-only, or hit
-  a static limit carry additive `properties.python_no_action` in diff-scoped
-  SARIF. The nested object marks `repair_packet_ready = false`,
-  `repair_card_present = false`, `no_action_kind`, null verify/receipt
-  commands, stop conditions, and the `preview_advisory_only` authority
-  boundary. Ordinary no-action states use
-  `repairability = "no_action"` with `not_applicable_no_action` verify/receipt
-  status. Static limits use `repairability = "analyzer_limitation"`, include
-  the typed `static_limit_kind`, and use `not_applicable_static_limit` status.
-  This is fail-closed review context only; it must not be treated as an agent
-  packet or closure receipt.
-- Perl preview cards with strict fact-packet evidence also carry additive
-  `properties.perl_preview_card` in diff-scoped SARIF. The nested card matches
-  the `ripr check --format json` shape, keeps receipt commands null and edit
-  boundaries hidden, and remains code-scanning context only. It does not make
-  SARIF a repair executor, receipt authority, gate, badge input, or RIPR Zero
-  authority.
-
-Suppressed exposure-gap Findings remain visible with SARIF suppression metadata
-when their configured severity is visible. Results whose configured severity is
-`off` are omitted. See RIPR-SPEC-0008 for the full suppression and baseline
-policy contract.
-
-`cargo xtask sarif-policy` compares current SARIF against an optional baseline
-and writes:
-
-```text
-target/ripr/reports/sarif-policy.json
-target/ripr/reports/sarif-policy.md
-```
-
-The JSON report is repo automation output with schema version `"0.1"`:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "status": "new_results",
-  "mode": "baseline-check",
-  "threshold": "warning",
-  "current": {
-    "path": "target/ripr/reports/ripr-seams.sarif.json",
-    "results_total": 12,
-    "compared_results": 3
-  },
-  "baseline": {
-    "path": ".ripr/sarif-baseline.json",
-    "missing": false,
-    "results_total": 10,
-    "compared_results": 2
-  },
-  "new_results_total": 1,
-  "new_results": [
-    {
-      "rule_id": "ripr.seam.weakly_gripped",
-      "level": "warning",
-      "fingerprint": "ripr.seam.weakly_gripped|abc123|src/lib.rs|42",
-      "uri": "src/lib.rs",
-      "line": 42,
-      "message": "weakly_gripped seam grip for predicate_boundary"
-    }
-  ]
-}
-```
-
-Policy reports are advisory unless `--mode fail-on-new-warning` is used.
-
-## Context Packet
-
-`ripr context --json` emits compact test intent for agents:
-
-```json
-{
-  "version": "1.0",
-  "tool": "ripr",
-  "probe": {
-    "id": "probe:src_lib.rs:predicate:bbaa2c25",
-    "family": "predicate",
-    "delta": "control",
-    "file": "src/lib.rs",
-    "line": 88,
-    "changed_expression": "if amount >= discount_threshold {"
-  },
-  "ripr": {
-    "reach": "yes",
-    "infect": "weak",
-    "propagate": "yes",
-    "observe": "yes",
-    "discriminate": "weak"
-  },
-  "related_tests": [],
-  "observed_values": [],
-  "missing_discriminators": [],
-  "witness": {
-    "kind": "static_discriminator_gap",
-    "probe_family": "predicate",
-    "changed_expression": "amount >= discount_threshold",
-    "before": "amount > discount_threshold",
-    "after": "amount >= discount_threshold",
-    "expected_sink": "return_value",
-    "missing_discriminators": [
-      {
-        "value": "amount == discount_threshold",
-        "reason": "the current tests do not distinguish the equality boundary"
-      }
-    ],
-    "fix_site": {
-      "file": "tests/pricing.rs",
-      "line": 42,
-      "test_name": "discount_at_threshold",
-      "current_oracle": "assert!(result.is_some())",
-      "oracle_kind": "smoke_only",
-      "oracle_strength": "weak",
-      "oracle_location": { "file": "tests/pricing.rs", "line": 44 }
-    },
-    "suggested_assertion": null,
-    "explain_command": "ripr explain --root . probe:src_lib.rs:predicate:bbaa2c25",
-    "confidence": { "value": 0.75, "basis": "static_only" },
-    "limitations": [
-      {
-        "kind": "suggested_assertion_unavailable",
-        "detail": "No producer-owned symbol-resolved assertion template is available."
-      }
-    ]
-  },
-  "missing": [],
-  "stop_reasons": [],
-  "recommended_next_step": "Add below, equal, and above threshold tests."
-}
-```
-
-The context packet is intentionally smaller than check output. It is optimized
-for coding agents and editor commands. `witness` is additive and is omitted
-when an exposed finding has no unresolved discriminator. It contains only
-producer-owned facts: `fix_site` and `oracle_location` are absent when the
-producer cannot identify them, and `suggested_assertion` remains `null` until
-the producer supplies a symbol-resolved assertion template. `limitations[]`
-names unavailable evidence; renderers must not infer it from paths, lines,
-classes, or prose. `source_currentness` (RIPR-SPEC-0152) mirrors the finding's
-disposition: agent consumers must not treat a `base_deleted`,
-`moved_or_renamed`, or `unresolved_subject` packet as a candidate edit
-target.
-
-## Repo Seam Inventory
-
-`ripr check --root . --format repo-seams-json` emits the repo seam inventory
-introduced by RIPR-SPEC-0005. The artifact lands at
-`target/ripr/reports/repo-seams.json` when generated via
-`cargo xtask repo-seam-inventory`.
-
-```json
-{
-  "schema_version": "0.1",
-  "scope": "repo",
-  "seams": [
-    {
-      "seam_id": "f3c9e4d21a0b7c88",
-      "kind": "predicate_boundary",
-      "file": "src/pricing.rs",
-      "line": 88,
-      "owner": "src/pricing.rs::discounted_total",
-      "expression": "amount >= discount_threshold",
-      "required_discriminator": {
-        "kind": "boundary_value",
-        "description": "amount >= discount_threshold"
-      },
-      "expected_sink": {
-        "kind": "return_value"
-      }
-    }
-  ]
-}
-```
-
-Field contract:
-
-- `schema_version` â€” currently `"0.1"`. Bumping requires updating this section,
-  the renderer (`crates/ripr/src/output/repo_seams.rs`), and any downstream
-  consumers in lockstep.
-- `scope` â€” always `"repo"` for this artifact. Distinguishes the repo seam
-  inventory from diff-scoped findings.
-- `seam_id` â€” 16-char lowercase hex. FNV-1a 64-bit hash of
-  `file | owner | kind | byte_offset` (null-byte separators). Stable across
-  runs and file walk reorderings.
-- `kind` â€” one of `predicate_boundary`, `error_variant`, `return_value`,
-  `field_construction`, `side_effect`, `match_arm`, `call_presence`. The spec
-  also reserves `validation_branch` for a future detection PR.
-- `file` â€” repo-root-relative Unix-separator path (no leading `./`).
-- `line` â€” 1-based start line for human display only. Not part of the seam ID
-  hash; `byte_offset` is the canonical position field internally.
-- `owner` â€” fully-qualified module/symbol path of the enclosing function.
-  Backslashes from native paths are normalized to forward slashes before
-  hashing. Test functions (e.g., `#[test] fn` inside `#[cfg(test)] mod tests`)
-  are excluded.
-- `expression` â€” verbatim source-code text at the seam origin. Surfaced for
-  human review; not part of the seam ID hash.
-- `required_discriminator.kind` â€” `boundary_value`, `error_variant`,
-  `return_value`, `field_value`, `effect`, `match_arm_taken`, or `call_site`.
-- `required_discriminator.description` â€” human-readable summary of what a test
-  must observe to grip the seam.
-- `expected_sink.kind` â€” `return_value`, `output_field`, `error_channel`, or
-  `side_effect`. The spec's `unknown` sink will return when an undetermined
-  kind is detected.
-
-The repo seam inventory v1 captures every probeable production syntax shape
-and does not yet classify test grip. When the repository root is analyzed,
-repository automation and fixture data (`xtask/`, top-level `fixtures/`) are
-excluded so repo-scoped public signals represent the published `ripr` package
-surface; passing an individual fixture workspace as `--root` still analyzes
-that fixture normally. `analysis/repo-ripr-classification-v1` adds
-`SeamGripClass` and the headline-eligibility table per RIPR-SPEC-0005.
-Static output continues to forbid runtime-mutation outcome words.
-
-The Markdown sibling (`repo-seams.md`, generated alongside the JSON) is
-human-readable but follows the same contract for `kind`, `owner`, and
-`expected_sink` strings.
-
-## Repo Exposure Report
-
-`ripr check --root . --format repo-exposure-json` emits the classified seam
-inventory introduced by `analysis/repo-ripr-classification-v1`. The artifact
-lands at `target/ripr/reports/repo-exposure.json` when generated via
-`cargo xtask repo-exposure-report`.
-
-The full `repo-exposure-json` artifact is evidence-heavy by design: each seam
-can carry related tests, observed values, missing discriminator records, and the
-Lane 1 `evidence_record` projection. Large repositories should use
-`repo-exposure-summary-json` for ordinary metrics, badge, planning, or CI
-summary workflows, and reserve the full artifact for explicit deep inspection.
-
-Every producer-generated `repo-exposure-json` snapshot also carries an
-additive top-level `artifact` envelope before it is suitable for
-`ripr agent verify`:
-
-```json
-{
-  "kind": "repo_exposure",
-  "schema_version": "1",
-  "canonicalization": "raw_json_placeholder_v1",
-  "producer": {"tool": "ripr", "version": "0.10.0"},
-  "repository": {"root": "<workspace-root>", "head": "<40-hex-sha>"},
-  "analysis": {
-    "format": "repo-exposure-json",
-    "mode": "draft",
-    "base_revision": null,
-    "input_identity": "input:v4:fnv1a64:<16-hex-fingerprint>",
-    "command": "ripr check --format repo-exposure-json",
-    "profile": "draft",
-    "worktree": "clean"
-  },
-  "snapshot_identity": "snapshot:input:v4:fnv1a64:<16-hex-fingerprint>;revision:<full-head-sha>",
-  "content_sha256": "sha256:<64-hex-digest>"
-}
-```
-
-`content_sha256` commits the exact JSON bytes after replacing its one value
-with the fixed zero-digest placeholder. This is an integrity/currentness
-commitment, not a signature or runtime proof. `repository.head` and
-`analysis.worktree` are `unavailable` when the producer cannot resolve Git;
-such an artifact is disclosed but is not accepted by `agent verify`.
-`analysis.input_identity` is the portable semantic/configuration identity of
-the analysis input. It carries an explicit algorithm version and digest shape
-(`input:v4:fnv1a64:<16 lowercase hex>`) and covers the identity version,
-mode, profile (this producer binds profile to mode and states both), base
-semantics, analysis format, manifest content identities and the content
-identities of the Cargo lockfiles Git tracks (an untracked or ignored
-`Cargo.lock` is build state the seam inventory never reads), the
-repo-exposure producer-consumed configuration boundary (the three
-oracle-strength fields `oracles.snapshot_strength`,
-`oracles.mock_expectation_strength`, and `oracles.broad_error_strength` â€” the
-Rust-only seam inventory consumes nothing else from `ripr.toml`), and the
-analyzer version â€” never
-the concrete checkout root or any host-specific path spelling. Cargo manifest
-and lockfile CRLF line endings are normalized to LF for this portable identity;
-standalone CR is preserved. Two equivalent
-checkouts of the same commit under different temporary roots therefore share
-one input identity, while `repository.root` stays the concrete
-checkout-instance evidence: `agent verify` validates the declared root with
-exact canonical-path equality, so an artifact produced in one root is still
-rejected at another. The snapshot identity
-(`snapshot:<input_identity>;revision:<head>`) binds that portable input
-identity to the concrete repository head, so two clean artifacts from
-different commits have distinct snapshot identities even when their input
-identity is unchanged. Only the current `input:v4:` identity version with the
-exact `fnv1a64:<16 lowercase hex>` digest shape validates as current
-evidence; a wrong version is rejected as an unsupported input identity
-version and a wrong digest shape as a malformed input identity digest. `agent verify`
-and `agent receipt` compare the stable producer/version, base, mode, and
-profile fields separately, and reject unchanged identities when the declared
-repository commits differ. `analysis.command` and `analysis.profile` state the
-producer operation used.
-
-### Repo Exposure Summary JSON
-
-`ripr check --root . --format repo-exposure-summary-json` emits a bounded
-aggregate view over the same classified seam inventory. It does not include the
-full `seams[]` array, per-seam `evidence_record`, `related_tests`,
-`observed_values`, or `missing_discriminators` payloads.
-
-```json
-{
-  "schema_version": "0.1",
-  "format": "repo-exposure-summary-json",
-  "tool": "ripr",
-  "ripr_version": "0.8.0",
-  "scope": "repo",
-  "basis": "canonical_actionable_gap",
-  "metadata": {
-    "root": ".",
-    "base": "origin/main",
-    "head": "HEAD",
-    "mode": "draft"
-  },
-  "metrics": {
-    "raw_seams": 135812,
-    "headline_eligible_seams": 120408,
-    "canonical_gap_records": 2722,
-    "raw_actionable_seam_records": 46406,
-    "unsuppressed_exposure_gaps": 2722,
-    "suppressed_exposure_gaps": 0,
-    "grip_class": {
-      "strongly_gripped": 15404,
-      "weakly_gripped": 1800,
-      "ungripped": 0,
-      "reachable_unrevealed": 2,
-      "activation_unknown": 118606,
-      "propagation_unknown": 0,
-      "observation_unknown": 0,
-      "discrimination_unknown": 0,
-      "opaque": 0,
-      "intentional": 0,
-      "suppressed": 0
-    }
-  },
-  "reason_breakdown": {
-    "actionability": {
-      "add_focused_test": 200,
-      "extend_related_test": 2100,
-      "upgrade_assertion": 422
-    },
-    "gap_state": {
-      "actionable": 46406,
-      "already_observed": 15404,
-      "static_limitation": 0
-    },
-    "seam_kind": {
-      "predicate_boundary": 1200,
-      "return_value": 900,
-      "field_construction": 622
-    },
-    "grip_class": {
-      "strongly_gripped": 15404,
-      "weakly_gripped": 1800,
-      "ungripped": 0,
-      "reachable_unrevealed": 2,
-      "activation_unknown": 118606,
-      "propagation_unknown": 0,
-      "observation_unknown": 0,
-      "discrimination_unknown": 0,
-      "opaque": 0,
-      "intentional": 0,
-      "suppressed": 0
-    }
-  },
-  "limits": {
-    "top_files_limit": 25,
-    "top_files_total": 130,
-    "top_files_truncated": true
-  },
-  "top_files": [
-    {
-      "file": "src/pricing.rs",
-      "raw_seams": 480,
-      "headline_eligible_seams": 220,
-      "canonical_gap_records": 30,
-      "unsuppressed_exposure_gaps": 30,
-      "suppressed_exposure_gaps": 0,
-      "reason_breakdown": {
-        "actionability": {
-          "extend_related_test": 20,
-          "upgrade_assertion": 10
-        },
-        "grip_class": {
-          "strongly_gripped": 260,
-          "weakly_gripped": 20,
-          "activation_unknown": 200
-        }
-      }
-    }
-  ]
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"` for the bounded summary shape.
-- `format` - always `"repo-exposure-summary-json"`.
-- `scope` - always `"repo"`.
-- `basis` - always `"canonical_actionable_gap"`; the headline metric is the
-  unique canonical actionable gap count, not raw seam inventory.
-- `metadata.root`, `metadata.base`, `metadata.head`, and `metadata.mode` -
-  command context for the analyzed root. `head` records the selected head ref
-  as `HEAD`; this format does not resolve a commit hash.
-- `metrics.raw_seams` - number of classified seam records inspected.
-- `metrics.headline_eligible_seams` - raw seam records whose `grip_class` is
-  headline-eligible.
-- `metrics.canonical_gap_records` - unique canonical gap identities assigned to
-  headline-eligible seam records.
-- `metrics.raw_actionable_seam_records` - raw seam records whose canonical item
-  is actionable and carries a repair route, verify command, and receipt command.
-- `metrics.unsuppressed_exposure_gaps` - unique actionable canonical gap count.
-  This is the summary counterpart of the public repo badge basis.
-- `metrics.suppressed_exposure_gaps` - raw seam records classified as
-  `suppressed`.
-- `metrics.grip_class` - all 11 `SeamGripClass` count buckets.
-- `reason_breakdown.actionability` - unique actionable canonical gap counts by
-  canonical item actionability, such as `add_focused_test`,
-  `extend_related_test`, and `upgrade_assertion`.
-- `reason_breakdown.gap_state` - raw canonical item counts by state, such as
-  `actionable`, `already_observed`, `internal_only`, `static_limitation`, and
-  `unknown`.
-- `reason_breakdown.seam_kind` - unique actionable canonical gap counts by seam
-  kind.
-- `reason_breakdown.grip_class` - same all-bucket class counts as
-  `metrics.grip_class`, repeated for consumers that read breakdowns only.
-- `limits.top_files_limit` - maximum number of `top_files[]` rows returned.
-  The current limit is 25.
-- `limits.top_files_total` and `limits.top_files_truncated` - total file rows
-  before truncation and whether the emitted list is capped.
-- `top_files[]` - bounded file summaries sorted by actionable canonical gap
-  count, then headline-eligible raw seams, raw seams, and file path. File-level
-  `unsuppressed_exposure_gaps` counts unique actionable canonical gap IDs within
-  that file.
-
-The summary format is additive. It does not replace `repo-exposure-json`, which
-remains the full per-seam evidence artifact for deep debugging and downstream
-consumers that require complete evidence records.
-
-`cargo xtask repo-exposure-summary-report` wraps this format with a local
-timeout. The timeout is controlled by `RIPR_REPO_EXPOSURE_SUMMARY_TIMEOUT_MS`
-(default: 240000). If the command times out, exits before a complete summary, or
-cannot start, it writes a warning artifact to the same
-`target/ripr/reports/repo-exposure-summary.json` path with:
-
-- `basis: "limited_runtime_status"`
-- `run_status` such as `limited_timeout`, `limited_runner_failure`, or
-  `limited_incomplete_input`
-- `runtime_status.downstream_consumable: false`
-- an empty `metrics` object and empty `top_files` array
-- `run_limitations[]` with command, timeout, duration, exit code, and stderr/stdout
-  excerpts
-
-Consumers must not treat limited artifacts as canonical actionable counts.
-
-```json
-{
-  "schema_version": "0.3",
-  "scope": "repo",
-  "metrics": {
-    "seams_total": 9355,
-    "headline_eligible": 6114,
-    "strongly_gripped": 3241,
-    "weakly_gripped": 1756,
-    "ungripped": 0,
-    "reachable_unrevealed": 2,
-    "activation_unknown": 4356,
-    "propagation_unknown": 0,
-    "observation_unknown": 0,
-    "discrimination_unknown": 0,
-    "opaque": 0,
-    "intentional": 0,
-    "suppressed": 0
-  },
-  "seams": [
-    {
-      "seam_id": "f3c9e4d21a0b7c88",
-      "kind": "predicate_boundary",
-      "file": "src/pricing.rs",
-      "line": 88,
-      "owner": "src/pricing.rs::discounted_total",
-      "expression": "amount >= discount_threshold",
-      "grip_class": "weakly_gripped",
-      "headline_eligible": true,
-      "evidence": {
-        "reach": "yes",
-        "activate": "yes",
-        "propagate": "yes",
-        "observe": "yes",
-        "discriminate": "weak"
-      },
-      "related_tests_total": 47,
-      "related_tests": [
-        {
-          "name": "below_threshold_has_no_discount",
-          "file": "tests/pricing_tests.rs",
-          "line": 12,
-          "oracle_kind": "exact_value",
-          "oracle_strength": "strong",
-          "evidence_summary": "exact value assertion",
-          "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
-        }
-      ],
-      "observed_values": ["50", "10000"],
-      "missing_discriminators": [
-        {
-          "value": "input that hits the boundary: amount >= discount_threshold",
-          "reason": "predicate uses an equality-bearing operator; tests should exercise the boundary case"
-        },
-        {
-          "value": "discount_threshold (equality boundary)",
-          "reason": "observed values do not include the equality-boundary case for this predicate"
-        }
-      ],
-      "evidence_record": {
-        "schema_version": "0.1",
-        "seam_id": "f3c9e4d21a0b7c88",
-        "canonical_gap_id": "gap:67fc764ba37d77bd",
-        "canonical_gap_group_size": 1,
-        "canonical_gap_reason": "same owner, seam kind, flow sink, missing discriminator, and assertion shape",
-        "raw_findings": [
-          {
-            "file": "src/pricing.rs",
-            "line": 88,
-            "kind": "weakly_gripped",
-            "expression": "amount >= discount_threshold",
-            "probe_kind": "predicate_boundary",
-            "source_id": "f3c9e4d21a0b7c88",
-            "evidence_record_ref": "f3c9e4d21a0b7c88"
-          }
-        ],
-        "canonical_item": {
-          "canonical_gap_id": "gap:67fc764ba37d77bd",
-          "raw_group_size": 1,
-          "canonical_item_kind": "gap",
-          "evidence_class": "predicate_boundary",
-          "gap_state": "actionable",
-          "actionability": "extend_related_test",
-          "group_reason": "same owner, seam kind, flow sink, missing discriminator, and assertion shape",
-          "primary_anchor": {
-            "file": "src/pricing.rs",
-            "line": 88,
-            "kind": "weakly_gripped",
-            "source_id": "f3c9e4d21a0b7c88",
-            "reason": "canonical_group_primary_raw_finding"
-          },
-          "raw_spans": [
-            {
-              "file": "src/pricing.rs",
-              "start_line": 88,
-              "end_line": 88,
-              "kind": "weakly_gripped",
-              "source_id": "f3c9e4d21a0b7c88"
-            }
-          ],
-          "why": "extend the nearest related test with the missing discriminator",
-          "recommended_repair": "Add or strengthen `assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)` for `input that hits the boundary: amount >= discount_threshold` in `tests/pricing_tests.rs` as `discounted_total_boundary_discriminator`.",
-          "repair_route": {
-            "repair_kind": "add_boundary_assertion",
-            "target_test_type": "boundary_discriminator",
-            "suggested_assertion": "assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)"
-          },
-          "related_test": {
-            "name": "below_threshold_has_no_discount",
-            "file": "tests/pricing_tests.rs",
-            "line": 12,
-            "reason": "direct_owner_call"
-          },
-          "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json",
-          "confidence": {
-            "basis": "static_only",
-            "notes": ["no imported runtime calibration data"]
-          }
-        },
-        "owner": "src/pricing.rs::discounted_total",
-        "location": {
-          "file": "src/pricing.rs",
-          "line": 88
-        },
-        "seam_kind": "predicate_boundary",
-        "grip_class": "weakly_gripped",
-        "headline_eligible": true,
-        "evidence_path": {
-          "reach": {
-            "state": "yes",
-            "confidence": "medium",
-            "summary": "owner is reached"
-          },
-          "activate": {
-            "state": "yes",
-            "confidence": "medium",
-            "summary": "boundary values were observed"
-          },
-          "propagate": {
-            "state": "yes",
-            "confidence": "medium",
-            "summary": "changed value flows to return value"
-          },
-          "observe": {
-            "state": "yes",
-            "confidence": "medium",
-            "summary": "related test observes returned value"
-          },
-          "discriminate": {
-            "state": "weak",
-            "confidence": "medium",
-            "summary": "equality discriminator is missing"
-          }
-        },
-        "assertion_texts": {
-          "12": "discounted_total(50, 100)"
-        },
-        "observed_values": [
-          {
-            "value": "50",
-            "line": 12,
-            "context": "function_argument"
-          }
-        ],
-        "missing_discriminators": [
-          {
-            "value": "discount_threshold (equality boundary)",
-            "reason": "observed values do not include the equality-boundary case for this predicate",
-            "flow_sink": null
-          }
-        ],
-        "related_tests_total": 47,
-        "related_tests": [
-          {
-            "name": "below_threshold_has_no_discount",
-            "file": "tests/pricing_tests.rs",
-            "line": 12,
-            "oracle_kind": "exact_value",
-            "oracle_strength": "strong",
-            "evidence_summary": "exact value assertion",
-            "oracle_semantics": {
-              "observes": "the exact value or value pattern asserted by the test",
-              "missing": "no obvious value-shape discriminator gap under static scope",
-              "upgrade_suggestion": null
-            },
-            "relation_reason": "direct_owner_call",
-            "relation_confidence": "high"
-          }
-        ],
-        "recommendation": {
-          "action": "write_targeted_test",
-          "reason": "extend the nearest related test with the missing discriminator",
-          "recommended_test": {
-            "name": "discounted_total_boundary_discriminator",
-            "file": "tests/pricing_tests.rs",
-            "reason": "place the new targeted test next to the nearest strong related test"
-          },
-          "nearest_test_to_imitate": {
-            "name": "below_threshold_has_no_discount",
-            "file": "tests/pricing_tests.rs",
-            "line": 12,
-            "oracle_kind": "exact_value",
-            "oracle_strength": "strong",
-            "evidence_summary": "exact value assertion",
-            "oracle_semantics": {
-              "observes": "the exact value or value pattern asserted by the test",
-              "missing": "no obvious value-shape discriminator gap under static scope",
-              "upgrade_suggestion": null
-            },
-            "relation_reason": "direct_owner_call",
-            "relation_confidence": "high"
-          },
-          "candidate_values": [
-            {
-              "value": "discount_threshold (equality boundary)",
-              "reason": "observed values do not include the equality-boundary case for this predicate"
-            }
-          ],
-          "assertion_shape": {
-            "kind": "exact_return_value",
-            "example": "assert_eq!(actual, expected)"
-          },
-          "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json"
-        },
-        "actionability": {
-          "class": "actionable_related_test_extension",
-          "reason": "extend the nearest related test with the missing discriminator",
-          "has_concrete_guidance": true,
-          "signals": {
-            "missing_discriminator": true,
-            "candidate_value": true,
-            "assertion_shape": true,
-            "related_test": true,
-            "recommended_test_target": true,
-            "verification_command": true
-          }
-        },
-        "calibration": {
-          "availability": "not_imported",
-          "confidence": "unknown",
-          "agreement": "no_runtime_data"
-        },
-        "static_limitations": [],
-        "presentation_text": null
-      }
-    }
-  ]
-}
-```
-
-Field contract:
-
-- `schema_version` â€” currently `"0.3"`. Bumping requires updating this
-  section, the renderer (`crates/ripr/src/output/repo_exposure.rs`), and
-  any downstream consumers in lockstep. `0.1` â†’ `0.2`: per-related-test
-  entries gained `relation_reason` and `relation_confidence` fields
-  (`analysis/related-test-precision-v1`). `0.2` -> `0.3`: seams gained
-  the additive `evidence_record` projection (`RIPR-SPEC-0021`) while
-  preserving existing top-level seam fields. `relation_reason` is an
-  additive string enum within `0.3`; `helper_owner_call` extends the
-  existing relation taxonomy without changing the field shape.
-- `scope` â€” always `"repo"`.
-- `run_status` â€” always present; one of `"complete"` or
-  `"seam_limit_applied"`. `"complete"` means the run analyzed all
-  seams. `"seam_limit_applied"` means `RIPR_REPO_EXPOSURE_SEAM_LIMIT`
-  truncated the inventory. Consumers must read `run_status` before
-  treating counts as complete-repo totals. Added as an additive field
-  within schema version `0.3` per RIPR-SPEC-0074.
-- `limitations[]` â€” present when repo exposure has a named run limitation or
-  guidance disclosure. Consumers must branch on `category`.
-  - `category: "repo_seam_limit_applied"` appears when `run_status` is
-    `"seam_limit_applied"`. It carries `seams_analyzed`, `seams_total`,
-    `limit_source`, `control`, and `repair_route`. `limit_source` is
-    `"default"` when the cap came from the built-in default
-    (`DEFAULT_REPO_EXPOSURE_SEAM_LIMIT = 10_000`) and `"configured"` when
-    `RIPR_REPO_EXPOSURE_SEAM_LIMIT` was explicitly set in the environment.
-  - `category: "typescript_diff_first"` appears when a TS/JS-predominant
-    workspace has TS/JS files, no Rust files, and zero classified seams.
-    `run_status` remains `"complete"` because the Rust repo-exposure scan
-    completed. It carries `ts_file_count`, `repair_route`, and the optional
-    nested `typescript_readiness` object.
-  - `category: "python_diff_first"` appears when a workspace has Python
-    files, no Rust files, and zero classified seams. `run_status` remains
-    `"complete"`. It carries `python_file_count`, `authority_boundary`
-    (`preview_advisory_only`), `analysis_model` (`diff_first`),
-    `non_claims`, and `repair_route`. The route points at diff-scoped
-    `ripr check`. This inventory still does not render Python findings, so
-    a zero-seam result is not a clean Python result. It does not claim that
-    full-repo Python analysis is unmodeled.
-  - `typescript_readiness.source` is
-    `"repo_exposure_typescript_readiness.v1"`.
-  - `typescript_readiness.authority_boundary` is
-    `"preview_advisory_only"`.
-  - `typescript_readiness.analysis_model` is `"diff_first"`.
-  - `typescript_readiness.source_file_count` is the count of TS/JS files not
-    detected as tests.
-  - `typescript_readiness.test_file_count` is the count of detected TS/JS test
-    files.
-  - `typescript_readiness.package_root_count` is the count of distinct package
-    roots resolved from detected TS/JS files.
-  - `typescript_readiness.package_confidence` is `none`, `low`, `medium`, or
-    `high`; it is the highest package discovery confidence across detected
-    TS/JS files.
-  - `typescript_readiness.runner_status` is `no_tests_detected`, `resolved`,
-    `partial`, or `unresolved`.
-  - `typescript_readiness.verify_command_count` is the number of detected test
-    files with a concrete verify command.
-  - `typescript_readiness.top_blocker` is the top missing readiness signal, or
-    `null`.
-  - `typescript_readiness.non_claims[]` states that the card does not emit
-    full-repo TypeScript seams, run TypeScript tests, or create gate/badge
-    authority.
-- `metrics` â€” totals plus a per-`SeamGripClass` count bucket. Keys mirror
-  `SeamGripClass::as_str()`. The renderer emits all 11 buckets even when
-  zero so consumers can plot stable bar charts.
-- `metrics.headline_eligible` â€” count of seams whose `grip_class`
-  satisfies `SeamGripClass::is_headline_eligible()` per RIPR-SPEC-0005.
-- `seams[].grip_class` â€” one of the 11 `SeamGripClass` strings:
-  `strongly_gripped`, `weakly_gripped`, `ungripped`, `reachable_unrevealed`,
-  `activation_unknown`, `propagation_unknown`, `observation_unknown`,
-  `discrimination_unknown`, `opaque`, `intentional`, `suppressed`.
-- `seams[].evidence` â€” per-stage `StageState` strings: `yes`, `weak`,
-  `no`, `unknown`, `opaque`, `not_applicable`.
-- `seams[].related_tests_total` â€” number of related tests the analyzer
-  matched. The `related_tests` array is **capped** for artifact size; see
-  `MAX_RELATED_TESTS_PER_SEAM_JSON` in the renderer (currently 8). The
-  total field always carries the unbounded count.
-- `seams[].related_tests[].relation_reason` â€” single highest-priority
-  reason this test is related to the seam. One of:
-  `direct_owner_call`, `helper_owner_call`, `assertion_target_affinity`,
-  `same_test_file`, `same_module`, `owner_named_test`,
-  `import_path_affinity`, `fixture_owner_affinity`. Detection lives in
-  `crates/ripr/src/analysis/test_grip_evidence.rs`.
-  `helper_owner_call` is limited to a one-hop helper or wrapper that directly
-  calls the owner. Supported shapes are same-file helpers, test-local helpers,
-  explicitly qualified test-support helpers, and unambiguous same-package
-  production wrappers. The helper either carries the specific owner token in
-  its name or is a direct delegating wrapper whose supported owner calls all
-  target one specific owner name. Generic owner names, skipped-owner wrappers,
-  mixed-owner wrappers, ambiguous production wrapper names, local test-helper
-  shadows, and two-hop wrapper chains remain non-activating static limitations.
-- `seams[].related_tests[].relation_confidence` â€” `high`, `medium`,
-  `low`, or `opaque`. Mapping from reason: `direct_owner_call`,
-  `helper_owner_call` â†’ `high`; `assertion_target_affinity`,
-  `same_test_file`, `same_module`, `owner_named_test`, and
-  `import_path_affinity` â†’ `medium`; `fixture_owner_affinity` â†’ `low`.
-  Independent of `oracle_strength`: a `low` relation can still carry a strong
-  oracle.
-- The `related_tests` array is **ranked** by
-  `(confidence, reason_priority, oracle_strength, activation_overlap, file,
-  name, line)` so the highest-confidence tests appear first, then the nearest
-  strong imitation target wins within otherwise equivalent relationships.
-  `activation_overlap` is a static tie-breaker from already observed call
-  values, such as a predicate-boundary equality call. `related_tests_total` is
-  unaffected by ranking.
-- `seams[].observed_values` â€” statically resolved scalar values seen in
-  owner-call arguments across related tests. In addition to direct literals,
-  Rust predicate boundaries may carry exact values from source-ordered direct
-  field assignments whose right-hand side is a same-file literal constant or
-  that constant plus/minus a bounded integer offset. The write must be an
-  unconditional function-body statement with no intervening explicit mutable
-  borrow before the owner call. Other bare identifiers, helper-derived values,
-  conditional writes, invalidated values, and ambiguous field writes are
-  intentionally excluded.
-- `seams[].missing_discriminators` â€” per-rule hypothesis strings (e.g.,
-  the equality-boundary case for predicate seams). Empty when no rule
-  fires.
-- `seams[].evidence_record` - additive Lane 1 evidence spine for the seam.
-  It is schema versioned independently from repo exposure and currently uses
-  `schema_version: "0.1"`.
-- `seams[].evidence_record.canonical_gap_id` - generated canonical
-  behavioral gap identity for headline-eligible gap classes, or `null` for
-  strong, opaque, intentional, and suppressed seams. Line numbers remain
-  locators, not durable canonical identity.
-- `seams[].evidence_record.canonical_gap_group_size` - number of raw seams
-  in this repo-exposure snapshot that share the same canonical gap identity,
-  or `null` when no canonical gap identity is assigned.
-- `seams[].evidence_record.canonical_gap_reason` - grouping reason for the
-  canonical identity, or `null` when no canonical gap identity is assigned.
-- `seams[].evidence_record.raw_findings` - supporting raw analyzer signals
-  that contributed to this record. The current seam-native projection emits
-  one raw finding per seam; later class-specific grouping may attach multiple
-  raw findings to one canonical item.
-- `seams[].evidence_record.canonical_item` - additive finding-alignment
-  projection with `gap_state`, class-scoped `actionability`, `why`,
-  `recommended_repair`, nullable structured `repair_route`, `related_test`,
-  `verify_command`, nullable `receipt_command`, nullable `repair_command`,
-  `confidence`, raw group size,
-  nullable `primary_anchor`, and `raw_spans`. Actionable canonical items carry
-  `repair_route.repair_kind`, `target_test_type`, and `suggested_assertion`;
-  no-action, observed, limitation, and unknown items keep `repair_route: null`.
-  Actionable items also carry a safe agent receipt command when the canonical
-  repair/verify loop is available, so public-projection readiness can be
-  assessed from canonical evidence rather than raw findings. `repair_command`
-  is `ripr agent repair --root . --seam-id <id> --phase before` only when the
-  item is actionable and the seam passes the fail-closed repair-packet flip
-  (#3906); every other item carries `null`. Downstream
-  surfaces should render this canonical item before treating raw findings as
-  separate work.
-- `seams[].evidence_record.canonical_item.command_specs` - additive typed
-  descriptions for the canonical `verify_command` and `receipt_command` when
-  RIPR owns those routes. Each spec carries ordered argv, policies, expected
-  writes, and an authority boundary. A verify command that writes through shell
-  redirection is marked `execution_mode: "shell_required"`; receipt `--out`
-  is represented as direct argv. These descriptions are not execution
-  permission, and arbitrary preview test commands remain legacy advisory text
-  until their producer supplies an executable boundary.
-- `seams[].evidence_record.canonical_item.primary_anchor` - preferred
-  placement hint for downstream surfaces when the canonical item has a safe
-  source location. It is `null` only when RIPR cannot safely name a placement.
-- `seams[].evidence_record.canonical_item.raw_spans[]` - source-span summary
-  for every raw finding contributing to the canonical item. These spans are
-  supporting evidence, not independent user-facing actions.
-- `seams[].evidence_record.canonical_item.static_limitations[]` - canonical
-  item-local copy of named analyzer limitations for static-limitation and
-  unknown states. Downstream canonical-item consumers may use these category
-  and repair-route rows to explain why an item is not actionable, but must not
-  treat them as user test debt.
-  `field_assignment_value_unresolved` routes to
-  `analysis/field-assignment-value-resolution` when a direct Rust field write
-  is present but its value is outside the safe literal/constant-offset subset.
-- `seams[].evidence_record.evidence_path` - typed reach, activate,
-  propagate, observe, and discriminate stages. Each stage carries `state`,
-  `confidence`, and `summary`.
-- `seams[].evidence_record.observed_values`,
-  `missing_discriminators`, and `related_tests` - structured copies of
-  existing seam evidence, including related-test relation fields. The
-  nested `related_tests` array is capped like the top-level array and keeps
-  `related_tests_total`.
-- `seams[].evidence_record.related_tests[].oracle_semantics` - structured
-  oracle-shape explanation with `observes`, `missing`, and nullable
-  `upgrade_suggestion`. Weak, broad, smoke-only, and unknown oracle shapes
-  name the behavior they observe, the discriminator they fail to observe, and
-  the assertion upgrade RIPR recommends for this seam kind. The upgrade
-  suggestion is strength-gated (#3731): a `strong` oracle already
-  discriminates, so its `upgrade_suggestion` is `null`; medium-or-below
-  keeps the recommendation.
-- `seams[].evidence_record.recommendation` - bounded test-intent guidance
-  derived from existing evidence: recommended test target, nearest test to
-  imitate, candidate values, assertion shape, and verification command when
-  the seam has concrete guidance.
-- `seams[].evidence_record.actionability` - advisory classification plus
-  boolean signals showing which pieces of guidance are present. It does not
-  change gate or baseline policy.
-- `seams[].evidence_record.calibration` - placeholder static/runtime
-  confidence context. `no_runtime_data` means no imported runtime
-  calibration was supplied; it does not imply runtime confirmation.
-- `seams[].evidence_record.static_limitations` - unknown or opaque static
-  evidence stages that should be treated as analyzer limitations rather than
-  focused-test instructions. Each entry carries the original `stage`, `state`,
-  and `reason` plus a normalized `category` and `repair_route` so Lane 1 can
-  group analyzer limits without treating them as user test gaps.
-  Predicate boundaries whose activation operand is local, member-access,
-  iterator-derived, or computed use category
-  `activation_boundary_input_unresolved`. Iterator-derived operands route to
-  `analysis/iterator-boundary-operand-resolution`; member-access operands route
-  to `analysis/local-member-boundary-operand-resolution`; local or computed
-  operands route to `analysis/local-computed-boundary-operand-resolution`.
-  They must not emit exact boundary candidate values or public repair packets.
-- `seams[].evidence_record.presentation_text` - reserved presentation-text
-  evidence-class projection. It is `null` until a fixture-backed presentation
-  text slice classifies visibility, observer shape, and output actionability.
-
-The fixture contract corpus at
-`fixtures/boundary_gap/expected/evidence-record-contract/corpus.json` pins
-representative `evidence_record` v0.1 records for predicate boundaries, exact
-error variants, strong exact-value evidence, broad error assertions, field and
-whole-object oracles, snapshot evidence, side-effect observers, opaque static
-limitations, generated canonical gap identity, and the current
-`no_runtime_data` calibration placeholder. Unit and repo-exposure tests pin the
-additive `raw_findings`, `canonical_item`, and `presentation_text` alignment
-fields before later presentation-text grouping changes. `cargo xtask check-fixture-contracts`
-validates the required case matrix and field shape; `cargo xtask
-check-output-contracts` validates the `evidence_record` schema version in code,
-docs, and the corpus.
-
-The Markdown sibling (`repo-exposure.md`) prints a metrics table plus
-the top headline-eligible seams (capped at 50). Both formats are
-generated together by `cargo xtask repo-exposure-report`.
-
-This report shows static test-grip evidence for repo seams. Runtime
-confirmation via `cargo-mutants` is a separate calibration step
-(`calibration/cargo-mutants-v1`). Static-language constraints from
-RIPR-SPEC-0005 still apply: the report never uses runtime-mutation
-outcome words.
-
-## Evidence Health Report
-
-`ripr evidence-health --root .` summarizes Lane 1 analyzer evidence health
-without changing analyzer behavior. The same report lands at
-`target/ripr/reports/evidence-health.json` and
-`target/ripr/reports/evidence-health.md` when generated through
-`cargo xtask evidence-health`.
-
-The xtask facade bounds both the preflight `cargo build -p ripr` phase and the
-live `ripr evidence-health` subprocess with `RIPR_EVIDENCE_HEALTH_TIMEOUT_MS`
-(default 4 minutes). If either phase times out, exits before a complete report
-is available, or the xtask runner cannot start, capture, poll, or read the
-child process, xtask discards stale or partial outputs and writes warning JSON
-and Markdown with `status = "warn"`, phase context such as
-`evidence_health_build` or `evidence_health_generation`, and a named
-`evidence_health_timeout`, `evidence_health_incomplete`, or
-`evidence_health_runner_error` `run_limitations[]` entry. Runner/capture errors
-use `inputs.generation.status = "runner_error"` and the limitation category
-`evidence_health_runner_error`. The default is intentionally below common
-5-minute validation shells so pathological live runs can write bounded warning
-artifacts instead of being killed before `evidence-health.json` / `.md` exist.
-while pathological runs still produce bounded diagnostics before abnormal
-termination can drop the artifact. During
-generation, xtask enables repo-exposure latency tracing so timeout artifacts can
-include analyzer phase breadcrumbs when available. Limited artifacts expose those
-breadcrumbs as bounded `latency_trace_events_total` and `latency_trace_tail`
-fields on both `inputs.generation` and `run_limitations[]`, so operators can see
-which repo-exposure phase was active without scraping stderr. That limited
-artifact is diagnostic only; it does not claim user test debt from missing health
-counts.
-
-```json
-{
-  "schema_version": "0.2",
-  "tool": "ripr",
-  "scope": "repo",
-  "status": "advisory",
-  "inputs": {
-    "root": ".",
-    "mutation_calibration": "target/ripr/reports/mutation-calibration.json"
-  },
-  "metrics": {
-    "seams_total": 9355,
-    "headline_eligible_total": 6114,
-    "weakly_gripped_total": 1756,
-    "ungripped_total": 0,
-    "grip_class_counts": {
-      "strongly_gripped": 3241,
-      "weakly_gripped": 1756,
-      "ungripped": 0,
-      "reachable_unrevealed": 2,
-      "activation_unknown": 4356,
-      "propagation_unknown": 0,
-      "observation_unknown": 0,
-      "discrimination_unknown": 0,
-      "opaque": 0,
-      "intentional": 0,
-      "suppressed": 0
-    },
-    "stage_state_counts": {
-      "reach": {
-        "yes": 4999,
-        "weak": 0,
-        "no": 0,
-        "unknown": 4356,
-        "opaque": 0,
-        "not_applicable": 0
-      }
-    },
-    "unknown_stage_counts": {
-      "reach": 4356,
-      "activate": 4356,
-      "propagate": 0,
-      "observe": 0,
-      "discriminate": 0
-    },
-    "unknown_stop_reason_counts": {
-      "activation_unknown": 4356,
-      "propagation_unknown": 0,
-      "observation_unknown": 0,
-      "discrimination_unknown": 0,
-      "opaque": 0
-    },
-    "missing_discriminators_total": 1756,
-    "seams_with_missing_discriminators": 1756,
-    "missing_discriminator_counts": [
-      {"label": "amount == threshold", "count": 4}
-    ],
-    "observed_values_total": 740,
-    "seams_with_observed_values": 310,
-    "observed_value_context_counts": {
-      "function_argument": 600,
-      "assertion_argument": 40,
-      "builder_method": 30,
-      "table_row": 50,
-      "enum_variant": 12,
-      "return_value": 8,
-      "unknown": 0
-    },
-    "related_tests_total": 2200,
-    "seams_with_related_tests": 1720,
-    "related_test_confidence_counts": {
-      "high": 910,
-      "medium": 1060,
-      "low": 220,
-      "opaque": 10
-    },
-    "oracle_strength_counts": {
-      "strong": 800,
-      "medium": 410,
-      "weak": 600,
-      "smoke": 300,
-      "none": 80,
-      "unknown": 10
-    },
-    "oracle_kind_counts": {
-      "exact_value": 700,
-      "exact_error_variant": 60,
-      "whole_object_equality": 40,
-      "snapshot": 120,
-      "relational_check": 180,
-      "broad_error": 250,
-      "smoke_only": 300,
-      "mock_expectation": 40,
-      "unknown": 10
-    },
-    "opaque_oracle_count": 10
-  },
-  "evidence_quality": {
-    "canonical_gap_groups_total": 4800,
-    "duplicate_looking_groups_total": 240,
-    "largest_canonical_groups": [
-      {
-        "canonical_gap_id": "gap:37d49d135d41fb52",
-        "count": 18,
-        "reported_group_size": 18,
-        "owner": "crates/ripr/src/output/first_useful_action.rs::selected_from_editor_context",
-        "seam_kind": "call_presence",
-        "flow_sink": "n/a",
-        "missing_discriminator": "n/a",
-        "assertion_shape": "n/a",
-        "example_seam_id": "f013a5a5798ec6c5",
-        "example_file": "crates/ripr/src/output/first_useful_action.rs"
-      }
-    ],
-    "actionability_class_counts": {
-      "actionable_related_test_extension": 1200,
-      "static_limitation": 3600
-    },
-    "static_limitation_stage_counts": {
-      "activate": 3600
-    },
-    "static_limitation_reason_counts": [
-      {
-        "label": "No concrete activation values observed for seam `Vec::new()`",
-        "count": 255
-      }
-    ],
-    "static_limitation_category_counts": {
-      "activation_value_unresolved": 255
-    },
-    "calibration_availability_counts": {
-      "not_imported": 9355
-    },
-    "movement_availability": {
-      "records_with_seam_id": 9355,
-      "records_with_canonical_gap_id": 6114,
-      "records_with_complete_evidence_path": 9355,
-      "records_with_recommendation": 9355,
-      "records_with_verify_command": 1756
-    },
-    "top_evidence_quality_risks": [
-      {
-        "kind": "static_limitations",
-        "count": 3600,
-        "summary": "Evidence records still contain static limitations."
-      }
-    ]
-  },
-  "calibration": {
-    "status": "loaded",
-    "source": "target/ripr/reports/mutation-calibration.json",
-    "matched_total": 18,
-    "static_without_runtime_total": 120,
-    "runtime_without_static_total": 2,
-    "ambiguous_file_line_total": 1,
-    "unmatched_runtime_total": 2
-  },
-  "top_static_limitations": [
-    {
-      "kind": "missing_discriminator",
-      "count": 1756,
-      "summary": "At least one discriminator remains missing for the seam.",
-      "example_seam_id": "f3c9e4d21a0b7c88"
-    }
-  ]
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.2"`. `0.2` changes free-form
-  `missing_discriminator_counts` and `static_limitation_reason_counts` from
-  JSON objects to `{label, count}` rows so downstream consumers do not treat
-  analyzer evidence strings as stable field names.
-- `scope` - always `"repo"`.
-- `status` - `"advisory"` for complete analyzer-health reports and `"warn"`
-  for bounded xtask fallback artifacts. This report is an analyzer-health view,
-  not a gate decision.
-- `inputs.root` - the analyzed workspace root as supplied to the command.
-- `inputs.mutation_calibration` - optional imported calibration report path;
-  `null` when not provided.
-- `inputs.generation` - present on bounded xtask fallback artifacts. It records
-  `phase` (`evidence_health_build` or `evidence_health_generation`), bounded
-  command, `status` (`fail`, `timeout`, `pass_incomplete`, or `runner_error`),
-  timeout/duration, exit code when available, output byte counts, optional
-  `failure_reason`, bounded stdout/stderr excerpts,
-  `latency_trace_events_total`, and `latency_trace_tail` repo-exposure phase
-  diagnostics when available. Complete `ripr evidence-health` reports omit this
-  wrapper field and keep the normal analyzer-health payload, so the current
-  contract does not emit an `"ok"` generation status.
-- `metrics.grip_class_counts` - all `SeamGripClass` buckets, including zero
-  counts.
-- `metrics.stage_state_counts` - per-stage `StageState` buckets for `reach`,
-  `activate`, `propagate`, `observe`, and `discriminate`.
-- `metrics.unknown_stage_counts` - unknown or opaque counts by evidence stage.
-- `metrics.unknown_stop_reason_counts` - counts of unknown/opaque
-  `SeamGripClass` buckets. This is intentionally repo-seam terminology; diff
-  finding stop-reason strings are not reinterpreted here.
-- `metrics.missing_discriminator_counts` - aggregate `{label, count}` rows for
-  missing discriminator value text. It is row-shaped because the labels are
-  analyzer evidence strings and can collide in case-insensitive JSON consumers.
-- `metrics.observed_value_context_counts` - aggregate counts keyed by
-  `ValueContext::as_str()`.
-- `metrics.related_test_confidence_counts` - `high`, `medium`, `low`, and
-  `opaque` related-test confidence buckets.
-- `metrics.oracle_strength_counts` and `metrics.oracle_kind_counts` - aggregate
-  oracle evidence observed on related tests.
-- `evidence_quality` - audit-style fields derived from
-  `seams[].evidence_record` and canonical gap identity, without changing
-  classifications or policy.
-- `evidence_quality.canonical_gap_groups_total` - number of distinct canonical
-  gap IDs among headline-eligible evidence records.
-- `evidence_quality.duplicate_looking_groups_total` - number of canonical gap
-  groups with more than one raw seam.
-- `evidence_quality.largest_canonical_groups` - top canonical gap groups by raw
-  seam count, capped to 10 rows, including the canonical ID, reported group
-  size, owner, seam kind, flow sink, discriminator, assertion shape, and
-  example seam/file.
-- `evidence_quality.actionability_class_counts` - counts keyed by
-  `evidence_record.actionability.class`.
-- `evidence_quality.static_limitation_stage_counts` and
-  `static_limitation_reason_counts` - distributions from
-  `evidence_record.static_limitations`. Reason counts are `{label, count}` rows
-  because reasons are free-form evidence strings.
-- `evidence_quality.static_limitation_category_counts` - normalized limitation
-  categories such as `activation_value_unresolved`,
-  `activation_owner_call_absent`,
-  `activation_owner_call_absent_call_presence_target_affinity`,
-  `activation_owner_call_absent_assertion_target_affinity`,
-  `activation_owner_call_absent_affinity_only`,
-  `activation_owner_call_absent_same_file_only`,
-  `activation_owner_call_unresolved`, `constructor_field_owner_ambiguous`,
-  `opaque_helper_call`,
-  `cross_file_constant_unresolved`, `dynamic_dispatch`,
-  `unsupported_mock_shape`, `snapshot_field_unknown`, and
-  `side_effect_sink_unknown`.
-- `activation_owner_call_absent` routes to
-  `analysis/owner-call-absence-triage`; it means static analysis found related
-  context but no direct owner call, so it remains a named limitation rather than
-  user-facing test repair debt. When the related-test evidence has no direct or
-  helper owner-call relation, the category is split into
-  `activation_owner_call_absent_call_presence_target_affinity` routed to
-  `analysis/call-presence-target-affinity-owner-call-tracing` for call-presence
-  target-token affinity,
-  `activation_owner_call_absent_assertion_target_affinity` routed to
-  `analysis/assertion-target-affinity-owner-call-tracing`; return-value
-  assertion-target owner-call absence may route more narrowly to
-  `analysis/assertion-target-return-value-owner-call-tracing` while remaining
-  non-actionable,
-  `activation_owner_call_absent_affinity_only` routed to
-  `analysis/related-test-affinity-owner-call-tracing`, or
-  `activation_owner_call_absent_same_file_only` routed to
-  `analysis/same-file-owner-call-tracing` when same-file context is the
-  primary non-owner-call relation.
-  Call-presence target-affinity, related-test-affinity, and same-file owner-call
-  absence backlog packets may further split `limitation_subroute` by expression
-  shape, such as receiver-method, associated-call, or function-call
-  missing-owner-call routes, so analyzer work can distinguish local receiver
-  method evidence from free-function call tracing without making the item
-  actionable.
-- `constructor_field_owner_ambiguous` routes to
-  `analysis/constructor-field-observation`; it means an exact-field observer
-  exists but a same-name same-crate caller maps to multiple possible owners.
-  The seam remains a static limitation rather than selecting an owner or
-  presenting the field observer as actionable closure evidence.
-- `evidence_quality.calibration_availability_counts` - counts keyed by
-  `evidence_record.calibration.availability`. These are placeholder coverage
-  labels from the static record and do not imply runtime execution.
-- `evidence_quality.movement_availability` - counts of records carrying seam
-  IDs, canonical gap IDs, complete evidence paths, recommendations, and verify
-  commands for movement-aware downstream reports.
-- `evidence_quality.top_evidence_quality_risks` - largest advisory risk buckets
-  for follow-up Lane 1 work. They are measurements, not gate decisions.
-- `calibration` - availability counts from an already-produced mutation
-  calibration report when one is supplied. The evidence-health command does not
-  run mutation testing, infer thresholds, or change static classification.
-- `top_static_limitations` - the largest static evidence gaps by count, capped
-  to 10 rows and carrying one example seam ID for inspection.
-- `run_limitations` - present on bounded xtask fallback artifacts. Timeout,
-  incomplete, and runner-error rows name `evidence_health_timeout`,
-  `evidence_health_incomplete`, or `evidence_health_runner_error`, the
-  `evidence_health_build` or `evidence_health_generation` phase,
-  timeout/duration/output byte diagnostics, bounded stdout/stderr excerpts,
-  optional `failure_reason`, bounded `latency_trace_events_total` and
-  `latency_trace_tail` repo-exposure phase diagnostics when available, and a
-  repair route for inspecting runtime, stdout/stderr, or increasing
-  `RIPR_EVIDENCE_HEALTH_TIMEOUT_MS` on slower machines. If the child exits
-  successfully but the expected JSON/Markdown artifacts are missing or
-  incomplete, the fallback uses
-  `inputs.generation.status = "pass_incomplete"` and overwrites stale prior
-artifacts. If the build or generation runner cannot start, capture, poll, or
-read the child process, the fallback uses
-`inputs.generation.status = "runner_error"`,
-`run_limitations[].category = "evidence_health_runner_error"`, and still
-overwrites stale prior artifacts.
-
-The Markdown sibling prints the same summary, grip-class, top missing
-discriminator, oracle-strength, related-test confidence, evidence-quality,
-largest canonical group, actionability, static limitation distribution,
-evidence-record calibration coverage, calibration, top evidence-quality risk,
-and top limitation sections for humans. High-cardinality
-missing-discriminator and static-limitation reason details remain complete in
-JSON and are capped in Markdown. Static-language constraints still apply:
-runtime-specific labels stay confined to the optional imported calibration
-availability section.
-
-## Lane 1 Runtime Status
-
-Lane 1 repair-control reports keep the existing advisory `status` field and add
-a separate `run_status` field for completeness:
-
-```text
-full
-limited_timeout
-limited_runner_failure
-limited_large_cache_skip
-limited_incomplete_input
-limited_sampled_input
-limited_stale_input
-```
-
-Reports that emit this contract also include `runtime_status`:
-
-```json
-{
-  "run_status": "limited_timeout",
-  "runtime_status": {
-    "state": "limited_timeout",
-    "phase": "repo_exposure_generation",
-    "duration_ms": 120000,
-    "limit_ms": 120000,
-    "input_kind": "repo-exposure-json",
-    "input_path": null,
-    "limitation_category": "lane1_repo_exposure_timeout",
-    "repair_route": "inspect repo-exposure latency trace",
-    "downstream_consumable": false
-  }
-}
-```
-
-`run_status = "full"` means the report did not observe a completeness-affecting
-runtime limitation. Limited states must name the phase, duration or limit when
-available, an input kind or path, a limitation category, a repair route, and
-whether downstream consumers may safely use the counts. `status = "advisory"`
-still means the artifact does not change gate policy or public badge semantics.
-Downstream surfaces must read `run_status` before treating Lane 1 counts as
-complete.
-
-## Lane 1 Evidence Quality Audit
-
-`cargo xtask lane1-evidence-audit` writes a repo-local audit over generated
-`ripr check --mode instant --format repo-exposure-json`
-`seams[].evidence_record` data:
-
-```text
-target/ripr/reports/lane1-evidence-audit.json
-target/ripr/reports/lane1-evidence-audit.md
-target/ripr/reports/actionable-gaps.json
-target/ripr/reports/actionable-gaps.md
-```
-
-`cargo xtask evidence-quality-audit` is an alias. The report is advisory and
-does not change analyzer behavior, gate policy, PR/CI projection, editor UX, or
-runtime execution.
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "report": "lane1-evidence-audit",
-  "scope": "repo",
-  "status": "advisory",
-  "run_status": "full",
-  "runtime_status": {
-    "state": "full",
-    "phase": null,
-    "duration_ms": null,
-    "limit_ms": null,
-    "input_kind": null,
-    "input_path": null,
-    "limitation_category": null,
-    "repair_route": null,
-    "downstream_consumable": true
-  },
-  "inputs": {
-    "root": ".",
-    "source": "repo-exposure-json",
-    "repo_exposure_mode": "instant",
-    "repo_exposure_schema_version": "0.3",
-    "repo_exposure_generation": {
-      "command": "target/debug/ripr check --root . --mode instant --format repo-exposure-json",
-      "timeout_ms": 120000,
-      "status": "pass",
-      "failure_reason": null,
-      "duration_ms": 42000,
-      "exit_code": 0,
-      "stdout_bytes": 1048576,
-      "stderr_bytes": 4096,
-      "latency_trace_events_total": 18,
-      "latency_trace_tail": [
-        {
-          "phase": "evidence_for_seams_progress",
-          "status": "processed_5000_of_38124",
-          "duration_ms": 41000
-        }
-      ]
-    }
-  },
-  "run_limitations": [],
-  "summary": {
-    "seams_total": 9355,
-    "raw_headline_gaps": 6114,
-    "evidence_records_total": 9355,
-    "evidence_records_missing": 0,
-    "canonical_gap_groups_total": 4800,
-    "duplicate_looking_groups_total": 240,
-    "headline_without_canonical_gap_id": 12,
-    "missing_discriminators_total": 1756,
-    "static_limitations_total": 4356,
-    "related_tests_total": 2200,
-    "seams_without_related_tests": 310,
-    "low_or_opaque_top_related_tests": 48,
-    "calibrated_records": 0,
-    "uncalibrated_records": 9355
-  },
-  "finding_alignment": {
-    "source": "evidence_record.canonical_item",
-    "summary": {
-      "raw_findings": 9355,
-      "raw_signals": 9355,
-      "canonical_items": 9355,
-      "aligned_raw_findings": 9355,
-      "unaligned_raw_findings": 0,
-      "raw_to_canonical_ratio": 1.0,
-      "duplicate_groups_total": 0,
-      "actionable_gaps": 1756,
-      "already_observed": 3200,
-      "internal_no_action": 20,
-      "static_limitations": 4356,
-      "unknown": 23,
-      "calibrated_supported": 0,
-      "uncalibrated": 9355,
-      "presentation_text_total": 0,
-      "presentation_text_visibility_unknown": 0,
-      "finding_alignment_raw_signals_total": 9355,
-      "finding_alignment_canonical_items_total": 9355,
-      "finding_alignment_actionable_items_total": 1756,
-      "finding_alignment_static_limitation_total": 4356
-    },
-    "coverage": {
-      "alignment_coverage_by_class": [
-        {
-          "evidence_class": "predicate_boundary",
-          "raw_findings": 4200,
-          "canonical_items": 3900,
-          "aligned_raw_findings": 4100,
-          "unaligned_raw_findings": 100,
-          "actionable_items": 900,
-          "already_observed_items": 1700,
-          "internal_no_action_items": 20,
-          "static_limitation_items": 1200,
-          "unknown_items": 80
-        }
-      ],
-      "unaligned_raw_findings_by_class": {
-        "config_or_policy_constant": 12
-      },
-      "top_unaligned_examples": [
-        {
-          "evidence_class": "config_or_policy_constant",
-          "file": "src/policy.rs",
-          "line": 10,
-          "kind": "static_unknown",
-          "expression": "pub const POLICY_LABEL: &str = \"internal\";",
-          "reason": "missing canonical_item"
-        }
-      ],
-      "same_line_duplicate_groups": [
-        {
-          "file": "src/policy.rs",
-          "line": 10,
-          "raw_findings": 2,
-          "evidence_classes": ["config_or_policy_constant"],
-          "kinds": ["exposed", "static_unknown"],
-          "example_expression": "pub const POLICY_LABEL: &str ="
-        }
-      ],
-      "static_unknown_without_named_limitation": 0,
-      "canonical_items_without_repair_route": 0,
-      "canonical_items_without_verify_command": 120
-    },
-    "actionable_gap_top_lists": {
-      "top_actionable_gap_classes": [
-        {"label": "predicate_boundary", "count": 900}
-      ],
-      "top_actionable_files": [
-        {"label": "src/pricing.rs", "count": 42}
-      ],
-      "top_repair_kinds": [
-        {"label": "add_boundary_assertion", "count": 810}
-      ],
-      "top_missing_discriminator_kinds": [
-        {"label": "return_value", "count": 720}
-      ],
-      "top_static_limitation_reasons": [
-        {"label": "opaque helper value", "count": 1200}
-      ],
-      "top_verify_command_unknowns": [
-        {"label": "predicate_boundary", "count": 120}
-      ],
-      "top_repair_route_unknowns": []
-    },
-    "actionable_gap_packets": [
-      {
-        "canonical_gap_id": "gap:abc",
-        "evidence_class": "predicate_boundary",
-        "gap_state": "actionable",
-        "actionability": "extend_related_test",
-        "source_file": "src/pricing.rs",
-        "primary_anchor": {"file": "src/pricing.rs", "line": 42},
-        "repair_kind": "add_boundary_assertion",
-        "target_test_type": "boundary_discriminator",
-        "assertion_shape": "assert_eq!(price(/* boundary input where amount == threshold */), expected)",
-        "repair_route": {
-          "repair_kind": "add_boundary_assertion",
-          "target_test_type": "boundary_discriminator",
-          "assertion_shape": "assert_eq!(price(/* boundary input where amount == threshold */), expected)"
-        },
-        "target_test_shape": "boundary_discriminator: assert_eq!(price(/* boundary input where amount == threshold */), expected)",
-        "recommended_repair": "Add or strengthen `assert_eq!(price(/* boundary input where amount == threshold */), expected)` for `input that hits the boundary: amount == threshold` in `tests/pricing.rs` as `price_boundary_discriminator`.",
-        "why": "Related tests reach the seam but miss equality at the threshold.",
-        "related_test_or_observer": {
-          "file": "tests/pricing.rs",
-          "name": "below_threshold_has_no_discount",
-          "line": 10
-        },
-        "candidate_value_or_observer": "input that hits the boundary: amount == threshold",
-        "verify_command": "cargo xtask evidence-quality-scorecard",
-        "repair_route_source": "canonical_item.repair_route",
-        "verify_command_source": "canonical_item.verify_command",
-        "receipt_command": null,
-        "receipt_command_or_path": null,
-        "receipt_source": "missing",
-        "public_projection_eligible": false,
-        "projection_exclusion_reasons": ["missing_receipt_command"],
-        "raw_evidence_refs": [
-          {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed"}
-        ],
-        "raw_findings": [
-          {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed"}
-        ],
-        "raw_findings_supporting_only": true,
-        "static_limitations": [],
-        "confidence": {"basis": "static_only"},
-        "confidence_basis": "static_only",
-        "must_not_change": [
-          "Do not infer actionability from raw static class."
-        ],
-        "allowed_edit_surface": [
-          "tests/pricing.rs"
-        ]
-      }
-    ],
-    "actionable_gap_packet_public_projection": {
-      "scope": "emitted_actionable_gap_packets",
-      "public_projection_eligible_packets": 0,
-      "public_projection_excluded_packets": 1,
-      "projection_exclusion_reasons": [
-        {"label": "missing_receipt_command", "count": 1}
-      ]
-    },
-    "runtime_confidence_by_class": [
-      {
-        "evidence_class": "predicate_boundary",
-        "canonical_items": 900,
-        "calibrated_supported": 0,
-        "fixture_backed": 0,
-        "static_only": 900,
-        "unknown_confidence": 0,
-        "uncalibrated": 900,
-        "actionable_items": 120,
-        "static_limitation_items": 40
-      }
-    ]
-  },
-
-  "canonical_gap_groups": {
-    "total": 4800,
-    "largest": [
-      {
-        "key": "canonical:gap:abc",
-        "canonical_gap_id": "gap:abc",
-        "count": 8,
-        "reported_group_size": 8,
-        "owner": "pricing::discount",
-        "seam_kind": "predicate_boundary",
-        "flow_sink": "return_value",
-        "missing_discriminator": "amount == threshold",
-        "assertion_shape": "exact_value",
-        "example_seam_id": "f3c9e4d21a0b7c88",
-        "example_file": "src/pricing.rs"
-      }
-    ]
-  },
-  "duplicate_looking_groups": [],
-  "missing_discriminator_classes": {
-    "by_reason": [
-      {"label": "boundary value not observed", "count": 900}
-    ],
-    "by_flow_sink": {
-      "return_value": 870
-    },
-    "by_value": [
-      {"label": "amount == threshold", "count": 4}
-    ]
-  },
-  "static_limitations": {
-    "by_reason": [
-      {"label": "static evidence is opaque or unknown for this seam", "count": 1200}
-    ],
-    "by_stage": {
-      "activate": 800
-    },
-    "by_category": {
-      "activation_static_unknown": 800
-    },
-    "repair_routes": {
-      "analysis/static-limitation-taxonomy": 800
-    }
-  },
-  "oracle_semantics_distribution": {
-    "by_semantics": [
-      {
-        "label": "observes=exact return value; missing=boundary equality; upgrade=add equality boundary",
-        "count": 42
-      }
-    ],
-    "oracle_kind_counts": {
-      "exact_value": 700
-    },
-    "oracle_strength_counts": {
-      "strong": 800
-    }
-  },
-  "related_test_ranking": {
-    "all_confidence_counts": {
-      "high": 910,
-      "medium": 1060,
-      "low": 220,
-      "opaque": 10
-    },
-    "top_confidence_counts": {
-      "high": 600,
-      "medium": 900,
-      "low": 40,
-      "opaque": 8
-    },
-    "top_relation_reason_counts": {
-      "direct_owner_call": 600
-    },
-    "seams_without_related_tests": 310,
-    "low_or_opaque_top_related_tests": 48
-  },
-  "movement_availability": {
-    "records_with_seam_id": 9355,
-    "records_with_canonical_gap_id": 4800,
-    "records_with_complete_evidence_path": 9355,
-    "records_with_recommendation": 9355,
-    "records_with_verify_command": 1756
-  },
-  "calibration_availability": {
-    "availability_counts": {
-      "not_imported": 9355
-    },
-    "confidence_counts": {
-      "unknown": 9355
-    },
-    "agreement_counts": {
-      "no_runtime_data": 9355
-    },
-    "calibrated_records": 0,
-    "uncalibrated_records": 9355,
-    "runtime_confidence_by_class": [
-      {
-        "evidence_class": "predicate_boundary",
-        "canonical_items": 900,
-        "calibrated_supported": 0,
-        "fixture_backed": 0,
-        "static_only": 900,
-        "unknown_confidence": 0,
-        "uncalibrated": 900,
-        "actionable_items": 42,
-        "static_limitation_items": 0
-      }
-    ]
-  },
-  "evidence_record_field_health": [
-    {
-      "field": "canonical_gap_id",
-      "present": 4800,
-      "missing": 0,
-      "null": 4555,
-      "empty": 0
-    }
-  ],
-  "top_files_by_unresolved_evidence_debt": [
-    {
-      "file": "src/pricing.rs",
-      "debt_score": 42,
-      "headline_gaps": 10,
-      "missing_discriminators": 10,
-      "static_limitations": 5,
-      "unknown_stage_records": 12,
-      "no_related_tests": 3,
-      "low_or_opaque_top_related_tests": 2,
-      "missing_evidence_records": 0
-    }
-  ]
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"`.
-- `tool` - always `"ripr"`.
-- `report` - always `"lane1-evidence-audit"`.
-- `scope` - always `"repo"`.
-- `status` - always `"advisory"`.
-- `run_status` - Lane 1 completeness state. Values are `full`,
-  `limited_timeout`, `limited_runner_failure`, `limited_large_cache_skip`,
-  `limited_incomplete_input`, `limited_sampled_input`, or
-  `limited_stale_input`.
-- `runtime_status` - structured completeness context matching `run_status`.
-  Limited states name the phase, input kind or path, limitation category, repair
-  route, timing fields when available, and `downstream_consumable`.
-- `inputs.root` - analyzed root for the generated repo exposure snapshot.
-- `inputs.source` - always `"repo-exposure-json"`.
-- `inputs.repo_exposure_mode` - currently `"instant"`; this keeps the
-  repo-local audit bounded while preserving the existing repo-exposure
-  `evidence_record` contract.
-- `inputs.repo_exposure_generation.latency_trace_tail` - includes the
-  preserved `repo_exposure_seam_limit` trace row when the default sampled
-  repo-exposure input path is used. `cargo xtask lane1-evidence-audit` samples
-  5,000 seams by default via the internal `RIPR_REPO_EXPOSURE_SEAM_LIMIT`
-  handoff; operators can set `RIPR_LANE1_EVIDENCE_AUDIT_SAMPLE_SEAMS=0` for an
-  unsampled full-repo attempt, or a positive integer to change the sample size.
-- `inputs.repo_exposure_schema_version` - schema version read from the generated
-  repo exposure JSON, or `null` if absent.
-- `inputs.repo_exposure_generation` - bounded diagnostics for the live
-  repo-exposure subprocess, including timeout, status, nullable
-  `failure_reason`, duration, output byte counts, and the last captured latency
-  trace events. These diagnostics explain long or pathological audit input
-  generation without changing classifications, gate policy, or score semantics.
-- `run_limitations` - bounded report-level limitations. A timed-out
-  repo-exposure subprocess produces a warning audit artifact only when the
-  captured repo-exposure JSON is missing or incomplete. If the captured file is
-  complete and contains a top-level `seams` array, the audit consumes it and
-  records `inputs.repo_exposure_generation.status = "timeout_complete"` instead
-  of claiming a timeout-limited zero-debt artifact. A true timeout limitation
-  includes a `lane1_repo_exposure_timeout` row, phase/input context,
-  timeout/duration diagnostics, the latency trace tail, and a repair route. A
-  subprocess that exits before writing complete repo-exposure JSON, including a
-  nominally successful exit with an empty or malformed output file, produces
-  `lane1_repo_exposure_incomplete` with the same bounded diagnostics. Counts in
-  such limited artifacts are not complete repo truth and downstream reports must
-  surface the limitation instead of treating zeros as absence of gaps. A runner
-  or capture failure before repo exposure can be started or read produces
-  `lane1_repo_exposure_runner_error` with `failure_reason`, command, timeout,
-  duration, phase/input context, and a repair route. If the existing
-  `target/ripr/cache` footprint exceeds the Lane 1 cache budget before
-  repo-exposure generation starts, the audit writes
-  `lane1_repo_exposure_large_cache_preflight_skip` with `run_status =
-  "limited_large_cache_skip"`, `downstream_consumable = false`, and a repair
-  route through `cargo xtask cache report` and `cargo xtask cache gc --dry-run`.
-  Current repo seam cache writes entries larger than
-  `RIPR_REPO_SEAM_CACHE_LIMIT` as bounded shard files under `target/ripr/cache`.
-  Older audit artifacts or older cache-store implementations may still report
-  `lane1_repo_exposure_cache_store_skipped_large_entry` when the live
-  repo-exposure run emitted complete evidence but skipped a full classified
-  seam cache store. That compatibility limitation carries structured
-  `observed_seams` and `cache_limit` fields in addition to the compatibility
-  `input` string, and its repair route names `cargo xtask cache report` plus
-  `RIPR_REPO_SEAM_CACHE_LIMIT` configuration when a machine has enough
-  disk/time budget for larger cache shard writes.
-  The default sampled repo-exposure path records `limited_sampled_input` with
-  `lane1_repo_exposure_sampled` and input such as
-  `repo-exposure-json:limit_5000_of_39685`; sampled counts are useful
-  work-queue evidence, not full-repo debt totals.
-  Run-limitation rows also carry `run_status`, `input_kind`, `input_path`,
-  `limit_ms`, and `downstream_consumable` so consumers do not need to infer
-  completeness from category strings.
-  Named `run_limitations[]` entries also contribute to
-  `summary.static_limitations_total` and `static_limitations.by_category`, so a
-  limited audit cannot look like a clean zero-limitation run in headline
-  summaries.
-- `summary.raw_headline_gaps` - count of seams that are headline-eligible in
-  the record or top-level repo exposure row.
-- `finding_alignment.source` - source used for audit-local alignment counts;
-  currently `evidence_record.canonical_item`.
-- `finding_alignment.summary.raw_signals` and
-  `finding_alignment.summary.finding_alignment_raw_signals_total` - raw
-  finding/supporting-signal count derived from each evidence record's
-  `raw_findings[]` or `canonical_item.raw_group_size`.
-- `finding_alignment.summary.canonical_items` and
-  `finding_alignment.summary.finding_alignment_canonical_items_total` - count
-  of evidence records carrying a canonical item.
-- `finding_alignment.summary.actionable_gaps`,
-  `already_observed`, `internal_no_action`, `static_limitations`, `unknown`,
-  `calibrated_supported`, and `uncalibrated` - audit-local rollups of
-  `canonical_item.canonical_item_kind`, `gap_state`, `actionability`, and
-  `confidence.basis`.
-- `finding_alignment.summary.presentation_text_*` - presentation-text
-  class-specific counts when those canonical items are present. These remain
-  zero when the instant repo-exposure artifact has no presentation-text
-  canonical items.
-- `finding_alignment.coverage.alignment_coverage_by_class` - per-class raw
-  finding, canonical item, state, and aligned/unaligned counts. The grain is
-  `evidence_class`, using `canonical_item.evidence_class` when available and a
-  conservative seam/raw-finding fallback otherwise. Rows also carry
-  `static_limitation_categories` and `static_limitation_repair_routes` maps so
-  static-dominated classes keep their named analyzer limitation and repair
-  route instead of collapsing to a generic `static_unknown` bucket.
-- `finding_alignment.coverage.unaligned_raw_findings_by_class` - raw finding
-  counts by class for evidence records that do not carry `canonical_item`.
-- `finding_alignment.coverage.top_unaligned_examples` - bounded examples of
-  raw findings that did not align to a canonical item, for fixture-first
-  follow-up selection. Each example includes `evidence_class`, `file`, `line`,
-  `kind`, `expression`, and `reason` so the next fixture can be selected from
-  typed raw-finding context instead of Markdown prose.
-- `finding_alignment.coverage.same_line_duplicate_groups` - bounded raw
-  finding groups sharing one file and line so maintainers can spot remaining
-  duplicate user-action risks. Each group includes `file`, `line`,
-  `raw_findings`, `evidence_classes`, `kinds`, and `example_expression`.
-- `finding_alignment.coverage.evidence_class_work_queue` - ranked evidence
-  classes that still need Lane 1 work, derived from alignment coverage rows.
-  Rows include `work_score`, `dominant_signal`, raw/canonical/actionable/
-  limitation/unknown/unaligned/duplicate counts, dominant static limitation
-  category/count/repair route when present, and `next_repair`. When static
-  limitations dominate a class, `next_repair` is the dominant named limitation
-  repair route. This is the audit-local "choose the next class from live
-  output" queue.
-- `finding_alignment.coverage.static_unknown_without_named_limitation` -
-  count of static-unknown or limitation-shaped canonical items without a named
-  static limitation category plus repair route. Generic `static_unknown` or
-  `unknown` categories do not satisfy the named-limitation requirement.
-- `finding_alignment.coverage.canonical_items_without_repair_route` and
-  `canonical_items_without_verify_command` - coverage counts for canonical
-  items missing repair or verification guidance.
-- `finding_alignment.actionable_gap_top_lists` - bounded top counts derived
-  from canonical items, not raw findings. Each row is `{label, count}` sorted
-  by descending count and then label. The section reports actionable gap
-  classes, files, repair kinds, missing discriminator kinds, static limitation
-  reasons on actionable gap records, verify-command unknowns by class, and
-  repair-route unknowns by class so maintainers can choose the next
-  fixture-backed repair slice from live evidence.
-- `finding_alignment.actionable_gap_packets` - bounded top actionable
-  canonical gap packets derived from `evidence_record.canonical_item`. Packets
-  are agent-safe work items: they carry stable `canonical_gap_id` identity,
-  evidence class, repair
-  kind, `target_test_shape`, related test or observer, verification command,
-  receipt command, raw evidence references as supporting evidence, confidence
-  basis, conservative `must_not_change` boundaries, and
-  `allowed_edit_surface[]` file bounds. Derived edit surfaces must resolve to
-  existing workspace files before public projection or swarm-ready ranking; a
-  guessed or missing file is reported as `missing_allowed_edit_surface`. Packets
-  do not create user work from raw static class alone. A broad repo-exposure
-  snapshot comparison verify command is not enough for swarm-ready routing
-  unless RIPR can derive a narrower `cargo test -p <package> <test-filter>`
-  command from a typed `related_test_or_observer` file/name pair.
-  `seam_id`, `finding_id`, and synthetic packet IDs can help internal
-  diagnostics, but they do not satisfy public repair packet identity; missing
-  canonical identity is reported as `missing_canonical_gap_id`.
-  `raw_evidence_refs[]` entries are structured evidence anchors. For public
-  projection and swarm planning, at least one entry must carry an anchor field
-  (`file`, `path`, or `source_file`) and an identity field (`kind`,
-  `source_id`, `evidence_record_ref`, or `canonical_gap_id`). Empty objects,
-  strings, counts, or other placeholders are treated as
-  `missing_raw_evidence_refs`.
-- `finding_alignment.actionable_gap_packet_public_projection` - packet-level
-  badge-readiness diagnostics for the emitted packet set. It counts
-  public-projection eligible packets, excluded packets, and stable
-  `projection_exclusion_reasons` rows such as `not_actionable_gap_state`,
-  `missing_canonical_gap_id`, `missing_receipt_command`, `missing_repair_kind`,
-  `missing_target_test_shape`, `missing_related_test_or_observer`, `missing_confidence`,
-  `missing_must_not_change`, `missing_allowed_edit_surface`,
-  `missing_raw_evidence_refs`, `unbounded_verify_command`, and
-  `static_limitation_present`. This is advisory report evidence only and does
-  not change public badge endpoint semantics. Swarm planning treats explicit
-  packet-field projection exclusions such as `not_actionable_gap_state`,
-  `missing_repair_kind`, `missing_repair_route`, `missing_verify_command`, `unbounded_verify_command`,
-  `missing_receipt_command`, `missing_must_not_change`,
-  `missing_raw_evidence_refs`, `missing_related_test_or_observer`, or
-  `missing_confidence` as field-level blocked states even if stale actionability
-  text, stale route text, stale command, boundary text, placeholder evidence,
-  stale related target text, or stale confidence text is still present in the
-  packet artifact.
-- `static_limitation_present` projection exclusions are routed through
-  `blocked_by_static_limitation` even when an older packet artifact also carries
-  stale actionable-looking repair fields.
-- `finding_alignment.runtime_confidence_by_class` - runtime confidence coverage
-  rows at the canonical evidence-class grain. Each row reports canonical item
-  count, calibrated-supported, fixture-backed, static-only, unknown-confidence,
-  uncalibrated, actionable, and static-limitation counts so maintainers can see
-  which classes still need runtime support before badge-readiness work.
-- `canonical_gap_groups.total` - number of distinct canonical gap IDs among
-  headline records.
-- `canonical_gap_groups.largest` - top canonical groups by observed count,
-  capped for review.
-- `duplicate_looking_groups` - canonical or fallback groups with observed count
-  greater than one, or a reported group size greater than one.
-- `missing_discriminator_classes` - complete `{label, count}` rows by reason
-  and value plus count maps by flow sink.
-- `static_limitations` - complete `{label, count}` rows by limitation reason
-  plus count maps by evidence stage, normalized category, and suggested repair
-  route.
-- `oracle_semantics_distribution` - complete `{label, count}` rows for rendered
-  related-test oracle semantics plus oracle kind and strength counts.
-  Free-form text counts are not object keys because discriminator, limitation,
-  and oracle text can differ only by case, and Windows/PowerShell JSON
-  consumers treat object keys case-insensitively.
-- `related_test_ranking` - confidence and relation-reason counts for all
-  rendered related tests and for the top related test per seam.
-- `movement_availability` - counts of records carrying the identity and
-  recommendation fields needed by before/after evidence movement.
-- `calibration_availability` - counts of imported calibration placeholder
-  fields from `evidence_record`; `runtime_confidence_by_class` breaks canonical
-  items down by `canonical_item.evidence_class`, confidence basis,
-  actionability, and limitation state so badge-readiness work can see which
-  classes remain static-only or unknown. This report does not import or execute
-  calibration itself.
-- `evidence_record_field_health` - per-field present, missing, null, and empty
-  counts for key `evidence_record` contract fields.
-- `top_files_by_unresolved_evidence_debt` - top files by an audit-local debt
-  score that combines headline gaps, missing discriminators, static
-  limitations, unknown stages, no related tests, low/opaque top related tests,
-  and missing evidence records.
-
-The Markdown sibling prints the same audit areas in bounded tables. JSON keeps
-the complete count maps.
-
-## Actionable Gap Packets
-
-`cargo xtask lane1-evidence-audit` also writes a bounded packet projection for
-humans and agents:
-
-```text
-target/ripr/reports/actionable-gaps.json
-target/ripr/reports/actionable-gaps.md
-```
-
-The packet artifact is advisory and derives from the Lane 1 audit's
-`evidence_record.canonical_item` projection. It does not change public badge
-semantics, PR/CI rendering, gate policy, provider calls, generated tests, or
-mutation execution.
-The Markdown sibling includes a `Runtime Status` table with the same
-completeness fields as JSON so human readers can see whether packet counts are
-full or limited before acting on them.
-`static_limitation_backlog` carries the same named limitation categories and
-analyzer repair routes from the source Lane 1 audit so downstream swarm
-surfaces can explain why no packet is safely actionable without turning those
-limitations into user repair work.
-For `top_categories[]`, `repair_route` is the dominant route from the
-route-grained backlog packets for that category when packet evidence exists;
-otherwise it uses the category fallback route.
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "report": "actionable-gaps",
-  "scope": "repo",
-  "status": "advisory",
-  "run_status": "full",
-  "runtime_status": {
-    "state": "full",
-    "phase": null,
-    "duration_ms": null,
-    "limit_ms": null,
-    "input_kind": null,
-    "input_path": null,
-    "limitation_category": null,
-    "repair_route": null,
-    "downstream_consumable": true
-  },
-  "source_report": "target/ripr/reports/lane1-evidence-audit.json",
-  "source": "evidence_record.canonical_item",
-  "packet_limit": 25,
-  "summary": {
-    "raw_signals": 47515,
-    "canonical_items": 38445,
-    "actionable_gaps": 162,
-    "already_observed": 12006,
-    "internal_no_action": 0,
-    "static_limitations": 26277,
-    "packets_emitted": 25,
-    "public_projection_eligible_packets": 25,
-    "public_projection_excluded_packets": 0,
-    "projection_exclusion_reasons": [],
-    "raw_to_canonical_ratio": 1.24,
-    "repair_route_unknowns": 0,
-    "verify_command_unknowns": 0
-  },
-  "run_limitations": [],
-  "static_limitation_backlog": {
-    "source": "lane1-evidence-audit.static_limitations",
-    "top_categories": [
-      {
-        "category": "activation_boundary_input_unresolved",
-        "count": 297,
-        "repair_route": "analysis/local-computed-boundary-operand-resolution"
-      }
-    ],
-    "top_subroutes": [
-      {
-        "category": "activation_owner_call_absent_call_presence_target_affinity",
-        "subroute": "bare_alias_unsupported",
-        "count": 12,
-        "repair_route": "analysis/call-presence-target-affinity-owner-call-tracing"
-      }
-    ],
-    "top_repair_routes": [
-      {
-        "repair_route": "analysis/local-computed-boundary-operand-resolution",
-        "count": 297
-      }
-    ],
-    "limitation_backlog_packets": [
-      {
-        "packet_id": "limitation:activation_boundary_input_unresolved:analysis-local-computed-boundary-operand-resolution",
-        "limitation_category": "activation_boundary_input_unresolved",
-        "limitation_subroute": "activation_boundary_input_unresolved",
-        "repair_route": "analysis/local-computed-boundary-operand-resolution",
-        "signal_count": 297,
-        "sample_canonical_gap_ids": ["gap:idx-offset-local"],
-        "sample_sources": [
-          {
-            "canonical_gap_id": "gap:idx-offset-local",
-            "evidence_class": "predicate_boundary",
-            "source_file": "src/window.rs",
-            "line": 44,
-            "expression": "idx >= offset",
-            "limitation_reason": "local/computed operand cannot be mapped to a safe test input"
-          }
-        ],
-        "dominant_evidence_class": "predicate_boundary",
-        "why_not_actionable": "activation inputs cannot yet be mapped to a safe concrete test value",
-        "unlock_condition": "implement `analysis/local-computed-boundary-operand-resolution` so local, member-access, iterator, or computed operands can be resolved before candidate values are recommended",
-        "non_claims": [
-          "not a public repair packet",
-          "not swarm-ready work",
-          "do not edit tests from this backlog item alone",
-          "do not invent exact candidate values",
-          "do not invent exact boundary candidate values"
-        ]
-      }
-    ]
-  },
-  "packets": [
-    {
-      "canonical_gap_id": "gap:abc",
-      "evidence_class": "predicate_boundary",
-      "gap_state": "actionable",
-      "actionability": "extend_related_test",
-      "source_file": "src/pricing.rs",
-      "primary_anchor": {"file": "src/pricing.rs", "line": 42},
-      "repair_kind": "add_boundary_assertion",
-      "target_test_type": "boundary_discriminator",
-      "assertion_shape": "assert_eq!(price(/* boundary input where amount == threshold */), expected)",
-      "repair_route": {
-        "repair_kind": "add_boundary_assertion",
-        "target_test_type": "boundary_discriminator",
-        "assertion_shape": "assert_eq!(price(/* boundary input where amount == threshold */), expected)"
-      },
-      "recommended_repair": "Add or strengthen `assert_eq!(price(/* boundary input where amount == threshold */), expected)` for `input that hits the boundary: amount == threshold` in `tests/pricing.rs` as `price_boundary_discriminator`.",
-      "why": "Related tests reach the seam but miss equality at the threshold.",
-      "related_test_or_observer": {
-        "file": "tests/pricing.rs",
-        "name": "below_threshold_has_no_discount",
-        "line": 10
-      },
-      "candidate_value_or_observer": "input that hits the boundary: amount == threshold",
-      "missing_discriminators": [
-        {
-          "value": "discount_threshold (equality boundary)",
-          "reason": "observed values do not include the equality-boundary case for this predicate"
-        }
-      ],
-      "verify_command": "cargo xtask evidence-quality-scorecard",
-      "repair_route_source": "canonical_item.repair_route",
-      "verify_command_source": "canonical_item.verify_command",
-      "receipt_command_or_path": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id probe:src_pricing_rs:42:predicate_boundary --json --out target/ripr/reports/agent-receipt.json",
-      "receipt_source": "canonical_item.receipt_command",
-      "public_projection_eligible": true,
-      "projection_exclusion_reasons": [],
-      "raw_findings": [
-        {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed"}
-      ],
-      "raw_findings_supporting_only": true,
-      "static_limitations": [],
-      "confidence_basis": "static_only",
-      "must_not_change": [
-        "Do not infer actionability from raw static class."
-      ],
-      "allowed_edit_surface": [
-        "tests/pricing.rs"
-      ]
-    }
-  ],
-  "must_not_infer": [
-    "raw findings are supporting evidence, not user work",
-    "do not infer actionability from raw static class",
-    "do not treat named static limitations as user test debt",
-    "do not claim mutation execution or runtime proof from this packet"
-  ]
-}
-```
-
-The packet grain is one canonical actionable item. `raw_findings[]` is included
-only to preserve supporting evidence and line context; downstream consumers must
-not fan it back out into separate user-facing work.
-`missing_discriminators[]` carries the exact unresolved discriminator facts from
-the evidence record so agents do not have to infer the boundary or assertion
-target from a broader candidate-value hint.
-`public_projection_eligible` is an audit-only badge-readiness decision for the
-emitted packet. It is true only when the packet has public-projection
-prerequisites such as `gap_state = "actionable"`, canonical repair and verify
-fields plus a receipt command or path; otherwise the stable
-`projection_exclusion_reasons[]` values explain why an otherwise useful agent
-packet is not yet a public badge item. This does not change committed badge
-endpoint semantics.
-Canonical evidence-record items carry additive `command_specs.verify` and
-`command_specs.receipt` `CommandSpec` objects when RIPR owns those routes.
-GapRecord-derived gap-ledger and agent-packet queue projections carry those
-objects only when the producer supplied them; legacy display strings are never
-parsed back into machine authority. A legacy string-only GapRecord remains
-readable, but its typed command collections are omitted until a producer-owned
-spec is available. LSP gap-artifact validation accepts the object form and
-compatibility array form, but rejects non-object `command_specs` containers,
-malformed specs, and role-mismatched specs before projection.
-
-This producer-owned projection boundary is distinct from the explicit
-`agent verify-execute` surface below. GapRecord packet rendering does not
-reconstruct typed routes from compatibility display strings; a consumer that
-requires direct execution must apply its own execution-route consistency and
-provenance checks before running a command.
-
-## RIPR Swarm Plan
-
-`cargo xtask ripr-swarm plan --top <n>` ranks existing actionable canonical gap
-packets for a bounded, dry-run repair loop:
-
-```text
-target/ripr/reports/swarm-plan.json
-target/ripr/reports/swarm-plan.md
-```
-
-The command reads `target/ripr/reports/actionable-gaps.json` by default, or the
-path supplied by `--actionable-gaps`. It is report-only. It does not edit files,
-run tests, call providers, generate tests, create receipts, run mutation
-testing, change PR/CI rendering, change editor/LSP behavior, change gates, or
-change public badges.
-`blocked_state_examples[]` is not top-limit truncated; it gives readiness one
-sample packet per blocked packet class where the plan has source data.
-
-For compatibility with current actionable-gap packets, input may carry either
-`receipt_command_or_path` or `receipt_command`. The swarm plan normalizes the
-ranked packet output to `receipt_command`. A packet is not swarm-ready unless it
-also carries a structured `repair_route` object and a typed workspace-relative
-repair target in `related_test_or_observer` or `candidate_value_or_observer`.
-
-If the actionable-gaps input is missing or malformed, the command still writes
-a bounded blocked report with the input path, input state, and limitation text.
-It does not silently drop the plan or infer work from stale Markdown.
-The Markdown sibling includes a `Runtime Status` table with the same
-completeness fields as JSON before listing plan inputs.
-`static_limitation_backlog` is copied from the actionable-gap source audit so
-operators can see which named analyzer limitations are blocking routeable
-packets. It is backlog routing evidence only; it must not be counted as
-repair-ready packet work.
-`static_limitation_backlog.limitation_backlog_packets[]` turns top limitation
-routes into analyzer work packets with sample IDs, source file, optional line,
-expression, limitation reason, dominant evidence class, unlock condition, and
-non-claims. `limitation_subroute` names the more specific analyzer bucket when a
-category is still too broad, such as target-affinity owner-call cases that are
-blocked by unsupported alias or ambiguity shapes. Packet identity is route- and
-subroute-grained: the same limitation category can emit separate backlog packets
-for separate analyzer repair routes or named subroutes. These packets are not
-public repair packets and must not enter the swarm-ready queue.
-The `summary.static_limitation_packets` count is limited to public repair
-packets that carry static limitations. `summary.static_limitation_backlog_packets`
-and `summary.static_limitation_backlog_signals` summarize the separate analyzer
-backlog so consumers can route analyzer work even when no public repair packets
-are emitted.
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "report": "swarm-plan",
-  "scope": "repo",
-  "status": "advisory",
-  "input": {
-    "actionable_gaps": "target/ripr/reports/actionable-gaps.json",
-    "state": "read",
-    "limitation": null
-  },
-  "source": "actionable-gaps.packets",
-  "source_summary": {
-    "raw_signals": 47515,
-    "canonical_items": 38445,
-    "actionable_gaps": 162,
-    "packets_emitted": 25
-  },
-  "static_limitation_backlog": {
-    "source": "lane1-evidence-audit.static_limitations",
-    "top_categories": [
-      {
-        "category": "activation_value_unresolved",
-        "count": 141,
-        "repair_route": "analysis/value-resolution-audit-fixes"
-      }
-    ],
-    "top_subroutes": [
-      {
-        "category": "activation_value_unresolved",
-        "subroute": "activation_value_unresolved",
-        "count": 141,
-        "repair_route": "analysis/value-resolution-audit-fixes"
-      }
-    ],
-    "top_repair_routes": [
-      {
-        "repair_route": "analysis/value-resolution-audit-fixes",
-        "count": 141
-      }
-    ]
-  },
-  "top_limit": 10,
-  "summary": {
-    "packets_total": 25,
-    "swarm_ready_packets": 10,
-    "blocked_packets": 15,
-    "blocked_by_missing_context_packets": 12,
-    "blocked_by_static_limitation_packets": 2,
-    "blocked_by_public_projection_exclusion_packets": 0,
-    "blocked_by_operator_judgment_packets": 1,
-    "public_projection_excluded_packets": 0,
-    "missing_canonical_gap_id": 0,
-    "missing_verify_command": 0,
-    "missing_receipt_command": 0,
-    "missing_repair_kind": 0,
-    "missing_repair_route": 0,
-    "missing_target_test_shape": 0,
-    "missing_must_not_change": 0,
-    "missing_allowed_edit_surface": 0,
-    "missing_confidence": 0,
-    "missing_raw_evidence_refs": 0,
-    "missing_related_test_or_observer": 3,
-    "related_context_missing": 3,
-    "static_limitation_packets": 2,
-    "static_limitation_backlog_packets": 6,
-    "static_limitation_backlog_signals": 141,
-    "high_confidence_packets": 4
-  },
-  "blocked_state_examples": [
-    {
-      "state": "missing_canonical_gap_id",
-      "example_packet_id": "packet:missing-canonical-gap-id",
-      "example_canonical_gap_id": "packet-fallback-seam-id",
-      "example_repair_kind": "add_boundary_assertion",
-      "example_missing_context": ["canonical_gap_id"],
-      "example_projection_exclusion_reasons": ["missing_canonical_gap_id"],
-      "example_blocked_reasons": ["missing_canonical_gap_id"]
-    },
-    {
-      "state": "missing_target_test_shape",
-      "example_packet_id": "packet:missing-target-test-shape",
-      "example_canonical_gap_id": "gap:missing-target-test-shape",
-      "example_repair_kind": "add_boundary_assertion",
-      "example_missing_context": ["target_test_shape"],
-      "example_projection_exclusion_reasons": [],
-      "example_blocked_reasons": ["missing_target_test_shape"]
-    },
-    {
-      "state": "missing_allowed_edit_surface",
-      "example_packet_id": "packet:missing-edit-surface",
-      "example_canonical_gap_id": "gap:missing-edit-surface",
-      "example_repair_kind": "add_boundary_assertion",
-      "example_missing_context": ["allowed_edit_surface"],
-      "example_projection_exclusion_reasons": [],
-      "example_blocked_reasons": ["missing_context"]
-    }
-  ],
-  "top_ready_packets": [
-    {
-      "packet_id": "gap:abc",
-      "canonical_gap_id": "gap:abc",
-      "evidence_class": "predicate_boundary",
-      "source_file": "src/pricing.rs",
-      "repair_kind": "add_boundary_assertion",
-      "target_test_type": "boundary_discriminator",
-      "assertion_shape": "assert_eq!(price(/* boundary */), expected)",
-      "confidence_basis": "fixture_backed",
-      "swarm_state": "queued",
-      "score": 110,
-      "expected_canonical_gap_delta": 1,
-      "readiness_reasons": [
-        "repair_route_present",
-        "verify_command_present",
-        "receipt_command_present",
-        "related_test_or_observer_present",
-        "must_not_change_present",
-        "allowed_edit_surface_present",
-        "public_projection_eligible",
-        "no_static_limitation",
-        "confidence_basis_fixture_backed"
-      ],
-      "blocked_reasons": [],
-      "missing_context": [],
-      "verify_command": "cargo xtask evidence-quality-scorecard",
-      "receipt_command": "cargo xtask receipts check",
-      "allowed_edit_surface": ["tests/pricing.rs"],
-      "allowed_edit_surface_count": 1,
-      "related_test_or_observer_available": true,
-      "must_not_change": ["production behavior"],
-      "must_not_change_count": 1,
-      "raw_findings_count": 2,
-      "raw_findings_supporting_only": true,
-      "static_limitations_count": 0,
-      "public_projection_eligible": true,
-      "projection_exclusion_reasons": []
-    }
-  ],
-  "top_blocked_packets": [],
-  "top_missing_verify_or_receipt": [],
-  "must_not_infer": [
-    "do not consume raw findings as swarm work",
-    "do not rank static limitations as repair-ready",
-    "do not rank static-only predicate-boundary packets as swarm-ready without stronger evidence",
-    "do not rank packets without receipt_command as swarm-ready",
-    "do not rank packets without verify_command as high confidence",
-    "do not edit files, call providers, generate tests, run mutation testing, or create receipts from this plan"
-  ]
-}
-```
-
-`swarm_state = queued` means the packet is ready for a bounded dry-run repair
-attempt. Queued packets require a structured `repair_route` object, a typed
-workspace-relative `related_test_or_observer` or `candidate_value_or_observer`
-target, and an `allowed_edit_surface[]` entry that resolves to an existing
-workspace file. Candidate prose, `repair_route_source` hints, and top-level
-repair-shape strings remain supporting context only; they do not authorize file
-edits or swarm-ready ranking by themselves. Packets missing required typed
-context use `blocked_by_missing_context`. Packets with static limitations use
-`blocked_by_static_limitation`. Packets excluded from the public actionable
-projection use `blocked_by_public_projection_exclusion`; a non-empty
-`projection_exclusion_reasons[]` array is blocking even if a stale producer also
-sets `public_projection_eligible = true`. Static-only
-predicate-boundary assertion packets use `blocked_by_operator_judgment`; they
-remain visible but are not default
-swarm-ready until upstream evidence is fixture-backed, calibrated, or explicitly
-operator-selected. Ranking is advisory and never redefines actionability; it
-starts from the canonical packet state already emitted by Lane 1.
-
-`projection_exclusion_reasons[]` includes `unbounded_verify_command` when the
-packet's only verify route is a broad `ripr agent verify` repo-exposure snapshot
-comparison. Those commands require separately generating before/after
-repo-exposure artifacts and are not a bounded proof command for agent-safe
-repair delegation. `swarm-plan` treats this as a verify-command field blocker
-and also applies this exclusion when reading older artifacts that predate the
-reason, so legacy packets do not remain swarm-ready solely because they carry
-the old broad verify command.
-
-`summary.public_projection_exclusion_reasons[]` is a stable reason-count
-breakdown for packets routed through `blocked_by_public_projection_exclusion`.
-Readiness preserves the same rows so operators can inspect the dominant
-projection policy reason instead of treating all public-projection exclusions as
-one generic blocked bucket.
-
-## RIPR Swarm Attempt Dry Run
-
-`cargo xtask ripr-swarm attempt --packet <id> --dry-run` reads
-`target/ripr/reports/actionable-gaps.json` by default, or the path supplied by
-`--actionable-gaps`, and prints bounded packet context to stdout. The packet id
-can be a `packet_id`, `canonical_gap_id`, or compatible unprefixed canonical
-identifier. The command does not edit files, run tests, call providers,
-generate tests, create receipts, run mutation testing, merge code, or change
-public badge semantics.
-
-The dry-run output includes:
-
-```text
-copy-ready operator packet
-task
-allowed files
-do-not-change boundaries
-repair target
-verify command
-receipt command
-stop conditions
-required return format
-canonical_gap_id
-evidence_class
-source_file
-swarm_state
-confidence_basis
-repair_kind
-repair_route
-target_test_type
-assertion_or_observer_shape
-related_test_or_observer
-expected_evidence_movement
-verify_command
-receipt_command_or_path
-must_not_change boundaries
-raw_findings_count
-static_limitations_count
-```
-
-`queued` packets show the expected canonical-gap delta if receipt-backed
-evidence movement resolves or improves the item. Blocked packets remain visible
-with their `blocked_by_missing_context` or `blocked_by_static_limitation` state
-or `blocked_by_public_projection_exclusion` or `blocked_by_operator_judgment`
-state and are not promoted to repair-ready work.
-
-## Actionable Gap Outcomes
-
-`cargo xtask actionable-gap-outcomes` joins actionable-gap packets with optional
-agent receipt and targeted-test outcome artifacts:
-
-```text
-target/ripr/reports/actionable-gap-outcomes.json
-target/ripr/reports/actionable-gap-outcomes.md
-```
-
-The report is advisory. It does not run repairs, generate tests, execute
-mutation testing, change PR/CI rendering, or change public badge semantics.
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "report": "actionable-gap-outcomes",
-  "scope": "repo",
-  "status": "advisory",
-  "source": "actionable-gaps plus optional receipt and targeted-test outcome artifacts",
-  "inputs": {
-    "actionable_gaps": "target/ripr/reports/actionable-gaps.json",
-    "agent_receipt": "target/ripr/reports/agent-receipt.json",
-    "targeted_test_outcome": "target/ripr/reports/targeted-test-outcome.json"
-  },
-  "summary": {
-    "packets_total": 25,
-    "outcomes_total": 25,
-    "not_attempted": 22,
-    "attempted_no_receipt": 0,
-    "receipt_present": 0,
-    "evidence_improved": 1,
-    "evidence_unchanged": 1,
-    "evidence_regressed": 0,
-    "resolved": 1,
-    "unknown": 0,
-    "receipts_present": 1,
-    "receipts_missing_after_input": 24,
-    "orphaned_receipts": 1
-  },
-  "movement_front": {
-    "current_actionable_count": 25,
-    "receipt_linked_actionable_delta": -1,
-    "resolved": 1,
-    "improved": 1,
-    "unchanged_after_attempt": 1,
-    "missing_receipts": 24,
-    "orphaned_receipts": 1,
-    "top_blocked_reason": "missing_receipts"
-  },
-  "outcomes": [
-    {
-      "canonical_gap_id": "gap:abc",
-      "evidence_class": "predicate_boundary",
-      "repair_kind": "add_boundary_assertion",
-      "source_file": "src/pricing.rs",
-      "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
-      "verify_result": "pass",
-      "receipt_command": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id abc --json --out target/ripr/reports/agent-receipt.json",
-      "receipt_command_or_path": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id abc --json --out target/ripr/reports/agent-receipt.json",
-      "receipt_state": "receipt_movement_improved",
-      "outcome_state": "evidence_improved",
-      "timestamp": "unix_ms:1778240100000",
-      "attempt_instance": "timestamp:unix_ms:1778240100000",
-      "seam_id": "abc",
-      "before": "weakly_gripped",
-      "after": "strongly_gripped",
-      "movement_source": "agent_receipt",
-      "movement_direction": "improved",
-      "evidence_delta": [
-        "missing discriminator no longer reported: threshold equality"
-      ],
-      "reason": "Matched agent receipt artifact."
-    }
-  ],
-  "orphaned_receipts": [
-    {
-      "receipt_id": "receipt:old-gap",
-      "seam_id": "old-gap",
-      "source_file": "src/old.rs",
-      "line": 7,
-      "movement_direction": "improved",
-      "reason": "Receipt artifact did not match any current actionable canonical gap packet."
-    }
-  ],
-  "must_not_infer": [
-    "outcome reports join existing artifacts; they do not execute repairs",
-    "raw findings remain supporting evidence, not user work",
-    "targeted-test outcomes are static evidence movement, not mutation proof",
-    "missing receipts do not imply a repair failed",
-    "orphaned receipts do not create new actionable gaps"
-  ]
-}
-```
-
-`outcome_state` uses the bounded Lane 1 lifecycle states
-`not_attempted`, `attempted_no_receipt`, `receipt_present`,
-`evidence_improved`, `evidence_unchanged`, `evidence_regressed`, `resolved`,
-and `unknown`. Raw findings do not determine outcome state; the join is based
-on canonical packet identity, seam identity, or the packet primary anchor.
-`timestamp` and `attempt_instance` carry stable attempt identity when an
-outcome is backed by a matching receipt or targeted-test outcome. The attempt
-instance prefers a receipt/targeted timestamp when available, then the matched
-receipt artifact path, then the targeted-test outcome artifact path; missing
-identity remains `null` for not-attempted packets.
-Targeted-test outcome movement without a matching receipt is classified as
-`attempted_no_receipt`; its movement fields remain visible for debugging, but it
-does not count as `evidence_improved`, `evidence_unchanged`,
-`evidence_regressed`, or `resolved` until receipt evidence is joined.
-`receipt_command` is the normalized command for downstream consumers;
-`receipt_command_or_path` remains as compatibility for older packet artifacts.
-`verify_result` is optional typed evidence copied from matching receipt or
-targeted-test outcome artifacts. Missing values remain `null`; RIPR must not
-infer a passing result from a present `verify_command`.
-`receipt_state` uses the canonical receipt lifecycle vocabulary:
-`receipt_missing`, `receipt_found`, `receipt_stale`,
-`receipt_gap_mismatch`, `receipt_movement_improved`,
-`receipt_movement_unchanged`, or `receipt_not_applicable`.
-`movement_front` is the first-screen outcome summary. It reports the current
-actionable packet count, receipt-linked actionable delta, resolved/improved
-movement, unchanged attempts, missing/orphaned receipts, and the top follow-up
-blocker. The delta is receipt-linked static movement only: it is not mutation
-confirmation, runtime adequacy, policy eligibility, gate passage, or merge
-readiness.
-`orphaned_receipts[]` preserves receipt artifacts that do not match any current
-packet so attempt history remains visible without creating new actionable gaps.
-
-## RIPR Swarm Attempt Ledger
-
-`cargo xtask ripr-swarm attempt-ledger` joins the swarm plan,
-actionable-gap outcome report, optional real repair attempts, and prior ledger
-into durable attempt history:
-
-```text
-target/ripr/reports/swarm-attempt-ledger.json
-target/ripr/reports/swarm-attempt-ledger.md
-```
-
-The command reads `target/ripr/reports/swarm-plan.json`,
-`target/ripr/reports/actionable-gap-outcomes.json`, any existing
-`target/ripr/reports/swarm-attempt-ledger.json`, and
-`fixtures/real-repair-attempts/corpus.json` by default. The real-repair-attempts
-input is advisory dogfood evidence; it is imported as attempt history and route
-quality, not as a new public repair packet. The command preserves prior durable
-attempt entries by `attempt_id`, drops stale synthetic `not_attempted`
-placeholders when their packet is no longer present in the current swarm plan,
-adds the current outcome join, imports real dogfood attempts, and highlights the
-latest attempt per `canonical_gap_id`. It does not execute repairs, edit files,
-run tests, create receipts, call providers, run mutation testing, change PR/CI
-rendering, change editor/LSP behavior, change gates, or change public badges.
-The Markdown sibling includes a `Runtime Status` table with the same
-completeness fields as JSON before listing ledger inputs. `attempted_no_receipt`
-entries may carry `missing_receipt_reason` so receipt reliability failures remain
-actionable operator evidence instead of only route-quality counts.
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "report": "swarm-attempt-ledger",
-  "scope": "repo",
-  "status": "advisory",
-  "run_status": "full",
-  "runtime_status": {
-    "state": "full",
-    "phase": null,
-    "duration_ms": null,
-    "limit_ms": null,
-    "input_kind": null,
-    "input_path": null,
-    "limitation_category": null,
-    "repair_route": null,
-    "downstream_consumable": true
-  },
-  "generated_at": "unix_ms:1778240100000",
-  "inputs": {
-    "swarm_plan": {
-      "path": "target/ripr/reports/swarm-plan.json",
-      "state": "read",
-      "limitation": null
-    },
-    "actionable_gap_outcomes": {
-      "path": "target/ripr/reports/actionable-gap-outcomes.json",
-      "state": "read",
-      "limitation": null
-    },
-    "prior_ledger": {
-      "path": "target/ripr/reports/swarm-attempt-ledger.json",
-      "state": "read",
-      "limitation": null
-    },
-    "real_repair_attempts": {
-      "path": "fixtures/real-repair-attempts/corpus.json",
-      "state": "read",
-      "limitation": null
-    }
-  },
-  "summary": {
-    "attempts_total": 4,
-    "canonical_gaps_total": 3,
-    "not_attempted": 1,
-    "attempted_no_receipt": 0,
-    "receipt_present": 0,
-    "missing_verify_result": 0,
-    "evidence_improved": 2,
-    "evidence_unchanged": 1,
-    "expected_unchanged": 0,
-    "evidence_regressed": 0,
-    "resolved": 0,
-    "unknown": 0,
-    "orphaned_receipts": 1
-  },
-  "attempt_history_summary": {
-    "attempts_total": 5,
-    "durable_attempts_total": 4,
-    "canonical_gaps_total": 3,
-    "not_attempted": 1,
-    "attempted_no_receipt": 1,
-    "receipt_present": 0,
-    "missing_verify_result": 0,
-    "evidence_improved": 2,
-    "evidence_unchanged": 1,
-    "expected_unchanged": 0,
-    "evidence_regressed": 0,
-    "resolved": 0,
-    "unknown": 0
-  },
-  "repair_route_quality": [
-    {
-      "language": null,
-      "repair_kind": "add_boundary_assertion",
-      "repair_kind_attempted": 2,
-      "repair_kind_improved": 1,
-      "repair_kind_unchanged": 1,
-      "repair_kind_regressed": 0,
-      "repair_kind_resolved": 0,
-      "repair_kind_attempted_no_receipt": 0,
-      "repair_kind_receipt_present": 0,
-      "repair_kind_missing_verify_result": 0,
-      "repair_kind_expected_unchanged": 0,
-      "repair_kind_unknown": 0,
-      "repair_kind_failure_count": 1,
-      "repair_kind_dominant_failure_reason": "unchanged",
-      "repair_kind_success_rate": 0.5,
-      "sample_packet_ids": ["packet-boundary-002"],
-      "sample_attempt_ids": ["attempt-boundary-002"],
-      "sample_canonical_gap_ids": ["gap:def"],
-      "sample_missing_receipt_reasons": []
-    }
-  ],
-  "language_repair_route_quality": [
-    {
-      "language": "typescript",
-      "repair_kind": "sharpen_static_limitation_route",
-      "repair_kind_attempted": 1,
-      "repair_kind_improved": 1,
-      "repair_kind_unchanged": 0,
-      "repair_kind_regressed": 0,
-      "repair_kind_resolved": 0,
-      "repair_kind_attempted_no_receipt": 0,
-      "repair_kind_receipt_present": 0,
-      "repair_kind_missing_verify_result": 0,
-      "repair_kind_expected_unchanged": 0,
-      "repair_kind_unknown": 0,
-      "repair_kind_failure_count": 0,
-      "repair_kind_dominant_failure_reason": null,
-      "repair_kind_success_rate": 1.0,
-      "sample_packet_ids": ["packet-ts-route-001"],
-      "sample_attempt_ids": ["attempt-ts-route-001"],
-      "sample_canonical_gap_ids": ["gap:ts-route"],
-      "sample_missing_receipt_reasons": []
-    }
-  ],
-  "historical_repair_route_quality": [
-    {
-      "language": null,
-      "repair_kind": "add_boundary_assertion",
-      "repair_kind_attempted": 3,
-      "repair_kind_improved": 2,
-      "repair_kind_unchanged": 1,
-      "repair_kind_regressed": 0,
-      "repair_kind_resolved": 0,
-      "repair_kind_attempted_no_receipt": 0,
-      "repair_kind_receipt_present": 0,
-      "repair_kind_missing_verify_result": 0,
-      "repair_kind_expected_unchanged": 0,
-      "repair_kind_unknown": 0,
-      "repair_kind_failure_count": 1,
-      "repair_kind_dominant_failure_reason": "unchanged",
-      "repair_kind_success_rate": 0.667,
-      "sample_packet_ids": ["packet-boundary-002"],
-      "sample_attempt_ids": ["attempt-boundary-002"],
-      "sample_canonical_gap_ids": ["gap:def"],
-      "sample_missing_receipt_reasons": []
-    }
-  ],
-  "historical_language_repair_route_quality": [
-    {
-      "language": "typescript",
-      "repair_kind": "sharpen_static_limitation_route",
-      "repair_kind_attempted": 2,
-      "repair_kind_improved": 2,
-      "repair_kind_unchanged": 0,
-      "repair_kind_regressed": 0,
-      "repair_kind_resolved": 0,
-      "repair_kind_attempted_no_receipt": 0,
-      "repair_kind_receipt_present": 0,
-      "repair_kind_missing_verify_result": 0,
-      "repair_kind_expected_unchanged": 0,
-      "repair_kind_unknown": 0,
-      "repair_kind_failure_count": 0,
-      "repair_kind_dominant_failure_reason": null,
-      "repair_kind_success_rate": 1.0,
-      "sample_packet_ids": ["packet-ts-route-001"],
-      "sample_attempt_ids": ["attempt-ts-route-001"],
-      "sample_canonical_gap_ids": ["gap:ts-route"],
-      "sample_missing_receipt_reasons": []
-    }
-  ],
-  "top_failing_repair_routes": [
-    {
-      "language": null,
-      "repair_kind": "add_boundary_assertion",
-      "repair_kind_attempted": 2,
-      "repair_kind_improved": 1,
-      "repair_kind_unchanged": 1,
-      "repair_kind_regressed": 0,
-      "repair_kind_resolved": 0,
-      "repair_kind_attempted_no_receipt": 0,
-      "repair_kind_receipt_present": 0,
-      "repair_kind_missing_verify_result": 0,
-      "repair_kind_expected_unchanged": 0,
-      "repair_kind_unknown": 0,
-      "repair_kind_failure_count": 1,
-      "repair_kind_dominant_failure_reason": "unchanged",
-      "repair_kind_success_rate": 0.5,
-      "sample_packet_ids": ["packet-boundary-002"],
-      "sample_attempt_ids": ["attempt-boundary-002"],
-      "sample_canonical_gap_ids": ["gap:def"],
-      "sample_missing_receipt_reasons": []
-    }
-  ],
-  "top_historical_failing_repair_routes": [
-    {
-      "language": null,
-      "repair_kind": "add_boundary_assertion",
-      "repair_kind_attempted": 3,
-      "repair_kind_improved": 2,
-      "repair_kind_unchanged": 1,
-      "repair_kind_regressed": 0,
-      "repair_kind_resolved": 0,
-      "repair_kind_attempted_no_receipt": 0,
-      "repair_kind_receipt_present": 0,
-      "repair_kind_missing_verify_result": 0,
-      "repair_kind_expected_unchanged": 0,
-      "repair_kind_unknown": 0,
-      "repair_kind_failure_count": 1,
-      "repair_kind_dominant_failure_reason": "unchanged",
-      "repair_kind_success_rate": 0.667,
-      "sample_packet_ids": ["packet-boundary-002"],
-      "sample_attempt_ids": ["attempt-boundary-002"],
-      "sample_canonical_gap_ids": ["gap:def"],
-      "sample_missing_receipt_reasons": []
-    }
-  ],
-  "repair_route_quality_backlog": [
-    {
-      "packet_id": "route-quality:add-boundary-assertion:unchanged",
-      "repair_kind": "add_boundary_assertion",
-      "improvement_route": "analysis/repair-route-guidance/add-boundary-assertion",
-      "failure_count": 1,
-      "dominant_failure_reason": "unchanged",
-      "dominant_failure_count": 1,
-      "sample_packet_ids": ["packet-boundary-002"],
-      "sample_attempt_ids": ["attempt-boundary-002"],
-      "sample_canonical_gap_ids": ["gap:def"],
-      "sample_missing_receipt_reasons": [],
-      "why_action_required": "`add_boundary_assertion` produced unchanged evidence; refine target shape, assertion guidance, or evidence expectations before increasing packet volume",
-      "unlock_condition": "update `add_boundary_assertion` guidance so a future attempt can produce evidence_improved or resolved instead of evidence_unchanged",
-      "non_claims": [
-        "not a public repair packet",
-        "not swarm-ready work",
-        "do not retry this repair kind from this backlog item alone",
-        "do not promote or downgrade actionability from route-quality evidence alone",
-        "do not change badge or gate semantics from route-quality evidence alone"
-      ]
-    }
-  ],
-  "top_missing_evidence_fields": [
-    {
-      "label": "receipt_command",
-      "count": 1,
-      "sample_packet_ids": ["packet-boundary-001"],
-      "sample_canonical_gap_ids": ["gap:abc"],
-      "sample_repair_kinds": ["add_boundary_assertion"]
-    }
-  ],
-  "attempts": [
-    {
-      "packet_id": "packet-boundary-001",
-      "canonical_gap_id": "gap:abc",
-      "attempt_id": "attempt:gap-abc:evidence-improved:receipt-movement-improved:agent-receipt:abc:timestamp-unix-ms-1778240100000",
-      "evidence_class": "predicate_boundary",
-      "source_file": "src/pricing.rs",
-      "repair_kind": "add_boundary_assertion",
-      "target_test_type": "boundary_discriminator",
-      "assertion_shape": "assert_eq!(discounted_total(threshold), expected)",
-      "actor_kind": "agent",
-      "receipt_path": "target/ripr/reports/agent-receipt.json",
-      "verify_command": "cargo test -p ripr boundary_gap",
-      "verify_result": "pass",
-      "receipt_command": "cargo xtask receipts write --packet packet-boundary-001",
-      "missing_receipt_reason": null,
-      "before_gap_state": "weakly_gripped",
-      "after_gap_state": "strongly_gripped",
-      "outcome": "evidence_improved",
-      "timestamp": "unix_ms:1778240100000",
-      "receipt_state": "receipt_movement_improved",
-      "movement_source": "agent_receipt",
-      "route_quality_expectation": null,
-      "reason": "Matched agent receipt artifact."
-    }
-  ],
-  "latest_attempts": [
-    {
-      "packet_id": "packet-boundary-001",
-      "canonical_gap_id": "gap:abc",
-      "attempt_id": "attempt:gap-abc:evidence-improved:receipt-movement-improved:agent-receipt:abc:timestamp-unix-ms-1778240100000",
-      "evidence_class": "predicate_boundary",
-      "source_file": "src/pricing.rs",
-      "repair_kind": "add_boundary_assertion",
-      "target_test_type": "boundary_discriminator",
-      "assertion_shape": "assert_eq!(discounted_total(threshold), expected)",
-      "actor_kind": "agent",
-      "receipt_path": "target/ripr/reports/agent-receipt.json",
-      "verify_command": "cargo test -p ripr boundary_gap",
-      "verify_result": "pass",
-      "receipt_command": "cargo xtask receipts write --packet packet-boundary-001",
-      "missing_receipt_reason": null,
-      "before_gap_state": "weakly_gripped",
-      "after_gap_state": "strongly_gripped",
-      "outcome": "evidence_improved",
-      "timestamp": "unix_ms:1778240100000",
-      "receipt_state": "receipt_movement_improved",
-      "movement_source": "agent_receipt",
-      "route_quality_expectation": null,
-      "reason": "Matched agent receipt artifact."
-    }
-  ],
-  "orphaned_receipts": [
-    {
-      "receipt_id": "receipt:old-gap",
-      "seam_id": "old-gap",
-      "reason": "Receipt artifact did not match any current actionable canonical gap packet."
-    }
-  ],
-  "must_not_infer": [
-    "attempt ledgers preserve existing artifact joins; they do not execute repairs",
-    "not_attempted means no matching attempt artifact was supplied, not that repair failed",
-    "receipt_present without movement is not evidence improvement",
-    "orphaned receipts do not create new actionable gaps",
-    "repair-route quality is grouped from latest attempts by repair_kind; it is not a ranking gate",
-    "ledger counts do not change public badge semantics or CI gate mode"
-  ]
-}
-```
-
-`attempts[]` is durable history plus current-plan queue placeholders.
-`latest_attempts[]` is the current routing view, one entry per canonical gap,
-and is the source readiness uses for
-attempt/improved/unchanged/regressed/resolved counts. The ledger preserves
-current `top_ready_packets[]` as synthetic `not_attempted` queue placeholders
-until a receipt or outcome row replaces them. It preserves
-`attempted_no_receipt`, `receipt_present`, `evidence_improved`,
-`evidence_unchanged`, `evidence_regressed`, `resolved`, and `unknown` outcomes.
-`summary` is the latest-projection state used for current routing, except
-`summary.attempts_total`, which reports the durable row count for operator
-visibility. `attempt_history_summary` counts full durable `attempts[]` history
-before latest-attempt collapse and is the place to inspect prior unchanged,
-no-receipt, regressed, or expected-unchanged outcomes that were superseded by a
-newer current attempt.
-It preserves prior `not_attempted` rows only when they remain tied to the current
-swarm plan or carry durable receipt/verification evidence; stale synthetic
-`not_attempted` placeholders are dropped so retired packets do not create
-route-quality or missing-field noise. Missing outcome inputs make the ledger
-`limited_incomplete_input`; readable-but-limited outcome inputs keep their
-limited `runtime_status` instead of becoming a clean full ledger. Missing
-swarm-plan input is consumable but explicitly limited because packet ids may be
-less complete.
-`verify_result` is preserved when supplied by outcome or prior-ledger rows.
-Attempted rows with no `verify_result` contribute to
-`summary.missing_verify_result` and to `top_missing_evidence_fields[]` as
-`verify_result`.
-`route_quality_expectation = "expected_unchanged_negative_capability"` keeps an
-`evidence_unchanged` attempt visible while marking the unchanged result as the
-expected trust-boundary outcome. When such an attempt is the latest row for its
-canonical gap, it increments `summary.expected_unchanged` and
-`repair_kind_expected_unchanged`; it does not contribute to
-`repair_kind_failure_count`, top failing repair routes, or route-quality backlog
-packets. If a newer improved or resolved attempt supersedes it, the expected
-unchanged row remains in durable `attempts[]` history but no longer affects
-latest-route quality counts. It still contributes to
-`attempt_history_summary.expected_unchanged`.
-
-Generated `attempt_id` values include a stable attempt-instance suffix when the
-outcome carries one, preferring explicit outcome `attempt_instance`, then
-outcome `timestamp`, then receipt artifact path, then targeted-test-outcome
-artifact path. This keeps repeated same-state attempts visible without creating
-a new history row from a plain ledger rerun over the same artifacts.
-
-`repair_route_quality[]` is grouped from latest attempts by `repair_kind` and
-reports attempted, improved, unchanged, regressed, resolved, no-receipt,
-receipt-only, missing-verify-result, expected-unchanged, unknown, and
-success-rate counts.
-Rows include `language = null` because they are repo-level repair-kind rollups.
-`language_repair_route_quality[]` is the additive language-scoped projection
-grouped by `language` and `repair_kind` for attempts that carry a known language
-field. It lets TypeScript/JavaScript preview route outcomes be measured without
-promoting preview evidence into public repair packets, badge inputs, or gates.
-`historical_repair_route_quality[]` and
-`historical_language_repair_route_quality[]` use the same row shape over the
-durable full attempt history instead of the latest-attempt projection. They keep
-older unchanged, regressed, and no-receipt attempts visible after a later
-follow-up improves or resolves the same canonical gap. They are audit evidence;
-current routing still comes from latest-attempt `repair_route_quality[]`.
-`top_failing_repair_routes[]` is the subset with unexpected unchanged,
-regressed, no-receipt, missing-verify-result, or unknown outcomes,
-ordered for analyzer-improvement routing. Repair-route quality rows include
-sample packet IDs, attempt IDs, and canonical gap IDs for representative attempted rows when
-available, so successful and failing route metrics both remain inspectable.
-`top_failing_repair_routes[]` and `repair_route_quality_backlog[]` still derive
-their routing from failing attempts and preserve the concrete failed-attempt
-sample in both `next_actions[].attempt_id` and the reason text when available.
-`repair_route_quality_backlog[]` converts
-top failing repair routes into analyzer/report backlog packets with stable
-packet IDs, improvement routes, unlock conditions, samples, and non-claims; the
-rows are not public repair packets, are not swarm-ready work, and do not promote
-or downgrade actionability by themselves.
-`top_historical_failing_repair_routes[]` applies the same failing-route ordering
-to durable history. It is for route-learning audits and must not be used as the
-current next action when the latest-attempt projection has already improved or
-resolved the route.
-When `sample_missing_receipt_reasons[]` shows that no-receipt attempts timed
-out before receipt capture, readiness routes that sample to the bounded
-verify-route `improve_repair_route_quality` action instead of generic
-`collect_missing_attempt_receipts`. Ordinary missing receipts still route to
-receipt collection.
-`top_missing_evidence_fields[]`
-counts missing route/verify/receipt fields that prevent route-quality analysis
-and includes sample packet IDs, canonical gap IDs, and repair kinds when the
-row is derived from attempts. Legacy label/count-only rows remain readable and
-default sample arrays to empty.
-`repair_kind_failure_count` is the sum of unexpected unchanged, regressed,
-no-receipt, missing-verify-result, and unknown latest attempts. Expected
-unchanged negative-capability rows remain counted in `repair_kind_unchanged`
-and `repair_kind_expected_unchanged`, but are excluded from failure routing.
-`repair_kind_dominant_failure_reason` is the highest-count failing bucket, with
-deterministic tie preference for regressed, missing-verify-result, unchanged,
-no-receipt, then unknown.
-The Markdown attempt-ledger and readiness repair-route quality tables include
-both fields so human readers see the same failure explanation as JSON
-consumers.
-
-## RIPR Swarm Readiness
-
-`cargo xtask ripr-swarm readiness` rolls up the existing swarm plan,
-actionable-gap outcomes, and swarm attempt ledger into a repo-level
-repair-coordination readiness report:
-
-```text
-target/ripr/reports/swarm-readiness.json
-target/ripr/reports/swarm-readiness.md
-```
-
-The command reads `target/ripr/reports/swarm-plan.json` and
-`target/ripr/reports/actionable-gap-outcomes.json` and
-`target/ripr/reports/swarm-attempt-ledger.json` by default, or the paths
-provided by `--swarm-plan`, `--actionable-gap-outcomes`, and
-`--attempt-ledger`. It is report-only. It does not execute repairs, edit files,
-run tests, call providers, generate tests, create receipts, run mutation
-testing, change PR/CI rendering, change editor/LSP behavior, change gates, or
-change public badges.
-
-If `swarm-plan.json` is missing or malformed, the report is `blocked` with a
-bounded input limitation. If `actionable-gap-outcomes.json` or
-`swarm-attempt-ledger.json` is missing, the report records the limitation and
-routes the operator to regenerate the missing artifact; missing outcomes or
-ledger inputs do not imply failed attempts. They do make readiness
-non-consumable for downstream attempt/outcome claims until the missing artifact
-is regenerated.
-
-Swarm plan, attempt-ledger, and readiness reports include `run_status` and
-`runtime_status`. Readiness also includes `readiness_state`, a coarse
-user-facing class with one of `full`, `limited`, `stale`, or `blocked`.
-`readiness_state` is additive: consumers that need the exact runtime limitation
-should continue reading `run_status` and `runtime_status`. Readiness preserves
-limited swarm-plan, actionable-gap
-outcome, and attempt-ledger inputs, and reports missing or malformed required
-plan input as `limited_incomplete_input` instead of turning absent packets into a
-clean zero-ready state. Missing outcomes or attempt ledger inputs also report
-`limited_incomplete_input` with `downstream_consumable = false` because the
-repair queue can still be inspected, but attempt history and outcome quality are
-incomplete. If outcomes are present while the attempt ledger is missing,
-readiness may display those outcome counts as advisory context, but the report
-remains non-consumable until durable attempt history is available.
-The Markdown input table mirrors the JSON `inputs` object and includes swarm
-plan, actionable-gap outcomes, and attempt-ledger rows. The Markdown sibling
-also includes a `Runtime Status` table with the same completeness fields as JSON
-before listing those inputs.
-
-Readiness recomputes attempt/outcome summary counts, repair-route quality, and
-missing-evidence-field counts from durable attempt-ledger `attempts[]` when
-present, and otherwise forwards attempt-ledger `summary`,
-`repair_route_quality[]`, `top_failing_repair_routes[]`, and
-`top_missing_evidence_fields[]` so the next operator action can distinguish
-"try the next packet" from "fix the noisy repair route first." These fields are
-advisory quality signals and do not change badge, LSP, PR, or CI gate
-semantics.
-Readiness forwards `static_limitation_backlog` from `swarm-plan` so thin
-surfaces can show the leading analyzer repair routes when no packet is safely
-actionable. This field is advisory limitation backlog, not a public actionable
-count and not a CI gate predicate.
-Readiness summary counts keep the same split as the plan summary:
-`static_limitation_packets` counts public repair packets blocked by static
-limitations, while `static_limitation_backlog_packets` and
-`static_limitation_backlog_signals` describe the separate analyzer backlog.
-`top_limitation_routes[]` is a readiness-level projection of those analyzer
-routes with sample packet context, sample category/subroute, sample canonical
-gap IDs, sample source locations, `why_not_actionable`, unlock conditions, and
-non-claims so operators can inspect the backlog without treating it as repair
-work. It is intentionally separate from `repair_route_quality[]`, which is
-based only on latest repair attempts.
-The backlog packet set is bounded, but it preserves representative samples for
-each packet-backed top repair route in addition to the highest-volume subroutes
-so low-count routes do not collapse to `unknown` sample context. Report-only
-runtime diagnostics remain in `runtime_status` and `run_limitations`, not in
-the packet-backed route projection.
-For older or external backlog packets that omit presentation-only route fields,
-readiness fills standard non-claims, fallback non-actionability text, fallback
-unlock conditions, and explicit `unknown` evidence class values rather than
-dropping the route or making it look repair-ready.
-`attempt_history_summary` preserves durable attempt-ledger history before
-readiness collapses to latest attempts for current routing counts. Use it to
-inspect prior unchanged, no-receipt, regressed, or expected-unchanged outcomes
-without treating those superseded rows as current route-quality failures.
-`top_next_action` is a single-object projection of `next_actions[0]` for
-thin downstream surfaces that need one canonical next route without
-reinterpreting the full advisory queue. When that action routes static
-limitation backlog, its reason preserves the sample subroute and
-`why_not_actionable` text so thin surfaces can explain why the route is
-analyzer work rather than a repair packet.
-When all required inputs are readable but a non-consumable limited runtime state
-is preserved from one input, readiness emits
-`resolve_limited_runtime_status` before packet or route-quality actions so
-downstream surfaces do not treat limited zero counts as work-ready truth.
-For known runtime limitation categories, that action includes the command that
-regenerates or inspects the limiting input, for example
-`cargo xtask lane1-evidence-audit` for sampled, timed-out, runner-failed, or
-incomplete repo-exposure generation and cache report/GC commands for large cache
-limits.
-Readiness also includes `cross_language_oracle_route_quality`, a SPEC-0062
-preview-only summary over the checked Bun Blob cross-language oracle graph
-corpus. This section counts complete advisory witnesses, missing discriminator
-limitations, mention-only limitations, unknown bridge limitations, and public
-packet exclusions while keeping all rows `repair_packet_ready = false`. It is
-operator route-quality evidence only; it does not create repair packets, verify
-commands, receipt commands, source edits, generated tests, gates, badges, or
-support-tier claims.
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "report": "swarm-readiness",
-  "scope": "repo",
-  "status": "advisory",
-  "readiness_state": "full",
-  "run_status": "full",
-  "runtime_status": {
-    "state": "full",
-    "phase": null,
-    "duration_ms": null,
-    "limit_ms": null,
-    "input_kind": null,
-    "input_path": null,
-    "limitation_category": null,
-    "repair_route": null,
-    "downstream_consumable": true
-  },
-  "inputs": {
-    "swarm_plan": {
-      "path": "target/ripr/reports/swarm-plan.json",
-      "state": "read",
-      "limitation": null
-    },
-    "actionable_gap_outcomes": {
-      "path": "target/ripr/reports/actionable-gap-outcomes.json",
-      "state": "read",
-      "limitation": null
-    },
-    "attempt_ledger": {
-      "path": "target/ripr/reports/swarm-attempt-ledger.json",
-      "state": "read",
-      "limitation": null
-    }
-  },
-  "summary": {
-    "actionable_gaps_total": 162,
-    "public_projection_eligible_packets": 25,
-    "swarm_ready_packets": 10,
-    "blocked_packets": 15,
-    "blocked_by_missing_context_packets": 12,
-    "blocked_by_static_limitation_packets": 2,
-    "blocked_by_public_projection_exclusion_packets": 0,
-    "blocked_by_operator_judgment_packets": 1,
-    "public_projection_excluded_packets": 0,
-    "missing_canonical_gap_id": 0,
-    "missing_verify_command": 0,
-    "missing_verify_result": 0,
-    "missing_receipt_command": 0,
-    "missing_repair_kind": 0,
-    "missing_target_test_shape": 0,
-    "static_limitation_packets": 2,
-    "static_limitation_backlog_packets": 6,
-    "static_limitation_backlog_signals": 141,
-    "high_confidence_packets": 4,
-    "attempted_packets": 3,
-    "attempted_no_receipt_packets": 0,
-    "receipt_present_packets": 0,
-    "improved_packets": 2,
-    "unchanged_packets": 1,
-    "expected_unchanged_packets": 0,
-    "regressed_packets": 0,
-    "resolved_packets": 1,
-    "orphaned_receipts": 0
-  },
-  "attempt_history_summary": {
-    "attempts_total": 6,
-    "durable_attempts_total": 5,
-    "canonical_gaps_total": 4,
-    "not_attempted": 1,
-    "attempted_no_receipt": 1,
-    "receipt_present": 0,
-    "missing_verify_result": 0,
-    "evidence_improved": 2,
-    "evidence_unchanged": 2,
-    "expected_unchanged": 1,
-    "evidence_regressed": 0,
-    "resolved": 1,
-    "unknown": 0
-  },
-  "static_limitation_backlog": {
-    "source": "lane1-evidence-audit.static_limitations",
-    "top_categories": [
-      {
-        "category": "activation_value_unresolved",
-        "count": 141,
-        "repair_route": "analysis/value-resolution-audit-fixes"
-      }
-    ],
-    "top_repair_routes": [
-      {
-        "repair_route": "analysis/value-resolution-audit-fixes",
-        "count": 141
-      }
-    ]
-  },
-  "top_limitation_routes": [
-    {
-      "repair_route": "analysis/value-resolution-audit-fixes",
-      "signal_count": 141,
-      "sample_packet_id": "limitation:activation-value-unresolved:value-resolution-audit-fixes",
-      "sample_limitation_category": "activation_value_unresolved",
-      "sample_limitation_subroute": "activation_value_unresolved",
-      "sample_canonical_gap_ids": ["gap:value-resolution"],
-      "sample_sources": [
-        {
-          "canonical_gap_id": "gap:value-resolution",
-          "evidence_class": "predicate_boundary",
-          "source_file": "crates/ripr/src/analysis/value_resolution.rs",
-          "line": 88,
-          "expression": "idx >= offset",
-          "limitation_reason": "activation value cannot be safely mapped to a test input"
-        }
-      ],
-      "dominant_evidence_class": "predicate_boundary",
-      "why_not_actionable": "activation value cannot be safely mapped to a test input",
-      "unlock_condition": "implement analyzer value-resolution before public repair packets are emitted",
-      "non_claims": [
-        "not a public repair packet",
-        "not swarm-ready work",
-        "do not edit tests from this backlog item alone",
-        "do not invent exact candidate values"
-      ]
-    }
-  ],
-  "blocked_state_routes": [
-    {
-      "state": "blocked_by_missing_context",
-      "count": 12,
-      "reason": "required packet context is missing before the packet can be safely delegated",
-      "next_action_kind": "inspect_blocked_missing_context",
-      "repair_route": "cargo xtask lane1-evidence-audit",
-      "example_packet_id": "packet:missing-context",
-      "example_canonical_gap_id": "gap:missing-context",
-      "example_repair_kind": "add_boundary_assertion",
-      "example_receipt_path": null
-    },
-    {
-      "state": "blocked_by_static_limitation",
-      "count": 2,
-      "reason": "a named static limitation prevents a safe bounded repair route",
-      "next_action_kind": "route_static_limitations",
-      "repair_route": "cargo xtask lane1-evidence-audit",
-      "example_packet_id": "packet:static-limit",
-      "example_canonical_gap_id": "gap:static-limit",
-      "example_repair_kind": "add_boundary_assertion",
-      "example_receipt_path": null
-    },
-    {
-      "state": "blocked_by_operator_judgment",
-      "count": 1,
-      "reason": "typed context exists, but default swarm routing still requires operator judgment",
-      "next_action_kind": "route_operator_judgment_packets",
-      "repair_route": "cargo xtask ripr-swarm plan --top 10",
-      "example_packet_id": "packet:manual",
-      "example_canonical_gap_id": "gap:manual",
-      "example_repair_kind": "add_boundary_assertion",
-      "example_receipt_path": null
-    }
-  ],
-  "repair_route_quality": [
-    {
-      "language": null,
-      "repair_kind": "add_boundary_assertion",
-      "repair_kind_attempted": 2,
-      "repair_kind_improved": 1,
-      "repair_kind_unchanged": 1,
-      "repair_kind_regressed": 0,
-      "repair_kind_resolved": 0,
-      "repair_kind_attempted_no_receipt": 0,
-      "repair_kind_receipt_present": 0,
-      "repair_kind_missing_verify_result": 0,
-      "repair_kind_expected_unchanged": 0,
-      "repair_kind_unknown": 0,
-      "repair_kind_failure_count": 1,
-      "repair_kind_dominant_failure_reason": "unchanged",
-      "repair_kind_success_rate": 0.5,
-      "sample_packet_ids": ["packet-boundary-002"],
-      "sample_attempt_ids": ["attempt-boundary-002"],
-      "sample_canonical_gap_ids": ["gap:def"],
-      "sample_missing_receipt_reasons": []
-    }
-  ],
-  "language_repair_route_quality": [
-    {
-      "language": "typescript",
-      "repair_kind": "sharpen_static_limitation_route",
-      "repair_kind_attempted": 1,
-      "repair_kind_improved": 1,
-      "repair_kind_unchanged": 0,
-      "repair_kind_regressed": 0,
-      "repair_kind_resolved": 0,
-      "repair_kind_attempted_no_receipt": 0,
-      "repair_kind_receipt_present": 0,
-      "repair_kind_missing_verify_result": 0,
-      "repair_kind_expected_unchanged": 0,
-      "repair_kind_unknown": 0,
-      "repair_kind_failure_count": 0,
-      "repair_kind_dominant_failure_reason": null,
-      "repair_kind_success_rate": 1.0,
-      "sample_packet_ids": [],
-      "sample_attempt_ids": [],
-      "sample_canonical_gap_ids": [],
-      "sample_missing_receipt_reasons": []
-    }
-  ],
-  "cross_language_oracle_route_quality": {
-    "status": "pass",
-    "source_path": "fixtures/cross-language-oracle-graph-corpus/corpus.json",
-    "cases_total": 9,
-    "passing_cases": 9,
-    "failing_cases": 0,
-    "cross_language_oracle_graph_complete_advisory_witnesses": 3,
-    "cross_language_oracle_graph_missing_discriminator_limitations": 1,
-    "cross_language_oracle_graph_missing_external_oracle_limitations": 1,
-    "cross_language_oracle_graph_bridge_unknown_limitations": 1,
-    "cross_language_oracle_graph_mention_only_limitations": 1,
-    "cross_language_oracle_graph_panic_boundary_limitations": 1,
-    "cross_language_oracle_graph_public_packet_exclusions": 9,
-    "repair_packet_ready_cases": 0,
-    "authority_boundary": "preview_advisory_only",
-    "non_claims": [
-      "not a public repair packet",
-      "not badge or gate input",
-      "not runtime Bun execution",
-      "not generated tests",
-      "not source edits",
-      "not full cross-language proof",
-      "not support-tier promotion"
-    ],
-    "rows": [
-      {
-        "case_id": "bun_blob_bridge_unknown_limitation",
-        "expected_state": "bridge_unknown",
-        "observed_state": "bridge_unknown",
-        "status": "pass",
-        "missing_discriminators": [],
-        "missing_graph_legs": ["binding_or_ffi_edge"],
-        "authority_boundary": "preview_advisory_only",
-        "repair_packet_ready": false,
-        "unlock_condition": "Name a configured or generated binding edge from the TypeScript Blob surface to Blob::from_js_without_defer_gc."
-      },
-      {
-        "case_id": "bun_blob_missing_external_oracle_limitation",
-        "expected_state": "rust_ungripped_ts_missing_external_oracle",
-        "observed_state": "rust_ungripped_ts_missing_external_oracle",
-        "status": "pass",
-        "missing_discriminators": [],
-        "missing_graph_legs": ["external_oracle:stable_byte_copy"],
-        "authority_boundary": "preview_advisory_only",
-        "repair_packet_ready": false,
-        "unlock_condition": "Connect the partial Blob observer evidence to a stable byte oracle before crediting the Rust seam or suggesting placement."
-      }
-    ]
-  },
-  "top_failing_repair_routes": [
-    {
-      "language": null,
-      "repair_kind": "add_boundary_assertion",
-      "repair_kind_attempted": 2,
-      "repair_kind_improved": 1,
-      "repair_kind_unchanged": 1,
-      "repair_kind_regressed": 0,
-      "repair_kind_resolved": 0,
-      "repair_kind_attempted_no_receipt": 0,
-      "repair_kind_receipt_present": 0,
-      "repair_kind_missing_verify_result": 0,
-      "repair_kind_expected_unchanged": 0,
-      "repair_kind_unknown": 0,
-      "repair_kind_failure_count": 1,
-      "repair_kind_dominant_failure_reason": "unchanged",
-      "repair_kind_success_rate": 0.5,
-      "sample_packet_ids": ["packet-boundary-002"],
-      "sample_attempt_ids": ["attempt-boundary-002"],
-      "sample_canonical_gap_ids": ["gap:def"]
-    }
-  ],
-  "repair_route_quality_backlog": [
-    {
-      "packet_id": "route-quality:add-boundary-assertion:unchanged",
-      "repair_kind": "add_boundary_assertion",
-      "improvement_route": "analysis/repair-route-guidance/add-boundary-assertion",
-      "failure_count": 1,
-      "dominant_failure_reason": "unchanged",
-      "dominant_failure_count": 1,
-      "sample_packet_ids": ["packet-boundary-002"],
-      "sample_attempt_ids": ["attempt-boundary-002"],
-      "sample_canonical_gap_ids": ["gap:def"],
-      "sample_missing_receipt_reasons": [],
-      "why_action_required": "`add_boundary_assertion` produced unchanged evidence; refine target shape, assertion guidance, or evidence expectations before increasing packet volume",
-      "unlock_condition": "update `add_boundary_assertion` guidance so a future attempt can produce evidence_improved or resolved instead of evidence_unchanged",
-      "non_claims": [
-        "not a public repair packet",
-        "not swarm-ready work",
-        "do not retry this repair kind from this backlog item alone",
-        "do not promote or downgrade actionability from route-quality evidence alone",
-        "do not change badge or gate semantics from route-quality evidence alone"
-      ]
-    }
-  ],
-  "top_missing_evidence_fields": [
-    {
-      "label": "receipt_command",
-      "count": 1,
-      "sample_packet_ids": ["packet-boundary-001"],
-      "sample_canonical_gap_ids": ["gap:abc"],
-      "sample_repair_kinds": ["add_boundary_assertion"]
-    }
-  ],
-  "top_next_action": {
-    "kind": "improve_repair_route_quality",
-    "packet_id": "route-quality:add-boundary-assertion:unchanged",
-    "attempt_id": "attempt-boundary-002",
-    "canonical_gap_id": null,
-    "evidence_class": null,
-    "repair_kind": "add_boundary_assertion",
-    "command": "cargo xtask ripr-swarm readiness",
-    "reason": "`add_boundary_assertion` has 1 failing latest attempt(s); dominant reason `unchanged` appears 1 time(s); route backlog packet `route-quality:add-boundary-assertion:unchanged` through `analysis/repair-route-guidance/add-boundary-assertion` before increasing packet volume; sample failed packet `packet-boundary-002` attempt `attempt-boundary-002`"
-  },
-  "next_actions": [
-    {
-      "kind": "improve_repair_route_quality",
-      "packet_id": "route-quality:add-boundary-assertion:unchanged",
-      "attempt_id": "attempt-boundary-002",
-      "canonical_gap_id": null,
-      "evidence_class": null,
-      "repair_kind": "add_boundary_assertion",
-      "command": "cargo xtask ripr-swarm readiness",
-      "reason": "`add_boundary_assertion` has 1 failing latest attempt(s); dominant reason `unchanged` appears 1 time(s); route backlog packet `route-quality:add-boundary-assertion:unchanged` through `analysis/repair-route-guidance/add-boundary-assertion` before increasing packet volume; sample failed packet `packet-boundary-002` attempt `attempt-boundary-002`"
-    },
-    {
-      "kind": "inspect_unchanged_attempts",
-      "packet_id": null,
-      "attempt_id": null,
-      "canonical_gap_id": null,
-      "evidence_class": null,
-      "repair_kind": null,
-      "command": "cargo xtask ripr-swarm attempt-ledger",
-      "reason": "1 attempted packet(s) left evidence unchanged; refine the repair route before retrying"
-    },
-    {
-      "kind": "route_static_limitations",
-      "packet_id": null,
-      "canonical_gap_id": null,
-      "evidence_class": null,
-      "repair_kind": null,
-      "command": "cargo xtask lane1-evidence-audit",
-      "reason": "2 packet(s) are blocked by static limitations; route them to the Lane 1 analyzer backlog, not repair execution"
-    },
-    {
-      "kind": "route_operator_judgment_packets",
-      "packet_id": "gap:static-only-boundary",
-      "canonical_gap_id": "gap:static-only-boundary",
-      "evidence_class": "predicate_boundary",
-      "repair_kind": "add_boundary_assertion",
-      "command": "cargo xtask ripr-swarm plan --top 10",
-      "reason": "1 top blocked packet(s) require operator judgment; improve upstream evidence confidence or choose a manual repair outside the default swarm-ready queue"
-    },
-    {
-      "kind": "attempt_ready_packet",
-      "packet_id": "packet-boundary-001",
-      "canonical_gap_id": "gap:boundary",
-      "evidence_class": "predicate_boundary",
-      "repair_kind": "add_boundary_assertion",
-      "command": "cargo xtask ripr-swarm attempt --packet packet-boundary-001 --dry-run",
-      "reason": "packet is queued with repair, verify, receipt, and no static limitation"
-    }
-  ],
-  "must_not_infer": [
-    "readiness reports summarize existing swarm artifacts; they do not execute repairs",
-    "raw findings remain supporting evidence, not swarm work",
-    "missing outcome artifacts mean no outcome join is available, not that attempts failed",
-    "repair-route quality is an analyzer improvement signal, not a public badge basis",
-    "top_next_action is a projection of next_actions[0], not a separate ranking source",
-    "readiness counts do not change public badge semantics",
-    "static limitations and blocked packets are not repair-ready work"
-  ]
-}
-```
-
-The readiness report is the management dashboard for repair coordination. It
-summarizes whether actionable packets have enough typed context to be
-swarm-ready, whether attempts have been recorded, and whether receipt-backed
-outcomes improved, stayed unchanged, regressed, or resolved. It does not make
-badge-readiness claims by itself. `next_actions` is a bounded advisory queue
-derived from the same plan and outcome artifacts. It can point operators to a
-ready dry-run packet, missing verify/receipt source fields, orphaned receipts,
-unchanged or regressed attempts, static-limitation backlog work, or
-operator-judgment packets that are visible but not default swarm-ready. It does
-not execute the action or consume raw findings as work. Route-quality next
-actions may carry `attempt_id` to point at the concrete failed receipt sample
-behind the analyzer/report backlog route. `top_next_action` is
-the first item in that queue, duplicated as a stable object for badge, LSP, PR,
-CI, or other thin surfaces that should not implement their own ranking rules.
-`blocked_state_routes[]` gives every reported blocked packet or attempt state a
-count, reason, next action kind, repair route, and example packet/canonical gap
-identity when source artifacts provide one, so no blocked class is visible only
-through raw packet JSON. It includes coarse states such as
-`blocked_by_missing_context`, field-level blockers such as
-`missing_canonical_gap_id`, `missing_repair_kind`, `missing_target_test_shape`, `missing_allowed_edit_surface`,
-`missing_confidence`, `missing_raw_evidence_refs`, and
-`missing_related_test_or_observer`, and outcome blockers such as `orphan_receipt`,
-`unchanged_attempt`, and
-`regressed_attempt`. For `blocked_by_static_limitation`, readiness prefers the
-top static-limitation backlog route and sample packet when available, so the
-blocked route names the analyzer repair lane instead of a generic report rerun.
-
-
-## Evidence Quality Scorecard
-
-`cargo xtask evidence-quality-scorecard` writes a repo-local Lane 1 scorecard
-over existing evidence-quality artifacts:
-
-```text
-target/ripr/reports/evidence-quality-scorecard.json
-target/ripr/reports/evidence-quality-scorecard.md
-```
-
-The command reads `target/ripr/reports/lane1-evidence-audit.json`, regenerating
-the audit first only when that required input is absent. It also reads
-`target/ripr/reports/evidence-health.json` and the previous scorecard artifact
-when they are already available. The report is advisory and does not change
-analyzer behavior, gate policy, PR/CI projection, editor output, source files,
-generated tests, provider calls, or runtime execution.
-The Markdown sibling includes a `Runtime Status` table with the same
-completeness fields as JSON before listing scorecard summary metrics.
-
-If the scorecard cannot regenerate a missing Lane 1 audit, it still writes a
-bounded diagnostic scorecard instead of silently dropping the report. That
-limited scorecard carries `unknowns[].kind =
-"evidence_quality_scorecard_audit_regeneration_failed"` and an audit
-`run_limitations[]` entry with the same category. Counts in that artifact are
-diagnostic only and must not be treated as complete repo truth or user test
-debt.
-
-Scorecard JSON includes `run_status` and `runtime_status`. It preserves a
-limited current audit or limited evidence-health input instead of converting
-partial counts into a clean scorecard headline. A completed audit that only
-  skipped a large cache store reports `limited_large_cache_skip` with
-  `downstream_consumable = true`; an audit skipped before generation because
-  the existing cache footprint exceeded the Lane 1 budget reports
-  `limited_large_cache_skip` with `downstream_consumable = false`; timeout,
-  runner failure, sampled, incomplete, or audit-regeneration states are not
-  complete repo truth.
-
-When a Lane 1 audit carries named `run_limitations[]`, the scorecard treats the
-matching `static_limitations.by_category` rows as static limitations even if an
-older or partial audit summary did not increment `summary.static_limitations_total`.
-This keeps limited artifacts visible in the headline static-limitation count
-instead of presenting a misleading zero.
-The scorecard also includes `cross_language_oracle_route_quality`, the same
-SPEC-0062 preview-only route-quality summary emitted by swarm readiness. It is
-included so evidence-quality readers can see whether the checked Bun Blob
-cross-language corpus is credited, missing a discriminator, mention-only, bridge
-unknown, or excluded from public repair packets without running a separate
-analyzer path. It remains advisory and does not change gate, badge, baseline,
-repair-packet, generated-test, source-edit, provider, runtime, or support-tier
-authority.
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "report": "evidence-quality-scorecard",
-  "generated_at": "unix_ms:1778620000000",
-  "run_status": "full",
-  "runtime_status": {
-    "state": "full",
-    "phase": null,
-    "duration_ms": null,
-    "limit_ms": null,
-    "input_kind": null,
-    "input_path": null,
-    "limitation_category": null,
-    "repair_route": null,
-    "downstream_consumable": true
-  },
-  "scope": {
-    "kind": "repo",
-    "root": "."
-  },
-  "inputs": {
-    "lane1_evidence_audit": {
-      "path": "target/ripr/reports/lane1-evidence-audit.json",
-      "status": "loaded",
-      "schema_version": "0.1",
-      "sha256": "0123456789abcdef",
-      "note": "required Lane 1 evidence-quality audit input"
-    },
-    "evidence_health": {
-      "path": "target/ripr/reports/evidence-health.json",
-      "status": "missing",
-      "schema_version": null,
-      "sha256": null,
-      "note": "optional durable evidence-health audit fields"
-    }
-  },
-  "headline": {
-    "primary_metric": "finding_alignment_actionable_unresolved_canonical_gaps",
-    "primary_count": 0,
-    "counting_model": "actionable_canonical_gaps",
-    "raw_signals": 2,
-    "canonical_items": 1,
-    "already_observed": 0,
-    "internal_no_action": 0,
-    "static_limitations": 4356,
-    "unknown": 0,
-    "raw_to_canonical_ratio": 2.0,
-    "note": "Raw findings are diagnostic; actionable canonical gaps are the user-facing repair count."
-  },
-  "summary": {
-    "raw_headline_gaps": 6114,
-    "canonical_gap_groups_total": 4800,
-    "duplicate_looking_groups_total": 240,
-    "missing_discriminators_total": 1756,
-    "static_limitations_total": 4356,
-    "related_tests_total": 2200,
-    "low_or_opaque_top_related_tests": 48,
-    "calibrated_records": 0,
-    "uncalibrated_records": 9355,
-    "evidence_records_total": 9355,
-    "evidence_records_missing": 0,
-    "top_repair_count": 5,
-    "recent_delta_available": false,
-    "finding_alignment_raw_findings_total": 2,
-    "finding_alignment_raw_signals_total": 2,
-    "finding_alignment_canonical_items_total": 1,
-    "finding_alignment_aligned_raw_findings_total": 2,
-    "finding_alignment_unaligned_raw_findings_total": 0,
-    "finding_alignment_raw_to_canonical_ratio": 2.0,
-    "finding_alignment_duplicate_groups_total": 1,
-    "finding_alignment_actionable_items_total": 0,
-    "finding_alignment_actionable_unresolved_canonical_gaps": 0,
-    "finding_alignment_already_observed_total": 0,
-    "finding_alignment_internal_only_total": 0,
-    "finding_alignment_internal_no_action_total": 0,
-    "finding_alignment_static_limitation_total": 1,
-    "finding_alignment_unknown_total": 0,
-    "finding_alignment_calibrated_supported_total": 0,
-    "finding_alignment_uncalibrated_total": 1,
-    "finding_alignment_visibility_unknown_total": 1,
-    "finding_alignment_presentation_text_actionable_total": 0,
-    "finding_alignment_static_unknown_without_named_limitation": 0,
-    "finding_alignment_canonical_items_without_repair_route": 0,
-    "finding_alignment_canonical_items_without_verify_command": 0,
-    "finding_alignment_actionable_gap_packet_public_projection_eligible_packets": 25,
-    "finding_alignment_actionable_gap_packet_public_projection_excluded_packets": 0,
-    "presentation_text_total": 1,
-    "presentation_text_user_visible": 0,
-    "presentation_text_observed": 0,
-    "presentation_text_unobserved": 0,
-    "presentation_text_internal_only": 0,
-    "presentation_text_visibility_unknown": 1,
-    "presentation_text_observer_unknown": 1,
-    "presentation_text_duplicate_groups": 1,
-    "presentation_text_actionable_snapshot": 0,
-    "presentation_text_no_action": 0,
-    "presentation_text_static_limitations": 1
-  },
-  "maturity_by_class": [
-    {
-      "class": "related_test_ranking",
-      "status": "static_only",
-      "proof_source": "RIPR-SPEC-0029, Lane 1 audit related-test confidence distribution",
-      "known_limits": "Top related-test choices include low-confidence or opaque rankings.",
-      "recommended_next_repair": "analysis/related-test-ranking-audit-fixes"
-    }
-  ],
-  "canonical_gap_groups": {
-    "total": 4800,
-    "largest": []
-  },
-  "duplicate_looking_groups": [],
-  "static_limitation_categories": {
-    "by_reason": [],
-    "by_stage": {},
-    "by_category": {},
-    "repair_routes": {}
-  },
-  "missing_discriminator_classes": {
-    "by_reason": [],
-    "by_flow_sink": {},
-    "by_value": []
-  },
-  "related_test_confidence": {
-    "all_confidence_counts": {},
-    "top_confidence_counts": {}
-  },
-  "oracle_semantics_distribution": {
-    "by_semantics": [],
-    "oracle_kind_counts": {},
-    "oracle_strength_counts": {}
-  },
-  "movement_availability": {
-    "records_with_canonical_gap_id": 4800
-  },
-  "calibration_coverage": {
-    "availability_counts": {
-      "not_imported": 9355
-    },
-    "confidence_counts": {
-      "unknown": 9355
-    },
-    "agreement_counts": {
-      "no_runtime_data": 9355
-    },
-    "calibrated_records": 0,
-    "uncalibrated_records": 9355,
-    "runtime_scope": "uncalibrated",
-    "by_evidence_class": [
-      {
-        "evidence_class": "predicate_boundary",
-        "canonical_items": 900,
-        "calibrated_supported": 0,
-        "fixture_backed": 0,
-        "static_only": 900,
-        "unknown_confidence": 0,
-        "uncalibrated": 900,
-        "actionable_items": 42,
-        "static_limitation_items": 0
-      }
-    ]
-  },
-  "actionable_gap_top_lists": {
-    "top_actionable_gap_classes": [
-      {"label": "predicate_boundary", "count": 900}
-    ],
-    "top_actionable_files": [
-      {"label": "src/pricing.rs", "count": 42}
-    ],
-    "top_repair_kinds": [
-      {"label": "add_boundary_assertion", "count": 810}
-    ],
-    "top_missing_discriminator_kinds": [
-      {"label": "return_value", "count": 720}
-    ],
-    "top_static_limitation_reasons": [
-      {"label": "opaque helper value", "count": 1200}
-    ],
-    "top_verify_command_unknowns": [
-      {"label": "predicate_boundary", "count": 120}
-    ],
-    "top_repair_route_unknowns": []
-  },
-  "actionable_gap_packet_public_projection": {
-    "scope": "emitted_actionable_gap_packets",
-    "public_projection_eligible_packets": 25,
-    "public_projection_excluded_packets": 0,
-    "projection_exclusion_reasons": []
-  },
-  "cross_language_oracle_route_quality": {
-    "status": "pass",
-    "source_path": "fixtures/cross-language-oracle-graph-corpus/corpus.json",
-    "cases_total": 9,
-    "passing_cases": 9,
-    "failing_cases": 0,
-    "cross_language_oracle_graph_complete_advisory_witnesses": 3,
-    "cross_language_oracle_graph_missing_discriminator_limitations": 1,
-    "cross_language_oracle_graph_missing_external_oracle_limitations": 1,
-    "cross_language_oracle_graph_bridge_unknown_limitations": 1,
-    "cross_language_oracle_graph_mention_only_limitations": 1,
-    "cross_language_oracle_graph_panic_boundary_limitations": 1,
-    "cross_language_oracle_graph_public_packet_exclusions": 9,
-    "repair_packet_ready_cases": 0,
-    "authority_boundary": "preview_advisory_only",
-    "rows": [
-      {
-        "case_id": "bun_blob_missing_resizable_oracle_limitation",
-        "expected_state": "rust_ungripped_ts_missing_discriminator",
-        "observed_state": "rust_ungripped_ts_missing_discriminator",
-        "status": "pass",
-        "missing_discriminators": ["resizable_array_buffer"],
-        "missing_graph_legs": [
-          "boundary_discriminator:resizable_array_buffer"
-        ],
-        "repair_packet_ready": false,
-        "unlock_condition": "Prove a TypeScript Blob observer for a resizable ArrayBuffer on the configured bridge before placement or actionability is suggested."
-      },
-      {
-        "case_id": "bun_blob_missing_external_oracle_limitation",
-        "expected_state": "rust_ungripped_ts_missing_external_oracle",
-        "observed_state": "rust_ungripped_ts_missing_external_oracle",
-        "status": "pass",
-        "missing_discriminators": [],
-        "missing_graph_legs": [
-          "external_oracle:stable_byte_copy"
-        ],
-        "repair_packet_ready": false,
-        "unlock_condition": "Connect the partial Blob observer evidence to a stable byte oracle before crediting the Rust seam or suggesting placement."
-      }
-    ]
-  },
-  "recommended_repairs": [
-    {
-      "slice": "analysis/related-test-ranking-audit-fixes",
-      "priority": 100,
-      "evidence_class": "related_test_ranking",
-      "risk_kind": "low_or_opaque_top_related_tests",
-      "signal_count": 48,
-      "why": "Top related-test choices include low-confidence or opaque evidence.",
-      "expected_impact": "Improve first-useful-action task quality and agent packet reliability without changing gate behavior."
-    }
-  ],
-  "recent_audit_deltas": {
-    "available": false,
-    "source": null,
-    "reason": "no previous scorecard artifact was available",
-    "deltas": []
-  },
-  "unknowns": [
-    {
-      "kind": "recent_delta_unavailable",
-      "summary": "No previous scorecard artifact was available for before/after delta reporting.",
-      "next_repair": "report/evidence-quality-trend"
-    }
-  ]
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"`.
-- `tool` - always `"ripr"`.
-- `report` - always `"evidence-quality-scorecard"`.
-- `generated_at` - generation timestamp in `unix_ms:<millis>` form.
-- `scope.kind` - always `"repo"`.
-- `inputs.*` - input artifact identity with path, load status, optional schema
-  version, optional SHA-256, and a short note. Missing optional artifacts are
-  reported instead of treated as failures.
-- `headline` - additive scorecard lead numbers for the finding-alignment
-  counting model plus the audit-wide static-limitation headline.
-  `primary_metric` is
-  `finding_alignment_actionable_unresolved_canonical_gaps`, `primary_count` is
-  the actionable canonical gap count, and raw signals remain diagnostic context
-  alongside canonical item, already-observed, no-action, unknown, and
-  raw-to-canonical counts. `static_limitations` mirrors the scorecard summary's
-  audit-wide `static_limitations_total`, including named run limitations that
-  are carried into the static-limitation taxonomy. This does not redefine public
-  badges or gate policy.
-- `summary` - headline scorecard counts copied from the current Lane 1 audit
-  plus scorecard-local repair, delta availability, finding-alignment, and
-  presentation-text counts. Finding-alignment counts preserve raw signals,
-  canonical item totals, raw-to-canonical ratio, evidence states, confidence
-  basis, and class-scoped presentation-text actionability without redefining
-  RIPR scores.
-- `maturity_by_class` - class-scoped maturity rows. Status values are
-  `fixture_backed`, `static_only`, `imported_runtime_calibrated`, or
-  `uncalibrated`; these are scorecard maturity labels, not RIPR exposure
-  classifications.
-- `canonical_gap_groups`, `duplicate_looking_groups`,
-  `static_limitation_categories`, `missing_discriminator_classes`,
-  `related_test_confidence`, `oracle_semantics_distribution`, and
-  `movement_availability` - current audit sections carried forward so the
-  scorecard remains traceable to `lane1-evidence-audit.json`. Static
-  limitation categories and repair routes are advisory Lane 1 analyzer-work
-  buckets; they are not user-actionable test-gap labels.
-- `calibration_coverage` - class-scoped calibration availability from
-  `evidence_record.calibration`; `by_evidence_class` carries the audit's
-  runtime-confidence rows for canonical items so maintainers can see calibrated
-  support, fixture-backed static confidence, static-only evidence, unknown
-  confidence, actionable items, and limitation items by class. It does not run
-  mutation testing.
-- `actionable_gap_top_lists` - the audit-derived
-  `finding_alignment.actionable_gap_top_lists` section carried forward for the
-  scorecard. It shows the dominant actionable classes, files, repair kinds,
-  missing discriminator kinds, static limitation reasons on actionable gap
-  records, and guidance-unknown classes so the scorecard explains the shape of
-  user work before any badge or downstream rendering change.
-- `actionable_gap_packet_public_projection` - the audit-derived
-  `finding_alignment.actionable_gap_packet_public_projection` readiness section
-  carried forward for scorecard and trend use. It counts emitted actionable-gap
-  packets that are internally ready for future public projection and lists
-  exclusion reasons such as missing receipt paths. This is advisory
-  badge-readiness evidence only; it does not switch public badges or PR/CI
-  rendering.
-- `cross_language_oracle_route_quality` - the checked SPEC-0062 Bun Blob route
-  summary. It reports complete advisory witnesses, missing discriminator
-  limitations, mention-only limitations, unknown bridge limitations, public
-  packet exclusions, row-level missing graph legs, unlock conditions, and
-  `repair_packet_ready=false`. It is preview/advisory evidence only and does not
-  create public repair packets, verify commands, receipt commands, source edits,
-  generated tests, runtime execution, gates, badges, baselines, RIPR Zero, or
-  support-tier claims.
-- `evidence_class_work_queue` - the audit-derived
-  `finding_alignment.coverage.evidence_class_work_queue` section carried
-  forward so the scorecard names the next evidence classes to burn down from
-  live output rather than static roadmap guesses. Static-dominated rows retain
-  the dominant named limitation category and repair route, matching the audit
-  queue.
-- `recommended_repairs` - bounded Lane 1 repair slices. The scorecard promotes
-  the audit-derived `evidence_class_work_queue` rows first so the next repair
-  class comes from live evidence-class counts rather than static roadmap
-  guesses; remaining generic risks are ordered by product risk priority and
-  signal count. These are advisory next steps, not policy decisions.
-- `recent_audit_deltas` - before/after summary deltas when a previous
-  scorecard artifact is available; otherwise an explicit unavailable reason.
-- `unknowns` - unavailable inputs and evidence-quality unknowns that should
-  stay visible until a fixture, analyzer, or calibration slice addresses them.
-  A scorecard generated after failed missing-audit regeneration includes
-  `evidence_quality_scorecard_audit_regeneration_failed` and the generic
-  `lane1_evidence_audit_limited` unknown so downstream consumers can explain
-  the bounded diagnostic state. Non-completeness audit limitations, such as
-  skipped full-cache storage after a complete repo-exposure run, remain visible
-  on the audit artifact but do not mark scorecard counts as partial.
-
-The Markdown sibling prints bounded sections for summary, finding-alignment and
-presentation-text quality, actionable canonical gap top lists, actionable-gap
-packet public-projection readiness, evidence-class work queue, maturity by
-class, top evidence-quality risks, recommended repairs, duplicate/canonical group signals, static
-limitations, missing discriminators, related-test and oracle distributions,
-movement and calibration coverage, recent deltas, and unknowns.
-
-## Evidence Quality Trend
-
-`cargo xtask evidence-quality-trend` writes a repo-local Lane 1 trend report
-over existing scorecard or audit snapshots:
-
-```text
-target/ripr/reports/evidence-quality-trend.json
-target/ripr/reports/evidence-quality-trend.md
-```
-
-By default the command reads the current
-`target/ripr/reports/evidence-quality-scorecard.json`, regenerating the
-scorecard first only when that required input is absent. It compares against
-`target/ripr/reports/evidence-quality-scorecard.previous.json` or
-`target/ripr/reports/lane1-evidence-audit.previous.json` when one exists.
-Operators may also pass `--current <path>` and `--previous <path>`. Missing
-history is reported explicitly as `unknown`; the command does not change
-analyzer behavior, gate policy, PR/CI projection, editor output, source files,
-generated tests, provider calls, score definitions, or runtime execution.
-The Markdown sibling includes a `Runtime Status` table with the same
-completeness fields as JSON before listing trend movement.
-
-If an explicit `--previous <path>` artifact is missing or malformed, the command
-still writes bounded trend JSON/Markdown with `summary.status = "unknown"`,
-`inputs.previous_artifact.status = "missing"` or `"malformed"`, and the named
-`evidence_quality_trend_previous_artifact_unavailable` unknown instead of
-exiting before producing trend evidence. Metric rows may still carry current
-values, but movement and badge-readiness deltas remain unknown.
-
-Trend JSON includes `run_status` and `runtime_status`. A limited current
-scorecard preserves its runtime state, including `limited_sampled_input` or
-`limited_incomplete_input`; an explicit missing or malformed previous artifact
-also produces a limited trend state. Missing implicit history remains an
-unknown trend, not a gate or badge claim.
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "report": "evidence-quality-trend",
-  "generated_at": "unix_ms:1778620000000",
-  "run_status": "full",
-  "runtime_status": {
-    "state": "full",
-    "phase": null,
-    "duration_ms": null,
-    "limit_ms": null,
-    "input_kind": null,
-    "input_path": null,
-    "limitation_category": null,
-    "repair_route": null,
-    "downstream_consumable": true
-  },
-  "scope": {
-    "kind": "repo",
-    "root": "."
-  },
-  "inputs": {
-    "current_scorecard": {
-      "path": "target/ripr/reports/evidence-quality-scorecard.json",
-      "status": "loaded",
-      "schema_version": "0.1",
-      "sha256": "0123456789abcdef",
-      "note": "current evidence-quality scorecard"
-    },
-    "previous_artifact": {
-      "path": "target/ripr/reports/evidence-quality-scorecard.previous.json",
-      "status": "missing",
-      "schema_version": null,
-      "sha256": null,
-      "note": "optional previous scorecard or audit snapshot unavailable; movement is diagnostic only"
-    }
-  },
-  "summary": {
-    "status": "unknown",
-    "compared_metrics": 0,
-    "improved_metrics": 0,
-    "regressed_metrics": 0,
-    "unchanged_metrics": 0,
-    "unknown_metrics": 27,
-    "no_history": true
-  },
-  "movement_front": {
-    "current_actionable_count": 926,
-    "actionable_delta_since_prior_refresh": null,
-    "resolved": null,
-    "improved": null,
-    "unchanged_after_attempt": null,
-    "missing_receipts": null,
-    "orphaned_receipts": null,
-    "top_blocked_reason": "trend_history_unavailable",
-    "receipt_linked_movement_source": "unavailable_in_evidence_quality_trend",
-    "next_receipt_linked_command": "cargo xtask actionable-gap-outcomes"
-  },
-  "metric_trends": [
-    {
-      "metric": "finding_alignment_actionable_unresolved_canonical_gaps",
-      "label": "Actionable canonical gaps",
-      "before": null,
-      "after": 926,
-      "delta": null,
-      "direction": "unknown",
-      "interpretation": "No comparable previous value was available."
-    }
-  ],
-  "static_limitation_category_trends": [],
-  "runtime_confidence_static_only_class_trends": [
-    {
-      "metric": "runtime_confidence_static_only_class:call_presence",
-      "label": "call_presence",
-      "before": null,
-      "after": 2567,
-      "delta": null,
-      "direction": "unknown",
-      "interpretation": "No comparable previous value was available."
-    }
-  ],
-  "unknowns": [
-    {
-      "kind": "trend_history_unavailable",
-      "summary": "No previous scorecard or audit snapshot was available, so the report cannot claim improvement or regression.",
-      "next_repair": "report/evidence-quality-trend"
-    },
-    {
-      "kind": "evidence_quality_trend_previous_artifact_unavailable",
-      "summary": "Evidence-quality trend could not load the requested previous artifact. No movement or badge-readiness delta claim is made from this limited trend.",
-      "next_repair": "report/evidence-quality-trend"
-    }
-  ]
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"`.
-- `tool` - always `"ripr"`.
-- `report` - always `"evidence-quality-trend"`.
-- `inputs.current_scorecard` - current scorecard artifact identity. The
-  command creates the default scorecard first if it is missing.
-- `inputs.previous_artifact` - optional previous scorecard or audit snapshot.
-  Missing history is an explicit unknown, not a failure. Missing or malformed
-  explicit previous paths are bounded unavailable-input states.
-- `summary.status` - `improvement`, `regression`, `mixed`, `unchanged`, or
-  `unknown`.
-- `movement_front` - the first-screen movement panel. In
-  `evidence-quality-trend`, `current_actionable_count` and
-  `actionable_delta_since_prior_refresh` come from the scorecard trend for
-  `finding_alignment_actionable_unresolved_canonical_gaps`. Receipt-linked
-  `resolved`, `improved`, `unchanged_after_attempt`, `missing_receipts`, and
-  `orphaned_receipts` are `null` because this report does not read receipt
-  artifacts; operators should run `cargo xtask actionable-gap-outcomes` for
-  receipt-linked movement. This field does not imply runtime adequacy, mutation
-  proof, policy eligibility, gate passage, or merge readiness.
-- `metric_trends[]` - comparable Lane 1 evidence-quality metrics with
-  nullable `before`, `after`, and `delta` values plus a direction. Lower counts
-  are better for debt and uncertainty metrics; higher counts are better for
-  calibrated records, calibrated-supported canonical items, already-observed
-  items, and internal no-action items. The first trend row is the actionable
-  canonical gap count, matching the scorecard headline and keeping raw findings
-  diagnostic rather than user work. Finding-alignment and presentation-text
-  metrics also track raw-to-canonical quality, duplicate groups, actionability,
-  static limitations, visibility unknowns, no-action/observed outcomes, and
-  actionable-gap packet public-projection readiness. If the current scorecard
-  carries limited input unknowns such as `lane1_evidence_audit_limited`,
-  `evidence_health_limited`, or
-  `evidence_quality_scorecard_audit_regeneration_failed`, metric rows remain
-  present for diagnostics but their direction is `unknown` and `delta` is null.
-- `static_limitation_category_trends[]` - bounded category-level deltas for
-  normalized static limitation classes. Current limited scorecards also force
-  these category trend directions to `unknown`.
-- `runtime_confidence_static_only_class_trends[]` - bounded evidence-class
-  deltas derived from `calibration_coverage.by_evidence_class[].static_only`.
-  Rows make the top static-only canonical evidence classes visible so runtime
-  confidence work can pick calibrated fixture expansion targets. They remain
-  advisory trend evidence and do not imply mutation execution or gate authority.
-  Current limited scorecards also force these class trend directions to
-  `unknown`.
-- `unknowns[]` - missing history or missing current metric fields that must
-  stay visible until later audit or scorecard inputs exist. A
-  `current_scorecard_limited` unknown means the current scorecard is itself a
-  bounded diagnostic artifact, so the trend must not claim improvement or
-  regression from its counts. Missing or malformed explicit previous artifacts
-  are reported as `evidence_quality_trend_previous_artifact_unavailable`.
-
-The Markdown sibling starts with a movement front section, then prints bounded
-sections for summary, metric trends, static limitation category trends, runtime
-confidence static-only class trends, and unknowns.
-
-## Repo Exposure Latency Report
-
-`cargo xtask repo-exposure-latency-report` writes a maintainer diagnostic
-report to:
-
-```text
-target/ripr/reports/repo-exposure-latency.json
-target/ripr/reports/repo-exposure-latency.md
-```
-
-This report is intentionally separate from `repo-exposure.json` and
-`repo-exposure.md`. It can time-box the repo-exposure command path and capture
-phase timing without changing analyzer classifications or public report
-schemas.
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "report": "repo-exposure-latency",
-  "status": "warn",
-  "timeout_ms": 30000,
-  "binary": "target/debug/ripr.exe",
-  "runs": [
-    {
-      "format": "repo-exposure-json",
-      "status": "timeout",
-      "duration_ms": 30082,
-      "exit_code": 1,
-      "stdout_bytes": 0,
-      "stderr_bytes": 152,
-      "trace": [
-        {
-          "phase": "collect_workspace_state",
-          "status": "ok",
-          "duration_ms": 15
-        },
-        {
-          "phase": "cache_load",
-          "status": "miss",
-          "duration_ms": 0
-        },
-        {
-          "phase": "file_fact_cache",
-          "status": "hits_134_misses_0_corrupt_0_store_errors_0",
-          "duration_ms": 328
-        }
-      ]
-    }
-  ]
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"` for the diagnostic report.
-- `status` - `pass` when every attempted format completes successfully, `warn`
-  when a format times out or a later format is skipped after timeout, and
-  `fail` when a format exits unsuccessfully before timeout.
-- `timeout_ms` - timeout budget per repo-exposure format. Override with
-  `RIPR_REPO_EXPOSURE_LATENCY_TIMEOUT_MS`.
-- `runs[].format` - `repo-exposure-json` or `repo-exposure-md`.
-- `runs[].status` - `pass`, `fail`, `timeout`, or
-  `skipped_after_json_timeout`.
-- `runs[].trace` - analyzer trace lines captured from stderr when
-  `RIPR_REPO_EXPOSURE_LATENCY_TRACE=1` is set by the xtask command. Phases
-  currently include `collect_workspace_state`, `cache_load`,
-  `file_fact_cache`, `apply_oracle_policy`, `inventory_seams`,
-  `evidence_for_seams`, `classify_seams`, `cold_compute`, `cache_store`, and
-  `total`; cache load statuses include `hit`, `miss`, and `corrupt_ignored`.
-  The `file_fact_cache` status is a compact counter label such as
-  `hits_134_misses_0_corrupt_0_store_errors_0`; it describes parser/file-fact
-  cache reuse only, not rendered output caching.
-
-## Targeted-Test Outcome Report
-
-`ripr outcome --before <snapshot-json> --after <snapshot-json>` compares two
-static RIPR snapshots and prints Markdown by default. The snapshots can be
-repo-exposure JSON with `seams[]` or check-output JSON with `findings[]` that
-carry canonical gap IDs. Use `--format json` for the machine-readable shape, or
-`--out <path>` to write the rendered receipt to disk.
-
-```text
-ripr outcome --before before.json --after after.json
-ripr outcome --before before.json --after after.json --format json
-ripr outcome --before before.json --after after.json --out target/ripr/outcome/targeted-test-outcome.md
-```
-
-The report is an advisory receipt for the targeted-test loop. It does not run
-analysis, mutation testing, SARIF policy, or badge generation; it only compares
-the two supplied static artifacts. Repo-exposure seams are matched by
-`seam_id`; check-output findings are matched by `canonical_gap_id`, which lets
-Python repair cards and TypeScript repair packets produce before/after receipts
-without language-specific receipt commands.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "status": "advisory",
-  "inputs": {
-    "before": "target/ripr/before.json",
-    "after": "target/ripr/after.json"
-  },
-  "before": {
-    "seams_total": 15,
-    "strongly_gripped": 3,
-    "weakly_gripped": 9,
-    "ungripped": 3
-  },
-  "after": {
-    "seams_total": 15,
-    "strongly_gripped": 5,
-    "weakly_gripped": 7,
-    "ungripped": 3
-  },
-  "summary": {
-    "moved": 2,
-    "unchanged": 12,
-    "regressed": 0,
-    "new": 0,
-    "removed": 1,
-    "gap_movement": {
-      "closed": 2,
-      "opened": 0,
-      "strengthened": 0,
-      "weakened": 0,
-      "unchanged": 12,
-      "new": 0,
-      "removed": 1,
-      "changed": 0
-    }
-  },
-  "moved": [
-    {
-      "seam_id": "67fc764ba37d77bd",
-      "seam_kind": "predicate_boundary",
-      "file": "src/pricing.rs",
-      "line": 88,
-      "before": "weakly_gripped",
-      "after": "strongly_gripped",
-      "direction": "improved",
-      "gap_movement": "closed",
-      "evidence_delta": [
-        "grip class moved from weakly_gripped to strongly_gripped",
-        "discriminate evidence moved from missing to yes",
-        "missing discriminator no longer reported: discount_threshold (equality boundary)",
-        "stronger related oracle visible: weak -> strong"
-      ],
-      "evidence_source": "evidence_record",
-      "reach_delta": null,
-      "activate_delta": null,
-      "propagate_delta": null,
-      "observe_delta": null,
-      "discriminate_delta": {
-        "before_state": "missing",
-        "after_state": "yes",
-        "before_confidence": "high",
-        "after_confidence": "high",
-        "before_summary": "equality boundary not asserted",
-        "after_summary": "equality boundary asserted"
-      },
-      "observed_values_added": ["discount_threshold"],
-      "observed_values_removed": [],
-      "missing_discriminators_resolved": [
-        "discount_threshold (equality boundary)"
-      ],
-      "missing_discriminators_reopened": [],
-      "oracle_strength_delta": "weak -> strong",
-      "related_test_delta": 1,
-      "no_movement_reason": null
-    }
-  ],
-  "unchanged": [],
-  "regressed": [],
-  "new": [],
-  "removed": [],
-  "review_receipt": {
-    "gap_movement": {
-      "closed": 2,
-      "opened": 0,
-      "strengthened": 0,
-      "weakened": 0,
-      "unchanged": 12,
-      "new": 0,
-      "removed": 1,
-      "changed": 0
-    },
-    "what_changed": [
-      "Compared before snapshot target/ripr/before.json with after snapshot target/ripr/after.json.",
-      "Static seam movement: 2 moved, 12 unchanged, 0 regressed, 0 new, 1 removed."
-    ],
-    "ripr_flagged_before": [
-      "weakly_gripped before predicate_boundary at src/pricing.rs:88."
-    ],
-    "focused_proof_added": [
-      "predicate_boundary at src/pricing.rs:88 shows static evidence movement for focused proof outside RIPR: missing discriminator no longer reported: discount_threshold (equality boundary); new observed value: discount_threshold."
-    ],
-    "movement_after_verification": [
-      "2 improved, 0 changed without ranking higher, 0 regressed, 12 unchanged.",
-      "Gap movement: 2 closed, 0 opened, 0 strengthened, 0 weakened, 12 unchanged, 0 new, 1 removed, 0 changed.",
-      "predicate_boundary at src/pricing.rs:88 moved weakly_gripped -> strongly_gripped (improved)."
-    ],
-    "remaining_weak_or_unknown": [
-      "predicate_boundary remains weakly_gripped at src/checkout.rs:41."
-    ],
-    "reviewer_should_inspect": [
-      "Open the compared artifacts: target/ripr/before.json and target/ripr/after.json.",
-      "Inspect the focused test or output proof corresponding to each listed evidence delta.",
-      "Review remaining weak, unknown, new, or regressed seams before treating the repair loop as complete."
-    ],
-    "reviewer_may_believe": [
-      "RIPR compared only the listed static snapshots: target/ripr/before.json and target/ripr/after.json.",
-      "The listed focused-proof signals are static evidence visible after a test or output proof changed outside RIPR.",
-      "The movement and remaining-weak sections define the static claim boundary for this receipt."
-    ],
-    "reviewer_should_not_believe": [
-      "Runtime mutation result.",
-      "Coverage adequacy.",
-      "General correctness.",
-      "Merge approval.",
-      "That RIPR edited source or generated tests."
-    ]
-  }
-}
-```
-
-For check-output snapshots, `seam_id` is the canonical gap ID. A Python or
-TypeScript preview gap that moves from `weakly_exposed` to `exposed` is rendered as
-`weakly_gripped -> strongly_gripped` with `gap_movement = "closed"`. This is
-still static/advisory evidence: verify success and a closed gap movement are
-receipt signals, not runtime mutation proof or correctness proof.
-The Python first-PR fixture pins this path with before/after check-output
-snapshots and expected closed, unchanged, opened, strengthened, and weakened
-receipts at
-`fixtures/first_successful_pr/python-preview-gap/inputs/reports/before-check.json`,
-`fixtures/first_successful_pr/python-preview-gap/inputs/reports/after-check.json`,
-`fixtures/first_successful_pr/python-preview-gap/inputs/reports/no-path-check.json`,
-`fixtures/first_successful_pr/python-preview-gap/expected/outcome/closed.json`,
-`fixtures/first_successful_pr/python-preview-gap/expected/outcome/closed.md`,
-`fixtures/first_successful_pr/python-preview-gap/expected/outcome/unchanged.json`,
-`fixtures/first_successful_pr/python-preview-gap/expected/outcome/unchanged.md`,
-`fixtures/first_successful_pr/python-preview-gap/expected/outcome/opened.json`,
-`fixtures/first_successful_pr/python-preview-gap/expected/outcome/opened.md`,
-`fixtures/first_successful_pr/python-preview-gap/expected/outcome/strengthened.json`,
-`fixtures/first_successful_pr/python-preview-gap/expected/outcome/strengthened.md`,
-`fixtures/first_successful_pr/python-preview-gap/expected/outcome/weakened.json`,
-and
-`fixtures/first_successful_pr/python-preview-gap/expected/outcome/weakened.md`.
-The TypeScript preview packet receipt path is pinned by
-`fixtures/first_successful_pr/typescript-preview-gap/inputs/reports/before-check.json`,
-`fixtures/first_successful_pr/typescript-preview-gap/inputs/reports/after-check.json`,
-`fixtures/first_successful_pr/typescript-preview-gap/expected/outcome/closed.json`,
-and
-`fixtures/first_successful_pr/typescript-preview-gap/expected/outcome/closed.md`.
-The non-boundary return-value receipt path is pinned by
-`fixtures/first_successful_pr/python-return-gap/inputs/reports/before-check.json`,
-`fixtures/first_successful_pr/python-return-gap/inputs/reports/after-check.json`,
-`fixtures/first_successful_pr/python-return-gap/expected/outcome/closed.json`,
-and
-`fixtures/first_successful_pr/python-return-gap/expected/outcome/closed.md`.
-The exception-path receipt path is pinned by
-`fixtures/first_successful_pr/python-exception-gap/inputs/reports/before-check.json`,
-`fixtures/first_successful_pr/python-exception-gap/inputs/reports/after-check.json`,
-`fixtures/first_successful_pr/python-exception-gap/expected/outcome/closed.json`,
-and
-`fixtures/first_successful_pr/python-exception-gap/expected/outcome/closed.md`.
-The field/object receipt path is pinned by
-`fixtures/first_successful_pr/python-field-gap/inputs/reports/before-check.json`,
-`fixtures/first_successful_pr/python-field-gap/inputs/reports/after-check.json`,
-`fixtures/first_successful_pr/python-field-gap/expected/outcome/closed.json`,
-and
-`fixtures/first_successful_pr/python-field-gap/expected/outcome/closed.md`.
-The output/log receipt path is pinned by
-`fixtures/first_successful_pr/python-output-gap/inputs/reports/before-check.json`,
-`fixtures/first_successful_pr/python-output-gap/inputs/reports/after-check.json`,
-`fixtures/first_successful_pr/python-output-gap/expected/outcome/closed.json`,
-and
-`fixtures/first_successful_pr/python-output-gap/expected/outcome/closed.md`.
-
-Field contract:
-
-- `schema_version` â€” currently `"0.1"`.
-- `status` â€” always `"advisory"`; this report is a receipt, not a CI policy.
-- `inputs.before` / `inputs.after` â€” normalized paths to the compared static
-  evidence snapshots. Supported snapshots are `repo-exposure-json` artifacts
-  with `seams[]` or check-output JSON artifacts with `findings[]`.
-- `before` / `after` â€” grip-class counts computed from the supplied seams. The
-  report emits `seams_total` plus every known `SeamGripClass` bucket, even when
-  a bucket is zero.
-- `summary` â€” movement bucket counts. `moved` means the seam matched by
-  `seam_id` changed grip class without ranking lower; `regressed` means the
-  after class ranked lower than the before class; `unchanged` means the class
-  stayed the same; `new` and `removed` cover seam IDs present in only one input.
-- `summary.gap_movement` - comparable canonical gap movement counts derived
-  from each matched row's `gap_movement`: `closed`, `opened`, `strengthened`
-  for row-level `improved`, `weakened` for row-level `regressed`,
-  `unchanged`, and `changed`. `new` and `removed` are one-sided identity counts.
-  These counts are receipt signals for static evidence movement; they are not
-  mutation proof or correctness proof.
-- `review_receipt.remaining_weak_or_unknown` includes unchanged, regressed, and
-  improved-but-still-attention-needed rows. A strengthened row is not treated as
-  closed unless the after snapshot no longer needs review attention.
-- `moved[]` / `unchanged[]` / `regressed[]` â€” matched seams with before/after
-  grip classes, a direction string, and evidence-delta hints. When
-  `seams[].evidence_record` is present, the comparison prefers that shared
-  evidence spine; otherwise it falls back to legacy repo-exposure seam fields.
-- `evidence_delta[]` â€” advisory hints such as missing discriminators no longer
-  reported, new observed values, or stronger related oracles. These hints are
-  based on the rendered static artifact and do not claim runtime confirmation.
-- `evidence_source` â€” `evidence_record`, `legacy_fields`, or a mixed transition
-  label when before and after snapshots differ in available evidence source.
-- `reach_delta`, `activate_delta`, `propagate_delta`, `observe_delta`, and
-  `discriminate_delta` â€” `null` when the stage is unchanged or unavailable, or
-  an object with before/after state, confidence, and summary copied from the
-  evidence record.
-- `observed_values_added` / `observed_values_removed` â€” value-level activation
-  evidence movement derived from the evidence record when available.
-- `missing_discriminators_resolved` /
-  `missing_discriminators_reopened` â€” discriminator-level movement derived from
-  the evidence record when available.
-- `oracle_strength_delta` â€” `null` when unchanged, otherwise a compact
-  `before -> after` static oracle-strength movement label.
-- `related_test_delta` â€” count movement for related-test evidence.
-- `no_movement_reason` â€” explicit static reason for unchanged seams with no
-  rendered evidence movement.
-- `new[]` / `removed[]` â€” seam identity and grip class for seam IDs present in
-  only one input.
-- `review_receipt` â€” an additive reviewer packet derived from the same
-  before/after movement data. It answers what changed, what RIPR flagged before
-  the focused repair attempt, which static proof signals moved, what still
-  remains weak or unknown, which bounded static claims reviewers may make, and
-  what reviewers should inspect or avoid inferring. It does not add gate
-  authority or runtime evidence beyond the compared snapshots.
-
-The Markdown surface prints the same summary plus a "Gap Movement" table,
-highlights moved, unchanged, regressed, new, and removed seams for human review,
-and includes a "Review Receipt" section with the same reviewer-native fields.
-Unchanged seams can still carry evidence-delta hints, such as a new observed
-value, so reviewers can see when a targeted test improved rendered evidence
-without changing the grip class.
-
-## Agent Verify
-
-`ripr agent verify --root <workspace> --before <snapshot-json> --after
-<snapshot-json> --json` compares two saved static snapshots
-under the workspace root and emits a compact agent-focused JSON summary. It
-reuses the targeted-test outcome comparison engine, but names the buckets for
-the active agent loop:
-
-```text
-ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json
-```
-
-The command does not run analysis, mutation testing, SARIF policy, badge
-generation, LSP refresh, or cache warm-up. It only compares the supplied static
-artifacts after validating they resolve under `--root` and carry the
-producer-owned repo-exposure identity envelope. Missing, unsupported,
-root-mismatched, revision-invalid, or content-tampered artifacts fail before
-movement is calculated. This is static artifact integrity/currentness
-validation; it does not execute tests or runtime mutation testing.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.3",
-  "tool": "ripr",
-  "status": "advisory",
-  "inputs": {
-    "before": "target/ripr/workflow/before.repo-exposure.json",
-    "after": "target/ripr/workflow/after.repo-exposure.json",
-    "before_content_sha256": "sha256:<64-hex-digest>",
-    "after_content_sha256": "sha256:<64-hex-digest>"
-  },
-  "artifact_currentness": "historical_before_current_after",
-  "summary": {
-    "improved": 1,
-    "changed": 0,
-    "regressed": 0,
-    "unchanged": 0,
-    "new": 0,
-    "resolved": 0,
-    "gap_movement": {
-      "closed": 1,
-      "opened": 0,
-      "strengthened": 0,
-      "weakened": 0,
-      "unchanged": 0,
-      "new": 0,
-      "removed": 0,
-      "changed": 0
-    }
-  },
-  "changed_seams": [
-    {
-      "seam_id": "67fc764ba37d77bd",
-      "seam_kind": "predicate_boundary",
-      "file": "src/pricing.rs",
-      "line": 88,
-      "before": "weakly_gripped",
-      "after": "strongly_gripped",
-      "change": "improved",
-      "gap_movement": "closed",
-      "evidence_delta": [
-        "grip class moved from weakly_gripped to strongly_gripped",
-        "missing discriminator no longer reported: discount_threshold (equality boundary)"
-      ],
-      "evidence_source": "evidence_record",
-      "reach_delta": null,
-      "activate_delta": null,
-      "propagate_delta": null,
-      "observe_delta": null,
-      "discriminate_delta": {
-        "before_state": "missing",
-        "after_state": "yes",
-        "before_confidence": "high",
-        "after_confidence": "high",
-        "before_summary": "equality boundary not asserted",
-        "after_summary": "equality boundary asserted"
-      },
-      "observed_values_added": ["discount_threshold"],
-      "observed_values_removed": [],
-      "missing_discriminators_resolved": [
-        "discount_threshold (equality boundary)"
-      ],
-      "missing_discriminators_reopened": [],
-      "oracle_strength_delta": "weak -> strong",
-      "related_test_delta": 1,
-      "no_movement_reason": null
-    }
-  ],
-  "unchanged_seams": [],
-  "new_gaps": [],
-  "resolved_gaps": []
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.3"`. Version `0.2` added the artifact
-  content-commitment binding (`inputs.before_content_sha256` /
-  `inputs.after_content_sha256`) so a verify result is bound to the exact
-  artifact bytes it compared. Version `0.3` (#3027) corrects the pair-level
-  `artifact_currentness` value domain â€” a closed-vocabulary correction that
-  removes the old catch-all `dirty_worktree` pair token â€” so consumers
-  dispatching on 0.2 values must re-verify; `agent receipt` fails closed on
-  any other schema version and never migrates a 0.2 document.
-- `status` - always `"advisory"`; this is an agent verification hint, not a CI
-  policy.
-- `inputs.before` / `inputs.after` - the compared snapshot paths.
-- `inputs.before_content_sha256` / `inputs.after_content_sha256` - the
-  validated `artifact.content_sha256` commitments of the compared artifacts.
-  This is the replay binding: a consumer that revalidates the artifacts can
-  detect any byte change after verify, including one invisible to the
-  movement render.
-- `artifact_currentness` - the pair's repository identity disclosure, one of:
-  `current`, `historical_noncurrent`, `historical_before_current_after`,
-  `current_before_historical_after`, `dirty_before`, `dirty_after`, or
-  `dirty_both`. A dirty side names the side (`dirty_before`, `dirty_after`,
-  or `dirty_both`). `historical_before_current_after` is the expected
-  before/after transaction shape â€” the repository moved past the before
-  artifact while the after artifact is bound to the current HEAD â€” and is a
-  revision-movement disclosure, not a cleanliness certificate: a historical
-  side is classified by head mismatch alone, and the worktree state
-  remembered at production time does not participate in that
-  classification, so a historical artifact produced on a dirty worktree
-  still renders a `historical_*` pair token (#3229).
-  `current_before_historical_after` is a reachable accepted outcome when the
-  checked-out HEAD is the before artifact's revision and the after artifact
-  is bound to a descendant revision. A fully current pair (both artifacts
-  current at the same clean revision) fails the movement gate before any
-  output is rendered, so `current` closes the vocabulary without being a
-  reachable successful verify outcome. The field does not claim
-  that tests ran or that the static gap is correct.
-- `summary.improved` - matched seams whose after `SeamGripClass` ranks higher
-  than before.
-- `summary.changed` - matched seams whose class changed without ranking higher
-  or lower.
-- `summary.regressed` - matched seams whose after class ranks lower than
-  before.
-- `summary.unchanged` - matched seams whose class stayed the same.
-- `summary.new` - seam IDs present only in the after snapshot.
-- `summary.resolved` - seam IDs absent from the after snapshot. This is
-  advisory; it can mean a gap was fixed, or that the seam disappeared because
-  the code changed.
-- `summary.gap_movement` - the same additive static gap-movement summary used
-  by `ripr outcome`, so agent receipts can read closed/opened/strengthened/
-  weakened/unchanged/new/removed/changed counts without scanning every row.
-- `changed_seams[]` - improved, same-rank changed, and regressed matched seams.
-- `unchanged_seams[]` - matched seams whose class stayed the same. These can
-  still carry `evidence_delta` hints when rendered evidence improved without
-  changing class.
-- `changed_seams[]` / `unchanged_seams[]` carry the same additive
-  evidence-record movement fields as `ripr outcome`: stage deltas,
-  observed-value movement, missing-discriminator movement, oracle strength
-  movement, related-test count movement, `gap_movement`, and
-  `no_movement_reason`.
-- `new_gaps[]` / `resolved_gaps[]` - seam identity and static class for seam IDs
-  present in only one snapshot.
-
-### Agent repair after-phase stdout
-
-`ripr agent repair --attempt <id> --phase after` holds the verify render until
-its post-verify tail (edit-cage finish, receipt write, apply record) settles,
-then prints exactly one JSON document on stdout. On success the document is
-its own versioned envelope, not a mutated verify document:
-
-```json
-{
-  "schema_version": "0.1",
-  "kind": "repair_after_result",
-  "verify": {
-    "schema_version": "0.3",
-    "tool": "ripr",
-    "status": "advisory"
-  },
-  "agent_status": {
-    "schema_version": "0.1",
-    "status": "complete"
-  }
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"`, versioning the envelope contract
-  independently of both children. The envelope exists so every stdout
-  document's shape is identifiable from its `schema_version`: the success
-  document wraps the two children instead of splicing `agent_status` into the
-  verify 0.3 document, which would leave two documents sharing one
-  `schema_version` with different shapes depending on the invocation path.
-- `kind` - always `"repair_after_result"`.
-- `verify` - the agent verify `0.3` document: every verify field keeps its
-  name and value, including the verify outcome's own top-level `status`
-  (keys are re-serialized in sorted order, so bytes may differ from a direct
-  `ripr agent verify --json` capture even though every field is identical). Consumers must read the verify
-  outcome under `verify`, not at the envelope top level.
-- `agent_status` - what `ripr agent status --json` prints at this point (agent
-  status `0.1`), embedded beside the verify document because the verify
-  outcome already owns the `status` field name.
-- Refusal paths are the exception, not the envelope: when the after phase
-  refuses after the verify render (for example the receipt is not
-  receipt-ready or the apply record failed), stdout is the bare agent verify
-  `0.3` document alone â€” a pure verify document, honestly labeled, still one
-  parseable document. A consumer dispatching on `schema_version` therefore
-  sees `0.1` only for the two-child envelope and `0.3` only for the pure
-  verify document, whichever path produced it.
-
-## Agent Verify Execute
-
-`ripr agent verify-execute --root <workspace> --packet <packet-json>
---result-json <result-json> --authorize --json` is the only explicit process
-execution surface in the agent loop. It accepts one schema `0.4` producer
-envelope containing exactly one packet, and executes only the direct,
-no-network, no-write `ripr agent verify` route. The current ripr executable is
-used; shell text is never interpreted.
-
-The packet's typed `command_specs.verify` is an **array**, and it must equal
-exactly what RIPR derives from that packet's own `verification_commands`. The
-headline `verify_command` must resolve to the same route. Exactly one of the
-reproduced routes must be executable; zero and more-than-one are both refused
-rather than guessed.
-
-### How route authority is established
-
-Authority is layered, because packet self-consistency alone is not provenance â€”
-every field of a packet is caller-supplied.
-
-1. **Consistency.** The typed specs must be reproducible from the packet's own
-   display commands, and the headline must resolve to the same route. This buys
-   one property: the command a reviewer reads is the command that runs. On its
-   own it proves nothing about origin â€” a caller who coherently rewrites every
-   copy of the route would pass this layer.
-2. **Provenance.** The route's `--before` and `--after` inputs must each pass the
-   repo-exposure provenance contract: canonical shape, `ripr` producer identity,
-   the exact `ripr check --format repo-exposure-json` producer command, a
-   repository root equal to the selected root, a full-SHA HEAD, and a
-   **recomputed content commitment**. Their base revisions must agree. RIPR then
-   **recomputes** the canonical verify route over those validated artifacts and
-   requires the packet's route to equal it.
-
-The packet therefore chooses *which validated producer artifacts to compare*; it
-never authors the command. A coherently rewritten packet naming anything that is
-not a provenance-valid producer artifact is refused with
-`verification_rejected_policy` and no process starts.
-
-The operation requires `--authorize`, bounds process lifetime and stdout/stderr
-separately, refuses to overwrite an existing result, and checks repository HEAD
-and worktree state before and after execution. `--before` and `--after` inputs
-must resolve under `--root`, and their content digests are committed alongside
-the result.
-
-Every successfully parsed execution attempt â€” including authorization and
-execution refusals â€” emits one typed JSON terminal result on stdout with a
-`disposition` field. Usage errors (a missing `--packet`, `--result-json`, or
-`--json`, or a malformed `--cancel-after-ms`) remain plain usage errors on
-stderr and produce no disposition. The exit status distinguishes only whether
-RIPR
-committed a bounded observation: `0` when it did (including
-`verification_executed_fail`, which is a successful observation of a failing
-command), nonzero when it could not. Dispositions are
-`verification_executed_pass`, `verification_executed_fail`,
-`verification_command_not_found`, `verification_rejected_policy`,
-`verification_wrong_root`, `verification_timed_out`,
-`verification_cancelled`, `verification_output_limited`,
-`verification_repository_changed`, and `verification_result_write_failed`.
-
-```text
-ripr agent verify-execute --root . --packet target/ripr/workflow/packet.json --result-json target/ripr/workflow/verification-execution.json --authorize --json
-```
-
-### Environment posture
-
-`EnvironmentPolicy::Clean` means no ambient application or credential variables
-reach the child â€” not an empty environment block. The verify route invokes
-`git`, so a literally empty environment strips `PATH` and makes a passing
-observation unreachable on every real repository. Only a fixed platform floor
-crosses the boundary (`PATH`, Windows `SystemRoot`/`SystemDrive`/`windir`/
-`COMSPEC`/`PATHEXT`/`TEMP`/`TMP`, and `HOME`/`TMPDIR`/`LANG`/`LC_ALL`). The
-floor is disclosed by name in the response `preflight.environment_floor`;
-values are never emitted. Tokens and cloud credentials are dropped.
-
-Because `HOME` is in the floor, host global Git configuration can influence the
-child's Git behavior. "Clean" here means no ambient credential or application
-variables â€” not behavioural independence from host Git configuration. Disabling
-global and system Git configuration for the child is a possible future
-tightening, not a current guarantee.
-
-### Declared limitations
-
-- **Descendant containment.** Only the owned child is terminated. The workspace
-  forbids `unsafe_code` and the dependency policy admits neither `libc` nor
-  `windows-sys`, so no process-group or job-object substrate is available. The
-  authority boundary compensates structurally: the only executable route is one
-  leaf `ripr agent verify` invocation, which spawns no long-lived descendants.
-  The posture is disclosed as `descendant_containment` in the response.
-- **`verification_executed_fail`**, **`verification_timed_out`**, and
-  **`verification_command_not_found`** are mapped and unit-tested but are not
-  reachable end-to-end today. The only executable route is `ripr agent verify`
-  over two provenance-valid artifacts, and that command always exits 0 well
-  inside its 120s timeout. Reaching these states needs a fallible typed route
-  (for example a `cargo test` route) in the command catalog, which this surface
-  deliberately does not add. `--cancel-after-ms` is the deterministic
-  bounded-termination path that *is* reachable.
-- **`verification_command_not_found`** covers failure to start the resolved ripr
-  executable, not a `PATH` lookup, because the route is executed via the current
-  executable rather than by program name.
-
-This is process evidence only. It does not compare static before/after
-movement, issue a repair receipt, prove mutation adequacy or correctness, or
-grant gate or merge authority. Packet rejection, wrong-root paths, policy
-rejection, and result-write failures are fail-closed and do not produce a
-receipt.
-
-## Agent Receipt
-
-`ripr agent receipt --root <workspace> --verify-json <agent-verify-json>
---seam-id <id> --json` narrows a saved `ripr agent verify` artifact to one
-seam and adds optional handoff metadata for review:
-
-```text
-ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67fc764ba37d77bd --json
-ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67fc764ba37d77bd --test discounted_total_boundary_discriminator --command "cargo test discounted_total_boundary_discriminator" --json --out target/ripr/reports/agent-receipt.json
-```
-
-The command does not run analysis, mutation testing, SARIF policy, badge
-generation, LSP refresh, or cache warm-up. It reads the supplied `agent verify`
-JSON after validating that path resolves under `--root`, then reads and hashes
-the `inputs.before` and `inputs.after` snapshot artifacts named by the verify
-JSON after validating those paths also resolve under `--root`.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.5",
-  "tool": "ripr",
-  "status": "advisory",
-  "analysis_outcome_status": "complete",
-  "analysis_outcome_error": null,
-  "analysis_outcome": {
-    "analysis_complete": true,
-    "outcome": {
-      "schema_version": "0.1",
-      "kind": "complete_no_findings",
-      "identity": {},
-      "counts": {},
-      "limitations": [],
-      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
-    },
-    "semantic_digest": "sha256:..."
-  },
-  "inputs": {
-    "agent_verify_json": "target/ripr/workflow/agent-verify.json",
-    "before": "target/ripr/workflow/before.repo-exposure.json",
-    "after": "target/ripr/workflow/after.repo-exposure.json"
-  },
-  "provenance": {
-    "ripr_version": "0.8.0",
-    "repo_root": ".",
-    "config_fingerprint": "fnv1a64:4c94a2f6cfaa5c21",
-    "command_template_version": "0.1",
-    "generated_at": "unix_ms:1778179200000",
-    "workflow_artifact": null,
-    "before_artifact": {
-      "path": "target/ripr/workflow/before.repo-exposure.json",
-      "sha256": "sha256:..."
-    },
-    "after_artifact": {
-      "path": "target/ripr/workflow/after.repo-exposure.json",
-      "sha256": "sha256:..."
-    },
-    "verify_artifact": {
-      "path": "target/ripr/workflow/agent-verify.json",
-      "sha256": "sha256:..."
-    },
-    "seam_id": "67fc764ba37d77bd",
-    "before_class": "weakly_gripped",
-    "after_class": "strongly_gripped",
-    "movement": "improved",
-    "limits": {
-      "static_artifact_relationship": true,
-      "runtime_mutation_execution": false,
-      "runtime_adequacy_claim": false
-    }
-  },
-  "seam": {
-    "seam_id": "67fc764ba37d77bd",
-    "seam_kind": "predicate_boundary",
-    "file": "src/pricing.rs",
-    "line": 88,
-    "before": "weakly_gripped",
-    "after": "strongly_gripped",
-    "grip_class": null,
-    "change": "improved",
-    "evidence_delta": [
-      "missing discriminator no longer reported: discount_threshold (equality boundary)"
-    ]
-  },
-  "test_changed": "discounted_total_boundary_discriminator",
-  "verification": {
-    "commands_run": ["cargo test discounted_total_boundary_discriminator"]
-  },
-  "summary": {
-    "receipt_state": "receipt_movement_improved",
-    "remaining_gap": "No remaining static gap is named by this receipt; inspect the current seam packet if review needs final assertion detail.",
-    "next_recommendation": "Keep the focused test and attach this receipt with the agent verify JSON.",
-    "next_action": {
-      "kind": "improved",
-      "summary": "Static grip improved.",
-      "recommended_action": "Keep the focused test and include this receipt in review.",
-      "safe_to_merge": false
-    }
-  }
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.5"`. Version `0.2` added receipt
-  provenance fields; version `0.3` added structured next-action guidance;
-  version `0.4` adds the producer-owned analysis-outcome envelope while
-  preserving the selected-seam and handoff fields from `0.1`.
-- `status` - `"advisory"` only when the producer outcome is complete;
-  `"incomplete"` when the producer outcome is incomplete or unavailable; and
-  `"invalid"` when the producer artifact is malformed, stale, or identity
-  mismatched. This is a handoff receipt, not a CI policy.
-- `analysis_outcome_status` - the producer evidence state: `complete`,
-  `incomplete`, `missing`, or `invalid`. It is copied from the canonical
-  `target/ripr/workflow/analysis-outcome.json` artifact and is never inferred
-  from static movement, finding counts, or receipt presence.
-- `analysis_outcome_error` - a diagnostic for `missing` or `invalid` producer
-  evidence; it is `null` when the typed outcome is present.
-- `analysis_outcome` - the validated producer-owned typed outcome, including
-  its derived completeness, limitations, recovery routes, input identity, and
-  semantic digest. It is `null` when producer evidence is unavailable or
-  invalid; the receipt never fabricates a replacement outcome.
-- `inputs.agent_verify_json` - the verify JSON path supplied to the command.
-- `inputs.before` / `inputs.after` - snapshot paths copied from the verify JSON.
-- `provenance` - identity for the static artifacts behind the receipt. It is
-  produced without rerunning analysis after the referenced artifacts are
-  revalidated and the supplied verify JSON is compared with canonical
-  movement recomputed from those artifacts.
-- `provenance.ripr_version` - the `ripr` binary version that rendered the
-  receipt.
-- `provenance.repo_root` - the `--root` argument normalized to forward slashes
-  for reporting.
-- `provenance.config_fingerprint` - stable fingerprint of `ripr.toml` when that
-  file exists under the root, or `null` when no config file is present. The
-  receipt reads the file text only; it does not rerun analysis.
-- `provenance.command_template_version` - version of the internal agent-loop
-  command templates that produced the workflow command strings.
-- `provenance.generated_at` - local render timestamp as `unix_ms:<millis>`.
-- `provenance.workflow_artifact` - reserved workflow manifest artifact identity
-  when a future receipt command is tied to a specific manifest. It is currently
-  `null`.
-- `provenance.before_artifact` / `provenance.after_artifact` /
-  `provenance.verify_artifact` - path and SHA-256 hash for the static before,
-  after, and verify artifacts used by the receipt.
-- `provenance.seam_id` - selected seam identity copied from the receipt seam.
-- `provenance.before_class` / `provenance.after_class` - static grip classes
-  before and after for matched seams. For one-sided gaps, the absent side is
-  `null`.
-- `provenance.movement` - selected verify movement bucket such as `improved`,
-  `changed`, `regressed`, `unchanged`, `new`, or `resolved`.
-- `provenance.limits` - explicit static boundary flags. Receipts prove only the
-  relationship between static before/after artifacts; they do not run mutation
-  testing or claim runtime adequacy.
-- The receipt reads and validates the canonical producer artifact but does not
-  rerun diff analysis. A complete zero-finding producer outcome remains
-  complete; partial, unsupported, missing, malformed, stale, or identity-
-  mismatched producer evidence remains visibly non-clean.
-- Receipt issuance rejects hand-authored or altered verify JSON before this
-  envelope is rendered; the input must be exact canonical output from
-  `ripr agent verify` for the bound artifacts.
-- `seam` - the selected seam from `changed_seams`, `unchanged_seams`,
-  `new_gaps`, or `resolved_gaps`.
-- `seam.before` / `seam.after` - before/after grip class for matched seams, or
-  `null` for one-sided new/resolved gaps.
-- `seam.grip_class` - one-sided grip class for `new` or `resolved` gaps, or
-  `null` for matched seams.
-- `test_changed` - optional focused test the edit changed. `ripr agent receipt`
-  takes it from `--test-changed`. The after phase of `ripr agent repair` sets it
-  to the attempt's selected test file when the edit cage is compliant and
-  recorded that file changing, and leaves it null otherwise.
-- `verification.commands_run` - optional commands supplied by the caller. The
-  receipt records them; it does not run them.
-- `summary.remaining_gap` / `summary.next_recommendation` - static advisory
-  guidance derived from the verify bucket. It does not claim runtime
-  confirmation. When `status` is not `advisory`, `next_recommendation` instead
-  states that the receipt is not review evidence, with the status, the
-  analysis-outcome reason, and the recovery.
-- `summary.receipt_state` - canonical receipt lifecycle state for the selected
-  receipt. It is one of `receipt_missing`, `receipt_found`, `receipt_stale`,
-  `receipt_gap_mismatch`, `receipt_movement_improved`,
-  `receipt_movement_unchanged`, or `receipt_not_applicable`.
-- `summary.next_action` - structured static guidance for agents and reviewers.
-  `kind` is `improved`, `changed`, `regressed`, `unchanged`, `new_gap`,
-  `resolved`, or `unknown`; `summary` is a short static movement statement;
-  `recommended_action` is the bounded next step; and `safe_to_merge` is always
-  `false` because the static receipt is review evidence, not a merge policy.
-  Only an `advisory` receipt is review evidence: for an `incomplete` or
-  `invalid` receipt, `recommended_action` carries the same not-review-evidence
-  statement as `next_recommendation` and never recommends including the
-  receipt in review, while `kind` and `summary` still describe the movement.
-
-## Assurance axes (design contract)
-
-The current `agent verify` and `agent receipt` surfaces are static-only
-compatibility commands. Their `verify_command`, `commands_run`, and
-`verify_result` fields record routes or caller-supplied context; they do not
-prove that a command executed. Receipt presence does not imply test execution,
-runtime mutation confirmation, adequacy, correctness, or merge authority.
-
-`RIPR-SPEC-0135` and
-`schemas/ripr/repair-assurance.schema.json` reserve the versioned
-`RepairAssuranceV1` envelope. It keeps these axes independent:
-
-- `static_movement_evaluated` with an explicit movement result;
-- `verification_command_available`, `verification_executed_pass`,
-  `verification_executed_fail`, `verification_not_run`,
-  `verification_unavailable`, or `verification_cancelled_or_timed_out`;
-- `receipt_issued`, `receipt_rejected`, or `receipt_not_requested`; and
-- `runtime_mutation_confirmation_external` only for externally supplied
-  runtime evidence.
-
-This is a design-only contract in the current release. No packet, receipt
-request, or editor action automatically executes a command. A future execution
-slice must bind the typed command, working root, repository revision, process
-disposition, bounded output commitments, and currentness before emitting an
-executed state. A static-only receipt must remain visibly lower assurance.
-
-## LSP riprAgent: ripr/listActionableItems (interim response shape)
-
-> **Interim record.** This section documents the response bytes the live
-> `ripr/listActionableItems` LSP custom request actually emits today
-> (#1603, producer: `ripr_list_actionable_items` in
-> `crates/ripr/src/lsp/backend.rs`). It does **not** conform to
-> `schemas/ripr/ripr-agent-success.schema.json` or
-> `schemas/ripr/ripr-agent-error.schema.json`; those envelopes stay
-> `reserved` for #3009, which owns redesigning the wire to the full schema.
-> Redesigning the envelope is out of scope here; this section exists so the
-> interim shape is documented somewhere and cannot silently drift. The
-> closed shape is pinned by
-> `list_actionable_items_interim_response_shape_is_closed` in
-> `crates/ripr/src/lsp/backend.rs`.
-
-Ingress: params are accepted but no client-supplied field is read; the
-serialized params blob is bounded to 16 KiB at handler entry
-(`crates/ripr/src/lsp/payload_bounds.rs`) and larger payloads are rejected
-with a bounded `-32602` before any handler work.
-
-Success payload (200-level result object, no `protocol_version`,
-`schema_version`, or `request` envelope fields):
-
-- `kind` â€” always `"actionable_items"`.
-- `status` â€” always `"ok"` on this path.
-- `snapshot_id` â€” echoes `RefreshMetadata::snapshot_id` of the committed
-  analysis snapshot. This is the interim refresh **generation identity**,
-  NOT the immutable snapshot-handle contract reserved for #1602; the
-  `riprAgent` capability advertises `snapshot_handles: false` until that
-  contract lands. `null` when the snapshot carries no generation identity.
-- `selected_count` / `omitted_count` / `total_count` â€” diagnostic-budget
-  counts from the committed delivery selection.
-- `budget_identity` â€” the snapshot profile budget identity string.
-- `complete_evidence_identity` â€” the complete-evidence identity string.
-- `continuation_or_inspect_route` â€” the route string for continuing or
-  inspecting the selection.
-- `allowed_edit_surface` â€” always `"read_only"`.
-- `must_not_change` â€” always
-  `["source_edits", "workspace_edit", "autonomous_repair"]`.
-
-Fail-closed payloads (still HTTP-success LSP results, distinguished by the
-`error` object). All variants carry exactly the same closed three-field
-error object:
-
-- `error.kind` â€” `no_snapshot` (no committed analysis snapshot),
-  `analysis_in_flight` (delivery selection missing, or the diagnostic
-  budget is unavailable for this snapshot).
-- `error.message` â€” bounded human-readable explanation.
-- `error.recovery_route` â€” always `"refresh"`.
-
-Error payloads never carry `snapshot_id`, `kind` (response kind), or any
-other success field.
-
-Non-claims: this response is a pure transform of the committed analysis
-snapshot; it performs no new analysis, proves no runtime adequacy, and its
-`snapshot_id` must not be read as an immutable handle.
-
-## PR Test Guidance
-
-RIPR-SPEC-0012 defines the pinned contract for the
-`ripr review-comments` report that projects existing seam evidence into
-advisory pull-request guidance:
-
-```text
-ripr review-comments \
-  --root . \
-  --base <sha> \
-  --head <sha> \
-  --out target/ripr/review/comments.json
-
-ripr review-comments \
-  --root . \
-  --base <sha> \
-  --head <sha> \
-  --gap-ledger target/ripr/reports/gap-decision-ledger.json \
-  --out target/ripr/review/comments.json
-```
-
-The command is a pure renderer. The default path joins existing static seam
-evidence with the changed-line diff, but it reports a scoped review input
-instead of full-repo truth: changed production files plus bounded immediate
-caller files. The JSON and Markdown carry `analysis_scope.run_status =
-"limited_diff_scope"` and the `review_comments_diff_scope_only` limitation
-route so large-repo users can see the narrowed basis. When `--gap-ledger` is
-supplied, the JSON and Markdown carry `analysis_scope.run_status =
-"artifact_scope"` and the `review_comments_gap_ledger_artifact_scope_only`
-limitation route so users can see that RIPR consumed a supplied ledger artifact
-rather than rerunning diff or full-repo analysis. The command renders
-changed-line repair cards only from explicit `GapRecord` entries with
-`projection_eligibility.pr_comment.eligible = true`, PR-local scope, a stable
-anchor, a dedupe fingerprint, a repair route, and verification commands. It
-does not post to GitHub, run mutation testing, refresh LSP state, edit source
-files, or generate tests. CI can use the JSON to write a job summary and emit
-check annotations by default. Inline PR review comments require a custom
-explicit opt-in publisher.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "status": "advisory",
-  "root": ".",
-  "base": "origin/main",
-  "head": "HEAD",
-  "mode": "draft",
-  "inputs": {
-    "gap_ledger": "target/ripr/reports/gap-decision-ledger.json"
-  },
-  "analysis_scope": {
-    "scope": "gap_ledger_artifact",
-    "run_status": "artifact_scope",
-    "basis": "supplied_gap_decision_ledger",
-    "changed_files": ["src/pricing.rs"],
-    "changed_lines": 1,
-    "changed_owner_functions": 0,
-    "changed_production_files": ["src/pricing.rs"],
-    "immediate_caller_files": [],
-    "scoped_production_files": ["src/pricing.rs"],
-    "total_rust_files": null,
-    "total_production_files": null,
-    "production_files_considered": 1,
-    "classified_seams_considered": 1,
-    "downstream_consumable": true,
-    "limitation": "review_comments_gap_ledger_artifact_scope_only",
-    "repair_route": "reports/gap-decision-ledger"
-  },
-  "limits": {
-    "max_inline_comments": 3,
-    "max_summary_items": 10
-  },
-  "summary": {
-    "comments": 2,
-    "summary_only": 1,
-    "suppressed": 1,
-    "unchanged_tests": true
-  },
-  "comments": [
-    {
-      "id": "ripr-review-67fc764ba37d77bd",
-      "seam_id": "67fc764ba37d77bd",
-      "canonical_gap_id": "gap:67fc764ba37d77bd",
-      "dedupe_key": "ripr:67fc764ba37d77bd:src/pricing.rs:88",
-      "placement": {
-        "path": "src/pricing.rs",
-        "line": 88,
-        "side": "RIGHT",
-        "mode": "exact_seam_line"
-      },
-      "kind": "predicate_boundary",
-      "grip_class": "weakly_gripped",
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
-      "severity": "warning",
-      "source_location": {
-        "file": "src/pricing.rs",
-        "limitation": null,
-        "line": 88,
-        "repair_route": null,
-        "span": null,
-        "status": "resolved"
-      },
-      "reason": "Related tests reach and observe the owner but miss the equality boundary.",
-      "missing_discriminator": "amount == discount_threshold",
-      "suggested_test": {
-        "intent": "Add an equality-boundary test.",
-        "candidate_values": ["amount == discount_threshold"],
-        "assertion_shape": "Assert the returned discount behavior directly.",
-        "assertion_kind": "exact_value",
-        "recommended_file": "tests/pricing.rs",
-        "recommended_name": "discounted_total_boundary",
-        "near_test": "applies_discount_above_threshold",
-        "related_test": {
-          "name": "applies_discount_above_threshold",
-          "file": "tests/pricing.rs",
-          "line": 18
-        }
-      },
-      "llm_guidance": {
-        "prompt": "Write one focused Rust test for the missing equality boundary. Place it near tests/pricing.rs::applies_discount_above_threshold. Do not change production code. Preserve existing fixture style. Verify with ripr agent verify.",
-        "command": "ripr agent brief --root . --seam-id 67fc764ba37d77bd --json > target/ripr/workflow/agent-brief.json",
-        "verify_command": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
-      },
-      "repair_card": {
-        "gap_kind": "MissingBoundaryAssertion",
-        "changed_behavior": "amount == discount_threshold",
-        "why_this_matters": "Changed behavior `amount == discount_threshold` has a repairable MissingBoundaryAssertion gap.",
-        "repair": "Assert the returned discount behavior directly.",
-        "evidence_ids": ["evidence:pricing-threshold-reached"],
-        "verification_commands": ["cargo xtask fixtures boundary_gap"],
-        "verify_command": "cargo xtask fixtures boundary_gap",
-        "source_artifact": "target/ripr/reports/gap-decision-ledger.json",
-        "authority_boundary": "gate_decision_artifact_only"
-      }
-    }
-  ],
-  "summary_only": [],
-  "suppressed": [],
-  "warnings": [],
-  "limits_note": "Advisory static evidence only; no automatic edits, generated tests, runtime mutation execution, or CI blocking."
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"`.
-- `tool` - always `"ripr"`.
-- `status` - always `"advisory"`; this report is review guidance, not a CI
-  policy.
-- `root`, `base`, `head`, and `mode` - the workspace root, compared revisions,
-  and RIPR analysis mode used to render the report.
-- `inputs.gap_ledger` - optional explicit gap decision ledger used for
-  repair-card projection. It is present only when `--gap-ledger` is supplied.
-- `analysis_scope` - scoped-input metadata for the renderer path. The default
-  diff renderer emits `scope = "diff_scoped_changed_files"`, `run_status =
-  "limited_diff_scope"`, changed files, changed owner count, changed production
-  files, immediate caller files, total production-file counts, the classified
-  seam count considered, and the `review_comments_diff_scope_only` limitation
-  route. This makes the report useful on large repos without representing the
-  scoped review as full-repo evidence. Gap-ledger rendering emits `scope =
-  "gap_ledger_artifact"` and `run_status = "artifact_scope"` with `basis =
-  "supplied_gap_decision_ledger"`, ledger anchor files, the supplied GapRecord
-  count in `classified_seams_considered`, and the
-  `review_comments_gap_ledger_artifact_scope_only` limitation route. That path
-  does not rerun diff or full-repo analysis; its authority is the supplied
-  ledger artifact.
-- `limits.max_inline_comments` - default cap for changed-line annotations.
-- `limits.max_summary_items` - default cap for total recommendations.
-- `summary.comments` - count of guidance items with safe changed-line
-  placement.
-- `summary.summary_only` - count of recommendations without safe changed-line
-  placement.
-- `summary.suppressed` - count hidden by configured severity, suppression,
-  caps, or missing guidance.
-- `summary.unchanged_tests` - `true` when selected recommendations did not have
-  a nearby test change in the pull request.
-- `comments[]` - line-placeable advisory recommendations. These are the only
-  items eligible for check annotations or inline review comments.
-- `comments[].id` - stable report-local ID derived from the seam when possible.
-- `comments[].seam_id` - static seam identifier from the existing exposure or
-  agent packet evidence.
-- `comments[].canonical_gap_id` - required, nullable stable behavioral-gap
-  identity. Working-set cards project it from the canonical analysis domain;
-  gap-ledger cards preserve `GapRecord.canonical_gap_id`. The renderer never
-  derives it from file, line, expression, or related-test navigation. `null`
-  names the absence of an eligible domain identity rather than a fallback.
-- `comments[].dedupe_key` - stable key based on seam ID, path, and seam line.
-- `comments[].placement` - GitHub-compatible changed-line placement. Items
-  without safe placement belong in `summary_only[]`.
-- `comments[].placement.mode` - `"exact_seam_line"`,
-  `"owner_function_changed_line"`, or `"same_file_changed_line"`. The last
-  names a changed line inside the seam owner's span that owner attribution
-  bound to a nested function; a changed line elsewhere in the same file is
-  not a placement. The renderer must prefer summary-only guidance over
-  misleading line placement.
-- `comments[].kind` - seam kind from the existing static evidence.
-- `comments[].grip_class` - seam grip class from the existing static evidence.
-- `comments[].severity` - configured report severity for the recommendation.
-- `comments[].source_location` - canonical source coordinate for the seam or
-  gap record rendered next to the seam ID in Markdown. When resolution is not
-  available, `status` is `"source_location_unresolved"`, `file` and `line`
-  render as unknown, `limitation` is `"source_location_unresolved"`, and
-  `repair_route` is `"analysis/source-location-resolution"`.
-- `comments[].reason` - short static-evidence explanation for why a focused
-  test would be useful.
-- `comments[].missing_discriminator` - missing value, branch, variant, or
-  observation when available.
-- `comments[].suggested_test` - bounded test intent, candidate values,
-  assertion shape, recommended test file, and related test to imitate when
-  available. `assertion_guidance` is the typed projection of the same
-  producer-owned contract used by agent packets: only `state: "concrete"`
-  carries an example; `requires_observer_setup`, `fix_site_only`,
-  `verification_only`, `unresolved`, and `stale` carry `example: null` and
-  their bounded reason/recovery fields.
-- `comments[].suggested_test.related_test` - structured navigational object
-  `{name, file, line}` for the nearest strong related test (RIPR-SPEC-0068),
-  or `null` when no strong related test resolves. The flat `recommended_file`,
-  `recommended_name`, and `near_test` strings are retained alongside it; this
-  object adds a directly navigable `file:line` when the related-test location
-  is resolved. On the gap-ledger card path `file` and `line` may be `null`
-  when the supplied repair route names only the related test.
-- `comments[].llm_guidance` - bounded handoff command and prompt for one
-  focused test. It is not a request for free-form diff review.
-- `comments[].llm_guidance.repair_command` - present only on an actionable
-  working-set card whose seam passes the fail-closed repair-packet flip
-  (`repair_packet_eligibility`, #3906): `ripr agent repair --root . --seam-id
-  <id> --phase before`, the start of the repair transaction. Its before phase
-  prints the `--attempt ... --phase after` command. Absent on limitation,
-  ineligible, and gap-ledger cards; consumers must not derive it from
-  `seam_id`. Inline publish planning closes the comment body with it in place
-  of the bare `ripr agent verify` line.
-- `comments[].repair_card` - optional GapRecord-backed repair card. When
-  present, inline publish planning should use this field for the human/LLM
-  comment body instead of raw static classes. It carries gap kind, changed
-  behavior when available, why the gap matters, the bounded repair route,
-  evidence IDs, verification commands, source artifact, and authority boundary.
-- `comments[].oracle_kind` / `comments[].oracle_strength` - card-level oracle
-  facts (RIPR-SPEC-0068) projecting the representative related test's oracle
-  (the nearest strong related test, else the top-ranked related test). When no
-  related test observes the seam they degrade honestly to `oracle_kind =
-  "unknown"` / `oracle_strength = "none"`, never a fabricated observer. These
-  project the same oracle facts agent briefs and seam packets already carry;
-  the review card computes no oracle of its own. Working-set path. `oracle_kind`
-  is one of `"exact_value"`, `"exact_error_variant"`, `"whole_object_equality"`,
-  `"snapshot"`, `"relational_check"`, `"broad_error"`, `"smoke_only"`,
-  `"mock_expectation"`, `"unknown"`; `oracle_strength` is one of `"strong"`,
-  `"medium"`, `"weak"`, `"smoke"`, `"none"`, `"unknown"`. Enforced by
-  `spec0068_card_carries_oracle_kind_and_strength`.
-- `comments[].gap_state` - canonical actionability state per RIPR-SPEC-0061.
-  Present on every card (working-set and gap-ledger paths). Values:
-  `"actionable"`, `"static_limitation"`, `"already_observed"`,
-  `"internal_only"`, or `"unknown"`. This replaces the previous implicit
-  classification from `grip_class` alone for consumer code; always prefer
-  `gap_state` for routing decisions. Enforced by reject-list test
-  `spec0068_every_card_carries_gap_state`.
-- `comments[].receipt_command` - copyable `ripr agent receipt` command.
-  Present when `gap_state == "actionable"`. This completes the
-  actionable-card contract: `verify_command` (in `llm_guidance`) plus
-  `receipt_command` together form the proof-closure handoff. Enforced by
-  reject-list test `spec0068_actionable_card_carries_verify_and_receipt_commands`.
-- `comments[].why_not_actionable` - human-readable sentence from the first
-  `EvidenceRecordStaticLimitation.reason`. Present when
-  `gap_state == "static_limitation"`. Consumers should show this alongside
-  `limitation` and `limitation_route` when explaining why no repair is offered.
-- `comments[].non_claims` - advisory-only boundary declarations. Present when
-  `gap_state == "static_limitation"`. Always carries
-  `authority_boundary: "advisory_static_evidence_only"`. The `language_status`
-  field classifies the evidence tier (`"advisory"`, `"preview_advisory"`, etc.).
-- `comments[].canonical_gap_id` - stable gap identity from the gap-ledger.
-  Present on gap-ledger path cards when available. Deferred on the working-set
-  path (no `CanonicalGapIdentity` is threaded through the working-set renderer
-  today; planned for a future slice).
-- `summary_only[]` - same recommendation shape without `placement`. These rows
-  still carry `source_location` for navigable Markdown and JSON parity. CI
-  should show these in the Markdown/job summary but must not invent a
-  changed-line annotation for them.
-- `summary_only[].summary_reason` - closed-vocabulary token explaining why the
-  card is in the summary rather than the inline set. Valid tokens:
-  `inline_comment_cap_reached`, `no_safe_changed_line_placement`,
-  `navigation_only_cross_language_target`, `nearby_test_changed`,
-  `summary_cap`, `missing_verification_command`. Free-text values are
-  forbidden per RIPR-SPEC-0068; adding a new token requires amending the spec.
-- `suppressed[]` - bounded records for recommendations hidden by caps or
-  nearby test changes on non-headline-eligible seams. Nearby test changes do
-  not hide unresolved headline-eligible recommendations or strengthen their
-  evidence; `summary.unchanged_tests` still records that tests changed.
-- `warnings[]` - selection warnings from the agent brief selection path.
-- `limits_note` - static-evidence boundary text for downstream summaries.
-
-Default CI projection runs `ripr review-comments` on pull requests, writes
-summary items to the job summary, and emits check annotations only for changed
-lines. Inline PR review comments remain opt-in through `RIPR_COMMENT_MODE`; the
-generated workflow can emit a publish plan or publish safe same-repository
-changed-line comments only when explicitly configured, capped, and deduped. See
-[PR review guidance](PR_REVIEW_GUIDANCE.md) for the command, generated CI
-behavior, placement-safe review flow, and inline-comment boundary.
-
-## PR Inline Comment Publish Plan
-
-RIPR-SPEC-0025 defines the optional inline comment publisher contract. The
-first surface is a read-only publish plan over existing PR guidance:
-
-```text
-target/ripr/review/comment-publish-plan.json
-target/ripr/review/comment-publish-plan.md
-```
-
-The plan consumes `target/ripr/review/comments.json`, optional existing RIPR
-comment metadata, explicit comment mode, and permission context. The producer
-does not post comments, call GitHub, rerun analysis, edit source files,
-generate tests, run mutation testing, or change gate authority. Generated CI
-keeps inline comments disabled by default, writes the plan in opt-in `plan` or
-`inline` mode, and publishes only safe create/update operations in explicit
-`inline` mode.
-
-Producer:
-
-```bash
-ripr pr-comments plan \
-  --pr-guidance target/ripr/review/comments.json \
-  --existing-comments target/ripr/review/existing-comments.json \
-  --mode plan \
-  --out target/ripr/review/comment-publish-plan.json \
-  --out-md target/ripr/review/comment-publish-plan.md
-```
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "pr_inline_comment_publish_plan",
-  "status": "advisory",
-  "root": ".",
-  "generated_at": "2026-05-10T12:00:00Z",
-  "mode": "plan",
-  "inputs": {
-    "pr_guidance": "target/ripr/review/comments.json",
-    "existing_comments": "target/ripr/review/existing-comments.json",
-    "pull_request": 123,
-    "event_name": "pull_request",
-    "head_repo": "EffortlessMetrics/ripr",
-    "base_repo": "EffortlessMetrics/ripr"
-  },
-  "limits": {
-    "max_inline_comments": 3,
-    "advisory": true,
-    "comments_default": "off"
-  },
-  "summary": {
-    "guidance_comments": 4,
-    "summary_only": 1,
-    "suppressed": 1,
-    "publishable": 3,
-    "planned_create": 2,
-    "planned_update": 1,
-    "planned_keep": 0,
-    "planned_delete": 0,
-    "skipped": 2,
-    "blocked": 0,
-    "safe_to_publish": false
-  },
-  "operations": [
-    {
-      "operation": "create",
-      "safe_to_publish": false,
-      "dry_run": true,
-      "source_collection": "comments",
-      "source_id": "ripr-review-67fc764ba37d77bd",
-      "dedupe_key": "ripr:67fc764ba37d77bd:src/pricing.rs:88",
-      "placement": {
-        "path": "src/pricing.rs",
-        "line": 88,
-        "side": "RIGHT",
-        "mode": "exact_seam_line"
-      },
-      "body": "RIPR advisory: static evidence says this seam misses `amount == discount_threshold`. Add one focused boundary assertion and verify with `ripr agent verify`.",
-      "existing_comment_id": null,
-      "skip_reason": null,
-      "blocked_reason": null
-    }
-  ],
-  "skipped": [
-    {
-      "source_collection": "summary_only",
-      "source_id": "ripr-review-summary-1",
-      "dedupe_key": "ripr:summary:67fc764ba37d77bd",
-      "skip_reason": "summary_only",
-      "message": "Summary-only guidance is visible in comments.md but is not eligible for inline publishing."
-    }
-  ],
-  "blocked": [],
-  "warnings": [],
-  "limits_note": "Advisory inline-comment publish plan only; default workflows do not post comments, summary-only guidance is never published inline, and gate decisions remain separate."
-}
-```
-
-Field contract:
-
-- `schema_version` is `0.1` until the plan shape changes.
-- `kind` is always `pr_inline_comment_publish_plan`.
-- `status` is `advisory`; this report is not gate authority.
-- `mode` is `off`, `plan`, or `inline`; generated CI defaults to `off`.
-- `inputs.pr_guidance` records the explicit `review-comments` source.
-- `inputs.existing_comments` records optional existing-comment metadata when
-  supplied.
-- `inputs.event_name`, `inputs.head_repo`, and `inputs.base_repo` preserve the
-  permission context used for plan decisions.
-- `limits.max_inline_comments` defaults to three.
-- `limits.comments_default` is `off`.
-- `summary.guidance_comments`, `summary.summary_only`, and
-  `summary.suppressed` mirror the input collections when available.
-- `summary.publishable` counts only `comments[]` items eligible under placement,
-  cap, permission, and dedupe rules.
-- `summary.safe_to_publish` is `true` only when mode is `inline` and every
-  planned publishing operation satisfies the permission boundary.
-- `operations[]` records publishable operations sourced from `comments[]` and
-  stale existing-comment cleanup candidates.
-- `operations[].operation` is `create`, `update`, `keep`, or `delete`.
-- `operations[].source_collection` must be `comments` for publishable
-  operations.
-- `operations[].dedupe_key` is required for `create`, `update`, `keep`, and
-  `delete`.
-- `operations[].placement` is copied from the source `comments[]` item; the
-  plan must not invent placement.
-- `operations[].body` preserves advisory static-evidence language and must not
-  claim runtime mutation results.
-- `skipped[]` records capped, summary-only, suppressed, disabled, and
-  already-current items.
-- `skip_reason` is `mode_off`, `summary_only`, `suppressed`,
-  `inline_comment_cap_reached`, `unchanged_tests`, `not_publishable`, or
-  `already_current`.
-- `blocked[]` records hard safety blockers such as missing permissions,
-  untrusted forks, missing PR context, unsafe events, missing dedupe keys, or
-  malformed inputs.
-- `blocked_reason` is `missing_pr_guidance`, `malformed_pr_guidance`,
-  `missing_pull_request`, `missing_token`, `missing_write_permission`,
-  `fork_untrusted`, `unsafe_event`, `missing_dedupe_key`,
-  `missing_changed_line_placement`, `unsupported_mode`, or `unknown`.
-- `warnings[]` records malformed optional inputs, stale existing comments,
-  unsupported optional metadata, and other non-authoritative context.
-- `limits_note` preserves the default-off, advisory, no-summary-only-inline,
-  and separate-gate-authority boundaries.
-
-Existing-comment metadata may be supplied to plan upsert behavior:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "pr_inline_comment_existing_comments",
-  "comments": [
-    {
-      "comment_id": 987654321,
-      "dedupe_key": "ripr:67fc764ba37d77bd:src/pricing.rs:88",
-      "path": "src/pricing.rs",
-      "line": 88,
-      "side": "RIGHT",
-      "body_hash": "sha256:...",
-      "outdated": false
-    }
-  ]
-}
-```
-
-Generated CI may upload and summarize the publish plan only when explicit
-configuration requests `plan` or `inline` mode. The default remains job summary,
-check annotations, and uploaded artifacts without durable PR comments.
-
-## Bun UB TypeScript Calibration Report
-
-The Bun UB TypeScript calibration report is a repo-local operator receipt for
-the preview Bun Blob / `ArrayBuffer` stable-byte corpus. It summarizes whether
-the calibrated cases are TS-discriminated, missing shared/resizable
-discriminators, mention-only rather than observed, or blocked by an unknown
-bridge. It is advisory preview evidence only.
-
-The repo-local report command is:
-
-```text
-cargo xtask bun-ub-calibration \
-  --corpus fixtures/typescript-bun-ub-calibration/corpus.json \
-  --out target/ripr/reports/bun-ub-calibration.json \
-  --out-md target/ripr/reports/bun-ub-calibration.md
-```
-
-With defaults, `cargo xtask bun-ub-calibration` writes:
-
-```text
-target/ripr/reports/bun-ub-calibration.json
-target/ripr/reports/bun-ub-calibration.md
-```
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "report": "bun-ub-calibration",
-  "status": "pass",
-  "source_path": "fixtures/typescript-bun-ub-calibration/corpus.json",
-  "authority_boundary": "preview_advisory_only",
-  "summary": {
-    "cases_total": 7,
-    "passing_cases": 7,
-    "failing_cases": 0,
-    "ts_discriminated_cases": 1,
-    "ts_missing_resizable_cases": 1,
-    "ts_missing_shared_cases": 1,
-    "ts_missing_shared_and_resizable_cases": 1,
-    "ts_missing_external_oracle_cases": 1,
-    "ts_mention_not_observer_cases": 1,
-    "bridge_unknown_cases": 1,
-    "missing_discriminator_cases": 3,
-    "public_packet_exclusions": 7,
-    "repair_packet_ready_cases": 0
-  },
-  "operator_question": "This Rust/FFI seam changed. Do Bun's TypeScript integration tests discriminate the boundary that would catch the stable-byte bug?",
-  "calibration_boundary": "Bun UB TypeScript calibration is preview/advisory only...",
-  "non_claims": [
-    "no provider calls",
-    "no source edits",
-    "no generated tests",
-    "no runtime Bun execution",
-    "no mutation execution",
-    "no default gates",
-    "no public badge contribution",
-    "no baseline authority",
-    "no RIPR Zero authority",
-    "no support-tier promotion",
-    "no public repair packet",
-    "no full cross-language proof"
-  ],
-  "rows": [
-    {
-      "case_id": "bun_blob_resizable_missing",
-      "source": "#31648-stripped-resizable",
-      "expected_state": "ts_missing_resizable",
-      "observed_state": "ts_missing_resizable",
-      "status": "pass",
-      "rust_seam": {
-        "file": "src/jsc/Blob.rs",
-        "owner": "Blob::from_js_without_defer_gc",
-        "boundary": "array_buffer.shared || array_buffer.resizable"
-      },
-      "typescript_evidence": {
-        "test_file": "test/js/web/fetch/blob.test.ts",
-        "entrypoints": ["new Blob", "blob.arrayBuffer"],
-        "shared_array_buffer": true,
-        "resizable_array_buffer": false,
-        "view_backed_blob_input": true,
-        "stable_byte_copy_oracle": true,
-        "max_byte_length_mention_only": false
-      },
-      "bridge_confidence": "configured_hint",
-      "expected_action": "route_cross_language_oracle_visibility_limitation",
-      "expected_missing_discriminators": ["resizable_array_buffer"],
-      "missing_discriminators": ["resizable_array_buffer"],
-      "missing_graph_legs": ["boundary_discriminator:resizable_array_buffer"],
-      "suggested_test_file": "test/js/web/fetch/blob.test.ts",
-      "suggested_shape": "add or inspect a resizable ArrayBuffer Blob stable-byte discriminator in the configured TypeScript observer file; keep repair_packet_ready=false until verify, receipt, and edit-surface evidence exists",
-      "authority_boundary": "preview_advisory_only",
-      "repair_packet_ready": false,
-      "non_claims": ["runtime Bun execution", "generated tests"],
-      "reason": "Missing the resizable ArrayBuffer discriminator in the manifest calibration case.",
-      "errors": []
-    }
-  ]
-}
-```
-
-`status` is `pass` only when every row matches its expected state and no row is
-`repair_packet_ready`. `bridge_unknown` rows name `binding_or_ffi_edge` in
-`missing_graph_legs[]`; mention-only rows name
-`external_blob_or_stable_byte_observer`. The report does not run Bun, `tsc`,
-`tsserver`, mutation, providers, generated tests, source edits, gates, badges,
-baselines, RIPR Zero, or support-tier promotion.
-
-## Bun UB Preview Summary Report
-
-The Bun UB preview summary is a compact operator surface built from existing
-Bun UB calibration, cross-language oracle graph, and dogfood receipt data. It
-summarizes route counts, named static limitations, public packet exclusions,
-and receipt state without creating public repair packets.
-
-The repo-local report command is:
-
-```text
-cargo xtask bun-ub-preview-summary \
-  --calibration-corpus fixtures/typescript-bun-ub-calibration/corpus.json \
-  --graph-corpus fixtures/cross-language-oracle-graph-corpus/corpus.json \
-  --dogfood-corpus fixtures/bun-ub-cross-language-dogfood/corpus.json \
-  --out target/ripr/reports/bun-ub-preview-summary.json \
-  --out-md target/ripr/reports/bun-ub-preview-summary.md
-```
-
-With defaults, `cargo xtask bun-ub-preview-summary` writes:
-
-```text
-target/ripr/reports/bun-ub-preview-summary.json
-target/ripr/reports/bun-ub-preview-summary.md
-```
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "report": "bun-ub-preview-summary",
-  "status": "pass",
-  "authority": "preview_advisory_only",
-  "authority_boundary": "preview_advisory_only",
-  "repair_packet_ready": false,
-  "source_paths": {
-    "calibration": "fixtures/typescript-bun-ub-calibration/corpus.json",
-    "cross_language_oracle_graph": "fixtures/cross-language-oracle-graph-corpus/corpus.json",
-    "dogfood": "fixtures/bun-ub-cross-language-dogfood/corpus.json"
-  },
-  "summary": {
-    "calibration_cases_total": 7,
-    "route_quality_cases_total": 9,
-    "dogfood_receipts_total": 4,
-    "route_state_counts": {
-      "rust_ungripped_ts_discriminated": 3,
-      "rust_ungripped_ts_missing_discriminator": 1,
-      "bridge_unknown": 1,
-      "ts_mention_not_observer": 1
-    },
-    "dogfood_state_counts": {
-      "rust_ungripped_ts_discriminated": 1,
-      "rust_ungripped_ts_missing_discriminator": 1,
-      "ts_mention_not_observer": 1,
-      "public_reachable_panic_boundary_unrevealed": 1
-    },
-    "named_static_limitations": [
-      {
-        "category": "cross_language_oracle_visibility_unresolved",
-        "count": 4,
-        "repair_routes": ["analysis/cross-language-oracle-visibility"],
-        "sample_case_ids": ["bun_blob_bridge_unknown_limitation"]
-      }
-    ],
-    "public_packet_exclusions": 20,
-    "repair_packet_ready_cases": 0
-  },
-  "calibrated_routes": [
-    {
-      "route_label": "bun_blob_missing_resizable_oracle_limitation",
-      "profile": "bun_blob_array_buffer",
-      "case_id": "bun_blob_missing_resizable_oracle_limitation",
-      "state": "rust_ungripped_ts_missing_discriminator",
-      "gap_state": "static_limitation",
-      "limitation_category": "cross_language_oracle_visibility_unresolved",
-      "repair_route": "analysis/cross-language-oracle-visibility",
-      "suggested_test_file": "test/js/web/fetch/blob.test.ts",
-      "missing_discriminators": ["resizable_array_buffer"],
-      "missing_graph_legs": ["boundary_discriminator:resizable_array_buffer"],
-      "public_projection_eligible": false,
-      "repair_packet_ready": false,
-      "authority_boundary": "preview_advisory_only",
-      "unlock_condition": "prove the external oracle path and keep typed placement evidence"
-    }
-  ],
-  "dogfood_receipts": [
-    {
-      "case_id": "bun_blob_missing_resizable_receipt",
-      "source_case": "bun_blob_resizable_missing",
-      "route_quality_case": "bun_blob_missing_resizable_oracle_limitation",
-      "state": "rust_ungripped_ts_missing_discriminator",
-      "receipt_state": "closed",
-      "operator_action": "add_resizable_blob_discriminator",
-      "proof_mode": "preview_manifest_receipt",
-      "suggested_test_file": "test/js/web/fetch/blob.test.ts",
-      "repair_packet_ready": false,
-      "authority_boundary": "preview_advisory_only",
-      "errors": []
-    }
-  ],
-  "non_claims": [
-    "preview/advisory only",
-    "no public repair packet",
-    "no runtime Bun execution",
-    "no TypeScript execution",
-    "no mutation execution",
-    "no provider calls",
-    "no generated tests",
-    "no source edits",
-    "no gates or badges",
-    "no support-tier promotion",
-    "no full cross-language proof"
-  ],
-  "errors": []
-}
-```
-
-Markdown shape:
-
-```text
-# Bun UB Preview Summary
-
-Status: `pass`
-
-authority = preview_advisory_only
-
-repair_packet_ready: false
-
-## Source Paths
-## Summary
-## State Counts
-## Named Static Limitations
-## Calibrated Routes
-## Dogfood Receipts
-## Non-Claims
-```
-
-`status` is `pass` only when the source calibration and route-quality reports
-pass, dogfood receipts validate, every source keeps
-`authority_boundary = preview_advisory_only`, and
-`repair_packet_ready_cases = 0`. This report does not run Bun, `tsc`,
-`tsserver`, Jest, Vitest, Miri, mutation, providers, generated tests, source
-edits, gates, badges, baselines, RIPR Zero, support-tier promotion, or
-`ripr check --profile`. It is not a TypeScript/JavaScript stability claim, a
-full Bun binding graph, a runtime UB proof, or a public repair packet source.
-
-## Configured Bridge Inventory Report
-
-The configured bridge inventory is a report-only Bun cross-language profile
-inventory built from the existing cross-language oracle graph corpus. It makes
-current configured bridges and manifest-only future surfaces visible without
-adding analyzer behavior or a full Bun binding graph.
-
-The repo-local report command is:
-
-```text
-cargo xtask configured-bridge-inventory \
-  --graph-corpus fixtures/cross-language-oracle-graph-corpus/corpus.json \
-  --out target/ripr/reports/configured-bridge-inventory.json \
-  --out-md target/ripr/reports/configured-bridge-inventory.md
-```
-
-With defaults, `cargo xtask configured-bridge-inventory` writes:
-
-```text
-target/ripr/reports/configured-bridge-inventory.json
-target/ripr/reports/configured-bridge-inventory.md
-```
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "report": "configured-bridge-inventory",
-  "status": "pass",
-  "authority": "preview_advisory_only",
-  "authority_boundary": "preview_advisory_only",
-  "repair_packet_ready": false,
-  "source_path": "fixtures/cross-language-oracle-graph-corpus/corpus.json",
-  "summary": {
-    "configured_bridge_profiles": 3,
-    "bridge_unknown_profiles": 1,
-    "future_or_missing_surfaces": 2,
-    "named_static_limitation_profiles": 1,
-    "repair_packet_ready_cases": 0,
-    "s3_surfaces_backed_by_corpus": false
-  },
-  "configured_bridges": [
-    {
-      "profile": "bun_blob_array_buffer",
-      "label": "Blob ArrayBuffer",
-      "surface_state": "configured",
-      "rust_file": "src/jsc/Blob.rs",
-      "rust_owner": "Blob::from_js_without_defer_gc",
-      "bridge_kind": "configured_bridge",
-      "bridge_confidence": "configured_hint",
-      "external_surface": "test/js/web/fetch/blob.test.ts",
-      "source_cases": ["bun_blob_complete_ts_discriminated_advisory"],
-      "missing_graph_legs": [],
-      "inventory_action": "inventory_only",
-      "repair_packet_ready": false,
-      "public_projection_eligible": false,
-      "authority_boundary": "preview_advisory_only"
-    }
-  ],
-  "bridge_unknown": [
-    {
-      "profile": "bun_blob_array_buffer",
-      "label": "Blob ArrayBuffer",
-      "surface_state": "bridge_unknown",
-      "missing_graph_legs": ["binding_or_ffi_edge"],
-      "inventory_action": "inventory_only",
-      "repair_packet_ready": false
-    }
-  ],
-  "future_or_missing_surfaces": [
-    {
-      "profile": "bun_write_helper_gated",
-      "label": "Bun.write sink",
-      "surface_state": "manifest_only",
-      "missing_graph_legs": [
-        "helper:bun_write_fixture_helper",
-        "binding_or_ffi_edge:bun_write_sink",
-        "external_oracle:stable_byte_write"
-      ],
-      "inventory_action": "inventory_only",
-      "repair_packet_ready": false
-    }
-  ],
-  "named_static_limitations": [],
-  "non_claims": [
-    "preview/advisory only",
-    "report-only bridge inventory",
-    "no inferred reachability",
-    "no full Bun binding graph",
-    "no public repair packet",
-    "no placement from missing inventory rows",
-    "no runtime Bun execution",
-    "no TypeScript execution",
-    "no mutation execution",
-    "no provider calls",
-    "no generated tests",
-    "no source edits",
-    "no gates or badges",
-    "no support-tier promotion"
-  ],
-  "errors": []
-}
-```
-
-Markdown shape:
-
-```text
-# Configured Bridge Inventory
-
-Status: `pass`
-
-authority = preview_advisory_only
-
-repair_packet_ready: false
-
-## Summary
-## Configured Bridges
-## Bridge Unknown
-## Future Or Missing Surfaces
-## Named Static Limitations
-## Non-Claims
-```
-
-`status` is `pass` only when required configured bridge profiles and
-manifest-only future surfaces are present in the corpus and no row claims a
-repair packet. Missing inventory entries are `inventory_only`; they do not
-become repair tasks or TypeScript placement suggestions.
-
-## Recommendation Calibration Report
-
-RIPR-SPEC-0013 defines the recommendation calibration report contract.
-The report measures whether existing PR guidance was useful, correctly placed,
-properly suppressed or capped, aimed at the expected test target, and
-correlated with later static evidence movement.
-
-The repo-local report command is:
-
-```text
-cargo xtask recommendation-calibration \
-  --root . \
-  --pr-guidance target/ripr/review/comments.json \
-  --calibration-expectations fixtures/boundary_gap/expected/recommendation-calibration/expectations.json \
-  --outcome-receipts fixtures/boundary_gap/expected/recommendation-calibration/outcome-receipts \
-  --agent-receipt target/ripr/reports/agent-receipt.json \
-  --targeted-test-outcome target/ripr/outcome/targeted-test-outcome.json \
-  --out target/ripr/reports/recommendation-calibration.json
-```
-
-The report writes:
-
-```text
-target/ripr/reports/recommendation-calibration.json
-target/ripr/reports/recommendation-calibration.md
-```
-
-See [Recommendation calibration](RECOMMENDATION_CALIBRATION.md) for the
-operator workflow and metric interpretation guide.
-
-This is an advisory calibration surface. It does not call LLM providers, edit
-source files, generate tests, run mutation testing, post comments, or make CI
-blocking by default.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "status": "advisory",
-  "root": ".",
-  "inputs": {
-    "pr_guidance": ["target/ripr/review/comments.json"],
-    "agent_receipt": "target/ripr/reports/agent-receipt.json",
-    "targeted_test_outcome": "target/ripr/outcome/targeted-test-outcome.json",
-    "calibration_expectations": "fixtures/boundary_gap/expected/recommendation-calibration/expectations.json",
-    "outcome_receipts": [
-      "fixtures/boundary_gap/expected/recommendation-calibration/outcome-receipts/useful.json"
-    ]
-  },
-  "summary": {
-    "recommendations_evaluated": 4,
-    "top_recommendation_outcome": "useful",
-    "useful": 2,
-    "noisy": 1,
-    "false_annotations": 1,
-    "summary_only_correct": 1,
-    "suppressed_correctly": 1,
-    "target_file_correct": 2,
-    "static_improved": 1,
-    "static_unchanged": 1,
-    "static_regressed": 0,
-    "unknown": 1
-  },
-  "latency": {
-    "guidance_generated_unix_ms": 1778240000000,
-    "annotation_emitted_unix_ms": 1778240001200,
-    "outcome_recorded_unix_ms": 1778240100000,
-    "annotation_latency_ms": 1200,
-    "outcome_latency_ms": 100000
-  },
-  "recommendations": [
-    {
-      "id": "ripr-review-67fc764ba37d77bd",
-      "seam_id": "67fc764ba37d77bd",
-      "rank": 1,
-      "source": "comments",
-      "source_artifact": "target/ripr/review/comments.json",
-      "source_case": "useful_exact_line_boundary",
-      "placement": {
-        "path": "src/pricing.rs",
-        "line": 88,
-        "mode": "exact_seam_line",
-        "quality": "correct"
-      },
-      "grip_class": "weakly_gripped",
-      "severity": "warning",
-      "missing_discriminator": "amount == discount_threshold",
-      "suggested_test": {
-        "recommended_file": "tests/pricing.rs",
-        "near_test": "applies_discount_above_threshold",
-        "target_quality": "correct",
-        "expected_file": "tests/pricing.rs"
-      },
-      "calibration": {
-        "outcome": "useful",
-        "source": "outcome_receipt:fixture",
-        "reason": "expected equality-boundary recommendation on the changed seam"
-      },
-      "static_movement": {
-        "state": "improved",
-        "source": "outcome_receipt",
-        "before_class": null,
-        "after_class": null
-      }
-    }
-  ],
-  "suppressed": [
-    {
-      "id": "ripr-review-capped-1",
-      "seam_id": "67fc764ba37d77bd",
-      "source_artifact": "target/ripr/review/comments.json",
-      "source_case": "configured_off_boundary",
-      "reason": "cap_reached",
-      "quality": "suppressed_correctly",
-      "calibration": {
-        "outcome": "suppressed_correctly",
-        "source": "fixture_expectation",
-        "reason": "expected cap suppression"
-      }
-    }
-  ],
-  "warnings": [],
-  "limits_note": "Advisory recommendation-quality evidence only; no telemetry, generated tests, source edits, runtime execution, or CI blocking."
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"`.
-- `tool` - always `"ripr"`.
-- `status` - `advisory` when at least one recommendation can be evaluated and
-  `incomplete` when required inputs are missing. Malformed required inputs
-  return an actionable command error instead of a successful report.
-- `root` - workspace root used to resolve artifact paths.
-- `inputs` - paths and receipt lists considered by the report. Missing optional
-  inputs should be visible as `null`, empty arrays, or warnings.
-- `summary.recommendations_evaluated` - count of visible and suppressed
-  recommendations considered.
-- `summary.top_recommendation_outcome` - outcome label for the highest-ranked
-  recommendation, or `unknown`.
-- `summary.useful`, `summary.noisy`, `summary.false_annotations`,
-  `summary.summary_only_correct`, `summary.suppressed_correctly`,
-  `summary.target_file_correct`, `summary.static_improved`,
-  `summary.static_unchanged`, `summary.static_regressed`, and
-  `summary.unknown` - aggregate quality and static-movement counts.
-- `latency.*_unix_ms` - optional timestamps from artifacts or CI-provided
-  metadata. Values are `null` when timestamps are unavailable.
-- `latency.annotation_latency_ms` - elapsed time from guidance generation to
-  annotation emission when both timestamps are available.
-- `latency.outcome_latency_ms` - elapsed time from guidance generation to the
-  first matching outcome or receipt timestamp when available.
-- `recommendations[]` - calibrated records for visible PR guidance items.
-- `recommendations[].rank` - ranking from the source guidance.
-- `recommendations[].placement.quality` - `correct`, `wrong_line`,
-  `summary_only_expected`, `not_placeable`, or `unknown`.
-  `summary_only_expected` is a placement-quality value only; the matching
-  review-quality outcome remains `summary_only_correct`.
-- `recommendations[].suggested_test.target_quality` - `correct`,
-  `wrong_target`, `not_applicable`, or `unknown`.
-- `recommendations[].calibration.outcome` - `useful`, `noisy`, `wrong_line`,
-  `already_covered`, `wrong_target`, `summary_only_correct`,
-  `suppressed_correctly`, or `unknown`.
-- `recommendations[].calibration.source` - `fixture_expectation` or
-  `outcome_receipt:<source>`.
-- `recommendations[].static_movement.state` - `improved`, `unchanged`,
-  `regressed`, `resolved`, `new_gap`, `missing_after_snapshot`, or `unknown`.
-- `suppressed[]` - recommendations hidden by caps, suppression, configured-off
-  severity, generated/migration exclusion, or nearby-test change.
-- `suppressed[].reason` - stable reason code: `cap_reached`, `suppression`,
-  `severity_off`, `nearby_test_changed`, `generated_or_migration`, or
-  `unknown`.
-- `suppressed[].quality` - `suppressed_correctly`, `over_suppressed`, or
-  `unknown`.
-- `warnings[]` - missing inputs, unsupported expectation fields, stale
-  artifacts, or latency values that could not be derived.
-- `limits_note` - advisory boundary text for summaries and generated CI.
-
-## Calibrated Gate Decision
-
-RIPR-SPEC-0014 defines the optional calibrated gate policy contract. The gate
-decision report is read-only policy over existing repo exposure, PR guidance,
-GapRecord decisions, SARIF policy, labels, receipts, recommendation
-calibration, and optional imported mutation calibration artifacts.
-
-The evaluator is:
-
-```text
-ripr gate evaluate \
-  --root . \
-  --repo-exposure target/ripr/reports/repo-exposure.json \
-  --pr-guidance target/ripr/review/comments.json \
-  --gap-ledger target/ripr/reports/gap-decision-ledger.json \
-  --sarif-policy target/ripr/reports/sarif-policy.json \
-  --labels-json target/ci/labels.json \
-  --agent-verify target/ripr/workflow/agent-verify.json \
-  --agent-receipt target/ripr/reports/agent-receipt.json \
-  --recommendation-calibration target/ripr/reports/recommendation-calibration.json \
-  --mutation-calibration target/ripr/reports/mutation-calibration.json \
-  --mode visible-only \
-  --out target/ripr/reports/gate-decision.json \
-  --out-md target/ripr/reports/gate-decision.md
-```
-
-The report writes:
-
-```text
-target/ripr/reports/gate-decision.json
-target/ripr/reports/gate-decision.md
-```
-
-This is an optional policy surface. Generated workflows remain advisory and
-non-blocking by default. When `--gap-ledger` is supplied, gate candidates come
-from explicit GapRecord `projection_eligibility.gate_candidate` records that
-satisfy the safe gate predicate; PR guidance remains the legacy/fallback input.
-The evaluator writes JSON and Markdown before returning a non-zero exit for
-`blocked` or `config_error` decisions. It must not post comments, edit source
-files, generate tests, run mutation testing, upload SARIF, mutate GitHub state,
-or hide acknowledged decisions.
-
-Generated CI runs this evaluator only when `RIPR_GATE_MODE` is explicitly set.
-The default generated workflow leaves `RIPR_GATE_MODE` empty, captures pull
-request labels to `target/ci/labels.json`, and uploads any gate-decision files
-with the regular RIPR artifact packet. When `gate-decision.json` and
-`RIPR_GATE_BASELINE` are available, generated CI also runs
-`ripr baseline diff` as a non-blocking movement report and uploads
-`baseline-debt-delta.{json,md}` with the same artifact packet. The job summary
-renders an at-a-glance projection of mode, status, decision counts, labels,
-waiver, baseline, calibration, blocking reason, debt movement counts, and
-artifact paths before appending the full Markdown decision report.
-`visible-only` remains advisory; blocking modes are opt-in.
-
-The CLI also prints a stderr warning when `ripr gate evaluate` omits `--mode`
-and stderr is non-interactive: the default is `visible-only`, which records
-advisory evidence and never blocks. This warning is not part of the JSON or
-Markdown report contract; an explicit `--mode visible-only` suppresses it.
-
-See [Calibrated gate policy](CALIBRATED_GATE_POLICY.md) for the operating
-model, rollout path, waiver behavior, and static/runtime vocabulary boundary.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "status": "acknowledged",
-  "mode": "acknowledgeable",
-  "root": ".",
-  "inputs": {
-    "repo_exposure": "target/ripr/reports/repo-exposure.json",
-    "pr_guidance": "target/ripr/review/comments.json",
-    "gap_ledger": "target/ripr/reports/gap-decision-ledger.json",
-    "sarif_policy": "target/ripr/reports/sarif-policy.json",
-    "labels_json": "target/ci/labels.json",
-    "labels": ["ripr-waive"],
-    "agent_verify": "target/ripr/workflow/agent-verify.json",
-    "agent_receipt": "target/ripr/reports/agent-receipt.json",
-    "recommendation_calibration": "target/ripr/reports/recommendation-calibration.json",
-    "mutation_calibration": null,
-    "baseline": null
-  },
-  "policy": {
-    "mode": "acknowledgeable",
-    "threshold": "high_confidence_new_gap",
-    "acknowledgement_labels": ["ripr-waive"],
-    "default_workflow_posture": "advisory"
-  },
-  "summary": {
-    "evaluated": 2,
-    "blocking": 0,
-    "acknowledged": 1,
-    "advisory": 1,
-    "suppressed": 0,
-    "not_applicable": 0,
-    "unknown_confidence": 0
-  },
-  "decisions": [
-    {
-      "id": "ripr-gate-67fc764ba37d77bd",
-      "source": "pr_guidance",
-      "decision": "acknowledged",
-      "gate_reason": "policy-eligible gap acknowledged by ripr-waive",
-      "seam_id": "67fc764ba37d77bd",
-      "source_id": "ripr-review-67fc764ba37d77bd",
-      "gap_state": "actionable",
-      "static_class": "weakly_gripped",
-      "severity": "warning",
-      "placement": {
-        "path": "src/pricing.rs",
-        "line": 88
-      },
-      "policy": {
-        "mode": "acknowledgeable",
-        "threshold": "high_confidence_new_gap",
-        "acknowledgement_label": "ripr-waive",
-        "baseline_identity": null
-      },
-      "repair_route": {
-        "canonical_gap_id": "gap:pricing:threshold",
-        "seam_id": "67fc764ba37d77bd",
-        "classification": "weakly_gripped",
-        "changed_owner": "pricing::discounted_total",
-        "changed_behavior": "amount >= discount_threshold",
-        "missing_discriminator": "amount == discount_threshold",
-        "repair_target": {
-          "kind": "related_test",
-          "name": "discounted_total_boundary",
-          "file": "tests/pricing.rs",
-          "line": 12
-        },
-        "test_intent": "Exercise the production caller at the equality boundary and assert the returned discount.",
-        "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
-        "verify_command": "cargo test -p pricing discounted_total_boundary",
-        "receipt_command": "ripr receipt write --gap gap:pricing:threshold",
-        "inspection_command": "ripr agent brief --root . --seam-id 67fc764ba37d77bd --json",
-        "authority_boundary": "static_ripr_evidence_only",
-        "limitation": null
-      },
-      "evidence": {
-        "missing_discriminator": "amount == discount_threshold",
-        "assertion_shape": "Assert the returned discount behavior directly.",
-        "candidate_values": ["amount == discount_threshold"],
-        "recommended_test": "tests/pricing.rs::discounted_total_boundary",
-        "nearby_test_changed": false,
-        "suppressed": false,
-        "configured_off": false,
-        "recommendation_calibration": {
-          "available": true,
-          "outcome": "useful",
-          "confidence_effect": "supports_static_gap"
-        },
-        "mutation_calibration": {
-          "available": false,
-          "confidence_effect": "not_used"
-        }
-      }
-    }
-  ],
-  "warnings": [],
-  "limits_note": "Optional policy over static RIPR evidence; advisory by default; runtime mutation calibration is used only when supplied."
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"`.
-- `status` - one of `pass`, `advisory`, `acknowledged`, `blocked`, or
-  `config_error`.
-- `mode` - one of `visible-only`, `acknowledgeable`, `baseline-check`, or
-  `calibrated-gate`.
-- `inputs` - normalized paths and labels used by the evaluator. Optional inputs
-  should appear as `null` or produce a warning when they are absent.
-- `inputs.gap_ledger` - optional explicit gap decision ledger input. When
-  supplied, gate candidates come from GapRecord gate-candidate projection
-  targets instead of raw PR guidance candidates.
-- `policy.mode` - effective gate mode after config and CLI precedence.
-- `policy.threshold` - initially `high_confidence_new_gap`.
-- `policy.acknowledgement_labels` - configured labels that can turn a blocking
-  candidate into a visible acknowledged decision.
-- `policy.default_workflow_posture` - must remain `advisory` for generated
-  workflows unless a later explicit configuration changes it.
-- `summary.evaluated` - candidate count considered after parsing inputs.
-- `summary.blocking` - count of candidate decisions that make the gate fail.
-- `summary.acknowledged` - count of candidate decisions made non-failing by an
-  acknowledgement label.
-- `summary.advisory` - count of visible non-blocking decisions.
-- `summary.suppressed` - count of suppressed or configured-hidden candidates
-  preserved in the gate report.
-- `summary.not_applicable` - count of parsed records that are outside the
-  configured policy scope.
-- `summary.unknown_confidence` - count of candidates that could not satisfy
-  high-confidence requirements.
-- `decisions[].source` - source artifact family such as `pr_guidance`,
-  `gap_decision_ledger`, `repo_exposure`, `sarif_policy`, or `agent_receipt`.
-- `decisions[].gap_id` and `decisions[].gap_kind` - optional GapRecord identity
-  and repair-problem kind copied when the decision came from a gap ledger.
-- `decisions[].canonical_gap_id` - optional semantic Lane 1 gap identity copied
-  from the source candidate when supplied directly, through
-  `identity.canonical_gap_id`, or through `evidence_record.canonical_gap_id`.
-  The field is omitted when unavailable.
-- `decisions[].decision` - one of `blocking`, `acknowledged`, `advisory`,
-  `suppressed`, or `not_applicable`.
-- `decisions[].gate_reason` - short policy explanation for human summaries.
-- `decisions[].gap_state` - producer-owned gap state, or `null` when the source
-  cannot supply it.
-- `decisions[].static_class` - source static class copied without rewriting
-  seam-grip classes into finding classes.
-- `decisions[].severity` - configured severity from the source surface.
-- `decisions[].policy` - mode, threshold, acknowledgement, and baseline facts
-  that affected the candidate.
-- `decisions[].policy.baseline_identity` - identity used for baseline
-  comparison. Matching prefers `canonical_gap_id` before legacy seam, source,
-  ID, dedupe-key, and path/line/static-class fallback identities.
-- `decisions[].baseline_match_kind` - optional disclosure recorded when the
-  baseline match happened only through the legacy path/line/static-class
-  fallback identity. The sole allowed value is `"legacy_path_line_class"`.
-  The field is omitted for canonical identity matches and for baseline-new
-  candidates, so their rendered decisions stay byte-identical. During the
-  compatibility window a fallback-only match still suppresses blocking but
-  also produces a report-level warning naming the candidate and the matched
-  legacy identity.
-- `decisions[].evidence` - static evidence and optional calibration confidence
-  effects used for the candidate.
-- `decisions[].repair_route` - uniform failure-time route object, present on
-  every decision. It carries nullable producer-owned fields for
-  `canonical_gap_id`, `seam_id`, `classification`, `changed_owner`,
-  `changed_behavior`, `missing_discriminator`, tagged `repair_target`,
-  `test_intent`, `repair_command`, `verify_command`, `receipt_command`, and
-  exact producer-owned `inspection_command`. `repair_command` is the review
-  card's `llm_guidance.repair_command` carried unchanged (#3906); it is `null`
-  for gap-ledger candidates and for seams that fail the repair-packet flip, and
-  it is not a completeness field. When present, the gate summary names it
-  instead of the inspection command. A changed owner is not assumed to be a production
-  caller, generic evidence-vector position is not treated as seam identity,
-  and path/line is not manufactured into an exact inspection selector. The
-  `authority_boundary` is `static_ripr_evidence_only`.
-- `decisions[].repair_route.limitation` - `null` only when the route is
-  complete. Otherwise it has kind `incomplete_repair_route`, a closed list of
-  missing fields, and a bounded detail. A candidate that would otherwise be
-  policy-eligible fails closed to advisory visibility when this limitation is
-  present; no renderer invents a fallback identity, location, test, or command.
-- `gate-decision.md` - human projection consumed directly by generated GitHub
-  step summaries. Blocking, acknowledged, and advisory decisions expand the
-  same structured route into gap/seam identity, gap state, classification,
-  changed owner/behavior, missing discriminator, tagged target, test intent,
-  verify/receipt/inspection commands, and the static authority boundary.
-  Incomplete routes print their named limitation and missing fields without a
-  fabricated inspection command; suppressed and not-applicable decisions do
-  not present an actionable route.
-- `decisions[].evidence.repair_route` and `verification_commands` - optional
-  GapRecord repair route and verification commands. These fields are present
-  when the gate decision is driven by a repairable gap ledger record.
-- `warnings[]` - missing optional inputs, unsupported labels, ambiguous
-  calibration, baseline limitations, or schema limitations.
-- `limits_note` - static/runtime and advisory-default boundary text.
-- `new_unsuppressed` - canonical downstream-thresholding receipt (see below).
-
-### `new_unsuppressed` receipt field
-
-Added by RIPR-SPEC-0111. Additive â€” does not bump `schema_version`.
-
-```json
-"new_unsuppressed": { "basis": "diff", "count": 3, "reason": null }
-```
-
-Consumers may threshold on `.new_unsuppressed.count` (e.g.
-`max_new_unsuppressed=0`). The field is a stable filter over the gate's own
-`decisions[]` â€” reproducible by any reader of the same receipt.
-
-**Honest definition.** `count` is the number of decisions `d` in `decisions[]`
-where ALL of the following hold:
-
-1. `d.static_class âˆˆ {"weakly_gripped","ungripped","reachable_unrevealed","weakly_exposed"}`
-   (policy-eligible class).
-2. `d.decision âˆˆ {"blocking","advisory"}` â€” suppressed, acknowledged, and
-   not_applicable candidates are EXCLUDED (they are handled or ineligible).
-3. `d.repair_route.limitation == null`. An advisory decision with
-   `incomplete_repair_route` is visible but is not policy-eligible debt for a
-   downstream threshold.
-4. If `basis == "baseline"`: additionally `d.is_baseline_new` is true. If
-   `basis == "diff"`: all candidates in 1+2+3 count (diff scope equals "new").
-
-CRITICAL: `count` INCLUDES policy-eligible `advisory` decisions. It is NOT
-equal to `summary.blocking`. In `visible-only` mode every eligible candidate is
-advisory (`blocking=0`) but `count` is the advisory candidate count. An external
-thresholder applies its own policy; `ripr` reports the complete-route candidate
-count regardless of its own blocking/advisory label.
-
-**`basis` values.**
-
-| `basis` | Meaning |
-|---|---|
-| `"diff"` | Diff-scoped run. All surviving candidates are new by definition. |
-| `"baseline"` | Baseline-aware run (`baseline-check` or `calibrated-gate`). Only `is_baseline_new=true` candidates count. |
-| `null` | FAIL CLOSED: `config_errors` is non-empty â€” analysis did not run. |
-
-**Fail-closed rule.** When `config_errors` is non-empty, `basis=null`,
-`count=0`, and `reason` discloses the first config error. `count=0` with
-`basis=null` must NEVER be read as "clean/pass" â€” the `reason` field is
-the mandatory disclosure.
-
-### `exception_policy` ledger section (top-level additive, #1442)
-
-Emitted only when `ripr gate evaluate` is invoked with
-`--exception-policy PATH`. Absent otherwise, so existing gate-decision
-consumers and goldens see byte-identical output. Does not bump
-`schema_version`. `inputs.exception_policy` carries the supplied path when
-the flag is present.
-
-The ledger is a `quality-gate-exceptions` TOML file: a dated, auditable list
-of named temporary burndown exceptions. Header fields: `schema_version = 1`,
-`policy = "quality-gate-exceptions"`, optional `owner`, `status`
-(default `"active"`), `updated`, and `due_review = "warn" | "fail"`
-(default `"fail"`, fail-closed). An optional `[requirements] required_active`
-list names exception ids that MUST be active. Each `[[exception]]` requires
-`id`, `kind`, `scope`, `owner`, `reason`, `final_target`, `evidence`,
-`removal_criteria`, and `YYYY-MM-DD` `created`, `review_after`, and `expires`
-dates; `issue` is optional metadata. Unknown keys, blank required fields,
-malformed dates, and duplicate ids are load errors.
-
-Enforcement, evaluated against today's UTC date; ripr owns these semantics
-while the consumer owns only the ledger content:
-
-- `expires < today` â†’ `quality_exception_expired` (blocking).
-- otherwise `review_after <= today` â†’ `quality_exception_review_due`
-  (blocking under `due_review = "fail"`; a gate warning under `"warn"`).
-- a `required_active` id with no active exception â†’
-  `quality_exception_required_missing` (blocking). An expired required
-  exception raises both violations; both stay visible.
-- ledger `status = "final"` â†’ every still-active exception is
-  `quality_exception_final_active` (blocking): final enforcement means zero
-  active exceptions remain.
-
-Any blocking violation makes the top-level gate `status` `"blocked"` (non-zero
-exit). A missing or malformed ledger is a `config_error`, never a silently
-ignored input â€” the gate must not report `pass` while believing a policy was
-applied.
-
-```json
-"exception_policy": {
-  "path": "policy/quality-gate-exceptions.toml",
-  "ledger_status": "active",
-  "ledger_owner": "EffortlessMetrics",
-  "due_review": "fail",
-  "active_count": 1,
-  "active": [
-    {"id": "ripr-total-burndown", "kind": "temporary_burndown",
-     "scope": "ripr_plus_total", "owner": "proof-lane",
-     "reason": "Existing repo-wide gaps predate the transition gate.",
-     "review_after": "2026-06-28", "expires": "2026-09-30"}
-  ],
-  "violations": [
-    {"kind": "quality_exception_review_due",
-     "exception_id": "ripr-total-burndown",
-     "detail": "exception `ripr-total-burndown` passed its review_after date 2026-06-28 (today 2026-07-05); re-review it and move review_after forward",
-     "blocking": true}
-  ]
-}
-```
-
-The Markdown report renders a matching `## Exception Policy` section with the
-ledger path, status, active entries, and violations (BLOCKING vs warning).
-These are gate policy states, not static exposure claims: violation kinds are
-`quality_exception_*` terms and never rewrite finding classifications.
-
-Markdown should fit in a job summary. It should name the top-level decision,
-mode, counts, blocking or acknowledged seams, repair action, and limits. It
-must not hide acknowledged decisions. If the evaluator returns a blocking exit
-code, the Markdown still needs enough evidence for the next agent or reviewer
-to resolve the state.
-
-## Gate Baseline Ledger
-
-`ripr baseline create` writes the first executable Campaign 17 baseline ledger.
-It turns an existing gate-decision JSON report into a stable historical-debt
-baseline that can be reviewed, checked in, diffed against current evidence, and
-shrink-only refreshed after resolved debt is reviewed.
-
-Command:
-
-```text
-ripr baseline create \
-  --from target/ripr/reports/gate-decision.json \
-  --out .ripr/gate-baseline.json
-```
-
-Options:
-
-- `--from` - required gate-decision JSON from `ripr gate evaluate`.
-- `--out` - baseline path. Defaults to `.ripr/gate-baseline.json`.
-- `--dry-run` - print the baseline JSON without writing.
-- `--force` - overwrite an existing baseline path.
-
-The command includes `advisory`, `acknowledged`, and `blocking` gate decisions.
-It skips `suppressed`, configured-off, `not_applicable`, and malformed
-decisions. The command refuses to overwrite an existing baseline unless
-`--force` is supplied. It does not run analysis, change gate policy, edit
-source, generate tests, run mutation testing, or make CI blocking by default.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "gate_baseline",
-  "created_at": "unix_ms:1778277000000",
-  "source_report": "target/ripr/reports/gate-decision.json",
-  "mode": "baseline-check",
-  "reviewed": false,
-  "summary": {
-    "entries": 1,
-    "included": 1,
-    "skipped": {
-      "suppressed": 0,
-      "not_applicable": 0,
-      "malformed": 0,
-      "other": 0
-    }
-  },
-  "entries": [
-    {
-      "identity": {
-        "canonical_gap_id": "pricing::discount::threshold_equality",
-        "seam_id": "67fc764ba37d77bd",
-        "source_id": "ripr-review-67fc764ba37d77bd",
-        "id": "ripr-gate-67fc764ba37d77bd",
-        "dedupe_key": null,
-        "fallback": "src/pricing.rs:88:weakly_gripped"
-      },
-      "path": "src/pricing.rs",
-      "line": 88,
-      "static_class": "weakly_gripped",
-      "decision": "advisory",
-      "severity": "warning",
-      "source": "pr_guidance",
-      "gate_reason": "visible-only mode records evidence without blocking",
-      "evidence": {
-        "missing_discriminator": "amount == discount_threshold",
-        "assertion_shape": "Assert returned discount behavior directly.",
-        "recommended_test": "tests/pricing.rs::applies_discount_above_threshold"
-      },
-      "review": {
-        "reviewed": false,
-        "owner": null,
-        "reason": "initial adoption baseline",
-        "created_at": "unix_ms:1778277000000",
-        "review_after": null,
-        "source": "target/ripr/reports/gate-decision.json"
-      }
-    }
-  ],
-  "warnings": [],
-  "limits_note": "Reviewed baseline debt ledger over static RIPR gate evidence; baselines are not suppressions and do not change gate policy by themselves."
-}
-```
-
-The gate evaluator accepts this `entries[]` ledger shape in addition to the
-older lightweight `decisions[]` baseline fixture shape, so newly created
-baselines can be used by `ripr gate evaluate --baseline`.
-
-The `entries[].review` object is additive review metadata for later RIPR Zero
-reporting. New ledgers include `owner`, `created_at`, `review_after`, and
-`source` fields alongside the original `reviewed` and `reason` fields. Older
-Campaign 17 ledgers that only contain `reviewed` and `reason`, or no entry
-review object at all, remain valid inputs for baseline diff and shrink-only
-update.
-
-## Gate Baseline Update
-
-`ripr baseline update --remove-resolved` refreshes a reviewed baseline ledger in
-shrink-only mode. It removes reviewed baseline entries that are absent from the
-current gate-decision evidence and never adopts new current debt.
-
-Command:
-
-```text
-ripr baseline update \
-  --baseline .ripr/gate-baseline.json \
-  --current target/ripr/reports/gate-decision.json \
-  --remove-resolved \
-  --out .ripr/gate-baseline.json
-```
-
-Options:
-
-- `--baseline` - reviewed baseline ledger to refresh.
-- `--current` - current gate-decision JSON from `ripr gate evaluate`.
-- `--remove-resolved` - required shrink-only mode.
-- `--out` - updated baseline path. Defaults to `--baseline`.
-
-The update command hard-fails if either input is missing or unsupported. It
-preserves malformed entries without stable identity and ambiguous matches for
-manual review. New current gate decisions are counted as ignored and are not
-inserted into the baseline. Generated CI must not use this command to rewrite
-checked-in baselines automatically.
-
-The output is the same `kind = "gate_baseline"` ledger with updated `entries`
-and `summary` counts plus an additive update receipt:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "gate_baseline",
-  "summary": {
-    "entries": 40,
-    "included": 39,
-    "skipped": {
-      "malformed": 1
-    }
-  },
-  "entries": [],
-  "update": {
-    "remove_resolved": true,
-    "current_gate_decision": "target/ripr/reports/gate-decision.json",
-    "removed_resolved": 7,
-    "ignored_new_current": 2
-  },
-  "warnings": [
-    "preserved malformed baseline entry without stable identity during shrink-only update"
-  ],
-  "limits_note": "Shrink-only baseline refresh over static RIPR gate evidence; update removes resolved reviewed debt and never adopts new current debt."
-}
-```
-
-## Baseline Debt Delta Report
-
-RIPR-SPEC-0016 defines the baseline debt delta report. The report compares an
-explicit reviewed baseline ledger with current gate-decision evidence so teams
-can see existing, resolved, new, acknowledged, suppressed, stale, invalid, and
-missing-input behavioral-grip debt without making the report a gate.
-
-Command:
-
-```text
-ripr baseline diff \
-  --baseline .ripr/gate-baseline.json \
-  --current target/ripr/reports/gate-decision.json \
-  --out target/ripr/reports/baseline-debt-delta.json \
-  --out-md target/ripr/reports/baseline-debt-delta.md
-```
-
-The report writes:
-
-```text
-target/ripr/reports/baseline-debt-delta.json
-target/ripr/reports/baseline-debt-delta.md
-```
-
-This report is advisory movement evidence. `ripr gate evaluate` remains the
-pass/fail authority for configured gate modes. Generated CI uploads and
-summarizes the delta report when `RIPR_GATE_BASELINE` is set and
-`gate-decision.json` exists, but the report itself must not fail CI, rewrite a
-baseline, post comments, edit source, generate tests, rerun analysis, or run
-mutation testing.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "baseline_debt_delta",
-  "status": "advisory",
-  "root": ".",
-  "inputs": {
-    "baseline": ".ripr/gate-baseline.json",
-    "current_gate_decision": "target/ripr/reports/gate-decision.json",
-    "pr_guidance": null,
-    "agent_receipt": null
-  },
-  "baseline": {
-    "path": ".ripr/gate-baseline.json",
-    "schema_version": "0.1",
-    "entries": 47,
-    "valid": 46,
-    "stale": 1,
-    "invalid": 0
-  },
-  "delta": {
-    "still_present": 40,
-    "resolved": 7,
-    "new_policy_eligible": 2,
-    "acknowledged": 1,
-    "suppressed": 0,
-    "stale_baseline_entry": 1,
-    "invalid_baseline_entry": 0,
-    "missing_current_input": 0
-  },
-  "items": [
-    {
-      "bucket": "new_policy_eligible",
-      "identity": {
-        "canonical_gap_id": "pricing::discount::threshold_equality",
-        "seam_id": "67fc764ba37d77bd",
-        "source_id": "ripr-review-67fc764ba37d77bd",
-        "id": "ripr-gate-67fc764ba37d77bd",
-        "dedupe_key": null,
-        "fallback": "src/pricing.rs:88:weakly_gripped",
-        "matched_by": "canonical_gap_id"
-      },
-      "path": "src/pricing.rs",
-      "line": 88,
-      "static_class": "weakly_gripped",
-      "decision": "blocking",
-      "reason": "Current policy-eligible gap is not present in the reviewed baseline.",
-      "missing_discriminator": "amount == discount_threshold",
-      "suggested_test": {
-        "recommended_test": "tests/pricing.rs::applies_discount_above_threshold",
-        "assertion_shape": "Assert returned discount behavior directly."
-      },
-      "repair": {
-        "action": "add_focused_test_or_acknowledge",
-        "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json"
-      },
-      "review": null
-    }
-  ],
-  "warnings": [],
-  "limits_note": "Advisory baseline debt movement over static RIPR gate evidence; pass/fail remains owned by ripr gate evaluate."
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"`.
-- `status` - currently `advisory`. The report does not return `blocked`;
-  blocking belongs to the gate evaluator.
-- `inputs.baseline` - explicit baseline ledger path. Missing or unreadable
-  required baseline input produces a repair-oriented warning and a
-  `missing_current_input` item instead of treating the baseline as resolved.
-- `inputs.current_gate_decision` - current gate-decision JSON path.
-- `inputs.pr_guidance`, `inputs.agent_receipt`, and other optional inputs -
-  used only to enrich repair context when supplied.
-- `baseline.entries` - parsed baseline entry count.
-- `baseline.valid`, `baseline.stale`, and `baseline.invalid` - baseline record
-  health counts after current comparison.
-- `delta.still_present` - baseline identities present in current evidence.
-- `delta.resolved` - baseline identities absent from current evidence.
-- `delta.new_policy_eligible` - current policy-eligible identities absent from
-  the baseline.
-- `delta.acknowledged` - current visible findings acknowledged by label or
-  policy.
-- `delta.suppressed` - current findings hidden by suppression or configured-off
-  severity while remaining visible in the delta report.
-- `delta.stale_baseline_entry` - baseline records that parse but cannot join
-  cleanly because the identity is ambiguous, obsolete, or incompatible.
-- `delta.invalid_baseline_entry` - malformed baseline records or records
-  missing required identity fields.
-- `delta.missing_current_input` - records whose movement cannot be classified
-  because required current artifacts are missing or unreadable.
-- `items[].bucket` - one primary bucket from the `delta` object.
-- `items[].identity` - stable identity fields. Matching order is
-  `canonical_gap_id`, `seam_id`, `source_id`, `id`, `dedupe_key`, then
-  normalized path, line, and static class fallback. `canonical_gap_id` may be
-  supplied directly, through `identity.canonical_gap_id`, or through
-  `evidence_record.canonical_gap_id`; when absent it remains `null` for
-  backward-compatible ledgers.
-- `items[].identity.matched_by` - the identity selector that joined baseline
-  and current records.
-- `items[].repair` - focused repair context from the current gate decision and
-  built-in baseline debt movement actions.
-- `items[].review` - optional reviewed baseline metadata copied from the
-  baseline ledger when the item is baseline-derived. It preserves
-  `reviewed`, `owner`, `reason`, `created_at`, `review_after`, and `source`
-  when present. Current-only items use `null`; older Campaign 17 entries with
-  only `reviewed` and `reason` remain valid and render missing metadata fields
-  as `null`.
-- `warnings[]` - malformed baseline entries, ambiguous matches, fallback
-  matches, missing optional inputs, or unsupported schema versions.
-- `limits_note` - advisory boundary text for generated CI summaries.
-
-Markdown should fit in a generated CI job summary. It should include the
-baseline path, status, bucket counts, top new policy-eligible gaps, top resolved
-baseline entries, warnings, and the advisory boundary. It must distinguish
-baseline debt from suppressions and acknowledged current findings from hidden
-success.
-
-## RIPR Zero Status Report
-
-RIPR-SPEC-0017 defines the RIPR Zero status report. `ripr zero status` joins
-existing baseline ledgers, baseline debt deltas, gate decisions, PR guidance,
-gap decision ledgers, and optional calibration or receipt artifacts so teams
-can see repo-level movement toward RIPR 0 without changing analyzer identity,
-gate policy, or advisory defaults.
-
-Command:
-
-```text
-ripr zero status \
-  --baseline .ripr/gate-baseline.json \
-  --delta target/ripr/reports/baseline-debt-delta.json \
-  --gap-ledger target/ripr/reports/gap-decision-ledger.json \
-  --gate target/ripr/reports/gate-decision.json \
-  --pr-guidance target/ripr/review/comments.json \
-  --recommendation-calibration target/ripr/reports/recommendation-calibration.json \
-  --out target/ripr/reports/ripr-zero-status.json \
-  --out-md target/ripr/reports/ripr-zero-status.md
-```
-
-The report writes:
-
-```text
-target/ripr/reports/ripr-zero-status.json
-target/ripr/reports/ripr-zero-status.md
-```
-
-This report is advisory progress evidence. `ripr gate evaluate` remains the
-pass/fail authority for configured gate modes. Generated CI uploads and
-summarizes `ripr-zero-status.{json,md}` when `baseline-debt-delta.json` exists,
-but the report itself must not fail CI, rewrite baselines, post comments, edit
-source, generate tests, rerun analysis, call an LLM, or run mutation testing.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "ripr_zero_status",
-  "status": "advisory",
-  "root": ".",
-  "generated_at": "2026-05-08T00:00:00Z",
-  "inputs": {
-    "baseline": ".ripr/gate-baseline.json",
-    "baseline_debt_delta": "target/ripr/reports/baseline-debt-delta.json",
-    "gap_decision_ledger": "target/ripr/reports/gap-decision-ledger.json",
-    "gate_decision": "target/ripr/reports/gate-decision.json",
-    "pr_guidance": "target/ripr/review/comments.json",
-    "recommendation_calibration": null,
-    "previous_status": null
-  },
-  "ripr_zero": {
-    "state": "not_yet",
-    "target_source": "gap_decision_ledger",
-    "visible_unresolved": 43,
-    "new_policy_eligible": 1,
-    "blocking_candidates": 0,
-    "acknowledged": 1,
-    "suppressed": 0,
-    "limits_note": "RIPR 0 means no visible unresolved behavioral test-grip gaps under configured scope and policy; it is not a coverage or runtime adequacy claim."
-  },
-  "baseline": {
-    "path": ".ripr/gate-baseline.json",
-    "entries": 47,
-    "still_present": 40,
-    "resolved": 7,
-    "age_days": 31,
-    "metadata": {
-      "current": 38,
-      "stale": 4,
-      "missing_metadata": 5,
-      "unknown": 0
-    }
-  },
-  "debt_delta": {
-    "still_present": 40,
-    "resolved": 7,
-    "new": 2,
-    "new_policy_eligible": 1,
-    "acknowledged": 1,
-    "suppressed": 0,
-    "stale": 4,
-    "invalid": 0,
-    "missing_input": 0
-  },
-  "trend": {
-    "source": "not_available",
-    "window": null,
-    "visible_unresolved_delta": null,
-    "resolved_delta": null,
-    "new_policy_eligible_delta": null
-  },
-  "top_debt_areas": [
-    {
-      "rank": 1,
-      "area": "src/pricing.rs",
-      "visible_unresolved": 8,
-      "new_policy_eligible": 1,
-      "stale_baseline_entries": 2,
-      "top_static_class": "weakly_gripped"
-    }
-  ],
-  "repair_routes": [
-    {
-      "rank": 1,
-      "source": "baseline_debt_delta",
-      "gap_id": null,
-      "canonical_gap_id": null,
-      "seam_id": "67fc764ba37d77bd",
-      "path": "src/pricing.rs",
-      "line": 88,
-      "missing_discriminator": "amount == discount_threshold",
-      "suggested_test": "Add an equality-boundary assertion.",
-      "related_test": "tests/pricing.rs::applies_discount_above_threshold",
-      "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json",
-      "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
-      "agent_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
-      "static_limitations": []
-    }
-  ],
-  "warnings": [
-    "5 baseline entries are missing review metadata"
-  ],
-  "limits_note": "Read-only advisory RIPR Zero status over existing static RIPR artifacts; gate-decision remains the pass/fail authority."
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"`.
-- `status` - `advisory` for complete reports and `incomplete` when required
-  inputs are missing or unsupported.
-- `ripr_zero.state` - one of `achieved`, `not_yet`, or `unknown`.
-- `ripr_zero.target_source` - `gap_decision_ledger` when explicit GapRecord
-  RIPR Zero targets were supplied, otherwise `baseline_debt_delta`.
-- `ripr_zero.visible_unresolved` - visible unresolved behavioral test-grip gaps
-  under the supplied baseline and gate scope, or explicit
-  `projection_eligibility.ripr_zero_count` GapRecord targets when a gap ledger
-  is supplied.
-- `ripr_zero.new_policy_eligible` - current policy-eligible gaps that are not
-  covered by the reviewed baseline.
-- `ripr_zero.blocking_candidates` - current gate candidates that would block
-  under the configured gate mode. The status report surfaces this count but does
-  not make the blocking decision.
-- `ripr_zero.acknowledged` - visible current findings acknowledged by label or
-  policy.
-- `ripr_zero.suppressed` - current findings hidden by suppression or
-  configured-off severity while remaining visible in the status report.
-- `baseline.metadata.current`, `stale`, `missing_metadata`, and `unknown` -
-  baseline review metadata health counts. Missing metadata must not hide the
-  entry.
-- `debt_delta.*` - baseline movement buckets copied from the baseline debt
-  delta report so summaries can show old debt, new debt, resolved debt,
-  acknowledgements, suppressions, stale entries, invalid entries, and missing
-  inputs without reinterpreting gate policy.
-- `trend.source` - `previous_status`, `ledger`, or `not_available`.
-- `top_debt_areas[]` - capped groups by stable repo-relative path or configured
-  area name. Grouping is a reporting surface, not an analyzer identity rewrite.
-- `repair_routes[]` - capped focused repair candidates copied from existing PR
-  guidance, gate decisions, baseline debt delta, agent packets, or receipts.
-  When a baseline debt delta item supplies `evidence_record`, RIPR Zero status
-  prefers the record's location, grip class, missing discriminator, related
-  test, assertion shape, verification command, and static limitations while
-  preserving legacy top-level fields as fallback. The report must not invent
-  missing commands or generated tests.
-- `repair_routes[].repair_command` - present only when the delta item's
-  `evidence_record.canonical_item.repair_command` carries the repair start
-  (#3906), which that record names only past the fail-closed repair-packet
-  flip. `repair_routes[].agent_command` is that carried command or `null`;
-  RIPR Zero status never builds an `agent start` or `agent repair` command
-  from a seam id, and gap-record routes name none.
-- `warnings[]` - stale baseline metadata, missing inputs, unsupported schemas,
-  ambiguous identities, and trend gaps.
-- `limits_note` - advisory boundary text for generated CI summaries.
-
-Markdown should fit in a generated CI job summary. It should show RIPR 0 state,
-visible unresolved gaps, existing baseline gaps still present, resolved baseline
-gaps, new policy-eligible gaps, acknowledged gaps, suppressed gaps, stale
-metadata, the top repair route, warnings, and the advisory boundary. It must
-say that RIPR 0 is not perfect tests, 100 percent coverage, or runtime mutation
-adequacy.
-
-## Policy Readiness Report
-
-RIPR-SPEC-0029 defines the policy readiness report. `ripr policy readiness`
-joins explicit existing policy artifacts so maintainers can see the strictest
-safe policy posture for the current repository without executing a gate or
-changing any policy decision.
-
-Command:
-
-```text
-ripr policy readiness \
-  --gate-decision target/ripr/reports/gate-decision.json \
-  --baseline-delta target/ripr/reports/baseline-debt-delta.json \
-  --recommendation-calibration target/ripr/reports/recommendation-calibration.json \
-  --mutation-calibration target/ripr/reports/mutation-calibration.json \
-  --waiver-aging target/ripr/reports/waiver-aging.json \
-  --suppression-health target/ripr/reports/suppression-health.json \
-  --out target/ripr/reports/policy-readiness.json \
-  --out-md target/ripr/reports/policy-readiness.md
-```
-
-The report writes:
-
-```text
-target/ripr/reports/policy-readiness.json
-target/ripr/reports/policy-readiness.md
-```
-
-This report is advisory readiness evidence. `ripr gate evaluate` remains the
-only pass/fail authority when an explicit gate mode is configured. The command
-does not run analysis, mutate baselines or suppressions, post comments, edit
-source, generate tests, run mutation testing, change gate policy, or make CI
-blocking.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "policy_readiness",
-  "status": "ready_for_baseline_check",
-  "recommended_mode": "baseline-check",
-  "root": ".",
-  "generated_at": "unix_ms:1778277000000",
-  "inputs": {
-    "gate_decision": "target/ripr/reports/gate-decision.json",
-    "baseline_delta": "target/ripr/reports/baseline-debt-delta.json",
-    "recommendation_calibration": null,
-    "mutation_calibration": null,
-    "waiver_aging": null,
-    "suppression_health": null,
-    "repo_config": null,
-    "previous_readiness": null
-  },
-  "summary": {
-    "blocking_ready": true,
-    "visible_only_ready": true,
-    "acknowledgeable_ready": false,
-    "baseline_check_ready": true,
-    "calibrated_gate_ready": false,
-    "preview_candidates": 1,
-    "preview_candidates_gate_eligible": 0,
-    "warnings": 0,
-    "unknowns": 6
-  },
-  "blocking_readiness": {
-    "state": "healthy",
-    "evidence": [
-      "gate_status=advisory",
-      "current_gate_mode=visible-only",
-      "blocking_candidates=0"
-    ],
-    "warnings": [],
-    "next_action": "Keep generated CI advisory unless RIPR_GATE_MODE is explicitly configured."
-  },
-  "baseline_health": {
-    "state": "healthy",
-    "evidence": ["new_policy_eligible=0", "auto_adopt_new=false"],
-    "warnings": [],
-    "next_action": "Use baseline-check only with the reviewed baseline path supplied."
-  },
-  "waiver_health": {
-    "state": "missing",
-    "evidence": [],
-    "warnings": [],
-    "next_action": "Add waiver-aging input before requiring acknowledgement."
-  },
-  "suppression_health": {
-    "state": "missing",
-    "evidence": [],
-    "warnings": [],
-    "next_action": "Add suppression-health input before tightening policy."
-  },
-  "calibration_health": {
-    "state": "not_ready",
-    "evidence": [],
-    "warnings": [],
-    "next_action": "Collect same-class recommendation calibration before calibrated-gate."
-  },
-  "preview_evidence_boundary": {
-    "state": "healthy",
-    "preview_languages": ["typescript"],
-    "preview_findings_visible": 1,
-    "preview_findings_acknowledgeable": 1,
-    "preview_findings_suppressible": 1,
-    "preview_findings_baseline_advisory": 1,
-    "preview_findings_gate_eligible": 0,
-    "preview_findings_ripr_zero_blocking": 0,
-    "preview_findings_calibrated_confidence": 0,
-    "missing_language_status": 0,
-    "static_limits_seen": 1,
-    "static_limits_required": true,
-    "promotion_policy": null,
-    "warnings": [],
-    "next_action": "Keep preview evidence advisory until an explicit promotion policy exists."
-  },
-  "unknowns": [
-    {
-      "kind": "missing_input",
-      "message": "recommendation_calibration input not supplied.",
-      "source_artifact": null
-    },
-    {
-      "kind": "missing_input",
-      "message": "mutation_calibration input not supplied.",
-      "source_artifact": null
-    },
-    {
-      "kind": "missing_input",
-      "message": "waiver_aging input not supplied.",
-      "source_artifact": null
-    },
-    {
-      "kind": "missing_input",
-      "message": "suppression_health input not supplied.",
-      "source_artifact": null
-    },
-    {
-      "kind": "missing_input",
-      "message": "repo_config input not supplied.",
-      "source_artifact": null
-    },
-    {
-      "kind": "missing_input",
-      "message": "previous_readiness input not supplied.",
-      "source_artifact": null
-    }
-  ],
-  "warnings": [],
-  "next_policy_action": "Enable baseline-check for stable Rust evidence only; keep preview evidence advisory.",
-  "limits_note": "Read-only advisory readiness over explicit artifacts; gate-decision remains the only pass/fail authority when configured.",
-  "preview_limits_note": "Preview-language evidence is visible and advisory by default; it is not gate-eligible, RIPR Zero blocking debt, or calibrated confidence without explicit promotion."
-}
-```
-
-Field contract:
-
-- `status` - one of `advisory_only`, `ready_for_visible_only`,
-  `ready_for_acknowledgeable`, `ready_for_baseline_check`,
-  `ready_for_calibrated_gate`, or `config_error`.
-- `recommended_mode` - `advisory-only`, `visible-only`, `acknowledgeable`,
-  `baseline-check`, or `calibrated-gate`. Values other than `advisory-only`
-  match gate mode strings.
-- `inputs` - supplied artifact paths, or `null` when omitted.
-- `summary.*_ready` - boolean projection of which policy modes currently have
-  enough readable input evidence.
-- `blocking_readiness`, `baseline_health`, `waiver_health`,
-  `suppression_health`, and `calibration_health` - independent health axes with
-  `state`, evidence facts, warnings, and a next action.
-- `suppression_health.evidence[]` - includes the supplied
-  `suppression_health_status`, suppression count, missing owner/reason counts,
-  stale count, overbroad scope count, unknown selector count, preview label gap
-  count, warning count, and config-error count. `warning` or `config_error`
-  status prevents acknowledgeable readiness.
-- `preview_evidence_boundary` - RIPR-SPEC-0030 projection. Preview findings
-  remain visible while default gate eligibility, RIPR Zero blocking, and
-  calibrated-confidence counts remain zero until explicit promotion. Missing
-  preview labels keep the readiness recommendation advisory until repaired.
-- `unknowns[]` - missing recommended or optional inputs. Missing inputs are not
-  treated as passing evidence.
-- `warnings[]` - malformed supplied inputs, preview metadata gaps, or policy
-  readiness limitations.
-- `limits_note` and `preview_limits_note` - advisory, pass/fail, and preview
-  policy boundary text.
-
-Markdown should fit in a job summary. It should show the status, recommended
-mode, each health axis, preview zero-count boundary, unknowns, warnings, next
-policy action, and limits. It must not claim runtime mutation outcomes or make
-the report a gate.
-
-## Policy Operations Report
-
-RIPR-SPEC-0039 defines the policy operations report. `ripr policy operations`
-composes explicit policy artifacts into one read-only operator
-packet that names the current safe ceiling, next safe action, safe and blocked
-promotion modes, blockers, action lists, warnings, unknowns, and input health.
-
-Command:
-
-```text
-ripr policy operations \
-  --policy-readiness target/ripr/reports/policy-readiness.json \
-  --waiver-aging target/ripr/reports/waiver-aging.json \
-  --suppression-health target/ripr/reports/suppression-health.json \
-  --baseline-delta target/ripr/reports/baseline-debt-delta.json \
-  --gate-decision target/ripr/reports/gate-decision.json \
-  --recommendation-calibration target/ripr/reports/recommendation-calibration.json \
-  --mutation-calibration target/ripr/reports/mutation-calibration.json \
-  --out target/ripr/reports/policy-operations.json \
-  --out-md target/ripr/reports/policy-operations.md
-```
-
-The report writes:
-
-```text
-target/ripr/reports/policy-operations.json
-target/ripr/reports/policy-operations.md
-```
-
-This report is advisory policy operations evidence. It does not execute a gate,
-mutate config, baselines, suppressions, workflows, branch protection, generated
-CI defaults, or source files, promote preview-language evidence, run analysis,
-generate tests, call providers, post comments, or run mutation testing.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "policy_operations",
-  "root": ".",
-  "generated_at": "unix_ms:1778277000000",
-  "current_policy_ceiling": "ready_for_acknowledgeable",
-  "recommended_next_action": "Run shrink-only baseline review and remove resolved entries.",
-  "safe_to_promote_to": [
-    {
-      "mode": "visible-only",
-      "allowed_now": true,
-      "reason": "Policy readiness and supplied inputs allow visible-only advisory display.",
-      "source_artifacts": [
-        "target/ripr/reports/policy-readiness.json",
-        "target/ripr/reports/gate-decision.json"
-      ]
-    },
-    {
-      "mode": "acknowledgeable",
-      "allowed_now": true,
-      "reason": "Waivers are visible PR-time acknowledgements and suppression health is readable.",
-      "source_artifacts": [
-        "target/ripr/reports/policy-readiness.json",
-        "target/ripr/reports/waiver-aging.json",
-        "target/ripr/reports/suppression-health.json"
-      ]
-    }
-  ],
-  "not_safe_to_promote_to": [
-    {
-      "mode": "baseline-check",
-      "allowed_now": false,
-      "reason": "Current policy ceiling ready_for_acknowledgeable does not allow baseline-check. Baseline contains 1 stale entries.",
-      "blockers": [
-        "current_ceiling_below_baseline_check",
-        "baseline_stale_entries"
-      ],
-      "source_artifacts": [
-        "target/ripr/reports/baseline-debt-delta.json"
-      ]
-    }
-  ],
-  "promotion_blockers": [
-    {
-      "kind": "baseline_stale_entries",
-      "severity": "warning",
-      "message": "Baseline contains 1 stale entries.",
-      "target_modes": ["baseline-check", "calibrated-gate"],
-      "source_artifact": "target/ripr/reports/baseline-debt-delta.json",
-      "repair_action": "Run shrink-only baseline review and remove resolved entries."
-    }
-  ],
-  "baseline_actions": [
-    "Review stale baseline entries.",
-    "Use shrink-only refresh for resolved debt."
-  ],
-  "waiver_actions": [
-    "Review repeated PR-time acknowledgements before requiring acknowledgement.",
-    "Keep waivers visible and do not convert them to suppressions automatically."
-  ],
-  "suppression_actions": [
-    "Keep durable suppressions visible with owner, reason, scope, and review metadata."
-  ],
-  "calibration_actions": [
-    "Collect same-class recommendation calibration before calibrated-gate.",
-    "Optional mutation calibration was not supplied; keep runtime confirmation separate from static evidence."
-  ],
-  "preview_boundary_actions": [
-    "Keep typescript preview evidence visible/advisory and excluded from gate eligibility, RIPR Zero blocking debt, and calibrated confidence."
-  ],
-  "warnings": [
-    {
-      "kind": "missing_optional_input",
-      "message": "No mutation calibration input was supplied.",
-      "source_artifact": null
-    }
-  ],
-  "unknowns": [
-    {
-      "kind": "preview_boundary_not_supplied",
-      "message": "Preview boundary details came only from policy readiness when available.",
-      "source_artifact": "target/ripr/reports/policy-readiness.json"
-    }
-  ],
-  "input_artifacts": [
-    {
-      "kind": "policy_readiness",
-      "path": "target/ripr/reports/policy-readiness.json",
-      "status": "read"
-    },
-    {
-      "kind": "preview_boundary",
-      "path": null,
-      "status": "omitted"
-    }
-  ],
-  "limits_note": "Read-only advisory policy operations report over explicit existing artifacts. Promotion requires separate manual review and configuration changes; this report never mutates config, baselines, suppressions, workflows, CI defaults, or preview-language eligibility."
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"`.
-- `tool` - always `"ripr"`.
-- `kind` - always `"policy_operations"`.
-- `current_policy_ceiling` - copied or derived from policy readiness.
-  Supported values are `advisory_only`, `ready_for_visible_only`,
-  `ready_for_acknowledgeable`, `ready_for_baseline_check`,
-  `ready_for_calibrated_gate`, `not_ready`, and `config_error`.
-- `recommended_next_action` - the first repair or operator action needed before
-  stricter policy review.
-- `safe_to_promote_to[]` - target modes currently allowed by the ceiling and
-  readable dependent inputs.
-- `not_safe_to_promote_to[]` - target modes blocked by ceiling, baseline,
-  waiver, suppression, calibration, preview-boundary, or input health.
-- `promotion_blockers[]` - normalized blocker records with severity, target
-  modes, source artifact, and repair action.
-- `baseline_actions[]`, `waiver_actions[]`, `suppression_actions[]`,
-  `calibration_actions[]`, and `preview_boundary_actions[]` - operator actions
-  grouped by policy surface.
-- `warnings[]` - malformed supplied inputs or optional evidence gaps.
-- `unknowns[]` - missing or unknowable context that limits confidence.
-- `input_artifacts[]` - one record for every operations input. Status values
-  are `read`, `omitted`, `missing`, `malformed`, and `not_applicable`.
-- `limits_note` - static advisory boundary and no-mutation policy text.
-
-Markdown should fit in a job summary. It should show current ceiling, next safe
-action, can-promote and cannot-promote sections, top blockers, grouped actions,
-warnings, unknowns, input artifact status, and limits. It must not make a gate
-decision or promote preview-language evidence.
-
-## Policy History Report
-
-RIPR-SPEC-0041 defines the policy history report. `ripr policy history` reads a
-current `policy-operations.json` report plus an optional append-only history
-JSONL input and writes a read-only advisory trend packet. The report shows
-whether readiness, waiver pressure, suppression health, baseline movement,
-preview-boundary state, and calibration health improved, regressed, stayed
-unchanged, or are unknown.
-
-Command:
-
-```text
-ripr policy history \
-  --current target/ripr/reports/policy-operations.json \
-  --history .ripr/policy-history.jsonl \
-  --commit HEAD \
-  --pr-number 123 \
-  --out target/ripr/reports/policy-history.json \
-  --out-md target/ripr/reports/policy-history.md
-```
-
-The report writes:
-
-```text
-target/ripr/reports/policy-history.json
-target/ripr/reports/policy-history.md
-```
-
-This report is advisory policy trend evidence. It does not append to
-`.ripr/policy-history.jsonl`, execute gates, collect telemetry, mutate config,
-baselines, suppressions, workflows, branch protection, generated CI defaults,
-or source files, promote preview-language evidence, run analysis, generate
-tests, call providers, post comments, or run mutation testing.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "policy_history",
-  "root": ".",
-  "generated_at": "unix_ms:1778277000000",
-  "current": {
-    "commit": "HEAD",
-    "pr_number": "123",
-    "generated_at": "unix_ms:1778277000000",
-    "recommended_mode": "acknowledgeable",
-    "current_policy_ceiling": "ready_for_acknowledgeable",
-    "baseline_health": "warning",
-    "waiver_health": "advisory",
-    "suppression_health": "healthy",
-    "calibration_health": "not_ready",
-    "preview_boundary_state": "healthy",
-    "new_policy_eligible_count": 1,
-    "waiver_count": 2,
-    "stale_suppression_count": 0,
-    "baseline_still_present": 4,
-    "baseline_resolved": 1
-  },
-  "history_summary": {
-    "entries": 3,
-    "oldest_generated_at": "unix_ms:1778190600000",
-    "newest_generated_at": "unix_ms:1778277000000",
-    "readiness_improved": true,
-    "waiver_pressure_increased": false,
-    "suppression_health_regressed": false,
-    "baseline_shrank": true,
-    "preview_remained_advisory": true,
-    "calibration_changed_ceiling": false
-  },
-  "trend": {
-    "ceiling": {
-      "previous": "ready_for_visible_only",
-      "current": "ready_for_acknowledgeable",
-      "direction": "improved"
-    },
-    "waiver_count": {
-      "previous": 3,
-      "current": 2,
-      "direction": "improved"
-    },
-    "stale_suppression_count": {
-      "previous": 0,
-      "current": 0,
-      "direction": "unchanged"
-    },
-    "baseline_still_present": {
-      "previous": 5,
-      "current": 4,
-      "direction": "improved"
-    },
-    "baseline_resolved": {
-      "previous": 0,
-      "current": 1,
-      "direction": "improved"
-    },
-    "preview_boundary_state": {
-      "previous": "healthy",
-      "current": "healthy",
-      "direction": "unchanged"
-    },
-    "calibration_health": {
-      "previous": "not_ready",
-      "current": "not_ready",
-      "direction": "unchanged"
-    }
-  },
-  "example_append_record": {
-    "commit": "HEAD",
-    "pr_number": "123",
-    "generated_at": "unix_ms:1778277000000",
-    "current_policy_ceiling": "ready_for_acknowledgeable",
-    "recommended_mode": "acknowledgeable"
-  },
-  "warnings": [],
-  "unknowns": [
-    {
-      "kind": "history_not_supplied",
-      "message": "No policy history JSONL was supplied; trend is limited to the current snapshot.",
-      "source_artifact": null
-    }
-  ],
-  "input_artifacts": [
-    {
-      "kind": "policy_operations",
-      "path": "target/ripr/reports/policy-operations.json",
-      "status": "read"
-    },
-    {
-      "kind": "policy_history_jsonl",
-      "path": ".ripr/policy-history.jsonl",
-      "status": "missing"
-    }
-  ],
-  "limits_note": "Read-only advisory policy history report. It reads explicit history inputs and never appends, mutates policy, or changes gate authority."
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"`.
-- `tool` - always `"ripr"`.
-- `kind` - always `"policy_history"`.
-- `current` - normalized snapshot derived from `policy-operations.json` plus
-  optional commit and PR metadata.
-- `current.recommended_mode` - derived from the highest safe promotion mode or
-  current policy operations ceiling.
-- `current.current_policy_ceiling` - copied from policy operations.
-- `current.*_health` fields - normalized policy surface states derived from
-  operations actions, blockers, and input artifacts.
-- `current.new_policy_eligible_count`, `waiver_count`,
-  `stale_suppression_count`, `baseline_still_present`, and
-  `baseline_resolved` - current movement counters when available, otherwise
-  zero with an unknown.
-- `history_summary.entries` - count of prior plus current snapshots included in
-  the trend.
-- `history_summary.readiness_improved` - true only when the current ceiling
-  ranks higher than the previous comparable snapshot.
-- `history_summary.waiver_pressure_increased` - true when waiver count rises.
-- `history_summary.suppression_health_regressed` - true when stale or malformed
-  suppression signals rise.
-- `history_summary.baseline_shrank` - true when still-present baseline debt
-  falls or resolved baseline debt rises without adopt-new behavior.
-- `history_summary.preview_remained_advisory` - true only when preview evidence
-  stayed non-gating across comparable snapshots.
-- `history_summary.calibration_changed_ceiling` - true when calibration health
-  improvement is the reason the ceiling changed.
-- `trend.*.direction` - `improved`, `regressed`, `unchanged`, or `unknown`.
-- `example_append_record` - the current snapshot in appendable JSONL shape. It
-  is advisory output only and must not be written automatically.
-- `warnings[]` - malformed supplied history lines, malformed current input, or
-  unsupported historical shapes.
-- `unknowns[]` - missing optional history, commit, PR number, or unavailable
-  metric fields.
-- `input_artifacts[]` - per-input status. Status values are `read`, `omitted`,
-  `missing`, `malformed`, and `not_applicable`.
-- `limits_note` - read-only/no-telemetry/no-mutation/no-gate boundary.
-
-Markdown should fit in generated CI summaries and report packets. It should
-show the current ceiling, recommended mode, history entry count, trend summary,
-current snapshot counters, input artifact status, an optional manual append
-record, warnings, unknowns, and limits. It must not append history
-automatically, make a gate decision, or promote preview-language evidence.
-
-## Policy Promotion Packet
-
-RIPR-SPEC-0042 defines the policy promotion packet. `ripr policy promote`
-reads a current `policy-operations.json` report plus optional
-`policy-history.json` and writes a read-only manual-review packet for one target
-mode.
-
-Command:
-
-```text
-ripr policy promote \
-  --to baseline-check \
-  --operations target/ripr/reports/policy-operations.json \
-  --history target/ripr/reports/policy-history.json \
-  --out target/ripr/reports/policy-promotion-baseline-check.json \
-  --out-md target/ripr/reports/policy-promotion-baseline-check.md
-```
-
-The report writes:
-
-```text
-target/ripr/reports/policy-promotion-visible-only.json
-target/ripr/reports/policy-promotion-visible-only.md
-target/ripr/reports/policy-promotion-acknowledgeable.json
-target/ripr/reports/policy-promotion-acknowledgeable.md
-target/ripr/reports/policy-promotion-baseline-check.json
-target/ripr/reports/policy-promotion-baseline-check.md
-target/ripr/reports/policy-promotion-calibrated-gate.json
-target/ripr/reports/policy-promotion-calibrated-gate.md
-```
-
-This report is advisory policy review evidence. It does not mutate `ripr.toml`,
-baselines, suppressions, workflows, branch protection, generated CI defaults,
-source files, history ledgers, or preview-language eligibility. It does not
-execute gates, post comments, run analysis, generate tests, call providers, run
-mutation testing, or make CI blocking by default.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "policy_promotion_packet",
-  "root": ".",
-  "generated_at": "unix_ms:1778277000000",
-  "target_mode": "baseline-check",
-  "allowed_now": false,
-  "why_or_why_not": "Baseline contains stale entries and suppression health has warnings.",
-  "required_repairs": [
-    "Run shrink-only baseline review and remove resolved entries.",
-    "Repair suppression-health warnings before tightening policy."
-  ],
-  "required_receipts": [
-    "policy-operations.json showing baseline-check in safe_to_promote_to",
-    "policy-history.json showing baseline debt is not being normalized",
-    "baseline-debt-delta.json showing reviewed shrink-only movement",
-    "suppression-health.json showing durable exception metadata is healthy"
-  ],
-  "rollback_path": [
-    "Revert the manual gate-mode config change.",
-    "Return to visible-only or acknowledgeable policy mode.",
-    "Keep policy operations and history artifacts for audit."
-  ],
-  "example_config_change": {
-    "file": "ripr.toml",
-    "change": "Set the reviewed policy gate mode to baseline-check.",
-    "manual_only": true
-  },
-  "input_artifacts": [
-    {
-      "kind": "policy_operations",
-      "path": "target/ripr/reports/policy-operations.json",
-      "status": "read"
-    },
-    {
-      "kind": "policy_history",
-      "path": "target/ripr/reports/policy-history.json",
-      "status": "read"
-    }
-  ],
-  "warnings": [],
-  "unknowns": [],
-  "non_goals": [
-    "No automatic config mutation.",
-    "No automatic baseline adoption.",
-    "No suppression creation.",
-    "No default CI blocking.",
-    "No preview-language promotion."
-  ],
-  "limits_note": "Read-only advisory promotion packet. It supports manual review only and never mutates policy configuration or gate authority."
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"`.
-- `tool` - always `"ripr"`.
-- `kind` - always `"policy_promotion_packet"`.
-- `target_mode` - one of `visible-only`, `acknowledgeable`,
-  `baseline-check`, or `calibrated-gate`.
-- `allowed_now` - true only when policy operations lists the target in
-  `safe_to_promote_to`.
-- `why_or_why_not` - explanation from the operations safe/not-safe entry and
-  blockers.
-- `required_repairs[]` - blocker repair actions required before manual
-  promotion review.
-- `required_receipts[]` - artifacts reviewers should inspect before accepting
-  a manual config change.
-- `rollback_path[]` - explicit steps to return to a less strict posture.
-- `example_config_change` - manual review guidance only. The command must not
-  write this change.
-- `input_artifacts[]` - per-input status.
-- `warnings[]` - malformed supplied inputs, unsupported history shape, or
-  target-mode limitations.
-- `unknowns[]` - missing optional history or unavailable supporting context.
-- `non_goals[]` - hard boundaries repeated in the packet.
-- `limits_note` - read-only/manual-review/no-mutation boundary.
-
-Markdown should fit in generated CI summaries and report packets. It should
-show the target mode, allowed status, why/why not explanation, required
-repairs, required receipts, rollback path, manual-only config example, input
-artifact status, warnings, unknowns, non-goals, and limits. It must not mutate
-policy configuration or promote preview-language evidence.
-
-## Preview Evidence Promotion Packet
-
-RIPR-SPEC-0044 defines the preview evidence promotion packet. The
-`ripr policy preview-promote` command writes a read-only advisory packet for a
-preview language and evidence class. The default result is blocked:
-`allowed_now = false` with reason `preview promotion evidence not supplied`.
-The maintainer-facing proof checklist is
-[Preview promotion criteria](policy/PREVIEW_PROMOTION_CRITERIA.md).
-
-Command:
-
-```text
-ripr policy preview-promote \
-  --language typescript \
-  --class boundary_gap \
-  --evidence target/ripr/reports/preview-promotion-evidence.json \
-  --out target/ripr/reports/preview-promotion-typescript-boundary-gap.json \
-  --out-md target/ripr/reports/preview-promotion-typescript-boundary-gap.md
-```
-
-The report writes:
-
-```text
-target/ripr/reports/preview-promotion-<language>-<class>.json
-target/ripr/reports/preview-promotion-<language>-<class>.md
-```
-
-This report is advisory policy review evidence. It does not mutate `ripr.toml`,
-baselines, suppressions, workflows, branch protection, generated CI defaults,
-source files, history ledgers, gate configuration, RIPR Zero membership,
-calibrated confidence, or preview-language eligibility. It does not execute
-gates, post comments, run analysis, generate tests, call providers, run
-mutation testing, or make CI blocking by default.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "preview_evidence_promotion_packet",
-  "root": ".",
-  "generated_at": "unix_ms:1778277000000",
-  "language": "typescript",
-  "language_status": "preview",
-  "candidate_class": "boundary_gap",
-  "target_status": "policy_eligible",
-  "allowed_now": false,
-  "reason": "preview promotion evidence not supplied",
-  "required_evidence": [
-    {
-      "kind": "fixture_corpus_coverage",
-      "required": true,
-      "description": "Representative fixtures cover the candidate class and known static limits."
-    },
-    {
-      "kind": "static_limit_exclusions",
-      "required": true,
-      "description": "Known static parser, language-adapter, and static-limit taxonomy limits are covered, excluded, or labeled."
-    },
-    {
-      "kind": "false_positive_review",
-      "required": true,
-      "description": "Maintainer-reviewed false-positive sample is documented for this language and class."
-    },
-    {
-      "kind": "recommendation_calibration",
-      "required": true,
-      "description": "Same-class recommendation calibration supports policy eligibility."
-    },
-    {
-      "kind": "dogfood_receipts",
-      "required": true,
-      "description": "External-style dogfood receipts exercise the candidate language and class through the start-here repair loop."
-    },
-    {
-      "kind": "related_test_accuracy_review",
-      "required": true,
-      "description": "Maintainer-reviewed related-test samples show the candidate language does not route repair packets to wrong tests."
-    },
-    {
-      "kind": "false_repair_packet_review",
-      "required": true,
-      "description": "Maintainer-reviewed sample confirms preview repair packets do not overstate or invent safe repairs."
-    },
-    {
-      "kind": "surface_consistency_review",
-      "required": true,
-      "description": "Editor, CLI, generated CI, PR evidence, receipts, and docs show the same preview/advisory boundary."
-    },
-    {
-      "kind": "policy_signoff",
-      "required": true,
-      "description": "Policy owner explicitly signs off that the narrow language/class may be reviewed for stronger status."
-    },
-    {
-      "kind": "mutation_calibration",
-      "required": false,
-      "description": "Optional runtime calibration exists for this language and class without being inferred from Rust."
-    },
-    {
-      "kind": "baseline_behavior",
-      "required": true,
-      "description": "Baseline handling keeps preview debt visible and does not auto-adopt new preview findings."
-    },
-    {
-      "kind": "waiver_suppression_behavior",
-      "required": true,
-      "description": "Waivers and suppressions preserve owner, reason, scope, and preview status."
-    },
-    {
-      "kind": "rollback_path",
-      "required": true,
-      "description": "Manual rollback to advisory preview status is documented."
-    },
-    {
-      "kind": "generated_ci_posture",
-      "required": true,
-      "description": "Generated CI remains advisory and non-blocking unless a later explicit gate mode is configured."
-    }
-  ],
-  "supplied_evidence": [],
-  "missing_evidence": [
-    "fixture_corpus_coverage",
-    "static_limit_exclusions",
-    "false_positive_review",
-    "recommendation_calibration",
-    "dogfood_receipts",
-    "related_test_accuracy_review",
-    "false_repair_packet_review",
-    "surface_consistency_review",
-    "policy_signoff",
-    "baseline_behavior",
-    "waiver_suppression_behavior",
-    "rollback_path",
-    "generated_ci_posture"
-  ],
-  "required_repairs": [
-    "Supply explicit preview promotion evidence before policy eligibility review."
-  ],
-  "required_receipts": [
-    "preview-promotion-typescript-boundary-gap.json",
-    "preview-boundary report showing advisory language status",
-    "fixture corpus coverage receipt for TypeScript boundary_gap",
-    "static-limit exclusions receipt for TypeScript boundary_gap",
-    "false-positive review receipt for TypeScript boundary_gap",
-    "recommendation-calibration receipt for TypeScript boundary_gap",
-    "dogfood receipt for TypeScript boundary_gap",
-    "related-test accuracy review receipt for TypeScript boundary_gap",
-    "false repair packet review receipt for TypeScript boundary_gap",
-    "surface consistency receipt for TypeScript boundary_gap",
-    "policy signoff receipt for TypeScript boundary_gap",
-    "baseline behavior receipt for TypeScript boundary_gap",
-    "waiver/suppression behavior receipt for TypeScript boundary_gap",
-    "rollback path receipt for TypeScript boundary_gap",
-    "generated CI posture receipt for TypeScript boundary_gap"
-  ],
-  "rollback_path": [
-    "Keep TypeScript boundary_gap evidence advisory.",
-    "Remove any manual preview promotion config if one was reviewed later.",
-    "Regenerate policy operations and preview promotion packets after rollback."
-  ],
-  "generated_ci_posture": {
-    "may_upload_artifact": true,
-    "may_summarize_artifact": true,
-    "may_fail_check": false,
-    "may_post_comment": false,
-    "may_mutate_config": false
-  },
-  "input_artifacts": [],
-  "warnings": [],
-  "unknowns": [],
-  "non_goals": [
-    "No actual promotion.",
-    "No gate eligibility change.",
-    "No RIPR Zero inclusion.",
-    "No calibrated confidence.",
-    "No CI blocking."
-  ],
-  "limits_note": "Read-only advisory preview promotion packet. Preview evidence remains visible and non-gating until a later explicit promotion policy is reviewed."
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"`.
-- `tool` - always `"ripr"`.
-- `kind` - always `"preview_evidence_promotion_packet"`.
-- `language` - requested preview language.
-- `language_status` - current status, initially `"preview"`.
-- `candidate_class` - requested evidence class.
-- `target_status` - requested future policy status. The packet may describe it
-  but must not apply it.
-- `allowed_now` - false unless every required evidence item is supplied and a
-  later implementation explicitly recognizes those receipts.
-- `reason` - concise explanation for the decision.
-- `required_evidence[]` - full evidence checklist for preview promotion.
-- `supplied_evidence[]` - evidence receipts accepted by the packet.
-- `missing_evidence[]` - required evidence still absent.
-- `required_repairs[]` - concrete work before a maintainer can review
-  promotion.
-- `required_receipts[]` - artifacts reviewers should inspect before promotion.
-- `rollback_path[]` - explicit return path to advisory preview status.
-- `generated_ci_posture` - advisory CI permissions and hard denials.
-- `input_artifacts[]` - optional explicit evidence input status.
-- `warnings[]` - malformed supplied inputs or target-language limitations.
-- `unknowns[]` - unavailable context that must stay visible.
-- `non_goals[]` - hard boundaries repeated in the packet.
-- `limits_note` - read-only/manual-review/no-promotion boundary.
-
-Markdown should fit in generated CI summaries and report packets. It should
-show language, class, current status, target status, allowed status, reason,
-supplied and missing evidence, required repairs, required receipts, rollback
-path, generated CI posture, input artifact status, warnings, unknowns,
-non-goals, and limits. It must not promote preview evidence or mutate policy.
-
-## Suppression Health Report
-
-`ripr policy suppression-health` summarizes the durable suppression manifest
-without applying suppressions or changing policy. It exists so teams can audit
-whether durable exceptions have enough metadata before stricter policy modes
-depend on them.
-
-Command:
-
-```text
-ripr policy suppression-health \
-  --root . \
-  --manifest .ripr/suppressions.toml \
-  --out target/ripr/reports/suppression-health.json \
-  --out-md target/ripr/reports/suppression-health.md
-```
-
-The report writes:
-
-```text
-target/ripr/reports/suppression-health.json
-target/ripr/reports/suppression-health.md
-```
-
-This report is advisory policy evidence. It does not run analysis, mutate
-baselines or suppressions, post comments, edit source, generate tests, run
-mutation testing, change gate policy, or make CI blocking.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "suppression_health",
-  "status": "warning",
-  "root": ".",
-  "generated_at": "unix_ms:1778277000000",
-  "inputs": {
-    "manifest": ".ripr/suppressions.toml"
-  },
-  "summary": {
-    "suppressions": 2,
-    "healthy": 1,
-    "missing_owner": 0,
-    "missing_reason": 0,
-    "missing_scope": 1,
-    "missing_created_at": 0,
-    "missing_last_seen": 0,
-    "missing_review_by_or_expires": 0,
-    "missing_expected_visibility": 0,
-    "missing_static_class": 0,
-    "stale": 0,
-    "overbroad_scope": 1,
-    "unknown_selector": 0,
-    "preview_without_preview_label": 1,
-    "warnings": 3,
-    "config_errors": 0
-  },
-  "records": [
-    {
-      "identity": "probe:src/pricing.rs:88:predicate",
-      "kind": "exposure_gap",
-      "owner": "billing",
-      "reason": "accepted durable policy exception",
-      "scope": "seam:pricing::threshold",
-      "created_at": "2026-01-01",
-      "last_seen": "2026-05-01",
-      "expires": null,
-      "review_by": "2026-12-01",
-      "expected_visibility": "suppressed_visible",
-      "static_class": "weakly_exposed",
-      "language": "rust",
-      "language_status": null,
-      "health": "healthy",
-      "still_visible": true,
-      "source": ".ripr/suppressions.toml:4",
-      "findings": []
-    }
-  ],
-  "findings": [
-    {
-      "kind": "preview_without_preview_label",
-      "severity": "warning",
-      "message": "preview-language suppression is missing language_status = \"preview\"",
-      "source": ".ripr/suppressions.toml:18"
-    }
-  ],
-  "warnings": [],
-  "limits_note": "Read-only advisory suppression-health report over the durable suppression manifest; suppressions remain visible and the report never creates, deletes, applies, or gates on suppressions."
-}
-```
-
-Field contract:
-
-- `static_class` is required for `exposure_gap` records because it identifies
-  the exposure class covered by the durable exception. It is not applicable to
-  `test_efficiency` records, which select a test and optional path instead.
-- `status` - `no_suppressions` when the manifest is missing or empty,
-  `healthy` when all parsed records have complete policy metadata, `warning`
-  when valid records need review, or `config_error` when the manifest is
-  malformed.
-- `summary.missing_owner` and `summary.missing_reason` - parser-level
-  structural errors. Owner and reason remain required for every durable
-  suppression.
-- `summary.stale` - entries whose `expires` or `review_by` date is before the
-  report date.
-- `summary.overbroad_scope` - entries whose scope is explicitly broad, or
-  test-efficiency suppressions that omit `path`.
-- `summary.unknown_selector` - unsupported kinds, missing required selectors,
-  blank selectors, or duplicate selectors.
-- `summary.preview_without_preview_label` - preview-language suppressions that
-  omit `language_status = "preview"`.
-- `records[].still_visible` - always `true`; suppression health never hides
-  suppressed findings.
-- `findings[]` - normalized findings with `kind`, `severity`, `message`, and
-  optional source.
-- `limits_note` - advisory/read-only boundary text.
-
-Markdown should fit in a job summary. It should show the status, each durable
-suppression identity, owner, review date, findings, and the advisory boundary.
-
-## Waiver Aging Report
-
-`ripr policy waiver-aging` summarizes visible PR-time waivers from the current
-PR evidence ledger and optional prior ledger history. It exists so repeated
-waiver remains a visible signal for repair or explicit policy review without
-becoming a failure, a suppression, or a hidden exception.
-
-Command:
-
-```text
-ripr policy waiver-aging \
-  --ledger target/ripr/reports/pr-evidence-ledger.json \
-  --history .ripr/pr-evidence-ledger.jsonl \
-  --out target/ripr/reports/waiver-aging.json \
-  --out-md target/ripr/reports/waiver-aging.md
-```
-
-The report writes:
-
-```text
-target/ripr/reports/waiver-aging.json
-target/ripr/reports/waiver-aging.md
-```
-
-This report is advisory policy evidence. It does not run analysis, mutate
-baselines or suppressions, post comments, edit source, generate tests, run
-mutation testing, change gate policy, or make CI blocking.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "waiver_aging",
-  "status": "advisory",
-  "root": ".",
-  "generated_at": "unix_ms:1778277000000",
-  "inputs": {
-    "ledger": "target/ripr/reports/pr-evidence-ledger.json",
-    "history": ".ripr/pr-evidence-ledger.jsonl"
-  },
-  "summary": {
-    "waiver_count": 3,
-    "identity_count": 1,
-    "repeated_seam_count": 1,
-    "repeated_file_count": 1,
-    "max_age_prs": 3,
-    "max_age_days": 40,
-    "focused_test_candidates": 1,
-    "durable_suppression_candidates": 1,
-    "warnings": 0
-  },
-  "records": [
-    {
-      "identity": "pricing::discount::threshold_equality",
-      "canonical_gap_id": "pricing::discount::threshold_equality",
-      "seam_id": "67fc764ba37d77bd",
-      "file": "src/pricing.rs",
-      "owner": null,
-      "waiver_count": 3,
-      "first_seen": "pr#123",
-      "last_seen": "pr#125",
-      "age_prs": 3,
-      "age_days": 40,
-      "same_seam_waived_repeatedly": true,
-      "same_file_waived_repeatedly": true,
-      "candidate_for_focused_test": true,
-      "candidate_for_durable_suppression": true,
-      "reasons": ["accepted for this PR"],
-      "labels": ["ripr-waive"],
-      "still_visible": true,
-      "source_records": [
-        ".ripr/pr-evidence-ledger.jsonl:1",
-        ".ripr/pr-evidence-ledger.jsonl:2",
-        "target/ripr/reports/pr-evidence-ledger.json"
-      ]
-    }
-  ],
-  "warnings": [],
-  "limits_note": "Read-only advisory waiver-aging report over existing PR evidence ledgers; repeated waiver is a signal, not a failure or durable suppression."
-}
-```
-
-Field contract:
-
-- `status` - `advisory`, `no_waivers`, `incomplete`, or `config_error`.
-- `inputs` - supplied current PR ledger and JSONL history paths, or `null` when
-  omitted.
-- `summary.waiver_count` - visible waiver observations across supplied ledgers.
-- `summary.identity_count` - distinct canonical gap, seam, or waiver identities.
-- `summary.repeated_*` - repeated-waiver signals. These are not failures.
-- `records[].identity` - canonical gap id when available, else seam id,
-  decision id, or a source-local fallback.
-- `records[].file` and `records[].owner` - copied from source ledgers when
-  available; missing values stay `null`.
-- `records[].candidate_for_focused_test` - advisory signal for repeated or aged
-  waiver that should usually become a focused test.
-- `records[].candidate_for_durable_suppression` - advisory signal for policy
-  review only; it does not create or imply a suppression.
-- `records[].still_visible` - waivers remain visible acknowledgements.
-- `warnings[]` - malformed supplied inputs, invalid JSONL lines, or missing
-  optional history.
-- `limits_note` - advisory boundary text.
-
-Markdown should fit in a job summary. It should show waiver identities, counts,
-age, candidate signals, warnings, and the policy boundary that repeated waiver
-is a visible signal rather than pass/fail authority.
-
-## PR Evidence Ledger
-
-RIPR-SPEC-0018 defines the PR evidence ledger. `ripr pr-ledger record` records
-per-PR behavioral grip movement from existing RIPR artifacts so teams can track
-new policy-eligible gaps, resolved baseline debt, visible acknowledgements,
-suppressions, repair receipts, and optional coverage/grip frontier signals
-without changing analyzer identity, gate policy, or advisory defaults.
-
-Command:
-
-```text
-ripr pr-ledger record \
-  --pr-number 123 \
-  --head <sha> \
-  --base <sha> \
-  --gate target/ripr/reports/gate-decision.json \
-  --baseline-delta target/ripr/reports/baseline-debt-delta.json \
-  --zero-status target/ripr/reports/ripr-zero-status.json \
-  --pr-guidance target/ripr/review/comments.json \
-  --gap-ledger target/ripr/reports/gap-decision-ledger.json \
-  --recommendation-calibration target/ripr/reports/recommendation-calibration.json \
-  --agent-receipt target/ripr/reports/agent-receipt.json \
-  --coverage target/ripr/reports/coverage-summary.json \
-  --history .ripr/pr-evidence-ledger.jsonl \
-  --out target/ripr/reports/pr-evidence-ledger.json \
-  --out-md target/ripr/reports/pr-evidence-ledger.md
-```
-
-The report writes:
-
-```text
-target/ripr/reports/pr-evidence-ledger.json
-target/ripr/reports/pr-evidence-ledger.md
-```
-
-This report is advisory history. `ripr gate evaluate` remains the pass/fail
-authority for configured gate modes. Generated GitHub CI runs
-`ripr pr-ledger record` on pull requests when `target/ripr/review/comments.json`
-exists, adds optional gate, baseline delta, RIPR Zero, recommendation
-calibration, agent receipt, coverage, label, and history inputs when present,
-and may add a gap decision ledger input when an explicit ledger artifact exists.
-It uploads `pr-evidence-ledger.{json,md}` with the normal report packet and
-appends a PR movement card to the job summary. The report itself must not fail
-CI, rewrite baselines, post comments, edit source, generate tests, rerun
-analysis, call an LLM, or run mutation testing.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "pr_evidence_ledger",
-  "status": "advisory",
-  "root": ".",
-  "generated_at": "2026-05-09T00:00:00Z",
-  "pr": {
-    "number": 123,
-    "base": "53ea9a205f569a5ca636ba0a7451c6aca8b5ad2e",
-    "head": "984d5222a058fbceecfb9b230baef65c47c52820",
-    "labels": ["ripr-waive"]
-  },
-  "inputs": {
-    "gate_decision": "target/ripr/reports/gate-decision.json",
-    "baseline_debt_delta": "target/ripr/reports/baseline-debt-delta.json",
-    "ripr_zero_status": "target/ripr/reports/ripr-zero-status.json",
-    "pr_guidance": "target/ripr/review/comments.json",
-    "gap_decision_ledger": "target/ripr/reports/gap-decision-ledger.json",
-    "recommendation_calibration": "target/ripr/reports/recommendation-calibration.json",
-    "agent_receipt": "target/ripr/reports/agent-receipt.json",
-    "coverage": "target/ripr/reports/coverage-summary.json",
-    "history": ".ripr/pr-evidence-ledger.jsonl"
-  },
-  "movement": {
-    "new_policy_eligible": 1,
-    "baseline_still_present": 40,
-    "baseline_resolved": 3,
-    "acknowledged": 1,
-    "suppressed": 0,
-    "blocking_candidates": 0,
-    "visible_unresolved": 41,
-    "ripr_zero_state": "not_yet",
-    "count_source": "baseline_delta"
-  },
-  "gate": {
-    "mode": "baseline-check",
-    "decision": "acknowledged",
-    "pass_fail_authority": "ripr gate evaluate",
-    "acknowledgement_label": "ripr-waive"
-  },
-  "waivers": [
-    {
-      "label": "ripr-waive",
-      "canonical_gap_id": "pricing::discount::threshold_equality",
-      "decision_id": "ripr-gate-67fc764ba37d77bd",
-      "seam_id": "67fc764ba37d77bd",
-      "age_prs": 1,
-      "age_days": 0,
-      "reason": "accepted for this PR",
-      "still_visible": true
-    }
-  ],
-  "suppressions": [
-    {
-      "canonical_gap_id": "pricing::discount::threshold_equality",
-      "decision_id": "ripr-gate-suppressed",
-      "seam_id": "suppressed",
-      "source": ".ripr/suppressions.toml",
-      "owner": "test-platform",
-      "reason": "accepted durable policy exception",
-      "still_visible": true
-    }
-  ],
-  "repair_receipts": [
-    {
-      "source": "agent_receipt",
-      "canonical_gap_id": "pricing::discount::threshold_equality",
-      "seam_id": "67fc764ba37d77bd",
-      "receipt_state": "receipt_movement_improved",
-      "static_movement": {
-        "state": "improved",
-        "source": "agent_receipt",
-        "artifact": "target/ripr/reports/agent-receipt.json"
-      },
-      "focused_test": "tests/pricing.rs::threshold_exact_boundary",
-      "receipt": "target/ripr/reports/agent-receipt.json"
-    }
-  ],
-  "coverage_grip_frontier": {
-    "status": "available",
-    "coverage_delta_percent": 0.0,
-    "ripr_visible_unresolved_delta": -3,
-    "interpretation": "behavioral grip improved without line-coverage movement",
-    "quadrants": {
-      "covered_with_ripr_gap": 2,
-      "covered_without_ripr_gap": 12,
-      "uncovered_with_ripr_gap": 1,
-      "uncovered_without_ripr_gap": 0
-    }
-  },
-  "top_repair_route": {
-    "source": "gap_decision_ledger",
-    "gap_id": "gap:pr:pricing:threshold-boundary",
-    "canonical_gap_id": "pricing::discount::threshold_equality",
-    "seam_id": "67fc764ba37d77bd",
-    "path": "src/pricing.rs",
-    "line": 88,
-    "missing_discriminator": "amount == discount_threshold",
-    "suggested_test": "Add an equality-boundary assertion.",
-    "related_test": "tests/pricing.rs::applies_discount_above_threshold",
-    "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json",
-    "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
-    "agent_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before"
-  },
-  "history": {
-    "source": ".ripr/pr-evidence-ledger.jsonl",
-    "records": 42,
-    "waiver_age_max_days": 14,
-    "baseline_resolved_total": 45,
-    "new_policy_eligible_total": 3,
-    "trend": "improving"
-  },
-  "warnings": [
-    "coverage input is optional and does not determine pass/fail"
-  ],
-  "limits_note": "Read-only advisory PR evidence ledger over existing static RIPR artifacts; gate-decision remains the pass/fail authority."
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"`.
-- `status` - `advisory` for complete reports and `incomplete` when PR identity
-  or all evidence sources are missing.
-- `movement.*` - copied or derived from existing gate, baseline delta, and RIPR
-  Zero status artifacts. The ledger must not recompute analyzer semantics.
-- `movement.count_source` - `baseline_delta`, `ripr_zero_status`, or
-  `not_measured`. With `not_measured` neither artifact was supplied, so
-  `new_policy_eligible`, `baseline_still_present`, `baseline_resolved`, and
-  `visible_unresolved` hold their zero defaults and are not evidence of zero
-  gaps; the Markdown renders those rows as `not measured`.
-- `gate.pass_fail_authority` - names `ripr gate evaluate` whenever a gate
-  decision is present.
-- `waivers[]` - PR-time visible acknowledgement records. Waivers do not hide
-  findings and do not become suppressions. `waivers[].canonical_gap_id` is
-  copied from source artifacts when available and remains `null` otherwise.
-- `suppressions[]` - durable policy exceptions. Suppressions are not waivers
-  and are not baseline debt. `suppressions[].canonical_gap_id` is copied from
-  gate or baseline-delta evidence when available.
-- `repair_receipts[]` - supplied outcome or agent receipt evidence.
-  `repair_receipts[].receipt_state` carries the canonical receipt lifecycle
-  label: `receipt_missing`, `receipt_found`, `receipt_stale`,
-  `receipt_gap_mismatch`, `receipt_movement_improved`,
-  `receipt_movement_unchanged`, or `receipt_not_applicable`.
-  `repair_receipts[].static_movement` uses the same object shape as review
-  guidance outcome receipts, including `state`, `source`, and `artifact`; the
-  ledger must not infer receipt success from a missing artifact.
-  `repair_receipts[].canonical_gap_id` is copied from receipts or
-  recommendation provenance when supplied.
-- `coverage_grip_frontier.status` - `available`, `not_available`, or
-  `unsupported`.
-- `coverage_grip_frontier.*` - keeps coverage movement separate from RIPR
-  evidence movement. Coverage movement is execution evidence, not test
-  adequacy.
-- `top_repair_route` - copied from an explicit gap decision ledger when it
-  supplies a repairable, stable Rust, PR-local gap record with a verification
-  command. If no such gap record is present, the ledger falls back to existing
-  PR guidance, RIPR Zero status, gate decision, agent packet, or receipt
-  artifacts. Missing fields are `null` plus warnings, not invented.
-  `top_repair_route.gap_id` and `top_repair_route.canonical_gap_id` are copied
-  from the selected source artifact when available.
-- `top_repair_route.repair_command` - present only when the selected source
-  carries the repair start (#3906): a review card's
-  `llm_guidance.repair_command`, a gate route's `repair_route.repair_command`,
-  or a RIPR Zero route's `repair_command`. Those producers name it only past
-  the fail-closed repair-packet flip; the ledger carries it and never derives
-  it. `top_repair_route.agent_command` is that command when present, else a
-  carried read-only inspection command, else `null`; the ledger never builds
-  an `agent start` or `agent repair` command from a bare seam id. Markdown
-  shows the carried command as `Repair start`, followed by the after-phase
-  step, with verify and receipt labelled as the manual alternative (#3906).
-  `top_repair_route.receipt_command` for a review card is read from the card
-  root.
-- `history.*` - present only when prior ledger history or previous ledger
-  summary is supplied.
-- `warnings[]` - missing inputs, unavailable coverage, unsupported schemas,
-  ambiguous identities, and trend gaps.
-- `limits_note` - advisory boundary text for generated CI summaries.
-
-Markdown should fit in a generated CI job summary. It should show new
-policy-eligible gaps, existing baseline gaps still present, baseline gaps
-resolved, acknowledged gaps, suppressed gaps, blocking candidates, visible
-unresolved gaps, the top focused test to add, receipt paths, coverage/grip
-frontier status, and the advisory boundary. It must say that the PR evidence
-ledger is advisory history and that gate decisions remain the pass/fail
-authority.
-
-See [PR evidence ledger workflow](PR_EVIDENCE_LEDGER_WORKFLOW.md) for how
-teams read ledger records as waiver aging, baseline burn-down, repair receipts,
-coverage/grip frontier signals, and movement toward RIPR 0.
-
-## Coverage / Grip Frontier Report
-
-`ripr coverage-grip frontier` writes an advisory report that keeps execution
-coverage movement and static RIPR behavioral grip movement as separate axes. It
-can consume a coverage summary plus any existing PR evidence ledger, baseline
-debt delta, or RIPR Zero status report.
-
-Command:
-
-```text
-ripr coverage-grip frontier \
-  --coverage target/ripr/reports/coverage-summary.json \
-  --ledger target/ripr/reports/pr-evidence-ledger.json \
-  --baseline-delta target/ripr/reports/baseline-debt-delta.json \
-  --zero-status target/ripr/reports/ripr-zero-status.json \
-  --out target/ripr/reports/coverage-grip-frontier.json \
-  --out-md target/ripr/reports/coverage-grip-frontier.md
-```
-
-The report writes:
-
-```text
-target/ripr/reports/coverage-grip-frontier.json
-target/ripr/reports/coverage-grip-frontier.md
-```
-
-Coverage is optional. Without coverage input, the report still preserves RIPR
-movement and marks the coverage axis `not_available`. The report must not
-treat coverage as test adequacy, run mutation testing, change gate policy, post
-comments, edit source, generate tests, call an LLM, or make CI blocking by
-default.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "coverage_grip_frontier",
-  "status": "advisory",
-  "root": ".",
-  "generated_at": "2026-05-09T00:00:00Z",
-  "inputs": {
-    "coverage": "target/ripr/reports/coverage-summary.json",
-    "pr_evidence_ledger": "target/ripr/reports/pr-evidence-ledger.json",
-    "baseline_debt_delta": "target/ripr/reports/baseline-debt-delta.json",
-    "ripr_zero_status": "target/ripr/reports/ripr-zero-status.json"
-  },
-  "coverage": {
-    "status": "available",
-    "delta_percent": "0.0",
-    "source": "target/ripr/reports/coverage-summary.json"
-  },
-  "ripr": {
-    "source": "pr_evidence_ledger",
-    "new_policy_eligible": 1,
-    "baseline_resolved": 3,
-    "baseline_still_present": 2,
-    "acknowledged": 1,
-    "suppressed": 0,
-    "blocking_candidates": 0,
-    "visible_unresolved": 4,
-    "visible_unresolved_delta": -3
-  },
-  "quadrants": {
-    "covered_with_ripr_gap": 4,
-    "covered_without_ripr_gap": 20,
-    "uncovered_with_ripr_gap": 2,
-    "uncovered_without_ripr_gap": 8
-  },
-  "interpretation": "behavioral grip improved without line-coverage movement",
-  "warnings": [],
-  "limits_note": "Coverage is execution evidence; RIPR is static behavioral grip evidence. This report is advisory and does not claim test adequacy or runtime mutation outcomes."
-}
-```
-
-Markdown shape:
-
-```md
-# RIPR Coverage / Grip Frontier
-
-Status: advisory
-
-Coverage axis:
-- Status: available
-- Delta percent: 0.0
-
-RIPR axis:
-- Source: pr_evidence_ledger
-- New policy-eligible gaps: 1
-- Baseline gaps resolved: 3
-- Visible unresolved gaps: 4
-- Visible unresolved delta: -3
-
-Interpretation:
-- behavioral grip improved without line-coverage movement
-```
-
-The report may use these coverage inputs when present:
-
-- `coverage_delta_percent`;
-- `coverage.delta_percent`;
-- `summary.coverage_delta_percent`;
-- `ripr_visible_unresolved_delta`;
-- `ripr.visible_unresolved_delta`;
-- `quadrants.covered_with_ripr_gap`;
-- `quadrants.covered_without_ripr_gap`;
-- `quadrants.uncovered_with_ripr_gap`;
-- `quadrants.uncovered_without_ripr_gap`.
-
-## Test-Oracle Assistant Loop
-
-RIPR-SPEC-0019 defines the end-to-end test-oracle assistant loop. `ripr
-assistant-loop proof` writes an advisory proof report that joins existing PR
-guidance, editor or agent handoff packets, before/after static evidence,
-receipts, PR evidence ledgers, and optional gate or coverage/grip frontier
-reports without changing analyzer identity, recommendation ranking, gate
-policy, editor behavior, or CI defaults.
-
-When an input artifact supplies the shared Lane 1 `evidence_record`, the proof
-report prefers that record for selected seam identity, owner/location, grip
-class, missing discriminator, assertion shape, related test, static limits, and
-before/after movement classes. Legacy PR guidance, agent packet, receipt, and
-repo-exposure fields remain fallback for older artifacts.
-
-Command shape:
-
-```text
-ripr assistant-loop proof \
-  --pr-guidance target/ripr/review/comments.json \
-  --agent-packet target/ripr/workflow/agent-brief.json \
-  --before target/ripr/pilot/repo-exposure.json \
-  --after target/ripr/pilot/after.repo-exposure.json \
-  --receipt target/ripr/reports/agent-receipt.json \
-  --ledger target/ripr/reports/pr-evidence-ledger.json \
-  --coverage-frontier target/ripr/reports/coverage-grip-frontier.json \
-  --gate-decision target/ripr/reports/gate-decision.json \
-  --out target/ripr/reports/test-oracle-assistant-proof.json \
-  --out-md target/ripr/reports/test-oracle-assistant-proof.md
-```
-
-The report writes:
-
-```text
-target/ripr/reports/test-oracle-assistant-proof.json
-target/ripr/reports/test-oracle-assistant-proof.md
-```
-
-Generated GitHub CI writes the same artifacts when the required PR guidance,
-editor/agent brief, before/after static evidence, agent receipt, and PR
-evidence ledger inputs already exist. The generated workflow treats the report
-as advisory summary/artifact content only; it does not make the proof report a
-pass/fail authority, post comments, mutate the baseline, rerun hidden analysis,
-or print a placeholder when the required inputs are missing.
-
-The report is advisory and read-only. It must not fail CI, post comments, edit
-source, generate tests, call an LLM provider, run mutation testing, or claim
-runtime confirmation from static evidence.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "test_oracle_assistant_loop",
-  "status": "advisory",
-  "root": ".",
-  "inputs": {
-    "pr_guidance": "target/ripr/review/comments.json",
-    "agent_packet": "target/ripr/workflow/agent-brief.json",
-    "before": "target/ripr/pilot/repo-exposure.json",
-    "after": "target/ripr/pilot/after.repo-exposure.json",
-    "receipt": "target/ripr/reports/agent-receipt.json",
-    "ledger": "target/ripr/reports/pr-evidence-ledger.json",
-    "coverage_frontier": "target/ripr/reports/coverage-grip-frontier.json"
-  },
-  "seam": {
-    "seam_id": "67fc764ba37d77bd",
-    "canonical_gap_id": null,
-    "owner": "pricing::discounted_total",
-    "seam_kind": "predicate_boundary",
-    "path": "src/pricing.rs",
-    "line": 88,
-    "grip_class": "weakly_gripped",
-    "missing_discriminator": "amount == discount_threshold",
-    "evidence_source": "evidence_record",
-    "static_limitations": []
-  },
-  "recommendation": {
-    "source": "evidence_record",
-    "placement": "changed_line",
-    "summary_only_reason": null,
-    "suggested_test": "Add an equality-boundary assertion.",
-    "related_test": "tests/pricing.rs::applies_discount_above_threshold",
-    "assertion_shape": "assert_eq!(discounted_total(100, 100), 90)",
-    "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json"
-  },
-  "handoff": {
-    "source": "agent_packet",
-    "artifact": "target/ripr/workflow/agent-brief.json",
-    "agent_command": "ripr agent start --root . --seam-id 67fc764ba37d77bd --out target/ripr/workflow",
-    "external_provider": false
-  },
-  "evidence_movement": {
-    "state": "improved",
-    "before_class": "weakly_gripped",
-    "after_class": "strongly_gripped",
-    "source": "agent_receipt",
-    "artifact": "target/ripr/reports/agent-receipt.json"
-  },
-  "ci_projection": {
-    "ledger": "target/ripr/reports/pr-evidence-ledger.json",
-    "coverage_frontier": "target/ripr/reports/coverage-grip-frontier.json",
-    "gate_decision": null,
-    "pass_fail_authority": "gate decision when explicitly configured"
-  },
-  "warnings": [],
-  "limits": {
-    "advisory": true,
-    "source_edits": false,
-    "generated_tests": false,
-    "external_service": false,
-    "runtime_mutation_execution": false,
-    "ci_blocking_default": false
-  }
-}
-```
-
-Field contract:
-
-- `status` is `advisory` for complete proof records and `incomplete` when the
-  selected seam or required before/after evidence is missing.
-- `inputs.*` records explicit input paths. Missing optional inputs are `null`;
-  missing or invalid supplied inputs produce a warning.
-- `seam.*` is copied from existing RIPR evidence or guidance. When
-  `evidence_record` is present in the agent packet or matching repo-exposure
-  seam, `seam.evidence_source` is `evidence_record`, and the proof prefers the
-  record's seam identity, canonical gap ID, owner, location, grip class,
-  missing discriminator, and static limits. Otherwise
-  `seam.evidence_source` is `legacy_fields`. The report must not recompute
-  analyzer identity.
-- `recommendation.placement` is `changed_line`, `summary_only`, or `unknown`.
-  Summary-only guidance must remain visible.
-- `recommendation.assertion_shape`, `recommendation.related_test`, and
-  `recommendation.verify_command` prefer `evidence_record.recommendation`
-  fields when available and otherwise use the legacy agent packet or PR
-  guidance fields.
-- `handoff.external_provider` is always `false`; RIPR emits packets but does
-  not call a provider.
-- `evidence_movement.state` is `improved`, `resolved`, `unchanged`,
-  `regressed`, or `unknown`. It is static RIPR movement, not runtime mutation
-  confirmation. Without a receipt, before/after class comparison prefers the
-  matching repo-exposure `evidence_record.grip_class` and falls back to legacy
-  seam `grip_class`.
-- `ci_projection.pass_fail_authority` keeps proof records separate from
-  optional gate decisions.
-- `limits.*` preserves the no-edit, no-generated-test, no-provider-call,
-  no-runtime-mutation-execution, and advisory-default boundaries.
-
-Markdown should fit in a PR summary, generated CI job summary, or dogfood
-receipt. It should show the selected seam, missing discriminator, suggested
-focused test, related test, verify command, before/after static movement,
-receipt path, ledger path, optional coverage/grip frontier path, assertion
-shape, owner, and static limits.
-
-See [Test-oracle assistant proof report](TEST_ORACLE_ASSISTANT_PROOF_REPORT.md)
-for how reviewers, maintainers, and coding agents should read the report,
-warnings, optional CI projection, and advisory limits.
-
-## First Useful Action Report
-
-RIPR-SPEC-0020 defines the first useful action report. `ripr first-action`
-writes an advisory JSON and Markdown report that compresses existing
-editor, PR guidance, gap decision ledger, PR evidence ledger, baseline,
-assistant proof, receipt, optional gate, optional coverage/grip, and staleness
-evidence into one next test action or one fallback reason. The report is
-read-only and must not rerun hidden analysis, edit source, generate tests, call
-a provider, run mutation testing, invent policy, or change default CI blocking.
-
-See [First useful action workflow](FIRST_USEFUL_ACTION_WORKFLOW.md) for how
-developers, reviewers, and coding agents read the report, act on the selected
-action, verify static movement, emit receipts, and interpret fallback states.
-
-The producer lives in `crates/ripr/src/output/first_useful_action.rs`; the
-fixture corpus under `fixtures/boundary_gap/expected/first-useful-action/`
-pins every bounded status plus expected JSON and Markdown routes.
-
-Command shape:
-
-```text
-ripr first-action \
-  --root . \
-  --pr-guidance target/ripr/review/comments.json \
-  --assistant-proof target/ripr/reports/test-oracle-assistant-proof.json \
-  --gap-ledger target/ripr/reports/gap-decision-ledger.json \
-  --ledger target/ripr/reports/pr-evidence-ledger.json \
-  --baseline-delta target/ripr/reports/baseline-debt-delta.json \
-  --receipt target/ripr/reports/agent-receipt.json \
-  --gate-decision target/ripr/reports/gate-decision.json \
-  --coverage-frontier target/ripr/reports/coverage-grip-frontier.json \
-  --editor-context target/ripr/workflow/evidence-context.json \
-  --out target/ripr/reports/first-useful-action.json \
-  --out-md target/ripr/reports/first-useful-action.md
-```
-
-The report writes:
-
-```text
-target/ripr/reports/first-useful-action.json
-target/ripr/reports/first-useful-action.md
-```
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "first_useful_action",
-  "status": "actionable",
-  "audience": "developer",
-  "action_kind": "write_focused_test",
-  "root": ".",
-  "generated_at": "2026-05-09T12:00:00Z",
-  "inputs": {
-    "pr_guidance": "target/ripr/review/comments.json",
-    "assistant_proof": "target/ripr/reports/test-oracle-assistant-proof.json",
-    "gap_ledger": "target/ripr/reports/gap-decision-ledger.json",
-    "ledger": "target/ripr/reports/pr-evidence-ledger.json",
-    "baseline_delta": "target/ripr/reports/baseline-debt-delta.json",
-    "receipt": "target/ripr/reports/agent-receipt.json",
-    "gate_decision": "target/ripr/reports/gate-decision.json",
-    "coverage_frontier": "target/ripr/reports/coverage-grip-frontier.json",
-    "editor_context": "target/ripr/workflow/evidence-context.json"
-  },
-  "selected": {
-    "source": "assistant_proof",
-    "source_artifact": "target/ripr/reports/test-oracle-assistant-proof.json",
-    "seam_id": "67fc764ba37d77bd",
-    "seam_kind": "predicate_boundary",
-    "path": "src/pricing.rs",
-    "line": 88,
-    "classification": "weakly_exposed",
-    "missing_discriminator": "amount == discount_threshold",
-    "gap_id": "gap:pr:pricing:threshold-boundary",
-    "canonical_gap_id": "gap:rust:pricing:discount:threshold-boundary",
-    "repair_route": "AddBoundaryAssertion"
-  },
-  "title": "Add equality-boundary discriminator test",
-  "why": "Changed predicate boundary is weakly exposed and lacks an equality-boundary discriminator.",
-  "why_first": [
-    "The seam is PR-local.",
-    "The assistant proof report links guidance, handoff, before/after evidence, and receipt inputs.",
-    "No waiver, acknowledgement, or suppression applies."
-  ],
-  "target": {
-    "file": "tests/pricing.rs",
-    "related_test": "below_threshold_has_no_discount",
-    "suggested_test_name": "discounted_total_boundary_discriminator",
-    "suggested_assertion": "Assert the exact returned discount at the equality boundary."
-  },
-  "commands": {
-    "context_packet": "ripr agent packet --root . --seam-id 67fc764ba37d77bd --json",
-    "after_snapshot": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/after.repo-exposure.json",
-    "verify": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json",
-    "receipt": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67fc764ba37d77bd --json"
-  },
-  "evidence": {
-    "pr_guidance": "target/ripr/review/comments.json",
-    "assistant_proof": "target/ripr/reports/test-oracle-assistant-proof.json",
-    "gap_ledger": "target/ripr/reports/gap-decision-ledger.json",
-    "receipt": "target/ripr/reports/agent-receipt.json",
-    "ledger": "target/ripr/reports/pr-evidence-ledger.json",
-    "static_movement": "unknown"
-  },
-  "fallback": null,
-  "warnings": [],
-  "limits": [
-    "Static evidence only.",
-    "Does not prove runtime adequacy.",
-    "Does not run mutation testing.",
-    "Does not edit source or generate tests.",
-    "Does not make CI blocking by default."
-  ]
-}
-```
-
-Field contract:
-
-- `schema_version` is `0.1` until the report shape changes.
-- `kind` is always `first_useful_action`.
-- `status` is one of `actionable`, `stale`,
-  `missing_required_artifact`, `baseline_only`, `acknowledged`, `waived`,
-  `suppressed`, `no_actionable_seam`, `already_improved`, or
-  `unchanged_after_attempt`.
-- `action_kind` is one of `write_focused_test`, `refresh_evidence`,
-  `generate_missing_artifact`, `acknowledge_baseline`, `inspect_proof_report`,
-  `revise_focused_test`, or `no_action`.
-- `audience` is `developer`, `reviewer`, or `agent`.
-- `inputs.*` records explicit input paths. Missing optional inputs are `null`
-  or omitted for additive unsupplied fields; missing or invalid supplied inputs
-  produce warnings and an appropriate fallback status.
-- `selected.*` is copied from existing RIPR artifacts. The report must not
-  mint a new seam identity or rerank findings with a provider.
-- `selected.gap_id`, `selected.canonical_gap_id`, and
-  `selected.repair_route` are present when an explicit gap decision ledger
-  drives the first action.
-- `why_first` records deterministic routing reasons. It must not be an opaque
-  score.
-- `target.*` records the recommended test file, related test, suggested test
-  name, and assertion shape when supplied by existing artifacts.
-- `commands.*` records copyable commands from existing command templates or
-  supplied artifacts. Missing commands become `null` and warnings.
-- `commands.repair` is present only when the first review card (inline
-  comments, then summary-only) carries `llm_guidance.repair_command` and no
-  assistant proof exists yet (#3906). The card names that command only past
-  the fail-closed repair-packet flip; first-action carries it verbatim, takes
-  every `selected` field from the same card, and never builds a repair
-  command from a bare seam id. Without it, a PR with review cards but no
-  assistant proof keeps the `missing_required_artifact` route. Markdown shows
-  the command under `Start Repair` and as `Repair start` in the one-screen
-  recommendation. The after-phase step follows it, and verify and receipt are
-  labelled as the manual alternative (`Manual verify without a repair attempt (needs before and after snapshots taken around the test edit)`); without a repair start they read `Verify after the test edit`
-  and `Receipt after verify` (#3906). JSON fields are unchanged.
-- `evidence.*` records supporting artifact paths and static movement when
-  supplied. Static movement is not runtime mutation confirmation.
-- `fallback` records the reason for non-actionable statuses and the next safe
-  command when available.
-- `limits` preserves static-evidence, no-edit, no-generated-test,
-  no-provider-call, no-runtime-mutation-execution, and advisory-default
-  boundaries.
-
-Markdown should fit in a PR summary, generated CI job summary, or editor status
-detail. It should show status, audience, action kind, top action, deterministic
-why-first reasons, target file, related test, suggested test name, verification
-command, receipt command, supporting artifact paths, warnings, fallback reason
-when present, and static limits.
-
-Generated CI runs `ripr first-action` only when one or more explicit upstream
-RIPR artifacts already exist, uploads `first-useful-action.{json,md}` with the
-normal report packet, and appends a compact at-a-glance summary. The projection
-is advisory: `ripr gate evaluate` remains the only configured pass/fail
-authority, and the first-action report must not edit source, generate tests,
-call a provider, run mutation testing, rerun hidden analysis, or change default
-blocking.
-
-The VS Code extension may also read an existing
-`target/ripr/reports/first-useful-action.json` and project the selected action
-through the status bar and `ripr: Show Status`. That editor projection is not a
-schema producer: it does not run `ripr first-action`, add diagnostics, edit
-source, generate tests, call providers, run mutation testing, or make gate
-decisions.
-
-## Assistant Loop Health Report
-
-RIPR-SPEC-0022 defines the assistant-loop-health report contract.
-`ripr assistant-loop health` reads one or more explicit
-`test-oracle-assistant-proof.json` paths and writes advisory JSON and Markdown
-that summarize proof completeness, missing inputs, static movement, warnings,
-and bounded repair queues. The report is read-only and must not rerun hidden
-analysis, inspect source to infer missing fields, edit source, generate tests,
-call providers, run mutation testing, change recommendation ranking, change gate
-policy, or change default CI blocking.
-
-Command shape:
-
-```text
-ripr assistant-loop health \
-  --proof target/ripr/reports/test-oracle-assistant-proof.json \
-  --out target/ripr/reports/assistant-loop-health.json \
-  --out-md target/ripr/reports/assistant-loop-health.md
-```
-
-The report writes:
-
-```text
-target/ripr/reports/assistant-loop-health.json
-target/ripr/reports/assistant-loop-health.md
-```
-
-Fixture corpus:
-
-```text
-fixtures/boundary_gap/expected/assistant-loop-health/
-```
-
-The corpus pins complete-improved, partial-missing-optional,
-missing-required-input, unchanged, regressed, warning-heavy, and multi-proof
-health reports plus representative proof inputs for producer tests.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "assistant_loop_health",
-  "status": "advisory",
-  "root": ".",
-  "generated_at": "2026-05-09T12:00:00Z",
-  "inputs": {
-    "proofs": [
-      "target/ripr/reports/test-oracle-assistant-proof.json"
-    ]
-  },
-  "summary": {
-    "proofs": 1,
-    "complete": 0,
-    "partial": 1,
-    "missing_required_input": 0,
-    "missing_optional_input": 1,
-    "improved": 1,
-    "unchanged": 0,
-    "regressed": 0,
-    "unknown_movement": 0,
-    "warnings": 2,
-    "repair_queue": 1
-  },
-  "proofs": [
-    {
-      "id": "proof-67fc764ba37d77bd",
-      "source_artifact": "target/ripr/reports/test-oracle-assistant-proof.json",
-      "proof_state": "partial",
-      "movement_state": "improved",
-      "seam": {
-        "seam_id": "67fc764ba37d77bd",
-        "seam_kind": "predicate_boundary",
-        "path": "src/pricing.rs",
-        "line": 88,
-        "grip_class": "weakly_gripped",
-        "missing_discriminator": "amount == discount_threshold"
-      },
-      "recommendation": {
-        "placement": "changed_line",
-        "related_test": "tests/pricing.rs::applies_discount_above_threshold",
-        "suggested_test": "Add an equality-boundary assertion.",
-        "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json"
-      },
-      "handoff": {
-        "artifact": "target/ripr/workflow/agent-brief.json",
-        "agent_command": "ripr agent start --root . --seam-id 67fc764ba37d77bd --out target/ripr/workflow"
-      },
-      "receipt": {
-        "artifact": null,
-        "status": "missing"
-      },
-      "movement": {
-        "before_class": "weakly_gripped",
-        "after_class": "strongly_gripped",
-        "source": "agent_receipt"
-      },
-      "optional_context": {
-        "ledger": "target/ripr/reports/pr-evidence-ledger.json",
-        "gate_decision": null,
-        "coverage_frontier": "target/ripr/reports/coverage-grip-frontier.json",
-        "first_useful_action": "target/ripr/reports/first-useful-action.json"
-      },
-      "warnings": [
-        {
-          "kind": "missing_optional_input",
-          "message": "No gate decision input was supplied.",
-          "source_artifact": null
-        },
-        {
-          "kind": "missing_receipt",
-          "message": "No receipt was supplied for the repair attempt.",
-          "source_artifact": "target/ripr/reports/test-oracle-assistant-proof.json"
-        }
-      ]
-    }
-  ],
-  "warning_summary": [
-    {
-      "kind": "missing_optional_input",
-      "count": 1,
-      "examples": [
-        "No gate decision input was supplied."
-      ]
-    },
-    {
-      "kind": "missing_receipt",
-      "count": 1,
-      "examples": [
-        "No receipt was supplied for the repair attempt."
-      ]
-    }
-  ],
-  "repair_queue": [
-    {
-      "repair_kind": "rerun_verify_and_receipt",
-      "source_artifact": "target/ripr/reports/test-oracle-assistant-proof.json",
-      "seam_id": "67fc764ba37d77bd",
-      "path": "src/pricing.rs",
-      "line": 88,
-      "reason": "Proof packet is missing an agent receipt.",
-      "next_command": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67fc764ba37d77bd --json",
-      "expected_result": "Attach a receipt so reviewers can inspect static before/after movement."
-    }
-  ],
-  "limits": [
-    "Static RIPR evidence only.",
-    "Does not provide runtime confirmation.",
-    "Does not run mutation testing.",
-    "Does not call providers.",
-    "Does not edit source or generate tests.",
-    "Does not change default CI blocking.",
-    "Gate evaluator remains pass/fail authority."
-  ]
-}
-```
-
-Field contract:
-
-- `schema_version` is `0.1` until the report shape changes.
-- `kind` is always `assistant_loop_health`.
-- `status` is `advisory` when at least one proof path was read and summarized,
-  or `incomplete` when no proof path could be read.
-- `inputs.proofs` records explicit proof paths in deterministic order.
-- `summary.*` counts proof states, movement buckets, warnings, and repair queue
-  entries. Counts are derived from report items; they are not an opaque score.
-- `proofs[].proof_state` is `complete`, `partial`, or
-  `missing_required_input`.
-- `proofs[].movement_state` is `improved`, `unchanged`, `regressed`, or
-  `unknown`. A source proof movement of `resolved` is counted as `improved`.
-- `proofs[].seam`, `recommendation`, `handoff`, `receipt`, and `movement`
-  fields are copied from existing proof artifacts when present. The health
-  report must not mint seam identities or rerank recommendations.
-- `optional_context.*` records optional artifact paths when the proof names
-  them. Missing optional paths are `null` and may also appear as warnings.
-- `warnings[].kind` is one of `missing_required_input`,
-  `missing_optional_input`, `stale_input`, `malformed_input`,
-  `incompatible_schema`, `summary_only_guidance`, `unchanged_movement`,
-  `regressed_movement`, `missing_receipt`, `missing_handoff`,
-  `unknown_movement`, `static_limit`, or `other`.
-- `repair_queue[].repair_kind` is one of `regenerate_proof`,
-  `regenerate_missing_artifact`, `rerun_verify_and_receipt`,
-  `refresh_before_after_evidence`, `inspect_unchanged_attempt`,
-  `inspect_regression`, `inspect_summary_only_guidance`, `attach_receipt`, or
-  `no_repair`.
-- `limits` preserves static-evidence, no-edit, no-generated-test,
-  no-provider-call, no-runtime-mutation-execution, and advisory-default
-  boundaries.
-
-Markdown should fit in a generated CI job summary or reviewer handoff. It
-should show status, complete/partial/missing proof counts, movement counts, top
-warning kinds, bounded repair queue entries that include `repair_kind`, and
-advisory limits. For example, a repair row should begin with
-`rerun_verify_and_receipt` before the file and reason. If no proof input can be
-read, Markdown should show `Status: incomplete` and put the repair instruction
-before empty counts.
-
-Generated CI runs `ripr assistant-loop health` only when proof artifacts exist,
-uploads `assistant-loop-health.{json,md}` with the normal report packet, and
-appends a compact summary. The projection is advisory: `ripr gate evaluate`
-remains the only configured pass/fail authority.
-
-See [Assistant loop health workflow](ASSISTANT_LOOP_HEALTH_WORKFLOW.md) for how
-maintainers and coding agents read complete versus partial proof packets,
-missing-input repairs, unchanged movement, generated-CI summaries, and advisory
-limits.
-
-## PR Review Front Panel Report
-
-RIPR-SPEC-0023 defines the PR review front-panel report contract. The
-`ripr pr-review front-panel` producer reads explicit existing RIPR artifacts and
-writes advisory JSON and Markdown that summarize the PR's top test-oracle issue,
-policy state, baseline movement, repair route, receipt state, optional
-calibration, optional coverage/grip context, and artifact groups. The report is
-read-only and does not rerun hidden analysis, inspect source to infer missing
-fields, edit source, generate tests, call providers, run mutation testing,
-change recommendation ranking, change gate policy, publish inline comments, or
-change default CI blocking.
-
-Command shape:
-
-```text
-ripr pr-review front-panel \
-  --root . \
-  --pr-guidance target/ripr/review/comments.json \
-  --first-action target/ripr/reports/first-useful-action.json \
-  --assistant-proof target/ripr/reports/test-oracle-assistant-proof.json \
-  --assistant-health target/ripr/reports/assistant-loop-health.json \
-  --ledger target/ripr/reports/pr-evidence-ledger.json \
-  --baseline-delta target/ripr/reports/baseline-debt-delta.json \
-  --zero-status target/ripr/reports/ripr-zero-status.json \
-  --gate-decision target/ripr/reports/gate-decision.json \
-  --recommendation-calibration target/ripr/reports/recommendation-calibration.json \
-  --mutation-calibration target/ripr/reports/mutation-calibration.json \
-  --coverage-frontier target/ripr/reports/coverage-grip-frontier.json \
-  --receipt target/ripr/reports/agent-receipt.json \
-  --out target/ripr/reports/pr-review-front-panel.json \
-  --out-md target/ripr/reports/pr-review-front-panel.md
-```
-
-The report writes:
-
-```text
-target/ripr/reports/pr-review-front-panel.json
-target/ripr/reports/pr-review-front-panel.md
-```
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "pr_review_front_panel",
-  "status": "advisory",
-  "root": ".",
-  "generated_at": "2026-05-09T12:00:00Z",
-  "inputs": {
-    "pr_guidance": "target/ripr/review/comments.json",
-    "first_action": "target/ripr/reports/first-useful-action.json",
-    "assistant_proof": "target/ripr/reports/test-oracle-assistant-proof.json",
-    "assistant_health": "target/ripr/reports/assistant-loop-health.json",
-    "ledger": "target/ripr/reports/pr-evidence-ledger.json",
-    "baseline_delta": "target/ripr/reports/baseline-debt-delta.json",
-    "zero_status": "target/ripr/reports/ripr-zero-status.json",
-    "gate_decision": "target/ripr/reports/gate-decision.json",
-    "recommendation_calibration": "target/ripr/reports/recommendation-calibration.json",
-    "mutation_calibration": null,
-    "coverage_frontier": "target/ripr/reports/coverage-grip-frontier.json",
-    "receipt": "target/ripr/reports/agent-receipt.json"
-  },
-  "summary": {
-    "status": "advisory",
-    "headline": "Add equality-boundary discriminator test.",
-    "top_issue_state": "actionable",
-    "policy_state": "new_policy_eligible",
-    "placement": "changed_line",
-    "movement_state": "unknown",
-    "coverage_grip_state": "not_available",
-    "blocking_candidates": 0,
-    "acknowledged": 0,
-    "suppressed": 0,
-    "new_policy_eligible": 1,
-    "baseline_still_present": 42,
-    "baseline_resolved": 3
-  },
-  "top_issue": {
-    "source": "first_useful_action",
-    "source_artifact": "target/ripr/reports/first-useful-action.json",
-    "seam_id": "67fc764ba37d77bd",
-    "canonical_gap_id": "gap-67fc764ba37d77bd",
-    "path": "src/pricing.rs",
-    "line": 88,
-    "classification": "weakly_exposed",
-    "current_evidence_strength": "Static evidence found related test context, but the current check is weak because the discriminator is missing.",
-    "missing_discriminator": "amount == discount_threshold",
-    "focused_proof_intent": "Add an equality-boundary assertion.",
-    "related_test": "tests/pricing.rs::applies_discount_above_threshold",
-    "suggested_test": "Add an equality-boundary assertion.",
-    "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
-    "verify_command": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json",
-    "receipt_command": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67fc764ba37d77bd --json",
-    "static_evidence_boundary": "static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.",
-    "agent_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
-    "receipt": {
-      "artifact": "target/ripr/reports/agent-receipt.json",
-      "status": "present"
-    }
-  },
-  "movement": {
-    "state": "unknown",
-    "before_class": null,
-    "after_class": null,
-    "source_artifact": null
-  },
-  "debt_delta": {
-    "new_policy_eligible": 1,
-    "baseline_still_present": 42,
-    "baseline_resolved": 3,
-    "acknowledged": 0,
-    "waived": 0,
-    "suppressed": 0,
-    "blocking_candidates": 0
-  },
-  "policy": {
-    "mode": "visible-only",
-    "decision": "advisory",
-    "authority_artifact": "target/ripr/reports/gate-decision.json",
-    "acknowledgement_label": "ripr-waive"
-  },
-  "calibration": {
-    "recommendation": "unknown",
-    "mutation": "not_available",
-    "source_artifacts": [
-      "target/ripr/reports/recommendation-calibration.json"
-    ]
-  },
-  "coverage_grip": {
-    "state": "not_available",
-    "coverage_delta": null,
-    "grip_delta": null,
-    "source_artifact": "target/ripr/reports/coverage-grip-frontier.json"
-  },
-  "artifacts": [
-    {
-      "group": "start_here",
-      "label": "PR review front panel",
-      "path": "target/ripr/reports/pr-review-front-panel.md",
-      "available": true,
-      "required": true
-    },
-    {
-      "group": "repair",
-      "label": "Assistant proof",
-      "path": "target/ripr/reports/test-oracle-assistant-proof.md",
-      "available": true,
-      "required": false
-    },
-    {
-      "group": "policy",
-      "label": "Gate decision",
-      "path": "target/ripr/reports/gate-decision.md",
-      "available": true,
-      "required": false
-    }
-  ],
-  "warnings": [],
-  "limits": [
-    "Static RIPR evidence only.",
-    "Does not provide runtime confirmation.",
-    "Does not run mutation testing.",
-    "Does not call providers.",
-    "Does not edit source or generate tests.",
-    "Does not publish inline comments.",
-    "Does not change default CI blocking.",
-    "Gate evaluator remains pass/fail authority."
-  ]
-}
-```
-
-Field contract:
-
-- `schema_version` remains `0.1`; additive top-issue projection fields preserve
-  existing consumers and carry the same first-screen vocabulary used by
-  `first-pr`.
-- `kind` is always `pr_review_front_panel`.
-- `status` is `advisory`, `pass`, `acknowledged`, `blocked`,
-  `config_error`, or `incomplete`.
-- `summary.top_issue_state` is `actionable`, `summary_only`,
-  `baseline_only`, `already_improved`, `unchanged_after_attempt`,
-  `no_actionable_seam`, `missing_required_input`, or `stale_input`.
-- `summary.policy_state` is `none`, `new_policy_eligible`, `baseline`,
-  `acknowledged`, `waived`, `suppressed`, `blocking`, or `config_error`.
-- `summary.placement` is `changed_line`, `summary_only`, or
-  `not_available`.
-- `summary.movement_state` is `improved`, `resolved`, `unchanged`,
-  `regressed`, `unknown`, or `not_available`.
-- `summary.coverage_grip_state` is `not_available`,
-  `flat_coverage_grip_improved`, `coverage_and_grip_improved`,
-  `coverage_improved_grip_unchanged`, `coverage_regressed`, or `unknown`.
-- `inputs.*` records explicit input paths. Missing optional paths are `null`;
-  missing recommended paths produce warnings or fallback states.
-- `summary.*` carries first-screen counts and states derived from supplied
-  artifacts. It must not be an opaque score.
-- `top_issue.*` is copied from existing RIPR artifacts. The front panel must
-  not mint seam identities, rerank recommendations with a model, or infer
-  missing source facts from code.
-- `top_issue.current_evidence_strength`,
-  `top_issue.missing_discriminator`, `top_issue.focused_proof_intent`,
-  `top_issue.verify_command`, `top_issue.receipt_command`, and
-  `top_issue.static_evidence_boundary` are the typed one-screen repair
-  vocabulary. They mirror the CLI first screen when the supplied artifacts
-  carry the field. For `first_useful_action` inputs, current evidence strength
-  must come from `selected.current_evidence_strength`. Legacy PR guidance,
-  gate, baseline, and assistant-health inputs may normalize existing typed
-  class/status fields, but must not infer the value from Markdown prose or code
-  inspection.
-- `top_issue.repair_command` is present only when an input carries the repair
-  start (#3906): first-action `commands.repair`, a review card's
-  `llm_guidance.repair_command`, or an acknowledged gate route's
-  `repair_route.repair_command`. `top_issue.agent_command` is that command
-  when present, else a carried read-only inspection command (first-action
-  `commands.context_packet`, a card's `llm_guidance.command`, or a gate
-  route's `inspection_command`), else `null`. The panel never builds an
-  `agent start` or `agent repair` command from a bare seam id.
-- `movement.*` preserves before/after static movement when supplied. It is not
-  runtime mutation confirmation.
-- `debt_delta.*` carries PR-local movement from baseline, RIPR Zero, gate, or
-  ledger inputs when available.
-- `policy.authority_artifact` records the gate decision path when supplied.
-  Gate decision remains the only configured pass/fail authority.
-- `calibration.*` and `coverage_grip.*` are advisory context. They must not
-  become adequacy or blocking claims.
-- `artifacts[].group` is `start_here`, `repair`, `evidence`, `policy`,
-  `calibration`, or `generated_ci`.
-- `artifacts[]` groups known artifacts by reviewer use. Missing artifacts stay
-  visible with `available = false`.
-- `warnings[].kind` is one of `missing_required_input`,
-  `missing_optional_input`, `stale_input`, `malformed_input`,
-  `incompatible_schema`, `summary_only_guidance`, `missing_receipt`,
-  `missing_handoff`, `missing_gate_decision`, `missing_calibration`,
-  `static_limit`, `config_error`, or `other`.
-- `limits` preserves static-evidence, no-edit, no-generated-test,
-  no-provider-call, no-runtime-mutation-execution, no-inline-comment, and
-  advisory-default boundaries.
-
-Markdown should fit in a generated GitHub job summary. It should show status,
-top issue, current evidence strength, missing discriminator, focused proof
-intent, suggested focused test, related test, baseline and PR movement, policy
-state, repair commands, receipt command/state, artifact groups, and advisory
-limits. For fallback states, Markdown should put the safe next step before
-lower-priority detail. For example, missing required inputs should say to
-regenerate the missing PR guidance or first-useful-action artifact before
-acting on the panel.
-
-Generated CI runs the producer only when configured input artifacts exist,
-uploads `pr-review-front-panel.{json,md}` with the normal report packet, and
-appends the Markdown plus compact at-a-glance fields to the job summary. The
-projection is advisory: `ripr gate evaluate` remains the only configured
-pass/fail authority. See
-[PR review front panel workflow](PR_REVIEW_FRONT_PANEL_WORKFLOW.md) for the
-reviewer, developer, maintainer, and coding-agent workflow over the generated
-panel.
-
-## Report Packet Index
-
-RIPR-SPEC-0024 defines the report packet index contract. The index is the
-reviewer front door for the uploaded `ripr-reports` packet. It groups explicit
-existing artifacts by reviewer use, identifies the recommended start-here
-artifact, preserves missing or warning surfaces, and names commands that
-regenerate missing expected artifacts when the command is known.
-
-The report is advisory and read-only. It does not rerun hidden analysis, inspect
-source to infer missing fields, edit source, generate tests, call providers, run
-mutation testing, change recommendation ranking, change gate policy, publish
-inline comments, or change default CI blocking. `gate-decision.{json,md}`
-remains the only configured pass/fail authority.
-
-Command shape:
-
-```text
-ripr reports index \
-  --root . \
-  --reports-dir target/ripr/reports \
-  --review-dir target/ripr/review \
-  --receipts-dir target/ripr/receipts \
-  --workflow-dir target/ripr/workflow \
-  --agent-dir target/ripr/agent \
-  --pilot-dir target/ripr/pilot \
-  --ci-dir target/ci \
-  --out target/ripr/reports/index.json \
-  --out-md target/ripr/reports/index.md
-```
-
-Repo-local automation may keep `cargo xtask reports index` as a wrapper.
-Generated GitHub CI uses the public `ripr reports index` command when indexed
-artifacts exist and projects the resulting index into the advisory summary.
-
-The report writes:
-
-```text
-target/ripr/reports/index.json
-target/ripr/reports/index.md
-```
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "report_packet_index",
-  "status": "warn",
-  "root": ".",
-  "generated_at": "2026-05-10T12:00:00Z",
-  "inputs": {
-    "reports_dir": "target/ripr/reports",
-    "review_dir": "target/ripr/review",
-    "receipts_dir": "target/ripr/receipts",
-    "workflow_dir": "target/ripr/workflow",
-    "agent_dir": "target/ripr/agent",
-    "pilot_dir": "target/ripr/pilot",
-    "ci_dir": "target/ci"
-  },
-  "summary": {
-    "entries": 18,
-    "available": 14,
-    "missing_expected": 4,
-    "warnings": 3,
-    "failures": 0,
-    "start_here": "target/ripr/reports/start-here.md",
-    "gate_authority": "target/ripr/reports/gate-decision.md",
-    "advisory": true
-  },
-  "groups": [
-    {
-      "group": "start_here",
-      "label": "Start here",
-      "summary": "Reviewer-first PR story.",
-      "entries": [
-        {
-          "id": "first_pr_start_here",
-          "label": "First PR start here",
-          "kind": "markdown",
-          "path": "target/ripr/reports/start-here.md",
-          "json_path": "target/ripr/reports/start-here.json",
-          "status": "available",
-          "available": true,
-          "required": true,
-          "authority": false,
-          "description": "Canonical first-screen repair packet.",
-          "next_command": null
-        },
-        {
-          "id": "pr_review_front_panel",
-          "label": "PR review front panel",
-          "kind": "markdown",
-          "path": "target/ripr/reports/pr-review-front-panel.md",
-          "json_path": "target/ripr/reports/pr-review-front-panel.json",
-          "status": "available",
-          "available": true,
-          "required": true,
-          "authority": false,
-          "description": "First-screen PR review story.",
-          "next_command": null
-        }
-      ]
-    }
-  ],
-  "repo_ops_packets": [
-    {
-      "id": "gh_pr_status",
-      "label": "PR merge readiness",
-      "status": "warn",
-      "next_command": "cargo xtask gh-pr-status --pr <number>",
-      "description": "Summarizes one PR's merge state, checks, reviews, and safe next action.",
-      "artifacts": [
-        {
-          "path": "target/ripr/reports/gh-pr-status.md",
-          "status": "warn",
-          "available": true
-        },
-        {
-          "path": "target/ripr/reports/gh-pr-status.json",
-          "status": "warn",
-          "available": true
-        }
-      ]
-    }
-  ],
-  "lane1_readiness": {
-    "status": "warn",
-    "missing_artifacts": 2,
-    "warning_artifacts": 0,
-    "failing_artifacts": 0,
-    "packets": [
-      {
-        "id": "lane1_evidence_audit",
-        "label": "Lane 1 evidence audit",
-        "status": "missing",
-        "next_command": "cargo xtask lane1-evidence-audit",
-        "description": "Produces raw-to-canonical/actionability counts and actionable-gap packet inputs.",
-        "artifacts": [
-          {
-            "path": "target/ripr/reports/lane1-evidence-audit.json",
-            "status": "missing",
-            "available": false
-          },
-          {
-            "path": "target/ripr/reports/lane1-evidence-audit.md",
-            "status": "missing",
-            "available": false
-          }
-        ]
-      }
-    ]
-  },
-  "missing_expected": [
-    {
-      "id": "assistant_loop_health",
-      "label": "Assistant loop health",
-      "group": "repair_agent_handoff",
-      "path": "target/ripr/reports/assistant-loop-health.md",
-      "required": false,
-      "reason": "input_not_available",
-      "next_command": "ripr assistant-loop health --proof target/ripr/reports/test-oracle-assistant-proof.json --out target/ripr/reports/assistant-loop-health.json --out-md target/ripr/reports/assistant-loop-health.md"
-    }
-  ],
-  "warnings": [
-    {
-      "kind": "missing_expected",
-      "message": "Assistant loop health was not generated because no proof input was present.",
-      "source_artifact": null
-    }
-  ],
-  "limits": [
-    "Advisory report-packet index only.",
-    "Does not rerun analysis.",
-    "Does not edit source or generate tests.",
-    "Does not call providers.",
-    "Does not run mutation testing.",
-    "Does not publish inline comments.",
-    "Does not change default CI blocking.",
-    "Gate decision remains pass/fail authority when configured."
-  ]
-}
-```
-
-Field contract:
-
-- `schema_version` is `0.1` until the report shape changes.
-- `kind` is always `report_packet_index`.
-- `status` is `pass`, `warn`, `fail`, or `incomplete`. This is packet-health
-  context only, not gate authority.
-- `inputs.*` records explicit directories and paths that the producer was
-  allowed to inspect.
-- `summary.start_here` names the first artifact to show reviewers. Prefer
-  `pr-review-front-panel.md` when available.
-- `summary.gate_authority` records `gate-decision.md` when supplied. The index
-  itself never becomes gate authority.
-- `groups[].group` is `start_here`, `pr_review_story`,
-  `repair_agent_handoff`, `evidence_movement`, `policy_gates`, `calibration`,
-  `validation_receipts`, `sarif_badges`, or `local_context`.
-- `groups[].entries[]` records artifact id, label, kind, path, optional JSON
-  sibling, status, availability, requiredness, authority, description, and
-  next command.
-- `repo_ops_packets[]` is the repo-local operating packet index used by
-  `cargo xtask reports index`. It records command mutability, the repo
-  cockpit, worktree doctor, PR-ready, PR triage, per-PR merge readiness,
-  generated-clean, badge diff policy, command catalog coverage, critic,
-  receipts, suggested-fixes, and `check-pr` artifacts with status, known output
-  paths, and regeneration commands. It is advisory front-door metadata only and
-  never becomes gate authority.
-- `lane1_readiness` is the Lane 1 evidence packet index used by
-  `cargo xtask reports index`. It records whether evidence-health, Lane 1
-  evidence-audit/actionable-gap, evidence-quality scorecard, evidence-quality
-  trend, and badge-basis packets are present and healthy. Missing, warning, or
-  failing Lane 1 readiness artifacts add advisory next commands, but do not
-  create gate authority, badge authority, runtime mutation proof, or coverage
-  adequacy claims.
-
-Report packet index field contract:
-
-- `entries[].status` is `available`, `missing`, `pass`, `warn`, `fail`,
-  `actionable`, `blocked`, `acknowledged`, `suppressed`, `stale`, `incomplete`,
-  `unreadable`, or `not_applicable`.
-- `lane1_readiness.status` is `present`, `warn`, or `fail`.
-- `lane1_readiness.missing_artifacts`,
-  `lane1_readiness.warning_artifacts`, and
-  `lane1_readiness.failing_artifacts` are counts over the packet artifacts.
-- `lane1_readiness.packets[]` uses the same packet shape as
-  `repo_ops_packets[]`: id, label, status, next command, description, and
-  artifact availability.
-- `missing_expected[].reason` is `not_generated`, `input_not_available`,
-  `configured_off`, `missing_required_input`, `stale_upstream`, or `unknown`.
-- `missing_expected[]` keeps absent expected surfaces visible with a bounded
-  reason and, when known, a command to regenerate the missing surface.
-- `warnings[]` carries malformed, stale, unreadable, missing-input, and
-  incomplete packet context without converting it to waiver, suppression,
-  improvement, runtime confirmation, or pass/fail authority.
-- `limits` preserves read-only, explicit-input, no-source-edit,
-  no-generated-test, no-provider-call, no-runtime-mutation-execution,
-  no-inline-comment, and advisory-default boundaries.
-
-`target/ripr/reports/pr-triage.json` is the open-board hygiene packet emitted by
-`cargo xtask pr-triage-report`:
-
-```json
-{
-  "schema_version": "0.1",
-  "mode": "advisory",
-  "status": "warn",
-  "open_prs": [],
-  "queue_disposition": [
-    {
-      "pr_number": 819,
-      "disposition": "needs_owner_decision",
-      "reason": "duplicate or stale work needs canonical owner selection",
-      "recommended_action": "Choose the canonical branch, refresh the stale draft, or close superseded variants."
-    }
-  ],
-  "findings": [],
-  "recommended_actions": []
-}
-```
-
-Field contract:
-
-- `queue_disposition[].disposition` is advisory. It may be
-  `merge_candidate`, `needs_rebase`, `needs_review`, `close_duplicate`,
-  `superseded`, `needs_fresh_validation`, `needs_owner_decision`, or
-  `do_not_touch_wrong_lane`.
-- `queue_disposition[]` never closes, updates, merges, comments on, or mutates
-  PRs. It translates triage findings into operator next-action vocabulary.
-- `findings[]` remains the detailed evidence; `recommended_actions[]` keeps the
-  grouped repair guidance for agents and maintainers.
-
-`target/ripr/reports/pr-ready.json` is the local PR readiness cockpit emitted by
-`cargo xtask pr-ready`:
-
-```json
-{
-  "schema_version": "0.1",
-  "mode": "advisory",
-  "status": "actionable",
-  "next_action": "review the attention items, then run cargo xtask check-pr for full gate receipts",
-  "steps": [
-    {
-      "id": "worktree_doctor",
-      "command": "cargo xtask worktree doctor",
-      "status": "pass",
-      "required": true,
-      "report": "target/ripr/reports/worktree-doctor.md",
-      "summary": "completed"
-    }
-  ],
-  "safe_repairs": ["run cargo xtask fix-pr"],
-  "generated_only": ["target/ripr/**"],
-  "judgment_required": ["golden blessing"],
-  "next_commands": ["cargo xtask check-pr"]
-}
-```
-
-Field contract:
-
-- `status` is `pass`, `actionable`, or `fail`. `fail` means a required local
-  hygiene step failed; `actionable` means a non-blocking packet needs attention.
-- `steps[].required` records whether a failed step makes `pr-ready` exit
-  nonzero.
-- `safe_repairs[]` lists deterministic repair paths; it must not include badge
-  value edits, golden blessing, baselines, suppressions, dependency exceptions,
-  schema version changes, or policy authority changes.
-
-`target/ripr/reports/cockpit.json` is the repo-level maintainer cockpit emitted
-by `cargo xtask cockpit`:
-
-```json
-{
-  "schema_version": "0.1",
-  "mode": "advisory",
-  "status": "actionable",
-  "next_action": "review the action queue, then run cargo xtask pr-ready or cargo xtask check-pr for the active PR",
-  "action_queue": ["review stale, duplicate, behind, policy-sensitive, or generated-artifact PRs"],
-  "steps": [
-    {
-      "id": "pr_triage",
-      "command": "cargo xtask pr-triage-report",
-      "status": "needs_attention",
-      "required": false,
-      "report": "target/ripr/reports/pr-triage.md",
-      "summary": "report status: warn; see target/ripr/reports/pr-triage.md"
-    }
-  ],
-  "safe_repairs": ["run cargo xtask fix-pr"],
-  "generated_only": ["target/ripr/**"],
-  "judgment_required": ["branch protection"],
-  "next_commands": ["cargo xtask pr-ready", "cargo xtask check-pr"]
-}
-```
-
-Field contract:
-
-- `status` is `pass`, `actionable`, or `fail`. `fail` means a required
-  repo-ops rail failed; `actionable` means the cockpit found advisory queue,
-  source-of-truth, generated-evidence, or command-catalog attention items.
-- `action_queue[]` is the maintainer-facing next-work queue derived from the
-  composed repo-ops packet statuses. It is advisory and must not close PRs,
-  update branches, edit badges, or mutate policy.
-- `steps[]` records each composed repo-ops command, whether it is required for
-  cockpit success, and the report path to inspect.
-- `safe_repairs[]`, `generated_only[]`, and `judgment_required[]` preserve the
-  generated-evidence discipline boundary: deterministic cleanup is allowed,
-  while badge refreshes, goldens, suppressions, baselines, dependency
-  exceptions, branch protection, and policy authority remain human decisions.
-
-Markdown should fit in a generated GitHub job summary and uploaded report
-packet. It should show status, start-here artifact, gate authority, packet
-summary counts, grouped artifact links, missing expected artifacts with next
-commands, and advisory limits. When no useful packet map can be rendered,
-Markdown should show `Status: incomplete` and put the regeneration instruction
-before empty groups.
-
-Generated GitHub CI may run the index producer after individual report
-producers and before artifact upload, upload `index.{json,md}` with the normal
-`ripr-reports` artifact, and append a compact index section to the job summary.
-The projection is advisory. Missing optional index entries must not fail CI
-unless the explicit gate decision already failed or reported `config_error`.
-See [Report packet index workflow](REPORT_PACKET_INDEX_WORKFLOW.md) for
-reviewer, maintainer, developer, and coding-agent use of the generated packet
-map.
-
-## First PR Start Here Packet
-
-`ripr first-pr` writes the first successful PR front-door packet from explicit
-existing RIPR artifacts. `cargo xtask first-pr` remains a repo-local wrapper
-over the same public command. The packet selects one top repairable PR-local
-stable Rust gap or preview Python/TypeScript gap when the gap decision ledger
-supplies one, or emits a bounded no-action or blocked recovery state. It does not rerun
-hidden analysis, edit source, generate tests, call providers, run mutation
-testing, change gate policy, or change CI blocking.
-
-Command shape:
-
-```text
-ripr first-pr \
-  --root . \
-  --base origin/main \
-  --head HEAD \
-  --check-output target/ripr/reports/check.json \
-  --gap-ledger target/ripr/reports/gap-decision-ledger.json \
-  --first-action target/ripr/reports/first-useful-action.json \
-  --review-comments target/ripr/review/comments.json \
-  --agent-packet target/ripr/agent/gap-packet.md \
-  --gate-decision target/ripr/reports/gate-decision.json \
-  --receipts-dir target/ripr/receipts \
-  --out-dir target/ripr/reports
-```
-
-The command writes:
-
-```text
-target/ripr/reports/start-here.json
-target/ripr/reports/start-here.md
-```
-
-When `--check-output` is supplied, `ripr first-pr` treats the saved check JSON
-as an explicit input artifact and materializes
-`target/ripr/reports/gap-decision-ledger.{json,md}` before selecting the
-start-here repair. This is the direct preview-language path for actionable
-`python_repair_card` records and `typescript_repair_packet` records that
-already came from `ripr check`; it does not rerun hidden analysis, run tests,
-import preview-language code, generate tests, or change gate authority.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "first_pr_start_here",
-  "status": "blocked",
-  "posture": "advisory",
-  "root": ".",
-  "selected": {
-    "state": "stale_artifact",
-    "output_state": "stale_evidence",
-    "message": "The gap decision ledger is stale; refresh the first-run evidence before assigning repair work.",
-    "next_command": "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md"
-  },
-  "preflight": {
-    "status": "needs_attention",
-    "mode": "write",
-    "root": ".",
-    "base": "origin/main",
-    "head": "HEAD",
-    "next_command": "git fetch origin main; then rerun `ripr first-pr --root . --base origin/main --head HEAD`.",
-    "checks": [
-      {
-        "id": "git_base",
-        "label": "Git base",
-        "status": "needs_attention",
-        "message": "Could not resolve `origin/main` to a commit.",
-        "path": null,
-        "next_command": "git fetch origin main; then rerun `ripr first-pr --root . --base origin/main --head HEAD`."
-      }
-    ]
-  },
-  "commands": {
-    "regenerate_gap_ledger": "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md",
-    "next": "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md"
-  },
-  "artifacts": [
-    {
-      "id": "gap_ledger",
-      "label": "Gap decision ledger",
-      "path": "target/ripr/reports/gap-decision-ledger.json",
-      "status": "present",
-      "regeneration_command": "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md"
-    }
-  ],
-  "authority": {
-    "status": "advisory",
-    "gate_decision": "target/ripr/reports/gate-decision.json",
-    "boundary": "Pass/fail authority remains with explicit gate-decision artifacts when configured; this first-run packet does not gate."
-  },
-  "warnings": [
-    "The gap decision ledger is stale; refresh the first-run evidence before assigning repair work."
-  ],
-  "limits": [
-    "Composes explicit RIPR artifacts only.",
-    "Does not run hidden analysis.",
-    "Does not edit source or generate tests.",
-    "Does not run mutation testing.",
-    "Does not change CI blocking or gate policy."
-  ]
-}
-```
-
-Field contract:
-
-- `schema_version` is `0.1` until the packet shape changes.
-- `kind` is always `first_pr_start_here`.
-- `status` is `actionable`, `blocked`, or `no_action`. It is reviewer context
-  only, not gate authority.
-- `posture` is always `advisory`.
-- `selected.state` is `top_gap` for a selected repairable gap,
-  `missing_artifact`, `malformed_artifact`, `stale_artifact`, `wrong_root`
-  (including selected-root preflight failures), `blocked_artifact`, or `timeout`
-  for blocked recovery states, and
-  `empty_diff` or `no_action` for no-action states.
-- `selected.output_state` is the canonical no-output/fail-closed state for
-  machine consumers. It distinguishes `actionable_gap`, `clean`,
-  `no_actionable_gap`, `missing_artifacts`, `stale_evidence`, `wrong_root`,
-  `language_disabled`, `adapter_unavailable`, `preview_disabled`,
-  `preview_limited`, `malformed_artifact`, `timeout_partial`,
-  `server_unavailable`, `unsupported_schema`, `unsafe_path`, and
-  `unsafe_command` where the packet has that data.
-- `top_gap` requires `status = "actionable"`.
-- `selected.canonical_gap_id` and `selected.gap_id` identify the repair unit
-  when a top gap is selected. Generated CI and report indexes should prefer the
-  canonical gap id when present.
-- `selected.language` and `selected.language_status` keep stable Rust evidence
-  distinct from preview Python and TypeScript evidence when a top gap is
-  selected. Preview top gaps use
-  `selected.output_state = "preview_limited"` and remain advisory repair
-  routing, not support-tier promotion.
-- `selected.current_evidence_strength`,
-  `selected.missing_discriminator`, and `selected.focused_proof_intent`
-  provide the one-screen recommendation contract. They are derived from typed
-  gap kind and repair-route fields; consumers must not infer them from
-  Markdown prose.
-- `selected.why` explains why the selected gap matters in reviewer language.
-  It is supporting explanation for the same typed repair unit, not a separate
-  authority source.
-- `selected.static_evidence_boundary` repeats the static/advisory non-claim
-  boundary in the selected top-gap object so one-screen consumers do not need
-  to infer it from Markdown or higher-level packet authority text.
-- `selected.repair.route`, `selected.repair.target_file`,
-  `selected.repair.related_test`, and `selected.repair.suggested_assertion`
-  describe the bounded repair route when present.
-- `selected.static_limit_kind` and `selected.static_limit_detail` are optional;
-  surfaces must show them before suggested action language when they are
-  present.
-- `selected.repair_command` is present only when the top gap was selected from
-  a review card (#3906): when the gap ledger yields no top gap, first-pr reads
-  `inputs.review_comments` and selects the first card in `comments[]`, then
-  `summary_only[]`, that is actionable and carries
-  `llm_guidance.repair_command` (`ripr agent repair ... --phase before`).
-  The command is that card's value carried unchanged; first-pr never builds it
-  from a seam, gap, or probe id. Every other selected field then comes from
-  that same card, never mixed with a ledger record: `source_artifact` is the
-  review-comments path, `repair.route` is `AgentRepairTransaction`,
-  `verify_command` and `receipt_command` are the card's
-  (`receipt_command_source = "review_comments.receipt_command"`), and
-  `receipt_path` and `agent_packet_command` are `null` because the card is not
-  a gap-ledger record. The card is used only when the review-comments report
-  is `tool = "ripr"`, `status = "advisory"`, and names the same root, base,
-  and head as the first-pr invocation. Ledger-selected top gaps never carry
-  `repair_command`. `commands` does not repeat the repair start, so editor
-  projections that allowlist `commands` values are unaffected.
-- `selected.verify_command`, `selected.receipt_command`,
-  `selected.receipt_path`, `selected.receipt_command_source`, and
-  `selected.receipt_state` are the static movement proof path. When the source
-  gap ledger omits a receipt command, `ripr first-pr` may provide a deterministic
-  canonical `ripr receipt write` command (RIPR-SPEC-0079) under the configured
-  receipts directory; `receipt_command_source` is then
-  `first_pr.default_receipt_write_command`. A missing
-  receipt is not failure, merge approval, mutation proof, or runtime adequacy.
-  `selected.receipt_state` uses the canonical receipt lifecycle vocabulary:
-  `receipt_missing`, `receipt_found`, `receipt_stale`,
-  `receipt_gap_mismatch`, `receipt_movement_improved`,
-  `receipt_movement_unchanged`, or `receipt_not_applicable`.
-- `missing_artifact`, `malformed_artifact`, `stale_artifact`, `wrong_root`,
-  `blocked_artifact`, and `timeout` require `status = "blocked"` and a
-  bounded next command when one is known.
-- `blocked_artifact` may also represent setup preflight failures such as a
-  missing git worktree, missing base ref, missing head ref, or invalid diff
-  range.
-- `empty_diff` and `no_action` require `status = "no_action"` and must not
-  produce a repair interruption. When the gap ledger selected nothing,
-  `selected.reason` also says why no review card supplied a repair start
-  (missing, unreadable, stale, or no card carrying `repair_command`) and, when
-  the cards are missing or were rendered from the gap ledger, names the
-  seam-level `ripr review-comments --root <root> --base <base> --head <head>
-  --out <review_comments>` route.
-- `preflight` is present for the public `ripr first-pr` command path. It
-  records read-only front-door checks for root, Git worktree, base/head refs,
-  diff presence, supported project marker, `ripr.toml` defaulting, output
-  directory, and write/check mode. Supported project markers currently mean a
-  Cargo workspace, Python preview project root, or TypeScript preview project
-  root. Preflight does not create analyzer facts and does not become gate
-  authority.
-- `inputs.check_output` is present only when `--check-output` was supplied.
-  In that mode, the start-here packet can include a `check_output` artifact and
-  the `gap_ledger` artifact is the ledger materialized from that saved check
-  JSON rather than from repo-exposure evidence.
-- `preflight.status` is `ready` when the command can proceed without setup
-  attention, or `needs_attention` when a setup check has a recovery/no-action
-  note. A `needs_attention` preflight can still accompany an explicit
-  artifact-backed packet; typed artifact states still decide repair
-  selection.
-- `preflight.checks[].status` is one of `ok`, `needs_attention`, `no_action`,
-  `defaulted`, or `will_create`. Checks with `next_command` provide the next
-  safe setup or recovery command; they must not imply mutation, coverage,
-  runtime proof, merge approval, or gate pass/fail.
-- `commands.regenerate_gap_ledger` is always present so missing, stale,
-  wrong-root, malformed, and timeout states can point to a known refresh path.
-- `artifacts[]` records artifact id, label, path, `present` or `missing`
-  status, and optional regeneration command.
-- `authority.boundary` preserves the gate boundary. This packet never becomes
-  pass/fail authority.
-- `warnings[]` carries blocked-state context without converting it to waiver,
-  suppression, improvement, clean, or gate-passing state.
-- `limits` preserves explicit-input, no-source-edit, no-generated-test,
-  no-provider-call, no-runtime-mutation-execution, and advisory-default
-  boundaries.
-
-Markdown should fit in a PR summary, local handoff, or generated CI summary. It
-should show the selected top gap, no-action state, or blocked recovery state
-first. For a top gap, the first screen must include changed behavior, why it
-matters, current evidence strength, missing discriminator, focused proof intent,
-verify command, receipt command or path, and the static advisory boundary
-before deeper artifact links.
-`empty_diff` must render as a no-action state, not a blocked repair.
-
-### Review Guidance Outcome Receipt
-
-Review guidance outcome receipts are optional repo-local inputs to the
-recommendation calibration report. They record reviewer, fixture, agent, or CI
-artifact feedback for one PR guidance item without sending telemetry, calling an
-external service, editing source, generating tests, running mutation testing, or
-changing CI blocking behavior.
-
-Receipt files may live anywhere a repo chooses. The boundary-gap calibration
-corpus pins examples under:
-
-```text
-fixtures/boundary_gap/expected/recommendation-calibration/outcome-receipts/
-```
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "kind": "review_guidance_outcome_receipt",
-  "status": "advisory",
-  "spec": "RIPR-SPEC-0013",
-  "receipt_id": "review-outcome-useful-exact-line-boundary",
-  "case_id": "useful_exact_line_boundary",
-  "root": ".",
-  "guidance": {
-    "artifact": "fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json",
-    "collection": "comments",
-    "id": "ripr-review-8f7fa8644fd12280",
-    "seam_id": "8f7fa8644fd12280",
-    "dedupe_key": "ripr:8f7fa8644fd12280:src/pricing.rs:88"
-  },
-  "outcome": {
-    "label": "useful",
-    "source": "fixture",
-    "reason": "The recommendation points at the changed seam line and names the expected boundary discriminator and test target."
-  },
-  "placement": {
-    "path": "src/pricing.rs",
-    "line": 88,
-    "mode": "exact_seam_line",
-    "quality": "correct"
-  },
-  "suggested_test": {
-    "target_quality": "correct",
-    "expected_file": "tests/pricing.rs",
-    "actual_file": "tests/pricing.rs",
-    "near_test": "applies_discount_above_threshold"
-  },
-  "suppression": {
-    "reason": null,
-    "quality": "not_applicable"
-  },
-  "static_movement": {
-    "state": "improved",
-    "source": "targeted_test_outcome",
-    "artifact": "fixtures/boundary_gap/calibration/targeted-test-outcome.json"
-  },
-  "latency": {
-    "guidance_generated_unix_ms": null,
-    "outcome_recorded_unix_ms": null,
-    "outcome_latency_ms": null
-  },
-  "limits": {
-    "telemetry": false,
-    "external_service": false,
-    "source_edits": false,
-    "generated_tests": false,
-    "runtime_mutation_execution": false,
-    "ci_blocking": false
-  },
-  "limits_note": "Advisory review-guidance outcome receipt only; no telemetry, generated tests, source edits, mutation execution, or CI blocking."
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"`.
-- `tool` - always `"ripr"`.
-- `kind` - always `review_guidance_outcome_receipt`.
-- `status` - `advisory`; receipts are feedback artifacts, not policy gates.
-- `spec` - `RIPR-SPEC-0013`.
-- `receipt_id` - stable local identifier for this receipt.
-- `case_id` - optional calibration-corpus case identifier when the receipt
-  came from a fixture expectation.
-- `root` - workspace root used to resolve artifact paths.
-- `guidance` - the source PR guidance artifact, collection, item id,
-  `seam_id`, and dedupe key when available.
-- `outcome.label` - one of `useful`, `noisy`, `wrong_line`,
-  `already_covered`, `wrong_target`, `summary_only_correct`,
-  `suppressed_correctly`, or `unknown`.
-- `outcome.source` - local source class such as `fixture`, `reviewer`,
-  `agent`, `ci_artifact`, or `unknown`.
-- `outcome.reason` - concise local rationale for the outcome label.
-- `placement.quality` - `correct`, `wrong_line`,
-  `summary_only_expected`, `not_placeable`, or `unknown`.
-- `suggested_test.target_quality` - `correct`, `wrong_target`,
-  `not_applicable`, or `unknown`.
-- `suppression.reason` - `cap_reached`, `suppression`, `severity_off`,
-  `nearby_test_changed`, `generated_or_migration`, `none`, or `unknown`.
-- `suppression.quality` - `suppressed_correctly`, `over_suppressed`,
-  `not_applicable`, or `unknown`.
-- `static_movement.state` - `improved`, `unchanged`, `regressed`, `resolved`,
-  `new_gap`, `missing_after_snapshot`, or `unknown`.
-- `latency.*` - optional timestamps and elapsed time. Values are `null` when
-  not available.
-- `limits` - explicit false values for telemetry, external services, source
-  edits, generated tests, runtime mutation execution, and CI blocking.
-- `limits_note` - static/advisory boundary text for downstream summaries.
-
-## Agent Status
-
-`ripr agent status --root <workspace>` reads already-written agent-loop
-artifacts and reports which step is missing next. Markdown is the default for
-human review packets; add `--json` for the machine-readable contract:
-
-```text
-ripr agent status --root .
-ripr agent status --root . --json
-```
-
-The command does not run analysis, mutation testing, SARIF policy, badge
-generation, LSP refresh, or cache warm-up. It only inspects fixed artifact
-paths under the supplied workspace root:
-
-```text
-target/ripr/workflow/before.repo-exposure.json
-target/ripr/workflow/after.repo-exposure.json
-target/ripr/workflow/agent-brief.json
-target/ripr/workflow/agent-packet.json
-target/ripr/workflow/agent-verify.json
-target/ripr/reports/agent-receipt.json
-```
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "status": "incomplete",
-  "root": ".",
-  "seam": {
-    "seam_id": "67fc764ba37d77bd",
-    "source": "agent_receipt"
-  },
-  "artifacts": [
-    {
-      "name": "before_snapshot",
-      "label": "before snapshot",
-      "path": "target/ripr/workflow/before.repo-exposure.json",
-      "required": true,
-      "state": "present",
-      "bytes": 12000,
-      "modified_unix_ms": 1778179200000
-    }
-  ],
-  "repair_attempts": [],
-  "missing_commands": [
-    {
-      "step": "agent_packet",
-      "artifact": "target/ripr/workflow/agent-packet.json",
-      "reason": "agent packet artifact is missing",
-      "command": "ripr agent packet --root . --seam-id 67fc764ba37d77bd --json > target/ripr/workflow/agent-packet.json"
-    }
-  ],
-  "next_command": {
-    "step": "agent_packet",
-    "artifact": "target/ripr/workflow/agent-packet.json",
-    "reason": "agent packet artifact is missing",
-    "command": "ripr agent packet --root . --seam-id 67fc764ba37d77bd --json > target/ripr/workflow/agent-packet.json"
-  },
-  "warnings": []
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"`.
-- `status` - `"complete"` when every required artifact is present, no next
-  command is selected, and there are no warnings; `"warning"` when every
-  artifact is present but a stale-looking condition exists or a finished
-  repair attempt's receipt does not report static grip improved at the current
-  `HEAD`; `"incomplete"` when any required artifact is missing or a next
-  command is selected. A finished attempt counts toward `"complete"` only when
-  the receipt issued for it is `advisory` with static movement `improved` and
-  the current `HEAD` is the head its after phase recorded (a commit made on top
-  of the prepared head, such as a committed focused test, counts).
-- `root` - the `--root` argument normalized to forward slashes for reporting.
-- `seam` - recovered seam identity when available. The current recovery order
-  is receipt, verify, packet, then brief. It is `null` when no existing
-  artifact names a seam.
-- `artifacts[]` - one entry for each required fixed artifact. `bytes` and
-  `modified_unix_ms` are `null` when the artifact is missing or the filesystem
-  does not expose the timestamp.
-- Volatile fields: `artifacts[].modified_unix_ms` is wall-clock state read
-  from the filesystem at report time, not analysis output. Two consecutive
-  `agent status --json` runs over an unchanged artifact tree can produce
-  different bytes for this field alone. Snapshot-based consumers must exclude
-  `artifacts[].modified_unix_ms` from snapshot assertions (and from any
-  byte-equality diff of the document). `artifacts[].bytes` is content-derived
-  and is stable while the artifact bytes are unchanged. The same rule applies
-  to the `agent_status` document embedded by `ripr agent repair --phase after`
-  (#4052), which is the same schema.
-- `missing_commands[]` - one command for each missing artifact in workflow
-  order: before snapshot, packet, brief, after snapshot, verify, receipt. If no
-  seam can be recovered, packet, brief, and receipt commands use `<seam-id>`.
-- `repair_attempts[]` - every repair attempt under
-  `target/ripr/repair-attempts/`, validated by the attempt authority and
-  ordered by attempt ID (not by age): `attempt_id`, `seam_id`, `state` (the
-  manifest state), `head_current` (for an attempt awaiting its edit, whether
-  its after phase would evaluate the current `HEAD` as the attempt's, by the
-  attempt authority's rule: the prepared head, or for an ordinary attempt a
-  commit that descends from it; for an attempt with an after verdict, whether
-  `HEAD` is still the head that verdict recorded; `null` when `HEAD` cannot be
-  read or related to the prepared head), `disposition` (`resumable`,
-  `prepared_at_other_head`, `head_unknown`, `not_published`, `finished`,
-  `gap_open`, `unconfirmed`, or `ended`), `manifest`, `command` (the command
-  that would move this attempt or its seam forward, or `null`),
-  `receipt`, and `last_after_refusal`. A `ready_to_finish` attempt reads
-  `finished` only when its receipt is `advisory` with movement `improved`;
-  `gap_open` when its receipt shows movement `unchanged`, `changed`, or
-  `regressed` (the seam is restarted); otherwise `unconfirmed` (no restart; a
-  `repair_receipt_unconfirmed` warning says why). An attempt awaiting its
-  edit reads `prepared_at_other_head` when its after phase would not evaluate
-  the current `HEAD`: a trust-bound attempt whose `HEAD` moved, or an ordinary
-  attempt whose `HEAD` no longer descends from its prepared head, in which case
-  the restart reason repeats the after phase's recovery (`git reset --soft
-  <prepared-head>`, then the attempt's after command).
-  - `receipt` - `null` unless the attempt is `ready_to_finish`. Otherwise an
-    object read from `target/ripr/reports/agent-receipt.json`: `path`,
-    `issued_for_attempt` (whether that receipt's `repair_attempt` binding
-    matches this attempt's after verdict: attempt ID, after `HEAD`, delta and
-    packet digests), `superseded_by` (the attempt ID the receipt is bound to
-    when that is another attempt: the workflow keeps one receipt, so a later
-    attempt's after phase replaced this attempt's receipt; otherwise `null`),
-    and, when it is issued for this attempt, the receipt's `status`,
-    `movement`, `receipt_state`, `recommended_action`, and
-    `analysis_outcome_error`, plus `shows_gap_closed` (`true` only for an
-    `advisory` receipt with movement `improved`; it records improved static
-    grip, not a runtime or mutation result). Unbound receipts leave these
-    `null` and `shows_gap_closed` `false`.
-  - `last_after_refusal` - `null`, or `{reason, recorded_unix_ms}` when the
-    attempt's most recent after phase refused after selecting the attempt (the
-    attempt manifest's `last_after_refusal`: the final error followed by the
-    cause and recovery the after phase printed, such as the changed analysis
-    inputs, bounded to 4096 bytes).
-- `next_command` - selected in the order RIPR-SPEC-0011 documents (#3906): the
-  one current awaiting repair attempt's recorded after command
-  (`repair_attempt_after`; when that attempt recorded a refused after phase,
-  `reason` names the refusal before repeating the command); otherwise a new
-  attempt for the one seam whose attempts ended without a receipt or finished
-  with a receipt that leaves the gap open (`repair_attempt_before`); otherwise the
-  first `missing_commands` entry, except that an unknown seam routes to
-  `ripr pilot --root <root>` (`select_seam`) and a missing workflow directory
-  routes to a new repair attempt. It is `null` when nothing is missing, and
-  also when status cannot choose honestly: an unreadable attempt manifest,
-  several current awaiting attempts, several open seams, or an unreadable
-  `HEAD`. A warning (`repair_attempt_unreadable`, `ambiguous_repair_attempts`,
-  `multiple_open_repair_seams`, `repair_attempt_head_unknown`) then names the
-  choices.
-- `warnings[]` - stale-looking or unreadable-artifact hints. Timestamp warnings
-  are emitted when `agent verify` is older than a before/after snapshot or
-  `agent receipt` is older than `agent verify`. For a seam with no attempt
-  awaiting its edit and no finished attempt current at `HEAD`,
-  `repair_receipt_stale` names a finished attempt whose receipt evidence was
-  recorded at a `HEAD` other than the current one (its message says the
-  receipt reports static grip improved at the recorded head), and
-  `repair_receipt_unconfirmed` names a `ready_to_finish` attempt whose receipt
-  does not report improved grip (an `invalid` or `incomplete` receipt, a
-  movement that is neither `improved` nor open, no receipt issued for it, or a
-  receipt superseded by a later attempt's, in which case the message names
-  that attempt and the new-attempt command for the seam if its gap is still
-  open). Hash mismatch warnings remain a
-  later reviewer-summary/status enhancement now that receipt provenance records
-  artifact SHA-256 values.
-
-Markdown output contains the same status, recovered seam, artifact table, next
-command, warnings, and static-only limits. Generated CI writes it to
-`target/ripr/workflow/agent-status.md` next to
-`target/ripr/workflow/agent-status.json`.
-
-## Agent Review Summary
-
-`ripr agent review-summary --root <workspace>` reads already-written agent-loop
-artifacts and emits a compact Markdown packet for PR review. Add `--json` for
-the machine-readable contract:
-
-```text
-ripr agent review-summary --root .
-ripr agent review-summary --root . --json
-```
-
-The command does not run analysis, mutation testing, SARIF policy, badge
-generation, LSP refresh, cache warm-up, source edits, or test generation. It
-joins only existing artifacts:
-
-- `ripr agent status` computed from the current artifact tree;
-- `target/ripr/workflow/workflow.json` when present;
-- `target/ripr/reports/agent-receipt.json`;
-- `target/ripr/reports/operator-cockpit.json` when present;
-- `target/ripr/reports/repo-exposure.json` when present;
-- `target/ripr/reports/lsp-cockpit.json` when present;
-- `target/ripr/workflow/analysis-outcome.json`, the required producer-backed
-  diff completeness envelope emitted by the generated agent workflow;
-- local file presence for CI-published work-loop artifacts.
-
-The JSON schema is version `0.1`:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "status": "ready",
-  "root": ".",
-  "target_seam": {
-    "seam_id": "67fc764ba37d77bd",
-    "source": "agent_receipt",
-    "file": "src/lib.rs",
-    "line": 42,
-    "seam_kind": "predicate_boundary"
-  },
-  "static_movement": {
-    "state": "improved",
-    "before_class": "weakly_gripped",
-    "after_class": "strongly_gripped",
-    "grip_class": "strongly_gripped",
-    "evidence_artifact": "target/ripr/reports/agent-receipt.json",
-    "verify_artifact": "target/ripr/workflow/agent-verify.json",
-    "summary": "Static movement is improved (weakly_gripped -> strongly_gripped).",
-    "next_action": {
-      "kind": "improved",
-      "summary": "Static grip improved.",
-      "recommended_action": "Keep the focused test and include this receipt in review."
-    }
-  },
-  "analysis_outcome": {
-    "analysis_complete": true,
-    "outcome": {
-      "schema_version": "0.1",
-      "kind": "complete_no_findings",
-      "identity": {},
-      "counts": {},
-      "limitations": [],
-      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
-    }
-  },
-  "next_command": null,
-  "surfaces": [
-    {
-      "name": "agent_status",
-      "label": "Agent status",
-      "path": "target/ripr/workflow/agent-status.json",
-      "state": "computed",
-      "status": "complete",
-      "required": true,
-      "summary": "6 of 6 required artifacts present, 0 missing, 0 warnings."
-    }
-  ],
-  "ci_artifacts": [
-    {
-      "name": "agent_status",
-      "path": "target/ripr/workflow/agent-status.json",
-      "state": "present"
-    },
-    {
-      "name": "agent_status_markdown",
-      "path": "target/ripr/workflow/agent-status.md",
-      "state": "present"
-    },
-    {
-      "name": "agent_review_summary",
-      "path": "target/ripr/workflow/agent-review-summary.json",
-      "state": "missing"
-    },
-    {
-      "name": "agent_review_summary_markdown",
-      "path": "target/ripr/workflow/agent-review-summary.md",
-      "state": "missing"
-    }
-  ],
-  "reviewer_summary": {
-    "headline": "Review packet is ready for seam 67fc764ba37d77bd.",
-    "what_changed": "Static movement is improved (weakly_gripped -> strongly_gripped).",
-    "evidence": "Review target/ripr/reports/agent-receipt.json with target/ripr/workflow/agent-verify.json.",
-    "remaining": "Keep the focused test and include this receipt in review.",
-    "reviewer_should_inspect": [
-      "target/ripr/reports/agent-receipt.json",
-      "target/ripr/workflow/agent-verify.json"
-    ]
-  },
-  "limits": {
-    "static_artifact_relationship": true,
-    "runtime_mutation_execution": false,
-    "automatic_edits": false,
-    "generated_tests": false
-  }
-}
-```
-
-Field notes:
-
-- `status` is `ready` when a receipt is present, the required loop artifacts do
-  not report warnings, and the producer-backed `analysis_outcome` is present
-  and complete; `warning` when a receipt exists but optional local artifact
-  state looks stale or malformed; `incomplete` when the receipt or typed
-  producer outcome is missing, invalid, or incomplete.
-- `target_seam` is recovered from receipt first, then workflow, then agent
-  status.
-- `static_movement` is copied from the receipt and remains a static
-  before/after artifact relationship.
-- `analysis_outcome` is copied from the producer's typed check envelope. Its
-  `analysis_complete` value is derived from the closed outcome kind; it is not
-  inferred from receipt movement, packet-budget state, or empty findings.
-- `surfaces[]` reports each joined surface as `computed`, `present`, `missing`,
-  `optional_missing`, `invalid`, or `invalid_json`.
-- `ci_artifacts[]` is local file presence for artifacts that generated CI can
-  upload later; it does not query GitHub Actions.
-- `reviewer_summary` is intentionally compact enough for PR comments and LLM
-  context windows.
-
-The Markdown output contains the same target seam, movement, evidence artifact,
-next command when one is missing, reviewer inspection list, and static limits.
-
-## Agent Workflow Manifest
-
-`ripr agent start --root <workspace> --seam-id <id> --out <dir>` writes a
-source-edit-free workflow packet for one visible seam:
-
-```text
-ripr agent start --root . --seam-id 67fc764ba37d77bd --out target/ripr/workflow
-```
-
-Outputs:
-
-```text
-target/ripr/workflow/workflow.json
-target/ripr/workflow/commands.md
-target/ripr/workflow/agent-brief.json
-```
-
-The command selects the requested seam with the same policy as
-`ripr agent brief --seam-id`, writes a focused brief, then renders a workflow
-manifest that names artifact paths and shared command templates for the static
-before snapshot, agent packet, agent brief, after snapshot, verify, and
-receipt steps. It does not edit source files, generate tests, call LLM APIs,
-run mutation testing, refresh LSP state, or configure CI blocking.
-The generated command list also captures the diff-scoped producer outcome at
-`target/ripr/workflow/analysis-outcome.json`; this is a required input to the
-review-summary projection and is distinct from repo-exposure snapshots.
-When a step has a producer-owned typed route, its command object also carries
-a `command_spec` â€” the versioned, direct-execution-safe form (#1617) whose
-`command_id`, role, argv, policies, and expected writes bind machine
-execution; the `command` string remains the human display. Steps without a
-typed route are legacy-string-only: copyable, but never advertised as
-direct-executable.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "status": "ready",
-  "command_shell": "bash",
-  "root": ".",
-  "mode": "draft",
-  "out_dir": "target/ripr/workflow",
-  "seam": {
-    "seam_id": "67fc764ba37d77bd",
-    "file": "src/pricing.rs",
-    "line": 88,
-    "seam_kind": "predicate_boundary",
-    "grip_class": "weakly_gripped",
-    "why": "caller requested seam_id 67fc764ba37d77bd",
-    "missing_discriminator": "amount == discount_threshold",
-    "assertion_shape": "assert_eq!(...)",
-    "recommended_test_file": "tests/pricing.rs",
-    "recommended_test_name": "discount_threshold_equality_boundary_is_asserted",
-    "related_test_to_imitate": "applies_discount_above_threshold"
-  },
-  "outputs": {
-    "workflow_manifest": "target/ripr/workflow/workflow.json",
-    "commands_markdown": "target/ripr/workflow/commands.md",
-    "agent_brief": "target/ripr/workflow/agent-brief.json"
-  },
-  "artifacts": [
-    {
-      "name": "before_snapshot",
-      "label": "before snapshot",
-      "path": "target/ripr/workflow/before.repo-exposure.json",
-      "required": true,
-      "state": "missing"
-    }
-  ],
-  "commands": [
-    {
-      "step": "before_snapshot",
-      "artifact": "target/ripr/workflow/before.repo-exposure.json",
-      "purpose": "Capture static seam evidence before editing tests.",
-      "command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json"
-    },
-    {
-      "step": "agent_packet",
-      "artifact": "target/ripr/workflow/agent-packet.json",
-      "purpose": "Expand the selected seam into a bounded agent packet.",
-      "command": "ripr agent packet --root . --seam-id 67fc764ba37d77bd --json > target/ripr/workflow/agent-packet.json",
-      "command_spec": {
-        "schema_version": "1",
-        "command_id": "ripr:agent:packet",
-        "role": "regeneration",
-        "execution_mode": "shell_required",
-        "program": "ripr",
-        "args": ["agent", "packet", "--root", ".", "--seam-id", "67fc764ba37d77bd", "--json"],
-        "working_directory": ".",
-        "environment": "clean",
-        "stdin": "null",
-        "timeout_ms": 120000,
-        "cancellation": "allowed",
-        "network": "forbidden",
-        "expected_result_parser": "declared_json",
-        "expected_exit_codes": [0],
-        "expected_writes": ["target/ripr/workflow/agent-packet.json"],
-        "cost_class": "unknown",
-        "platforms": ["linux", "macos", "windows"],
-        "human_display": "ripr agent packet --root . --seam-id 67fc764ba37d77bd --json > target/ripr/workflow/agent-packet.json",
-        "authority_boundary": "regeneration_route_only"
-      }
-    }
-  ],
-  "missing_inputs": [
-    {
-      "step": "before_snapshot",
-      "artifact": "target/ripr/workflow/before.repo-exposure.json",
-      "purpose": "Capture static seam evidence before editing tests.",
-      "command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json"
-    }
-  ],
-  "next_command": {
-    "step": "before_snapshot",
-    "artifact": "target/ripr/workflow/before.repo-exposure.json",
-    "purpose": "Capture static seam evidence before editing tests.",
-    "command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json"
-  },
-  "boundaries": {
-    "source_edits": false,
-    "generated_tests": false,
-    "runtime_mutation_execution": false,
-    "llm_api_calls": false,
-    "ci_blocking": false
-  }
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"`.
-- `status` - currently `"ready"` when the manifest was written.
-- `command_shell` - currently `"bash"`. Every `command` string in this manifest
-  is a bash command line: arguments are quoted with POSIX single quotes and
-  output redirection uses `>`. Consumers on Windows must run them through Git
-  Bash; cmd.exe treats `'` as a literal character and PowerShell rejects the
-  `'\''` escape. WSL bash is not equivalent, because paths in this manifest keep
-  their Windows drive-letter prefix, which WSL resolves as a relative path.
-  `commands.md` states the same boundary in prose above its first command block.
-  No shell-neutral argv form is emitted for this schema version.
-- `root`, `mode`, and `out_dir` - the selected workspace root, effective
-  analysis mode, and workflow output directory.
-- `seam` - the selected seam fields copied from the generated agent brief.
-- `outputs` - the three files written by `agent start`.
-- `artifacts[]` - required downstream workflow inputs and outputs, marked
-  `present` or `missing` at manifest creation time.
-- `commands[]` - deterministic command templates for regenerating the
-  workflow, capturing snapshots, rendering packet and brief artifacts,
-  comparing before/after evidence, and writing a receipt.
-- `missing_inputs[]` - the commands whose artifacts are currently missing.
-- `next_command` - the first missing-input command, or `null` when all
-  downstream artifacts are present.
-- `boundaries` - explicit false-valued guardrails for source edits, generated
-  tests, runtime mutation execution, LLM API calls, and CI blocking.
-
-## Release Readiness Report
-
-`cargo xtask release-readiness --version <version>` writes a Campaign 10
-release-surface report to:
-
-```text
-target/ripr/reports/release-readiness.json
-target/ripr/reports/release-readiness.md
-```
-
-The report checks repo artifacts and safe local commands for the 0.4
-first-hour loop. It packages and extracts the local crate, installs the binary
-from that extracted package, verifies the installed binary differs from the
-workspace build, and exercises `ripr doctor` against an external fixture. It
-then verifies the public command surface, runs the boundary-gap `ripr pilot`, `ripr outcome`, and
-`ripr agent verify` snapshots, writes a focused `ripr agent receipt`, refreshes
-repo-exposure latency and LSP cockpit reports, checks the advisory GitHub
-workflow dry-run, and confirms VSIX and known-limit docs. It does not run
-mutation testing, enable CI blocking, change analyzer classifications, or
-expand LSP behavior.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "report": "release-readiness",
-  "version": "0.8.0",
-  "status": "warn",
-  "checks": [
-    {
-      "id": "installed-command-surface",
-      "status": "pass",
-      "required": true,
-      "command": "target/ripr/release-readiness/install/bin/ripr --help",
-      "summary": "installed binary exposes the public release-loop commands",
-      "artifacts": [
-        "target/ripr/release-readiness/install/bin/ripr"
-      ],
-      "details": []
-    },
-    {
-      "id": "publish-dry-run",
-      "status": "not_run",
-      "required": false,
-      "command": "cargo publish -p ripr --dry-run",
-      "summary": "requested release version does not match the crate version yet",
-      "artifacts": [],
-      "details": [
-        "requested version: 0.4.0; crates/ripr version: 0.3.1"
-      ]
-    }
-  ],
-  "next_commands": [
-    "cargo publish -p ripr --dry-run"
-  ]
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"`.
-- `status` - `pass` when all checks pass, `warn` when any check is `warn` or
-  `not_run` and no required check failed, and `fail` when a required check
-  failed.
-- `version` - requested release version from `--version`.
-- `checks[].id` - stable check identifier such as `package-list`,
-  `publish-dry-run`, `package-install`, `installed-command-surface`,
-  `pilot-boundary-fixture`, `outcome-boundary-fixture`,
-  `agent-verify-boundary-fixture`, `agent-receipt-boundary-fixture`,
-  `repo-exposure-latency`, `lsp-cockpit`, `github-workflow-defaults`,
-  `vsix-packaging-path`, or `known-limits-docs`.
-- `checks[].status` - `pass`, `warn`, `fail`, or `not_run`.
-- `checks[].required` - `true` for checks that must pass in the normal local
-  readiness run. Release-only package and publish dry-run checks can be
-  `not_run` and non-required until the version bump and clean release-prep tree
-  make them safe to execute.
-- `checks[].command` - command or dry-run surface that produced the signal.
-- `checks[].summary` - short human-readable status.
-- `checks[].artifacts` - generated or inspected artifacts for the check.
-- `checks[].details` - optional bounded command output, missing fields, or
-  skip reasons.
-- `next_commands[]` - follow-up commands for non-passing checks, or the
-  release-readiness command itself when everything passed.
-
-The Markdown sibling prints the same check table, per-check details, artifacts,
-and next commands for release review.
-
-## Historical Release Control Lens Report
-
-`cargo xtask release-control --input <captured-snapshot.json>` replays a
-captured historical 0.11 release-control snapshot. `cargo xtask release-control
---live` collects current `origin/main`, open PRs, and #2379 through bounded
-read-only adapters. Both paths write:
-
-```text
-target/ripr/reports/release-control.json
-target/ripr/reports/release-control.md
-```
-
-The JSON report has schema version `0.1` and the following stable top-level
-shape:
-
-```json
-{
-  "report": "release-control",
-  "schema_version": "0.1",
-  "status": "ready | reconcile_required",
-  "captured_at": "...",
-  "source": {
-    "mode": "captured | live",
-    "freshness": "current",
-    "main_sha": "...",
-    "authority_issue": 2379,
-    "authority_state": "open",
-    "authority_main_sha": "...",
-    "portfolio_state": "complete | unknown",
-    "open_prs_complete": true,
-    "active_claims_complete": true,
-    "worktree_inventory_complete": true,
-    "worktree_count": 1,
-    "graph_digest": "..."
-  },
-  "reconciliation_reasons": [],
-  "prs": [
-    {
-      "number": 2528,
-      "title": "...",
-      "is_draft": false,
-      "head_sha": "...",
-      "base_ref": "main",
-      "linked_issue_refs": [2528],
-      "release_disposition": "release_required",
-      "disposition_reason": "...",
-      "merge_eligible": true
-    }
-  ],
-  "next_action": "...",
-  "authority_boundary": "temporary_release_lens_only",
-  "must_not_claim": [
-    "candidate qualification",
-    "package readiness",
-    "merge approval",
-    "release publication"
-  ]
-}
-```
-
-Allowed `release_disposition` values are `release_required`,
-`release_optional_pending_decision`, `hold_post_release`, and
-`blocked_on_named_authority`. A complete current snapshot can mark only
-non-draft `release_required` rows as `merge_eligible`; any stale, missing, or
-contradictory source input clears eligibility for every row. The live collector
-does not claim portfolio or active-claim completeness from its bounded inputs;
-its report remains `reconcile_required` until those authorities are supplied.
-The Markdown report is derived from the same normalized DTO and is advisory
-only. This report never closes issues, merges PRs, selects or qualifies a
-candidate, or publishes release artifacts.
-
-The open-PR inventory is informational and must not be used as a candidate
-readiness gate. Candidate readiness is a separate, cut-relative decision over
-selected claims, candidate-only exclusions, the reviewed denominator through
-historical development cut `C`, and a reproducible historical candidate tree.
-Those fields are retained for audit only; the active 0.11.0 publication
-candidate is the exact transaction-boundary live swarm head recorded in
-`docs/release-candidates/0.11.0-live-head-selection.json`. The candidate control
-artifact must report `candidate_required_claims_pending` and the associated
-landed, excluded, deferred, unresolved-defect, denominator, cut, and immutable
-candidate-reference state. An `open_release_pr_count`, if displayed, is
-context only.
-
-The release-control JSON carries this candidate-relative state separately from
-PR rows:
-
-```json
-{
-  "candidate_state": {
-    "status": "scope_pending | scope_closed | hard_cut_eligible | candidate_materialized | qualification_eligible",
-    "selected_candidate_claims": 0,
-    "candidate_required_claims_pending": 0,
-    "candidate_claims_landed": 0,
-    "candidate_claims_excluded": 0,
-    "candidate_claims_deferred": 0,
-    "candidate_defects_unresolved": 0,
-    "denominator_decisions_remaining": 0,
-    "denominator_decisions_remaining_through_selected_cut": 0,
-    "candidate_cut_selected": false,
-    "candidate_ref_created": false,
-    "projection_reproducible": false,
-    "candidate_tree_present": false,
-    "candidate_tree_parent_matches_cut": false,
-    "exclusion_digests_match": false,
-    "preservation_digests_match": false,
-    "manifest_matches_candidate_tree": false,
-    "qualification_instruments_available": false,
-    "reasons": []
-  }
-}
-```
-
-`denominator_decisions_remaining` is retained for schema-0.1 wire compatibility
-and counts decisions through the fixed provisional review cutoff. The additive
-`denominator_decisions_remaining_through_selected_cut` field is `null` until a
-development cut is selected; once selected, it must be zero before hard-cut
-eligibility. Neither field counts the repository-wide open board. A state
-earlier than `qualification_eligible` is not a qualification claim; the state
-names the next missing boundary.
-
-## Release Denominator Ledger Report
-
-`release-denominator` writes a deterministic supplemental denominator report
-from a captured `release_denominator_snapshot`. The JSON report has this
-stable top-level shape:
-
-```json
-{
-  "report": "release-denominator",
-  "schema_version": "0.1",
-  "captured_at": "...",
-  "status": "ready | reconcile_required",
-  "source": {},
-  "candidate_selection": null,
-  "counts_by_disposition": {},
-  "counts_by_tree_state": {},
-  "records": [],
-  "range_digest": "sha256:...",
-  "candidate_tree_digest": "sha256:...",
-  "record_set_digest": "sha256:...",
-  "reconciliation_reasons": [],
-  "next_action": "...",
-  "authority_boundary": "supplemental_denominator_only",
-  "must_not_claim": ["candidate qualification", "merge approval", "release publication", "source integration"]
-}
-```
-
-The validator preserves the ordered first-parent range and requires one
-reviewed record per range commit. Missing, duplicate, out-of-range, wrongly
-ordered, wrong-tree, stale-live, and unresolved-final-decision cases produce
-`reconcile_required`; no report status qualifies or publishes a candidate.
-
-Each record may retain typed reference authority in `references[]`:
-
-```json
-{
-  "kind": "merge_pr | issue | pull_request | reviewed_manual_mapping",
-  "number": 2788,
-  "source": "associated_pull_request | closing_reference | body_reference | explicit_review",
-  "evidence_url": "https://github.com/...",
-  "github_identity": null,
-  "observed_for_commit_sha": "...",
-  "reviewed": true,
-  "limitation": ""
-}
-```
-
-Exactly one of `evidence_url` or `github_identity` is required. The legacy
-`pr_refs` and `issue_refs` fields are compatibility projections and cannot
-establish final denominator authority by themselves. Final ledgers reject
-unreviewed references and legacy-only projections.
-
-`source.github_repository` pins the GitHub repository whose retained authority
-may be imported; captures from another repository are rejected.
-`source.provisional_review_cutoff_sha` optionally pins the fixed review cutoff
-used by #2832 and extended through the selected development cut by #2825. Each record may also carry `claim_refs[]`,
-`reference_capture_status` (`not_captured`, `captured`,
-`no_linked_authority`, `ambiguous`, or `unavailable`), and
-`reference_capture_limitation`. `candidate_tree_state_pending` is the
-fail-closed state for a row whose candidate-tree effect has not been
-adjudicated; it is only valid with `operator_decision_required`. The optional
-`candidate_selection` object is the #2766/#2871 selected-claim authority, not a
-claim inferred from numeric issue or PR references.
-
-The checked provisional fixture also retains the #2832 and #2825 adjudication
-batch receipts in each reviewed record's `review_refs[]`, and its
-candidate-tree commit list is the ordered projection of reviewed
-`candidate_tree_state` values. Unreviewed rows after a pinned cutoff remain
-pending and do not enter that projection; once adjudicated through the
-selected cut, each row carries its reviewed tree state into the projection.
-
-## Operator Cockpit Report
-
-`cargo xtask operator-cockpit` joins existing repo-local report artifacts into
-one next-action cockpit:
-
-```text
-target/ripr/reports/operator-cockpit.json
-target/ripr/reports/operator-cockpit.md
-```
-
-The command reads current artifacts under `target/ripr/reports/`; it does not
-rerun analysis, generate tests, mutate source files, or change static
-classifications. Missing inputs are reported with the command that should
-generate them. `cargo xtask operator-cockpit-report` remains an alias for
-existing repo automation.
-
-JSON shape:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "status": "warn",
-  "inputs": [
-    {
-      "name": "repo exposure",
-      "path": "target/ripr/reports/repo-exposure.json",
-      "state": "present",
-      "status": "present",
-      "command": "cargo xtask repo-exposure-report",
-      "required": true,
-      "summary": "2 seams; 1 weakly_gripped, 0 ungripped, 0 reachable_unrevealed."
-    },
-    {
-      "name": "LSP cockpit",
-      "path": "target/ripr/reports/lsp-cockpit.json",
-      "state": "present",
-      "status": "pass",
-      "command": "cargo xtask lsp-cockpit-report",
-      "required": true,
-      "summary": "1 fixture reports; 0 uncovered contributed commands."
-    },
-    {
-      "name": "before snapshot",
-      "path": "target/ripr/pilot/repo-exposure.json",
-      "state": "present",
-      "status": "present",
-      "command": "ripr pilot --out target/ripr/pilot",
-      "required": true,
-      "summary": "2 seams; 1 weakly_gripped, 0 ungripped, 0 reachable_unrevealed."
-    },
-    {
-      "name": "after snapshot",
-      "path": "target/ripr/pilot/after.repo-exposure.json",
-      "state": "present",
-      "status": "present",
-      "command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json",
-      "required": true,
-      "summary": "2 seams; 0 weakly_gripped, 0 ungripped, 0 reachable_unrevealed."
-    },
-    {
-      "name": "agent verify",
-      "path": "target/ripr/agent/agent-verify.json",
-      "state": "present",
-      "status": "advisory",
-      "command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > target/ripr/agent/agent-verify.json",
-      "required": true,
-      "summary": "1 improved, 0 changed, 0 regressed, 1 unchanged seams."
-    },
-    {
-      "name": "agent receipt",
-      "path": "target/ripr/agent/agent-receipt.json",
-      "state": "present",
-      "status": "advisory",
-      "command": "ripr agent receipt --root . --verify-json target/ripr/agent/agent-verify.json --seam-id <seam-id> --json --out target/ripr/agent/agent-receipt.json",
-      "required": true,
-      "summary": "Receipt for seam 67fc764ba37d77bd: improved; before weakly_gripped, after strongly_gripped. No remaining static gap is named by this receipt."
-    },
-    {
-      "name": "SARIF policy",
-      "path": "target/ripr/reports/sarif-policy.json",
-      "state": "missing",
-      "status": "missing",
-      "command": "cargo xtask sarif-policy --current target/ripr/workflow/current.repo-sarif.json",
-      "required": true,
-      "summary": "Report has not been generated yet."
-    },
-    {
-      "name": "badge status",
-      "path": "target/ripr/reports/repo-ripr-badge.json",
-      "state": "present",
-      "status": "present",
-      "command": "cargo xtask repo-badge-artifacts",
-      "required": true,
-      "summary": "Badge headline status is available."
-    },
-    {
-      "name": "targeted-test outcome",
-      "path": "target/ripr/reports/targeted-test-outcome.json",
-      "state": "missing",
-      "status": "missing",
-      "command": "ripr outcome --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --format json --out target/ripr/reports/targeted-test-outcome.json",
-      "required": true,
-      "summary": "Report has not been generated yet."
-    },
-    {
-      "name": "actionable gap outcomes",
-      "path": "target/ripr/reports/actionable-gap-outcomes.json",
-      "state": "missing",
-      "status": "missing",
-      "command": "cargo xtask actionable-gap-outcomes",
-      "required": true,
-      "summary": "Actionable packet outcome join has not been generated yet."
-    },
-    {
-      "name": "mutation calibration",
-      "path": "target/ripr/reports/mutation-calibration.json",
-      "state": "optional_missing",
-      "status": "optional",
-      "command": "cargo xtask mutation-calibration . --mutants-json target/mutants/outcomes.json --repo-exposure-json target/ripr/reports/repo-exposure.json",
-      "required": false,
-      "summary": "Optional calibration report has not been generated."
-    }
-  ],
-  "top_weak_seams": [
-    {
-      "seam_id": "67fc764ba37d77bd",
-      "seam_kind": "predicate_boundary",
-      "file": "src/lib.rs",
-      "line": 42,
-      "owner": "src/lib.rs::discounted_total",
-      "expression": "amount >= discount_threshold",
-      "grip_class": "weakly_gripped",
-      "why_it_matters": "observed values do not include the equality-boundary case for this predicate",
-      "suggested_next_targeted_test": "Add a focused predicate_boundary test for `src/lib.rs::discounted_total` that exercises `discount_threshold (equality boundary)` and asserts the observable result.",
-      "best_related_test": {
-        "name": "below_threshold_has_no_discount",
-        "file": "tests/pricing.rs",
-        "line": 12,
-        "oracle_strength": "strong"
-      }
-    }
-  ],
-  "surface_alignment": [
-    {
-      "surface": "LSP cockpit",
-      "state": "present",
-      "status": "pass",
-      "agreement": "editor_contract_green",
-      "signal": "1 LSP fixture reports; 0 uncovered contributed VS Code commands.",
-      "command": "cargo xtask lsp-cockpit-report"
-    },
-    {
-      "surface": "agent verify",
-      "state": "present",
-      "status": "advisory",
-      "agreement": "agent_verify_counts_available",
-      "signal": "1 improved, 0 changed, 0 regressed, 1 unchanged seams.",
-      "command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > target/ripr/agent/agent-verify.json"
-    },
-    {
-      "surface": "agent receipt",
-      "state": "present",
-      "status": "advisory",
-      "agreement": "agent_receipt_available",
-      "signal": "Receipt for seam 67fc764ba37d77bd: improved; before weakly_gripped, after strongly_gripped. No remaining static gap is named by this receipt.",
-      "command": "ripr agent receipt --root . --verify-json target/ripr/agent/agent-verify.json --seam-id <seam-id> --json --out target/ripr/agent/agent-receipt.json"
-    }
-  ],
-  "next_commands": [
-    {
-      "command": "ripr pilot --out target/ripr/pilot",
-      "reason": "Open the top actionable seam packet and write one focused targeted test."
-    }
-  ]
-}
-```
-
-Field contract:
-
-- `schema_version` - currently `"0.1"`.
-- top-level `status` - `"pass"` when all required inputs are present and no top
-  weak seams require operator attention; `"warn"` when required inputs are
-  missing, stale/unreadable, LSP cockpit status needs review, or actionable
-  weak seams are visible.
-- `inputs[]` - report inventory for repo exposure, LSP cockpit, before
-  snapshot, after snapshot, agent verify, agent receipt, SARIF policy, badge
-  status, targeted-test outcome, and optional mutation calibration.
-  `state` is `present`, `missing`, `optional_missing`, `unreadable`, or
-  `invalid_json`.
-- `inputs[].required` - `true` for reports expected in the normal operator
-  cockpit loop and `false` for optional mutation calibration.
-- `inputs[].status` - when an artifact is present, this is copied from the
-  artifact's top-level `status` field. If the source JSON has no `status`, the
-  cockpit uses `"present"`. Missing required inputs use `"missing"`; missing
-  optional inputs use `"optional"`; unreadable or invalid JSON inputs use
-  `"warn"`. Source-specific values such as `"pass"`, `"warn"`,
-  `"new_results"`, and `"advisory_missing_baseline"` are preserved.
-- `top_weak_seams[]` - up to five headline-eligible repo exposure seams with
-  operator-attention classes: `weakly_gripped`, `ungripped`,
-  `reachable_unrevealed`, `activation_unknown`, `propagation_unknown`,
-  `observation_unknown`, or `discrimination_unknown`.
-- `surface_alignment[]` - per-surface status and an `agreement` string that
-  states whether LSP, before/after snapshots, agent verify, agent receipt,
-  SARIF, badge, targeted outcome, and calibration artifacts are available and
-  aligned with the operator loop.
-- `next_commands[]` - ordered commands to generate missing reports, inspect the
-  top seam packet, capture the after snapshot, run agent verify, write an agent
-  receipt, and write the before/after targeted-test receipt.
-
-The Markdown sibling prints:
-
-- `Top Weak Seams`, with each seam's ID, class, file, line, kind, why it
-  matters, suggested next targeted test, and best related test when present.
-- `Surface Alignment`, a table with `Surface`, `State`, `Status`, `Agreement`,
-  and `Signal` columns for LSP, before/after snapshots, agent verify, agent
-  receipt, SARIF, badge, targeted outcome, and calibration surfaces.
-- `Inputs`, a table with `Report`, `Required`, `State`, and `Path` columns for
-  every input artifact.
-- `Next Commands`, an ordered list of commands to refresh missing reports,
-  inspect the top seam packet, capture the after snapshot, run agent verify,
-  write the agent receipt, and write the before/after targeted-test receipt.
-
-## Agent Seam Packets
-
-`ripr check --root . --format agent-seam-packets-json` emits per-seam
-agent work orders for every headline-eligible classified seam. The
-artifact lands at `target/ripr/reports/agent-seam-packets.json` when
-generated via `cargo xtask agent-seam-packets`.
-
-`ripr agent packet --root . --seam-id <id> --json` emits the same
-`agent-seam-packets-json` envelope filtered to one visible seam. It does not
-dump the full repo packet set. Missing seam IDs, non-actionable seam classes,
-and seams whose configured severity is `off` return an actionable error.
-
-`ripr agent packet --root . --gap-ledger <path> --gap-id <id> --json` emits
-the same packet envelope from one explicit `GapRecord`, matched by `gap_id` or
-`canonical_gap_id`. This mode does not rerun analysis and does not infer
-projectability from raw classifications. The selected record must have
-`projection_eligibility.agent_packet.eligible = true`, a `repair_route`,
-`verification_commands`, and a bounded edit surface from `repair_route.target_file`
-or a path-like `repair_route.related_test` fallback. Records that are already observed, waived,
-suppressed, preview-gating ineligible, or otherwise not agent-packet eligible
-return an actionable error instead of a repair packet.
-
-When the gap ledger was derived from check JSON, actionable Python
-`python_repair_card` findings become preview-language GapRecords with
-`policy_state = "new"`, `repairability = "repairable"`, gate and RIPR-zero
-projection ineligible, and `agent_packet` projection eligible. If the raw
-repair card does not carry `receipt.command`, the check-output ledger bridge
-synthesizes a deterministic command that compares the supplied before check
-JSON with `target/ripr/reports/after-check.json` and writes a gap-scoped receipt
-under `target/ripr/receipts/`. This keeps Python packets delegable without
-claiming runtime proof or gate authority.
-
-`ripr swarm queue --language python --top 10` reads
-`target/ripr/reports/gap-decision-ledger.json` by default and emits a
-GapRecord-backed queue of bounded agent-packet work. The queue does not rerun
-analysis and only includes records that can already render through
-`ripr agent packet --gap-ledger ... --gap-id ... --json`. Static limitations,
-already-observed/no-action records, records without verify commands, and
-records without `allowed_edit_surface` are counted in `exclusion_reasons`
-instead of entering `packets[]`. `--top` is applied after the live-current
-filtering: `packets[]` contains only assignable candidates â€”
-`queue_state = "queued"` with `staleness_status = "current"` â€” selected in
-upstream ledger order, so a stale or `not_evaluated` record never consumes a
-bounded packet slot. Non-assignable candidates stay visible in a bounded,
-command-free `blocked_review[]` projection that carries identity, typed
-queue/currentness state, reason, conflict group, and `refresh_commands` only.
-The summary keeps the honest denominators for every truncation:
-`queue_total` counts validated candidates, `assignable_total` counts the
-live-current assignable frontier, `returned` counts rendered packets,
-`unreturned_assignable_total` counts assignable candidates `--top` left
-unrendered, and `stale_total` / `not_evaluated_total` count blocked
-candidates, with `blocked_review_total` and `blocked_review_returned`
-reporting the full and rendered review projections.
-
-The queue envelope is:
-
-```json
-{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "report": "swarm-queue",
-  "scope": "repo",
-  "source": "gap_decision_ledger",
-  "status": "advisory",
-  "inputs": {
-    "root": ".",
-    "gap_ledger": "target/ripr/reports/gap-decision-ledger.json",
-    "language": "python",
-    "top": 10
-  },
-  "summary": {
-    "records_total": 3,
-    "language_records_total": 3,
-    "queue_total": 2,
-    "returned": 2,
-    "stale_total": 0,
-    "excluded_records_total": 1,
-    "conflict_groups_total": 1,
-    "current_total": 2,
-    "not_evaluated_total": 0,
-    "assignable_total": 2,
-    "returned_assignable_total": 2,
-    "unreturned_assignable_total": 0,
-    "blocked_total": 0,
-    "blocked_review_total": 0,
-    "blocked_review_returned": 0
-  },
-  "conflict_groups": [
-    {
-      "conflict_group": "file:tests/test_pricing.py",
-      "size": 2,
-      "gap_ids": ["gap:python:pricing-boundary", "gap:python:pricing-return"]
-    }
-  ],
-  "exclusion_reasons": [
-    {
-      "reason": "is not agent-packet eligible: already_observed",
-      "count": 1
-    }
-  ],
-  "packets": [
-    {
-      "priority": 1,
-      "queue_state": "queued",
-      "staleness_status": "current",
-      "staleness_reason": "producer-validated repo-exposure source matches the selected canonical root, exact clean HEAD, snapshot identity, content commitment, and persisted GapRecords",
-      "gap_id": "gap:python:pricing-boundary",
-      "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
-      "language": "python",
-      "language_status": "preview",
-      "repair_kind": "StrengthenExistingTest",
-      "task": "strengthen_targeted_test",
-      "changed_owner": "calculate_discount",
-      "missing_discriminator": "amount == threshold",
-      "discriminator_guidance": {
-        "state": "present",
-        "text": "amount == threshold",
-        "basis": "activation_evidence_fact",
-        "reason": null,
-        "recovery": null,
-        "static_limit_kind": null
-      },
-      "suggested_test_file": "tests/test_pricing.py",
-      "suggested_test_name": "test_calculate_discount_smoke",
-      "verify_command": "pytest tests/test_pricing.py::test_calculate_discount_smoke",
-      "conflict_group": "file:tests/test_pricing.py",
-      "conflict_group_size": 2,
-      "allowed_edit_surface": ["tests/test_pricing.py"],
-      "allowed_files": ["tests/test_pricing.py"],
-      "forbidden_files": ["src/pricing.py"],
-      "assignment": {
-        "eligible": true,
-        "reason": "producer-validated live-current packet"
-      },
-      "packet_command_args": [
-        "ripr",
-        "agent",
-        "packet",
-        "--root",
-        ".",
-        "--gap-ledger",
-        "target/ripr/reports/gap-decision-ledger.json",
-        "--gap-id",
-        "gap:python:pricing-boundary",
-        "--json"
-      ]
-    }
-  ],
-  "blocked_review": [
-    {
-      "source_index": 2,
-      "gap_id": "gap:python:pricing-stale",
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éíÛ¶÷Ôèµ©hºÚn¶X§zÍHÈÝ]]ØÚ[XB‚˜š\˜[Z]ÈÝX›H”ÓÓˆ›ÜˆÛÛËÒHÞ\Ý[\ËY]Üˆ[YÜ˜][ÛœË[™ÛÙ[™Â˜YÙ[Ë‚‚ˆÈÈÝ]]Ý™X[\ÈžHÛÛ[X[™˜[Z[B‚•HÓH\ÈÛÈ[[[Û˜[Ý]]ÛÛ™[[ÛœÎ‚‚‹HHÚXÚËY˜[Z[HÛÛ[X[™È
+ÚXÚØY™˜^Z[˜[™ÛÛ^
+HÜš]BˆZ\ˆš[X\žH™\Ý[ÈÝÝ]ˆÚXÚØY™˜[™ÛÛ^Ø[ˆ[Z]ˆXXÚ[™K\™XYX›H”ÓÓŽÈ^Z[˜[Z]È]È[X[ˆ^[˜][Û‹ˆØ\›š[™ÜÈ[™ˆXYÛ›ÜÝXÜÈÛÈÈÝ\œ‹ÛÈØÜš\ÈØ[ˆØ\\™HÝÝ]Ú]Ý]š[\š[™ÂˆÝ]\È^‚‹HHØ]KY˜[Z[HÛÛ[X[™ÈÜš]H™]šY]ÙY\Y˜XÝÈÈH]ÈÚÝÛˆžHZ\‚ˆ[^[™š[[X[ˆÜ›ÝH‹‹˜Ý]\È[™\ÈÈÝÝ]ˆØ]H]˜[X]Xˆ˜\Ù[[™HY™˜[™™\›ÈÝ]\ØÝ\ÜZ\ˆØÝ[Y[Y”ÓÓ‹ÓX\šÙÝÛ‚ˆÝ]]]ÎÈ˜\Ù[[™HÜ™X]X[™˜\Ù[[™H\]XÝ\ÜK[Ý]›ÜˆBˆ”ÓÓˆYÙ\‹Ú[H˜\Ù[[™HY™˜\ÈH˜\Ù[[™HÝX˜ÛÛ[X[™][ÛÂˆÝ\ÜÈK[Ý][Yˆ˜\Ù[[™HÜ™X]HKYžK\[˜\ÈH^XÚ]^Ù\[ÛŽ‚ˆ]š[ÈHØ[™Y]H”ÓÓˆÈÝÝ]Ú]Ý]Üš][™ÈHš[K‚‚•\ÈÜ]\È[X™\˜]NˆÚXÚËY˜[Z[HÝ]]\ÈH\™XÝ[˜[\Ú\È™\Ý[Ú[HØ]KY˜[Z[HÝ]]\ÈH™]šY]ÙYš[KX˜XÚÙYÛXÞKÜ™\Ü\Y˜XÝ‚•HØ]H]˜[X]ÜˆØ[ˆÝ[™]\›ˆH›Û‹^™\›ÈÝ]\ÈY\ˆÜš][™È]Â˜\Y˜XÝÈÚ[ˆHXÚ\Ú[Ûˆ\È›ØÚÙYÜˆÛÛ™šY×Ù\œ›Ü˜ÈØ[\œÈÚÝ[š[œÜXÝ›ÝH^]Ý]\È[™HÜš][ˆ”ÓÓ‹‚‚•Hš\ˆÚXÚÈKY›Ü›X]œÛÛ˜ØÚ[XH™\œÚ[Ûˆ\Î‚‚˜^ŒŒ‚˜‚˜ØÚ[XWÝ™\œÚ[Û˜\ÈH\‹XÛÛ˜XÝ˜[Y\ÜXÙK›ÝHÚ[™ÛH›ÙXÝ]ÚYH[X™\‚ŠÌŒÍJNˆXXÚÝ]]˜[Z[H™\œÚ[ÛœÈ[™\[™[KˆHÛÛ[X[™]Ë]™\œÚ[Û‚›X\\Î‚‚ŸÝ]]šY[Ý\œ™[˜[YHŸKKHKKHKKHŸš\ˆÚXÚÈKY›Ü›X]œÛÛ˜ØÚ[XWÝ™\œÚ[Û˜Œ˜Ÿš\ˆÚXÚÈKY›Ü›X]Ø\šY˜™\œÚ[Û˜‹ŒKŒ
+Ý[™\™ÐT’Qˆ[™[ÜJHŸš\ˆØ]H]˜[X]XØÚ[XWÝ™\œÚ[Û˜ŒXŸš\ˆØÝÜˆKZœÛÛ˜ØÚ[XWÝ™\œÚ[Û˜Œ˜Ÿš\ˆYÙ[XÚÙ]ØÚ[XWÝ™\œÚ[Û˜Ÿš\ˆYÙ[™XÙZ\ØÚ[XWÝ™\œÚ[Û˜XŸš\ˆYÙ[™\šYžXØÚ[XWÝ™\œÚ[Û˜ŒØŸš\ˆYÙ[™\Z\ˆK\\ÙHY\˜ÝXØÙ\ÜÈÝÝ]ØÚ[XWÝ™\œÚ[Û˜ŒXŸš\ˆYÙ[Ý]\ØØÚ[XWÝ™\œÚ[Û˜ŒXŸš\ˆYÙ[™]šY]Ë\Ý[[X\žXØÚ[XWÝ™\œÚ[Û˜ŒXŸš\ˆ™XÙZ\Üš]KØÚXÚØØÚ[XWÝ™\œÚ[Û˜ŒXŸ˜YÙH”ÓÓˆØÚ[XWÝ™\œÚ[Û˜ŽŸš\ˆØXÚHÝ]\ÈKZœÛÛ˜ØÚ[XWÝ™\œÚ[Û˜ŒXŸš\ˆXÜÝ]\ÈÛÛ[™™\ÛÝ\˜ÙHØÚ[XWÝ™\œÚ[Û˜š\‹[XÜ]ÛÜšÜÜXÙK\Ý]\Ë]ŒX
+ÙYHÓPÔÛÜšÜÜXÙHÝ]\ÈÙ\™\—J[\›ÜÛXÜ›Y
+JHŸš\ˆÝØ\›H]Y]YHKZœÛÛ˜ØÚ[XWÝ™\œÚ[Û˜Œ˜‚[\[\È™[ÝÈ\H\ˆÛÛ˜XÝˆHœ™XZÚ[™ÈÚ[™ÙHÈÛ™H˜[Z[H[\Â]˜[Z[IÜÈ™\œÚ[ÛˆÛ›K‚‚˜š\ˆØÝÜˆKZœÛÛ˜Ü[]™[Ý]\Ø[™[[YWÜ›Ø™\Ö×KœÝ]\Ø\™B˜\ÜØÜˆ˜Z[ˆXXÚÚXÚÜÖ×KœÝ]\Ø\È\ÜØ˜Z[ÜˆÚÚ\YÂ˜ÚÚ\Y
+Y]]™H[ˆØÚ[XHŒ˜
+HX\šÜÈHÚXÚÈ]Ù\È›Ý\HÈBœ›ÛÝÝXÚ\ÈHØ\™Û×ÝÛ[ÛÛØØ\™ÛØ[™ÛÛÜ\ÝØÚXÚÜÈÛˆBœ›ÛÝÚ\™H\Ý\È›Ý[ˆØÛÜKˆHÚÚ\YÚXÚÈ™]™\ˆ˜Z[ÈH™\Ü[™š]È]šY[˜ÙXÝ]\ÈÚH]Ø\ÈÚÚ\YˆÙYHÑ^]ÛÙ\×JVUÐÓÑTË›Y
+K‚‚ˆÈÈ”ÓÓˆØš™XÝÙ^HÜ™\š[™Â‚’”ÓÓˆØš™XÝÙ^HÜ™\ˆ\È›Ý\ÙˆHÙ[X[XÈÛÛ˜XÝ›ÜˆÜ™[˜\žBœØÚ[XKX™X\š[™Èš\˜Ý]]ˆH^[\\È™[ÝÈ\ÙHHÝX›K™XYX›HÜ™\‹˜]ÛÛœÝ[Y\œÈ]\Ý\œÙH”ÓÓˆØš™XÝÈžHÙ^H˜]\ˆ[ˆX]Ú˜]ÈÝš[™ÜËœ™Yš^\ËÜˆž]HÙ™œÙ]Ëˆ\ÈÙY\ÈXÛ\˜][Û‹[Ü™\ˆ[™X\X˜XÚÙYœ™[™\™\œÈ[\›Ü\˜X›K‚‚•\ÈÝZY[˜ÙHÙ\È›Ý™[^ž]KXØ[›ÛšXØ[\Y˜XÝÛÛ˜XÝËˆ[œ]ÈÂ˜š\ˆYÙ[™\šYžX[™\Y˜XÝÈØ\œžZ[™ÈHÛÛ[ÜÚLM˜ÛÛ[Z]Y[\™B˜[Y]Y\È^XÝØ[›ÛšXØ[ž]\ÎÈÛÛœÝ[Y\œÈ]\Ý™\Ù\™HÜÙHž]\È˜]\‚[ˆ\œÙH[™™K\™[™\ˆ[H™Y›Ü™H™\šYšXØ][Û‹‚‚’[™]šYX[™[™\™\œÈX^H[Z]Øš™XÝÙ^\È[ˆY™™\™[]\›Z[š\ÝXÈÜ™\œËš[˜ÛY[™ÈXÛ\˜][ÛˆÜ™\ˆÜˆX\Ü™\‹ˆH^XÝÜ™\ˆ\È[ˆ[\[Y[][Û‚™]Z[›ÝHØÚ[XH\Ý[˜Ý[Û‹[™\ÈØÝ[Y[[X™\˜][HÙ\È›ÝœÜXÚYžHÚXÚÜ™\ˆH™[™\™\ˆ]\ÝÚÛÜÙKˆH™\ÜÚ]ÜžHX^H™]Z[‚˜ž]K[ÜšY[YÛÛ[ˆÛ˜\ÚÝÈ\È™[™\™\ˆ™YÜ™\ÜÚ[Ûˆ\ÝË]ÜÙBœÛ˜\ÚÝÈÈ›Ý]]Üš^™HÝÛœÝ™X[HÛÛœÝ[Y\œÈÈ\[™ÛˆZ\ˆÙ^HÜ™\‹‚Ú[™Ú[™ÈH™[™\™\‰ÜÈÜ™\š[™ÈÛÝ[™HHÙ\\˜]HÝ]]ZYÜ˜][Ûˆ[™\È›Ýš[\YYžH[žHØÚ[XH™\œÚ[Û‹‚‚”ØÚ[XHÚ[™Ù\È]™[[Ý™HšY[Ë™[˜[YHšY[ËÜˆÚ[™ÙHšY[YX[š[™ÜÂœÚÝ[[\ØÚ[XWÝ™\œÚ[Û˜‚‚”™\ÜÚ]ÜžHÛÛ™šYÈ[ˆš\‹Û[Ù\È›ÝYH™]ÈšY[ÈHÚXÚØœØÚ[XKˆ]Ø[ˆÚ[™ÙHH™[™\™Y[ÙX[™ÛÛ™šYÝ\™YÙ]™\š]X˜[Y\Ë˜™XØ]\ÙHÜÙHšY[È[™XYH\ØÜšX™HHY™™XÝ]™H[˜[\Ú\È[ÙH[™™\Ü[™ÂœÛXÞH›ÜˆHÝ\œ™[[‹ˆÙYHÐÛÛ™šYÝ\˜][Û—JÓÓ‘’QÕTUSÓ‹›Y
+K‚‚”ÐT’QˆÝ]]\ÈÛÝ™\›™YžB–Ô’T‹TÔPËLJÜXÜËÔ’T‹TÔPËL\Ø\šY‹XÚK\ÛXÞK›Y
+KˆÐT’Qˆ\Ù\ÈBœÝ[™\™ÐT’Qˆ™\œÚ[ÛŽˆŒ‹ŒKŒ˜[™[ÜH˜]\ˆ[ˆØÚ[XWÝ™\œÚ[ÛŽˆŒŒH˜‚Y[™ÈÐT’QˆÜˆÚ]Xˆ[››Ý][Ûˆ]Z[]\Ý›Ý™[[Ý™HÜˆ™[˜[YH^\Ý[™Â’”ÓÓ‹˜YÙKÔÜˆÛÛ^šY[Ëˆ™]šY]ËXØ\™Ý\™˜XÙWÜØÛÜX˜[Y\È™XÛÜ™ÚXÚX›XÈYš\ÛÜžHÝ\™˜XÙ\È\™HÝ\œ™[HÚ\™Y‚‚˜š\ˆÚXÚÈKY›Ü›X]Ú]X˜[Z]ÈÚ]XˆXÝ[ÛœÈÛÜšÙ›ÝËXÛÛ[X[™^˜]\‚[ˆ”ÓÓ‹ˆ›Üˆ]Ûˆ™]šY]Èš[™[™ÜË]Y\ÜØYÙHX^H\[™Z]\ˆ[‚™[YÚX›H™\Z\‹XØ\™Ý[[X\žHÜˆH›ËXXÝ[Û‹ÜÝ]XË[[Z]Ý[[X\žKˆ›Üˆ\›œ™]šY]Èš[™[™ÜÈÚ]ÝšXÝ˜XÝ\XÚÙ]]šY[˜ÙK]X^H\[™HÛÛ\XÝ˜\›Ü™]šY]×ØØ\™ŒXYš\ÛÜžHÝ[[X\žHÚ]Z\ÜÚ[™È\ØÜš[Z[˜]Ü‹ÝYÙÙ\ÝY˜\ÜÙ\[Û‹ÝYÙÙ\ÝYØØ][Û‹[™™\šYžHÛÛ[X[™ˆÚ]Xˆ[››Ý][Ûˆ^Ù\Â››Ý^ÜÙH™XÙZ\ÛÛ[X[™ËY]X›Ý[™\žH]]Üš]KÜˆYÙ[XÚÙ]Ë[™œ™[XZ[œÈYš\ÛÜžH™]šY]ÈÛÛ^˜]\ˆ[ˆ™\šYžK™XÙZ\Ø]K˜YÙKÜ‚”’Tˆ™\›È]]Üš]K‚‚˜š\ˆÚXÚÈKY›Ü›X][X[˜\ÈH›Ý[™YY˜][\›Z[˜[Ý\™˜XÙKˆ]š[ÂšXY\ˆ[™Ý[[X\žHÛÝ[Ë[ˆÛ™HÝ\\™N˜šXYÙH›ØÚÈÚ]HÛÜÙYœÝ]H
+ÜÙØ\›×ØXÝ[Û˜X›WÙØ\™]šY]×Û[Z]YÝ]X×Û[Z]YÜ‚˜Z\ÜÚ[™×ÜØÛÜX
+KÛ™HÙ[XÝYš[™[™ÈYÙ\ÝÚ[ˆ]˜Z[X›K[ˆÛZ]YYš[™[™Â˜ÛÝ[[™Ú[\œÈÈKY›Ü›X][X[‹Y[[™KY›Ü›X]œÛÛ˜‚˜š\ˆÚXÚÈKY›Ü›X][X[‹Y[
+[X\È^Y[
+H™\Ù\™\ÈH^]\Ý]™Bœ\‹Yš[™[™È[X[ˆ™\Üˆ\ÙH[X[ˆ^›Ü›X]ÈÈ›ÝÚ[™ÙB˜ØÚ[XWÝ™\œÚ[Û˜ÈHXXÚ[™K\™XYX›HÛÛ˜XÝ™[XZ[œÈKY›Ü›X]œÛÛ˜‚”™\Ë\ØÛÜY›Ü›X]ÈÝXÚ\È™\ËY^ÜÝ\™KZœÛÛ˜™\ËY^ÜÝ\™K[Y˜™\Ë\Ø\šY˜[™YÙ[\ÙX[K\XÚÙ]ËZœÛÛ˜Ø\›ˆÛˆÝ\œˆÚ[ˆZ\™YÚ]˜KX˜\ÙXÜˆKYY™˜™XØ]\ÙHÜÙH›YÜÈÈ›Ý›Ý[™[\™\È›Ü›X]Ë‚‚ˆÈÈÚXÚÈÝ]]‚˜š\ˆÚXÚÈKZœÛÛ˜[Z]Î‚‚•H›Ü›X]]™HÜ[]™[ÛÛ˜XÝ\Â–ØØÚ[X\ËÜš\‹ØÚXÚËœØÚ[XKšœÛÛ˜J‹‹ÜØÚ[X\ËÜš\‹ØÚXÚËœØÚ[XKšœÛÛŠKˆ][œÂ˜ØÚ[XWÝ™\œÚ[Û˜
+Œ˜
+KÛÛ[ÙX›ÛÝÝ[[X\žX[™š[™[™ÜØ‚•HÜ[Û˜[[˜[\Ú\×ÛÝ]ÛÛYX›ØÚÈ™\Ù\™\È›ÙXÙ\‹[ÝÛ™YÛÛ\][™\ÜÎÂHÜ[Û˜[š[™[™×Ø[YÛ›Y[›ØÚÈ\ÈH\YØ[›ÛšXØ[ÙX[H›Ú™XÝ[Û‹‚•[šÛ›ÝÛˆÜ[]™[šY[È\™H™Z™XÝYžHH™\šYšXØ][ÛˆÛÛ˜XÝˆ™\ÝY™š[™[™È[™ÙX[H]Z[ÈX^HÜ›ÝÈY]]™[HÚ][ˆH[›™Y™\œÚ[Û‹‚‚•Ü[]™[˜\ÙX™XÛÜ™ÈH˜\ÙH™YˆHY™ˆØY\ˆXÝX[H\ÙY
+ÌÎM
+N‚H^XÚ]KX˜\ÙXÚ[ˆÛ™HØ\ÈÚ]™[‹H™\ÛÛ™YY˜][˜\ÙBŠ’T‹TÔPËL
+H›ÜˆØÛÜK[\ÜÈ[œË[™XœÙ[Ú[ˆ›È˜\ÙHØ\È[›Û™YŠY™‹Yš[KÜÝ[ˆ[œ]È[™™\Ë\ØÛÜH[œÊKˆ˜\ÙK[X]Ú[™ÈÛÛœÝ[Y\œÈ
+›Ü‚™^[\H™]šY]ËXÛÛ[Y[ÈKXÚXÚË[Ý]]ÚXÚ™\]Z\™\ÈH[™[ÜH˜\ÙXÈ\]X[]ÈÝÛˆKX˜\ÙX
+HX^H™[HÛˆH™\Ù[˜\ÙXÈ[ˆXœÙ[˜\ÙX›YX[œÈH[ˆØ[››Ý™H]šX]YÈH˜\ÙKˆH\Y˜[˜[\Ú\×ÛÝ]ÛÛYK›Ý]ÛÛYKšY[]K˜˜\ÙWÜ™]š\Ú[Û˜˜[Y\ÈHØ[YH˜[YNˆBœØÛÜK[\ÜÈ[ˆ™XÛÜ™ÈH™\ÛÛ™YY˜][\™HÛËÛÈH[™[ÜH[™BšY[]HYÜ™YH[™H[˜[\Ú\Ë[Ý]ÛÛYH˜[Y]ÜˆXØÙ\ÈH\Y˜XÝ‚‚˜œÛÛ‚žÂˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒŒˆ‹ˆÛÛŽˆœš\ˆ‹ˆ›[ÙHŽˆ™˜Y‹ˆœ›ÛÝŽˆ‹ˆ‹ˆ˜˜\ÙHŽˆ›ÜšYÚ[‹ÛXZ[ˆ‹ˆœÝ[[X\žHŽˆÂˆ˜Ú[™ÙYÜ\ÝÙš[\ÈŽˆKˆœ›Ø™\ÈŽˆKˆ™š[™[™ÜÈŽˆKˆ™^ÜÙYŽˆˆÙXZÛWÙ^ÜÙYŽˆKˆœ™XXÚX›WÝ[œ™]™X[YŽˆˆ››×ÜÝ]X×Ü]Žˆˆš[™™XÝ[Û—Ý[šÛ›ÝÛˆŽˆˆœ›ÜYØ][Û—Ý[šÛ›ÝÛˆŽˆˆœÝ]X×Ý[šÛ›ÝÛˆŽˆˆKˆ˜[˜[\Ú\×ÛÝ]ÛÛYHŽˆÂˆ˜[˜[\Ú\×ØÛÛ\]HŽˆYKˆ›Ý]ÛÛYHŽˆÂˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒŒH‹ˆšÚ[™Žˆ˜ÛÛ\]WÝÚ]Ùš[™[™ÜÈ‹ˆšY[]HŽˆÂˆ˜˜\ÙWÜ™]š\Ú[ÛˆŽˆ›ÜšYÚ[‹ÛXZ[ˆ‹ˆš[œ]ÚY[]HŽˆœÚLMŽY™‹Xž]\Ïˆ‚ˆKˆ˜ÛÝ[ÈŽˆÂˆ˜Ú[™ÙYÙš[WØÛÝ[ŽˆKˆ˜Ú[™ÙYÛ[™WØÛÝ[Žˆ‹ˆ˜Ø[™Y]WÛ[™WØÛÝ[Žˆ‹ˆœ›Ø™WØÛÝ[ŽˆKˆ™š[™[™×ØÛÝ[ŽˆBˆKˆ›[Z]][ÛœÈŽˆ×Kˆ˜ÛZ[WØ›Ý[™\žHŽˆ”Ý]XÈ[˜[\Ú\ÈÝ]ÛÛYHÛ›NÈ›ÈÛÜœ™XÝ™\ÜË\ÝXY\]XXÞK[[YKY^XÝ][Û‹ÜˆY\™ÙK\™XY[™\ÜÈÛZ[Kˆ‚ˆBˆKˆ™š[™[™ÜÈŽˆ×BŸB˜‚˜[˜[\Ú\×ÛÝ]ÛÛYX\È[Z]Y›ÜˆY™ˆ[™ÛÜšÝ™YH[˜[\Ú\Ëˆ]Â˜[˜[\Ú\×ØÛÛ\]XY[X™\ˆ\È\š]™Yœ›ÛHÝ]ÛÛYKšÚ[™ÈÛÛœÝ[Y\œÈ]\Ý\ÙBH\YÝ]ÛÛYH[™]È[Z]][ÛœÖ×X˜]\ˆ[ˆ[™™\ˆÛÛ\][™\ÜÈœ›ÛB˜š[™[™ÜØÜˆ›Ø™\Øˆ›Üˆ[œÝ\ÜYÚ[œ][™˜\X[ÝÚ]Û[Z]][ÛœØ™\›Èš[™[™ÜÈ\È^XÚ]H›ÝHÛX[ˆ™\Ý[‚‚•Ú[ˆÝ\ÜY˜]Èš[™[™ÜÈ[YÛˆÈHØ[›ÛšXØ[]šY[˜ÙH][Kš\ˆÚXÚÂ‹KZœÛÛ˜[ÛÈ[Z]È[ˆY]]™Hš[™[™×Ø[YÛ›Y[ÙXÝ[Û‹ˆHÙXÝ[Ûˆ\Â›ÛZ]YÚ[ˆ›ÈÝ\ÜY[YÛ›Y[][H\È™\Ù[ÛÈ^\Ý[™ÈÛÛœÝ[Y\œÈØ[‚˜ÛÛ[YHÈ™XYš[™[™ÜØ\™XÝKˆ˜]Èš[™[™ÜÈ™[XZ[ˆ[˜Ú[™ÙY[™\™Bœ™\X]YÛ›H\ÈÝ\Ü[™È]šY[˜ÙH›ÜˆHØ[›ÛšXØ[][K‚‚•Ú[ˆ\ÝY™‹\ØÛÜY[˜[\Ú\ÈÝÜÈ]HÛÛ™šYÝ\™YYÙ]™Y›Ü™H›Ø™B™^[œÚ[Û‹š\ˆÚXÚÈKZœÛÛ˜Ý[^]È›Û‹^™\›Ë]]Üš]\ÈH[Z]Y˜ÚXÚÈ\Y˜XÝÈÝÝ]™Y›Ü™H™\Ü[™ÈH\œ›ÜˆÛˆÝ\œ‹ˆ\È\Y˜XÝœ™\Ù\™\ÈH›Ü›X[ÚXÚÈ[™[ÜH
+ØÚ[XWÝ™\œÚ[Û˜ÛÛ[ÙX›ÛÝ˜Ý[[X\žX[™š[™[™ÜØ
+H[™YÎ‚‚‹H[˜[\Ú\×ÜØÛÜKœ[—ÜÝ]\Îˆ™Y™—ÜØÛÜWÛÝ™\œÚ^™Y˜‹H[˜[\Ú\×ÜØÛÜK˜˜\Ú\Îˆœ\ÝÙY™—ÜØÛÜWØYÙ]˜‹H[˜[\Ú\×ÜØÛÜK™ÝÛœÝ™X[WØÛÛœÝ[XX›Nˆ˜[ÙX‹H[˜[\Ú\×ÜØÛÜK›[Z]][ÛŽˆ™Y™—ÜØÛÜWÛÝ™\œÚ^™Y˜‹H[˜[\Ú\×ÜØÛÜKœ™\Z\—Ü›Ý]Nˆ˜[˜[\Ú\ËÙY™‹\ØÛÜKXYÙ]˜‹H[—Û[Z]][ÛœÖ×XÚ]HØ[YHØ]YÛÜžK[ˆÝ]\Ë™\Z\ˆ›Ý]K[™BˆYÙ]XYÛ›ÜÝXÈY\ÜØYÙB‚ÛÛœÝ[Y\œÈ]\Ý›Ý™X]H[Z]YY™—ÜØÛÜWÛÝ™\œÚ^™Y\Y˜XÝ\ÈHÛX[‚›ÜˆÛÛ\]H[˜[\Ú\ËˆH™\›ÈÝ[[X\žH[™[\Hš[™[™ÜØ\œ˜^HYX[ˆ[˜[\Ú\Â™Y›Ý[ˆ˜\ˆ[›ÝYÚÈÛ\ÜÚYžH›Ø™\Ë›Ý]HY™ˆ\È›Èš[™[™ÜË‚‚˜œÛÛ‚žÂˆ™š[™[™×Ø[YÛ›Y[ŽˆÂˆœØÛÜHŽˆœÝ\ÜYØÛ\ÜÙ\È‹ˆœÝ\ÜYÙ]šY[˜ÙWØÛ\ÜÙ\ÈŽˆÈœ™\Ù[][Û—Ý^‹˜ÛÛ™šY×ÛÜ—ÜÛXÞWØÛÛœÝ[—KˆœÝ[[X\žHŽˆÂˆœ˜]×ÜÚYÛ˜[ÈŽˆ‹ˆ˜Ø[›ÛšXØ[Ú][\ÈŽˆKˆ˜[YÛ™YÜ˜]×Ùš[™[™ÜÈŽˆ‹ˆ[˜[YÛ™YÜ˜]×Ùš[™[™ÜÈŽˆˆœ˜]×Ý×ØØ[›ÛšXØ[Ü˜][ÈŽˆ‹Œˆ™\XØ]WÙÜ›Ý\×ÝÝ[ŽˆKˆ˜XÝ[Û˜X›WÙØ\ÈŽˆˆ˜[™XYWÛØœÙ\™YŽˆˆš[\›˜[Û›×ØXÝ[ÛˆŽˆˆœÝ]X×Û[Z]][ÛœÈŽˆKˆ[šÛ›ÝÛˆŽˆˆ˜Ø[Xœ˜]YÜÝ\ÜYŽˆˆ[˜Ø[Xœ˜]YŽˆKˆœ™\Z\—Ü›Ý]WØÛÝ™\˜YÙHŽˆˆ˜XÝ[Û˜X›WÚ][\×ÝÚ]Ý]Ü™\Z\—Ü›Ý]HŽˆˆ™\šYžWØÛÛ[X[™ØÛÝ™\˜YÙHŽˆˆ˜XÝ[Û˜X›WÚ][\×ÝÚ]Ý]Ý™\šYžWØÛÛ[X[™Žˆˆœ™\Ù[][Û—Ý^ÝÝ[ŽˆKˆœ™\Ù[][Û—Ý^Ý\Ù\—Ýš\ÚX›HŽˆˆœ™\Ù[][Û—Ý^ÛØœÙ\™YŽˆˆœ™\Ù[][Û—Ý^Ý[›ØœÙ\™YŽˆˆœ™\Ù[][Û—Ý^Ú[\›˜[ÛÛ›HŽˆˆœ™\Ù[][Û—Ý^Ýš\ÚXš[]WÝ[šÛ›ÝÛˆŽˆKˆœ™\Ù[][Û—Ý^ÛØœÙ\™\—Ý[šÛ›ÝÛˆŽˆKˆœ™\Ù[][Û—Ý^Ù\XØ]WÙÜ›Ý\ÈŽˆKˆœ™\Ù[][Û—Ý^ØXÝ[Û˜X›WÜÛ˜\ÚÝŽˆˆœ™\Ù[][Û—Ý^ØXÝ[Û˜X›WÛÝ]]Ü™\Z\œÈŽˆˆœ™\Ù[][Û—Ý^Û›×ØXÝ[ÛˆŽˆˆœ™\Ù[][Û—Ý^ÜÝ]X×Û[Z]][ÛœÈŽˆKˆ˜ÛÛ™šY×ÜÛXÞWØÛÛœÝ[ÝÝ[Žˆˆ˜ÛÛ™šY×ÜÛXÞWÝ\Ù\—Ýš\ÚX›HŽˆˆ˜ÛÛ™šY×ÜÛXÞWÛØœÙ\™YŽˆˆ˜ÛÛ™šY×ÜÛXÞWÝ[›ØœÙ\™YŽˆˆ˜ÛÛ™šY×ÜÛXÞWÚ[\›˜[ÛÛ›HŽˆˆ˜ÛÛ™šY×ÜÛXÞWÙ›Ý×Ý[šÛ›ÝÛˆŽˆˆ˜ÛÛ™šY×ÜÛXÞWÛØœÙ\™\—Ý[šÛ›ÝÛˆŽˆˆ˜ÛÛ™šY×ÜÛXÞWÙ\XØ]WÙÜ›Ý\ÈŽˆˆ˜ÛÛ™šY×ÜÛXÞWØXÝ[Û˜X›WÛÝ]]ÛØœÙ\™\ˆŽˆˆ˜ÛÛ™šY×ÜÛXÞWØXÝ[Û˜X›WØ™Z]š[Ü—Ù\ØÜš[Z[˜]ÜˆŽˆˆ˜ÛÛ™šY×ÜÛXÞWÛ›×ØXÝ[ÛˆŽˆˆ˜ÛÛ™šY×ÜÛXÞWÜÝ]X×Û[Z]][ÛœÈŽˆˆ˜ÛÛ™šY×ÜÛXÞWÜ™\Z\—Ü›Ý]WØÛÝ™\˜YÙHŽˆˆ˜ÛÛ™šY×ÜÛXÞWÝ™\šYžWØÛÛ[X[™ØÛÝ™\˜YÙHŽˆˆKˆš][\ÈŽˆÂˆÂˆ˜Ø[›ÛšXØ[ÙØ\ÚYŽˆœ™\Ù[][Û—Ý^ŽTWÓL×ÐRT—ÑU’PÑWÓP‘S×ÕV‹ˆ˜Ø[›ÛšXØ[Ú][WÚÚ[™Žˆ›[Z]][Ûˆ‹ˆ™]šY[˜ÙWØÛ\ÜÈŽˆœ™\Ù[][Û—Ý^‹ˆ™Ø\ÜÝ]HŽˆœÝ]X×Û[Z]][Ûˆ‹ˆ˜XÝ[Û˜Xš[]HŽˆš[œÜXÝÝš\ÚXš[]H‹ˆœ˜]×ÙÜ›Ý\ÜÚ^™HŽˆ‹ˆ™Ü›Ý\Ü™X\ÛÛˆŽˆ™XÛ\˜][Û—Ø[™Û]\˜[ÜØ[YWÝ^ØÛÛœÝ[‹ˆœš[X\žWØ[˜ÚÜˆŽˆÂˆ™š[HŽˆœÜ˜ËÙ]šXÙWÛX™[ËœœÈ‹ˆ›[™HŽˆ‹ˆšÚ[™Žˆ™^ÜÙY‹ˆœÛÝ\˜ÙWÚYŽˆœ›Ø™NœÜ˜×Ù]šXÙWÛX™[×ÜœÎŽ™XÛ‹ˆœ™X\ÛÛˆŽˆ™XÛ\˜][Û—Û[™WÙ›Ü—ÙÜ›Ý\YØÛÛœÝ[‚ˆKˆœ˜]×ÜÜ[œÈŽˆÂˆÂˆ™š[HŽˆœÜ˜ËÙ]šXÙWÛX™[ËœœÈ‹ˆœÝ\Û[™HŽˆ‹ˆ™[™Û[™HŽˆ‹ˆšÚ[™Žˆ™^ÜÙY‹ˆœÛÝ\˜ÙWÚYŽˆœ›Ø™NœÜ˜×Ù]šXÙWÛX™[×ÜœÎŽ™XÛ‚ˆKˆÂˆ™š[HŽˆœÜ˜ËÙ]šXÙWÛX™[ËœœÈ‹ˆœÝ\Û[™HŽˆËˆ™[™Û[™HŽˆËˆšÚ[™ŽˆœÝ]X×Ý[šÛ›ÝÛˆ‹ˆœÛÝ\˜ÙWÚYŽˆœ›Ø™NœÜ˜×Ù]šXÙWÛX™[×ÜœÎÎ›]\˜[‚ˆBˆKˆÚHŽˆÚ[™ÙY™\Ù[][Ûˆ^ÛÝ[›Ý™H˜XÙYÈÜˆ]Ø^Hœ›ÛHH\Ù\‹]š\ÚX›HÝ]]Ú[šËˆ‹ˆœ™XÛÛ[Y[™YÜ™\Z\ˆŽˆ•˜XÙHHÝš[™ÈÛÛœÝ[ÈH™[™\™YÝ]]]ÜˆÛÛ™š\›H]\È[\›˜[[Û›Kˆ‹ˆœ™\Z\—Ü›Ý]HŽˆ[ˆœ™[]YÝ\ÝŽˆ[ˆ™\šYžWØÛÛ[X[™Žˆ˜Ø\™ÛÈ\ÚÈ]šY[˜ÙK\]X[]K\ØÛÜ™XØ\™‹ˆœÝ]X×Û[Z]][ÛœÈŽˆÂˆÂˆ˜Ø]YÛÜžHŽˆœ™\Ù[][Û—Ý^Ýš\ÚXš[]WÝ[šÛ›ÝÛˆ‹ˆœ™\Z\—Ü›Ý]HŽˆ˜XÙWÜÝš[™×ØÛÛœÝ[Ý×ÛÝ]]ÛÜ—ÜÛ˜\ÚÝÝ\Ý‹ˆ\Ù\—ØXÝ[Û˜Xš[]HŽˆ[šÛ›ÝÛ—Ý[[Ýš\ÚXš[]WÚÛ›ÝÛˆ‚ˆBˆKˆ˜ÛÛ™šY[˜ÙHŽˆÂˆ˜˜\Ú\ÈŽˆ™š^\™WØ˜XÚÙY‹ˆ››Ý\ÈŽˆÂˆ•š\ÚXš[]K][šÛ›ÝÛˆ™\Ù[][Ûˆ^\È™[˜ÚX\šË\[›™YÈ›È\Ù\ˆ\ÝX\ÈÛZ[YYÚ]Ý][ˆÝ]]Ú[šËˆ‚ˆBˆKˆœ˜]×Ùš[™[™ÜÈŽˆÂˆÂˆ™š[HŽˆœÜ˜ËÙ]šXÙWÛX™[ËœœÈ‹ˆ›[™HŽˆ‹ˆšÚ[™Žˆ™^ÜÙY‹ˆ™^™\ÜÚ[ÛˆŽˆœXˆÛÛœÝTWÓL×ÐRT—ÑU’PÑWÓP‘S×ÕVˆ	œÝˆH‹ˆœ›Ø™WÚÚ[™Žˆ™šY[ØÛÛœÝXÝ[Ûˆ‹ˆœÛÝ\˜ÙWÚYŽˆœ›Ø™NœÜ˜×Ù]šXÙWÛX™[×ÜœÎŽ™XÛ‹ˆ™]šY[˜ÙWÜ™XÛÜ™Ü™YˆŽˆœ›Ø™NœÜ˜×Ù]šXÙWÛX™[×ÜœÎŽ™XÛ‚ˆKˆÂˆ™š[HŽˆœÜ˜ËÙ]šXÙWÛX™[ËœœÈ‹ˆ›[™HŽˆËˆšÚ[™ŽˆœÝ]X×Ý[šÛ›ÝÛˆ‹ˆ™^™\ÜÚ[ÛˆŽˆ—˜\K[LËXZ\‹XÜK[™[ÛˆHLÈXXÐ›ÛÚÈZ\ˆ\HÔKÓ‘SÓˆ[™WŽÈ‹ˆœ›Ø™WÚÚ[™ŽˆœÝ]X×Ý[šÛ›ÝÛˆ‹ˆœÛÝ\˜ÙWÚYŽˆœ›Ø™NœÜ˜×Ù]šXÙWÛX™[×ÜœÎÎ›]\˜[‹ˆ™]šY[˜ÙWÜ™XÛÜ™Ü™YˆŽˆœ›Ø™NœÜ˜×Ù]šXÙWÛX™[×ÜœÎÎ›]\˜[‚ˆBˆKˆœ™\Ù[][Û—Ý^ŽˆÂˆ˜ÛÛœÝ[Û˜[YHŽˆTWÓL×ÐRT—ÑU’PÑWÓP‘S×ÕV‹ˆ^Û]\˜[Žˆ˜\K[LËXZ\‹XÜK[™[ÛˆHLÈXXÐ›ÛÚÈZ\ˆ\HÔKÓ‘SÓˆ[™H‹ˆš\ÚXš[]HŽˆ[šÛ›ÝÛˆ‹ˆ›ØœÙ\™\ˆŽˆ[šÛ›ÝÛˆ‹ˆ˜XÝ[Û˜Xš[]HŽˆœÝ]X×Û[Z]][Û—Ýš\ÚXš[]WÝ[šÛ›ÝÛˆ‹ˆœÛÝ\˜ÙWÚÚ[™Žˆ˜ÛÛœÝÙXÛ‹ˆ˜Ø[›ÛšXØ[ÙÜ›Ý\Ü™X\ÛÛˆŽˆ™XÛ\˜][Û—Ø[™Û]\˜[ÜØ[YWÝ^ØÛÛœÝ[‹ˆœ™XÛÛ[Y[™YÛØœÙ\™\ˆŽˆ[šÛ›ÝÛˆ‹ˆœ™\Z\—ÚÚ[™Žˆš[œÜXÝÝš\ÚXš[]H‹ˆ\™Ù]Ý\ÝÝ\HŽˆ[šÛ›ÝÛˆ‹ˆœÝYÙÙ\ÝYØ\ÜÙ\[ÛˆŽˆ•˜XÙHHÛÛœÝ[ÈHÝ\ÜYÝ]]Ú[šÈ™Y›Ü™HY[™ÈÜˆ\][™È\ÝËˆ‚ˆKˆ˜ÛÛ™šY×ÜÛXÞHŽˆ[ˆBˆBˆBŸB˜‚‘šY[ÛÛ˜XÝ‚‚‹Hš[™[™×Ø[YÛ›Y[œØÛÜXHÝ\œ™[HÝ\ÜYØÛ\ÜÙ\ØÈ[™HH™\ÜÂˆÛ›H]šY[˜ÙHÛ\ÜÙ\ÈÚÜÙHÜ›Ý\[™È™Z]š[Üˆ\Èš^\™KX˜XÚÙY‚‹Hš[™[™×Ø[YÛ›Y[œÝ\ÜYÙ]šY[˜ÙWØÛ\ÜÙ\ØH]šY[˜ÙHÛ\ÜÙ\È[˜ÛYYˆ[ˆ\È›Ú™XÝ[Û‹ˆHÝ\œ™[š^\™KX˜XÚÙYÛ\ÜÙ\È\™Bˆ™\Ù[][Û—Ý^[™ÛÛ™šY×ÛÜ—ÜÛXÞWØÛÛœÝ[‚‹Hš[™[™×Ø[YÛ›Y[œÝ[[X\žKœ˜]×ÜÚYÛ˜[ØHÝ[˜]Èš[™[™ÜÈ[Z]Y[ˆBˆÚXÚÈÝ]]‚‹Hš[™[™×Ø[YÛ›Y[œÝ[[X\žK˜Ø[›ÛšXØ[Ú][\ØHÝ\ÜYØ[›ÛšXØ[]šY[˜ÙBˆ][\ÈY\ˆ[YÛ›Y[‚‹Hš[™[™×Ø[YÛ›Y[œÝ[[X\žK˜[YÛ™YÜ˜]×Ùš[™[™ÜØ[™ˆ[˜[YÛ™YÜ˜]×Ùš[™[™ÜØHÝÈX[žH˜]Èš[™[™ÜÈÙ\™H]XÚYÈÝ\ÜYˆØ[›ÛšXØ[][\È™\œÝ\ÈY\ÈÜ™[˜\žH˜]Èš[™[™ÜË‚‹Hš[™[™×Ø[YÛ›Y[œÝ[[X\žKœ˜]×Ý×ØØ[›ÛšXØ[Ü˜][ØH˜]ÈÚYÛ˜[ÛÝ[]šYYˆžHÝ\ÜYØ[›ÛšXØ[][HÛÝ[È\È\ÈXYÛ›ÜÝXÈ]šY[˜ÙK›ÝHØÛÜ™K‚‹Hš[™[™×Ø[YÛ›Y[œÝ[[X\žK™\XØ]WÙÜ›Ý\×ÝÝ[HØ[›ÛšXØ[][\ÈÚ]ˆ[Ü™H[ˆÛ™HÝ\Ü[™È˜]Èš[™[™Ë‚‹Hš[™[™×Ø[YÛ›Y[œÝ[[X\žK˜XÝ[Û˜X›WÙØ\Øˆ[™XYWÛØœÙ\™Y[\›˜[Û›×ØXÝ[Û˜Ý]X×Û[Z]][ÛœØ[™ˆ[šÛ›ÝÛ˜H[™HH]šY[˜ÙHÝ]\ËˆÛXÞHÝ]\ÈÝXÚ\È˜\Ù[[™KØZ]™\‹ˆXÚÛ›ÝÛYÙ[Y[Ý\™\ÜÚ[Û‹Üˆ™Z[›ÙXÝ[Ûˆ™[XZ[ˆÝ]ÚYH\ÈÙXÝ[Û‹‚‹Hš[™[™×Ø[YÛ›Y[œÝ[[X\žK˜Ø[Xœ˜]YÜÝ\ÜY[™[˜Ø[Xœ˜]YBˆÛÛ™šY[˜ÙKX˜\Ú\ÈÛÝ[È›ÜˆØ[›ÛšXØ[][\ËˆÝ\œ™[™\Ù[][Û‹]^][\Âˆ\™Hš^\™KX˜XÚÙYÝ]XÈ]šY[˜ÙH[›\ÜÈH]\ˆÚXÚÙY[[YHØ[Xœ˜][Û‚ˆÛ\ÜÈÝ\Y\ÈØ[Xœ˜]YÝ\Ü‚‹Hš[™[™×Ø[YÛ›Y[œÝ[[X\žKœ™\Z\—Ü›Ý]WØÛÝ™\˜YÙXHÛÝ[ÙˆXÝ[Û˜X›BˆØ[›ÛšXØ[][\È]Ø\œžHHÛÛ˜Ü™]HÜ[]™[™\Z\—Ü›Ý]XÚ]ˆ™\Z\—ÚÚ[™\™Ù]Ý\ÝÝ\X[™ÝYÙÙ\ÝYØ\ÜÙ\[Û˜‚‹Hš[™[™×Ø[YÛ›Y[œÝ[[X\žK˜XÝ[Û˜X›WÚ][\×ÝÚ]Ý]Ü™\Z\—Ü›Ý]XHÛÝ[Ù‚ˆXÝ[Û˜X›HØ[›ÛšXØ[][\È]\™HZ\ÜÚ[™ÈHÛÛ˜Ü™]HÜ[]™[™\Z\‚ˆ›Ý]KˆÝ\ÜYš^\™KX˜XÚÙYÛ\ÜÙ\ÈÚÝ[ÙY\\È]™\›ÎÈ›ËXXÝ[Û‚ˆ[™Ý]XË[[Z]][Ûˆ][\È\™H›ÝÛÝ[Y\ÈZ\ÜÚ[™È\Ù\ˆ™\Z\ˆ›Ý]\Ë‚‹Hš[™[™×Ø[YÛ›Y[œÝ[[X\žK™\šYžWØÛÛ[X[™ØÛÝ™\˜YÙXHÛÝ[ÙˆXÝ[Û˜X›BˆØ[›ÛšXØ[][\È]Ø\œžHHÛÛ˜Ü™]H™\šYžWØÛÛ[X[™‚‹Hš[™[™×Ø[YÛ›Y[œÝ[[X\žK˜XÝ[Û˜X›WÚ][\×ÝÚ]Ý]Ý™\šYžWØÛÛ[X[™HÛÝ[ˆÙˆXÝ[Û˜X›HØ[›ÛšXØ[][\ÈZ\ÜÚ[™ÈHÛÛ˜Ü™]H™\šYšXØ][Ûˆ›Ý]KˆÝ\ÜYˆš^\™KX˜XÚÙYÛ\ÜÙ\ÈÚÝ[ÙY\\È]™\›ÎÈ›ËXXÝ[Ûˆ[™ˆÝ]XË[[Z]][Ûˆ][\È\™H›ÝÛÝ[Y\ÈZ\ÜÚ[™È\Ù\ˆ™\šYšXØ][ÛˆÛÛ[X[™Ë‚‹Hš[™[™×Ø[YÛ›Y[œÝ[[X\žKœ™\Ù[][Û—Ý^Ê˜H™\Ù[][Û‹]^Û\ÜÂˆÛÝ[È›Üˆš\ÚXš[]KØœÙ\™\ˆÝ]\Ë\XØ]HÜ›Ý\[™Ë›ËXXÝ[ÛˆÝ]\ËˆÝ]XÈ[Z]][ÛœË[™Ý]][ØœÙ\™\ˆ™\Z\œË‚‹Hš[™[™×Ø[YÛ›Y[œÝ[[X\žK˜ÛÛ™šY×ÜÛXÞWÊ˜HÛÛ™šYËÜÛXÞHÛÛœÝ[Û\ÜÂˆÛÝ[È›Üˆš\ÚXš[]KØœÙ\™\ˆÜˆ\ØÜš[Z[˜]ÜˆÝ]\Ë\XØ]HÜ›Ý\[™Ëˆ›ËXXÝ[ÛˆÝ]\ËÝ]XÈ[Z]][ÛœËÝ]][ØœÙ\™\ˆ™\Z\œËˆ™Z]š[Ü‹Y\ØÜš[Z[˜]Üˆ™\Z\œË™\Z\‹\›Ý]HÛÝ™\˜YÙK[™™\šYžKXÛÛ[X[™ˆÛÝ™\˜YÙKˆÛÛ™šYËÜÛXÞH™\Z\‹\›Ý]HÛÝ™\˜YÙH\Ù\ÈHØ[YH›Ü›X[^™YˆÜ[]™[ÝXÝ\™Y™\Z\—Ü›Ý]XÛÛ˜XÝ\ÈHÝ™\˜[Ý[[X\žNÈ›ÜÙBˆ™XÛÛ[Y[™YÜ™\Z\˜ÜˆÛ\ÜË[ØØ[™\Z\ˆY]Y]H[Û™HÙ\È›ÝÛÝ[‚ˆÛÛ™šYËÜÛXÞH™\šYžKXÛÛ[X[™ÛÝ™\˜YÙH\Ù\ÈHØ[YHÛÛ˜Ü™]KXÛÛ[X[™[H\ÂˆHÝ™\˜[Ý[[X\žNÈ[\K[šÛ›ÝÛ˜Üˆ™\šYžWØÛÛ[X[™Ý[šÛ›ÝÛ˜˜[Y\ÈÂˆ›ÝÛÝ[\ÈÛÝ™\™Y‚‹Hš[™[™×Ø[YÛ›Y[š][\Ö×XHØ[›ÛšXØ[]šY[˜ÙH][\ËˆÝÛœÝ™X[HÝ\™˜XÙ\ÂˆÚÝ[™Y™\ˆ\ÙH][\È\ÈH\Ù\‹Y˜XÚ[™È[š][™ÚÝÈ˜]Èš[™[™ÜÈ\ÂˆÝ\Ü[™È]šY[˜ÙK‚‹Hš[™[™×Ø[YÛ›Y[š][\Ö×K˜Ø[›ÛšXØ[ÙØ\ÚYHÝX›HÛ\ÜË\ØÛÜYÜ›Ý\[™ÂˆÙ^Kˆ›Üˆ™\Ù[][Ûˆ^ÛÛœÝ[È\È\ÈÝ\œ™[Bˆ™\Ù[][Û—Ý^ŽÓÓ”ÕS•ÓSQO˜ÛÈ[™H[Ý™[Y[Ù\È›ÝÚ[™ÙHBˆY[]K‚‹Hš[™[™×Ø[YÛ›Y[š][\Ö×K™Ø\ÜÝ]XHÛ™HÙˆXÝ[Û˜X›Xˆ[™XYWÛØœÙ\™Y[\›˜[ÛÛ›XÝ]X×Û[Z]][Û˜Üˆ[šÛ›ÝÛ˜‚‹Hš[™[™×Ø[YÛ›Y[š][\Ö×K˜XÝ[Û˜Xš[]XHÛ\ÜË\ØÛÜYXÝ[ÛˆX™[ÝXÚˆ\È[œÜXÝÝš\ÚXš[]XYÛÝ]]ÛØœÙ\™\˜[™XYWÛØœÙ\™YÜ‚ˆ›×ØXÝ[Û˜ˆ™\Ù[][Ûˆ^Ù\È›Ý›ÙXÙH\Ù\ˆ™\Z\ˆÛÜšÈœ›ÛH^ˆ[Û™K‚‹Hš[™[™×Ø[YÛ›Y[š][\Ö×Kœš[X\žWØ[˜ÚÜ˜H[X›H™Y™\œ™YXÙ[Y[ˆ[›ÜˆÝÛœÝ™X[HÝ\™˜XÙ\È]™YYÛ™H[›[™HØØ][Û‹ˆÝ\ÜYˆXÛ\˜][Û‹X˜XÚÙY][\ÈÚ[]HXÛ\˜][ÛˆÜˆÝÛ™\ˆ[™H[™[˜ÛYBˆHÛÝ\˜ÙHQ\ÈHXÙ[Y[™X\ÛÛ‹‚‹Hš[™[™×Ø[YÛ›Y[š][\Ö×Kœ˜]×ÜÜ[œÖ×XHÛÝ\˜ÙK\Ü[ˆÝ[[X\žH›Üˆ]™\žH˜]Âˆš[™[™È]XÚYÈHØ[›ÛšXØ[][Kˆ\ÙHÜ[œÈ™\Ù\™H[™K[ØØ[ˆ]šY[˜ÙH›Üˆ^[œÚ[Û‹Ù]Z[šY]ÜÎÈ^HÈ›Ý™XÛÛYHÙ\\˜]H\Ù\‚ˆXÝ[ÛœË‚‹Hš[™[™×Ø[YÛ›Y[š][\Ö×Kœ™\Z\—Ü›Ý]XH[X›H›Ü›X[^™Y™\Z\ˆ›Ý]BˆÛÜYYœ›ÛHÛ\ÜË\ÜXÚYšXÈ]šY[˜ÙKˆ]\È™\]Z\™Y›Ü‚ˆØ\ÜÝ]HH˜XÝ[Û˜X›H˜[ˆÝ\ÜYÛ\ÜÙ\È[™\È[›Ü‚ˆ[™XYK[ØœÙ\™Y[\›˜[[Û›K[™Ý]XË[[Z]][Ûˆ][\Ë‚‹Hš[™[™×Ø[YÛ›Y[š][\Ö×KœÝ]X×Û[Z]][ÛœÖ×XH[˜[^™\ˆ[Z]][Û‚ˆØ]YÛÜšY\È[™™\Z\ˆ›Ý]\Ëˆ™\Ù[][Û—Ý^Ýš\ÚXš[]WÝ[šÛ›ÝÛ˜YX[œÂˆ’TˆÛÝ[›ÝØY™[H˜XÙHH^ÈÜˆ]Ø^Hœ›ÛHH\Ù\‹]š\ÚX›HÝ]]ˆÚ[šË‚‹Hš[™[™×Ø[YÛ›Y[š][\Ö×Kœ™\Ù[][Û—Ý^HÛ\ÜË\ÜXÚYšXÈš\ÚXš[]KˆØœÙ\™\‹XÝ[Û˜Xš[]KÛÝ\˜ÙKZÚ[™Ü›Ý\[™È™X\ÛÛ‹™XÛÛ[Y[™YØœÙ\™\‹ˆ™\Z\ˆÚ[™\™Ù]\Ý\K[™ÝYÙÙ\ÝY\ÜÙ\[ÛˆÛÛ^ˆ[\[Y[Yˆš^\™KX˜XÚÙYÝ]\È[˜ÛYHš\ÚXš[]H[šÛ›ÝÛ‹\Ù\‹]š\ÚX›H[›ØœÙ\™Yˆ[Ü™\Ü^\Ù\‹]š\ÚX›HØœÙ\™Y™\Ü^[™[\›˜[[Û›BˆX™[Ë‚‹Hš[™[™×Ø[YÛ›Y[š][\Ö×K˜ÛÛ™šY×ÜÛXÞXHÛ\ÜË\ÜXÚYšXÈÛÛœÝ[›ÛKˆÛÝ\˜ÙKZÚ[™š\ÚXš[]KØœÙ\™\‹Ù\ØÜš[Z[˜]Ü‹XÝ[Û˜Xš[]K™\Z\ˆÚ[™ˆ\™Ù]\Ý\K[™ÝYÙÙ\ÝY\ÜÙ\[ÛˆÛÛ^ˆ[\[Y[Yˆš^\™KX˜XÚÙYÝ]\È[˜ÛYH[\›˜[[Û›HÛXÞHY]Y]Kš\ÚX›Bˆ[›ØœÙ\™Y™\ÜØÛÛ™šYÈX™[ËØœÙ\™YØÚ[XHX™[ËÜ›ÜÜËYš[H›ÝÂˆ[šÛ›ÝÛˆ[Z]][ÛœË[™Ü\]YHÛÚÝ\[Z]][ÛœË‚‚ˆÈÈÚXÚÈ\Y˜XÝ‚˜š\ˆÚXÚÈK]Üš]KX\Y˜XÝ]˜Üš]\ÈH[YšY[]HÚXÚÈ\Y˜XÝŠ’T‹TÔPËLM
+H›Üˆ]\ˆš\ˆ^Z[ˆKYœ›ÛH]˜Â˜š\ˆÛÛ^KYœ›ÛH]˜™]\ÙKˆ\È\ÈHÙ\\˜]H[™[ÜHœ›ÛB˜ÚXÚÈKZœÛÛ˜ˆHš[™[™ÜÈ”ÓÓˆX›Ý™H\ÈHÛ™K]Ø^KÜÜÞH™[™\‚œ›Ú™XÝ[Ûˆ[™\È›ÝH™]\ÙHÛÝ\˜ÙKˆH\Y˜XÝ\ÈHØØ[\ÜÜØX›B™\š]˜]]™HÙˆÛ™HÚXÚÈ[ˆ8 %]]\Ý™]™\ˆ™YYHÝ\Ü]Y\ˆ›ÝËØ]K˜˜YÙKÜˆ›ÛÙˆ›Ý]K[™]\È›ÝÜX›H™]ÙY[ˆXXÚ[™\Ë‚‚‘[™[ÜH
+ØÚ[XWÝ™\œÚ[ÛˆHœš\‹XÚXÚËX\Y˜XÝ]ŒH˜
+N‚‚˜œÛÛ‚žÂˆœØÚ[XWÝ™\œÚ[ÛˆŽˆœš\‹XÚXÚËX\Y˜XÝ]ŒH‹ˆÛÛŽˆœš\ˆ‹ˆ˜[˜[^™\—Ý™\œÚ[ÛˆŽˆŒŒLŒ‹ˆšY[]HŽˆÂˆ™Y™—ÜÛÝ\˜ÙHŽˆÈ™Y™—Ùš[HŽˆÈœ]Žˆ‹ØXœËÜ]ÝËÙ^[\K™Y™ˆˆHKˆ™Y™—Øž]\×Ú\ÚŽˆ™›ŒXMŒLŒÍMÎXX˜ÙYˆ‹ˆœ›ÛÝŽˆ‹ØXœËÜ]ÝËÝÛÜšÜÜXÙH‹ˆ›[ÙHŽˆ™˜Y‹ˆ™[˜X›YÛ[™ÝXYÙ\ÈŽˆÈœ\Ý—Kˆ˜[˜[\Ú\×ÛÜ[ÛœÈŽˆÂˆš[˜ÛYWÝ[˜Ú[™ÙYÝ\ÝÈŽˆYKˆœ\›Ù˜XÝ×Ü]Žˆ[ˆœ\›Ù˜XÝ×ØÛÛ[Ú\ÚŽˆ[ˆKˆ˜ÛÛ™šY×ÚY[]WÝ™\œÚ[ÛˆŽˆKˆ˜ÛÛ™šY×ÚY[]WÚ\ÚŽˆ™›ŒXM™™YØ˜NNÍMÌŒL‚ˆKˆ™š[™[™ÜÈŽˆÈÊˆÛÛ\]Hš[™[™ÈÙ][šY[]H
+‹ÈBŸB˜‚‹HY™—ÜÛÝ\˜ÙX\ÈÈ™Y™—Ùš[HŽˆÈœ]Žˆ‹‹Ÿ_X
+HØ[›ÛšXØ[^™YKYY™˜ˆ]
+KÈ˜˜\ÙWÚXYŽˆÈ˜˜\ÙHŽˆ‹‹‹šXYŽˆ’PQŸ_XÜ‚ˆÈÛÜšÝ™YHŽˆÈ˜˜\ÙHŽˆ‹‹Ÿ_X
+HK]ÛÜšÝ™YX[ŽÈ˜\ÙX\È[Ú[‚ˆH›ÙXÚ[™È[ˆ\ÙY[˜[ZXÈY˜][X˜\ÙH™\ÛÛ][ÛŠKˆ]™]\ÙH[YHBˆ™XÛÜ™YÛÝ\˜ÙH\È™K\™\ÛÛ™YˆH™XÛÜ™YKYY™˜]\È™K\™XYBˆ™XÛÜ™Y˜\ÙKÚXYZ\ˆÜˆÛÜšÝ™YHY™ˆ\È™K\™\ÛÛ™Y›ÝYÚÚ][™ˆHž]\È\™H™KZ\ÚYYØZ[œÝY™—Øž]\×Ú\ÚˆH\HÜˆY˜[˜ÙYˆÛÜšÝ™YH™]ÙY[ˆÜš]H[™™]\ÙH˜Z[ÈÛÜÙYÛˆY™—Øž]\×Ú\Ú‚‹Hš[™[™ÜØÙ\šX[^™\ÈHÛÛ\]Hš[™[™ØÙ]Ú]Ù\™Nˆ[˜Ø\Yˆ™[]YÝ\ÝØ
+›ÈY[žH™[™\ˆØ\
+K[Ø^\Ë\™\Ù[›Ø™HÝÛ™\˜ˆ[™›È™[™\‹][YHÙ]™\š]H›Ú™XÝ[Û‹‚‹HHY[]HØ]H\È˜Z[XÛÜÙYˆ[žHZ\ÛX]ÚÛˆY™—Øž]\×Ú\Úˆ›ÛÝ[ÙX[˜X›YÛ[™ÝXYÙ\Ø[˜[\Ú\×ÛÜ[ÛœËŠ˜ˆÛÛ™šY×ÚY[]WÝ™\œÚ[Û˜ÛÛ™šY×ÚY[]WÚ\ÚÜˆ[˜[^™\—Ý™\œÚ[Û˜ˆ\ÈH\Y\œ›Üˆ˜[Z[™È]™\žHZ\ÛX]ÚYšY[ˆØÛÜH›YÜÈ\ÜÙYˆ[Û™ÜÚYHKYœ›ÛX
+KYY™˜KX˜\ÙX
+H\™H\ÜÙ\[ÛœÈ™\šYšYYYØZ[œÝˆH™XÛÜ™[™Ë™]™\ˆÝ™\œšY\Ëˆ\™H\È›ÈÚ[[™XÛÛ\]H˜[˜XÚË‚‹HÛÛ™šY×ÚY[]WÚ\ÚÛÝ™\œÈHÛÜÙY™\œÚ[Û™Y[ÝÛ\ÝÙ‚ˆš[™[™ËXY™™XÝ[™Èš\‹Û[šY[È
+Ü˜XÛ\ËŠ˜ˆ\\ØÜš\œ™\ÛÛ™WÝØÛÛ™šY×Ü]Ø\›Š˜
+KØ[›ÛšXØ[HÙ\šX[^™YˆÚ]Y˜][ÈX]\šX[^™Yˆ™[™\‹[Û›HÛ›ØœÈ
+Ù]™\š]H\Ü^Kˆ™\ÜË›X^Ü™[]YÝ\ÝØ
+H\™H^ÛYY[™Û›Ü™Yœ™\Ú]™[™\‚ˆ[YKˆY[™ÈHš[™[™ËXY™™XÝ[™ÈÛÛ™šYÈšY[™\]Z\™\È^[™[™ÈBˆ[ÝÛ\Ý[™[\[™ÈÛÛ™šY×ÚY[]WÝ™\œÚ[Û˜[ˆHØ[YH‹‚‹HÜš]\È\™H]ÛZXÎˆ[š\]Y[H˜[YY[\š[H[ˆH\Ý[˜][Û‚ˆ\™XÝÜžK›\Ú
+ÈœÞ[˜Ë™[˜[YNÈ[\š[\È\™H[›[šÙYÛˆ˜Z[\™NÂˆ\ÝÜš]\ˆÚ[œÈÛˆH™\X]YÜš]HÈHØ[YH]‚‚ˆÈÈš[™[™Â‚•HYšY[\ÈÛÛ[XY™\ÜÙYˆ›Ø™NØ[š]^™YÜ]Ž˜[Z[OŽœ–Ë—XÚ\™Hœ˜\ÈHš\œÝ^Ú\œÈÙˆÒKLMˆÝ™\ˆ]˜[Z[WÝÛ™\—^™\ÜÚ[Û—ˆ\ÈYX[œÈHÝ\™\ÜÚ[Ûˆ˜XÚÜÈHÛÙK›ÝH[™H8 %HØ[YH^™\ÜÚ[Ûˆ[Ý™YÈH™]È[™HÙY\È]ÈY
+Ý\™\ÜÚ[Ûˆ›ÛÝÜÈ]
+KÚ[HÚ[™ÙYÛÙH]HÜÝÙ]ÈH™]ÈY
+Ý[HÝ\™\ÜÚ[Ûˆ[˜[Y]\ÊKˆH[™XšY[[ˆH›Ø™XØš™XÝÝ[Ú]™\ÈØØ[]H›Üˆ\Ü^K‚‚Hš[™[™ÈÛÛZ[œÎ‚‚˜œÛÛ‚žÂˆšYŽˆœ›Ø™NœÜ˜×ÛX‹œœÎœ™YXØ]N˜˜˜XL˜ÌH‹ˆ˜Û\ÜÚYšXØ][ÛˆŽˆÙXZÛWÙ^ÜÙY‹ˆœÙ]™\š]HŽˆØ\›š[™È‹ˆ˜ÛÛ™šY[˜ÙHŽˆŽL‹ˆœ›Ø™HŽˆÂˆšYŽˆœ›Ø™NœÜ˜×ÛX‹œœÎœ™YXØ]N˜˜˜XL˜ÌH‹ˆ™˜[Z[HŽˆœ™YXØ]H‹ˆ™[HŽˆ˜ÛÛ›Û‹ˆ™š[HŽˆœÜ˜ËÛX‹œœÈ‹ˆ›[™HŽˆˆ™^™\ÜÚ[ÛˆŽˆšYˆ[[Ý[H\ØÛÝ[Ý™\ÚÛÈ‚ˆKˆœš\ˆŽˆÂˆœ™XXÚŽˆÂˆœÝ]HŽˆžY\È‹ˆ˜ÛÛ™šY[˜ÙHŽˆ›YY][H‹ˆœÝ[[X\žHŽˆ”™[]Y\ÝÈ\X\ˆÈ™XXÚšXÙNˆ™[Z][WØÝ\ÝÛY\—ÙÙ]×Ù\ØÛÝ[‚ˆKˆš[™™XÝŽˆÂˆœÝ]HŽˆÙXZÈ‹ˆ˜ÛÛ™šY[˜ÙHŽˆ›YY][H‹ˆœÝ[[X\žHŽˆ•\ÝÈ]™H]\˜[Ë]›È]XÝY˜[YHX]Ú\ÈÚ[™ÙY›Ý[™\žH‚ˆKˆœ›ÜYØ]HŽˆÂˆœÝ]HŽˆžY\È‹ˆ˜ÛÛ™šY[˜ÙHŽˆ›YY][H‹ˆœÝ[[X\žHŽˆÚ[™ÙY™Z]š[ÜˆØ[ˆ›ÜYØ]H›ÝYÚH™]\›ˆ›Ý[™\žH‚ˆKˆ›ØœÙ\™HŽˆÂˆœÝ]HŽˆžY\È‹ˆ˜ÛÛ™šY[˜ÙHŽˆ›YY][H‹ˆœÝ[[X\žHŽˆH™[]Y\ÝØœÙ\™\ÈH˜[YH™X\ˆHÚ[™ÙY™Z]š[Üˆ‚ˆKˆ™\ØÜš[Z[˜]HŽˆÂˆœÝ]HŽˆÙXZÈ‹ˆ˜ÛÛ™šY[˜ÙHŽˆšYÚ‹ˆœÝ[[X\žHŽˆ“Û›HÙXZÈÜˆÛ[ÚÙHÜ˜XÛH›Ý[™‚ˆBˆKˆ™]šY[˜ÙWÜ]ŽˆÂˆœ™XXÚY\Îˆ™[]Y\ÝÈ\X\ˆÈ™XXÚšXÙNˆ™[Z][WØÝ\ÝÛY\—ÙÙ]×Ù\ØÛÝ[‹ˆœ›ÜYØ][ÛˆY\ÎˆÚ[™ÙY™Z]š[Üˆ\X\œÈÈ[™›Y[˜ÙH™]\›™Y˜[YNˆ[[Ý[H\ØÛÝ[‹ˆœ™[]Y\Ý\ÝËÜšXÚ[™ËœœÎŒLˆ™[Z][WØÝ\ÝÛY\—ÙÙ]×Ù\ØÛÝ[\Ù\ÈÝ›Û™È^XÝ˜[YHÜ˜XÛNˆ\ÜÙ\Ù\HJÝ[L
+H‹ˆ›ØœÙ\™Y[˜Ý[Ûˆ\™Ý[Y[˜[YH[[Ý[HL][™HLˆ‹ˆ›Z\ÜÚ[™È\ØÜš[Z[˜]Üˆ[[Ý[OH\ØÛÝ[Ý™\ÚÛˆ›È™[]Y\ÝØ[\Ù\ÈH›Ý[™\žH˜[YH‚ˆKˆ™›Ý×ÜÚ[šÜÈŽˆÂˆÂˆšÚ[™Žˆœ™]\›—Ý˜[YH‹ˆ^Žˆ˜[[Ý[H\ØÛÝ[‹ˆ›[™HŽˆBˆBˆKˆ™]šY[˜ÙHŽˆ×Kˆ›Z\ÜÚ[™ÈŽˆ×Kˆ˜\ÜÙ\[Û—Ý^ÈŽˆÂˆŒLˆŽˆ˜\ÜÙ\Ù\HJ\ØÛÝ[YÝÝ[
+LL
+KL
+NÈ‚ˆKˆ˜XÝ]˜][ÛˆŽˆÂˆ›ØœÙ\™YÝ˜[Y\ÈŽˆÂˆÂˆ›[™HŽˆL‹ˆ˜[YHŽˆ˜[[Ý[HL‹ˆ˜ÛÛ^Žˆ™[˜Ý[Û—Ø\™Ý[Y[‚ˆBˆKˆ›Z\ÜÚ[™×Ù\ØÜš[Z[˜]ÜœÈŽˆÂˆÂˆ˜[YHŽˆ˜[[Ý[OH\ØÛÝ[Ý™\ÚÛ‹ˆœ™X\ÛÛˆŽˆ“›È™[]Y\ÝØ[\Ù\È[[Ý[\]X[È\ØÛÝ[Ý™\ÚÛ‹ˆ™›Ý×ÜÚ[šÈŽˆÂˆšÚ[™Žˆœ™]\›—Ý˜[YH‹ˆ^Žˆ˜[[Ý[HL‹ˆ›[™HŽˆBˆBˆBˆBˆKˆ›ØœÙ\™YÝ˜[Y\ÈŽˆÂˆÂˆ›[™HŽˆL‹ˆ˜[YHŽˆ˜[[Ý[HL‹ˆ˜ÛÛ^Žˆ™[˜Ý[Û—Ø\™Ý[Y[‚ˆBˆKˆ›Z\ÜÚ[™×Ù\ØÜš[Z[˜]ÜœÈŽˆÂˆÂˆ˜[YHŽˆ˜[[Ý[OH\ØÛÝ[Ý™\ÚÛ‹ˆœ™X\ÛÛˆŽˆ“›È™[]Y\ÝØ[\Ù\È[[Ý[\]X[È\ØÛÝ[Ý™\ÚÛ‹ˆ™›Ý×ÜÚ[šÈŽˆÂˆšÚ[™Žˆœ™]\›—Ý˜[YH‹ˆ^Žˆ˜[[Ý[HL‹ˆ›[™HŽˆBˆBˆBˆKˆœ™[]YÝ\Ý×ÝÝ[ŽˆKˆœ™[]YÝ\ÝÈŽˆÂˆÂˆ›˜[YHŽˆœ™[Z][WØÝ\ÝÛY\—ÙÙ]×Ù\ØÛÝ[‹ˆ™š[HŽˆ\ÝËÜšXÚ[™ËœœÈ‹ˆ›[™HŽˆL‹ˆ›Ü˜XÛWÜÝ™[™ÝŽˆœÝ›Û™È‹ˆ›Ü˜XÛWÚÚ[™Žˆ™^XÝÝ˜[YH‹ˆ›Ü˜XÛHŽˆ˜\ÜÙ\Ù\HJÝ[L
+H‹ˆœ™[][Û—Ü™X\ÛÛˆŽˆ™\™XÝÛÝÛ™\—ØØ[‹ˆœ™[][Û—ØÛÛ™šY[˜ÙHŽˆšYÚ‚ˆBˆKˆœÝÜÜ™X\ÛÛœÈŽˆ×Kˆ›Ü˜XÛWÚÚ[™Žˆ™^XÝÝ˜[YH‹ˆ›Ü˜XÛWÜÝ™[™ÝŽˆœÝ›Û™È‹ˆœ™XÛÛ[Y[™YÛ™^ÜÝ\ŽˆY›Ý[™\žH\ÝÈÚ]^XÝ\ÜÙ\[ÛœËˆ‹ˆœÝYÙÙ\ÝYÛ™^ØXÝ[ÛˆŽˆY›Ý[™\žH\ÝÈÚ]^XÝ\ÜÙ\[ÛœËˆ‹ˆ›[™ÝXYÙHŽˆœ\Ý‚ŸB˜‚•H]šY[˜ÙKYš\œÝšY[È\™HY]]™H[ˆØÚ[XHŒ˜‚‚‹H]šY[˜ÙWÜ]\È[ˆÜ™\™Y[X[‹\™XYX›HÝ[[X\žHÙˆ™XXÚXš[]Kˆ[™™XÝ[Û‹›ÜYØ][Û‹ØœÙ\˜][Û‹\ØÜš[Z[˜][Û‹ØØ[›ÝË™[]Y\ÝˆÜ˜XÛ\ËØœÙ\™Y˜[Y\Ë[™Z\ÜÚ[™È\ØÜš[Z[˜]Üˆ]šY[˜ÙK‚‹HY[]K™Ú]ØØ[™Y]WÜÝXš™XÝ
+Y]]™K›ÈØÚ[XWÝ™\œÚ[Û˜[\ˆÌÌÎ
+H\X\œÈ[ˆH[˜[\Ú\×ÛÝ]ÛÛYK›Ý]ÛÛYKšY[]XØš™XÝˆ\ÈH›Û‹[[Øš™XÝ^XÝHÚ[ˆH[ˆ[˜[^™Y[ˆ[[]]X›HÚ]ˆØ[™Y]H
+KXØ[™Y]K]™YX
+NÈHÙ^H]Ù[ˆ\È[Ø^\È™\Ù[[™ˆÜ™[˜\žH[œÈX]™H][ˆ]š[™È\™XÝHÈH™\ÛÛ™Y›ÙXÙ\‚ˆÝ]H8 %ÝXš™XÝÚÚ[™
+™YWÝ×Ý™YX
+K˜\ÙWÝ™YX[™ˆØ[™Y]WÝ™YXØš™XÝQË[™Y™—ÚY[]X
+ÒKLMˆÙˆBˆ\š]™Y˜\Ùx¡¤˜Ø[™Y]H[šYšYYY™ŠKˆHÛÛœÝ[Y\ˆÛÛ\\™\ÈH[Z]YˆØ[™Y]WÝ™YXÚ]]ÈÝ\YYÒQÚ]Ý]\œÚ[™È›ÜÙNÂˆÜ™[˜\žH[œÈX]™HHšY[[‚‹H\ÜÙ\[Û—Ý^Ø
+YY[ˆØÚ[XHŒ˜
+H\ÈHš[™[™Ë[]™[”ÓÓˆØš™XÝˆX\[™È[™K[[X™\ˆÝš[™ÜÈÈ\ÜÙ\[ÛˆÛÝ\˜ÙH^ˆ\‹]˜[YHØš™XÝÈ[‚ˆØœÙ\™YÝ˜[Y\Ø›ÈÛ™Ù\ˆØ\œžHH™Y[™[^šY[ÈÝÛœÝ™X[BˆÛÛœÝ[Y\œÈ™XÛÝ™\ˆH\ÜÙ\[ÛˆÛÝ\˜ÙHšXBˆš[™[™Ë˜\ÜÙ\[Û—Ý^ÖÛ[™K×ÜÝš[™Ê
+WXˆ
+Š’Û›ÝÛˆ[Z]][ÛŠŠŽˆHX\ˆ\ÈÙ^YYžH[™H[X™\ˆÛ›KÛÈYˆÛÈ\ÜÙ\[ÛœÈ[ˆY™™\™[ÛÝ\˜ÙHš[\ÂˆÚ\™HHØ[YH[™H[X™\ˆÚ][ˆÛ™Hš[™[™ËÛ›HÛ™H^\È™]Z[™Yˆ
+Šš[ˆ\ÈX\
+Šˆ8 %Y™™\š[™È^È\™H™]Z[™Y\‹]˜[YHšXHHÜ[Û˜[ˆ›Ý™[˜[˜ÙXšY[\ØÜšX™Y™[ÝËˆ\È\ÈHÝË\›Ø˜Xš[]HYÙHØ\ÙNÈBˆ]\™HØÚ[XHÛÝ[\ÙH™š[N›[™H˜ÛÛ\ÜÚ]HÙ^\Ë‚‹H\‹]˜[YHØš™XÝÈ[ˆØœÙ\™YÝ˜[Y\ØØ\œžH[ˆ
+Š›Ü[Û˜[›Ý™[˜[˜ÙX
+Š‚ˆšY[
+Y]]™K›ÈØÚ[XWÝ™\œÚ[Û˜[\ÌÌŽMH›ÛÝË]\
+Kˆ]Ø\œšY\ÂˆH˜XÝ	ÜÈ™]Z[™YÛÝ\˜ÙH^
+ŠÚ[™]™\ˆ]Y™™\œÈœ›ÛHHÚ\™Yˆ\ÜÙ\[ÛˆÛÝ\˜ÙH›Üˆ]È[™JŠˆ8 %H^XÝ^ÈH[™KZÙ^YYˆ\ÜÙ\[Û—Ý^ØX\›ÜËˆ][˜ÛY\ÈØ[\ÛÝ\˜ÙH^›ÜˆZ[‚ˆ[˜Ý[Û—Ø\™Ý[Y[˜XÝÈ[™›Üˆ˜XÝÈÛÛ\]YžHH›Ý[™Yˆ˜[YK]˜[œÙ™\ˆ]˜[X]Üˆ
+ÌÌŽMX
+HÜˆH[\‹]˜[œÙ™\ˆÚZ[‚ˆ
+ÌÌŽM˜
+KH[]˜[X][ÛˆÚZ[ˆÚ]›Ý[™[œ]È[™ÚZ[ˆ\ˆ
+K™Ë‚ˆ\ÜÙ\Ù\HJ8 )ŠNÈ›ÙHH™š^ˆšXHÝš\Ü™Yš^OˆX\ÛÜˆÝ™\ˆX™[Hœ™KYš^ˆ
+ÚZ[ˆ\ŠX
+K‚ˆ˜XÝÈÚÜÙH^
+Šš\ÊŠˆHZ[ˆ\ÜÙ\[ÛˆÛÝ\˜ÙHÝ^HY\Y[™ÛZ]ˆHšY[ÛÈ\ÜÙ\[Û—Ý^Ø™[XZ[œÈH™XÛÝ™\žH]›Üˆ[K‚‹H›Ý×ÜÚ[šÜØØœÙ\™YÝ˜[Y\Ø[™Z\ÜÚ[™×Ù\ØÜš[Z[˜]ÜœØ›Û[ÝHBˆ™\ÝYXÝ]˜][Ûˆ]šY[˜ÙH›ÜˆÛÛœÝ[Y\œÈ]Ø[\™XÝš[™[™Ë[]™[ˆXØÙ\ÜË‚‹H™[]YÝ\Ý×ÝÝ[8 %[X™\ˆÙˆ™[]Y\ÝÈH[˜[^™\ˆX]ÚY›Ü‚ˆ\Èš[™[™È
+™KXØ\[Ø^\ÈHYHÛÝ[
+KˆH™[]YÝ\ÝØ\œ˜^H\Âˆ
+Š˜Ø\Y
+Šˆ]PVÔ‘SUQÕTÕ×ÔT—Ñ’S‘S‘×Ò”ÓÓ˜
+Ý\œ™[H
+HÈ›Ý[™ˆ\Y˜XÝÚ^™HÛˆ™X[™\ÜÈÚ\™HHYÚ]˜Y™šXÈÝÛ™\ˆØ[ˆ˜[ˆÝ]Âˆ[™™YÈÙˆ™[]Y\ÝËˆ\È\È[ˆY]]™HšY[
+›ÈØÚ[XWÝ™\œÚ[Û˜ˆ[\
+KˆHØ\™]™\ˆY™™XÝÈÛ\ÜÚYšXØ][Û‹š[™[™ÈÛÝ[ÜˆBˆÜ˜XÛWÚÚ[™ØÜ˜XÛWÜÝ™[™ÝÝ[[X\žH8 %ÜÙH\ÙHH[™KXØ\™XÝÜ‹‚ˆZ\œ›ÜœÈH™[]YÝ\Ý×ÝÝ[
+ÈØ\]\›ˆ[™XYH[‚ˆÙX[\Ö×Kœ™[]YÝ\Ý×ÝÝ[›ÜˆH™\ËY^ÜÝ\™KšœÛÛ˜›Ü›X]‚‹H™[]YÝ\ÝÖ×Kœ™[][Û—Ü™X\ÛÛ˜8 %
+Ü[Û˜[Y]]™K›ÈØÚ[XWÝ™\œÚ[Û˜ˆ[\
+HHYÚ\Ý\š[Üš]HÝ]XÈÚYÛ˜[]Ø]\ÙY\È\ÝÈ™Bˆ[˜ÛYYˆ˜[Y\Îˆ\™XÝÛÝÛ™\—ØØ[[\—ÛÝÛ™\—ØØ[ˆ\ÜÙ\[Û—Ý\™Ù]ØY™š[š]XØ[YWÝ\ÝÙš[XØ[YWÛ[Ù[XˆÝÛ™\—Û˜[YYÝ\Ý[\ÜÜ]ØY™š[š]Xš^\™WÛÝÛ™\—ØY™š[š]XˆÙXZ×ÝÚÙ[—ÜÝXœÝš[™ØˆÛÛœÝ[Y\œÈØ[ˆš[\ˆÜˆK\š[Üš]^™H[šY\ÈYÙÙYˆÙXZ×ÝÚÙ[—ÜÝXœÝš[™Ø8 %\ÙH\™H]XÚYšXH›Ø™K]ÚÙ[ˆ˜[YHX]Ú[™È[™ˆÛÝ™\ˆNx $ÎL	HÙˆ[œ™[]Y\ÝÈ[ˆ™X[™\ÜËˆ
+Š“Y[X™\œÚ\\È[˜Ú[™ÙY
+ŠŽ‚ˆ[\ÝÈ]Ù\™H™]š[Ý\ÛH[ˆ™[]YÝ\ÝØ™[XZ[ŽÈÛ›HHYÙÚ[™Âˆ\ÈYYˆXœÙ[Ûˆ[™ÝXYÙHY\\œÈ
+]Û‹\TØÜš\
+H]È›ÝY]ˆÛÛ\]H™X\ÛÛŽÈ[ÈÛZ]Y[ˆ]Ø\ÙK‚‹H™[]YÝ\ÝÖ×Kœ™[][Û—ØÛÛ™šY[˜ÙX8 %
+Ü[Û˜[Y]]™JHÛÛ\[š[Û‚ˆÛÛ™šY[˜ÙH]™[›ÜˆH™[][Û—Ü™X\ÛÛ˜ˆ˜[Y\ÎˆYÚYY][XÝØˆÜ\]YXˆ\™XÝÛÝÛ™\—ØØ[8¡¤ˆYÚÈ\ÜÙ\[Û—Ý\™Ù]ØY™š[š]XˆÝÛ™\—Û˜[YYÝ\ÝØ[YWÝ\ÝÙš[X8¡¤ˆYY][XÈÙXZ×ÝÚÙ[—ÜÝXœÝš[™ØˆØ[YWÛ[Ù[X[\—ÛÝÛ™\—ØØ[8¡¤ˆÝØÈÝ\ˆÝ]XÈÚYÛ˜[È8¡¤ˆÜ\]YX‚‹HÜ˜XÛWÚÚ[™[™Ü˜XÛWÜÝ™[™ÝÝ[[X\š^™HHÝ›Û™Ù\Ý™[]YÜ˜XÛBˆÝ\œ™[Hš\ÚX›HÈHš[™[™Ë‚‹HÝYÙÙ\ÝYÛ™^ØXÝ[Û˜Z\œ›ÜœÈ™XÛÛ[Y[™YÛ™^ÜÝ\›ÜˆXÝ[Û‹[ÜšY[Yˆ[YÜ˜][ÛœË‚‹H›Ý\™H[Ø^\È™\Ù[[™X^H™HH[\HÝš[™ËÚXÚ\ÈH›ÙXÙ\‰ÜÂˆ››ÈXÝ[ÛˆÈ™XÛÛ[Y[™ˆ›Üˆ\Èš[™[™ËˆÛÛœÝ[Y\œÈÚÝ[™X]ˆ˜\È[‚ˆXœÙ[™XÛÛ[Y[™][Ûˆ˜]\ˆ[ˆ\ÈÝZY[˜ÙKˆÚ]\ˆ[ˆÛZ]YšY[ÛÝ[ˆØ^H\È™]\ˆ[ˆ[ˆ[\HÝš[™È\ÈH›ÙXÙ\‹\Ú\H]Y\Ý[Ûˆ]\È›ÝˆÙ]Y\™NÈHX›\ÚYØÚ[XH\ØÜšX™\ÈÚ]HÛÛ[Z]ÈÙ^K‚‹HÚ[™ÙYÜÚ[šØØœÙ\™YÜÚ[šØÜ˜XÛWØ[YÛ›Y[[™[YÛ›Y[Ü™X\ÛÛ˜ˆ\™HY]]™HÜ[Û˜[šY[È
+’T‹TÔPËLŽ
+H]Ý\™˜XÙHH]Û‚ˆÛ\ÜÚYšY\‰ÜÈ
+ŠœÚ[šËX[YÛ›Y[
+ŠˆXÚ\Ú[Ûˆ8 %
+ÚJˆHÝ›Û™ÈÜ˜XÛHYÜˆYˆ›ÝÜ™Y]^ÜÙYˆ^H\™H[Z]YÛ›HÛˆ[™ÝXYÙHOHœ]Ûˆ˜š[™[™ÜÂˆ[™\™HXœÙ[Ûˆ\Ý[™\TØÜš\š[™[™ÜÎÈ^HÈ
+Š››Ý
+Šˆ[\ˆØÚ[XWÝ™\œÚ[Û˜
+Ý[Œ˜
+KˆÚ[™ÙYÜÚ[šØ\ÈHÛÛ[XKZ›Ú[™YÚYÛšYšXØ[ˆÚÙ[œÈÙˆHÚ[™ÙY[™NÈØœÙ\™YÜÚ[šØ\ÈHÝ›Û™Ù\Ý™[]YÜ˜XÛIÜÂˆ\ÜÙ\[Ûˆ^È[YÛ›Y[Ü™X\ÛÛ˜\ÈHÝX›HÛ˜ZÙWØØ\ÙHÚÙ[‹ˆBˆÜ˜XÛWØ[YÛ›Y[˜[YH\ÈHÛÛ›ÛY[[H
+ÔPÓWÐSQÓ“QS•ÕSQTØ
+N‚ˆH\™XÝ8 %HÝ›Û™ÈÜ˜XÛHØœÙ\™\ÈHÚ[™ÙYÝÛ™\ˆžH˜[YK‚ˆH[X\Ø8 %HÝ›Û™ÈÜ˜XÛHØœÙ\™\È[ˆ[\Ü[X\ÈÙˆHÝÛ™\‹‚ˆHÚ[™ÙYÜÚ[š×ÝÚÙ[˜8 %HÝ›Û™ÈÜ˜XÛHØœÙ\™\ÈHÚ[™ÙY\Ú[šÈÚÙ[ˆœ›ÛBˆHÚ[™ÙY[™K]›ÝHÝÛ™\ˆ˜[YK‚ˆHÜÙÛÛ˜[8 %HÝ›Û™ÈÜ˜XÛH^\ÝÈ]ØœÙ\™\ÈHY™™\™[Ú[šÈ[ˆBˆÚ[™ÙH
+H˜Z[XÛÜÙYÙXZÛWÙ^ÜÙYœ˜[˜Ú
+NÈ[YÛ›Y[Ü™X\ÛÛ˜\ÂˆÝ›Û™×ÛÜ˜XÛWÛØœÙ\™\×ÙY™™\™[ÜÚ[šØ‚ˆH[šÛ›ÝÛ˜8 %›ÈÝ›Û™ÈÜ˜XÛHØœÙ\™YHÚ[™ÙYÚ[šÈ
+ÜˆH[Ù[O˜ˆÝÛ™\ˆÚ]›È\ØX›HÚÙ[ŠK‚‚ˆ^[\H8 %[ˆ^ÜÙYš[™[™È[YÛ™Y\™XÝK[™HÙXZÛWÙ^ÜÙYˆš[™[™ÈÚÜÙHÝ›Û™ÈÜ˜XÛH\ÈÜÙÛÛ˜[‚‚ˆœÛÛ‚ˆÈ˜Û\ÜÈŽˆ™^ÜÙY‹›[™ÝXYÙHŽˆœ]Ûˆ‹ˆ˜Ú[™ÙYÜÚ[šÈŽˆ˜[[Ý[™\ÚÛ‹ˆ›ØœÙ\™YÜÚ[šÈŽˆ˜\ÜÙ\\WÙ\ØÛÝ[
+LL
+HOHL‹ˆ›Ü˜XÛWØ[YÛ›Y[Žˆ™\™XÝ‹ˆ˜[YÛ›Y[Ü™X\ÛÛˆŽˆœÝ›Û™×ÛÜ˜XÛWÛØœÙ\™\×ÛÝÛ™\—Û˜[YHˆBˆÈ˜Û\ÜÈŽˆÙXZÛWÙ^ÜÙY‹›[™ÝXYÙHŽˆœ]Ûˆ‹ˆ˜Ú[™ÙYÜÚ[šÈŽˆ˜[[Ý[™\ÚÛ‹ˆ›ØœÙ\™YÜÚ[šÈŽˆ˜\ÜÙ\[—Ü™]žJ[X™Nˆ	Þ	ÊHOH	Þ	È‹ˆ›Ü˜XÛWØ[YÛ›Y[Žˆ›ÜÙÛÛ˜[‹ˆ˜[YÛ›Y[Ü™X\ÛÛˆŽˆœÝ›Û™×ÛÜ˜XÛWÛØœÙ\™\×ÙY™™\™[ÜÚ[šÈˆBˆ‹HÛÝ\˜ÙWØÝ\œ™[™\ÜØ\È[ˆY]]™H\‹Yš[™[™ÈšY[
+ÌÌŽ\™[ÌÌŒLŠBˆ]Ý]\ÈÚXÚ™]š\Ú[ÛˆÝÛœÈHš[™[™ÉÜÈXÝ[Û˜X›HÛÝ\˜ÙKˆ]\Âˆ[Ø^\È[Z]Y[™Ù\È
+Š››Ý
+Šˆ[\ØÚ[XWÝ™\œÚ[Û˜
+Ý[Œ˜
+KˆBˆ˜[YH\ÈHÛÛ›ÛY[[H
+ÓÕTÑWÐÕT”‘S•‘TÔ×ÕSQTØ
+N‚ˆHØ[™Y]WØÝ\œ™[8 %Hš[™[™ÉÜÈÛÝ\˜ÙH^™\ÜÚ[Ûˆ\È™\Ù[[ˆBˆØ[™Y]H
+XY\ÚYJHÛÝ\˜ÙH]H™XÛÜ™Y›Ø™K™š[XØ›Ø™K›[™XÂˆHØØ][Ûˆ\ÈHØ[™Y]HY]\™Ù]‚ˆ’T‹TÔPËLMLˆ›Ý]\È]™\žHXÝ[Û˜Xš[]HÝ\™˜XÙH›ÝYÚ\ÈšY[‚ˆ˜YÙHØ\È[™[šÛ›ÝÛœË[YÛ›Y[][\ËØ\™XÛÜ™È
+]]Üš]Bˆ›Ú™XÝ[ÛœÈÛ›H›ÜˆØ[™Y]WØÝ\œ™[
+KÝ\Z\™HšXYÙKHÔˆXÝ[Û˜X›H›Ùš[KÐT’Qˆ™\Ý[ËÚ]Xˆ[››Ý][ÛœË[™ˆÙ]™\™KYØ\ˆÛÝ[È^ÛYH›Û‹XÝ\œ™[š[™[™ÜÈÚ[H[›ÛZ[˜]ÜœÈÙY\]™\ž][™ÎÂˆËÒ”ËÔ]Ûˆš[™[™ÜÈ›ÝÈ™\ÛÛ™HØ[™Y]WØÝ\œ™[œ›ÛHZ\‚ˆXY\ÚYH›Ø™\È[™\›Ý^\ÈH^XÚ][šÛ›ÝÛ‹‚ˆH˜\ÙWÙ[]Y8 %H^™\ÜÚ[ÛˆØ\È™[[Ý™YÛˆHØ[™Y]HÚYKˆBˆ™]Z[™Y]šY[˜ÙH\È˜\ÙK\ÚYH[™Hš[™[™È\È›ÝHØ[™Y]HY]ˆ\™Ù]È›Ø™K›[™XÝ[™XÛÜ™ÈH›Ú™XÝY™]Ë\ÚYHÛÛÜ™[˜]H[‚ˆ\ÈÛXÙK[™ÛÛœÝ[Y\ˆ™KXÛÛÜ™[˜][ÛˆÙˆ[]Y\ÚYH]šY[˜ÙH\ÂˆHÌÌŒLˆ›Ú™XÝ[ÛˆÛXÙK‚ˆH[Ý™YÛÜ—Ü™[˜[YY8 %HØ[YH^™\ÜÚ[Ûˆ™KX\X\œÈ[Ù]Ú\™H[ˆBˆØ[™Y]Hš[K]H›ÙXÙ\ˆØ[››Ý›Ý™HH^XÝØ[™Y]BˆY[]HÙˆHÛÝ\˜ÙNÈ›ÝHØ[™Y]HY]\™Ù]‚ˆH[œ™\ÛÛ™YÜÝXš™XÝ8 %H›ÙXÚ[™ÈÝ\™˜XÙHÙ\È›Ý™\ÛÛ™HÛÝ\˜ÙBˆÝ\œ™[™\ÜÈ
+™]šY]Ë[[™ÝXYÙHš[™[™ÜÈÙ^JNÈH^XÚ][šÛ›ÝÛ‹[™ˆH˜XÚÝØ\™XÛÛ\]Xš[]H˜[YHÚ[ˆ™XY[™È\Y˜XÝÈÜš][ˆ™Y›Ü™BˆHšY[^\ÝY‚ˆ›Üˆ\ÝY™ˆš[™[™ÜÈH\ÜÜÚ][Ûˆ\È™\ÛÛ™Yœ›ÛHHY™ˆ]šY[˜ÙBˆ]ÙYYYH›Ø™NÈ™\Ë[[ÙHš[™[™ÜÈ\™HØ[™Y]WØÝ\œ™[žBˆÛÛœÝXÝ[Ûˆ
+^HÙYYœ›ÛHHÝ\œ™[™YJKˆ[ˆ\ÈÛXÙHHšY[\Âˆ[™›Ü›X][Û˜[›ÜˆÛÛœÝ[Y\œÎˆØ]H[™XÝ[Û˜Xš[]HÛXÞH›ÛÝÈ[ˆBˆÌÌŒLˆ›Ú™XÝ[ÛˆÛXÙK‚‹H™\Z\—ÜXÙ[Y[\È[ˆY]]™HÜ[Û˜[Øš™XÝ›Üˆ™]šY]Ë[[™ÝXYÙBˆš[™[™ÜÈ]Ø[ˆÝ]XØ[H˜[YHH›Ý[™Y\ÝØØ][Ûˆ[™ÛÛ[X[™™Y›Ü™Bˆ[™\Z\‹XØ\™›Ú™XÝ[Û‹ˆ]Ý\œ™[H\X\œÈ›Üˆ\™XÝÙXZÈ]Û‚ˆš[™[™ÜÈÚ]HÛÛ˜Ü™]HZ\ÜÚ[™È\ØÜš[Z[˜]Üˆ[™H]XÝY]\ÝÜ‚ˆ[š]\Ý™[]Y\Ýˆ]Ø\œšY\ÈÝYÙÙ\ÝYÝ\ÝÙš[XˆÝYÙÙ\ÝYÝ\ÝÛ˜[YXÜ[Û˜[ÝYÙÙ\ÝYÝ\ÝÛ›ÙWÚY™\šYžWØÛÛ[X[™ˆ[™™\šYžWØÛÛ[X[™ØÛÛ™šY[˜ÙX‚‹H]Û—Ü™\Z\—ØØ\™\È[ˆY]]™HÜ[Û˜[Øš™XÝ›Üˆ\™XÝÙXZÈ]Û‚ˆš[™[™ÜÈ][™XYH]™HHØ[›ÛšXØ[Ø\ÛÛ˜Ü™]HZ\ÜÚ[™È\ØÜš[Z[˜]Ü‹ˆ™[]Y]\Ý]šY[˜ÙKXÙ[Y[[™™\šYžHÛÛ[X[™ˆ]\È[[[Û˜[Bˆ]Û‹\ØÛÜYÛÈ]Ù\È›ÝÛÛYHÚ]H^\Ý[™ÈØ\™XÛÜ™ˆ™\Z\—ØØ\™XÚÙ]ÛÛ˜XÝˆHŒHØ\™Ø\œšY\ÈØ\™Ý™\œÚ[Û˜ÛÝ\˜ÙXˆØ[›ÛšXØ[ÙØ\ÚY[™ÝXYÙX[™ÝXYÙWÜÝ]\Ø]]Üš]WØ›Ý[™\žXˆ™\Z\—ØXÝ[Û˜Ú[™ÙYÛÝÛ™\˜Ú[™ÙYØ™Z]š[Ü˜Ý\œ™[Ý\ÝÙ]šY[˜ÙXˆZ\ÜÚ[™×Ù\ØÜš[Z[˜]Ü˜™XÛÛ[Y[™YÝ\ÝÜÚ\XÝYÙÙ\ÝYØ\ÜÙ\[Û˜ˆÝYÙÙ\ÝYÛØØ][Û˜™\šYžX™XÙZ\ÝÜØÛÛ™][ÛœØ[™[Z]Ø‚ˆ™\Z\—ØXÝ[ÛˆHœÝ™[™Ý[—Ù^\Ý[™×Ý\Ý˜YX[œÈHØ\™[™\š]™YˆXÚÙ]ÚÝ[Ý™[™Ý[ˆH˜[YYÙXZÈ™[]Y\Ý[œÝXYÙˆY[™ÈBˆ™Y[™[™]È\Ý‚ˆ[ˆ˜]Èš\ˆÚXÚØÝ]]™XÙZ\˜ÛÛ[X[™X^HÝ[™H[™XØ]\ÙHBˆ™[™\™\ˆÙ\È›ÝÛ›ÝÈÚ\™HHØ[\ˆÚ[Ø]™H™Y›Ü™KØY\ˆÚXÚÂˆÛ˜\ÚÝËˆ˜]ÈÚXÚÈØ\™È[˜ÛYH™XÙZ\™ÝZY[˜ÙX[™[Ý›Ú™XÝ[ÛœÂˆØ\œžHHØ[YH^\È™XÙZ\ÙÝZY[˜ÙXÛÈ[X[œÈ[™YÙ[ÈØ[ˆØ]™HBˆÚXÚÈ”ÓÓˆ[™[ˆš\œÝ\ˆKXÚXÚË[Ý]]Ü‚ˆ™\ÜÈØ\[YÙ\ˆKXÚXÚË[Ý]]È]œšYÙHØ[ˆÞ[\Ú^™HHÛÛ˜Ü™]Bˆ™XÙZ\›Ý]Hœ›ÛHHÝ\YYÚXÚË[Ý]]]‚‹H™]šY]×ØXÝ[Û˜Xš[]X\È[ˆY]]™HÜ[Û˜[Øš™XÝ›Üˆ\TØÜš\[™ˆ˜]˜TØÜš\™]šY]Èš[™[™ÜËˆ]›Ú™XÝÈH™]šY]ÈY\\‰ÜÈ˜Z[XÛÜÙYˆXÝ[Û˜Xš[]HÝ]H\ÈÝXÝ\™Y]HÚ[H™\Ù\š[™ÈHÜšYÚ[˜[ˆš[™[™ÜÖ×K™]šY[˜ÙXÝš[™ÜÈ›ÜˆÛÛ\]Xš[]Kˆ]\È›ÝH™\Z\ˆXÚÙ]ˆ[™\È›ÝØ]K˜YÙK˜\Ù[[™K’Tˆ™\›ËÜˆYÙ[\XÚÙ]]]Üš]K‚ˆÝ\œ™[šY[È\™H]]Üš]WØ›Ý[™\žX
+œ™]šY]×ØYš\ÛÜžWÛÛ›H˜
+Kˆ™\Z\—ÜXÚÙ]Ü™XYX
+›ÛÛX[ŽÈ˜[ÙX›Üˆ[ÜÝ™]šY]Èš[™[™ÜÎÈ›\ÈÂˆYXÛ›H›Üˆ\TØÜš\š[™[™ÜÈØ]\ÙžZ[™ÈH’T‹TÔPËLÈÛÛ\]BˆÛÛ˜XÝ8 %ÙYHH›\ÛÛ™][Ûˆ™[ÝÊKØ\ÜÝ]XXÝ[Û˜Xš[]WØØ]YÛÜžXˆÚWÛ›ÝØXÝ[Û˜X›X™\Z\—Ü›Ý]XZ\ÜÚ[™×ØXÝ[Û˜Xš[]WÙšY[Ö×XˆZ\ÜÚ[™×ÙÜ˜\ÛYÜÖ×X[X›H[›ØÚ×ØÛÛ™][Û˜ˆ]šY[˜ÙWÛ™YYYÝ×Ü›Û[ÝX[™˜]×Ù]šY[˜ÙWÜ™YœÖ×X‚ˆ™\Z\—ÜXÚÙ]Ü™XYX›\ÛÛ™][Ûˆ
+’T‹TÔPËLÈ0©ÔÊNˆH\TØÜš\ˆš[™[™È›\È™\Z\—ÜXÚÙ]Ü™XYNˆYXY™ˆSÙˆH›ÛÝÚ[™ÈÛ‚ˆ
+JHXÝ[Û˜Xš[]WØØ]YÛÜžHOHš[˜ÛÛ\]WÜ™\Z\—ÜXÚÙ]˜
+ËPJNÂˆ
+ŠH[™ÝXYÙWÜÝ]\ÈOHœ™]šY]È˜[™[™ÝXYÙH8¢"Ý\\ØÜš\˜]˜\ØÜš\XÂˆ
+ÊH\\ØÜš\ÛÜ˜XÛWÙ^XÝY\ÈHÛÛ˜Ü™]H]\˜[S‘ˆ\\ØÜš\Ù[˜[ZX×Ø\ÜÙ\[Û—Ý[œ™\ÛÛ™Y[Z]][Ûˆ\ÈXœÙ[
+ËPÊNÂˆ
+
+H™[]Y\Ý\ÈÜ˜XÛKY[YÚX›H
+[\ÜX]Ø\™KÛÝÛ™\‹XØ[›Ýˆ]\š\ÝXË[Û›JH8 %ÝX\˜[YYžHËPH
+ËQ
+NÂˆ
+JH]X\ÝÛ™H˜[YYZ\ÜÚ[™È\ØÜš[Z[˜]Üˆ^\ÝÈ[ˆZ\ÜÚ[™×Ù\ØÜš[Z[˜]ÜœØˆ
+ËQJNÂˆ
+ŠH›È›Ý]WØÜ›ÜÜ×Û[™ÝXYÙWÛÜ˜XÛWÝš\ÚXš[]WÛ[Z]][Û˜Ü‚ˆ\\ØÜš\Ø[—ØœšYÙWÝ™\™XÝ]šY[˜ÙH™\Ù[
+ËQŠNÂˆS‘HÚ\™Y˜[Y]WØYÙ[ÙØ\Ü™XÛÜ™ÜXÚÙ]˜[Y]Üˆ™]\›œÈÚÊ
+
+JX‚ˆÚ[ˆ›\YˆXÝ[Û˜Xš[]WØØ]YÛÜžX™XÛÛY\È˜ÛÛ\]WÜ™\Z\—ÜXÚÙ]˜ˆØ\ÜÝ]X™XÛÛY\È˜XÝ[Û˜X›H˜Z\ÜÚ[™×ØXÝ[Û˜Xš[]WÙšY[Ø™XÛÛY\Âˆ×X[™]]Üš]WØ›Ý[™\žXÝ^\Èœ™]šY]×ØYš\ÛÜžWÛÛ›H˜
+\TØÜš\ˆ™[XZ[œÈ™]šY]ÊKˆÛ›H[˜ÛÛ\]WÜ™\Z\—ÜXÚÙ]\È[YÚX›HÈ›\È[ˆÝ\ˆØ]YÛÜšY\ÈÝ^H›Û‹XXÝ[Û˜X›KˆØÚ[XWÝ™\œÚ[Û˜\È[˜Ú[™ÙY‚ˆÚ[ˆ›\YHXÝ[Û˜Xš[]HšY[È\™H™]Üš][ˆÈ™XY\ÈXÝ[Û˜X›Bˆ
+’T‹TÔPËL0©ÔŽ
+HÛÈ^HÈ›ÝÛÛ˜YXÝHÛÛ\]HXÚÙ]‚ˆ™\Z\—Ü›Ý]X˜[Y\ÈHXÝX[™\Z\ˆXÝ[Ûˆ
+HÝYÙÙ\ÝY\ÜÙ\[ÛˆÚ\BˆÜˆZ\ÜÚ[™È\ØÜš[Z[˜]ÜŠH˜]\ˆ[ˆH›ØÚÙYXØ\ÙH›Û›HY\ˆ‹‹‚ˆ]˜Z[X›Hˆ^È]šY[˜ÙWÛ™YYYÝ×Ü›Û[ÝX\ÈH[\HÝš[™È
+›Ý[™È\Âˆ™YYY
+NÈ[™ÚWÛ›ÝØXÝ[Û˜X›XØ\œšY\ÈHÚHXÝ[Û˜X›HˆÛÛ™š\›X][Û‚ˆ˜[Z[™ÈH™\ÛÛ™YÛÛ˜XÝšY[ËˆH”ÓÓˆÙ^\È\™HÙ\ÝX›H›ÜˆØÚ[XBˆÛÛ\]Xš[]NÈH[X[ˆ™[™\™\ˆ™[X™[È[HÈÚHXÝ[Û˜X›XÂˆ™\Z\ˆXÝ[Û˜[™ÛZ]ÈH[\H]šY[˜ÙH™YYY[™H›ÜˆHXÝ[Û˜X›BˆØ\ÙK‚ˆ˜]È]šY[˜ÙH™YœÈØ\œžHHÜšYÚ[˜[˜]ÈÝš[™È\È\œÙYš[X[™XˆÚ[™ÛÝ\˜ÙWÚYÜ[Û˜[ÝÛ™\˜Ü[Û˜[Ü˜\YØ[™Ü[Û˜[ˆÛÝ\˜ÙHØ[\XÚ[ˆ™\Ù[‚‹H\TØÜš\™]šY]Èš[™[™ÜÈX^H[˜ÛYHY]]™HXÚØYÙKY\ØÛÝ™\žH]šY[˜ÙBˆÝš[™ÜÈ[œÚYHH^\Ý[™Èš[™[™ÜÖ×K™]šY[˜ÙV×X\œ˜^Kˆ\ÙHÝš[™ÜÈ\™Bˆ›ÙXÙYžHH[˜[\Ú\ËÛ[™ÝXYÙKÝ\\ØÜš\ÜXÚØYÙKœœØX[šY™\Ý™\ÛÛ™\‚ˆ
+’T‹TÔPËLHˆˆ8 %XÚØYÙK\›ÛÝ[™ÛÜšÜÜXÙH\ØÛÝ™\žJKˆ^H\™BˆYš\ÛÜžH[™È›ÝÚ[™ÙH™\Z\—ÜXÚÙ]Ü™XYX™]šY]×ØYš\ÛÜžWÛÛ›XˆÜˆ[™ÝXYÙWÜÝ]\Øˆ™]È]šY[˜ÙHÝš[™ÜÈ\™N‚ˆH\\ØÜš\ÜXÚØYÙWÜ›ÛÝˆ]˜8 %™X\™\Ý[˜Ù\ÝÜˆ\™XÝÜžH]ˆÛÛZ[œÈHXÚØYÙKšœÛÛ˜
+™[]]™HÈH™\È›ÛÝ
+KˆXœÙ[Ú[ˆ›ÂˆXÚØYÙKšœÛÛ˜\È›Ý[™‚ˆH\\ØÜš\ÝÛÜšÜÜXÙWÜ›ÛÝˆ]˜8 %™X\™\Ý[˜Ù\ÝÜˆÚ]BˆœK]ÛÜšÜÜXÙKžX[[ÜˆHXÚØYÙKšœÛÛ˜ÛÜšÜÜXÙ\È˜šY[È˜[Âˆ˜XÚÈÈXÚØYÙWÜ›ÛÝˆXœÙ[Ú[ˆXÚØYÙWÜ›ÛÝ\È[œ™\ÛÛ™Y‚ˆH\\ØÜš\Ùœ˜[Y]ÛÜš×Ú[ˆ™\Ýš]\Ý[Ÿ[ØÚ_›ÙWÝ\Ý]˜O˜8 %\Ýˆœ˜[Y]ÛÜšÈ]XÝYœ›ÛHXÚØYÙKšœÛÛ˜\ËÙ]‘\ËˆXœÙ[Ú[ˆ›Âˆ]šY[˜ÙKX˜XÚÙYœ˜[Y]ÛÜšÈ\È›Ý[™‚ˆH\\ØÜš\Ý\ÝÜ[›™\Žˆ™\Ýš]\Ý[Ÿ[ØÚ_›ÙWÝ\Ý]˜O˜8 %YXØ]Yˆ]šY[˜ÙHšY[›ÜˆH]XÝY\Ý[›™\ˆ˜[YKˆ[Ø^\ÈÛËY[Z]YÚ]ˆ\\ØÜš\Ùœ˜[Y]ÛÜš×Ú[Ú[ˆHœ˜[Y]ÛÜšÈ\È]XÝYˆXœÙ[Ú[ˆ›Âˆœ˜[Y]ÛÜšÈ\È›Ý[™
+˜Z[XÛÜÙY
+Kˆ]XÝYœ›ÛH]‘\[™[˜ÚY\Øˆ\[™[˜ÚY\Ø[™ØÜš\Ë\Ý˜[YH
+ØÜš\[˜[YH˜[˜XÚÈ[™\ÂˆÛÛ\ÜÚ]HØÜš\ÈZÙHžÈ	‰ˆœH[ˆZ[	‰ˆ]˜H˜
+KˆY]]™NˆÙ\È›ÝˆÚ[™ÙH[žH^\Ý[™ÈšY[ˆH]\ˆ][H\Ù\È\ÈšY[È[™™\ˆ™\šYžBˆÛÛ[X[™È›Üˆ[›™\œÈ›ÝY][™YžH™\šYžWØÛÛ[X[™Ù›Ü—Ù\ØÛÝ™\žXˆ
+È]\Ý]\ÙH›ØYX\][HÎÈ’T‹TÔPËLJK‚ˆH\\ØÜš\Ü[›™\—Ú[ˆ[Ÿœ_X\›ŸœO˜8 %XÚØYÙH[›™\ˆ]XÝYˆœ›ÛHØÚÙš[H™\Ù[˜ÙHÜˆØÜš\Ë\ÝˆXœÙ[Ú[ˆ›È]šY[˜ÙKX˜XÚÙYˆ[›™\ˆ\È›Ý[™‚ˆH\\ØÜš\ÜXÚØYÙWØÛÛ™šY[˜ÙNˆYÚYY][_Ýß›Û™O˜8 %ÝÈ]XÚˆX[šY™\Ý]šY[˜ÙH˜XÚÙYH™\ÛÛ][Û‹ˆYÚHœ˜[Y]ÛÜšÈ
+È[›™\‹ˆYY][XHÛ™HÙˆHÛËÝØHXÚØYÙH›Ý[™]™Z]\ˆ™\ÛÛ™Yˆ›Û™XH›ÈXÚØYÙKšœÛÛ˜›Ý[™][‚ˆH\\ØÜš\ÜXÚØYÙWÛ[Z]][ÛŽˆÚ[™˜8 %˜[YY[Z]][ÛˆÚ[ˆ™\]Z\™Yˆ]šY[˜ÙH\ÈXœÙ[ˆÝ\œ™[Ú[™Î‚ˆ\\ØÜš\ÜXÚØYÙWÜ›ÛÝÝ[œ™\ÛÛ™Y
+›ÈXÚØYÙKšœÛÛ˜›Ý[™È˜[YH\Âˆ™]™\ˆ˜XœšXØ]Yœ›ÛHHš[H^[œÚ[Ûˆ[Û™JKˆ\\ØÜš\Ùœ˜[Y]ÛÜš×Ú[Ý[œ™\ÛÛ™Yˆ\\ØÜš\ÜXÚØYÙWÛX[˜YÙ\—Ý[œ™\ÛÛ™Y
+œ˜[Y]ÛÜšÈ\ÈÛ›ÝÛˆÛÈH™\šYžBˆÛÛ[X[™TÈ]˜Z[X›HšXHHœ˜[Y]ÛÜšÈš[˜\žK]›ÈØÚÙš[H]šY[˜ÙBˆY[YšYYHXÚØYÙHX[˜YÙ\ˆ
+œKÜœKÞX\›‹Ø[ŠNÈ[™›Ü›X][Û˜[›Ýˆ›ØÚÚ[™ÎÈ\ˆ’T‹TÔPËLLJKˆ\\ØÜš\Ü[›™\—Ú[Ý[œ™\ÛÛ™Y
+›Èœ˜[Y]ÛÜšÈS‘›ÈØÚÙš[KÜØÜš\ˆ[›™\ˆ]šY[˜ÙNÈ›È™\šYžHÛÛ[X[™Ø[ˆ™H\š]™YÈÝ›Û™È˜Z[XÛÜÙYØ\ÙJKˆ\\ØÜš\Ý\ÝÜ[›™\—Ý[œ™\ÛÛ™Y
+™Z]\ˆœ˜[Y]ÛÜšÈ›Üˆ[›™\ˆÛÝ[™Bˆ™\ÛÛ™YÈH›Ý[™Y™\šYžHÛÛ[X[™È[Z]YÚ[ˆ™\šYžWØÛÛ[X[™Ù›Ü—Ù\ØÛÝ™\žXˆ™]\›œÈ›Û™XÈ˜Z[XÛÜÙY\ˆ’T‹TÔPËLH0©È‘˜Z[XÛÜÙYŠKˆ\\ØÜš\Ý\ÝÜ[›™\—Ø[XšYÝ[Ý\Ø
+ÛÈÜˆ[Ü™H\Ý[˜Ýœ˜[Y]ÛÜšÈÚYÛ˜[ÂˆX]ÚYK™Ëˆ™\Ý
+Èš]\Ý]‘\ÎÈH™\ÜY[›™\ˆ\ÈHš\œÝˆX]ÚžHš^Yš[Üš]KÛÈÛÛ™šY[˜ÙH\ÈØ\Y]YY][X
+Kˆ\\ØÜš\ÜXÚØYÙWÛX[šY™\ÝÜ™XYØØ\Y
+HXÚØYÙKšœÛÛ˜Ø\È›Ý[™]ˆ^ÙYYYHØ\Y™XY[Z]ÛÈ]ÈX[šY™\Ý]šY[˜ÙHÛÝ[›Ý™Bˆ[œÜXÝYÈ˜Z[XÛÜÙY›È›ÛÝ[™›È˜XœšXØ]Y˜[Y\ÊK‚ˆÚ[ˆ\\ØÜš\ÜXÚØYÙWÜ›ÛÝÝ[œ™\ÛÛ™Y\È™\Ù[›Âˆ\\ØÜš\ÜXÚØYÙWÜ›ÛÝ[™H\È[Z]Y
+˜Z[XÛÜÙY\ˆ’T‹TÔPËLJK‚ˆH\\ØÜš\Ý™\šYžWØÛÛ[X[™ˆÛY˜8 %]šY[˜ÙKX˜XÚÙY™\šYžHÛÛ[X[™›ÜˆBˆÝ›Û™Ù\Ý™[]Y\Ý^™\ÜÙY™[]]™HÈXÚØYÙWÜ›ÛÝˆ[Z]YÛ›BˆÚ[ˆ]X\ÝÛ™HÙˆœ˜[Y]ÛÜš×Ú[Üˆ[›™\—Ú[\È™\ÛÛ™YˆÚ[‚ˆ[Z]Y\\ØÜš\Ü™]šY]×ØØ\™™\šYžK˜ÛÛ[X[™™Y›XÝÈHØ[YH˜[YK‚ˆÛÛ[X[™›Ü›\È
+’T‹TÔPËLHˆÊN‚ˆ™\Ýš[O˜š]\Ý[ˆš[O˜[ˆ\Ýš[O˜ˆ]˜Hš[O˜›ÙHK]\Ýš[O˜œH\ÝKHš[O˜œH\ÝKHš[O˜ˆX\›ˆ\Ýš[O˜‚ˆH\\ØÜš\Û[Z]][ÛŽˆ˜[YO˜8 %QUU‘H]šY[˜ÙH[™H
+’T‹TÔPËLBˆ0©Ô˜[YY[Z]][Ûˆ^Û›Û^JKˆ[Z]YÛ›HÚ[ˆH‘PS]XÝYˆ\TØÜš\ÛÛœÝXÝšYÙÙ\œÈH˜[YY[Z]][Û‹ˆ›È^\Ý[™ÈšY[\ÂˆÚ[™ÙYˆÝ\œ™[[Z]Y˜[Y\È[™Z\ˆ™X[›ÙXÙ\œÎ‚ˆH\\ØÜš\Û[ØÚ×ÛÛ›WÛØœÙ\™\˜8 %š\™YžHÝ]XÓ[Z]Ú[™Ž“[ØÚÙY[Ù[Xˆ
+H™[]Y\Ýš[H\Ù\È™\Ý›[ØÚÊ
+XØšK›[ØÚÊ
+X
+K‚ˆH\\ØÜš\Ú[\ÜÙÜ˜\Ý[œ™\ÛÛ™Y8 %š\™YžBˆÝ]XÓ[Z]Ú[™Ž“Z\ÜÚ[™Ò[\ÜÜ˜\
+HÚ[™ÙY[™HØ[È[ˆ[\ÜYˆÞ[X›ÛÚÜÙHÜ›ÜÜË[[Ù[H[\[Y[][Ûˆ\È[˜]˜Z[X›HÈHÞ[^ˆY\\ŠK‚ˆH\\ØÜš\ÜÛ˜\ÚÝÙ\ØÜš[Z[˜]Ü—Ý[œ™\ÛÛ™Y8 %š\™YÚ[ˆ[‚ˆÜ˜XÛKY[YÚX›H™[]Y\Ý\ÜÙ\[Ûˆ\ÈÜ˜XÛRÚ[™Ž”Û˜\ÚÝˆ
+ÓX]ÚÛ˜\ÚÝØÓX]Ú[›[™TÛ˜\ÚÝ
+K‚ˆH\\ØÜš\ØÝ\ÝÛWÛX]Ú\—Ý[œ™\ÛÛ™Y8 %š\™YÚ[ˆ[ˆÜ˜XÛKY[YÚX›Bˆ™[]Y\Ý\ÜÙ\[Ûˆ\ÈÜ˜XÛRÚ[™Ž•[šÛ›ÝÛ˜S‘H›Û‹Y[\HX]Ú\‚ˆ˜[YH]\È›Ý[ˆH™XÛÙÛš\ÙYX]Ú\ˆÙ]
+™X[ÞË\\œÙYTÕˆ]šY[˜ÙJK‚ˆH\\ØÜš\Ù[˜[ZX×Ø\ÜÙ\[Û—Ý[œ™\ÛÛ™Y8 %š\™Y
+’T‹TÔPËLH0©ÔJBˆÚ[ˆ[ˆÜ˜XÛKY[YÚX›H™[]Y\Ý\ÜÙ\[Ûˆ\ÈH›Û‹[]\˜[[˜[ZXÂˆX]Ú\ˆ\™Ý[Y[
+H˜\šXX›K[˜Ý[ÛˆØ[ÜˆÛÛ\]Y^™\ÜÚ[ÛŠKˆBˆ™X[›ÙXÙ\ˆ\ÈÜ˜XÛKœœÎŽ™^˜XÝÛX]Ú\—Ù^XÝYÝ˜[YXÚXÚÙ]Âˆ\×Ù[˜[ZX×ÛX]Ú\—Ø\™ÈHYXÚ[ˆH\™Ý[Y[\È›ÝH™\ÛÛ˜X›Bˆ]\˜[ˆH[Z]][Ûˆ^Z[œÈ]H^XÝY\ØÜš[Z[˜]Üˆ˜[YBˆØ[››Ý™HÝ]XØ[H™\ÛÛ™Y‚ˆH\\ØÜš\ÝX›WØØ\ÙWÝ[œ™\ÛÛ™Y8 %š\™YÚ[ˆ[ˆÜ˜XÛKY[YÚX›Bˆ\Ý™XXÚ
+‹‹ŠXÈ]™XXÚ
+‹‹ŠXX›HØ\ÙH\Ù\ÈH›ÝËY\š]™Y[˜[ZXÂˆX]Ú\ˆ\™Ý[Y[ˆH™X[›ÙXÙ\ˆ\Ù\ÈX›KXØ[\Ý^˜XÝ[Ûˆ\Âˆ\×Ù[˜[ZX×ÛX]Ú\—Ø\™ÈHYXÈH[Z]][Ûˆ^Z[œÈ]Þ[^[Û›Bˆ™]šY]È]šY[˜ÙHØ[››Ýš[™H›ÝÈÈHÛÛ˜Ü™]H^XÝY˜[YK‚ˆH\\ØÜš\ÛÜ˜XÛWÚ[\—ÙØ]Y8 %š\™YÚ[ˆ[ˆÜ˜XÛKY[YÚX›H™[]Yˆ\ÝØ[È[ˆ\ÜÙ\[Û‹\Ú\Y[\ˆ\›Ý[™HÚ[™ÙYÝÛ™\ˆØ[]›Âˆ\™XÝÝ\ÜY\ÜÙ\[Ûˆ\È^˜XÝYˆH[Z]][Ûˆ^Z[œÈ]BˆY\\ˆØ[››Ý[œÜXÝH[\ˆ›ÙHÜˆ›Ý™H]ÈÜ˜XÛHÙ[X[XÜÈœ›ÛBˆHØ[Ú]K‚ˆH\\ØÜš\Ý\™Ù]Ý[œ™\ÛÛ™Y8 %š\™Y
+’T‹TÔPËLH0©ÔŠHÚ[ˆH\Ýˆ[ˆHY™™\™[XÚØYÙH™Y™\™[˜Ù\ÈHÝÛ™\ˆžHØ[˜[YH]\È^ÛYYžBˆHXÚØYÙK[ØØ[ÝÛ™\œÚ\š[\‹ˆH™X[›ÙXÙ\ˆ\ÂˆÝ]X×Û[Z]œœÎŽ›˜[YYÛ[Z]][Ûœ×Ù›Ü—Ý[œ™\ÛÛ™YÛÝÛ™\œÚ\ÚXÚˆÛÛ™š\›\ÈHÜ›ÜÜË\XÚØYÙH^Û\Ú[ÛˆžHÛÛ\\š[™ÈØ[™Y]\ÈÚ]œË‚ˆÚ]Ý]HXÚØYÙK[ØØ[š[\‹ˆÛ›H[Z]YÚ[ˆÛÜšÜÜXÙWÜ›ÛÝ\ÂˆÛÛYX
+K™Kˆ[ˆ›ÙXÝ[Û‹›Ý[ˆ[š]\ÝÈÚ]Ý]HÛÜšÜÜXÙH›ÛÝ
+K‚ˆH\\ØÜš\Ü]Ø[X\×Ý[œ™\ÛÛ™Y8 %š\™Y
+’T‹TÔPËLNJHÚ[ˆH™[]Yˆ\Ý[\ÜÈHÞ[X›Û˜[YK[X]ÚYÈHÝÛ™\ˆœ›ÛHH“Ó‹T‘SUU‘BˆÜXÚYšY\ˆ
+Ë‹‹˜Ë‹‹˜˜\™HXÚØYÙH˜[YJH]HY\\ˆÛÝ[›Ýˆ™\ÛÛ™HÈH[š\]YHÛÜšÜÜXÙHš[KÛÈ›ÈÜ™Y]Ø\ÈÚ]™[‹ˆH™X[ˆ›ÙXÙ\ˆ\ÈÝ]X×Û[Z]œœÎŽ›˜[YYÛ[Z]][Ûœ×Ù›Ü—Ø[X\×Ý[œ™\ÛÛ™YÂˆ]™\]Z\™\È[™YHÛÛ™][ÛœÈ
+›Û‹\™[]]™H[\Ü[\ÜY˜[YBˆX]Ú\ÈHÝÛ™\ˆ˜[YK[™H[\ÜY›ÝÜ™Y]HÝÛ™\ŠH[™\ÂˆÛ\ÜÚYšXØ][Û‹[™]]˜[
+Y]]™H\ØÛÜÝ\™HÛ›JK‚ˆH\\ØÜš\Ü™[]]™WÚ[\ÜÝ[œ™\ÛÛ™Y8 %š\™Y
+ÍLPÊHÚ[ˆ[‚ˆ[˜Ü™Y]Y™[]Y\Ý˜[YK[X]Ú\ÈHÝÛ™\ˆ›ÝYÚH‘SUU‘BˆÜXÚYšY\ˆ]™\ÛÛ™\ÈÈ›ÈÛÜšÜÜXÙHš[H
+[Ù[H™[˜[YYÜˆ[Ý™YˆÚ]Ý]\][™ÈH[\Ü
+KˆH™X[›ÙXÙ\ˆ\ÂˆÝ]X×Û[Z]œœÎŽ›˜[YYÛ[Z]][Ûœ×Ù›Ü—Ü™[]]™WÚ[\ÜÝ[œ™\ÛÛ™YÂˆH^Û\Ú[Ûˆ]Ù[ˆ\ÈÛÜœ™XÝ
+ÝÛ™\—Û˜[YWÜÚYÝÙYØžWÝ[œ™[]YÚ[\Ü
+Kˆ[™\È[Z]][Ûˆ\ØÛÜÙ\ÈÚKÛÈ›×ÜÝ]X×Ü]\ÈÛ›ÝÛˆÈ™HBˆÜÜÚX›H˜[ÙH™YØ]]™KˆÛ\ÜÚYšXØ][Û‹[™]]˜[
+Y]]™H\ØÛÜÝ\™BˆÛ›JK‚ˆH\\ØÜš\Û[Z]][Û—ÜØ[\Nˆ˜[YOˆ]š[OŽ[™O˜8 %Y]]™NÈBˆš[N›[™XÙˆH™X[TÕ]šY[˜ÙH]šYÙÙ\™YH˜[YY[Z]][Û‹‚ˆH\\ØÜš\Û[Z]][Û—ÝÚNˆ˜[YOˆ8 %ÚO˜8 %Y]]™NÈ[X[‹\™XYX›Bˆ™X\ÛÛˆÚHHš[™[™È\È›ÝXÝ[Û˜X›H›Üˆ\È[Z]][Û‹‚ˆH\\ØÜš\Û[Z]][Û—Ü™\Z\—Ü›Ý]Nˆ˜[YOˆ8¡¤ˆ›Ý]O˜8 %Y]]™NÈÚ[\‚ˆÈH[˜[^™\ˆ˜XÚÛÙÈÛXÙH]ÛÝ[™\ÛÛ™H\È[Z]][Û‹‚‚ˆÈÈÈÈ\TØÜš\[Z]][ÛˆXY\˜›Ø\™™\Ü‚˜š\ˆ™\ÜÈË[[Z]][ÛœÈKXÚXÚË[Ý]]ÚXÚËšœÛÛ˜Üš]\ÈYš\ÛÜžH”ÓÓ‚˜[™X\šÙÝÛˆ™\ÜÈÎ‚‚˜^\™Ù]Üš\‹Ü™\ÜËÝ\\ØÜš\[[Z]][ÛœËšœÛÛ‚\™Ù]Üš\‹Ü™\ÜËÝ\\ØÜš\[[Z]][ÛœË›Y˜‚•HÛÛ[X[™™XYÈ[ˆ^\Ý[™Èš\ˆÚXÚÈKZœÛÛ˜\Y˜XÝˆ]Ù\È›Ý™\[‚˜[˜[\Ú\Ë^XÝ]H\TØÜš\\ÝËY]ÛÝ\˜ÙKÙ[™\˜]H\ÝËØ[›ÝšY\œËœ[ˆ]]][Ûˆ\Ý[™ËX›\ÚÛÛ[Y[ËÚ[™ÙHØ]\ËÜˆÛÛšX]H˜YÙB˜]]Üš]K‚‚’”ÓÓˆšY[Î‚‚˜œÛÛ‚žÂˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒŒH‹ˆÛÛŽˆœš\ˆ‹ˆšÚ[™Žˆ\\ØÜš\Û[Z]][Û—ÛXY\˜›Ø\™‹ˆœÝ]\ÈŽˆ˜Yš\ÛÜžH‹ˆœ›ÛÝŽˆ‹ˆ‹ˆ™Ù[™\˜]YØ]Žˆ[š^Û\ÎŒMÌŒ‹ˆš[œ]ÈŽˆÂˆ˜ÚXÚ×ÛÝ]]Žˆ\™Ù]Üš\‹Ü™\ÜËØÚXÚËšœÛÛˆ‚ˆKˆœÝ[[X\žHŽˆÂˆ™š[™[™Ü×ÝÝ[Žˆˆ\\ØÜš\Ù˜[Z[WÙš[™[™Ü×ÝÝ[Žˆˆ›[Z]][Ûœ×ÝÝ[ŽˆL‹ˆ™\Ý[˜ÝÛ[Z]][Ûœ×ÝÝ[Žˆ‹ˆÜÛ[Z]][Û—ÚÚ[™Žˆ\\ØÜš\ÜXÚØYÙWÜ›ÛÝÝ[œ™\ÛÛ™Y‚ˆKˆ›[Z]][ÛœÈŽˆÂˆÂˆšÚ[™Žˆ\\ØÜš\ÜXÚØYÙWÜ›ÛÝÝ[œ™\ÛÛ™Y‹ˆ˜ÛÝ[ŽˆˆœÛÝ\˜Ù\ÈŽˆÈ\\ØÜš\ÜXÚØYÙWÛ[Z]][Ûˆ—KˆœØ[\\ÈŽˆÂˆÂˆ™š[™[™×ÚYŽˆœ›Ø™NœÜ˜×Ù\Ü]ÚÎ\\ØÜš\Ü™]šY]Î™Ž‹ˆ›[™ÝXYÙHŽˆ\\ØÜš\‹ˆ™š[HŽˆœÜ˜ËÙ\Ü]ÚÈ‹ˆ›[™HŽˆ‚ˆBˆBˆBˆKˆØ\›š[™ÜÈŽˆ×Kˆ›[Z]ÈŽˆÂˆYš\ÛÜžH\TØÜš\Y˜[Z[H™]šY]È[Z]][ÛˆÛÝ[ÈÛ›Kˆ‹ˆÛÝ[ÈÛÛYHœ›ÛH^XÚ]ÚXÚÈ”ÓÓˆ]šY[˜ÙNÈ\È™\ÜÙ\È›Ý™\[ˆ[˜[\Ú\Ëˆ‹ˆ•\È™\ÜÙ\È›Ý^XÝ]H\TØÜš\\ÝËY]ÛÝ\˜ÙKÙ[™\˜]H\ÝËØ[›ÝšY\œËÚ[™ÙHØ]\ËÜˆÛÛšX]H˜YÙH]]Üš]Kˆ‚ˆBŸB˜‚‹HÝ]\Ø\ÈYš\ÛÜžXÚ[ˆHÝ\YYÚXÚÈÝ]]\œÙY]™[ˆÚ[ˆ›Âˆ\TØÜš\Y˜[Z[H[Z]][ÛˆÚYÛ˜[ÈÙ\™H›Ý[™ˆ]\È›ØÚÙYÚ[ˆBˆ\Y˜XÝ\ÈZ\ÜÚ[™Ë[œ™XYX›KX[›Ü›YYÜˆXÚÜÈHš[™[™ÜØ\œ˜^K‚‹H[Z]][ÛœÖ×KšÚ[™\ÈÛÝ[YÛ˜ÙH\ˆš[™[™È\ˆÚ[™ˆ\XØ]H]šY[˜ÙBˆ[™\È[ˆHØ[YHš[™[™ÈÈ›Ý[™›]HÛÝ[Ë‚‹HÛÝ\˜Ù\Ö×X˜[Y\ÈÚ\™HH[Z]][ÛˆÚYÛ˜[Ø[YHœ›ÛN‚ˆ\\ØÜš\Û[Z]][Û˜\\ØÜš\ÜXÚØYÙWÛ[Z]][Û˜Ü‚ˆÝ]X×Û[Z]ÚÚ[™ˆÝ]XÈZ\ÜÚ[™×Ú[\ÜÙÜ˜\[™[ØÚÙYÛ[Ù[Xˆš[™[™ÜÈ\™H›Ü›X[^™YÈHÛÜœ™\ÜÛ™[™È\TØÜš\˜[YY[Z]][Û‚ˆ
+\\ØÜš\Ú[\ÜÙÜ˜\Ý[œ™\ÛÛ™YÜˆ\\ØÜš\Û[ØÚ×ÛÛ›WÛØœÙ\™\˜
+HÛÂˆHXY\˜›Ø\™Ü›Ý\È\]Z]˜[[ÚYÛ˜[ÈÙÙ]\‹‚ˆÝ\ˆ\TØÜš\Y˜[Z[HÝ]X×Û[Z]ÚÚ[™˜[Y\ÈÙY\Z\ˆ^\Ý[™ÂˆÝ]XË[[Z]›ØØX[\žK‚ˆ\È›Ü›X[^˜][Ûˆ\È›Üˆ™\ÜÜ›Ý\[™ÈÛ›H[™Ù\È›ÝÚ[™ÙHÚXÚÈ”ÓÓ‹‚ˆ]\È›ÝHÝ\Ü]Y\‹Ø]K˜YÙK˜\Ù[[™KÜˆ’Tˆ™\›ÈÛZ[K‚ˆØ[\\È\™H›Ý[™YÈ™YHš[™[™ÜÈ\ˆ[Z]][ÛˆÚ[™[™\™H^[\\Ëˆ›Ý^]\Ý]™H›ÛÙ‹‚‚ˆÈÈÈÈ\TØÜš\˜[ÙKPXÝ[Û˜X›H]Y]™\Ü‚˜š\ˆ™\ÜÈËY˜[ÙKXXÝ[Û˜X›HKXÛÜœ\Â™š^\™\ËÝ\\ØÜš\\™]šY]ËY˜[ÙKXXÝ[Û˜X›KX]Y]ØÛÜœ\ËšœÛÛ˜Üš]\Â˜Yš\ÛÜžH”ÓÓˆ[™X\šÙÝÛˆ™\ÜÈÎ‚‚˜^\™Ù]Üš\‹Ü™\ÜËÝ\\ØÜš\Y˜[ÙKXXÝ[Û˜X›KX]Y]šœÛÛ‚\™Ù]Üš\‹Ü™\ÜËÝ\\ØÜš\Y˜[ÙKXXÝ[Û˜X›KX]Y]›Y˜‚•HÛÛ[X[™™XYÈ[ˆ^\Ý[™È\TØÜš\Y˜[Z[H™]šY]È]Y]ÛÜœ\Ëˆ]Ù\Â››Ý™\[ˆ[˜[\Ú\Ë^XÝ]H\TØÜš\\ÝËY]ÛÝ\˜ÙKÙ[™\˜]H\ÝËØ[œ›ÝšY\œË[ˆ]]][Ûˆ\Ý[™ËX›\ÚÛÛ[Y[ËÚ[™ÙHØ]\ËÛÛšX]B˜˜YÙKØ˜\Ù[[™KÔ’Tˆ™\›È]]Üš]KÜˆ›Û[ÝHÝ\ÜY\œË‚‚’”ÓÓˆšY[Î‚‚˜œÛÛ‚žÂˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒŒH‹ˆÛÛŽˆœš\ˆ‹ˆšÚ[™Žˆ\\ØÜš\Ù˜[ÙWØXÝ[Û˜X›WØ]Y]‹ˆœÝ]\ÈŽˆ˜Yš\ÛÜžH‹ˆœ›ÛÝŽˆ‹ˆ‹ˆ™Ù[™\˜]YØ]Žˆ[š^Û\ÎŒMÌŒ‹ˆš[œ]ÈŽˆÂˆ˜ÛÜœ\ÈŽˆ™š^\™\ËÝ\\ØÜš\\™]šY]ËY˜[ÙKXXÝ[Û˜X›KX]Y]ØÛÜœ\ËšœÛÛˆ‚ˆKˆœÝ[[X\žHŽˆÂˆ˜Ø\Ù\×ÝÝ[ŽˆMˆ›]\ÝÜ™[XZ[—Û›Û—ØXÝ[Û˜X›WÝÝ[ŽˆMˆœ™\Z\—ÜXÚÙ]Ü™XYWÝYWÝÝ[Žˆˆ˜XÝ[Û˜X›WÙØ\ÜÝ]WÝÝ[Žˆˆ˜ÛÛ\]WÜXÚÙ]ØØ]YÛÜžWÝÝ[Žˆˆ™˜[ÙWØXÝ[Û˜X›WÝÝ[Žˆˆ™˜[ÙWØXÝ[Û˜X›WÙ[›ÛZ[˜]ÜˆŽˆMˆ™˜[ÙWØXÝ[Û˜X›WÜ˜]HŽˆŒˆœ™]šY]×Ø›Ý[™\žWÝš[Û][Û—ÝÝ[ŽˆˆKˆ™\ÜÜÚ][Û—ØÛÝ[ÈŽˆÂˆÈ˜[YHŽˆ˜Ø[™Y]WÙ]\™WÜÝ\Ü‹˜ÛÝ[ŽˆÈBˆKˆœš\Ú×ØÛ\Ü×ØÛÝ[ÈŽˆÂˆÈ˜[YHŽˆ›[ØÚÈ[\˜XÝ[Ûˆ^[ØYØ\‹˜ÛÝ[ŽˆHBˆKˆ˜Ø\Ù\ÈŽˆÂˆÂˆšYŽˆ›[ØÚ×Ú[\˜XÝ[Û—ÝÚ]Ý]Ü^[ØYÜ›ÛÙˆ‹ˆ›[™ÝXYÙHŽˆ\\ØÜš\‹ˆœš\Ú×ØÛ\ÜÈŽˆ›[ØÚÈ[\˜XÝ[Ûˆ^[ØYØ\‹ˆ™]šY[˜ÙWÚÚ[™Žˆ›[ØÚ×Ú[\˜XÝ[Ûˆ‹ˆ™\ÜÜÚ][ÛˆŽˆ˜Ø[™Y]WÙ]\™WÜÝ\Ü‹ˆ™Ø\ÜÝ]HŽˆ˜Yš\ÛÜžH‹ˆ˜XÝ[Û˜Xš[]WØØ]YÛÜžHŽˆš[˜ÛÛ\]WÜ™\Z\—ÜXÚÙ]‹ˆœ™\Z\—ÜXÚÙ]Ü™XYHŽˆ˜[ÙKˆ›]\ÝÜ™[XZ[—Û›Û—ØXÝ[Û˜X›HŽˆYKˆ˜]]Üš]WØ›Ý[™\žHŽˆœ™]šY]×ØYš\ÛÜžWÛÛ›H‹ˆ™˜[ÙWØXÝ[Û˜X›HŽˆ˜[ÙKˆœÛÝ\˜ÙWÙš^\™HŽˆ™š^\™\ËÝ\\ØÜš\Ú™\ÝÝš]\ÝØ\ÜÙ\[Û—Ù˜XÝÈ‹ˆœÛÝ\˜ÙWÙš[™[™×ÚYŽˆœ›Ø™NœÜ˜×ØÚXÚÛÝ]Î\\ØÜš\Ü™]šY]Î›[ØÚÈ‚ˆBˆKˆØ\›š[™ÜÈŽˆ×Kˆ›[Z]ÈŽˆÂˆYš\ÛÜžH\TØÜš\Y˜[Z[H™]šY]È]Y]Y]šXÈÛ›Kˆ‹ˆ•H˜[ÙKXXÝ[Û˜X›H˜]H\ÈÛÛ\]Yœ›ÛH^XÚ]]Y]ÛÜœ\È›ÝÜÎÈ\È™\ÜÙ\È›Ý™\[ˆ[˜[\Ú\ÈÜˆ^XÝ]H\TØÜš\\ÝËˆ‹ˆ•\È™\ÜÙ\È›ÝY]ÛÝ\˜ÙKÙ[™\˜]H\ÝËØ[›ÝšY\œË[ˆ]]][Ûˆ\Ý[™ËÚ[™ÙHØ]\ËÛÛšX]H˜YÙH]]Üš]KÜˆ›Û[ÝHÝ\ÜY\œËˆ‚ˆBŸB˜‚‹HÝ]\Ø\ÈYš\ÛÜžXÚ[ˆHÝ\YYÛÜœ\È\œÙYˆ]\È›ØÚÙYÚ[‚ˆH\Y˜XÝ\ÈZ\ÜÚ[™Ë[œ™XYX›KX[›Ü›YYÜˆ›ÝH^XÝYˆ\\ØÜš\Ü™]šY]×Ù˜[ÙWØXÝ[Û˜X›WØ]Y]ØÛÜœ\ØÚ\K‚‹HÝ[[X\žK™˜[ÙWØXÝ[Û˜X›WÝÝ[ÛÝ[È]Y]›ÝÜÈX\šÙYˆ]\ÝÜ™[XZ[—Û›Û—ØXÝ[Û˜X›X][ÛÈÙ]™\Z\—ÜXÚÙ]Ü™XYHHYXˆØ\ÜÝ]HH˜XÝ[Û˜X›H˜Ü‚ˆXÝ[Û˜Xš[]WØØ]YÛÜžHH˜ÛÛ\]WÜ™\Z\—ÜXÚÙ]˜‚‹HÝ[[X\žK™˜[ÙWØXÝ[Û˜X›WÙ[›ÛZ[˜]Ü˜\ÈH[X™\ˆÙ‚ˆ]\ÝÜ™[XZ[—Û›Û—ØXÝ[Û˜X›X›ÝÜË›Ý[\TØÜš\š[™[™ÜË‚‹HH™\Ü\È[ˆ]Y]Ý™\ˆ^XÚ]™]šY]È›ÝÜËˆ]\È›Ý]šY[˜ÙH]ˆ\TØÜš\Ý\Ü\È\ØX›H[KØ]H[YÚX›K˜YÙH[YÚX›K˜\Ù[[™Bˆ[YÚX›K’Tˆ™\›È[YÚX›KÜˆ[[YHY\]X]K‚‹HÜ˜XÛHY]Y]H]šY[˜ÙH[™\È
+’T‹TÔPËLH0©ÔJKˆQUU‘NˆÈ›ÝÚ[™ÙBˆÜ˜XÛWÚÚ[™Ü˜XÛWÜÝ™[™ÝÝ]X×Û[Z]ÚÚ[™Üˆ™\Z\—ÜXÚÙ]Ü™XYX‚ˆ[Z]Yœ›ÛHHÝ›Û™Ù\ÝÜ˜XÛKY[YÚX›H\ÜÙ\[ÛˆXÜ›ÜÜÈ[Ü˜XÛKY[YÚX›Bˆ™[]Y\ÝØ[™Y]\ËˆÛ›HÓ‘H\ÜÙ\[Û‰ÜÈY]Y]H\È[Z]Y\ˆš[™[™Ë‚ˆH\\ØÜš\ÛÜ˜XÛWÛØœÙ\™Yˆ^˜8 %Y]]™NÈH^XÝ
+^ŠX\™Ý[Y[ˆ\ÈÛÝ\˜ÙH^^˜XÝYœ›ÛHHÞÈTÕÜ[‹ˆHXÝX[˜[YKÙ^™\ÜÚ[Û‚ˆ™Z[™ÈØœÙ\™YžHH\ÜÙ\[Û‹‚ˆH\\ØÜš\ÛÜ˜XÛWÙ^XÝYˆ˜[YO˜8 %Y]]™NÈHX]Ú\ˆ\™Ý[Y[\ÂˆÛÝ\˜ÙH^[Z]YÓ“HÚ[ˆH\™Ý[Y[\ÈHÛÛ˜Ü™]H™\ÛÛ˜X›H]\˜[ˆ
+Ýš[™Ë[X™\‹›ÛÛX[‹[ÜˆHØY™H[[]\˜[Øš™XÝ
+Kˆ“Õ[Z]Yˆ›Üˆ[˜[ZXËÛ›Û‹[]\˜[\™Ý[Y[ÎÈÜÙHšYÙÙ\‚ˆ\\ØÜš\Ù[˜[ZX×Ø\ÜÙ\[Û—Ý[œ™\ÛÛ™Y[œÝXY‚ˆH\\ØÜš\ÛÜ˜XÛWØÛÛ™šY[˜ÙNˆ]™[˜8 %Y]]™NÈÛÛ™šY[˜ÙH\š]™Yœ›ÛBˆÜ˜XÛWÜÝ™[™Ý\ÈÚ]\ˆH^XÝY˜[YH\ÈHÛÛ˜Ü™]H]\˜[‚ˆ˜[Y\ÎˆYÚ
+Ý›Û™ÈÜ˜XÛH
+È]\˜[^XÝY
+KYY][X
+Ý›Û™ÈÜ˜XÛBˆÚ]Ý]]\˜[ÜˆYY][HÜ˜XÛJKÝØ
+ÙXZÈÜˆÛ[ÚÙHÜ˜XÛJK[šÛ›ÝÛ˜ˆ
+[šÛ›ÝÛˆÜ˜XÛHÚ[™
+K‚ˆH\\ØÜš\ÛÜ˜XÛWÙ]šY[˜ÙWÜ™YŽˆš[OŽ[™O˜8 %Y]]™NÈš[N›[™Xˆ˜XÚÈÈH^XÝ
+‹‹ŠXØ[[ˆH\Ýš[KÚ[[™È]HTÕØ[ˆÚ]HÙˆH\ÜÙ\[Û‹‚‹H\\ØÜš\Ü™]šY]×ØØ\™\È[ˆY]]™HÜ[Û˜[Øš™XÝ›Üˆ\TØÜš\[™ˆ˜]˜TØÜš\™]šY]Èš[™[™ÜÈ][™XYH]™HÝXÝ\™Yˆ™]šY]×ØXÝ[Û˜Xš[]Xˆ]\È[ˆYš\ÛÜžHØ\™›ÝH™\Z\ˆXÚÙ]ˆHŒBˆØ\™Ø\œšY\ÈØ\™Ý™\œÚ[Û˜ÛÝ\˜ÙX[™ÝXYÙX[™ÝXYÙWÜÝ]\Øˆ]]Üš]WØ›Ý[™\žXÝÛ™\˜Ü[Û˜[ÝÛ™\—ÚÚ[™›Ø™WÙ˜[Z[XˆÚ[™ÙYØ™Z]š[Ü˜Ü[Û˜[™[]YÝ\ÝÜ˜XÛWÚÚ[™ˆÜ˜XÛWÜÝ™[™ÝÜ[Û˜[[—ØÜ›ÜÜ×Û[™ÝXYÙWÙÜš\Ü[Û˜[ˆZ\ÜÚ[™×Ù\ØÜš[Z[˜]Ü˜ÝYÙÙ\ÝYØ\ÜÙ\[Û—ÜÚ\XÝ]X×Û[Z]Øˆ[X›H™\šYžK˜ÛÛ[X[™ÚWÛ›ÝØXÝ[Û˜X›X™\Z\—Ü›Ý]Xˆ™\Z\—ÜXÚÙ]Ü™XYX[™[Z]ØˆHÜ[Û˜[ˆ[—ØÜ›ÜÜ×Û[™ÝXYÙWÙÜš\Øš™XÝØ\œšY\ÈÛ™HÛÚ\™[ÛÛ™šYÝ\™Y[ˆœšYÙBˆ›Ùš[HÙ[XÝYœ›ÛHH™[]Y]šY[˜ÙH
+[˜ÛY[™È›Ø‹ˆÛÜWÝ×Ý[œÚ\™Y[™X\šÙÝÛˆ™\Ú^˜X›H›Ùš[\ÊKˆ]Ø\œšY\ÈÝ]Xˆ\ÝÜÙX[K™š[X\ÝÜÙX[K›ÝÛ™\˜ˆ\ÝÜÙX[K˜›Ý[™\žX\\ØÜš\Ù]šY[˜ÙK\ÝÙš[Xˆ\\ØÜš\Ù]šY[˜ÙK™\™XÝ\\ØÜš\Ù]šY[˜ÙK˜œšYÙWØÛÛ™šY[˜ÙXˆ\\ØÜš\Ù]šY[˜ÙK›Z\ÜÚ[™×Ù\ØÜš[Z[˜]ÜœÖ×X[Z]][Û—ØØ]YÛÜžXˆ™\Z\—Ü›Ý]XZ\ÜÚ[™×ÙÜ˜\ÛYÜÖ×X[X›H[›ØÚ×ØÛÛ™][Û˜ˆ˜]×Ù]šY[˜ÙWÜ™YœÖ×XXÝ[Û˜ÝYÙÙ\ÝYÝ\ÝÙš[XÜ[Û˜[ˆXÙ[Y[™\ÝY›ÛÙ—Û[ÙX™\ÝYYš\ÛÜžWÜXÚÙ]]]Üš]WØ›Ý[™\žX[™ˆ™\Z\—ÜXÚÙ]Ü™XYXˆH™\ÝYYš\ÛÜžWÜXÚÙ]\ÈH™]šY]È\ÚË\Ú\[™ÂˆXÚÙ]›ÝX›XÈ™\Z\‹\XÚÙ]]]Üš]KˆÚ[ˆÛ™Hš[™[™È\È][\BˆÛÛ™šYÝ\™Y[ˆœšYÙH›Ùš[\ËHš\œÝ›Ùš[H™[XZ[œÈ[‚ˆ[—ØÜ›ÜÜ×Û[™ÝXYÙWÙÜš\›ÜˆÛÛ\]Xš[]H[™HØ[YHØš™XÝ[ÛÈØ\œšY\Âˆ›Ùš[\Ö×XÛÛZ[š[™È]™\žH[Üš\[ˆ]\›Z[š\ÝXÈ›ÙXÙ\ˆÜ™\‹‚ˆ[X[‹”ÓÓ‹ÐT’Q‹[™Ú]Xˆ›Ú™XÝ[ÛœÈ]\Ý™]Z[ˆ]™\žH›Ùš[NÂˆÛÛœÝ[Y\œÈ]\Ý›Ý™X]Hš\œÝ›Ùš[H\È[ˆ^]\Ý]™HÝ[[X\žKˆ]Ø\œšY\ÂˆXÚÙ]Ý™\œÚ[ÛˆH˜[—ØÜ›ÜÜ×Û[™ÝXYÙWØYš\ÛÜžWÜXÚÙ]ŒH˜ˆÜ›ÜÜ×Û[™ÝXYÙWÜÝ]X\ÝÙš[X\ÝÛÝÛ™\˜\ÝØ›Ý[™\žXˆ[X›H×Ý\ÝÙš[XZ\ÜÚ[™×Ù\ØÜš[Z[˜]ÜœÖ×XÝYÙÙ\ÝYÜÚ\XˆœšYÙWØÛÛ™šY[˜ÙXZ\ÜÚ[™×ÙÜ˜\ÛYÜÖ×X™\ÝY›ÛÙ—Û[ÙXˆ™^ØXÝ[Û˜ˆ]]Üš]WØ›Ý[™\žX™\Z\—ÜXÚÙ]Ü™XYHH˜[ÙXˆX›X×Ü™\Z\—ÜXÚÙ]H˜[ÙX]\ÝÛ›ÝØÚ[™ÙV×XÝÜØÛÛ™][Û˜[™ˆ˜]×Ù]šY[˜ÙWÜ™YœÖ×XˆH™\ÝY›ÛÙ—Û[ÙXØš™XÝØ\œšY\È[ÙXˆ™X\ÛÛ˜]]Üš]WØ›Ý[™\žHHœ™]šY]×ØYš\ÛÜžWÛÛ›H˜ˆ[[YWÙ^XÝ][ÛˆH˜[ÙX]]][Û—Ù^XÝ][ÛˆH˜[ÙXˆZ\šWÙ^XÝ][ÛˆH˜[ÙX[™›ÛÙ—ØÛZ[HH˜[ÙXˆÝ\œ™[[Ù\È\™BˆØœÙ\˜X›WÜ™YÙÜ™Y[˜]]][Û—Ü\×ÛZ\šX[\—ÙØ]YˆœšYÙWÝ[šÛ›ÝÛ˜[™Ý]X×Û[Z]][Û˜È\ÙH˜[YH[ˆYš\ÛÜžH›ÛÙ‚ˆÝ˜]YÞHÛ›H[™È›Ý™\Ü][žH[[YK]]][Û‹Z\šKÜˆ[Ù[ˆ›ÛÙˆØ\È^XÝ]YˆHÝ\œ™[ÛÛ™šYÝ\™Y[ˆ›Øˆ›Ý]HX^H˜[YBˆ\ÝÚœËÝÙX‹Ù™]ÚØ›Ø‹\ÝØ\ÈYš\ÛÜžHXÙ[Y[Ú[‚ˆÚ\™YÜ™\Ú^˜X›H›Ý[™\žH\ØÜš[Z[˜]ÜœÈ\™HZ\ÜÚ[™ÈÛˆHÛÛ™šYÝ\™YœšYÙK‚ˆY[[Û‹[Û›K\X[^\›˜[[Ü˜XÛKœšYÙK][šÛ›ÝÛ‹[™[œ™\ÛÛ™Y\™Ù]ˆØ\Ù\ÈÝ^H]ˆÝYÙÙ\ÝYÝ\ÝÙš[O[›ÝØ\XØX›X[Z]›ÈXÙ[Y[›È™\šYžHÜ‚ˆ™XÙZ\ÛÛ[X[™›È[ÝÙYY]Ý\™˜XÙK[™›ÈX›XÈ™\Z\ˆXÚÙ][[ˆH[X›XÈXÚÙ]šY[È^\ÝˆÛÛ™šYÝ\™YœšYÙH]šY[˜ÙH\ÈBˆÜ™Y]Y˜]×Ù]šY[˜ÙWÜ™YœÖ×K›YÈH˜š[™[™×ÙYÙH˜ÈHœšYÙWÝ[šÛ›ÝÛ˜ˆ[Z]][Ûˆ]\ÝÛZ]]Ü™Y]Yš[™[™È˜]È™Yˆ[™[œÝXY˜[YBˆš[™[™×ÛÜ—Ù™šWÙYÙX[ˆZ\ÜÚ[™×ÙÜ˜\ÛYÜÖ×Xˆ]\È›ÝHÙ[™\˜]Y\ÝˆÛÝ\˜ÙHY][[YHÛÛ[X[™\Ý]\ÝXÙ[Y[Ø]K˜YÙK˜\Ù[[™KÜ‚ˆ™\Z\ˆXÚÙ]‚ˆ™\Z\—ÜXÚÙ]Ü™XYX™[XZ[œÈ˜[ÙX›Üˆ\È™]šY]ÈÛXÙK[™[X›Bˆ™\šYžK˜ÛÛ[X[™]\Ý›Ý™H[\œ™]Y\ÈH[YØ]Y™\Z\ˆ›Ý]K‚‹H\\ØÜš\Ü™\Z\—ÜXÚÙ]\È[ˆY]]™HÜ[Û˜[Øš™XÝ™\Ù[Û›HÚ[‚ˆ\\ØÜš\Ü™]šY]×ØØ\™œ™\Z\—ÜXÚÙ]Ü™XYHOHYX
+K™K‹H[’T‹TÔPËLÂˆÛÛ˜XÝ\ÈØ]\ÙšYY
+Kˆ]\È[ˆYš\ÛÜžH™\Z\‹]ÛÜšÈXÚÙ]›Ú™XÝYšXHHÚ\™Yˆ™[™\™\ˆœ›ÛHHØ\™XÛÜ™ÛÛ\]YžH\\ØÜš\ÙØ\Ü™XÛÜ™Ù›Ü˜ˆ]Ø\œšY\ÂˆØÚ[XWÝ™\œÚ[Û˜
+Œ˜
+KÛÝ\˜ÙX
+\\ØÜš\Ü™]šY]×Ü›Ú™XÝ[Ûˆ˜
+KˆØ\ÚYØ[›ÛšXØ[ÙØ\ÚY[™ÝXYÙX[™ÝXYÙWÜÝ]\Ø
+œ™]šY]È˜
+Kˆ]]Üš]WØ›Ý[™\žX
+œ™]šY]×ØYš\ÛÜžWÛÛ›H˜
+KÜ[Û˜[š[XÜ[Û˜[[™XˆÜ[Û˜[ÝÛ™\˜™\šYžWØÛÛ[X[™Ü[Û˜[™XÙZ\ØÛÛ[X[™[ÝÙYÙY]ÜÝ\™˜XÙV×Xˆ›Ü˜šY[—Ùš[\Ö×X]\ÝÛ›ÝØÚ[™ÙV×XÜ[Û˜[\ÜÙ\[Û—ÜÚ\XˆÜ[Û˜[™\Z\—ÚÚ[™Ü[Û˜[\™Ù]Ý\Ý[™Ü[Û˜[Z\ÜÚ[™×Ù\ØÜš[Z[˜]Ü˜‚ˆÚ[ˆ™\Ù[™XÙZ\ØÛÛ[X[™\ÈHØ[›ÛšXØ[’T‹TÔPËLÎBˆš\ˆ™XÙZ\Üš]HKYØ\Ø[›ÛšXØ[ÙØ\ÚYˆK]™\šYžKXÛÛ[X[™™\šYžWØÛÛ[X[™‚ˆK\Ý]\È›ÝÜ[ˆK[Ý]\™Ù]Üš\‹Ü™XÙZ\ËÏØ\ÜÛYÏ‹šœÛÛ˜ÛÛ[X[™Z[žBˆHÚ\™Y™XÙZ\]Üš]HÝÛ™\ˆ8 %HØ[YHÝš[™ÈHØ\XÚ\Ú[ÛˆYÙ\‚ˆÞ[\Ú^™\È›Üˆ]Ø\8 %[™™]™\ˆHš\ˆÝ]ÛÛYX[Ý™[Y[ÛÛ[X[™‚ˆÚ[ˆXœÙ[H[X[ˆÝ]]ÛÛZ[œÈH˜[YYÝ]\Îˆ›ÝXÝ[Û˜X›X[Z]][Û‚ˆÙXÝ[Ûˆ[œÝXYˆ\ÈšY[\È’T‹TÔPËL0©Ì‹Œ‹ˆ]\È›ÝHØ]K˜YÙKÜ‚ˆX›XÈ™\Z\ˆ]]Üš]NÈ]]Üš]H›Ý[™\žH™[XZ[œÈ™]šY]×ØYš\ÛÜžWÛÛ›X‚ˆ\ÜÙ\[Û—ÜÚ\X\š]˜][Ûˆ
+\ÜÝYHÍLJNˆHÚ\H™]\Ù\ÈHØœÙ\™YˆÜ˜XÛH^™\ÜÚ[Ûˆ
+\\ØÜš\ÛÜ˜XÛWÛØœÙ\™Y
+HÛ›HÚ[ˆHØœÙ\™YØ[ˆ[œ]™XXÚ\ÈH˜[YYZ\ÜÚ[™È\ØÜš[Z[˜]Ü‹ÜˆÚ[ˆ]™XXÚXš[]H\Âˆ›ÝÝ]XØ[HXÚYX›H
+›Û‹[]\˜[›Ý[™\šY\ÈÝXÚ\È[[Ý[H™\ÚÛˆ][KX\™Ý[Y[Ø[ÈÚ]Ý]ÚYÛ˜]\™H]šY[˜ÙK\ØØ\YÝš[™È]\˜[ËÜ‚ˆØ[Y\È]È›Ý™\ÛÛ™HÈHÝÛ™\ŠKˆÚ[ˆHØœÙ\™YØ[[œ]ˆ›Ý˜X›HÙ\È“Õ™XXÚH›Ý[™\žH8 %›Üˆ^[\HH\ØÜš[Z[˜]Üˆ\Âˆ\Ù\‹›[™ÝOHØÚ[HHØœÙ\™YØ[\ÈÙÚ[Š	Ø[XÙIÊX
+[™ÝJH8 %ˆHÚ\H™XÛÛY\È[ˆ^XÚ]›Ý[™\žHXÙZÛ\‹ˆÙÚ[ŠÊˆ›Ý[™\žH[œ]›Üˆ\Ù\‹›[™ÝOHÈ
+‹ÊX[™HXÚÙ]˜Z[ÂˆÛÜÙYˆ™\Z\—ÜXÚÙ]Ü™XYXÝ^\È˜[ÙX\\ØÜš\Ü™\Z\—ÜXÚÙ]\Âˆ›Ý[Z]Y[™H[X[ˆ[Z]][ÛˆÙXÝ[ÛˆÚÝÜÈHÚ\H\Âˆ\™Ù]Ú\H
+›Ý[YØ]X›JXÙÙ]\ˆÚ]HÝÜÛÛ™][Ûˆ›Ü˜šY[™Âˆ™]\ÙHÙˆHØœÙ\™YØ[[œ]ˆHÛÛ\]HXÚÙ]]\Ý›Ý[œÝXÝBˆ\XØ]HÙˆH›Û‹Y\ØÜš[Z[˜][™È\ÜÙ\[Û‹‚‹H\›Ü™]šY]×ØØ\™\È[ˆY]]™HÜ[Û˜[Øš™XÝ›Üˆ\›™]šY]Èš[™[™ÜÂˆ][™XYH]™HÝšXÝ˜XÝ\XÚÙ]]šY[˜ÙKØ[›ÛšXØ[Ø\Y[]Kˆ™[]Y]\Ý]šY[˜ÙKZ\ÜÚ[™È\ØÜš[Z[˜]Üˆ]šY[˜ÙK™\šYžKXÛÛ[X[™ˆ]šY[˜ÙK™XÙZ\]šY[˜ÙKÝÜÛÛ™][ÛœË]\Ý[›ÝXÚ[™ÙHÛÛœÝ˜Z[Ë[™ˆØY™H™\Ë\™[]]™H˜]È]šY[˜ÙH™YœËˆ]\ÈHÚXÚÈ”ÓÓ‹[X[ˆÓKÐT’Q‹ˆÚ]Xˆ[››Ý][Û‹[™Ø\[YÙ\ˆX\šÙÝÛˆYš\ÛÜžHØ\™›ÝHX›XÈ™\Z\‚ˆXÚÙ]ˆ
+Š”ØÛÜHØ]™X]
+Ø[\ZYÛˆÌHÌLÍÎJNŠŠˆH™[™\™\ˆ\È™X[›ÙXÝ[Û‚ˆÛÙK][ˆHÝ\œ™[Ý]H]›Ú™XÝÈÛ›Hœ›ÛHÞ[]XÈ\Ýš[™[™ÜÈ8 %ˆ›È›ÙXÝ[Ûˆ\›ÛÝ\˜ÙHØ[ˆ›ÙXÙHHš[™[™È]Ø\œšY\È\ÈØ\™ˆ™XØ]\ÙHH\›Y\\ˆ[Ù[H\ÈÖØÙ™Ê\Ý
+WH[Ù\›ØH]›Ý]\‚ˆYÛ›Ü™\ÈœXØœØØœÙÚX[™H\Ý™X[H\›[Üš\‹Y˜XÝØˆ^Ü\ˆÙ\È›Ý^\ÝY]ˆ\›	ÜÈÝ\ÜY\ˆ\ÈØØY™›Û›Ý™]šY]Øˆ
+ÙYHÔÝ\ÜY\œ×JÝ]\ËÔÕTÔ•ÕQT”Ë›Y
+JKˆHØ\™YÚÈ\›Üˆ™X[ˆ\›ÛÝ\˜ÙHÛ˜ÙHØ[\ZYÛˆÌH[™ÈH›ÙXÝ[Ûˆ^Ü\ˆ
+ÈÛÛœÝ[Y\ˆœšYÙK‚ˆHŒHØ\™Ø\œšY\ÂˆØ\™Ý™\œÚ[Û˜ÛÝ\˜ÙXˆ[™ÝXYÙX[™ÝXYÙWÜÝ]\Ø]]Üš]WØ›Ý[™\žXÝ\™˜XÙWÜØÛÜXˆX›X×Ü›Ú™XÝ[Û—Ü™XYXX›X×Ü™\Z\—ÜXÚÙ]™\Z\—ÜXÚÙ]Ü™XYXˆYÙ[ÜXÚÙ]Ü™XYXØ]WØØ[™Y]X˜YÙWØØ[™Y]Xˆš\—Þ™\›×ØØ[™Y]XXÚÙ]ÚYØ[›ÛšXØ[ÙØ\ÚYØ\ÜÝ]XˆÚ[™ÙYÛÝÛ™\˜]šY[˜ÙWØÛ\ÜØ™\Z\—Ü›Ý]XˆÝ\œ™[Ý\ÝÙ]šY[˜ÙXZ\ÜÚ[™×Ù\ØÜš[Z[˜]Ü˜\™Ù]Ý\ÝÜÚ\XˆÝYÙÙ\ÝYÝ\ÝÛØØ][Û˜ÝYÙÙ\ÝYØ\ÜÙ\[Û˜™\šYžX™XÙZ\ˆÛÛ™šY[˜ÙX˜]×Ù]šY[˜ÙWÜ™YœÖ×XÝÜÚY–×X]\ÝÛ›ÝØÚ[™ÙV×X[™ˆ[Z]Øˆ›Üˆ\ÈÛXÙKˆÝ\™˜XÙWÜØÛÜHH˜ÚXÚ×ÚœÛÛ—Ú[X[—ÜØ\šY—ÙÚ]X—ÙØ\ÛYÙ\—ÛX\šÙÝÛˆ˜ˆX›X×Ü™\Z\—ÜXÚÙ]H˜[ÙX™\Z\—ÜXÚÙ]Ü™XYHH˜[ÙXˆYÙ[ÜXÚÙ]Ü™XYHH˜[ÙXØ]WØØ[™Y]HH˜[ÙXˆ˜YÙWØØ[™Y]HH˜[ÙX[™š\—Þ™\›×ØØ[™Y]HH˜[ÙX‚ˆ™\šYžK˜ÛÛ[X[™\ÈÛÜYYœ›ÛH˜XÝ]šY[˜ÙHÚ]ˆ™\šYžKœÝ]\ÈH™˜XÝÛÛ›WÛ›ÝÙ[YØ]Y˜ˆ™XÙZ\˜ÛÛ[X[™\È[Ø^\Âˆ[]™[ˆÝYÚ™XÙZ\]šY[˜ÙH\È™\]Z\™Y[\›˜[K[™ˆ™XÙZ\œÝ]\ÈH˜]˜Z[X›WÛ›ÝÙ[YØ]Y˜ˆ\›™]šY]ÈØ\™È\™HX›XÂˆÚXÚÈ”ÓÓ‹[X[ˆÓKY™‹\ØÛÜYÐT’Q‹Ú]Xˆ[››Ý][Û‹[™Ø\[YÙ\‚ˆX\šÙÝÛˆYš\ÛÜžHÛÛ^Û›KˆØ\[YÙ\ˆ\š]˜][ÛˆX^H[Z]H‹[ØØ[ˆ™]šY]ÈØ\™XÛÜ™Ú]›Ú™XÝ[Û—Ù[YÚXš[]K›X\šÙÝÛ—ØYš\ÛÜžHHYXˆÛÈHX\šÙÝÛˆYÙ\ˆØ[ˆÚÝÈHÚ[™ÙYÝÛ™\‹Z\ÜÚ[™È\ØÜš[Z[˜]Ü‹ˆÝYÙÙ\ÝY\ÜÙ\[Û‹ÝYÙÙ\ÝY\ÝØØ][Û‹[™˜XÝ[Û›H™\šYžHÛÛ[X[™‚ˆ]\š]™Y™XÛÜ™]\ÝÙY\YÙ[ÜXÚÙ]—ØÛÛ[Y[Ø]WØØ[™Y]Xˆš\—Þ™\›×ØÛÝ[[™š\—Ü\×ØÛÝ[[™[YÚX›H[™]\Ý›ÝÞ[\Ú^™HBˆ™XÙZ\ÛÛ[X[™ˆ\›™]šY]ÈØ\™ÈÈ›Ý›Ú™XÝ[ÝÙYY]Ý\™˜XÙ\Ëˆ›Ü˜šY[ˆš[\Ë™XÙZ\\™Ý‹‹ÒKÔÝØ\›H›Ý][™Ë˜YÙH]]Üš]KˆØ]H]]Üš]KÜˆ’Tˆ™\›È]]Üš]H[ˆ\ÈÛXÙK‚‹Hš\ˆ™\ÜÈØ\[YÙ\ˆKXÚXÚË[Ý]]ÚXÚËšœÛÛ˜Ø[ˆ\š]™H‹[ØØ[ˆ]Ûˆ[™\TØÜš\Ø\™XÛÜ™[šY\Èœ›ÛHš[™[™ÜÈ]Ø\œžBˆ]Û—Ü™\Z\—ØØ\™Üˆ\\ØÜš\Ü™\Z\—ÜXÚÙ]ˆÜÙH™XÛÜ™È\™BˆYš\ÛÜžH™]šY]È[œ]È›Üˆš\ˆYÙ[XÚÙ]KYØ\[YÙ\ˆ‹‹ˆKYØ\ZY‹‹‚ˆKZœÛÛ˜È^H™\Ù\™HHØ[›ÛšXØ[™]šY]Ë[[™ÝXYÙHØ\QÛÝ\˜ÙH[˜ÚÜ‹ˆÝYÙÙ\ÝY\ÝØØ][Û‹™\šYžHÛÛ[X[™ÝÜÛÛ™][ÛœË[™™]šY]Âˆ]]Üš]H›Ý[™\žHÚ]Ý]™\[›š[™È[˜[\Ú\ÈÜˆÛZ[Z[™È™Y›Ü™KØY\‚ˆÛÜÝ\™K‚‹HØ[›ÛšXØ[ÙØ\ÚY\È[ˆY]]™HÜ[Û˜[ÝX›HY[]H›ÜˆBˆ[™ÝXYÙK\]X[YšYY™Z]š[Ü˜[Ø\Ú[ˆH›ÙXÙ\ˆØ[ˆ˜[YHÛ™HÚ]Ý]ˆ™[Z[™ÈÛˆ[™H[X™\œÈ[Û™Kˆ]Ûˆ™]šY]È˜[Y\È\ÙBˆØ\œ]ÛŽ]ŽÝÛ™\Ž™Z]š[Ü—ÚÚ[™Ž›Ø™WÚÚ[™Ž›Ü›X[^™YÙ\ØÜš[Z[˜]Ü˜‚ˆÝ]XË[[Z]š[™[™ÜÈX^HÛZ]\ÈšY[[[H›Û‹XXÝ[Û˜X›HØ\\Ý]Bˆ›Ú™XÝ[Ûˆ^\ÝË‚‹HØ[›ÛšXØ[ÙØ\ÙÜ›Ý\ÜÚ^™X\ÈH[X™\ˆÙˆ˜]Èš[™[™ÜÈ[ˆHÝ\œ™[ˆ™\Ü]Ú\™HHØ[YHØ[›ÛšXØ[ÙØ\ÚYÜˆÛZ]YÚ[ˆ›ÈØ[›ÛšXØ[ˆØ\Y[]H\È\ÜÚYÛ™Y‚‹HØ[›ÛšXØ[ÙØ\\È[ˆY]]™HÜ[Û˜[Øš™XÝ]Ø\œšY\ÈHY[]Bˆ\È\ÙYÈ\š]™HØ[›ÛšXØ[ÙØ\ÚYˆY[™ÝXYÙXš[XÝÛ™\˜ˆ™Z]š[Ü—ÚÚ[™›Ø™WÚÚ[™[™›Ü›X[^™YÙ\ØÜš[Z[˜]Ü˜‚‹H›Ø™K›ÝÛ™\˜\È[ˆY]]™HÜ[Û˜[ÝX›HÝÛ™\ˆY[YšY\ˆ[Z]YÚ[ˆBˆ™]šY]Ë[[™ÝXYÙHY\\ˆÜ[]YHÚ[™ÙYÝÛ™\‹ˆ]Ûˆ™]šY]ÈÝÛ™\œÈ\ÙBˆ]ÛŽ]ŽŽÝÛ™\˜›Üˆ^[\Bˆ]ÛŽœÜ˜ËÜšXÚ[™ËœNŽ˜Ø[Ý[]WÙ\ØÛÝ[ˆ[Ù[K[]™[]ÛˆÚ[™Ù\È\ÙBˆ[Ù[O˜\ÈHÝÛ™\ˆÙYÛY[‚‹H[™ÝXYÙX\ÈH\‹Yš[™[™ÈÛÝ\˜ÙH[™ÝXYÙH™\ÜYžHH[™ÝXYÙBˆY\\ˆ]›ÙXÙY]
+ÙYHÔ’T‹TÔPËL—JÜXÜËÔ’T‹TÔPËL‹[[™ÝXYÙKXY\\‹XÛÛ˜XÝ›Y
+JK‚ˆ˜[Y\È\™H\Ý\\ØÜš\˜]˜\ØÜš\]Û˜Üˆ\›ˆÛZ]YˆÚ[ˆ›ÈY\\ˆÜ[]Y]ˆ\Ýš[™[™ÜÈ[Ø^\ÈØ\œžH[™ÝXYÙNˆœ\Ý˜Âˆ™]šY]ÈY\\œÈÙ]H™]šY]Ë[[™ÝXYÙH˜[YHÚ[ˆÛÛ™šYÝ\™Y‚‹H[™ÝXYÙWÜÝ]\Ø\ÈH\‹Yš[™[™ÈY\\ˆÝ]\Ëˆ˜[Y\È\™HÝX›XˆÜˆ™]šY]Øˆ
+Š“ÛZ]Y›Üˆ\Ý
+Šˆ\ˆ’T‹TÔPËLŽÈÛÛ™šYÝ\™Y™]šY]ÂˆY\\œÈÙ]™]šY]Ø‚‹HÝÛ™\—ÚÚ[™\È[ˆY]]™HÜ[Û˜[\‹Yš[™[™ÈÞ[XÝXÈÝÛ™\‚ˆ\ØÜš[Z[˜]Ü‹ˆ]\ÈÛZ]YÚ[ˆ›È™]šY]ÈY\\ˆÜ[]YH›Ý[™YˆÝÛ™\‹ˆ˜[Y\È\™H[˜Ý[Û˜Y]ÙÛ\Ü×ÛY]Ù\œ›Ý×Ù[˜Ý[Û˜ˆÛÛ\Û™[Üˆ[Ù[WÙ[˜Ý[Û˜‚‹HÝ]X×Û[Z]ÚÚ[™\È[ˆY]]™HÜ[Û˜[\‹Yš[™[™ÈÝ]XÈ[Z]][Û‚ˆ\ØÜš[Z[˜]Ü‹ˆ]\ÈÛZ]YÚ[ˆ›ÈÝXÝ\™YÝ]XÈ[Z]\ÈÛ›ÝÛ‹ˆ˜[Y\Âˆ\™H[˜[ZX×Ù\Ü]ÚY]\›ÙÜ˜[[Z[™ØZ\ÜÚ[™×Ú[\ÜÙÜ˜\ˆXÛÜ˜]Ü—Ú[™\™XÝ[Û˜[ØÚÙYÛ[Ù[XˆÜ\]YWØÝ\ÝÛWØ\ÜÙ\[Û—Ú[\˜›Ü\WØ˜\ÙYÝ\Ýˆ[œ™\ÛÛ™YÜ]\ÝÙš^\™X[œÝ\ÜYÜÞ[^ˆÜ›ÜÜ×Û[™ÝXYÙWÛÜ˜XÛWÝš\ÚXš[]WÝ[œ™\ÛÛ™Yˆ\ÝÝ˜[œÚ]]™WÜ™XXÚÝ[œ™\ÛÛ™Yˆ\ÝÚ[YÜ˜][Û—ÜX›X×Ø\WÜ]Ý[œ™\ÛÛ™YÜ‚ˆ\ÝÛXXÜ›×Ü™XXÚÝ[œ™\ÛÛ™YÜ‚ˆ\ÝÛXXÜ›×ÝÜ˜\YÝ\ÝØØ[Ý[œ™\ÛÛ™YÜ‚ˆ\ÝÛXXÜ›×ÝÜ˜\YØ\ÜÙ\[Û—Ý[œ™\ÛÛ™YÜ‚ˆ\ÝÝ˜[YWÜ›ÜYØ][Û—Ý[œ™\ÛÛ™Y‚‹HÝ]X×Û[Z]][Û˜\È[ˆY]]™HÜ[Û˜[\‹Yš[™[™ÈØš™XÝ[Z]YÛ›BˆÚ[ˆHš[™[™ÈÚ]Ý]X×Û[Z]ÚÚ[™[ÛÈØ\œšY\ÈHÛÛ\]HÝXÝ\™Yˆ[Z]][Ûˆ]Z[ˆÝ\œ™[\Ý˜[œÚ]]™K\™XXÚ[YÜ˜][ÛˆX›XËPTH]ˆXXÜ›Ë\™XXÚ\™XÝ\ÝXXÜ›ËXØ[XXÜ›Ë]Ü˜\Y\ÜÙ\[Û‹[™ˆ˜[YK\›ÜYØ][Ûˆ[Z]][ÛœÂˆÜ[]H]œ›ÛHHØ[YH]šY[˜ÙH[™\È™[™\™Y[ˆ[X[ˆÝ]]ˆšY[È\™BˆÚ[™\ÝÙ\ÝX›\ÚYÙYÙXš\œÝÝ[œ™\ÛÛ™YÙYÙX[˜[^™\—Ü›Ý]Xˆ[™›Û—ØÛZ[XˆHØš™XÝ\ÈXœÙ[›ÜˆÝ]XÈ[Z]È]È›Ý]™H[ˆ›Ý\ˆ]Z[šY[ÎÈÛÛœÝ[Y\œÈÚÝ[ÙY\\Ú[™ÈÝ]X×Û[Z]ÚÚ[™\ÈBˆ[Z]][Ûˆ\ØÜš[Z[˜]Üˆ[™™X]Ý]X×Û[Z]][Û˜\ÈšXÚ\ˆ]Z[Ú[‚ˆ™\Ù[‚‚ˆÈÈÈ™]šY]×Û[™ÝXYÙ\Ø
+Ü[]™[Y]]™HYš\ÛÜžK’T‹TÔPËLŠB‚YY[ˆØÚ[XHŒ˜\È[ˆY]]™HÜ[Û˜[Ü[]™[\œ˜^Kˆ[Z]YÚ[™]™\‚œ™]šY]Ë[[™ÝXYÙHš[\È
+\TØÜš\˜]˜TØÜš\Üˆ]ÛŠH\™H™\Ù[[ˆB˜[˜[^™YØÛÜH8 %
+Šœ™YØ\™\ÜÈÙˆÚ]\ˆH™]šY]ÈY\\ˆ\È[˜X›Y
+Šˆ[‚˜š\‹Û[ˆXœÙ[›Üˆ\™KT\ÝØÛÜ\ËˆÙ\È›Ý[\ØÚ[XWÝ™\œÚ[Û˜‚‚“›ÝY[˜X›Y
+Y˜][
+H^[\H8 %HÌLLLHØ\ÙHÚ\™HH\TØÜš\Ú[™ÙH\È[‚[™\ˆHY˜][\Ý[Û›HÛÛ™šYÈ[™Ø\È\™Y›Ü™H›Ý[˜[^™Y‚‚˜œÛÛ‚ˆœ™]šY]×Û[™ÝXYÙ\ÈŽˆÂˆÂˆ›[™ÝXYÙHŽˆ\\ØÜš\‹ˆ™š[WØÛÝ[ŽˆKˆœØ[\WÜ]ÈŽˆÈœÜ˜ËÝ][ËÈ—Kˆ™[˜X›YŽˆ˜[ÙKˆ˜[˜[^™YŽˆ˜[ÙKˆ˜Ø]YÛÜžHŽˆœ™]šY]×Û[™ÝXYÙWØYš\ÛÜžH‹ˆÚHŽˆœ™]šY]ÈY\\ˆ›Ý[˜X›YÈš[\È]XÝY]›Ý[˜[^™YÈ[\H™\Ý[\È›Ý\ÝYÜ˜YHÛX[ŽÈÈ[˜X›HYÈš\‹Û[ˆÛ[™ÝXYÙ\×H[˜X›YH×œ\Ý‹\\ØÜš\—H‚ˆB—B˜‚‘[˜X›Y^[\HØ\œšY\È™[˜X›YŽˆYX˜[˜[^™YŽˆYX[™B˜ÚHŽˆœ™]šY]ÈY\\ŽÈYš\ÛÜžNÈX^H™H[˜ÛÛ\]NÈ[\H™\Ý[\È›Ý\ÝYÜ˜YHÛX[ˆ˜‚‚‹H[™ÝXYÙX8 %ÝX›HÚ\™HÝš[™ÎÈÛ™HÙˆ\\ØÜš\˜]˜\ØÜš\]Û˜‹Hš[WØÛÝ[8 %[X™\ˆÙˆš[\È[ˆØÛÜH›Ý]YÈ\ÈY\\ˆ
+™X[™]™\ˆ˜XœšXØ]Y
+B‹HØ[\WÜ]Ø8 %\È™YH›Ü›X[^™Y
+›ÜØ\™\Û\Ú
+Hš[H]Â‹H[˜X›Y8 %Ú]\ˆH™]šY]ÈY\\ˆØ\È[˜X›Y
+˜[ŠH›Üˆ\È[˜[\Ú\Â‹H[˜[^™Y8 %Ú]\ˆHš[\ÈÙ\™H[˜[^™Y
+Z\œ›ÜœÈ[˜X›Y
+B‹HØ]YÛÜžX8 %[Ø^\Èœ™]šY]×Û[™ÝXYÙWØYš\ÛÜžH˜›ÜˆXXÚ[™Hš[\š[™Â‹HÚX8 %Yš\ÛÜžH˜][Û˜[HÝš[™È
+Ø\ÙK\ÜXÚYšXÊB‚[ˆ[\HÜˆXœÙ[™]šY]×Û[™ÝXYÙ\Ø\œ˜^HYX[œÈÛ›HÝX›H
+\Ý
+HÛÛ[Ø\È[ˆØÛÜKˆH›Û‹Y[\H\œ˜^H\È[ˆÛ™\ÝHÚYÛ˜[ˆZ]\ˆH\ÝYœ™]šY]Ë[[™ÝXYÙHš[\ÈÙ\™H›Ý[˜[^™Y][
+[˜X›YOH˜[ÙX
+HÜˆÙ\™B˜[˜[^™Y[™\ˆYš\ÛÜžH™]šY]ÈÝ\Ü]X^H™H[˜ÛÛ\]BŠ[˜X›YOHYX
+Kˆ[ˆ™Z]\ˆØ\ÙH\È[ˆ[\H™\Ý[H\ÝYÜ˜YHÛX[‚œ™\Ý[‚‚ˆÈÈÈ\ÝÚ\›™\ÜÙ\Ø
+Ü[]™[Y]]™HYš\ÛÜžKÌÍLÌŠB‚YY[ˆØÚ[XHŒ˜\È[ˆY]]™HÜ[Û˜[Ü[]™[\œ˜^Kˆ[Z]YÛ›HÚ[‚H™\ÜÚ]ÜžH™YÚ\Ý\™Y\Ý\›™\ÜÙ\È
+Ø[˜[\Ú\Ë\ÝÚ\›™\ÜÙ\×X[‚˜š\‹Û[
+H[™H[‰ÜÈ[˜[\Ú\ÈØ\œšYY\›™\ÜÈ˜XÝËˆXœÙ[›Ü‚œ™\ÜÚ]ÜšY\ÈÚ]Ý]™YÚ\Ý˜][ÛœËÛÈZ\ˆÝ]]\Èž]KZY[XØ[ÈBœ™KHÌÍLÌˆÚ\KˆÙ\È›Ý[\ØÚ[XWÝ™\œÚ[Û˜‚‚•HÔY]ÜˆÝ\™˜XÙHØ\œšY\ÈHØ[YH™YÚ\Ý\™Y˜XÝÈÛˆ]È[˜[\Ú\ÂœÛ˜\ÚÝ
+\›™\Ü×Ü›Ú™XÝ[ÛœØ
+Nˆ™YÚ\Ý˜][ÛˆY[]K\›™\ÜÈÚ[™˜Y\\ˆÙ[™\˜][Û‹^XÝX\šÙ\ˆ[™\™Ù]›Ý™[˜[˜ÙK\ÝX›\ÚYœÝXš™XÝË[™\Y[Z]][ÛœË‚‚•HY]ÜˆÛÜšÜÜXÙHÝ]\È\ØÛÜÙ\ÈH›Ý[™YÝ[[X\žHÙˆHØ[YB™˜XÝÎˆ\›™\Ü×Ü™YÚ\ÝžKœ™YÚ\Ý˜][ÛœÖ×XÚ]™YÚ\Ý˜][ÛˆYš\›™\ÜÈÚ[™Y\\‹\™Ù]\ÝX›\ÚYÝXš™XÝÛÝ[[™\Y›[Z]][ÛˆÛÝ[\ˆ™YÚ\Ý˜][Û‹ˆHÙ^H\È[Ú[ˆH[‚˜Ø\œšYY›È\›™\ÜÈ˜XÝÈ[™\ÈXœÙ[œ›ÛH[œÈÙˆ™\ÜÚ]ÜšY\ÂÚ]Ý]™YÚ\Ý˜][ÛœËˆHÛ˜\ÚÝØ\œšY\È[HÛ›Hœ›ÛB˜ÛÛ\]H[œÈÚÜÙHY™ˆØÛÜH[˜ÛYYH™YÚ\Ý\™Y\™Ù]È[Z]Yœ[œÈ
+Ú][Y[Ý]Ý™\œÚ^™YY™ŠH\ØÛÜÙHH[‹\Ý]\È[Z]][Û‚š[œÝXY[™™\Ü[]HÛˆH™^[™Yœ™\Úˆ\È\ÈBœ™YÚ\Ý\™YY˜XÝÈÝXœÙ]8 %]™]™\ˆÛZ[\ÈH\›™\ÜÈÝXš™XÝÈÙ\™B™^XÝ]Y
+ÌÍŒJK‚‚‘^[\H8 %Û™H™YÚ\Ý\™Y\›™\ÜÈH˜[ÙXÝ\ÝÛH\™Ù]Ú]Û™H^XÝšX[œÝXš™XÝ[™Û™H[˜[ZXË[˜[YH[Z]][ÛŽ‚‚˜œÛÛ‚ˆ\ÝÚ\›™\ÜÙ\ÈŽˆÂˆÂˆœ™YÚ\Ý˜][Û—ÚYŽˆ›Z[ZXË\ÝZ]H‹ˆš\›™\Ü×ÚÚ[™Žˆ˜Ý\ÝÛWÚ\›™\ÜÈ‹ˆ˜Y\\ˆŽˆ›X\ÝÛZ[ZX×ÝŒH‹ˆ›X\šÙ\ˆŽˆ›X\ÝÛZ[ZXÈ‹ˆ\™Ù]Žˆ\ÝËÜšXÙWÛZ[ZXËœœÈ‹ˆœ›Ý™[˜[˜ÙHŽˆœš\‹Û[Ø[˜[\Ú\Ë\ÝÚ\›™\ÜÙ\×H‹ˆœÝXš™XÝÈŽˆÂˆÂˆ›˜[YHŽˆ˜[WÜ\œÙ\È‹ˆ™š[HŽˆ\ÝËÜšXÙWÛZ[ZXËœœÈ‹ˆœÝ\Û[™HŽˆKˆ™[™Û[™HŽˆKˆœÙ[XÝÜˆŽˆ›˜[YYÝ[™^XÝ]Y‹ˆ˜ÛZ[HŽˆ›˜[YYÚ[›ØØ][Ûˆ‚ˆBˆKˆ›[Z]][ÛœÈŽˆÂˆÂˆ˜ÛÙHŽˆ™[˜[ZX×ÝšX[Û˜[YH‹ˆ™š[HŽˆ\ÝËÜšXÙWÛZ[ZXËœœÈ‹ˆ›[™HŽˆMËˆ™]Z[ŽˆšX[˜[YH\È›ÝHÚ[\HÝš[™È]\˜[ÈÙ[™\˜]Y˜[Y\È™[XZ[ˆ[œ™\ÛÛ™Y‚ˆBˆBˆB—B˜‚‹H™YÚ\Ý˜][Û—ÚY8 %HÝX›HY[YšY\ˆœ›ÛHH™YÚ\Ý˜][Û‚‹H\›™\Ü×ÚÚ[™8 %Ý\ÝÛWÚ\›™\ÜØÜˆ™YÚ\Ý\™YØ]šX]X‹HY\\˜8 %Y\\ˆÙ[™\˜][Û‹K™ËˆX\ÝÛZ[ZX×ÝŒX^XÝØ]šX]WÝŒX‹HX\šÙ\˜8 %H^XÝÛÝ\˜ÙHX\šÙ\ˆHY\\ˆX]ÚY
+Ü˜]HÜˆ]šX]H]
+B‹H\™Ù]8 %H^XÝ™YÚ\Ý\™Y\™Ù]š[H
+ÛÜšÜÜXÙK\™[]]™K›ÜØ\™\Û\ÚY
+B‹H›Ý™[˜[˜ÙX8 %Ú\™HH]]Üš]HØ[YHœ›ÛH
+™YÚ\Ý˜][ÛˆÚ[›™[
+B‹HÝXš™XÝÖ×K›˜[YX8 %ÝX›HÝXš™XÝY[]H
+šX[˜[YHÜˆ\Ý›ˆ˜[YJB‹HÝXš™XÝÖ×KœÙ[XÝÜ˜8 %˜[YYÝ[™^XÝ]YÚ[ˆHÙ[XÝÜˆ›Ý]H\ÈÛ›ÝÛŽÂˆHÛ›ÝÛˆ›Ý]H\È™]™\ˆHÙ[XÝÜˆ]˜[ˆ8 %\ÜÚ]™H[˜[\Ú\È™]™\ˆÝ\ÂˆØ\™ÛÈÜˆH\›™\ÜÂ‹HÝXš™XÝÖ×K˜ÛZ[X8 %˜[YYÚ[›ØØ][Û˜
+H[›ØØ][Ûˆ\ÈÛ™HÛÝ\˜ÙK[]™[ˆÝXš™XÝÈÙ[™\˜]YØ\Ù\È\™H›Ý[[Y\˜]Y
+HÜˆ˜[YYÙ[˜Ý[Û˜
+Bˆ[˜Ý[Ûˆ\ÈÛ™H^XÝ]X›H\Ý
+Kˆ˜[YYÚ[›ØØ][Û˜\ÈHÞ[XÝXÈÛZ[Bˆ›Ý[™YžHH™YÚ\Ý\™Y\™Ù]ˆH˜[YYšX[[›ØØ][Ûˆ^\ÝÈ[ˆBˆ™YÚ\Ý\™Y\™Ù]ˆ]Ù\È›ÝÛZ[HH\›™\ÜÈ™YÚ\Ý\œÈÜˆ^XÝ]\ÈBˆšX[8 %HÛÛœÝXÝÜˆ[ˆXYÛÛœÝXÝ[Ûˆ
+[ˆ[\ÙY[\‹[ˆYˆ˜[ÙXˆœ˜[˜ÚHÛÛXÝ[Ûˆ™]™\ˆ\ÜÙYÈH\›™\ÜÉÜÈ[ˆ[žHÚ[
+HÝ[ˆØ\œšY\ÈHÛZ[Kˆ[›ÛZ[˜]ÜˆYZ\ÜÚ[Ûˆ›ÜˆHÝXš™XÝ\ÈXÚYYžHBˆ›Ý[™Y™XXÚXš[]H]]Üš]H
+ÌÍŒÍŠNˆHÛÛœÝXÝ[Ûˆ›Ý˜X›H^ÛYYˆœ›ÛH]™\žH™\ÛÛ™Y[ˆ\™Ý[Y[ÙY\È\ÈÛZ[H]X]™\ÈBˆ^XÝ]X›K]\Ý[›ÛZ[˜]Üˆ[™\È˜[YYžHH™YÚ\Ý˜][Û—Ý[œ™XXÚX›Xˆ[Z]][ÛŽÈHÛÛœÝXÝ[ÛˆH™\ÛÛ™\ˆØ[ˆ™Z]\ˆÛÛ›™XÝ›Üˆ^ÛYBˆÝ^\È[ˆH[›ÛZ[˜]Üˆ[™\ˆ\ÈÛZ[HÚ][ˆYÙÜ™YØ]Bˆ™YÚ\Ý˜][Û—Ü™XXÚXš[]WÝ[šÛ›ÝÛ˜\ØÛÜÝ\™Kˆ\™H\È›È\‹\ÝXš™XÝˆ™XXÚXš[]HšY[ˆH[šÛ›ÝÛˆXÚÙ]\È^XÝHHØ\ÙHÚ\™Bˆ\‹\ÝXš™XÝ]šX][Ûˆ\È›Ý\ÝX›\ÚY‚‹H[Z]][ÛœÖ×X8 %\YÚ\\ÈH™YÚ\Ý˜][ÛˆØ]È]ÛÝ[›ÝÛ\ÜÚYžBˆ
+[˜[ZX×ÝšX[Û˜[YX[˜[ZX×ÝšX[Ü™YÚ\Ý˜][Û˜[XšYÝ[Ý\×Ú[\Üˆ[˜[˜ÚÜ™YÝšX[Ü][œ™\ÛÛ™YÛX\šÙ\—Ú[\Ü\XØ]WÜÝXš™XÝˆ\œÙWÝ[˜]˜Z[X›X
+KˆØ\™ÛÈ\™Ù]Y]Y]HÛÛ™›XÝÈ
+ÌÍŒ
+H\ÙBˆ\™Ù]Û›ÝÙXÛ\™Y
+H\™Ù]X]Ú\È›ÈØ\™ÛÈÖÝ\ÝWX\™Ù]ˆXÛ\™YÜˆ]]Ù\ØÛÝ™\™Y
+K\›™\Ü×Ù›Y×ØÛÛ™›XÝ
+HØ\™ÛÈ\™Ù]ˆÝ[\È\›™\ÜÈHYX
+K[™X[šY™\ÝÝ[˜]˜Z[X›X
+HÝÛš[™ÂˆX[šY™\ÝÛÝ[›Ý™H™XYÜˆ\œÙY
+NÈXXÚ™XÛÜ™È]Bˆ™YÚ\Ý˜][ÛˆÜ˜[È›Èš[K]ÚYH]šY[˜ÙH›ÛK[[Ý[Û‹ÜˆšX[ˆÝXš™XÝÈ[™H\™Ù]ÙY\È]ÈÜ™[˜\žH\‹Y[˜Ý[ÛˆÛ\ÜÚYšXØ][Û‹‚ˆ™XXÚXš[]H[Z]][ÛœÈ
+ÌÍŒÍŠH\ÙH™YÚ\Ý˜][Û—Ý[œ™XXÚX›X
+Û™H\‚ˆšX[ˆHÛÛœÝXÝ[Ûˆ›Ý˜X›HØ[››Ý™XXÚH™YÚ\Ý\™Y[ˆ[žBˆÚ[	ÜÈ\™Ý[Y[8 %›ÈÝ\ÜY[ˆ[žHØ[^\ÝÈ[ˆH\™Ù]Ü‚ˆ]™\žH[ˆ\™Ý[Y[™\ÛÛ™YÛÛ\][H[™HšX[\È›Ý[ˆ[žHÙ‚ˆ[H8 %ÛÈHÝXš™XÝÙY\È]ÈÞ[XÝXÈÛZ[H[™˜XÝ]]Âˆ^XÝ]X›K]\Ý˜XÝÙ\È›Ý›Ú[ˆH[›ÛZ[˜]ÜŠH[™ˆ™YÚ\Ý˜][Û—Ü™XXÚXš[]WÝ[šÛ›ÝÛ˜
+Û™HYÙÜ™YØ]H\ØÛÜÝ\™H\‚ˆ™YÚ\Ý˜][ÛŽˆH›Ý[™Y™\ÛÛ™\ˆÛÝ[›Ý\ÝX›\Ú™XXÚXš[]H›Ü‚ˆH˜[YYšX[ËÛÈ^H™[XZ[ˆ[ˆH[›ÛZ[˜]Üˆ[™\ˆHÞ[XÝXÂˆÛZ[H[™HØ\\È\ØÛÜÙY\™H˜]\ˆ[ˆ\ˆÝXš™XÝ
+K‚‚[ˆXœÙ[\ÝÚ\›™\ÜÙ\Ø\œ˜^HYX[œÈH™\ÜÚ]ÜžH\È›È\›™\ÜÂœ™YÚ\Ý˜][ÛœÎÈ]\È™]™\ˆHÛZ[H]Ý\ÝÛH\›™\ÜÙ\ÈÈ›Ý^\Ý‚‚ˆÈÈÈØÛÜWÙ\ØÛÜÝ\™\Ø
+Ü[]™[Y]]™HYš\ÛÜžK’T‹TÔPËLÊB‚YY\È[ˆY]]™HÜ[Û˜[Ü[]™[\œ˜^Kˆ[Z]YÛ›HÚ[ˆš\ˆÚXÚØØ\È[›ÚÙYÚ]
+Š››È[˜[\Ú\ÈØÛÜJŠˆ
+›ÈKYY™˜KX˜\ÙXÜˆK[[ÙX™›YÊH[™H™\Ý[\È[\KˆXœÙ[Ú[ˆØÛÜHØ\È^XÚ]H›ÝšYY
+]™[‚šYˆH[˜[^™YØÛÜH›ÙXÙYš[™[™ÜÊKˆÙ\È›Ý[\ØÚ[XWÝ™\œÚ[Û˜‚‚“›Ë\ØÛÜH^[\H8 %H’T‹TÔPËLÈØ\ÙHÚ\™H˜\™Hš\ˆÚXÚØ[˜[^™\Â››Ý[™ÈY]š[È[\N‚‚˜œÛÛ‚ˆœØÛÜWÙ\ØÛÜÝ\™\ÈŽˆÂˆÂˆœØÛÜWÜÝ]\ÈŽˆ››×ÜØÛÜWÜ›ÝšYY‹ˆ˜Ø]YÛÜžHŽˆ››×ÜØÛÜWÙ\ØÛÜÝ\™H‹ˆÚHŽˆ››È[˜[\Ú\ÈØÛÜH›ÝšYYÈš\ˆÚXÚÈ\ÈY™‹Yš\œÝÈ[\H™\Ý[Ù\È›ÝYX[ˆÚ[™ÙY™Z]š[Üˆ\ÈÛÝ™\™YÈ[ˆš\ˆÚXÚÈKX˜\ÙHTÑHÚ]TÑHÙ]È[ˆ^\Ý[™È™YˆÜˆš\ˆÚXÚÈK\›ÛÝˆKY›Ü›X]™\ËY^ÜÝ\™K[Y‚ˆB—B˜‚•Ú[ˆØÛÜHØ\È^XÚ]H›ÝšYY
+KYY™˜KX˜\ÙXÜˆK[[ÙX
+K˜ØÛÜWÙ\ØÛÜÝ\™\Ø\ÈXœÙ[ˆHØÛÜK\›ÝšYY[\H™\Ý[\ÈÛ™\Ý[™œ™\]Z\™\È›È\ØÛÜÝ\™K‚‚‹HØÛÜWÜÝ]\Ø8 %[Ø^\È››×ÜØÛÜWÜ›ÝšYY˜›ÜˆXXÚ[™Hš[\š[™Â‹HØ]YÛÜžX8 %[Ø^\È››×ÜØÛÜWÙ\ØÛÜÝ\™H˜›ÜˆXXÚ[™Hš[\š[™Â‹HÚX8 %Yš\ÛÜžH˜][Û˜[K›ÝHÝX›HÙ^KˆÚ[ˆHY˜][˜\ÙHØ\È™\ÛÛ™Y]˜[Y\ÈHÛÛ\\™Y™Yˆ[™[\H˜[™ÙNÈÚ]Ý]H™\ÛÛ™Y˜\ÙH]˜[Y\È[ˆ^XÚ]TÑXXÙZÛ\ˆÈ™\XÙHÚ][ˆ^\Ý[™È™Y‹ˆÛÛœÝ[Y\œÈ]\Ý\ÙHÝXÝ\™YØÛÜH[™˜\ÙHšY[È›ÜˆXÚ\Ú[ÛœË‚‚ˆÈÈÈ[˜[˜[^™YÝÛÜšÚ[™×Ý™YX
+Ü[]™[Y]]™H›ÛÛX[‹’T‹TÔPËLLLŠB‚YY\È[ˆY]]™HÜ[Û˜[Ü[]™[›ÛÛX[‹ˆ[Z]Y
+\ÈYX
+HÛ›HÚ[‚SÙˆH›ÛÝÚ[™È\™HYN‚‚ŒKˆH[˜[^™YY™ˆØ\ÈÛÛ[Z]Y\ÝÜžNˆš\ˆÚXÚÈKX˜\ÙH™]˜ÜˆBˆ˜\™Hš\ˆÚXÚØ]™\ÛÛ™YHY˜][˜\ÙH
+ÌÎ
+K‚Œ‹ˆ›Û™HÙˆKYY™ˆš[O˜K]ÛÜšÝ™YXÜˆKXØ[™Y]K]™YXØ\ÈÝ\YYˆ[™H›Ü›X]\È›Ý™\Ë\ØÛÜK‚ŒËˆHÛÜšÚ[™È™YH\È]X\ÝÛ™H[˜ÛÛ[Z]YÚ[™ÙHÈH˜XÚÙYÛÝ\˜ÙBˆš[K\È™\ÜYžHÚ]Ý]\ÈK\Ü˜Ù[Z[˜‚‚XœÙ[
+›Ý[Z]Y
+HÚ[ˆ˜[ÙXˆÙ\È›Ý[\ØÚ[XWÝ™\œÚ[Û˜‚‚•\ÈšY[ÛÜÙ\ÈH˜[ÙKXÛX[ˆØ\Ú\™Hš\ˆÚXÚÈKX˜\ÙHPQ
+ÜˆH˜\™B˜š\ˆÚXÚØÛˆHY˜][œ˜[˜Ú
+HÚ][ˆ[˜ÛÛ[Z]YœœØY]™]\›œÈ›Ø™\È[™^]8 %H™\Ý[]\ÈÛ™\Ý™›ÜˆHÛÛ[Z]YY™ˆ]Z\ÛXY[™ÈYˆH\Ù\ˆ\ÜÝ[Y\È]ÛÝ™\œÈZ\‚ÛÜšÚ[™Ë]™YHÚ[™ÙKˆÚ[ˆ[˜[˜[^™YÝÛÜšÚ[™×Ý™YNˆYX\È™\Ù[Bœ™\Ý[\È“ÕHÛX[ˆ\ÜÈ›ÜˆH[˜ÛÛ[Z]YÚ[™Ù\Ë‚‚‘^[\N‚‚˜œÛÛ‚ˆ[˜[˜[^™YÝÛÜšÚ[™×Ý™YHŽˆYB˜‚•HšY[\ÈXœÙ[Ú[ˆHÛÜšÝ™YH\ÈÛX[‹Ú[ˆKYY™ˆš[O˜Ü‚˜KXØ[™Y]K]™YXØ\È\ÙYÚ[ˆH™\Ë\ØÛÜH›Ü›X]Ø\È™\]Y\ÝYÚ[ˆK]ÛÜšÝ™YXØ\È\ÙYÈ[˜ÛYHÝYÙY[™[œÝYÙY˜XÚÙYY]È[ˆH[˜[^™YY™‹ÜˆÚ[ˆÚ]Ý]\ÈK\Ü˜Ù[Z[˜Ø[››Ý™Bœ[ˆ
+˜Z[XÛÜÙYˆ›È˜XœšXØ]Y\ØÛÜÝ\™JK‚‚ˆÈÈÈÝ\™\ÜÚ[Û—ÜÛXÞX[™Ý\™\ÜÙYš[™[™ÜÈ
+Ü[]™[Y]]™KÌMJB‚‘[Z]YÛ›HÚ[ˆš\ˆÚXÚØ\È[›ÚÙYÚ]K\Ý\™\ÜÚ[Û‹\ÛXÞHU‚XœÙ[Ý\Ú\ÙKÛÈÛÛœÝ[Y\œÈÚ]Ý]HÛXÞHÙYHž]KZY[XØ[Ý]]‚‘Ù\È›Ý[\ØÚ[XWÝ™\œÚ[Û˜‚‚•HÛXÞHš[H\Ù\ÈHœš\‹ÜÝ\™\ÜÚ[ÛœËÛ[ØÚ[XKˆ^ÜÝ\™WÙØ\™[šY\ÈÙ[XÝš[™[™ÜÈZ]\ˆžH^XÝš[™[™×ÚY
+H^\Ý[™ÈÙ[XÝÜŠB›ÜˆžHH]ÛØˆÝ™\ˆ›ÛÝ\™[]]™Hš[™[™È]È
+
+Š˜Ü[œÈ]œÙYÛY[Ë
+˜[™ØÝ^HÚ][ˆÛ™HÙYÛY[
+KÜ[Û˜[H˜\œ›ÝÙYžB˜Ý]X×ØÛ\ÜØ
+ÚXÚ]\Ý[ˆ™HÛ™HÙˆHÙ]™[ˆÛ\ÜÚYšXØ][Û˜˜[Y\ÊK‚‘^\™Y[šY\È\™H›Ý\YYÈ^\™Y[™[›X]ÚYÙ[XÝÜœÈÝ\™˜XÙH\ÂØ\›š[™ÜËˆHZ\ÜÚ[™ÈÜˆX[›Ü›YYÛXÞH˜Z[ÈH[ˆ
+˜Z[XÛÜÙY
+NˆH[‚›™]™\ˆÚ[[H[Z]È[™š[\™YÛÝ[È\ÈYˆHÛXÞHY™Y[ˆ\YY‚‚•™YHÝ\™˜XÙ\ÈÚ[™ÙHÚ[ˆH›YÈ\È™\Ù[‚‚‹HÝ[[X\žKœÝ\™\ÜÙYØžWÜÛXÞX8 %ÛÝ[ÙˆÝ\™\ÜÙYš[™[™ÜËˆBˆ\‹XÛ\ÜÈÝ[[X\žXXÚÙ]È
+^ÜÙY8 )ˆÝ]X×Ý[šÛ›ÝÛ˜
+HÛÝ[ˆ[œÝ\™\ÜÙYš[™[™ÜÈÛ›NÈXÚÙ]È\ÈÝ\™\ÜÙYØžWÜÛXÞXY˜XÚÂˆ\ÈÝ[[X\žK™š[™[™ÜØÚXÚÝ^\ÈHÝ[™[™\™YÛÝ[‚‹Hš[™[™ÜÖ×KœÝ\™\ÜÙYÈš[™[™ÜÖ×KœÝ\™\ÜÙYØžX8 %Ý\™\ÜÙYš[™[™ÜÂˆÝ^H[H™[™\™Y
+š\ÚX›K›ÝY[ŠH[™Ø\œžHœÝ\™\ÜÙYŽˆYXˆ\ÈHÙ[XÝÜˆ
+š[™[™×ÚYÜˆ]ÛØŠH]X]ÚYˆHš\œÝˆX]Ú[™È[žH[ˆÛXÞKYš[HÜ™\ˆ˜[Y\ÈHÙ[XÝÜ‹‚‹HÜ[]™[Ý\™\ÜÚ[Û—ÜÛXÞXØš™XÝ8 %]
+\ÈÝ\YY
+KÝ\™\ÜÙYˆ
+ÛÝ[
+K[™Ø\›š[™ÜØ
+^\™YÝ[›X]ÚYÙ[XÝÜˆÝš[™ÜÊK‚‚‘^[\N‚‚˜œÛÛ‚ˆœÝ[[X\žHŽˆÈ™š[™[™ÜÈŽˆ‹››×ÜÝ]X×Ü]ŽˆKœÝ\™\ÜÙYØžWÜÛXÞHŽˆ_Kˆ™š[™[™ÜÈŽˆÂˆÈšYŽˆœ›Ø™N™ØÜ×ÙÙ[—ØH‹œÝ\™\ÜÙYŽˆYKœÝ\™\ÜÙYØžHŽˆ™ØÜËÙÙ[‹ÊŠˆ‹‹‹ŸKˆÈšYŽˆœ›Ø™NœÜ˜×ÛXˆ‹‹‹ŸB—KˆœÝ\™\ÜÚ[Û—ÜÛXÞHŽˆÂˆœ]ŽˆœÛXÞKÜš\‹\Ý\™\ÜÚ[ÛœËÛ[‹ˆœÝ\™\ÜÙYŽˆKˆØ\›š[™ÜÈŽˆ×BŸB˜‚”ØÛÜNˆH›YÈ\Y\ÈÈHš[™[™ÜËX˜\ÙYÚXÚÈ›Ü›X]È
+[X[˜˜[X[‹Y[œÛÛ˜Ú]X˜
+Kˆ[X[ˆÝ]]\ÝÈÝ\™\ÜÙYš[™[™ÜÈ\ÈÛÛ\XÝ›Û™K[[™\œÈ[œÝXYÙˆ]Z[Y›ØÚÜÎÈÚ]X‹Y›Ü›X]Ý]]ÚÚ\Â˜[››Ý][ÛœÈ›ÜˆÝ\™\ÜÙYš[™[™ÜËˆÐT’QˆÙY\È]È^\Ý[™Â˜œš\‹ÜÝ\™\ÜÚ[ÛœËÛ[š[™[™×ÚYÝ\™\ÜÚ[ÛˆÚ[›™[[™˜YÙKÜ™\Â™›Ü›X]ÈÙY\Z\ˆÝÛˆÝ\™\ÜÚ[Ûˆ›Ú™XÝ[ÛœÈ8 %š\ˆÚXÚØ™Z™XÝÈB™›YÈ›ÜˆÜÙH›Ü›X]È[œÝXYÙˆÚ[[HYÛ›Üš[™È]ˆ]KY^\žB™[™›Ü˜Ù[Y[™^[Û™^\™\Ø
+™]šY]ËXY\ˆXY[™\Ë™\]Z\™YXXÝ]™B›YÙ\œÊH™[Û™ÜÈÈHØ]H^Ù\[ÛˆÛXÞH
+ÌMŠK›ÝÚXÚÂœÝ\™\ÜÚ[Û‹‚‚ˆÈÈ[[\Â‚˜Û\ÜÚYšXØ][Û˜˜[Y\Î‚‚‹H^ÜÙY‹HÙXZÛWÙ^ÜÙY‹H™XXÚX›WÝ[œ™]™X[Y‹H›×ÜÝ]X×Ü]‹H[™™XÝ[Û—Ý[šÛ›ÝÛ˜‹H›ÜYØ][Û—Ý[šÛ›ÝÛ˜‹HÝ]X×Ý[šÛ›ÝÛ˜‚˜Ù]™\š]X˜[Y\Î‚‚‹H[™›Ø‹HØ\›š[™Ø‹H›ÝX‚˜˜[Z[X˜[Y\Î‚‚‹H™YXØ]X‹H™]\›—Ý˜[YX‹H\œ›Ü—Ü]‹HØ[Ù[][Û˜‹HšY[ØÛÛœÝXÝ[Û˜‹HÚYWÙY™™XÝ‹HX]ÚØ\›X‹HÝ]X×Ý[šÛ›ÝÛ˜‚˜[X˜[Y\Î‚‚‹H˜[YX‹HÛÛ›Û‹HY™™XÝ‹H[šÛ›ÝÛ˜‚˜Ý]X×Û[Z]ÚÚ[™˜[Y\Î‚‚•\TØÜš\^Ù\[ÛŽˆH\TØÜš\Ý]XÈ[Z]Ù]ÈØ\ÜÝ]N‚œÝ]X×Û[Z]][Û˜[™›ØÚÜÈH™\Z\ˆXÚÙ]
+™\Z\—ÜXÚÙ]Ü™XYN‚™˜[ÙX
+H]Ù\È“ÕÝ\™\ÜÈ^ÜÝ\™HÛ\ÜÚYšXØ][Ûˆ8 %Hš[™[™ÈÙY\Âš]È[™\[™[KY\š]™YÛ\ÜÚYšXØ][Ûˆ
+K™Ëˆ^ÜÙYÚ]˜\\ØÜš\Ù[˜[ZX×Ø\ÜÙ\[Û—Ý[œ™\ÛÛ™YÛÙ^\Ý[™Ë\È[›™YžB™š^\™\ËÝ×ÜÝ]X×Û[Z][™š^\™\ËÝ\\ØÜš\Û[ØÚÙYÛ[Ù[WÛ[Z]
+K‚‚‹H[˜[ZX×Ù\Ü]Ú‹HY]\›ÙÜ˜[[Z[™Ø‹HZ\ÜÚ[™×Ú[\ÜÙÜ˜\‹HXÛÜ˜]Ü—Ú[™\™XÝ[Û˜‹H[ØÚÙYÛ[Ù[X‹HÜ\]YWØÝ\ÝÛWØ\ÜÙ\[Û—Ú[\˜‹H›Ü\WØ˜\ÙYÝ\Ý‹H[œ™\ÛÛ™YÜ]\ÝÙš^\™X‹H[œÝ\ÜYÜÞ[^‹HÜ›ÜÜ×Û[™ÝXYÙWÛÜ˜XÛWÝš\ÚXš[]WÝ[œ™\ÛÛ™Y8 %HÚ[™ÙY\ÝÙX[HÝÛ™\ˆ\È‘’KØš[™[™ËY^ÜÙYÈÚ]\ˆ[ˆ^\›˜[[[™ÝXYÙH
+K™Ëˆ\TØÜš\
+H\ÝÜ˜XÛH\ØÜš[Z[˜]\È\È™Z]š[Üˆ\È›ÝÝ]XØ[HÛ›ÝÛˆ8 %™\šYžHH^\›˜[Ü˜XÛH˜]\ˆ[ˆY[™ÈH\Ý\Ý‚‹H\ÝÝ˜[œÚ]]™WÜ™XXÚÝ[œ™\ÛÛ™Y8 %
+’T‹TÔPËLLMY]]™JHH\Ý\X\œÈÈØ[X›XÈTH]X^H˜[œÚ]]™[H™XXÚHÚ[™ÙY\ÝÝÛ™\ˆ›ÝYÚHX‹OœXŠÜ˜]JH[\ˆÚZ[ˆÜˆÚ[Z[\ˆ[\›˜[Ø[Ü˜\]š\ˆØ[››Ý[H™\ÛÛ™HH]
+XXÜ›ÜËÙ[™\šXÜË˜Z]\Ü]ÚÜˆ\HÝÜHØ[ÊKˆÛ\ÜÚYšXØ][ÛˆÝ^\È›×ÜÝ]X×Ü]È\È\ÈH˜[YY[Z]][Û‹›ÝHÛÝ™\˜YÙHÛZ[K‚‚‹H\ÝÚ[YÜ˜][Û—ÜX›X×Ø\WÜ]Ý[œ™\ÛÛ™YKH
+’T‹TÔPËLLNY]]™JH[ˆ[YÜ˜][Ûˆ\Ý\X\œÈÈØ[Ü˜]HX›XÈTKÜˆH\Ý[\ˆ]Ø[ÈÜ˜]HX›XÈTK[Û™ÈHØ[™Y]H]ÝØ\™HÚ[™ÙY\ÝÝÛ™\‹ˆ’TˆØ[››Ý[H™\ÛÛ™H][YÜ˜][Û‹ÜX›XËPTH]ÛÈÛ\ÜÚYšXØ][ÛˆÝ^\È›×ÜÝ]X×Ü]È\È\ÈH˜[YY[Z]][Û‹›ÝH™XXÚÛÝ™\˜YÙKÜˆÜ˜XÛHÛZ[K‚‚‹H\ÝÛXXÜ›×Ü™XXÚÝ[œ™\ÛÛ™YKH
+’T‹TÔPËLLMËY]]™JHH\Ý\X\œÈÈØ[H\Ý[žHÚ[ÚÜÙH]ÝØ\™HÚ[™ÙYÝÛ™\ˆÝÜÈ]HØ[YK\™\ÈXXÜ›È[›ØØ][Û‹ˆš\ˆÙ\È›Ý^[™XXÜ›ÜËÛÈÛ\ÜÚYšXØ][ÛˆÝ^\È›×ÜÝ]X×Ü]È\È\ÈH˜[YY[Z]][Û‹›ÝHÛÝ™\˜YÙHÛZ[K‚‚‹H\ÝÛXXÜ›×ÝÜ˜\YÝ\ÝØØ[Ý[œ™\ÛÛ™YKH
+’T‹TÔPËLLNKY]]™JHH\Ý\Ý\™XÝH[›ÚÙ\ÈHØ[YK\™\ÈXXÜ›ÈÚÜÙHYš[š][ÛˆY[[ÛœÈHÚ[™ÙYÝÛ™\‹ˆš\ˆÙ\È›Ý^[™XXÜ›ÜËÛÈÛ\ÜÚYšXØ][ÛˆÝ^\È›×ÜÝ]X×Ü]È\È\ÈH˜[YY[Z]][Û‹›ÝH™XXÚÛÝ™\˜YÙKÜˆÜ˜XÛHÛZ[K‚‚‹H\ÝÛXXÜ›×ÝÜ˜\YØ\ÜÙ\[Û—Ý[œ™\ÛÛ™YKH
+’T‹TÔPËLLŒY]]™JHH\Ý\Ý™XXÚ\ÈHÚ[™ÙYÝÛ™\‹]]È\ÜÙ\[Û‹[ZÙHÝ\ÝÛHXXÜ›È\È›ÝÛ\ÜÚYšYY\È[ˆÜ˜XÛKˆÛ\ÜÚYšXØ][ÛˆÝ^\È™XXÚX›WÝ[œ™]™X[YÈ\È\ÈH˜[YY[Z]][Û‹›Ý[ˆÜ˜XÛKÛÝ™\˜YÙKÜˆ™\Z\‹\XÚÙ]ÛZ[K‚‚‹H\ÝÝ˜[YWÜ›ÜYØ][Û—Ý[œ™\ÛÛ™YKH
+’T‹TÔPËLMLY]]™JHHÚ[™ÙY\Ý˜[YK\›ÙXÚ[™Èš[™[™È™XXÚ\ÈHØ[YK[ÝÛ™\ˆ\]X[]H™YXØ]H›ÝYÚH›Ý[™YX\ÛÜ˜Ú\H]š\ˆØ[››Ý[H™\ÛÛ™KˆÛ\ÜÚYšXØ][ÛˆÝ^\ÈÝ]X×Ý[šÛ›ÝÛ˜È\È\ÈH˜[YY[Z]][Û‹›ÝH›ÜYØ][Û‹ÛÝ™\˜YÙKÜˆ™\Z\ˆÛZ[K‚‚”™\Ù\™Y›Ý×ÜÚ[šØ˜[Y\Î‚‚‹H™]\›—Ý˜[YX‹H\œ›Ü—Ý˜\šX[‹HÝXÝÙšY[‹H]™[ØØ[‹HÝ]WÝÜš]X‹H\œÚ\Ý[˜ÙX‹HÙ×ÛY\ÜØYÙX‹HÛÛ™šY×ØÚ[™ÙX‹HØ[ÙY™™XÝ‹HX]ÚØ\›X‹H[šÛ›ÝÛ˜‚•\ÙHX™[È\™H[\›˜[[˜[\Ú\È\›\È[ˆØÚ[XHŒXˆHÚYKYY™™XÝ™˜[Z[Y\È\™HY]]™H™Yš[™[Y[ÈÙˆHÛ\ˆÙ[™\šXÈØ[ÙY™™XÝÚ[šÎ‚™]™[ÜˆÝ]›Ý[™Ø[ËÝ]HÜš]\Ë\œÚ\Ý[˜ÙHÜš]\ËÙÈY\ÜØYÙ\Ë[™˜ÛÛ™šYÝ\˜][ÛˆÚ[™Ù\È\™H˜[YYÚ[ˆÞ[^Yš\œÝ[˜[\Ú\ÈØ[ˆY[YžH[KÚ[HØ[ÙY™™XÝ™[XZ[œÈH˜[˜XÚÈ›ÜˆÝ\ˆØœÙ\˜X›HØ[Ë‚‚˜Ý]X˜[Y\Î‚‚‹HY\Ø‹HÙXZØ‹H›Ø‹H[šÛ›ÝÛ˜‹HÜ\]YX‹H›ÝØ\XØX›X‚˜ÛÛ™šY[˜ÙX˜[Y\È[œÚYH’TˆÝYÙ\Î‚‚‹HYÚ‹HYY][X‹HÝØ‹H[šÛ›ÝÛ˜‚˜Ü˜XÛWÜÝ™[™Ý˜[Y\Î‚‚‹HÝ›Û™Ø‹HYY][X‹HÙXZØ‹HÛ[ÚÙX‹H›Û™X‹H[šÛ›ÝÛ˜‚˜Ü˜XÛWÚÚ[™˜[Y\Î‚‚‹H^XÝÝ˜[YX‹H^XÝÙ\œ›Ü—Ý˜\šX[‹HÝX\™YÜ™\Ý[ÛX]Ú‹HÚÛWÛØš™XÝÙ\]X[]X‹HÛ˜\ÚÝ‹H™[][Û˜[ØÚXÚØ‹Hœ›ØYÙ\œ›Ü˜‹HÛ[ÚÙWÛÛ›X‹H[ØÚ×Ù^XÝ][Û˜‹H[šÛ›ÝÛ˜‚˜˜[YWØÛÛ^˜[Y\Î‚‚‹H[˜Ý[Û—Ø\™Ý[Y[‹H\ÜÙ\[Û—Ø\™Ý[Y[‹HZ[\—ÛY]Ù‹HX›WÜ›ÝØ‹H[[WÝ˜\šX[‹H™]\›—Ý˜[YX‹H[šÛ›ÝÛ˜‚˜ÝÜÜ™X\ÛÛ˜˜[Y\Î‚‚‹HX^Ù\Ü™XXÚY‹H^\›˜[ØÜ˜]WØ›Ý[™\žX‹H[˜[ZX×Ù\Ü]ÚÝ[œ™\ÛÛ™Y‹H›Ø×ÛXXÜ›×ÛÜ\]YX‹Hš^\™WÛÜ\]YX‹H™X]\™WÝ[šÛ›ÝÛ˜‹H\Þ[˜×Ø›Ý[™\žWÛÜ\]YX‹H›×ØÚ[™ÙYÜ\ÝÛ[™X‹HXXÜ›×Ü™XXÚÝ[œ™\ÛÛ™Y‹H[™™XÝ[Û—Ù]šY[˜ÙWÝ[šÛ›ÝÛ˜‹H›ÜYØ][Û—Ù]šY[˜ÙWÝ[šÛ›ÝÛ˜‹HÝ]X×Ü›Ø™WÝ[šÛ›ÝÛ˜‚ˆÈÈ˜YÙHÝ]]‚˜YÙK[˜]]™H”ÓÓˆ\ÈHÙ\\˜]HÝ]]ÛÛ˜XÝœ›ÛHš\ˆÚXÚÈKZœÛÛ˜‚’]\ÈÛÛœÝ[YYžHÒH\Y˜XÝËX›XÈÚY[È[™Ú[Ù[™\˜][Û‹[™˜˜YÙHÛXÞHÛÛ[™ËˆHÚY[È›Ú™XÝ[Ûˆ\È[Ø^\È^XÝH›Ý\ˆšY[ÎÂH˜]]™HÚ\HØ\œšY\ÈHÝX›HY]Y]HÛÛœÝ[Y\œÈ™YYÈ[™\œÝ[™œØÛÜH[™ÛÝ[˜\Ú\Ë‚‚‘›Ü›X]Î‚‚˜˜\Úœš\ˆÚXÚÈKY›Ü›X]˜YÙKZœÛÛ‚œš\ˆÚXÚÈKY›Ü›X]˜YÙK\\ËZœÛÛ‚œš\ˆÚXÚÈKY›Ü›X]™\ËX˜YÙKZœÛÛ‚œš\ˆÚXÚÈKY›Ü›X]™\ËX˜YÙK\\ËZœÛÛ‚œš\ˆÚXÚÈKY›Ü›X]™\ËX˜YÙKZœÛÛˆKYØ\[YÙ\ˆ\™Ù]Üš\‹Ü™\ÜËÙØ\YXÚ\Ú[Û‹[YÙ\‹šœÛÛ‚˜‚“˜]]™HØÚ[XHŽ‚‚˜œÛÛ‚žÂˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒŽ‹ˆšÚ[™Žˆœš\ˆ‹ˆœØÛÜHŽˆœ™\È‹ˆ˜˜\Ú\ÈŽˆ˜Ø[›ÛšXØ[ØXÝ[Û˜X›WÙØ\‹ˆ›X™[Žˆœš\ˆ‹ˆ›Y\ÜØYÙHŽˆŒXÝ[Û˜X›H‹ˆœÝ]\ÈŽˆœ\ÜÈ‹ˆ˜ÛÛÜˆŽˆ˜œšYÚÜ™Y[ˆ‹ˆ˜[˜[\Ú\×ØÛÛ\]HŽˆ[ˆ˜[˜[\Ú\×ÛÝ]ÛÛYHŽˆ[ˆ˜ÛÝ[ÈŽˆÂˆ[œÝ\™\ÜÙYÙ^ÜÝ\™WÙØ\ÈŽˆˆ[œÝ\™\ÜÙYÝ\ÝÙY™šXÚY[˜ÞWÙš[™[™ÜÈŽˆˆš[[[Û˜[Ý\ÝÙY™šXÚY[˜ÞWÙš[™[™ÜÈŽˆˆœÝ\™\ÜÙYÙ^ÜÝ\™WÙØ\ÈŽˆˆœÝ\™\ÜÙYÝ\ÝÙY™šXÚY[˜ÞWÙš[™[™ÜÈŽˆˆ[šÛ›ÝÛœÈŽˆˆ[šÛ›ÝÛœ×Ý\ÝÙY™šXÚY[˜ÞHŽˆˆ˜[˜[^™YÙš[™[™ÜÈŽˆˆ˜[˜[^™YÜÙX[\ÈŽˆLŒˆ˜[˜[^™YÙØ\Ü™XÛÜ™ÈŽˆˆ˜[˜[^™YÝ\ÝÈŽˆˆKˆœ™X\ÛÛ—ØÛÝ[ÈŽˆÂˆ››×Ø\ÜÙ\[Û—Ù]XÝYŽˆˆœÛ[ÚÙWÛÜ˜XÛWÛÛ›HŽˆˆœ™[][Û˜[ÛÜ˜XÛHŽˆˆ˜œ›ØYÛÜ˜XÛHŽˆˆ˜\ÜÙ\[Û—ÛX^WÛ›ÝÛX]ÚÙ]XÝYÛÝÛ™\ˆŽˆˆ›Ü\]YWÚ[\—ÛÜ—Ùš^\™WØ›Ý[™\žHŽˆˆ››×ØXÝ]˜][Û—Û]\˜[Ù]XÝYŽˆˆ™^XÝYÝ˜[YWØÛÛ\]YÙœ›ÛWÙ]XÝYÛÝÛ™\—Ü]Žˆˆ™\XØ]WØXÝ]˜][Û—Ø[™ÛÜ˜XÛWÜÚ\HŽˆˆKˆœÛXÞHŽˆÂˆš[˜ÛYWÝ[šÛ›ÝÛœÈŽˆ˜[ÙKˆ™˜Z[ÛÛ—Û›Ûž™\›ÈŽˆ˜[ÙKˆ\ÝÚ[[Ü]Žˆ‹œš\‹Ý\ÝÚ[[Û[‹ˆœÝ\™\ÜÚ[Ûœ×Ü]Žˆ‹œš\‹ÜÝ\™\ÜÚ[ÛœËÛ[‚ˆKˆØ\›š[™ÜÈŽˆ×Kˆœ™]šY]×ÜÚÚ\YŽˆ×KˆœX›X×Ü›Ú™XÝ[ÛˆŽˆÂˆœÝ]HŽˆž™\›×ØXÝ[Û˜X›H‹ˆ›Y\ÜØYÙHŽˆŒXÝ[Û˜X›H‹ˆœ[—ÜÝ]\ÈŽˆ™[‹ˆ™Ù[™\˜]YØ]ŽˆŒŒ‹L‹LŒŒŒˆ‹ˆ˜XÝ[Û˜X›WØÛÝ[Žˆˆ›[Z]YÜ™X\ÛÛˆŽˆ[ˆœÝ[WØYÙWÜÙXÜÈŽˆˆœÛÝ\˜ÙWÜ™\ÜŽˆ\™Ù]Üš\‹Ü™\ÜËÜ™\Ë\š\‹X˜YÙKšœÛÛˆ‚ˆBŸB˜‚‘šY[ÛÛ˜XÝ‚‚‹HØÚ[XWÝ™\œÚ[Û˜8 %Ý\œ™[HŒŽ˜ˆŒ˜YYØÛÜXÈŒØYÂˆ˜\Ú\Ø[™ÛÝ[Ë˜[˜[^™YÜÙX[\ØÈYÂˆ˜\Ú\ÈH™Ø\ÙXÚ\Ú[Û—ÛYÙ\ˆ˜[™ÛÝ[Ë˜[˜[^™YÙØ\Ü™XÛÜ™ØÂˆXYÈ˜\Ú\ÈH˜Ø[›ÛšXØ[ØXÝ[Û˜X›WÙØ\˜›ÜˆX›XÈ™\Z\‹Z][Bˆ›Ú™XÝ[ÛŽÈ˜YÈ™]šY]×ÜÚÚ\YÈØYÈBˆX›X×Ü›Ú™XÝ[Û˜Øš™XÝ
+’T‹TÔPËLŠHÛˆ™\Ë\ØÛÜYX›XÈ˜YÙ\ÎÂˆŽYÈ[˜[\Ú\×ØÛÛ\]X[™\Y[˜[\Ú\×ÛÝ]ÛÛYXÛˆY™‹\ØÛÜYˆ˜YÙ\Ëˆ™\Ë\ØÛÜY˜YÙ\È[Z]›ÝšY[È\È[™XØ]\ÙH^HÈ›Ýˆ]™HHY™ˆÛÛ\][™\ÜÈ[›ÛZ[˜]Ü‹‚‹HÚ[™8 %œš\ˆ˜Üˆœš\—Ü\È˜‚‹HØÛÜX8 %™Y™ˆ˜›Üˆ‹ÙY™ˆ\Y˜XÝËœ™\È˜›ÜˆX›XÈ™\Âˆ˜\Ù[[™H\Y˜XÝË‚‹H˜\Ú\Ø8 %™š[™[™×Ù^ÜÝ\™H˜›ÜˆYØXÞHš[™[™ËÑ^ÜÝ\™PÛ\ÜÈÛÝ[ˆ\Y˜XÝË˜Ø[›ÛšXØ[ØXÝ[Û˜X›WÙØ\˜›ÜˆX›XÈ™\È™\Z\‹Z][H˜YÙBˆ›Ú™XÝ[Û‹œÙX[WÛ˜]]™H˜›Üˆ[\›˜[™\ÔÙX[KÔÙX[QÜš\Û\ÜÈ[™[ÜžBˆ\Y˜XÝËÜˆ™Ø\ÙXÚ\Ú[Û—ÛYÙ\ˆ˜Ú[ˆ™\È˜YÙH›Ü›X]È\™H^XÚ]Bˆ™[™\™Yœ›ÛHÝ\YYØ\™XÛÜ™›Ú™XÝ[Ûˆ\™Ù]ËˆY™‹\ØÛÜY˜YÙBˆ›Ü›X]ÈÝ\œ™[H\ÙHš[™[™×Ù^ÜÝ\™XÈ™\Ë\ØÛÜYX›XÈ˜YÙH›Ü›X]Âˆ\ÙHØ[›ÛšXØ[ØXÝ[Û˜X›WÙØ\[›\ÜÈKYØ\[YÙ\˜\ÈÝ\YY‚‹HY\ÜØYÙX8 %HXY[™H™[™\™Y\ÈHÝš[™È›ÜˆÚY[ÈÛÛ\]Xš[]K‚ˆY™‹\ØÛÜY[™[\›˜[˜YÙ\È™[™\ˆH˜\™HÛÝ[
+›Üˆ^[\HH˜
+K‚ˆ™\Ë\ØÛÜYX›XÈ˜YÙ\È™[™\ˆHÛÜÙY’T‹TÔPËLˆ›ØØX[\žBˆ
+ŒXÝ[Û˜X›H˜ˆXÝ[Û˜X›H˜›[Z]Y˜œÝ[H˜Ü‚ˆ[šÛ›ÝÛˆ˜
+KÛÛXš[™YÚ]HX™[È™XY\Èš\ŽˆˆXÝ[Û˜X›X‚ˆ]\ÈHÛÝ[ÜˆH˜[YYÝ]K™]™\ˆH[›ÛZ[˜]ÜˆÜˆÛÝ™\˜YÙHœ˜XÝ[Û‹‚‹HÛÝ[Ë[œÝ\™\ÜÙYÙ^ÜÝ\™WÙØ\Ø8 %Y™ˆØÛÜNˆ[œÝ\™\ÜÙYˆÙXZÛWÙ^ÜÙY™XXÚX›WÝ[œ™]™X[Y[™›×ÜÝ]X×Ü]š[™[™ÜÎÂˆ™\ÈX›XÈØÛÜNˆ[œ™\ÛÛ™YXÝ[Û˜X›HØ[›ÛšXØ[™\Z\ˆ][\ÎÈÙX[K[˜]]™Bˆ[™[ÜžHØÛÜNˆÛÛ™šYÝ\™Y]š\ÚX›HXY[™KY[YÚX›HÙX[HÛ\ÜÙ\Ë‚‹HÛÝ[Ë[šÛ›ÝÛœØ8 %Y™ˆØÛÜNˆÝ]XÈ[šÛ›ÝÛˆš[™[™ÈÛ\ÜÙ\ÎÈÙX[K[˜]]™Bˆ[™[ÜžHØÛÜNˆÛÛ™šYÝ\™Y]š\ÚX›HÜ\]YXÙX[\ËˆØ[›ÛšXØ[XXÝ[Û˜X›BˆX›XÈ˜YÙH›Ú™XÝ[ÛˆÙ\È›ÝÛÝ[[šÛ›ÝÛ‹[Û›HÜˆ[Z]][Û‹[Û›HÝ]\Âˆ[ˆHXY[™K‚‹HÛÝ[Ë˜[˜[^™YÙš[™[™ÜØ8 %[X™\ˆÙˆš[™[™ÜÈÛÛœÚY\™YžHBˆš[™[™ËY^ÜÝ\™H˜\Ú\ÎÈ›ÜˆØ[›ÛšXØ[XXÝ[Û˜X›H[™ÙX[K[˜]]™H™\Âˆ˜YÙ\Ë‚‹HÛÝ[Ë˜[˜[^™YÜÙX[\Ø8 %[X™\ˆÙˆÛ\ÜÚYšYYÙX[\ÈÛÛœÚY\™YžHBˆØ[›ÛšXØ[XXÝ[Û˜X›HÜˆÙX[K[˜]]™H™\È˜\Ú\ÎÈ›Üˆš[™[™ËY^ÜÝ\™HY™‚ˆ˜YÙ\Ë‚‹HÛÝ[Ë˜[˜[^™YÙØ\Ü™XÛÜ™Ø8 %[X™\ˆÙˆØ\™XÛÜ™[šY\ÈÛÛœÚY\™YžBˆHØ\YXÚ\Ú[Û‹[YÙ\ˆ˜\Ú\ËÜˆØ[›ÛšXØ[™\Z\ˆÜ›Ý\ÈÛÛœÚY\™YžHBˆØ[›ÛšXØ[XXÝ[Û˜X›H˜\Ú\ÎÈ›Üˆš[™[™ËY^ÜÝ\™H[™ÙX[K[˜]]™H˜YÙ\Ë‚‹HØ\›š[™ÜØ8 %Yš\ÛÜžHÝ\™\ÜÚ[ÛœËØÛÛ™šYÈØ\›š[™ÜÈ]™[XZ[ˆš\ÚX›H[‚ˆ˜]]™H”ÓÓ‹ˆHÚY[È›Ú™XÝ[Ûˆ™]™\ˆ[˜ÛY\ÈØ\›š[™ÜË‚‹H™]šY]×ÜÚÚ\Y8 %
+ŒŠH\œ˜^HÙˆ™]šY]Ë[[™ÝXYÙHY\\ˆ˜[Y\È]XÝYˆ[ˆHY™ˆ]›Ý[˜X›YÈH›Û‹Y[\H\ÝYX[œÈH™\Ý[\È›ÝBˆÛX[ˆ\ÝYÜ˜YH™\Ý[ˆ[Ø^\È™\Ù[\È[ˆ\œ˜^H
+ÜÜÚX›H[\JK‚‹H[˜[\Ú\×ØÛÛ\]X8 %
+ŒŽ
+H[X›H›ÛÛX[ˆ\š]™Yœ›ÛHH\YˆY™‹\ØÛÜY[˜[\Ú\×ÛÝ]ÛÛYXÈ˜[ÙXYX[œÈH˜YÙH\È›ÝHÛX[‚ˆ™\Ý[]™[ˆÚ[ˆ]Èš[™[™ÈÛÝ[\È™\›ËÚ[H[YX[œÈH˜YÙH\Âˆ™\Ë\ØÛÜYÜˆÝ\Ú\ÙH\È›ÈY™ˆÝ]ÛÛYK‚‹H[˜[\Ú\×ÛÝ]ÛÛYX8 %
+ŒŽ
+H[X›H\Y[˜[\Ú\ÓÝ]ÛÛYXÈ›Ü‚ˆY™‹\ØÛÜY˜YÙ\Ëˆ]™\Ù\™\ÈH›ÙXÙ\ˆÝ]ÛÛYHÚ[™ÛÝ[Ëˆ[Z]][ÛœË™XÛÝ™\žH›Ý]\Ë[™Ù[X[XÈ[œ]Y[]Kˆ[ˆ[˜ÛÛ\]BˆÝ]ÛÛYHÝÛ™Ü˜Y\ÈH\ÜËÙÜ™Y[ˆY™ˆ˜YÙHÈØ\›š[™ËÞY[ÝÈ[™˜[Y\ÈBˆÝ]ÛÛYHÚ[™[ˆY\ÜØYÙXÈ[ˆ^\Ý[™È˜Z[\™H™[XZ[œÈH˜Z[\™K‚‹HX›X×Ü›Ú™XÝ[Û˜8 %
+ŒÊH™\Ù[Û›HÛˆ™\Ë\ØÛÜYX›XÈ˜YÙ\Âˆ
+Ø[›ÛšXØ[ØXÝ[Û˜X›WÙØ\ÜˆØ\ÙXÚ\Ú[Û—ÛYÙ\˜˜\Ú\ÊKˆBˆ’T‹TÔPËLˆ›Ú™XÝ[ÛˆÙˆH˜YÙH[ÈÛ™HÛÜÙYX›XÈÝ]H\ÂˆH™\]Z\™YÚYXØ\ˆšY[ËˆXœÙ[ÛˆY™‹\ØÛÜY[™[\›˜[˜YÙ\Ë‚ˆÚ[ˆ™\Ù[H˜]]™HY\ÜØYÙXÈÝ]\ØÈÛÛÜ˜\™H›Ú™XÝYœ›ÛBˆ]ˆšY[Î‚ˆHÝ]X8 %Û™HÙˆ™\›×ØXÝ[Û˜X›XXÝ[Û˜X›X[Z]YÝ[Xˆ[šÛ›ÝÛ˜ˆÙ[XÝYÚ]˜Z[XÛÜÙY™XÙY[˜ÙBˆ
+[šÛ›ÝÛˆˆÝ[Hˆ[Z]YˆÛÝ[
+NÈHYÜ˜YY[œ]™]™\ˆ™\ÛÛ™\ÂˆÝØ\™HÛX[™\‹[ÛÚÚ[™ÈÝ]K‚ˆHY\ÜØYÙX8 %HÚY[ÈY\ÜØYÙH›ÜˆHÝ]H
+X™[XYÛ›ÜÝXËK™Ë‚ˆXÝ[Û˜X›X[Z]Y
+K‚ˆH[—ÜÝ]\Ø8 %[™KLHÛÛ\][™\ÜÈÝ]HÙˆHÛÝ\˜ÙH[ˆ
+[ÜˆBˆ˜[YY[Z]YÊ˜˜[YJK‚ˆHÙ[™\˜]YØ]8 %‘ÌÌÌÎHUÈ[Y\Ý[\H˜YÙHØ\ÈÙ[™\˜]YÜˆ[‚ˆHXÝ[Û˜X›WØÛÝ[8 %[œ™\ÛÛ™YØ[›ÛšXØ[XÝ[Û˜X›HØ\ÛÝ[È™\Ù[ˆÛ›H›ÜˆHÛÝ[Ý]\È
+™\›×ØXÝ[Û˜X›XÈXÝ[Û˜X›X
+K[ˆ[Û™ÜÚYH[žHYÜ˜YYÝ]K‚ˆH[Z]YÜ™X\ÛÛ˜8 %H[Z]][Û—ØØ]YÛÜžX
+[™™\Z\ˆ›Ý]JH›ÜˆBˆ[Z]YÝ]NÈ[Ý\Ú\ÙK‚ˆHÝ[WØYÙWÜÙXÜØ8 %YÙHÙˆH\Y˜XÝ™[]]™HÈ]ÈÛÝ\˜ÙH]ˆ]˜[X][Ûˆ[YK[ˆÙXÛÛ™ÎÈ[Ú[ˆÙ[™\˜]YØ]\È[šÛ›ÝÛ‹‚ˆHÛÝ\˜ÙWÜ™\Ü8 %™\Ë\™[]]™H]H˜YÙHØ\È›Ú™XÝYœ›ÛKÜ‚ˆ[‚‚”ÚY[È›Ú™XÝ[ÛŽ‚‚˜œÛÛ‚žÂˆœØÚ[XU™\œÚ[ÛˆŽˆKˆ›X™[Žˆœš\ˆ‹ˆ›Y\ÜØYÙHŽˆŒ‹ˆ˜ÛÛÜˆŽˆ˜œšYÚÜ™Y[ˆ‚ŸB˜‚•HÚY[È›Ú™XÝ[Ûˆ›ÜÈ˜]]™K[Û›HšY[È[˜ÛY[™ÈØÚ[XWÝ™\œÚ[Û˜˜Ú[™ØÛÜX˜\Ú\ØÝ]\ØÛÝ[Ø™X\ÛÛ—ØÛÝ[ØÛXÞX[™˜Ø\›š[™ÜØ‚‚ˆÈÈÈ˜YÙKP˜\Ú\È]Y]™\Ü‚˜Ø\™ÛÈ\ÚÈ˜YÙKX˜\Ú\ØÜš]\È[ˆYš\ÛÜžH]Y]™\Ü]‚‚˜^\™Ù]Üš\‹Ü™\ÜËØ˜YÙKX˜\Ú\ËšœÛÛ‚\™Ù]Üš\‹Ü™\ÜËØ˜YÙKX˜\Ú\Ë›Y˜‚•\È™\ÜXÛÛ\ÜÙ\ÈÛÛ[Z]YX›XÈ[™Ú[˜[Y\È[™›Ý™\ÈÚ]\ˆBœX›XÈ˜YÙH˜\Ú\ÈX]Ú\È’T‹TÔPËLM‹ˆ]Ù\È›ÝY]˜YÙ\ËÊ‹šœÛÛ˜‚‚”™\]Z\™Y”ÓÓˆÚ\N‚‚˜œÛÛ‚žÂˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒŒH‹ˆœÝ]\ÈŽˆœ\ÜÈ‹ˆ›[ÙHŽˆ˜Yš\ÛÜžH‹ˆ˜Ý\œ™[ÜX›X×Ù[™Ú[ÈŽˆÂˆÂˆœ]Žˆ˜˜YÙ\ËÜš\‹šœÛÛˆ‹ˆ›X™[Žˆœš\ˆ‹ˆ›Y\ÜØYÙHŽˆŒMÎH‹ˆ˜ÛÛÜˆŽˆ›Ü˜[™ÙH‚ˆBˆKˆ˜Ý\œ™[Ü™\×Ø˜YÙ\ÈŽˆÂˆÂˆšÚ[™Žˆœš\ˆ‹ˆœØÛÜHŽˆœ™\È‹ˆ˜˜\Ú\ÈŽˆ˜Ø[›ÛšXØ[ØXÝ[Û˜X›WÙØ\‹ˆ›Y\ÜØYÙHŽˆŒMÎH‹ˆ˜ÛÝ[ÈŽˆßBˆBˆKˆœÙX[WÛ˜]]™HŽˆÂˆœÝ]\ÈŽˆœ\ÜÈ‹ˆœÛÝ\˜ÙHŽˆœš\ˆÚXÚÈK\›ÛÝˆKY›Ü›X]™\ËY^ÜÝ\™K[Y‹ˆ˜ÛÝ[×ØžWØÛ\ÜÈŽˆßBˆKˆ\ÝÙY™šXÚY[˜ÞHŽˆÂˆœÝ]\ÈŽˆœ\ÜÈ‹ˆœÛÝ\˜ÙHŽˆ\™Ù]Üš\‹Ü™\ÜËÝ\ÝYY™šXÚY[˜ÞKšœÛÛˆ‹ˆ˜ÛÝ[×ØžWØÛ\ÜÈŽˆßBˆKˆ˜Ø[›ÛšXØ[ØXÝ[Û˜X›WÙØ\ŽˆÂˆœÝ]\ÈŽˆ˜]˜Z[X›H‹ˆœÛÝ\˜ÙHŽˆœ™\ËX˜YÙKX\Y˜XÝÈ‹ˆœš\—ØÛÝ[ŽˆMÎKˆœš\—Ü\×ØÛÝ[ŽˆMÎBˆKˆœÝ\Ü[™×ÜÚYÛ˜[ÈŽˆÂˆœ˜]×Ø[YÛ›Y[ÜÚYÛ˜[ÈŽˆÈœÝ]\ÈŽˆ››ÝÚ[—ØÝ\œ™[Ø˜YÙWÙÙ[™\˜]ÜˆˆKˆ˜Ø[›ÛšXØ[Ù]šY[˜ÙWÚ][\ÈŽˆÈœÝ]\ÈŽˆ››ÝÚ[—ØÝ\œ™[Ø˜YÙWÙÙ[™\˜]ÜˆˆKˆœÝ]X×Û[Z]][ÛœÈŽˆÈœÝ]\ÈŽˆ˜]˜Z[X›HˆKˆœÝ\™\ÜÙYÛÜ—Ú[[[Û˜[Ú][\ÈŽˆÈœÝ]\ÈŽˆ˜]˜Z[X›WÙœ›ÛWØ˜YÙWØÛÝ[ÈˆKˆ››×ØXÝ[Û—Ú][\ÈŽˆÈœÝ]\ÈŽˆœ™\]Z\™\×ÙØ\ÙXÚ\Ú[Û—ÛYÙ\ˆˆBˆKˆœ™XÛÛ[Y[™YÜX›X×Ü›Ú™XÝ[ÛˆŽˆÂˆ˜˜\Ú\ÈŽˆ˜Ø[›ÛšXØ[ØXÝ[Û˜X›WÙØ\‹ˆœ[HŽˆ”‘PQQKÜÝÜ™H˜YÙ\ÈÚÝ[ÛÝ[[œ™\ÛÛ™YXÝ[Û˜X›HÝ]XÈ™\Z\ˆØ\È\Ú[™ÈØ[›ÛšXØ[ØXÝ[Û˜X›WÙØ\Èš\ŠÈYÈÛ›H][\È›Ú™XÝY[ÈHØ[YH™\Z\‹™\šYžK[™™XÙZ\[Ù[ÈÙX[K[˜]]™H[™[ÜžHÝ^\ÈÝ\Ü[™ËÚ[\›˜[ˆ‚ˆKˆØ\›š[™ÜÈŽˆ×Kˆ››Û—ØÛZ[\ÈŽˆ×BŸB˜‚‘šY[ÛÛ˜XÝ‚‚‹HÝ\œ™[ÜX›X×Ù[™Ú[ØZ\œ›ÜœÈÛÛ[Z]YÚY[È[™Ú[”ÓÓ‹‚‹HÝ\œ™[Ü™\×Ø˜YÙ\Ø™XÛÜ™ÈH˜]]™H˜YÙH˜\Ú\È\ÙYÈ\š]™HX›XÂˆÛÝ[Ë‚‹HØ[›ÛšXØ[ØXÝ[Û˜X›WÙØ\™XÛÜ™ÈHX›XÈ™\Z\ˆ›Ú™XÝ[ÛˆÛÝ[ÎˆBˆ[œ™\ÛÛ™YXÝ[Û˜X›HÝ]XÈ™\Z\ˆØ\È\ÙY›Üˆ‘PQQKÜÝÜ™H˜YÙBˆXY[™\Ë‚‹HÙX[WÛ˜]]™X™XÛÜ™È[\›˜[[™[ÜžHÝ]\È[™\‹XÛ\ÜÈÛÝ[ÈÚ[‚ˆÛÛXÝYÚ]KZ[˜ÛYK\ÙX[KXÛ\ÜÙ\Ø‚‹H\ÝÙY™šXÚY[˜ÞX™XÛÜ™ÈÛ\ÜÈÛÝ[È]Ù\È›Ý[Ý™HHX›XÈš\ŠØˆXY[™H[›\ÜÈÜÙH][\È\™H›Ú™XÝY[ÈH™\Z\ˆÈ™\šYžHÈ™XÙZ\ˆ[Ù[‚‹HÝ\Ü[™×ÜÚYÛ˜[Ø˜[Y\ÈÝ\Ü[™ÈÜˆ^ÛYY]šY[˜ÙH˜]\ˆ[‚ˆÚ[[H›Ü[™È]‚‹H™XÛÛ[Y[™YÜX›X×Ü›Ú™XÝ[Û‹˜˜\Ú\Ø]\Ý™BˆØ[›ÛšXØ[ØXÝ[Û˜X›WÙØ\›ÜˆX›XÈ™\Z\ˆ˜YÙ\Ë[™ˆ™XÛÛ[Y[™YÜX›X×Ü›Ú™XÝ[Û‹œ[X]\ÝÙY\ÙX[K[˜]]™H[™[ÜžBˆÝ\Ü[™ËÚ[\›˜[˜]\ˆ[ˆHX›XÈXY[™HÛÝ[\‹‚‚ˆÈÈÐT’QˆÝ]]‚Ø[\ZYÛˆPˆÐT’Qˆ›Ü›X]Î‚‚˜˜\Úœš\ˆÚXÚÈKY›Ü›X]Ø\šY‚œš\ˆÚXÚÈKY›Ü›X]™\Ë\Ø\šY‚˜‚˜Ø\šY˜\ÈHY™‹\ØÛÜYš[™[™ÈÐT’QˆÝ\™˜XÙKˆ™\Ë\Ø\šY˜\ÈBœ™\Ë\ØÛÜYÛ\ÜÚYšYYÙX[HÐT’QˆÝ\™˜XÙKˆ›Ý\ÙHÐT’Qˆ‹ŒKŒ‚‚˜œÛÛ‚žÂˆ‰ØÚ[XHŽˆšÎ‹ËÚœÛÛ‹œØÚ[X\ÝÜ™K›Ü™ËÜØ\šY‹L‹ŒKŒšœÛÛˆ‹ˆ™\œÚ[ÛˆŽˆŒ‹ŒKŒ‹ˆœ[œÈŽˆÂˆÂˆÛÛŽˆÂˆ™š]™\ˆŽˆÂˆ›˜[YHŽˆœš\ˆ‹ˆœ[\ÈŽˆ×BˆBˆKˆœ™\Ý[ÈŽˆ×BˆBˆBŸB˜‚”[HQÈ\™HÝX›HX›XÈ[YÜ˜][ÛˆÝš[™ÜË‚‚‘š[™[™È[HQÎ‚‚‹Hš\‹™š[™[™Ë™^ÜÙY‹Hš\‹™š[™[™ËÙXZÛWÙ^ÜÙY‹Hš\‹™š[™[™Ëœ™XXÚX›WÝ[œ™]™X[Y‹Hš\‹™š[™[™Ë››×ÜÝ]X×Ü]‹Hš\‹™š[™[™Ëš[™™XÝ[Û—Ý[šÛ›ÝÛ˜‹Hš\‹™š[™[™Ëœ›ÜYØ][Û—Ý[šÛ›ÝÛ˜‹Hš\‹™š[™[™ËœÝ]X×Ý[šÛ›ÝÛ˜‚”ÙX[H[HQÎ‚‚‹Hš\‹œÙX[KœÝ›Û™ÛWÙÜš\Y‹Hš\‹œÙX[KÙXZÛWÙÜš\Y‹Hš\‹œÙX[K[™Üš\Y‹Hš\‹œÙX[Kœ™XXÚX›WÝ[œ™]™X[Y‹Hš\‹œÙX[K˜XÝ]˜][Û—Ý[šÛ›ÝÛ˜‹Hš\‹œÙX[Kœ›ÜYØ][Û—Ý[šÛ›ÝÛ˜‹Hš\‹œÙX[K›ØœÙ\˜][Û—Ý[šÛ›ÝÛ˜‹Hš\‹œÙX[K™\ØÜš[Z[˜][Û—Ý[šÛ›ÝÛ˜‹Hš\‹œÙX[K›Ü\]YX‹Hš\‹œÙX[Kš[[[Û˜[‹Hš\‹œÙX[KœÝ\™\ÜÙY‚ÛÛ™šYÝ\™YÙ]™\š]HX\È[ÈÐT’Qˆ\Î‚‚Ÿš\‹Û[Ù]™\š]HÐT’Qˆ™\Ý[™Z]š[ÜˆŸKKHKKHŸØ\›š[™Ø[Z]]™[ˆØ\›š[™È˜Ÿ[™›Ø[Z]]™[ˆ››ÝH˜Ÿ›ÝX[Z]]™[ˆ››ÝH˜ŸÙ™˜ÛZ]H™\Ý[‚”ÐT’QˆŒHÙ\È›Ý[Z]]™[ˆ™\œ›Üˆ˜ˆÒH›ØÚÚ[™È\ÈHÙ\\˜]HÜZ[‚œÛXÞHXÚ\Ú[Û‹›ÝH›Ü\HÙˆHÝ]XÈÐT’Qˆ™[™\™\‹‚‚‘Y™‹\ØÛÜYÐT’Qˆ[ÛÈØ\œšY\ÈY]]™H[‹[]™[›Ü\Y\ØÚ[ˆBœ›ÙXÙ\ˆÝ\Y\È[ˆ[˜[\Ú\ÓÝ]ÛÛYXˆ[—ÜÝ]\Ø\È˜ÛÛ\]H˜Ü‚˜š[˜ÛÛ\]H˜[˜[\Ú\×ØÛÛ\]X\ÈH\š]™Y›ÛÛX[‹[™˜[˜[\Ú\×ÛÝ]ÛÛYX\ÈH\YËˆ\ÙH›Ü\Y\ÈÙY\[ˆ[\H™\Ý[Ø˜\œ˜^Hœ›ÛH™Z[™ÈZ\Ü™XY\ÈHÛX[ˆ[˜[\Ú\Ëˆ™\Ë\ØÛÜYÙX[HÐT’Qˆ™]Z[œÂš]È^\Ý[™È[Z]][Ûˆ›Ü\Y\È[™Ù\È›Ý[™[HY™ˆÝ]ÛÛYK‚‚‘]™\žH™\Ý[Ø\œšY\Î‚‚‹H[RYÂ‹H]™[Â‹HHš[X\žH\ÚXØ[ØØ][ÛˆÚ[ˆš[H[™[™H\™HÛ›ÝÛŽÂ‹H\X[š[™Ù\œš[Ëœš\‘š[™Ù\œš[ŒXÂ‹H›Ü\Y\ËšÚ[™
+š[™[™ØÜˆÙX[X
+NÂ‹HÝX›HQÈ
+š[™[™×ÚY›Ø™WÚYÜˆÙX[WÚY
+HÚ[ˆ]˜Z[X›NÂ‹HÛ\ÜÈY]Y]H
+Û\ÜÚYšXØ][Û˜›Ø™WÙ˜[Z[XÜš\ØÛ\ÜØÜ‚ˆÙX[WÚÚ[™
+HÚ[ˆ]˜Z[X›K‚‹HY™‹\ØÛÜY™]šY]Ë[[™ÝXYÙHš[™[™È™\Ý[ÈX^H[ÛÈØ\œžHY]]™Bˆ›Ü\Y\Ë›[™ÝXYÙX›Ü\Y\Ë›[™ÝXYÙWÜÝ]\Ø›Ü\Y\Ë›ÝÛ™\—ÚÚ[™ˆ›Ü\Y\ËœÝ]X×Û[Z]ÚÚ[™›Ü\Y\Ëœ™]šY]×ØXÝ[Û˜Xš[]X[™ˆ›Ü\Y\Ë\\ØÜš\Ü™]šY]×ØØ\™ˆH™]šY]×ØXÝ[Û˜Xš[]X[™ˆ\TØÜš\™]šY]ËXØ\™Ú\\ÈX]Úš\ˆÚXÚÈKY›Ü›X]œÛÛ˜[™™[XZ[‚ˆYš\ÛÜžH™]šY]ÈÛÛ^›ÝÐT’QˆÛXÞHXÚ\Ú[ÛœÈÜˆ™\Z\ˆXÚÙ]Ë‚‹H\™XÝÙXZÈ]Ûˆ™]šY]Èš[™[™ÜÈÚ][ˆ[YÚX›H]Û—Ü™\Z\—ØØ\™[‚ˆš\ˆÚXÚÈKY›Ü›X]œÛÛ˜[ÛÈØ\œžHY]]™Bˆ›Ü\Y\Ëœ]Û—Ü™\Z\—ØØ\™[ˆY™‹\ØÛÜYÐT’Q‹ˆH™\ÝYØ\™ÙY\ÂˆHØ[YH™]šY]ËØYš\ÛÜžH›Ý[™\žKØ[›ÛšXØ[Ø\QZ\ÜÚ[™È\ØÜš[Z[˜]Ü‹ˆÝYÙÙ\ÝYØØ][Û‹™\šYžHÛÛ[X[™™XÙZ\Ý]\ËÙÝZY[˜ÙKÝÜˆÛÛ™][ÛœË[™[Z]Ëˆ\È\ÈÛÙK\ØØ[›š[™ÈÛÛ^Û›NÈ]Ù\È›ÝXZÙBˆÐT’QˆH™\Z\ˆ^XÝ]Ü‹™XÙZ\]]Üš]KÜˆØ]K‚‹H]Ûˆ™]šY]Èš[™[™ÜÈ]\™H›Ý™\Z\‹XØ\™[YÚX›H™XØ]\ÙH^H\™Bˆ[™XYHØœÙ\™Y]™H›ÈØY™H™[]Y]\Ý›Ý]K\™H]\š\ÝXË[Û›KÜˆ]ˆHÝ]XÈ[Z]Ø\œžHY]]™H›Ü\Y\Ëœ]Û—Û›×ØXÝ[Û˜[ˆY™‹\ØÛÜYˆÐT’Q‹ˆH™\ÝYØš™XÝX\šÜÈ™\Z\—ÜXÚÙ]Ü™XYHH˜[ÙXˆ™\Z\—ØØ\™Ü™\Ù[H˜[ÙX›×ØXÝ[Û—ÚÚ[™[™\šYžKÜ™XÙZ\ˆÛÛ[X[™ËÝÜÛÛ™][ÛœË[™H™]šY]×ØYš\ÛÜžWÛÛ›X]]Üš]Bˆ›Ý[™\žKˆÜ™[˜\žH›ËXXÝ[ÛˆÝ]\È\ÙBˆ™\Z\˜Xš[]HH››×ØXÝ[Ûˆ˜Ú]›ÝØ\XØX›WÛ›×ØXÝ[Û˜™\šYžKÜ™XÙZ\ˆÝ]\ËˆÝ]XÈ[Z]È\ÙH™\Z\˜Xš[]HH˜[˜[^™\—Û[Z]][Ûˆ˜[˜ÛYBˆH\YÝ]X×Û[Z]ÚÚ[™[™\ÙH›ÝØ\XØX›WÜÝ]X×Û[Z]Ý]\Ë‚ˆ\È\È˜Z[XÛÜÙY™]šY]ÈÛÛ^Û›NÈ]]\Ý›Ý™H™X]Y\È[ˆYÙ[ˆXÚÙ]ÜˆÛÜÝ\™H™XÙZ\‚‹H\›™]šY]ÈØ\™ÈÚ]ÝšXÝ˜XÝ\XÚÙ]]šY[˜ÙH[ÛÈØ\œžHY]]™Bˆ›Ü\Y\Ëœ\›Ü™]šY]×ØØ\™[ˆY™‹\ØÛÜYÐT’Q‹ˆH™\ÝYØ\™X]Ú\ÂˆHš\ˆÚXÚÈKY›Ü›X]œÛÛ˜Ú\KÙY\È™XÙZ\ÛÛ[X[™È[[™Y]ˆ›Ý[™\šY\ÈY[‹[™™[XZ[œÈÛÙK\ØØ[›š[™ÈÛÛ^Û›Kˆ]Ù\È›ÝXZÙBˆÐT’QˆH™\Z\ˆ^XÝ]Ü‹™XÙZ\]]Üš]KØ]K˜YÙH[œ]Üˆ’Tˆ™\›Âˆ]]Üš]K‚‚”Ý\™\ÜÙY^ÜÝ\™KYØ\š[™[™ÜÈ™[XZ[ˆš\ÚX›HÚ]ÐT’QˆÝ\™\ÜÚ[ÛˆY]Y]BÚ[ˆZ\ˆÛÛ™šYÝ\™YÙ]™\š]H\Èš\ÚX›Kˆ™\Ý[ÈÚÜÙHÛÛ™šYÝ\™YÙ]™\š]H\Â˜Ù™˜\™HÛZ]YˆÙYH’T‹TÔPËL›ÜˆH[Ý\™\ÜÚ[Ûˆ[™˜\Ù[[™BœÛXÞHÛÛ˜XÝ‚‚˜Ø\™ÛÈ\ÚÈØ\šY‹\ÛXÞXÛÛ\\™\ÈÝ\œ™[ÐT’QˆYØZ[œÝ[ˆÜ[Û˜[˜\Ù[[™B˜[™Üš]\Î‚‚˜^\™Ù]Üš\‹Ü™\ÜËÜØ\šY‹\ÛXÞKšœÛÛ‚\™Ù]Üš\‹Ü™\ÜËÜØ\šY‹\ÛXÞK›Y˜‚•H”ÓÓˆ™\Ü\È™\È]]ÛX][ÛˆÝ]]Ú]ØÚ[XH™\œÚ[ÛˆŒŒH˜‚‚˜œÛÛ‚žÂˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒŒH‹ˆÛÛŽˆœš\ˆ‹ˆœÝ]\ÈŽˆ›™]×Ü™\Ý[È‹ˆ›[ÙHŽˆ˜˜\Ù[[™KXÚXÚÈ‹ˆ™\ÚÛŽˆØ\›š[™È‹ˆ˜Ý\œ™[ŽˆÂˆœ]Žˆ\™Ù]Üš\‹Ü™\ÜËÜš\‹\ÙX[\ËœØ\šY‹šœÛÛˆ‹ˆœ™\Ý[×ÝÝ[ŽˆL‹ˆ˜ÛÛ\\™YÜ™\Ý[ÈŽˆÂˆKˆ˜˜\Ù[[™HŽˆÂˆœ]Žˆ‹œš\‹ÜØ\šY‹X˜\Ù[[™KšœÛÛˆ‹ˆ›Z\ÜÚ[™ÈŽˆ˜[ÙKˆœ™\Ý[×ÝÝ[ŽˆLˆ˜ÛÛ\\™YÜ™\Ý[ÈŽˆ‚ˆKˆ›™]×Ü™\Ý[×ÝÝ[ŽˆKˆ›™]×Ü™\Ý[ÈŽˆÂˆÂˆœ[WÚYŽˆœš\‹œÙX[KÙXZÛWÙÜš\Y‹ˆ›]™[ŽˆØ\›š[™È‹ˆ™š[™Ù\œš[Žˆœš\‹œÙX[KÙXZÛWÙÜš\YX˜ÌLŒßÜ˜ËÛX‹œœßˆ‹ˆ\šHŽˆœÜ˜ËÛX‹œœÈ‹ˆ›[™HŽˆ‹ˆ›Y\ÜØYÙHŽˆÙXZÛWÙÜš\YÙX[HÜš\›Üˆ™YXØ]WØ›Ý[™\žH‚ˆBˆBŸB˜‚”ÛXÞH™\ÜÈ\™HYš\ÛÜžH[›\ÜÈK[[ÙH˜Z[[Û‹[™]Ë]Ø\›š[™Ø\È\ÙY‚‚ˆÈÈÛÛ^XÚÙ]‚˜š\ˆÛÛ^KZœÛÛ˜[Z]ÈÛÛ\XÝ\Ý[[›ÜˆYÙ[Î‚‚˜œÛÛ‚žÂˆ™\œÚ[ÛˆŽˆŒKŒ‹ˆÛÛŽˆœš\ˆ‹ˆœ›Ø™HŽˆÂˆšYŽˆœ›Ø™NœÜ˜×ÛX‹œœÎœ™YXØ]N˜˜˜XL˜ÌH‹ˆ™˜[Z[HŽˆœ™YXØ]H‹ˆ™[HŽˆ˜ÛÛ›Û‹ˆ™š[HŽˆœÜ˜ËÛX‹œœÈ‹ˆ›[™HŽˆˆ˜Ú[™ÙYÙ^™\ÜÚ[ÛˆŽˆšYˆ[[Ý[H\ØÛÝ[Ý™\ÚÛÈ‚ˆKˆœš\ˆŽˆÂˆœ™XXÚŽˆžY\È‹ˆš[™™XÝŽˆÙXZÈ‹ˆœ›ÜYØ]HŽˆžY\È‹ˆ›ØœÙ\™HŽˆžY\È‹ˆ™\ØÜš[Z[˜]HŽˆÙXZÈ‚ˆKˆœ™[]YÝ\ÝÈŽˆ×Kˆ›ØœÙ\™YÝ˜[Y\ÈŽˆ×Kˆ›Z\ÜÚ[™×Ù\ØÜš[Z[˜]ÜœÈŽˆ×KˆÚ]™\ÜÈŽˆÂˆšÚ[™ŽˆœÝ]X×Ù\ØÜš[Z[˜]Ü—ÙØ\‹ˆœ›Ø™WÙ˜[Z[HŽˆœ™YXØ]H‹ˆ˜Ú[™ÙYÙ^™\ÜÚ[ÛˆŽˆ˜[[Ý[H\ØÛÝ[Ý™\ÚÛ‹ˆ˜™Y›Ü™HŽˆ˜[[Ý[ˆ\ØÛÝ[Ý™\ÚÛ‹ˆ˜Y\ˆŽˆ˜[[Ý[H\ØÛÝ[Ý™\ÚÛ‹ˆ™^XÝYÜÚ[šÈŽˆœ™]\›—Ý˜[YH‹ˆ›Z\ÜÚ[™×Ù\ØÜš[Z[˜]ÜœÈŽˆÂˆÂˆ˜[YHŽˆ˜[[Ý[OH\ØÛÝ[Ý™\ÚÛ‹ˆœ™X\ÛÛˆŽˆHÝ\œ™[\ÝÈÈ›Ý\Ý[™ÝZ\ÚH\]X[]H›Ý[™\žH‚ˆBˆKˆ™š^ÜÚ]HŽˆÂˆ™š[HŽˆ\ÝËÜšXÚ[™ËœœÈ‹ˆ›[™HŽˆ‹ˆ\ÝÛ˜[YHŽˆ™\ØÛÝ[Ø]Ý™\ÚÛ‹ˆ˜Ý\œ™[ÛÜ˜XÛHŽˆ˜\ÜÙ\J™\Ý[š\×ÜÛÛYJ
+JH‹ˆ›Ü˜XÛWÚÚ[™ŽˆœÛ[ÚÙWÛÛ›H‹ˆ›Ü˜XÛWÜÝ™[™ÝŽˆÙXZÈ‹ˆ›Ü˜XÛWÛØØ][ÛˆŽˆÈ™š[HŽˆ\ÝËÜšXÚ[™ËœœÈ‹›[™HŽˆBˆKˆœÝYÙÙ\ÝYØ\ÜÙ\[ÛˆŽˆ[ˆ™^Z[—ØÛÛ[X[™Žˆœš\ˆ^Z[ˆK\›ÛÝˆ›Ø™NœÜ˜×ÛX‹œœÎœ™YXØ]N˜˜˜XL˜ÌH‹ˆ˜ÛÛ™šY[˜ÙHŽˆÈ˜[YHŽˆÍK˜˜\Ú\ÈŽˆœÝ]X×ÛÛ›HˆKˆ›[Z]][ÛœÈŽˆÂˆÂˆšÚ[™ŽˆœÝYÙÙ\ÝYØ\ÜÙ\[Û—Ý[˜]˜Z[X›H‹ˆ™]Z[Žˆ“›È›ÙXÙ\‹[ÝÛ™YÞ[X›Û\™\ÛÛ™Y\ÜÙ\[Ûˆ[\]H\È]˜Z[X›Kˆ‚ˆBˆBˆKˆ›Z\ÜÚ[™ÈŽˆ×KˆœÝÜÜ™X\ÛÛœÈŽˆ×Kˆœ™XÛÛ[Y[™YÛ™^ÜÝ\ŽˆY™[ÝË\]X[[™X›Ý™H™\ÚÛ\ÝËˆ‚ŸB˜‚•HÛÛ^XÚÙ]\È[[[Û˜[HÛX[\ˆ[ˆÚXÚÈÝ]]ˆ]\ÈÜ[Z^™Y™›ÜˆÛÙ[™ÈYÙ[È[™Y]ÜˆÛÛ[X[™ËˆÚ]™\ÜØ\ÈY]]™H[™\ÈÛZ]YÚ[ˆ[ˆ^ÜÙYš[™[™È\È›È[œ™\ÛÛ™Y\ØÜš[Z[˜]Ü‹ˆ]ÛÛZ[œÈÛ›Bœ›ÙXÙ\‹[ÝÛ™Y˜XÝÎˆš^ÜÚ]X[™Ü˜XÛWÛØØ][Û˜\™HXœÙ[Ú[ˆBœ›ÙXÙ\ˆØ[››ÝY[YžH[K[™ÝYÙÙ\ÝYØ\ÜÙ\[Û˜™[XZ[œÈ[[[H›ÙXÙ\ˆÝ\Y\ÈHÞ[X›Û\™\ÛÛ™Y\ÜÙ\[Ûˆ[\]Kˆ[Z]][ÛœÖ×X›˜[Y\È[˜]˜Z[X›H]šY[˜ÙNÈ™[™\™\œÈ]\Ý›Ý[™™\ˆ]œ›ÛH]Ë[™\Ë˜Û\ÜÙ\ËÜˆ›ÜÙKˆÛÝ\˜ÙWØÝ\œ™[™\ÜØ
+’T‹TÔPËLMLŠHZ\œ›ÜœÈHš[™[™ÉÜÂ™\ÜÜÚ][ÛŽˆYÙ[ÛÛœÝ[Y\œÈ]\Ý›Ý™X]H˜\ÙWÙ[]Y˜[Ý™YÛÜ—Ü™[˜[YYÜˆ[œ™\ÛÛ™YÜÝXš™XÝXÚÙ]\ÈHØ[™Y]HY]\™Ù]‚‚ˆÈÈ™\ÈÙX[H[™[ÜžB‚˜š\ˆÚXÚÈK\›ÛÝˆKY›Ü›X]™\Ë\ÙX[\ËZœÛÛ˜[Z]ÈH™\ÈÙX[H[™[ÜžBš[›ÙXÙYžH’T‹TÔPËLKˆH\Y˜XÝ[™È]˜\™Ù]Üš\‹Ü™\ÜËÜ™\Ë\ÙX[\ËšœÛÛ˜Ú[ˆÙ[™\˜]YšXB˜Ø\™ÛÈ\ÚÈ™\Ë\ÙX[KZ[™[ÜžX‚‚˜œÛÛ‚žÂˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒŒH‹ˆœØÛÜHŽˆœ™\È‹ˆœÙX[\ÈŽˆÂˆÂˆœÙX[WÚYŽˆ™ŒØÎYMŒXLØÎ‹ˆšÚ[™Žˆœ™YXØ]WØ›Ý[™\žH‹ˆ™š[HŽˆœÜ˜ËÜšXÚ[™ËœœÈ‹ˆ›[™HŽˆˆ›ÝÛ™\ˆŽˆœÜ˜ËÜšXÚ[™ËœœÎŽ™\ØÛÝ[YÝÝ[‹ˆ™^™\ÜÚ[ÛˆŽˆ˜[[Ý[H\ØÛÝ[Ý™\ÚÛ‹ˆœ™\]Z\™YÙ\ØÜš[Z[˜]ÜˆŽˆÂˆšÚ[™Žˆ˜›Ý[™\žWÝ˜[YH‹ˆ™\ØÜš\[ÛˆŽˆ˜[[Ý[H\ØÛÝ[Ý™\ÚÛ‚ˆKˆ™^XÝYÜÚ[šÈŽˆÂˆšÚ[™Žˆœ™]\›—Ý˜[YH‚ˆBˆBˆBŸB˜‚‘šY[ÛÛ˜XÝ‚‚‹HØÚ[XWÝ™\œÚ[Û˜8 %Ý\œ™[HŒŒH˜ˆ[\[™È™\]Z\™\È\][™È\ÈÙXÝ[Û‹ˆH™[™\™\ˆ
+Ü˜]\ËÜš\‹ÜÜ˜ËÛÝ]]Ü™\×ÜÙX[\ËœœØ
+K[™[žHÝÛœÝ™X[BˆÛÛœÝ[Y\œÈ[ˆØÚÜÝ\‚‹HØÛÜX8 %[Ø^\Èœ™\È˜›Üˆ\È\Y˜XÝˆ\Ý[™ÝZ\Ú\ÈH™\ÈÙX[Bˆ[™[ÜžHœ›ÛHY™‹\ØÛÜYš[™[™ÜË‚‹HÙX[WÚY8 %M‹XÚ\ˆÝÙ\˜Ø\ÙH^ˆ“•‹LXHXš]\ÚÙ‚ˆš[HÝÛ™\ˆÚ[™ž]WÛÙ™œÙ]
+[Xž]HÙ\\˜]ÜœÊKˆÝX›HXÜ›ÜÜÂˆ[œÈ[™š[HØ[È™[Ü™\š[™ÜË‚‹HÚ[™8 %Û™HÙˆ™YXØ]WØ›Ý[™\žX\œ›Ü—Ý˜\šX[™]\›—Ý˜[YXˆšY[ØÛÛœÝXÝ[Û˜ÚYWÙY™™XÝX]ÚØ\›XØ[Ü™\Ù[˜ÙXˆHÜXÂˆ[ÛÈ™\Ù\™\È˜[Y][Û—Øœ˜[˜Ú›ÜˆH]\™H]XÝ[Ûˆ‹‚‹Hš[X8 %™\Ë\›ÛÝ\™[]]™H[š^\Ù\\˜]Üˆ]
+›ÈXY[™È‹Ø
+K‚‹H[™X8 %KX˜\ÙYÝ\[™H›Üˆ[X[ˆ\Ü^HÛ›Kˆ›Ý\ÙˆHÙX[HQˆ\ÚÈž]WÛÙ™œÙ]\ÈHØ[›ÛšXØ[ÜÚ][ÛˆšY[[\›˜[K‚‹HÝÛ™\˜8 %[K\]X[YšYY[Ù[KÜÞ[X›Û]ÙˆH[˜ÛÜÚ[™È[˜Ý[Û‹‚ˆ˜XÚÜÛ\Ú\Èœ›ÛH˜]]™H]È\™H›Ü›X[^™YÈ›ÜØ\™Û\Ú\È™Y›Ü™Bˆ\Ú[™Ëˆ\Ý[˜Ý[ÛœÈ
+K™Ë‹ÖÝ\ÝH›˜[œÚYHÖØÙ™Ê\Ý
+WH[Ù\ÝØ
+Bˆ\™H^ÛYY‚‹H^™\ÜÚ[Û˜8 %™\˜˜][HÛÝ\˜ÙKXÛÙH^]HÙX[HÜšYÚ[‹ˆÝ\™˜XÙY›Ü‚ˆ[X[ˆ™]šY]ÎÈ›Ý\ÙˆHÙX[HQ\Ú‚‹H™\]Z\™YÙ\ØÜš[Z[˜]Ü‹šÚ[™8 %›Ý[™\žWÝ˜[YX\œ›Ü—Ý˜\šX[ˆ™]\›—Ý˜[YXšY[Ý˜[YXY™™XÝX]ÚØ\›WÝZÙ[˜ÜˆØ[ÜÚ]X‚‹H™\]Z\™YÙ\ØÜš[Z[˜]Ü‹™\ØÜš\[Û˜8 %[X[‹\™XYX›HÝ[[X\žHÙˆÚ]H\Ýˆ]\ÝØœÙ\™HÈÜš\HÙX[K‚‹H^XÝYÜÚ[šËšÚ[™8 %™]\›—Ý˜[YXÝ]]ÙšY[\œ›Ü—ØÚ[›™[Ü‚ˆÚYWÙY™™XÝˆHÜXÉÜÈ[šÛ›ÝÛ˜Ú[šÈÚ[™]\›ˆÚ[ˆ[ˆ[™]\›Z[™YˆÚ[™\È]XÝY‚‚•H™\ÈÙX[H[™[ÜžHŒHØ\\™\È]™\žH›Ø™XX›H›ÙXÝ[ÛˆÞ[^Ú\B˜[™Ù\È›ÝY]Û\ÜÚYžH\ÝÜš\ˆÚ[ˆH™\ÜÚ]ÜžH›ÛÝ\È[˜[^™Yœ™\ÜÚ]ÜžH]]ÛX][Ûˆ[™š^\™H]H
+\ÚËØÜ[]™[š^\™\ËØ
+H\™B™^ÛYYÛÈ™\Ë\ØÛÜYX›XÈÚYÛ˜[È™\™\Ù[HX›\ÚYš\˜XÚØYÙBœÝ\™˜XÙNÈ\ÜÚ[™È[ˆ[™]šYX[š^\™HÛÜšÜÜXÙH\ÈK\›ÛÝÝ[[˜[^™\Â]š^\™H›Ü›X[Kˆ[˜[\Ú\ËÜ™\Ë\š\‹XÛ\ÜÚYšXØ][Û‹]ŒXYÂ˜ÙX[QÜš\Û\ÜØ[™HXY[™KY[YÚXš[]HX›H\ˆ’T‹TÔPËLK‚”Ý]XÈÝ]]ÛÛ[Y\ÈÈ›Ü˜šY[[YK[]]][ÛˆÝ]ÛÛYHÛÜ™Ë‚‚•HX\šÙÝÛˆÚX›[™È
+™\Ë\ÙX[\Ë›YÙ[™\˜]Y[Û™ÜÚYHH”ÓÓŠH\Âš[X[‹\™XYX›H]›ÛÝÜÈHØ[YHÛÛ˜XÝ›ÜˆÚ[™ÝÛ™\˜[™˜^XÝYÜÚ[šØÝš[™ÜË‚‚ˆÈÈ™\È^ÜÝ\™H™\Ü‚˜š\ˆÚXÚÈK\›ÛÝˆKY›Ü›X]™\ËY^ÜÝ\™KZœÛÛ˜[Z]ÈHÛ\ÜÚYšYYÙX[Bš[™[ÜžH[›ÙXÙYžH[˜[\Ú\ËÜ™\Ë\š\‹XÛ\ÜÚYšXØ][Û‹]ŒXˆH\Y˜XÝ›[™È]\™Ù]Üš\‹Ü™\ÜËÜ™\ËY^ÜÝ\™KšœÛÛ˜Ú[ˆÙ[™\˜]YšXB˜Ø\™ÛÈ\ÚÈ™\ËY^ÜÝ\™K\™\Ü‚‚•H[™\ËY^ÜÝ\™KZœÛÛ˜\Y˜XÝ\È]šY[˜ÙKZX]žHžH\ÚYÛŽˆXXÚÙX[B˜Ø[ˆØ\œžH™[]Y\ÝËØœÙ\™Y˜[Y\ËZ\ÜÚ[™È\ØÜš[Z[˜]Üˆ™XÛÜ™Ë[™B“[™HH]šY[˜ÙWÜ™XÛÜ™›Ú™XÝ[Û‹ˆ\™ÙH™\ÜÚ]ÜšY\ÈÚÝ[\ÙB˜™\ËY^ÜÝ\™K\Ý[[X\žKZœÛÛ˜›ÜˆÜ™[˜\žHY]šXÜË˜YÙK[›š[™ËÜˆÒBœÝ[[X\žHÛÜšÙ›ÝÜË[™™\Ù\™HH[\Y˜XÝ›Üˆ^XÚ]Y\[œÜXÝ[Û‹‚‚‘]™\žH›ÙXÙ\‹YÙ[™\˜]Y™\ËY^ÜÝ\™KZœÛÛ˜Û˜\ÚÝ[ÛÈØ\œšY\È[‚˜Y]]™HÜ[]™[\Y˜XÝ[™[ÜH™Y›Ü™H]\ÈÝZ]X›H›Ü‚˜š\ˆYÙ[™\šYžX‚‚˜œÛÛ‚žÂˆšÚ[™Žˆœ™\×Ù^ÜÝ\™H‹ˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒH‹ˆ˜Ø[›ÛšXØ[^˜][ÛˆŽˆœ˜]×ÚœÛÛ—ÜXÙZÛ\—ÝŒH‹ˆœ›ÙXÙ\ˆŽˆÈÛÛŽˆœš\ˆ‹™\œÚ[ÛˆŽˆŒŒLŒŸKˆœ™\ÜÚ]ÜžHŽˆÈœ›ÛÝŽˆÛÜšÜÜXÙK\›ÛÝˆ‹šXYŽˆZ^\ÚOˆŸKˆ˜[˜[\Ú\ÈŽˆÂˆ™›Ü›X]Žˆœ™\ËY^ÜÝ\™KZœÛÛˆ‹ˆ›[ÙHŽˆ™˜Y‹ˆ˜˜\ÙWÜ™]š\Ú[ÛˆŽˆ[ˆš[œ]ÚY[]HŽˆš[œ]™›ŒXMM‹Z^Yš[™Ù\œš[ˆ‹ˆ˜ÛÛ[X[™Žˆœš\ˆÚXÚÈKY›Ü›X]™\ËY^ÜÝ\™KZœÛÛˆ‹ˆœ›Ùš[HŽˆ™˜Y‹ˆÛÜšÝ™YHŽˆ˜ÛX[ˆ‚ˆKˆœÛ˜\ÚÝÚY[]HŽˆœÛ˜\ÚÝš[œ]™›ŒXMM‹Z^Yš[™Ù\œš[ŽÜ™]š\Ú[ÛŽ[ZXY\ÚOˆ‹ˆ˜ÛÛ[ÜÚLMˆŽˆœÚLMŽZ^YYÙ\Ýˆ‚ŸB˜‚˜ÛÛ[ÜÚLM˜ÛÛ[Z]ÈH^XÝ”ÓÓˆž]\ÈY\ˆ™\XÚ[™È]ÈÛ™H˜[YBÚ]Hš^Y™\›ËYYÙ\ÝXÙZÛ\‹ˆ\È\È[ˆ[YÜš]KØÝ\œ™[™\ÜÂ˜ÛÛ[Z]Y[›ÝHÚYÛ˜]\™HÜˆ[[YH›ÛÙ‹ˆ™\ÜÚ]ÜžKšXY[™˜[˜[\Ú\ËÛÜšÝ™YX\™H[˜]˜Z[X›XÚ[ˆH›ÙXÙ\ˆØ[››Ý™\ÛÛ™HÚ]ÂœÝXÚ[ˆ\Y˜XÝ\È\ØÛÜÙY]\È›ÝXØÙ\YžHYÙ[™\šYžX‚˜[˜[\Ú\Ëš[œ]ÚY[]X\ÈHÜX›HÙ[X[XËØÛÛ™šYÝ\˜][ÛˆY[]HÙ‚H[˜[\Ú\È[œ]ˆ]Ø\œšY\È[ˆ^XÚ][ÛÜš]H™\œÚ[Ûˆ[™YÙ\ÝÚ\BŠ[œ]™›ŒXMMˆÝÙ\˜Ø\ÙH^˜
+H[™ÛÝ™\œÈHY[]H™\œÚ[Û‹›[ÙK›Ùš[H
+\È›ÙXÙ\ˆš[™È›Ùš[HÈ[ÙH[™Ý]\È›Ý
+K˜\ÙBœÙ[X[XÜË[˜[\Ú\È›Ü›X]X[šY™\ÝÛÛ[Y[]Y\È[™HÛÛ[šY[]Y\ÈÙˆHØ\™ÛÈØÚÙš[\ÈÚ]˜XÚÜÈ
+[ˆ[˜XÚÙYÜˆYÛ›Ü™Y˜Ø\™ÛË›ØÚØ\ÈZ[Ý]HHÙX[H[™[ÜžH™]™\ˆ™XYÊKBœ™\ËY^ÜÝ\™H›ÙXÙ\‹XÛÛœÝ[YYÛÛ™šYÝ\˜][Ûˆ›Ý[™\žH
+H™YB›Ü˜XÛK\Ý™[™ÝšY[ÈÜ˜XÛ\ËœÛ˜\ÚÝÜÝ™[™Ý˜Ü˜XÛ\Ë›[ØÚ×Ù^XÝ][Û—ÜÝ™[™Ý[™Ü˜XÛ\Ë˜œ›ØYÙ\œ›Ü—ÜÝ™[™Ý8 %B”\Ý[Û›HÙX[H[™[ÜžHÛÛœÝ[Y\È›Ý[™È[ÙHœ›ÛHš\‹Û[
+K[™B˜[˜[^™\ˆ™\œÚ[Ûˆ8 %™]™\‚HÛÛ˜Ü™]HÚXÚÛÝ]›ÛÝÜˆ[žHÜÝ\ÜXÚYšXÈ]Ü[[™ËˆØ\™ÛÈX[šY™\Ý˜[™ØÚÙš[HÔ“ˆ[™H[™[™ÜÈ\™H›Ü›X[^™YÈˆ›Üˆ\ÈÜX›HY[]NÂœÝ[™[Û™HÔˆ\È™\Ù\™YˆÛÈ\]Z]˜[[˜ÚXÚÛÝ]ÈÙˆHØ[YHÛÛ[Z][™\ˆY™™\™[[\Ü˜\žH›ÛÝÈ\™Y›Ü™HÚ\™B›Û™H[œ]Y[]KÚ[H™\ÜÚ]ÜžKœ›ÛÝÝ^\ÈHÛÛ˜Ü™]B˜ÚXÚÛÝ]Z[œÝ[˜ÙH]šY[˜ÙNˆYÙ[™\šYžX˜[Y]\ÈHXÛ\™Y›ÛÝÚ]™^XÝØ[›ÛšXØ[\]\]X[]KÛÈ[ˆ\Y˜XÝ›ÙXÙY[ˆÛ™H›ÛÝ\ÈÝ[œ™Z™XÝY][›Ý\‹ˆHÛ˜\ÚÝY[]BŠÛ˜\ÚÝ[œ]ÚY[]OŽÜ™]š\Ú[ÛŽXY˜
+Hš[™È]ÜX›H[œ]šY[]HÈHÛÛ˜Ü™]H™\ÜÚ]ÜžHXYÛÈÛÈÛX[ˆ\Y˜XÝÈœ›ÛB™Y™™\™[ÛÛ[Z]È]™H\Ý[˜ÝÛ˜\ÚÝY[]Y\È]™[ˆÚ[ˆZ\ˆ[œ]šY[]H\È[˜Ú[™ÙYˆÛ›HHÝ\œ™[[œ]˜Y[]H™\œÚ[ÛˆÚ]B™^XÝ›ŒXMMˆÝÙ\˜Ø\ÙH^˜YÙ\ÝÚ\H˜[Y]\È\ÈÝ\œ™[™]šY[˜ÙNÈHÜ›Û™È™\œÚ[Ûˆ\È™Z™XÝY\È[ˆ[œÝ\ÜY[œ]Y[]B™\œÚ[Ûˆ[™HÜ›Û™ÈYÙ\ÝÚ\H\ÈHX[›Ü›YY[œ]Y[]HYÙ\ÝˆYÙ[™\šYžX˜[™YÙ[™XÙZ\ÛÛ\\™HHÝX›H›ÙXÙ\‹Ý™\œÚ[Û‹˜\ÙK[ÙK[™œ›Ùš[HšY[ÈÙ\\˜][K[™™Z™XÝ[˜Ú[™ÙYY[]Y\ÈÚ[ˆHXÛ\™Yœ™\ÜÚ]ÜžHÛÛ[Z]ÈY™™\‹ˆ[˜[\Ú\Ë˜ÛÛ[X[™[™[˜[\Ú\Ëœ›Ùš[XÝ]HBœ›ÙXÙ\ˆÜ\˜][Ûˆ\ÙY‚‚ˆÈÈÈ™\È^ÜÝ\™HÝ[[X\žH”ÓÓ‚‚˜š\ˆÚXÚÈK\›ÛÝˆKY›Ü›X]™\ËY^ÜÝ\™K\Ý[[X\žKZœÛÛ˜[Z]ÈH›Ý[™Y˜YÙÜ™YØ]HšY]ÈÝ™\ˆHØ[YHÛ\ÜÚYšYYÙX[H[™[ÜžKˆ]Ù\È›Ý[˜ÛYHB™[ÙX[\Ö×X\œ˜^K\‹\ÙX[H]šY[˜ÙWÜ™XÛÜ™™[]YÝ\ÝØ˜ØœÙ\™YÝ˜[Y\ØÜˆZ\ÜÚ[™×Ù\ØÜš[Z[˜]ÜœØ^[ØYË‚‚˜œÛÛ‚žÂˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒŒH‹ˆ™›Ü›X]Žˆœ™\ËY^ÜÝ\™K\Ý[[X\žKZœÛÛˆ‹ˆÛÛŽˆœš\ˆ‹ˆœš\—Ý™\œÚ[ÛˆŽˆŒŽŒ‹ˆœØÛÜHŽˆœ™\È‹ˆ˜˜\Ú\ÈŽˆ˜Ø[›ÛšXØ[ØXÝ[Û˜X›WÙØ\‹ˆ›Y]Y]HŽˆÂˆœ›ÛÝŽˆ‹ˆ‹ˆ˜˜\ÙHŽˆ›ÜšYÚ[‹ÛXZ[ˆ‹ˆšXYŽˆ’PQ‹ˆ›[ÙHŽˆ™˜Y‚ˆKˆ›Y]šXÜÈŽˆÂˆœ˜]×ÜÙX[\ÈŽˆLÍNL‹ˆšXY[™WÙ[YÚX›WÜÙX[\ÈŽˆLŒˆ˜Ø[›ÛšXØ[ÙØ\Ü™XÛÜ™ÈŽˆÌŒ‹ˆœ˜]×ØXÝ[Û˜X›WÜÙX[WÜ™XÛÜ™ÈŽˆ‹ˆ[œÝ\™\ÜÙYÙ^ÜÝ\™WÙØ\ÈŽˆÌŒ‹ˆœÝ\™\ÜÙYÙ^ÜÝ\™WÙØ\ÈŽˆˆ™Üš\ØÛ\ÜÈŽˆÂˆœÝ›Û™ÛWÙÜš\YŽˆMMˆÙXZÛWÙÜš\YŽˆNˆ[™Üš\YŽˆˆœ™XXÚX›WÝ[œ™]™X[YŽˆ‹ˆ˜XÝ]˜][Û—Ý[šÛ›ÝÛˆŽˆLNŒ‹ˆœ›ÜYØ][Û—Ý[šÛ›ÝÛˆŽˆˆ›ØœÙ\˜][Û—Ý[šÛ›ÝÛˆŽˆˆ™\ØÜš[Z[˜][Û—Ý[šÛ›ÝÛˆŽˆˆ›Ü\]YHŽˆˆš[[[Û˜[ŽˆˆœÝ\™\ÜÙYŽˆˆBˆKˆœ™X\ÛÛ—Øœ™XZÙÝÛˆŽˆÂˆ˜XÝ[Û˜Xš[]HŽˆÂˆ˜YÙ›ØÝ\ÙYÝ\ÝŽˆŒˆ™^[™Ü™[]YÝ\ÝŽˆŒLˆ\Ü˜YWØ\ÜÙ\[ÛˆŽˆŒ‚ˆKˆ™Ø\ÜÝ]HŽˆÂˆ˜XÝ[Û˜X›HŽˆ‹ˆ˜[™XYWÛØœÙ\™YŽˆMMˆœÝ]X×Û[Z]][ÛˆŽˆˆKˆœÙX[WÚÚ[™ŽˆÂˆœ™YXØ]WØ›Ý[™\žHŽˆLŒˆœ™]\›—Ý˜[YHŽˆLˆ™šY[ØÛÛœÝXÝ[ÛˆŽˆŒŒ‚ˆKˆ™Üš\ØÛ\ÜÈŽˆÂˆœÝ›Û™ÛWÙÜš\YŽˆMMˆÙXZÛWÙÜš\YŽˆNˆ[™Üš\YŽˆˆœ™XXÚX›WÝ[œ™]™X[YŽˆ‹ˆ˜XÝ]˜][Û—Ý[šÛ›ÝÛˆŽˆLNŒ‹ˆœ›ÜYØ][Û—Ý[šÛ›ÝÛˆŽˆˆ›ØœÙ\˜][Û—Ý[šÛ›ÝÛˆŽˆˆ™\ØÜš[Z[˜][Û—Ý[šÛ›ÝÛˆŽˆˆ›Ü\]YHŽˆˆš[[[Û˜[ŽˆˆœÝ\™\ÜÙYŽˆˆBˆKˆ›[Z]ÈŽˆÂˆÜÙš[\×Û[Z]ŽˆKˆÜÙš[\×ÝÝ[ŽˆLÌˆÜÙš[\×Ý[˜Ø]YŽˆYBˆKˆÜÙš[\ÈŽˆÂˆÂˆ™š[HŽˆœÜ˜ËÜšXÚ[™ËœœÈ‹ˆœ˜]×ÜÙX[\ÈŽˆˆšXY[™WÙ[YÚX›WÜÙX[\ÈŽˆŒŒˆ˜Ø[›ÛšXØ[ÙØ\Ü™XÛÜ™ÈŽˆÌˆ[œÝ\™\ÜÙYÙ^ÜÝ\™WÙØ\ÈŽˆÌˆœÝ\™\ÜÙYÙ^ÜÝ\™WÙØ\ÈŽˆˆœ™X\ÛÛ—Øœ™XZÙÝÛˆŽˆÂˆ˜XÝ[Û˜Xš[]HŽˆÂˆ™^[™Ü™[]YÝ\ÝŽˆŒˆ\Ü˜YWØ\ÜÙ\[ÛˆŽˆLˆKˆ™Üš\ØÛ\ÜÈŽˆÂˆœÝ›Û™ÛWÙÜš\YŽˆŒˆÙXZÛWÙÜš\YŽˆŒˆ˜XÝ]˜][Û—Ý[šÛ›ÝÛˆŽˆŒˆBˆBˆBˆBŸB˜‚‘šY[ÛÛ˜XÝ‚‚‹HØÚ[XWÝ™\œÚ[Û˜HÝ\œ™[HŒŒH˜›ÜˆH›Ý[™YÝ[[X\žHÚ\K‚‹H›Ü›X]H[Ø^\Èœ™\ËY^ÜÝ\™K\Ý[[X\žKZœÛÛˆ˜‚‹HØÛÜXH[Ø^\Èœ™\È˜‚‹H˜\Ú\ØH[Ø^\È˜Ø[›ÛšXØ[ØXÝ[Û˜X›WÙØ\˜ÈHXY[™HY]šXÈ\ÈBˆ[š\]YHØ[›ÛšXØ[XÝ[Û˜X›HØ\ÛÝ[›Ý˜]ÈÙX[H[™[ÜžK‚‹HY]Y]Kœ›ÛÝY]Y]K˜˜\ÙXY]Y]KšXY[™Y]Y]K›[ÙXBˆÛÛ[X[™ÛÛ^›ÜˆH[˜[^™Y›ÛÝˆXY™XÛÜ™ÈHÙ[XÝYXY™Y‚ˆ\ÈPQÈ\È›Ü›X]Ù\È›Ý™\ÛÛ™HHÛÛ[Z]\Ú‚‹HY]šXÜËœ˜]×ÜÙX[\ØH[X™\ˆÙˆÛ\ÜÚYšYYÙX[H™XÛÜ™È[œÜXÝY‚‹HY]šXÜËšXY[™WÙ[YÚX›WÜÙX[\ØH˜]ÈÙX[H™XÛÜ™ÈÚÜÙHÜš\ØÛ\ÜØ\ÂˆXY[™KY[YÚX›K‚‹HY]šXÜË˜Ø[›ÛšXØ[ÙØ\Ü™XÛÜ™ØH[š\]YHØ[›ÛšXØ[Ø\Y[]Y\È\ÜÚYÛ™YÂˆXY[™KY[YÚX›HÙX[H™XÛÜ™Ë‚‹HY]šXÜËœ˜]×ØXÝ[Û˜X›WÜÙX[WÜ™XÛÜ™ØH˜]ÈÙX[H™XÛÜ™ÈÚÜÙHØ[›ÛšXØ[][Bˆ\ÈXÝ[Û˜X›H[™Ø\œšY\ÈH™\Z\ˆ›Ý]K™\šYžHÛÛ[X[™[™™XÙZ\ÛÛ[X[™‚‹HY]šXÜË[œÝ\™\ÜÙYÙ^ÜÝ\™WÙØ\ØH[š\]YHXÝ[Û˜X›HØ[›ÛšXØ[Ø\ÛÝ[‚ˆ\È\ÈHÝ[[X\žHÛÝ[\œ\ÙˆHX›XÈ™\È˜YÙH˜\Ú\Ë‚‹HY]šXÜËœÝ\™\ÜÙYÙ^ÜÝ\™WÙØ\ØH˜]ÈÙX[H™XÛÜ™ÈÛ\ÜÚYšYY\ÂˆÝ\™\ÜÙY‚‹HY]šXÜË™Üš\ØÛ\ÜØH[LHÙX[QÜš\Û\ÜØÛÝ[XÚÙ]Ë‚‹H™X\ÛÛ—Øœ™XZÙÝÛ‹˜XÝ[Û˜Xš[]XH[š\]YHXÝ[Û˜X›HØ[›ÛšXØ[Ø\ÛÝ[ÈžBˆØ[›ÛšXØ[][HXÝ[Û˜Xš[]KÝXÚ\ÈYÙ›ØÝ\ÙYÝ\Ýˆ^[™Ü™[]YÝ\Ý[™\Ü˜YWØ\ÜÙ\[Û˜‚‹H™X\ÛÛ—Øœ™XZÙÝÛ‹™Ø\ÜÝ]XH˜]ÈØ[›ÛšXØ[][HÛÝ[ÈžHÝ]KÝXÚ\ÂˆXÝ[Û˜X›X[™XYWÛØœÙ\™Y[\›˜[ÛÛ›XÝ]X×Û[Z]][Û˜[™ˆ[šÛ›ÝÛ˜‚‹H™X\ÛÛ—Øœ™XZÙÝÛ‹œÙX[WÚÚ[™H[š\]YHXÝ[Û˜X›HØ[›ÛšXØ[Ø\ÛÝ[ÈžHÙX[BˆÚ[™‚‹H™X\ÛÛ—Øœ™XZÙÝÛ‹™Üš\ØÛ\ÜØHØ[YH[XXÚÙ]Û\ÜÈÛÝ[È\ÂˆY]šXÜË™Üš\ØÛ\ÜØ™\X]Y›ÜˆÛÛœÝ[Y\œÈ]™XYœ™XZÙÝÛœÈÛ›K‚‹H[Z]ËÜÙš[\×Û[Z]HX^[][H[X™\ˆÙˆÜÙš[\Ö×X›ÝÜÈ™]\›™Y‚ˆHÝ\œ™[[Z]\ÈK‚‹H[Z]ËÜÙš[\×ÝÝ[[™[Z]ËÜÙš[\×Ý[˜Ø]YHÝ[š[H›ÝÜÂˆ™Y›Ü™H[˜Ø][Ûˆ[™Ú]\ˆH[Z]Y\Ý\ÈØ\Y‚‹HÜÙš[\Ö×XH›Ý[™Yš[HÝ[[X\šY\ÈÛÜYžHXÝ[Û˜X›HØ[›ÛšXØ[Ø\ˆÛÝ[[ˆXY[™KY[YÚX›H˜]ÈÙX[\Ë˜]ÈÙX[\Ë[™š[H]ˆš[K[]™[ˆ[œÝ\™\ÜÙYÙ^ÜÝ\™WÙØ\ØÛÝ[È[š\]YHXÝ[Û˜X›HØ[›ÛšXØ[Ø\QÈÚ][‚ˆ]š[K‚‚•HÝ[[X\žH›Ü›X]\ÈY]]™Kˆ]Ù\È›Ý™\XÙH™\ËY^ÜÝ\™KZœÛÛ˜ÚXÚœ™[XZ[œÈH[\‹\ÙX[H]šY[˜ÙH\Y˜XÝ›ÜˆY\XYÙÚ[™È[™ÝÛœÝ™X[B˜ÛÛœÝ[Y\œÈ]™\]Z\™HÛÛ\]H]šY[˜ÙH™XÛÜ™Ë‚‚˜Ø\™ÛÈ\ÚÈ™\ËY^ÜÝ\™K\Ý[[X\žK\™\ÜÜ˜\È\È›Ü›X]Ú]HØØ[[Y[Ý]ˆH[Y[Ý]\ÈÛÛ›ÛYžH’T—Ô‘T×ÑVÔÕT‘WÔÕSSPT–WÕSQSÕUÓTØŠY˜][ˆ
+KˆYˆHÛÛ[X[™[Y\ÈÝ]^]È™Y›Ü™HHÛÛ\]HÝ[[X\žKÜ‚˜Ø[››ÝÝ\]Üš]\ÈHØ\›š[™È\Y˜XÝÈHØ[YB˜\™Ù]Üš\‹Ü™\ÜËÜ™\ËY^ÜÝ\™K\Ý[[X\žKšœÛÛ˜]Ú]‚‚‹H˜\Ú\Îˆ›[Z]YÜ[[YWÜÝ]\È˜‹H[—ÜÝ]\ØÝXÚ\È[Z]YÝ[Y[Ý][Z]YÜ[›™\—Ù˜Z[\™XÜ‚ˆ[Z]YÚ[˜ÛÛ\]WÚ[œ]‹H[[YWÜÝ]\Ë™ÝÛœÝ™X[WØÛÛœÝ[XX›Nˆ˜[ÙX‹H[ˆ[\HY]šXÜØØš™XÝ[™[\HÜÙš[\Ø\œ˜^B‹H[—Û[Z]][ÛœÖ×XÚ]ÛÛ[X[™[Y[Ý]\˜][Û‹^]ÛÙK[™Ý\œ‹ÜÝÝ]ˆ^Ù\œÂ‚ÛÛœÝ[Y\œÈ]\Ý›Ý™X][Z]Y\Y˜XÝÈ\ÈØ[›ÛšXØ[XÝ[Û˜X›HÛÝ[Ë‚‚˜œÛÛ‚žÂˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒŒÈ‹ˆœØÛÜHŽˆœ™\È‹ˆ›Y]šXÜÈŽˆÂˆœÙX[\×ÝÝ[ŽˆLÍMKˆšXY[™WÙ[YÚX›HŽˆŒLMˆœÝ›Û™ÛWÙÜš\YŽˆÌKˆÙXZÛWÙÜš\YŽˆMÍM‹ˆ[™Üš\YŽˆˆœ™XXÚX›WÝ[œ™]™X[YŽˆ‹ˆ˜XÝ]˜][Û—Ý[šÛ›ÝÛˆŽˆÍM‹ˆœ›ÜYØ][Û—Ý[šÛ›ÝÛˆŽˆˆ›ØœÙ\˜][Û—Ý[šÛ›ÝÛˆŽˆˆ™\ØÜš[Z[˜][Û—Ý[šÛ›ÝÛˆŽˆˆ›Ü\]YHŽˆˆš[[[Û˜[ŽˆˆœÝ\™\ÜÙYŽˆˆKˆœÙX[\ÈŽˆÂˆÂˆœÙX[WÚYŽˆ™ŒØÎYMŒXLØÎ‹ˆšÚ[™Žˆœ™YXØ]WØ›Ý[™\žH‹ˆ™š[HŽˆœÜ˜ËÜšXÚ[™ËœœÈ‹ˆ›[™HŽˆˆ›ÝÛ™\ˆŽˆœÜ˜ËÜšXÚ[™ËœœÎŽ™\ØÛÝ[YÝÝ[‹ˆ™^™\ÜÚ[ÛˆŽˆ˜[[Ý[H\ØÛÝ[Ý™\ÚÛ‹ˆ™Üš\ØÛ\ÜÈŽˆÙXZÛWÙÜš\Y‹ˆšXY[™WÙ[YÚX›HŽˆYKˆ™]šY[˜ÙHŽˆÂˆœ™XXÚŽˆžY\È‹ˆ˜XÝ]˜]HŽˆžY\È‹ˆœ›ÜYØ]HŽˆžY\È‹ˆ›ØœÙ\™HŽˆžY\È‹ˆ™\ØÜš[Z[˜]HŽˆÙXZÈ‚ˆKˆœ™[]YÝ\Ý×ÝÝ[ŽˆËˆœ™[]YÝ\ÝÈŽˆÂˆÂˆ›˜[YHŽˆ˜™[Ý×Ý™\ÚÛÚ\×Û›×Ù\ØÛÝ[‹ˆ™š[HŽˆ\ÝËÜšXÚ[™×Ý\ÝËœœÈ‹ˆ›[™HŽˆL‹ˆ›Ü˜XÛWÚÚ[™Žˆ™^XÝÝ˜[YH‹ˆ›Ü˜XÛWÜÝ™[™ÝŽˆœÝ›Û™È‹ˆ™]šY[˜ÙWÜÝ[[X\žHŽˆ™^XÝ˜[YH\ÜÙ\[Ûˆ‹ˆœ™[][Û—Ü™X\ÛÛˆŽˆ™\™XÝÛÝÛ™\—ØØ[‹ˆœ™[][Û—ØÛÛ™šY[˜ÙHŽˆšYÚ‚ˆBˆKˆ›ØœÙ\™YÝ˜[Y\ÈŽˆÈL‹ŒL—Kˆ›Z\ÜÚ[™×Ù\ØÜš[Z[˜]ÜœÈŽˆÂˆÂˆ˜[YHŽˆš[œ]]]ÈH›Ý[™\žNˆ[[Ý[H\ØÛÝ[Ý™\ÚÛ‹ˆœ™X\ÛÛˆŽˆœ™YXØ]H\Ù\È[ˆ\]X[]KX™X\š[™ÈÜ\˜]ÜŽÈ\ÝÈÚÝ[^\˜Ú\ÙHH›Ý[™\žHØ\ÙH‚ˆKˆÂˆ˜[YHŽˆ™\ØÛÝ[Ý™\ÚÛ
+\]X[]H›Ý[™\žJH‹ˆœ™X\ÛÛˆŽˆ›ØœÙ\™Y˜[Y\ÈÈ›Ý[˜ÛYHH\]X[]KX›Ý[™\žHØ\ÙH›Üˆ\È™YXØ]H‚ˆBˆKˆ™]šY[˜ÙWÜ™XÛÜ™ŽˆÂˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒŒH‹ˆœÙX[WÚYŽˆ™ŒØÎYMŒXLØÎ‹ˆ˜Ø[›ÛšXØ[ÙØ\ÚYŽˆ™Ø\Ù˜ÍÍ˜LÍÙÍØ™‹ˆ˜Ø[›ÛšXØ[ÙØ\ÙÜ›Ý\ÜÚ^™HŽˆKˆ˜Ø[›ÛšXØ[ÙØ\Ü™X\ÛÛˆŽˆœØ[YHÝÛ™\‹ÙX[HÚ[™›ÝÈÚ[šËZ\ÜÚ[™È\ØÜš[Z[˜]Ü‹[™\ÜÙ\[ÛˆÚ\H‹ˆœ˜]×Ùš[™[™ÜÈŽˆÂˆÂˆ™š[HŽˆœÜ˜ËÜšXÚ[™ËœœÈ‹ˆ›[™HŽˆˆšÚ[™ŽˆÙXZÛWÙÜš\Y‹ˆ™^™\ÜÚ[ÛˆŽˆ˜[[Ý[H\ØÛÝ[Ý™\ÚÛ‹ˆœ›Ø™WÚÚ[™Žˆœ™YXØ]WØ›Ý[™\žH‹ˆœÛÝ\˜ÙWÚYŽˆ™ŒØÎYMŒXLØÎ‹ˆ™]šY[˜ÙWÜ™XÛÜ™Ü™YˆŽˆ™ŒØÎYMŒXLØÎ‚ˆBˆKˆ˜Ø[›ÛšXØ[Ú][HŽˆÂˆ˜Ø[›ÛšXØ[ÙØ\ÚYŽˆ™Ø\Ù˜ÍÍ˜LÍÙÍØ™‹ˆœ˜]×ÙÜ›Ý\ÜÚ^™HŽˆKˆ˜Ø[›ÛšXØ[Ú][WÚÚ[™Žˆ™Ø\‹ˆ™]šY[˜ÙWØÛ\ÜÈŽˆœ™YXØ]WØ›Ý[™\žH‹ˆ™Ø\ÜÝ]HŽˆ˜XÝ[Û˜X›H‹ˆ˜XÝ[Û˜Xš[]HŽˆ™^[™Ü™[]YÝ\Ý‹ˆ™Ü›Ý\Ü™X\ÛÛˆŽˆœØ[YHÝÛ™\‹ÙX[HÚ[™›ÝÈÚ[šËZ\ÜÚ[™È\ØÜš[Z[˜]Ü‹[™\ÜÙ\[ÛˆÚ\H‹ˆœš[X\žWØ[˜ÚÜˆŽˆÂˆ™š[HŽˆœÜ˜ËÜšXÚ[™ËœœÈ‹ˆ›[™HŽˆˆšÚ[™ŽˆÙXZÛWÙÜš\Y‹ˆœÛÝ\˜ÙWÚYŽˆ™ŒØÎYMŒXLØÎ‹ˆœ™X\ÛÛˆŽˆ˜Ø[›ÛšXØ[ÙÜ›Ý\Üš[X\žWÜ˜]×Ùš[™[™È‚ˆKˆœ˜]×ÜÜ[œÈŽˆÂˆÂˆ™š[HŽˆœÜ˜ËÜšXÚ[™ËœœÈ‹ˆœÝ\Û[™HŽˆˆ™[™Û[™HŽˆˆšÚ[™ŽˆÙXZÛWÙÜš\Y‹ˆœÛÝ\˜ÙWÚYŽˆ™ŒØÎYMŒXLØÎ‚ˆBˆKˆÚHŽˆ™^[™H™X\™\Ý™[]Y\ÝÚ]HZ\ÜÚ[™È\ØÜš[Z[˜]Üˆ‹ˆœ™XÛÛ[Y[™YÜ™\Z\ˆŽˆYÜˆÝ™[™Ý[ˆ\ÜÙ\Ù\HJ\ØÛÝ[YÝÝ[
+Êˆ›Ý[™\žH[œ]Ú\™H[[Ý[H\ØÛÝ[Ý™\ÚÛ
+‹ÊKÊˆ^XÝY
+‹ÊX›Üˆ[œ]]]ÈH›Ý[™\žNˆ[[Ý[H\ØÛÝ[Ý™\ÚÛ[ˆ\ÝËÜšXÚ[™×Ý\ÝËœœØ\È\ØÛÝ[YÝÝ[Ø›Ý[™\žWÙ\ØÜš[Z[˜]Ü˜ˆ‹ˆœ™\Z\—Ü›Ý]HŽˆÂˆœ™\Z\—ÚÚ[™Žˆ˜YØ›Ý[™\žWØ\ÜÙ\[Ûˆ‹ˆ\™Ù]Ý\ÝÝ\HŽˆ˜›Ý[™\žWÙ\ØÜš[Z[˜]Üˆ‹ˆœÝYÙÙ\ÝYØ\ÜÙ\[ÛˆŽˆ˜\ÜÙ\Ù\HJ\ØÛÝ[YÝÝ[
+Êˆ›Ý[™\žH[œ]Ú\™H[[Ý[H\ØÛÝ[Ý™\ÚÛ
+‹ÊKÊˆ^XÝY
+‹ÊH‚ˆKˆœ™[]YÝ\ÝŽˆÂˆ›˜[YHŽˆ˜™[Ý×Ý™\ÚÛÚ\×Û›×Ù\ØÛÝ[‹ˆ™š[HŽˆ\ÝËÜšXÚ[™×Ý\ÝËœœÈ‹ˆ›[™HŽˆL‹ˆœ™X\ÛÛˆŽˆ™\™XÝÛÝÛ™\—ØØ[‚ˆKˆ™\šYžWØÛÛ[X[™Žˆœš\ˆYÙ[™\šYžHK\›ÛÝˆKX™Y›Ü™H\™Ù]Üš\‹Ü[ÝÜ™\ËY^ÜÝ\™KšœÛÛˆKXY\ˆ\™Ù]Üš\‹Ü[ÝØY\‹œ™\ËY^ÜÝ\™KšœÛÛˆKZœÛÛˆ‹ˆ˜ÛÛ™šY[˜ÙHŽˆÂˆ˜˜\Ú\ÈŽˆœÝ]X×ÛÛ›H‹ˆ››Ý\ÈŽˆÈ››È[\ÜY[[YHØ[Xœ˜][Ûˆ]H—BˆBˆKˆ›ÝÛ™\ˆŽˆœÜ˜ËÜšXÚ[™ËœœÎŽ™\ØÛÝ[YÝÝ[‹ˆ›ØØ][ÛˆŽˆÂˆ™š[HŽˆœÜ˜ËÜšXÚ[™ËœœÈ‹ˆ›[™HŽˆˆKˆœÙX[WÚÚ[™Žˆœ™YXØ]WØ›Ý[™\žH‹ˆ™Üš\ØÛ\ÜÈŽˆÙXZÛWÙÜš\Y‹ˆšXY[™WÙ[YÚX›HŽˆYKˆ™]šY[˜ÙWÜ]ŽˆÂˆœ™XXÚŽˆÂˆœÝ]HŽˆžY\È‹ˆ˜ÛÛ™šY[˜ÙHŽˆ›YY][H‹ˆœÝ[[X\žHŽˆ›ÝÛ™\ˆ\È™XXÚY‚ˆKˆ˜XÝ]˜]HŽˆÂˆœÝ]HŽˆžY\È‹ˆ˜ÛÛ™šY[˜ÙHŽˆ›YY][H‹ˆœÝ[[X\žHŽˆ˜›Ý[™\žH˜[Y\ÈÙ\™HØœÙ\™Y‚ˆKˆœ›ÜYØ]HŽˆÂˆœÝ]HŽˆžY\È‹ˆ˜ÛÛ™šY[˜ÙHŽˆ›YY][H‹ˆœÝ[[X\žHŽˆ˜Ú[™ÙY˜[YH›ÝÜÈÈ™]\›ˆ˜[YH‚ˆKˆ›ØœÙ\™HŽˆÂˆœÝ]HŽˆžY\È‹ˆ˜ÛÛ™šY[˜ÙHŽˆ›YY][H‹ˆœÝ[[X\žHŽˆœ™[]Y\ÝØœÙ\™\È™]\›™Y˜[YH‚ˆKˆ™\ØÜš[Z[˜]HŽˆÂˆœÝ]HŽˆÙXZÈ‹ˆ˜ÛÛ™šY[˜ÙHŽˆ›YY][H‹ˆœÝ[[X\žHŽˆ™\]X[]H\ØÜš[Z[˜]Üˆ\ÈZ\ÜÚ[™È‚ˆBˆKˆ˜\ÜÙ\[Û—Ý^ÈŽˆÂˆŒLˆŽˆ™\ØÛÝ[YÝÝ[
+LL
+H‚ˆKˆ›ØœÙ\™YÝ˜[Y\ÈŽˆÂˆÂˆ˜[YHŽˆL‹ˆ›[™HŽˆL‹ˆ˜ÛÛ^Žˆ™[˜Ý[Û—Ø\™Ý[Y[‚ˆBˆKˆ›Z\ÜÚ[™×Ù\ØÜš[Z[˜]ÜœÈŽˆÂˆÂˆ˜[YHŽˆ™\ØÛÝ[Ý™\ÚÛ
+\]X[]H›Ý[™\žJH‹ˆœ™X\ÛÛˆŽˆ›ØœÙ\™Y˜[Y\ÈÈ›Ý[˜ÛYHH\]X[]KX›Ý[™\žHØ\ÙH›Üˆ\È™YXØ]H‹ˆ™›Ý×ÜÚ[šÈŽˆ[ˆBˆKˆœ™[]YÝ\Ý×ÝÝ[ŽˆËˆœ™[]YÝ\ÝÈŽˆÂˆÂˆ›˜[YHŽˆ˜™[Ý×Ý™\ÚÛÚ\×Û›×Ù\ØÛÝ[‹ˆ™š[HŽˆ\ÝËÜšXÚ[™×Ý\ÝËœœÈ‹ˆ›[™HŽˆL‹ˆ›Ü˜XÛWÚÚ[™Žˆ™^XÝÝ˜[YH‹ˆ›Ü˜XÛWÜÝ™[™ÝŽˆœÝ›Û™È‹ˆ™]šY[˜ÙWÜÝ[[X\žHŽˆ™^XÝ˜[YH\ÜÙ\[Ûˆ‹ˆ›Ü˜XÛWÜÙ[X[XÜÈŽˆÂˆ›ØœÙ\™\ÈŽˆH^XÝ˜[YHÜˆ˜[YH]\›ˆ\ÜÙ\YžHH\Ý‹ˆ›Z\ÜÚ[™ÈŽˆ››ÈØš[Ý\È˜[YK\Ú\H\ØÜš[Z[˜]ÜˆØ\[™\ˆÝ]XÈØÛÜH‹ˆ\Ü˜YWÜÝYÙÙ\Ý[ÛˆŽˆ[ˆKˆœ™[][Û—Ü™X\ÛÛˆŽˆ™\™XÝÛÝÛ™\—ØØ[‹ˆœ™[][Û—ØÛÛ™šY[˜ÙHŽˆšYÚ‚ˆBˆKˆœ™XÛÛ[Y[™][ÛˆŽˆÂˆ˜XÝ[ÛˆŽˆÜš]WÝ\™Ù]YÝ\Ý‹ˆœ™X\ÛÛˆŽˆ™^[™H™X\™\Ý™[]Y\ÝÚ]HZ\ÜÚ[™È\ØÜš[Z[˜]Üˆ‹ˆœ™XÛÛ[Y[™YÝ\ÝŽˆÂˆ›˜[YHŽˆ™\ØÛÝ[YÝÝ[Ø›Ý[™\žWÙ\ØÜš[Z[˜]Üˆ‹ˆ™š[HŽˆ\ÝËÜšXÚ[™×Ý\ÝËœœÈ‹ˆœ™X\ÛÛˆŽˆœXÙHH™]È\™Ù]Y\Ý™^ÈH™X\™\ÝÝ›Û™È™[]Y\Ý‚ˆKˆ›™X\™\ÝÝ\ÝÝ×Ú[Z]]HŽˆÂˆ›˜[YHŽˆ˜™[Ý×Ý™\ÚÛÚ\×Û›×Ù\ØÛÝ[‹ˆ™š[HŽˆ\ÝËÜšXÚ[™×Ý\ÝËœœÈ‹ˆ›[™HŽˆL‹ˆ›Ü˜XÛWÚÚ[™Žˆ™^XÝÝ˜[YH‹ˆ›Ü˜XÛWÜÝ™[™ÝŽˆœÝ›Û™È‹ˆ™]šY[˜ÙWÜÝ[[X\žHŽˆ™^XÝ˜[YH\ÜÙ\[Ûˆ‹ˆ›Ü˜XÛWÜÙ[X[XÜÈŽˆÂˆ›ØœÙ\™\ÈŽˆH^XÝ˜[YHÜˆ˜[YH]\›ˆ\ÜÙ\YžHH\Ý‹ˆ›Z\ÜÚ[™ÈŽˆ››ÈØš[Ý\È˜[YK\Ú\H\ØÜš[Z[˜]ÜˆØ\[™\ˆÝ]XÈØÛÜH‹ˆ\Ü˜YWÜÝYÙÙ\Ý[ÛˆŽˆ[ˆKˆœ™[][Û—Ü™X\ÛÛˆŽˆ™\™XÝÛÝÛ™\—ØØ[‹ˆœ™[][Û—ØÛÛ™šY[˜ÙHŽˆšYÚ‚ˆKˆ˜Ø[™Y]WÝ˜[Y\ÈŽˆÂˆÂˆ˜[YHŽˆ™\ØÛÝ[Ý™\ÚÛ
+\]X[]H›Ý[™\žJH‹ˆœ™X\ÛÛˆŽˆ›ØœÙ\™Y˜[Y\ÈÈ›Ý[˜ÛYHH\]X[]KX›Ý[™\žHØ\ÙH›Üˆ\È™YXØ]H‚ˆBˆKˆ˜\ÜÙ\[Û—ÜÚ\HŽˆÂˆšÚ[™Žˆ™^XÝÜ™]\›—Ý˜[YH‹ˆ™^[\HŽˆ˜\ÜÙ\Ù\HJXÝX[^XÝY
+H‚ˆKˆ™\šYžWØÛÛ[X[™Žˆœš\ˆYÙ[™\šYžHK\›ÛÝˆKX™Y›Ü™H\™Ù]Üš\‹Ü[ÝÜ™\ËY^ÜÝ\™KšœÛÛˆKXY\ˆ\™Ù]Üš\‹Ü[ÝØY\‹œ™\ËY^ÜÝ\™KšœÛÛˆKZœÛÛˆ‚ˆKˆ˜XÝ[Û˜Xš[]HŽˆÂˆ˜Û\ÜÈŽˆ˜XÝ[Û˜X›WÜ™[]YÝ\ÝÙ^[œÚ[Ûˆ‹ˆœ™X\ÛÛˆŽˆ™^[™H™X\™\Ý™[]Y\ÝÚ]HZ\ÜÚ[™È\ØÜš[Z[˜]Üˆ‹ˆš\×ØÛÛ˜Ü™]WÙÝZY[˜ÙHŽˆYKˆœÚYÛ˜[ÈŽˆÂˆ›Z\ÜÚ[™×Ù\ØÜš[Z[˜]ÜˆŽˆYKˆ˜Ø[™Y]WÝ˜[YHŽˆYKˆ˜\ÜÙ\[Û—ÜÚ\HŽˆYKˆœ™[]YÝ\ÝŽˆYKˆœ™XÛÛ[Y[™YÝ\ÝÝ\™Ù]ŽˆYKˆ™\šYšXØ][Û—ØÛÛ[X[™ŽˆYBˆBˆKˆ˜Ø[Xœ˜][ÛˆŽˆÂˆ˜]˜Z[Xš[]HŽˆ››ÝÚ[\ÜY‹ˆ˜ÛÛ™šY[˜ÙHŽˆ[šÛ›ÝÛˆ‹ˆ˜YÜ™Y[Y[Žˆ››×Ü[[YWÙ]H‚ˆKˆœÝ]X×Û[Z]][ÛœÈŽˆ×Kˆœ™\Ù[][Û—Ý^Žˆ[ˆBˆBˆBŸB˜‚‘šY[ÛÛ˜XÝ‚‚‹HØÚ[XWÝ™\œÚ[Û˜8 %Ý\œ™[HŒŒÈ˜ˆ[\[™È™\]Z\™\È\][™È\ÂˆÙXÝ[Û‹H™[™\™\ˆ
+Ü˜]\ËÜš\‹ÜÜ˜ËÛÝ]]Ü™\×Ù^ÜÝ\™KœœØ
+K[™ˆ[žHÝÛœÝ™X[HÛÛœÝ[Y\œÈ[ˆØÚÜÝ\ˆŒX8¡¤ˆŒ˜ˆ\‹\™[]Y]\Ýˆ[šY\ÈØZ[™Y™[][Û—Ü™X\ÛÛ˜[™™[][Û—ØÛÛ™šY[˜ÙXšY[Âˆ
+[˜[\Ú\ËÜ™[]Y]\Ý\™XÚ\Ú[Û‹]ŒX
+KˆŒ˜OˆŒØˆÙX[\ÈØZ[™YˆHY]]™H]šY[˜ÙWÜ™XÛÜ™›Ú™XÝ[Ûˆ
+’T‹TÔPËLŒX
+HÚ[Bˆ™\Ù\š[™È^\Ý[™ÈÜ[]™[ÙX[HšY[Ëˆ™[][Û—Ü™X\ÛÛ˜\È[‚ˆY]]™HÝš[™È[[HÚ][ˆŒØÈ[\—ÛÝÛ™\—ØØ[^[™ÈBˆ^\Ý[™È™[][Ûˆ^Û›Û^HÚ]Ý]Ú[™Ú[™ÈHšY[Ú\K‚‹HØÛÜX8 %[Ø^\Èœ™\È˜‚‹H[—ÜÝ]\Ø8 %[Ø^\È™\Ù[ÈÛ™HÙˆ˜ÛÛ\]H˜Ü‚ˆœÙX[WÛ[Z]Ø\YY˜ˆ˜ÛÛ\]H˜YX[œÈH[ˆ[˜[^™Y[ˆÙX[\ËˆœÙX[WÛ[Z]Ø\YY˜YX[œÈ’T—Ô‘T×ÑVÔÕT‘WÔÑPSWÓSRUˆ[˜Ø]YH[™[ÜžKˆÛÛœÝ[Y\œÈ]\Ý™XY[—ÜÝ]\Ø™Y›Ü™Bˆ™X][™ÈÛÝ[È\ÈÛÛ\]K\™\ÈÝ[ËˆYY\È[ˆY]]™HšY[ˆÚ][ˆØÚ[XH™\œÚ[ÛˆŒØ\ˆ’T‹TÔPËLÍ‚‹H[Z]][ÛœÖ×X8 %™\Ù[Ú[ˆ™\È^ÜÝ\™H\ÈH˜[YY[ˆ[Z]][ÛˆÜ‚ˆÝZY[˜ÙH\ØÛÜÝ\™KˆÛÛœÝ[Y\œÈ]\Ýœ˜[˜ÚÛˆØ]YÛÜžX‚ˆHØ]YÛÜžNˆœ™\×ÜÙX[WÛ[Z]Ø\YY˜\X\œÈÚ[ˆ[—ÜÝ]\Ø\ÂˆœÙX[WÛ[Z]Ø\YY˜ˆ]Ø\œšY\ÈÙX[\×Ø[˜[^™YÙX[\×ÝÝ[ˆ[Z]ÜÛÝ\˜ÙXÛÛ›Û[™™\Z\—Ü›Ý]Xˆ[Z]ÜÛÝ\˜ÙX\Âˆ™Y˜][˜Ú[ˆHØ\Ø[YHœ›ÛHHZ[Z[ˆY˜][ˆ
+QUSÔ‘T×ÑVÔÕT‘WÔÑPSWÓSRUHLÌ
+H[™˜ÛÛ™šYÝ\™Y˜Ú[‚ˆ’T—Ô‘T×ÑVÔÕT‘WÔÑPSWÓSRUØ\È^XÚ]HÙ][ˆH[š\›Û›Y[‚ˆHØ]YÛÜžNˆ\\ØÜš\ÙY™—Ùš\œÝ˜\X\œÈÚ[ˆHËÒ”Ë\™YÛZ[˜[ˆÛÜšÜÜXÙH\ÈËÒ”Èš[\Ë›È\Ýš[\Ë[™™\›ÈÛ\ÜÚYšYYÙX[\Ë‚ˆ[—ÜÝ]\Ø™[XZ[œÈ˜ÛÛ\]H˜™XØ]\ÙHH\Ý™\ËY^ÜÝ\™HØØ[‚ˆÛÛ\]Yˆ]Ø\œšY\È×Ùš[WØÛÝ[™\Z\—Ü›Ý]X[™HÜ[Û˜[ˆ™\ÝY\\ØÜš\Ü™XY[™\ÜØØš™XÝ‚ˆHØ]YÛÜžNˆœ]Û—ÙY™—Ùš\œÝ˜\X\œÈÚ[ˆHÛÜšÜÜXÙH\È]Û‚ˆš[\Ë›È\Ýš[\Ë[™™\›ÈÛ\ÜÚYšYYÙX[\Ëˆ[—ÜÝ]\Ø™[XZ[œÂˆ˜ÛÛ\]H˜ˆ]Ø\œšY\È]Û—Ùš[WØÛÝ[]]Üš]WØ›Ý[™\žXˆ
+™]šY]×ØYš\ÛÜžWÛÛ›X
+K[˜[\Ú\×Û[Ù[
+Y™—Ùš\œÝ
+Kˆ›Û—ØÛZ[\Ø[™™\Z\—Ü›Ý]XˆH›Ý]HÚ[È]Y™‹\ØÛÜYˆš\ˆÚXÚØˆ\È[™[ÜžHÝ[Ù\È›Ý™[™\ˆ]Ûˆš[™[™ÜËÛÂˆH™\›Ë\ÙX[H™\Ý[\È›ÝHÛX[ˆ]Ûˆ™\Ý[ˆ]Ù\È›ÝÛZ[H]ˆ[\™\È]Ûˆ[˜[\Ú\È\È[›[Ù[Y‚ˆH\\ØÜš\Ü™XY[™\ÜËœÛÝ\˜ÙX\Âˆœ™\×Ù^ÜÝ\™WÝ\\ØÜš\Ü™XY[™\ÜËŒH˜‚ˆH\\ØÜš\Ü™XY[™\ÜË˜]]Üš]WØ›Ý[™\žX\Âˆœ™]šY]×ØYš\ÛÜžWÛÛ›H˜‚ˆH\\ØÜš\Ü™XY[™\ÜË˜[˜[\Ú\×Û[Ù[\È™Y™—Ùš\œÝ˜‚ˆH\\ØÜš\Ü™XY[™\ÜËœÛÝ\˜ÙWÙš[WØÛÝ[\ÈHÛÝ[ÙˆËÒ”Èš[\È›Ýˆ]XÝY\È\ÝË‚ˆH\\ØÜš\Ü™XY[™\ÜË\ÝÙš[WØÛÝ[\ÈHÛÝ[Ùˆ]XÝYËÒ”È\Ýˆš[\Ë‚ˆH\\ØÜš\Ü™XY[™\ÜËœXÚØYÙWÜ›ÛÝØÛÝ[\ÈHÛÝ[Ùˆ\Ý[˜ÝXÚØYÙBˆ›ÛÝÈ™\ÛÛ™Yœ›ÛH]XÝYËÒ”Èš[\Ë‚ˆH\\ØÜš\Ü™XY[™\ÜËœXÚØYÙWØÛÛ™šY[˜ÙX\È›Û™XÝØYY][XÜ‚ˆYÚÈ]\ÈHYÚ\ÝXÚØYÙH\ØÛÝ™\žHÛÛ™šY[˜ÙHXÜ›ÜÜÈ]XÝYˆËÒ”Èš[\Ë‚ˆH\\ØÜš\Ü™XY[™\ÜËœ[›™\—ÜÝ]\Ø\È›×Ý\Ý×Ù]XÝY™\ÛÛ™Yˆ\X[Üˆ[œ™\ÛÛ™Y‚ˆH\\ØÜš\Ü™XY[™\ÜË™\šYžWØÛÛ[X[™ØÛÝ[\ÈH[X™\ˆÙˆ]XÝY\Ýˆš[\ÈÚ]HÛÛ˜Ü™]H™\šYžHÛÛ[X[™‚ˆH\\ØÜš\Ü™XY[™\ÜËÜØ›ØÚÙ\˜\ÈHÜZ\ÜÚ[™È™XY[™\ÜÈÚYÛ˜[Ü‚ˆ[‚ˆH\\ØÜš\Ü™XY[™\ÜË››Û—ØÛZ[\Ö×XÝ]\È]HØ\™Ù\È›Ý[Z]ˆ[\™\È\TØÜš\ÙX[\Ë[ˆ\TØÜš\\ÝËÜˆÜ™X]HØ]KØ˜YÙBˆ]]Üš]K‚‹HY]šXÜØ8 %Ý[È\ÈH\‹XÙX[QÜš\Û\ÜØÛÝ[XÚÙ]ˆÙ^\ÈZ\œ›Ü‚ˆÙX[QÜš\Û\ÜÎŽ˜\×ÜÝŠ
+XˆH™[™\™\ˆ[Z]È[LHXÚÙ]È]™[ˆÚ[‚ˆ™\›ÈÛÈÛÛœÝ[Y\œÈØ[ˆÝÝX›H˜\ˆÚ\Ë‚‹HY]šXÜËšXY[™WÙ[YÚX›X8 %ÛÝ[ÙˆÙX[\ÈÚÜÙHÜš\ØÛ\ÜØˆØ]\ÙšY\ÈÙX[QÜš\Û\ÜÎŽš\×ÚXY[™WÙ[YÚX›J
+X\ˆ’T‹TÔPËLK‚‹HÙX[\Ö×K™Üš\ØÛ\ÜØ8 %Û™HÙˆHLHÙX[QÜš\Û\ÜØÝš[™ÜÎ‚ˆÝ›Û™ÛWÙÜš\YÙXZÛWÙÜš\Y[™Üš\Y™XXÚX›WÝ[œ™]™X[YˆXÝ]˜][Û—Ý[šÛ›ÝÛ˜›ÜYØ][Û—Ý[šÛ›ÝÛ˜ØœÙ\˜][Û—Ý[šÛ›ÝÛ˜ˆ\ØÜš[Z[˜][Û—Ý[šÛ›ÝÛ˜Ü\]YX[[[Û˜[Ý\™\ÜÙY‚‹HÙX[\Ö×K™]šY[˜ÙX8 %\‹\ÝYÙHÝYÙTÝ]XÝš[™ÜÎˆY\ØÙXZØˆ›Ø[šÛ›ÝÛ˜Ü\]YX›ÝØ\XØX›X‚‹HÙX[\Ö×Kœ™[]YÝ\Ý×ÝÝ[8 %[X™\ˆÙˆ™[]Y\ÝÈH[˜[^™\‚ˆX]ÚYˆH™[]YÝ\ÝØ\œ˜^H\È
+Š˜Ø\Y
+Šˆ›Üˆ\Y˜XÝÚ^™NÈÙYBˆPVÔ‘SUQÕTÕ×ÔT—ÔÑPSWÒ”ÓÓ˜[ˆH™[™\™\ˆ
+Ý\œ™[H
+KˆBˆÝ[šY[[Ø^\ÈØ\œšY\ÈH[˜›Ý[™YÛÝ[‚‹HÙX[\Ö×Kœ™[]YÝ\ÝÖ×Kœ™[][Û—Ü™X\ÛÛ˜8 %Ú[™ÛHYÚ\Ý\š[Üš]Bˆ™X\ÛÛˆ\È\Ý\È™[]YÈHÙX[KˆÛ™HÙŽ‚ˆ\™XÝÛÝÛ™\—ØØ[[\—ÛÝÛ™\—ØØ[\ÜÙ\[Û—Ý\™Ù]ØY™š[š]XˆØ[YWÝ\ÝÙš[XØ[YWÛ[Ù[XÝÛ™\—Û˜[YYÝ\Ýˆ[\ÜÜ]ØY™š[š]Xš^\™WÛÝÛ™\—ØY™š[š]Xˆ]XÝ[Ûˆ]™\È[‚ˆÜ˜]\ËÜš\‹ÜÜ˜ËØ[˜[\Ú\ËÝ\ÝÙÜš\Ù]šY[˜ÙKœœØ‚ˆ[\—ÛÝÛ™\—ØØ[\È[Z]YÈHÛ™KZÜ[\ˆÜˆÜ˜\\ˆ]\™XÝBˆØ[ÈHÝÛ™\‹ˆÝ\ÜYÚ\\È\™HØ[YKYš[H[\œË\Ý[ØØ[[\œËˆ^XÚ]H]X[YšYY\Ý\Ý\Ü[\œË[™[˜[XšYÝ[Ý\ÈØ[YK\XÚØYÙBˆ›ÙXÝ[ÛˆÜ˜\\œËˆH[\ˆZ]\ˆØ\œšY\ÈHÜXÚYšXÈÝÛ™\ˆÚÙ[ˆ[‚ˆ]È˜[YHÜˆ\ÈH\™XÝ[YØ][™ÈÜ˜\\ˆÚÜÙHÝ\ÜYÝÛ™\ˆØ[È[ˆ\™Ù]Û™HÜXÚYšXÈÝÛ™\ˆ˜[YKˆÙ[™\šXÈÝÛ™\ˆ˜[Y\ËÚÚ\Y[ÝÛ™\ˆÜ˜\\œËˆZ^Y[ÝÛ™\ˆÜ˜\\œË[XšYÝ[Ý\È›ÙXÝ[ÛˆÜ˜\\ˆ˜[Y\ËØØ[\ÝZ[\‚ˆÚYÝÜË[™ÛËZÜÜ˜\\ˆÚZ[œÈ™[XZ[ˆ›Û‹XXÝ]˜][™ÈÝ]XÈ[Z]][ÛœË‚‹HÙX[\Ö×Kœ™[]YÝ\ÝÖ×Kœ™[][Û—ØÛÛ™šY[˜ÙX8 %YÚYY][XˆÝØÜˆÜ\]YXˆX\[™Èœ›ÛH™X\ÛÛŽˆ\™XÝÛÝÛ™\—ØØ[ˆ[\—ÛÝÛ™\—ØØ[8¡¤ˆYÚÈ\ÜÙ\[Û—Ý\™Ù]ØY™š[š]XˆØ[YWÝ\ÝÙš[XØ[YWÛ[Ù[XÝÛ™\—Û˜[YYÝ\Ý[™ˆ[\ÜÜ]ØY™š[š]X8¡¤ˆYY][XÈš^\™WÛÝÛ™\—ØY™š[š]X8¡¤ˆÝØ‚ˆ[™\[™[ÙˆÜ˜XÛWÜÝ™[™ÝˆHÝØ™[][ÛˆØ[ˆÝ[Ø\œžHHÝ›Û™ÂˆÜ˜XÛK‚‹HH™[]YÝ\ÝØ\œ˜^H\È
+Šœ˜[šÙY
+ŠˆžBˆ
+ÛÛ™šY[˜ÙK™X\ÛÛ—Üš[Üš]KÜ˜XÛWÜÝ™[™ÝXÝ]˜][Û—ÛÝ™\›\š[Kˆ˜[YK[™JXÛÈHYÚ\ÝXÛÛ™šY[˜ÙH\ÝÈ\X\ˆš\œÝ[ˆH™X\™\ÝˆÝ›Û™È[Z]][Ûˆ\™Ù]Ú[œÈÚ][ˆÝ\Ú\ÙH\]Z]˜[[™[][ÛœÚ\Ë‚ˆXÝ]˜][Û—ÛÝ™\›\\ÈHÝ]XÈYKXœ™XZÙ\ˆœ›ÛH[™XYHØœÙ\™YØ[ˆ˜[Y\ËÝXÚ\ÈH™YXØ]KX›Ý[™\žH\]X[]HØ[ˆ™[]YÝ\Ý×ÝÝ[\Âˆ[˜Y™™XÝYžH˜[šÚ[™Ë‚‹HÙX[\Ö×K›ØœÙ\™YÝ˜[Y\Ø8 %Ý]XØ[H™\ÛÛ™YØØ[\ˆ˜[Y\ÈÙY[ˆ[‚ˆÝÛ™\‹XØ[\™Ý[Y[ÈXÜ›ÜÜÈ™[]Y\ÝËˆ[ˆY][ÛˆÈ\™XÝ]\˜[Ëˆ\Ý™YXØ]H›Ý[™\šY\ÈX^HØ\œžH^XÝ˜[Y\Èœ›ÛHÛÝ\˜ÙK[Ü™\™Y\™XÝˆšY[\ÜÚYÛ›Y[ÈÚÜÙHšYÚZ[™ÚYH\ÈHØ[YKYš[H]\˜[ÛÛœÝ[Ü‚ˆ]ÛÛœÝ[\ËÛZ[\ÈH›Ý[™Y[YÙ\ˆÙ™œÙ]ˆHÜš]H]\Ý™H[‚ˆ[˜ÛÛ™][Û˜[[˜Ý[Û‹X›ÙHÝ][Y[Ú]›È[\™[š[™È^XÚ]]]X›Bˆ›Üœ›ÝÈ™Y›Ü™HHÝÛ™\ˆØ[ˆÝ\ˆ˜\™HY[YšY\œË[\‹Y\š]™Y˜[Y\ËˆÛÛ™][Û˜[Üš]\Ë[˜[Y]Y˜[Y\Ë[™[XšYÝ[Ý\ÈšY[Üš]\È\™Bˆ[[[Û˜[H^ÛYY‚‹HÙX[\Ö×K›Z\ÜÚ[™×Ù\ØÜš[Z[˜]ÜœØ8 %\‹\[H\Ý\Ú\ÈÝš[™ÜÈ
+K™Ë‹ˆH\]X[]KX›Ý[™\žHØ\ÙH›Üˆ™YXØ]HÙX[\ÊKˆ[\HÚ[ˆ›È[Bˆš\™\Ë‚‹HÙX[\Ö×K™]šY[˜ÙWÜ™XÛÜ™HY]]™H[™HH]šY[˜ÙHÜ[™H›ÜˆHÙX[K‚ˆ]\ÈØÚ[XH™\œÚ[Û™Y[™\[™[Hœ›ÛH™\È^ÜÝ\™H[™Ý\œ™[H\Ù\ÂˆØÚ[XWÝ™\œÚ[ÛŽˆŒŒH˜‚‹HÙX[\Ö×K™]šY[˜ÙWÜ™XÛÜ™˜Ø[›ÛšXØ[ÙØ\ÚYHÙ[™\˜]YØ[›ÛšXØ[ˆ™Z]š[Ü˜[Ø\Y[]H›ÜˆXY[™KY[YÚX›HØ\Û\ÜÙ\ËÜˆ[›Ü‚ˆÝ›Û™ËÜ\]YK[[[Û˜[[™Ý\™\ÜÙYÙX[\Ëˆ[™H[X™\œÈ™[XZ[‚ˆØØ]ÜœË›Ý\˜X›HØ[›ÛšXØ[Y[]K‚‹HÙX[\Ö×K™]šY[˜ÙWÜ™XÛÜ™˜Ø[›ÛšXØ[ÙØ\ÙÜ›Ý\ÜÚ^™XH[X™\ˆÙˆ˜]ÈÙX[\Âˆ[ˆ\È™\ËY^ÜÝ\™HÛ˜\ÚÝ]Ú\™HHØ[YHØ[›ÛšXØ[Ø\Y[]KˆÜˆ[Ú[ˆ›ÈØ[›ÛšXØ[Ø\Y[]H\È\ÜÚYÛ™Y‚‹HÙX[\Ö×K™]šY[˜ÙWÜ™XÛÜ™˜Ø[›ÛšXØ[ÙØ\Ü™X\ÛÛ˜HÜ›Ý\[™È™X\ÛÛˆ›ÜˆBˆØ[›ÛšXØ[Y[]KÜˆ[Ú[ˆ›ÈØ[›ÛšXØ[Ø\Y[]H\È\ÜÚYÛ™Y‚‹HÙX[\Ö×K™]šY[˜ÙWÜ™XÛÜ™œ˜]×Ùš[™[™ÜØHÝ\Ü[™È˜]È[˜[^™\ˆÚYÛ˜[Âˆ]ÛÛšX]YÈ\È™XÛÜ™ˆHÝ\œ™[ÙX[K[˜]]™H›Ú™XÝ[Ûˆ[Z]ÂˆÛ™H˜]Èš[™[™È\ˆÙX[NÈ]\ˆÛ\ÜË\ÜXÚYšXÈÜ›Ý\[™ÈX^H]XÚ][\Bˆ˜]Èš[™[™ÜÈÈÛ™HØ[›ÛšXØ[][K‚‹HÙX[\Ö×K™]šY[˜ÙWÜ™XÛÜ™˜Ø[›ÛšXØ[Ú][XHY]]™Hš[™[™ËX[YÛ›Y[ˆ›Ú™XÝ[ÛˆÚ]Ø\ÜÝ]XÛ\ÜË\ØÛÜYXÝ[Û˜Xš[]XÚXˆ™XÛÛ[Y[™YÜ™\Z\˜[X›HÝXÝ\™Y™\Z\—Ü›Ý]X™[]YÝ\Ýˆ™\šYžWØÛÛ[X[™[X›H™XÙZ\ØÛÛ[X[™[X›H™\Z\—ØÛÛ[X[™ˆÛÛ™šY[˜ÙX˜]ÈÜ›Ý\Ú^™Kˆ[X›Hš[X\žWØ[˜ÚÜ˜[™˜]×ÜÜ[œØˆXÝ[Û˜X›HØ[›ÛšXØ[][\ÈØ\œžBˆ™\Z\—Ü›Ý]Kœ™\Z\—ÚÚ[™\™Ù]Ý\ÝÝ\X[™ÝYÙÙ\ÝYØ\ÜÙ\[Û˜Âˆ›ËXXÝ[Û‹ØœÙ\™Y[Z]][Û‹[™[šÛ›ÝÛˆ][\ÈÙY\™\Z\—Ü›Ý]Nˆ[‚ˆXÝ[Û˜X›H][\È[ÛÈØ\œžHHØY™HYÙ[™XÙZ\ÛÛ[X[™Ú[ˆHØ[›ÛšXØ[ˆ™\Z\‹Ý™\šYžHÛÜ\È]˜Z[X›KÛÈX›XË\›Ú™XÝ[Ûˆ™XY[™\ÜÈØ[ˆ™Bˆ\ÜÙ\ÜÙYœ›ÛHØ[›ÛšXØ[]šY[˜ÙH˜]\ˆ[ˆ˜]Èš[™[™ÜËˆ™\Z\—ØÛÛ[X[™ˆ\Èš\ˆYÙ[™\Z\ˆK\›ÛÝˆK\ÙX[KZYYˆK\\ÙH™Y›Ü™XÛ›HÚ[ˆBˆ][H\ÈXÝ[Û˜X›H[™HÙX[H\ÜÙ\ÈH˜Z[XÛÜÙY™\Z\‹\XÚÙ]›\ˆ
+ÌÎLŠNÈ]™\žHÝ\ˆ][HØ\œšY\È[ˆÝÛœÝ™X[BˆÝ\™˜XÙ\ÈÚÝ[™[™\ˆ\ÈØ[›ÛšXØ[][H™Y›Ü™H™X][™È˜]Èš[™[™ÜÈ\ÂˆÙ\\˜]HÛÜšË‚‹HÙX[\Ö×K™]šY[˜ÙWÜ™XÛÜ™˜Ø[›ÛšXØ[Ú][K˜ÛÛ[X[™ÜÜXÜØHY]]™H\Yˆ\ØÜš\[ÛœÈ›ÜˆHØ[›ÛšXØ[™\šYžWØÛÛ[X[™[™™XÙZ\ØÛÛ[X[™Ú[‚ˆ’TˆÝÛœÈÜÙH›Ý]\ËˆXXÚÜXÈØ\œšY\ÈÜ™\™Y\™Ý‹ÛXÚY\Ë^XÝYˆÜš]\Ë[™[ˆ]]Üš]H›Ý[™\žKˆH™\šYžHÛÛ[X[™]Üš]\È›ÝYÚÚ[ˆ™Y\™XÝ[Ûˆ\ÈX\šÙY^XÝ][Û—Û[ÙNˆœÚ[Ü™\]Z\™Y˜È™XÙZ\K[Ý]ˆ\È™\™\Ù[Y\È\™XÝ\™Ý‹ˆ\ÙH\ØÜš\[ÛœÈ\™H›Ý^XÝ][Û‚ˆ\›Z\ÜÚ[Û‹[™\˜š]˜\žH™]šY]È\ÝÛÛ[X[™È™[XZ[ˆYØXÞHYš\ÛÜžH^ˆ[[Z\ˆ›ÙXÙ\ˆÝ\Y\È[ˆ^XÝ]X›H›Ý[™\žK‚‹HÙX[\Ö×K™]šY[˜ÙWÜ™XÛÜ™˜Ø[›ÛšXØ[Ú][Kœš[X\žWØ[˜ÚÜ˜H™Y™\œ™YˆXÙ[Y[[›ÜˆÝÛœÝ™X[HÝ\™˜XÙ\ÈÚ[ˆHØ[›ÛšXØ[][H\ÈHØY™BˆÛÝ\˜ÙHØØ][Û‹ˆ]\È[Û›HÚ[ˆ’TˆØ[››ÝØY™[H˜[YHHXÙ[Y[‚‹HÙX[\Ö×K™]šY[˜ÙWÜ™XÛÜ™˜Ø[›ÛšXØ[Ú][Kœ˜]×ÜÜ[œÖ×XHÛÝ\˜ÙK\Ü[ˆÝ[[X\žBˆ›Üˆ]™\žH˜]Èš[™[™ÈÛÛšX][™ÈÈHØ[›ÛšXØ[][Kˆ\ÙHÜ[œÈ\™BˆÝ\Ü[™È]šY[˜ÙK›Ý[™\[™[\Ù\‹Y˜XÚ[™ÈXÝ[ÛœË‚‹HÙX[\Ö×K™]šY[˜ÙWÜ™XÛÜ™˜Ø[›ÛšXØ[Ú][KœÝ]X×Û[Z]][ÛœÖ×XHØ[›ÛšXØ[ˆ][K[ØØ[ÛÜHÙˆ˜[YY[˜[^™\ˆ[Z]][ÛœÈ›ÜˆÝ]XË[[Z]][Ûˆ[™ˆ[šÛ›ÝÛˆÝ]\ËˆÝÛœÝ™X[HØ[›ÛšXØ[Z][HÛÛœÝ[Y\œÈX^H\ÙH\ÙHØ]YÛÜžBˆ[™™\Z\‹\›Ý]H›ÝÜÈÈ^Z[ˆÚH[ˆ][H\È›ÝXÝ[Û˜X›K]]\Ý›Ýˆ™X][H\È\Ù\ˆ\ÝX‚ˆšY[Ø\ÜÚYÛ›Y[Ý˜[YWÝ[œ™\ÛÛ™Y›Ý]\ÈÂˆ[˜[\Ú\ËÙšY[X\ÜÚYÛ›Y[]˜[YK\™\ÛÛ][Û˜Ú[ˆH\™XÝ\ÝšY[Üš]Bˆ\È™\Ù[]]È˜[YH\ÈÝ]ÚYHHØY™H]\˜[ØÛÛœÝ[[Ù™œÙ]ÝXœÙ]‚‹HÙX[\Ö×K™]šY[˜ÙWÜ™XÛÜ™™]šY[˜ÙWÜ]H\Y™XXÚXÝ]˜]Kˆ›ÜYØ]KØœÙ\™K[™\ØÜš[Z[˜]HÝYÙ\ËˆXXÚÝYÙHØ\œšY\ÈÝ]XˆÛÛ™šY[˜ÙX[™Ý[[X\žX‚‹HÙX[\Ö×K™]šY[˜ÙWÜ™XÛÜ™›ØœÙ\™YÝ˜[Y\ØˆZ\ÜÚ[™×Ù\ØÜš[Z[˜]ÜœØ[™™[]YÝ\ÝØHÝXÝ\™YÛÜY\ÈÙ‚ˆ^\Ý[™ÈÙX[H]šY[˜ÙK[˜ÛY[™È™[]Y]\Ý™[][ÛˆšY[ËˆBˆ™\ÝY™[]YÝ\ÝØ\œ˜^H\ÈØ\YZÙHHÜ[]™[\œ˜^H[™ÙY\Âˆ™[]YÝ\Ý×ÝÝ[‚‹HÙX[\Ö×K™]šY[˜ÙWÜ™XÛÜ™œ™[]YÝ\ÝÖ×K›Ü˜XÛWÜÙ[X[XÜØHÝXÝ\™YˆÜ˜XÛK\Ú\H^[˜][ÛˆÚ]ØœÙ\™\ØZ\ÜÚ[™Ø[™[X›Bˆ\Ü˜YWÜÝYÙÙ\Ý[Û˜ˆÙXZËœ›ØYÛ[ÚÙK[Û›K[™[šÛ›ÝÛˆÜ˜XÛHÚ\\Âˆ˜[YHH™Z]š[Üˆ^HØœÙ\™KH\ØÜš[Z[˜]Üˆ^H˜Z[ÈØœÙ\™K[™ˆH\ÜÙ\[Ûˆ\Ü˜YH’Tˆ™XÛÛ[Y[™È›Üˆ\ÈÙX[HÚ[™ˆH\Ü˜YBˆÝYÙÙ\Ý[Ûˆ\ÈÝ™[™ÝYØ]Y
+ÌÍÌÌJNˆHÝ›Û™ØÜ˜XÛH[™XYBˆ\ØÜš[Z[˜]\ËÛÈ]È\Ü˜YWÜÝYÙÙ\Ý[Û˜\È[ÈYY][K[Ü‹X™[ÝÂˆÙY\ÈH™XÛÛ[Y[™][Û‹‚‹HÙX[\Ö×K™]šY[˜ÙWÜ™XÛÜ™œ™XÛÛ[Y[™][Û˜H›Ý[™Y\ÝZ[[ÝZY[˜ÙBˆ\š]™Yœ›ÛH^\Ý[™È]šY[˜ÙNˆ™XÛÛ[Y[™Y\Ý\™Ù]™X\™\Ý\ÝÂˆ[Z]]KØ[™Y]H˜[Y\Ë\ÜÙ\[ÛˆÚ\K[™™\šYšXØ][ÛˆÛÛ[X[™Ú[‚ˆHÙX[H\ÈÛÛ˜Ü™]HÝZY[˜ÙK‚‹HÙX[\Ö×K™]šY[˜ÙWÜ™XÛÜ™˜XÝ[Û˜Xš[]XHYš\ÛÜžHÛ\ÜÚYšXØ][Ûˆ\Âˆ›ÛÛX[ˆÚYÛ˜[ÈÚÝÚ[™ÈÚXÚYXÙ\ÈÙˆÝZY[˜ÙH\™H™\Ù[ˆ]Ù\È›ÝˆÚ[™ÙHØ]HÜˆ˜\Ù[[™HÛXÞK‚‹HÙX[\Ö×K™]šY[˜ÙWÜ™XÛÜ™˜Ø[Xœ˜][Û˜HXÙZÛ\ˆÝ]XËÜ[[YBˆÛÛ™šY[˜ÙHÛÛ^ˆ›×Ü[[YWÙ]XYX[œÈ›È[\ÜY[[YBˆØ[Xœ˜][ÛˆØ\ÈÝ\YYÈ]Ù\È›Ý[\H[[YHÛÛ™š\›X][Û‹‚‹HÙX[\Ö×K™]šY[˜ÙWÜ™XÛÜ™œÝ]X×Û[Z]][ÛœØH[šÛ›ÝÛˆÜˆÜ\]YHÝ]XÂˆ]šY[˜ÙHÝYÙ\È]ÚÝ[™H™X]Y\È[˜[^™\ˆ[Z]][ÛœÈ˜]\ˆ[‚ˆ›ØÝ\ÙY]\Ý[œÝXÝ[ÛœËˆXXÚ[žHØ\œšY\ÈHÜšYÚ[˜[ÝYÙXÝ]Xˆ[™™X\ÛÛ˜\ÈH›Ü›X[^™YØ]YÛÜžX[™™\Z\—Ü›Ý]XÛÈ[™HHØ[‚ˆÜ›Ý\[˜[^™\ˆ[Z]ÈÚ]Ý]™X][™È[H\È\Ù\ˆ\ÝØ\Ë‚ˆ™YXØ]H›Ý[™\šY\ÈÚÜÙHXÝ]˜][ÛˆÜ\˜[™\ÈØØ[Y[X™\‹XXØÙ\ÜËˆ]\˜]Ü‹Y\š]™YÜˆÛÛ\]Y\ÙHØ]YÛÜžBˆXÝ]˜][Û—Ø›Ý[™\žWÚ[œ]Ý[œ™\ÛÛ™Yˆ]\˜]Ü‹Y\š]™YÜ\˜[™È›Ý]HÂˆ[˜[\Ú\ËÚ]\˜]Ü‹X›Ý[™\žK[Ü\˜[™\™\ÛÛ][Û˜ÈY[X™\‹XXØÙ\ÜÈÜ\˜[™È›Ý]BˆÈ[˜[\Ú\ËÛØØ[[Y[X™\‹X›Ý[™\žK[Ü\˜[™\™\ÛÛ][Û˜ÈØØ[ÜˆÛÛ\]YˆÜ\˜[™È›Ý]HÈ[˜[\Ú\ËÛØØ[XÛÛ\]YX›Ý[™\žK[Ü\˜[™\™\ÛÛ][Û˜‚ˆ^H]\Ý›Ý[Z]^XÝ›Ý[™\žHØ[™Y]H˜[Y\ÈÜˆX›XÈ™\Z\ˆXÚÙ]Ë‚‹HÙX[\Ö×K™]šY[˜ÙWÜ™XÛÜ™œ™\Ù[][Û—Ý^H™\Ù\™Y™\Ù[][Û‹]^ˆ]šY[˜ÙKXÛ\ÜÈ›Ú™XÝ[Û‹ˆ]\È[[[Hš^\™KX˜XÚÙY™\Ù[][Û‚ˆ^ÛXÙHÛ\ÜÚYšY\Èš\ÚXš[]KØœÙ\™\ˆÚ\K[™Ý]]XÝ[Û˜Xš[]K‚‚•Hš^\™HÛÛ˜XÝÛÜœ\È]˜š^\™\ËØ›Ý[™\žWÙØ\Ù^XÝYÙ]šY[˜ÙK\™XÛÜ™XÛÛ˜XÝØÛÜœ\ËšœÛÛ˜[œÂœ™\™\Ù[]]™H]šY[˜ÙWÜ™XÛÜ™ŒŒH™XÛÜ™È›Üˆ™YXØ]H›Ý[™\šY\Ë^XÝ™\œ›Üˆ˜\šX[ËÝ›Û™È^XÝ]˜[YH]šY[˜ÙKœ›ØY\œ›Üˆ\ÜÙ\[ÛœËšY[[™ÚÛK[Øš™XÝÜ˜XÛ\ËÛ˜\ÚÝ]šY[˜ÙKÚYKYY™™XÝØœÙ\™\œËÜ\]YHÝ]XÂ›[Z]][ÛœËÙ[™\˜]YØ[›ÛšXØ[Ø\Y[]K[™HÝ\œ™[˜›×Ü[[YWÙ]XØ[Xœ˜][ÛˆXÙZÛ\‹ˆ[š][™™\ËY^ÜÝ\™H\ÝÈ[ˆB˜Y]]™H˜]×Ùš[™[™ÜØØ[›ÛšXØ[Ú][X[™™\Ù[][Û—Ý^[YÛ›Y[™šY[È™Y›Ü™H]\ˆ™\Ù[][Û‹]^Ü›Ý\[™ÈÚ[™Ù\ËˆØ\™ÛÈ\ÚÈÚXÚËYš^\™KXÛÛ˜XÝØ˜[Y]\ÈH™\]Z\™YØ\ÙHX]š^[™šY[Ú\NÈØ\™ÛÈ\ÚÂ˜ÚXÚË[Ý]]XÛÛ˜XÝØ˜[Y]\ÈH]šY[˜ÙWÜ™XÛÜ™ØÚ[XH™\œÚ[Ûˆ[ˆÛÙK™ØÜË[™HÛÜœ\Ë‚‚•HX\šÙÝÛˆÚX›[™È
+™\ËY^ÜÝ\™K›Y
+Hš[ÈHY]šXÜÈX›H\ÂHÜXY[™KY[YÚX›HÙX[\È
+Ø\Y]L
+Kˆ›Ý›Ü›X]È\™B™Ù[™\˜]YÙÙ]\ˆžHØ\™ÛÈ\ÚÈ™\ËY^ÜÝ\™K\™\Ü‚‚•\È™\ÜÚÝÜÈÝ]XÈ\ÝYÜš\]šY[˜ÙH›Üˆ™\ÈÙX[\Ëˆ[[YB˜ÛÛ™š\›X][ÛˆšXHØ\™ÛË[]][Ø\ÈHÙ\\˜]HØ[Xœ˜][ÛˆÝ\ŠØ[Xœ˜][Û‹ØØ\™ÛË[]][Ë]ŒX
+KˆÝ]XË[[™ÝXYÙHÛÛœÝ˜Z[Èœ›ÛB”’T‹TÔPËLHÝ[\NˆH™\Ü™]™\ˆ\Ù\È[[YK[]]][Û‚›Ý]ÛÛYHÛÜ™Ë‚‚ˆÈÈ]šY[˜ÙHX[™\Ü‚˜š\ˆ]šY[˜ÙKZX[K\›ÛÝ˜Ý[[X\š^™\È[™HH[˜[^™\ˆ]šY[˜ÙHX[Ú]Ý]Ú[™Ú[™È[˜[^™\ˆ™Z]š[Ü‹ˆHØ[YH™\Ü[™È]˜\™Ù]Üš\‹Ü™\ÜËÙ]šY[˜ÙKZX[šœÛÛ˜[™˜\™Ù]Üš\‹Ü™\ÜËÙ]šY[˜ÙKZX[›YÚ[ˆÙ[™\˜]Y›ÝYÚ˜Ø\™ÛÈ\ÚÈ]šY[˜ÙKZX[‚‚•H\ÚÈ˜XØYH›Ý[™È›ÝH™Y›YÚØ\™ÛÈZ[\š\˜\ÙH[™B›]™Hš\ˆ]šY[˜ÙKZX[ÝXœ›ØÙ\ÜÈÚ]’T—ÑU’QSÑWÒPSÕSQSÕUÓTØŠY˜][Z[]\ÊKˆYˆZ]\ˆ\ÙH[Y\ÈÝ]^]È™Y›Ü™HHÛÛ\]H™\Üš\È]˜Z[X›KÜˆH\ÚÈ[›™\ˆØ[››ÝÝ\Ø\\™KÛÜˆ™XYB˜Ú[›ØÙ\ÜË\ÚÈ\ØØ\™ÈÝ[HÜˆ\X[Ý]]È[™Üš]\ÈØ\›š[™È”ÓÓ‚˜[™X\šÙÝÛˆÚ]Ý]\ÈHØ\›ˆ˜\ÙHÛÛ^ÝXÚ\Â˜]šY[˜ÙWÚX[ØZ[Üˆ]šY[˜ÙWÚX[ÙÙ[™\˜][Û˜[™H˜[YY˜]šY[˜ÙWÚX[Ý[Y[Ý]]šY[˜ÙWÚX[Ú[˜ÛÛ\]XÜ‚˜]šY[˜ÙWÚX[Ü[›™\—Ù\œ›Ü˜[—Û[Z]][ÛœÖ×X[žKˆ[›™\‹ØØ\\™H\œ›ÜœÂ\ÙH[œ]Ë™Ù[™\˜][Û‹œÝ]\ÈHœ[›™\—Ù\œ›Üˆ˜[™H[Z]][ÛˆØ]YÛÜžB˜]šY[˜ÙWÚX[Ü[›™\—Ù\œ›Ü˜ˆHY˜][\È[[[Û˜[H™[ÝÈÛÛ[[Û‚K[Z[]H˜[Y][ÛˆÚ[ÈÛÈ]ÛÙÚXØ[]™H[œÈØ[ˆÜš]H›Ý[™YØ\›š[™Â˜\Y˜XÝÈ[œÝXYÙˆ™Z[™ÈÚ[Y™Y›Ü™H]šY[˜ÙKZX[šœÛÛ˜È›Y^\Ý‚Ú[H]ÛÙÚXØ[[œÈÝ[›ÙXÙH›Ý[™YXYÛ›ÜÝXÜÈ™Y›Ü™HX››Ü›X[\›Z[˜][ÛˆØ[ˆ›ÜH\Y˜XÝˆ\š[™Â™Ù[™\˜][Û‹\ÚÈ[˜X›\È™\ËY^ÜÝ\™H][˜ÞH˜XÚ[™ÈÛÈ[Y[Ý]\Y˜XÝÈØ[‚š[˜ÛYH[˜[^™\ˆ\ÙHœ™XYÜ[XœÈÚ[ˆ]˜Z[X›Kˆ[Z]Y\Y˜XÝÈ^ÜÙHÜÙB˜œ™XYÜ[XœÈ\È›Ý[™Y][˜ÞWÝ˜XÙWÙ]™[×ÝÝ[[™][˜ÞWÝ˜XÙWÝZ[™šY[ÈÛˆ›Ý[œ]Ë™Ù[™\˜][Û˜[™[—Û[Z]][ÛœÖ×XÛÈÜ\˜]ÜœÈØ[ˆÙYBÚXÚ™\ËY^ÜÝ\™H\ÙHØ\ÈXÝ]™HÚ]Ý]ØÜ˜\[™ÈÝ\œ‹ˆ][Z]Y˜\Y˜XÝ\ÈXYÛ›ÜÝXÈÛ›NÈ]Ù\È›ÝÛZ[H\Ù\ˆ\ÝXœ›ÛHZ\ÜÚ[™ÈX[˜ÛÝ[Ë‚‚˜œÛÛ‚žÂˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒŒˆ‹ˆÛÛŽˆœš\ˆ‹ˆœØÛÜHŽˆœ™\È‹ˆœÝ]\ÈŽˆ˜Yš\ÛÜžH‹ˆš[œ]ÈŽˆÂˆœ›ÛÝŽˆ‹ˆ‹ˆ›]]][Û—ØØ[Xœ˜][ÛˆŽˆ\™Ù]Üš\‹Ü™\ÜËÛ]]][Û‹XØ[Xœ˜][Û‹šœÛÛˆ‚ˆKˆ›Y]šXÜÈŽˆÂˆœÙX[\×ÝÝ[ŽˆLÍMKˆšXY[™WÙ[YÚX›WÝÝ[ŽˆŒLMˆÙXZÛWÙÜš\YÝÝ[ŽˆMÍM‹ˆ[™Üš\YÝÝ[Žˆˆ™Üš\ØÛ\Ü×ØÛÝ[ÈŽˆÂˆœÝ›Û™ÛWÙÜš\YŽˆÌKˆÙXZÛWÙÜš\YŽˆMÍM‹ˆ[™Üš\YŽˆˆœ™XXÚX›WÝ[œ™]™X[YŽˆ‹ˆ˜XÝ]˜][Û—Ý[šÛ›ÝÛˆŽˆÍM‹ˆœ›ÜYØ][Û—Ý[šÛ›ÝÛˆŽˆˆ›ØœÙ\˜][Û—Ý[šÛ›ÝÛˆŽˆˆ™\ØÜš[Z[˜][Û—Ý[šÛ›ÝÛˆŽˆˆ›Ü\]YHŽˆˆš[[[Û˜[ŽˆˆœÝ\™\ÜÙYŽˆˆKˆœÝYÙWÜÝ]WØÛÝ[ÈŽˆÂˆœ™XXÚŽˆÂˆžY\ÈŽˆNNKˆÙXZÈŽˆˆ››ÈŽˆˆ[šÛ›ÝÛˆŽˆÍM‹ˆ›Ü\]YHŽˆˆ››ÝØ\XØX›HŽˆˆBˆKˆ[šÛ›ÝÛ—ÜÝYÙWØÛÝ[ÈŽˆÂˆœ™XXÚŽˆÍM‹ˆ˜XÝ]˜]HŽˆÍM‹ˆœ›ÜYØ]HŽˆˆ›ØœÙ\™HŽˆˆ™\ØÜš[Z[˜]HŽˆˆKˆ[šÛ›ÝÛ—ÜÝÜÜ™X\ÛÛ—ØÛÝ[ÈŽˆÂˆ˜XÝ]˜][Û—Ý[šÛ›ÝÛˆŽˆÍM‹ˆœ›ÜYØ][Û—Ý[šÛ›ÝÛˆŽˆˆ›ØœÙ\˜][Û—Ý[šÛ›ÝÛˆŽˆˆ™\ØÜš[Z[˜][Û—Ý[šÛ›ÝÛˆŽˆˆ›Ü\]YHŽˆˆKˆ›Z\ÜÚ[™×Ù\ØÜš[Z[˜]Üœ×ÝÝ[5ãm½öÚ$z{-®éÜj× "gap:python:pricing-stale",
       "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:stale",
       "language": "python",
       "queue_state": "blocked_stale",
