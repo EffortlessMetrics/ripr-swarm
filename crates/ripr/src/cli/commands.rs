@@ -8483,9 +8483,11 @@ language = "rust"
 
         let annotations = workflow_step(&workflow, "Emit RIPR PR guidance annotations");
         assert!(annotations.contains("hashFiles('target/ripr/review/comments.json')"));
-        assert!(annotations.contains("escape_github_message()"));
-        assert!(annotations.contains("escape_github_property()"));
-        assert!(annotations.contains("::warning file=$annotation_path,line=$annotation_line"));
+        assert!(annotations.contains("def escape_data:"));
+        assert!(annotations.contains("def escape_property:"));
+        assert!(!annotations.contains("@tsv"));
+        assert!(!annotations.contains("escape_github_message()"));
+        assert!(annotations.contains("::warning file="));
 
         let summary = workflow_step(&workflow, "Add RIPR advisory summary");
         assert!(summary.contains("### PR review summary"));
