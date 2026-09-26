@@ -55,6 +55,16 @@ suite('Standard LSP compatibility probe', () => {
     assert.ok(result.status === 'incompatible' && ['framing_failure', 'process_failure'].includes(result.kind));
   });
 
+  test('an initialize capability observer failure settles as a process failure', async () => {
+    const fake = fakeServer('valid');
+    const result = await probeStandardLspCompatibility(fake.command, fake.useShell, fakeProbeTimeoutMs, () => {
+      throw new Error('observer fixture failure');
+    });
+    assert.strictEqual(result.status, 'incompatible');
+    assert.strictEqual(result.status === 'incompatible' ? result.kind : undefined, 'process_failure');
+    assert.match(result.status === 'incompatible' ? result.detail : '', /observer fixture failure/);
+  });
+
   test('requires the exercised baseline but records genuinely optional omissions', async () => {
     const missing = fakeServer('missing-hover');
     const rejected = await probeStandardLspCompatibility(missing.command, missing.useShell, fakeProbeTimeoutMs);

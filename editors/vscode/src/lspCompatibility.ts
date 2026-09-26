@@ -322,7 +322,12 @@ export async function probeStandardLspCompatibility(
         // The editor e2e fixture observes the real server advertisement here,
         // after validation, instead of maintaining a second capability literal.
         if (onInitializeCapabilities && isObject(response.result) && isObject(response.result.capabilities)) {
-          onInitializeCapabilities(response.result.capabilities);
+          try {
+            onInitializeCapabilities(response.result.capabilities);
+          } catch (error) {
+            fail('process_failure', `LSP initialize capability observer failed: ${String(error)}`);
+            return;
+          }
         }
         evidence = checked;
         phase = 'shutdown';
