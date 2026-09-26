@@ -673,7 +673,8 @@ mod tests {
         run_git_checked(&dir, &["add", "."])?;
         run_git_checked(&dir, &["commit", "-m", "change paths", "--quiet"])?;
 
-        for (setting, value) in [("diff.noprefix", "true")] {
+        {
+            let (setting, value) = ("diff.noprefix", "true");
             run_git_checked(&dir, &["config", setting, value])?;
 
             let raw = Command::new("git")
