@@ -1,314 +1,115 @@
 # ripr
 
-`ripr` helps Rust developers and coding agents find test-oracle gaps before
-mutation testing.
+**Write tests that notice changed behavior.**
 
-It answers a draft-time testing question:
+ripr reads your diff and related tests to find potential gaps in what they
+check. It explains the evidence and suggests where a focused test could help.
+Use the finding during review or hand it to a coding agent.
 
-```text
-For the behavior changed in this diff, do the current tests appear to contain
-a discriminator that would notice if that behavior were wrong?
+The analysis is static and advisory. ripr does not run mutants or prove test
+adequacy; real mutation testing remains the execution-backed confirmation step.
+
+## Example
+
+```diff
+- if amount > discount_threshold {
++ if amount >= discount_threshold {
 ```
 
-`ripr` is alpha software. The current release is a syntax-first scanner that is
-useful for early feedback, not a proof system.
+Tests below and above the threshold can pass in both versions. The equality
+case, with an assertion on the result, distinguishes the changed behavior.
+ripr looks for missing cases and weak assertions like this.
 
-This is the product repository for `ripr`. The `0.11.x` line keeps the analyzer,
-editor, CI, and agent loops aligned around static evidence, preview-language
-visibility, and repo-local operating packets for targeted tests.
-
-The first-hour docs lead with plain language; internal terms (seam,
-discriminator, oracle, grip, canonical gap) live in the spec/schema layer.
-See the [Terminology bridge](https://github.com/EffortlessMetrics/ripr/blob/main/docs/TERMINOLOGY.md)
-for the mapping.
-
-## Mission
-
-`ripr` helps Rust developers and coding agents write tests that actually notice
-changed behavior.
-
-It performs static RIPR exposure analysis over changed Rust code, creates
-mutation-shaped probes, and reports whether existing tests appear to contain the
-discriminators needed to expose those changes.
-
-It is a fast draft-mode companion to real mutation testing: static guidance
-while the pull request is moving, real mutation confirmation when the change is
-ready.
-
-## Vision
-
-The vision for `ripr` is to become the live static mutation-exposure layer
-between coverage signals and runtime mutation confirmation for Rust/Cargo
-workspaces.
-
-Coverage tells developers what executed. Mutation testing tells developers what
-survived. `ripr` tells developers, reviewers, and agents what changed behavior
-appears to lack a meaningful oracle before the expensive mutation run begins.
-
-The end state is an LSP-native sidecar that watches changed code, identifies
-missing discriminators, explains the evidence path, emits agent-ready test
-intent, and calibrates itself against real mutation outcomes.
-
-## Category
-
-`ripr` defines its category as:
-
-```text
-Static Mutation Exposure Analysis
-```
-
-More specifically:
-
-```text
-Static oracle-gap analysis for diff-derived mutation probes.
-```
-
-The tool is not trying to be a coverage dashboard, a full mutation engine, a
-proof system, a second rust-analyzer, or a generic LLM test generator. Its job is
-to shorten the path from "this behavior changed" to "this is the exact test
-oracle that should notice."
-
-## What ripr Does
-
-`ripr` reads changed Rust code, creates mutation-shaped probes, and estimates
-whether related tests appear to reach, infect, propagate, observe, and
-discriminate the changed behavior.
-
-It looks for missing or weak test oracles such as:
-
-- boundary changes without boundary-value assertions
-- error-path changes checked only with `is_err()`
-- return-value changes checked only with smoke assertions
-- field construction changes without field, object, or snapshot assertions
-- side effects without mock, event, state, persistence, or metric oracles
-
-## What ripr Does Not Do
-
-`ripr` does not run mutants.
-
-It does not report `killed` or `survived`, prove test adequacy, replace coverage,
-or replace real mutation testing. Use a real mutation runner, such as
-`cargo-mutants`, when the change is ready for confirmation.
-
-## Where It Fits
-
-```text
-coverage:
-  did this code execute?
-
-ripr:
-  does changed behavior appear exposed to a meaningful oracle?
-
-mutation testing:
-  did tests fail when a concrete mutant was run?
-```
-
-The goal is fast, honest oracle-gap feedback while code is still changing.
-
-## Ecosystem Positioning
-
-| Existing layer | What it answers | Gap |
-| --- | --- | --- |
-| `cargo-llvm-cov` | Did code execute? | Not oracle-aware |
-| selective retest tools | Which tests are impacted? | Not assertion-aware |
-| `cargo-mutants` | Did real mutants survive? | Too expensive for live draft feedback |
-| `rust-analyzer` | What does Rust code mean in the editor? | Does not rank mutation exposure |
-| `ripr` | Does changed behavior appear exposed to a meaningful oracle? | New middle layer |
+See the [product README](https://github.com/EffortlessMetrics/ripr/blob/main/README.md)
+for an output example and the [static exposure model](https://github.com/EffortlessMetrics/ripr/blob/main/docs/STATIC_EXPOSURE_MODEL.md)
+for the analysis behind a finding.
 
 ## Install
-
-Install from crates.io:
 
 ```bash
 cargo install ripr
 ```
 
-Links:
+Cargo installation requires Rust 1.95 or newer. Git is required for the diff
+workflow. The package installs the `ripr` binary; you do not need a checkout of
+ripr to analyze your own repository.
 
-- crates.io: https://crates.io/crates/ripr
-- docs.rs: https://docs.rs/ripr
-
-For local development from this repository:
-
-```bash
-cargo install --path crates/ripr
-```
-
-`ripr` targets Rust 2024 and requires Rust `1.95` or newer.
+This source package is **0.11.0 development, pending publication**. The latest
+GitHub release is [0.10.0](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0).
+`cargo install ripr` installs the published package, not this checkout.
+Use the [versioned release instructions](https://github.com/EffortlessMetrics/ripr/blob/v0.10.0/README.md)
+for that release, or the [source installation guide](https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/QUICKSTART.md#installation)
+for development features.
 
 ## Quick Start
 
+From a Rust repository on a branch with committed changes:
+
 ```bash
-# Check local tooling and workspace shape
-ripr doctor
-
-# Analyze the current Git diff and name one gap to start with
-ripr check --base origin/main
-
-# The following examples use the bundled sample diff. Run them from the
-# ripr repository root. If you installed via cargo install ripr, use your
-# own --diff path and copy the probe id from `ripr check --json`.
-ripr check --diff crates/ripr/examples/sample/example.diff
-
-# Show every finding instead of the bounded Start here: route
-ripr check --diff crates/ripr/examples/sample/example.diff --format human-full
-
-# Emit stable JSON for tools and agents
-ripr check --diff crates/ripr/examples/sample/example.diff --json
-
-# Emit GitHub Actions annotations
-ripr check --diff crates/ripr/examples/sample/example.diff --format github
-
-# Explain one finding. Probe ids are content-addressed against the
-# workspace root, so the id below only matches from the repository root.
-ripr explain --diff crates/ripr/examples/sample/example.diff probe:crates_ripr_examples_sample_src_lib.rs:predicate:3d666895
-
-# Emit an agent-ready context packet (same probe id as explain)
-ripr context --diff crates/ripr/examples/sample/example.diff --at probe:crates_ripr_examples_sample_src_lib.rs:predicate:3d666895 --json
-
-# Repair one named gap: ripr records before and after, you edit one test.
-# Seam ids come from `ripr pilot --root .` (target/ripr/pilot/pilot-summary.md);
-# the probe ids `ripr check` prints are a different identifier.
-ripr agent repair --root . --seam-id <seam-id> --phase before
-ripr agent repair --root . --attempt <repair-attempt-id> --phase after
-
-# Start the experimental LSP sidecar
-ripr lsp --stdio
-
-# Serve read-only workspace status to an MCP client
-ripr mcp --stdio
+ripr check
 ```
 
-`ripr doctor --json` emits the same setup checks as machine-readable JSON.
+Read the changed behavior, related tests, and suggested next test. Configuration
+is optional. Use `ripr doctor` when setup is not working, rather than as a
+required step before each check.
 
-## Example Finding
+The [CLI quickstart](https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/QUICKSTART.md#cli-first-hour)
+covers diff selection, development output, and finding inspection. Use the
+`explain` or `context` command printed by a development build to retain the
+finding's root, diff, mode, and ID instead of copying an ID from an example.
 
-`ripr explain` on the bundled sample (evidence list shortened):
+## Workflows
 
-```text
-WARNING ./crates/ripr/examples/sample/src/lib.rs:8
+`check` inspects one change. `pilot` explores the repository more broadly.
+In a development build, `agent repair` prepares and records a supported
+before/edit/after attempt. The human or external agent writes the test.
+The receipt records static evidence movement, separately from any test execution.
 
-Changed
-  after:  amount >= discount_threshold
+Probe IDs from `check` are not the seam IDs accepted by `agent repair`. Follow
+[Repair a gap](https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/QUICKSTART.md#agent-or-reviewer-first-hour)
+from selection through completion; do not skip the preparation step.
 
-Probe
-  family: predicate
-  delta:  control
-  owner:  crates/ripr/examples/sample/src/lib.rs::price
-
-Static exposure
-  weakly_exposed (warning, confidence 0.84)
-
-Evidence
-  - reach yes: Related tests appear to reach price: premium_customer_gets_discount
-  - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
-  - propagation yes: Changed behavior appears to influence returned value: Quote { total: amount - 100, discount_applied: true }
-  - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly
-
-Weakness
-  - No strong discriminator was detected
-  - missing discriminator amount == discount_threshold: No related test call uses amount equal to discount_threshold; observed amount values: 10_000; observed discount_threshold values: 100
-
-Next step
-  Add boundary tests for below, equal, and above the changed threshold with exact assertions.
-```
+[VS Code](https://github.com/EffortlessMetrics/ripr/blob/main/docs/EDITOR_EXTENSION.md)
+provides saved-workspace feedback. [Advisory CI](https://github.com/EffortlessMetrics/ripr/blob/main/docs/CI.md#copyable-ripr-advisory-workflow)
+brings findings into PR review. The [command guide](https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/COMMAND_HIERARCHY.md)
+also covers PR evidence composition, read-only MCP status, and advanced commands.
 
 ## Output Formats
 
-Human output is optimized for local use.
+Human output is for local inspection. JSON is versioned for integrations;
+consumers should check `schema_version` before reading the rest of the result.
+Use the [output reference](https://github.com/EffortlessMetrics/ripr/blob/main/docs/OUTPUT_SCHEMA.md)
+for JSON, GitHub annotations, SARIF, and report formats.
 
-JSON output is versioned and intended for editor integrations, CI, and coding
-agents. The `schema_version` field is the contract discriminator — consumers
-should branch on it before reading the rest of the envelope:
+## Support and limitations
 
-```json
-{
-  "schema_version": "0.2",
-  "tool": "ripr",
-  "mode": "draft",
-  "root": ".",
-  "base": "origin/main",
-  "findings": []
-}
-```
+Rust analysis and bounded repair are `usable alpha`. A valid repair route is
+required; ordinary real-repository route yield and success remain unestablished.
+Python analysis is `preview`, with selected pytest/unittest repair routes at
+`usable alpha`. TypeScript and JavaScript are opt-in previews. Perl requires a
+`lang-perl` build and the unpublished `perl-ripr-facts` exporter; it is not usable
+from a released build/exporter combination.
 
-GitHub output emits workflow annotations.
-
-## Classifications
-
-| Classification | Meaning |
-| --- | --- |
-| `exposed` | Static evidence suggests a complete RIPR path to a strong oracle. |
-| `weakly_exposed` | A path exists, but infection or discrimination appears weak. |
-| `reachable_unrevealed` | Related tests appear reachable, but no meaningful oracle was found. |
-| `no_static_path` | No static test path was found for the changed owner. |
-| `infection_unknown` | Reachability exists, but input or fixture evidence is opaque. |
-| `propagation_unknown` | The changed behavior crosses an opaque propagation boundary. |
-| `static_unknown` | Syntax-first analysis cannot make a credible judgment. |
-
-## Current Scope
-
-The current alpha line is intentionally narrow:
-
-- one published package: `ripr`
-- one CLI binary: `ripr`
-- one shared analysis engine
-- syntax-first unified diff analysis
-- basic Rust function, test, and assertion indexing
-- human, JSON, GitHub, SARIF, repo, and badge outputs
-- experimental LSP sidecar
-- read-only MCP status server (`ripr mcp --stdio`)
-
-The package is not split into `ripr-core`, `ripr-cli`, or `ripr-lsp`. Public
-crate boundaries can be added later if external consumers need them.
-
-## Current Capability Snapshot
-
-`ripr` is currently strongest as a fast, syntax-backed draft signal with a
-defaults-first operator loop for finding one weak seam, adding one focused
-test, and comparing before/after evidence.
-
-| Capability | Current state | Next checkpoint |
-| --- | --- | --- |
-| Distribution | `0.11.0` is the current source-package frame and is pending crates.io publication (`cargo install ripr` once published). The source-of-truth release authority is `EffortlessMetrics/ripr`; `ripr-swarm` is the development trunk. GitHub Releases in this repo are development artifacts, not the distribution channel. Rust 1.95 MSRV. | Promotion and release-maintenance proof. |
-| Diff analysis | Syntax-backed changed-line probes with owner symbols, parser-backed probe facts, explicit stop reasons for unknowns, probe-relative oracle strength, and local flow sink facts. | Maintenance; no active analyzer-refactor lane. |
-| Test discovery | Parser-backed test and assertion facts with exact, broad, relational, snapshot, mock, smoke, and unknown oracle kinds. | Maintenance; no active analyzer-refactor lane. |
-| Output | Human, JSON, context, GitHub/SARIF, repo seam, pilot, outcome, and badge formats include evidence-first stop reasons and advisory next actions. Public `ripr` badges count unresolved actionable static repair gaps, not coverage, mutation adequacy, all behavior seams, or all untested code. | Output contract maintenance. |
-| LSP | Experimental `tower-lsp-server` sidecar with saved-workspace seam diagnostics, hovers, targeted context actions, refresh status, and related-test actions. | Editor contract maintenance. |
-| Agent context | Context packets and agent seam packets include targeted-test briefs with missing values and assertion shape. | Agent-context v2 when there is a concrete external contract. |
-| Calibration | `ripr calibrate cargo-mutants` imports supplied runtime mutation data and joins it to repo seam evidence for advisory static/runtime calibration; `fixtures/EXAMPLE_CORPUS.md` links the checked boundary-gap sample into the operator loop, and `fixtures/boundary_gap/calibration/runtime-fixtures-v1/` pins the main static/runtime agreement buckets. | Maintenance; runtime data stays optional and supplied. |
+No findings does not mean the tests are complete. Opaque fixtures, generated
+code, and unsupported flows can limit static analysis. See
+[Support tiers](https://github.com/EffortlessMetrics/ripr/blob/main/docs/status/SUPPORT_TIERS.md),
+[static limits](https://github.com/EffortlessMetrics/ripr/blob/main/docs/STATIC_LIMITS.md),
+and [terminology](https://github.com/EffortlessMetrics/ripr/blob/main/docs/TERMINOLOGY.md).
 
 ## Development
 
-Use focused proof during implementation. Before publication, run:
+From the development repository root:
 
 ```bash
+cargo install --path crates/ripr
 cargo xtask precommit
 ```
 
-`precommit` is the cheap non-mutating shift-left command. For one complete
-local review and package pass, run `cargo xtask ci-full`. See the repository
-root `AGENTS.md` local validation section.
+`precommit` is focused local validation, not the complete hosted matrix.
+Use `cargo xtask ci-full` for the complete local pass, or rerun a specific failed
+gate. See [Contributing](https://github.com/EffortlessMetrics/ripr-swarm/blob/main/CONTRIBUTING.md)
+and [Agent instructions](https://github.com/EffortlessMetrics/ripr-swarm/blob/main/AGENTS.md).
 
-Do not run the command block below as a sequential required list. It is the
-inventory for targeted reruns when a specific gate failed. Claiming
-CI-equivalent completeness still requires `ci-full` or the routed `check-*`
-list; `precommit` does not substitute for those.
+## License
 
-```bash
-cargo fmt --check
-cargo check --workspace --all-targets
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-cargo doc --workspace --no-deps
-cargo package -p ripr --list
-cargo publish -p ripr --dry-run
-```
-
-Useful sample commands:
-
-```bash
-cargo run -p ripr -- check --diff crates/ripr/examples/sample/example.diff
-cargo run -p ripr -- check --diff crates/ripr/examples/sample/example.diff --json
-```
+MIT OR Apache-2.0, at your option.
