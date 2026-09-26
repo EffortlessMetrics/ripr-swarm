@@ -238,12 +238,13 @@ Consumption boundary: the repo-scoped CLI formats (`repo-exposure-*`,
 Rust/Perl seam inventory and do not render preview-language findings, so a
 Python-only or TypeScript-only workspace still shows zero seams in those
 formats — a known limitation, not a clean result. Repo-exposure emits a
-`typescript_diff_first` limitation entry for TS/JS-only workspaces pointing
-the user at diff-scoped analysis; Python-only runs do not currently carry an
-equivalent entry. Python's repo-mode evidence is consumed through the shared
-repo analysis result (`run_repo_analysis` / `check_workspace_repo`): its
+`typescript_diff_first` limitation entry for TS/JS-only workspaces and a
+`python_diff_first` limitation entry for Python-only workspaces, both
+pointing at diff-scoped `ripr check`. Neither entry fabricates seams.
+Python's repo-mode evidence is still consumed through the shared repo
+analysis result (`run_repo_analysis` / `check_workspace_repo`): its
 findings, per-language file counts, and `language_runs` partial-run
-disclosure — no renderer reconstructs Python semantics.
+disclosure — no seam renderer reconstructs Python semantics.
 
 | Format | Rust repo | Perl repo | TypeScript repo | Python repo |
 | --- | --- | --- | --- | --- |

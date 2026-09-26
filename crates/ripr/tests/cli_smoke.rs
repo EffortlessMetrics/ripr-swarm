@@ -9601,7 +9601,28 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
     let command = format!("ripr check --root {}", root.display());
     assert_eq!(route["enabled"], true);
     assert_eq!(route["command"], serde_json::json!(command));
-    assert_eq!(route["guidance_category"], serde_json::Value::Null);
+    assert_eq!(route["guidance_category"], "python_diff_first");
+    assert!(
+        route["guidance"].as_str().is_some_and(|text| {
+            text.contains("does not render Python findings")
+                && text.contains("ripr check --base origin/main")
+        }),
+        "{route}"
+    );
+    let categories = exposure["limitations"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item["category"].as_str())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    assert!(
+        categories.contains(&"python_diff_first"),
+        "python-only repo exposure must name the seam-inventory limit: {exposure}"
+    );
+    assert_eq!(exposure["metrics"]["seams_total"], 0);
     assert!(
         stdout.contains(&format!(
             "python: 2 files (preview, diff-first)\n    route: {command}\n"
@@ -9619,6 +9640,7 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
         "Python pilot must not end in the Rust repo-exposure outcome route:\n{stdout}"
     );
     assert!(md.contains(&format!("  - Route: `{command}`")), "{md}");
+    assert!(md.contains("`python_diff_first`:"), "{md}");
     assert!(!md.contains("ripr outcome --before"), "{md}");
 
     // The printed route must analyze the changed Python, not only parse.
