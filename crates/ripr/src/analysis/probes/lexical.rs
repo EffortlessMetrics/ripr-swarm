@@ -327,7 +327,10 @@ fn is_where_clause(tail: &str) -> bool {
     let Some(after) = tail.strip_prefix("where") else {
         return false;
     };
-    after.is_empty() || after.starts_with(|ch: char| ch.is_whitespace() || ch == ';' || ch == '{')
+    // A `where` bound needs no whitespace after the keyword (`where'a: 'b`,
+    // `where[T; 4]: Clone`). Only a trailing identifier character means the
+    // line names something else (`whereabouts`, `where_clause`).
+    after.is_empty() || after.starts_with(|ch: char| !ch.is_alphanumeric() && ch != '_')
 }
 
 fn numeric_discriminant(tail: &str) -> bool {
@@ -768,6 +771,8 @@ mod tests {
             "struct Foo<T>(T) where T: Clone;",
             "pub struct Foo<T>(pub T) where T: Clone;",
             "#[derive(Clone)] pub struct Foo<T>(T) where T: Clone;",
+            "struct Foo<'a, 'b>(&'a str) where'a: 'b;",
+            "struct Foo<T>(T) where[T; 4]: Clone;",
         ] {
             let families = classify_changed_line(text);
             assert_eq!(
