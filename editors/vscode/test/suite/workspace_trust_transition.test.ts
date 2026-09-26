@@ -286,8 +286,9 @@ suite('RiprClientController Lifecycle', () => {
 
   test('a failed client stop retains ownership and permits a later stop retry', async () => {
     let stopCalls = 0;
+    let disposed = 0;
     const runtime = trustedRuntime(() => ({
-      onNotification: () => ({ dispose: () => undefined }),
+      onNotification: () => ({ dispose: () => { disposed += 1; } }),
       sendRequest: async () => undefined,
       setTrace: () => undefined,
       start: async () => undefined,
@@ -309,10 +310,12 @@ suite('RiprClientController Lifecycle', () => {
 
     assert.strictEqual(stopCalls, 1);
     assert.strictEqual(controller.isRunning(), true);
+    assert.strictEqual(disposed, 0, 'failed stop keeps session registrations for retry');
     await controller.stop();
 
     assert.strictEqual(stopCalls, 2);
     assert.strictEqual(controller.isRunning(), false);
+    assert.strictEqual(disposed, 2, 'successful retry disposes each registration once');
   });
 
   test('a rejected real controller start leaves no stale client and the retry re-initializes', async () => {
@@ -347,5 +350,67 @@ suite('RiprClientController Lifecycle', () => {
     assert.strictEqual(createClientCalls, 2, 'retry must create a fresh client, not reuse stale state');
     assert.strictEqual(clientStartCalls, 2, 'retry must start the fresh client');
     await controller.stop();
+  });
+
+  test('an old stop cannot dispose notifications installed by a replacement start', async () => {
+    const firstStartEntered = deferred();
+    const rejectFirstStart = deferred();
+    const oldStopWaiting = deferred();
+    const releaseOldStop = deferred();
+    const disposed = [0, 0];
+    const statusBar = { text: '', show: () => undefined } as unknown as vscode.StatusBarItem;
+    let created = 0;
+    const waitForLifecycle: RiprClientLifecycleWait = async (operation) => {
+      await operation;
+      oldStopWaiting.resolve();
+      await releaseOldStop.promise;
+    };
+    const runtime = trustedRuntime(() => {
+      const session = created++;
+      return {
+        onNotification: () => ({ dispose: () => { disposed[session] += 1; } }),
+        sendRequest: async () => undefined,
+        setTrace: () => undefined,
+        start: async () => {
+          if (session === 0) {
+            firstStartEntered.resolve();
+            await rejectFirstStart.promise;
+            throw new Error('sentinel first start failure');
+          }
+        },
+        stop: async () => undefined
+      };
+    }, waitForLifecycle);
+    // Rendering the status bar consults the configured server version.
+    runtime.getConfig = () => ({ ...trustedConfig(), serverVersion: '0.11.0' });
+    const controller = new RiprClientController(
+      {} as unknown as vscode.ExtensionContext,
+      outputChannel([]),
+      runtime,
+      statusBar
+    );
+
+    const firstStart = controller.start();
+    const firstStartRejected = assert.rejects(firstStart, /sentinel first start failure/);
+    await firstStartEntered.promise;
+    const oldStop = controller.stop();
+    rejectFirstStart.resolve();
+    await oldStopWaiting.promise;
+    await firstStartRejected;
+    assert.strictEqual(disposed[0], 2, 'failed session owns both registrations');
+
+    await controller.start();
+    assert.strictEqual(created, 2);
+    const replacementStatus = statusBar.text;
+    assert.strictEqual(replacementStatus, '$(clock) ripr: queued');
+    releaseOldStop.resolve();
+    await oldStop;
+    assert.strictEqual(controller.isRunning(), true);
+    assert.strictEqual(disposed[1], 0, 'old stop must leave replacement registrations active');
+    assert.strictEqual(statusBar.text, replacementStatus, 'old stop must not overwrite replacement status');
+
+    await controller.stop();
+    assert.strictEqual(disposed[0], 2, 'failed session registrations dispose once');
+    assert.strictEqual(disposed[1], 2, 'replacement registrations dispose on its own stop');
   });
 });

@@ -361,7 +361,7 @@ const defaultRuntime: RiprClientRuntime = {
 export class RiprClientController {
   private client: RiprLanguageClient | undefined;
   private server: ResolvedServer | undefined;
-  private readonly notificationDisposables: vscode.Disposable[] = [];
+  private readonly notificationDisposables = new Map<RiprLanguageClient, vscode.Disposable[]>();
   private receivedTypedAnalysisStatus = false;
   private typedAnalysisStatusState: RiprAnalysisStatusPayload['state'] | undefined;
   private readonly dirtyRiprDocuments = new Set<string>();
@@ -604,10 +604,18 @@ export class RiprClientController {
     );
     this.client = client;
     client.setTrace(traceFromConfig(config.traceServer));
-    this.notificationDisposables.push(
-      client.onNotification('ripr/analysisStatus', (params) => this.handleAnalysisStatus(params)),
-      client.onNotification('window/logMessage', (params) => this.handleServerLog(params))
-    );
+    this.notificationDisposables.set(client, [
+      client.onNotification('ripr/analysisStatus', (params) => {
+        if (this.client === client && this.startGeneration === startGeneration) {
+          this.handleAnalysisStatus(params);
+        }
+      }),
+      client.onNotification('window/logMessage', (params) => {
+        if (this.client === client && this.startGeneration === startGeneration) {
+          this.handleServerLog(params);
+        }
+      })
+    ]);
     try {
       await client.start();
       // Re-apply the configured trace level after the handshake (#2082
@@ -625,9 +633,7 @@ export class RiprClientController {
       if (this.client === client) {
         this.client = undefined;
       }
-      while (this.notificationDisposables.length > 0) {
-        this.notificationDisposables.pop()?.dispose();
-      }
+      this.disposeClientNotifications(client);
       await client.stop().catch(() => undefined);
       throw error;
     }
@@ -761,6 +767,14 @@ export class RiprClientController {
     return this.client !== undefined;
   }
 
+  private disposeClientNotifications(client: RiprLanguageClient): void {
+    const registrations = this.notificationDisposables.get(client);
+    this.notificationDisposables.delete(client);
+    for (const registration of registrations ?? []) {
+      registration.dispose();
+    }
+  }
+
   async stop(): Promise<void> {
     const client = this.client;
     const starting = this.startingPromise;
@@ -788,20 +802,25 @@ export class RiprClientController {
       await client.stop();
       this.client = undefined;
     }
-    this.server = undefined;
-    this.receivedTypedAnalysisStatus = false;
-    this.typedAnalysisStatusState = undefined;
-    this.firstUsefulAction = undefined;
-    this.dirtyRiprDocuments.clear();
-    while (this.notificationDisposables.length > 0) {
-      this.notificationDisposables.pop()?.dispose();
+    if (client) {
+      this.disposeClientNotifications(client);
     }
-    this.updateStatus({
-      kind: 'stopped',
-      summary: 'ripr server has stopped.',
-      detail: 'Run ripr: Restart Server to start analysis again.',
-      nextStep: 'Run ripr: Restart Server.'
-    });
+    // A new start can install its own session after the captured start settles
+    // but before this stop resumes. Its fields and status belong to that new
+    // client; only a stop that leaves no current client may clear them.
+    if (!this.client) {
+      this.server = undefined;
+      this.receivedTypedAnalysisStatus = false;
+      this.typedAnalysisStatusState = undefined;
+      this.firstUsefulAction = undefined;
+      this.dirtyRiprDocuments.clear();
+      this.updateStatus({
+        kind: 'stopped',
+        summary: 'ripr server has stopped.',
+        detail: 'Run ripr: Restart Server to start analysis again.',
+        nextStep: 'Run ripr: Restart Server.'
+      });
+    }
   }
 
   markWorkspaceStale(document: vscode.TextDocument): void {
