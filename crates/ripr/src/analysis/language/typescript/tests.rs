@@ -10412,6 +10412,24 @@ fn undercredit_4103_dynamic_import_other_module_is_not_credited() {
 }
 
 #[test]
+fn undercredit_4103_dynamic_import_without_await_is_not_credited() {
+    let owner = test_owner("loyaltyPrice", "src/pricing.ts");
+    let tests = extract_tests(
+        Path::new("tests/pricing.test.ts"),
+        r#"it("holds a promise", async () => {
+    const m = import("../src/pricing");
+    expect(m.loyaltyPrice(1000, 5)).toBe(950);
+});
+"#,
+    );
+    let related = find_related_tests(&owner, &tests, None, &ReExportIndex::empty(), None);
+    assert!(
+        related.is_empty(),
+        "an unawaited dynamic import binds a promise, so the member call cannot reach the owner"
+    );
+}
+
+#[test]
 fn undercredit_4103_named_default_import_under_other_local_is_credited() {
     let mut owner = test_owner("formatPrice", "src/defaulted.ts");
     owner.exported_as_default = true;

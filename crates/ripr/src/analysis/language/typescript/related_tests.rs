@@ -734,7 +734,9 @@ fn quoted_literal_after(body: &str, from: usize) -> Option<String> {
 fn awaited_import_binding_before(body: &str, at: usize) -> Option<String> {
     let line_start = body[..at].rfind('\n').map_or(0, |offset| offset + 1);
     let trimmed = body[line_start..at].trim();
-    let after_await = trimmed.strip_suffix("await").unwrap_or(trimmed).trim_end();
+    // The import must actually be awaited: `const m = import(...)` binds a
+    // promise, so a member call through `m` cannot reach the owner.
+    let after_await = trimmed.strip_suffix("await")?.trim_end();
     let (head, tail) = after_await.rsplit_once('=')?;
     if !tail.is_empty() {
         return None;
