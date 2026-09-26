@@ -37,7 +37,10 @@ pub(crate) use id::LanguageId;
 pub(crate) use perl::PerlAdapter;
 #[cfg(feature = "lang-python")]
 pub(crate) use python::{PythonAdapter, detect_python_test_framework};
-pub(crate) use router::route;
+pub(crate) use router::{
+    JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS, TsJsSourceKind,
+    is_ts_js_source_extension, route, ts_js_source_kind,
+};
 pub(crate) use rust::{
     DIFF_SCOPE_OVERSIZED_PREFIX, RustAdapter, changed_let_binding, is_diff_scope_oversized,
     mask_rust_comments_and_strings,

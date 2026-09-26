@@ -235,18 +235,24 @@ fn detect_languages(root: &Path) -> Vec<LanguageId> {
         found.push(LanguageId::Rust);
     }
 
-    // TypeScript: package.json, tsconfig.json, .ts or .tsx files
+    // TypeScript: package.json, tsconfig.json, or a TypeScript-source
+    // extension (.ts/.tsx/.mts/.cts) at a shallow depth. #4116: both
+    // extension families consume the shared TS/JS extension authority.
     if shallow_has_file(root, "package.json")
         || shallow_has_file(root, "tsconfig.json")
-        || shallow_has_extension(root, "ts")
-        || shallow_has_extension(root, "tsx")
+        || analysis::TYPESCRIPT_SOURCE_EXTENSIONS
+            .iter()
+            .any(|extension| shallow_has_extension(root, extension))
     {
         found.push(LanguageId::TypeScript);
     }
 
-    // JavaScript: .js or .jsx files (only when no TS markers already found)
+    // JavaScript: JavaScript-source extensions (.js/.jsx/.mjs/.cjs), only
+    // when no TypeScript markers were found.
     if !found.contains(&LanguageId::TypeScript)
-        && (shallow_has_extension(root, "js") || shallow_has_extension(root, "jsx"))
+        && analysis::JAVASCRIPT_SOURCE_EXTENSIONS
+            .iter()
+            .any(|extension| shallow_has_extension(root, extension))
     {
         found.push(LanguageId::JavaScript);
     }
@@ -1302,6 +1308,52 @@ mod tests {
             assert_eq!(tools, vec!["node", tool], "lockfile {lockfile}");
             std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         }
+        Ok(())
+    }
+
+    #[test]
+    fn detect_languages_treats_modern_ts_js_extensions_as_language_markers() -> Result<(), String> {
+        // #4116: .mts/.cts are TypeScript markers and .mjs/.cjs are
+        // JavaScript markers through the shared extension authority; a
+        // mixed root is labeled TypeScript only, and near-misses stay
+        // undetected.
+        for (extension, expected) in [
+            ("mts", LanguageId::TypeScript),
+            ("cts", LanguageId::TypeScript),
+            ("mjs", LanguageId::JavaScript),
+            ("cjs", LanguageId::JavaScript),
+        ] {
+            let root = unique_command_test_dir(&format!("detect-{extension}"));
+            std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+            std::fs::write(root.join(format!("index.{extension}")), "export {};\n")
+                .map_err(|err| format!("write source: {err}"))?;
+            assert_eq!(
+                detect_languages(&root),
+                vec![expected],
+                ".{extension} root"
+            );
+            std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        }
+
+        let root = unique_command_test_dir("detect-mixed-ts-js");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(root.join("index.ts"), "export {};\n")
+            .map_err(|err| format!("write source: {err}"))?;
+        std::fs::write(root.join("helper.mjs"), "export {};\n")
+            .map_err(|err| format!("write source: {err}"))?;
+        assert_eq!(detect_languages(&root), vec![LanguageId::TypeScript]);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+        let root = unique_command_test_dir("detect-near-miss");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(root.join("index.mjsx"), "export {};\n")
+            .map_err(|err| format!("write source: {err}"))?;
+        assert!(
+            !detect_languages(&root).contains(&LanguageId::TypeScript)
+                && !detect_languages(&root).contains(&LanguageId::JavaScript),
+            ".mjsx must not detect as a TS/JS marker"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }
 
