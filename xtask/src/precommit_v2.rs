@@ -2,19 +2,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::process::{Command, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::run::{ProcessErrorKind, capture_output_with_timeout, capture_process_output};
-
-#[cfg(test)]
-use crate::run::run_process_status;
+use crate::run::{ProcessErrorKind, capture_process_output, run_process_status};
 
 const REPORT_JSON: &str = "target/ripr/reports/precommit-v2.json";
 const REPORT_MARKDOWN: &str = "target/ripr/reports/precommit-v2.md";
-const PRECOMMIT_COMMAND_TIMEOUT: Duration = Duration::from_mins(15);
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -330,7 +327,10 @@ fn fail_with_report(
     report.status = kind.status().to_string();
     report.failure_kind = Some(kind);
     report.limitations.push(detail.clone());
-    record_failure(report, &command.into(), &detail);
+    let command = command.into();
+    let remaining = remaining_steps(root, report, &command);
+    report.skipped.extend(remaining);
+    record_failure(report, &command, &detail);
     let report_error = write_report(root, report).err();
     match report_error {
         Some(error) => Err(format!(
@@ -338,6 +338,61 @@ fn fail_with_report(
         )),
         None => Err(detail),
     }
+}
+
+fn remaining_steps(root: &Path, report: &PrecommitReport, failed: &str) -> Vec<String> {
+    let mut planned = vec!["existing repository policy precommit".to_string()];
+    let committed_diff = format!(
+        "{}...HEAD",
+        report.merge_base_sha.as_deref().unwrap_or("BASE")
+    );
+    for args in [
+        vec!["diff".to_string(), "--check".to_string(), committed_diff],
+        vec![
+            "diff".to_string(),
+            "--cached".to_string(),
+            "--check".to_string(),
+        ],
+        vec!["diff".to_string(), "--check".to_string()],
+    ] {
+        planned.push(format_command(
+            "git",
+            &args.iter().map(String::as_str).collect::<Vec<_>>(),
+            root,
+        ));
+    }
+    if report.impact_plan.workspace_clippy {
+        let args = workspace_clippy_args(root);
+        planned.push(format_command(
+            "cargo",
+            &args.iter().map(String::as_str).collect::<Vec<_>>(),
+            root,
+        ));
+    } else {
+        for package in &report.impact_plan.impacted_packages {
+            let args = package_clippy_args(root, package);
+            planned.push(format_command(
+                "cargo",
+                &args.iter().map(String::as_str).collect::<Vec<_>>(),
+                root,
+            ));
+        }
+    }
+    // A failed step is recorded under Commands. Only subsequent, unexecuted
+    // steps belong in skipped, and the impact plan may not exist yet.
+    if let Some(position) = planned.iter().position(|step| step == failed) {
+        return planned.into_iter().skip(position + 1).collect();
+    }
+    if report.impact_plan.skipped_reason.is_none()
+        && !report.impact_plan.workspace_clippy
+        && report.impact_plan.impacted_packages.is_empty()
+    {
+        planned.push("Clippy selection (impact plan unavailable)".to_string());
+    }
+    planned
+        .into_iter()
+        .filter(|step| !report.commands.iter().any(|completed| completed.command == *step))
+        .collect()
 }
 
 fn run_clippy(root: &Path, report: &mut PrecommitReport, args: Vec<String>) -> Result<(), String> {
@@ -804,85 +859,76 @@ fn git_bytes(root: &Path, args: &[&str], context: &str) -> Result<Vec<u8>, Preco
 }
 
 fn cargo_bytes(args: &[String], context: &str) -> Result<Vec<u8>, PrecommitError> {
-    let output =
-        capture_output_with_timeout("cargo", args, &[], PRECOMMIT_COMMAND_TIMEOUT, context)
-            .map_err(|message| {
-                PrecommitError::new(PrecommitFailureKind::Infrastructure, message)
-            })?;
-    if output.timed_out {
-        return Err(PrecommitError::new(
-            PrecommitFailureKind::Infrastructure,
-            format!(
-                "{context} exceeded the {} second precommit timeout",
-                PRECOMMIT_COMMAND_TIMEOUT.as_secs()
-            ),
-        ));
-    }
-    let Some(status) = output.status else {
-        return Err(PrecommitError::new(
-            PrecommitFailureKind::Infrastructure,
-            format!("{context} produced no process status"),
-        ));
-    };
-    if status.success() {
-        return Ok(output.stdout.into_bytes());
-    }
-    let detail = [output.stdout.trim(), output.stderr.trim()]
-        .into_iter()
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>()
-        .join("; ");
-    Err(PrecommitError::new(
-        PrecommitFailureKind::IncompleteEvidence,
-        format!("{context} failed with {status}: {detail}"),
-    ))
+    capture_metadata_output("cargo", args, context)
 }
 
 fn run_status(program: &str, args: &[String]) -> Result<(), PrecommitError> {
-    let output = capture_output_with_timeout(
-        program,
-        args,
-        &[],
-        PRECOMMIT_COMMAND_TIMEOUT,
-        "precommit command",
-    )
-    .map_err(|message| PrecommitError::new(PrecommitFailureKind::Infrastructure, message))?;
-    if output.timed_out {
-        return Err(PrecommitError::new(
-            PrecommitFailureKind::Infrastructure,
-            format!(
-                "{program} {} exceeded the {} second precommit timeout",
-                args.join(" "),
-                PRECOMMIT_COMMAND_TIMEOUT.as_secs()
-            ),
-        ));
-    }
-    let Some(status) = output.status else {
-        return Err(PrecommitError::new(
-            PrecommitFailureKind::Infrastructure,
-            format!("{program} {} produced no process status", args.join(" ")),
-        ));
-    };
-    if status.success() {
-        return Ok(());
-    }
-    let detail = [output.stdout.trim(), output.stderr.trim()]
-        .into_iter()
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>()
-        .join("; ");
-    Err(PrecommitError::new(
-        PrecommitFailureKind::SourceOrPolicy,
-        format!(
-            "{program} {} failed with {status}{}",
-            args.join(" "),
-            if detail.is_empty() {
-                String::new()
-            } else {
-                format!(": {detail}")
-            }
-        ),
-    ))
+    // Keep Clippy progress and diagnostics visible. No captured pipe can stay
+    // open after the direct child exits while an inherited descendant runs.
+    run_process_status(program, args).map_err(|error| {
+        PrecommitError::new(
+            match error.kind {
+                ProcessErrorKind::Launch => PrecommitFailureKind::Infrastructure,
+                ProcessErrorKind::Exit => PrecommitFailureKind::SourceOrPolicy,
+            },
+            error.message,
+        )
+    })
+}
+
+fn capture_metadata_output(
+    program: &str,
+    args: &[String],
+    context: &str,
+) -> Result<Vec<u8>, PrecommitError> {
+    // Metadata JSON needs capture, but a pipe can stay open after Cargo exits
+    // if a descendant inherited it. A regular file has no drain to wait on.
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| {
+            PrecommitError::new(PrecommitFailureKind::Infrastructure, error.to_string())
+        })?
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "ripr-precommit-metadata-{}-{nonce}.json",
+        std::process::id()
+    ));
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|error| {
+            PrecommitError::new(
+                PrecommitFailureKind::Infrastructure,
+                format!("create {context} capture file: {error}"),
+            )
+        })?;
+    let result = (|| {
+        let status = Command::new(program)
+            .args(args)
+            .stdout(Stdio::from(file))
+            .status()
+            .map_err(|error| {
+                PrecommitError::new(
+                    PrecommitFailureKind::Infrastructure,
+                    format!("launch {context}: {error}"),
+                )
+            })?;
+        if !status.success() {
+            return Err(PrecommitError::new(
+                PrecommitFailureKind::IncompleteEvidence,
+                format!("{context} failed with {status}; diagnostics were written to stderr"),
+            ));
+        }
+        fs::read(&path).map_err(|error| {
+            PrecommitError::new(
+                PrecommitFailureKind::Infrastructure,
+                format!("read {context} capture file: {error}"),
+            )
+        })
+    })();
+    let _ = fs::remove_file(&path);
+    result
 }
 
 fn record_pass(report: &mut PrecommitReport, command: &str) {
@@ -976,6 +1022,19 @@ fn report_markdown(report: &PrecommitReport) -> String {
         report.change_set.changes.len(),
         report.report_digest
     );
+    let meaning = match report.failure_kind {
+        Some(PrecommitFailureKind::Infrastructure) => {
+            "Execution was interrupted by infrastructure; no policy violation was established by the interrupted step."
+        }
+        Some(PrecommitFailureKind::SourceOrPolicy) => {
+            "A step returned an error. Inspect its diagnostic: the aggregate repository policy step can include a nested execution failure."
+        }
+        Some(PrecommitFailureKind::IncompleteEvidence) => {
+            "Evidence required to complete precommit is unavailable; this is not a pass."
+        }
+        None => "All selected precommit steps completed successfully.",
+    };
+    out.push_str(&format!("**Result:** {meaning}\n\n"));
     out.push_str("## Changed files\n\n");
     if report.change_set.changes.is_empty() {
         out.push_str("- none\n");
@@ -1004,9 +1063,34 @@ fn report_markdown(report: &PrecommitReport) -> String {
             out.push_str(&format!("- package: `{package}`\n"));
         }
     }
-    out.push_str("\n## Commands\n\n");
+    out.push_str("\n## Completed steps\n\n");
+    let mut completed = false;
     for command in &report.commands {
-        out.push_str(&format!("- `{}`: `{}`\n", command.command, command.outcome));
+        if command.outcome == "pass" {
+            completed = true;
+            out.push_str(&format!("- `{}`\n", command.command));
+        }
+    }
+    if !completed {
+        out.push_str("- none\n");
+    }
+    out.push_str("\n## Interrupted or failed step\n\n");
+    if let Some(failure) = report.commands.iter().find(|command| command.outcome == "failed") {
+        out.push_str(&format!(
+            "- `{}`: {}\n",
+            failure.command,
+            failure.detail.as_deref().unwrap_or("no detail")
+        ));
+    } else {
+        out.push_str("- none\n");
+    }
+    out.push_str("\n## Steps not run\n\n");
+    if report.skipped.is_empty() {
+        out.push_str("- none\n");
+    } else {
+        for step in &report.skipped {
+            out.push_str(&format!("- {step}\n"));
+        }
     }
     out.push_str("\n## Limitations\n\n");
     if report.limitations.is_empty() {
@@ -1045,6 +1129,8 @@ fn is_sha(value: &str) -> bool {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+    #[cfg(unix)]
+    use std::time::{Duration, Instant};
 
     static NEXT_TEST_REPO_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -1330,6 +1416,97 @@ mod tests {
         require(
             matches!(exited.kind, ProcessErrorKind::Exit),
             "non-zero process was not an exit failure",
+        )
+    }
+
+    #[test]
+    fn slow_step_completes_and_real_violation_still_fails() -> Result<(), String> {
+        #[cfg(windows)]
+        let (program, slow_success, slow_failure) = (
+            "powershell",
+            vec!["-NoProfile", "-Command", "Start-Sleep -Milliseconds 100; exit 0"],
+            vec!["-NoProfile", "-Command", "Start-Sleep -Milliseconds 100; exit 7"],
+        );
+        #[cfg(not(windows))]
+        let (program, slow_success, slow_failure) = (
+            "sh",
+            vec!["-c", "sleep 0.1; exit 0"],
+            vec!["-c", "sleep 0.1; exit 7"],
+        );
+        let args = slow_success.into_iter().map(str::to_string).collect::<Vec<_>>();
+        run_status(program, &args).map_err(|error| error.message)?;
+        let args = slow_failure.into_iter().map(str::to_string).collect::<Vec<_>>();
+        let violation = run_status(program, &args)
+            .err()
+            .ok_or_else(|| "real nonzero gate exit passed".to_string())?;
+        require(
+            matches!(violation.kind, PrecommitFailureKind::SourceOrPolicy),
+            "real gate exit was not a source or policy failure",
+        )?;
+        let launch = run_status("ripr-precommit-command-that-does-not-exist", &[])
+            .err()
+            .ok_or_else(|| "missing gate unexpectedly launched".to_string())?;
+        require(
+            matches!(launch.kind, PrecommitFailureKind::Infrastructure),
+            "launch failure was not infrastructure",
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn completed_parent_does_not_wait_for_descendant_held_output() -> Result<(), String> {
+        // The old Command::output path waited for the inherited stdout/stderr
+        // pipe even after the parent exited. The descendant exits on its own.
+        let args = vec!["-c".to_string(), "sleep 3 & exit 0".to_string()];
+        let started = Instant::now();
+        run_status("sh", &args).map_err(|error| error.message)?;
+        require(
+            started.elapsed() < Duration::from_secs(2),
+            "status gate waited for an unrelated descendant to close its pipes",
+        )?;
+
+        let args = vec!["-c".to_string(), "sleep 3 & printf 'ready\\n'".to_string()];
+        let started = Instant::now();
+        let output = capture_metadata_output("sh", &args, "metadata fixture")
+            .map_err(|error| error.message)?;
+        require(
+            started.elapsed() < Duration::from_secs(2) && output == b"ready\n",
+            "metadata capture waited for a descendant or lost output",
+        )
+    }
+
+    #[test]
+    fn interrupted_report_names_completed_failed_and_unrun_steps() -> Result<(), String> {
+        let fixture = TestRepo::new()?;
+        let mut report = sample_report("running");
+        report.impact_plan.impacted_packages.push("xtask".to_string());
+        record_pass(&mut report, "existing repository policy precommit");
+        let first = format!("git diff --check {}...HEAD", report.merge_base_sha.as_deref().unwrap_or(""));
+        record_pass(&mut report, &first);
+        let failure = "git diff --cached --check";
+        let result = fail_with_report(
+            &fixture.path,
+            &mut report,
+            PrecommitFailureKind::Infrastructure,
+            failure,
+            "child launch interrupted",
+        );
+        require(result.is_err(), "interrupted step unexpectedly passed")?;
+        let markdown = fs::read_to_string(fixture.path.join(REPORT_MARKDOWN))
+            .map_err(|error| error.to_string())?;
+        require(
+            markdown.contains("Execution was interrupted by infrastructure")
+                && markdown.contains("## Completed steps")
+                && markdown.contains("## Interrupted or failed step")
+                && markdown.contains("## Steps not run")
+                && markdown.contains("git diff --check")
+                && markdown.contains("cargo clippy"),
+            "interrupted summary omitted its classification or step accounting",
+        )?;
+        require(
+            report.skipped.iter().all(|step| step != failure && step != &first)
+                && report.skipped.iter().any(|step| step.contains("cargo clippy")),
+            "completed or interrupted step was marked not run, or clippy was lost",
         )
     }
 
