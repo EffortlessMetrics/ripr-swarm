@@ -17,7 +17,9 @@ mod python;
 #[cfg(feature = "lang-typescript")]
 mod typescript;
 
-pub use diagnostic::{ConfigDiagnostic, ConfigLocation, ConfigLocationStatus, ConfigPosition};
+pub(crate) use diagnostic::ConfigDiagnostic;
+#[cfg(test)]
+use diagnostic::ConfigLocationStatus;
 use model::{BunUbProfileConfig, FindingSeverityConfig, ProfilesConfig, SeamSeverityConfig};
 pub use model::{
     CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION, CheckInputExplicit, ConfigIdentityRole, ConfigSeverity,
@@ -307,7 +309,7 @@ fn parse_config(text: &str) -> Result<RiprConfig, String> {
 
 /// Preserve semantic source locations without changing the typed configuration
 /// authority. Consumers can project this diagnostic into their own transports.
-pub fn parse_config_diagnostic(text: &str) -> Result<RiprConfig, ConfigDiagnostic> {
+pub(crate) fn parse_config_diagnostic(text: &str) -> Result<RiprConfig, ConfigDiagnostic> {
     let raw: RawConfig = toml::from_str(text)
         .map_err(|err| ConfigDiagnostic::structural(format!("invalid ripr.toml: {err}")))?;
     RiprConfig::from_raw(raw, text)
