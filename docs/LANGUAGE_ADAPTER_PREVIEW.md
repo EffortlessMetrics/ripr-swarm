@@ -12,7 +12,7 @@ typechecker or test runner, and they do not make generated CI blocking.
 | Language | Status | Default | Evidence scope |
 | --- | --- | --- | --- |
 | Rust | reference path | enabled | Rust static exposure evidence and the existing CLI, CI, editor, report, and gate surfaces. |
-| TypeScript and JavaScript | preview | disabled | Syntax-first owners, tests, assertions, probes, related tests, and visible static limits for `.ts`, `.tsx`, `.js`, and `.jsx`. |
+| TypeScript and JavaScript | preview | disabled | Syntax-first owners, tests, assertions, probes, related tests, and visible static limits for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`. |
 | Python | preview static facts; scoped repair routing is `usable alpha` | detected Python projects without `ripr.toml`; otherwise disabled unless configured | Syntax-first owners, tests, assertions, probes, related tests, RIPR-stage evidence, selected repair-class missing discriminators, fail-closed static limits, and bounded repair cards/packets for selected pytest/unittest routes. |
 
 The preview adapters feed the same output schema and review surfaces as Rust.
@@ -93,7 +93,8 @@ test_roots = [
 bridge_hints = "ripr.bun.bridge.toml"
 ```
 
-The `typescript` adapter covers `.ts`, `.tsx`, `.js`, and `.jsx` files, so the
+The `typescript` adapter covers `.ts`, `.tsx`, `.mts`, `.cts`, `.js`,
+`.jsx`, `.mjs`, and `.cjs` files, so the
 profile does not add a separate `javascript` language key. `profiles.bun_ub`
 is advisory configuration only: it records test roots and the bridge-hint file
 for Bun Blob / ArrayBuffer cross-language evidence, and `ripr doctor --root .`

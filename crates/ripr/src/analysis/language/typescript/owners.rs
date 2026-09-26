@@ -3,16 +3,24 @@
 use super::*;
 
 pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> {
-    let allocator = Allocator::default();
-    let ret = Parser::new(&allocator, source, source_type_for(file)).parse();
-    if !ret.errors.is_empty() {
+    // Parse (and walk) on the dedicated large-stack worker behind the
+    // nesting budget (#4101): a refused source or a failed worker yields no
+    // owners, exactly like the previous parse-error path, while the oxc
+    // recursion no longer runs on the caller's small stack.
+    let Ok(owners) = parse_on_worker(file, source, |file, source, allocator| {
+        let ret = Parser::new(allocator, source, source_type_for(file)).parse();
+        if !ret.errors.is_empty() {
+            return Vec::new();
+        }
+        let imports = extract_imports_from_statements(&ret.program.body);
+        let mut owners = Vec::new();
+        for stmt in &ret.program.body {
+            owners.extend(owners_from_statement(stmt, file, source, &imports));
+        }
+        owners
+    }) else {
         return Vec::new();
-    }
-    let imports = extract_imports_from_statements(&ret.program.body);
-    let mut owners = Vec::new();
-    for stmt in &ret.program.body {
-        owners.extend(owners_from_statement(stmt, file, source, &imports));
-    }
+    };
     owners
 }
 

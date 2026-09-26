@@ -1,206 +1,153 @@
 # Release Copy Checklist
 
-Public copy is part of the product. A release can be technically correct and
-still fail users by leading with metadata, documenting the publishing process,
-conflating build prerequisites with target-repository requirements, or teaching
-a command weaker than the one the product actually emits.
+Public release copy should describe the shipped product, not the publishing
+process. Check the README, package page, and editor listing alongside release
+notes before publishing. Keep recovery details in [CHANGELOG.md](../CHANGELOG.md)
+and [Release](RELEASE.md), not the public release body.
 
-Run this checklist before finalizing:
+Run this review before finalizing release notes, triggering
+`publish-extension.yml`, or running `cargo publish`. Fix inaccurate copy or
+stale artifacts before publishing.
 
-- the root or crate README;
-- the Quickstart or editor first-use path;
-- the GitHub Release body;
-- crates.io, VS Marketplace, or Open VSX metadata;
-- generated CI instructions; and
-- any install, upgrade, or known-limitations copy.
+## README and onboarding
 
-Fix the copy or the artifact before publication. Release recovery and operator
-history belong in [CHANGELOG.md](../CHANGELOG.md) and
-[Release](RELEASE.md), not in the public product opener.
+- [ ] Lead with the product and a specific reason to use it. Show a concrete
+      example and one complete first-use path before explaining the full model.
+- [ ] Put installation requirements beside the installation that needs them.
+      Do not interrupt the product introduction with prerequisites or diagnostics.
+- [ ] State the assumptions needed by an example. Use ordinary defaults where
+      they work; explain alternate bases and other controls in the relevant guide.
+- [ ] Keep the prose direct: name the actor and action, explain necessary terms
+      where they arise, and remove repetition and administrative noun phrases.
+- [ ] Remove self-description such as "this README is a front door" and mandatory
+      glossaries. Let the document's order and examples explain the product.
+- [ ] Keep internal release, campaign, and agent-operation detail in contributor
+      documentation. Link to the specific user task, not an internal index.
+- [ ] Match installation, examples, output, and support claims to the same channel.
+      Label development-only steps and link to versioned release instructions.
+- [ ] Obtain every identifier and input in the shown workflow. In particular,
+      do not pass a `check` probe ID to `agent repair` as a seam ID.
+- [ ] Use captured output or a checked fixture. Label excerpts and illustrative
+      examples; do not invent a cleaner CLI, timings, or successful outcomes.
+- [ ] Review rendered pages and follow their links. Confirm one useful run and
+      the handling of an empty or limited result with the advertised build.
+- [ ] Keep root, crate, and editor introductions consistent in meaning, while
+      tailoring their examples to the reader. Do not copy the whole README into
+      every surface.
 
-## Front-door structure
-
-The first screen must answer these questions in order:
-
-1. **What does ripr do for me?**
-2. **What is the first useful command or editor action?**
-3. **What result should I expect—even when no repair is available?**
-4. **What does ripr not claim?**
-5. **Where do I go deeper?**
-
-Check all of the following:
-
-- [ ] The opener uses plain language before internal terms.
-- [ ] One runnable path appears before prerequisites, compatibility matrices,
-      architecture, mission/vision prose, or a large badge block.
-- [ ] The first result is described as one selected action **or** an honest
-      no-action/limited state. Zero findings is not presented as a clean bill
-      of health.
-- [ ] The trust boundary appears near the first workflow: static evidence is
-      not runtime mutation proof, correctness, or test-adequacy proof.
-- [ ] The model, terminology, support tiers, compatibility details, and
-      reference mechanics follow through progressive disclosure.
-- [ ] The first screen is not a metadata wall. Keep badges to one compact line
-      or move product/status badges below the first useful workflow.
-- [ ] Internal terms such as `seam`, `discriminator`, `oracle`, `grip`, and
-      `canonical gap` are introduced only after a plain-language description
-      and a link to [Terminology](TERMINOLOGY.md).
-
-## Installation and toolchain truth
-
-Keep these three facts separate:
-
-```text
-RIPR build/install toolchain
-repository analysis availability
-repository project-verification toolchain
-```
-
-- [ ] Rust 1.95+ is described as RIPR's **build/install-from-source MSRV**.
-- [ ] The copy does not imply that every repository analyzed by an already-built
-      binary must itself use Rust 1.95+.
-- [ ] Project verification is described as using the target repository's own
-      selected toolchain and as independently available, failing, or limited.
-- [ ] The normal VS Code path does not tell users to install or rebuild ripr
-      when the extension supplies the server.
-- [ ] `cargo install ripr` is true at publication time. A named version exists
-      on crates.io before the copy says it does.
-- [ ] `cargo install --path crates/ripr` is development/fallback guidance, not
-      the required public first-run path.
-- [ ] `doctor` is described as diagnostics, not as a substitute for the first
-      useful analysis command.
-
-## Commands, roots, and base refs
-
-- [ ] Public examples use the repository's actual base ref or a placeholder
-      such as `<base-ref>`. They do not teach `origin/main` as universal.
-- [ ] Where a command resolves the default base automatically, the docs say so
-      instead of requiring a hand-written ref.
-- [ ] Product-generated commands preserve the repository selected when they
-      were rendered. Copy must not use `cd` as a permanent workaround for a
-      producer-owned wrong-root defect.
-- [ ] Root, before/after artifacts, verification subject, and receipt refer to
-      the same repository and comparable revisions.
-- [ ] A composition command such as `first-pr` is not presented as the first
-      analyzer action.
-- [ ] Display commands, JSON fields, help, Quickstart, generated CI, and editor
-      actions describe the same current command surface.
-- [ ] A command shown as paste-ready has been executed in the claimed shell and
-      path context, including native PowerShell where relevant.
-- [ ] Failure, stale, partial, unavailable, wrong-root, and zero-subject states
-      remain explicit; prose does not strengthen them to success.
+Concision means removing unnecessary reader effort, not hiding limitations,
+removing useful context, or enforcing an arbitrary word count. These are review
+questions, not new wording, heading, or badge-count gates.
 
 ## GitHub Release body
 
-- [ ] The first paragraph describes the shipped user outcome, not the release
-      transaction, retries, branch choreography, or recovery commands.
-- [ ] The body says what changed since the last public version.
-- [ ] Static evidence remains in the conservative vocabulary documented by
-      [Terminology](TERMINOLOGY.md).
-- [ ] The body does not use runtime mutation words such as `killed` or
-      `survived` unless real runtime data is part of the release.
-- [ ] Positioning remains consistent: ripr is static mutation-exposure
-      analysis, catches the mutation-testing class of signal earlier and more
-      cheaply, does not run mutants, and keeps mutation testing as the runtime
-      backstop.
-- [ ] Counts name their basis and denominator. Static audit counts are not
-      public badge totals, coverage, runtime outcomes, or test-adequacy rates.
-- [ ] Every selected defer appears as an exact public non-claim. Required work
-      is not converted into a defer merely because the release notes can
-      describe it.
-- [ ] The final body is re-read on the exact integrated source head after the
-      history-preserving join.
+- [ ] The body describes the **shipped release**: what users get and what changed
+      since the last public version.
+- [ ] Publishing attempts, failures, and recovery commands stay in the changelog's
+      `Release recovery` section and [Release recovery](RELEASE.md#recovery).
+- [ ] The first paragraph describes the user benefit before internal vocabulary.
+      Use [Terminology](TERMINOLOGY.md) for the public-to-internal mapping.
+- [ ] Runtime mutation words such as `killed` and `survived` appear only with real
+      runtime data. Static claims retain conservative classifications.
+- [ ] Positioning remains static mutation-exposure analysis: draft-time guidance
+      about weak testing evidence before execution-backed mutation confirmation.
+      Do not claim that ripr replaces mutation testing or detects an unrelated
+      class of signal.
+- [ ] Preview-language copy separates what ships from what is supported. Check
+      [Support tiers](status/SUPPORT_TIERS.md) for language and workflow scope;
+      do not imply Rust parity or default gate eligibility.
+- [ ] Counts name their basis. Static audit counts are not coverage, runtime
+      mutation results, or test-adequacy claims.
 
-## Preview-language copy
+## VS Marketplace and Open VSX
 
-- [ ] Packaging is separated from authority: an adapter may ship in the normal
-      binary while its findings remain preview/advisory.
-- [ ] TypeScript/JavaScript copy names the actual routed extensions:
-      `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`.
-- [ ] Any narrower downstream repair, rerun, packet, or repo-mode surface is
-      named precisely rather than hidden behind the broad adapter statement.
-- [ ] Python's scoped repair route does not promote all Python static facts.
-- [ ] Preview evidence is not described as Rust parity, gate authority,
-      runtime execution, or support promotion.
-- [ ] A zero-seam repo-scoped view over a preview-only repository is described
-      as a renderer limitation, not a clean result.
+- [ ] `editors/vscode/package.json` uses a readable `displayName` consistent with
+      the opener; the current target is `ripr: Static Mutation Exposure`.
+- [ ] The package `description` explains the user benefit, not the internal model.
+- [ ] The extension README starts with what the user can do. Use absolute links
+      for documentation reached from store listings.
+- [ ] Rebuild and inspect the VSIX after copy changes. The published artifact
+      must contain the updated title, description, and README.
+- [ ] Read the title and description in both store previews, not just the source.
 
-## README, crate, and marketplace metadata
+## Crate metadata and README
 
-- [ ] Root `README.md` and `crates/ripr/README.md` share the same plain-language
-      value proposition and trust boundary.
-- [ ] `crates/ripr/Cargo.toml` description is user-facing crates.io copy.
-- [ ] `editors/vscode/package.json` title and description are user-facing and
-      match the README opener.
-- [ ] `editors/vscode/README.md` opens with the editor user job and uses
-      absolute GitHub links where marketplace rendering cannot resolve relative
-      paths.
-- [ ] Marketplace copy is reviewed in the actual VS Marketplace and Open VSX
-      previews, not only in repository files.
-- [ ] A VSIX is rebuilt after package metadata or extension README changes.
+- [ ] The Cargo `description` explains the tool to a package user.
+- [ ] The package README provides an installed-user path; source-checkout
+      examples and contributor validation are clearly separate.
+- [ ] The root README explains the product before the RIPR model and links to
+      [Terminology](TERMINOLOGY.md) when introducing precise vocabulary.
+- [ ] Badge labels and destinations describe the actual metric and repository.
+      Live badges may use live endpoints. Manual badges need a nearby hidden
+      comment naming the source and last-checked date. Pending services must be
+      labeled pending or omitted until available.
+- [ ] Badge layout changes do not change generated counts or imply stronger
+      coverage, mutation, correctness, or release claims.
 
-## Badges and freshness
+## Install instructions
 
-- [ ] Live badges use live, authoritative endpoints.
-- [ ] Manual badges carry a nearby hidden comment naming the source and
-      last-checked date.
-- [ ] Pending services are hidden or visibly labelled pending.
-- [ ] Repository-wide ripr badges retain their exact meaning: generated counts
-      of unresolved actionable static repair gaps, not coverage, runtime
-      mutation outcomes, all seams, or all code without tests.
-- [ ] Diff-scoped evidence stays in PR summaries and retained CI artifacts,
-      not a repository-wide public badge.
+- [ ] Versions named in README, editor README, and [Quickstart](QUICKSTART.md)
+      are available from the named channel at publish time.
+- [ ] `cargo install ripr` resolves to the release being described, or the command
+      pins the intended version explicitly. A source version is not publication.
+- [ ] `cargo install --path crates/ripr` is a source-build option, not a hidden
+      requirement for an ordinary package install.
+- [ ] The extension's documented bundled, cached, and downloaded server choices
+      match the assets actually available for that extension version.
+- [ ] Missing matching assets or unsupported hosts are stated before the user
+      relies on automatic installation.
+
+## Public vocabulary
+
+- [ ] Explain the task before introducing seams, discriminators, oracle strength,
+      grip, canonical gaps, or internal report names.
+- [ ] Use precise terms in specs, schemas, metrics, fixtures, and technical
+      explanations. A term's presence is not a defect when it does useful work.
+- [ ] State limitations beside the affected claim. Do not overclaim first and
+      retract it later, or repeat the same disclaimer throughout the page.
+- [ ] Keep generated summaries and CLI help aligned with the documented command
+      roles. Detailed flags belong in help and task references.
 
 ## Release assets and dependent channels
 
-- [ ] The GitHub Release contains the asset set documented in
-      [Release](RELEASE.md): VSIX, server manifest, per-target archives, and
-      checksums.
-- [ ] Archive checksums match the server manifest.
-- [ ] The documented bundled/cached/downloaded server chain matches the actual
-      extension package and release assets.
-- [ ] Dependent channels are triggered only after the GitHub Release asset set
-      is verified.
-- [ ] The marketplace workflow consumes the final rebuilt VSIX, not an earlier
-      artifact attached to the same release train.
-- [ ] Public source, release tags, registries, and marketplaces remain source
-      repository authority; swarm rehearsal is not described as publication.
+- [ ] The GitHub Release contains the full documented asset set: VSIX, server
+      manifest, per-target server archives, and checksums.
+- [ ] Server archive checksums match the manifest.
+- [ ] Trigger dependent marketplace and crates.io publication only after verifying
+      the GitHub Release assets. Dependent workflows must consume the right set.
+- [ ] `publish-extension.yml` uses the rebuilt VSIX, not an older artifact attached
+      to the same release.
 
-## Automated guards
+## When something slips
 
-Run the public-copy and documentation checks on the exact candidate surface:
+Before dependent publication, fix the copy or rebuild the artifact and retry.
+Keep the retry narrative out of the public release body.
 
-```bash
-cargo xtask check-product-copy
-cargo xtask check-doc-index
-cargo xtask check-doc-artifacts
-cargo xtask check-static-language
-cargo xtask check-command-catalog
-cargo xtask check-output-contracts
-cargo xtask markdown-links
-```
+After publication:
 
-`check-product-copy` scans the principal public surfaces, including root and
-crate READMEs, Quickstart, editor copy, release docs, and marketplace metadata.
-It rejects unbridged internal vocabulary. A file is bridged when it explains the
-user job first and links to [Terminology](TERMINOLOGY.md) before relying on the
-internal model.
+1. Open a focused fix PR and follow [Release recovery](RELEASE.md#recovery).
+2. Record the recovery in the changelog's `Release recovery` section.
+3. Leave the tag in place. Update public release copy only to describe the
+   shipped product, not the repair process.
+4. Add installation smoke evidence when user-visible behavior changed; see
+   [Installation verification](INSTALLATION_VERIFICATION.md).
 
-Automated scans are necessary but insufficient. Execute the first-use and
-install commands they describe. Text search cannot establish shell behavior,
-artifact identity, source-root binding, marketplace packaging, or public asset
-availability.
+## Automated guard
 
-## When copy or packaging slips
+`cargo xtask check-product-copy` scans the public files registered in
+`xtask/src/policy/product_copy.rs` for selected internal terms. The current
+implementation skips vocabulary scanning for a whole file when it contains
+`TERMINOLOGY.md` anywhere. The `product_copy` unit tests exercise that rule.
 
-Before dependent publication:
+A passing result does not establish plain language, good section order, readable
+rendering, or working examples. A terminology link helps navigation; it is not
+proof that the text explains the user's task. Review those properties directly.
+Use existing link, README-state, and documentation checks for their mechanical
+contracts; do not freeze prose to compensate for missing editorial review.
 
-1. fix the copy or artifact;
-2. rebuild the affected package;
-3. rerun the exact public-copy and package checks; and
-4. verify the final user-visible surface.
+## Origin
 
-After dependent publication, use the fix-forward procedure in
-[Release → Recovery](RELEASE.md#recovery). Keep retry and recovery history in
-the changelog/operator record. The public release body should continue to
-describe the product users can now obtain, not the internal recovery sequence.
+This checklist grew from the v0.5.0 release review: publishing-recovery prose
+appeared before product information, an older VSIX carried stale storefront
+copy, and a marketplace-count badge used an unreliable live route. Apply those
+lessons without turning the product introduction into a release runbook.

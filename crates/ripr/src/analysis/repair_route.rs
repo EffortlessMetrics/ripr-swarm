@@ -677,24 +677,14 @@ fn has_external_language_related_test(entry: &ClassifiedSeam) -> bool {
 }
 
 fn is_external_language_extension(extension: &str) -> bool {
-    matches!(
-        extension.to_ascii_lowercase().as_str(),
-        "ts" | "tsx"
-            | "js"
-            | "jsx"
-            | "mjs"
-            | "cjs"
-            | "py"
-            | "rb"
-            | "java"
-            | "c"
-            | "cc"
-            | "cpp"
-            | "cxx"
-            | "swift"
-            | "kt"
-            | "kts"
-    )
+    let extension = extension.to_ascii_lowercase();
+    // #4116: the TS/JS family consumes the shared extension authority; the
+    // remaining bridge languages keep their historical lowercase fold.
+    crate::analysis::is_ts_js_source_extension(&extension)
+        || matches!(
+            extension.as_str(),
+            "py" | "rb" | "java" | "c" | "cc" | "cpp" | "cxx" | "swift" | "kt" | "kts"
+        )
 }
 
 fn cross_language_surface_hint(entry: &ClassifiedSeam) -> bool {
@@ -966,8 +956,8 @@ mod tests {
     #[test]
     fn external_language_test_extensions_cover_bridge_language_families() -> Result<(), String> {
         for extension in [
-            "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "rb", "java", "c", "cc", "cpp", "cxx",
-            "swift", "kt", "kts",
+            "ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "py", "rb", "java", "c", "cc",
+            "cpp", "cxx", "swift", "kt", "kts",
         ] {
             let mut related_test = external_related_test();
             related_test.file = PathBuf::from(format!("tests/bridge.{extension}"));
@@ -983,7 +973,7 @@ mod tests {
             );
         }
 
-        for extension in ["rs", "txt"] {
+        for extension in ["rs", "txt", "mt", "mjsx"] {
             let mut related_test = external_related_test();
             related_test.file = PathBuf::from(format!("tests/bridge.{extension}"));
             let entry = classified_with(

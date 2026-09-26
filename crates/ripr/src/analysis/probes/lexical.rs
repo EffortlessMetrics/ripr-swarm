@@ -223,6 +223,7 @@ fn is_assertion_macro(text: &str) -> bool {
 
 fn has_call_shape(text: &str) -> bool {
     !is_constant_declaration(text)
+        && !is_tuple_type_declaration(text)
         && text.contains('(')
         && text.contains(')')
         && !is_function_signature(text)
@@ -231,6 +232,226 @@ fn has_call_shape(text: &str) -> bool {
         && !starts_with_binding_or_control(text)
         && !text.trim_end().ends_with(',')
         && call_prefix_is_named(text)
+}
+
+/// Tuple enum variants and tuple structs are declarations, not executable
+/// calls (#3740, #3749). `Invalid(String)`, `struct Wrap(PathBuf);`, and
+/// `pub struct Wrapper(pub String);` must not become `call_deletion` probes.
+/// Generics between the name and the tuple (`Foo<T>(pub T)`) belong to the
+/// declaration. A value argument (`NotFound(id)`, `Foo(value)`) and an
+/// expression statement (`Invalid(msg);`) stay calls. `Err` / `Ok` / `Some`
+/// are constructors, not variant declarations.
+fn is_tuple_type_declaration(text: &str) -> bool {
+    let mut rest = text.trim();
+    if let Some(after_visibility) = strip_pub_visibility(rest) {
+        rest = after_visibility.trim_start();
+    }
+    let struct_form = if let Some(after_struct) = rest.strip_prefix("struct ") {
+        rest = after_struct.trim_start();
+        true
+    } else {
+        false
+    };
+    let Some((name, after_name)) = take_rust_ident(rest) else {
+        return false;
+    };
+    if matches!(name, "Err" | "Ok" | "Some") {
+        return false;
+    }
+    if !name.starts_with(|ch: char| ch.is_ascii_uppercase()) {
+        return false;
+    }
+    let mut after_name = after_name.trim_start();
+    if after_name.starts_with('<') {
+        let Some(skipped) = skip_balanced_generics(after_name) else {
+            return false;
+        };
+        after_name = skipped.trim_start();
+    }
+    let Some(after_open) = after_name.strip_prefix('(') else {
+        return false;
+    };
+    let Some((inner, tail)) = split_matching_paren(after_open) else {
+        return false;
+    };
+    if !type_argument_list(inner) {
+        return false;
+    }
+    let tail = tail.trim();
+    if struct_form {
+        return tail.is_empty() || tail == ";";
+    }
+    if tail.is_empty() || tail == "," || tail == "}" || tail == "}," {
+        return true;
+    }
+    numeric_discriminant(tail)
+}
+
+fn numeric_discriminant(tail: &str) -> bool {
+    let Some(after_eq) = tail.strip_prefix('=') else {
+        return false;
+    };
+    let mut text = after_eq.trim();
+    if let Some(without_comma) = text.strip_suffix(',') {
+        text = without_comma.trim();
+    }
+    !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn strip_pub_visibility(text: &str) -> Option<&str> {
+    let rest = text.trim_start();
+    let after_pub = rest.strip_prefix("pub")?;
+    // Do not trim before the word-boundary check. `pub struct` has a space
+    // after `pub`; trimming it makes `struct` look like an identifier suffix.
+    if let Some(after_paren) = after_pub.strip_prefix('(') {
+        let (_, after_visibility) = split_matching_paren(after_paren)?;
+        return Some(after_visibility);
+    }
+    if after_pub.is_empty() || after_pub.starts_with(|ch: char| ch.is_whitespace()) {
+        return Some(after_pub);
+    }
+    None
+}
+
+fn take_rust_ident(text: &str) -> Option<(&str, &str)> {
+    let mut end = 0usize;
+    for (index, ch) in text.char_indices() {
+        let ok = if index == 0 {
+            ch == '_' || ch.is_ascii_alphabetic()
+        } else {
+            ch == '_' || ch.is_ascii_alphanumeric()
+        };
+        if !ok {
+            break;
+        }
+        end = index + ch.len_utf8();
+    }
+    if end == 0 {
+        None
+    } else {
+        Some((&text[..end], &text[end..]))
+    }
+}
+
+fn split_matching_paren(text: &str) -> Option<(&str, &str)> {
+    let mut depth = 1usize;
+    for (index, ch) in text.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((&text[..index], &text[index + ch.len_utf8()..]));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Text after a `<...>` generic argument list, or `None` when the brackets
+/// do not close. Nested `Foo<Bar<T>>` stays inside the declaration name.
+fn skip_balanced_generics(text: &str) -> Option<&str> {
+    let inner = text.trim_start().strip_prefix('<')?;
+    let mut depth = 1usize;
+    for (index, ch) in inner.char_indices() {
+        match ch {
+            '<' => depth += 1,
+            '>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&inner[index + ch.len_utf8()..]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+const TYPE_ARGUMENT_WORDS: &[&str] = &[
+    "str", "bool", "char", "dyn", "mut", "const", "i8", "i16", "i32", "i64", "i128", "isize", "u8",
+    "u16", "u32", "u64", "u128", "usize", "f32", "f64",
+];
+
+fn type_argument_list(inner: &str) -> bool {
+    let text = inner.trim();
+    if text.is_empty() {
+        return false;
+    }
+    let bytes = text.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte.is_ascii_whitespace()
+            || matches!(
+                byte,
+                b'&' | b',' | b'<' | b'>' | b'[' | b']' | b'(' | b')' | b'*'
+            )
+        {
+            index += 1;
+            continue;
+        }
+        if byte == b':' {
+            if bytes.get(index + 1) == Some(&b':') {
+                index += 2;
+                continue;
+            }
+            return false;
+        }
+        if byte == b'\'' {
+            index += 1;
+            let Some((ident, _)) = take_rust_ident(&text[index..]) else {
+                return false;
+            };
+            index += ident.len();
+            continue;
+        }
+        if byte.is_ascii_alphabetic() || byte == b'_' {
+            let Some((ident, _)) = take_rust_ident(&text[index..]) else {
+                return false;
+            };
+            if ident == "pub" {
+                let Some(after_vis) = skip_field_visibility(&text[index..]) else {
+                    return false;
+                };
+                index = text.len() - after_vis.len();
+                continue;
+            }
+            if ident.starts_with(|ch: char| ch.is_ascii_lowercase())
+                && !TYPE_ARGUMENT_WORDS.contains(&ident)
+            {
+                let rest = text[index + ident.len()..].trim_start();
+                if !rest.starts_with("::") {
+                    return false;
+                }
+            }
+            index += ident.len();
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
+/// Remainder after tuple-field visibility (`pub` or `pub(...)`).
+///
+/// `pub String` and `pub(crate) u32` are types. A bare `pub` is not, so
+/// `Foo(pub)` stays a value argument.
+fn skip_field_visibility(text: &str) -> Option<&str> {
+    let after_pub = text.strip_prefix("pub")?;
+    let trimmed = after_pub.trim_start();
+    if let Some(after_open) = trimmed.strip_prefix('(') {
+        let (_, after_vis) = split_matching_paren(after_open)?;
+        return Some(after_vis);
+    }
+    if trimmed.starts_with(|ch: char| {
+        ch.is_ascii_alphabetic() || matches!(ch, '_' | '&' | '\'' | '[' | '*')
+    }) {
+        return Some(after_pub);
+    }
+    None
 }
 
 fn starts_with_binding_or_control(text: &str) -> bool {
@@ -253,6 +474,7 @@ fn call_prefix_is_named(text: &str) -> bool {
 
 fn has_field_shape(text: &str) -> bool {
     !is_constant_declaration(text)
+        && !is_tuple_type_declaration(text)
         && text.contains(':')
         && !text.contains("::")
         && !is_function_signature(text)
@@ -472,6 +694,52 @@ mod tests {
             !initializer.contains(&ProbeFamily::CallDeletion),
             "const initializer call must not classify the declaration as call_deletion"
         );
+    }
+
+    /// #3740 / #3749: tuple enum variants and tuple structs are declarations.
+    /// The reported `Invalid(String),` lines already fail the trailing-comma
+    /// gate; the last variant (no comma) and a tuple struct still matched
+    /// `call_deletion`. Field visibility and generics are part of the
+    /// declaration. Value arguments and `Err(...)` stay calls.
+    #[test]
+    fn tuple_type_declarations_are_not_call_deletion() {
+        for text in [
+            "Invalid(String),",
+            "Ambiguous(String),",
+            "Invalid(String)",
+            "pub(crate) Invalid(&str)",
+            "Invalid(Box<String>)",
+            "Invalid(std::path::PathBuf) = 1",
+            "struct Wrap(String);",
+            "pub struct Wrap(std::path::PathBuf);",
+            "struct Foo(String);",
+            "pub struct Foo(pub String);",
+            "pub(crate) struct Foo(pub(crate) u32);",
+            "pub struct Foo<T>(pub T);",
+            "struct Foo<'a>(&'a str);",
+            "struct Foo<T: Clone>(T);",
+        ] {
+            let families = classify_changed_line(text);
+            assert_eq!(
+                families,
+                vec![ProbeFamily::StaticUnknown],
+                "{text} must be a non-executable declaration, got {families:?}"
+            );
+        }
+        for text in [
+            "send_invoice(invoice)",
+            "NotFound(id)",
+            "Invalid(msg);",
+            "Err(AuthError::Revoked)",
+            "Foo(value)",
+            "Id(0)",
+        ] {
+            let families = classify_changed_line(text);
+            assert!(
+                families.contains(&ProbeFamily::CallDeletion),
+                "{text} must stay call_deletion, got {families:?}"
+            );
+        }
     }
 
     #[test]
