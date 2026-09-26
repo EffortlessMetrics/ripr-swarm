@@ -128,7 +128,10 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             stages,
-            [AnalysisProgressStage::LoadingInput, AnalysisProgressStage::Cancelled]
+            [
+                AnalysisProgressStage::LoadingInput,
+                AnalysisProgressStage::Cancelled
+            ]
         );
     }
 }

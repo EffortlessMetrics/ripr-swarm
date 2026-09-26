@@ -14,8 +14,8 @@ mod context;
 mod explain;
 pub(crate) mod impacted_evidence;
 mod navigation;
-mod progress;
 pub mod pr_evidence;
+mod progress;
 pub use pr_evidence::reject_pr_evidence_error_packet;
 /// Shared PR-evidence summary projection used by the `ripr` binary and the
 /// compatibility `xtask` route.
@@ -48,8 +48,8 @@ pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = "0.4";
 pub(crate) use crate::analysis::repair_route::repair_route_readiness;
 pub(crate) use check::is_managed_perl_producer;
 pub use check::{
-    check_workspace_repo_with_config, check_workspace_with_config,
-    check_workspace_repo_with_config_and_progress, check_workspace_with_config_and_progress,
+    check_workspace_repo_with_config, check_workspace_repo_with_config_and_progress,
+    check_workspace_with_config, check_workspace_with_config_and_progress,
     check_workspace_worktree_with_config, check_workspace_worktree_with_config_and_progress,
 };
 pub(crate) use context::collect_context_from_artifact;

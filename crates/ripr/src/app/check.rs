@@ -627,9 +627,11 @@ mod tests {
                 && event.completed_units.is_none()
                 && event.total_units.is_none()
         }));
-        assert!(events
-            .windows(2)
-            .all(|pair| pair[0].elapsed_ms <= pair[1].elapsed_ms));
+        assert!(
+            events
+                .windows(2)
+                .all(|pair| pair[0].elapsed_ms <= pair[1].elapsed_ms)
+        );
         Ok(())
     }
 
@@ -639,8 +641,12 @@ mod tests {
         let mut input = sample_diff_input();
         input.diff_file = Some(input.root.join("absent-progress-input.diff"));
         assert!(
-            check_workspace_with_config_and_progress(input, &RiprConfig::default(), Some(&recorder))
-                .is_err()
+            check_workspace_with_config_and_progress(
+                input,
+                &RiprConfig::default(),
+                Some(&recorder)
+            )
+            .is_err()
         );
         let events = recorder.0.lock().unwrap();
         assert_eq!(
