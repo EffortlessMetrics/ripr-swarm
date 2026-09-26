@@ -48,6 +48,7 @@
 //! so different keys land in different files and a v1 cache hit on a
 //! v0.5 entry is impossible.
 
+use super::cache_layers::CacheLayer;
 use super::facts::FileFacts;
 use super::seam_classification::ClassifiedSeam;
 #[cfg(test)]
@@ -917,7 +918,7 @@ impl RepoCorpusFingerprintCache {
     pub(crate) fn at(workspace_root: &Path) -> Self {
         Self {
             dir: cache_base_dir(workspace_root)
-                .join("repo-corpus-fingerprint")
+                .join(CacheLayer::CorpusFingerprint.name())
                 .join(CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION),
         }
     }
@@ -1022,7 +1023,12 @@ pub(crate) struct CacheStoreStatus {
 impl RepoSeamFactCache {
     /// Construct a cache rooted at the workspace's `target/ripr/cache/...`.
     pub(crate) fn at(workspace_root: &Path) -> Self {
-        Self::at_named(workspace_root, "repo-seam-facts", CACHE_SCHEMA_VERSION)
+        Self::at_named(
+            workspace_root,
+            CacheLayer::SeamFacts,
+            CacheLayer::SeamFactsSharded,
+            CACHE_SCHEMA_VERSION,
+        )
     }
 
     /// Construct the separate compact-classified cache used by repo badge
@@ -1031,17 +1037,23 @@ impl RepoSeamFactCache {
     pub(crate) fn at_compact_classified(workspace_root: &Path) -> Self {
         Self::at_named(
             workspace_root,
-            "repo-compact-classified-seams",
+            CacheLayer::CompactClassifiedSeams,
+            CacheLayer::CompactClassifiedSeamsSharded,
             COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION,
         )
     }
 
-    fn at_named(workspace_root: &Path, cache_name: &str, schema_version: &str) -> Self {
+    fn at_named(
+        workspace_root: &Path,
+        cache_layer: CacheLayer,
+        sharded_layer: CacheLayer,
+        schema_version: &str,
+    ) -> Self {
         let cache_root = cache_base_dir(workspace_root);
         Self {
-            dir: cache_root.join(cache_name).join(schema_version),
+            dir: cache_root.join(cache_layer.name()).join(schema_version),
             sharded_dir: cache_root
-                .join(format!("{cache_name}-sharded"))
+                .join(sharded_layer.name())
                 .join(schema_version)
                 .join(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION),
         }
@@ -1502,7 +1514,7 @@ impl RepoFileFactCache {
     pub(crate) fn at(workspace_root: &Path) -> Self {
         Self {
             dir: cache_base_dir(workspace_root)
-                .join("repo-file-facts")
+                .join(CacheLayer::FileFacts.name())
                 .join(FILE_FACT_CACHE_SCHEMA_VERSION),
         }
     }
@@ -1599,7 +1611,7 @@ impl RepoSeamCountCache {
     pub(crate) fn at(workspace_root: &Path) -> Self {
         Self {
             dir: cache_base_dir(workspace_root)
-                .join("repo-seam-counts")
+                .join(CacheLayer::SeamCounts.name())
                 .join(COUNT_CACHE_SCHEMA_VERSION),
         }
     }

@@ -1,4 +1,5 @@
 pub(crate) mod cancellation;
+pub(crate) mod cache_layers;
 pub(crate) mod canonical_gap;
 mod classifier;
 mod classify;
