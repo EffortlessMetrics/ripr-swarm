@@ -648,13 +648,17 @@ fn trace_file_fact_cache(stats: &FileFactCacheStats) {
     if std::env::var_os(LATENCY_TRACE_ENV).is_none() {
         return;
     }
-    let failures = stats.store_failures.iter().map(|row| {
-        serde_json::json!({
-            "path": row.path.to_string_lossy().replace('\\', "/"),
-            "stage": row.stage,
-            "error": row.error,
+    let failures = stats
+        .store_failures
+        .iter()
+        .map(|row| {
+            serde_json::json!({
+                "path": row.path.to_string_lossy().replace('\\', "/"),
+                "stage": row.stage,
+                "error": row.error,
+            })
         })
-    }).collect::<Vec<_>>();
+        .collect::<Vec<_>>();
     let value = serde_json::json!({
         "schema_version": "0.1",
         "hits": stats.hits,

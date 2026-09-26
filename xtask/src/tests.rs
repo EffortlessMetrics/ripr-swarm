@@ -46671,9 +46671,11 @@ fn repo_exposure_latency_rejects_absent_malformed_and_host_path_cache_telemetry(
 #[test]
 fn repo_exposure_latency_preserves_producer_failure_cap_and_overflow() -> Result<(), String> {
     let rows = (0..32)
-        .map(|index| serde_json::json!({
-            "path": format!("src/{index}.rs"), "stage": "write", "error": "disk full"
-        }))
+        .map(|index| {
+            serde_json::json!({
+                "path": format!("src/{index}.rs"), "stage": "write", "error": "disk full"
+            })
+        })
         .collect::<Vec<_>>();
     let payload = serde_json::json!({
         "schema_version": "0.1", "hits": 0, "misses": 35, "invalidated": 0,
