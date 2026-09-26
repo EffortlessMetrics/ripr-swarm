@@ -834,15 +834,17 @@ impl Selection {
                     value["regeneration_command_spec"] = spec_value;
                 }
                 if !additional_missing_artifacts.is_empty() {
-                    value["additional_missing_artifacts"] = json!(additional_missing_artifacts
-                        .iter()
-                        .map(|artifact| json!({
-                            "id": artifact.id,
-                            "label": artifact.label,
-                            "path": artifact.path,
-                            "regeneration_command": artifact.regeneration_command,
-                        }))
-                        .collect::<Vec<_>>());
+                    value["additional_missing_artifacts"] = json!(
+                        additional_missing_artifacts
+                            .iter()
+                            .map(|artifact| json!({
+                                "id": artifact.id,
+                                "label": artifact.label,
+                                "path": artifact.path,
+                                "regeneration_command": artifact.regeneration_command,
+                            }))
+                            .collect::<Vec<_>>()
+                    );
                 }
                 value
             }
@@ -2765,7 +2767,11 @@ mod tests {
         assert_eq!(packet["status"], "blocked");
         assert_eq!(packet["selected"]["state"], "blocked_artifact");
         assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
-        assert!(packet["selected"].get("additional_missing_artifacts").is_none());
+        assert!(
+            packet["selected"]
+                .get("additional_missing_artifacts")
+                .is_none()
+        );
         let message = packet["selected"]["message"]
             .as_str()
             .ok_or_else(|| "selected message missing".to_string())?;
@@ -2870,7 +2876,11 @@ mod tests {
         assert_eq!(packet["selected"]["state"], "missing_artifact");
         assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
         assert_eq!(packet["selected"]["artifact"]["id"], "gap_ledger");
-        assert!(packet["selected"].get("additional_missing_artifacts").is_none());
+        assert!(
+            packet["selected"]
+                .get("additional_missing_artifacts")
+                .is_none()
+        );
         assert!(
             packet["selected"]["regeneration_command"]
                 .as_str()

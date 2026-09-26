@@ -147,7 +147,9 @@ pub(super) fn start_here_cli_summary(
                         string_path(artifact, &["path"]),
                         string_path(artifact, &["regeneration_command"]),
                     ) {
-                        out.push_str(&format!("Then regenerate {label} at `{path}`: `{command}`\n"));
+                        out.push_str(&format!(
+                            "Then regenerate {label} at `{path}`: `{command}`\n"
+                        ));
                         push_recovery_powershell_variant(&mut out, "Then regenerate", &command);
                     }
                 }
@@ -561,7 +563,9 @@ fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
                 string_path(artifact, &["path"]),
                 string_path(artifact, &["regeneration_command"]),
             ) {
-                out.push_str(&format!("- Then regenerate {label} at `{path}`: `{command}`\n"));
+                out.push_str(&format!(
+                    "- Then regenerate {label} at `{path}`: `{command}`\n"
+                ));
                 push_recovery_powershell_variant(out, "- Then regenerate", &command);
             }
         }
