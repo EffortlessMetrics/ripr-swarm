@@ -70,6 +70,34 @@ suite('Standard LSP compatibility probe', () => {
     });
   }
 
+  // The server advertises explicit incremental textDocumentSync options with a
+  // didSave that does not require text. A probe that only accepted the bare
+  // `Full` shorthand would reject the real server, so the incremental shape is
+  // proven here, and the sync shapes the client cannot work with are rejected.
+  test('admits the incremental saved-workspace textDocumentSync the server advertises', async () => {
+    const fake = fakeServer('valid');
+    const result = await probeStandardLspCompatibility(fake.command, fake.useShell, fakeProbeTimeoutMs);
+    assert.strictEqual(result.status, 'compatible', JSON.stringify(result));
+    if (result.status === 'compatible') {
+      assert.strictEqual(result.required.textDocumentSync, true);
+    }
+  });
+
+  for (const mode of ['save-requires-text', 'no-open-close', 'will-save-required', 'no-save'] as const) {
+    test(`rejects the unserviceable textDocumentSync shape ${mode}`, async () => {
+      const fake = fakeServer(mode);
+      const result = await probeStandardLspCompatibility(fake.command, fake.useShell, fakeProbeTimeoutMs);
+      assert.strictEqual(result.status, 'incompatible');
+      assert.deepStrictEqual(result.status === 'incompatible' ? result.kind : undefined, 'missing_required_capability');
+    });
+  }
+
+  test('still admits a legacy bare Full sync advertisement', async () => {
+    const fake = fakeServer('legacy-full-sync');
+    const result = await probeStandardLspCompatibility(fake.command, fake.useShell, fakeProbeTimeoutMs);
+    assert.strictEqual(result.status, 'compatible', JSON.stringify(result));
+  });
+
   for (const mode of [
     'missing-jsonrpc',
     'wrong-jsonrpc',
@@ -297,11 +325,17 @@ function consume() {
     const message = JSON.parse(input.subarray(start, start + length).toString()); input = input.subarray(start + length);
     if (message.method === 'initialize') {
       const commands = ['ripr.refresh','ripr.collectContext','ripr.collectEvidenceContext','ripr.collectWorkspaceStatus','ripr.collectRepairPacket','ripr.collectTopLimitation','ripr.collectReceiptStatus'];
-      const capabilities = { textDocumentSync: 1, hoverProvider: true, codeActionProvider: true, diagnosticProvider: {}, executeCommandProvider: { commands }, workspace: { workspaceFolders: { supported: true } }, positionEncoding: mode === 'utf8' ? 'utf-8' : 'utf-16' };
+      // Mirrors the server's real advertisement: explicit incremental
+      // textDocumentSync options with a didSave that does not require text.
+      const capabilities = { textDocumentSync: mode === 'legacy-full-sync' ? 1 : { openClose: true, change: 2, willSave: false, willSaveWaitUntil: false, save: { includeText: false } }, hoverProvider: true, codeActionProvider: true, diagnosticProvider: {}, executeCommandProvider: { commands }, workspace: { workspaceFolders: { supported: true } }, positionEncoding: mode === 'utf8' ? 'utf-8' : 'utf-16' };
       if (mode === 'missing-hover') delete capabilities.hoverProvider;
       if (mode === 'missing-diagnostics') delete capabilities.diagnosticProvider;
       if (mode === 'missing-workspace-folders') delete capabilities.workspace;
       if (mode === 'missing-command') capabilities.executeCommandProvider.commands.pop();
+      if (mode === 'save-requires-text') capabilities.textDocumentSync = { openClose: true, change: 2, willSave: false, willSaveWaitUntil: false, save: { includeText: true } };
+      if (mode === 'no-open-close') capabilities.textDocumentSync = { openClose: false, change: 2, willSave: false, willSaveWaitUntil: false, save: { includeText: false } };
+      if (mode === 'will-save-required') capabilities.textDocumentSync = { openClose: true, change: 2, willSave: true, willSaveWaitUntil: true, save: { includeText: false } };
+      if (mode === 'no-save') capabilities.textDocumentSync = { openClose: true, change: 2, willSave: false, willSaveWaitUntil: false };
       const envelope = { jsonrpc: mode === 'wrong-jsonrpc' ? '1.0' : '2.0', id: message.id, result: { capabilities, serverInfo: { name: mode === 'wrong-identity' ? 'other' : 'ripr', version: '9.9.9' } } };
       if (mode === 'missing-jsonrpc') delete envelope.jsonrpc;
       if (mode === 'missing-response-payload') delete envelope.result;

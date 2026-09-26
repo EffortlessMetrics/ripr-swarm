@@ -27,7 +27,7 @@ use super::refresh_scheduler::{
 };
 use super::state::{
     AnalysisAttemptState, AnalysisFailure, AnalysisFailureKind, AnalysisHealth, AnalysisSnapshot,
-    ConfigPullState, DocumentStalenessReason, DocumentStore, QuarantineTransition,
+    ConfigPullState, DocumentStalenessReason, DocumentState, DocumentStore, QuarantineTransition,
     WorkspaceFolderEventRejection, WorkspaceFolderSelection, WorkspaceFolderSet,
     WorkspaceRootAuthority, WorkspaceRootState, content_digest, format_duration,
 };
@@ -112,8 +112,8 @@ pub(super) struct Backend {
     /// optional full-list reconciliation query is a separately versioned
     /// confirmation step bound to the folder-set epoch.
     workspace_folders: Mutex<WorkspaceFolderSet>,
-    documents: Mutex<DocumentStore>,
-    saved_content_digests: Mutex<BTreeMap<tower_lsp_server::ls_types::Uri, String>>,
+    pub(super) documents: Mutex<DocumentStore>,
+    pub(super) saved_content_digests: Mutex<BTreeMap<tower_lsp_server::ls_types::Uri, String>>,
     analysis_config: Mutex<LspAnalysisConfig>,
     configuration_failure: Mutex<Option<AnalysisFailure>>,
     /// Negotiated session-configuration transport (#2031, RIPR-SPEC-0136).
@@ -178,6 +178,15 @@ pub(super) struct Backend {
 struct ConfigPullCoordinator {
     in_flight: bool,
     queued: bool,
+}
+
+/// Result of registering one `didSave` notification.
+struct SaveOutcome {
+    transition: QuarantineTransition,
+    /// False when the server refused the save's saved-content identity because
+    /// it had disowned the document's buffer. The caller must not publish
+    /// that identity as analysis input or dedup against it.
+    digest_adopted: bool,
 }
 
 pub(super) struct RefreshTransaction {
@@ -2310,22 +2319,54 @@ impl Backend {
         params: DidChangeTextDocumentParams,
     ) -> Option<(Uri, QuarantineTransition)> {
         let uri = params.text_document.uri.clone();
-        self.documents
+        let version = params.text_document.version;
+        // Position encoding negotiated once at initialize. If the immutable
+        // profile store is unavailable, return no encoding: after negotiation
+        // the session has authority for exactly one encoding, and guessing
+        // UTF-16 could reinterpret UTF-8/UTF-32 incremental ranges and
+        // corrupt retained buffer identity.
+        let position_encoding = self
+            .client_features
             .lock()
             .ok()
-            .map(|mut documents| (uri, documents.change(params)))
+            .map(|features| features.selected_position_encoding.clone());
+        let mut documents = self.documents.lock().ok()?;
+        let transition = match position_encoding {
+            Some(position_encoding) => documents.change(params, &position_encoding),
+            None => documents.invalidate_change(&uri, version),
+        };
+        Some((uri, transition))
     }
 
+    /// Persist a save, refusing to adopt any saved-content identity while the
+    /// server has disowned the document's buffer. A `didSave` with
+    /// `params.text = None` — the advertised `includeText: false` contract —
+    /// makes the server fall back to retained buffer text, and even a
+    /// client-sent text cannot be reconciled against an unknown buffer
+    /// baseline. Recording such a digest would let a refresh analyze stale
+    /// content as if it were the saved workspace, while the quarantine still
+    /// withholds line-local diagnostics. Buffer authority returns only when a
+    /// range-less replacement or `didOpen` supplies complete current text.
     fn save_document(
         &self,
         uri: &Uri,
         saved_digest: Option<String>,
         text: Option<String>,
-    ) -> Option<QuarantineTransition> {
-        self.documents
-            .lock()
-            .ok()
-            .map(|mut documents| documents.save(uri, saved_digest, text))
+    ) -> Option<SaveOutcome> {
+        let mut documents = self.documents.lock().ok()?;
+        let digest_adopted = !documents
+            .state_for_uri(uri)
+            .is_some_and(DocumentState::is_buffer_authority_unknown);
+        let (saved_digest, text) = if digest_adopted {
+            (saved_digest, text)
+        } else {
+            (None, None)
+        };
+        let transition = documents.save(uri, saved_digest, text);
+        Some(SaveOutcome {
+            transition,
+            digest_adopted,
+        })
     }
 
     fn close_document(&self, params: DidCloseTextDocumentParams) {
@@ -4030,7 +4071,11 @@ impl LanguageServer for Backend {
         // refresh is scheduled. A failed store lock means the save was never
         // registered; skip every downstream mutation so the store, the
         // dedup ledger, and the committed snapshot cannot diverge.
-        let Some(transition) = self.save_document(&uri, digest.clone(), text) else {
+        let Some(SaveOutcome {
+            transition,
+            digest_adopted,
+        }) = self.save_document(&uri, digest.clone(), text)
+        else {
             self.client
                 .log_message(
                     MessageType::ERROR,
@@ -4039,6 +4084,21 @@ impl LanguageServer for Backend {
                 .await;
             return;
         };
+        if !digest_adopted {
+            // The server disowned this buffer after an uninterpretable
+            // incremental change, so neither the retained text nor any
+            // client-sent text can establish what was just saved. Publish no
+            // identity, schedule no refresh, and keep the withdrawal.
+            self.handle_document_quarantine_transition(&uri, transition)
+                .await;
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    "ripr didSave recorded no saved-content identity: this document's buffer authority was lost to an incremental change that could not be applied; a full document synchronization or reopen re-establishes it",
+                )
+                .await;
+            return;
+        }
         if let Some(digest) = &digest
             && self.saved_content_digest_matches(&uri, digest)
         {

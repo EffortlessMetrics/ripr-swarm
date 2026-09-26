@@ -27,8 +27,8 @@ use super::refresh_scheduler::{
     RefreshAttemptOutcome, RefreshDecision, RefreshReason, RefreshRequest, RefreshScope,
 };
 use super::state::{
-    AnalysisAttemptState, AnalysisFailureKind, AnalysisSnapshot, DocumentStore,
-    HarnessFactsOnSnapshot, RefreshMetadata, content_digest, format_duration,
+    AnalysisAttemptState, AnalysisFailureKind, AnalysisSnapshot, DocumentStalenessReason,
+    DocumentStore, HarnessFactsOnSnapshot, RefreshMetadata, content_digest, format_duration,
 };
 use super::uri::{encode_uri_path, file_uri_for_path, file_uris_match, path_from_file_uri};
 use super::{
@@ -67,10 +67,10 @@ use tower_lsp_server::ls_types::{
     DidSaveTextDocumentParams, DocumentDiagnosticParams, ExecuteCommandParams, FileChangeType,
     FileEvent, HoverContents, HoverParams, HoverProviderCapability, InitializeParams, MarkedString,
     NumberOrString, PartialResultParams, Position, PositionEncodingKind, PreviousResultId, Range,
-    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TraceValue,
-    VersionedTextDocumentIdentifier, WindowClientCapabilities, WorkspaceDiagnosticParams,
-    WorkspaceFolder,
+    SaveOptions, TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncSaveOptions, TraceValue, VersionedTextDocumentIdentifier,
+    WindowClientCapabilities, WorkspaceDiagnosticParams, WorkspaceFolder,
 };
 use tower_lsp_server::{LspService, Server};
 
@@ -90,9 +90,19 @@ fn server_path_text(path: &Path) -> String {
 fn initialize_result_exposes_existing_lsp_capabilities() -> Result<(), String> {
     let result = initialize_result();
 
+    let Some(TextDocumentSyncCapability::Options(sync)) = result.capabilities.text_document_sync
+    else {
+        return Err("expected explicit textDocumentSync options".to_string());
+    };
+    // The extension's pre-activation probe admits a server on exactly this
+    // object, so the advertisement is a consumer contract.
+    assert_eq!(sync.open_close, Some(true));
+    assert_eq!(sync.change, Some(TextDocumentSyncKind::INCREMENTAL));
     assert_eq!(
-        result.capabilities.text_document_sync,
-        Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL))
+        sync.save,
+        Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
+            include_text: Some(false)
+        }))
     );
     assert_eq!(
         result.capabilities.hover_provider,
@@ -7197,6 +7207,117 @@ async fn did_save_without_text_falls_back_to_document_store_content() -> Result<
     Ok(())
 }
 
+/// The advertised `includeText: false` contract makes the server fall back
+/// to its own retained buffer on `didSave`. After an incremental change the
+/// server could not apply, that buffer is not the client's buffer, so a
+/// text-less save must publish no saved-content identity at all: recording the
+/// frozen digest would let a refresh analyze stale content as the saved
+/// workspace, and would advance the revision on a no-op. The quarantine must
+/// also survive the save, because no digest can restore line identity the
+/// server does not have.
+#[tokio::test]
+async fn did_save_without_text_records_no_identity_after_an_invalid_incremental_change()
+-> Result<(), String> {
+    let uri = test_uri("file:///workspace/src/lib.rs")?;
+    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+    let backend = service.inner();
+    // didOpen text is deliberately not the last saved content, so the digest
+    // a text-less save would derive from the retained buffer differs from the
+    // identity already recorded. Otherwise the save would dedup and prove
+    // nothing about whether a frozen digest was published. didSave with text
+    // must not be used to set that baseline: it would overwrite the retained
+    // buffer with the saved content and re-align the two digests.
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem::new(
+                uri.clone(),
+                "rust".to_string(),
+                1,
+                "fn unsaved_edit() {}".to_string(),
+            ),
+        })
+        .await;
+    let baseline = backend.workspace_revision();
+    let saved_before = {
+        let documents = backend
+            .documents
+            .lock()
+            .map_err(|_| "document store unavailable".to_string())?;
+        let state = documents
+            .state_for_uri(&uri)
+            .ok_or_else(|| "expected retained document".to_string())?;
+        let saved_before = state.saved_digest.clone();
+        // The retained buffer is exactly what a text-less save would hash. It
+        // must differ from the recorded identity, or that save dedups and this
+        // control would prove nothing.
+        if Some(state.buffer_digest()) == saved_before {
+            return Err(
+                "fixture drift: the retained buffer must differ from the last recorded save"
+                    .to_string(),
+            );
+        }
+        saved_before
+    };
+
+    // A UTF-16 range past the end of the line cannot be applied.
+    backend
+        .did_change(DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier::new(uri.clone(), 2),
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: Some(Range {
+                    start: Position {
+                        line: 0,
+                        character: 99,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 100,
+                    },
+                }),
+                range_length: None,
+                text: "X".to_string(),
+            }],
+        })
+        .await;
+
+    backend
+        .did_save(DidSaveTextDocumentParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            text: None,
+        })
+        .await;
+
+    let documents = backend
+        .documents
+        .lock()
+        .map_err(|_| "document store unavailable".to_string())?;
+    let state = documents
+        .state_for_uri(&uri)
+        .ok_or_else(|| "expected retained document".to_string())?;
+    if !state.is_buffer_authority_unknown() {
+        return Err("an unappliable incremental change must disown the buffer".to_string());
+    }
+    if state.quarantine.as_ref().map(|q| q.reason)
+        != Some(DocumentStalenessReason::InvalidIncrementalChange)
+    {
+        return Err("a text-less save must not clear the invalid-change quarantine".to_string());
+    }
+    if state.saved_digest != saved_before {
+        return Err(
+            "a text-less save over a disowned buffer must record no saved digest".to_string(),
+        );
+    }
+    drop(documents);
+    if backend.workspace_revision() != baseline {
+        return Err(format!(
+            "a text-less save over a disowned buffer must not advance the workspace revision: \
+             expected {baseline}, got {}",
+            backend.workspace_revision()
+        ));
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn did_close_clears_the_saved_content_digest() -> Result<(), String> {
     let uri = test_uri("file:///workspace/src/lib.rs")?;
@@ -7277,14 +7398,17 @@ fn document_store_tracks_open_change_and_close() -> Result<(), String> {
     assert_eq!(opened.version, Some(1));
     assert_eq!(opened.text, "fn old() {}");
 
-    store.change(DidChangeTextDocumentParams {
-        text_document: VersionedTextDocumentIdentifier::new(uri.clone(), 2),
-        content_changes: vec![TextDocumentContentChangeEvent {
-            range: None,
-            range_length: None,
-            text: "fn new() {}".to_string(),
-        }],
-    });
+    store.change(
+        DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier::new(uri.clone(), 2),
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: "fn new() {}".to_string(),
+            }],
+        },
+        &PositionEncodingKind::UTF16,
+    );
 
     let Some(changed) = store.documents.get(&uri) else {
         return Err("expected changed document".to_string());
@@ -7305,14 +7429,17 @@ fn document_store_creates_document_from_full_change_when_missing() -> Result<(),
     let uri = test_uri("file:///workspace/src/lib.rs")?;
     let mut store = DocumentStore::default();
 
-    store.change(DidChangeTextDocumentParams {
-        text_document: VersionedTextDocumentIdentifier::new(uri.clone(), 7),
-        content_changes: vec![TextDocumentContentChangeEvent {
-            range: None,
-            range_length: None,
-            text: "fn discovered() {}".to_string(),
-        }],
-    });
+    store.change(
+        DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier::new(uri.clone(), 7),
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: "fn discovered() {}".to_string(),
+            }],
+        },
+        &PositionEncodingKind::UTF16,
+    );
 
     let Some(document) = store.documents.get(&uri) else {
         return Err("expected document from full change".to_string());

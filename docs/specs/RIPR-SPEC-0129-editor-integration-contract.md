@@ -108,9 +108,14 @@ Consumes everything in Layer 1, plus:
 Before activation, the trusted VS Code extension admits a resolved server only
 after a bounded, standard JSON-RPC 2.0 `initialize` → `initialized` →
 `shutdown` → `exit` exchange over LSP stdio. Admission requires the exact
-surface the active client consumes: full saved-document synchronization,
-UTF-16 positions, hover, code actions, pull diagnostics, workspace folders,
-and the complete current server-executed `ripr.collect*`/refresh command set.
+surface the active client consumes: serviceable saved-document
+synchronization, UTF-16 positions, hover, code actions, pull diagnostics,
+workspace folders, and the complete current server-executed
+`ripr.collect*`/refresh command set. `textDocumentSync` is admitted when it
+is the bare `Full`/`Incremental` shorthand or an options object that keeps
+open/close, applies the advertised change kind, disables `willSave`, and
+delivers `didSave`; an options object requiring `includeText` is rejected,
+because client-sent text is not saved-workspace authority.
 `codeAction/resolve` and work-done progress remain optional because their
 absence has an existing client fallback. A response must carry JSON-RPC 2.0,
 the active request id, no method, and exactly one of `result` or a structurally
@@ -279,10 +284,15 @@ does not advertise fails the parity tests.
   `hover_for_position_adds_snapshot_status_to_seam_hover`) verify hover
   falls back to snapshot status and never fabricates content without a
   snapshot.
-- `tests.rs::initialize_result_exposes_existing_lsp_capabilities` pins
-  the base advertisement: full text-document sync, position encoding, and
-  workspace-folder support. Their deeper semantics are owned by the
-  linked child issues (#1625 saved-workspace sync, #1626 positions,
+- `tests.rs::initialize_result_exposes_existing_lsp_capabilities` and
+  `capabilities.rs::initialize_result_advertises_incremental_saved_workspace_sync`
+  pin the base advertisement: incremental text-document sync with a
+  `didSave` that does not require text, position encoding, and
+  workspace-folder support. The incremental consumer is pinned by
+  `state.rs` offset tests and the fail-closed
+  `InvalidIncrementalChange` quarantine, including that a save over a
+  disowned buffer records no saved-content identity. The remaining
+  deeper semantics are owned by the linked child issues (#1626 positions,
   RIPR-SPEC-0139 workspace roots), not re-specified here.
 - `tests.rs::framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save`
   is the saved-workspace end-to-end fixture (#1622): one framed session

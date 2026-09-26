@@ -475,14 +475,43 @@ function validateInitializeResult(result: unknown): Omit<LspCompatibilityEvidenc
   };
 }
 
-function supportedTextDocumentSync(value: unknown): boolean {
-  if (value === 1) {
+/**
+ * The server must actually apply `didChange` content changes to its retained
+ * buffer, otherwise an edit would replace the whole document with a fragment
+ * and poison the saved-workspace identity the diagnostics path depends on.
+ * `1` (Full) and `2` (Incremental) are both served; the `ripr` server
+ * advertises explicit options, and the only thing that matters here is that
+ * the advertised change kind is one the server honors.
+ */
+function supportedTextDocumentSyncKind(value: unknown): boolean {
+  return value === 1 || value === 2;
+}
+
+/**
+ * `didSave` must be delivered, and the client must not depend on the server
+ * requiring the saved text: `ripr` advertises `includeText: false` and
+ * derives the saved-content identity from persisted bytes plus its own
+ * retained buffer, because client-sent text is not saved-workspace authority.
+ * An `includeText: false` object therefore satisfies this contract.
+ */
+function supportedTextDocumentSyncSave(value: unknown): boolean {
+  if (value === true || value === false) {
     return true;
   }
-  if (!isObject(value) || value.change !== 1) {
+  return isObject(value) && value.includeText !== true;
+}
+
+function supportedTextDocumentSync(value: unknown): boolean {
+  if (isObject(value) && (value.openClose === false || value.willSave === true || value.willSaveWaitUntil === true)) {
+    // Open/close and optional willSave notifications are the server's current
+    // surface; a candidate that withholds didOpen/didClose or demands a
+    // willSave round trip is not the contract this client depends on.
     return false;
   }
-  return value.save === true || (isObject(value.save) && value.save.includeText !== false);
+  if (isObject(value)) {
+    return supportedTextDocumentSyncKind(value.change) && supportedTextDocumentSyncSave(value.save);
+  }
+  return supportedTextDocumentSyncKind(value);
 }
 
 type CheckedJsonRpcResponse =
