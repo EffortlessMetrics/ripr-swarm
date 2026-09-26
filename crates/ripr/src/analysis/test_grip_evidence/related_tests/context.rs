@@ -75,7 +75,11 @@ impl NameModuleCandidateIndex {
         if parent.is_empty() {
             return Vec::new();
         }
-        let mut indices = self.module_prefixes.get(parent).cloned().unwrap_or_default();
+        let mut indices = self
+            .module_prefixes
+            .get(parent)
+            .cloned()
+            .unwrap_or_default();
         let flattened = parent.replace('/', "_");
         if flattened != parent {
             indices.extend(
@@ -320,7 +324,8 @@ impl<'a> CompactGripContext<'a> {
             .module_candidates(owner_module)
             .into_iter()
             .filter(|&index| {
-                self.tests[index].module_path
+                self.tests[index]
+                    .module_path
                     .as_deref()
                     .is_some_and(|test_module| same_module(owner_module, test_module))
             })
@@ -385,7 +390,11 @@ mod candidate_index_tests {
             let actual = index
                 .module_candidates(owner)
                 .into_iter()
-                .filter(|&i| fixtures[i].1.is_some_and(|module| same_module(owner, module)))
+                .filter(|&i| {
+                    fixtures[i]
+                        .1
+                        .is_some_and(|module| same_module(owner, module))
+                })
                 .collect::<Vec<_>>();
             // Inline legacy predicate: deliberately independent of the indexed
             // candidate generator and of `same_module`.
@@ -393,7 +402,10 @@ mod candidate_index_tests {
                 .iter()
                 .enumerate()
                 .filter_map(|(i, (_, module))| {
-                    let parent = owner.rsplit_once('/').map(|(parent, _)| parent).unwrap_or("");
+                    let parent = owner
+                        .rsplit_once('/')
+                        .map(|(parent, _)| parent)
+                        .unwrap_or("");
                     let related = !parent.is_empty()
                         && module.is_some_and(|module| {
                             module == parent
