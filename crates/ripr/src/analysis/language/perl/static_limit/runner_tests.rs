@@ -8,7 +8,9 @@ use super::super::{
     Confidence, DynamicBoundaryFact, LimitationFact, PacketStatus, packet_to_findings,
 };
 use super::*;
-use crate::domain::{ExposureClass, Finding, LanguageStatus};
+use crate::app::{CheckOutput, Mode};
+use crate::domain::{ExposureClass, Finding, LanguageStatus, Summary};
+use std::path::PathBuf;
 
 const REAL_PRODUCER_PACKET: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -110,6 +112,40 @@ fn perl_static_limit_missing_runner_keeps_observation() -> Result<(), String> {
             .any(|evidence| evidence.starts_with("perl_suggested_"))
     );
     assert!(packet.verify_commands.is_empty());
+    let human = crate::output::human::render_finding(&observed);
+    assert!(human.contains("Make the related Perl test runner available"));
+    assert!(!human.contains("No test change needed"));
+
+    let output = CheckOutput {
+        schema_version: "0.2".to_string(),
+        harness_projections: Vec::new(),
+        tool: "ripr".to_string(),
+        mode: Mode::Draft,
+        root: PathBuf::from("."),
+        base: None,
+        analysis_outcome: None,
+        summary: Summary::default(),
+        findings: vec![observed],
+        preview_language_advisories: Vec::new(),
+        language_runs: Vec::new(),
+        no_scope_provided: false,
+        unanalyzed_working_tree: false,
+        suppression: None,
+        partial_scope: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&crate::output::json::render(&output))
+        .map_err(|error| format!("parse rendered Perl finding: {error}"))?;
+    let step = json["findings"][0]["recommended_next_step"]
+        .as_str()
+        .ok_or_else(|| "rendered Perl finding lacks a next step".to_string())?;
+    assert!(step.contains("Make the related Perl test runner available"));
+    assert!(!step.contains("No test change needed"));
+    let evidence = json["findings"][0]["evidence"]
+        .as_array()
+        .ok_or_else(|| "rendered Perl finding lacks evidence".to_string())?;
+    assert!(evidence.iter().any(|line| line
+        .as_str()
+        .is_some_and(|text| text.starts_with("perl_missing_test_runner:"))));
     Ok(())
 }
 
