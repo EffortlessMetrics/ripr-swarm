@@ -79,6 +79,7 @@ suite('Standard LSP compatibility probe', () => {
   }
 
   for (const [mode, reason] of [
+    ['sync-numeric-incremental', 'requires options advertising openClose and save'],
     ['sync-save-false', 'save'],
     ['sync-no-save', 'save'],
     ['sync-no-open-close', 'openClose'],
@@ -333,7 +334,7 @@ function consume() {
       if (mode === 'sync-will-save') syncOptions.willSave = true;
       if (mode === 'sync-will-save-wait') syncOptions.willSaveWaitUntil = true;
       if (mode === 'sync-include-text') syncOptions.save.includeText = true;
-      const capabilities = { textDocumentSync: mode.startsWith('sync-') ? syncOptions : 1, hoverProvider: true, codeActionProvider: true, diagnosticProvider: {}, executeCommandProvider: { commands }, workspace: { workspaceFolders: { supported: true } }, positionEncoding: mode === 'utf8' ? 'utf-8' : 'utf-16' };
+      const capabilities = { textDocumentSync: mode === 'sync-numeric-incremental' ? 2 : mode.startsWith('sync-') ? syncOptions : 1, hoverProvider: true, codeActionProvider: true, diagnosticProvider: {}, executeCommandProvider: { commands }, workspace: { workspaceFolders: { supported: true } }, positionEncoding: mode === 'utf8' ? 'utf-8' : 'utf-16' };
       if (mode === 'missing-hover') delete capabilities.hoverProvider;
       if (mode === 'missing-diagnostics') delete capabilities.diagnosticProvider;
       if (mode === 'missing-workspace-folders') delete capabilities.workspace;
