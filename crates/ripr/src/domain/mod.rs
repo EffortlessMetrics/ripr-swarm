@@ -44,7 +44,7 @@ pub use evidence::{
     Confidence, OracleKind, OracleStrength, RelationConfidence, RelationReason, RevealEvidence,
     RiprEvidence, StageEvidence, StageState,
 };
-pub use evidence_state::EvidenceState;
+pub(crate) use evidence_state::EvidenceState;
 pub use fix_instruction::{FixInstructionState, FixInstructionSummary};
 pub use git_candidate::{
     GitCandidateBase, GitCandidateDiffSemantics, GitCandidateSubject, GitCandidateSubjectError,
