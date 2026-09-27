@@ -1114,6 +1114,8 @@ fn given_strict_boundary_seam_when_tests_skip_equal_value_then_grip_names_missin
         ("<", "100", Some("100"), false),
         (">=", "100", None, true),
         (">=", "100", Some("100"), false),
+        ("<=", "100", None, true),
+        ("<=", "100", Some("100"), false),
         (">", "1_000", Some("1000"), false),
         (">", "1000", Some("1_000"), false),
         (">", "1_000", Some("1001"), true),
@@ -1126,14 +1128,14 @@ fn given_strict_boundary_seam_when_tests_skip_equal_value_then_grip_names_missin
         let numeric = |literal: &str| literal.replace('_', "").parse::<u64>();
         let threshold = numeric(boundary).map_err(|error| error.to_string())?;
         // Keep every fixture assertion true for its operator.
-        let fee = |amount: u64| {
-            let taken = match operator {
-                ">" => amount > threshold,
-                "<" => amount < threshold,
-                _ => amount >= threshold,
-            };
-            if taken { 0 } else { 5 }
+        let taken: fn(u64, u64) -> bool = match operator {
+            ">" => |amount, threshold| amount > threshold,
+            "<" => |amount, threshold| amount < threshold,
+            ">=" => |amount, threshold| amount >= threshold,
+            "<=" => |amount, threshold| amount <= threshold,
+            other => return Err(format!("fixture has no model for operator `{other}`")),
         };
+        let fee = |amount: u64| if taken(amount, threshold) { 0 } else { 5 };
         let boundary_test = match boundary_input {
             Some(input) => format!(
                 "#[test]\nfn near_boundary() {{ assert_eq!(fee({input}), {}); }}\n",
