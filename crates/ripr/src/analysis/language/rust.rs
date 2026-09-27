@@ -1789,15 +1789,12 @@ impl RustAdapter {
             // seed diff probes; Cargo benches, examples, integration
             // tests, and confirmed test-target files stay indexed
             // evidence without harness-plumbing obligations. Changed
-            // files under the repository's own automation directory
-            // still seed probes: automation changes are reviewed
-            // behavior (pre-#3283 diff behavior, pinned by
-            // `diff_analysis_seeds_probes_for_changed_repo_automation_files`),
-            // while the
+            // root `xtask/` sources still seed probes: automation changes
+            // are reviewed behavior (pre-#3283 diff behavior), while the
             // evidence role keeps governing repo-mode indexing.
             let role = workspace::classify_with(&changed.path, &source_role_context);
             if !role.seeds_production_findings()
-                && !workspace::is_repo_automation_path(&changed.path)
+                && !workspace::is_repo_automation_subject(&changed.path, role)
             {
                 continue;
             }
@@ -4666,7 +4663,9 @@ let _ = (result, note, raw);"##,
         // automation file is reviewed behavior. Without the automation
         // exemption the whole diff counted as a changed Rust file yet
         // produced zero candidate lines and no disclosure (the 0.11 Rust
-        // challenge p1745 case: 329 changed xtask lines, 0 probes).
+        // challenge p1745 case: 329 changed xtask lines, 0 probes). The
+        // exemption must not reach xtask's own integration tests: an
+        // unannotated helper under `xtask/tests/` stays evidence.
         let root = temp_root("xtask-automation-seeds")?;
         write(
             &root.join("Cargo.toml"),
@@ -4680,6 +4679,10 @@ let _ = (result, note, raw);"##,
             &root.join("xtask/src/main.rs"),
             "fn wedged(stuck: usize, limit: usize) -> bool {\n    stuck > limit\n}\nfn main() {\n    let _ = wedged(1, 0);\n}\n",
         )?;
+        write(
+            &root.join("xtask/tests/help.rs"),
+            "fn rendered(ok: bool) -> &'static str {\n    if ok { \"out\" } else { \"err\" }\n}\n#[test]\nfn help_renders() {\n    assert_eq!(rendered(true), \"out\");\n}\n",
+        )?;
         let changed_files = diff::parse_unified_diff(
             "diff --git a/xtask/src/main.rs b/xtask/src/main.rs\n\
          new file mode 100644\n\
@@ -4691,6 +4694,18 @@ let _ = (result, note, raw);"##,
          +}\n\
          +fn main() {\n\
          +    let _ = wedged(1, 0);\n\
+         +}\n\
+         diff --git a/xtask/tests/help.rs b/xtask/tests/help.rs\n\
+         new file mode 100644\n\
+         --- /dev/null\n\
+         +++ b/xtask/tests/help.rs\n\
+         @@ -0,0 +1,7 @@\n\
+         +fn rendered(ok: bool) -> &'static str {\n\
+         +    if ok { \"out\" } else { \"err\" }\n\
+         +}\n\
+         +#[test]\n\
+         +fn help_renders() {\n\
+         +    assert_eq!(rendered(true), \"out\");\n\
          +}\n",
         );
 
@@ -4713,7 +4728,7 @@ let _ = (result, note, raw);"##,
             &changed_files,
         )?;
 
-        assert_eq!(result.changed_files, 1);
+        assert_eq!(result.changed_files, 2);
         assert!(
             result.candidate_line_count > 0,
             "a changed automation file must seed candidate lines"
@@ -4728,6 +4743,17 @@ let _ = (result, note, raw);"##,
                 .ends_with("xtask/src/main.rs")
                 && finding.probe.location.line == 2),
             "the changed xtask predicate must become a probe: {:?}",
+            result.findings
+        );
+        assert!(
+            result.findings.iter().all(|finding| !finding
+                .probe
+                .location
+                .file
+                .to_string_lossy()
+                .replace('\\', "/")
+                .contains("xtask/tests/")),
+            "xtask integration-test helpers must stay evidence: {:?}",
             result.findings
         );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
