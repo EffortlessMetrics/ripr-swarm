@@ -305,12 +305,17 @@ The receipt that closes the loop is the attempt-bound receipt: one carrying a
 and packet digests its finish measured. `ripr agent status` matches that block
 against an attempt's after verdict, so the bound receipt, not the raw verify
 artifact, is what tells status the attempt's outcome. The repair transaction
-writes it for you: for one named gap, run
-`ripr agent repair --phase before`, make the focused edit, then run the
-`--attempt ... --phase after` command it printed. The after phase runs the
-verify and receipt plumbing, binds the receipt, and writes it to
-`target/ripr/reports/agent-receipt.json`. See **First-hour repair path:
-`ripr agent repair`** below.
+writes it, and its ordering matters: the before phase captures the current
+checkout as its baseline, so the transaction must start **before** the focused
+test edit — run `ripr agent repair --phase before`, make the focused edit,
+then run the `--attempt ... --phase after` command it printed. The after phase
+runs the verify and receipt plumbing, binds the receipt, and writes it to
+`target/ripr/reports/agent-receipt.json`. A transaction started only after the
+test has landed sees no repository movement between its phases and refuses
+the receipt. Because this section's rerun happens after the test has landed,
+the commands below close out with the bare receipt instead; the
+**First-hour repair path: `ripr agent repair`** section below is where a
+bound receipt is produced end to end.
 
 The lower-level commands stay available as the explicit-control fallback
 (they are the plumbing the repair transaction drives, and they remain useful
@@ -333,10 +338,14 @@ cargo run -p ripr -- agent receipt \
 ```
 
 The binding is conditional. `ripr agent receipt` binds the receipt to a repair
-attempt only when the workflow packet (`target/ripr/workflow/agent-packet.json`)
-or the attempts directory (`target/ripr/repair-attempts/`) already exists, and
-then only when exactly one receipt-ready attempt for the seam is found. Run it
-before any repair attempt exists and the receipt is written **unbound**: it
+attempt only when the workflow packet exists at
+`target/ripr/workflow/agent-packet.json` — the public command always reads
+that file and has no packet override — and then only when exactly one attempt
+manifest exists for the seam across all states and that attempt is
+receipt-ready (finished, with a current after head and a compliant cage
+verdict). Two retained attempts for the same seam fail closed; inspect them
+with `ripr agent status --json`. Run it before any repair attempt exists and
+the receipt is written **unbound**: it
 carries no `repair_attempt` block. That is a legacy shape, not a finished
 loop: status matches a receipt to an attempt by that block, so it treats the
 unbound file the same as a missing one. If you later finish a real attempt
@@ -347,9 +356,10 @@ that attempt:
 no receipt at `target/ripr/reports/agent-receipt.json` was issued for its after verdict
 ```
 
-Prefer the repair transaction for the first receipt. Run the bare
-`agent receipt` command only to rewrite the receipt of an attempt that
-already finished receipt-ready.
+Prefer the repair transaction for the first receipt; it satisfies the binding
+preconditions by construction. The bare command is for rerunning the receipt
+when exactly one finished attempt for the seam exists and the workflow packet
+is still in place — anything else fails closed rather than guessing.
 
 The JSON printed by `ripr agent verify` shows whether matched seams improved,
 stayed unchanged, regressed, appeared, or disappeared from the after snapshot.
