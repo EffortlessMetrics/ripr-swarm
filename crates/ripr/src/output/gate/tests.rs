@@ -1331,6 +1331,38 @@ fn gate_static_limitation_reason_outranks_pr_wide_nearby_test_flag() -> Result<(
             control.gate_reason
         );
     }
+    // N3 pin: with no test changed in the PR the same card is otherwise
+    // policy-eligible without a route, so it is headlined by the gate's own
+    // incomplete-route limitation. This pins current behavior; the order is
+    // not changed here.
+    let unchanged = write_temp_json(
+        &dir,
+        "unchanged.json",
+        &NO_TEST_REACHES_OWNER_GUIDANCE_JSON
+            .replace(r#""unchanged_tests": false"#, r#""unchanged_tests": true"#),
+    )?;
+    let mut input = fixture_input(GateMode::VisibleOnly)?;
+    input.root = dir.clone();
+    input.pr_guidance = Some(
+        unchanged
+            .strip_prefix(&dir)
+            .map_err(|err| err.to_string())?
+            .to_path_buf(),
+    );
+    let report = build_gate_decision_report(&input)?;
+    let limited = report
+        .decisions
+        .iter()
+        .find(|decision| decision.source_id == "loyalty")
+        .ok_or("missing unchanged-tests decision")?;
+    assert!(!limited.evidence.nearby_test_changed);
+    assert!(
+        limited
+            .gate_reason
+            .starts_with("incomplete_repair_route: missing "),
+        "{}",
+        limited.gate_reason
+    );
     ignore_remove_dir_all(dir);
     Ok(())
 }
