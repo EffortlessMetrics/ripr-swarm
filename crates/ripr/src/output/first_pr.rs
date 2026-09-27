@@ -109,15 +109,39 @@ pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
-    let options = parse_options(args)?;
+    let mut options = parse_options(args)?;
     print_side_effect_disclosure(&options);
 
     let repo = repo_root()?;
+    resolve_omitted_base(&repo, &mut options)?;
     if options.check {
         check_first_pr(&repo, &options)
     } else {
         write_first_pr(&repo, &options)
     }
+}
+
+/// Resolve an omitted `--base` through the diff loader's authority (#3952,
+/// RIPR-SPEC-0084) instead of assuming `origin/main`, which need not exist:
+/// in a repository without `origin` the packet used to record a base that
+/// was never analyzed.
+///
+/// Only a root that is a Git work tree is resolved. A missing root or a
+/// non-repository keeps the placeholder so the root and Git preflights still
+/// write their own recovery packets; those block before the base is used.
+/// When the root is a work tree and nothing resolves, the run fails with the
+/// loader's named error rather than recording a guessed base.
+fn resolve_omitted_base(repo: &Path, options: &mut FirstPrOptions) -> Result<(), String> {
+    if options.base_explicit {
+        return Ok(());
+    }
+    let root = resolve_path(repo, &options.root);
+    if !root.is_dir() || git_worktree_available_with_ceiling(&root, None) != Ok(true) {
+        return Ok(());
+    }
+    options.base = crate::analysis::resolve_effective_base(&root, None, None)
+        .map_err(|err| format!("first-pr: {err}"))?;
+    Ok(())
 }
 
 /// Print the side-effect and cost disclosure for the *resolved* invocation, so
@@ -2328,6 +2352,8 @@ mod tests {
         ])?;
         assert_eq!(parsed.root, "repo");
         assert_eq!(parsed.base, "origin/main");
+        assert!(parsed.base_explicit);
+        assert!(!FirstPrOptions::default().base_explicit);
         assert_eq!(parsed.head, "HEAD");
         assert_eq!(parsed.check_output.as_deref(), Some("check.json"));
         assert_eq!(parsed.gap_ledger, "gap.json");
@@ -3468,6 +3494,53 @@ mod tests {
         cleanup(&repo)
     }
 
+    /// #4216: a weakly exposed Python finding without a repair card used to
+    /// leave first-pr at a bare generic "no actionable gap". The ledger now
+    /// carries a non-delegatable static-limitation record, and first-pr names
+    /// why no card exists and the manual step, as advisory no-action.
+    #[test]
+    fn python_finding_without_repair_card_names_limitation_and_manual_step() -> Result<(), String> {
+        use crate::output::gap_decision_ledger::{
+            GapDecisionLedgerInput, GapDecisionLedgerSourceKind, build_gap_decision_ledger_report,
+            render_gap_decision_ledger_json,
+        };
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: ".".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "check.json".to_string(),
+            records_json: Ok(include_str!(
+                "../../../../fixtures/python_same_stem_sibling_owner_not_related/expected/check.json"
+            )
+            .to_string()),
+        });
+        let ledger_json = render_gap_decision_ledger_json(&report)?;
+        let repo = temp_repo("first-pr-python-no-card")?;
+        let ledger_value: Value =
+            serde_json::from_str(&ledger_json).map_err(|err| format!("parse ledger: {err}"))?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_value)?;
+        write_json(
+            &repo.join(DEFAULT_REVIEW_COMMENTS),
+            review_comments_report(Vec::new()),
+        )?;
+        let packet = render_start_here_packet(&repo, &FirstPrOptions::default());
+        assert_eq!(packet["status"], "no_action", "{packet}");
+        assert_eq!(packet["selected"]["output_state"], "no_actionable_gap");
+        let reason = packet["selected"]["reason"].as_str().unwrap_or_default();
+        assert!(
+            reason.contains(
+                "Static limitation `python_repair_card_unavailable` at `pricing.py:5`: this Python preview finding has no repair card (static evidence names no concrete missing discriminator)"
+            ),
+            "{reason}"
+        );
+        assert!(
+            reason.contains("add or strengthen a test by hand, then rerun `ripr check`"),
+            "{reason}"
+        );
+        assert!(packet["commands"].get("agent_packet").is_none(), "{packet}");
+        cleanup(&repo)
+    }
+
     /// A carried repair start that no producer builds from the card's seam
     /// id: the non-default `--root` makes any rebuilt command differ.
     const CARD_REPAIR_COMMAND: &str =
@@ -3810,8 +3883,8 @@ mod tests {
         .map_err(|err| format!("parse pr-summary json: {err}"))?;
         assert!(summary_json["top_repair"].get("repair_command").is_none());
         assert_eq!(
-            summary_json["local_reproduction_commands"][0],
-            "ripr check --base origin/main"
+            summary_json["local_reproduction_commands"][0], "ripr check --base origin/main",
+            "pr-summary replays the base the start-here packet recorded"
         );
         Ok(())
     }
