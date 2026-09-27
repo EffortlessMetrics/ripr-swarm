@@ -4824,6 +4824,63 @@ let _ = (result, note, raw);"##,
     }
 
     #[test]
+    fn diff_analysis_skips_build_scripts_cargo_never_compiles() -> Result<(), String> {
+        // `package.build = false`: Cargo never compiles this `build.rs`
+        // (it may not even type-check), so it must not seed findings.
+        let root = temp_root("build-script-disabled")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='sample'\nversion='0.1.0'\nedition='2024'\nbuild=false\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub fn value() -> u32 { 1 }\n")?;
+        write(
+            &root.join("build.rs"),
+            "fn wants_rerun(stamp: u64, limit: u64) -> bool {\n    stamp > limit\n}\nfn main() {\n    let _ = wants_rerun(1, 0);\n}\n",
+        )?;
+        let changed_files = diff::parse_unified_diff(
+            "diff --git a/build.rs b/build.rs\n\
+         new file mode 100644\n\
+         --- /dev/null\n\
+         +++ b/build.rs\n\
+         @@ -0,0 +1,6 @@\n\
+         +fn wants_rerun(stamp: u64, limit: u64) -> bool {\n\
+         +    stamp > limit\n\
+         +}\n\
+         +fn main() {\n\
+         +    let _ = wants_rerun(1, 0);\n\
+         +}\n",
+        );
+
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+
+        assert_eq!(result.changed_files, 1);
+        assert!(
+            result.findings.is_empty(),
+            "a disabled build script must not seed probes: {:?}",
+            result.findings
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
     fn diff_analysis_confirms_declared_test_targets_but_not_unconfirmed_names() -> Result<(), String>
     {
         // #3283: a `[[test]]` target with an explicit path confirms

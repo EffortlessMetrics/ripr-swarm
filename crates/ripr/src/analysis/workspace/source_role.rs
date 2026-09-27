@@ -109,6 +109,11 @@ pub(crate) struct SourceRoleContext {
     /// producers. Evidence role; the explicit production-like opt-in
     /// still wins over a harness registration.
     pub(crate) harness_targets: BTreeSet<PathBuf>,
+    /// Relative paths of the build scripts Cargo actually compiles: a
+    /// package's `build.rs` unless `package.build = false`, or the path
+    /// `package.build` names. Only these seed changed-file probes outside
+    /// a `src` layout.
+    pub(crate) build_scripts: BTreeSet<PathBuf>,
 }
 
 impl SourceRoleContext {
@@ -281,7 +286,10 @@ fn is_repo_automation_subject(path: &Path, role: SourceRole) -> bool {
 /// there is reviewed behavior rather than data:
 ///
 /// - repository automation (`xtask/`, see [`is_repo_automation_subject`]);
-/// - Cargo build scripts (`build.rs`), which sit outside any `src` layout.
+/// - Cargo build scripts, which sit outside any `src` layout. Only the
+///   script a package manifest actually builds counts
+///   ([`SourceRoleContext::build_scripts`]): a `build.rs` under
+///   `package.build = false`, or outside any package, is never compiled.
 ///
 /// Repo mode keeps both out of the seam inventory. Registered non-source
 /// directories (`fixtures/`, `target/`, ...) stay evidence even inside
@@ -299,10 +307,7 @@ pub(crate) fn seeds_diff_probes(path: &Path, context: &SourceRoleContext) -> boo
                     .is_some_and(|name| NON_SOURCE_DIRECTORIES.contains(&name))
             });
             is_repo_automation_subject(path, role)
-                || (!in_non_source_directory
-                    && normalized
-                        .file_name()
-                        .is_some_and(|name| name == "build.rs"))
+                || (!in_non_source_directory && context.build_scripts.contains(&normalized))
         }
         _ => false,
     }
@@ -596,7 +601,19 @@ mod tests {
 
     #[test]
     fn changed_automation_and_loose_files_seed_diff_probes() {
-        let context = SourceRoleContext::empty();
+        // Build scripts seed only when a manifest declares them; the
+        // `fixtures/` entry proves the non-source guard still wins.
+        let mut context = SourceRoleContext::empty();
+        for script in [
+            "build.rs",
+            "crates/ripr/build.rs",
+            "examples/sample/build.rs",
+            "xtask/build.rs",
+            "tools/codegen.rs",
+            "fixtures/entropy/input/build.rs",
+        ] {
+            context.build_scripts.insert(PathBuf::from(script));
+        }
         for (path, seeds) in [
             ("crates/ripr/src/lib.rs", true),
             ("xtask/src/windows_advisory.rs", true),
@@ -604,8 +621,12 @@ mod tests {
             ("crates/ripr/build.rs", true),
             ("crates\\ripr\\build.rs", true),
             ("examples/sample/build.rs", true),
-            ("tests/cli.rs", false),
             ("xtask/build.rs", true),
+            ("tools/codegen.rs", true),
+            // Undeclared: `build = false`, or no owning package.
+            ("crates/other/build.rs", false),
+            ("scripts/build.rs", false),
+            ("tests/cli.rs", false),
             ("xtask/tests/cli.rs", false),
             ("xtask/tests/support/helpers.rs", false),
             ("fixtures/case/input/xtask/src/main.rs", false),
@@ -628,6 +649,10 @@ mod tests {
                 "{path}"
             );
         }
+        assert!(
+            !super::seeds_diff_probes(Path::new("build.rs"), &SourceRoleContext::empty()),
+            "a build.rs no manifest declares must not seed"
+        );
         // Repo mode keeps loose files out of the production set; only the
         // changed-file surfaces widen.
         assert_eq!(
