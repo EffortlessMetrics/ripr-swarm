@@ -543,6 +543,51 @@ are scoped or reviewed.
   result. It counts as a missing verify result
   ([#4234](https://github.com/EffortlessMetrics/ripr-swarm/issues/4234)).
 
+- `ripr gate evaluate --gap-ledger` no longer reports an already-observed
+  (closed) gap under "Suppressed" as configured-hidden. The ledger's
+  `not_policy_targeted` state also covers no-action records, so the gate now
+  reads suppression only from an explicit suppressed state or predicate. Such a
+  record is `not_applicable` with the reason "already observed; no action
+  required", and `evidence.configured_off` is `false`. The gate stays
+  non-blocking and the status is unchanged
+  ([#3903](https://github.com/EffortlessMetrics/ripr-swarm/issues/3903)).
+
+- A TypeScript change that only edits type syntax on a signature or
+  declaration line (a return type, a parameter or variable annotation, an
+  optional marker, a generic parameter list) no longer produces a `predicate`
+  probe. TypeScript erases those types, so there is no behavior for a test to
+  notice. A default-value, parameter, body, or export change on the same line
+  keeps its probe
+  ([#4282](https://github.com/EffortlessMetrics/ripr-swarm/issues/4282)).
+
+- The CLI smoke test that copies `ripr` and runs `doctor` retries only
+  `ETXTBSY` (`ExecutableFileBusy`), up to three times. A parallel test can
+  `fork` while that copy is still open for writing, and the copy cannot be
+  executed until the child reaches `exec`. Any other error, and any process
+  that actually started, is still returned unchanged. The same bound covers
+  the other smoke test that executes a copied binary
+  ([#4296](https://github.com/EffortlessMetrics/ripr-swarm/issues/4296)).
+
+- TypeScript/JavaScript preview: a class method tested through an instance
+  built outside the test body is no longer reported `no_static_path`. The
+  receiver may now come from the enclosing `describe` scope, a
+  `beforeEach`/`beforeAll` hook, a default import of the owner's
+  default-exported class, or a namespace import (`new shop.Cart()`). Scope
+  bindings are read from the syntax tree and resolved to the innermost scope,
+  where the last hook write wins over the declaration's initializer. The
+  receiver is withheld when anything in the file could rebind it outside a
+  recognized declaration or hook write: a write anywhere else (including
+  destructuring, casts and closures), a parameter or redeclaration of the
+  same name, a second hook of the same kind writing it, a hook the file
+  defines or imports under another name, or a declaration or write of the
+  class name itself (`class Cart` or `function Cart` in a hook), a method
+  assignment such as `cart.total = ...` or any use of `Cart.prototype` (a
+  spy or replaced method), a hook write that follows a possible early
+  `return`, a generator hook, or any `eval` or escaped identifier in the
+  file. Member reads, `expect(cart)`, `typeof cart`, comments, import paths
+  and describe/test/mock name strings do not count; any other string or
+  template that mentions the name does.
+
 - A generated command prints no PowerShell form only when PowerShell reads it
   the same way. Commands with a quoted program path, `$` expansion, globs,
   braces, `~`, `@`, comments, `--%`, non-spaced `>` forms, a second redirect or
@@ -560,6 +605,17 @@ are scoped or reviewed.
   reads the test index
   ([#4261](https://github.com/EffortlessMetrics/ripr-swarm/issues/4261)).
 
+- `ripr check --candidate-tree` no longer reads the worktree `ripr.toml`. A
+  subject run configures itself from its candidate tree, but the CLI still
+  loaded the worktree file first, so an unparseable worktree file, or a
+  `languages.enabled` entry the binary lacks (for example `python` in a
+  Rust-only build), made the subject run exit 2, and a worktree
+  `[analysis] mode` reached a subject whose tree sets none. The Rust-only
+  feature set (`--no-default-features --features lang-rust`) now passes its
+  test suite, and CI runs it on Linux for pull requests that change the Rust
+  crate, fixtures or Cargo manifests, and on every push to `main`
+  ([#4252](https://github.com/EffortlessMetrics/ripr-swarm/issues/4252)).
+
 - An improved `agent receipt` (including the one `ripr agent repair --phase
   after` writes) no longer says "Keep the focused test": ripr never runs the
   project's tests, and a test that fails `cargo test` can still move static
@@ -567,6 +623,27 @@ are scoped or reviewed.
   passes, and `verification` carries `status: "verification_not_run"` and the
   non-claim `static_only_assurance`
   ([#4234](https://github.com/EffortlessMetrics/ripr-swarm/issues/4234)).
+
+- TypeScript/JavaScript preview: a changed ambient declaration
+  (`declare function`, `export declare const`, `declare module`) or any
+  change in a `.d.ts`/`.d.mts`/`.d.cts` declaration file no longer yields a
+  `predicate` probe reading `no_static_path`. These are type-only and erased
+  at compile time; declaration files still count as changed files. Ambient
+  statements are found from the syntax tree, so `declare` used as a
+  JavaScript identifier, or at the start of a template-literal line, is still
+  probed.
+
+- Perl preview: with Perl enabled but no fact packet, the reason now says
+  to pass `--perl-facts <packet.json>` or configure `[perl].producer` instead
+  of citing an internal campaign issue, and the note reads "1 Perl file was
+  not analyzed".
+
+- `ripr doctor` now lists Perl under "Detected languages" whenever its Perl
+  section appears: any `.pm`, `.pl` or `.t` file at any depth, such as a
+  CPAN module under `lib/Name/`, or a `Makefile.PL`, `Build.PL` or `cpanfile`.
+  It no longer prints "none detected" beside a Perl section that counts the
+  same files. Files under `target/`, `node_modules/`, `blib/` or hidden
+  directories detect nothing, as they already counted nothing.
 
 - `cargo xtask vscode-package` now reads the built VSIX and fails if it
   carries workspace build output (anything under `extension/target/`, Cargo
