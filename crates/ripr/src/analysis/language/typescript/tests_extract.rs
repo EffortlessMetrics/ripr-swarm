@@ -470,6 +470,14 @@ fn collect_scope_bindings(
                 let Some(body) = function_body_statements_from_argument(argument) else {
                     continue;
                 };
+                // A generator hook's body does not run when the hook is
+                // called (Vitest awaits the returned generator object).
+                let phase = match argument {
+                    oxc_ast::ast::Argument::FunctionExpression(function) if function.generator => {
+                        Phase::Interleaved
+                    }
+                    _ => phase,
+                };
                 // Writes to the callback's own parameters and declarations
                 // stay in it.
                 let mut locals: Vec<ScopeEntry> = argument_parameter_names(argument)
@@ -654,7 +662,15 @@ fn withhold_rebound_scope_receivers(
                 continue;
             };
             let root = constructor.split('.').next().unwrap_or(constructor);
+            // `Cart.prototype` anywhere (a spy or method assignment in a
+            // hook) may replace the method the test calls.
             let constructor_rebound = rebound.iter().any(|name| name == root)
+                || identifier_occurrences(&code, root).any(|at| {
+                    code[at + root.len()..]
+                        .trim_start()
+                        .strip_prefix('.')
+                        .is_some_and(|rest| rest.trim_start().starts_with("prototype"))
+                })
                 || (constructor.contains('.') && member_assigned(&code, constructor));
             if opaque
                 || constructor_rebound
@@ -694,11 +710,19 @@ fn is_plain_read(code: &str, at: usize, identifier: &str) -> bool {
             .strip_prefix('.')
             .filter(|rest| !rest.starts_with(".."))
     });
-    if let Some(member) = member {
-        let end = member
-            .find(|ch: char| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
-            .unwrap_or(member.len());
-        return !assigns_next(&member[end..]);
+    if let Some(mut member) = member {
+        // Walk the whole chain: `cart.constructor.prototype.total = ...`
+        // replaces a method as surely as `cart.total = ...`.
+        loop {
+            let end = member
+                .find(|ch: char| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+                .unwrap_or(member.len());
+            let rest = member[end..].trim_start();
+            match rest.strip_prefix("?.").or_else(|| rest.strip_prefix('.')) {
+                Some(next) if !next.starts_with('.') => member = next.trim_start(),
+                _ => return !assigns_next(rest),
+            }
+        }
     }
     (before.ends_with("expect(") && after.starts_with(')')) || before.ends_with("typeof")
 }

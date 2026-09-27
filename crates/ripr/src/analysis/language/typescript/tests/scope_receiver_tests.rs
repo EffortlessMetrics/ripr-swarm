@@ -504,6 +504,18 @@ fn hidden_or_skippable_rebinding_withholds_the_receiver() -> Result<(), String> 
             "let cart: any;\nbeforeEach(() => {\n  cart = new Cart();\n  eval('car' + 't = { total: () => 1 }');\n});\nit('t', () => {\n  expect(cart.total()).toBe(1);\n});\n",
         ),
         (
+            "adv3-prototype-spy",
+            "let cart: Cart;\nbeforeEach(() => {\n  vi.spyOn(Cart.prototype, 'total').mockReturnValue(1);\n  cart = new Cart();\n});\nit('t', () => {\n  expect(cart.total()).toBe(1);\n});\n",
+        ),
+        (
+            "adv3-constructor-prototype-chain",
+            "let cart: any;\nbeforeEach(() => {\n  cart = new Cart();\n  cart.constructor.prototype.total = () => 1;\n});\nit('t', () => {\n  expect(cart.total()).toBe(1);\n});\n",
+        ),
+        (
+            "adv3-generator-hook",
+            "let cart: any = { total: () => 1 };\nbeforeEach(function* () {\n  cart = new Cart();\n});\nit('t', () => {\n  expect(cart.total()).toBe(1);\n});\n",
+        ),
+        (
             "adv2-escaped-name",
             "let cart: any;\nbeforeEach(() => {\n  cart = new Cart();\n  \\u0063art = { total: () => 1 };\n});\nit('t', () => {\n  expect(cart.total()).toBe(1);\n});\n",
         ),

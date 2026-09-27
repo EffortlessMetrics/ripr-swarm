@@ -551,8 +551,10 @@ are scoped or reviewed.
   same name, a second hook of the same kind writing it, a hook the file
   defines or imports under another name, or a declaration or write of the
   class name itself (`class Cart` or `function Cart` in a hook), a method
-  assignment such as `cart.total = ...`, a hook write that follows a possible
-  early `return`, or any `eval` or escaped identifier in the file. Member
+  assignment such as `cart.total = ...` or any use of `Cart.prototype` (a
+  spy or replaced method), a hook write that follows a possible early
+  `return`, a generator hook, or any `eval` or escaped identifier in the
+  file. Member
   reads, `expect(cart)`, `typeof cart`, comments, import paths and
   describe/test/mock name strings do not count; any other string or template
   that mentions the name does.
