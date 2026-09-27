@@ -199,66 +199,275 @@ pub(crate) fn collect_tests_from_statements(
     scope: &mut TestScope,
     tests: &mut Vec<TypeScriptTest>,
 ) {
-    // Setup that runs for every test in this scope: variable declarations and
-    // `beforeEach`/`beforeAll` hooks at this level. Collected before any test
-    // so a hook written after a test still counts, as it does at runtime.
-    let setup_depth = scope.setup.len();
+    // Bindings that hold for every test in this scope: variable, function and
+    // class declarations and `beforeEach`/`beforeAll` assignments at this
+    // level. Collected before any test so a hook written after a test still
+    // counts, as it does at runtime.
+    let mut level = Vec::new();
     for stmt in statements {
-        if let Some(setup) = scope_setup_snippet(stmt, source) {
-            scope.setup.push(setup);
-        }
+        collect_scope_bindings(stmt, source, &mut level);
     }
+    scope.levels.push(level);
     for stmt in statements {
         if let Some((describe_name, body)) = describe_body_from_statement(stmt) {
+            // `describe.each(...)('x', (cart) => ...)` binds its parameters
+            // for every test inside.
+            scope.levels.push(
+                statement_callback_parameter_names(stmt, 1)
+                    .into_iter()
+                    .map(|name| (name, ScopeValue::Other))
+                    .collect(),
+            );
             scope.describe_names.push(describe_name);
             collect_tests_from_statements(body, file, source, mocks, imports, scope, tests);
             scope.describe_names.pop();
+            scope.levels.pop();
             continue;
         }
         if let Some(mut test) = test_from_statement(stmt, file, source, &scope.describe_names) {
             test.mocks_in_file = mocks.to_vec();
             test.imports_in_file = imports.to_vec();
-            test.scope_setup_text = scope.setup.join("\n");
+            // Test callback parameters (`it.each` rows, Vitest fixtures)
+            // shadow every enclosing binding of the same name.
+            let parameters = statement_callback_parameter_names(stmt, 1)
+                .into_iter()
+                .map(|name| (name, ScopeValue::Other))
+                .collect();
+            test.scope_bindings = scope.resolve_with(parameters);
             tests.push(test);
         }
     }
-    scope.setup.truncate(setup_depth);
+    scope.levels.pop();
 }
 
-/// The enclosing `describe` scopes of the statements being walked.
+/// The enclosing scopes of the statements being walked.
 #[derive(Default)]
 pub(crate) struct TestScope {
     /// Describe names, outermost first.
     describe_names: Vec<String>,
-    /// Setup snippets (`scope_setup_snippet`) of the file and each enclosing
-    /// describe, outermost first.
-    setup: Vec<String>,
+    /// Name bindings of the file and each enclosing describe, outermost first.
+    levels: Vec<Vec<(String, ScopeValue)>>,
 }
 
-/// Source text of a statement that sets up state for every test in its scope:
-/// a variable declaration (`let cart: Cart;`, `const cart = new Cart();`) or a
-/// `beforeEach`/`beforeAll` hook. Tests, `describe` blocks, `afterEach` hooks
-/// and skipped tests are not setup, so their locals never leak into a test.
-fn scope_setup_snippet(stmt: &Statement<'_>, source: &str) -> Option<String> {
-    let span = match stmt {
-        Statement::VariableDeclaration(declaration) => declaration.span,
+/// What one setup statement binds a name to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ScopeValue {
+    /// `let cart: Cart;`: declared here, assigned elsewhere or never.
+    Declared,
+    /// `new Cart()` / `new shop.Cart()`, by constructor text.
+    Constructed(String),
+    /// Anything else, including a shadowing function, class or parameter.
+    Other,
+}
+
+impl TestScope {
+    /// Resolve every bound name to its innermost scope. Within that scope the
+    /// name is constructed only when every binding of it constructs the same
+    /// class; a declaration without an initializer is neutral.
+    fn resolve_with(&self, innermost: Vec<(String, ScopeValue)>) -> Vec<TypeScriptScopeBinding> {
+        let mut resolved: Vec<TypeScriptScopeBinding> = Vec::new();
+        for level in std::iter::once(&innermost).chain(self.levels.iter().rev()) {
+            let mut names: Vec<&str> = level.iter().map(|(name, _)| name.as_str()).collect();
+            names.sort_unstable();
+            names.dedup();
+            for name in names {
+                if resolved.iter().any(|binding| binding.name == name) {
+                    continue;
+                }
+                let mut constructors =
+                    level
+                        .iter()
+                        .filter(|(bound, _)| bound == name)
+                        .filter_map(|(_, value)| match value {
+                            ScopeValue::Declared => None,
+                            ScopeValue::Constructed(constructor) => Some(Some(constructor)),
+                            ScopeValue::Other => Some(None),
+                        });
+                let first = constructors.next().flatten();
+                let constructed_by = first
+                    .filter(|first| constructors.all(|next| next == Some(*first)))
+                    .cloned();
+                resolved.push(TypeScriptScopeBinding {
+                    name: name.to_string(),
+                    constructed_by,
+                });
+            }
+        }
+        resolved
+    }
+}
+
+/// Record the names one scope-level statement binds for every test in the
+/// scope: declarations, and assignments made by a `beforeEach`/`beforeAll`
+/// hook. Test bodies, `describe` blocks, `afterEach` hooks and skipped tests
+/// bind nothing here, and a hook's own local declarations stay local.
+fn collect_scope_bindings(stmt: &Statement<'_>, source: &str, out: &mut Vec<(String, ScopeValue)>) {
+    match stmt {
+        Statement::VariableDeclaration(declaration) => {
+            for declarator in &declaration.declarations {
+                if let BindingPattern::BindingIdentifier(identifier) = &declarator.id {
+                    let value = match &declarator.init {
+                        None => ScopeValue::Declared,
+                        Some(init) => constructed_value(init),
+                    };
+                    out.push((identifier.name.to_string(), value));
+                } else {
+                    for identifier in declarator.id.get_binding_identifiers() {
+                        out.push((identifier.name.to_string(), ScopeValue::Other));
+                    }
+                }
+            }
+        }
+        Statement::FunctionDeclaration(function) => {
+            if let Some(identifier) = &function.id {
+                out.push((identifier.name.to_string(), ScopeValue::Other));
+            }
+        }
+        Statement::ClassDeclaration(class) => {
+            if let Some(identifier) = &class.id {
+                out.push((identifier.name.to_string(), ScopeValue::Other));
+            }
+        }
         Statement::ExpressionStatement(expr_stmt) => {
             let Expression::CallExpression(call) = &expr_stmt.expression else {
-                return None;
+                return;
             };
             let Expression::Identifier(callee) = &call.callee else {
-                return None;
+                return;
             };
             if !matches!(callee.name.as_str(), "beforeEach" | "beforeAll") {
-                return None;
+                return;
             }
-            expr_stmt.span
+            let Some(body) = call
+                .arguments
+                .first()
+                .and_then(function_body_statements_from_argument)
+            else {
+                return;
+            };
+            for hook_stmt in body {
+                collect_hook_assignment(hook_stmt, source, out);
+            }
         }
-        _ => return None,
-    };
-    source
+        _ => {}
+    }
+}
+
+/// A hook statement `name = <expr>;` binds `name`. Any other statement that
+/// may assign a name (a nested block, a loop, a compound or destructuring
+/// assignment) marks every name it assigns as ambiguous, read from its text
+/// because the adapter has no nested-statement walk.
+fn collect_hook_assignment(
+    stmt: &Statement<'_>,
+    source: &str,
+    out: &mut Vec<(String, ScopeValue)>,
+) {
+    match stmt {
+        // A hook's own declarations are local to the hook.
+        Statement::VariableDeclaration(_) => return,
+        Statement::ExpressionStatement(expr_stmt) => {
+            if let Expression::AssignmentExpression(assignment) =
+                expr_stmt.expression.without_parentheses()
+                && assignment.operator == oxc_ast::ast::AssignmentOperator::Assign
+                && let oxc_ast::ast::AssignmentTarget::AssignmentTargetIdentifier(target) =
+                    &assignment.left
+            {
+                out.push((
+                    target.name.to_string(),
+                    constructed_value(&assignment.right),
+                ));
+                return;
+            }
+        }
+        _ => {}
+    }
+    let span = stmt.span();
+    let text = source
         .get(span.start as usize..span.end as usize)
-        .map(str::to_string)
+        .unwrap_or_default();
+    for name in assigned_identifier_names(text) {
+        out.push((name, ScopeValue::Other));
+    }
+}
+
+fn constructed_value(expression: &Expression<'_>) -> ScopeValue {
+    let Expression::NewExpression(new_expression) = expression.without_parentheses() else {
+        return ScopeValue::Other;
+    };
+    match &new_expression.callee {
+        Expression::Identifier(identifier) => ScopeValue::Constructed(identifier.name.to_string()),
+        Expression::StaticMemberExpression(member) => match &member.object {
+            Expression::Identifier(object) => {
+                ScopeValue::Constructed(format!("{}.{}", object.name, member.property.name))
+            }
+            _ => ScopeValue::Other,
+        },
+        _ => ScopeValue::Other,
+    }
+}
+
+/// Identifiers written as an assignment target anywhere in `text`
+/// (`name =`, `name +=`, `name ??=`), excluding comparisons and arrows, and
+/// member targets (`this.name =`). Over-reports on purpose: a false entry only
+/// withholds a relation.
+fn assigned_identifier_names(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut names = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        let ch = bytes[index] as char;
+        if !(ch == '_' || ch == '$' || ch.is_ascii_alphabetic()) {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && {
+            let ch = bytes[index] as char;
+            ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
+        } {
+            index += 1;
+        }
+        let preceded_by_member = text[..start].trim_end().ends_with('.');
+        let rest = text[index..].trim_start();
+        let operator_end = rest
+            .find(|ch: char| {
+                !matches!(
+                    ch,
+                    '+' | '-' | '*' | '/' | '%' | '&' | '|' | '^' | '?' | '<' | '>'
+                )
+            })
+            .unwrap_or(rest.len());
+        let after_operator = &rest[operator_end..];
+        let assigns = after_operator.starts_with('=')
+            && !after_operator[1..].starts_with(['=', '>'])
+            && !matches!(&rest[..operator_end], "<" | ">" | "!");
+        if assigns && !preceded_by_member && !names.iter().any(|name| name == &text[start..index]) {
+            names.push(text[start..index].to_string());
+        }
+    }
+    names
+}
+
+/// Parameter names of the callback at `index` in a statement's call
+/// (`describe.each(...)('x', (row) => ...)`, `it('x', ({ fixture }) => ...)`).
+fn statement_callback_parameter_names(stmt: &Statement<'_>, index: usize) -> Vec<String> {
+    let Statement::ExpressionStatement(expr_stmt) = stmt else {
+        return Vec::new();
+    };
+    let Expression::CallExpression(call) = &expr_stmt.expression else {
+        return Vec::new();
+    };
+    let params = match call.arguments.get(index) {
+        Some(oxc_ast::ast::Argument::ArrowFunctionExpression(arrow)) => &arrow.params,
+        Some(oxc_ast::ast::Argument::FunctionExpression(function)) => &function.params,
+        _ => return Vec::new(),
+    };
+    params
+        .items
+        .iter()
+        .flat_map(|param| param.pattern.get_binding_identifiers())
+        .map(|identifier| identifier.name.to_string())
+        .collect()
 }
 
 pub(crate) fn describe_body_from_statement<'a>(
@@ -305,7 +514,7 @@ pub(crate) fn test_from_statement(
         // per file before the test is returned to the caller.
         mocks_in_file: Vec::new(),
         imports_in_file: Vec::new(),
-        scope_setup_text: String::new(),
+        scope_bindings: Vec::new(),
     })
 }
 
