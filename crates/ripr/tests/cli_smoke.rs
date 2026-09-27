@@ -2434,7 +2434,7 @@ fn first_pr_check_missing_packet_suggests_rooted_out_dir() -> Result<(), Box<dyn
     let output = run_ripr(&["first-pr", "--root", &root, "--check"]);
     assert_failure(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("it does not create one"));
+    assert!(stderr.contains("it does not create one"), "{stderr}");
     // The suggested recovery must reproduce the exact directory `--check`
     // validated: rooted at `--root`, never CWD-relative, with stable
     // separators on every host.
@@ -2451,6 +2451,82 @@ fn first_pr_check_missing_packet_suggests_rooted_out_dir() -> Result<(), Box<dyn
     // The missing path renders with stable separators even on Windows.
     assert!(stderr.contains(&format!("Missing:\n  {expected_out_dir}/start-here.json")));
     std::fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+/// #4285: `--check` never diffs, so a repository where no default base
+/// resolves (no origin, no main/master: a CI merge-ref checkout) must still
+/// answer a missing packet with the recovery command, not the base failure.
+/// (Windows Advisory surfaced it: the suite's temp root is under the checkout,
+/// and the lane's shallow PR checkout has no default base.)
+/// The workspace is its own repository so the outcome does not depend on the
+/// checkout the suite runs in. The suggested write omits `--base` so that run
+/// resolves it rather than being handed a guessed `origin/main`.
+#[test]
+fn first_pr_check_missing_packet_recovers_without_a_resolvable_base()
+-> Result<(), Box<dyn std::error::Error>> {
+    let workspace = make_temp_workspace(None)?;
+    run_git(&workspace, &["init", "-q", "-b", "topic"])?;
+    run_git(&workspace, &["add", "Cargo.toml", "src/lib.rs"])?;
+    run_git(
+        &workspace,
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-q",
+            "-m",
+            "fixture",
+        ],
+    )?;
+    // The CI merge-ref shape: a detached HEAD and no base-named branch.
+    run_git(&workspace, &["checkout", "-q", "--detach"])?;
+    run_git(&workspace, &["branch", "-q", "-D", "topic"])?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["first-pr", "--root", &root, "--check"]);
+    assert_failure(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("it does not create one"), "{stderr}");
+    assert!(
+        !stderr.contains("could not resolve a default base"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("ripr first-pr --root "), "{stderr}");
+    assert!(!stderr.contains("--base"), "{stderr}");
+    std::fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+/// #4285 positive half: the recovery command's omitted `--base` resolves the
+/// same default at run time (#4260), and once the packet exists `--check`
+/// still resolves the omitted base, so the packet it validates is current.
+#[test]
+fn first_pr_check_recovery_write_resolves_the_default_base() -> Result<(), String> {
+    let root = no_origin_master_repo("first-pr-check-default-base", "master")?;
+    let root_str = root.display().to_string();
+    let missing = run_ripr(&["first-pr", "--root", &root_str, "--check"]);
+    assert_failure(&missing);
+    let stderr = String::from_utf8_lossy(&missing.stderr);
+    assert!(stderr.contains("it does not create one"), "{stderr}");
+    assert!(!stderr.contains("--base"), "{stderr}");
+
+    let write = run_ripr(&["first-pr", "--root", &root_str]);
+    assert_success(&write);
+    let base = json_string_at(
+        &root.join("target/ripr/reports/start-here.json"),
+        "/inputs/base",
+    )?;
+    assert_eq!(base, "master");
+
+    let check = run_ripr(&["first-pr", "--root", &root_str, "--check"]);
+    assert_success(&check);
+    assert!(
+        String::from_utf8_lossy(&check.stdout).contains("First PR start-here packet ok"),
+        "{check:?}"
+    );
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 

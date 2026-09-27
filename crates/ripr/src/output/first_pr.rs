@@ -113,6 +113,14 @@ pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
     print_side_effect_disclosure(&options);
 
     let repo = repo_root()?;
+    // A missing packet is answered before the base is resolved (#4285):
+    // `--check` never diffs, so a repository where no default base resolves
+    // must still get the recovery command instead of the base failure.
+    if options.check {
+        let root = resolve_path(&repo, &options.root);
+        let root_recovery = root_preflight_recovery(&root, &options).is_some();
+        check_packet_paths(&repo, &root, root_recovery, &options)?;
+    }
     resolve_omitted_base(&repo, &mut options)?;
     if options.check {
         check_first_pr(&repo, &options)
@@ -200,13 +208,17 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
     Ok(())
 }
 
-fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
-    let root = resolve_path(repo, &options.root);
-    let root_recovery = root_preflight_recovery(&root, options);
-    let preflight_recovery = root_recovery
-        .clone()
-        .or_else(|| git_preflight_recovery(&root, options));
-    let output_root = if root_recovery.is_some() { repo } else { &root };
+/// The packet `--check` validates lives under the root, or under the
+/// invocation directory when the root failed its preflight (where the write
+/// run puts that recovery packet). A missing packet file is the validate-only
+/// recovery error, never a later preflight or base failure.
+fn check_packet_paths(
+    repo: &Path,
+    root: &Path,
+    root_recovery: bool,
+    options: &FirstPrOptions,
+) -> Result<(PathBuf, PathBuf), String> {
+    let output_root = if root_recovery { repo } else { root };
     let out_dir = resolve_path(output_root, &options.out_dir);
     let json_path = out_dir.join(START_HERE_JSON);
     let markdown_path = out_dir.join(START_HERE_MD);
@@ -218,6 +230,15 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
             &out_dir,
         ));
     }
+    Ok((json_path, markdown_path))
+}
+
+fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
+    let root = resolve_path(repo, &options.root);
+    let root_recovery = root_preflight_recovery(&root, options);
+    let (json_path, markdown_path) =
+        check_packet_paths(repo, &root, root_recovery.is_some(), options)?;
+    let preflight_recovery = root_recovery.or_else(|| git_preflight_recovery(&root, options));
     let packet = validate_start_here_packet(&json_path, &markdown_path)?;
     validate_current_preflight_recovery(&packet, &root, options, preflight_recovery)?;
     print!(
@@ -256,11 +277,15 @@ fn first_pr_write_command(options: &FirstPrOptions, out_dir: &Path) -> String {
         "first-pr".to_string(),
         "--root".to_string(),
         shell_arg(&options.root),
-        "--base".to_string(),
-        shell_arg(&options.base),
-        "--head".to_string(),
-        shell_arg(&options.head),
     ];
+    // An omitted base stays omitted: the write run resolves it through the
+    // diff loader (#3952), and rendering a default here would be a guess.
+    if options.base_explicit {
+        parts.push("--base".to_string());
+        parts.push(shell_arg(&options.base));
+    }
+    parts.push("--head".to_string());
+    parts.push(shell_arg(&options.head));
     if let Some(check_output) = &options.check_output {
         parts.push("--check-output".to_string());
         parts.push(shell_arg(check_output));
@@ -2302,6 +2327,19 @@ mod tests {
         assert!(err.contains("--out-dir /repo/target/ripr/foo/reports"));
         assert!(!err.contains("--out-dir target/ripr/foo/reports"));
         assert!(!err.trim_end().ends_with(" --check"));
+    }
+
+    #[test]
+    fn first_pr_write_command_renders_only_an_explicit_base() {
+        // #4285: an omitted base is resolved by the write run itself.
+        let out = Path::new("target/ripr/reports");
+        assert!(!first_pr_write_command(&FirstPrOptions::default(), out).contains("--base"));
+        let explicit = FirstPrOptions {
+            base: "upstream/trunk".to_string(),
+            base_explicit: true,
+            ..FirstPrOptions::default()
+        };
+        assert!(first_pr_write_command(&explicit, out).contains("--base upstream/trunk --head"));
     }
 
     #[test]
