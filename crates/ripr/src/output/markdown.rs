@@ -248,10 +248,18 @@ fn is_compound_bash_command(command: &str) -> bool {
                 '\'' => in_single_quote = true,
                 '"' => in_double_quote = true,
                 '\\' => match chars.get(index + 1).copied() {
-                    // `\'` outside quotes closes, escapes, and reopens a
-                    // single-quoted region (`'it'\''s'`); it is quoting, not
-                    // a compound form.
-                    Some('\'') => index += 1,
+                    // `\'` outside quotes is quoting only as the middle of
+                    // the close-escape-reopen idiom `'\''` (`'it'\''s'`),
+                    // which `powershell_command` rewrites to `''`. A bare
+                    // `a\'b` is one Bash argument but an unmatched quote in
+                    // PowerShell, so it withholds.
+                    Some('\'')
+                        if index > 0
+                            && chars[index - 1] == '\''
+                            && chars.get(index + 2) == Some(&'\'') =>
+                    {
+                        index += 1;
+                    }
                     // Any other escape (`\;`, `\&`, `\ `, `\\`...) changes
                     // how the shells tokenize the line.
                     Some(_) => return true,
@@ -401,6 +409,10 @@ mod tests {
             powershell_command(bash),
             Some("ripr receipt write --gap 'it''s'".to_string())
         );
+        // A bare escaped apostrophe outside the idiom is one Bash argument
+        // (`a'b`) but an unmatched quote in PowerShell: withhold it.
+        assert_eq!(powershell_command("cargo test a\\'b"), None);
+        assert_eq!(powershell_command("cargo test 'a'\\'b"), None);
         // A quoted `>` inside an argument must not be mistaken for a redirect.
         assert_eq!(
             powershell_command("ripr receipt write --gap 'gap > file'"),
