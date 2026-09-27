@@ -540,16 +540,14 @@ fn subject_run_never_reads_the_worktree_config() -> Result<(), String> {
     write(&root, "ripr.toml", "this is not [valid toml\n")?;
     let unparseable = run_subject(&root, &base, &candidate)?;
     assert_eq!(
-        serde_json::to_string(&without).unwrap_or_default(),
-        serde_json::to_string(&unparseable).unwrap_or_default(),
+        without, unparseable,
         "an unparseable worktree ripr.toml must not change a subject run"
     );
 
     write(&root, "ripr.toml", "[analysis]\nmode = \"deep\"\n")?;
     let deep = run_subject(&root, &base, &candidate)?;
     assert_eq!(
-        serde_json::to_string(&without).unwrap_or_default(),
-        serde_json::to_string(&deep).unwrap_or_default(),
+        without, deep,
         "a worktree [analysis] mode must not reach a subject run"
     );
     Ok(())
@@ -696,6 +694,8 @@ fn type_change_fails_closed_naming_the_entry() -> Result<(), String> {
     Ok(())
 }
 
+/// Temporary candidate state is cleaned: after a successful run the
+/// materialization root is removed (the guard drops with the temp tree).
 #[test]
 #[serial]
 fn temporary_candidate_state_is_cleaned() -> Result<(), String> {

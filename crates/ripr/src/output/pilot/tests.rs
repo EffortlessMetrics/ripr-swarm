@@ -1241,6 +1241,15 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
             "{terminal}"
         );
         assert!(md.contains(&notice), "{md}");
+        if !LanguageId::Perl.is_available() {
+            // Neither discovered language is analyzable: no command at all.
+            assert!(!terminal.contains("route: ripr check"), "{terminal}");
+            assert!(
+                terminal.ends_with("No follow-up command applies: this ripr binary cannot analyze the languages listed above.\n"),
+                "{terminal}"
+            );
+            assert!(!md.contains("```bash"), "{md}");
+        }
     } else {
         assert!(
             terminal.contains("typescript: 1 file (preview, diff-first; not enabled in ripr.toml [languages])\n    route: ripr check --root .\n"),
