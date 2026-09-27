@@ -58,7 +58,7 @@ use crate::output::agent_seam_packets::{
 use crate::output::evidence_record::repair_start_command_for;
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
 use crate::output::gap_decision_ledger::{
-    DEFAULT_GAP_DECISION_LEDGER_OUT, GapRecord, parse_gap_records_json,
+    DEFAULT_GAP_DECISION_LEDGER_OUT, GapRecord, parse_gap_records_json_for_root,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -5291,7 +5291,7 @@ fn workspace_status_receipt_summary(
     // receipt_status: movement from ledger.
     let ledger_path = root.join(DEFAULT_GAP_DECISION_LEDGER_OUT);
     let receipt_movement = top_gap
-        .map(|artifact| receipt_status_from_ledger(&ledger_path, artifact).0)
+        .map(|artifact| receipt_status_from_ledger(root, &ledger_path, artifact).0)
         .unwrap_or_else(|| serde_json::Value::String("not_available".to_string()));
 
     // latest_attempt_outcome from swarm-attempt-ledger.json.
@@ -6189,7 +6189,7 @@ fn collect_gap_record_context_packet(
             return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON));
         }
     };
-    let records = match parse_gap_records_json(&contents) {
+    let records = match parse_gap_records_json_for_root(&contents, Some(root)) {
         Ok(records) => records,
         Err(_) => return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON)),
     };
@@ -6234,7 +6234,7 @@ impl Backend {
 
         // Fallback: gap-decision-ledger.json using the existing GapRecord machinery.
         let ledger_path = absolute_join(&root, Path::new(DEFAULT_GAP_DECISION_LEDGER_OUT));
-        collect_repair_packet_from_ledger(&ledger_path, gap_id_arg.as_deref())
+        collect_repair_packet_from_ledger(&root, &ledger_path, gap_id_arg.as_deref())
     }
 
     fn collect_top_limitation(&self) -> Option<LSPAny> {
@@ -6360,7 +6360,7 @@ fn collect_receipt_status_fields(
     let ledger_path =
         root.join(crate::output::gap_decision_ledger::DEFAULT_GAP_DECISION_LEDGER_OUT);
     let (receipt_status_val, missing_receipt_reason_val) =
-        receipt_status_from_ledger(&ledger_path, artifact);
+        receipt_status_from_ledger(root, &ledger_path, artifact);
 
     // copy_receipt_command: only for complete packets (verify + receipt
     // commands both present). Incomplete packets → not_available.
@@ -6399,6 +6399,7 @@ fn collect_receipt_status_fields(
 /// Read the gap-decision-ledger to get the real receipt movement + missing_reason
 /// for the given gap artifact. Falls back to not_available on any read/parse error.
 fn receipt_status_from_ledger(
+    root: &std::path::Path,
     ledger_path: &std::path::Path,
     artifact: &super::gap_artifacts::ValidatedGapArtifact,
 ) -> (serde_json::Value, serde_json::Value) {
@@ -6413,7 +6414,10 @@ fn receipt_status_from_ledger(
             );
         }
     };
-    let records = match crate::output::gap_decision_ledger::parse_gap_records_json(&contents) {
+    let records = match crate::output::gap_decision_ledger::parse_gap_records_json_for_root(
+        &contents,
+        Some(root),
+    ) {
         Ok(r) => r,
         Err(_) => {
             return (
@@ -6775,7 +6779,11 @@ fn validate_and_render_actionable_gap_packet(packet: &serde_json::Value) -> Opti
     serde_json::from_value(result).ok()
 }
 
-fn collect_repair_packet_from_ledger(path: &Path, gap_id: Option<&str>) -> Option<LSPAny> {
+fn collect_repair_packet_from_ledger(
+    root: &Path,
+    path: &Path,
+    gap_id: Option<&str>,
+) -> Option<LSPAny> {
     let contents = match read_artifact_capped(path) {
         CappedArtifactRead::Contents(contents) => contents,
         // Absent artifact: no packet is available, which is a normal state.
@@ -6785,7 +6793,7 @@ fn collect_repair_packet_from_ledger(path: &Path, gap_id: Option<&str>) -> Optio
             return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON));
         }
     };
-    let records = match parse_gap_records_json(&contents) {
+    let records = match parse_gap_records_json_for_root(&contents, Some(root)) {
         Ok(records) => records,
         Err(_) => return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON)),
     };
@@ -7407,7 +7415,7 @@ mod gap_record_context_tests {
 
     #[test]
     fn gap_record_matches_compares_pr_local_and_canonical_ids() -> Result<(), String> {
-        let records = parse_gap_records_json(gap_ledger_json())
+        let records = crate::output::gap_decision_ledger::parse_gap_records_json(gap_ledger_json())
             .map_err(|err| format!("parse fixture ledger failed: {err}"))?;
         let record = records
             .first()

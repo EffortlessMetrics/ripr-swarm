@@ -543,44 +543,66 @@ fn recover_gap_ledger_spec(
     command: &str,
     selected_root: &Path,
 ) -> Option<CommandSpec> {
-    // (argv, --out value, explicit --out-md value when present)
-    let (args, out, out_md) = match words.len() {
-        9 if words[3] == "--repo-exposure" && words[5] == "--out" && words[7] == "--out-md" => (
-            words[1..9].to_vec(),
-            words[6].as_str(),
-            Some(words[8].as_str()),
-        ),
-        11 if words[3] == "--check-output"
-            && words[5] == "--root"
-            && words[7] == "--out"
-            && words[9] == "--out-md" =>
-        {
-            (
-                words[1..11].to_vec(),
-                words[8].as_str(),
-                Some(words[10].as_str()),
-            )
+    // `ripr reports gap-ledger` followed by exact flag/value pairs.
+    let pairs = words.get(3..)?;
+    if pairs.len() % 2 != 0 {
+        return None;
+    }
+    let flags = pairs
+        .iter()
+        .step_by(2)
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    // Other shapes (including a display with no output flag at all) fail
+    // closed: the exact positional contract cannot state the route's writes.
+    if !matches!(
+        flags.as_slice(),
+        ["--repo-exposure", "--out"]
+            | ["--repo-exposure", "--out", "--out-md"]
+            | ["--root", "--repo-exposure", "--out"]
+            | ["--root", "--repo-exposure", "--out", "--out-md"]
+            | ["--check-output", "--root", "--out"]
+            | ["--check-output", "--root", "--out", "--out-md"]
+    ) {
+        return None;
+    }
+    // #4287: current producers anchor every path value at the bound
+    // `--root`, because the CLI resolves them against its working directory.
+    // Recovery maps each anchored value back to its root-relative form under
+    // the same rule as a redirect target, so argv stays portable; a value
+    // outside the root, or a root that is not the selected root, stays
+    // legacy-string-only.
+    let root = pairs
+        .chunks(2)
+        .find(|pair| pair[0] == "--root")
+        .map_or(PORTABLE_ROOT, |pair| pair[1].as_str());
+    let mut args = words[1..3].to_vec();
+    let mut out = None;
+    let mut out_md = None;
+    for pair in pairs.chunks(2) {
+        let (flag, value) = (pair[0].as_str(), pair[1].as_str());
+        let portable = if flag == "--root" {
+            portable_root_arg(value, selected_root)?
+        } else {
+            relativize_write_against_root(root, value, selected_root)?
+        };
+        match flag {
+            "--out" => out = Some(portable.clone()),
+            "--out-md" => out_md = Some(portable.clone()),
+            _ => {}
         }
-        7 if words[3] == "--repo-exposure" && words[5] == "--out" => {
-            (words[1..7].to_vec(), words[6].as_str(), None)
-        }
-        9 if words[3] == "--check-output" && words[5] == "--root" && words[7] == "--out" => {
-            (words[1..9].to_vec(), words[8].as_str(), None)
-        }
-        // Other shapes (including a display with no output flag at all)
-        // fail closed: the exact positional contract cannot state the
-        // route's writes.
-        _ => return None,
-    };
-    let markdown_out = out_md.map(ToOwned::to_owned).unwrap_or_else(|| {
+        args.push(flag.to_string());
+        args.push(portable);
+    }
+    let markdown_out = out_md.unwrap_or_else(|| {
         crate::output::gap_decision_ledger::DEFAULT_GAP_DECISION_LEDGER_MD_OUT.to_string()
     });
     let spec = command_spec(
         "ripr:reports:gap-ledger",
         CommandRole::Regeneration,
         CommandExecutionMode::Direct,
-        portable_root_args(&args, selected_root)?,
-        vec![out.to_string(), markdown_out],
+        args,
+        vec![out?, markdown_out],
         command.to_string(),
     );
     if spec.validate().is_err() {
@@ -1415,6 +1437,98 @@ mod tests {
     /// typed specs only at their exact token shapes; any deviation — wrong
     /// flag order, unknown or missing flags, extra tokens, a compound `&&`
     /// command — stays legacy-string-only.
+    /// #4287: first-pr anchors every gap-ledger path at the bound `--root`,
+    /// because `reports gap-ledger` resolves them against its working
+    /// directory. Recovery maps the anchored values back to root-relative
+    /// argv and writes; a path outside the selected root stays
+    /// legacy-string-only.
+    #[test]
+    fn anchored_gap_ledger_displays_recover_root_relative_argv() -> Result<(), String> {
+        use crate::agent::loop_commands::{anchored_redirect_target, bound_root, shell_arg};
+        let selected = std::path::Path::new(".");
+        let root = bound_root(".");
+        let anchored = |path: &str| shell_arg(&anchored_redirect_target(".", path));
+        let args = |pairs: &[(&str, &str)]| {
+            let mut args = vec!["reports".to_string(), "gap-ledger".to_string()];
+            for (flag, value) in pairs {
+                args.push((*flag).to_string());
+                args.push((*value).to_string());
+            }
+            args
+        };
+        let writes = vec![
+            "target/ripr/reports/gap-decision-ledger.json".to_string(),
+            "target/ripr/reports/gap-decision-ledger.md".to_string(),
+        ];
+
+        let repo_exposure = format!(
+            "ripr reports gap-ledger --root {} --repo-exposure {} --out {} --out-md {}",
+            shell_arg(&root),
+            anchored("target/ripr/reports/repo-exposure.json"),
+            anchored("target/ripr/reports/gap-decision-ledger.json"),
+            anchored("target/ripr/reports/gap-decision-ledger.md"),
+        );
+        let spec = super::report_regeneration_command_spec_from_display(&repo_exposure, selected)
+            .ok_or_else(|| {
+            format!("anchored repo-exposure route was not recovered: {repo_exposure}")
+        })?;
+        if spec.args
+            != args(&[
+                ("--root", "."),
+                ("--repo-exposure", "target/ripr/reports/repo-exposure.json"),
+                ("--out", "target/ripr/reports/gap-decision-ledger.json"),
+                ("--out-md", "target/ripr/reports/gap-decision-ledger.md"),
+            ])
+            || spec.expected_writes != writes
+        {
+            return Err(format!("unexpected anchored repo-exposure spec: {spec:?}"));
+        }
+
+        let check_output = format!(
+            "ripr reports gap-ledger --check-output {} --root {} --out {} --out-md {}",
+            anchored("target/ripr/reports/check.json"),
+            shell_arg(&root),
+            anchored("target/ripr/reports/gap-decision-ledger.json"),
+            anchored("target/ripr/reports/gap-decision-ledger.md"),
+        );
+        let spec = super::report_regeneration_command_spec_from_display(&check_output, selected)
+            .ok_or_else(|| {
+                format!("anchored check-output route was not recovered: {check_output}")
+            })?;
+        if spec.args
+            != args(&[
+                ("--check-output", "target/ripr/reports/check.json"),
+                ("--root", "."),
+                ("--out", "target/ripr/reports/gap-decision-ledger.json"),
+                ("--out-md", "target/ripr/reports/gap-decision-ledger.md"),
+            ])
+            || spec.expected_writes != writes
+        {
+            return Err(format!("unexpected anchored check-output spec: {spec:?}"));
+        }
+
+        // An input or output outside the selected root fails closed.
+        let outside = shell_arg(&anchored_redirect_target(
+            "../ripr-outside-root",
+            "target/ripr/reports/gap-decision-ledger.json",
+        ));
+        for display in [
+            repo_exposure.replacen(
+                &anchored("target/ripr/reports/gap-decision-ledger.json"),
+                &outside,
+                1,
+            ),
+            check_output.replacen(&anchored("target/ripr/reports/check.json"), &outside, 1),
+        ] {
+            if super::report_regeneration_command_spec_from_display(&display, selected).is_some() {
+                return Err(format!(
+                    "a path outside the selected root gained a typed spec: {display}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn first_pr_report_routes_recover_exact_shapes_and_reject_deviations() -> Result<(), String> {
         // Route 1: the repo-exposure check redirect (route word at index 1),

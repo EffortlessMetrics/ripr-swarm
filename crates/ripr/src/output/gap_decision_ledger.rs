@@ -650,12 +650,38 @@ pub(crate) fn render_gap_decision_ledger_markdown(report: &GapDecisionLedgerRepo
     out
 }
 
+/// Parse a persisted ledger for a CLI consumer. The CLI resolves `--root .`
+/// against its own working directory, so that directory is the selected root
+/// typed recovery binds to (#3999).
 pub(crate) fn parse_gap_records_json(contents: &str) -> Result<Vec<GapRecord>, String> {
     parse_gap_record_source_json(contents).map(|source| source.records)
 }
 
+/// Parse a persisted ledger for a consumer that owns its selected root
+/// rather than inheriting the process working directory (#4287). The LSP
+/// passes its workspace root, so a root-bound regeneration display keeps its
+/// typed route when the editor starts the server elsewhere. `None` is the
+/// legacy-only path for a caller without a trusted root: records keep their
+/// displays and gain no recovered typed regeneration specs.
+pub(crate) fn parse_gap_records_json_for_root(
+    contents: &str,
+    selected_root: Option<&Path>,
+) -> Result<Vec<GapRecord>, String> {
+    parse_gap_record_source_json_with_root(contents, selected_root).map(|source| source.records)
+}
+
 pub(crate) fn parse_gap_record_source_json(
     contents: &str,
+) -> Result<ParsedGapRecordSource, String> {
+    parse_gap_record_source_json_with_root(
+        contents,
+        Some(Path::new(crate::agent::command_specs::PORTABLE_ROOT)),
+    )
+}
+
+fn parse_gap_record_source_json_with_root(
+    contents: &str,
+    selected_root: Option<&Path>,
 ) -> Result<ParsedGapRecordSource, String> {
     let value: Value =
         serde_json::from_str(contents).map_err(|err| format!("invalid JSON: {err}"))?;
@@ -677,13 +703,13 @@ pub(crate) fn parse_gap_record_source_json(
     // regeneration specs is left untouched. A persisted ledger carries no
     // selected-root authority of its own (its `root` field is producer text,
     // not a consumer selection), so a display bound to a concrete root gains
-    // a typed spec here only when that root is the reading process's
-    // directory; any other bound root stays legacy-string-only (#3999).
-    for record in &mut records {
-        recover_regeneration_command_specs(
-            record,
-            Path::new(crate::agent::command_specs::PORTABLE_ROOT),
-        );
+    // a typed spec here only when that root is the consumer's selected root;
+    // any other bound root stays legacy-string-only (#3999). Without a
+    // trusted selected root nothing is recovered (#4287).
+    if let Some(selected_root) = selected_root {
+        for record in &mut records {
+            recover_regeneration_command_specs(record, selected_root);
+        }
     }
     Ok(ParsedGapRecordSource {
         root,

@@ -1,4 +1,4 @@
-use crate::agent::loop_commands::bound_root;
+use crate::agent::loop_commands::{anchored_redirect_target, bound_root, shell_arg};
 use crate::cli::unknown_argument;
 use std::path::PathBuf;
 
@@ -38,6 +38,17 @@ impl FirstPrOptions {
     /// analyzes and writes the selected repository from any directory.
     pub(super) fn command_root(&self) -> String {
         bound_root(&self.root)
+    }
+
+    /// A first-pr artifact path rendered as a generated command argument,
+    /// quoted for the shell. first-pr resolves its artifact paths against the
+    /// selected root, while `first-action`, `review-comments`, `agent packet`,
+    /// `gate evaluate`, `reports gap-ledger` and shell redirects resolve them
+    /// against the invocation working directory. Anchoring at the bound root
+    /// keeps `--root` and every path naming the same repository when a command
+    /// is pasted elsewhere (#3948, #4287); an absolute path passes through.
+    pub(super) fn anchored_arg(&self, path: &str) -> String {
+        shell_arg(&anchored_redirect_target(&self.root, path))
     }
 }
 

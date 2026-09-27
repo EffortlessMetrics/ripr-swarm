@@ -1,3 +1,4 @@
+pub(crate) use crate::agent::loop_commands::pilot_select_command;
 use crate::agent::loop_commands::{
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_BRIEF_ARTIFACT,
     WORKFLOW_AGENT_PACKET_ARTIFACT, WORKFLOW_AGENT_RECEIPT_ARTIFACT,
@@ -6,9 +7,8 @@ use crate::agent::loop_commands::{
     WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
     WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_brief_command, agent_packet_command,
     agent_receipt_command, agent_review_summary_command, agent_review_summary_markdown_command,
-    agent_status_command, agent_status_markdown_command, agent_verify_command,
-    anchored_redirect_target, bound_root, check_analysis_outcome_command,
-    check_repo_exposure_command, display_path, shell_arg,
+    agent_status_command, agent_status_markdown_command, agent_verify_command, bound_root,
+    check_analysis_outcome_command, check_repo_exposure_command, display_path, shell_arg,
 };
 use crate::app::repair_attempt::{
     AfterPhaseHeadAdmission, DivergedHeadRecovery, REPAIR_ATTEMPT_DIRECTORY,
@@ -806,19 +806,6 @@ fn select_next_command(
 
 /// Where `ripr pilot` writes its summary by default, relative to the root.
 const PILOT_SUMMARY_ARTIFACT: &str = "target/ripr/pilot/pilot-summary.json";
-
-/// The seam-selection route status offers before any seam is known. `ripr
-/// pilot` resolves a relative `--out` against the working directory, not
-/// `--root`, so the command names the pilot directory under the selected root
-/// explicitly; pasted from any directory it writes the summary status reads
-/// next (#4000).
-pub(crate) fn pilot_select_command(root_display: &str) -> String {
-    format!(
-        "ripr pilot --root {} --out {}",
-        shell_arg(root_display),
-        shell_arg(&anchored_redirect_target(root_display, "target/ripr/pilot"))
-    )
-}
 
 /// The repair start `ripr pilot` recorded for its top seam (#3906), carried
 /// verbatim. Pilot fills `next.repair_command` only past the repair-packet
@@ -1683,6 +1670,26 @@ mod tests {
             bytes: Some(1),
             modified,
         }
+    }
+
+    /// #4287: `pilot_select_command` binds its root once, so a raw root and an
+    /// already bound root render the same command and the pilot directory is
+    /// anchored exactly once under the bound root.
+    #[test]
+    fn pilot_select_command_binds_raw_and_bound_roots_once() {
+        let bound = bound_root(".");
+        let command = pilot_select_command(&bound);
+        assert_eq!(pilot_select_command("."), command);
+        assert_eq!(pilot_select_command(&bound_root(&bound)), command);
+        assert_eq!(
+            command,
+            format!(
+                "ripr pilot --root {} --out {}",
+                shell_arg(&bound),
+                shell_arg(&format!("{bound}/target/ripr/pilot"))
+            )
+        );
+        assert_eq!(command.matches("target/ripr/pilot").count(), 1, "{command}");
     }
 
     #[test]

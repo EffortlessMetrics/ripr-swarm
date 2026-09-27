@@ -1,6 +1,7 @@
 use crate::agent::command_specs::report_regeneration_command_spec_from_display;
 use crate::agent::loop_commands::{
-    anchored_redirect_target, check_repo_exposure_command, display_path, shell_arg,
+    anchored_redirect_target, check_repo_exposure_command, display_path, pilot_select_command,
+    shell_arg,
 };
 use crate::config::detect_python_project;
 use crate::domain::CommandSpec;
@@ -353,8 +354,8 @@ fn render_start_here_packet_with_selection(
             Some(format!(
                 "ripr check --root {} --base {} --json > {}",
                 shell_arg(&options.command_root()),
-                options.base,
-                check_output
+                shell_arg(&options.base),
+                options.anchored_arg(check_output)
             )),
         ));
     }
@@ -374,9 +375,9 @@ fn render_start_here_packet_with_selection(
             Some(format!(
                 "ripr first-action --root {} --gap-ledger {} --out {} --out-md {}",
                 shell_arg(&options.command_root()),
-                options.gap_ledger,
-                options.first_action,
-                with_extension(&options.first_action, "md")
+                options.anchored_arg(&options.gap_ledger),
+                options.anchored_arg(&options.first_action),
+                options.anchored_arg(&with_extension(&options.first_action, "md"))
             )),
         ),
         artifact_status(
@@ -400,9 +401,9 @@ fn render_start_here_packet_with_selection(
             &options.gate_decision,
             Some(format!(
                 "ripr gate evaluate --gap-ledger {} --out {} --out-md {}",
-                options.gap_ledger,
-                options.gate_decision,
-                with_extension(&options.gate_decision, "md")
+                options.anchored_arg(&options.gap_ledger),
+                options.anchored_arg(&options.gate_decision),
+                options.anchored_arg(&with_extension(&options.gate_decision, "md"))
             )),
         ),
     ]);
@@ -1117,8 +1118,8 @@ fn review_card_repair_start(
     }
     if outside_diff_starts > 0 {
         return Err(CardFallback::NoCard(Some(format!(
-            "{outside_diff_starts} review card(s) in `{path}` carry a repair start for code outside this PR's changed lines; `ripr pilot --root {}` ranks repository-wide repairs.",
-            shell_arg(&options.root)
+            "{outside_diff_starts} review card(s) in `{path}` carry a repair start for code outside this PR's changed lines; `{}` ranks repository-wide repairs.",
+            pilot_select_command(&options.root)
         ))));
     }
     // Gap-ledger-scoped cards never carry a repair start; the seam-level
@@ -1211,10 +1212,10 @@ fn review_comments_regeneration_command(root: &Path, options: &FirstPrOptions) -
         return format!(
             "ripr review-comments --root {} --base {} --head {} --gap-ledger {} --out {}",
             shell_arg(&options.command_root()),
-            options.base,
-            options.head,
-            options.gap_ledger,
-            options.review_comments
+            shell_arg(&options.base),
+            shell_arg(&options.head),
+            options.anchored_arg(&options.gap_ledger),
+            options.anchored_arg(&options.review_comments)
         );
     }
     seam_review_comments_command(options)
@@ -1229,7 +1230,7 @@ fn seam_review_comments_command(options: &FirstPrOptions) -> String {
         shell_arg(&options.command_root()),
         shell_arg(&options.base),
         shell_arg(&options.head),
-        shell_arg(&options.review_comments)
+        options.anchored_arg(&options.review_comments)
     )
 }
 
@@ -1669,7 +1670,7 @@ fn top_gap_from_record(record: &Value, root: &Path, options: &FirstPrOptions) ->
         agent_packet_command: Some(format!(
             "ripr agent packet --root {} --gap-ledger {} --gap-id {} --json > {}",
             shell_arg(&options.command_root()),
-            shell_arg(&options.gap_ledger),
+            options.anchored_arg(&options.gap_ledger),
             shell_arg(&gap_id),
             // Issue #3872: the shell redirect anchors at --root like every
             // other funnel redirect, so the pasted packet command reproduces
@@ -1973,7 +1974,7 @@ fn regenerate_gap_ledger_command(root: &Path, options: &FirstPrOptions) -> Strin
     if uses_check_output_gap_ledger(root) {
         return regenerate_check_output_gap_ledger_command(options);
     }
-    regenerate_repo_exposure_gap_ledger_command(&options.gap_ledger)
+    regenerate_repo_exposure_gap_ledger_command(options)
 }
 
 /// A blocked ledger could not use its input, so regenerating the ledger
@@ -1988,14 +1989,10 @@ fn regenerate_blocked_gap_ledger_command(root: &Path, options: &FirstPrOptions) 
     // Every path in the compound anchors at --root, like the redirect in its
     // first half: a cwd-relative read or write would split the retry across
     // directories when first-pr runs with a --root other than the cwd.
-    let anchored = |path: &str| shell_arg(&anchored_redirect_target(&options.root, path));
     format!(
-        "{} && ripr reports gap-ledger --root {} --repo-exposure {} --out {} --out-md {}",
-        regenerate_repo_exposure_command(&options.root),
-        shell_arg(&options.root),
-        anchored(DEFAULT_REPO_EXPOSURE),
-        anchored(&options.gap_ledger),
-        anchored(&with_extension(&options.gap_ledger, "md"))
+        "{} && {}",
+        regenerate_repo_exposure_command(&options.command_root()),
+        regenerate_repo_exposure_gap_ledger_command(options)
     )
 }
 
@@ -2004,10 +2001,16 @@ fn uses_check_output_gap_ledger(root: &Path) -> bool {
         && (detect_python_project(root) || detect_typescript_project(root))
 }
 
-fn regenerate_repo_exposure_gap_ledger_command(out: &str) -> String {
+/// `ripr reports gap-ledger` resolves `--repo-exposure`, `--out` and
+/// `--out-md` against its working directory, so each anchors at the bound
+/// root that `--root` names (#3948, #4287).
+fn regenerate_repo_exposure_gap_ledger_command(options: &FirstPrOptions) -> String {
     format!(
-        "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --out {out} --out-md {}",
-        with_extension(out, "md")
+        "ripr reports gap-ledger --root {} --repo-exposure {} --out {} --out-md {}",
+        shell_arg(&options.command_root()),
+        options.anchored_arg(DEFAULT_REPO_EXPOSURE),
+        options.anchored_arg(&options.gap_ledger),
+        options.anchored_arg(&with_extension(&options.gap_ledger, "md"))
     )
 }
 
@@ -2018,9 +2021,9 @@ fn regenerate_check_output_gap_ledger_command(options: &FirstPrOptions) -> Strin
         .check_output
         .as_deref()
         .unwrap_or(DEFAULT_CHECK_OUTPUT);
-    let check_output = shell_arg(check_output_raw);
-    let out = shell_arg(&options.gap_ledger);
-    let out_md = shell_arg(&with_extension(&options.gap_ledger, "md"));
+    let check_output = options.anchored_arg(check_output_raw);
+    let out = options.anchored_arg(&options.gap_ledger);
+    let out_md = options.anchored_arg(&with_extension(&options.gap_ledger, "md"));
     if options.check_output.is_some() {
         format!(
             "ripr reports gap-ledger --check-output {check_output} --root {root} --out {out} --out-md {out_md}"
@@ -2031,10 +2034,8 @@ fn regenerate_check_output_gap_ledger_command(options: &FirstPrOptions) -> Strin
         // working directory. The paired --check-output read names the same
         // anchored file: a relative read next to an absolute write would
         // split the compound across directories when pasted elsewhere.
-        let anchored = anchored_redirect_target(&options.command_root(), check_output_raw);
-        let anchored_arg = shell_arg(&anchored);
         format!(
-            "ripr check --root {root} --base {base} --json > {anchored_arg} && ripr reports gap-ledger --check-output {anchored_arg} --root {root} --out {out} --out-md {out_md}"
+            "ripr check --root {root} --base {base} --json > {check_output} && ripr reports gap-ledger --check-output {check_output} --root {root} --out {out} --out-md {out_md}"
         )
     }
 }
@@ -3000,8 +3001,14 @@ mod tests {
         assert!(command.contains(&format!(
             "ripr check --root {bound} --base origin/main --json > {anchored_check}"
         )));
+        // #4287: the ledger outputs anchor at --root as well.
         assert!(command.contains(&format!(
-            "ripr reports gap-ledger --check-output {anchored_check} --root {bound} --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md"
+            "ripr reports gap-ledger --check-output {anchored_check} --root {bound} --out {} --out-md {}",
+            shell_arg(&anchored_redirect_target(".", DEFAULT_GAP_LEDGER)),
+            shell_arg(&anchored_redirect_target(
+                ".",
+                &with_extension(DEFAULT_GAP_LEDGER, "md")
+            ))
         )));
         assert!(!command.contains("--repo-exposure"));
         assert_eq!(packet["commands"]["regenerate_gap_ledger"], command);
@@ -3388,11 +3395,14 @@ mod tests {
             .as_str()
             .unwrap_or_default();
         let (input, ledger) = next.split_once(" && ").unwrap_or_default();
+        // #4287: both halves bind the same root, so `--root` never stays
+        // `.` beside anchored paths.
         let exposure = anchored_redirect_target(".", DEFAULT_REPO_EXPOSURE);
+        let bound = bound_arg(".");
         assert!(
             input
                 == format!(
-                    "ripr check --root . --mode instant --format repo-exposure-json > {exposure}"
+                    "ripr check --root {bound} --mode instant --format repo-exposure-json > {exposure}"
                 ),
             "{next}"
         );
@@ -3401,7 +3411,7 @@ mod tests {
         assert!(
             ledger
                 == format!(
-                    "ripr reports gap-ledger --root . --repo-exposure {exposure} --out {} --out-md {}",
+                    "ripr reports gap-ledger --root {bound} --repo-exposure {exposure} --out {} --out-md {}",
                     anchored_redirect_target(".", DEFAULT_GAP_LEDGER),
                     anchored_redirect_target(".", &with_extension(DEFAULT_GAP_LEDGER, "md"))
                 ),
@@ -3723,7 +3733,7 @@ mod tests {
         );
         let reason = outside["selected"]["reason"].as_str().unwrap_or_default();
         assert!(
-            reason.contains("1 review card(s) in `target/ripr/review/comments.json` carry a repair start for code outside this PR's changed lines; `ripr pilot --root .` ranks repository-wide repairs."),
+            reason.contains(&format!("1 review card(s) in `target/ripr/review/comments.json` carry a repair start for code outside this PR's changed lines; `{}` ranks repository-wide repairs.", pilot_select_command("."))),
             "{reason}"
         );
 
@@ -3965,8 +3975,9 @@ mod tests {
             report
         };
         let seam_route = format!(
-            "ripr review-comments --root {} --base origin/main --head HEAD --out target/ripr/review/comments.json",
-            bound_arg(".")
+            "ripr review-comments --root {} --base origin/main --head HEAD --out {}",
+            bound_arg("."),
+            shell_arg(&anchored_redirect_target(".", DEFAULT_REVIEW_COMMENTS))
         );
         for (name, report, state, needle) in [
             (
@@ -4186,8 +4197,9 @@ mod tests {
         assert_eq!(
             packet["selected"]["agent_packet_command"],
             format!(
-                "ripr agent packet --root {} --gap-ledger target/ripr/reports/gap-decision-ledger.json --gap-id 'gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold' --json > {}",
+                "ripr agent packet --root {} --gap-ledger {} --gap-id 'gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold' --json > {}",
                 bound_arg("."),
+                shell_arg(&anchored_redirect_target(".", DEFAULT_GAP_LEDGER)),
                 shell_arg(&anchored_redirect_target(
                     ".",
                     "target/ripr/workflow/agent-packet.json"

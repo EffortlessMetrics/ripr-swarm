@@ -6378,9 +6378,18 @@ fn agent_loop_command_payloads_stay_root_anchored_for_platform_roots() -> Result
         let copied = argument["command"]
             .as_str()
             .ok_or_else(|| "expected command string".to_string())?;
+        // #4287: separators normalize to `/` on Windows. On Unix `\\` is a
+        // filename character, so the selected root keeps it verbatim and
+        // only the root-relative remainder is slash-separated.
+        let unrooted = copied.replace(&bound_root(&workspace), "");
         assert!(
-            !copied.contains('\\'),
+            !unrooted.contains('\\'),
             "copied commands should use slash-separated paths, got {copied}"
+        );
+        assert_eq!(
+            copied.contains('\\'),
+            !cfg!(windows),
+            "only a Unix root keeps its literal backslash, got {copied}"
         );
         // #3999/#4001: the copied command names the selected workspace root
         // (slash-normalized), so it analyzes that workspace from any
