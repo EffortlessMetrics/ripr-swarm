@@ -239,6 +239,20 @@ pub(crate) fn classify(path: &Path) -> SourceRole {
     SourceRole::ProductionSubject
 }
 
+/// Whether the path lives under the repository's own automation
+/// directory. Automation files are evidence-role for repo-mode indexing,
+/// but a *changed* automation file is reviewed behavior: the pre-#3283
+/// diff loop seeded probes for every non-test changed file, and the
+/// `diff_analysis_seeds_probes_for_changed_repo_automation_files`
+/// pins probe seeding for `xtask/` changes. The Rust diff-probe loop consults this
+/// alongside [`SourceRole::seeds_production_findings`] so the evidence
+/// taxonomy keeps repo-mode scope without silencing automation diffs.
+pub(crate) fn is_repo_automation_path(path: &Path) -> bool {
+    normalize(path)
+        .components()
+        .any(|component| component_name(&component) == "xtask")
+}
+
 fn component_name(component: &std::path::Component) -> String {
     component.as_os_str().to_string_lossy().to_string()
 }
@@ -508,6 +522,25 @@ mod tests {
             SourceRole::TestEvidence,
             "normalized identity compares across separators"
         );
+    }
+
+    #[test]
+    fn repo_automation_paths_are_flagged_for_diff_seeding() {
+        // `xtask/` stays evidence-role for repo-mode indexing, but the
+        // path flag lets the diff-probe loop seed changed automation
+        // files (pre-#3283 diff behavior).
+        assert!(super::is_repo_automation_path(Path::new(
+            "xtask/src/windows_advisory.rs"
+        )));
+        assert!(super::is_repo_automation_path(Path::new(
+            "xtask\\src\\main.rs"
+        )));
+        assert!(!super::is_repo_automation_path(Path::new(
+            "crates/ripr/src/lib.rs"
+        )));
+        assert!(!super::is_repo_automation_path(Path::new(
+            "fixtures/entropy/input/src/lib.rs"
+        )));
     }
 
     #[test]
