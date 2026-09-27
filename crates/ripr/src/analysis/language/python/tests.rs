@@ -3121,7 +3121,7 @@ fn classify_change_emits_first_python_repair_class_discriminators() -> Result<()
     assert_eq!(return_finding.class, ExposureClass::WeaklyExposed);
     assert_eq!(
         missing_discriminator_values(&return_finding),
-        vec!["return value == amount >= 100"]
+        vec!["return value == <expected value>"]
     );
     assert!(
         return_finding
@@ -3211,6 +3211,77 @@ fn classify_change_emits_first_python_repair_class_discriminators() -> Result<()
             .is_some_and(|step| step.contains("output/log/call-effect assertion"))
     );
 
+    Ok(())
+}
+
+/// #4216 row 6 (Py#7): the missing discriminator must never restate the changed
+/// production expression as its own oracle. `assert result == sum(...) + 1`
+/// passes for every mutant of that expression, so a computed return or
+/// assignment names a `<expected value>` placeholder; only an independent
+/// literal stays concrete. Gating (class, presence of the fact) is unchanged.
+#[test]
+fn classify_change_never_restates_changed_expression_as_discriminator() -> Result<(), String> {
+    let cart_source = "class Cart:\n    def __init__(self, items):\n        self.items = items\n\n    def total_quantity(self):\n        return sum(i.quantity for i in self.items) + 1\n";
+    let cart_tests = "from app.cart import Cart\n\n\
+        def test_total_quantity():\n    cart = Cart([])\n    assert cart.total_quantity() > 0\n";
+    let computed_return = classify_change(
+        Path::new("app/cart.py"),
+        6,
+        "        return sum(i.quantity for i in self.items) + 1",
+        &extract_owners(Path::new("app/cart.py"), cart_source),
+        &extract_tests(Path::new("tests/test_cart.py"), cart_tests),
+    )
+    .ok_or_else(|| "computed return change should classify".to_string())?;
+    assert_eq!(computed_return.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        missing_discriminator_values(&computed_return),
+        vec!["return value == <expected value>"]
+    );
+    let next_step = computed_return
+        .recommended_next_step
+        .as_deref()
+        .ok_or_else(|| "computed return should keep a next step".to_string())?;
+    assert!(
+        !next_step.contains("sum(i.quantity"),
+        "next step must not restate the changed expression: {next_step}"
+    );
+
+    let literal_return = classify_change(
+        Path::new("app/cart.py"),
+        6,
+        "        return 42",
+        &extract_owners(
+            Path::new("app/cart.py"),
+            "class Cart:\n    def __init__(self, items):\n        self.items = items\n\n    def total_quantity(self):\n        return 42\n",
+        ),
+        &extract_tests(Path::new("tests/test_cart.py"), cart_tests),
+    )
+    .ok_or_else(|| "literal return change should classify".to_string())?;
+    assert_eq!(
+        missing_discriminator_values(&literal_return),
+        vec!["return value == 42"]
+    );
+
+    let computed_field = classify_change(
+        Path::new("app/cart.py"),
+        6,
+        "        self.total = sum(i.quantity for i in self.items) + 1",
+        &extract_owners(
+            Path::new("app/cart.py"),
+            "class Cart:\n    def __init__(self, items):\n        self.items = items\n\n    def total_quantity(self):\n        self.total = sum(i.quantity for i in self.items) + 1\n",
+        ),
+        &extract_tests(
+            Path::new("tests/test_cart.py"),
+            "from app.cart import Cart\n\n\
+                def test_total_quantity():\n    cart = Cart([])\n    cart.total_quantity()\n    assert cart\n",
+        ),
+    )
+    .ok_or_else(|| "computed field change should classify".to_string())?;
+    assert_eq!(computed_field.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        missing_discriminator_values(&computed_field),
+        vec!["self.total == <expected value>"]
+    );
     Ok(())
 }
 

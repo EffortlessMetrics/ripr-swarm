@@ -296,12 +296,18 @@ canonical repair-gap ID or repair recommendation is emitted.
 Direct weak findings may also carry activation-level missing discriminator
 facts for the first preview repair classes. For example, a changed
 `if amount >= threshold:` predicate can emit `amount == threshold`; a changed
-`return amount >= 100` expression can emit `return value == amount >= 100`; a
-changed `raise ValueError("positive required")` path can emit
+`return 42` expression can emit `return value == 42`; a changed
+`raise ValueError("positive required")` path can emit
 `raises ValueError matching "positive required"`; a changed
 `self.status = "paid"` assignment can emit `self.status == "paid"`; and a
 changed `logger.warning("coupon expired")` call can emit
-`log contains "coupon expired"`. These facts are evidence only until a later
+`log contains "coupon expired"`. A missing discriminator never restates the
+changed production expression as its own oracle: an assertion such as
+`result == sum(i.quantity for i in self.items) + 1` passes for every mutant of
+that expression. When the returned or assigned value is not an independent
+literal, the expected side is the `<expected value>` placeholder
+(`return value == <expected value>`, `self.total == <expected value>`), and no
+concrete expected value is claimed. These facts are evidence only until a later
 repair-card contract supplies the test shape, verify command, receipt command,
 and edit boundaries. Heuristic-only links, no related-test paths, and static
 limits must not emit repair guidance.

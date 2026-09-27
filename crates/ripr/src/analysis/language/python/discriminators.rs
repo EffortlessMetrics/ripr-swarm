@@ -76,7 +76,28 @@ fn python_return_value_discriminator(line_text: &str) -> Option<String> {
     if expression.is_empty() {
         None
     } else {
-        Some(format!("return value == {expression}"))
+        Some(format!(
+            "return value == {}",
+            python_expected_value_or_placeholder(expression)
+        ))
+    }
+}
+
+/// Placeholder for an expected value the syntax-first preview cannot derive.
+/// Same `<...>` placeholder style the Python repair card already uses for
+/// `<expected exception>` and `<instance>`.
+const PYTHON_EXPECTED_VALUE_PLACEHOLDER: &str = "<expected value>";
+
+/// The expected side of a synthesized equality discriminator. A literal is an
+/// independent expected value (`return 42` → `== 42`). Any other expression is
+/// the changed production computation itself: echoing it would make the
+/// suggested oracle restate the changed code (`== sum(...) + 1`), which passes
+/// for every mutant of that expression. Name no concrete value then (#4216 row 6).
+fn python_expected_value_or_placeholder(value: &str) -> &str {
+    if is_literal_python_model_field_value(value) {
+        value.trim()
+    } else {
+        PYTHON_EXPECTED_VALUE_PLACEHOLDER
     }
 }
 
@@ -103,6 +124,7 @@ fn python_exception_discriminator(line_text: &str) -> Option<String> {
 fn python_field_value_discriminator(line_text: &str, owner: &PythonOwner) -> Option<String> {
     let text = line_text.trim();
     if let Some((field, value)) = python_return_dict_field_parts(text) {
+        let value = python_expected_value_or_placeholder(&value);
         if !owner.route_paths.is_empty() {
             return Some(format!("response.json()[\"{field}\"] == {value}"));
         }
@@ -123,7 +145,10 @@ fn python_field_value_discriminator(line_text: &str, owner: &PythonOwner) -> Opt
     if lhs.is_empty() || rhs.is_empty() {
         return None;
     }
-    Some(format!("{lhs} == {rhs}"))
+    Some(format!(
+        "{lhs} == {}",
+        python_expected_value_or_placeholder(rhs)
+    ))
 }
 
 pub(super) fn python_route_response_field_discriminator(
