@@ -271,6 +271,16 @@ fn production_target_evidence_hashes_each_test_file_once_per_context() -> Result
         ));
     }
     drop(cache);
+    // Reuse, not just presence: a poisoned memo entry must decide the next
+    // validation, so a lookup that recomputes the digest would be caught.
+    context
+        .source_digest_cache
+        .borrow_mut()
+        .insert(file.as_path(), "sha256:poisoned".to_string());
+    if test_target_evidence(&context, &seam, related[0], RelationReason::DirectOwnerCall).is_some()
+    {
+        return Err("validation recomputed the digest instead of reusing the memo".to_string());
+    }
     if context
         .indexed_source_digest(Path::new("src/unindexed.rs"))
         .is_some()
