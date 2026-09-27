@@ -669,8 +669,13 @@ The coverage workflow currently runs:
 
 ```bash
 cargo llvm-cov clean --workspace
+cargo build -p ripr
 cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
 ```
+
+The plain `cargo build -p ripr` comes first because tests that spawn the
+binary resolve a pre-built `target/debug/ripr` and never start a nested build,
+while `cargo llvm-cov` builds into its own target directory.
 
 It uploads `lcov.info` as the `rust-lcov` GitHub Actions artifact and uploads
 the same file to Codecov with the `rust` flag and `rust-workspace` upload name.
@@ -754,9 +759,10 @@ moving them onto the shared `sccache`/`/mnt/ci-cache` path used by
 `routed-rust.yml` is a tracked follow-up rather than part of this placement
 change.
 
-Release and publish workflows (`publish-extension.yml`,
-`release-server-binaries.yml`) and branch protection (`.github/settings.yml`)
-are intentionally out of scope for this placement change.
+Publication workflow `publish-extension.yml`, the read-only server-binary
+rehearsal `release-server-binaries.yml`, and branch protection
+(`.github/settings.yml`) are intentionally out of scope for this placement
+change. Public release publication belongs to `EffortlessMetrics/ripr`.
 
 ## SARIF and Policy Contract
 

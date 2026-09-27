@@ -9334,6 +9334,49 @@ jobs:
 }
 
 #[test]
+fn swarm_server_binary_rehearsal_cannot_publish() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest should have a repository parent".to_string())?;
+    let path = root.join(".github/workflows/release-server-binaries.yml");
+    let workflow = fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let validate = |candidate: &str| -> Result<(), String> {
+        if !candidate.contains("permissions:\n  contents: read")
+            || !candidate.contains("uses: ./.github/workflows/server-archive-qualification.yml")
+            || !candidate.contains("candidate_sha: ${{ github.sha }}")
+            || !candidate.contains("version: ${{ inputs.version }}")
+            || candidate.contains("contents: write")
+            || candidate.contains("release-upload-assets")
+            || candidate.contains("gh release")
+            || candidate.contains("GH_TOKEN")
+            || candidate.contains("github.token")
+            || candidate.contains("secrets.")
+            || candidate.contains("run:")
+            || candidate.contains("steps:")
+            || candidate.contains("push:")
+        {
+            return Err("swarm server-binary entrypoint must delegate exact-SHA read-only qualification without a publication path".to_string());
+        }
+        Ok(())
+    };
+    validate(&workflow)?;
+    for broken in [
+        workflow.replace("contents: read", "contents: write"),
+        format!("{workflow}\n# release-upload-assets"),
+        workflow.replace(
+            "candidate_sha: ${{ github.sha }}",
+            "candidate_sha: ${{ github.ref }}",
+        ),
+    ] {
+        if validate(&broken).is_ok() {
+            return Err("rehearsal publication negative control was accepted".to_string());
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> Result<(), String> {
     const QUALIFICATION_COMMIT_TYPE_COMMAND: &str = r#"git -C "${GITHUB_WORKSPACE}" cat-file -t"#;
     let workflow_path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -9423,11 +9466,11 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         if candidate
             .matches("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")
             .count()
-            != 2
+            != 3
             || candidate
                 .matches("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c")
                 .count()
-                != 1
+                != 2
             || candidate.contains("release-upload-assets")
             || candidate.contains("gh release")
             || candidate.contains("gh api")
@@ -19330,7 +19373,11 @@ fn dogfood_language_preview_run_checks_static_limit_receipt() -> Result<(), Stri
         assert_eq!(run.preview_findings, 1);
         assert_eq!(run.missing_preview_status, 0);
         assert_eq!(run.related_tests, 1);
-        assert_eq!(run.classifications, vec!["exposed".to_string()]);
+        // The #4103/#4102 relation gates hold a vi.mock'd owner module at
+        // weakly_exposed with the mocked_module limit disclosed: the mocked
+        // observation cannot witness the real changed sink. The fixture
+        // goldens were blessed for exactly this classification.
+        assert_eq!(run.classifications, vec!["weakly_exposed".to_string()]);
         assert_eq!(run.static_limit_kinds, vec!["mocked_module".to_string()]);
         assert!(run.json_path.exists());
         assert!(run.human_path.exists());
@@ -28121,6 +28168,27 @@ fn traceability_failure_report_renders_recommended_fixes() -> Result<(), String>
 }
 
 #[test]
+fn traceability_pass_report_discloses_registered_only_scope() -> Result<(), String> {
+    with_temp_cwd("traceability-pass-scope-report", |_| {
+        finish_traceability_report(
+            &[],
+            &["RIPR-SPEC-0027 symbol suffix unverified".to_string()],
+        )?;
+        let report = fs::read_to_string("target/ripr/reports/traceability.md")
+            .map_err(|err| format!("read traceability pass report: {err}"))?;
+
+        assert!(report.contains("Status: pass"));
+        assert!(report.contains("## Scope of this result"));
+        assert!(report.contains("does not enumerate Rust tests"));
+        assert!(report.contains("does not require every newly added test"));
+        assert!(report.contains("a test role, ran, or establishes the behavior"));
+        assert!(report.contains("Advisories (non-blocking)"));
+        assert!(report.contains("symbol suffix unverified"));
+        Ok(())
+    })
+}
+
+#[test]
 fn spec_ids_in_text_extracts_four_digit_ids_only() {
     let ids = spec_ids_in_text(
         "RIPR-SPEC-0001 RIPR-SPEC-001 RIPR-SPEC-9999 RIPR-SPEC-abcd RIPR-SPEC-12345",
@@ -28696,7 +28764,7 @@ fn command_catalog_pins_ci_enforced_classification() -> Result<(), String> {
     assert!(ci_enforced("check-static-language")?);
     assert!(ci_enforced("goldens check")?);
     assert!(ci_enforced("check-doc-index")?);
-    assert!(ci_enforced("release-upload-assets --version <version>")?);
+    assert!(!ci_enforced("release-upload-assets --version <version>")?);
     assert!(ci_enforced("release-readiness --version <version>")?);
     // Issue #2258: the routed-rust lanes invoke `cargo xtask precommit` as the
     // shared required gate table, so precommit and every gate it runs are
@@ -45994,6 +46062,177 @@ fn lane1_audit_sample_json() -> &'static str {
             }
           ]
         }"#
+}
+
+fn write_packaging_test_vsix(
+    path: &std::path::Path,
+    members: &[(&str, &str)],
+) -> Result<(), String> {
+    let file = fs::File::create(path)
+        .map_err(|err| format!("failed to create {}: {err}", path.display()))?;
+    let mut writer = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default();
+    for (name, body) in members {
+        writer
+            .start_file(*name, options)
+            .map_err(|err| format!("failed to stage {name}: {err}"))?;
+        std::io::Write::write_all(&mut writer, body.as_bytes())
+            .map_err(|err| format!("failed to write {name}: {err}"))?;
+    }
+    writer
+        .finish()
+        .map_err(|err| format!("failed to seal {}: {err}", path.display()))?;
+    Ok(())
+}
+
+fn vsix_entry(name: &str, size: u64) -> super::VsixEntry {
+    super::VsixEntry {
+        name: name.to_string(),
+        size,
+        compressed_size: size / 4,
+    }
+}
+
+#[test]
+fn vsix_inventory_rejects_workspace_build_output_sentinel() -> Result<(), String> {
+    with_temp_cwd("vsix-inventory-sentinel", |root| {
+        let approved = [
+            ("[Content_Types].xml", "<Types/>"),
+            ("extension.vsixmanifest", "<PackageManifest/>"),
+            ("extension/package.json", "{}"),
+            ("extension/distribution.json", "{\"schema\":2}"),
+            ("extension/out/src/client.js", "exports.x = 1;"),
+            // A dependency's own `target/` directory is not workspace output.
+            (
+                "extension/node_modules/dep/target/index.js",
+                "module.exports = 1;",
+            ),
+        ];
+        let clean = root.join("clean.vsix");
+        write_packaging_test_vsix(&clean, &approved)?;
+        let entries = super::read_vsix_inventory(&clean)?;
+        assert_eq!(entries.len(), approved.len());
+        super::check_vsix_inventory(
+            &entries,
+            super::VSIX_MAX_ENTRIES,
+            super::VSIX_MAX_UNCOMPRESSED_BYTES,
+        )?;
+        // The production path `vscode-package` runs after `vsce package`.
+        let summary = super::verify_packaged_vsix_inventory(&clean)?;
+        assert!(
+            summary.starts_with(&format!("VSIX inventory: {} entries, ", approved.len())),
+            "{summary}"
+        );
+
+        let sentinel = "extension/target/debug/ripr-1775-sentinel.bin";
+        let mut polluted_members = approved.to_vec();
+        polluted_members.push((sentinel, "cargo build output"));
+        let polluted = root.join("polluted.vsix");
+        write_packaging_test_vsix(&polluted, &polluted_members)?;
+        let entries = super::read_vsix_inventory(&polluted)?;
+        let Err(error) = super::check_vsix_inventory(
+            &entries,
+            super::VSIX_MAX_ENTRIES,
+            super::VSIX_MAX_UNCOMPRESSED_BYTES,
+        ) else {
+            return Err("a packaged editors/vscode/target sentinel must be rejected".to_string());
+        };
+        assert!(error.contains(sentinel), "{error}");
+        assert!(error.contains("1 workspace build-output"), "{error}");
+        let Err(error) = super::verify_packaged_vsix_inventory(&polluted) else {
+            return Err("vscode-package must reject the polluted VSIX".to_string());
+        };
+        assert!(error.contains("packaged VSIX"), "{error}");
+        assert!(error.contains(sentinel), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_inventory_rejects_cargo_artifacts_outside_target() -> Result<(), String> {
+    for name in [
+        "extension/out/libripr-0123.rlib",
+        "extension/out/libripr-0123.rmeta",
+        "extension/build/.fingerprint/ripr-0123/lib-ripr",
+        "extension/build/incremental/ripr-0123/s-abc/query-cache.bin",
+    ] {
+        let entries = vec![
+            vsix_entry("extension/package.json", 2),
+            vsix_entry(name, 10),
+        ];
+        let Err(error) = super::check_vsix_inventory(&entries, 10, 1_000) else {
+            return Err(format!("{name} must be rejected as build output"));
+        };
+        assert!(error.contains(name), "{error}");
+    }
+    Ok(())
+}
+
+#[test]
+fn vsix_inventory_fails_closed_on_missing_or_non_zip_package() -> Result<(), String> {
+    with_temp_cwd("vsix-inventory-unreadable", |root| {
+        // A package step that produced no archive must fail, not pass an empty inventory.
+        let missing = root.join("missing.vsix");
+        let Err(error) = super::read_vsix_inventory(&missing) else {
+            return Err("a missing VSIX must not yield an inventory".to_string());
+        };
+        assert!(error.contains("is missing"), "{error}");
+
+        let not_zip = root.join("not-zip.vsix");
+        fs::write(&not_zip, "not a zip archive")
+            .map_err(|err| format!("failed to write {}: {err}", not_zip.display()))?;
+        let Err(error) = super::read_vsix_inventory(&not_zip) else {
+            return Err("a non-zip VSIX must not yield an inventory".to_string());
+        };
+        assert!(error.contains("is not a zip"), "{error}");
+
+        // An intact central directory over a corrupt member header must fail
+        // at the member read, not produce a partial inventory.
+        let corrupt = root.join("corrupt-member.vsix");
+        write_packaging_test_vsix(&corrupt, &[("extension/package.json", "{}")])?;
+        let mut bytes = fs::read(&corrupt)
+            .map_err(|err| format!("failed to read {}: {err}", corrupt.display()))?;
+        assert_eq!(bytes.get(..4), Some(&b"PK\x03\x04"[..]));
+        bytes[..2].copy_from_slice(b"XX");
+        fs::write(&corrupt, &bytes)
+            .map_err(|err| format!("failed to write {}: {err}", corrupt.display()))?;
+        let Err(error) = super::read_vsix_inventory(&corrupt) else {
+            return Err("a corrupt VSIX member must not yield an inventory".to_string());
+        };
+        assert!(error.contains("member 0"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_inventory_bounds_entry_count_and_unpacked_size() -> Result<(), String> {
+    let three = vec![
+        vsix_entry("extension/package.json", 10),
+        vsix_entry("extension/out/a.js", 10),
+        vsix_entry("extension/out/b.js", 10),
+    ];
+    super::check_vsix_inventory(&three, 3, 30)?;
+    let Err(count) = super::check_vsix_inventory(&three, 2, 30) else {
+        return Err("an entry count above the bound must be rejected".to_string());
+    };
+    assert!(
+        count.contains("3 entries, above the 2-entry bound"),
+        "{count}"
+    );
+    let Err(size) = super::check_vsix_inventory(&three, 3, 29) else {
+        return Err("an unpacked size above the bound must be rejected".to_string());
+    };
+    assert!(size.contains("30 bytes, above the 29-byte bound"), "{size}");
+    // The production bounds sit between the observed 0.11 package (about 410
+    // entries, 3 MiB) and the #1775 defect (2,805 entries, about 2.3 GB).
+    const { assert!(super::VSIX_MAX_ENTRIES > 410 && super::VSIX_MAX_ENTRIES < 2_805) };
+    const {
+        assert!(
+            super::VSIX_MAX_UNCOMPRESSED_BYTES > 3 * 1024 * 1024
+                && super::VSIX_MAX_UNCOMPRESSED_BYTES < 2_300 * 1024 * 1024
+        )
+    };
+    Ok(())
 }
 
 #[test]
