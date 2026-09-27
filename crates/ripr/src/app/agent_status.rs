@@ -993,8 +993,8 @@ fn pilot_routed_to_check_message(routes: &PilotCheckRoutes, root_display: &str) 
         ));
     }
     message.push_str(&format!(
-        ". If the workspace changed since that run, rerun `ripr pilot --root {}`",
-        shell_arg(root_display)
+        ". If the workspace changed since that run, rerun `{}`",
+        pilot_select_command(root_display)
     ));
     message
 }
@@ -2517,12 +2517,17 @@ mod tests {
                 enabled_routes,
                 "null",
             ))?;
+            // The carried route keeps the pilot artifact's text; the rerun
+            // hint status generates binds the selected root (#4000).
             for expected in [
-                "routed the typescript, python code to `ripr check --root .`",
-                "add or strengthen a test for the changed behavior by hand, then rerun `ripr check --root .`",
-                "If the workspace changed since that run, rerun `ripr pilot --root .`",
+                "routed the typescript, python code to `ripr check --root .`".to_string(),
+                "add or strengthen a test for the changed behavior by hand, then rerun `ripr check --root .`".to_string(),
+                format!(
+                    "If the workspace changed since that run, rerun `{}`",
+                    pilot_select_command(&bound_root("."))
+                ),
             ] {
-                assert!(message.contains(expected), "{message}");
+                assert!(message.contains(&expected), "{message}");
             }
         }
 
@@ -2600,7 +2605,11 @@ mod tests {
                 .as_ref()
                 .ok_or_else(|| format!("expected pilot for control {control}"))?;
             assert_eq!(next.step, "select_seam", "{control}");
-            assert_eq!(next.command, "ripr pilot --root .", "{control}");
+            assert_eq!(
+                next.command,
+                pilot_select_command(&bound_root(".")),
+                "{control}"
+            );
         }
         std::fs::remove_file(root.join(PILOT_SUMMARY_ARTIFACT))
             .map_err(|err| format!("remove summary: {err}"))?;

@@ -6675,6 +6675,69 @@ mod tests {
         Ok(())
     }
 
+    /// #3999: a persisted ledger carries no selected-root authority, so a
+    /// regeneration display bound to some other absolute root stays
+    /// legacy-string-only when read; the same display bound to the reading
+    /// directory recovers the portable typed route.
+    #[test]
+    fn parse_keeps_a_display_bound_to_a_foreign_root_legacy_string_only() -> Result<(), String> {
+        use crate::agent::loop_commands::{bound_root, check_repo_exposure_command};
+        let record = |display: &str| {
+            serde_json::json!([{
+                "gap_id": "gap:bound-regen",
+                "kind": "MissingValueAssertion",
+                "regeneration_commands": [display]
+            }])
+            .to_string()
+        };
+        let reading_root = bound_root(".");
+        let foreign_root = bound_root("../ripr-foreign-selected-root");
+        assert_ne!(reading_root, foreign_root);
+
+        // Control: bound to the reading directory, the route is typed and
+        // its argv carries the portable root.
+        let local = check_repo_exposure_command(
+            &reading_root,
+            "instant",
+            "target/ripr/reports/repo-exposure.json",
+        );
+        let records = parse_gap_records_json(&record(&local))?;
+        let specs = records[0]
+            .command_specs
+            .as_ref()
+            .ok_or_else(|| format!("reading-root display was not typed: {local}"))?;
+        if specs.regeneration.len() != 1
+            || !specs.regeneration[0]
+                .args
+                .windows(2)
+                .any(|pair| pair == ["--root", "."])
+        {
+            return Err(format!("unexpected typed route: {:?}", specs.regeneration));
+        }
+
+        // Foreign root: the display is kept, no typed spec is invented.
+        let foreign = check_repo_exposure_command(
+            &foreign_root,
+            "instant",
+            "target/ripr/reports/repo-exposure.json",
+        );
+        let records = parse_gap_records_json(&record(&foreign))?;
+        if records[0].regeneration_commands != vec![foreign.clone()] {
+            return Err(format!("legacy display was not kept: {:?}", records[0]));
+        }
+        if records[0]
+            .command_specs
+            .as_ref()
+            .is_some_and(|specs| !specs.regeneration.is_empty())
+        {
+            return Err(format!(
+                "a display bound to a foreign root gained typed authority: {:?}",
+                records[0].command_specs
+            ));
+        }
+        Ok(())
+    }
+
     /// FIX (round-1 review): every persisted-ledger parse path enriches
     /// legacy string-only records with typed regeneration specs, and the
     /// enrichment is idempotent — producer-carried collections are never
