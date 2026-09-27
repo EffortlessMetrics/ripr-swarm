@@ -61,8 +61,8 @@ use command::{
 use command::{help_message, unknown_command_message};
 #[cfg(test)]
 pub(crate) use dogfood::{
-    BunUbPreviewSummaryArgs, ConfiguredBridgeInventoryArgs, CrossLanguageOracleGraphCase,
-    CrossLanguageOracleGraphRawRef, DogfoodBunUbCrossLanguageRun,
+    ArtifactRouterInput, BunUbPreviewSummaryArgs, ConfiguredBridgeInventoryArgs,
+    CrossLanguageOracleGraphCase, CrossLanguageOracleGraphRawRef, DogfoodBunUbCrossLanguageRun,
     DogfoodBunUbCrossLanguageScenario, DogfoodEditorFirstPrBridgeRun, DogfoodEditorGapCockpitRun,
     DogfoodFindingAlignmentRun, DogfoodFindingAlignmentScenario, DogfoodFirstActionRun,
     DogfoodFirstPrRun, DogfoodFrontPanelRun, DogfoodGateRun, DogfoodGeneratedCiCockpitRun,
@@ -75,15 +75,16 @@ pub(crate) use dogfood::{
     DogfoodUserSurfaceProjectionRun, GENERATED_CI_FIRST_ACTION_REPAIR,
     GENERATED_CI_FIRST_PR_REPAIR, GENERATED_CI_FRONT_PANEL_REPAIR,
     GENERATED_CI_PACKET_INDEX_REPAIR, TypeScriptBunUbCalibrationCase,
-    bun_ub_calibration_report_markdown, bun_ub_calibration_report_value,
-    bun_ub_preview_summary_markdown, bun_ub_preview_summary_report_value,
-    configured_bridge_inventory_markdown, configured_bridge_inventory_report_value,
-    cross_language_oracle_graph_cases, cross_language_oracle_graph_corpus_path,
-    dogfood_bun_ub_cross_language_scenarios, dogfood_class_counts,
-    dogfood_editor_first_pr_bridge_run, dogfood_editor_first_pr_bridge_scenarios,
-    dogfood_editor_gap_cockpit_run, dogfood_editor_gap_cockpit_scenarios,
-    dogfood_first_action_scenarios, dogfood_first_pr_metrics, dogfood_first_pr_run,
-    dogfood_first_pr_scenarios, dogfood_gate_adoption_run, dogfood_gate_adoption_scenarios,
+    artifact_router_path_violation, bun_ub_calibration_report_markdown,
+    bun_ub_calibration_report_value, bun_ub_preview_summary_markdown,
+    bun_ub_preview_summary_report_value, configured_bridge_inventory_markdown,
+    configured_bridge_inventory_report_value, cross_language_oracle_graph_cases,
+    cross_language_oracle_graph_corpus_path, dogfood_bun_ub_cross_language_scenarios,
+    dogfood_class_counts, dogfood_editor_first_pr_bridge_run,
+    dogfood_editor_first_pr_bridge_scenarios, dogfood_editor_gap_cockpit_run,
+    dogfood_editor_gap_cockpit_scenarios, dogfood_first_action_run, dogfood_first_action_scenarios,
+    dogfood_first_pr_metrics, dogfood_first_pr_run, dogfood_first_pr_scenarios,
+    dogfood_gate_adoption_run, dogfood_gate_adoption_scenarios,
     dogfood_generated_ci_cockpit_run_from_workflow, dogfood_language_preview_run,
     dogfood_language_preview_scenarios, dogfood_pr_inline_comment_run,
     dogfood_pr_inline_comment_scenarios, dogfood_pr_review_front_panel_run,
@@ -94,11 +95,11 @@ pub(crate) use dogfood::{
     dogfood_report_packet_index_run, dogfood_report_packet_index_scenarios,
     dogfood_typescript_false_actionable_audit_summary,
     dogfood_typescript_preview_repair_loop_scenarios, finding_alignment_verify_command_is_missing,
-    json_number_after, parse_bun_ub_preview_summary_args, parse_configured_bridge_inventory_args,
-    pin_report_packet_index_generated_at, repo_rooted_fixture_path,
-    report_packet_index_case_id_violation, report_packet_index_generated_at_violation,
-    report_packet_index_render_plan, typescript_bun_ub_calibration_cases,
-    typescript_preview_false_actionable_audit_cases,
+    front_panel_case_inputs, json_number_after, parse_bun_ub_preview_summary_args,
+    parse_configured_bridge_inventory_args, pin_report_packet_index_generated_at,
+    repo_rooted_fixture_path, report_packet_index_case_id_violation,
+    report_packet_index_generated_at_violation, report_packet_index_render_plan,
+    typescript_bun_ub_calibration_cases, typescript_preview_false_actionable_audit_cases,
 };
 pub(crate) use dogfood::{
     DogfoodSurfaceProjectionAlignmentScenario, DogfoodUserSurfaceProjectionScenario,
@@ -541,6 +542,7 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-spec-numbering",
     "check-fixture-contracts",
     "check-rust-judged-panel",
+    "check-release-challenge-selection",
     "check-python-judged-panel",
     "check-traceability",
     "check-capabilities",
@@ -582,6 +584,7 @@ fn precommit() -> Result<(), String> {
     check_spec_numbering()?;
     check_fixture_contracts()?;
     check_rust_judged_panel()?;
+    check_release_challenge_selection()?;
     check_python_judged_panel()?;
     check_traceability()?;
     check_capabilities()?;
@@ -611,6 +614,10 @@ fn precommit() -> Result<(), String> {
 
 fn check_rust_judged_panel() -> Result<(), String> {
     rust_judged_panel::check_canonical()
+}
+
+fn check_release_challenge_selection() -> Result<(), String> {
+    rust_judged_panel::check_release_selection()
 }
 
 fn check_python_judged_panel() -> Result<(), String> {
@@ -1348,7 +1355,111 @@ fn vscode_package() -> Result<(), String> {
     fs::create_dir_all(&dist)
         .map_err(|err| format!("failed to create {}: {err}", dist.display()))?;
     let version = vscode_package_version(&extension_dir.join("package.json"))?;
-    run_cwd_command(&vscode_package_command(&version))
+    run_cwd_command(&vscode_package_command(&version))?;
+    let summary = verify_packaged_vsix_inventory(&dist.join(format!("ripr-{version}.vsix")))?;
+    println!("{summary}");
+    Ok(())
+}
+
+/// Reads the built VSIX and applies the production inventory bounds. Returns
+/// the one-line summary `vscode-package` prints.
+fn verify_packaged_vsix_inventory(vsix_path: &Path) -> Result<String, String> {
+    let inventory = read_vsix_inventory(vsix_path)?;
+    check_vsix_inventory(&inventory, VSIX_MAX_ENTRIES, VSIX_MAX_UNCOMPRESSED_BYTES)
+        .map_err(|err| format!("packaged VSIX {} {err}", vsix_path.display()))?;
+    Ok(format!(
+        "VSIX inventory: {} entries, {} bytes unpacked",
+        inventory.len(),
+        inventory.iter().map(|entry| entry.size).sum::<u64>()
+    ))
+}
+
+/// Upper bounds on the packaged VSIX. The 0.11 extension packs about 410
+/// entries and 3 MiB uncompressed. Packing `editors/vscode/target/` (#1775)
+/// produced 2,805 entries and about 2.3 GB. The bounds leave room for
+/// dependency growth and still fail that class of regression without pinning
+/// one machine's compressed size.
+const VSIX_MAX_ENTRIES: usize = 1_500;
+const VSIX_MAX_UNCOMPRESSED_BYTES: u64 = 64 * 1024 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VsixEntry {
+    name: String,
+    size: u64,
+    compressed_size: u64,
+}
+
+fn read_vsix_inventory(vsix_path: &Path) -> Result<Vec<VsixEntry>, String> {
+    let file = fs::File::open(vsix_path)
+        .map_err(|err| format!("packaged VSIX {} is missing: {err}", vsix_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|err| format!("packaged VSIX {} is not a zip: {err}", vsix_path.display()))?;
+    let mut entries = Vec::with_capacity(archive.len());
+    for index in 0..archive.len() {
+        let member = archive.by_index_raw(index).map_err(|err| {
+            format!(
+                "failed to read {} member {index}: {err}",
+                vsix_path.display()
+            )
+        })?;
+        entries.push(VsixEntry {
+            name: member.name().to_string(),
+            size: member.size(),
+            compressed_size: member.compressed_size(),
+        });
+    }
+    Ok(entries)
+}
+
+/// Rejects workspace build output in the packaged extension (#1775). The
+/// `cargo xtask` alias builds into a cwd-relative target directory, so
+/// `npm run compile` in `editors/vscode` leaves Cargo output beside the
+/// extension. The check reads the real archive entries rather than trusting
+/// `.vscodeignore`, so a lost ignore rule fails here instead of shipping.
+fn check_vsix_inventory(
+    entries: &[VsixEntry],
+    max_entries: usize,
+    max_uncompressed_bytes: u64,
+) -> Result<(), String> {
+    let build_output: Vec<&str> = entries
+        .iter()
+        .map(|entry| entry.name.as_str())
+        .filter(|name| is_workspace_build_output(name))
+        .collect();
+    if !build_output.is_empty() {
+        let shown: Vec<&str> = build_output.iter().take(5).copied().collect();
+        return Err(format!(
+            "carries {} workspace build-output entries (first: {})",
+            build_output.len(),
+            shown.join(", ")
+        ));
+    }
+    if entries.len() > max_entries {
+        return Err(format!(
+            "carries {} entries, above the {max_entries}-entry bound",
+            entries.len()
+        ));
+    }
+    let uncompressed: u64 = entries.iter().map(|entry| entry.size).sum();
+    if uncompressed > max_uncompressed_bytes {
+        return Err(format!(
+            "unpacks to {uncompressed} bytes, above the {max_uncompressed_bytes}-byte bound"
+        ));
+    }
+    Ok(())
+}
+
+fn is_workspace_build_output(name: &str) -> bool {
+    if name.starts_with("extension/target/") {
+        return true;
+    }
+    if name
+        .split('/')
+        .any(|segment| segment == ".fingerprint" || segment == "incremental")
+    {
+        return true;
+    }
+    name.ends_with(".rlib") || name.ends_with(".rmeta")
 }
 
 fn vscode_test() -> Result<(), String> {
@@ -4504,7 +4615,7 @@ fn receipts_report_markdown(
 }
 
 fn precommit_report_body() -> String {
-    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
+    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
 }
 
 /// Compose the check-pr report for either terminal state (#3036). One

@@ -50,19 +50,19 @@ use super::run::{
 use super::scratch_gc_concurrency_violations;
 use super::validate_bless_reason;
 use super::{
-    BUN_UB_CROSS_LANGUAGE_DOGFOOD_REQUIRED_CASES, BadgeArtifactJob, BadgeBasisReport,
-    BadgeBasisSignal, BadgeCanonicalProjection, BadgeCountBreakdown, BadgeEndpointSnapshot,
-    BadgeNativeAuditSnapshot, BadgeNativeSlot, Capability, ChangedPath, CheckReport, CheckStatus,
-    CheckViolation, CiFullEvidenceGate, CommandCatalogEntry, CwdCommand, DOC_ARTIFACT_LEDGER,
-    DogfoodBunUbCrossLanguageScenario, DogfoodEditorFirstPrBridgeRun, DogfoodEditorGapCockpitRun,
-    DogfoodFindingAlignmentRun, DogfoodFindingAlignmentScenario, DogfoodFirstActionRun,
-    DogfoodFirstPrRun, DogfoodFrontPanelRun, DogfoodGateRun, DogfoodGeneratedCiCockpitRun,
-    DogfoodLanguagePreviewRun, DogfoodPrInlineCommentRun, DogfoodPreviewProjectionRuns,
-    DogfoodPythonNoActionEvalScenario, DogfoodPythonRealRepoEvalScenario,
-    DogfoodPythonStaticLimitEvalScenario, DogfoodRealRepairAttemptScenario, DogfoodReportInputs,
-    DogfoodReportPacketIndexRun, DogfoodRun, DogfoodSurfaceProjectionAlignmentScenario,
-    DogfoodTypescriptPreviewRepairLoopScenario, DogfoodUserSurfaceProjectionScenario,
-    EVIDENCE_QUALITY_SCORECARD_AUDIT_REGENERATION_FAILED,
+    ArtifactRouterInput, BUN_UB_CROSS_LANGUAGE_DOGFOOD_REQUIRED_CASES, BadgeArtifactJob,
+    BadgeBasisReport, BadgeBasisSignal, BadgeCanonicalProjection, BadgeCountBreakdown,
+    BadgeEndpointSnapshot, BadgeNativeAuditSnapshot, BadgeNativeSlot, Capability, ChangedPath,
+    CheckReport, CheckStatus, CheckViolation, CiFullEvidenceGate, CommandCatalogEntry, CwdCommand,
+    DOC_ARTIFACT_LEDGER, DogfoodBunUbCrossLanguageScenario, DogfoodEditorFirstPrBridgeRun,
+    DogfoodEditorGapCockpitRun, DogfoodFindingAlignmentRun, DogfoodFindingAlignmentScenario,
+    DogfoodFirstActionRun, DogfoodFirstPrRun, DogfoodFrontPanelRun, DogfoodGateRun,
+    DogfoodGeneratedCiCockpitRun, DogfoodLanguagePreviewRun, DogfoodPrInlineCommentRun,
+    DogfoodPreviewProjectionRuns, DogfoodPythonNoActionEvalScenario,
+    DogfoodPythonRealRepoEvalScenario, DogfoodPythonStaticLimitEvalScenario,
+    DogfoodRealRepairAttemptScenario, DogfoodReportInputs, DogfoodReportPacketIndexRun, DogfoodRun,
+    DogfoodSurfaceProjectionAlignmentScenario, DogfoodTypescriptPreviewRepairLoopScenario,
+    DogfoodUserSurfaceProjectionScenario, EVIDENCE_QUALITY_SCORECARD_AUDIT_REGENERATION_FAILED,
     EVIDENCE_QUALITY_TREND_PREVIOUS_ARTIFACT_UNAVAILABLE, EvidenceQualityScorecardInput,
     EvidenceQualityScorecardInputs, EvidenceQualityScorecardReport, EvidenceQualityTrendInputs,
     EvidenceQualityTrendReport, FixKind, GENERATED_CI_FIRST_ACTION_REPAIR,
@@ -86,8 +86,8 @@ use super::{
     WorktreeDoctorFinding, WorktreeDoctorSeverity, actionable_gap_outcomes_json,
     actionable_gap_outcomes_markdown, actionable_gap_outcomes_report_from_values,
     actionable_gap_outcomes_report_impl, allow_attribute_budget_violations,
-    badge_artifact_command_args, badge_artifact_command_label, badge_artifact_jobs,
-    badge_artifact_native_slot, badge_artifacts_impl_with_runners,
+    artifact_router_path_violation, badge_artifact_command_args, badge_artifact_command_label,
+    badge_artifact_jobs, badge_artifact_native_slot, badge_artifacts_impl_with_runners,
     badge_artifacts_summary_markdown, badge_basis_canonical_projection,
     badge_basis_derived_ripr_plus_snapshot, badge_basis_needs_repo_badge_plus_job,
     badge_basis_report_json, badge_basis_report_markdown, badge_basis_seam_native_counts,
@@ -104,22 +104,23 @@ use super::{
     dogfood_class_counts, dogfood_editor_first_pr_bridge_run,
     dogfood_editor_first_pr_bridge_scenarios, dogfood_editor_gap_cockpit_run,
     dogfood_editor_gap_cockpit_scenarios, dogfood_finding_alignment_run,
-    dogfood_finding_alignment_scenarios, dogfood_first_action_scenarios, dogfood_first_pr_metrics,
-    dogfood_first_pr_run, dogfood_first_pr_scenarios, dogfood_gate_adoption_run,
-    dogfood_gate_adoption_scenarios, dogfood_generated_ci_cockpit_run_from_workflow,
-    dogfood_language_preview_run, dogfood_language_preview_scenarios,
-    dogfood_pr_inline_comment_run, dogfood_pr_inline_comment_scenarios,
-    dogfood_pr_review_front_panel_run, dogfood_pr_review_front_panel_scenarios,
-    dogfood_push_python_quality_ratio_json, dogfood_python_no_action_eval_run,
-    dogfood_python_no_action_eval_scenarios, dogfood_python_real_repo_eval_run,
-    dogfood_python_real_repo_eval_scenarios, dogfood_python_repair_routing_quality_summary,
-    dogfood_python_static_limit_eval_run, dogfood_python_static_limit_eval_scenarios,
-    dogfood_real_repair_attempt_run, dogfood_real_repair_attempt_scenarios, dogfood_report_json,
-    dogfood_report_markdown, dogfood_report_packet_index_run,
-    dogfood_report_packet_index_scenarios, dogfood_surface_projection_alignment_run,
-    dogfood_surface_projection_alignment_scenarios, dogfood_typescript_preview_repair_loop_run,
-    dogfood_typescript_preview_repair_loop_scenarios, dogfood_user_surface_projection_run,
-    dogfood_user_surface_projection_scenarios, error_ripr_plus_receipt, evidence_health_args,
+    dogfood_finding_alignment_scenarios, dogfood_first_action_run, dogfood_first_action_scenarios,
+    dogfood_first_pr_metrics, dogfood_first_pr_run, dogfood_first_pr_scenarios,
+    dogfood_gate_adoption_run, dogfood_gate_adoption_scenarios,
+    dogfood_generated_ci_cockpit_run_from_workflow, dogfood_language_preview_run,
+    dogfood_language_preview_scenarios, dogfood_pr_inline_comment_run,
+    dogfood_pr_inline_comment_scenarios, dogfood_pr_review_front_panel_run,
+    dogfood_pr_review_front_panel_scenarios, dogfood_push_python_quality_ratio_json,
+    dogfood_python_no_action_eval_run, dogfood_python_no_action_eval_scenarios,
+    dogfood_python_real_repo_eval_run, dogfood_python_real_repo_eval_scenarios,
+    dogfood_python_repair_routing_quality_summary, dogfood_python_static_limit_eval_run,
+    dogfood_python_static_limit_eval_scenarios, dogfood_real_repair_attempt_run,
+    dogfood_real_repair_attempt_scenarios, dogfood_report_json, dogfood_report_markdown,
+    dogfood_report_packet_index_run, dogfood_report_packet_index_scenarios,
+    dogfood_surface_projection_alignment_run, dogfood_surface_projection_alignment_scenarios,
+    dogfood_typescript_preview_repair_loop_run, dogfood_typescript_preview_repair_loop_scenarios,
+    dogfood_user_surface_projection_run, dogfood_user_surface_projection_scenarios,
+    error_ripr_plus_receipt, evidence_health_args,
     evidence_quality_scorecard_audit_regeneration_failure_audit,
     evidence_quality_scorecard_from_values, evidence_quality_scorecard_json,
     evidence_quality_scorecard_markdown, evidence_quality_trend_from_values,
@@ -127,16 +128,16 @@ use super::{
     evidence_quality_trend_report_impl, extract_json_object_usize_map, extract_json_string,
     extract_json_warnings, extract_workflow_run_blocks, finding_alignment_raw_to_canonical_ratio,
     finding_alignment_verify_command_is_missing, finish_traceability_report,
-    finish_worktree_doctor_report, first_line_difference, generated_clean_violations,
-    gh_pr_safe_next_action, gh_pr_status_json, gh_pr_status_markdown, gh_pr_status_readiness,
-    github_event_pull_request_title_from_text, glob_matches, golden_changes_without_blessing,
-    golden_drift_semantics, guarded_allow_attribute_lints, guarded_allow_attributes_in_text,
-    heading_slug, heading_slugs, help_message, install_hooks_in, is_badge_refresh_context,
-    is_bdd_test_name, is_dependency_surface_candidate, is_generated_candidate,
-    is_non_rust_programming_candidate, is_public_badge_basis_surface, is_receipt_status,
-    is_ripr_managed_hook, is_snake_case_id, is_spec_id, json_escape, json_number_after,
-    json_string_values_for_key, json_summary_count, known_commands, known_xtask_command,
-    lane1_actionable_gap_packets_json, lane1_actionable_gap_packets_markdown,
+    finish_worktree_doctor_report, first_line_difference, front_panel_case_inputs,
+    generated_clean_violations, gh_pr_safe_next_action, gh_pr_status_json, gh_pr_status_markdown,
+    gh_pr_status_readiness, github_event_pull_request_title_from_text, glob_matches,
+    golden_changes_without_blessing, golden_drift_semantics, guarded_allow_attribute_lints,
+    guarded_allow_attributes_in_text, heading_slug, heading_slugs, help_message, install_hooks_in,
+    is_badge_refresh_context, is_bdd_test_name, is_dependency_surface_candidate,
+    is_generated_candidate, is_non_rust_programming_candidate, is_public_badge_basis_surface,
+    is_receipt_status, is_ripr_managed_hook, is_snake_case_id, is_spec_id, json_escape,
+    json_number_after, json_string_values_for_key, json_summary_count, known_commands,
+    known_xtask_command, lane1_actionable_gap_packets_json, lane1_actionable_gap_packets_markdown,
     lane1_evidence_audit_from_repo_exposure, lane1_evidence_audit_json,
     lane1_evidence_audit_limited_report, lane1_evidence_audit_markdown,
     lane1_evidence_audit_repo_exposure_args,
@@ -12768,6 +12769,7 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
         };
     let first_action_run = DogfoodFirstActionRun {
             name: "actionable".to_string(),
+            rendered: true,
             expected_dir: Path::new("fixtures/boundary_gap/expected/first-useful-action/actionable")
                 .to_path_buf(),
             json_path: Path::new(
@@ -12811,6 +12813,7 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
     };
     let front_panel_run = DogfoodFrontPanelRun {
             name: "actionable".to_string(),
+            rendered: true,
             report_path: Path::new(
                 "fixtures/boundary_gap/expected/pr-review-front-panel/actionable/pr-review-front-panel.json",
             )
@@ -19724,61 +19727,17 @@ fn dogfood_first_action_scenarios_have_checked_receipts() -> Result<(), String> 
         );
 
         for scenario in scenarios {
-            let expected_dir = Path::new(scenario.expected_dir);
-            let json_text = fs::read_to_string(expected_dir.join("first-useful-action.json"))
-                .map_err(|err| {
-                    format!("{} first-useful-action.json missing: {err}", scenario.name)
-                })?;
-            let markdown = fs::read_to_string(expected_dir.join("first-useful-action.md"))
-                .map_err(|err| {
-                    format!("{} first-useful-action.md missing: {err}", scenario.name)
-                })?;
-            let value: Value = serde_json::from_str(&json_text).map_err(|err| {
-                format!("{} first-useful-action.json invalid: {err}", scenario.name)
-            })?;
-
-            assert_eq!(
-                value.get("status").and_then(Value::as_str),
-                Some(scenario.expected_status),
-                "{} expected status should be pinned",
-                scenario.name
-            );
-            assert_eq!(
-                value.get("action_kind").and_then(Value::as_str),
-                Some(scenario.expected_action_kind),
-                "{} expected action should be pinned",
-                scenario.name
-            );
-            assert_eq!(
-                value.get("audience").and_then(Value::as_str),
-                Some(scenario.expected_audience),
-                "{} expected audience should be pinned",
-                scenario.name
-            );
-            assert_eq!(
-                value.get("selected").is_some_and(|value| !value.is_null()),
-                scenario.expected_selected,
-                "{} selected presence should be pinned",
-                scenario.name
-            );
-            assert_eq!(
-                value
-                    .get("evidence")
-                    .and_then(|evidence| evidence.get("static_movement"))
-                    .and_then(Value::as_str),
-                Some(scenario.expected_static_movement),
-                "{} static movement should be pinned",
-                scenario.name
+            let run = dogfood_first_action_run(&scenario);
+            assert!(
+                run.rendered,
+                "{} should render through ripr first-action",
+                run.name
             );
             assert!(
-                markdown.contains(&format!("Status: {}", scenario.expected_status)),
-                "{} Markdown should pin status",
-                scenario.name
-            );
-            assert!(
-                markdown.contains(&format!("Action: {}", scenario.expected_action_kind)),
-                "{} Markdown should pin action",
-                scenario.name
+                run.errors.is_empty(),
+                "{} first-action render should match its route and goldens: {:?}",
+                run.name,
+                run.errors
             );
         }
 
@@ -19989,6 +19948,73 @@ fn report_packet_index_case_id_violation_rejects_anything_but_one_component() {
             "`{name}` should be rejected as a scratch directory component"
         );
     }
+}
+
+#[test]
+fn artifact_router_path_violation_rejects_paths_outside_the_render_root() {
+    assert_eq!(
+        artifact_router_path_violation("first-useful-action", "target/ripr/reports/x.json"),
+        None
+    );
+
+    // Each input is copied to `<render root>/<path>`, so any of these would
+    // write outside the scratch directory the case owns.
+    for path in ["", "/etc/x.json", "../x.json", "a/../../x.json", "./x.json"] {
+        assert!(
+            artifact_router_path_violation("first-useful-action", path).is_some(),
+            "`{path}` should be rejected as a render-root input path"
+        );
+    }
+}
+
+#[test]
+fn artifact_router_inputs_never_copy_build_output_from_the_checkout() {
+    // A declared-absent `target/...` input stays absent even when an earlier
+    // run left a file at that path in the checkout.
+    let absent = ArtifactRouterInput::at(
+        "assistant-proof",
+        "target/ripr/reports/test-oracle-assistant-proof.json",
+    );
+    assert_eq!(absent.copy_source(), None);
+
+    let committed = ArtifactRouterInput::at("ledger", "fixtures/x/ledger.json");
+    assert_eq!(
+        committed.copy_source(),
+        Some(Path::new("fixtures/x/ledger.json"))
+    );
+    let sourced = ArtifactRouterInput::from(
+        "ledger",
+        "target/ripr/reports/pr-evidence-ledger.json",
+        "fixtures/x/inputs/pr-evidence-ledger.json",
+    );
+    assert_eq!(
+        sourced.copy_source(),
+        Some(Path::new("fixtures/x/inputs/pr-evidence-ledger.json"))
+    );
+}
+
+#[test]
+fn front_panel_case_inputs_follow_the_crate_corpus_root_rule() {
+    let (root, inputs) = front_panel_case_inputs(&serde_json::json!({
+        "inputs": { "first_action": "a.json", "gate_decision": null, "ledger": "b.json" }
+    }));
+    assert_eq!(root, "fixtures/boundary_gap/input");
+    let flags = inputs
+        .iter()
+        .map(|input| (input.flag.as_str(), input.path.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(flags, [("first-action", "a.json"), ("ledger", "b.json")]);
+
+    let (root, _) = front_panel_case_inputs(&serde_json::json!({
+        "inputs": { "ledger": "b.json" }
+    }));
+    assert_eq!(root, ".");
+
+    let (root, inputs) = front_panel_case_inputs(&serde_json::json!({
+        "inputs": { "root": "repo", "assistant_health": "h.json" }
+    }));
+    assert_eq!(root, "repo");
+    assert_eq!(inputs.len(), 1, "`root` is a label, not an input flag");
 }
 
 #[test]
@@ -46062,6 +46088,177 @@ fn lane1_audit_sample_json() -> &'static str {
             }
           ]
         }"#
+}
+
+fn write_packaging_test_vsix(
+    path: &std::path::Path,
+    members: &[(&str, &str)],
+) -> Result<(), String> {
+    let file = fs::File::create(path)
+        .map_err(|err| format!("failed to create {}: {err}", path.display()))?;
+    let mut writer = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default();
+    for (name, body) in members {
+        writer
+            .start_file(*name, options)
+            .map_err(|err| format!("failed to stage {name}: {err}"))?;
+        std::io::Write::write_all(&mut writer, body.as_bytes())
+            .map_err(|err| format!("failed to write {name}: {err}"))?;
+    }
+    writer
+        .finish()
+        .map_err(|err| format!("failed to seal {}: {err}", path.display()))?;
+    Ok(())
+}
+
+fn vsix_entry(name: &str, size: u64) -> super::VsixEntry {
+    super::VsixEntry {
+        name: name.to_string(),
+        size,
+        compressed_size: size / 4,
+    }
+}
+
+#[test]
+fn vsix_inventory_rejects_workspace_build_output_sentinel() -> Result<(), String> {
+    with_temp_cwd("vsix-inventory-sentinel", |root| {
+        let approved = [
+            ("[Content_Types].xml", "<Types/>"),
+            ("extension.vsixmanifest", "<PackageManifest/>"),
+            ("extension/package.json", "{}"),
+            ("extension/distribution.json", "{\"schema\":2}"),
+            ("extension/out/src/client.js", "exports.x = 1;"),
+            // A dependency's own `target/` directory is not workspace output.
+            (
+                "extension/node_modules/dep/target/index.js",
+                "module.exports = 1;",
+            ),
+        ];
+        let clean = root.join("clean.vsix");
+        write_packaging_test_vsix(&clean, &approved)?;
+        let entries = super::read_vsix_inventory(&clean)?;
+        assert_eq!(entries.len(), approved.len());
+        super::check_vsix_inventory(
+            &entries,
+            super::VSIX_MAX_ENTRIES,
+            super::VSIX_MAX_UNCOMPRESSED_BYTES,
+        )?;
+        // The production path `vscode-package` runs after `vsce package`.
+        let summary = super::verify_packaged_vsix_inventory(&clean)?;
+        assert!(
+            summary.starts_with(&format!("VSIX inventory: {} entries, ", approved.len())),
+            "{summary}"
+        );
+
+        let sentinel = "extension/target/debug/ripr-1775-sentinel.bin";
+        let mut polluted_members = approved.to_vec();
+        polluted_members.push((sentinel, "cargo build output"));
+        let polluted = root.join("polluted.vsix");
+        write_packaging_test_vsix(&polluted, &polluted_members)?;
+        let entries = super::read_vsix_inventory(&polluted)?;
+        let Err(error) = super::check_vsix_inventory(
+            &entries,
+            super::VSIX_MAX_ENTRIES,
+            super::VSIX_MAX_UNCOMPRESSED_BYTES,
+        ) else {
+            return Err("a packaged editors/vscode/target sentinel must be rejected".to_string());
+        };
+        assert!(error.contains(sentinel), "{error}");
+        assert!(error.contains("1 workspace build-output"), "{error}");
+        let Err(error) = super::verify_packaged_vsix_inventory(&polluted) else {
+            return Err("vscode-package must reject the polluted VSIX".to_string());
+        };
+        assert!(error.contains("packaged VSIX"), "{error}");
+        assert!(error.contains(sentinel), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_inventory_rejects_cargo_artifacts_outside_target() -> Result<(), String> {
+    for name in [
+        "extension/out/libripr-0123.rlib",
+        "extension/out/libripr-0123.rmeta",
+        "extension/build/.fingerprint/ripr-0123/lib-ripr",
+        "extension/build/incremental/ripr-0123/s-abc/query-cache.bin",
+    ] {
+        let entries = vec![
+            vsix_entry("extension/package.json", 2),
+            vsix_entry(name, 10),
+        ];
+        let Err(error) = super::check_vsix_inventory(&entries, 10, 1_000) else {
+            return Err(format!("{name} must be rejected as build output"));
+        };
+        assert!(error.contains(name), "{error}");
+    }
+    Ok(())
+}
+
+#[test]
+fn vsix_inventory_fails_closed_on_missing_or_non_zip_package() -> Result<(), String> {
+    with_temp_cwd("vsix-inventory-unreadable", |root| {
+        // A package step that produced no archive must fail, not pass an empty inventory.
+        let missing = root.join("missing.vsix");
+        let Err(error) = super::read_vsix_inventory(&missing) else {
+            return Err("a missing VSIX must not yield an inventory".to_string());
+        };
+        assert!(error.contains("is missing"), "{error}");
+
+        let not_zip = root.join("not-zip.vsix");
+        fs::write(&not_zip, "not a zip archive")
+            .map_err(|err| format!("failed to write {}: {err}", not_zip.display()))?;
+        let Err(error) = super::read_vsix_inventory(&not_zip) else {
+            return Err("a non-zip VSIX must not yield an inventory".to_string());
+        };
+        assert!(error.contains("is not a zip"), "{error}");
+
+        // An intact central directory over a corrupt member header must fail
+        // at the member read, not produce a partial inventory.
+        let corrupt = root.join("corrupt-member.vsix");
+        write_packaging_test_vsix(&corrupt, &[("extension/package.json", "{}")])?;
+        let mut bytes = fs::read(&corrupt)
+            .map_err(|err| format!("failed to read {}: {err}", corrupt.display()))?;
+        assert_eq!(bytes.get(..4), Some(&b"PK\x03\x04"[..]));
+        bytes[..2].copy_from_slice(b"XX");
+        fs::write(&corrupt, &bytes)
+            .map_err(|err| format!("failed to write {}: {err}", corrupt.display()))?;
+        let Err(error) = super::read_vsix_inventory(&corrupt) else {
+            return Err("a corrupt VSIX member must not yield an inventory".to_string());
+        };
+        assert!(error.contains("member 0"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_inventory_bounds_entry_count_and_unpacked_size() -> Result<(), String> {
+    let three = vec![
+        vsix_entry("extension/package.json", 10),
+        vsix_entry("extension/out/a.js", 10),
+        vsix_entry("extension/out/b.js", 10),
+    ];
+    super::check_vsix_inventory(&three, 3, 30)?;
+    let Err(count) = super::check_vsix_inventory(&three, 2, 30) else {
+        return Err("an entry count above the bound must be rejected".to_string());
+    };
+    assert!(
+        count.contains("3 entries, above the 2-entry bound"),
+        "{count}"
+    );
+    let Err(size) = super::check_vsix_inventory(&three, 3, 29) else {
+        return Err("an unpacked size above the bound must be rejected".to_string());
+    };
+    assert!(size.contains("30 bytes, above the 29-byte bound"), "{size}");
+    // The production bounds sit between the observed 0.11 package (about 410
+    // entries, 3 MiB) and the #1775 defect (2,805 entries, about 2.3 GB).
+    const { assert!(super::VSIX_MAX_ENTRIES > 410 && super::VSIX_MAX_ENTRIES < 2_805) };
+    const {
+        assert!(
+            super::VSIX_MAX_UNCOMPRESSED_BYTES > 3 * 1024 * 1024
+                && super::VSIX_MAX_UNCOMPRESSED_BYTES < 2_300 * 1024 * 1024
+        )
+    };
+    Ok(())
 }
 
 #[test]

@@ -64,6 +64,18 @@ root, such as the `cargo_toml`, `tool_cargo`, and `tool_rustc` checks on a
 root where Rust is not in scope. A skipped check never fails the report, and
 its `evidence` states why it was skipped. See [Exit codes](EXIT_CODES.md).
 
+`ripr doctor --json` also carries an additive `binary` object (schema `0.2`)
+naming which `ripr` is running and which one PATH selects: `version` (the
+`ripr --version` line), `commit` (full id or `null`), `commit_dirty`,
+`executable` (or `null` when the platform does not report it),
+`executable_is_cargo_build_output`, `path_ripr` (first `ripr` on
+PATH, symlinks resolved, or `null`), `path_ripr_is_cargo_build_output`,
+`path_ripr_is_running_executable` (`null` when either side is unknown), and
+`warnings`. Cargo build output means a binary beside Cargo's `deps/` and
+`.fingerprint/` directories in a `target/<profile>/` directory. The warnings are
+advisory: they never change `status` or the exit code, because a workspace build
+on PATH is a legitimate development setup.
+
 ## JSON object key ordering
 
 JSON object key order is not part of the semantic contract for ordinary
@@ -6940,16 +6952,18 @@ JSON shape:
   },
   "test_changed": "discounted_total_boundary_discriminator",
   "verification": {
-    "commands_run": ["cargo test discounted_total_boundary_discriminator"]
+    "status": "verification_not_run",
+    "commands_run": ["cargo test discounted_total_boundary_discriminator"],
+    "non_claims": ["static_only_assurance"]
   },
   "summary": {
     "receipt_state": "receipt_movement_improved",
     "remaining_gap": "No remaining static gap is named by this receipt; inspect the current seam packet if review needs final assertion detail.",
-    "next_recommendation": "Keep the focused test and attach this receipt with the agent verify JSON.",
+    "next_recommendation": "Run the focused test with the project's test command and keep it only if it passes; ripr compared static evidence and did not run it. Then attach this receipt with the agent verify JSON.",
     "next_action": {
       "kind": "improved",
       "summary": "Static grip improved.",
-      "recommended_action": "Keep the focused test and include this receipt in review.",
+      "recommended_action": "Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review.",
       "safe_to_merge": false
     }
   }
@@ -7024,8 +7038,16 @@ Field contract:
   takes it from `--test-changed`. The after phase of `ripr agent repair` sets it
   to the attempt's selected test file when the edit cage is compliant and
   recorded that file changing, and leaves it null otherwise.
+- `verification.status` - always `verification_not_run` (RIPR-SPEC-0135): no
+  receipt path, including the after phase of `ripr agent repair`, executes the
+  project's tests. A focused test that fails `cargo test` can still move static
+  grip, so the `improved` guidance tells the agent to run the test and keep it
+  only if it passes.
 - `verification.commands_run` - optional commands supplied by the caller. The
-  receipt records them; it does not run them.
+  receipt records them; it does not run them, and they do not change
+  `verification.status`.
+- `verification.non_claims` - `["static_only_assurance"]`: the receipt makes no
+  claim that any test passed.
 - `summary.remaining_gap` / `summary.next_recommendation` - static advisory
   guidance derived from the verify bucket. It does not claim runtime
   confirmation. When `status` is not `advisory`, `next_recommendation` instead
@@ -12169,10 +12191,11 @@ Field contract:
   `ripr pilot --root <root>` (`select_seam`) and a missing workflow directory
   routes to a new repair attempt. It is `null` when nothing is missing, and
   also when status cannot choose honestly: an unreadable attempt manifest,
-  several current awaiting attempts, several open seams, or an unreadable
-  `HEAD`. A warning (`repair_attempt_unreadable`, `ambiguous_repair_attempts`,
-  `multiple_open_repair_seams`, `repair_attempt_head_unknown`) then names the
-  choices.
+  several current awaiting attempts, several open seams, an unreadable
+  `HEAD`, or a complete pilot summary whose top seam recorded no repair start.
+  A warning (`repair_attempt_unreadable`, `ambiguous_repair_attempts`,
+  `multiple_open_repair_seams`, `repair_attempt_head_unknown`,
+  `pilot_found_no_repair_target`) then names the choices.
 - `warnings[]` - stale-looking or unreadable-artifact hints. Timestamp warnings
   are emitted when `agent verify` is older than a before/after snapshot or
   `agent receipt` is older than `agent verify`. For a seam with no attempt
@@ -12245,7 +12268,7 @@ The JSON schema is version `0.1`:
     "next_action": {
       "kind": "improved",
       "summary": "Static grip improved.",
-      "recommended_action": "Keep the focused test and include this receipt in review."
+      "recommended_action": "Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review."
     }
   },
   "analysis_outcome": {
@@ -12297,7 +12320,7 @@ The JSON schema is version `0.1`:
     "headline": "Review packet is ready for seam 67fc764ba37d77bd.",
     "what_changed": "Static movement is improved (weakly_gripped -> strongly_gripped).",
     "evidence": "Review target/ripr/reports/agent-receipt.json with target/ripr/workflow/agent-verify.json.",
-    "remaining": "Keep the focused test and include this receipt in review.",
+    "remaining": "Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review.",
     "reviewer_should_inspect": [
       "target/ripr/reports/agent-receipt.json",
       "target/ripr/workflow/agent-verify.json"
@@ -14746,6 +14769,8 @@ JSON shape:
   ],
   "first_useful_action": {
     "default_ci_blocking": false,
+    "rendered_cases": 6,
+    "total_cases": 6,
     "receipt_dir": "fixtures/boundary_gap/expected/first-useful-action",
     "cases": [
       {
@@ -14817,6 +14842,8 @@ JSON shape:
   },
   "pr_review_front_panel": {
     "default_ci_blocking": false,
+    "rendered_cases": 13,
+    "total_cases": 13,
     "receipt_dir": "fixtures/boundary_gap/expected/pr-review-front-panel",
     "cases": [
       {
@@ -14850,6 +14877,8 @@ JSON shape:
   },
   "report_packet_index": {
     "default_ci_blocking": false,
+    "rendered_cases": 7,
+    "total_cases": 7,
     "receipt_dir": "fixtures/boundary_gap/expected/report-packet-index",
     "cases": [
       {
