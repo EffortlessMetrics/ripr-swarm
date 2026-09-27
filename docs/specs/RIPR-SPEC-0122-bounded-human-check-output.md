@@ -266,6 +266,8 @@ no resolvable default branch still gets it (#4285).
 - `crates/ripr/src/cli/commands.rs::tests::diff_json_with_base_does_not_emit_repo_scope_warning`
 - `crates/ripr/src/output/first_pr.rs::tests::first_pr_check_missing_packet_error_explains_validate_only_mode`
 - `crates/ripr/src/output/first_pr.rs::tests::first_pr_write_command_preserves_explicit_gap_ledger_only`
+- `crates/ripr/src/output/first_pr.rs::tests::first_pr_write_command_renders_base_only_when_explicit`
+- `crates/ripr/tests/cli_smoke.rs::first_pr_check_missing_packet_recovers_without_a_resolvable_base`
 - `cargo xtask goldens check`
 
 ## Implementation Mapping
@@ -294,6 +296,8 @@ no resolvable default branch still gets it (#4285).
 - `cargo test -p ripr diff_json_with_base_does_not_emit_repo_scope_warning --lib`
 - `cargo test -p ripr first_pr_check_missing_packet_error_explains_validate_only_mode --lib`
 - `cargo test -p ripr first_pr_write_command_preserves_explicit_gap_ledger_only --lib`
+- `cargo test -p ripr first_pr_write_command_renders_base_only_when_explicit --lib`
+- `cargo test -p ripr --test cli_smoke first_pr_check_missing_packet_recovers_without_a_resolvable_base`
 - `cargo xtask goldens check`
 - `cargo xtask check-output-contracts`
 - `cargo xtask check-static-language`
