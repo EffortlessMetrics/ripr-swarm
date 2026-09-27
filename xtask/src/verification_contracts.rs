@@ -1381,8 +1381,7 @@ mod tests {
             assert!(!check(&hollow).is_empty(), "{label} repair_card accepted");
         }
         let mut no_commands = packet.clone();
-        no_commands["comments"][0]["repair_card"]["verification_commands"] =
-            serde_json::json!([]);
+        no_commands["comments"][0]["repair_card"]["verification_commands"] = serde_json::json!([]);
         assert!(!check(&no_commands).is_empty());
 
         // An eligible GapRecord needs no related test or target file.
@@ -1429,7 +1428,11 @@ mod tests {
                 .ok_or("missing default comments")?
                 .is_empty()
         );
-        assert!(check(&default_packet).is_empty(), "{:#?}", check(&default_packet));
+        assert!(
+            check(&default_packet).is_empty(),
+            "{:#?}",
+            check(&default_packet)
+        );
         // Working-set cards keep their string test-navigation contract.
         for field in ["recommended_file", "recommended_name"] {
             let mut null_navigation = default_packet.clone();
