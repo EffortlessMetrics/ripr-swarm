@@ -1944,10 +1944,17 @@ fn regenerate_blocked_gap_ledger_command(root: &Path, options: &FirstPrOptions) 
     if uses_check_output_gap_ledger(root) {
         return regenerate_check_output_gap_ledger_command(options);
     }
+    // Every path in the compound anchors at --root, like the redirect in its
+    // first half: a cwd-relative read or write would split the retry across
+    // directories when first-pr runs with a --root other than the cwd.
+    let anchored = |path: &str| shell_arg(&anchored_redirect_target(&options.root, path));
     format!(
-        "{} && {}",
+        "{} && ripr reports gap-ledger --root {} --repo-exposure {} --out {} --out-md {}",
         regenerate_repo_exposure_command(&options.root),
-        regenerate_repo_exposure_gap_ledger_command(&options.gap_ledger)
+        shell_arg(&options.root),
+        anchored(DEFAULT_REPO_EXPOSURE),
+        anchored(&options.gap_ledger),
+        anchored(&with_extension(&options.gap_ledger, "md"))
     )
 }
 
@@ -3306,15 +3313,23 @@ mod tests {
             .as_str()
             .unwrap_or_default();
         let (input, ledger) = next.split_once(" && ").unwrap_or_default();
+        let exposure = anchored_redirect_target(".", DEFAULT_REPO_EXPOSURE);
         assert!(
-            input.starts_with("ripr check --root . --mode instant --format repo-exposure-json > ")
-                && input.ends_with("target/ripr/reports/repo-exposure.json"),
+            input
+                == format!(
+                    "ripr check --root . --mode instant --format repo-exposure-json > {exposure}"
+                ),
             "{next}"
         );
+        // The ledger half reads the file the first half wrote and writes where
+        // first-pr resolves the ledger, both anchored at --root.
         assert!(
-            ledger.starts_with(
-                "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json"
-            ),
+            ledger
+                == format!(
+                    "ripr reports gap-ledger --root . --repo-exposure {exposure} --out {} --out-md {}",
+                    anchored_redirect_target(".", DEFAULT_GAP_LEDGER),
+                    anchored_redirect_target(".", &with_extension(DEFAULT_GAP_LEDGER, "md"))
+                ),
             "{next}"
         );
         cleanup(&repo)
