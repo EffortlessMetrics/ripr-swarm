@@ -2557,6 +2557,10 @@ mod tests {
             "Also missing: Gap decision ledger at `target/ripr/reports/gap-decision-ledger.json`"
         ));
         assert!(summary.contains("Then run: `ripr reports gap-ledger"));
+        assert!(
+            summary.find("Regeneration command:") < summary.find("Also missing:"),
+            "repo exposure recovery must precede the dependent ledger: {summary}"
+        );
         let markdown = render_start_here_markdown(&packet);
         assert!(markdown.contains("- Also missing: Gap decision ledger"));
         check_first_pr(&repo, &options)?;
