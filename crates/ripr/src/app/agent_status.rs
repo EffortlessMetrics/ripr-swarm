@@ -1,4 +1,3 @@
-pub(crate) use crate::agent::loop_commands::pilot_select_command;
 use crate::agent::loop_commands::{
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_BRIEF_ARTIFACT,
     WORKFLOW_AGENT_PACKET_ARTIFACT, WORKFLOW_AGENT_RECEIPT_ARTIFACT,
@@ -7,8 +6,9 @@ use crate::agent::loop_commands::{
     WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
     WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_brief_command, agent_packet_command,
     agent_receipt_command, agent_review_summary_command, agent_review_summary_markdown_command,
-    agent_status_command, agent_status_markdown_command, agent_verify_command, bound_root,
-    check_analysis_outcome_command, check_repo_exposure_command, display_path, shell_arg,
+    agent_status_command, agent_status_markdown_command, agent_verify_command,
+    anchored_redirect_target, bound_root, check_analysis_outcome_command,
+    check_repo_exposure_command, display_path, shell_arg,
 };
 use crate::app::repair_attempt::{
     AfterPhaseHeadAdmission, DivergedHeadRecovery, REPAIR_ATTEMPT_DIRECTORY,
@@ -806,6 +806,25 @@ fn select_next_command(
 
 /// Where `ripr pilot` writes its summary by default, relative to the root.
 const PILOT_SUMMARY_ARTIFACT: &str = "target/ripr/pilot/pilot-summary.json";
+
+/// The seam-selection route status offers before any seam is known. `ripr
+/// pilot` resolves a relative `--out` against the working directory, not
+/// `--root`, so the command names the pilot directory under the selected root
+/// explicitly; pasted from any directory it writes the summary status reads
+/// next (#4000).
+///
+/// The root is bound here, once (#4287): a caller may pass the raw `--root`
+/// or an already bound one. Binding is idempotent for an absolute root, so
+/// `--root` and `--out` always name the same bound directory and the pilot
+/// directory is never anchored twice.
+pub(crate) fn pilot_select_command(root: &str) -> String {
+    let root = bound_root(root);
+    format!(
+        "ripr pilot --root {} --out {}",
+        shell_arg(&root),
+        shell_arg(&anchored_redirect_target(&root, "target/ripr/pilot"))
+    )
+}
 
 /// The repair start `ripr pilot` recorded for its top seam (#3906), carried
 /// verbatim. Pilot fills `next.repair_command` only past the repair-packet

@@ -1529,6 +1529,37 @@ mod tests {
         Ok(())
     }
 
+    /// #4287: a Unix root whose directory name carries a literal `\\` keeps
+    /// it in the rendered display, and typed recovery binds that display to
+    /// the same selected root.
+    #[cfg(unix)]
+    #[test]
+    fn backslash_root_display_recovers_its_typed_route() -> Result<(), String> {
+        use crate::agent::loop_commands::{bound_root, check_repo_exposure_command};
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| err.to_string())?
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "ripr-backslash-recovery-{}-{nonce}",
+            std::process::id()
+        ));
+        let root = base.join("team\\repo");
+        std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        let bound = bound_root(&root.to_string_lossy());
+        let display = check_repo_exposure_command(&bound, "instant", "target/ripr/out.json");
+        let spec = super::report_regeneration_command_spec_from_display(&display, &root);
+        std::fs::remove_dir_all(&base).map_err(|err| err.to_string())?;
+        let spec =
+            spec.ok_or_else(|| format!("backslash-root display did not recover: {display}"))?;
+        if spec.expected_writes != ["target/ripr/out.json"]
+            || !spec.args.windows(2).any(|pair| pair == ["--root", "."])
+        {
+            return Err(format!("unexpected backslash-root spec: {spec:?}"));
+        }
+        Ok(())
+    }
+
     #[test]
     fn first_pr_report_routes_recover_exact_shapes_and_reject_deviations() -> Result<(), String> {
         // Route 1: the repo-exposure check redirect (route word at index 1),

@@ -7114,6 +7114,7 @@ tests = [
   "crates/ripr/src/domain/command_spec.rs::tests::mismatched_authority_is_rejected",
   "crates/ripr/src/domain/command_spec.rs::tests::same_route_ignores_only_the_display",
   "crates/ripr/src/agent/command_specs.rs::tests::anchored_gap_ledger_displays_recover_root_relative_argv",
+  "crates/ripr/src/agent/command_specs.rs::tests::backslash_root_display_recovers_its_typed_route",
   "crates/ripr/tests/verification_result.rs::verification_result_round_trips_and_validates_against_exact_context",
   "crates/ripr/src/domain/verification_result.rs::tests::wrong_root_and_command_digest_fail_closed",
   "crates/ripr/src/domain/verification_result.rs::tests::malformed_commitments_and_heads_fail_closed",

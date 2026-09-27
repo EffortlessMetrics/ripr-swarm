@@ -1,8 +1,8 @@
 use crate::agent::command_specs::report_regeneration_command_spec_from_display;
 use crate::agent::loop_commands::{
-    anchored_redirect_target, check_repo_exposure_command, display_path, pilot_select_command,
-    shell_arg,
+    anchored_redirect_target, check_repo_exposure_command, display_path, shell_arg,
 };
+use crate::app::agent_status::pilot_select_command;
 use crate::config::detect_python_project;
 use crate::domain::CommandSpec;
 use crate::output::gap_decision_ledger::projection_eligible_from_value;

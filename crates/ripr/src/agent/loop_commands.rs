@@ -99,7 +99,8 @@ pub(crate) fn bound_root_path(root_path: &Path) -> PathBuf {
 pub(crate) fn root_display(root: &str) -> String {
     let root_path = Path::new(root);
     if root_path.is_absolute() {
-        root_path_display(&lexically_clean(root_path))
+        // An absolute root binds to itself, lexically cleaned.
+        bound_root(root)
     } else {
         root.to_string()
     }
@@ -250,25 +251,6 @@ pub(crate) fn agent_receipt_command(
         Some(path) => format!("{command} --out {}", shell_arg(path)),
         None => command,
     }
-}
-
-/// The seam-selection route status offers before any seam is known. `ripr
-/// pilot` resolves a relative `--out` against the working directory, not
-/// `--root`, so the command names the pilot directory under the selected root
-/// explicitly; pasted from any directory it writes the summary status reads
-/// next (#4000).
-///
-/// The root is bound here, once (#4287): a caller may pass the raw `--root`
-/// or an already bound one. Binding is idempotent for an absolute root, so
-/// `--root` and `--out` always name the same bound directory and the pilot
-/// directory is never anchored twice.
-pub(crate) fn pilot_select_command(root: &str) -> String {
-    let root = bound_root(root);
-    format!(
-        "ripr pilot --root {} --out {}",
-        shell_arg(&root),
-        shell_arg(&anchored_redirect_target(&root, "target/ripr/pilot"))
-    )
 }
 
 pub(crate) fn agent_status_command(root: &str, out_path: Option<&str>) -> String {
@@ -458,8 +440,9 @@ mod tests {
     /// working directory.
     /// #4287: on Unix `\\` is an ordinary filename character. A selected root
     /// whose directory name carries one renders unchanged in `--root` and in
-    /// the anchored redirect, so the command names the real directory, and
-    /// typed recovery still binds it.
+    /// the anchored redirect, so the command names the real directory. This
+    /// file is also compiled into xtask, so the typed-recovery half lives in
+    /// `command_specs::tests::backslash_root_display_recovers_its_typed_route`.
     #[cfg(unix)]
     #[test]
     fn bound_root_keeps_a_unix_backslash_directory_name() -> Result<(), String> {
@@ -500,15 +483,6 @@ mod tests {
                 shell_arg(&format!("{spelled}/target/ripr/out.json"))
             )
         );
-        let spec = crate::agent::command_specs::report_regeneration_command_spec_from_display(
-            &command, &root,
-        )
-        .ok_or("a display bound to the backslash root must recover")?;
-        assert_eq!(
-            spec.expected_writes,
-            vec!["target/ripr/out.json".to_string()]
-        );
-
         std::fs::remove_dir_all(&base).map_err(|err| err.to_string())
     }
 

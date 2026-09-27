@@ -267,6 +267,8 @@ available.
 - `crates/ripr/src/agent/command_specs.rs::tests::anchored_gap_ledger_displays_recover_root_relative_argv`
   proves root-anchored regeneration displays recover portable argv and fail
   closed outside the selected root.
+- `crates/ripr/src/agent/command_specs.rs::tests::backslash_root_display_recovers_its_typed_route`
+  proves a Unix root with a literal backslash keeps its typed route.
 
 ## Implementation Mapping
 
