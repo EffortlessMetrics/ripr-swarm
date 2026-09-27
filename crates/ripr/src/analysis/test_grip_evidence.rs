@@ -247,7 +247,7 @@ fn evidence_for_seam_with_context(
 
     let related_tests: Vec<RelatedTestGrip> = related_with_reason
         .iter()
-        .map(|(indexed, reason)| related_test_grip(seam, indexed.test, *reason, context.index))
+        .map(|(indexed, reason)| related_test_grip(seam, indexed.test, *reason, context))
         .collect();
 
     TestGripEvidence {
@@ -394,7 +394,15 @@ fn activate_evidence(
         && boundary_constant
             .as_ref()
             .is_some_and(|constant| !constant.lookup.is_declared_once());
+    // A local boundary with no input-free value (#4228) is the same
+    // dead end: `check` drops its repair ask, so grip must not grade it.
+    let boundary = owner_fn.and_then(|owner_fn| predicate_boundary_operand(seam, owner_fn));
+    let boundary_local_unresolved = !boundary_equality_observed
+        && boundary
+            .as_ref()
+            .is_some_and(PredicateBoundaryOperand::local_unresolved);
     let boundary_activation_operands_unresolved = boundary_constant_unresolved
+        || boundary_local_unresolved
         || observed_argument_selection
             .as_ref()
             .is_some_and(|selection| {
@@ -411,6 +419,7 @@ fn activate_evidence(
         boundary_activation_operands_unresolved,
         boundary_equality_observed,
         boundary_constant.as_ref(),
+        boundary.as_ref(),
     );
     let direct_value_insensitive_owner_call = !owner_name.is_empty()
         && !requires_concrete_activation_values(seam)
@@ -436,7 +445,10 @@ fn activate_evidence(
 
     let state = if related.is_empty() {
         StageState::No
-    } else if ambiguous_constructor_field_owner || boundary_constant_unresolved {
+    } else if ambiguous_constructor_field_owner
+        || boundary_constant_unresolved
+        || boundary_local_unresolved
+    {
         StageState::Unknown
     } else if !observed.is_empty()
         || direct_value_insensitive_owner_call
@@ -451,6 +463,7 @@ fn activate_evidence(
     let stage = StageEvidence::new(
         state,
         if !boundary_constant_unresolved
+            && !boundary_local_unresolved
             && (!observed.is_empty()
                 || direct_value_insensitive_owner_call
                 || helper_value_insensitive_owner_call)
@@ -476,6 +489,8 @@ fn activate_evidence(
                     .unwrap_or(seam.expression()),
                 constant.1
             )
+        } else if boundary_local_unresolved && !related.is_empty() {
+            boundary_activation_operands_unresolved_summary(seam, index, owner_name)
         } else if !observed.is_empty() {
             format!(
                 "Observed {} concrete activation value(s) for seam `{}`",
@@ -577,9 +592,7 @@ fn observed_value_facts_for_test(
     // Per-test resolution facts (let bindings, rstest cases, table
     // rows, same-file consts) are built lazily and then reused across
     // all owner calls in this test. Per `analysis/value-extraction-v2`.
-    let value_facts = indexed
-        .value_facts
-        .get_or_init(|| super::value_resolution::ValueEnvFacts::build(indexed.test, index));
+    let value_facts = indexed.value_facts(index);
     let env = super::value_resolution::ValueEnv::new(seam, value_facts);
     for call in &indexed.test.calls {
         if call.name != owner_name {
@@ -650,9 +663,7 @@ fn field_assignment_value_unresolved_for_test(
     let ObservedArgumentSelection::ArgumentOperands(operands) = selection else {
         return false;
     };
-    let value_facts = indexed
-        .value_facts
-        .get_or_init(|| super::value_resolution::ValueEnvFacts::build(indexed.test, index));
+    let value_facts = indexed.value_facts(index);
     let env = super::value_resolution::ValueEnv::new(seam, value_facts);
     indexed.test.calls.iter().any(|call| {
         if call.name != owner_name {
@@ -731,12 +742,7 @@ fn observed_argument_selection(
         return ObservedArgumentSelection::ArgumentOperands(vec![left_operand]);
     }
     if let Some(right_operand) = boundary_operand_argument(owner_fn, &parameters, &right)
-        && !scalar_values(&left).is_empty()
-    {
-        return ObservedArgumentSelection::ArgumentOperands(vec![right_operand]);
-    }
-    if !scalar_values(&left).is_empty()
-        && let Some(right_operand) = boundary_operand_argument(owner_fn, &parameters, &right)
+        && left_is_boundary_value(owner_fn, &left, seam.display_line())
     {
         return ObservedArgumentSelection::ArgumentOperands(vec![right_operand]);
     }
@@ -1165,9 +1171,7 @@ fn resolved_argument_values(
     if !values.is_empty() {
         return values;
     }
-    let value_facts = indexed
-        .value_facts
-        .get_or_init(|| super::value_resolution::ValueEnvFacts::build(indexed.test, index));
+    let value_facts = indexed.value_facts(index);
     let env = super::value_resolution::ValueEnv::new(seam, value_facts);
     env.resolve_at_call(arg, call.line, &call.name, &call.text)
         .into_iter()
@@ -1244,6 +1248,7 @@ fn missing_discriminators_for(
     boundary_activation_operands_unresolved: bool,
     boundary_equality_observed: bool,
     boundary_constant: Option<&BoundaryConstantOperand>,
+    boundary: Option<&PredicateBoundaryOperand>,
 ) -> Vec<MissingDiscriminatorFact> {
     match seam.kind() {
         SeamKind::PredicateBoundary => {
@@ -1251,14 +1256,13 @@ fn missing_discriminators_for(
                 return Vec::new();
             }
             // Without a value model we cannot prove the boundary value is
-            // tested. Surface a hypothesis if the predicate uses a
-            // strict-or-equal operator and at least one observed value is
-            // strictly above or below.
-            let expression = seam.expression();
-            if !boundary_predicate_uses_equal_op(expression) {
-                return Vec::new();
-            }
-            let boundary_token = boundary_rhs_token(expression);
+            // tested. Every comparison operator (strict or not) flips
+            // against its neighbour only at the equality boundary, so
+            // surface it unless an observed value names it (#4214).
+            let boundary_token = boundary.map_or_else(
+                || boundary_rhs_token(seam.expression()),
+                |boundary| boundary.token.clone(),
+            );
             if boundary_token.is_empty() {
                 return Vec::new();
             }
@@ -1274,18 +1278,24 @@ fn missing_discriminators_for(
             // so we can only flag that the equality boundary is not
             // explicitly named in the observed value set.
             //
-            // Use exact equality rather than `contains` to avoid false
-            // matches like `boundary_token = "10"` matching observed
-            // value `"100"`. Observed values are literal scalars produced
-            // by `scalar_values`, so byte-for-byte equality is the right
-            // contract here.
+            // Use whole-value equality rather than `contains` to avoid
+            // false matches like `boundary_token = "10"` matching observed
+            // value `"100"`. Compare through `comparable_value` so digit
+            // separators do not matter (`1_000` names `1000`).
+            // A local boundary (`let limit = 100;`) is matched by its
+            // input-free value, the same value `check` evaluates (#4228).
+            let local_value = boundary.and_then(PredicateBoundaryOperand::local_value);
+            let boundary_value = comparable_value(local_value.unwrap_or(&boundary_token));
             let equality_seen = observed
                 .iter()
-                .any(|v| v.value.as_str() == boundary_token.as_str());
+                .any(|v| comparable_value(&v.value) == boundary_value);
             if equality_seen {
                 Vec::new()
             } else {
                 let reason = match boundary_constant {
+                    _ if let Some(value) = local_value => format!(
+                        "observed values do not include the equality-boundary case for this predicate ({boundary_token} = {value})"
+                    ),
                     Some(constant) if let Some(value) = constant.lookup.value() => format!(
                         "observed values do not include the equality-boundary case for this predicate ({boundary_token} = {value})"
                     ),
@@ -1383,11 +1393,67 @@ fn test_passes_boundary_constant(
     })
 }
 
-fn boundary_predicate_uses_equal_op(expression: &str) -> bool {
-    expression.contains(" >= ")
-        || expression.contains(" <= ")
-        || expression.contains(" == ")
-        || expression.contains(" != ")
+/// The boundary side of a predicate seam: the operand that does not bind
+/// to an owner parameter, so a reversed literal (`100 < amount`) names
+/// `100`, not `amount` (#4228). A local boundary carries what `check`'s
+/// evaluator can say about it.
+struct PredicateBoundaryOperand {
+    token: String,
+    local: super::classify::LocalBoundary,
+}
+
+impl PredicateBoundaryOperand {
+    fn local_value(&self) -> Option<&str> {
+        match &self.local {
+            super::classify::LocalBoundary::Exact(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    fn local_unresolved(&self) -> bool {
+        matches!(self.local, super::classify::LocalBoundary::Unresolved)
+    }
+}
+
+fn predicate_boundary_operand(
+    seam: &RepoSeam,
+    owner_fn: &FunctionSummary,
+) -> Option<PredicateBoundaryOperand> {
+    if seam.kind() != SeamKind::PredicateBoundary {
+        return None;
+    }
+    let (left, right) = comparison_operands(seam.expression())?;
+    let parameters = function_parameters(owner_fn);
+    // The reversed shape `observed_argument_selection` observes: a literal
+    // or input-free local on the left compared against a parameter on the
+    // right.
+    let reversed = boundary_operand_argument(owner_fn, &parameters, &left).is_none()
+        && left_is_boundary_value(owner_fn, &left, seam.display_line())
+        && boundary_operand_argument(owner_fn, &parameters, &right).is_some();
+    let token = boundary_token(if reversed { &left } else { &right });
+    if token.is_empty() {
+        return None;
+    }
+    let local = super::classify::local_boundary(owner_fn, &token, seam.display_line());
+    Some(PredicateBoundaryOperand { token, local })
+}
+
+/// Whether the left operand of a predicate is a boundary value rather than
+/// the tested input: a literal (`100 < amount`, `1.5f64 < amount`) or a
+/// local whose initializer folds without test input (`let limit = 100;
+/// limit < amount`), the value `check` evaluates per row (#4270). A local
+/// that depends on inputs, or that the evaluator cannot fold, is not one.
+fn left_is_boundary_value(owner_fn: &FunctionSummary, left: &str, predicate_line: usize) -> bool {
+    numeric_boundary_literal(left).is_some()
+        || !scalar_values(left).is_empty()
+        || matches!(
+            super::classify::local_boundary(
+                owner_fn,
+                &boundary_identifier_prefix(left),
+                predicate_line
+            ),
+            super::classify::LocalBoundary::Exact(_)
+        )
 }
 
 /// Best-effort right-hand-side identifier for a boundary predicate.
@@ -1395,18 +1461,50 @@ fn boundary_predicate_uses_equal_op(expression: &str) -> bool {
 fn boundary_rhs_token(expression: &str) -> String {
     for op in [" >= ", " <= ", " == ", " != ", " > ", " < "] {
         if let Some(idx) = expression.find(op) {
-            let rhs = expression[idx + op.len()..].trim();
-            // Take up to the first non-identifier char.
-            let token: String = rhs
-                .chars()
-                .take_while(|c| c.is_alphanumeric() || *c == '_')
-                .collect();
+            let token = boundary_identifier_prefix(&expression[idx + op.len()..]);
             if !token.is_empty() {
                 return token;
             }
         }
     }
     String::new()
+}
+
+/// The boundary operand as observed values spell it: a whole integer,
+/// decimal, char or string literal (`-100`, `1.5`, `'m'`), else its
+/// identifier prefix. Decimals are whole in both owners (#4271); enum
+/// paths keep the identifier-prefix spelling because `check` does not
+/// read them as whole values either (#4228).
+fn boundary_token(operand: &str) -> String {
+    if let Some(literal) = numeric_boundary_literal(operand) {
+        return literal;
+    }
+    match scalar_values(operand).into_iter().next() {
+        Some(literal) if !literal.contains("::") => literal,
+        _ => boundary_identifier_prefix(operand),
+    }
+}
+
+/// A numeric boundary read by `check`'s own literal reader, so a suffixed
+/// literal (`1.5f64`, `100u32`) spells the same value in both owners
+/// instead of grip's identifier prefix (`1`, `100u32`).
+fn numeric_boundary_literal(operand: &str) -> Option<String> {
+    let trimmed = operand.trim();
+    trimmed
+        .strip_prefix('-')
+        .unwrap_or(trimmed)
+        .starts_with(|ch: char| ch.is_ascii_digit())
+        .then(|| super::classify::literal_operand_value(trimmed))
+        .flatten()
+}
+
+/// An operand up to its first non-identifier character.
+fn boundary_identifier_prefix(operand: &str) -> String {
+    operand
+        .trim()
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect()
 }
 
 fn function_parameters(function: &FunctionSummary) -> Vec<String> {
@@ -2243,7 +2341,7 @@ fn related_test_grip(
     seam: &RepoSeam,
     test: &TestSummary,
     reason: RelationReason,
-    index: &RustIndex,
+    context: &CompactGripContext<'_>,
 ) -> RelatedTestGrip {
     let (kind, strength) = best_oracle(test, seam);
     let summary = if matches!(strength, OracleStrength::None) {
@@ -2267,7 +2365,7 @@ fn related_test_grip(
         test_name: test.name.clone(),
         file: test.file.clone(),
         line: test.start_line,
-        test_target: test_target_evidence(index, seam, test, reason),
+        test_target: test_target_evidence(context, seam, test, reason),
         oracle_kind: kind,
         oracle_strength: strength,
         evidence_summary: summary,
@@ -2277,11 +2375,12 @@ fn related_test_grip(
 }
 
 fn test_target_evidence(
-    index: &RustIndex,
+    context: &CompactGripContext<'_>,
     seam: &RepoSeam,
     test: &TestSummary,
     relation: RelationReason,
 ) -> Option<TestTargetEvidence> {
+    let index = context.index;
     let file = index.files.get(&test.file)?;
     let matches: Vec<&FunctionSummary> = file
         .functions
@@ -2296,7 +2395,8 @@ fn test_target_evidence(
         return None;
     }
     let authority = index.workspace_authority.as_ref()?;
-    if !authority.validates_target(&test.file, seam.file(), &file.source) {
+    let test_source_digest = context.indexed_source_digest(&test.file)?;
+    if !authority.validates_target_digest(&test.file, seam.file(), &test_source_digest) {
         return None;
     }
     let function = matches[0];

@@ -411,7 +411,8 @@ The gate decision JSON uses schema version `0.1`:
 - `summary.suppressed` - count of suppressed or configured-hidden candidates
   preserved in the gate report.
 - `summary.not_applicable` - count of parsed records that are outside the
-  configured policy scope.
+  configured policy scope, including gap-ledger records that are not
+  gate-candidate eligible, such as an already-observed gap.
 - `summary.unknown_confidence` - count of candidates that could not satisfy
   high-confidence requirements.
 - `decisions[].source` - source artifact family such as `pr_guidance`,
@@ -555,7 +556,10 @@ Initial implementation should add tests for:
 - missing and malformed input reports;
 - recommendation calibration agreement and disagreement;
 - mutation calibration agreement, disagreement, and ambiguous join handling;
-- generated workflow opt-in wiring.
+- generated workflow opt-in wiring;
+- a producer-declared static limitation outranks the PR-wide nearby-test
+  reason in the gate headline without changing eligibility
+  (`crates/ripr/src/output/gate/tests.rs::gate_static_limitation_reason_outranks_pr_wide_nearby_test_flag`).
 
 ## Implementation Mapping
 
