@@ -959,7 +959,7 @@
             "properties": { "source": { "const": "gap_decision_ledger" } }
           },
           "then": {
-            "required": ["gap_id"],
+            "required": ["gap_id", "repair_card"],
             "properties": {
               "placement": {
                 "properties": { "mode": { "const": "gap_record_anchor" } }

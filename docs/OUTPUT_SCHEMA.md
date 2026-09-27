@@ -7332,7 +7332,7 @@ Field contract:
   `"owner_function_changed_line"`, or `"same_file_changed_line"`. The last
   names a changed line inside the seam owner's span that owner attribution
   bound to a nested function; a changed line elsewhere in the same file is
-  not a placement. Gap-ledger cards use `"gap_record_anchor"` for their
+  not a placement. Gap-ledger cards use `gap_record_anchor` for their
   producer-owned stable anchor. The renderer must prefer summary-only guidance
   over misleading line placement.
 - `comments[].kind` - seam kind from the existing static evidence.

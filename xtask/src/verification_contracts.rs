@@ -1360,6 +1360,15 @@ mod tests {
             .remove("gap_id");
         assert!(!check(&missing_identity).is_empty());
 
+        // The eligible card exists to carry the repair card; a gap-ledger
+        // card without one is not a valid review recommendation.
+        let mut missing_repair_card = packet.clone();
+        missing_repair_card["comments"][0]
+            .as_object_mut()
+            .ok_or("missing fixture comment")?
+            .remove("repair_card");
+        assert!(!check(&missing_repair_card).is_empty());
+
         let mut wrong_placement = packet.clone();
         wrong_placement["comments"][0]["placement"]["mode"] =
             Value::String("exact_seam_line".to_string());
