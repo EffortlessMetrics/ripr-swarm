@@ -106,7 +106,7 @@ use super::{
     dogfood_editor_gap_cockpit_scenarios, dogfood_failed_families, dogfood_finding_alignment_run,
     dogfood_finding_alignment_scenarios, dogfood_first_action_run, dogfood_first_action_scenarios,
     dogfood_first_pr_metrics, dogfood_first_pr_run, dogfood_first_pr_scenarios,
-    dogfood_gate_adoption_run, dogfood_gate_adoption_scenarios,
+    dogfood_gate_adoption_run, dogfood_gate_adoption_scenarios, dogfood_gate_result,
     dogfood_generated_ci_cockpit_run_from_workflow, dogfood_language_preview_run,
     dogfood_language_preview_scenarios, dogfood_pr_inline_comment_run,
     dogfood_pr_inline_comment_scenarios, dogfood_pr_review_front_panel_run,
@@ -13629,6 +13629,14 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
         "{failed:?}"
     );
     assert_eq!(dogfood_report_status(&failing_inputs), "warn");
+    assert_eq!(dogfood_gate_result(&json_inputs), Ok(()));
+    let gate_error = dogfood_gate_result(&failing_inputs)
+        .err()
+        .unwrap_or_default();
+    assert!(
+        gate_error.contains("generated-pr-ci-review-workflow: "),
+        "{gate_error}"
+    );
     // Families that run no producer say so, so they cannot read as producer
     // evidence (#4267).
     let report: serde_json::Value =

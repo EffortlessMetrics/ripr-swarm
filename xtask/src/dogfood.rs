@@ -1287,15 +1287,21 @@ pub(crate) fn dogfood_impl() -> Result<(), String> {
     // Aggregate scenario outcomes into the gate exit code (#2411). The
     // report status and the exit code share one family list (#4309); two
     // hand-kept lists drifted and let a `warn` report exit 0.
-    let failed = dogfood_failed_families(&report_inputs);
-    if !failed.is_empty() {
-        return Err(format!(
-            "dogfood: {} scenario family/families recorded errors: {}",
-            failed.len(),
-            failed.join("; ")
-        ));
+    dogfood_gate_result(&report_inputs)
+}
+
+/// The command exit for a written report: `Err` exactly when the report
+/// status is `warn`, naming every failing run or summary.
+pub(crate) fn dogfood_gate_result(inputs: &DogfoodReportInputs<'_>) -> Result<(), String> {
+    let failed = dogfood_failed_families(inputs);
+    if failed.is_empty() {
+        return Ok(());
     }
-    Ok(())
+    Err(format!(
+        "dogfood: {} scenario family/families recorded errors: {}",
+        failed.len(),
+        failed.join("; ")
+    ))
 }
 
 pub(crate) fn dogfood_scenarios() -> Vec<DogfoodScenario> {
@@ -13100,7 +13106,7 @@ pub(crate) fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> Strin
     let pr_inline_comment_runs = inputs.pr_inline_comment_runs;
     let first_pr_metrics = dogfood_first_pr_metrics(first_pr_runs);
     let mut body = format!(
-        "# ripr dogfood report\n\nStatus: {}\n\nMode: advisory\n\nThis report runs `ripr check --mode fast` against stable in-repo fixture diffs. It records current product output for review without making dogfood a blocking gate yet.\n\n## Summary\n\n",
+        "# ripr dogfood report\n\nStatus: {}\n\nMode: advisory\n\nThis report runs `ripr check --mode fast` against stable in-repo fixture diffs. It records current product output for review. The findings stay advisory, but the command exits non-zero whenever this status is `warn`.\n\n## Summary\n\n",
         dogfood_report_status(inputs)
     );
     for run in runs {
