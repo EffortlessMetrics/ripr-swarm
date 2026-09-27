@@ -3552,9 +3552,11 @@ suite('Extension Smoke', () => {
           'target/ripr/agent/agent-verify.json'
         )
       ];
-      // Another root, another file, a `..` hop, or a trailing token.
+      // Another root, another file, a `..` hop, a trailing token, or a
+      // second redirect ahead of the anchored one.
       const rejected = [
         packetTo('/elsewhere/target/ripr/agent/agent-packet.json'),
+        packetTo(`/elsewhere/.bashrc > ${anchored('target/ripr/agent/agent-packet.json')}`),
         packetTo(anchored('target/ripr/agent/other.json')),
         packetTo(anchored(`../${path.basename(root)}/target/ripr/agent/agent-packet.json`)),
         packetTo(`${anchored('target/ripr/agent/agent-packet.json')} extra`)
