@@ -12986,6 +12986,54 @@ fn analyze_diff_discloses_valid_tagged_template_each() -> Result<(), String> {
     Ok(())
 }
 
+/// #4261: the test index is workspace-wide, so a diff that classified
+/// nothing against it must not be reported partial by an unrelated test
+/// shape. Same unextractable file as above; only the changed path differs.
+/// A Rust-only diff and a TS test-file-only diff stay complete, while the
+/// production change above still discloses.
+#[test]
+fn analyze_diff_withholds_extraction_partial_when_no_typescript_owner_changed() -> Result<(), String>
+{
+    let root = ts_unique_tempdir("extract-scope")?;
+    ts_write_file(
+        &root.join("src/pricing.ts"),
+        "export function tier(amount: number): string {\n  if (amount >= 150) {\n    return 'premium';\n  }\n  return 'standard';\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/tiers.test.ts"),
+        "import { expect, test } from 'vitest';\nimport { tier } from '../src/pricing';\n\ntest.each`\n  amount | expected\n  ${100} | ${'standard'}\n  ${150} | ${'premium'}\n`('computes the boundary case', ({ amount, expected }) => {\n  expect(tier(amount)).toBe(expected);\n});\n",
+    )?;
+    ts_write_file(
+        &root.join("src/lib.rs"),
+        "pub fn tier(amount: u32) -> bool {\n    amount >= 150\n}\n",
+    )?;
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let discloses = |changed_path: &str| -> Result<bool, String> {
+        let result =
+            adapter.analyze_diff(&options, &OraclePolicy::default(), &[changed(changed_path)])?;
+        Ok(result.limitations.iter().any(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+        }))
+    };
+    assert!(
+        discloses("src/pricing.ts")?,
+        "a changed TS owner must still disclose the partial test index"
+    );
+    assert!(
+        !discloses("src/lib.rs")?,
+        "a Rust-only diff never consulted the TS test index"
+    );
+    assert!(
+        !discloses("tests/tiers.test.ts")?,
+        "a TS test-file-only diff classifies no owner against the index"
+    );
+    Ok(())
+}
+
 /// (c) Negative control: a normal, fully extracted test file (plain titles,
 /// describe nesting, array-form `.each`) must NOT emit the new limitation.
 #[test]

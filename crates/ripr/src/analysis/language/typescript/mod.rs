@@ -248,6 +248,10 @@ impl LanguageAdapter for TypeScriptAdapter {
         // so the summary must not attribute JS files to typescript.
         let mut changed_typescript: usize = 0;
         let mut changed_javascript: usize = 0;
+        // Whether any classification in this diff read the TypeScript test
+        // index: a changed production owner, or a Bun cross-language finding.
+        // Partial test extraction is disclosed only then (#4261).
+        let mut test_index_consumed = false;
         for changed in changed_files {
             for added in &changed.added_lines {
                 if let Some(finding) = bun_cross_language_finding_for_changed_rust_line(
@@ -256,6 +260,7 @@ impl LanguageAdapter for TypeScriptAdapter {
                     &added.text,
                     &all_tests,
                 ) {
+                    test_index_consumed = true;
                     findings.push(finding);
                 }
             }
@@ -281,6 +286,7 @@ impl LanguageAdapter for TypeScriptAdapter {
             if is_test_file(&changed.path) {
                 continue;
             }
+            test_index_consumed = true;
 
             // Owner-extraction gap detection (#4104-A): a changed line inside
             // an owner shape the extractor does not index produces NO finding
@@ -433,7 +439,15 @@ impl LanguageAdapter for TypeScriptAdapter {
         }
         // Partial test extraction: one typed limitation per affected test
         // file, carrying the taxonomy name so JSON consumers can key on it.
-        for gap in &extraction_gaps {
+        // The index is workspace-wide, so a diff that classified nothing
+        // against it (Rust-only, or TS test edits only) is not made partial by
+        // test shapes it never consulted (#4261).
+        let consulted_gaps: &[_] = if test_index_consumed {
+            &extraction_gaps
+        } else {
+            &[]
+        };
+        for gap in consulted_gaps {
             let limitation = test_extraction_partial_limitation(gap);
             limitations.push(
                 AnalysisLimitation::new(
