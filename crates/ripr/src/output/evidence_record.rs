@@ -48,6 +48,11 @@ const REPAIR_ROUTE_EVIDENCE_CATEGORY: &str = "repair_route_evidence_incomplete";
 const REPAIR_ROUTE_EVIDENCE_REPAIR_ROUTE: &str = "analysis/producer-evidence-route";
 const TEST_TARGET_PROVENANCE_CATEGORY: &str = "test_target_provenance_unresolved";
 const TEST_TARGET_PROVENANCE_REPAIR_ROUTE: &str = "analysis/test-target-resolution";
+/// A changed owner that static evidence shows no existing test reaching.
+/// This is a test gap in the change, not an analyzer limitation; it keeps
+/// the fail-closed `static_limitation` gap state only because the route
+/// authority proposes no first-test target (#4216 row 2).
+pub(crate) const NO_TEST_REACHES_OWNER_CATEGORY: &str = "no_test_reaches_changed_owner";
 
 const MAX_RELATED_TESTS_PER_EVIDENCE_RECORD: usize = 8;
 const VERIFY_COMMAND: &str = "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json";
@@ -1069,6 +1074,7 @@ pub(crate) fn static_limitations_for(
             .missing_evidence
             .iter()
             .any(|evidence| evidence == "safe test target");
+        let no_test_reaches_owner = missing_target && no_test_reaches_owner(entry);
         let value_family = matches!(
             entry.seam.kind(),
             SeamKind::PredicateBoundary
@@ -1085,8 +1091,23 @@ pub(crate) fn static_limitations_for(
             }
             .to_string(),
             state: "unknown".to_string(),
-            reason: route_readiness.missing_evidence.join("; "),
-            category: if missing_target {
+            reason: if no_test_reaches_owner {
+                format!(
+                    "no existing test reaches `{}` (no static test path to the changed owner); the route authority does not propose a first-test target, so no repair route is available",
+                    entry.seam.owner()
+                )
+            } else {
+                // A prose reason, not a bare noun list: every consumer (the
+                // card's `why_not_actionable`, the gate headline, the
+                // evidence record) shows this text as-is (#4216 row 2 review).
+                format!(
+                    "the repair route is missing evidence: {}",
+                    route_readiness.missing_evidence.join("; ")
+                )
+            },
+            category: if no_test_reaches_owner {
+                NO_TEST_REACHES_OWNER_CATEGORY.to_string()
+            } else if missing_target {
                 TEST_TARGET_PROVENANCE_CATEGORY.to_string()
             } else if value_family {
                 MISSING_DISCRIMINATOR_EVIDENCE_CATEGORY.to_string()
@@ -1104,6 +1125,12 @@ pub(crate) fn static_limitations_for(
     }
 
     limitations
+}
+
+/// Static evidence names no related test and an explicit `reach: no` for
+/// the changed owner. Unknown or opaque reach stays a static limitation.
+fn no_test_reaches_owner(entry: &ClassifiedSeam) -> bool {
+    entry.evidence.related_tests.is_empty() && entry.evidence.reach.state == StageState::No
 }
 
 #[cfg(test)]
@@ -2013,6 +2040,47 @@ mod tests {
     }
 
     #[test]
+    fn evidence_record_names_owner_no_test_reaches_as_test_gap() {
+        let mut entry = sample_classified(StageState::No, SeamGripClass::Ungripped);
+        entry.evidence.related_tests.clear();
+        entry.evidence.reach = stage(StageState::No, "no static test path");
+        entry.evidence.observe = stage(StageState::No, "no reachable oracle");
+        entry.evidence.discriminate = stage(StageState::No, "no reachable assertion");
+
+        let record = evidence_record_for(&entry, None);
+        let json = evidence_record_json_value(&record);
+
+        // The flip stays fail-closed; only the limitation's framing changes.
+        assert_eq!(record.actionability.class, "static_limitation");
+        assert_eq!(json["canonical_item"]["gap_state"], "static_limitation");
+        assert_eq!(json["canonical_item"]["receipt_command"], Value::Null);
+        assert_eq!(
+            json["static_limitations"][0]["category"],
+            NO_TEST_REACHES_OWNER_CATEGORY
+        );
+        assert_eq!(
+            json["static_limitations"][0]["repair_route"],
+            TEST_TARGET_PROVENANCE_REPAIR_ROUTE
+        );
+        assert!(
+            json["static_limitations"][0]["reason"]
+                .as_str()
+                .is_some_and(|reason| reason
+                    .starts_with("no existing test reaches `pricing::discounted_total`"))
+        );
+
+        // A related test without a producer-owned target is still a target
+        // provenance limitation, not an owner that no test reaches.
+        let mut related = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
+        related.evidence.related_tests[0].test_target = None;
+        let json = evidence_record_json_value(&evidence_record_for(&related, None));
+        assert_eq!(
+            json["static_limitations"][0]["category"],
+            TEST_TARGET_PROVENANCE_CATEGORY
+        );
+    }
+
+    #[test]
     fn test_target_without_symbol_identity_is_unresolved() {
         let recommended = RecommendedTest {
             name: "discounted_total_boundary".to_string(),
@@ -2144,6 +2212,20 @@ mod tests {
                 .missing_evidence
                 .iter()
                 .any(|evidence| evidence == "safe test target")
+        );
+        // #4216 row 2 review (F2): the projected limitation reason reads as
+        // missing evidence, not as a bare noun list, because the review card
+        // and the gate headline show it verbatim.
+        let reasons = static_limitations_for(&entry)
+            .into_iter()
+            .map(|limitation| limitation.reason)
+            .collect::<Vec<_>>();
+        assert!(
+            reasons.iter().any(|reason| {
+                reason.starts_with("the repair route is missing evidence: ")
+                    && reason.ends_with("; safe test target")
+            }),
+            "{reasons:?}"
         );
         entry.evidence.related_tests[0].test_target = Some(test_target_fixture(
             "below_threshold_has_no_discount",
