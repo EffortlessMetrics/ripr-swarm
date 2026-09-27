@@ -74,7 +74,14 @@ Role is derived from authoritative context in priority order:
 Both diff probe seeding and the repo seam-inventory production set route
 through `classify_with`; `benches/**`/`examples/**` harness plumbing no
 longer seeds production obligations, closing the diff gap while the repo
-exclusion stays consistent. Evidence-role files remain fully indexed:
+exclusion stays consistent. Diff seeding and the LSP out-of-scope
+partition share one changed-file rule, `seeds_diff_probes`: production
+roles seed, and so do changed `xtask/` files and loose Rust files outside
+any `src` layout (a Cargo `build.rs`) that sit in no non-source directory
+and no `benches/`/`examples/` tree. Those are reviewed behavior; skipping
+them counted a changed Rust file with zero candidate lines and no
+disclosure, and the editor dropped the xtask findings the CLI reported.
+Repo mode keeps both out of the seam-inventory production set. Evidence-role files remain fully indexed:
 functions stay available for owner relations, activation input,
 sink/oracle evidence, and selectors. `TestFact` semantics are untouched
 — source role never registers a helper as an executable test selector.
@@ -212,6 +219,9 @@ The #3532 harness registry joined the same identity as FindingAffecting
 
 - Accept: `benches/exposure.rs` changed → indexed, counted as a changed
   file, zero production findings.
+- Accept: `build.rs` or `xtask/src/main.rs` changed → probes seeded and
+  the editor pins them; `fixtures/**/build.rs` and
+  `benches/common/mod.rs` stay evidence.
 - Accept: `[[test]] path="src/contract_test.rs"` → helper in it is
   evidence; `src/unconfirmed_test.rs` without a declaration → production.
 - Accept: `production_like_targets = ["tests/api_contract.rs"]` → that

@@ -1784,21 +1784,16 @@ impl RustAdapter {
             })
         {
             changed_rust_files += 1;
-            // Producer-owned source role (#3283): only production
-            // subjects and explicitly opted-in production-like targets
-            // seed diff probes; Cargo benches, examples, integration
-            // tests, and confirmed test-target files stay indexed
-            // evidence without harness-plumbing obligations. Changed
-            // files under the repository's own automation directory
-            // still seed probes: automation changes are reviewed
-            // behavior (pre-#3283 diff behavior, pinned by
-            // `diff_analysis_seeds_probes_for_changed_repo_automation_files`),
-            // while the
-            // evidence role keeps governing repo-mode indexing.
-            let role = workspace::classify_with(&changed.path, &source_role_context);
-            if !role.seeds_production_findings()
-                && !workspace::is_repo_automation_path(&changed.path)
-            {
+            // Producer-owned source role (#3283): production subjects and
+            // opted-in production-like targets seed diff probes; Cargo
+            // benches, examples, integration tests, and confirmed
+            // test-target files stay indexed evidence without
+            // harness-plumbing obligations. Changed automation (`xtask/`)
+            // and loose non-`src` files (`build.rs`) are reviewed
+            // behavior and seed too. `seeds_diff_probes` is shared with
+            // the LSP scope partition so the editor keeps what this loop
+            // reports.
+            if !workspace::seeds_diff_probes(&changed.path, &source_role_context) {
                 continue;
             }
             // Cooperative cancellation (#1972): check once per changed file
@@ -4728,6 +4723,70 @@ let _ = (result, note, raw);"##,
                 .ends_with("xtask/src/main.rs")
                 && finding.probe.location.line == 2),
             "the changed xtask predicate must become a probe: {:?}",
+            result.findings
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_seeds_probes_for_changed_build_scripts() -> Result<(), String> {
+        // A loose `build.rs` has no `src` component, so repo mode keeps it
+        // out of the production set. A changed one used to count as a
+        // changed Rust file with zero candidate lines and no disclosure.
+        let root = temp_root("build-script-seeds")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='sample'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub fn value() -> u32 { 1 }\n")?;
+        write(
+            &root.join("build.rs"),
+            "fn wants_rerun(stamp: u64, limit: u64) -> bool {\n    stamp > limit\n}\nfn main() {\n    let _ = wants_rerun(1, 0);\n}\n",
+        )?;
+        let changed_files = diff::parse_unified_diff(
+            "diff --git a/build.rs b/build.rs\n\
+         new file mode 100644\n\
+         --- /dev/null\n\
+         +++ b/build.rs\n\
+         @@ -0,0 +1,6 @@\n\
+         +fn wants_rerun(stamp: u64, limit: u64) -> bool {\n\
+         +    stamp > limit\n\
+         +}\n\
+         +fn main() {\n\
+         +    let _ = wants_rerun(1, 0);\n\
+         +}\n",
+        );
+
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+
+        assert_eq!(result.changed_files, 1);
+        assert!(
+            result.findings.iter().any(|finding| finding
+                .probe
+                .location
+                .file
+                .to_string_lossy()
+                .replace('\\', "/")
+                .ends_with("build.rs")
+                && finding.probe.location.line == 2),
+            "the changed build-script predicate must become a probe: {:?}",
             result.findings
         );
         Ok(())
