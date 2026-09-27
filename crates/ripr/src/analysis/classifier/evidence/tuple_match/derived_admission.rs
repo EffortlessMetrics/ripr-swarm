@@ -204,10 +204,8 @@ pub(super) fn top_level_projection_observes(
     let observation_end = statements
         .iter()
         .position(|statement| {
-            let ast::Stmt::ExprStmt(statement) = statement else {
-                return false;
-            };
-            matches!(statement.expr(), Some(ast::Expr::ReturnExpr(_)))
+            matches!(statement, ast::Stmt::ExprStmt(statement)
+                if matches!(statement.expr(), Some(ast::Expr::ReturnExpr(_))))
         })
         .unwrap_or(statements.len());
     let mut result_binding = None;
