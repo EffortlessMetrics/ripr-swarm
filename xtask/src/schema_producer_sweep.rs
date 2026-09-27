@@ -507,6 +507,27 @@ fn sweep(root: &Path, bindings: &[Binding], artifacts: &[Artifact]) -> Result<Sw
         }));
     }
 
+    // An artifact no row claims would otherwise be dropped without a trace,
+    // and a mistyped schema path would read as a clean run.
+    for artifact in artifacts {
+        let claimed = bindings.iter().any(|binding| {
+            artifact.schema_path == binding.schema_path
+                && artifact.schema_pointer.as_deref() == binding.pointer
+        });
+        if !claimed {
+            violations.push(format!(
+                "--artifact {} names {}{}, which no sweep row validates",
+                artifact.file.display(),
+                artifact.schema_path,
+                artifact
+                    .schema_pointer
+                    .as_deref()
+                    .map(|pointer| format!("#{pointer}"))
+                    .unwrap_or_default()
+            ));
+        }
+    }
+
     let rows = Value::Array(rows);
     let digest = sha256(rows.to_string().as_bytes());
     let packet = json!({
@@ -901,6 +922,34 @@ mod tests {
             return Err(format!(
                 "an invalid live artifact passed: {:?}",
                 supplied.violations
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_artifact_no_row_claims_fails_instead_of_being_dropped() -> Result<(), String> {
+        let root = example_root();
+        let artifact = root.join("live.json");
+        write(&artifact, r#"{"schema_version":"0.1","status":"pass"}"#);
+        let report = run(
+            &root,
+            &[binding(Corpus::RuntimeOnly("per-run bytes"), &[])],
+            &[Artifact {
+                schema_path: "schemas/ripr/exmaple.schema.json".to_string(),
+                schema_pointer: None,
+                file: artifact,
+                subject_pointer: None,
+            }],
+        )?;
+        if !report
+            .violations
+            .iter()
+            .any(|violation| violation.contains("no sweep row validates"))
+        {
+            return Err(format!(
+                "a mistyped artifact schema passed: {:?}",
+                report.violations
             ));
         }
         Ok(())
