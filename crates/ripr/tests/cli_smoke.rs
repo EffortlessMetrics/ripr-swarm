@@ -9605,7 +9605,8 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
     assert!(
         route["guidance"].as_str().is_some_and(|text| {
             text.contains("does not render Python findings")
-                && text.contains("ripr check --base origin/main")
+                && text.contains("run 'ripr check' or")
+                && !text.contains("origin/main")
         }),
         "{route}"
     );
@@ -15566,7 +15567,10 @@ fn history_commands_resolve_the_default_base_without_origin() -> Result<(), Stri
         ));
     }
 
-    let first_pr = run_command(bin, Some(&root), &["first-pr", "--root", "."])
+    // Run from the ripr checkout, which has its own `origin/main`, so a
+    // resolver that consulted the working directory instead of `--root`
+    // would record the wrong base.
+    let first_pr = run_command(bin, None, &["first-pr", "--root", &root_str])
         .map_err(|err| format!("spawn ripr first-pr: {err}"))?;
     match json_string_at(
         &root.join("target/ripr/reports/start-here.json"),
@@ -15583,7 +15587,7 @@ fn history_commands_resolve_the_default_base_without_origin() -> Result<(), Stri
     let evidence = run_command(bin, Some(&root), &["pr-evidence"])
         .map_err(|err| format!("spawn ripr pr-evidence: {err}"))?;
     match json_string_at(&root.join("target/ripr/pr/repo-exposure.json"), "/base") {
-        Ok(base) if base == "master" => {}
+        Ok(base) if base == "master" && evidence.status.success() => {}
         other => failures.push(format!(
             "pr-evidence must record the resolved base `master`; got {other:?}, status {:?}, stderr:\n{}",
             evidence.status.code(),
@@ -15599,26 +15603,43 @@ fn history_commands_resolve_the_default_base_without_origin() -> Result<(), Stri
     }
 }
 
-/// #3952 fail-closed half: when no default base resolves, `first-pr` names
-/// the resolution failure and writes no packet, rather than recording a base
-/// the run never analyzed.
+/// #3952 fail-closed half: when no default base resolves, `first-pr` and
+/// `pr-evidence` name the resolution failure and write no packet, rather
+/// than recording a base the run never analyzed.
 #[test]
-fn first_pr_without_a_resolvable_default_base_fails_named() -> Result<(), String> {
+fn history_commands_without_a_resolvable_default_base_fail_named() -> Result<(), String> {
     let root = no_origin_master_repo("no-origin-unresolvable-base", "trunk")?;
     let bin = env!("CARGO_BIN_EXE_ripr");
-    let output = run_command(bin, Some(&root), &["first-pr", "--root", "."])
-        .map_err(|err| format!("spawn ripr first-pr: {err}"))?;
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    let packet_written = root.join("target/ripr/reports/start-here.json").exists();
-    ignore_remove_dir_all(&root);
-    if output.status.success()
-        || packet_written
-        || !stderr.contains("could not resolve a default base")
-    {
-        return Err(format!(
-            "first-pr with no resolvable base must fail named and write nothing; status {:?}, packet written {packet_written}, stderr:\n{stderr}",
-            output.status.code()
-        ));
+    let mut failures = Vec::new();
+    for (args, packet) in [
+        (
+            ["first-pr", "--root", "."].as_slice(),
+            "target/ripr/reports/start-here.json",
+        ),
+        (
+            ["pr-evidence"].as_slice(),
+            "target/ripr/pr/repo-exposure.json",
+        ),
+    ] {
+        let output = run_command(bin, Some(&root), args)
+            .map_err(|err| format!("spawn ripr {}: {err}", args[0]))?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let packet_written = root.join(packet).exists();
+        if output.status.success()
+            || packet_written
+            || !stderr.contains("could not resolve a default base")
+        {
+            failures.push(format!(
+                "{} with no resolvable base must fail named and write nothing; status {:?}, packet written {packet_written}, stderr:\n{stderr}",
+                args[0],
+                output.status.code()
+            ));
+        }
     }
-    Ok(())
+    ignore_remove_dir_all(&root);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n\n"))
+    }
 }

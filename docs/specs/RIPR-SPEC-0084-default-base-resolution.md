@@ -113,7 +113,7 @@ returns a named, actionable `Err` rather than a raw git error or a silent
 empty result. The message is:
 
 ```
-could not resolve a default base (no origin/main, origin/master, or local main/master found). Pass `--base <ref>` to diff against a specific ref, or `--root . --mode fast` for a full-repo scan.
+could not resolve a default base (no origin/main, origin/master, or local main/master found). Pass `--base <ref>` to diff against a specific ref, or run `ripr check --root . --format repo-exposure-md` for a full-repo scan.
 ```
 
 This message explicitly says the analysis did not run (unlike "No probes
@@ -193,7 +193,7 @@ problem and the two remediation paths.
 - `crates/ripr/src/analysis/diff/load.rs::tests::explicit_base_is_used_as_is_without_resolution`
 - `crates/ripr/src/analysis/diff/load.rs::tests::load_diff_from_file_returns_content`
 - `crates/ripr/tests/cli_smoke.rs::history_commands_resolve_the_default_base_without_origin`
-- `crates/ripr/tests/cli_smoke.rs::first_pr_without_a_resolvable_default_base_fails_named`
+- `crates/ripr/tests/cli_smoke.rs::history_commands_without_a_resolvable_default_base_fail_named`
 
 ## Implementation Mapping
 
