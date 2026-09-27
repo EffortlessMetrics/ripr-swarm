@@ -1262,6 +1262,31 @@ mod tests {
             "{line}"
         );
         assert!(!line.contains("generic preamble"), "{line}");
+
+        // The fixed eligibility phrase after `validator: ` is dropped too, so
+        // the remedy survives the line budget.
+        let mut finding = typescript_preview_finding(false);
+        finding
+            .evidence
+            .retain(|line| !line.starts_with("why_not_actionable: "));
+        finding.evidence.push(
+            "why_not_actionable: generic preamble; validator: is not agent-packet eligible: observed call input `login('alice')` does not reach the missing discriminator `user.length == 3`; derive an input that hits the boundary"
+                .to_string(),
+        );
+        let rendered = render(&single_finding_output(finding));
+        let line = rendered
+            .lines()
+            .find(|line| line.starts_with("  Safe next action:"))
+            .unwrap_or_default();
+        assert!(
+            line.contains("(observed call input `login('alice')` does not reach"),
+            "{line}"
+        );
+        assert!(
+            line.contains("derive an input that hits the boundary"),
+            "{line}"
+        );
+        assert!(!line.contains("is not agent-packet eligible"), "{line}");
     }
 
     // #4216: an exposed TypeScript preview finding has nothing to repair; its

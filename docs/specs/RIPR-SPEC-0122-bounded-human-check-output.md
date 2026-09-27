@@ -161,14 +161,17 @@ completeness, with the shared repair-packet validator as the only authority:
   finding carries a structured static-limit kind, the action names the real
   blocker: the named static limitation holds the packet, and the operator
   must resolve the limitation and rerun preview evidence before acting.
-  Without a structured static-limit kind the line stays generic rather than
-  inventing a limitation the analysis did not name.
+  Without a structured static-limit kind the finding falls through to the
+  exposed and closed-packet rules below.
 - An `exposed` preview finding says there is no repair to make and must be
   verified independently, in every preview language (#4216).
 - Otherwise, when `preview_actionability_for` projects a packet the shared
   validator kept closed (TypeScript and JavaScript today), the action is
-  terminal (#4216): it quotes the validator's `why_not_actionable` (the part
-  after `validator: ` when present, so the specific cause survives the budget;
+  terminal (#4216): it quotes `preview_actionability_for`'s
+  `why_not_actionable` (in most closed-packet cases the validator never ran;
+  the part after `validator: ` when present, without a leading
+  `is not agent-packet eligible: `, so the specific cause and its remedy
+  survive the budget;
   collapsed to one line and bounded to the digest line budget), states that
   `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route the
   finding, and names the manual step before rerunning `ripr check`: add a test

@@ -77,3 +77,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_repair_packet_boundary_unreachable (7)
+
+Reason:
+RIPR-SPEC-0122 (#4216 final review F3): the closed-packet safe action drops the fixed `is not agent-packet eligible: ` phrase after `validator: `, so the specific cause and its remedy fit the line budget. Only that Safe next action line changes.
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_unreachable --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

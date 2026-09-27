@@ -216,8 +216,9 @@ const EXPOSED_PREVIEW_SAFE_ACTION: &str = "  Safe next action: preview-language 
 /// closed, so `check` emits no repair packet, the gap ledger carries no repair
 /// route (#4224), and no ripr command routes it. "Complete the missing
 /// repair-packet fields" asked for something the operator cannot supply. The
-/// line is terminal instead: it quotes the validator's `why_not_actionable`
-/// verbatim and names the manual step. Readiness is only read here, never
+/// line is terminal instead: it quotes `preview_actionability_for`'s
+/// `why_not_actionable` (in most closed-packet cases the validator never
+/// ran) and names the manual step. Readiness is only read here, never
 /// decided.
 fn packet_closed_preview_safe_action(finding: &Finding, why_not_actionable: &str) -> String {
     let language = finding
@@ -238,9 +239,14 @@ fn packet_closed_preview_safe_action(finding: &Finding, why_not_actionable: &str
     // The authority's reason opens with a generic preview preamble and ends
     // with `validator: <specific cause>`; under the line budget the specific
     // cause is the part the user can act on, so show it when present.
+    // The cause itself may still open with the fixed eligibility phrase;
+    // drop it so the remedy ("derive an input ...") fits the budget.
     let specific = why_not_actionable
         .split_once("validator: ")
         .map_or(why_not_actionable, |(_, cause)| cause);
+    let specific = specific
+        .strip_prefix("is not agent-packet eligible: ")
+        .unwrap_or(specific);
     let reason = one_line(specific);
     format!(
         "  Safe next action: this {language} preview finding's repair packet is not ready ({reason}); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; {manual_step}, then rerun `ripr check`.\n"
