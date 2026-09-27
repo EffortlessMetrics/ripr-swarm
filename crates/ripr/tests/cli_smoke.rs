@@ -14984,7 +14984,7 @@ fn decode_shell_token_inverts_the_renderer_quoting() {
         "/tmp/with space/repo",
         "/tmp/it's here",
         "",
-        r"C:\repo\sub",
+        r"/tmp/repo\sub\dir",
         r"/tmp/back\slash it's",
     ] {
         assert_eq!(
@@ -14994,8 +14994,8 @@ fn decode_shell_token_inverts_the_renderer_quoting() {
         );
     }
     assert_eq!(
-        decode_shell_token(r"'C:\repo'"),
-        Some(r"C:\repo".to_string())
+        decode_shell_token(r"'/tmp/a\b'"),
+        Some(r"/tmp/a\b".to_string())
     );
     assert_eq!(decode_shell_token("'unterminated"), None);
 }
