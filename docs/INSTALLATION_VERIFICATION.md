@@ -80,7 +80,8 @@ The installed binary's identity probe is intentionally narrower than every
 other CLI command: `ripr --version` and `ripr -V` must exit 0 and emit exactly one line,
 `ripr <package version> (<commit>)`, on stdout, with empty stderr. The commit is
 the full commit id the binary was built from, with `-dirty` appended when the
-crate sources (`src/`, `Cargo.toml`, `build.rs`) differed from it. A packaged
+crate sources (`src/`, `Cargo.toml`, `build.rs`) or the repository-root
+Cargo inputs (`Cargo.toml`, `Cargo.lock`, `.cargo/`) differed from it. A packaged
 crate (crates.io, `cargo install ripr`, an unpacked `.crate`) takes the commit
 from the `.cargo_vcs_info.json` that `cargo package` records; a build from a Git
 checkout takes it from that checkout. A build with neither prints the bare

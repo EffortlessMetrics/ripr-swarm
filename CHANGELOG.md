@@ -12,7 +12,7 @@ are scoped or reviewed.
 ### Added
 
 - `ripr --version` now names the commit the binary was built from, as
-  `ripr <version> (<commit>)`, with `-dirty` when the crate sources differed
+  `ripr <version> (<commit>)`, with `-dirty` when the sources that build it differed
   from that commit. Packaged crates (crates.io, `cargo install ripr`) read the
   commit that `cargo package` recorded, so an installed candidate can be bound
   to source without hashing it. `ripr doctor` reports the same identity with

@@ -16,7 +16,7 @@
 //! variable of the same name cannot stand in for the record.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 #[path = "src/build_commit_record.rs"]
@@ -43,8 +43,13 @@ fn main() {
     println!("cargo:rustc-env=RIPR_BUILD_COMMIT_DIRTY={dirty}");
 }
 
-/// Sources that decide whether the built binary differs from the commit.
-const DIRTY_PATHSPEC: [&str; 3] = ["src", "Cargo.toml", "build.rs"];
+/// Crate sources that decide whether the built binary differs from the
+/// commit, relative to the manifest directory.
+const CRATE_SOURCES: [&str; 3] = ["src", "Cargo.toml", "build.rs"];
+
+/// Repository-root Cargo inputs a workspace member inherits: the package
+/// version, lints and profiles, the lockfile, and Cargo configuration.
+const WORKSPACE_INPUTS: [&str; 3] = ["Cargo.toml", "Cargo.lock", ".cargo"];
 
 fn checkout_identity(dir: &Path) -> Option<(String, bool)> {
     git(dir, &["ls-files", "--error-unmatch", "--", "Cargo.toml"])?;
@@ -52,20 +57,42 @@ fn checkout_identity(dir: &Path) -> Option<(String, bool)> {
     if !is_full_commit_id(&commit) {
         return None;
     }
-    // Re-run when HEAD moves (detached HEAD rewrites HEAD itself; a branch
-    // commit writes a loose ref or packed-refs) and when the sources the
-    // dirty flag covers change. Only existing paths are watched: Cargo
-    // treats a missing path as always changed.
-    for git_path in ["HEAD", "packed-refs", "refs/heads"] {
-        if let Some(path) = git(dir, &["rev-parse", "--git-path", git_path])
-            && dir.join(&path).exists()
-        {
-            println!("cargo:rerun-if-changed={path}");
-        }
+    // Re-run when HEAD moves and when an input the dirty flag covers changes.
+    // A detached commit rewrites HEAD; a branch commit rewrites that branch's
+    // loose ref (created in its directory when the branch was packed-only);
+    // pack-refs rewrites packed-refs; a reftable repository rewrites its
+    // table directory. Other branches are not watched, so creating or
+    // deleting them does not rebuild ripr. Only existing paths are emitted:
+    // Cargo treats a missing path as always changed.
+    let mut watched: Vec<PathBuf> = ["HEAD", "packed-refs", "reftable"]
+        .into_iter()
+        .filter_map(|name| git(dir, &["rev-parse", "--git-path", name]))
+        .map(|path| dir.join(path))
+        .collect();
+    if let Some(branch) = git(dir, &["symbolic-ref", "-q", "HEAD"])
+        && let Some(path) = git(dir, &["rev-parse", "--git-path", &branch])
+    {
+        let path = dir.join(path);
+        watched.extend(if path.exists() {
+            Some(path)
+        } else {
+            path.parent().map(Path::to_path_buf)
+        });
     }
-    for source in DIRTY_PATHSPEC {
-        println!("cargo:rerun-if-changed={source}");
+    watched.extend(CRATE_SOURCES.iter().map(|source| dir.join(source)));
+    let top = git(dir, &["rev-parse", "--show-toplevel"]).map(PathBuf::from);
+    watched.extend(
+        top.iter()
+            .flat_map(|top| WORKSPACE_INPUTS.iter().map(move |input| top.join(input))),
+    );
+    for path in watched.iter().filter(|path| path.exists()) {
+        println!("cargo:rerun-if-changed={}", path.display());
     }
+
+    let top_inputs: Vec<String> = WORKSPACE_INPUTS
+        .iter()
+        .map(|input| format!(":(top){input}"))
+        .collect();
     let mut status = vec![
         "--no-optional-locks",
         "status",
@@ -73,7 +100,8 @@ fn checkout_identity(dir: &Path) -> Option<(String, bool)> {
         "--untracked-files=normal",
         "--",
     ];
-    status.extend(DIRTY_PATHSPEC);
+    status.extend(CRATE_SOURCES);
+    status.extend(top_inputs.iter().map(String::as_str));
     let dirty = !git(dir, &status)?.is_empty();
     Some((commit, dirty))
 }

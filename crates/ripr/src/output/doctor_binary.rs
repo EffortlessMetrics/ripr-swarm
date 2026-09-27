@@ -73,6 +73,12 @@ fn evaluate_binary_identity(
     path_ripr: Option<PathBuf>,
 ) -> DoctorBinaryIdentity {
     let executable = current_exe.map(|path| resolve(&path));
+    // The directory PATH lists is what a user edits; the resolved file is
+    // what runs. They differ when the PATH entry is a symlink.
+    let path_dir = path_ripr
+        .as_deref()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf);
     let path_ripr = path_ripr.map(|path| resolve(&path));
     let path_ripr_is_cargo_build_output = path_ripr.as_deref().is_some_and(is_cargo_build_output);
     let path_ripr_is_running_executable = match (&executable, &path_ripr) {
@@ -80,16 +86,17 @@ fn evaluate_binary_identity(
         _ => None,
     };
     let mut warnings = Vec::new();
-    if let Some(path) = path_ripr
-        .as_deref()
-        .filter(|_| path_ripr_is_cargo_build_output)
-    {
+    if let (Some(path), Some(dir), true) = (
+        path_ripr.as_deref(),
+        path_dir.as_deref(),
+        path_ripr_is_cargo_build_output,
+    ) {
         warnings.push(format!(
             "`ripr` on PATH is Cargo build output at {}, not an installed binary; commands, CI \
              steps, and editors that run `ripr` get that workspace build. Put an installed ripr \
              earlier on PATH or remove {} from PATH",
             path.display(),
-            path.parent().unwrap_or(path).display()
+            dir.display()
         ));
     }
     if let (Some(executable), Some(path), Some(false)) = (
@@ -99,7 +106,8 @@ fn evaluate_binary_identity(
     ) {
         warnings.push(format!(
             "`ripr` on PATH is {}, not the running binary {}; this report describes the running \
-             binary, and commands that run `ripr` get the other one",
+             binary, and unless that PATH entry is a shim that launches it, commands that run \
+             `ripr` get a different binary",
             path.display(),
             executable.display()
         ));

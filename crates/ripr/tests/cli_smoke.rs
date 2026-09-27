@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[path = "../src/build_commit_record.rs"]
+mod build_commit_record;
 #[path = "common/mod.rs"]
 mod common;
 
@@ -870,24 +872,36 @@ fn fixture_repository_head_rejects_whitespace_padded_success_output() -> Result<
     Ok(())
 }
 
-/// The `ripr --version` line this checkout must produce, derived from Git
-/// independently of `build.rs`: the package version plus the HEAD commit, with
-/// `-dirty` when the crate sources that decide the binary differ from it.
-/// Outside a Git checkout the commit is unknown and the line is the bare
-/// version.
+/// The `ripr --version` line this build must produce, derived without
+/// `build.rs`'s output: the package version plus the commit, with `-dirty`
+/// when the inputs that decide the binary differ from it. A packaged crate
+/// (this file ships in it) takes the commit from `.cargo_vcs_info.json`; a
+/// checkout that tracks this crate takes it from Git; anything else has no
+/// commit, and the line is the bare version.
 fn expected_version_line() -> String {
     let version = env!("CARGO_PKG_VERSION");
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    if let Ok(record) = std::fs::read_to_string(crate_dir.join(".cargo_vcs_info.json")) {
+        return match build_commit_record::parse_cargo_vcs_info(&record) {
+            Some((commit, true)) => format!("ripr {version} ({commit}-dirty)\n"),
+            Some((commit, false)) => format!("ripr {version} ({commit})\n"),
+            None => format!("ripr {version}\n"),
+        };
+    }
     let git_stdout = |args: &[&str]| {
         run_command("git", Some(crate_dir), args)
             .ok()
             .filter(|output| output.status.success())
             .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
     };
+    if git_stdout(&["ls-files", "--error-unmatch", "--", "Cargo.toml"]).is_none() {
+        return format!("ripr {version}\n");
+    }
     let Some(head) = git_stdout(&["rev-parse", "--verify", "HEAD"]) else {
         return format!("ripr {version}\n");
     };
     let Some(status) = git_stdout(&[
+        "--no-optional-locks",
         "status",
         "--porcelain",
         "--untracked-files=normal",
@@ -895,6 +909,9 @@ fn expected_version_line() -> String {
         "src",
         "Cargo.toml",
         "build.rs",
+        ":(top)Cargo.toml",
+        ":(top)Cargo.lock",
+        ":(top).cargo",
     ]) else {
         return format!("ripr {version}\n");
     };
