@@ -1378,19 +1378,27 @@ fn given_whole_literal_or_later_shadow_when_test_hits_boundary_then_grip_closes(
             "fee(1.5)",
             "1.5",
         ),
-        // A suffixed decimal keeps its fraction too: `fee(1)` does not
+        // A suffixed decimal keeps its fraction too: `fee(1.0)` does not
         // hit `1.5f64`.
         (
             "pub fn fee(amount: f64) -> u64 {\n    if amount > 1.5f64 { 0 } else { 5 }\n}\n",
             "amount > 1.5f64",
-            "fee(1)",
+            "fee(1.0)",
             "fee(1.5)",
             "1.5",
+        ),
+        // A type suffix is not a second literal: `99u32` is 99, not 32.
+        (
+            "pub fn fee(amount: u32) -> u64 {\n    if amount > 99u32 { 0 } else { 5 }\n}\n",
+            "amount > 99u32",
+            "fee(32)",
+            "fee(99)",
+            "99",
         ),
         (
             "pub fn fee(amount: f64) -> u64 {\n    if 1.5f64 < amount { 0 } else { 5 }\n}\n",
             "1.5f64 < amount",
-            "fee(1)",
+            "fee(1.0)",
             "fee(1.5)",
             "1.5",
         ),

@@ -1625,6 +1625,17 @@ fn scalar_values(text: &str) -> Vec<String> {
                 }
             }
         }
+        // Digits inside an identifier or a type suffix (`x1`, the `32` of
+        // `99u32`, the `64` of `1.5f64`) are not a separate value: read as
+        // one they sort ahead of the real literal and become its boundary.
+        let in_identifier = idx
+            .checked_sub(1)
+            .and_then(|prev| chars.get(prev))
+            .is_some_and(|(_, prev_ch)| prev_ch.is_ascii_alphanumeric() || *prev_ch == '_');
+        if ch.is_ascii_digit() && in_identifier {
+            idx += 1;
+            continue;
+        }
         if ch.is_ascii_digit()
             || (ch == '-'
                 && chars
@@ -2632,7 +2643,7 @@ assert_eq!(input.amount, 100);"#
                 "    amount > 1.5",
                 "amount > 1.5",
                 2,
-                "score(1);",
+                "score(1.0);",
                 Expect::Missing("amount == 1.5"),
             ),
             (
@@ -2646,8 +2657,23 @@ assert_eq!(input.amount, 100);"#
                 "    amount > 1.5f64",
                 "amount > 1.5f64",
                 2,
-                "score(1);",
+                "score(1.0);",
                 Expect::Missing("amount == 1.5f64"),
+            ),
+            // A type suffix is not a second literal: `99u32` is 99, not 32.
+            (
+                "    amount > 99u32",
+                "amount > 99u32",
+                2,
+                "score(32);",
+                Expect::Missing("amount == 99u32"),
+            ),
+            (
+                "    amount > 99u32",
+                "amount > 99u32",
+                2,
+                "score(99);",
+                Expect::Closed,
             ),
             // The evaluator cannot fold these initializers, so a test at
             // 100 could never close them: no repair is named.
@@ -2667,7 +2693,15 @@ assert_eq!(input.amount, 100);"#
             ),
         ];
         for (body, predicate, line, call, expect) in cases {
-            let owner = function(&format!("pub fn score(amount: i32) -> bool {{\n{body}\n}}"));
+            // Decimal cases compare a real `f64` input.
+            let ty = if predicate.contains('.') {
+                "f64"
+            } else {
+                "i32"
+            };
+            let owner = function(&format!(
+                "pub fn score(amount: {ty}) -> bool {{\n{body}\n}}"
+            ));
             let test = test_with_call("score_boundary", call);
             let mut probe = probe(ProbeFamily::Predicate, predicate);
             probe.location = SourceLocation::new("src/lib.rs", line, 5);
@@ -2875,6 +2909,10 @@ assert_eq!(input.amount, 100);"#
                 "1.5".to_string(),
                 "1_000.5".to_string()
             ]
+        );
+        assert_eq!(
+            scalar_values("f(99u32, 1.5f64, x1, 100_u8)"),
+            vec!["1.5".to_string(), "100_".to_string(), "99".to_string()]
         );
         assert_eq!(
             scalar_values("f(0..5, 2.max(3), 1.2.3)"),
