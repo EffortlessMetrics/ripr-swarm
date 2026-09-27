@@ -215,7 +215,7 @@ pub(crate) fn collect_tests_from_statements(
             scope.levels.push(
                 statement_callback_parameter_names(stmt, 1)
                     .into_iter()
-                    .map(|name| (name, ScopeValue::Other))
+                    .map(|name| (name, ScopeValue::Other, Phase::Declaration))
                     .collect(),
             );
             scope.describe_names.push(describe_name);
@@ -231,7 +231,7 @@ pub(crate) fn collect_tests_from_statements(
             // shadow every enclosing binding of the same name.
             let parameters = statement_callback_parameter_names(stmt, 1)
                 .into_iter()
-                .map(|name| (name, ScopeValue::Other))
+                .map(|name| (name, ScopeValue::Other, Phase::Declaration))
                 .collect();
             test.scope_bindings = scope.resolve_with(parameters);
             tests.push(test);
@@ -246,7 +246,20 @@ pub(crate) struct TestScope {
     /// Describe names, outermost first.
     describe_names: Vec<String>,
     /// Name bindings of the file and each enclosing describe, outermost first.
-    levels: Vec<Vec<(String, ScopeValue)>>,
+    levels: Vec<Vec<ScopeEntry>>,
+}
+
+/// One binding a scope-level statement makes, and when it runs.
+type ScopeEntry = (String, ScopeValue, Phase);
+
+/// When a scope-level write runs relative to a test in that scope, in order:
+/// declarations while the file or `describe` callback runs, then `beforeAll`
+/// hooks, then `beforeEach` hooks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Phase {
+    Declaration,
+    BeforeAll,
+    BeforeEach,
 }
 
 /// What one setup statement binds a name to.
@@ -262,31 +275,44 @@ enum ScopeValue {
 
 impl TestScope {
     /// Resolve every bound name to its innermost scope. Within that scope the
-    /// name is constructed only when every binding of it constructs the same
-    /// class; a declaration without an initializer is neutral.
-    fn resolve_with(&self, innermost: Vec<(String, ScopeValue)>) -> Vec<TypeScriptScopeBinding> {
+    /// last hook write decides, since hooks run after the declarations and
+    /// before every test. Without a hook write the name is constructed only
+    /// when every declaration of it constructs the same class; a declaration
+    /// without an initializer is neutral.
+    fn resolve_with(&self, innermost: Vec<ScopeEntry>) -> Vec<TypeScriptScopeBinding> {
         let mut resolved: Vec<TypeScriptScopeBinding> = Vec::new();
         for level in std::iter::once(&innermost).chain(self.levels.iter().rev()) {
-            let mut names: Vec<&str> = level.iter().map(|(name, _)| name.as_str()).collect();
+            let mut names: Vec<&str> = level.iter().map(|(name, _, _)| name.as_str()).collect();
             names.sort_unstable();
             names.dedup();
             for name in names {
                 if resolved.iter().any(|binding| binding.name == name) {
                     continue;
                 }
-                let mut constructors =
-                    level
-                        .iter()
-                        .filter(|(bound, _)| bound == name)
-                        .filter_map(|(_, value)| match value {
+                let mut writes: Vec<(&ScopeValue, Phase)> = level
+                    .iter()
+                    .filter(|(bound, _, _)| bound == name)
+                    .map(|(_, value, phase)| (value, *phase))
+                    .collect();
+                // Stable: source order is kept within a phase.
+                writes.sort_by_key(|(_, phase)| *phase);
+                let constructed_by = match writes.last() {
+                    Some((value, phase)) if *phase != Phase::Declaration => match value {
+                        ScopeValue::Constructed(constructor) => Some(constructor.clone()),
+                        ScopeValue::Declared | ScopeValue::Other => None,
+                    },
+                    _ => {
+                        let mut constructors = writes.iter().filter_map(|(value, _)| match value {
                             ScopeValue::Declared => None,
                             ScopeValue::Constructed(constructor) => Some(Some(constructor)),
                             ScopeValue::Other => Some(None),
                         });
-                let first = constructors.next().flatten();
-                let constructed_by = first
-                    .filter(|first| constructors.all(|next| next == Some(*first)))
-                    .cloned();
+                        let first = constructors.next().flatten();
+                        first
+                            .filter(|first| constructors.all(|next| next == Some(*first)))
+                            .cloned()
+                    }
+                };
                 resolved.push(TypeScriptScopeBinding {
                     name: name.to_string(),
                     constructed_by,
@@ -301,7 +327,7 @@ impl TestScope {
 /// scope: declarations, and assignments made by a `beforeEach`/`beforeAll`
 /// hook. Test bodies, `describe` blocks, `afterEach` hooks and skipped tests
 /// bind nothing here, and a hook's own local declarations stay local.
-fn collect_scope_bindings(stmt: &Statement<'_>, source: &str, out: &mut Vec<(String, ScopeValue)>) {
+fn collect_scope_bindings(stmt: &Statement<'_>, source: &str, out: &mut Vec<ScopeEntry>) {
     match stmt {
         Statement::VariableDeclaration(declaration) => {
             for declarator in &declaration.declarations {
@@ -310,22 +336,34 @@ fn collect_scope_bindings(stmt: &Statement<'_>, source: &str, out: &mut Vec<(Str
                         None => ScopeValue::Declared,
                         Some(init) => constructed_value(init),
                     };
-                    out.push((identifier.name.to_string(), value));
+                    out.push((identifier.name.to_string(), value, Phase::Declaration));
                 } else {
                     for identifier in declarator.id.get_binding_identifiers() {
-                        out.push((identifier.name.to_string(), ScopeValue::Other));
+                        out.push((
+                            identifier.name.to_string(),
+                            ScopeValue::Other,
+                            Phase::Declaration,
+                        ));
                     }
                 }
             }
         }
         Statement::FunctionDeclaration(function) => {
             if let Some(identifier) = &function.id {
-                out.push((identifier.name.to_string(), ScopeValue::Other));
+                out.push((
+                    identifier.name.to_string(),
+                    ScopeValue::Other,
+                    Phase::Declaration,
+                ));
             }
         }
         Statement::ClassDeclaration(class) => {
             if let Some(identifier) = &class.id {
-                out.push((identifier.name.to_string(), ScopeValue::Other));
+                out.push((
+                    identifier.name.to_string(),
+                    ScopeValue::Other,
+                    Phase::Declaration,
+                ));
             }
         }
         Statement::ExpressionStatement(expr_stmt) => {
@@ -335,9 +373,11 @@ fn collect_scope_bindings(stmt: &Statement<'_>, source: &str, out: &mut Vec<(Str
             let Expression::Identifier(callee) = &call.callee else {
                 return;
             };
-            if !matches!(callee.name.as_str(), "beforeEach" | "beforeAll") {
-                return;
-            }
+            let phase = match callee.name.as_str() {
+                "beforeAll" => Phase::BeforeAll,
+                "beforeEach" => Phase::BeforeEach,
+                _ => return,
+            };
             let Some(body) = call
                 .arguments
                 .first()
@@ -345,9 +385,21 @@ fn collect_scope_bindings(stmt: &Statement<'_>, source: &str, out: &mut Vec<(Str
             else {
                 return;
             };
+            // Writes to the hook's own declarations stay in the hook.
+            let mut hook_locals = Vec::new();
             for hook_stmt in body {
-                collect_hook_assignment(hook_stmt, source, out);
+                collect_scope_bindings(hook_stmt, source, &mut hook_locals);
             }
+            let mut writes = Vec::new();
+            for hook_stmt in body {
+                collect_hook_assignment(hook_stmt, source, &mut writes);
+            }
+            out.extend(
+                writes
+                    .into_iter()
+                    .filter(|(name, _)| !hook_locals.iter().any(|(local, _, _)| local == name))
+                    .map(|(name, value)| (name, value, phase)),
+            );
         }
         _ => {}
     }
@@ -363,8 +415,25 @@ fn collect_hook_assignment(
     out: &mut Vec<(String, ScopeValue)>,
 ) {
     match stmt {
-        // A hook's own declarations are local to the hook.
-        Statement::VariableDeclaration(_) => return,
+        // A hook's own declarations are local to the hook, but an
+        // initializer may still write an outer name (`const r = (cart = x)`
+        // or a closure that assigns it).
+        Statement::VariableDeclaration(declaration) => {
+            for init in declaration
+                .declarations
+                .iter()
+                .filter_map(|declarator| declarator.init.as_ref())
+            {
+                let span = init.span();
+                let text = source
+                    .get(span.start as usize..span.end as usize)
+                    .unwrap_or_default();
+                for name in assigned_identifier_names(text) {
+                    out.push((name, ScopeValue::Other));
+                }
+            }
+            return;
+        }
         Statement::ExpressionStatement(expr_stmt) => {
             if let Expression::AssignmentExpression(assignment) =
                 expr_stmt.expression.without_parentheses()

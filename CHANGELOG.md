@@ -534,10 +534,11 @@ are scoped or reviewed.
   receiver may now come from the enclosing `describe` scope, a
   `beforeEach`/`beforeAll` hook, a default import of the owner's
   default-exported class, or a namespace import (`new shop.Cart()`). Scope
-  bindings are read from the syntax tree and resolved to the innermost scope;
-  a name the test body declares or reassigns, a callback parameter, a hook
-  that also assigns something else, and a shadowed class or namespace name
-  still do not relate.
+  bindings are read from the syntax tree and resolved to the innermost scope,
+  where the last hook write wins over the declaration's initializer. A name
+  the test body declares or reassigns, a callback parameter, a hook write
+  that is conditional or made through a closure, a write to a hook-local
+  variable, and a shadowed class or namespace name still do not relate.
 
 - An improved `agent receipt` (including the one `ripr agent repair --phase
   after` writes) no longer says "Keep the focused test": ripr never runs the

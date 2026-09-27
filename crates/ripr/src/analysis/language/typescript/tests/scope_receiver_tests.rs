@@ -282,3 +282,39 @@ fn single_line_hook_assignment_relates() -> Result<(), String> {
         ),
     )
 }
+
+#[test]
+fn hook_write_overrides_declaration_initializer() -> Result<(), String> {
+    assert_related(
+        "hook-over-initializer",
+        &format!(
+            "{HEAD}describe('C', () => {{\n  let cart: any = null;\n  beforeEach(() => {{\n    cart = new Cart();\n  }});\n  it('t', () => {{\n    expect(cart.total()).toBe(1);\n  }});\n}});\n"
+        ),
+    )
+}
+
+#[test]
+fn last_hook_write_decides() -> Result<(), String> {
+    assert_related(
+        "literal-then-new",
+        &format!(
+            "{HEAD}describe('C', () => {{\n  let cart: any;\n  beforeEach(() => {{\n    cart = {{ total: () => 1 }};\n    cart = new Cart();\n  }});\n  it('t', () => {{\n    expect(cart.total()).toBe(1);\n  }});\n}});\n"
+        ),
+    )?;
+    unrelated_with_head(
+        "before-each-after-before-all",
+        "describe('C', () => {\n  let cart: any;\n  beforeEach(() => {\n    cart = { total: () => 1 };\n  });\n  beforeAll(() => {\n    cart = new Cart();\n  });\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+    )
+}
+
+#[test]
+fn hook_write_to_hook_local_and_closure_writes_do_not_bind() -> Result<(), String> {
+    assert_unrelated(
+        "adv-hook-local-write",
+        "import { describe, it, expect, beforeEach } from 'vitest';\nimport { Cart } from '../src/cart';\nimport { cart } from './fixtures';\n\ndescribe('C', () => {\n  beforeEach(() => {\n    let cart;\n    cart = new Cart();\n  });\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+    )?;
+    unrelated_with_head(
+        "adv-hook-closure",
+        "describe('C', () => {\n  let cart: any;\n  beforeEach(() => {\n    cart = new Cart();\n    const reset = () => { cart = { total: () => 1 }; };\n    reset();\n  });\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+    )
+}
