@@ -12726,6 +12726,87 @@ fn execute_command_collect_evidence_context_returns_editor_packet_for_known_seam
 }
 
 #[test]
+fn oversized_diff_warning_snapshot_prepares_commits_and_publishes() -> Result<(), String> {
+    // #4325: the production oversized-diff construction (one root-URI warning
+    // batch) must satisfy the publication invariant and survive the real
+    // prepare -> commit path, so the warning actually publishes instead of
+    // failing the refresh as an inconsistent snapshot.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        let message = "diff_scope_oversized: 2301 changed Rust lines across 42 Rust files exceed \
+                       the 2000-line guard (RIPR_MAX_DIFF_CHANGED_RUST_LINES); split the extraction PR"
+            .to_string();
+        let mut diagnostics = super::diagnostics::oversized_diff_limited_diagnostics(
+            Path::new("/workspace"),
+            &LspAnalysisConfig::default(),
+            false,
+            message,
+        );
+        // The production caller binds the input identity before prepare; the
+        // constructor leaves it unset so the identity is bound at refresh time.
+        diagnostics.snapshot.input_identity = Some(LspAnalysisInputIdentity::from_refresh_inputs(
+            diagnostics.snapshot.root.clone(),
+            1,
+            &LspAnalysisConfig::default(),
+        ));
+        if diagnostics.snapshot.diagnostics_by_uri
+            != super::backend::diagnostics_by_uri_from_batches(&diagnostics.batches)
+        {
+            return Err(
+                "the oversized snapshot must satisfy the publication invariant by construction"
+                    .to_string(),
+            );
+        }
+
+        let transaction = backend
+            .prepare_refresh_transaction(diagnostics)
+            .ok_or_else(|| "expected the oversized warning snapshot to prepare".to_string())?;
+        let super::backend::RefreshTransaction { plan, snapshot, .. } = transaction;
+        let root_uri = super::uri::file_uri_for_path(Path::new("/workspace"))
+            .map_err(|err| format!("root URI construction failed: {err}"))?;
+        if plan.publish_batches.len() != 1 || plan.publish_batches[0].uri != root_uri {
+            return Err("expected exactly one publish batch at the root URI".to_string());
+        }
+
+        let pending_analyzed = BTreeMap::new();
+        let pending_entered = Vec::new();
+        if backend
+            .commit_refresh_snapshot(snapshot, &plan, &pending_analyzed, &pending_entered)
+            .is_none()
+        {
+            return Err("expected the oversized warning snapshot to commit".to_string());
+        }
+
+        let committed = backend
+            .latest_analysis_snapshot()
+            .ok_or_else(|| "expected the committed snapshot".to_string())?;
+        let published = committed
+            .diagnostics_for_uri(&root_uri)
+            .ok_or_else(|| "expected the warning published at the root URI".to_string())?;
+        if published.len() != 1 {
+            return Err(format!(
+                "expected exactly one published warning, got {}",
+                published.len()
+            ));
+        }
+        if published[0].severity
+            != Some(tower_lsp_server::ls_types::DiagnosticSeverity::WARNING)
+        {
+            return Err("expected the published warning severity".to_string());
+        }
+        if !published[0].message.contains("diff_scope_oversized") {
+            return Err("expected the published guard message".to_string());
+        }
+        Ok(())
+    })
+}
+
+#[test]
 fn seam_evidence_is_identity_bound_and_deferred_refresh_returns_typed_stale_result()
 -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
