@@ -232,6 +232,9 @@ struct PythonTest {
     parametrized: bool,
     framework: &'static str,
     assertions: Vec<PythonAssertion>,
+    /// How the test and its module can rebind names and attributes; guards
+    /// module-constant boundary resolution (`boundary.rs`, #4227).
+    constant_rebinding: module_constants::PythonTestRebinding,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

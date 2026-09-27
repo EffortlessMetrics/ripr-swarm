@@ -3957,8 +3957,12 @@ mod tests {
         // `bulk_discount` finding from `exposed` to `weakly_exposed` gives it a
         // repair card it previously could not carry, raising the direct-aligned
         // repair-card inventory from 2 to 3 (the boundary-downgraded card in
-        // `python_src_layout_package_import`).
-        if (direct, no_strong, orthogonal) != (3, 28, 11) {
+        // `python_src_layout_package_import`). #4227: resolving module-level
+        // named-constant thresholds adds two more direct-aligned boundary cards
+        // (`python_named_constant_boundary_repair_gap` and the
+        // `DISCOUNT_THRESHOLD` boundary in
+        // `python_same_stem_sibling_owner_not_related`).
+        if (direct, no_strong, orthogonal) != (5, 28, 11) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}"
             ));

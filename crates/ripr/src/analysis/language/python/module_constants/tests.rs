@@ -114,7 +114,19 @@ fn rebindable_or_non_literal_names_stay_unresolved() {
         ),
         (
             "globals()",
-            "DISCOUNT_THRESHOLD = 10_000\nglobals()['DISCOUNT_THRESHOLD'] = 1\n",
+            "DISCOUNT_THRESHOLD = 10_000\nglobals ()['DISCOUNT_THRESHOLD'] = 1\n",
+        ),
+        (
+            "exec",
+            "DISCOUNT_THRESHOLD = 10_000\nexec('DISCOUNT_THRESHOLD = 5')\n",
+        ),
+        (
+            "sys.modules",
+            "import sys\nDISCOUNT_THRESHOLD = 10_000\nsys.modules[__name__].DISCOUNT_THRESHOLD = 5\n",
+        ),
+        (
+            "vars()",
+            "DISCOUNT_THRESHOLD = 10_000\nvars()['DISCOUNT_THRESHOLD'] = 5\n",
         ),
         (
             "match",
@@ -139,6 +151,21 @@ fn owner_local_bindings_shadow_the_module_constant() {
     assert_eq!(constants("local"), Some(0));
     assert_eq!(constants("param"), Some(0));
     assert_eq!(constants("plain"), Some(1));
+}
+
+#[test]
+fn owner_with_a_nested_scope_sees_no_constants() {
+    // A changed line inside `check` is attributed to `discounted_total`, and
+    // `check`'s parameter shadows the module constant there.
+    let source = "DISCOUNT_THRESHOLD = 10_000\n\ndef nested(amount, tier):\n    def check(DISCOUNT_THRESHOLD):\n        return amount >= DISCOUNT_THRESHOLD\n    return check(tier)\n\ndef lam(amount):\n    check = lambda DISCOUNT_THRESHOLD: amount >= DISCOUNT_THRESHOLD\n    return check(5)\n";
+    let owners = extract_owners(Path::new("src/pricing.py"), source);
+    for name in ["nested", "lam"] {
+        let constants = owners
+            .iter()
+            .find(|owner| owner.name == name)
+            .map(|owner| owner.module_constants.len());
+        assert_eq!(constants, Some(0), "{name}");
+    }
 }
 
 #[test]
@@ -201,5 +228,57 @@ fn constant_name_not_imported_from_the_owner_module_does_not_bind() -> Result<()
     let finding = classify("DISCOUNT_THRESHOLD = 10_000\n", tests)?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     assert_eq!(discriminators(&finding), ["amount == DISCOUNT_THRESHOLD"]);
+    Ok(())
+}
+
+#[test]
+fn test_side_rebinding_blocks_the_imported_constant_binding() -> Result<(), String> {
+    // Each test passes a name that no longer holds the owner's 10000, next to
+    // an off-boundary literal call that engages the rule.
+    let rebound = [
+        (
+            "module reassignment",
+            "from src.pricing import DISCOUNT_THRESHOLD, discounted_total\nDISCOUNT_THRESHOLD = 5\n",
+            "",
+        ),
+        (
+            "test local",
+            "from src.pricing import DISCOUNT_THRESHOLD, discounted_total\n",
+            "    DISCOUNT_THRESHOLD = 5\n",
+        ),
+        (
+            "function-level import",
+            "from src.pricing import DISCOUNT_THRESHOLD, discounted_total\n",
+            "    from src.other import DISCOUNT_THRESHOLD\n",
+        ),
+        (
+            "later module import",
+            "from src.pricing import DISCOUNT_THRESHOLD, discounted_total\nfrom src.other import DISCOUNT_THRESHOLD\n",
+            "",
+        ),
+    ];
+    for (label, header, prefix) in rebound {
+        let tests = format!(
+            "{header}\ndef test_mixed():\n{prefix}    assert discounted_total(20_000) == 18_000\n    assert discounted_total(DISCOUNT_THRESHOLD) == 9_000\n"
+        );
+        let finding = classify("DISCOUNT_THRESHOLD = 10_000\n", &tests)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    }
+    let parametrized = "import pytest\nfrom src.pricing import DISCOUNT_THRESHOLD, discounted_total\n\n@pytest.mark.parametrize('DISCOUNT_THRESHOLD', [5])\ndef test_param(DISCOUNT_THRESHOLD):\n    assert discounted_total(20_000) == 18_000\n    assert discounted_total(DISCOUNT_THRESHOLD) == 9_000\n";
+    let finding = classify("DISCOUNT_THRESHOLD = 10_000\n", parametrized)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "parametrized");
+    Ok(())
+}
+
+#[test]
+fn test_file_attribute_assignment_unresolves_the_constant() -> Result<(), String> {
+    // `pricing.DISCOUNT_THRESHOLD = 5` rewrites the owner's constant at
+    // runtime, so the boundary is not named as a repair target.
+    let tests = format!(
+        "import src.pricing as pricing\n{OFF_BOUNDARY_TESTS}\ndef test_patched():\n    pricing.DISCOUNT_THRESHOLD = 5\n    assert discounted_total(5) == 4\n"
+    );
+    let finding = classify("DISCOUNT_THRESHOLD = 10_000\n", &tests)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(discriminators(&finding).is_empty());
     Ok(())
 }

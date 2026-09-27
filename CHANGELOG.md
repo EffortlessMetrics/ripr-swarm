@@ -300,9 +300,10 @@ are scoped or reviewed.
   `DISCOUNT_THRESHOLD = 10_000`), matching the Rust and TypeScript adapters.
   The boundary gets a repair card for `amount == DISCOUNT_THRESHOLD`, the
   missing-discriminator reason names the constant's value, and a test that calls the owner with `10_000` or with
-  the imported constant now counts as observing the boundary. A name the module
-  can rebind (a second binding, `global`, walrus, star import, `globals()`) or
-  a non-literal value stays unresolved and gets no repair card
+  the imported constant now counts as observing the boundary. A name that can
+  be rebound (a second binding, `global`, walrus, star import, `exec`/`globals`/
+  `sys.modules`, a nested scope in the owner, a test-file attribute
+  assignment) or a non-literal value stays unresolved and gets no repair card
   ([#4227](https://github.com/EffortlessMetrics/ripr-swarm/issues/4227)).
 
 - xtask tests no longer discard `remove_dir_all`, `remove_file`, or

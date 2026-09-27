@@ -12,13 +12,22 @@
 //!   assignment, `for`/`with`/`except` target, import, `def`/`class`, `del`);
 //! - no function or class body declares it `global`, and no walrus (`:=`)
 //!   anywhere in the module targets it;
-//! - the module has no star import, no module-scope `match`, and no
-//!   `globals()` call, any of which can bind names static evidence cannot see.
+//! - the module has no star import, no module-scope `match`, and never names
+//!   a dynamic namespace writer (`exec`, `globals`, `vars`, `locals`,
+//!   `setattr`, `sys.modules`, `__dict__`), any of which can bind names static
+//!   evidence cannot see.
 //!
 //! Anything else stays unresolved, so the boundary rule keeps failing closed.
 //! A function owner additionally drops every constant its own scope shadows
-//! (a parameter or any local binding of the same name).
+//! (a parameter or any local binding of the same name), and sees none when it
+//! nests a `def`, `class` or `lambda`: a changed line inside a nested scope is
+//! attributed to the owner, and that scope may shadow the name.
+//!
+//! Test files carry the other half: [`python_test_rebinding`] records which
+//! names a test cannot be trusted to hold at their imported value, and which
+//! attributes the test file assigns (`pricing.DISCOUNT_THRESHOLD = 5`).
 
+use super::PythonTest;
 use super::boundary::literal_value;
 use super::source_utils::{line_for_range_start, text_for_range};
 use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
@@ -39,7 +48,7 @@ pub(super) fn module_literal_constants(
 ) -> Vec<PythonModuleConstant> {
     let mut bindings = ScopeBindings::default();
     collect_scope_bindings(statements, &mut bindings);
-    if bindings.opaque || source.contains("globals()") {
+    if bindings.opaque || writes_namespace_dynamically(source) {
         return Vec::new();
     }
     let mut globals = Vec::new();
@@ -64,13 +73,105 @@ pub(super) fn constants_visible_in_function(
     body: &[Stmt],
     body_text: &str,
 ) -> Vec<PythonModuleConstant> {
-    if constants.is_empty() {
+    if constants.is_empty()
+        || contains_nested_scope(body)
+        || mentions_identifier(body_text, "lambda")
+    {
         return Vec::new();
     }
+    let Some(locals) = function_scope_names(args, body) else {
+        return Vec::new();
+    };
+    constants
+        .iter()
+        .filter(|constant| {
+            !locals.contains(&constant.name) && !walrus_targets(body_text, &constant.name)
+        })
+        .cloned()
+        .collect()
+}
+
+/// What a test file can do to a module constant's value, for one test.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct PythonTestRebinding {
+    /// Names the test cannot be trusted to hold at their imported value: its
+    /// own parameters and locals, and names its module binds more than once.
+    pub(super) names: Vec<String>,
+    /// Attribute names the test file assigns anywhere (`pricing.LIMIT = 5`),
+    /// or `*` when it names a dynamic namespace writer (`setattr`,
+    /// `sys.modules`, ...); either can rewrite another module's constant at
+    /// runtime.
+    pub(super) attributes: Vec<String>,
+    /// The test or its module binds names this walk cannot enumerate, so no
+    /// name is trusted.
+    pub(super) opaque: bool,
+}
+
+impl PythonTestRebinding {
+    /// Whether the test may see `name` at a value other than its import.
+    pub(super) fn rebinds(&self, name: &str) -> bool {
+        self.opaque || self.names.iter().any(|bound| bound == name)
+    }
+
+    /// Whether the test file may assign attribute `name` on another module.
+    pub(super) fn assigns_attribute(&self, name: &str) -> bool {
+        self.attributes
+            .iter()
+            .any(|attribute| attribute == name || attribute == "*")
+    }
+}
+
+/// Rebinding facts from one test function's own scope: its parameters and
+/// locals. [`with_module_rebinding`] adds the facts of its module.
+pub(super) fn python_test_rebinding(
+    args: &ast::Arguments,
+    body: &[Stmt],
+    body_text: &str,
+) -> PythonTestRebinding {
+    let locals = function_scope_names(args, body);
+    PythonTestRebinding {
+        opaque: locals.is_none() || contains_nested_scope(body) || body_text.contains(":="),
+        names: locals.unwrap_or_default(),
+        attributes: Vec::new(),
+    }
+}
+
+/// Add one test module's facts to each of its tests: names the module binds
+/// more than once, attributes it assigns, and constructs that bind names the
+/// walk cannot enumerate. Computed once per module.
+pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &mut [PythonTest]) {
+    let mut module = ScopeBindings::default();
+    collect_scope_bindings(statements, &mut module);
+    let dynamic = writes_namespace_dynamically(source);
+    let rebound: Vec<&String> = module
+        .names
+        .iter()
+        .filter(|name| module.count(name) > 1)
+        .collect();
+    let attributes = if dynamic {
+        vec!["*".to_string()]
+    } else {
+        assigned_attributes(source)
+    };
+    for test in tests {
+        let rebinding = &mut test.constant_rebinding;
+        rebinding.opaque |= module.opaque || dynamic;
+        rebinding
+            .names
+            .extend(rebound.iter().map(|name| (*name).clone()));
+        rebinding.names.sort();
+        rebinding.names.dedup();
+        rebinding.attributes.clone_from(&attributes);
+    }
+}
+
+/// Parameters plus every name bound in a function's own scope, or None when
+/// the scope binds names the walk cannot enumerate.
+fn function_scope_names(args: &ast::Arguments, body: &[Stmt]) -> Option<Vec<String>> {
     let mut locals = ScopeBindings::default();
     collect_scope_bindings(body, &mut locals);
     if locals.opaque {
-        return Vec::new();
+        return None;
     }
     locals.names.extend(
         args.posonlyargs
@@ -81,13 +182,86 @@ pub(super) fn constants_visible_in_function(
             .chain(args.vararg.iter().map(|arg| arg.arg.to_string()))
             .chain(args.kwarg.iter().map(|arg| arg.arg.to_string())),
     );
-    constants
-        .iter()
-        .filter(|constant| {
-            locals.count(&constant.name) == 0 && !walrus_targets(body_text, &constant.name)
-        })
-        .cloned()
-        .collect()
+    Some(locals.names)
+}
+
+/// Whether `statements` (through compound statements) define a nested
+/// function or class.
+fn contains_nested_scope(statements: &[Stmt]) -> bool {
+    statements.iter().any(|stmt| match stmt {
+        Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::ClassDef(_) => true,
+        Stmt::For(stmt) => contains_nested_scope(&stmt.body) || contains_nested_scope(&stmt.orelse),
+        Stmt::AsyncFor(stmt) => {
+            contains_nested_scope(&stmt.body) || contains_nested_scope(&stmt.orelse)
+        }
+        Stmt::While(stmt) => {
+            contains_nested_scope(&stmt.body) || contains_nested_scope(&stmt.orelse)
+        }
+        Stmt::If(stmt) => contains_nested_scope(&stmt.body) || contains_nested_scope(&stmt.orelse),
+        Stmt::With(stmt) => contains_nested_scope(&stmt.body),
+        Stmt::AsyncWith(stmt) => contains_nested_scope(&stmt.body),
+        Stmt::Try(stmt) => {
+            contains_nested_scope(&stmt.body)
+                || stmt
+                    .handlers
+                    .iter()
+                    .any(|ast::ExceptHandler::ExceptHandler(handler)| {
+                        contains_nested_scope(&handler.body)
+                    })
+                || contains_nested_scope(&stmt.orelse)
+                || contains_nested_scope(&stmt.finalbody)
+        }
+        Stmt::TryStar(stmt) => {
+            contains_nested_scope(&stmt.body)
+                || stmt
+                    .handlers
+                    .iter()
+                    .any(|ast::ExceptHandler::ExceptHandler(handler)| {
+                        contains_nested_scope(&handler.body)
+                    })
+                || contains_nested_scope(&stmt.orelse)
+                || contains_nested_scope(&stmt.finalbody)
+        }
+        Stmt::Match(stmt) => stmt
+            .cases
+            .iter()
+            .any(|case| contains_nested_scope(&case.body)),
+        _ => false,
+    })
+}
+
+/// Whether `source` names a writer that can bind module names at runtime
+/// without an assignment statement. Textual on purpose: a false match only
+/// leaves constants unresolved.
+fn writes_namespace_dynamically(source: &str) -> bool {
+    ["exec", "globals", "vars", "locals", "setattr", "__dict__"]
+        .into_iter()
+        .any(|identifier| mentions_identifier(source, identifier))
+        || source.contains("sys.modules")
+}
+
+/// Attribute names assigned as `<expr>.NAME = ...` or `<expr>.NAME += ...`
+/// anywhere in `source`.
+fn assigned_attributes(source: &str) -> Vec<String> {
+    let mut attributes = Vec::new();
+    for (dot, _) in source.match_indices('.') {
+        let rest = &source[dot + 1..];
+        let end = rest
+            .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .unwrap_or(rest.len());
+        // `=` or an augmented `+=`; a comparison such as `<=` also matches,
+        // which only fails closed.
+        let after = rest[end..]
+            .trim_start()
+            .trim_start_matches(|ch: char| "+-*/%&|^@<>".contains(ch));
+        let assigns = after.starts_with('=') && !after.starts_with("==");
+        if end > 0 && assigns {
+            attributes.push(rest[..end].to_string());
+        }
+    }
+    attributes.sort();
+    attributes.dedup();
+    attributes
 }
 
 fn literal_assignment(source: &str, stmt: &Stmt) -> Option<PythonModuleConstant> {
@@ -317,13 +491,24 @@ fn collect_global_declarations(statements: &[Stmt], out: &mut Vec<String>) {
 /// purpose: an assignment expression can sit inside any expression, and a
 /// false match only leaves the constant unresolved.
 fn walrus_targets(text: &str, name: &str) -> bool {
-    text.match_indices(name).any(|(start, _)| {
-        let before_ok = text[..start]
-            .chars()
-            .next_back()
-            .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'));
-        before_ok && text[start + name.len()..].trim_start().starts_with(":=")
-    })
+    identifier_offsets(text, name).any(|end| text[end..].trim_start().starts_with(":="))
+}
+
+/// Whether `text` holds `identifier` as a whole word.
+fn mentions_identifier(text: &str, identifier: &str) -> bool {
+    identifier_offsets(text, identifier).next().is_some()
+}
+
+/// End offsets of every whole-word occurrence of `identifier` in `text`.
+fn identifier_offsets<'a>(text: &'a str, identifier: &'a str) -> impl Iterator<Item = usize> + 'a {
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    text.match_indices(identifier)
+        .filter_map(move |(start, _)| {
+            let end = start + identifier.len();
+            let before_ok = !text[..start].chars().next_back().is_some_and(is_word);
+            let after_ok = !text[end..].chars().next().is_some_and(is_word);
+            (before_ok && after_ok).then_some(end)
+        })
 }
 
 #[cfg(test)]

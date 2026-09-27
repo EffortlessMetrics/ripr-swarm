@@ -1,4 +1,6 @@
-use super::module_constants::{PythonModuleConstant, constants_visible_in_function};
+use super::module_constants::{
+    PythonModuleConstant, constants_visible_in_function, python_test_rebinding,
+};
 #[cfg(test)]
 use super::source_facts::extract_source_facts;
 use super::source_utils::{
@@ -262,6 +264,11 @@ pub(super) fn collect_tests_from_statements(
                     parametrized: is_parametrized(&function.decorator_list),
                     framework,
                     assertions: collect_assertions_from_statements(&function.body, source),
+                    constant_rebinding: python_test_rebinding(
+                        &function.args,
+                        &function.body,
+                        &text_for_range(source, function.range),
+                    ),
                 });
             }
             Stmt::AsyncFunctionDef(function) if function.name.as_str().starts_with("test") => {
@@ -283,6 +290,11 @@ pub(super) fn collect_tests_from_statements(
                     parametrized: is_parametrized(&function.decorator_list),
                     framework,
                     assertions: collect_assertions_from_statements(&function.body, source),
+                    constant_rebinding: python_test_rebinding(
+                        &function.args,
+                        &function.body,
+                        &text_for_range(source, function.range),
+                    ),
                 });
             }
             Stmt::ClassDef(class) => {

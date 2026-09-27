@@ -288,12 +288,16 @@ way the Rust and TypeScript adapters resolve a same-file constant; the missing
 discriminator keeps the name (`amount == DISCOUNT_THRESHOLD`) and its reason
 names the value and declaring line. A test argument that names the constant,
 imported from the owner's module (`discounted_total(DISCOUNT_THRESHOLD)` or
-`pricing.DISCOUNT_THRESHOLD`), binds to that value. The name stays unresolved
-when anything can rebind it: a second module-scope binding (including inside
+`pricing.DISCOUNT_THRESHOLD`), binds to that value unless the test's own scope
+or its module binds that name again. The name stays unresolved when anything
+can rebind it: a second module-scope binding (including inside
 `if`/`try`/`for`/`with`), a `global` declaration or walrus target anywhere in
-the module, a star import, a module-scope `match`, a `globals()` call, a
-non-literal value, or a parameter or local binding of the same name in the
-owner. When no strong related call binds a literal
+the module, a star import, a module-scope `match`, any mention of a dynamic
+namespace writer (`exec`, `globals`, `vars`, `locals`, `setattr`,
+`sys.modules`, `__dict__`), a non-literal value, a parameter or local binding
+of the same name in the owner, a nested `def`/`class`/`lambda` in the owner,
+or a related test file that assigns the attribute (`pricing.DISCOUNT_THRESHOLD
+= 5`). When no strong related call binds a literal
 argument (test locals, `*args`, a construct-call passing a dict), static
 evidence cannot see the activating input either way: the oracle verdict stands
 and an `exposed` finding carries a `boundary_activation_unresolved` evidence

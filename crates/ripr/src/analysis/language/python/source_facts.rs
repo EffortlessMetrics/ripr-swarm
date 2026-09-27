@@ -1,4 +1,4 @@
-use super::module_constants::module_literal_constants;
+use super::module_constants::{module_literal_constants, with_module_rebinding};
 use super::owners_tests::{
     collect_imports_from_statements, collect_owners_from_statements, collect_tests_from_statements,
     module_owner,
@@ -278,6 +278,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         &imports,
         &mut snapshot.tests,
     );
+    with_module_rebinding(source, &module.body, &mut snapshot.tests);
     collect_source_facts_from_statements(
         file,
         source,
