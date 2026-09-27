@@ -115,6 +115,8 @@ pub(in crate::analysis::test_grip_evidence) struct CompactTest<'a> {
     pub(in crate::analysis::test_grip_evidence) ambiguous_target_affinity_owner_call_names:
         BTreeSet<String>,
     pub(in crate::analysis::test_grip_evidence) code_lines: Vec<String>,
+    /// Per-test facts; build through [`CompactTest::value_facts`] so the
+    /// whole-file part comes from `file_value_scan`, never a fresh scan.
     value_facts: OnceCell<ValueEnvFacts>,
     /// Shared by every test in the same file.
     pub(in crate::analysis::test_grip_evidence) file_value_scan: Arc<OnceLock<FileValueScan>>,

@@ -295,7 +295,7 @@ fn value_facts_share_one_file_scan_per_file() -> Result<(), String> {
     let root = authority_fixture_root("file-scan-memo")?;
     fs::write(
         root.join("src/lib.rs"),
-        "pub fn score(amount: i32, threshold: i32) -> i32 { if amount >= threshold { 1 } else { 0 } }\n#[cfg(test)]\nmod tests {\n#[test] fn score_boundary() { assert_eq!(super::score(1, 1), 1); }\n#[test] fn score_below() { assert_eq!(super::score(0, 1), 0); }\n}\n",
+        "const LIMIT: i32 = 7;\npub fn score(amount: i32, threshold: i32) -> i32 { if amount >= threshold { 1 } else { 0 } }\n#[cfg(test)]\nmod tests {\n#[test] fn score_boundary() { assert_eq!(super::score(LIMIT, LIMIT), 1); }\n#[test] fn score_below() { assert_eq!(super::score(0, LIMIT), 0); }\n}\n",
     )
     .map_err(|error| error.to_string())?;
     fs::write(
@@ -331,6 +331,23 @@ fn value_facts_share_one_file_scan_per_file() -> Result<(), String> {
     first.value_facts(&index);
     if second.file_value_scan.get().is_none() {
         return Err("first test's facts did not populate the shared file scan".to_string());
+    }
+    // Identity alone would pass with an empty shared scan: both tests must
+    // still resolve the same-file constant through it.
+    let seam = inventory_seams_from_index(&files[..1], &index)
+        .into_iter()
+        .next()
+        .ok_or_else(|| "expected a fixture seam".to_string())?;
+    for indexed in [first, second] {
+        let env =
+            crate::analysis::value_resolution::ValueEnv::new(&seam, indexed.value_facts(&index));
+        let resolved = env.resolve("LIMIT");
+        if !resolved.iter().any(|(value, _)| value == "7") {
+            return Err(format!(
+                "`{}` did not resolve LIMIT through the shared scan: {resolved:?}",
+                indexed.test.name
+            ));
+        }
     }
     Ok(())
 }
