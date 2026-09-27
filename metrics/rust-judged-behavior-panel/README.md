@@ -119,7 +119,7 @@ validates it and reports the acceptance floors without lowering them.
 - Every selected repository has one `repository_scopes` record naming the exact
   commit subjects, allowed read-only operations, network and retention policy,
   bounds, actor, and expiry. `proposed_unauthorized` is the state until the
-  owner grants the scope; `authorized` requires a link to that grant. Rows in an
+  owner grants the scope; `authorized` requires an https link to that grant. Rows in an
   unauthorized repository stay selected but are not runnable.
 - A `should_limit` row names a registered product `StaticLimitKind`, expects a
   conservative class, routes no repair, credits no aligned observer, and states

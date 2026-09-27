@@ -44,12 +44,12 @@
         "8d3ee48f"
       ],
       "operations": [
-        "fetch the listed commit ids, including refs/pull/<n>/head where a head is not on the default branch",
+        "fetch the default branch, plus refs/pull/<n>/head where a head is not on it, and resolve each listed (possibly abbreviated) id to exactly one commit",
         "materialize the listed base and head trees in a disposable checkout outside the repository",
         "read source and tests at the listed commits",
         "run the frozen #1609 candidate binary read-only against the committed diff capture"
       ],
-      "network_policy": "fetch only the listed commit ids from github.com/EffortlessMetrics/ripr; the analyzer itself runs offline",
+      "network_policy": "fetch only from github.com/EffortlessMetrics/ripr, and only the refs needed to resolve the listed ids; the analyzer itself runs offline",
       "retention": "commit only the diff captures and derived selection/judgment/replay packets under metrics/rust-judged-behavior-panel; materialized checkouts are deleted after the run",
       "bounds": "one materialization per listed subject per replay attempt; per-case analyzer timeout from the #2769 replay profile",
       "actor": "EffortlessSteven (repository owner); grant pending",
@@ -72,12 +72,12 @@
         "c864308fc4845b133aa17f824f3af29b0e981de5"
       ],
       "operations": [
-        "fetch the listed commit ids, including refs/pull/<n>/head where a head is not on the default branch",
+        "fetch the default branch, plus refs/pull/<n>/head where a head is not on it, and resolve each listed (possibly abbreviated) id to exactly one commit",
         "materialize the listed base and head trees in a disposable checkout outside the repository",
         "read source and tests at the listed commits",
         "run the frozen #1609 candidate binary read-only against the committed diff capture"
       ],
-      "network_policy": "fetch only the listed commit ids from github.com/EffortlessMetrics/ripr-swarm; the analyzer itself runs offline",
+      "network_policy": "fetch only from github.com/EffortlessMetrics/ripr-swarm, and only the refs needed to resolve the listed ids; the analyzer itself runs offline",
       "retention": "commit only the diff captures and derived selection/judgment/replay packets under metrics/rust-judged-behavior-panel; materialized checkouts are deleted after the run",
       "bounds": "one materialization per listed subject per replay attempt; per-case analyzer timeout from the #2769 replay profile",
       "actor": "EffortlessSteven (repository owner); grant pending",

@@ -1464,14 +1464,16 @@ fn validate_release_duplicate_behavior(
     manifest: &RustJudgedPanelManifest,
     violations: &mut Vec<String>,
 ) {
-    let mut seen: BTreeMap<(&str, &str, &str, u64, &str, &str), &str> = BTreeMap::new();
+    // `changed_behavior` is not part of the key: the anchor proof accepts
+    // any token subsequence of the line, so rewording it would rename the
+    // same behavior.
+    let mut seen: BTreeMap<(&str, &str, &str, u64, &str), &str> = BTreeMap::new();
     for item in &manifest.items {
         let key = (
             item.repository.as_str(),
             item.head.value().map_or("", String::as_str),
             item.anchor.file.as_str(),
             item.anchor.line,
-            item.anchor.changed_behavior.trim(),
             item.expected_direction.as_str(),
         );
         if let Some(first) = seen.insert(key, &item.id) {
@@ -1518,9 +1520,10 @@ fn validate_release_scopes(manifest: &RustJudgedPanelManifest, violations: &mut 
             }
         }
         match (scope.status.as_str(), &scope.authority_ref) {
-            ("authorized", Nullable::Value(link)) if !link.trim().is_empty() => {}
+            ("authorized", Nullable::Value(link))
+                if link.starts_with("https://") && link.len() > "https://".len() => {}
             ("authorized", _) => violations.push(format!(
-                "{subject}.authority_ref: `authorized` requires a link to the actor's grant"
+                "{subject}.authority_ref: `authorized` requires an https link to the actor's grant"
             )),
             (_, Nullable::Null) => {}
             (_, _) => violations.push(format!(
@@ -1922,18 +1925,16 @@ fn validate_release_item(
 /// A `should_limit` row must name the exact unresolved static boundary
 /// (#3805): a registered product `StaticLimitKind`, a conservative class,
 /// no repair routing, no aligned observer, and the missing edge in words.
-/// Any other direction carries no limit kind, so a difficult gap cannot be
-/// relabelled a limit, nor a limit hidden in a gap row.
+/// Any other direction carries no limit kind. These are shape checks: they
+/// force a relabelled row to state a boundary, but whether that boundary is
+/// real is the independent adjudicator's call (#3806).
 fn validate_release_limit_contract(
     item: &RustJudgedPanelItem,
     subject: &str,
     violations: &mut Vec<String>,
 ) {
-    let kind = item
-        .expected_static_limit_kind
-        .value()
-        .map(|kind| kind.trim())
-        .filter(|kind| !kind.is_empty());
+    // Exact bytes: a padded or empty kind is not the registered token.
+    let kind = item.expected_static_limit_kind.value().map(String::as_str);
     if item.expected_direction != "should_limit" {
         if kind.is_some() {
             violations.push(format!(
@@ -1964,10 +1965,11 @@ fn validate_release_limit_contract(
     }
     match kind {
         Some(kind)
-            if serde_json::from_value::<ripr::domain::StaticLimitKind>(
-                serde_json::Value::String(kind.to_string()),
-            )
-            .is_ok() => {}
+            if !kind.is_empty()
+                && serde_json::from_value::<ripr::domain::StaticLimitKind>(
+                    serde_json::Value::String(kind.to_string()),
+                )
+                .is_ok() => {}
         Some(kind) => violations.push(format!(
             "{subject}.expected_static_limit_kind: `{kind}` is not a registered StaticLimitKind"
         )),
@@ -3095,6 +3097,24 @@ mod tests {
     fn release_selection_rejects_missing_or_inconsistent_scope() -> Result<(), String> {
         let fixture = TempFixture::new("release-scope")?;
         let manifest = valid_release_manifest(&fixture)?;
+        // A grant must be an https link, and a proposed scope must spell its
+        // missing grant as explicit null rather than omit it.
+        let mut broken = manifest.clone();
+        broken["repository_scopes"][0]["status"] = json!("authorized");
+        broken["repository_scopes"][0]["authority_ref"] = json!("x");
+        broken["items"][0]["scope_authorization"] = json!("authorized");
+        broken["repository_scopes"][1]
+            .as_object_mut()
+            .ok_or_else(|| "fixture scope must be an object".to_string())?
+            .remove("authority_ref");
+        let error = release_rejection(&fixture, &broken)?;
+        require_fragments(
+            &error,
+            &[
+                "(EffortlessMetrics/ripr).authority_ref: `authorized` requires an https link",
+                "(EffortlessMetrics/ripr-swarm).authority_ref: `proposed_unauthorized` requires explicit null",
+            ],
+        )?;
         // A repository with rows but no record is never implied authorized.
         let mut broken = manifest.clone();
         broken["repository_scopes"] = json!([release_scope("EffortlessMetrics/ripr")]);
@@ -3117,7 +3137,7 @@ mod tests {
         require_fragments(
             &error,
             &[
-                "(EffortlessMetrics/ripr).authority_ref: `authorized` requires a link",
+                "(EffortlessMetrics/ripr).authority_ref: `authorized` requires an https link",
                 "(EffortlessMetrics/ripr-swarm).authority_ref: `proposed_unauthorized` requires explicit null",
                 "(EffortlessMetrics/elsewhere): no selected row uses this repository",
                 "(EffortlessMetrics/elsewhere).operations: require non-empty entries",
@@ -3166,6 +3186,22 @@ mod tests {
         broken["items"][2]["expected_static_limit_kind"] = Value::Null;
         let error = release_rejection(&fixture, &broken)?;
         require_fragments(&error, &["`should_limit` requires a named static limit"])?;
+        // Exact tokens only: padding or an empty string is not the kind, and
+        // a limit may not claim `no_action` either.
+        let mut broken = manifest.clone();
+        broken["items"][2]["expected_static_limit_kind"] =
+            json!(" rust_subprocess_binary_reach_unresolved");
+        broken["items"][2]["expected_actionability"] = json!("no_action");
+        broken["items"][1]["expected_static_limit_kind"] = json!("");
+        let error = release_rejection(&fixture, &broken)?;
+        require_fragments(
+            &error,
+            &[
+                "(release-limit-id).expected_static_limit_kind: ` rust_subprocess_binary_reach_unresolved` is not a registered",
+                "(release-limit-id).expected_actionability: `should_limit` requires",
+                "(release-gap-id).expected_static_limit_kind: `should_gap` requires a null",
+            ],
+        )?;
         // Dropping only the kind does not hide a limit in a gap row, and a
         // quiet row may not route work.
         let mut broken = manifest;
@@ -3199,6 +3235,23 @@ mod tests {
                 "(release-limit-id).judgment_identity",
             ],
         )?;
+        // Each provenance field alone, and a missing (not null) one, fails.
+        for (field, value) in [
+            ("judgment_source", json!("selector notes")),
+            ("judged_at", json!("2026-09-27T00:00:00Z")),
+        ] {
+            let mut broken = manifest.clone();
+            broken["items"][2][field] = value;
+            let error = release_rejection(&fixture, &broken)?;
+            require_fragments(&error, &["(release-limit-id).judgment_identity"])?;
+            let mut broken = manifest.clone();
+            broken["items"][2]
+                .as_object_mut()
+                .ok_or_else(|| "fixture item must be an object".to_string())?
+                .remove(field);
+            let error = release_rejection(&fixture, &broken)?;
+            require_fragments(&error, &["(release-limit-id).judgment_identity"])?;
+        }
         // A judged row without provenance still fails as before.
         let mut broken = manifest;
         broken["items"][0]["judged_by"] = json!([]);
@@ -3237,6 +3290,14 @@ mod tests {
             .as_array_mut()
             .ok_or_else(|| "items are not an array".to_string())?
             .push(copy.clone());
+        let error = release_rejection(&fixture, &duplicated)?;
+        require_fragments(
+            &error,
+            &["(release-gap-renamed): duplicates behavior item `release-gap-id`"],
+        )?;
+        // Rewording the behavior to another token subsequence of the same
+        // anchored line is still the same behavior.
+        duplicated["items"][3]["anchor"]["changed_behavior"] = json!("gap_behavior");
         let error = release_rejection(&fixture, &duplicated)?;
         require_fragments(
             &error,
