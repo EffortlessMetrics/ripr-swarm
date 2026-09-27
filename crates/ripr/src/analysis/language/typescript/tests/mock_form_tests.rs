@@ -218,6 +218,76 @@ fn wrapped_mock_calls_withhold() -> Result<(), String> {
 }
 
 #[test]
+fn aliases_bound_as_values_or_later_withhold() -> Result<(), String> {
+    assert_all(
+        &[
+            (
+                "method-alias",
+                "import { it, expect, vi } from 'vitest';\nconst doMock = vi.doMock;\ndoMock('../src/cart');\n",
+            ),
+            (
+                "bound-method-alias",
+                "import { it, expect, vi } from 'vitest';\nconst m = vi.mock.bind(vi);\nm('../src/cart');\n",
+            ),
+            (
+                "destructured-default",
+                "import { it, expect, vi } from 'vitest';\nconst { doMock = () => {} } = vi;\ndoMock('../src/cart');\n",
+            ),
+            (
+                "alias-after-callback",
+                "import { it, expect, vi, beforeEach } from 'vitest';\nbeforeEach(() => { m.doMock('../src/cart'); });\nconst m = vi;\n",
+            ),
+            (
+                "alias-after-hoisted-function",
+                "import { it, expect, vi, beforeAll } from 'vitest';\nfunction setup() { m.doMock('../src/cart'); }\nconst m = vi;\nbeforeAll(setup);\n",
+            ),
+        ],
+        ExposureClass::NoStaticPath,
+    )
+}
+
+#[test]
+fn mock_calls_in_other_positions_withhold() -> Result<(), String> {
+    assert_all(
+        &[
+            (
+                "returned",
+                "import { it, expect, vi, beforeAll } from 'vitest';\nfunction setup() { return vi.doMock('../src/cart'); }\nbeforeAll(setup);\n",
+            ),
+            (
+                "void-arrow",
+                "import { it, expect, vi, beforeAll } from 'vitest';\nbeforeAll(() => void vi.doMock('../src/cart'));\n",
+            ),
+            (
+                "logical",
+                "import { it, expect, vi } from 'vitest';\nconst on = true;\non && vi.doMock('../src/cart');\n",
+            ),
+            (
+                "conditional",
+                "import { it, expect, vi } from 'vitest';\nconst on = true;\non ? vi.doMock('../src/cart') : null;\n",
+            ),
+            (
+                "object-method",
+                "import { it, expect, vi, beforeAll } from 'vitest';\nconst h = { setup() { vi.doMock('../src/cart'); } };\nbeforeAll(h.setup);\n",
+            ),
+            (
+                "wrapped-callback",
+                "import { it, expect, vi, beforeEach } from 'vitest';\nconst wrap = (f: () => void) => f;\nbeforeEach(wrap(() => { vi.doMock('../src/cart'); }));\n",
+            ),
+            (
+                "export-default-function",
+                "import { it, expect, vi } from 'vitest';\nexport default function setup() { vi.doMock('../src/cart'); }\n",
+            ),
+            (
+                "class-static-block",
+                "import { it, expect, vi } from 'vitest';\nclass Setup { static { vi.doMock('../src/cart'); } }\n",
+            ),
+        ],
+        ExposureClass::NoStaticPath,
+    )
+}
+
+#[test]
 fn other_runner_module_mock_apis_withhold() -> Result<(), String> {
     assert_all(
         &[
@@ -301,6 +371,10 @@ fn mocks_of_other_modules_still_relate() -> Result<(), String> {
             (
                 "non-runner-destructure",
                 "import { it, expect } from 'vitest';\nimport api from './api';\nconst { mock } = api;\nmock('../src/cart');\n",
+            ),
+            (
+                "non-runner-method-alias",
+                "import { it, expect } from 'vitest';\nimport api from './api';\nconst mock = api.mock;\nmock('../src/cart');\n",
             ),
             (
                 "other-alias",
