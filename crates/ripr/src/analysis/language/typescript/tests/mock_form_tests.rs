@@ -103,6 +103,10 @@ fn root_relative_mock_withholds() -> Result<(), String> {
         ("root", "/src/cart"),
         ("root-ext", "/src/cart.ts"),
         ("root-subdir", "/cart"),
+        ("root-double-slash", "//src/cart"),
+        ("root-dot-segment", "/src/./cart"),
+        ("root-query", "/src/cart?raw"),
+        ("root-backslash", "\\\\src\\\\cart"),
     ]
     .into_iter()
     .map(|(label, path)| {
@@ -142,6 +146,96 @@ fn aliased_runner_object_mock_withholds() -> Result<(), String> {
             (
                 "computed",
                 "import { it, expect, vi } from 'vitest';\nvi['mock']('../src/cart');\n",
+            ),
+            (
+                "computed-template",
+                "import { it, expect, vi } from 'vitest';\nvi[`mock`]('../src/cart');\n",
+            ),
+            (
+                "namespace-computed",
+                "import { it, expect } from 'vitest';\nimport * as vt from 'vitest';\nvt['vi'].mock('../src/cart');\n",
+            ),
+            (
+                "destructured-method",
+                "import { it, expect, vi } from 'vitest';\nconst { mock } = vi;\nmock('../src/cart');\n",
+            ),
+            (
+                "destructured-namespace",
+                "import { it, expect } from 'vitest';\nimport * as vt from 'vitest';\nconst { vi: v } = vt;\nv.mock('../src/cart');\n",
+            ),
+            (
+                "exported-alias",
+                "import { it, expect, vi } from 'vitest';\nexport const m = vi;\nm.mock('../src/cart');\n",
+            ),
+            (
+                "nested-alias",
+                "import { it, expect, vi, describe } from 'vitest';\ndescribe('d', () => {\n  const m = vi;\n  m.mock('../src/cart');\n});\n",
+            ),
+        ],
+        ExposureClass::NoStaticPath,
+    )
+}
+
+#[test]
+fn wrapped_mock_calls_withhold() -> Result<(), String> {
+    assert_all(
+        &[
+            (
+                "optional-call",
+                "import { it, expect, vi } from 'vitest';\nvi.mock?.('../src/cart');\n",
+            ),
+            (
+                "optional-member",
+                "import { it, expect, vi } from 'vitest';\nvi?.mock('../src/cart');\n",
+            ),
+            (
+                "parenthesized",
+                "import { it, expect, vi } from 'vitest';\n(vi).mock('../src/cart');\n",
+            ),
+            (
+                "sequence-callee",
+                "import { it, expect, vi } from 'vitest';\n(0, vi.mock)('../src/cart');\n",
+            ),
+            (
+                "awaited",
+                "import { it, expect, vi } from 'vitest';\nawait vi.doMock('../src/cart');\n",
+            ),
+            (
+                "arrow-initializer",
+                "import { it, expect, vi, beforeAll } from 'vitest';\nconst setup = () => { vi.doMock('../src/cart'); };\nbeforeAll(setup);\n",
+            ),
+            (
+                "asserted-specifier",
+                "import { it, expect, vi } from 'vitest';\nvi.mock('../src/cart' as string);\n",
+            ),
+            (
+                "require-resolve",
+                "import { it, expect } from '@jest/globals';\njest.mock(require.resolve('../src/cart'));\n",
+            ),
+        ],
+        ExposureClass::NoStaticPath,
+    )
+}
+
+#[test]
+fn other_runner_module_mock_apis_withhold() -> Result<(), String> {
+    assert_all(
+        &[
+            (
+                "jest-esm",
+                "import { it, expect, jest } from '@jest/globals';\njest.unstable_mockModule('../src/cart', () => ({}));\n",
+            ),
+            (
+                "jest-set-mock",
+                "import { it, expect, jest } from '@jest/globals';\njest.setMock('../src/cart', {});\n",
+            ),
+            (
+                "bun-mock-module",
+                "import { it, expect, mock } from 'bun:test';\nmock.module('../src/cart', () => ({}));\n",
+            ),
+            (
+                "node-mock-module",
+                "import { it, mock } from 'node:test';\nimport { expect } from 'vitest';\nmock.module('../src/cart', {});\n",
             ),
         ],
         ExposureClass::NoStaticPath,
@@ -191,6 +285,22 @@ fn mocks_of_other_modules_still_relate() -> Result<(), String> {
             (
                 "other-root-partial-segment",
                 "import { it, expect, vi } from 'vitest';\nvi.mock('/art');\n",
+            ),
+            (
+                "other-require-resolve",
+                "import { it, expect } from '@jest/globals';\njest.mock(require.resolve('../src/other'));\n",
+            ),
+            (
+                "other-root-parent-free",
+                "import { it, expect, vi } from 'vitest';\nvi.mock('/src/./other?raw');\n",
+            ),
+            (
+                "non-runner-mock-module",
+                "import { it, expect } from 'vitest';\nimport { mock } from './helpers';\nmock.module('../src/cart');\n",
+            ),
+            (
+                "non-runner-destructure",
+                "import { it, expect } from 'vitest';\nimport api from './api';\nconst { mock } = api;\nmock('../src/cart');\n",
             ),
             (
                 "other-alias",

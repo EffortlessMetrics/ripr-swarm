@@ -814,16 +814,23 @@ fn test_mocks_owner_module(
 /// `true` when a root-relative mock specifier (`/src/cart`) may name
 /// `module`. The runner resolves it against its own root, which the adapter
 /// does not model, so any whole-segment suffix of the module path matches:
-/// an unknown root errs toward withholding the relation (#4294).
+/// an unknown root errs toward withholding the relation (#4294). A query
+/// (`?raw`), empty and `.` segments are dropped first, so `//src/./cart`
+/// reads as `src/cart`; a `..` segment makes the path unknowable and matches.
 fn root_relative_mock_names_module(source: &str, module: &str) -> bool {
-    let Some(rooted) = source
-        .replace('\\', "/")
-        .strip_prefix('/')
-        .map(ToString::to_string)
-    else {
+    let source = source.replace('\\', "/");
+    let Some(rooted) = source.strip_prefix('/') else {
         return false;
     };
-    let rooted = strip_typescript_module_extension(&rooted);
+    let rooted = rooted.split(['?', '#']).next().unwrap_or_default();
+    let segments: Vec<&str> = rooted
+        .split('/')
+        .filter(|segment| !segment.is_empty() && *segment != ".")
+        .collect();
+    if segments.contains(&"..") {
+        return true;
+    }
+    let rooted = strip_typescript_module_extension(&segments.join("/"));
     !rooted.is_empty()
         && (module == rooted
             || module
