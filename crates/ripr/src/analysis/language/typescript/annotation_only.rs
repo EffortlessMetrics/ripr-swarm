@@ -17,6 +17,7 @@
 //! probe.
 
 use super::*;
+use oxc_ast::ast::MethodDefinitionKind;
 
 /// Whether a paired removed/added line change touches ONLY TypeScript type
 /// syntax. Fails closed (returns `false`) on identical lines, on lines that do
@@ -27,7 +28,11 @@ pub(crate) fn is_annotation_only_signature_change(
     old_line: &str,
     new_line: &str,
 ) -> bool {
-    if old_line.trim() == new_line.trim() {
+    // Decorators can turn erased types into runtime values: with
+    // `emitDecoratorMetadata`, a decorated class's parameter and return types
+    // become `design:paramtypes` / `design:returntype` metadata that DI
+    // frameworks read. A line carrying `@` fails closed.
+    if old_line.trim() == new_line.trim() || old_line.contains('@') || new_line.contains('@') {
         return false;
     }
     match (
@@ -49,7 +54,6 @@ enum RuntimeSkeleton {
         function: FunctionSkeleton,
     },
     Method {
-        decorators: Vec<String>,
         key: String,
         kind: String,
         computed: bool,
@@ -91,7 +95,6 @@ struct FunctionSkeleton {
 
 #[derive(Debug, PartialEq, Eq)]
 struct ParamSkeleton {
-    decorators: Vec<String>,
     pattern: String,
     initializer: Option<String>,
     /// Parameter-property modifiers (`private x`, `readonly x`) emit a field
@@ -100,6 +103,9 @@ struct ParamSkeleton {
     readonly: bool,
     is_override: bool,
 }
+
+/// Name of the synthetic class that wraps a method line.
+const PROBE_CLASS: &str = "RiprAnnotationProbe";
 
 /// Snippet wrappers tried in order. A signature line that opens a body
 /// (`function f(a: T): R {`) needs a closing brace to parse; a method
@@ -110,8 +116,8 @@ fn snippets(line: &str) -> [String; 4] {
     [
         line.to_string(),
         format!("{line}\n}}"),
-        format!("class RiprAnnotationProbe {{\n{line}\n}}"),
-        format!("class RiprAnnotationProbe {{\n{line}\n}}\n}}"),
+        format!("class {PROBE_CLASS} {{\n{line}\n}}"),
+        format!("class {PROBE_CLASS} {{\n{line}\n}}\n}}"),
     ]
 }
 
@@ -122,12 +128,20 @@ fn runtime_skeleton(file: &Path, line: &str) -> Option<RuntimeSkeleton> {
     }
     let candidates = snippets(trimmed);
     parse_on_worker(file, trimmed, move |file, _line, allocator| {
-        candidates.iter().find_map(|snippet| {
+        candidates.iter().enumerate().find_map(|(index, snippet)| {
             let ret = Parser::new(allocator, snippet, source_type_for(file)).parse();
             if !ret.errors.is_empty() || ret.program.body.len() != 1 {
                 return None;
             }
-            statement_skeleton(&ret.program.body[0], snippet)
+            // Wrappers 2 and 3 are the synthetic class; only they may yield a
+            // method, and only they may yield a class at all (a one-line real
+            // class declaration is not a signature).
+            let wrapped = index >= 2;
+            match &ret.program.body[0] {
+                Statement::ClassDeclaration(class) if wrapped => method_skeleton(class, snippet),
+                statement if !wrapped => statement_skeleton(statement, snippet),
+                _ => None,
+            }
         })
     })
     .ok()
@@ -160,26 +174,30 @@ fn statement_skeleton(statement: &Statement<'_>, src: &str) -> Option<RuntimeSke
             }
             _ => None,
         },
-        Statement::ClassDeclaration(class) => {
-            // Only the synthetic wrapper class holding exactly one method.
-            let [ClassElement::MethodDefinition(method)] = class.body.body.as_slice() else {
-                return None;
-            };
-            Some(RuntimeSkeleton::Method {
-                decorators: method
-                    .decorators
-                    .iter()
-                    .map(|decorator| text(src, decorator.span))
-                    .collect(),
-                key: text(src, method.key.span()),
-                kind: format!("{:?}", method.kind),
-                computed: method.computed,
-                is_static: method.r#static,
-                function: function_skeleton(&method.value, src),
-            })
-        }
         _ => None,
     }
+}
+
+/// The single method of the synthetic wrapper class. A constructor fails
+/// closed: its parameter types feed decorator metadata on a decorated class,
+/// which this one-line view cannot see.
+fn method_skeleton(class: &Class<'_>, src: &str) -> Option<RuntimeSkeleton> {
+    if class.id.as_ref().is_none_or(|id| id.name != PROBE_CLASS) {
+        return None;
+    }
+    let [ClassElement::MethodDefinition(method)] = class.body.body.as_slice() else {
+        return None;
+    };
+    if method.kind == MethodDefinitionKind::Constructor {
+        return None;
+    }
+    Some(RuntimeSkeleton::Method {
+        key: text(src, method.key.span()),
+        kind: format!("{:?}", method.kind),
+        computed: method.computed,
+        is_static: method.r#static,
+        function: function_skeleton(&method.value, src),
+    })
 }
 
 fn variables_skeleton(
@@ -248,11 +266,6 @@ fn params_skeleton(
         .items
         .iter()
         .map(|param| ParamSkeleton {
-            decorators: param
-                .decorators
-                .iter()
-                .map(|decorator| text(src, decorator.span))
-                .collect(),
             // The binding pattern's span excludes the parameter's own type
             // annotation and `?` marker, which live on `FormalParameter`.
             pattern: text(src, param.pattern.span()),

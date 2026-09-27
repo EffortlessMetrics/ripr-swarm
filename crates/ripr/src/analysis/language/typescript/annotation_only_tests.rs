@@ -47,15 +47,10 @@ fn type_only_signature_edits_are_annotation_only() {
             "const f = function (a: string) {",
             "const f = function (a: unknown) {",
         ),
-        // Class method, including a parameter-property constructor whose
-        // modifier is unchanged.
+        // Class method.
         (
             "  total(items: Item[]): number {",
             "  total(items: Line[]): number {",
-        ),
-        (
-            "  constructor(private readonly repo: Repo) {",
-            "  constructor(private readonly repo: RepoLike) {",
         ),
         // Variable annotation.
         ("const limit: number = 5;", "const limit: Limit = 5;"),
@@ -103,6 +98,33 @@ fn runtime_signature_edits_keep_their_probe() {
             "  constructor(repo: Repo) {",
             "  constructor(private repo: Repo) {",
         ),
+        // Constructor parameter types feed decorator metadata on a decorated
+        // class, which one line cannot rule out.
+        (
+            "  constructor(private readonly repo: Repo) {",
+            "  constructor(private readonly repo: RepoLike) {",
+        ),
+        // Any decorator: `emitDecoratorMetadata` makes types runtime values.
+        ("  @Get() find(id: string) {", "  @Get() find(id: number) {"),
+        (
+            "  find(@Param() id: string) {",
+            "  find(@Param() id: number) {",
+        ),
+        // A one-line class declaration is not the synthetic method wrapper.
+        (
+            "class A { m(a: string) { return 1; } }",
+            "class B { m(a: string) { return 1; } }",
+        ),
+        (
+            "class A { m(a: string) { return 1; } }",
+            "class A extends Base { m(a: string) { return 1; } }",
+        ),
+        (
+            "abstract class A { abstract m(): void; }",
+            "declare abstract class A { abstract m(): void; }",
+        ),
+        ("class A { m(a: string) {}", "class B { m(a: string) {}"),
+        ("class A { m(a: string) {} }", "m(a: string) {}"),
         // Method kind and staticness.
         (
             "  total(items: Item[]): number {",

@@ -215,8 +215,10 @@ A changed line whose in-place removed counterpart differs only in erased
 TypeScript type syntax also produces no probe (#4282). Both sides must parse
 as a single-line function, method, or variable declaration, and their runtime
 parts must match exactly: names, parameter patterns, default values, parameter
-properties, `async`/generator, export shape, decorators, and body or
-initializer text. Return types, parameter and variable annotations, optional
+properties, `async`/generator, export shape, and body or initializer text. A
+line with a decorator, and a constructor line, keep their probe: under
+`emitDecoratorMetadata` a decorated class's parameter and return types are
+emitted as runtime metadata. Return types, parameter and variable annotations, optional
 markers, generic parameter lists, and `this` parameters are ignored. Type
 syntax inside an expression (`as`, `satisfies`, generic call arguments) and
 multi-line signature fragments are not compared and keep their probe.
