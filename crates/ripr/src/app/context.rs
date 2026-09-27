@@ -131,7 +131,7 @@ mod tests {
         let diff = input
             .diff_file
             .as_ref()
-            .map(|path| path.display().to_string())
+            .map(|path| crate::agent::loop_commands::shell_arg(&path.display().to_string()))
             .ok_or("sample input must carry a diff file")?;
         let selector = "probe:crates_ripr_examples_sample_src_lib.rs:error_path:a776c683";
         let rendered = collect_context_with_input(input, selector, 2)?;
