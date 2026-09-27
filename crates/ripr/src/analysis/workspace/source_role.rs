@@ -250,7 +250,7 @@ pub(crate) fn classify(path: &Path) -> SourceRole {
 pub(crate) fn is_repo_automation_path(path: &Path) -> bool {
     normalize(path)
         .components()
-        .any(|component| component_name(&component) == "xtask")
+        .any(|component| component.as_os_str() == "xtask")
 }
 
 fn component_name(component: &std::path::Component) -> String {
