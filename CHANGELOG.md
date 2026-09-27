@@ -533,10 +533,19 @@ are scoped or reviewed.
   built outside the test body is no longer reported `no_static_path`. The
   receiver may now come from the enclosing `describe` scope, a
   `beforeEach`/`beforeAll` hook, a default import of the owner's
-  default-exported class, or a namespace import (`new shop.Cart()`). A test
-  body that declares its own local of that name, `afterEach` hooks, skipped
-  tests, sibling `describe` blocks, and a scope that also assigns the name to
-  something else still do not relate.
+  default-exported class, or a namespace import (`new shop.Cart()`). Scope
+  bindings are read from the syntax tree and resolved to the innermost scope;
+  a name the test body declares or reassigns, a callback parameter, a hook
+  that also assigns something else, and a shadowed class or namespace name
+  still do not relate.
+
+- An improved `agent receipt` (including the one `ripr agent repair --phase
+  after` writes) no longer says "Keep the focused test": ripr never runs the
+  project's tests, and a test that fails `cargo test` can still move static
+  grip. The guidance now says to run the focused test and keep it only if it
+  passes, and `verification` carries `status: "verification_not_run"` and the
+  non-claim `static_only_assurance`
+  ([#4234](https://github.com/EffortlessMetrics/ripr-swarm/issues/4234)).
 
 - `cargo xtask vscode-package` now reads the built VSIX and fails if it
   carries workspace build output (anything under `extension/target/`, Cargo
