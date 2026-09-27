@@ -598,7 +598,10 @@ are scoped or reviewed.
   (`declare function`, `export declare const`, `declare module`) or any
   change in a `.d.ts`/`.d.mts`/`.d.cts` declaration file no longer yields a
   `predicate` probe reading `no_static_path`. These are type-only and erased
-  at compile time; declaration files still count as changed files.
+  at compile time; declaration files still count as changed files. Ambient
+  statements are found from the syntax tree, so `declare` used as a
+  JavaScript identifier, or at the start of a template-literal line, is still
+  probed.
 
 - `cargo xtask vscode-package` now reads the built VSIX and fails if it
   carries workspace build output (anything under `extension/target/`, Cargo

@@ -326,8 +326,19 @@ impl LanguageAdapter for TypeScriptAdapter {
                 }
                 continue;
             }
+            // Ambient declarations are type-only; their lines are found from
+            // the syntax tree, since `declare` is also a legal runtime
+            // identifier and can start a line inside a template literal.
+            let ambient = source_by_normalized
+                .get(&normalized_path(&changed.path))
+                .map(|source| ambient_declaration_lines(&changed.path, source))
+                .unwrap_or_default();
             for added in &changed.added_lines {
-                if should_ignore_typescript_changed_line(&added.text) {
+                if should_ignore_typescript_changed_line(&added.text)
+                    || ambient
+                        .iter()
+                        .any(|(start, end)| (*start..=*end).contains(&added.line))
+                {
                     continue;
                 }
                 if let Some(mut finding) = classify_change_with_alias_state(

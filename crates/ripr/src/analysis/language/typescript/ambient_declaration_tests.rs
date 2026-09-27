@@ -1,6 +1,6 @@
-//! Ambient declarations (`declare ...` lines and `.d.ts` files) are type-only,
-//! so a change to them produces no probe (2026-09-27 re-walk: they produced a
-//! `predicate` finding reading `no_static_path`).
+//! Ambient declarations (parsed `declare ...` statements and `.d.ts` files)
+//! are type-only, so a change to them produces no probe (2026-09-27 re-walk:
+//! they produced a `predicate` finding reading `no_static_path`).
 
 use super::*;
 use crate::analysis::diff::ChangedLine;
@@ -110,25 +110,32 @@ fn declare_line_in_source_file_is_ignored_but_runtime_line_is_probed() -> Result
 }
 
 #[test]
-fn declare_prefixed_identifiers_are_still_probed() {
-    for kept in [
-        "  declareWinner(x);",
-        "  const declared = 1;",
-        "  return declare;",
-    ] {
-        assert!(
-            !should_ignore_typescript_changed_line(kept),
-            "`{kept}` is runtime code"
-        );
-    }
-    for ignored in [
-        "declare function f(): number;",
-        "export declare const V: string;",
-        "declare module 'x' {",
-    ] {
-        assert!(
-            should_ignore_typescript_changed_line(ignored),
-            "`{ignored}`"
-        );
-    }
+fn only_parsed_ambient_declarations_are_skipped() -> Result<(), String> {
+    // `declare` is also a runtime identifier, and a template literal line can
+    // start with `declare `: both stay probed. The body of `declare module`
+    // is ambient even on lines without the keyword.
+    let source = "declare module 'x' {\n  export function f(): number;\n}\nexport function emit(): string {\n  return `\ndeclare module y;\n`;\n}\nexport function reset(): number {\n  let declare = 0;\n  declare = compute();\n  return declare;\n}\nfunction compute(): number {\n  return 1;\n}\n";
+    let findings = analyze(
+        "declare-identifier",
+        &[("src/emit.ts", source)],
+        changed(
+            "src/emit.ts",
+            &[
+                (2, "  export function f(): number;"),
+                (6, "declare module y;"),
+                (11, "  declare = compute();"),
+            ],
+        ),
+    )?
+    .findings;
+    let lines: Vec<usize> = findings
+        .iter()
+        .map(|finding| finding.probe.location.line)
+        .collect();
+    assert_eq!(
+        lines,
+        vec![6, 11],
+        "the ambient module body is skipped, runtime lines are probed: {findings:?}"
+    );
+    Ok(())
 }
