@@ -1181,6 +1181,7 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
   "crates/ripr/src/output/gate.rs::tests::gate_visible_only_records_pr_guidance_without_blocking",
   "crates/ripr/src/output/gate/tests.rs::gate_static_limitation_reason_outranks_pr_wide_nearby_test_flag",
+  "crates/ripr/src/output/gate/tests.rs::gate_closed_gap_is_not_misreported_as_configured_off",
   "crates/ripr/src/output/gate.rs::tests::gate_acknowledgeable_blocks_policy_candidate_without_label",
   "crates/ripr/src/output/gate.rs::tests::gate_acknowledgeable_keeps_waived_candidate_visible",
   "crates/ripr/src/output/gate.rs::tests::gate_calibrated_mode_requires_explicit_baseline",
@@ -1601,6 +1602,8 @@ tests = [
   "crates/ripr/src/output/first_useful_action.rs::first_useful_action_reports_stale_editor_context_first",
   "crates/ripr/src/output/first_useful_action.rs::first_useful_action_routes_missing_assistant_proof",
   "crates/ripr/src/output/first_useful_action.rs::first_useful_action_routes_gap_record_without_assistant_proof",
+  "crates/ripr/src/output/first_useful_action.rs::unreadable_receipt_asks_for_a_complete_receipt",
+  "crates/ripr/tests/cli_smoke.rs::first_action_routes_live_unchanged_receipt_to_revise_focused_test",
   "crates/ripr/tests/cli_smoke.rs::first_action_cli_writes_actionable_report",
   "crates/ripr/src/cli/commands.rs::first_action_cli_writes_gap_record_report",
   "crates/ripr/src/cli/commands.rs::init_generated_github_workflow_is_advisory",
@@ -2184,6 +2187,9 @@ spec = "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md"
 tests = [
   "crates/ripr/src/analysis/language/typescript/mod.rs",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::analyze_diff_credits_cross_extension_related_test_oracle_for_mts_sources",
+  "crates/ripr/src/analysis/language/typescript/ambient_declaration_tests.rs::declaration_file_change_produces_no_probe_but_is_counted",
+  "crates/ripr/src/analysis/language/typescript/ambient_declaration_tests.rs::declare_line_in_source_file_is_ignored_but_runtime_line_is_probed",
+  "crates/ripr/src/analysis/language/typescript/ambient_declaration_tests.rs::only_parsed_ambient_declarations_are_skipped",
   "crates/ripr/src/analysis/language/typescript/related_tests.rs::module_extension_tests",
   "crates/ripr/src/analysis/language/typescript/related_tests.rs::module_extension_tests::strip_typescript_module_extension_covers_every_routed_suffix",
   "crates/ripr/src/analysis/repair_route.rs::tests::modern_ts_related_tests_keep_the_repair_packet_fail_closed",
@@ -3636,6 +3642,7 @@ name = "Gap decision ledger"
 spec = "docs/specs/RIPR-SPEC-0046-gap-decision-ledger.md"
 tests = [
   "xtask/src/main.rs::tests::gap_decision_ledger_corpus_is_valid",
+  "crates/ripr/src/output/gate/tests.rs::gate_closed_gap_is_not_misreported_as_configured_off",
   "xtask/src/main.rs::tests::gap_decision_ledger_reports_contract_drift",
   "xtask/src/main.rs::tests::gap_decision_ledger_gate_candidate_requires_safe_predicate",
   "xtask/src/main.rs::tests::gap_decision_ledger_missing_output_contract_requires_output_route",
@@ -6071,15 +6078,25 @@ spec = "docs/specs/RIPR-SPEC-0093-match-arm-blind-reach-downgrade.md"
 tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::match_arm_probe_without_token_match_downgrades_discriminate_to_weak",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::match_arm_probe_with_token_match_keeps_discriminate_yes",
-  "crates/ripr/src/analysis/classify/reveal.rs::tests::non_match_arm_probe_family_match_only_keeps_discriminate_yes"
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::non_match_arm_probe_family_match_only_keeps_discriminate_yes",
+  "crates/ripr/src/analysis/classifier/evidence/tuple_match/derived_admission/return_boundary_tests.rs::projection_return_boundary_requires_every_observation_before_return",
+  "crates/ripr/src/analysis/classifier/evidence/tuple_match/derived_admission/return_boundary_tests.rs::projection_return_boundary_does_not_search_nested_scopes_or_text",
+  "crates/ripr/src/analysis/classifier/evidence/tuple_match/derived_admission/return_boundary_tests.rs::projection_return_boundary_preserves_whole_body_owner_uniqueness",
+  "crates/ripr/tests/match_arm_tuple_derived_local.rs::projection_return_boundary_unreachable_assertions_cannot_certify_the_arm",
+  "crates/ripr/tests/match_arm_tuple_derived_local.rs::projection_return_boundary_after_complete_observation_preserves_exposure",
+  "crates/ripr/tests/match_arm_tuple_derived_local.rs::relative_prefixed_root_keeps_the_derived_arm_admission",
+  "crates/ripr/tests/match_arm_tuple_derived_local.rs::relative_prefixed_root_keeps_the_return_boundary"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/match_arm_blind",
-  "fixtures/match_arm_observer"
+  "fixtures/match_arm_observer",
+  "fixtures/match_arm_tuple_derived_return_before_assertion"
 ]
 code = [
-  "crates/ripr/src/analysis/classify/reveal.rs"
+  "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/classifier/evidence/tuple_match/derived_admission.rs",
+  "crates/ripr/src/analysis/classifier/evidence/tuple_match_derived.rs"
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0093-match-arm-blind-reach-downgrade.md",

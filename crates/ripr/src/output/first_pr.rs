@@ -114,6 +114,13 @@ pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
     print_side_effect_disclosure(&options);
 
     let repo = repo_root()?;
+    if options.check {
+        // A missing packet is answered before an omitted `--base` resolves
+        // (#4285): the recovery needs no base, and a checkout with no
+        // resolvable default branch (a detached shallow CI clone, a repo
+        // without `origin`) must still get the command that creates it.
+        require_start_here_packet(&repo, &options)?;
+    }
     resolve_omitted_base(&repo, &mut options)?;
     if options.check {
         check_first_pr(&repo, &options)
@@ -202,12 +209,32 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
 }
 
 fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
+    let (json_path, markdown_path) = require_start_here_packet(repo, options)?;
     let root = resolve_path(repo, &options.root);
-    let root_recovery = root_preflight_recovery(&root, options);
-    let preflight_recovery = root_recovery
-        .clone()
-        .or_else(|| git_preflight_recovery(&root, options));
-    let output_root = if root_recovery.is_some() { repo } else { &root };
+    let preflight_recovery =
+        root_preflight_recovery(&root, options).or_else(|| git_preflight_recovery(&root, options));
+    let packet = validate_start_here_packet(&json_path, &markdown_path)?;
+    validate_current_preflight_recovery(&packet, &root, options, preflight_recovery)?;
+    print!(
+        "{}",
+        start_here_cli_summary(&packet, &json_path, &markdown_path)
+    );
+    println!("First PR start-here packet ok: {}", json_path.display());
+    Ok(())
+}
+
+/// The start-here packet `--check` validates, or the recovery that creates
+/// it. Needs no base: only the root and `--out-dir` locate the packet.
+fn require_start_here_packet(
+    repo: &Path,
+    options: &FirstPrOptions,
+) -> Result<(PathBuf, PathBuf), String> {
+    let root = resolve_path(repo, &options.root);
+    let output_root = if root_preflight_recovery(&root, options).is_some() {
+        repo
+    } else {
+        &root
+    };
     let out_dir = resolve_path(output_root, &options.out_dir);
     let json_path = out_dir.join(START_HERE_JSON);
     let markdown_path = out_dir.join(START_HERE_MD);
@@ -219,14 +246,7 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
             &out_dir,
         ));
     }
-    let packet = validate_start_here_packet(&json_path, &markdown_path)?;
-    validate_current_preflight_recovery(&packet, &root, options, preflight_recovery)?;
-    print!(
-        "{}",
-        start_here_cli_summary(&packet, &json_path, &markdown_path)
-    );
-    println!("First PR start-here packet ok: {}", json_path.display());
-    Ok(())
+    Ok((json_path, markdown_path))
 }
 
 fn first_pr_missing_packet_recovery_error(
@@ -257,11 +277,15 @@ fn first_pr_write_command(options: &FirstPrOptions, out_dir: &Path) -> String {
         "first-pr".to_string(),
         "--root".to_string(),
         shell_arg(&options.command_root()),
-        "--base".to_string(),
-        shell_arg(&options.base),
-        "--head".to_string(),
-        shell_arg(&options.head),
     ];
+    // An omitted `--base` stays omitted: the write run resolves the default
+    // branch itself, and the placeholder was never a resolved base (#4285).
+    if options.base_explicit {
+        parts.push("--base".to_string());
+        parts.push(shell_arg(&options.base));
+    }
+    parts.push("--head".to_string());
+    parts.push(shell_arg(&options.head));
     if let Some(check_output) = &options.check_output {
         parts.push("--check-output".to_string());
         parts.push(shell_arg(check_output));
@@ -427,6 +451,25 @@ fn render_start_here_packet_with_selection(
         );
     }
 
+    let mut selected = selection.to_json();
+    // The repo-exposure report and gap ledger are both prerequisites for the
+    // first Rust start-here selection. Keep the primary recovery route, but
+    // disclose the second missing input now instead of making the operator
+    // discover it on the next invocation. Other artifact rows are optional
+    // until a particular selection needs them.
+    if selected["artifact"]["id"] == "repo_exposure"
+        && let Some(ledger) = artifacts
+            .iter()
+            .find(|artifact| artifact["id"] == "gap_ledger" && artifact["status"] == "missing")
+    {
+        selected["also_missing"] = json!([{
+            "id": "gap_ledger",
+            "label": "Gap decision ledger",
+            "path": options.gap_ledger,
+            "regeneration_command": ledger["regeneration_command"]
+        }]);
+    }
+
     let mut packet = json!({
         "schema_version": SCHEMA_VERSION,
         "tool": "ripr",
@@ -435,7 +478,7 @@ fn render_start_here_packet_with_selection(
         "posture": "advisory",
         "root": options.root,
         "inputs": inputs,
-        "selected": selection.to_json(),
+        "selected": selected,
         "commands": selection.commands_json(root, options),
         "artifacts": artifacts,
         "authority": {
@@ -2363,6 +2406,23 @@ mod tests {
     }
 
     #[test]
+    fn first_pr_write_command_renders_base_only_when_explicit() {
+        let out_dir = Path::new("target/ripr/reports");
+        let omitted = first_pr_write_command(&FirstPrOptions::default(), out_dir);
+        assert!(!omitted.contains("--base"), "{omitted}");
+        let explicit = FirstPrOptions {
+            base: "origin/trunk".to_string(),
+            base_explicit: true,
+            ..FirstPrOptions::default()
+        };
+        let rendered = first_pr_write_command(&explicit, out_dir);
+        assert!(
+            rendered.contains("--base origin/trunk --head HEAD"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn first_pr_write_command_renders_resolved_out_dir() {
         let options = FirstPrOptions::default();
         // Mixed-case anchored path: proves the resolved directory renders
@@ -2683,6 +2743,26 @@ mod tests {
             "Regeneration command: `ripr check --root {} --mode instant",
             shell_arg(&crate::agent::loop_commands::bound_root("."))
         )));
+        assert_eq!(packet["selected"]["also_missing"][0]["id"], "gap_ledger");
+        assert_eq!(
+            packet["selected"]["also_missing"][0]["path"],
+            DEFAULT_GAP_LEDGER
+        );
+        assert!(
+            packet["selected"]["also_missing"][0]["regeneration_command"]
+                .as_str()
+                .is_some_and(|command| command.contains("ripr reports gap-ledger"))
+        );
+        assert!(summary.contains(
+            "Also missing: Gap decision ledger at `target/ripr/reports/gap-decision-ledger.json`"
+        ));
+        assert!(summary.contains("Then run: `ripr reports gap-ledger"));
+        assert!(
+            summary.find("Regeneration command:") < summary.find("Also missing:"),
+            "repo exposure recovery must precede the dependent ledger: {summary}"
+        );
+        let markdown = render_start_here_markdown(&packet);
+        assert!(markdown.contains("- Also missing: Gap decision ledger"));
         check_first_pr(&repo, &options)?;
         cleanup(&repo)
     }
@@ -2975,6 +3055,7 @@ mod tests {
         assert_eq!(packet["selected"]["state"], "missing_artifact");
         assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
         assert_eq!(packet["selected"]["artifact"]["id"], "gap_ledger");
+        assert!(packet["selected"].get("also_missing").is_none());
         assert!(
             packet["selected"]["regeneration_command"]
                 .as_str()

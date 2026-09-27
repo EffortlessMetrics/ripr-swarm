@@ -103,10 +103,10 @@ use super::{
     dogfood_bun_ub_cross_language_run, dogfood_bun_ub_cross_language_scenarios,
     dogfood_class_counts, dogfood_editor_first_pr_bridge_run,
     dogfood_editor_first_pr_bridge_scenarios, dogfood_editor_gap_cockpit_run,
-    dogfood_editor_gap_cockpit_scenarios, dogfood_finding_alignment_run,
+    dogfood_editor_gap_cockpit_scenarios, dogfood_failed_families, dogfood_finding_alignment_run,
     dogfood_finding_alignment_scenarios, dogfood_first_action_run, dogfood_first_action_scenarios,
     dogfood_first_pr_metrics, dogfood_first_pr_run, dogfood_first_pr_scenarios,
-    dogfood_gate_adoption_run, dogfood_gate_adoption_scenarios,
+    dogfood_gate_adoption_run, dogfood_gate_adoption_scenarios, dogfood_gate_result,
     dogfood_generated_ci_cockpit_run_from_workflow, dogfood_language_preview_run,
     dogfood_language_preview_scenarios, dogfood_pr_inline_comment_run,
     dogfood_pr_inline_comment_scenarios, dogfood_pr_review_front_panel_run,
@@ -116,7 +116,7 @@ use super::{
     dogfood_python_repair_routing_quality_summary, dogfood_python_static_limit_eval_run,
     dogfood_python_static_limit_eval_scenarios, dogfood_real_repair_attempt_run,
     dogfood_real_repair_attempt_scenarios, dogfood_report_json, dogfood_report_markdown,
-    dogfood_report_packet_index_run, dogfood_report_packet_index_scenarios,
+    dogfood_report_packet_index_run, dogfood_report_packet_index_scenarios, dogfood_report_status,
     dogfood_surface_projection_alignment_run, dogfood_surface_projection_alignment_scenarios,
     dogfood_typescript_preview_repair_loop_run, dogfood_typescript_preview_repair_loop_scenarios,
     dogfood_user_surface_projection_run, dogfood_user_surface_projection_scenarios,
@@ -9310,6 +9310,107 @@ jobs:
     );
 }
 
+/// A pushed `v*` tag must not start publication, and the extension workflow
+/// must neither create the GitHub Release nor replace an attached asset. Each
+/// channel is dispatched explicitly per docs/RELEASE_TRANSACTION.md; #1646 owns
+/// the full single-writer topology.
+/// Keys directly under a workflow's block-form `on:` mapping, in order.
+/// `None` for a missing or inline `on:` (`on: push`, `on: [push]`).
+fn workflow_trigger_keys(workflow: &str) -> Option<Vec<&str>> {
+    let (_, rest) = workflow.split_once("\non:\n")?;
+    Some(
+        rest.lines()
+            .take_while(|line| line.is_empty() || line.starts_with(' ') || line.starts_with('#'))
+            .filter_map(|line| line.strip_prefix("  "))
+            .filter(|line| !line.starts_with(' ') && !line.starts_with('#'))
+            .filter_map(|line| line.split_once(':').map(|(key, _)| key))
+            .collect(),
+    )
+}
+
+#[test]
+fn release_workflows_publish_only_by_explicit_dispatch() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let read = |name: &str| {
+        std::fs::read_to_string(root.join(".github/workflows").join(name))
+            .map_err(|error| format!("failed to read {name}: {error}"))
+    };
+    for name in ["release-server-binaries.yml", "publish-extension.yml"] {
+        let workflow = read(name)?;
+        let triggers = workflow_trigger_keys(&workflow)
+            .ok_or_else(|| format!("{name} has no block-form `on:` declaration"))?;
+        if triggers != ["workflow_dispatch"] {
+            return Err(format!(
+                "{name} must run only on workflow_dispatch, found {triggers:?}"
+            ));
+        }
+    }
+    let extension = read("publish-extension.yml")?;
+    for input in ["publish_vs_marketplace", "publish_open_vsx"] {
+        let declared = extension
+            .split_once(&format!("\n      {input}:\n"))
+            .map(|(_, rest)| rest)
+            .ok_or_else(|| format!("publish-extension.yml has no {input} input"))?;
+        // Only this input's own mapping: stop at the first line indented no
+        // deeper than the input key, so a later input's default cannot match.
+        let default = declared
+            .lines()
+            .take_while(|line| line.trim().is_empty() || line.starts_with("        "))
+            .find_map(|line| line.trim().strip_prefix("default: "))
+            .ok_or_else(|| format!("{input} has no default"))?;
+        if default != "\"false\"" {
+            return Err(format!(
+                "{input} must default to \"false\", found {default}"
+            ));
+        }
+        if !extension.contains(&format!(
+            "if: ${{{{ github.event.inputs.{input} == 'true' }}}}"
+        )) {
+            return Err(format!("{input} must gate its job on an explicit 'true'"));
+        }
+    }
+    // One dispatch authorizes exactly one channel: zero or two must fail
+    // before anything packages, publishes or touches the Release.
+    if !extension.contains("true/false | false/true) ;;") {
+        return Err("publish-extension.yml must admit exactly one marketplace channel".to_string());
+    }
+    for job in ["package", "server-assets-ready", "attach-release-asset"] {
+        let needs = extension
+            .split_once(&format!("\n  {job}:\n"))
+            .map(|(_, rest)| {
+                rest.lines()
+                    .take_while(|line| {
+                        line.is_empty()
+                            || line.starts_with("    ")
+                            || line.trim_start().starts_with('#')
+                    })
+                    .find_map(|line| line.trim().strip_prefix("needs: "))
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .ok_or_else(|| format!("publish-extension.yml has no {job} job"))?;
+        if !needs.contains("admit-dispatch") {
+            return Err(format!("{job} must need admit-dispatch, found `{needs}`"));
+        }
+    }
+    if extension
+        .lines()
+        .any(|line| line.contains("gh release") && line.contains("${{"))
+    {
+        return Err(
+            "publish-extension.yml must pass the release ref to `gh release` through env"
+                .to_string(),
+        );
+    }
+    if extension.contains("gh release create") || extension.contains("--clobber") {
+        return Err(
+            "publish-extension.yml must not create the GitHub Release or replace an asset"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn workflow_runtime_policy_flags_remaining_old_action_refs() {
     let workflow = r#"
@@ -13503,6 +13604,56 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
     };
     let markdown = dogfood_report_markdown(&markdown_inputs);
     let json = dogfood_report_json(&json_inputs);
+    assert!(dogfood_failed_families(&json_inputs).is_empty());
+    assert_eq!(dogfood_report_status(&json_inputs), "pass");
+    // A failing family the #2411 exit list used to skip must still fail the
+    // command, and through the same owner as the report status (#4309).
+    let failing_generated_ci_runs = [dogfood_generated_ci_cockpit_run_from_workflow(
+        "generated-pr-ci-review-workflow",
+        "cargo run --quiet -p ripr -- init --ci github --dry-run",
+        10,
+        "name: RIPR",
+    )];
+    let failing_preview_projection_runs = DogfoodPreviewProjectionRuns {
+        generated_ci_cockpit: &failing_generated_ci_runs,
+        ..preview_projection_runs
+    };
+    let failing_inputs = DogfoodReportInputs {
+        preview_projection_runs: &failing_preview_projection_runs,
+        ..json_inputs
+    };
+    let failed = dogfood_failed_families(&failing_inputs);
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert!(
+        failed[0].starts_with("generated-pr-ci-review-workflow: "),
+        "{failed:?}"
+    );
+    assert_eq!(dogfood_report_status(&failing_inputs), "warn");
+    assert_eq!(dogfood_gate_result(&json_inputs), Ok(()));
+    let gate_error = dogfood_gate_result(&failing_inputs)
+        .err()
+        .unwrap_or_default();
+    assert!(
+        gate_error.contains("generated-pr-ci-review-workflow: "),
+        "{gate_error}"
+    );
+    // Families that run no producer say so, so they cannot read as producer
+    // evidence (#4267).
+    let report: serde_json::Value =
+        serde_json::from_str(&json).map_err(|err| format!("dogfood JSON: {err}"))?;
+    for family in ["first_successful_pr", "editor_gap_cockpit"] {
+        assert_eq!(
+            report[family]["evidence_source"], "committed_declarations",
+            "{family}"
+        );
+        assert_eq!(report[family]["rendered_cases"], 0, "{family}");
+    }
+    assert_eq!(
+        markdown
+            .matches("- Evidence source: committed declarations only;")
+            .count(),
+        2
+    );
 
     assert!(markdown.contains("Mode: advisory"));
     assert!(markdown.contains("boundary_gap"));
@@ -19301,6 +19452,20 @@ jobs:
             .iter()
             .any(|error| error.contains("regeneration commands"))
     );
+
+    // Generated CI names the PR range since #4260; the unscoped form it
+    // replaced must not satisfy the first-pr repair command.
+    let unscoped = workflow.replace(
+        GENERATED_CI_FIRST_PR_REPAIR,
+        "ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports",
+    );
+    let stale = dogfood_generated_ci_cockpit_run_from_workflow(
+        "unscoped-first-pr",
+        "cargo run --quiet -p ripr -- init --ci github --dry-run",
+        10,
+        &unscoped,
+    );
+    assert_eq!(stale.repair_commands, 3);
 }
 
 #[test]
