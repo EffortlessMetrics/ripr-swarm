@@ -271,15 +271,10 @@ fn detect_languages(root: &Path) -> Vec<LanguageId> {
         found.push(LanguageId::Python);
     }
 
-    // Perl: .pl/.pm/.t files or a CPAN build marker. A CPAN layout keeps
-    // modules below `lib/Name/` (deeper than the shallow scan) and tests in
-    // `t/`, so `.t` and the build markers keep this line in agreement with
-    // the Perl section, which counts files recursively.
-    if shallow_has_extension(root, "pl")
-        || shallow_has_extension(root, "pm")
-        || shallow_has_extension(root, "t")
-        || has_perl_project_markers(root)
-    {
+    // Perl: the same predicate that gates the Perl preview section, so a
+    // CPAN layout with modules below `lib/Name/` is detected and a `.t` under
+    // `target/` is not.
+    if perl_project_detected(root) {
         found.push(LanguageId::Perl);
     }
 
@@ -665,6 +660,36 @@ fn detected_test_surface_lines(root: &Path) -> Vec<String> {
 /// Count files with a given extension under the root (recursive). Used by the
 /// Perl preview to report real .pm/.pl/.t counts. Campaign 31 item 5: the
 /// prior `shallow_has_extension as usize` returned only 0/1, not a real count.
+/// Hidden and build/dependency directories that the Perl file walks skip,
+/// so vendored or generated files neither inflate counts nor detect Perl.
+fn is_skipped_walk_dir(path: &Path) -> bool {
+    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    name.starts_with('.') || matches!(name, "target" | "node_modules" | "blib")
+}
+
+/// True when the workspace has a CPAN build marker or any `.pm`, `.pl` or
+/// `.t` file outside skipped directories. One walk that stops at the first
+/// hit; `detect_languages` and the Perl preview share this definition.
+fn perl_project_detected(root: &Path) -> bool {
+    fn any_perl_file(dir: &Path) -> bool {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return false;
+        };
+        entries.flatten().any(|entry| {
+            let path = entry.path();
+            if path.is_dir() {
+                !is_skipped_walk_dir(&path) && any_perl_file(&path)
+            } else {
+                matches!(
+                    path.extension().and_then(|e| e.to_str()),
+                    Some("pm" | "pl" | "t")
+                )
+            }
+        })
+    }
+    has_perl_project_markers(root) || any_perl_file(root)
+}
+
 fn count_files(root: &Path, ext: &str) -> usize {
     fn count_recursive(dir: &Path, ext: &str) -> usize {
         let Ok(entries) = std::fs::read_dir(dir) else {
@@ -674,9 +699,7 @@ fn count_files(root: &Path, ext: &str) -> usize {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                // Skip hidden + build/dependency dirs that inflate counts.
-                let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                if name.starts_with('.') || matches!(name, "target" | "node_modules" | "blib") {
+                if is_skipped_walk_dir(&path) {
                     continue;
                 }
                 n += count_recursive(&path, ext);
@@ -749,13 +772,12 @@ fn which(bin: &str) -> bool {
 /// determine. No claim is made that the producer works end-to-end (that is the
 /// two-binary proof, item 3). Prints only when Perl markers are detected.
 fn report_perl_preview(root: &Path) {
+    if !perl_project_detected(root) {
+        return;
+    }
     let pm_count = count_files(root, "pm");
     let pl_count = count_files(root, "pl");
     let t_count = count_files(root, "t");
-    let has_markers = pm_count > 0 || pl_count > 0 || t_count > 0 || has_perl_project_markers(root);
-    if !has_markers {
-        return;
-    }
 
     println!("- Perl preview:");
     println!("  project: {pm_count} .pm, {pl_count} .pl, {t_count} .t");
@@ -1324,13 +1346,15 @@ mod tests {
 
     #[test]
     fn detect_languages_finds_a_cpan_layout_perl_project() -> Result<(), String> {
-        // A module two levels under `lib/` is below the shallow scan; the
-        // `t/*.t` test or the CPAN build marker must still detect Perl, or
-        // doctor prints "none detected" beside a Perl section counting files.
-        let cases: [(&str, &[&str]); 3] = [
-            ("tests", &["lib/Acme/Calc.pm", "t/calc.t"]),
-            ("marker", &["lib/Acme/Calc.pm", "Makefile.PL"]),
-            ("none", &["lib/Acme/Calc.pm", "README"]),
+        // A module two levels under `lib/` is below the shallow scan, yet
+        // the Perl preview counts it; detection must agree, or doctor prints
+        // "none detected" beside a Perl section counting files. Files under a
+        // skipped directory (`target/`, `node_modules/`) detect nothing.
+        let cases: [(&str, &[&str]); 4] = [
+            ("deep", &["lib/Acme/Calc.pm", "README"]),
+            ("tests", &["t/calc.t"]),
+            ("marker", &["Makefile.PL"]),
+            ("none", &["target/example.t", "node_modules/pkg/lib/X.pm"]),
         ];
         for (name, files) in cases {
             let root = unique_command_test_dir(&format!("detect-perl-{name}"));
