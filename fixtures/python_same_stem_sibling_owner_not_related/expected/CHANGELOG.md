@@ -59,3 +59,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_same_stem_sibling_owner_not_related (6)
+
+Reason:
+RIPR-SPEC-0028: the module-constant threshold DISCOUNT_THRESHOLD now resolves, so discounted_total names amount == DISCOUNT_THRESHOLD and gets a repair card (#4227)
+
+Command:
+`cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

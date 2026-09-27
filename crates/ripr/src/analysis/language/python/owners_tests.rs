@@ -1,3 +1,4 @@
+use super::module_constants::{PythonModuleConstant, constants_visible_in_function};
 #[cfg(test)]
 use super::source_facts::extract_source_facts;
 use super::source_utils::{
@@ -26,6 +27,7 @@ pub(super) fn collect_owners_from_statements(
     statements: &[Stmt],
     class_context: Option<&str>,
     imports: &[PythonImport],
+    module_constants: &[PythonModuleConstant],
     out: &mut Vec<PythonOwner>,
 ) {
     for stmt in statements {
@@ -37,11 +39,13 @@ pub(super) fn collect_owners_from_statements(
                         source,
                         class_context,
                         imports,
+                        module_constants,
                     },
                     function.name.as_str(),
                     function.range,
                     &function.decorator_list,
                     &function.args,
+                    &function.body,
                     false,
                 ));
             }
@@ -52,11 +56,13 @@ pub(super) fn collect_owners_from_statements(
                         source,
                         class_context,
                         imports,
+                        module_constants,
                     },
                     function.name.as_str(),
                     function.range,
                     &function.decorator_list,
                     &function.args,
+                    &function.body,
                     true,
                 ));
             }
@@ -67,6 +73,7 @@ pub(super) fn collect_owners_from_statements(
                     &class.body,
                     Some(class.name.as_str()),
                     imports,
+                    module_constants,
                     out,
                 );
                 out.push(owner_from_class(
@@ -75,6 +82,7 @@ pub(super) fn collect_owners_from_statements(
                         source,
                         class_context,
                         imports,
+                        module_constants,
                     },
                     class.name.as_str(),
                     class.range,
@@ -92,6 +100,7 @@ struct PythonOwnerContext<'a> {
     source: &'a str,
     class_context: Option<&'a str>,
     imports: &'a [PythonImport],
+    module_constants: &'a [PythonModuleConstant],
 }
 
 fn owner_from_function(
@@ -100,6 +109,7 @@ fn owner_from_function(
     range: TextRange,
     decorators: &[Expr],
     args: &ast::Arguments,
+    body: &[Stmt],
     is_async: bool,
 ) -> PythonOwner {
     let decorator_names = decorator_names(decorators);
@@ -136,6 +146,12 @@ fn owner_from_function(
         route_paths,
         dynamic_route_decorators,
         parameters: function_parameters(context.source, args),
+        module_constants: constants_visible_in_function(
+            context.module_constants,
+            args,
+            body,
+            &text_for_range(context.source, range),
+        ),
     }
 }
 
@@ -181,6 +197,7 @@ fn owner_from_class(
         route_paths: collect_static_route_paths(context.source, decorators),
         dynamic_route_decorators: collect_dynamic_route_decorators(context.source, decorators),
         parameters: Vec::new(),
+        module_constants: Vec::new(),
     }
 }
 
@@ -203,6 +220,7 @@ pub(super) fn module_owner(
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
+        module_constants: Vec::new(),
     }
 }
 

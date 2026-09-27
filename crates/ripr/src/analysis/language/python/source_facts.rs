@@ -1,3 +1,4 @@
+use super::module_constants::module_literal_constants;
 use super::owners_tests::{
     collect_imports_from_statements, collect_owners_from_statements, collect_tests_from_statements,
     module_owner,
@@ -255,12 +256,14 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
     );
 
     let imports = collect_imports_from_statements(file, &module.body);
+    let module_constants = module_literal_constants(source, &module.body);
     collect_owners_from_statements(
         file,
         source,
         &module.body,
         None,
         &imports,
+        &module_constants,
         &mut snapshot.owners,
     );
     snapshot

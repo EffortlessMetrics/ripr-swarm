@@ -295,6 +295,16 @@ are scoped or reviewed.
 
 ### Changed
 
+- The Python preview adapter now resolves a module-level named constant used
+  as a comparison threshold (`if amount >= DISCOUNT_THRESHOLD:` with
+  `DISCOUNT_THRESHOLD = 10_000`), matching the Rust and TypeScript adapters.
+  The boundary gets a repair card for `amount == DISCOUNT_THRESHOLD`, the
+  missing-discriminator reason names the constant's value, and a test that calls the owner with `10_000` or with
+  the imported constant now counts as observing the boundary. A name the module
+  can rebind (a second binding, `global`, walrus, star import, `globals()`) or
+  a non-literal value stays unresolved and gets no repair card
+  ([#4227](https://github.com/EffortlessMetrics/ripr-swarm/issues/4227)).
+
 - xtask tests no longer discard `remove_dir_all`, `remove_file`, or
   panic-path `set_current_dir` with `let _ =`. Directory cleanup matches
   the `io::Result` in `ignore_remove_dir_all` and still ignores a failure.

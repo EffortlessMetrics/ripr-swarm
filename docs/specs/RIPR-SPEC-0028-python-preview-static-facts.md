@@ -282,7 +282,18 @@ as `item.on_hand`, a computed `len(name)`, a comprehension local, or a line
 with several comparisons) never counts as observed, and such a boundary is not
 named as a typed repair target: the test input may already sit on it at runtime
 (`reserve(Item("a", 3), 3)`), so the finding states the unresolved operand
-instead of producing a repair card. When no strong related call binds a literal
+instead of producing a repair card. A module-scope name bound once to a scalar
+literal (`DISCOUNT_THRESHOLD = 10_000`) resolves like a literal operand, the
+way the Rust and TypeScript adapters resolve a same-file constant; the missing
+discriminator keeps the name (`amount == DISCOUNT_THRESHOLD`) and its reason
+names the value and declaring line. A test argument that names the constant,
+imported from the owner's module (`discounted_total(DISCOUNT_THRESHOLD)` or
+`pricing.DISCOUNT_THRESHOLD`), binds to that value. The name stays unresolved
+when anything can rebind it: a second module-scope binding (including inside
+`if`/`try`/`for`/`with`), a `global` declaration or walrus target anywhere in
+the module, a star import, a module-scope `match`, a `globals()` call, a
+non-literal value, or a parameter or local binding of the same name in the
+owner. When no strong related call binds a literal
 argument (test locals, `*args`, a construct-call passing a dict), static
 evidence cannot see the activating input either way: the oracle verdict stands
 and an `exposed` finding carries a `boundary_activation_unresolved` evidence
