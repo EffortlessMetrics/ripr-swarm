@@ -555,7 +555,7 @@ mod module_identity_tests {
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
             arity: None,
-            parameters: Vec::new(),
+            params: Vec::new(),
             source_text: None,
         }
     }
