@@ -322,6 +322,10 @@ pub(crate) fn report_regeneration_command_spec_from_display(
     command: &str,
     selected_root: &Path,
 ) -> Option<CommandSpec> {
+    // Bind the selected root once per recovery (#3999): every helper below
+    // compares and anchors against this one resolution.
+    let selected_root = bound_root_path(selected_root);
+    let selected_root = selected_root.as_path();
     let words = shell_words(command)?;
     if words.first().map(String::as_str) != Some("ripr") {
         return None;
@@ -467,14 +471,14 @@ fn recover_check_repo_exposure_spec(
 /// typed authority only when it names the consumer's selected root, and then
 /// becomes [`PORTABLE_ROOT`] so the checkout path never enters argv. Any
 /// other absolute root — a display whose root was substituted after it was
-/// rendered — fails closed.
+/// rendered — fails closed. `selected_root` is already bound by the public
+/// recovery entry point.
 fn portable_root_arg(value: &str, selected_root: &Path) -> Option<String> {
     let value_path = Path::new(value);
     if !value_path.is_absolute() {
         return Some(value.to_string());
     }
-    (lexically_clean(value_path) == bound_root_path(selected_root))
-        .then(|| PORTABLE_ROOT.to_string())
+    (lexically_clean(value_path) == selected_root).then(|| PORTABLE_ROOT.to_string())
 }
 
 /// Apply [`portable_root_arg`] to the value of every `--root` flag in `args`.
@@ -512,7 +516,7 @@ fn relativize_write_against_root(root: &str, target: &str, selected_root: &Path)
     // segments can never prefix-match its own rendered target. `join` keeps
     // an absolute `--root` as-is and nests a relative one under the
     // selected root.
-    let anchor = lexically_clean(&bound_root_path(selected_root).join(root));
+    let anchor = lexically_clean(&selected_root.join(root));
     let relative = Path::new(target).strip_prefix(&anchor).ok()?;
     if relative.as_os_str().is_empty()
         || relative.components().any(|component| {
@@ -594,6 +598,10 @@ pub(crate) fn agent_command_spec_from_display(
     command: &str,
     selected_root: &Path,
 ) -> Option<CommandSpec> {
+    // Bind the selected root once per recovery (#3999); see
+    // `report_regeneration_command_spec_from_display`.
+    let selected_root = bound_root_path(selected_root);
+    let selected_root = selected_root.as_path();
     let words = shell_words(command)?;
     if words.iter().any(|word| {
         word.chars()
@@ -926,8 +934,12 @@ mod tests {
         let cwd = std::env::current_dir().map_err(|err| format!("read test cwd: {err}"))?;
         let display = |path: &std::path::Path| path.to_string_lossy().replace('\\', "/");
         let under_cwd = display(&cwd.join("target/ripr/workflow/agent-verify.json"));
-        if super::relativize_write_against_root(".", &under_cwd, std::path::Path::new("."))
-            .as_deref()
+        if super::relativize_write_against_root(
+            ".",
+            &under_cwd,
+            &super::bound_root_path(std::path::Path::new(".")),
+        )
+        .as_deref()
             != Some("target/ripr/workflow/agent-verify.json")
         {
             return Err("absolute target under --root must relativize".to_string());
@@ -935,7 +947,7 @@ mod tests {
         if super::relativize_write_against_root(
             ".",
             "target/ripr/workflow/agent-verify.json",
-            std::path::Path::new("."),
+            &super::bound_root_path(std::path::Path::new(".")),
         )
         .as_deref()
             != Some("target/ripr/workflow/agent-verify.json")
@@ -953,7 +965,12 @@ mod tests {
             "{}/outside-scope/out.json",
             parent.to_string_lossy().replace('\\', "/")
         );
-        if super::relativize_write_against_root(".", &outside, std::path::Path::new(".")).is_some()
+        if super::relativize_write_against_root(
+            ".",
+            &outside,
+            &super::bound_root_path(std::path::Path::new(".")),
+        )
+        .is_some()
         {
             return Err(format!(
                 "unaligned absolute target must stay legacy-string-only: {outside}"
@@ -962,15 +979,23 @@ mod tests {
         // Traversal out of the root fails closed even when the lexical
         // prefix lines up.
         let traversal = display(&cwd.join("../escape.json"));
-        if super::relativize_write_against_root(".", &traversal, std::path::Path::new("."))
-            .is_some()
+        if super::relativize_write_against_root(
+            ".",
+            &traversal,
+            &super::bound_root_path(std::path::Path::new(".")),
+        )
+        .is_some()
         {
             return Err("traversing target must stay legacy-string-only".to_string());
         }
         // The anchor itself names no file.
         let bare_anchor = display(&cwd);
-        if super::relativize_write_against_root(".", &bare_anchor, std::path::Path::new("."))
-            .is_some()
+        if super::relativize_write_against_root(
+            ".",
+            &bare_anchor,
+            &super::bound_root_path(std::path::Path::new(".")),
+        )
+        .is_some()
         {
             return Err("bare-anchor target must stay legacy-string-only".to_string());
         }
@@ -980,7 +1005,7 @@ mod tests {
         if super::relativize_write_against_root(
             &absolute_root,
             &absolute_target,
-            std::path::Path::new("."),
+            &super::bound_root_path(std::path::Path::new(".")),
         )
         .as_deref()
             != Some("out.json")
@@ -995,7 +1020,7 @@ mod tests {
         if super::relativize_write_against_root(
             &traversing_root,
             &traversing_target,
-            std::path::Path::new("."),
+            &super::bound_root_path(std::path::Path::new(".")),
         )
         .as_deref()
             != Some("out.json")

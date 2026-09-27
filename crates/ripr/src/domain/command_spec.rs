@@ -196,13 +196,51 @@ impl CommandSpec {
     /// one route while their displays differ. The display is never execution
     /// authority (see the module docs), so route identity excludes it.
     pub(crate) fn same_route(&self, other: &Self) -> bool {
-        Self {
-            display: String::new(),
-            ..self.clone()
-        } == Self {
-            display: String::new(),
-            ..other.clone()
-        }
+        // Exhaustive destructuring: a field added to `CommandSpec` fails to
+        // compile here until it is classified as route identity or display.
+        let Self {
+            schema_version,
+            command_id,
+            role,
+            execution_mode,
+            program,
+            args,
+            cwd,
+            env_set,
+            env_passthrough,
+            environment_policy,
+            stdin,
+            timeout_ms,
+            cancellation,
+            network_policy,
+            expected_result_parser,
+            expected_exit_codes,
+            expected_writes,
+            cost_class,
+            platforms,
+            display: _,
+            authority_boundary,
+        } = self;
+        *schema_version == other.schema_version
+            && *command_id == other.command_id
+            && *role == other.role
+            && *execution_mode == other.execution_mode
+            && *program == other.program
+            && *args == other.args
+            && *cwd == other.cwd
+            && *env_set == other.env_set
+            && *env_passthrough == other.env_passthrough
+            && *environment_policy == other.environment_policy
+            && *stdin == other.stdin
+            && *timeout_ms == other.timeout_ms
+            && *cancellation == other.cancellation
+            && *network_policy == other.network_policy
+            && *expected_result_parser == other.expected_result_parser
+            && *expected_exit_codes == other.expected_exit_codes
+            && *expected_writes == other.expected_writes
+            && *cost_class == other.cost_class
+            && *platforms == other.platforms
+            && *authority_boundary == other.authority_boundary
     }
 
     /// Validate fields that must be true before a producer-owned route can be
@@ -373,6 +411,24 @@ mod tests {
             display: "cargo test -p 'pricing crate' -- --exact".to_string(),
             authority_boundary: CommandAuthorityBoundary::VerificationRouteOnly,
         }
+    }
+
+    #[test]
+    fn same_route_ignores_only_the_display() {
+        let base = verify_spec();
+        let mut redisplayed = verify_spec();
+        redisplayed.display = "cargo test -p 'pricing crate' -- --exact # /abs/root".to_string();
+        assert!(base.same_route(&redisplayed));
+
+        let mut other_args = verify_spec();
+        other_args.args.push("--nocapture".to_string());
+        assert!(!base.same_route(&other_args));
+        let mut other_cwd = verify_spec();
+        other_cwd.cwd = "crates".to_string();
+        assert!(!base.same_route(&other_cwd));
+        let mut other_writes = verify_spec();
+        other_writes.expected_writes.clear();
+        assert!(!base.same_route(&other_writes));
     }
 
     #[test]
