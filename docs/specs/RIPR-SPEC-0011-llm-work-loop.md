@@ -368,7 +368,14 @@ after phase applies) and selects `next_command` in this order:
    (`next.repair_command: null`) selects nothing and warns
    `pilot_found_no_repair_target`: rerunning pilot would rank the same seam
    again, so the warning names the hand step (a test in the seam's own
-   crate) instead. When the first missing artifact's directory does not
+   crate) instead. Likewise a complete pilot summary that ranked no seam,
+   recorded no repair card, routed the changed code to `ripr check`
+   (`language_routes.state: required` with a recorded route command) and
+   recorded no repair start selects nothing and warns
+   `pilot_routed_to_check_no_repair_target`, for any routed language: the
+   warning names the recorded check command and the hand step (add or
+   strengthen a test, then rerun that check). A timed-out, missing or
+   unreadable summary still routes to pilot. When the first missing artifact's directory does not
    exist and the seam is known, the next command starts a repair attempt,
    which writes the workflow artifacts itself, instead of redirecting into
    the missing directory.

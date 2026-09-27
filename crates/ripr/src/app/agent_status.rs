@@ -838,6 +838,58 @@ fn pilot_found_no_repair_target(root: &Path) -> bool {
             .is_some_and(Value::is_null)
 }
 
+/// The diff-first routes a complete `ripr pilot` run recorded when it ranked
+/// no seam, produced no repair card, and recorded no repair start: its
+/// `language_routes.state` is `required`, so pilot itself sends the changed
+/// code to `ripr check`, which offers no `ripr agent repair` start. Sending
+/// the user back to pilot then only routes them to `ripr check` again, for
+/// any routed language (#4216, Python and TypeScript re-walks). Returns the
+/// routed languages and their distinct recorded commands. A missing,
+/// unreadable, timed-out, seam-ranking, repair-card-bearing, or command-less
+/// summary is not this fact.
+fn pilot_routed_changed_code_to_check(root: &Path) -> Option<(Vec<String>, Vec<String>)> {
+    let text = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)).ok()?;
+    let summary = serde_json::from_str::<Value>(&text).ok()?;
+    let complete = summary.pointer("/status").and_then(Value::as_str) == Some("complete");
+    let no_seams = summary
+        .pointer("/top_actionable_seams")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty);
+    let no_repair_start = summary
+        .pointer("/next/repair_command")
+        .is_some_and(Value::is_null);
+    let routes_required = summary
+        .pointer("/language_routes/state")
+        .and_then(Value::as_str)
+        == Some("required");
+    let no_repair_cards = summary
+        .pointer("/python_first_use")
+        .filter(|first_use| !first_use.is_null())
+        .is_none_or(|first_use| {
+            first_use.get("repair_cards_total").and_then(Value::as_u64) == Some(0)
+        });
+    if !(complete && no_seams && no_repair_start && routes_required && no_repair_cards) {
+        return None;
+    }
+    let mut languages = Vec::new();
+    let mut commands = Vec::new();
+    for route in summary
+        .pointer("/language_routes/routes")
+        .and_then(Value::as_array)?
+    {
+        let Some(command) = route.get("command").and_then(Value::as_str) else {
+            continue;
+        };
+        if let Some(language) = route.get("language").and_then(Value::as_str) {
+            languages.push(language.to_string());
+        }
+        if !commands.iter().any(|known| known == command) {
+            commands.push(command.to_string());
+        }
+    }
+    (!commands.is_empty()).then_some((languages, commands))
+}
+
 /// The legacy seven-artifact loop, kept for `agent start` and manual users,
 /// with three refusals: it never recommends a command that needs a seam status
 /// does not know, never a redirect into a directory that does not exist, and
@@ -864,6 +916,22 @@ fn legacy_next_command(
                 kind: "pilot_found_no_repair_target".to_string(),
                 artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
                 message: "the last complete `ripr pilot` run offered no repair attempt: its top seam is not eligible for `ripr agent repair`, and running pilot again unchanged ranks the same seams. Read `target/ripr/pilot/pilot-summary.md` for that seam, add a test for it by hand in the crate that owns it, then rerun `ripr pilot` to rank the seams against that test".to_string(),
+            });
+            return None;
+        }
+        if let Some((languages, commands)) = pilot_routed_changed_code_to_check(root) {
+            let commands = commands
+                .iter()
+                .map(|command| format!("`{command}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            warnings.push(AgentStatusWarning {
+                kind: "pilot_routed_to_check_no_repair_target".to_string(),
+                artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
+                message: format!(
+                    "the last complete `ripr pilot` run ranked no seam and produced no repair card: it routed the changed {} code to {commands}, which reviews it diff-first and offers no `ripr agent repair` start, and running pilot again unchanged routes there again. Read the findings from {commands}, add or strengthen a test for the changed behavior by hand, then rerun {commands} to see whether static evidence now finds a discriminator",
+                    languages.join(", ")
+                ),
             });
             return None;
         }
@@ -2276,6 +2344,76 @@ mod tests {
             .ok_or_else(|| "expected a next command".to_string())?;
         assert_eq!(next.step, "select_seam");
         assert_eq!(next.command, "ripr pilot --root .");
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #4216 (Python and TypeScript re-walks): a complete pilot run that
+    /// ranked no seam, produced no repair card, and routed the changed code
+    /// to `ripr check` is terminal for status, whatever the language. Status
+    /// names the hand step and the recorded check command instead of looping
+    /// back to pilot. Timed-out, missing, unreadable, repair-card-bearing and
+    /// non-required summaries still route to pilot.
+    #[test]
+    fn agent_status_stops_when_pilot_routed_changed_code_to_check() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("pilot-routed-to-check");
+        let summary = |status: &str, state: &str, python_first_use: &str| {
+            format!(
+                r#"{{"status": "{status}", "top_actionable_seams": [], "python_first_use": {python_first_use}, "language_routes": {{"state": "{state}", "routes": [{{"language": "typescript", "command": "ripr check --root ."}}, {{"language": "python", "command": "ripr check --root ."}}]}}, "next": {{"repair_command": null}}}}"#
+            )
+        };
+        let no_cards = r#"{"status": "no_repair_cards", "repair_cards_total": 0}"#;
+        for python_first_use in ["null", no_cards] {
+            write_file(
+                &root.join(PILOT_SUMMARY_ARTIFACT),
+                &summary("complete", "required", python_first_use),
+            )?;
+            let report = build_agent_status_report(&root, Path::new("."));
+            assert_eq!(report.next_command, None, "{:?}", report.next_command);
+            let warning = report
+                .warnings
+                .iter()
+                .find(|warning| warning.kind == "pilot_routed_to_check_no_repair_target")
+                .ok_or_else(|| {
+                    format!("expected a routed-to-check warning: {:?}", report.warnings)
+                })?;
+            assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
+            for expected in [
+                "changed typescript, python code to `ripr check --root .`",
+                "add or strengthen a test for the changed behavior by hand, then rerun `ripr check --root .`",
+            ] {
+                assert!(warning.message.contains(expected), "{}", warning.message);
+            }
+            let rendered = render_agent_status_markdown(&report);
+            assert!(!rendered.contains("ripr pilot --root"), "{rendered}");
+        }
+
+        // Controls: every other summary keeps status on `select_seam`.
+        let with_cards = r#"{"status": "ready", "repair_cards_total": 1}"#;
+        for control in [
+            summary("timed_out", "required", "null"),
+            summary("complete", "supplementary", "null"),
+            summary("complete", "not_detected", "null"),
+            summary("complete", "required", with_cards),
+            "{ not json".to_string(),
+        ] {
+            write_file(&root.join(PILOT_SUMMARY_ARTIFACT), &control)?;
+            let report = build_agent_status_report(&root, Path::new("."));
+            let next = report
+                .next_command
+                .as_ref()
+                .ok_or_else(|| format!("expected pilot for control {control}"))?;
+            assert_eq!(next.step, "select_seam", "{control}");
+            assert_eq!(next.command, "ripr pilot --root .", "{control}");
+        }
+        std::fs::remove_file(root.join(PILOT_SUMMARY_ARTIFACT))
+            .map_err(|err| format!("remove summary: {err}"))?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert_eq!(
+            report.next_command.as_ref().map(|next| next.step.as_str()),
+            Some("select_seam")
+        );
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
