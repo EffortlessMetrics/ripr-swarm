@@ -9367,6 +9367,30 @@ fn release_workflows_publish_only_by_explicit_dispatch() -> Result<(), String> {
             return Err(format!("{input} must gate its job on an explicit 'true'"));
         }
     }
+    // One dispatch authorizes exactly one channel: zero or two must fail
+    // before anything packages, publishes or touches the Release.
+    if !extension.contains("true/false | false/true) ;;") {
+        return Err("publish-extension.yml must admit exactly one marketplace channel".to_string());
+    }
+    for job in ["package", "server-assets-ready", "attach-release-asset"] {
+        let needs = extension
+            .split_once(&format!("\n  {job}:\n"))
+            .map(|(_, rest)| {
+                rest.lines()
+                    .take_while(|line| {
+                        line.is_empty()
+                            || line.starts_with("    ")
+                            || line.trim_start().starts_with('#')
+                    })
+                    .find_map(|line| line.trim().strip_prefix("needs: "))
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .ok_or_else(|| format!("publish-extension.yml has no {job} job"))?;
+        if !needs.contains("admit-dispatch") {
+            return Err(format!("{job} must need admit-dispatch, found `{needs}`"));
+        }
+    }
     if extension
         .lines()
         .any(|line| line.contains("gh release") && line.contains("${{"))
