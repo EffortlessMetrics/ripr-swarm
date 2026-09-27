@@ -37,8 +37,8 @@ const UNRESOLVED_RELATION_CHANGE_ID: &str = "change:unresolved";
 /// Why a Perl run without a fact packet is `unavailable`, in user terms.
 fn missing_fact_packet_reason() -> String {
     format!(
-        "language `perl` requires a fact packet: pass --perl-facts <packet.json>, or configure [perl].producer with a compatible Perl fact exporter (`{}`, not yet published)",
-        crate::domain::PERL_FACT_EXPORTER
+        "language `perl` requires a fact packet: {}",
+        crate::domain::perl_fact_packet_guidance()
     )
 }
 
