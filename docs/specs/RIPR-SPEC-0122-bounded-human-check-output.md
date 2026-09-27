@@ -167,12 +167,16 @@ completeness, with the shared repair-packet validator as the only authority:
   verified independently, in every preview language (#4216).
 - Otherwise, when `preview_actionability_for` projects a packet the shared
   validator kept closed (TypeScript and JavaScript today), the action is
-  terminal (#4216): it quotes the validator's `why_not_actionable` verbatim,
-  states that `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not
-  route the finding, and names the manual step (add or strengthen a test by
-  hand, or add a test that calls the code when no test reaches it) before
-  rerunning `ripr check`. The renderer only reads readiness; it never decides
-  it.
+  terminal (#4216): it quotes the validator's `why_not_actionable` (collapsed
+  to one line and bounded to the digest line budget), states that
+  `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route the
+  finding, and names the manual step before rerunning `ripr check`: add a test
+  that calls the code when no test reaches it (`no_static_path`); check by hand
+  whether a test observes the change for an unknown class (`static_unknown`,
+  `infection_unknown`, `propagation_unknown`, for example a Bun-bridge
+  visibility limit); otherwise add or strengthen a test by hand. The routing
+  and manual-step parts are never truncated. The renderer only reads
+  readiness; it never decides it.
 - A preview finding with no projected actionability (for example Perl, whose
   production findings do not yet carry the projected actionability evidence)
   keeps the generic line directing the operator to complete the missing
@@ -262,6 +266,7 @@ inputs where present.
 - `crates/ripr/src/output/human.rs::tests::digest_keeps_missing_discriminator_label_for_non_exposed_classes`
 - `crates/ripr/src/output/human.rs::tests::preview_limited_safe_action_names_terminal_manual_step_for_closed_packet`
 - `crates/ripr/src/output/human.rs::tests::preview_limited_safe_action_says_no_repair_for_exposed_typescript`
+- `crates/ripr/src/output/human.rs::tests::preview_limited_closed_packet_unknown_class_asks_for_manual_check`
 - `crates/ripr/src/output/human.rs::tests::preview_limited_safe_action_names_complete_but_advisory_packet`
 - `crates/ripr/src/output/human.rs::tests::preview_limited_safe_action_names_limitation_block_when_no_fields_missing`
 - `crates/ripr/src/output/human.rs::tests::preview_limited_safe_action_uses_closed_packet_line_without_static_limit_kind`

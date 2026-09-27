@@ -1185,12 +1185,56 @@ mod tests {
 
         assert!(rendered.contains("State: preview_limited"));
         let expected = format!(
-            "  Safe next action: this TypeScript preview finding's repair packet is not ready ({why}), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`.\n"
+            "  Safe next action: this TypeScript preview finding's repair packet is not ready ({}); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`.\n",
+            super::sections::one_line(&why)
         );
         assert!(rendered.contains(&expected), "{rendered}");
         assert!(!rendered.contains("complete the missing repair-packet fields"));
         assert!(!rendered.contains("the repair packet is complete but remains advisory"));
         Ok(())
+    }
+
+    // #4216 review: an unknown-class closed packet (for example a Bun-bridge
+    // cross-language visibility limit: StaticUnknown, no static_limit_kind,
+    // missing fields present) is not a known weak test, so the manual step is
+    // the Python static-limit check, not a test edit. A long validator reason
+    // is bounded; the routing and manual-step parts stay whole.
+    #[test]
+    fn preview_limited_closed_packet_unknown_class_asks_for_manual_check() {
+        for class in [
+            ExposureClass::StaticUnknown,
+            ExposureClass::InfectionUnknown,
+            ExposureClass::PropagationUnknown,
+        ] {
+            let mut finding = typescript_preview_finding(false);
+            finding.class = class.clone();
+            finding
+                .evidence
+                .retain(|line| !line.starts_with("why_not_actionable: "));
+            finding.evidence.push(format!(
+                "why_not_actionable: Bun bridge visibility limit {}",
+                "x".repeat(400)
+            ));
+            let output = single_finding_output(finding);
+
+            let rendered = render(&output);
+
+            let line = rendered
+                .lines()
+                .find(|line| line.starts_with("  Safe next action:"))
+                .unwrap_or_default();
+            assert!(
+                line.ends_with(
+                    "…); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`."
+                ),
+                "{class:?}: {line}"
+            );
+            assert!(!line.contains("add or strengthen a test"), "{line}");
+            assert!(
+                !line.contains(&"x".repeat(200)),
+                "reason must be bounded: {line}"
+            );
+        }
     }
 
     // #4216: an exposed TypeScript preview finding has nothing to repair; its

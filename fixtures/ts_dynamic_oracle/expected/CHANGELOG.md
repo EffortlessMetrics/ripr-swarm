@@ -264,3 +264,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_dynamic_oracle (6)
+
+Reason:
+RIPR-SPEC-0122 (#4216 review): closed-packet TS/JS safe action bounds the quoted reason, drops the causal 'so', and asks unknown-class findings for a manual check
+
+Command:
+`cargo xtask goldens bless ts_dynamic_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

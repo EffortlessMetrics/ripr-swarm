@@ -5,7 +5,7 @@ use crate::output::preview_actionability::preview_actionability_for;
 use crate::output::python_repair_card::python_repair_card;
 use std::collections::BTreeSet;
 
-use super::sections::render_finding_digest_with_config;
+use super::sections::{one_line, render_finding_digest_with_config};
 
 pub(crate) struct HumanTriage<'a> {
     pub(crate) state: HumanTriageState,
@@ -223,13 +223,21 @@ fn packet_closed_preview_safe_action(finding: &Finding, why_not_actionable: &str
     let language = finding
         .language
         .map_or("preview-language", LanguageId::display_name);
-    let manual_step = if finding.class == ExposureClass::NoStaticPath {
-        "add a test that calls it by hand"
-    } else {
-        "add or strengthen a test by hand"
+    let manual_step = match finding.class {
+        ExposureClass::NoStaticPath => "add a test that calls it by hand",
+        // An unknown class is a visibility limit (for example the Bun bridge's
+        // cross-language gap), not a known weak test: ask for the same check
+        // the Python static-limit line names, not a test edit.
+        ExposureClass::StaticUnknown
+        | ExposureClass::InfectionUnknown
+        | ExposureClass::PropagationUnknown => "check by hand whether a test observes this change",
+        _ => "add or strengthen a test by hand",
     };
+    // Only the quoted reason is bounded; the routing and manual-step parts
+    // stay whole.
+    let reason = one_line(why_not_actionable);
     format!(
-        "  Safe next action: this {language} preview finding's repair packet is not ready ({why_not_actionable}), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; {manual_step}, then rerun `ripr check`.\n"
+        "  Safe next action: this {language} preview finding's repair packet is not ready ({reason}); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; {manual_step}, then rerun `ripr check`.\n"
     )
 }
 
