@@ -1789,8 +1789,8 @@ impl RustAdapter {
             // benches, examples, integration tests, and confirmed
             // test-target files stay indexed evidence without
             // harness-plumbing obligations. Changed automation (`xtask/`)
-            // and loose non-`src` files (`build.rs`) are reviewed
-            // behavior and seed too. `seeds_diff_probes` is shared with
+            // and Cargo build scripts (`build.rs`) are reviewed behavior
+            // and seed too. `seeds_diff_probes` is shared with
             // the LSP scope partition so the editor keeps what this loop
             // reports.
             if !workspace::seeds_diff_probes(&changed.path, &source_role_context) {
@@ -4730,7 +4730,7 @@ let _ = (result, note, raw);"##,
 
     #[test]
     fn diff_analysis_seeds_probes_for_changed_build_scripts() -> Result<(), String> {
-        // A loose `build.rs` has no `src` component, so repo mode keeps it
+        // A root `build.rs` has no `src` component, so repo mode keeps it
         // out of the production set. A changed one used to count as a
         // changed Rust file with zero candidate lines and no disclosure.
         let root = temp_root("build-script-seeds")?;

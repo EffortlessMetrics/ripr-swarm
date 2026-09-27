@@ -267,36 +267,32 @@ fn is_repo_automation_path(path: &Path) -> bool {
 /// This is the one authority for both surfaces: the Rust diff loop and the
 /// LSP out-of-scope partition must agree, or the editor silently drops
 /// findings the CLI reports. Production roles seed. Two evidence-role
-/// shapes also seed when changed, because a changed file there is
-/// reviewed behavior rather than test data:
+/// shapes also seed when changed, because Cargo compiles them and a change
+/// there is reviewed behavior rather than data:
 ///
 /// - repository automation (`xtask/`, see [`is_repo_automation_path`]);
-/// - loose Rust files outside a `src` layout, such as a Cargo build
-///   script (`build.rs`). Repo mode keeps them out of the seam inventory,
-///   but skipping a changed one here counted it as a changed Rust file
-///   with no probes and no disclosure.
+/// - Cargo build scripts (`build.rs`), which sit outside any `src` layout.
 ///
-/// Registered non-source directories (`fixtures/`, `target/`, ...) and
-/// the Cargo test, bench, and example layouts stay evidence.
+/// Repo mode keeps both out of the seam inventory. Registered non-source
+/// directories (`fixtures/`, `target/`, ...) stay evidence even inside
+/// `xtask/`, and other loose non-`src` files (panel subjects under
+/// `metrics/`, for example) are data Cargo never compiles.
 pub(crate) fn seeds_diff_probes(path: &Path, context: &SourceRoleContext) -> bool {
     match classify_with(path, context) {
         role if role.seeds_production_findings() => true,
         SourceRole::FixtureOrReceiptEvidence => {
-            is_repo_automation_path(path) || is_loose_source_path(path)
+            let normalized = normalize(path);
+            let in_non_source_directory = normalized.components().any(|component| {
+                NON_SOURCE_DIRECTORIES.contains(&component_name(&component).as_str())
+            });
+            !in_non_source_directory
+                && (is_repo_automation_path(&normalized)
+                    || normalized
+                        .file_name()
+                        .is_some_and(|name| name == "build.rs"))
         }
         _ => false,
     }
-}
-
-/// A Rust file outside any `src` layout that no layout rule claims as
-/// evidence: not under a registered non-source directory, and not a
-/// support file inside a `benches/` or `examples/` tree.
-fn is_loose_source_path(path: &Path) -> bool {
-    normalize(path).components().all(|component| {
-        let name = component_name(&component);
-        !NON_SOURCE_DIRECTORIES.contains(&name.as_str())
-            && !matches!(name.as_str(), "src" | "benches" | "examples")
-    })
 }
 
 fn component_name(component: &std::path::Component) -> String {
@@ -598,7 +594,12 @@ mod tests {
             ("build.rs", true),
             ("crates/ripr/build.rs", true),
             ("crates\\ripr\\build.rs", true),
+            ("examples/sample/build.rs", true),
             ("tests/cli.rs", false),
+            ("xtask/tests/cli.rs", false),
+            ("xtask/fixtures/sample/src/lib.rs", false),
+            ("metrics/panel/subjects/case/source.after.rs", false),
+            ("scripts/tool.rs", false),
             ("crates/ripr/tests/cli.rs", false),
             ("benches/throughput.rs", false),
             ("benches/common/mod.rs", false),
