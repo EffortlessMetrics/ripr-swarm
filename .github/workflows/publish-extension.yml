@@ -160,15 +160,17 @@ jobs:
           # Attach to it only; never create it or replace an existing asset, so
           # a second channel dispatch keeps the first attached VSIX.
           set -euo pipefail
-          existing="$(gh release view "${{ github.ref_name }}" --json assets --jq '.assets[].name')"
+          existing="$(gh release view "$RELEASE_REF" --json assets --jq '.assets[].name')"
           for vsix in dist/*.vsix; do
             name="$(basename "$vsix")"
             if printf '%s\n' "$existing" | grep -Fxq "$name"; then
-              echo "$name is already attached to ${{ github.ref_name }}; leaving it in place"
+              echo "$name is already attached to $RELEASE_REF; leaving it in place"
             else
-              gh release upload "${{ github.ref_name }}" "$vsix"
+              gh release upload "$RELEASE_REF" "$vsix"
             fi
           done
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          # Through env, not template expansion, so a crafted tag name is data.
+          RELEASE_REF: ${{ github.ref_name }}

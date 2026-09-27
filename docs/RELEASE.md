@@ -350,7 +350,7 @@ Pushing the tag publishes nothing by itself. The release workflows run only by
 `workflow_dispatch`, one channel at a time, in the order and with the receipts
 that [RELEASE_TRANSACTION.md](RELEASE_TRANSACTION.md) gives: create the GitHub
 Release, then dispatch `release-server-binaries.yml`, then
-`publish-extension.yml` with exactly one of `publish_vs_marketplace=true` or
+`publish-extension.yml` on the tag (`--ref v0.8.0`) with exactly one of `publish_vs_marketplace=true` or
 `publish_open_vsx=true`. Both marketplace inputs default to `false`, and the
 extension workflow attaches its VSIX to the existing Release without creating
 or replacing it.
@@ -388,7 +388,9 @@ existing GitHub Release rather than replacing it.
    correctly on the existing Release.
 3. After server assets are present and verified, rerun any downstream
    workflow that was gated on them, for example
-   `gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr -f version=0.8.0`.
+   `gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref v0.8.0 -f version=0.8.0 -f publish_vs_marketplace=true`,
+   or `-f publish_open_vsx=true` for the Open VSX channel. Both inputs default
+   to `false`, and without `--ref` on the tag the VSIX is not attached.
 4. Do not retag and do not delete the GitHub Release. Leave the tag at
    the release-prep commit; the fix-forward commit is on `main` and any
    subsequent point release will include it.

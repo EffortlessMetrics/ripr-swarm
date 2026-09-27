@@ -9312,6 +9312,20 @@ jobs:
 /// must neither create the GitHub Release nor replace an attached asset. Each
 /// channel is dispatched explicitly per docs/RELEASE_TRANSACTION.md; #1646 owns
 /// the full single-writer topology.
+/// Keys directly under a workflow's block-form `on:` mapping, in order.
+/// `None` for a missing or inline `on:` (`on: push`, `on: [push]`).
+fn workflow_trigger_keys(workflow: &str) -> Option<Vec<&str>> {
+    let (_, rest) = workflow.split_once("\non:\n")?;
+    Some(
+        rest.lines()
+            .take_while(|line| line.is_empty() || line.starts_with(' ') || line.starts_with('#'))
+            .filter_map(|line| line.strip_prefix("  "))
+            .filter(|line| !line.starts_with(' ') && !line.starts_with('#'))
+            .filter_map(|line| line.split_once(':').map(|(key, _)| key))
+            .collect(),
+    )
+}
+
 #[test]
 fn release_workflows_publish_only_by_explicit_dispatch() -> Result<(), String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
@@ -9321,22 +9335,25 @@ fn release_workflows_publish_only_by_explicit_dispatch() -> Result<(), String> {
     };
     for name in ["release-server-binaries.yml", "publish-extension.yml"] {
         let workflow = read(name)?;
-        let triggers = workflow
-            .split_once("\njobs:")
-            .map(|(triggers, _)| triggers)
-            .ok_or_else(|| format!("{name} has no jobs block"))?;
-        if triggers.contains("\n  push:") || triggers.contains("tags:") {
-            return Err(format!("{name} must not publish on a pushed tag"));
+        let triggers = workflow_trigger_keys(&workflow)
+            .ok_or_else(|| format!("{name} has no block-form `on:` declaration"))?;
+        if triggers != ["workflow_dispatch"] {
+            return Err(format!(
+                "{name} must run only on workflow_dispatch, found {triggers:?}"
+            ));
         }
     }
     let extension = read("publish-extension.yml")?;
     for input in ["publish_vs_marketplace", "publish_open_vsx"] {
         let declared = extension
-            .split_once(&format!("      {input}:"))
+            .split_once(&format!("\n      {input}:\n"))
             .map(|(_, rest)| rest)
             .ok_or_else(|| format!("publish-extension.yml has no {input} input"))?;
+        // Only this input's own mapping: stop at the first line indented no
+        // deeper than the input key, so a later input's default cannot match.
         let default = declared
             .lines()
+            .take_while(|line| line.trim().is_empty() || line.starts_with("        "))
             .find_map(|line| line.trim().strip_prefix("default: "))
             .ok_or_else(|| format!("{input} has no default"))?;
         if default != "\"false\"" {
@@ -9349,6 +9366,15 @@ fn release_workflows_publish_only_by_explicit_dispatch() -> Result<(), String> {
         )) {
             return Err(format!("{input} must gate its job on an explicit 'true'"));
         }
+    }
+    if extension
+        .lines()
+        .any(|line| line.contains("gh release") && line.contains("${{"))
+    {
+        return Err(
+            "publish-extension.yml must pass the release ref to `gh release` through env"
+                .to_string(),
+        );
     }
     if extension.contains("gh release create") || extension.contains("--clobber") {
         return Err(
