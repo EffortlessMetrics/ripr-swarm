@@ -47,6 +47,9 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
     let enabled_languages = enabled_languages(&core_evaluation.config);
     println!("ripr doctor");
     println!("- root: {}", root.display());
+    for line in output::doctor_binary::probe_binary_identity().human_lines() {
+        println!("{line}");
+    }
 
     ok &= report_doctor_core_check(core_report, "root_directory");
     ok &= report_doctor_core_check(core_report, "cargo_toml");
@@ -83,6 +86,7 @@ fn doctor_json(root: &Path) -> Result<(), String> {
     let evaluation =
         output::doctor::evaluate_doctor_core_with_config(root, &detect_languages(root));
     let mut report = evaluation.report;
+    report.binary = Some(output::doctor_binary::probe_binary_identity());
     let enabled_languages = enabled_languages(&evaluation.config);
     let _ =
         add_language_runtime_probes(root, &enabled_languages, &mut report, false, probe_runtime);
@@ -1072,11 +1076,11 @@ fn perl_next_command(
         // enabled through config, and check then runs the enabled set.
         // Name the additive edit, not a replacement list, so a user with
         // TypeScript/Python already enabled keeps them (#2105 review).
-        "add \"perl\" to [languages] enabled in ripr.toml, then: ripr check --base origin/main --head HEAD".to_string()
+        "add \"perl\" to [languages] enabled in ripr.toml, then: ripr check".to_string()
     } else if managed {
         // Managed mode configured but no compatible producer.
         format!(
-            "install a compatible Perl fact exporter (`{}`, not yet published) on PATH or set [perl].executable, and add \"perl\" to [languages] enabled in ripr.toml, then: ripr check --base origin/main --head HEAD",
+            "install a compatible Perl fact exporter (`{}`, not yet published) on PATH or set [perl].executable, and add \"perl\" to [languages] enabled in ripr.toml, then: ripr check",
             crate::domain::PERL_FACT_EXPORTER
         )
     } else {
@@ -1565,7 +1569,11 @@ mod tests {
         // The managed-present branch points at the config-driven route.
         let managed = perl_next_command(true, Some("perllsp"), Some("perllsp"));
         assert!(managed.contains("[languages]"));
-        assert!(managed.contains("ripr check --base origin/main --head HEAD"));
+        // #3886: a bare `ripr check` resolves the default branch; `check`
+        // has no `--head`, and `origin/main` need not exist.
+        assert!(managed.ends_with("then: ripr check"));
+        let unpublished = perl_next_command(true, Some("perllsp"), None);
+        assert!(unpublished.ends_with("then: ripr check"));
         // The packet-mode branch is unchanged.
         let packet = perl_next_command(true, None, None);
         assert!(packet.contains("--perl-facts"));

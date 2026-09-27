@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[path = "../src/build_commit_record.rs"]
+mod build_commit_record;
 #[path = "common/mod.rs"]
 mod common;
 
@@ -892,9 +894,56 @@ fn fixture_repository_head_rejects_whitespace_padded_success_output() -> Result<
     Ok(())
 }
 
+/// The `ripr --version` line this build must produce, derived without
+/// `build.rs`'s output: the package version plus the commit, with `-dirty`
+/// when the inputs that decide the binary differ from it. A packaged crate
+/// (this file ships in it) takes the commit from `.cargo_vcs_info.json`; a
+/// checkout that tracks this crate takes it from Git; anything else has no
+/// commit, and the line is the bare version.
+fn expected_version_line() -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    if let Ok(record) = std::fs::read_to_string(crate_dir.join(".cargo_vcs_info.json")) {
+        return match build_commit_record::parse_cargo_vcs_info(&record) {
+            Some((commit, true)) => format!("ripr {version} ({commit}-dirty)\n"),
+            Some((commit, false)) => format!("ripr {version} ({commit})\n"),
+            None => format!("ripr {version}\n"),
+        };
+    }
+    let git_stdout = |args: &[&str]| {
+        run_command("git", Some(crate_dir), args)
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+    if git_stdout(&["ls-files", "--error-unmatch", "--", "Cargo.toml"]).is_none() {
+        return format!("ripr {version}\n");
+    }
+    let Some(head) = git_stdout(&["rev-parse", "--verify", "HEAD"]) else {
+        return format!("ripr {version}\n");
+    };
+    let Some(status) = git_stdout(&[
+        "--no-optional-locks",
+        "status",
+        "--porcelain",
+        "--untracked-files=normal",
+        "--",
+        "src",
+        "Cargo.toml",
+        "build.rs",
+        ":(top)Cargo.toml",
+        ":(top)Cargo.lock",
+        ":(top).cargo",
+    ]) else {
+        return format!("ripr {version}\n");
+    };
+    let suffix = if status.is_empty() { "" } else { "-dirty" };
+    format!("ripr {version} ({head}{suffix})\n")
+}
+
 #[test]
 fn version_is_exact_and_precedes_help_or_output_flags() {
-    let expected = format!("ripr {}\n", env!("CARGO_PKG_VERSION"));
+    let expected = expected_version_line();
     for args in [
         &["--version"][..],
         &["-V"][..],
@@ -950,7 +999,7 @@ fn isolated_installed_binary_version_contract_is_side_effect_free() -> Result<()
         let config_before = std::fs::read(&config_path)?;
         let before = snapshot_tree(&root)?;
         let artifact_path = root.join("target/ripr/reports/version.json");
-        let expected_version = format!("ripr {}\n", env!("CARGO_PKG_VERSION"));
+        let expected_version = expected_version_line();
         let expected_lsp_version = format!("ripr-lsp {}\n", env!("CARGO_PKG_VERSION"));
         let workspace_text = workspace_root().to_string_lossy().to_string();
         let cases = [
@@ -4482,8 +4531,7 @@ fn rerun_repair_receipt(root: &Path, out: bool) -> Result<Output, std::io::Error
     run_command(env!("CARGO_BIN_EXE_ripr"), Some(root), &args)
 }
 
-const INCLUDE_RECEIPT_LINE: &str =
-    "ripr: next: Keep the focused test and include this receipt in review.";
+const INCLUDE_RECEIPT_LINE: &str = "ripr: next: Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review.";
 
 /// F15-1/F15-3: the printed loop on a library crate that does not commit
 /// `Cargo.lock`. The first `cargo test` between the phases creates the
@@ -4525,6 +4573,11 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
     assert_eq!(receipt["analysis_outcome_status"], "complete", "{receipt}");
     assert_eq!(receipt["analysis_outcome_error"], serde_json::Value::Null);
     assert_eq!(receipt["provenance"]["movement"], "improved");
+    // #4234: the loop never runs the focused test, and the receipt says so.
+    assert_eq!(
+        receipt["verification"]["status"], "verification_not_run",
+        "{receipt}"
+    );
     let verdict = &receipt["repair_attempt"]["edit_cage_verdict"];
     assert_eq!(verdict["status"], "compliant", "{verdict}");
     assert!(
@@ -6893,6 +6946,92 @@ fn config_validate_rejects_missing_and_file_roots() -> Result<(), String> {
 
     ignore_remove_dir_all(&workspace);
     Ok(())
+}
+
+/// Run `binary doctor --json` on `root` with `path_dirs` ahead of the host
+/// PATH (which still supplies git), and parse the report.
+fn doctor_json_with_path_prefix(
+    binary: &Path,
+    root: &Path,
+    path_dirs: &[&Path],
+) -> Result<(bool, serde_json::Value), String> {
+    let host_path = std::env::var_os("PATH").unwrap_or_default();
+    let search_path = std::env::join_paths(
+        path_dirs
+            .iter()
+            .map(|dir| dir.to_path_buf())
+            .chain(std::env::split_paths(&host_path)),
+    )
+    .map_err(|error| format!("build PATH: {error}"))?;
+    let search_path = search_path.to_string_lossy().into_owned();
+    let root_arg = root.display().to_string();
+    let output = run_command_with_env(
+        &binary.to_string_lossy(),
+        root,
+        &["doctor", "--root", &root_arg, "--json"],
+        &[("PATH", &search_path)],
+    )
+    .map_err(|error| format!("run doctor: {error}"))?;
+    let report = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("doctor JSON did not parse: {error}"))?;
+    Ok((output.status.success(), report))
+}
+
+/// #3797 control 9: a Cargo build output directory first on PATH replaces the
+/// installed `ripr` for everything that runs `ripr`. Doctor must name it,
+/// stay quiet when the installed binary is first, and never change its
+/// pass/fail status over it.
+#[test]
+fn doctor_names_workspace_build_first_on_path() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let installed_dir = unique_temp_workspace("doctor-installed-bin");
+    let result = (|| -> Result<(), String> {
+        std::fs::create_dir_all(&installed_dir)
+            .map_err(|error| format!("create installed bin dir: {error}"))?;
+        let built = Path::new(env!("CARGO_BIN_EXE_ripr"));
+        let built_dir = built.parent().ok_or("built ripr has no parent")?;
+        let installed = installed_dir.join(built.file_name().ok_or("built ripr has no name")?);
+        std::fs::copy(built, &installed).map_err(|error| format!("install copy: {error}"))?;
+
+        let (installed_ok, report) =
+            doctor_json_with_path_prefix(&installed, &workspace, &[&installed_dir])?;
+        let binary = &report["binary"];
+        if binary["path_ripr_is_running_executable"] != true
+            || binary["path_ripr_is_cargo_build_output"] != false
+            || binary["executable_is_cargo_build_output"] != false
+            || binary["warnings"] != serde_json::json!([])
+        {
+            return Err(format!(
+                "installed ripr first on PATH must be quiet: {binary}"
+            ));
+        }
+        if binary["version"].as_str() != Some(expected_version_line().trim_end()) {
+            return Err(format!("doctor must report the --version line: {binary}"));
+        }
+
+        let (workspace_ok, report) =
+            doctor_json_with_path_prefix(&installed, &workspace, &[built_dir, &installed_dir])?;
+        let binary = &report["binary"];
+        let warnings = binary["warnings"].to_string();
+        if binary["path_ripr_is_cargo_build_output"] != true
+            || binary["path_ripr_is_running_executable"] != false
+            || !warnings.contains("Cargo build output")
+            || !warnings.contains("not the running binary")
+        {
+            return Err(format!(
+                "workspace build first on PATH was not named: {binary}"
+            ));
+        }
+        if workspace_ok != installed_ok {
+            return Err(format!(
+                "a workspace build on PATH is advisory and must not change doctor status: {report}"
+            ));
+        }
+        Ok(())
+    })();
+    ignore_remove_dir_all(&installed_dir);
+    ignore_remove_dir_all(&workspace);
+    result
 }
 
 #[test]
@@ -9844,7 +9983,8 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
     assert!(
         route["guidance"].as_str().is_some_and(|text| {
             text.contains("does not render Python findings")
-                && text.contains("ripr check --base origin/main")
+                && text.contains("run 'ripr check' or")
+                && !text.contains("origin/main")
         }),
         "{route}"
     );
@@ -11285,14 +11425,40 @@ fn check_write_artifact_then_explain_and_context_reuse_preserves_detail_and_sour
             selector,
         ]);
         assert_success(&reused_context);
-        assert_eq!(
-            fresh_context.stdout, reused_context.stdout,
-            "context --from output must be byte-identical to the fresh run"
-        );
+        context_reuse_matches_fresh(&fresh_context.stdout, &reused_context.stdout)?;
         Ok(())
     })();
     ignore_remove_dir_all(&dir);
     result
+}
+
+/// RIPR-SPEC-0140: a `context --from` packet equals the fresh `--diff` packet
+/// except the witness's explain command, which names the source that
+/// produced it (#3952): `--diff` fresh, `--from` reused, as `explain` does.
+fn context_reuse_matches_fresh(fresh: &[u8], reused: &[u8]) -> Result<(), String> {
+    let parse = |bytes: &[u8], label: &str| -> Result<(serde_json::Value, String), String> {
+        let mut packet: serde_json::Value = serde_json::from_slice(bytes)
+            .map_err(|err| format!("parse {label} context packet: {err}"))?;
+        let command = packet
+            .pointer_mut("/witness/explain_command")
+            .map(serde_json::Value::take)
+            .and_then(|command| command.as_str().map(str::to_string))
+            .ok_or_else(|| format!("{label} context packet must carry an explain command"))?;
+        Ok((packet, command))
+    };
+    let (fresh_packet, fresh_command) = parse(fresh, "fresh")?;
+    let (reused_packet, reused_command) = parse(reused, "reused")?;
+    if !fresh_command.contains(" --diff ") || !reused_command.contains(" --from ") {
+        return Err(format!(
+            "explain commands must name their source: fresh `{fresh_command}`, reused `{reused_command}`"
+        ));
+    }
+    if fresh_packet != reused_packet {
+        return Err(format!(
+            "context --from packet must match the fresh run\nfresh: {fresh_packet}\nreused: {reused_packet}"
+        ));
+    }
+    Ok(())
 }
 
 /// Every identity mismatch class fails closed with a typed error naming the
@@ -11687,10 +11853,7 @@ fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> Result<()
         selector,
     ]);
     assert_success(&reused);
-    assert_eq!(
-        fresh.stdout, reused.stdout,
-        "context --from --no-unchanged-tests must be byte-identical to the fresh run"
-    );
+    context_reuse_matches_fresh(&fresh.stdout, &reused.stdout)?;
 
     let without_flag = run_ripr(&[
         "context",
@@ -15714,4 +15877,147 @@ fn plus_unknown_arg_fails_clearly() {
         stderr.contains("unknown plus argument") || stderr.contains("--bogus"),
         "error must name the unknown arg:\n{stderr}"
     );
+}
+
+/// A repository with no `origin` remote whose default branch is `master`, on a
+/// `work` branch one commit ahead. `master` is deliberately not `main`, so a
+/// command that still assumes `origin/main` cannot pass by coincidence.
+fn no_origin_master_repo(label: &str, initial_branch: &str) -> Result<PathBuf, String> {
+    let root = unique_temp_workspace(label);
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init", "-b", initial_branch])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"no-origin-base\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over(amount: i32) -> bool {\n    amount >= 10\n}\n",
+    )
+    .map_err(|err| format!("write base lib.rs: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "base"])?;
+    run_git(&root, &["checkout", "-b", "work"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over(amount: i32) -> bool {\n    amount > 10\n}\n",
+    )
+    .map_err(|err| format!("write work lib.rs: {err}"))?;
+    run_git(&root, &["commit", "-am", "work"])?;
+    Ok(root)
+}
+
+fn json_string_at(path: &Path, pointer: &str) -> Result<serde_json::Value, String> {
+    let text =
+        std::fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))?;
+    Ok(value.pointer(pointer).cloned().unwrap_or_default())
+}
+
+/// #3952 / RIPR-SPEC-0084: `diff`, `first-pr` and `pr-evidence` resolve an
+/// omitted `--base` through the loader's authority, as `check` does. Before,
+/// each defaulted to `origin/main`: `diff` failed on git's ambiguous-argument
+/// error, `pr-evidence` refused the revision, and `first-pr` exited 0 with
+/// `origin/main` recorded in `start-here.json` for a repository that has no
+/// `origin`.
+#[test]
+fn history_commands_resolve_the_default_base_without_origin() -> Result<(), String> {
+    let root = no_origin_master_repo("no-origin-default-base", "master")?;
+    let root_str = root.to_string_lossy().into_owned();
+    let bin = env!("CARGO_BIN_EXE_ripr");
+    let mut failures = Vec::new();
+
+    let diff = run_command(bin, None, &["diff", "--root", &root_str, "--json"])
+        .map_err(|err| format!("spawn ripr diff: {err}"))?;
+    let diff_stdout = String::from_utf8_lossy(&diff.stdout);
+    let diff_base = serde_json::from_str::<serde_json::Value>(&diff_stdout)
+        .map(|value| value["base"].clone())
+        .ok();
+    if !diff.status.success() || diff_base != Some(serde_json::json!("master")) {
+        failures.push(format!(
+            "ripr diff must analyze master...HEAD; status {:?}, stdout:\n{diff_stdout}\nstderr:\n{}",
+            diff.status.code(),
+            String::from_utf8_lossy(&diff.stderr)
+        ));
+    }
+
+    // Run from the ripr checkout, which has its own `origin/main`, so a
+    // resolver that consulted the working directory instead of `--root`
+    // would record the wrong base.
+    let first_pr = run_command(bin, None, &["first-pr", "--root", &root_str])
+        .map_err(|err| format!("spawn ripr first-pr: {err}"))?;
+    match json_string_at(
+        &root.join("target/ripr/reports/start-here.json"),
+        "/inputs/base",
+    ) {
+        Ok(base) if base == "master" => {}
+        other => failures.push(format!(
+            "first-pr must record the resolved base `master`; got {other:?}, status {:?}, stderr:\n{}",
+            first_pr.status.code(),
+            String::from_utf8_lossy(&first_pr.stderr)
+        )),
+    }
+
+    let evidence = run_command(bin, Some(&root), &["pr-evidence"])
+        .map_err(|err| format!("spawn ripr pr-evidence: {err}"))?;
+    match json_string_at(&root.join("target/ripr/pr/repo-exposure.json"), "/base") {
+        Ok(base) if base == "master" && evidence.status.success() => {}
+        other => failures.push(format!(
+            "pr-evidence must record the resolved base `master`; got {other:?}, status {:?}, stderr:\n{}",
+            evidence.status.code(),
+            String::from_utf8_lossy(&evidence.stderr)
+        )),
+    }
+
+    ignore_remove_dir_all(&root);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n\n"))
+    }
+}
+
+/// #3952 fail-closed half: when no default base resolves, `first-pr` and
+/// `pr-evidence` name the resolution failure and write no packet, rather
+/// than recording a base the run never analyzed.
+#[test]
+fn history_commands_without_a_resolvable_default_base_fail_named() -> Result<(), String> {
+    let root = no_origin_master_repo("no-origin-unresolvable-base", "trunk")?;
+    let bin = env!("CARGO_BIN_EXE_ripr");
+    let mut failures = Vec::new();
+    for (args, packet) in [
+        (
+            ["first-pr", "--root", "."].as_slice(),
+            "target/ripr/reports/start-here.json",
+        ),
+        (
+            ["pr-evidence"].as_slice(),
+            "target/ripr/pr/repo-exposure.json",
+        ),
+    ] {
+        let output = run_command(bin, Some(&root), args)
+            .map_err(|err| format!("spawn ripr {}: {err}", args[0]))?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let packet_written = root.join(packet).exists();
+        if output.status.success()
+            || packet_written
+            || !stderr.contains("could not resolve a default base")
+        {
+            failures.push(format!(
+                "{} with no resolvable base must fail named and write nothing; status {:?}, packet written {packet_written}, stderr:\n{stderr}",
+                args[0],
+                output.status.code()
+            ));
+        }
+    }
+    ignore_remove_dir_all(&root);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n\n"))
+    }
 }
