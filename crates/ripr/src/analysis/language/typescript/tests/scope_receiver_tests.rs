@@ -471,3 +471,54 @@ fn test_names_comments_and_plain_reads_keep_the_receiver() -> Result<(), String>
         ),
     )
 }
+
+#[test]
+fn hidden_or_skippable_rebinding_withholds_the_receiver() -> Result<(), String> {
+    for (label, rest) in [
+        (
+            "adv2-regex-quote",
+            "let cart: any;\nconst quote = /'/;\nfunction useFake() {\n  cart = { total: () => 1 };\n}\nconst other = 'x';\nbeforeEach(() => {\n  cart = new Cart();\n  useFake();\n});\nit('t', () => {\n  expect(cart.total()).toBe(1);\n});\n",
+        ),
+        (
+            "adv2-hook-early-return",
+            "let cart: any = { total: () => 1 };\nbeforeEach(() => {\n  if (process.env.SKIP) return;\n  cart = new Cart();\n});\nit('t', () => {\n  expect(cart.total()).toBe(1);\n});\n",
+        ),
+        (
+            "adv2-describe-early-return",
+            "describe('C', () => {\n  let cart: any = { total: () => 1 };\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n  if (process.env.SKIP) return;\n  beforeEach(() => {\n    cart = new Cart();\n  });\n});\n",
+        ),
+        (
+            "adv2-function-in-hook",
+            "let cart: any;\nbeforeEach(() => {\n  function Cart() { return { total: () => 1 }; }\n  cart = new Cart();\n});\nit('t', () => {\n  expect(cart.total()).toBe(1);\n});\n",
+        ),
+        (
+            "adv2-method-replaced",
+            "let cart: Cart;\nbeforeEach(() => {\n  cart = new Cart();\n  cart.total = () => 1;\n});\nit('t', () => {\n  expect(cart.total()).toBe(1);\n});\n",
+        ),
+        (
+            "adv2-template-write",
+            "let cart: any;\nbeforeEach(() => {\n  cart = new Cart();\n});\nconst label = `${(cart = { total: () => 1 })}`;\nit('t', () => {\n  expect(cart.total()).toBe(1);\n});\n",
+        ),
+        (
+            "adv2-eval",
+            "let cart: any;\nbeforeEach(() => {\n  cart = new Cart();\n  eval('car' + 't = { total: () => 1 }');\n});\nit('t', () => {\n  expect(cart.total()).toBe(1);\n});\n",
+        ),
+        (
+            "adv2-escaped-name",
+            "let cart: any;\nbeforeEach(() => {\n  cart = new Cart();\n  \\u0063art = { total: () => 1 };\n});\nit('t', () => {\n  expect(cart.total()).toBe(1);\n});\n",
+        ),
+    ] {
+        unrelated_with_head(label, rest)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn return_inside_a_nested_closure_keeps_the_hook_write() -> Result<(), String> {
+    assert_related(
+        "closure-return",
+        &format!(
+            "{HEAD}let cart: any = {{ total: () => 1 }};\nbeforeEach(() => {{\n  const sizes = [1].map((n) => {{\n    return n;\n  }});\n  cart = new Cart();\n}});\nit('t', () => {{\n  expect(cart.total()).toBe(3);\n}});\n"
+        ),
+    )
+}

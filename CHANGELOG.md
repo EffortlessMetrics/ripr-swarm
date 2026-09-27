@@ -550,8 +550,12 @@ are scoped or reviewed.
   destructuring, casts and closures), a parameter or redeclaration of the
   same name, a second hook of the same kind writing it, a hook the file
   defines or imports under another name, or a declaration or write of the
-  class name itself. Member reads, `expect(cart)`, `typeof cart`, strings and
-  comments do not count.
+  class name itself (`class Cart` or `function Cart` in a hook), a method
+  assignment such as `cart.total = ...`, a hook write that follows a possible
+  early `return`, or any `eval` or escaped identifier in the file. Member
+  reads, `expect(cart)`, `typeof cart`, comments, import paths and
+  describe/test/mock name strings do not count; any other string or template
+  that mentions the name does.
 
 - A generated command prints no PowerShell form only when PowerShell reads it
   the same way. Commands with a quoted program path, `$` expansion, globs,

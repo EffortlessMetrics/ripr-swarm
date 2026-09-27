@@ -39,7 +39,20 @@ pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
             &mut scope,
             &mut tests,
         );
-        withhold_rebound_scope_receivers(source, &scope.sites, &mut tests);
+        // Comments, module specifiers and call-statement name literals are
+        // the only text the rebinding check skips, each at its exact AST
+        // span; every other string, template and regex stays visible, so no
+        // mis-lexed quote can hide a write.
+        let masked: Vec<std::ops::Range<usize>> = ret
+            .program
+            .comments
+            .iter()
+            .map(|comment| comment.span)
+            .chain(ret.program.body.iter().filter_map(module_specifier_span))
+            .map(|span| span.start as usize..span.end as usize)
+            .chain(scope.names.iter().cloned())
+            .collect();
+        withhold_rebound_scope_receivers(source, &masked, &scope.sites, &mut tests);
         tests
     }) else {
         return Vec::new();
@@ -207,8 +220,17 @@ pub(crate) fn collect_tests_from_statements(
     // counts, as it does at runtime.
     let mut level = Vec::new();
     let mut sites = Vec::new();
+    let mut returned = false;
     for stmt in statements {
+        let start = level.len();
         collect_scope_bindings(stmt, source, &mut level, &mut sites);
+        // After a possible early `return`, a binding may never run.
+        if returned {
+            level[start..]
+                .iter_mut()
+                .for_each(|entry| entry.1 = ScopeValue::Other);
+        }
+        returned |= may_return(stmt, source);
     }
     scope.sites.extend(sites);
     // A `beforeEach`/`beforeAll` the file declares, or imports from anything
@@ -241,6 +263,9 @@ pub(crate) fn collect_tests_from_statements(
     }
     scope.levels.push(level);
     for stmt in statements {
+        if let Some(span) = name_literal_span(stmt) {
+            scope.names.push(span);
+        }
         if let Some((describe_name, body)) = describe_body_from_statement(stmt) {
             // `describe.each(...)('x', (cart) => ...)` binds its parameters
             // for every test inside.
@@ -284,6 +309,9 @@ pub(crate) struct TestScope {
     levels: Vec<Vec<ScopeEntry>>,
     /// Source offsets of every declaration and hook write the walk recorded.
     sites: Vec<usize>,
+    /// Spans of string literals passed first to a call statement: describe
+    /// and test names, `vi.mock('../src/cart')` paths.
+    names: Vec<std::ops::Range<usize>>,
 }
 
 /// One binding a scope-level statement makes, and when it runs.
@@ -453,14 +481,23 @@ fn collect_scope_bindings(
                 }
                 locals.retain(|(_, _, phase)| *phase == Phase::Declaration);
                 let mut writes = Vec::new();
+                let mut returned = false;
                 for inner in body {
                     // Only a runner hook's writes are recorded; any other
                     // callback's writes stay unrecorded, so they withhold.
                     let mut callback_sites = Vec::new();
+                    let start = writes.len();
                     collect_hook_assignment(inner, source, &mut writes, &mut callback_sites);
                     if phase != Phase::Interleaved {
                         sites.extend(callback_sites);
                     }
+                    // A write after a possible early `return` may not run.
+                    if returned {
+                        writes[start..]
+                            .iter_mut()
+                            .for_each(|write| write.1 = ScopeValue::Other);
+                    }
+                    returned |= may_return(inner, source);
                 }
                 let writes: Vec<ScopeEntry> = writes
                     .into_iter()
@@ -551,6 +588,27 @@ fn collect_hook_assignment(
     }
 }
 
+/// `true` when `stmt` may leave the enclosing callback early: a `return`
+/// statement, or control flow (`if`, `try`, a block or loop) containing one.
+/// A `return` inside an expression or declaration belongs to a nested
+/// closure and does not leave the callback.
+fn may_return(stmt: &Statement<'_>, source: &str) -> bool {
+    if matches!(
+        stmt,
+        Statement::ExpressionStatement(_)
+            | Statement::VariableDeclaration(_)
+            | Statement::FunctionDeclaration(_)
+            | Statement::ClassDeclaration(_)
+    ) {
+        return false;
+    }
+    let span = stmt.span();
+    let text = source
+        .get(span.start as usize..span.end as usize)
+        .unwrap_or_default();
+    identifier_occurrences(text, "return").next().is_some()
+}
+
 fn constructed_value(expression: &Expression<'_>) -> ScopeValue {
     let Expression::NewExpression(new_expression) = expression.without_parentheses() else {
         return ScopeValue::Other;
@@ -568,18 +626,27 @@ fn constructed_value(expression: &Expression<'_>) -> ScopeValue {
 }
 
 /// Withhold every scope receiver the file could rebind in a way the syntax
-/// walk did not record. Outside strings and comments, each occurrence of a
-/// credited name must be a recorded declaration or hook write, a member
-/// access (`cart.total()`), `expect(cart)` or `typeof cart`; anything else (a
-/// parameter, a cast target, another declaration, an unrecorded write) may
-/// rebind it. The constructor must not be declared or written anywhere in
-/// the file either (`class Cart {}` in a hook, `const { Cart } = ...`).
-fn withhold_rebound_scope_receivers(source: &str, sites: &[usize], tests: &mut [TypeScriptTest]) {
-    let code = code_only(source);
-    let rebound_constructors: Vec<String> = identifier_writes(&code)
+/// walk did not record. Outside comments and describe/test names, each
+/// occurrence of a credited name must be a recorded declaration or hook
+/// write, a member read (`cart.total()`, not `cart.total = ...`),
+/// `expect(cart)` or `typeof cart`; anything else (a parameter, a cast
+/// target, another declaration, an unrecorded write, text in a string an
+/// `eval` could run) may rebind it. The constructor must not be declared or
+/// written anywhere in the file either (`class Cart {}` or `function Cart()`
+/// in a hook, `const { Cart } = ...`, `shop.Cart = ...`). A file with `eval`
+/// or an escaped identifier (`\u0063art`) withholds every receiver.
+fn withhold_rebound_scope_receivers(
+    source: &str,
+    masked: &[std::ops::Range<usize>],
+    sites: &[usize],
+    tests: &mut [TypeScriptTest],
+) {
+    let code = blank_ranges(source, masked);
+    let opaque = identifier_occurrences(&code, "eval").next().is_some() || code.contains("\\u");
+    let rebound: Vec<String> = identifier_writes(&code)
         .into_iter()
         .map(|(name, _)| name)
-        .chain(declared_class_names(&code))
+        .chain(declared_names(&code))
         .collect();
     for test in tests {
         for binding in &mut test.scope_bindings {
@@ -587,7 +654,10 @@ fn withhold_rebound_scope_receivers(source: &str, sites: &[usize], tests: &mut [
                 continue;
             };
             let root = constructor.split('.').next().unwrap_or(constructor);
-            if rebound_constructors.iter().any(|name| name == root)
+            let constructor_rebound = rebound.iter().any(|name| name == root)
+                || (constructor.contains('.') && member_assigned(&code, constructor));
+            if opaque
+                || constructor_rebound
                 || identifier_occurrences(&code, &binding.name)
                     .any(|at| !sites.contains(&at) && !is_plain_read(&code, at, &binding.name))
             {
@@ -614,72 +684,78 @@ fn identifier_occurrences<'a>(
     })
 }
 
-/// `cart.x`, `cart?.x`, `expect(cart)` or `typeof cart`: reads that cannot
-/// rebind the name.
+/// `cart.x` / `cart?.x` that is not itself assigned, `expect(cart)` or
+/// `typeof cart`: reads that neither rebind the name nor replace a method.
 fn is_plain_read(code: &str, at: usize, identifier: &str) -> bool {
     let before = code[..at].trim_end();
     let after = code[at + identifier.len()..].trim_start();
-    (after.starts_with('.') && !after.starts_with("..."))
-        || after.starts_with("?.")
-        || (before.ends_with("expect(") && after.starts_with(')'))
-        || before.ends_with("typeof")
+    let member = after.strip_prefix("?.").or_else(|| {
+        after
+            .strip_prefix('.')
+            .filter(|rest| !rest.starts_with(".."))
+    });
+    if let Some(member) = member {
+        let end = member
+            .find(|ch: char| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+            .unwrap_or(member.len());
+        return !assigns_next(&member[end..]);
+    }
+    (before.ends_with("expect(") && after.starts_with(')')) || before.ends_with("typeof")
 }
 
-/// Names declared with `class Name`.
-fn declared_class_names(code: &str) -> Vec<String> {
-    identifier_occurrences(code, "class")
-        .filter_map(|at| {
-            let rest = code[at + "class".len()..].trim_start();
-            let end = rest
-                .find(|ch: char| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
-                .unwrap_or(rest.len());
-            (end > 0).then(|| rest[..end].to_string())
+/// `true` when `rest` starts with an assignment operator (`=`, `+=`, `??=`),
+/// not a comparison or arrow.
+fn assigns_next(rest: &str) -> bool {
+    let rest = rest.trim_start();
+    let operator_end = rest
+        .find(|ch: char| {
+            !matches!(
+                ch,
+                '+' | '-' | '*' | '/' | '%' | '&' | '|' | '^' | '?' | '<' | '>'
+            )
+        })
+        .unwrap_or(rest.len());
+    let after = &rest[operator_end..];
+    after.starts_with('=')
+        && !after[1..].starts_with(['=', '>'])
+        && !matches!(&rest[..operator_end], "<" | ">" | "!")
+}
+
+/// `true` when `ns.Class` (as written) is assigned anywhere in `code`.
+fn member_assigned(code: &str, path: &str) -> bool {
+    code.match_indices(path)
+        .any(|(at, _)| assigns_next(&code[at + path.len()..]))
+}
+
+/// Names declared with `class Name` or `function Name`.
+fn declared_names(code: &str) -> Vec<String> {
+    ["class", "function"]
+        .into_iter()
+        .flat_map(|keyword| {
+            identifier_occurrences(code, keyword).filter_map(move |at| {
+                let rest = code[at + keyword.len()..].trim_start();
+                let end = rest
+                    .find(|ch: char| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+                    .unwrap_or(rest.len());
+                (end > 0).then(|| rest[..end].to_string())
+            })
         })
         .collect()
 }
 
-/// `source` with string, template and comment contents replaced by spaces,
-/// byte offsets unchanged.
-fn code_only(source: &str) -> String {
-    let bytes = source.as_bytes();
-    let mut out = bytes.to_vec();
-    let mut index = 0;
-    while index < bytes.len() {
-        let (end, blank_from) = match bytes[index] {
-            b'/' if bytes.get(index + 1) == Some(&b'/') => (
-                bytes[index..]
-                    .iter()
-                    .position(|&byte| byte == b'\n')
-                    .map_or(bytes.len(), |offset| index + offset),
-                index,
-            ),
-            b'/' if bytes.get(index + 1) == Some(&b'*') => (
-                source[index + 2..]
-                    .find("*/")
-                    .map_or(bytes.len(), |offset| index + 2 + offset + 2),
-                index,
-            ),
-            quote @ (b'\'' | b'"' | b'`') => {
-                let mut cursor = index + 1;
-                while cursor < bytes.len() && bytes[cursor] != quote {
-                    cursor += if bytes[cursor] == b'\\' { 2 } else { 1 };
-                }
-                ((cursor + 1).min(bytes.len()), index + 1)
-            }
-            _ => {
-                index += 1;
-                continue;
-            }
-        };
-        for byte in &mut out[blank_from..end] {
-            if *byte != b'\n' && byte.is_ascii() {
+/// `source` with the ASCII bytes of `ranges` replaced by spaces, byte
+/// offsets unchanged.
+fn blank_ranges(source: &str, ranges: &[std::ops::Range<usize>]) -> String {
+    let mut bytes = source.as_bytes().to_vec();
+    for range in ranges {
+        for byte in bytes.get_mut(range.clone()).into_iter().flatten() {
+            if byte.is_ascii() && *byte != b'\n' {
                 *byte = b' ';
             }
         }
-        index = end.max(index + 1);
     }
     // Only ASCII bytes were replaced, so the result is still valid UTF-8.
-    String::from_utf8(out).unwrap_or_default()
+    String::from_utf8(bytes).unwrap_or_default()
 }
 
 /// Identifiers written as an assignment target anywhere in `text`, each
@@ -808,6 +884,34 @@ fn statement_callback_parameter_names(stmt: &Statement<'_>, index: usize) -> Vec
         .get(index)
         .map(argument_parameter_names)
         .unwrap_or_default()
+}
+
+/// The span of a call statement's first argument when it is a string literal.
+/// The `'../src/cart'` of an import or re-export declaration.
+fn module_specifier_span(stmt: &Statement<'_>) -> Option<oxc_span::Span> {
+    match stmt {
+        Statement::ImportDeclaration(import) => Some(import.source.span),
+        Statement::ExportNamedDeclaration(export) => {
+            export.source.as_ref().map(|source| source.span)
+        }
+        Statement::ExportAllDeclaration(export) => Some(export.source.span),
+        _ => None,
+    }
+}
+
+fn name_literal_span(stmt: &Statement<'_>) -> Option<std::ops::Range<usize>> {
+    let Statement::ExpressionStatement(expr_stmt) = stmt else {
+        return None;
+    };
+    let Expression::CallExpression(call) = &expr_stmt.expression else {
+        return None;
+    };
+    match call.arguments.first()? {
+        oxc_ast::ast::Argument::StringLiteral(literal) => {
+            Some(literal.span.start as usize..literal.span.end as usize)
+        }
+        _ => None,
+    }
 }
 
 /// Names a callback argument binds as parameters; empty for anything else.
