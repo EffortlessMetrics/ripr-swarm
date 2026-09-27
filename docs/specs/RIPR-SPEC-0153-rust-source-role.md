@@ -74,7 +74,26 @@ Role is derived from authoritative context in priority order:
 Both diff probe seeding and the repo seam-inventory production set route
 through `classify_with`; `benches/**`/`examples/**` harness plumbing no
 longer seeds production obligations, closing the diff gap while the repo
-exclusion stays consistent. Evidence-role files remain fully indexed:
+exclusion stays consistent. One diff-only exemption applies: a changed
+file under the root `xtask/` directory whose resolved role is the `xtask`
+catch-all, and whose path inside `xtask/` the layout would treat as
+production, still seeds diff probes. Repository automation changes are
+reviewed behavior, and without the exemption a 329-line `xtask/` diff
+(the 0.11 Rust challenge case p1745) counted as changed Rust files yet
+yielded zero candidate lines and no disclosure. `xtask/tests/**`,
+`tests.rs` stems, benches, examples, non-`src` files, and `xtask`
+segments nested under other directories keep their evidence role, and
+repo-mode seam inventory still excludes `xtask/`. A changed Cargo build
+script seeds too, outside any non-source directory (`xtask/build.rs`
+included): Cargo compiles it, and skipping it produced the same silent
+zero. The build script comes from the owning package manifest, not the
+file name: `build.rs` by default, the path `package.build` names, nothing
+under `build = false`, and nothing for a virtual workspace or a directory
+with no manifest. Diff seeding and the LSP out-of-scope partition share one
+changed-file rule, `seeds_diff_probes`, so the editor keeps every finding
+the CLI reports. Other loose non-`src` files (panel subjects under
+`metrics/`) are data Cargo never compiles and stay evidence; a
+`[lib]`/`[[bin]]` path declared outside `src` is not yet recognized. Evidence-role files remain fully indexed:
 functions stay available for owner relations, activation input,
 sink/oracle evidence, and selectors. `TestFact` semantics are untouched
 — source role never registers a helper as an executable test selector.
@@ -171,6 +190,11 @@ The #3532 harness registry joined the same identity as FindingAffecting
   undeclared `src/unconfirmed_test.rs` stays a production subject;
   disabling the declared-target branch makes the fixture fail
   (discriminating-power proof).
+- A changed root `xtask/src/**` file seeds diff probes while a changed
+  unannotated helper under `xtask/tests/` in the same diff seeds none;
+  removing the exemption drops the automation file to zero candidate
+  lines, and widening it to any `xtask` path component makes the
+  `xtask/tests/` helper produce findings (both verified failing).
 - The opt-in restores production analysis for the selected target only;
   sibling test targets stay evidence-only.
 - Layout pins: nested `examples/<dir>/src/**` and
@@ -212,6 +236,10 @@ The #3532 harness registry joined the same identity as FindingAffecting
 
 - Accept: `benches/exposure.rs` changed → indexed, counted as a changed
   file, zero production findings.
+- Accept: a manifest-built `build.rs` or `xtask/src/main.rs` changed →
+  probes seeded and the editor pins them; a `build.rs` under
+  `build = false` or outside any package seeds nothing; `fixtures/**/build.rs`,
+  `metrics/**/source.after.rs`, and `benches/common/mod.rs` stay evidence.
 - Accept: `[[test]] path="src/contract_test.rs"` → helper in it is
   evidence; `src/unconfirmed_test.rs` without a declaration → production.
 - Accept: `production_like_targets = ["tests/api_contract.rs"]` → that

@@ -498,6 +498,19 @@ release_version="$(cargo pkgid -p ripr | sed 's/.*#//')"
 cargo xtask release-readiness --version "$release_version"
 ```
 
+The legacy workflow's `Rust-only feature lane` job (#4252) runs the Rust-only
+feature set (#2400, #3128) on Linux:
+
+```bash
+cargo test -p ripr --locked --no-default-features --features lang-rust --no-fail-fast
+```
+
+It runs on every push to `main` or `master`, on manual dispatch, and on pull
+request `opened`, `synchronize`, and `reopened` events whose diff touches
+`crates/`, `fixtures/`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain*`, or
+`.cargo/`. Label events and other pull requests skip the compile. It is not
+a required check. The Windows advisory lane runs the same command on Windows.
+
 The CI workflow also has an explicit MSRV job that pins Rust `1.95.0` and runs:
 
 ```bash
@@ -508,8 +521,8 @@ The `release-proof` job pins the declared `1.95.0` toolchain; the MSRV job
 duplicates that baseline and runs only on manual dispatch or `full-ci` pull
 requests.
 
-The legacy workflow's `release-proof` and `msrv` jobs run on `ubuntu-latest`.
-They carry release-surface and baseline proof and must not
+The legacy workflow's `release-proof`, `rust-only-features`, and `msrv` jobs
+run on `ubuntu-latest`. They carry release-surface and baseline proof and must not
 depend on self-hosted runner capacity when preparing a source release. The
 routed Rust-small workflow remains the swarm development lane that selects
 self-hosted runners when available and falls back to hosted capacity.
@@ -578,8 +591,10 @@ writes advisory Markdown and JSON summaries of semantic expected-output drift
 for reviewers. `test-oracle-report` writes an advisory baseline for the strength
 of `ripr`'s own Rust test oracles. If no tests are selected, both report formats
 use status `not_run` and explain that oracle evidence was not established; this
-is distinct from a nonempty all-strong `pass` and remains advisory. `dogfood` writes a non-blocking
-`ripr`-on-`ripr` report from stable fixture diffs. `critic` writes an advisory
+is distinct from a nonempty all-strong `pass` and remains advisory. `dogfood` writes a
+`ripr`-on-`ripr` report from stable fixture diffs; its findings stay advisory,
+but the command, and `ci-full`, fails when any scenario records errors (report
+status `warn`). `critic` writes an advisory
 adversarial review packet from the current diff, reports, and receipts.
 `reports index` writes a reviewer front door for generated reports and includes
 the repo-ops packet statuses for command mutability, PR-ready, worktree doctor,

@@ -34,7 +34,7 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    load_diff, load_worktree_diff, parse_unified_diff, resolve_base_commit,
+    load_diff, load_worktree_diff, parse_unified_diff, resolve_base_commit, resolve_effective_base,
     working_tree_has_tracked_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
@@ -52,6 +52,7 @@ pub use language::{
     PartialDiffStopReason,
 };
 pub(crate) use probes::{fingerprint_probe_id, normalize_expression};
+pub use seam_cache::cache_layer_names;
 pub(crate) use seam_classification::ClassifiedSeam;
 #[cfg(test)]
 pub(crate) use seam_classification::SeamGripClassCounts;
@@ -68,9 +69,9 @@ pub(crate) use seam_inventory::{
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;
-pub(crate) use workspace::classify_with;
 pub(crate) use workspace::context_for_files;
 pub(crate) use workspace::is_test_surface_path;
+pub(crate) use workspace::seeds_diff_probes;
 
 /// Re-export workspace discovery helpers for the output layer so it can
 /// detect TS-predominant workspaces without importing through analysis::workspace
