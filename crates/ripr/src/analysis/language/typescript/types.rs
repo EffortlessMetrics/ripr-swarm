@@ -124,9 +124,11 @@ pub(crate) struct TypeScriptTest {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TypeScriptScopeBinding {
     pub(crate) name: String,
-    /// The constructor (`Cart`, `shop.Cart`) that every binding of `name` in
-    /// its innermost scope uses, or `None` when that scope binds it to
-    /// anything else, several different ways, or only declares it.
+    /// The constructor (`Cart`, `shop.Cart`) `name` holds when a test in the
+    /// scope starts: the last hook write in its innermost scope, or else every
+    /// declaration there. `None` when that value is anything else, is
+    /// ambiguous (a conditional write, or a write that can run between
+    /// tests), or is only declared.
     pub(crate) constructed_by: Option<String>,
 }
 
