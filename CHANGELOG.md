@@ -529,6 +529,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `cargo xtask actionable-gap-outcomes` no longer reports an agent receipt's
+  `verification.status: "verification_not_run"` as the attempt's verify
+  result. It counts as a missing verify result, and a targeted-test outcome's
+  result is used instead when one exists
+  ([#4234](https://github.com/EffortlessMetrics/ripr-swarm/issues/4234)).
+
 - An improved `agent receipt` (including the one `ripr agent repair --phase
   after` writes) no longer says "Keep the focused test": ripr never runs the
   project's tests, and a test that fails `cargo test` can still move static
