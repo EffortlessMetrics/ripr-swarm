@@ -81,8 +81,14 @@ fn evaluate_binary_identity(
         .map(Path::to_path_buf);
     let path_ripr = path_ripr.map(|path| resolve(&path));
     let path_ripr_is_cargo_build_output = path_ripr.as_deref().is_some_and(is_cargo_build_output);
+    // Only two fully resolved paths are comparable: a path that could not be
+    // canonicalized may still name the same file, so the answer is unknown.
     let path_ripr_is_running_executable = match (&executable, &path_ripr) {
-        (Some(executable), Some(path_ripr)) => Some(executable == path_ripr),
+        (Some(executable), Some(path_ripr))
+            if is_resolved(executable) && is_resolved(path_ripr) =>
+        {
+            Some(executable == path_ripr)
+        }
         _ => None,
     };
     let mut warnings = Vec::new();
@@ -123,6 +129,12 @@ fn evaluate_binary_identity(
         path_ripr_is_running_executable,
         warnings,
     }
+}
+
+/// Whether `path` is already its own canonical form, that is, `resolve`
+/// succeeded on it.
+fn is_resolved(path: &Path) -> bool {
+    std::fs::canonicalize(path).is_ok_and(|canonical| canonical == path)
 }
 
 /// Resolve symlinks so a PATH link into `target/release` is recognized; an
@@ -294,6 +306,35 @@ mod tests {
             let human = identity.human_lines().join("\n");
             if !human.contains("(this binary)") {
                 return Err(format!("human lines must name the running binary: {human}"));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    #[test]
+    fn different_installed_ripr_on_path_warns_without_build_output_claim() -> Result<(), String> {
+        let root = temp_dir("other-installed")?;
+        let running_dir = root.join("running");
+        let other_dir = root.join("other");
+        let result = (|| -> Result<(), String> {
+            for dir in [&running_dir, &other_dir] {
+                std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+            }
+            let running = executable(&running_dir)?;
+            executable(&other_dir)?;
+            let path = std::env::join_paths([&other_dir]).map_err(|error| error.to_string())?;
+            let found = first_on_path(&path, &ripr_executable_names(None));
+            let identity = evaluate_binary_identity(Some(running), found);
+            if identity.path_ripr_is_cargo_build_output
+                || identity.path_ripr_is_running_executable != Some(false)
+                || identity.warnings.len() != 1
+                || !identity.warnings[0].contains("not the running binary")
+            {
+                return Err(format!(
+                    "a different installed ripr must get only the other-binary warning: {identity:?}"
+                ));
             }
             Ok(())
         })();
