@@ -550,22 +550,18 @@ are scoped or reviewed.
 
 ### Fixed
 
-- `ripr first-pr --check` without a start-here packet in a checkout where
-  no default base resolves (a detached HEAD with no branches, as in some CI
-  checkouts) now prints a recovery command that requires `--base <ref>` and
-  names the resolution error, instead of a write command that fails on the
-  same missing base. When a default base resolves, the recovery still omits
-  `--base`
-  ([#4285](https://github.com/EffortlessMetrics/ripr-swarm/issues/4285),
-  [#4290](https://github.com/EffortlessMetrics/ripr-swarm/pull/4290)).
-
 - `ripr outcome` no longer reports zero movement for check-output snapshots
   whose findings carry no canonical gap id, such as Rust `ripr check --json`.
   It refuses the pair, points Rust users to `ripr check --format
   repo-exposure-json`, and says that preview-language findings without an id
   have no comparable receipt
   ([#3797](https://github.com/EffortlessMetrics/ripr-swarm/issues/3797)).
-
+- `cargo install ripr` without `--locked` compiles. It had resolved
+  `unicode-ident` 1.0.26, which fails a compile-time Unicode-version assert in
+  `ra-ap-rustc_lexer`; the 1.0.24 pin moved from `Cargo.lock` into the
+  `lang-rust` feature's manifest, and release CI now builds the packaged crate
+  from a fresh resolution
+  ([#3787](https://github.com/EffortlessMetrics/ripr-swarm/issues/3787)).
 - `cargo xtask actionable-gap-outcomes` no longer reports an agent receipt's
   `verification.status: "verification_not_run"` as the attempt's verify
   result. It counts as a missing verify result
@@ -1111,6 +1107,15 @@ are scoped or reviewed.
   first. Commands the translator cannot translate keep only the bash
   line, which stays byte-identical
   ([#3870](https://github.com/EffortlessMetrics/ripr-swarm/issues/3870)).
+
+- `ripr first-pr --check` without a start-here packet in a checkout where
+  no default base resolves (a detached HEAD with no branches, as in some CI
+  checkouts) now prints a recovery command that requires `--base <ref>` and
+  names the resolution error, instead of a write command that fails on the
+  same missing base. When a default base resolves, the recovery still omits
+  `--base`
+  ([#4285](https://github.com/EffortlessMetrics/ripr-swarm/issues/4285),
+  [#4290](https://github.com/EffortlessMetrics/ripr-swarm/pull/4290)).
 
 ### Docs
 
