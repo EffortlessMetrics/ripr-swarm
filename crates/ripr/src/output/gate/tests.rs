@@ -1440,6 +1440,18 @@ fn gate_closed_gap_is_not_misreported_as_configured_off() -> Result<(), String> 
         "{markdown}"
     );
 
+    // Fail closed: dropping the inferred configured-off flag must not let a
+    // non-targeted record block even when its projection claims eligibility.
+    // The shared safe-gate predicate still requires a `new`/`blocked` policy.
+    ledger["gap_records"][0]["projection_eligibility"]["gate_candidate"]["eligible"] =
+        Value::Bool(true);
+    ledger["gap_records"][0]["safe_gate_predicate"]["policy_target_enabled"] = Value::Bool(true);
+    fs::write(&gap_ledger, ledger.to_string()).map_err(|err| err.to_string())?;
+    let claimed = build_gate_decision_report(&input)?;
+    assert_eq!(claimed.status, "pass");
+    assert_eq!(claimed.summary.not_applicable, 1);
+    assert_eq!(claimed.decisions[0].decision, "not_applicable");
+
     // An explicit suppression still has its own gate decision and evidence.
     ledger["gap_records"][0]["policy_state"] = Value::from("suppressed");
     fs::write(&gap_ledger, ledger.to_string()).map_err(|err| err.to_string())?;
