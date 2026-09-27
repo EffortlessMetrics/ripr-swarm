@@ -292,13 +292,15 @@ fn validate_row(
     }
     let mut row_roles = BTreeSet::new();
     for review in &row.reviews {
-        if !roles.contains(review.role.as_str()) {
+        // Only declared roles count toward the two-role floor.
+        if roles.contains(review.role.as_str()) {
+            row_roles.insert(review.role.as_str());
+        } else {
             violations.push(format!(
                 "{subject}.reviews: role `{}` is not declared",
                 review.role
             ));
         }
-        row_roles.insert(review.role.as_str());
         if !CONFIDENCE.contains(&review.confidence.as_str()) {
             violations.push(format!(
                 "{subject}.reviews.{}.confidence: `{}` is not high/medium/low",
@@ -676,6 +678,13 @@ mod tests {
                 row_mut(value, "p1744-quiet-test-only")["reviews"][0]["role"] = "ghost".into();
             },
             "is not declared",
+        )?;
+        // An undeclared role must not count toward the two-role floor.
+        expect_violation(
+            |value| {
+                row_mut(value, "p1706-wiring-rows-gap")["reviews"][1]["role"] = "ghost".into();
+            },
+            "need two independent roles",
         )
     }
 }
