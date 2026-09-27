@@ -254,11 +254,14 @@ type ScopeEntry = (String, ScopeValue, Phase);
 
 /// When a scope-level write runs relative to a test in that scope, in order:
 /// declarations while the file or `describe` callback runs, then `beforeAll`
-/// hooks, then `beforeEach` hooks.
+/// hooks, then writes that may run between tests (another test, an
+/// `afterEach` hook, a nested `describe`), then `beforeEach` hooks, which
+/// reset the name before every test.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Phase {
     Declaration,
     BeforeAll,
+    Interleaved,
     BeforeEach,
 }
 
@@ -276,12 +279,16 @@ enum ScopeValue {
 impl TestScope {
     /// Resolve every bound name to its innermost scope. Within that scope the
     /// last hook write decides, since hooks run after the declarations and
-    /// before every test. Without a hook write the name is constructed only
+    /// before every test; a `beforeAll` write is ambiguous when an enclosing
+    /// `beforeEach` also writes the name. Without a hook write the name is constructed only
     /// when every declaration of it constructs the same class; a declaration
     /// without an initializer is neutral.
     fn resolve_with(&self, innermost: Vec<ScopeEntry>) -> Vec<TypeScriptScopeBinding> {
         let mut resolved: Vec<TypeScriptScopeBinding> = Vec::new();
-        for level in std::iter::once(&innermost).chain(self.levels.iter().rev()) {
+        let levels: Vec<&Vec<ScopeEntry>> = std::iter::once(&innermost)
+            .chain(self.levels.iter().rev())
+            .collect();
+        for (depth, level) in levels.iter().enumerate() {
             let mut names: Vec<&str> = level.iter().map(|(name, _, _)| name.as_str()).collect();
             names.sort_unstable();
             names.dedup();
@@ -297,6 +304,16 @@ impl TestScope {
                 // Stable: source order is kept within a phase.
                 writes.sort_by_key(|(_, phase)| *phase);
                 let constructed_by = match writes.last() {
+                    // An enclosing `beforeEach` runs after this `beforeAll`.
+                    Some((_, Phase::BeforeAll))
+                        if levels[depth + 1..].iter().any(|outer| {
+                            outer.iter().any(|(bound, _, phase)| {
+                                bound == name && *phase == Phase::BeforeEach
+                            })
+                        }) =>
+                    {
+                        None
+                    }
                     Some((value, phase)) if *phase != Phase::Declaration => match value {
                         ScopeValue::Constructed(constructor) => Some(constructor.clone()),
                         ScopeValue::Declared | ScopeValue::Other => None,
@@ -324,9 +341,10 @@ impl TestScope {
 }
 
 /// Record the names one scope-level statement binds for every test in the
-/// scope: declarations, and assignments made by a `beforeEach`/`beforeAll`
-/// hook. Test bodies, `describe` blocks, `afterEach` hooks and skipped tests
-/// bind nothing here, and a hook's own local declarations stay local.
+/// scope: declarations, assignments made by a `beforeEach`/`beforeAll` hook,
+/// and, as ambiguous, writes made by any other callback at this level (a
+/// sibling test, an `afterEach` hook, a nested `describe`). A callback's own
+/// local declarations stay local.
 fn collect_scope_bindings(stmt: &Statement<'_>, source: &str, out: &mut Vec<ScopeEntry>) {
     match stmt {
         Statement::VariableDeclaration(declaration) => {
@@ -370,36 +388,36 @@ fn collect_scope_bindings(stmt: &Statement<'_>, source: &str, out: &mut Vec<Scop
             let Expression::CallExpression(call) = &expr_stmt.expression else {
                 return;
             };
-            let Expression::Identifier(callee) = &call.callee else {
-                return;
+            let phase = match &call.callee {
+                Expression::Identifier(callee) if callee.name == "beforeAll" => Phase::BeforeAll,
+                Expression::Identifier(callee) if callee.name == "beforeEach" => Phase::BeforeEach,
+                _ => Phase::Interleaved,
             };
-            let phase = match callee.name.as_str() {
-                "beforeAll" => Phase::BeforeAll,
-                "beforeEach" => Phase::BeforeEach,
-                _ => return,
-            };
-            let Some(body) = call
+            for body in call
                 .arguments
-                .first()
-                .and_then(function_body_statements_from_argument)
-            else {
-                return;
-            };
-            // Writes to the hook's own declarations stay in the hook.
-            let mut hook_locals = Vec::new();
-            for hook_stmt in body {
-                collect_scope_bindings(hook_stmt, source, &mut hook_locals);
+                .iter()
+                .filter_map(function_body_statements_from_argument)
+            {
+                // Writes to the callback's own declarations stay in it.
+                let mut locals = Vec::new();
+                for inner in body {
+                    collect_scope_bindings(inner, source, &mut locals);
+                }
+                locals.retain(|(_, _, phase)| *phase == Phase::Declaration);
+                let mut writes = Vec::new();
+                for inner in body {
+                    collect_hook_assignment(inner, source, &mut writes);
+                }
+                out.extend(
+                    writes
+                        .into_iter()
+                        .filter(|(name, _)| !locals.iter().any(|(local, _, _)| local == name))
+                        .map(|(name, value)| match phase {
+                            Phase::Interleaved => (name, ScopeValue::Other, phase),
+                            _ => (name, value, phase),
+                        }),
+                );
             }
-            let mut writes = Vec::new();
-            for hook_stmt in body {
-                collect_hook_assignment(hook_stmt, source, &mut writes);
-            }
-            out.extend(
-                writes
-                    .into_iter()
-                    .filter(|(name, _)| !hook_locals.iter().any(|(local, _, _)| local == name))
-                    .map(|(name, value)| (name, value, phase)),
-            );
         }
         _ => {}
     }

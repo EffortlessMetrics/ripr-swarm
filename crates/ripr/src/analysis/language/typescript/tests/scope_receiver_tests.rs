@@ -318,3 +318,39 @@ fn hook_write_to_hook_local_and_closure_writes_do_not_bind() -> Result<(), Strin
         "describe('C', () => {\n  let cart: any;\n  beforeEach(() => {\n    cart = new Cart();\n    const reset = () => { cart = { total: () => 1 }; };\n    reset();\n  });\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
     )
 }
+
+#[test]
+fn outer_before_each_runs_after_inner_before_all() -> Result<(), String> {
+    unrelated_with_head(
+        "adv-outer-before-each",
+        "describe('C', () => {\n  let cart: any;\n  beforeEach(() => {\n    cart = { total: () => 1 };\n  });\n  describe('inner', () => {\n    beforeAll(() => {\n      cart = new Cart();\n    });\n    it('t', () => {\n      expect(cart.total()).toBe(1);\n    });\n  });\n});\n",
+    )?;
+    assert_related(
+        "inner-before-each",
+        &format!(
+            "{HEAD}describe('C', () => {{\n  let cart: any;\n  beforeAll(() => {{\n    cart = {{ total: () => 1 }};\n  }});\n  describe('inner', () => {{\n    beforeEach(() => {{\n      cart = new Cart();\n    }});\n    it('t', () => {{\n      expect(cart.total()).toBe(1);\n    }});\n  }});\n}});\n"
+        ),
+    )
+}
+
+#[test]
+fn write_between_tests_makes_shared_receiver_ambiguous() -> Result<(), String> {
+    unrelated_with_head(
+        "adv-sibling-test-write",
+        "describe('C', () => {\n  let cart: any;\n  beforeAll(() => {\n    cart = new Cart();\n  });\n  it('swaps', () => {\n    cart = { total: () => 1 };\n  });\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+    )?;
+    unrelated_with_head(
+        "adv-nested-describe-write",
+        "describe('C', () => {\n  let cart: any;\n  beforeAll(() => {\n    cart = new Cart();\n  });\n  describe('inner', () => {\n    it('swaps', () => {\n      cart = { total: () => 1 };\n    });\n  });\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+    )?;
+    unrelated_with_head(
+        "adv-after-each-write",
+        "describe('C', () => {\n  let cart: any = new Cart();\n  afterEach(() => {\n    cart = { total: () => 1 };\n  });\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+    )?;
+    assert_related(
+        "before-each-resets",
+        &format!(
+            "{HEAD}describe('C', () => {{\n  let cart: any;\n  beforeEach(() => {{\n    cart = new Cart();\n  }});\n  it('swaps', () => {{\n    let other = 1;\n    cart = {{ total: () => other }};\n  }});\n  it('t', () => {{\n    expect(cart.total()).toBe(1);\n  }});\n}});\n"
+        ),
+    )
+}
