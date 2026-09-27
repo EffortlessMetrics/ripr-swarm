@@ -14746,6 +14746,8 @@ JSON shape:
   ],
   "first_useful_action": {
     "default_ci_blocking": false,
+    "rendered_cases": 6,
+    "total_cases": 6,
     "receipt_dir": "fixtures/boundary_gap/expected/first-useful-action",
     "cases": [
       {
@@ -14817,6 +14819,8 @@ JSON shape:
   },
   "pr_review_front_panel": {
     "default_ci_blocking": false,
+    "rendered_cases": 13,
+    "total_cases": 13,
     "receipt_dir": "fixtures/boundary_gap/expected/pr-review-front-panel",
     "cases": [
       {
@@ -14850,6 +14854,8 @@ JSON shape:
   },
   "report_packet_index": {
     "default_ci_blocking": false,
+    "rendered_cases": 7,
+    "total_cases": 7,
     "receipt_dir": "fixtures/boundary_gap/expected/report-packet-index",
     "cases": [
       {
