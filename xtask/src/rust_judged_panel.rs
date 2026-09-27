@@ -390,6 +390,17 @@ fn validate_manifest(root: &Path, manifest: &RustJudgedPanelManifest) -> Vec<Str
         violations
             .push("manifest.repository_scopes: seed carries no release scope records".to_string());
     }
+    for item in &manifest.items {
+        if !matches!(item.diff_sha256, Nullable::Missing)
+            || !matches!(item.scope_authorization, Nullable::Missing)
+            || !matches!(item.anchor.anchor_kind, Nullable::Missing)
+        {
+            violations.push(format!(
+                "items ({}): seed items carry no diff_sha256, scope_authorization, or anchor_kind",
+                item.id
+            ));
+        }
+    }
     require_equal(
         &mut violations,
         "manifest.selection_status",
@@ -1930,6 +1941,25 @@ fn validate_release_limit_contract(
                 item.expected_direction
             ));
         }
+        // A quiet row routes nothing, and a gap row may not carry a limit's
+        // class or route: otherwise a limit hides in a gap row by dropping
+        // only its kind, and still counts toward the gap floor.
+        if item.expected_direction == "should_stay_quiet"
+            && item.expected_actionability != "no_action"
+        {
+            violations.push(format!(
+                "{subject}.expected_actionability: `should_stay_quiet` requires `no_action`, found `{}`",
+                item.expected_actionability
+            ));
+        }
+        if item.expected_direction == "should_gap"
+            && (item.expected_actionability == "limited_route"
+                || RELEASE_LIMIT_CLASSIFICATIONS.contains(&item.expected_classification.as_str()))
+        {
+            violations.push(format!(
+                "{subject}: `should_gap` must not expect a limit class or `limited_route`"
+            ));
+        }
         return;
     }
     match kind {
@@ -2627,6 +2657,22 @@ mod tests {
     }
 
     #[test]
+    fn seed_rejects_release_only_fields() -> Result<(), String> {
+        let fixture = TempFixture::new("seed-release-fields")?;
+        let mut manifest = valid_alternate_manifest(&fixture)?;
+        // The seed tier ignores these fields, so accepting them would let a
+        // seed row claim a release binding it never enforces.
+        manifest["items"][0]["anchor"]["anchor_kind"] = json!("string_literal");
+        manifest["items"][1]["scope_authorization"] = json!("authorized");
+        manifest["repository_scopes"] = json!([]);
+        expect_rejection(
+            &fixture,
+            &manifest,
+            &["seed items carry no diff_sha256, scope_authorization, or anchor_kind"],
+        )
+    }
+
+    #[test]
     fn parser_rejects_duplicate_and_unknown_keys() -> Result<(), String> {
         let fixture = TempFixture::new("duplicate-key")?;
         let path = fixture.root.join(MANIFEST_PATH);
@@ -3116,10 +3162,24 @@ mod tests {
                 "(release-gap-id).expected_static_limit_kind: `should_gap` requires a null",
             ],
         )?;
-        let mut broken = manifest;
+        let mut broken = manifest.clone();
         broken["items"][2]["expected_static_limit_kind"] = Value::Null;
         let error = release_rejection(&fixture, &broken)?;
-        require_fragments(&error, &["`should_limit` requires a named static limit"])
+        require_fragments(&error, &["`should_limit` requires a named static limit"])?;
+        // Dropping only the kind does not hide a limit in a gap row, and a
+        // quiet row may not route work.
+        let mut broken = manifest;
+        broken["items"][1]["expected_classification"] = json!("no_static_path");
+        broken["items"][1]["expected_actionability"] = json!("limited_route");
+        broken["items"][0]["expected_actionability"] = json!("repair_candidate");
+        let error = release_rejection(&fixture, &broken)?;
+        require_fragments(
+            &error,
+            &[
+                "(release-gap-id): `should_gap` must not expect a limit class",
+                "(release-quiet-id).expected_actionability: `should_stay_quiet` requires `no_action`",
+            ],
+        )
     }
 
     #[test]
