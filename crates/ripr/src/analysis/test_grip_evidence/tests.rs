@@ -1198,6 +1198,147 @@ fn given_strict_boundary_seam_when_tests_skip_equal_value_then_grip_names_missin
     Ok(())
 }
 
+/// #4228: a reversed literal (`100 < amount`) or a local boundary
+/// (`let limit = 100;`) names its boundary and closes only when a test
+/// passes the boundary value. The same shapes close in `check`
+/// (`classify::activation` tests). A local no evaluator can fold, or a
+/// local on the left of a reversed predicate, stays a static limitation,
+/// never strongly gripped.
+#[test]
+fn given_reversed_or_local_boundary_when_test_hits_boundary_then_grip_closes() -> Result<(), String>
+{
+    // (owner body lines, compared subject, `amount` above the boundary
+    // takes the branch, boundary is inclusive, boundary token in the
+    // missing discriminator; `None` means a static limitation).
+    let shapes = [
+        (
+            "    if 100 < amount { 0 } else { 5 }",
+            "100 < amount",
+            false,
+            Some("100"),
+        ),
+        (
+            "    if 100 <= amount { 0 } else { 5 }",
+            "100 <= amount",
+            true,
+            Some("100"),
+        ),
+        (
+            "    let limit = 100;\n    if amount > limit { 0 } else { 5 }",
+            "amount > limit",
+            false,
+            Some("limit"),
+        ),
+        (
+            "    let limit = 100;\n    if amount >= limit { 0 } else { 5 }",
+            "amount >= limit",
+            true,
+            Some("limit"),
+        ),
+        (
+            "    let limit = 100;\n    if limit < amount { 0 } else { 5 }",
+            "limit < amount",
+            false,
+            None,
+        ),
+        (
+            "    let limit = 100; if amount > limit { 0 } else { 5 }",
+            "amount > limit",
+            false,
+            None,
+        ),
+        (
+            "    let limit = amount / 2 + 50;\n    if amount > limit { 0 } else { 5 }",
+            "amount > limit",
+            false,
+            None,
+        ),
+    ];
+    for (body, subject, inclusive, token) in shapes {
+        let fee = |amount: u64| {
+            let taken = if inclusive {
+                amount >= 100
+            } else {
+                amount > 100
+            };
+            if taken { 0 } else { 5 }
+        };
+        for boundary_input in [None, Some(99_u64), Some(101), Some(100)] {
+            let prod_src = format!("pub fn fee(amount: u64) -> u64 {{\n{body}\n}}\n");
+            let boundary_test = boundary_input.map_or_else(String::new, |input| {
+                format!(
+                    "#[test]\nfn near_boundary() {{ assert_eq!(fee({input}), {}); }}\n",
+                    fee(input)
+                )
+            });
+            let tests_src = format!(
+                "#[test]\nfn low() {{ assert_eq!(fee(50), 5); }}\n#[test]\nfn high() {{ assert_eq!(fee(200), 0); }}\n{boundary_test}"
+            );
+            let index = index_from_files(&[
+                (PathBuf::from("src/lib.rs"), prod_src.as_str()),
+                (PathBuf::from("tests/fee.rs"), tests_src.as_str()),
+            ])?;
+            let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+            let predicate = seams
+                .iter()
+                .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+                .ok_or_else(|| format!("expected a predicate seam for `{subject}`"))?;
+            if predicate.expression().trim() != subject {
+                return Err(format!(
+                    "fixture parsed the wrong subject: `{}`",
+                    predicate.expression()
+                ));
+            }
+            let evidence = evidence_for_seam(predicate, &index);
+            if evidence.related_tests.len() < 2 {
+                return Err(format!(
+                    "`{subject}` fixture should relate the value tests, got {:?}",
+                    evidence.related_tests
+                ));
+            }
+            let missing: Vec<&str> = evidence
+                .missing_discriminators
+                .iter()
+                .map(|fact| fact.value.as_str())
+                .collect();
+            let class = crate::analysis::seam_classification::classify_seam(predicate, &evidence);
+            let label = format!("`{subject}` ({body:?}) with boundary input {boundary_input:?}");
+            match token {
+                None => {
+                    if !missing.is_empty()
+                        || class == SeamGripClass::StronglyGripped
+                        || evidence.activate.state != StageState::Unknown
+                    {
+                        return Err(format!(
+                            "{label} must stay a static limitation, got {} {missing:?}",
+                            class.as_str()
+                        ));
+                    }
+                }
+                Some(_) if boundary_input == Some(100) => {
+                    if !missing.is_empty() || class != SeamGripClass::StronglyGripped {
+                        return Err(format!(
+                            "{label} should be strongly gripped with nothing missing, got {} {missing:?}",
+                            class.as_str()
+                        ));
+                    }
+                }
+                Some(token) => {
+                    if missing != [format!("{token} (equality boundary)")]
+                        || class == SeamGripClass::StronglyGripped
+                    {
+                        return Err(format!(
+                            "{label} must name `{token}` as the missing boundary, got {} {missing:?}",
+                            class.as_str()
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn given_boundary_seam_when_test_uses_equal_value_and_exact_assertion_then_discriminate_evidence_is_yes()
 -> Result<(), String> {
