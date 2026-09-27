@@ -2,7 +2,7 @@ use crate::agent::artifact::{
     ArtifactCurrentness, RepoExposureArtifactContext, validate_repo_exposure_artifact,
 };
 use crate::agent::loop_commands::{
-    bound_root, bound_root_path, check_repo_exposure_command, shell_arg,
+    bound_root, bound_root_path, check_repo_exposure_command, lexically_clean, shell_arg,
 };
 use crate::output::gap_decision_ledger::{
     self, GapDecisionLedgerInput, GapDecisionLedgerSourceKind, GapRecord,
@@ -397,7 +397,10 @@ fn refresh_commands(root: &Path, gap_ledger_path: &Path, source_path: Option<&st
     // output path is the caller's own path and is rendered unchanged.
     let command_root = bound_root_path(root);
     let source_path = source_path
-        .map(|path| resolve_declared_path(&command_root, path))
+        // Clean `.`/`..` lexically before the containment check:
+        // `Path::starts_with` is component-wise on the raw path, so an
+        // un-normalized `<root>/../outside.json` would otherwise pass it.
+        .map(|path| lexically_clean(&resolve_declared_path(&command_root, path)))
         .filter(|path| path.starts_with(&command_root))
         .unwrap_or_else(|| command_root.join(DEFAULT_REPO_EXPOSURE_PATH));
     let source_display = crate::output::outcome::display_path(&source_path);
@@ -523,12 +526,21 @@ mod tests {
         );
         assert_eq!(bound, cwd.join("selected-root"));
 
-        for declared in [Some("reports/repo-exposure.json"), None] {
+        // A declared source that lexically escapes the bound root (`..`) must
+        // not survive the containment check: `Path::starts_with` compares
+        // un-normalized components, so `<root>/../outside.json` would pass it
+        // while naming a file outside the selected repository.
+        let default_source = bound.join(DEFAULT_REPO_EXPOSURE_PATH);
+        for (declared, expected_source) in [
+            (
+                Some("reports/repo-exposure.json"),
+                bound.join("reports/repo-exposure.json"),
+            ),
+            (None, default_source.clone()),
+            (Some("../outside.json"), default_source.clone()),
+            (Some("reports/../../outside.json"), default_source.clone()),
+        ] {
             let commands = refresh_commands(relative_root, ledger, declared);
-            let expected_source = match declared {
-                Some(path) => bound.join(path),
-                None => bound.join(DEFAULT_REPO_EXPOSURE_PATH),
-            };
             let source_display = crate::output::outcome::display_path(&expected_source);
             let root_display = bound_root(&crate::output::outcome::display_path(relative_root));
             let expected_ledger_command = format!(

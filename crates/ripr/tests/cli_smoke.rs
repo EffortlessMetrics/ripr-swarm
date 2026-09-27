@@ -14977,13 +14977,26 @@ fn decode_shell_token(token: &str) -> Option<String> {
 
 #[test]
 fn decode_shell_token_inverts_the_renderer_quoting() {
-    for value in ["/tmp/plain", "/tmp/with space/repo", "/tmp/it's here", ""] {
+    // A backslash inside single quotes is literal (the renderer preserves it);
+    // only an unquoted backslash, as in the renderer's `'\''`, is an escape.
+    for value in [
+        "/tmp/plain",
+        "/tmp/with space/repo",
+        "/tmp/it's here",
+        "",
+        r"C:\repo\sub",
+        r"/tmp/back\slash it's",
+    ] {
         assert_eq!(
             decode_shell_token(&renderer_shell_arg(value)).as_deref(),
             Some(value),
             "round trip for {value:?}"
         );
     }
+    assert_eq!(
+        decode_shell_token(r"'C:\repo'"),
+        Some(r"C:\repo".to_string())
+    );
     assert_eq!(decode_shell_token("'unterminated"), None);
 }
 
