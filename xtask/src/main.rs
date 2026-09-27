@@ -6508,6 +6508,14 @@ fn finish_traceability_report(violations: &[String], advisories: &[String]) -> R
          discoverable for long-context human and agent work.",
     );
     body.push_str("\n\n");
+    body.push_str("## Scope of this result\n\n");
+    body.push_str(
+        "A pass checks the authored `[[behavior]]` entries, spec coverage, fixture spec IDs, \
+         and the file paths named by registered references. It does not enumerate Rust tests. \
+         It does not require every newly added test to appear in `.ripr/traceability.toml`. \
+         A `::symbol` suffix remains advisory and is not proof that the symbol exists, has \
+         a test role, ran, or establishes the behavior (see #2345).\n\n",
+    );
 
     if violations.is_empty() {
         body.push_str("## Violations\n\nNone detected.\n\n");
@@ -13285,9 +13293,47 @@ fn check_output_contracts() -> Result<(), String> {
                     &mut violations,
                 );
             }
+            "kind" => {
+                let producer = match value.as_str() {
+                    "python_repair_driver_binding" => {
+                        "crates/ripr/src/app/python_repair_binding.rs"
+                    }
+                    "python_repair_verification_receipt" => {
+                        "crates/ripr/src/app/python_repair_verification.rs"
+                    }
+                    "python_repair_verification_check_report" => {
+                        "xtask/src/reports/python_repair_verification.rs"
+                    }
+                    other => {
+                        violations.push(format!("unrecognized output kind `{other}`"));
+                        continue;
+                    }
+                };
+                let source = read_text_lossy(Path::new(producer))?;
+                require_contract_value(producer, &source, value, kind, &mut violations);
+                require_contract_value(
+                    "docs/OUTPUT_SCHEMA.md",
+                    &schema,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+            }
             other => violations.push(format!(
                 "policy/output_contracts.txt uses unsupported kind `{other}`"
             )),
+        }
+    }
+
+    // These producer-owned kinds are durable artifacts in the governed Python
+    // repair path. Removing a registry row must fail too, not just a bad row.
+    for value in [
+        "python_repair_driver_binding",
+        "python_repair_verification_check_report",
+        "python_repair_verification_receipt",
+    ] {
+        if !seen.contains(&format!("kind|{value}")) {
+            violations.push(format!("missing output contract entry: kind|{value}"));
         }
     }
 
