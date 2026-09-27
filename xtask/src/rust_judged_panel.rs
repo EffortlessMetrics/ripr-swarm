@@ -93,6 +93,12 @@ struct RustJudgedPanelItem {
     disposition: String,
     must_not_claim: Vec<String>,
     reason: String,
+    /// Release tier only: files the replay must opt in through
+    /// `[analysis] production_like_targets`, because the default source-role
+    /// policy skips them (e.g. `xtask/`) and the case would replay as a
+    /// silent zero. Each entry must be a file the frozen diff changes.
+    #[serde(default)]
+    production_like_targets: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -698,6 +704,11 @@ fn validate_direction_contract(
 }
 
 fn validate_seed_judgment(item: &RustJudgedPanelItem, subject: &str, violations: &mut Vec<String>) {
+    if !item.production_like_targets.is_empty() {
+        violations.push(format!(
+            "{subject}.production_like_targets: seed carries no replay configuration"
+        ));
+    }
     if matches!(item.labels.false_actionable, Nullable::Value(true))
         && matches!(item.labels.false_exposed, Nullable::Value(true))
     {
@@ -1729,6 +1740,17 @@ fn validate_release_item(
             item.anchor.file, item.anchor.line, item.diff_path
         )),
         Err(error) => violations.push(format!("{subject}.diff_path: {error}")),
+    }
+    for target in &item.production_like_targets {
+        let changed = body
+            .lines()
+            .any(|line| line.strip_prefix("+++ b/") == Some(target.as_str()));
+        if !changed {
+            violations.push(format!(
+                "{subject}.production_like_targets: `{target}` is not a file changed by `{}`",
+                item.diff_path
+            ));
+        }
     }
     // Scope authorization is explicit per row and must match the
     // repository's scope record (enforced in validate_release_scopes).
@@ -3122,6 +3144,26 @@ mod tests {
         broken["items"][0]["judged_by"] = json!([]);
         let error = release_rejection(&fixture, &broken)?;
         require_fragments(&error, &["(release-quiet-id).judged_by"])
+    }
+
+    #[test]
+    fn release_selection_binds_replay_targets_to_the_frozen_diff() -> Result<(), String> {
+        let fixture = TempFixture::new("release-targets")?;
+        let mut manifest = valid_release_manifest(&fixture)?;
+        manifest["items"][0]["production_like_targets"] = json!(["src/quiet.rs"]);
+        write_release_manifest(&fixture, &manifest)?;
+        super::check_release_selection_at(&fixture.root)?;
+        // A target the diff does not change would opt the replay into
+        // unrelated code; a prefix of a changed path is not that path.
+        manifest["items"][0]["production_like_targets"] = json!(["src/other.rs", "src/quiet"]);
+        let error = release_rejection(&fixture, &manifest)?;
+        require_fragments(
+            &error,
+            &[
+                "`src/other.rs` is not a file changed by",
+                "`src/quiet` is not a file changed by",
+            ],
+        )
     }
 
     #[test]

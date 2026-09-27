@@ -127,6 +127,10 @@ validates it and reports the acceptance floors without lowering them.
 - New rows are `selected_unjudged`: labels null and no judgment provenance.
   Adjudication belongs to
   [#3806](https://github.com/EffortlessMetrics/ripr-swarm/issues/3806).
+- `production_like_targets` names files the replay must opt in through
+  `[analysis] production_like_targets` because the default source-role policy
+  skips them (the `xtask/` cases). Each entry must be a file the frozen diff
+  changes.
 - The same behavior under two ids fails; row slices of one capture may share an
   anchor only with different directions.
 

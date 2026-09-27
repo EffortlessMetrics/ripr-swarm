@@ -12,7 +12,9 @@
     "the three should_limit rows are selected_unjudged: their expected direction is the selection claim, and #3806 adjudicates them independently",
     "mixed cases split into row-slice items; tentative slices carry their verification debt in disposition",
     "baseline counts are the round-2 capture vintage (binary @89ac42442) unless a restated count is noted",
-    "no analyzer, harness, or actionability change in this artifact"
+    "no analyzer, harness, or actionability change in this artifact",
+    "tree_identity on the ten carried cases is corrected to the real head tree (git rev-parse <head>^{tree}); ripr#1675 recorded the PR merge or squash commit there. Case identity (repository, base, head, diff digest) is unchanged",
+    "the default source-role policy skips xtask/ paths before probing, so the p1745 and p1617 rows record production_like_targets for replay; under the default config they yield zero probes and cannot test either direction"
   ],
   "required_directions": [
     "should_gap",
@@ -42,7 +44,7 @@
         "8d3ee48f"
       ],
       "operations": [
-        "fetch the listed commit ids",
+        "fetch the listed commit ids, including refs/pull/<n>/head where a head is not on the default branch",
         "materialize the listed base and head trees in a disposable checkout outside the repository",
         "read source and tests at the listed commits",
         "run the frozen #1609 candidate binary read-only against the committed diff capture"
@@ -70,7 +72,7 @@
         "c864308fc4845b133aa17f824f3af29b0e981de5"
       ],
       "operations": [
-        "fetch the listed commit ids",
+        "fetch the listed commit ids, including refs/pull/<n>/head where a head is not on the default branch",
         "materialize the listed base and head trees in a disposable checkout outside the repository",
         "read source and tests at the listed commits",
         "run the frozen #1609 candidate binary read-only against the committed diff capture"
@@ -89,7 +91,7 @@
       "repository": "EffortlessMetrics/ripr",
       "base": "16e09900",
       "head": "e4a2072b",
-      "tree_identity": "6a9b21ca",
+      "tree_identity": "a20e55fb",
       "diff_path": "metrics/rust-judged-behavior-panel/diffs/release_p1744.diff",
       "diff_sha256": "0321cac2",
       "scope_authorization": "proposed_unauthorized",
@@ -147,7 +149,7 @@
       "repository": "EffortlessMetrics/ripr",
       "base": "731ef1b5",
       "head": "2ad07c0b",
-      "tree_identity": "58756ee2",
+      "tree_identity": "c1a18451",
       "diff_path": "metrics/rust-judged-behavior-panel/diffs/release_p1731.diff",
       "diff_sha256": "74a0b856",
       "scope_authorization": "proposed_unauthorized",
@@ -205,7 +207,7 @@
       "repository": "EffortlessMetrics/ripr",
       "base": "58756ee2",
       "head": "d89980a5",
-      "tree_identity": "60024a86",
+      "tree_identity": "85d5a24a",
       "diff_path": "metrics/rust-judged-behavior-panel/diffs/release_p1732.diff",
       "diff_sha256": "86c2809b",
       "scope_authorization": "proposed_unauthorized",
@@ -263,7 +265,7 @@
       "repository": "EffortlessMetrics/ripr",
       "base": "84f72e08",
       "head": "3b5b74fe",
-      "tree_identity": "16e09900",
+      "tree_identity": "7234bb63",
       "diff_path": "metrics/rust-judged-behavior-panel/diffs/release_p1741.diff",
       "diff_sha256": "f38bfdc1",
       "scope_authorization": "proposed_unauthorized",
@@ -321,7 +323,7 @@
       "repository": "EffortlessMetrics/ripr",
       "base": "84f72e08",
       "head": "3b5b74fe",
-      "tree_identity": "16e09900",
+      "tree_identity": "7234bb63",
       "diff_path": "metrics/rust-judged-behavior-panel/diffs/release_p1741.diff",
       "diff_sha256": "f38bfdc1",
       "scope_authorization": "proposed_unauthorized",
@@ -379,7 +381,7 @@
       "repository": "EffortlessMetrics/ripr",
       "base": "6a9b21ca",
       "head": "5d8c9253",
-      "tree_identity": "89ac4244",
+      "tree_identity": "d5a5a44a",
       "diff_path": "metrics/rust-judged-behavior-panel/diffs/release_p1745.diff",
       "diff_sha256": "4e7c99a7",
       "scope_authorization": "proposed_unauthorized",
@@ -430,14 +432,15 @@
         "Tentative: per-row sink match still to verify at freeze; do not treat as firm.",
         "Do not extend this quiet hypothesis to the triple-gap or catalog slices."
       ],
-      "reason": "21 of 46 first-observers are same-file windows_advisory tests including the two same-diff tests. Tentative should_stay_quiet; freeze must verify per-row sink match. Known pressure: the same wedge assertions rate weak under the oracle-strength taxonomy (see #1751 blast-radius note), so a strict single-oracle binding view withholds these rows — recorded here as the hypothesis under test, not as fact."
+      "reason": "21 of 46 first-observers are same-file windows_advisory tests including the two same-diff tests. Tentative should_stay_quiet; freeze must verify per-row sink match. Known pressure: the same wedge assertions rate weak under the oracle-strength taxonomy (see #1751 blast-radius note), so a strict single-oracle binding view withholds these rows — recorded here as the hypothesis under test, not as fact.",
+      "production_like_targets": ["xtask/src/command.rs", "xtask/src/windows_advisory.rs"]
     },
     {
       "id": "p1745-triple-rows-gap",
       "repository": "EffortlessMetrics/ripr",
       "base": "6a9b21ca",
       "head": "5d8c9253",
-      "tree_identity": "89ac4244",
+      "tree_identity": "d5a5a44a",
       "diff_path": "metrics/rust-judged-behavior-panel/diffs/release_p1745.diff",
       "diff_sha256": "4e7c99a7",
       "scope_authorization": "proposed_unauthorized",
@@ -489,14 +492,15 @@
         "grep-count reachability (0 references) distinguishes these rows; do not generalize the technique beyond zero-vocabulary cases.",
         "Slice-level should_gap is a leaning until the third row's driver adjudication completes at freeze; only the two demoted rows are confirmed false-exposed."
       ],
-      "reason": "Rows return_value:02424e3e (none-strength oracle) and call_deletion:07e82ab8/9778b858 (weak_token_substring/low observer a_conditional_issue_may_not_name_two_destinations): zero references to windows_advisory/wedge/nofeatures in all observer files. Driver restatement demoted 2 of 3 post-#1747. Confirmed false-exposed on the demoted rows; graduation-bound for the honesty corpus. Leaning should_gap for the slice; tentative pending the third row's driver adjudication at freeze."
+      "reason": "Rows return_value:02424e3e (none-strength oracle) and call_deletion:07e82ab8/9778b858 (weak_token_substring/low observer a_conditional_issue_may_not_name_two_destinations): zero references to windows_advisory/wedge/nofeatures in all observer files. Driver restatement demoted 2 of 3 post-#1747. Confirmed false-exposed on the demoted rows; graduation-bound for the honesty corpus. Leaning should_gap for the slice; tentative pending the third row's driver adjudication at freeze.",
+      "production_like_targets": ["xtask/src/command.rs", "xtask/src/windows_advisory.rs"]
     },
     {
       "id": "p1745-catalog-row-quiet",
       "repository": "EffortlessMetrics/ripr",
       "base": "6a9b21ca",
       "head": "5d8c9253",
-      "tree_identity": "89ac4244",
+      "tree_identity": "d5a5a44a",
       "diff_path": "metrics/rust-judged-behavior-panel/diffs/release_p1745.diff",
       "diff_sha256": "4e7c99a7",
       "scope_authorization": "proposed_unauthorized",
@@ -548,14 +552,15 @@
         "Entity binding is not specificity: the same-entity driver does not discriminate the wording.",
         "Retain weak; no repair. The residual class is tracked in EffortlessMetrics/ripr#1752 item 3."
       ],
-      "reason": "Same entity (catalog), structural-consistency oracle: a wording change preserving consistency passes. Post-#1751 the replica withholds at weakly_exposed via delta-token confirmation. Expected: stay quiet (weak), no repair."
+      "reason": "Same entity (catalog), structural-consistency oracle: a wording change preserving consistency passes. Post-#1751 the replica withholds at weakly_exposed via delta-token confirmation. Expected: stay quiet (weak), no repair.",
+      "production_like_targets": ["xtask/src/command.rs", "xtask/src/windows_advisory.rs"]
     },
     {
       "id": "p1706-helper-rows-quiet",
       "repository": "EffortlessMetrics/ripr",
       "base": "64605f5a",
       "head": "174ad2e0",
-      "tree_identity": "a56d95e6",
+      "tree_identity": "a7de1eec",
       "diff_path": "metrics/rust-judged-behavior-panel/diffs/release_p1706.diff",
       "diff_sha256": "b0ee1508",
       "scope_authorization": "proposed_unauthorized",
@@ -613,7 +618,7 @@
       "repository": "EffortlessMetrics/ripr",
       "base": "64605f5a",
       "head": "174ad2e0",
-      "tree_identity": "a56d95e6",
+      "tree_identity": "a7de1eec",
       "diff_path": "metrics/rust-judged-behavior-panel/diffs/release_p1706.diff",
       "diff_sha256": "b0ee1508",
       "scope_authorization": "proposed_unauthorized",
@@ -671,7 +676,7 @@
       "repository": "EffortlessMetrics/ripr",
       "base": "b04fbf4b",
       "head": "1617690d",
-      "tree_identity": "64605f5a",
+      "tree_identity": "c96b55a9",
       "diff_path": "metrics/rust-judged-behavior-panel/diffs/release_p1705.diff",
       "diff_sha256": "76810bc1",
       "scope_authorization": "proposed_unauthorized",
@@ -729,7 +734,7 @@
       "repository": "EffortlessMetrics/ripr",
       "base": "b04fbf4b",
       "head": "1617690d",
-      "tree_identity": "64605f5a",
+      "tree_identity": "c96b55a9",
       "diff_path": "metrics/rust-judged-behavior-panel/diffs/release_p1705.diff",
       "diff_sha256": "76810bc1",
       "scope_authorization": "proposed_unauthorized",
@@ -787,7 +792,7 @@
       "repository": "EffortlessMetrics/ripr",
       "base": "b04fbf4b",
       "head": "1617690d",
-      "tree_identity": "64605f5a",
+      "tree_identity": "c96b55a9",
       "diff_path": "metrics/rust-judged-behavior-panel/diffs/release_p1705.diff",
       "diff_sha256": "76810bc1",
       "scope_authorization": "proposed_unauthorized",
@@ -845,7 +850,7 @@
       "repository": "EffortlessMetrics/ripr",
       "base": "643108bb",
       "head": "8d3ee48f",
-      "tree_identity": "b04fbf4b",
+      "tree_identity": "70597676",
       "diff_path": "metrics/rust-judged-behavior-panel/diffs/release_p1617.diff",
       "diff_sha256": "8411bf69",
       "scope_authorization": "proposed_unauthorized",
@@ -897,14 +902,15 @@
         "Same owner plus exact oracle discriminates THIS wiring change; do not extend to the dispatch-arm rows.",
         "Catalog-alignment is structural here; no runtime control was run for these rows."
       ],
-      "reason": "2 command.rs return_value rows credited to the catalog-acceptance test (direct_owner_call/high, strong): same owner, exact oracle that fails on a missing/wrong entry. Correct exposure; retain, no repair."
+      "reason": "2 command.rs return_value rows credited to the catalog-acceptance test (direct_owner_call/high, strong): same owner, exact oracle that fails on a missing/wrong entry. Correct exposure; retain, no repair.",
+      "production_like_targets": ["xtask/src/command.rs", "xtask/src/dispatch.rs", "xtask/src/main.rs", "xtask/src/reports/mod.rs", "xtask/src/reports/source_promotion_network_policy_resolution.rs"]
     },
     {
       "id": "p1617-dispatch-rows-gap",
       "repository": "EffortlessMetrics/ripr",
       "base": "643108bb",
       "head": "8d3ee48f",
-      "tree_identity": "b04fbf4b",
+      "tree_identity": "70597676",
       "diff_path": "metrics/rust-judged-behavior-panel/diffs/release_p1617.diff",
       "diff_sha256": "8411bf69",
       "scope_authorization": "proposed_unauthorized",
@@ -955,14 +961,15 @@
         "Dispatcher-exercising is not arm-exercising: executing the dispatcher never takes the new arm.",
         "Flagged for freeze-pass: run one dispatch-arm removal control for uniform control coverage."
       ],
-      "reason": "Remaining 8 exposed rows carry only weak_token_substring/low observers (xtask tests.rs generically, verification_contracts, release files). None reaches the dispatch arm or module wiring, and the discriminating same-diff module tests do not match at all. Leaning should_gap; tentative pending the removal control."
+      "reason": "Remaining 8 exposed rows carry only weak_token_substring/low observers (xtask tests.rs generically, verification_contracts, release files). None reaches the dispatch arm or module wiring, and the discriminating same-diff module tests do not match at all. Leaning should_gap; tentative pending the removal control.",
+      "production_like_targets": ["xtask/src/command.rs", "xtask/src/dispatch.rs", "xtask/src/main.rs", "xtask/src/reports/mod.rs", "xtask/src/reports/source_promotion_network_policy_resolution.rs"]
     },
     {
       "id": "s3759-match-arm-quiet",
       "repository": "EffortlessMetrics/ripr-swarm",
       "base": "8a67d68b",
       "head": "289158f1",
-      "tree_identity": "6edc2782",
+      "tree_identity": "efff2f56",
       "diff_path": "metrics/rust-judged-behavior-panel/diffs/release_s3759.diff",
       "diff_sha256": "195da32a",
       "scope_authorization": "proposed_unauthorized",
@@ -1020,7 +1027,7 @@
       "repository": "EffortlessMetrics/ripr-swarm",
       "base": "bb879c6c",
       "head": "745402ab",
-      "tree_identity": "58cfeed0",
+      "tree_identity": "839532cf",
       "diff_path": "metrics/rust-judged-behavior-panel/diffs/release_s3755.diff",
       "diff_sha256": "73f39cff",
       "scope_authorization": "proposed_unauthorized",
@@ -1078,7 +1085,7 @@
       "repository": "EffortlessMetrics/ripr-swarm",
       "base": "bb879c6c",
       "head": "745402ab",
-      "tree_identity": "58cfeed0",
+      "tree_identity": "839532cf",
       "diff_path": "metrics/rust-judged-behavior-panel/diffs/release_s3755.diff",
       "diff_sha256": "73f39cff",
       "scope_authorization": "proposed_unauthorized",
