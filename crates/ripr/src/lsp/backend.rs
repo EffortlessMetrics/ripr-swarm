@@ -6878,6 +6878,10 @@ fn gap_record_matches(record: &GapRecord, gap_id: &str) -> bool {
 }
 
 fn evidence_context_packet(snapshot: &AnalysisSnapshot, entry: &ClassifiedSeam) -> LSPAny {
+    // #4001/#3999: loop commands bind the snapshot's selected workspace root,
+    // not the language-server process working directory; the packet's
+    // `root` field stays the portable role.
+    let root = loop_commands::bound_root(&snapshot.root.to_string_lossy());
     let seam = &entry.seam;
     let evidence = &entry.evidence;
     let seam_id = seam.id().as_str();
@@ -6948,31 +6952,31 @@ fn evidence_context_packet(snapshot: &AnalysisSnapshot, entry: &ClassifiedSeam) 
         // The repair start only for a seam `agent repair` would accept (the
         // fail-closed repair-packet flip, RIPR-SPEC-0087 §8, plus a
         // test-surface target); `null` otherwise (#3906).
-        "repair_command": repair_start_command_for(entry),
+        "repair_command": repair_start_command_for(entry, &root),
         "agent_packet_command": loop_commands::agent_packet_command(
-            ".",
+            &root,
             seam_id,
             loop_commands::EDITOR_AGENT_PACKET_ARTIFACT,
         ),
         "agent_brief_command": loop_commands::agent_brief_command(
-            ".",
+            &root,
             seam_id,
             loop_commands::EDITOR_AGENT_BRIEF_ARTIFACT,
         ),
         "after_snapshot_command": loop_commands::check_repo_exposure_command_with_base(
-            ".",
+            &root,
             snapshot.base.as_deref(),
             snapshot.mode.as_str(),
             loop_commands::PILOT_AFTER_SNAPSHOT_ARTIFACT,
         ),
         "verify_command": loop_commands::agent_verify_command(
-            ".",
+            &root,
             loop_commands::PILOT_BEFORE_SNAPSHOT_ARTIFACT,
             loop_commands::PILOT_AFTER_SNAPSHOT_ARTIFACT,
             Some(loop_commands::EDITOR_AGENT_VERIFY_ARTIFACT),
         ),
         "receipt_command": loop_commands::agent_receipt_command(
-            ".",
+            &root,
             loop_commands::EDITOR_AGENT_VERIFY_ARTIFACT,
             seam_id,
             Some(loop_commands::EDITOR_AGENT_RECEIPT_ARTIFACT),

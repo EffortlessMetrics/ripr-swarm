@@ -5,6 +5,7 @@ use crate::output::receipt_write::receipt_write_command;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 const SCHEMA_VERSION: &str = "0.1";
 const REPORT_KIND: &str = "gap_decision_ledger";
@@ -192,7 +193,7 @@ where
 /// report-regeneration routes gain their typed specs at read time — a pure
 /// enrichment; records whose routes are not canonical keep empty typed
 /// collections and stay legacy-string-only.
-fn recover_regeneration_command_specs(record: &mut GapRecord) {
+fn recover_regeneration_command_specs(record: &mut GapRecord, selected_root: &Path) {
     let already_typed = record
         .command_specs
         .as_ref()
@@ -203,7 +204,10 @@ fn recover_regeneration_command_specs(record: &mut GapRecord) {
     let mut recovered = Vec::new();
     for display in &record.regeneration_commands {
         if let Some(spec) =
-            crate::agent::command_specs::report_regeneration_command_spec_from_display(display)
+            crate::agent::command_specs::report_regeneration_command_spec_from_display(
+                display,
+                selected_root,
+            )
         {
             recovered.push(spec);
         }
@@ -437,7 +441,7 @@ pub(crate) fn build_gap_decision_ledger_report(
     // every downstream surface (LSP projections, first-pr, review packets)
     // sees the typed form without any upstream emitter change.
     for record in &mut records {
-        recover_regeneration_command_specs(record);
+        recover_regeneration_command_specs(record, Path::new(&input.root));
     }
 
     for record in &records {
@@ -670,9 +674,16 @@ pub(crate) fn parse_gap_record_source_json(
     // legacy string-only records with the typed regeneration specs, so the
     // LSP loaders (diagnostics/backend) see the typed form too. The
     // enrichment is idempotent: a record already carrying typed
-    // regeneration specs is left untouched.
+    // regeneration specs is left untouched. A persisted ledger carries no
+    // selected-root authority of its own (its `root` field is producer text,
+    // not a consumer selection), so a display bound to a concrete root gains
+    // a typed spec here only when that root is the reading process's
+    // directory; any other bound root stays legacy-string-only (#3999).
     for record in &mut records {
-        recover_regeneration_command_specs(record);
+        recover_regeneration_command_specs(
+            record,
+            Path::new(crate::agent::command_specs::PORTABLE_ROOT),
+        );
     }
     Ok(ParsedGapRecordSource {
         root,
@@ -6011,7 +6022,7 @@ mod tests {
     #[test]
     fn regeneration_collection_shares_object_or_array_contract() -> Result<(), String> {
         let spec = crate::agent::command_specs::report_regeneration_command_spec_from_display(
-            "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md",
+            "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md", std::path::Path::new(".")
         )
         .ok_or("canonical gap-ledger route was not recoverable")?;
         // Null collection deserializes to empty.
@@ -6151,7 +6162,7 @@ mod tests {
         );
         let mut producer_spec =
             crate::agent::command_specs::report_regeneration_command_spec_from_display(
-                "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md",
+                "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md", std::path::Path::new(".")
             )
             .ok_or("canonical gap-ledger route was not recoverable")?;
         producer_spec.command_id = "ripr:producer:gap-ledger".to_string();
@@ -6189,6 +6200,7 @@ mod tests {
     -> Result<(), String> {
         let spec = crate::agent::command_specs::report_regeneration_command_spec_from_display(
             "ripr check --root . --mode instant --format repo-exposure-json > repo.json",
+            std::path::Path::new("."),
         )
         .ok_or("canonical repo-exposure route was not recoverable")?;
         let base = serde_json::json!({

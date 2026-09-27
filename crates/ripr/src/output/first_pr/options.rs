@@ -1,3 +1,4 @@
+use crate::agent::loop_commands::bound_root;
 use crate::cli::unknown_argument;
 use std::path::PathBuf;
 
@@ -25,6 +26,16 @@ pub(super) struct FirstPrOptions {
     pub(super) preflight: bool,
     /// Test-only ceiling for `GIT_CEILING_DIRECTORIES`; `None` in production.
     pub(crate) git_ceiling: Option<PathBuf>,
+}
+
+impl FirstPrOptions {
+    /// The selected root bound once for product-generated commands (#3999):
+    /// a relative `--root` resolves against this process's working directory,
+    /// the same directory `repo_root` resolved it against, so a pasted command
+    /// analyzes and writes the selected repository from any directory.
+    pub(super) fn command_root(&self) -> String {
+        bound_root(&self.root)
+    }
 }
 
 impl Default for FirstPrOptions {

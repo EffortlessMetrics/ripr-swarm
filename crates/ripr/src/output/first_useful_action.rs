@@ -91,7 +91,10 @@ fn stale_report(
         ],
         None,
         ActionCommands {
-            status: Some(loop_commands::agent_status_command(&input.root, None)),
+            status: Some(loop_commands::agent_status_command(
+                &command_root(input),
+                None,
+            )),
             ..ActionCommands::default()
         },
         evidence(input, "unknown"),
@@ -1510,35 +1513,35 @@ fn seam_commands(input: &FirstUsefulActionInput, parsed: &ParsedSources) -> Acti
     ActionCommands {
         context_packet: Some(format!(
             "ripr agent packet --root {} --seam-id {} --json",
-            loop_commands::shell_arg(&input.root),
+            loop_commands::shell_arg(&command_root(input)),
             loop_commands::shell_arg(&seam_id)
         )),
         after_snapshot: Some(loop_commands::check_repo_exposure_command(
-            &input.root,
+            &command_root(input),
             "draft",
             loop_commands::WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
         )),
         verify: Some(loop_commands::agent_verify_command(
-            &input.root,
+            &command_root(input),
             loop_commands::WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
             loop_commands::WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
             None,
         )),
         receipt: Some(loop_commands::agent_receipt_command(
-            &input.root,
+            &command_root(input),
             loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT,
             &seam_id,
             None,
         )),
         command_specs: Some(ActionCommandSpecs {
             verify: Some(command_specs::agent_verify_command_spec(
-                &input.root,
+                &command_root(input),
                 loop_commands::WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
                 loop_commands::WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
                 None,
             )),
             receipt: Some(command_specs::agent_receipt_command_spec(
-                &input.root,
+                &command_root(input),
                 loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT,
                 &seam_id,
                 None,
@@ -1550,10 +1553,17 @@ fn seam_commands(input: &FirstUsefulActionInput, parsed: &ParsedSources) -> Acti
     }
 }
 
+/// The selected root bound once for product-generated commands (#4000): a
+/// relative `--root` resolves against the invocation working directory, the
+/// same directory the report inputs were resolved against.
+fn command_root(input: &FirstUsefulActionInput) -> String {
+    loop_commands::bound_root(&input.root)
+}
+
 fn receipt_command(input: &FirstUsefulActionInput, parsed: &ParsedSources) -> Option<String> {
     let seam_id = selected_seam_id(parsed)?;
     Some(loop_commands::agent_receipt_command(
-        &input.root,
+        &command_root(input),
         loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT,
         &seam_id,
         None,

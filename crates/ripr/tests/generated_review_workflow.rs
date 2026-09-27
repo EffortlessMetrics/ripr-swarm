@@ -425,6 +425,100 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
     Ok(())
 }
 
+/// #3937/#3999/#4000: the seam-selection command `agent status` generates
+/// in repository A, pasted into Bash from an unrelated directory B, analyzes
+/// and writes A, and the next status step reads what it wrote. B holds a
+/// decoy checkout under the same relative name, so a command that re-resolved
+/// the relative `--root` at the paste site would analyze the decoy while its
+/// anchored `--out` still wrote under A — the split this binding removes.
+#[cfg(unix)]
+#[test]
+fn generated_status_command_runs_from_a_foreign_working_directory() -> Result<(), Box<dyn Error>> {
+    for tool in ["bash", "git"] {
+        if !replay::tool_available(tool) {
+            if std::env::var_os("GITHUB_ACTIONS").is_some() {
+                return Err(format!("`{tool}` is not on PATH under GitHub Actions").into());
+            }
+            eprintln!(
+                "SKIPPED generated_status_command_runs_from_a_foreign_working_directory: `{tool}` is not on PATH"
+            );
+            return Ok(());
+        }
+    }
+    let base = replay::unique_temp_dir("rooted-foreign-cwd")?;
+    let parent = base.join("sélected parent");
+    let repo = parent.join("repo root");
+    let foreign = base.join("foreign cwd");
+    let decoy = foreign.join("repo root");
+    replay::write_pr_fixture(&repo)?;
+    replay::write_pr_fixture(&decoy)?;
+
+    // Render: status runs from A's parent with a relative --root, the way a
+    // user in a monorepo parent directory would select the repository.
+    let status = |dir: &std::path::Path| -> Result<serde_json::Value, Box<dyn Error>> {
+        let output = replay::ripr(dir, &["agent", "status", "--root", "repo root", "--json"])?;
+        assert!(
+            output.status.success(),
+            "agent status failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(serde_json::from_slice(&output.stdout)?)
+    };
+    let before = status(&parent)?;
+    assert_eq!(before["next_command"]["step"], "select_seam", "{before}");
+    let command = before["next_command"]["command"]
+        .as_str()
+        .ok_or("status next command is not a string")?
+        .to_string();
+
+    // Paste: run the exact generated text from B.
+    let run = replay::bash(&foreign, &command, &[])?;
+    assert!(
+        run.status.success(),
+        "generated command failed from a foreign directory: {command}\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    // Placement: the artifacts land under A and nothing lands in B.
+    let pilot_dir = repo.join("target/ripr/pilot");
+    let snapshot: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(pilot_dir.join("repo-exposure.json"))?)?;
+    let analyzed_root = snapshot
+        .pointer("/artifact/repository/root")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("repo-exposure snapshot names no repository root")?;
+    // Subject: the snapshot analyzed A, not B's decoy of the same name.
+    assert_eq!(
+        std::path::Path::new(analyzed_root).canonicalize()?,
+        repo.canonicalize()?,
+        "{command} analyzed the wrong repository"
+    );
+    assert!(pilot_dir.join("pilot-summary.json").is_file());
+    assert!(
+        !foreign.join("target").exists() && !decoy.join("target").exists(),
+        "{command} wrote under the paste directory"
+    );
+
+    // Consumption: the next status step reads the artifact the pasted
+    // command wrote and routes to the repair start bound to A.
+    let after = status(&parent)?;
+    assert_eq!(
+        after["next_command"]["step"], "repair_attempt_before",
+        "{after}"
+    );
+    let repair = after["next_command"]["command"]
+        .as_str()
+        .ok_or("repair command is not a string")?;
+    assert!(
+        repair.contains(&format!("--root '{}'", repo.canonicalize()?.display())),
+        "repair start must bind A: {repair}"
+    );
+
+    fs::remove_dir_all(base)?;
+    Ok(())
+}
+
 #[cfg(unix)]
 mod replay {
     use std::collections::BTreeMap;

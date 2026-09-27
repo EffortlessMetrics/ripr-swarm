@@ -2165,7 +2165,10 @@ fn first_action_cli_writes_actionable_report() -> Result<(), Box<dyn std::error:
     );
     assert_eq!(
         json_pointer_str(&report, "/commands/verify")?,
-        "ripr agent verify --root fixtures/boundary_gap/input --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
+        format!(
+            "ripr agent verify --root {}/fixtures/boundary_gap/input --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json",
+            workspace_root().to_string_lossy().replace('\\', "/")
+        )
     );
     assert_eq!(
         json_pointer_str(&report, "/target/suggested_test_name")?,
@@ -3656,7 +3659,11 @@ fn agent_start_writes_source_edit_free_workflow_packet() -> Result<(), Box<dyn s
     assert!(workflow_json.contains(r#""source_edits": false"#));
     assert!(workflow_json.contains(r#""llm_api_calls": false"#));
     assert!(workflow_json.contains(seam_id));
-    assert!(workflow_json.contains("ripr agent verify --root fixtures/boundary_gap/input"));
+    // #4000: generated commands bind the selected root the invocation resolved.
+    assert!(workflow_json.contains(&format!(
+        "ripr agent verify --root {}/fixtures/boundary_gap/input",
+        workspace_root().to_string_lossy().replace('\\', "/")
+    )));
     assert!(commands_md.contains("# RIPR Agent Workflow"));
     assert!(commands_md.contains("Does not edit source files."));
     assert!(commands_md.contains("Does not call an LLM API."));
@@ -13411,19 +13418,24 @@ fn agent_status_routes_a_fresh_workspace_to_pilot() -> Result<(), Box<dyn std::e
     assert_eq!(step, "select_seam", "{report:#}");
     assert_installed_command(&command)?;
     let root_display = root.to_string_lossy().replace('\\', "/");
-    assert_eq!(command, format!("ripr pilot --root '{root_display}'"));
+    // #4000: pilot resolves a relative `--out` against the working
+    // directory, so the route names the pilot directory under the root.
+    assert_eq!(
+        command,
+        format!("ripr pilot --root '{root_display}' --out '{root_display}/target/ripr/pilot'")
+    );
     assert!(!command.contains('>'), "no redirect expected: {command}");
     assert!(!root.join("target/ripr/workflow").exists());
     assert_eq!(report["status"], "incomplete");
 
-    // The route runs: pilot accepts the root and writes its summary. Pilot's
-    // default `--out` is relative to the working directory, so run it from
-    // the workspace the way a user following `--root .` would.
+    // The route runs: pilot accepts the root and writes its summary under
+    // the named `--out`.
     let root_arg = root.to_string_lossy().into_owned();
+    let out_arg = format!("{root_display}/target/ripr/pilot");
     let pilot = run_command(
         env!("CARGO_BIN_EXE_ripr"),
         Some(&root),
-        &["pilot", "--root", &root_arg],
+        &["pilot", "--root", &root_arg, "--out", &out_arg],
     )?;
     assert_success(&pilot);
     assert!(root.join("target/ripr/pilot/pilot-summary.json").is_file());

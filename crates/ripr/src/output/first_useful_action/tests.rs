@@ -48,7 +48,7 @@ fn first_useful_action_matches_actionable_fixture() -> Result<(), String> {
         read_file(&base.join("first-useful-action.json"))?.trim_end()
     );
     assert_eq!(
-        render_first_useful_action_markdown(&report),
+        project_cwd_text(&render_first_useful_action_markdown(&report)),
         read_file(&base.join("first-useful-action.md"))?
     );
     Ok(())

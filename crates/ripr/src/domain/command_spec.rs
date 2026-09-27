@@ -189,6 +189,22 @@ impl std::error::Error for CommandSpecValidationError {}
 impl CommandSpec {
     pub const SCHEMA_VERSION: &'static str = "1";
 
+    /// True when both specs describe the same executable route: every field
+    /// except the human display (#3999). A current producer's display names
+    /// the concrete selected checkout root, so two equivalent checkouts — or
+    /// a portable `--root .` display and its root-bound rendering — share
+    /// one route while their displays differ. The display is never execution
+    /// authority (see the module docs), so route identity excludes it.
+    pub(crate) fn same_route(&self, other: &Self) -> bool {
+        Self {
+            display: String::new(),
+            ..self.clone()
+        } == Self {
+            display: String::new(),
+            ..other.clone()
+        }
+    }
+
     /// Validate fields that must be true before a producer-owned route can be
     /// advertised to a machine consumer. This does not check executable
     /// availability and does not authorize process execution.

@@ -1,7 +1,7 @@
 use crate::agent::artifact::{
     ArtifactCurrentness, RepoExposureArtifactContext, validate_repo_exposure_artifact,
 };
-use crate::agent::loop_commands::{check_repo_exposure_command, shell_arg};
+use crate::agent::loop_commands::{bound_root, check_repo_exposure_command, shell_arg};
 use crate::output::gap_decision_ledger::{
     self, GapDecisionLedgerInput, GapDecisionLedgerSourceKind, GapRecord,
 };
@@ -388,7 +388,7 @@ fn resolve_declared_path(root: &Path, declared: &str) -> PathBuf {
 }
 
 fn refresh_commands(root: &Path, gap_ledger_path: &Path, source_path: Option<&str>) -> Vec<String> {
-    let root_display = crate::output::outcome::display_path(root);
+    let root_display = bound_root(&crate::output::outcome::display_path(root));
     let source_path = source_path
         .map(|path| resolve_declared_path(root, path))
         .filter(|path| path.starts_with(root))

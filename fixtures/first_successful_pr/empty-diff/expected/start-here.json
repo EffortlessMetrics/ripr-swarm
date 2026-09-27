@@ -11,14 +11,14 @@
       "id": "first_action",
       "label": "First useful action",
       "path": "target/ripr/reports/first-useful-action.json",
-      "regeneration_command": "ripr first-action --root fixtures/first_successful_pr/empty-diff --gap-ledger inputs/reports/gap-decision-ledger.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md",
+      "regeneration_command": "ripr first-action --root <cwd>/fixtures/first_successful_pr/empty-diff --gap-ledger inputs/reports/gap-decision-ledger.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md",
       "status": "missing"
     },
     {
       "id": "review_comments",
       "label": "PR repair cards",
       "path": "target/ripr/review/comments.json",
-      "regeneration_command": "ripr review-comments --root fixtures/first_successful_pr/empty-diff --base origin/main --head HEAD --out target/ripr/review/comments.json",
+      "regeneration_command": "ripr review-comments --root <cwd>/fixtures/first_successful_pr/empty-diff --base origin/main --head HEAD --out target/ripr/review/comments.json",
       "status": "missing"
     },
     {

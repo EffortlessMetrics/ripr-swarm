@@ -35,32 +35,70 @@ pub(crate) const WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT: &str =
 pub(crate) fn agent_start_command(root: &str, seam_id: &str, out_dir: &str) -> String {
     format!(
         "ripr agent start --root {} --seam-id {} --out {}",
-        shell_arg(root),
+        shell_arg(&root_display(root)),
         shell_arg(seam_id),
         shell_arg(out_dir)
     )
 }
 
-/// Render a shell-redirect target rooted at `--root` (issue #3872): the
-/// target is absolute with stable separators, so a pasted funnel command
-/// reproduces the validated write location from any working directory under
-/// both shells and both .NET/provider resolution rules. An already absolute
-/// target passes through (normalized); a relative target joins the --root
-/// value, resolved against the renderer process working directory exactly as
-/// the `--root` argument itself resolves. `--root` values are left untouched.
+/// Bind a producer's selected repository root for generated commands
+/// (#3999).
+///
+/// Product-generated copy/paste commands must analyze the repository that was
+/// selected when they were rendered, not the directory they are later pasted
+/// into. A producer that renders copy/paste guidance calls this once, at the
+/// boundary that selected the repository, and passes the result to the
+/// builders below: an absolute root passes through; a relative root is
+/// resolved exactly once against the producing process working directory —
+/// the same directory the producer's own `--root` argument resolved against.
+/// The result is one absolute, lexically cleaned path with stable
+/// separators, and the redirect anchor ([`anchored_redirect_target`]) uses
+/// the same rule, so the analyzed subject and the written artifact cannot
+/// name different repositories. User-authored `--root .` keeps its ordinary
+/// meaning.
+pub(crate) fn bound_root(root: &str) -> String {
+    display_path(&bound_root_path(Path::new(root)))
+}
+
+/// [`bound_root`] as a path: the one resolution rule shared by redirect
+/// anchoring and typed recovery (`agent::command_specs`).
+pub(crate) fn bound_root_path(root_path: &Path) -> PathBuf {
+    if root_path.is_absolute() {
+        lexically_clean(root_path)
+    } else {
+        let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        lexically_clean(&base.join(root_path))
+    }
+}
+
+/// Render a builder's `--root` value. An absolute root is a selected
+/// repository a producer bound with [`bound_root`] and renders cleaned with
+/// stable separators. A relative root is rendered verbatim: `.` is the
+/// portable route an artifact-internal record carries (its typed
+/// `CommandSpec` runs with the working directory at its own repository
+/// root), and a builder never re-resolves it against the renderer's working
+/// directory (#3999).
+pub(crate) fn root_display(root: &str) -> String {
+    let root_path = Path::new(root);
+    if root_path.is_absolute() {
+        display_path(&lexically_clean(root_path))
+    } else {
+        root.to_string()
+    }
+}
+
+/// Render a shell-redirect target rooted at the bound `--root` (issues
+/// #3872, #3999): the target is absolute with stable separators, so a pasted
+/// funnel command reproduces the validated write location from any working
+/// directory under both shells and both .NET/provider resolution rules. An
+/// already absolute target passes through (normalized); a relative target
+/// joins [`bound_root`].
 pub(crate) fn anchored_redirect_target(root: &str, out_path: &str) -> String {
     let out = Path::new(out_path);
     if out.is_absolute() {
         return display_path(&lexically_clean(out));
     }
-    let root_path = Path::new(root);
-    let joined = if root_path.is_absolute() {
-        root_path.join(out)
-    } else {
-        let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        base.join(root_path).join(out)
-    };
-    display_path(&lexically_clean(&joined))
+    display_path(&lexically_clean(&Path::new(&bound_root(root)).join(out)))
 }
 
 /// Drop `.` segments and resolve `..` lexically (no filesystem I/O: the
@@ -108,7 +146,7 @@ pub(crate) fn check_repo_exposure_command_with_base(
         .unwrap_or_default();
     format!(
         "ripr check --root {}{} --mode {} --format repo-exposure-json > {}",
-        shell_arg(root),
+        shell_arg(&root_display(root)),
         base_arg,
         shell_arg(mode),
         shell_arg(&anchored_redirect_target(root, out_path))
@@ -118,7 +156,7 @@ pub(crate) fn check_repo_exposure_command_with_base(
 pub(crate) fn agent_seam_packets_command(root: &str, mode: &str, out_path: &str) -> String {
     format!(
         "ripr check --root {} --mode {} --format agent-seam-packets-json > {}",
-        shell_arg(root),
+        shell_arg(&root_display(root)),
         shell_arg(mode),
         shell_arg(&anchored_redirect_target(root, out_path))
     )
@@ -127,7 +165,7 @@ pub(crate) fn agent_seam_packets_command(root: &str, mode: &str, out_path: &str)
 pub(crate) fn check_analysis_outcome_command(root: &str, mode: &str, out_path: &str) -> String {
     format!(
         "ripr check --root {} --mode {} --format json > {}",
-        shell_arg(root),
+        shell_arg(&root_display(root)),
         shell_arg(mode),
         shell_arg(&anchored_redirect_target(root, out_path))
     )
@@ -136,7 +174,7 @@ pub(crate) fn check_analysis_outcome_command(root: &str, mode: &str, out_path: &
 pub(crate) fn agent_packet_command(root: &str, seam_id: &str, out_path: &str) -> String {
     format!(
         "ripr agent packet --root {} --seam-id {} --json > {}",
-        shell_arg(root),
+        shell_arg(&root_display(root)),
         shell_arg(seam_id),
         shell_arg(&anchored_redirect_target(root, out_path))
     )
@@ -145,7 +183,7 @@ pub(crate) fn agent_packet_command(root: &str, seam_id: &str, out_path: &str) ->
 pub(crate) fn agent_brief_command(root: &str, seam_id: &str, out_path: &str) -> String {
     format!(
         "ripr agent brief --root {} --seam-id {} --json > {}",
-        shell_arg(root),
+        shell_arg(&root_display(root)),
         shell_arg(seam_id),
         shell_arg(&anchored_redirect_target(root, out_path))
     )
@@ -159,7 +197,7 @@ pub(crate) fn agent_verify_command(
 ) -> String {
     let command = format!(
         "ripr agent verify --root {} --before {} --after {} --json",
-        shell_arg(root),
+        shell_arg(&root_display(root)),
         shell_arg(before_path),
         shell_arg(after_path)
     );
@@ -174,7 +212,7 @@ pub(crate) fn agent_receipt_command(
 ) -> String {
     let command = format!(
         "ripr agent receipt --root {} --verify-json {} --seam-id {} --json",
-        shell_arg(root),
+        shell_arg(&root_display(root)),
         shell_arg(verify_json),
         shell_arg(seam_id)
     );
@@ -187,7 +225,10 @@ pub(crate) fn agent_receipt_command(
 pub(crate) fn agent_status_command(root: &str, out_path: Option<&str>) -> String {
     append_redirect(
         root,
-        format!("ripr agent status --root {} --json", shell_arg(root)),
+        format!(
+            "ripr agent status --root {} --json",
+            shell_arg(&root_display(root))
+        ),
         out_path,
     )
 }
@@ -195,7 +236,10 @@ pub(crate) fn agent_status_command(root: &str, out_path: Option<&str>) -> String
 pub(crate) fn agent_status_markdown_command(root: &str, out_path: Option<&str>) -> String {
     append_redirect(
         root,
-        format!("ripr agent status --root {}", shell_arg(root)),
+        format!(
+            "ripr agent status --root {}",
+            shell_arg(&root_display(root))
+        ),
         out_path,
     )
 }
@@ -205,7 +249,7 @@ pub(crate) fn agent_review_summary_command(root: &str, out_path: Option<&str>) -
         root,
         format!(
             "ripr agent review-summary --root {} --json",
-            shell_arg(root)
+            shell_arg(&root_display(root))
         ),
         out_path,
     )
@@ -214,7 +258,10 @@ pub(crate) fn agent_review_summary_command(root: &str, out_path: Option<&str>) -
 pub(crate) fn agent_review_summary_markdown_command(root: &str, out_path: Option<&str>) -> String {
     append_redirect(
         root,
-        format!("ripr agent review-summary --root {}", shell_arg(root)),
+        format!(
+            "ripr agent review-summary --root {}",
+            shell_arg(&root_display(root))
+        ),
         out_path,
     )
 }
@@ -353,6 +400,36 @@ mod tests {
         assert!(
             Path::new(&anchored_redirect_target(".", "target/out.json")).is_absolute(),
             "anchored target must be absolute"
+        );
+    }
+
+    /// #3999: a bound root renders as one absolute `--root` that agrees with
+    /// its redirect anchor, while a relative root stays the portable route
+    /// verbatim — the builder never resolves it against the renderer's
+    /// working directory.
+    #[test]
+    fn bound_roots_render_absolute_and_relative_roots_stay_portable() {
+        let bound = bound_root("repo root/./nested/..");
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        assert_eq!(bound, display_path(&cwd.join("repo root")));
+        assert!(Path::new(&bound).is_absolute());
+        assert_eq!(bound_root(&bound), bound, "binding is idempotent");
+        assert_eq!(
+            agent_status_command(&bound, None),
+            format!("ripr agent status --root {} --json", shell_arg(&bound))
+        );
+        assert_eq!(
+            agent_packet_command(&bound, "seam-a", "target/out.json"),
+            format!(
+                "ripr agent packet --root {} --seam-id seam-a --json > {}",
+                shell_arg(&bound),
+                shell_arg(&format!("{bound}/target/out.json"))
+            )
+        );
+        assert_eq!(
+            agent_status_command(".", None),
+            "ripr agent status --root . --json",
+            "a portable root is never resolved against the renderer directory"
         );
     }
 

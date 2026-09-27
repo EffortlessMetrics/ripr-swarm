@@ -3166,7 +3166,7 @@ mod seam_diagnostic_tests {
         }
 
         let spec = crate::agent::command_specs::report_regeneration_command_spec_from_display(
-            "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md",
+            "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md", std::path::Path::new(".")
         )
         .ok_or("canonical gap-ledger route was not recoverable")?;
         let (value, error) = regeneration_specs_payload(std::slice::from_ref(&spec));
