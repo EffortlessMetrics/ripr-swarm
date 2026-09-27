@@ -546,6 +546,14 @@ are scoped or reviewed.
   keeps its probe
   ([#4282](https://github.com/EffortlessMetrics/ripr-swarm/issues/4282)).
 
+- The CLI smoke test that copies `ripr` and runs `doctor` retries only
+  `ETXTBSY` (`ExecutableFileBusy`), up to three times. A parallel test can
+  `fork` while that copy is still open for writing, and the copy cannot be
+  executed until the child reaches `exec`. Any other error, and any process
+  that actually started, is still returned unchanged. The same bound covers
+  the other smoke test that executes a copied binary
+  ([#4296](https://github.com/EffortlessMetrics/ripr-swarm/issues/4296)).
+
 - TypeScript/JavaScript preview: a class method tested through an instance
   built outside the test body is no longer reported `no_static_path`. The
   receiver may now come from the enclosing `describe` scope, a
@@ -610,6 +618,11 @@ are scoped or reviewed.
   statements are found from the syntax tree, so `declare` used as a
   JavaScript identifier, or at the start of a template-literal line, is still
   probed.
+
+- Perl preview: with Perl enabled but no fact packet, the reason now says
+  to pass `--perl-facts <packet.json>` or configure `[perl].producer` instead
+  of citing an internal campaign issue, and the note reads "1 Perl file was
+  not analyzed".
 
 - `cargo xtask vscode-package` now reads the built VSIX and fails if it
   carries workspace build output (anything under `extension/target/`, Cargo
