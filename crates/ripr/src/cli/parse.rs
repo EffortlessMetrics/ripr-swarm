@@ -8,6 +8,22 @@ pub(crate) use format::parse_format;
 pub(crate) use mode::parse_mode;
 pub(crate) use value::expect_value;
 
+/// The parse-time conflict error for a command whose synopsis offers
+/// `[--base REV|--diff PATH]` when both flags are given explicitly (#4319).
+///
+/// The diff loader gives `--diff` precedence and never validates `--base`
+/// beside it, so both flags on one command line analyzed one input while
+/// appearing to assert the other. The phrasing follows `check`'s existing
+/// conflict errors (`commands/check.rs`): name the command and both flags,
+/// then say to pass one. Only the fresh-run path raises this; beside
+/// `--from`, both flags are assertions verified against the recording
+/// (RIPR-SPEC-0140), not alternative diff sources.
+pub(crate) fn base_with_diff_conflict_error(command: &str) -> String {
+    format!(
+        "{command} --base cannot be combined with --diff: --base and --diff are alternative diff sources; pass one"
+    )
+}
+
 /// Whether argv requests the package version before a top-level command.
 ///
 /// Only leading flags participate. A command-local contract such as
@@ -269,6 +285,21 @@ mod tests {
         assert_eq!(
             when_value_is_missing,
             Err("missing value for --diff".to_string())
+        );
+    }
+
+    /// #4319: the conflict error names the command, both flags, and the
+    /// pass-one repair, matching `check`'s conflict style. Pinned verbatim
+    /// for both consumers so a wording change is a visible contract change.
+    #[test]
+    fn base_and_diff_conflict_error_names_the_command_and_both_flags() {
+        assert_eq!(
+            base_with_diff_conflict_error("explain"),
+            "explain --base cannot be combined with --diff: --base and --diff are alternative diff sources; pass one"
+        );
+        assert_eq!(
+            base_with_diff_conflict_error("context"),
+            "context --base cannot be combined with --diff: --base and --diff are alternative diff sources; pass one"
         );
     }
 }
