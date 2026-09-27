@@ -870,11 +870,12 @@ fn gate_reason(
             );
         }
         if candidate.source == "gap_decision_ledger" {
+            // A closed gap needs no action whatever eligibility its projection claims.
+            if candidate.gap_state.as_deref() == Some("already_observed") {
+                return "gap decision ledger record is already observed; no action required"
+                    .to_string();
+            }
             if !candidate.gap_ledger_gate_candidate {
-                if candidate.gap_state.as_deref() == Some("already_observed") {
-                    return "gap decision ledger record is already observed; no action required"
-                        .to_string();
-                }
                 return format!(
                     "gap decision ledger record is not gate-candidate eligible: {}",
                     candidate

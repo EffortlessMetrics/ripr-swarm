@@ -1540,6 +1540,13 @@ fn gate_closed_gap_is_not_misreported_as_configured_off() -> Result<(), String> 
     assert_eq!(claimed.status, "pass");
     assert_eq!(claimed.summary.not_applicable, 1);
     assert_eq!(claimed.decisions[0].decision, "not_applicable");
+    assert!(
+        claimed.decisions[0]
+            .gate_reason
+            .contains("already observed; no action required"),
+        "claimed eligibility must still name the closed gap: {}",
+        claimed.decisions[0].gate_reason
+    );
 
     // An explicit suppression still has its own gate decision and evidence.
     ledger["gap_records"][0]["policy_state"] = Value::from("suppressed");
