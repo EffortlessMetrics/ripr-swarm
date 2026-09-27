@@ -529,6 +529,21 @@ are scoped or reviewed.
 
 ### Fixed
 
+- An improved `agent receipt` (including the one `ripr agent repair --phase
+  after` writes) no longer says "Keep the focused test": ripr never runs the
+  project's tests, and a test that fails `cargo test` can still move static
+  grip. The guidance now says to run the focused test and keep it only if it
+  passes, and `verification` carries `status: "verification_not_run"` and the
+  non-claim `static_only_assurance`
+  ([#4234](https://github.com/EffortlessMetrics/ripr-swarm/issues/4234)).
+
+- `cargo xtask vscode-package` now reads the built VSIX and fails if it
+  carries workspace build output (anything under `extension/target/`, Cargo
+  `.fingerprint` or `incremental` state, `.rlib` or `.rmeta`) or exceeds 1,500
+  entries or 64 MiB unpacked. On the 0.11.0 trial join, Cargo output left under
+  `editors/vscode/target/` was packed into a 725 MB VSIX; this check fails
+  packaging if an ignore rule ever misses that output again.
+
 - The LSP local file-URI decoder refuses a parent-directory segment (`..`),
   including one written with percent-encoding or backslashes, instead of
   admitting it as an absolute path. Saved-content digest reads use only an
