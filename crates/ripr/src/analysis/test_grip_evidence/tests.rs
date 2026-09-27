@@ -1388,6 +1388,13 @@ fn given_whole_literal_or_later_shadow_when_test_hits_boundary_then_grip_closes(
             "1.5",
         ),
         (
+            "pub fn fee(amount: f64) -> u64 {\n    if 1.5f64 < amount { 0 } else { 5 }\n}\n",
+            "1.5f64 < amount",
+            "fee(1)",
+            "fee(1.5)",
+            "1.5",
+        ),
+        (
             "pub fn fee(amount: f64) -> u64 {\n    if -1.5 < amount { 0 } else { 5 }\n}\n",
             "-1.5 < amount",
             "fee(-1.2)",

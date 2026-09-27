@@ -1445,14 +1445,19 @@ fn predicate_boundary_operand(
 }
 
 /// Whether the left operand of a predicate is a boundary value rather than
-/// the tested input: a scalar literal (`100 < amount`) or a local whose
-/// initializer folds without test input (`let limit = 100; limit <
-/// amount`), the value `check` evaluates per row (#4270). A local that
-/// depends on inputs, or that the evaluator cannot fold, is not one.
+/// the tested input: a literal (`100 < amount`, `1.5f64 < amount`) or a
+/// local whose initializer folds without test input (`let limit = 100;
+/// limit < amount`), the value `check` evaluates per row (#4270). A local
+/// that depends on inputs, or that the evaluator cannot fold, is not one.
 fn left_is_boundary_value(owner_fn: &FunctionSummary, left: &str, predicate_line: usize) -> bool {
-    !scalar_values(left).is_empty()
+    numeric_boundary_literal(left).is_some()
+        || !scalar_values(left).is_empty()
         || matches!(
-            super::classify::local_boundary(owner_fn, &boundary_token(left), predicate_line),
+            super::classify::local_boundary(
+                owner_fn,
+                &boundary_identifier_prefix(left),
+                predicate_line
+            ),
             super::classify::LocalBoundary::Exact(_)
         )
 }
@@ -1477,22 +1482,26 @@ fn boundary_rhs_token(expression: &str) -> String {
 /// paths keep the identifier-prefix spelling because `check` does not
 /// read them as whole values either (#4228).
 fn boundary_token(operand: &str) -> String {
-    // A numeric boundary is read by `check`'s own literal reader, so a
-    // suffixed literal (`1.5f64`, `100u32`) spells the same value in both
-    // owners instead of grip's identifier prefix (`1`, `100u32`).
-    let trimmed = operand.trim();
-    if trimmed
-        .strip_prefix('-')
-        .unwrap_or(trimmed)
-        .starts_with(|ch: char| ch.is_ascii_digit())
-        && let Some(literal) = super::classify::literal_operand_value(trimmed)
-    {
+    if let Some(literal) = numeric_boundary_literal(operand) {
         return literal;
     }
     match scalar_values(operand).into_iter().next() {
         Some(literal) if !literal.contains("::") => literal,
         _ => boundary_identifier_prefix(operand),
     }
+}
+
+/// A numeric boundary read by `check`'s own literal reader, so a suffixed
+/// literal (`1.5f64`, `100u32`) spells the same value in both owners
+/// instead of grip's identifier prefix (`1`, `100u32`).
+fn numeric_boundary_literal(operand: &str) -> Option<String> {
+    let trimmed = operand.trim();
+    trimmed
+        .strip_prefix('-')
+        .unwrap_or(trimmed)
+        .starts_with(|ch: char| ch.is_ascii_digit())
+        .then(|| super::classify::literal_operand_value(trimmed))
+        .flatten()
 }
 
 /// An operand up to its first non-identifier character.
