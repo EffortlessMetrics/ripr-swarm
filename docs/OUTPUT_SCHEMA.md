@@ -79,7 +79,9 @@ that family's version only.
 
 `ripr doctor --json` top-level `status` and `runtime_probes[].status` are
 `pass` or `fail`. The `profile` is `analysis` by default or `source-build`
-when requested. Each `checks[].status` is `pass`, `fail`, `advisory`, or `skipped`;
+when requested. Schema `0.3` also adds top-level `ripr_version`, the running
+binary's package version, and `ripr_build_msrv`, the minimum rustc that can
+build that version from source. Each `checks[].status` is `pass`, `fail`, `advisory`, or `skipped`;
 `advisory` (added in schema `0.3`) reports an unavailable Cargo/rustc
 capability without failing installed-binary analysis. The source-build profile
 fails on missing tools or rustc below RIPR's build MSRV, and reports its

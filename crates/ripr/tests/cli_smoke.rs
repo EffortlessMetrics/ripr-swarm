@@ -7283,6 +7283,9 @@ fn doctor_json_reports_current_schema() -> Result<(), String> {
         .map_err(|err| format!("doctor JSON did not parse: {err}"))?;
     assert_eq!(report["schema_version"], "0.3");
     assert_eq!(report["tool"], "ripr");
+    assert_eq!(report["profile"], "analysis");
+    assert_eq!(report["ripr_version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(report["ripr_build_msrv"], env!("CARGO_PKG_RUST_VERSION"));
     assert!(
         report["runtime_probes"].is_array(),
         "doctor JSON must expose typed runtime probe results: {report}"
