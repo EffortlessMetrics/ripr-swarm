@@ -16,74 +16,132 @@ const RIPR_SCHEMA_PREFIX: &str = "schemas/ripr/";
 /// parked in `schemas/` declare itself in the audit rather than slip past.
 const SCHEMA_FILE_SUFFIX: &str = ".json";
 
-// Each published RIPR schema has one producer/version authority. Keep this
-// inventory exhaustive: a newly published schema needs an explicit owner.
-const VERSION_AUTHORITIES: &[(&str, &str, &str, usize)] = &[
+const PR_EVIDENCE_INSTALLED_PRODUCER: &str = "crates/ripr/src/app/pr_evidence.rs";
+const PR_EVIDENCE_VERSION_PREFIX: &str = "json!({\n        \"schema_version\": \"";
+
+/// One producer that writes a published schema version into its output.
+struct VersionProducer {
+    source_path: &'static str,
+    /// Text immediately preceding each emitted version literal.
+    prefix: &'static str,
+    occurrences: usize,
+}
+
+const fn producer(
+    source_path: &'static str,
+    prefix: &'static str,
+    occurrences: usize,
+) -> VersionProducer {
+    VersionProducer {
+        source_path,
+        prefix,
+        occurrences,
+    }
+}
+
+// Each published RIPR schema lists every producer that emits its version.
+// Keep this inventory exhaustive: a newly published schema needs an explicit
+// owner, and a schema written by more than one producer (for example both the
+// installed `ripr` binary and unpublished xtask automation) lists each one so
+// no producer can drift unreconciled.
+const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
     (
         "check",
-        "crates/ripr/src/app.rs",
-        "const CHECK_OUTPUT_SCHEMA_VERSION: &str = \"",
-        1,
+        &[producer(
+            "crates/ripr/src/app.rs",
+            "const CHECK_OUTPUT_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
     ),
     (
         "gate-decision",
-        "crates/ripr/src/output/gate.rs",
-        "const SCHEMA_VERSION: &str = \"",
-        1,
+        &[producer(
+            "crates/ripr/src/output/gate.rs",
+            "const SCHEMA_VERSION: &str = \"",
+            1,
+        )],
     ),
     (
         "pr-evidence",
-        "xtask/src/reports/pr_evidence.rs",
-        "json!({\n        \"schema_version\": \"",
-        2, // Success and error packets each pin the public envelope.
+        &[
+            // Installed `ripr pr-evidence`: success and error packets each
+            // pin the public envelope.
+            producer(
+                PR_EVIDENCE_INSTALLED_PRODUCER,
+                PR_EVIDENCE_VERSION_PREFIX,
+                2,
+            ),
+            // Unpublished xtask compatibility producer, same two packets.
+            producer(
+                "xtask/src/reports/pr_evidence.rs",
+                PR_EVIDENCE_VERSION_PREFIX,
+                2,
+            ),
+        ],
     ),
     (
         "repair-assurance",
-        "crates/ripr/src/domain/verification_result.rs",
-        "pub const VERIFICATION_EXECUTION_RESULT_SCHEMA_VERSION: &str = \"",
-        1,
+        &[producer(
+            "crates/ripr/src/domain/verification_result.rs",
+            "pub const VERIFICATION_EXECUTION_RESULT_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
     ),
     (
         "repair-attempt",
-        "crates/ripr/src/app/repair_attempt.rs",
-        "const REPAIR_ATTEMPT_SCHEMA_VERSION: &str = \"",
-        1,
+        &[producer(
+            "crates/ripr/src/app/repair_attempt.rs",
+            "const REPAIR_ATTEMPT_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
     ),
     (
         "review-comments",
-        "crates/ripr/src/output/review_comments.rs",
-        "const REVIEW_COMMENTS_SCHEMA_VERSION: &str = \"",
-        1,
+        &[producer(
+            "crates/ripr/src/output/review_comments.rs",
+            "const REVIEW_COMMENTS_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
     ),
     (
         "ripr-agent-capability",
-        "crates/ripr/src/lsp/agent_protocol.rs",
-        "const RIPR_AGENT_SCHEMA_VERSION: &str = \"",
-        1,
+        &[producer(
+            "crates/ripr/src/lsp/agent_protocol.rs",
+            "const RIPR_AGENT_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
     ),
     (
         "ripr-agent-error",
-        "crates/ripr/src/lsp/agent_protocol.rs",
-        "const RIPR_AGENT_SCHEMA_VERSION: &str = \"",
-        1,
+        &[producer(
+            "crates/ripr/src/lsp/agent_protocol.rs",
+            "const RIPR_AGENT_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
     ),
     (
         "ripr-agent-request",
-        "crates/ripr/src/lsp/agent_protocol.rs",
-        "const RIPR_AGENT_SCHEMA_VERSION: &str = \"",
-        1,
+        &[producer(
+            "crates/ripr/src/lsp/agent_protocol.rs",
+            "const RIPR_AGENT_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
     ),
     (
         "ripr-agent-success",
-        "crates/ripr/src/lsp/agent_protocol.rs",
-        "const RIPR_AGENT_SCHEMA_VERSION: &str = \"",
-        1,
+        &[producer(
+            "crates/ripr/src/lsp/agent_protocol.rs",
+            "const RIPR_AGENT_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
     ),
     (
         "rust-repair-trust-corpus",
-        "xtask/src/reports/rust_repair_trust.rs",
-        "get(\"schema_version\").and_then(Value::as_str) == Some(\"",
-        1,
+        &[producer(
+            "xtask/src/reports/rust_repair_trust.rs",
+            "get(\"schema_version\").and_then(Value::as_str) == Some(\"",
+            1,
+        )],
     ),
 ];
 
@@ -480,38 +538,12 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
         }
     }
 
-    let version_doc = read_text(root.join("docs/OUTPUT_SCHEMA.md"))?;
-    // Audit the disk inventory in both directions, then compare the producer,
-    // published schema, and the consumer-facing version table for each row.
-    let mut registered = BTreeSet::new();
-    for (name, source_path, prefix, occurrences) in VERSION_AUTHORITIES {
-        if !registered.insert(*name) {
-            violations.push(format!("duplicate schema version authority: {name}"));
-        }
-        let schema_path = format!("schemas/ripr/{name}.schema.json");
-        if !published_schemas.contains(&schema_path) {
-            violations.push(format!(
-                "{schema_path} has an authority but is not published"
-            ));
-            continue;
-        }
-        let schema = read_json(root.join(&schema_path))?;
-        let pinned = schema
-            .pointer("/properties/schema_version/const")
-            .and_then(Value::as_str);
-        let source = read_text(root.join(source_path))?;
-        if let Some(violation) = version_mismatch(
-            &schema_path,
-            pinned,
-            source_path,
-            &source,
-            prefix,
-            *occurrences,
-            &version_doc,
-        ) {
-            violations.push(violation);
-        }
-    }
+    let registered = version_authority_violations(
+        &root,
+        &published_schemas,
+        &|path| read_text(root.join(path)),
+        &mut violations,
+    )?;
     // Reverse-direction check: every published RIPR schema declares a pinned
     // version and has exactly one reconciled authority.
     for rel_str in published_schemas
@@ -562,6 +594,58 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
                 .join("\n")
         ))
     }
+}
+
+/// Reconcile every registered producer with its published schema and the
+/// consumer-facing version table, returning the registered schema names.
+///
+/// Producer sources are read through `read_source` so a test can mutate one
+/// producer in isolation and prove the gate notices.
+fn version_authority_violations(
+    root: &Path,
+    published_schemas: &[String],
+    read_source: &dyn Fn(&str) -> Result<String, String>,
+    violations: &mut Vec<String>,
+) -> Result<BTreeSet<&'static str>, String> {
+    let version_doc = read_text(root.join("docs/OUTPUT_SCHEMA.md"))?;
+    // Audit the disk inventory in both directions, then compare each producer,
+    // the published schema, and the consumer-facing version table per row.
+    let mut registered = BTreeSet::new();
+    for (name, producers) in VERSION_AUTHORITIES {
+        if !registered.insert(*name) {
+            violations.push(format!("duplicate schema version authority: {name}"));
+        }
+        let schema_path = format!("schemas/ripr/{name}.schema.json");
+        if !published_schemas.contains(&schema_path) {
+            violations.push(format!(
+                "{schema_path} has an authority but is not published"
+            ));
+            continue;
+        }
+        if producers.is_empty() {
+            violations.push(format!("{schema_path} has no registered producer"));
+            continue;
+        }
+        let schema = read_json(root.join(&schema_path))?;
+        let pinned = schema
+            .pointer("/properties/schema_version/const")
+            .and_then(Value::as_str);
+        for producer in *producers {
+            let source = read_source(producer.source_path)?;
+            if let Some(violation) = version_mismatch(
+                &schema_path,
+                pinned,
+                producer.source_path,
+                &source,
+                producer.prefix,
+                producer.occurrences,
+                &version_doc,
+            ) {
+                violations.push(violation);
+            }
+        }
+    }
+    Ok(registered)
 }
 
 fn version_mismatch(
@@ -1299,6 +1383,44 @@ mod tests {
             )
             .is_some()
         );
+    }
+
+    /// Mutate only the installed `ripr pr-evidence` producer and require the
+    /// real inventory to reject it, so the unpublished xtask copy cannot stand
+    /// in for the binary users actually run.
+    #[test]
+    fn installed_pr_evidence_producer_drift_fails_the_gate() -> Result<(), String> {
+        let root = repo_root()?;
+        let published = published_schema_paths(&root)?;
+        let reconcile = |mutate: bool| -> Result<Vec<String>, String> {
+            let read_source = |path: &str| -> Result<String, String> {
+                let source = read_text(root.join(path))?;
+                if !mutate || path != PR_EVIDENCE_INSTALLED_PRODUCER {
+                    return Ok(source);
+                }
+                let current = format!("{PR_EVIDENCE_VERSION_PREFIX}0.1\"");
+                if source.matches(&current).count() != 2 {
+                    return Err(format!("{path} no longer emits two `0.1` packets"));
+                }
+                Ok(source.replacen(&current, &format!("{PR_EVIDENCE_VERSION_PREFIX}9.9\""), 1))
+            };
+            let mut violations = Vec::new();
+            version_authority_violations(&root, &published, &read_source, &mut violations)?;
+            Ok(violations)
+        };
+
+        let clean = reconcile(false)?;
+        if !clean.is_empty() {
+            return Err(format!("the unmutated tree must reconcile: {clean:?}"));
+        }
+        let drifted = reconcile(true)?;
+        let expected = format!(
+            "schemas/ripr/pr-evidence.schema.json version mismatch: schema=Some(\"0.1\"), {PR_EVIDENCE_INSTALLED_PRODUCER}=[\"9.9\", \"0.1\"] (expected 2 producer occurrences), docs/OUTPUT_SCHEMA.md=[\"0.1\"]"
+        );
+        if drifted != [expected.clone()] {
+            return Err(format!("expected only `{expected}`, got {drifted:?}"));
+        }
+        Ok(())
     }
 
     #[test]

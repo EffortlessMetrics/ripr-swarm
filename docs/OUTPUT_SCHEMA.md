@@ -55,7 +55,7 @@ map is:
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
 
 The published JSON Schemas have these current versions. Each row is checked
-against the schema's pinned `const` and the named producer source by
+against the schema's pinned `const` and every named producer source by
 `cargo xtask check-verification-contracts`. A schema can describe a reserved
 contract without claiming an installed producer; the verification audit
 records that distinction.
@@ -64,7 +64,7 @@ records that distinction.
 | --- | --- | --- |
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
 | `schemas/ripr/gate-decision.schema.json` | `0.1` | `crates/ripr/src/output/gate.rs`; gate decision envelope |
-| `schemas/ripr/pr-evidence.schema.json` | `0.1` | `xtask/src/reports/pr_evidence.rs`; PR evidence envelope |
+| `schemas/ripr/pr-evidence.schema.json` | `0.1` | `crates/ripr/src/app/pr_evidence.rs` (installed `ripr pr-evidence`) and `xtask/src/reports/pr_evidence.rs` (xtask compatibility); PR evidence envelope |
 | `schemas/ripr/repair-assurance.schema.json` | `1` | `crates/ripr/src/domain/verification_result.rs`; reserved assurance vocabulary and execution result |
 | `schemas/ripr/repair-attempt.schema.json` | `0.1` | `crates/ripr/src/app/repair_attempt.rs`; repair attempt manifest |
 | `schemas/ripr/review-comments.schema.json` | `0.1` | `crates/ripr/src/output/review_comments.rs`; review report envelope |
