@@ -9394,6 +9394,90 @@ fn pilot_language_fixture_repo(
     Ok(root)
 }
 
+/// #4216 row 1: the onboarding re-walk's `pyapp` shape. A named module
+/// constant threshold leaves the boundary operand unresolved, so the Python
+/// preview finding is weakly exposed with no repair card. `check` used to
+/// tell the operator to "complete the missing repair-packet fields", which
+/// they cannot do, while pilot, first-pr and status each pointed at another
+/// command. The safe next action must name why no route exists and the
+/// manual step that is left, with no route back into pilot.
+fn python_check_safe_action(
+    label: &str,
+    source_base: &str,
+    change_from: &str,
+    change_to: &str,
+    test_source: &str,
+) -> Result<String, String> {
+    let root = pilot_language_fixture_repo(
+        label,
+        &[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"py-safe-action\"\nversion = \"0.0.0\"\n",
+            ),
+            ("pricing/__init__.py", source_base),
+            ("tests/test_pricing.py", test_source),
+        ],
+        (
+            "pricing/__init__.py",
+            &source_base.replace(change_from, change_to),
+        ),
+    )?;
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root.display().to_string(),
+        "--base",
+        "origin/main",
+    ]);
+    let _ = std::fs::remove_dir_all(&root);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let line = stdout
+        .lines()
+        .find(|line| line.starts_with("  Safe next action:"))
+        .ok_or_else(|| format!("check printed no safe next action:\n{stdout}"))?;
+    assert!(
+        stdout.contains("State: preview_limited"),
+        "expected preview_limited triage:\n{stdout}"
+    );
+    Ok(line.to_string())
+}
+
+#[test]
+fn check_python_finding_without_repair_card_names_the_terminal_manual_step() -> Result<(), String> {
+    let line = python_check_safe_action(
+        "check-py-no-card",
+        "DISCOUNT_THRESHOLD = 10_000\n\n\ndef discounted_total(amount: int) -> int:\n    if amount > DISCOUNT_THRESHOLD:\n        return amount - amount // 10\n    return amount\n",
+        "amount > DISCOUNT_THRESHOLD",
+        "amount >= DISCOUNT_THRESHOLD",
+        "from pricing import discounted_total\n\n\ndef test_no_discount_below_threshold():\n    assert discounted_total(5_000) == 5_000\n\n\ndef test_discount_far_above_threshold():\n    assert discounted_total(20_000) == 18_000\n",
+    )?;
+    assert_eq!(
+        line,
+        "  Safe next action: this Python preview finding has no repair card (static evidence names no concrete missing discriminator), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`."
+    );
+    Ok(())
+}
+
+// Discriminating control: a Python finding that DOES carry a repair card is
+// routed by that card, so it must not get the no-card terminal line.
+#[test]
+fn check_python_finding_with_repair_card_points_at_the_card() -> Result<(), String> {
+    let line = python_check_safe_action(
+        "check-py-card",
+        "def calculate_discount(amount, threshold):\n    if amount > threshold:\n        return amount - 10\n    return amount\n",
+        "amount > threshold",
+        "amount >= threshold",
+        "from pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result\n",
+    )?;
+    assert_eq!(
+        line,
+        "  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it."
+    );
+    Ok(())
+}
+
 /// Run `ripr pilot` and return (stdout, pilot-summary.md, pilot-summary.json,
 /// repo-exposure.json).
 fn run_pilot_language_fixture(
