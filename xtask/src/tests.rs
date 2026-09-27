@@ -46158,6 +46158,27 @@ fn vsix_inventory_rejects_cargo_artifacts_outside_target() -> Result<(), String>
 }
 
 #[test]
+fn vsix_inventory_fails_closed_on_missing_or_non_zip_package() -> Result<(), String> {
+    with_temp_cwd("vsix-inventory-unreadable", |root| {
+        // A package step that produced no archive must fail, not pass an empty inventory.
+        let missing = root.join("missing.vsix");
+        let Err(error) = super::read_vsix_inventory(&missing) else {
+            return Err("a missing VSIX must not yield an inventory".to_string());
+        };
+        assert!(error.contains("is missing"), "{error}");
+
+        let not_zip = root.join("not-zip.vsix");
+        fs::write(&not_zip, "not a zip archive")
+            .map_err(|err| format!("failed to write {}: {err}", not_zip.display()))?;
+        let Err(error) = super::read_vsix_inventory(&not_zip) else {
+            return Err("a non-zip VSIX must not yield an inventory".to_string());
+        };
+        assert!(error.contains("is not a zip"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
 fn vsix_inventory_bounds_entry_count_and_unpacked_size() -> Result<(), String> {
     let three = vec![
         vsix_entry("extension/package.json", 10),
