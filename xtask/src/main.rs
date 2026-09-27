@@ -1348,7 +1348,105 @@ fn vscode_package() -> Result<(), String> {
     fs::create_dir_all(&dist)
         .map_err(|err| format!("failed to create {}: {err}", dist.display()))?;
     let version = vscode_package_version(&extension_dir.join("package.json"))?;
-    run_cwd_command(&vscode_package_command(&version))
+    run_cwd_command(&vscode_package_command(&version))?;
+    let vsix_path = dist.join(format!("ripr-{version}.vsix"));
+    let inventory = read_vsix_inventory(&vsix_path)?;
+    check_vsix_inventory(&inventory, VSIX_MAX_ENTRIES, VSIX_MAX_UNCOMPRESSED_BYTES)
+        .map_err(|err| format!("packaged VSIX {} {err}", vsix_path.display()))?;
+    println!(
+        "VSIX inventory: {} entries, {} bytes unpacked",
+        inventory.len(),
+        inventory.iter().map(|entry| entry.size).sum::<u64>()
+    );
+    Ok(())
+}
+
+/// Upper bounds on the packaged VSIX. The 0.11 extension packs about 410
+/// entries and 3 MiB uncompressed. Packing `editors/vscode/target/` (#1775)
+/// produced 2,805 entries and about 2.3 GB. The bounds leave room for
+/// dependency growth and still fail that class of regression without pinning
+/// one machine's compressed size.
+const VSIX_MAX_ENTRIES: usize = 1_500;
+const VSIX_MAX_UNCOMPRESSED_BYTES: u64 = 64 * 1024 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VsixEntry {
+    name: String,
+    size: u64,
+    compressed_size: u64,
+}
+
+fn read_vsix_inventory(vsix_path: &Path) -> Result<Vec<VsixEntry>, String> {
+    let file = fs::File::open(vsix_path)
+        .map_err(|err| format!("packaged VSIX {} is missing: {err}", vsix_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|err| format!("packaged VSIX {} is not a zip: {err}", vsix_path.display()))?;
+    let mut entries = Vec::with_capacity(archive.len());
+    for index in 0..archive.len() {
+        let member = archive.by_index_raw(index).map_err(|err| {
+            format!(
+                "failed to read {} member {index}: {err}",
+                vsix_path.display()
+            )
+        })?;
+        entries.push(VsixEntry {
+            name: member.name().to_string(),
+            size: member.size(),
+            compressed_size: member.compressed_size(),
+        });
+    }
+    Ok(entries)
+}
+
+/// Rejects workspace build output in the packaged extension (#1775). The
+/// `cargo xtask` alias builds into a cwd-relative target directory, so
+/// `npm run compile` in `editors/vscode` leaves Cargo output beside the
+/// extension. The check reads the real archive entries rather than trusting
+/// `.vscodeignore`, so a lost ignore rule fails here instead of shipping.
+fn check_vsix_inventory(
+    entries: &[VsixEntry],
+    max_entries: usize,
+    max_uncompressed_bytes: u64,
+) -> Result<(), String> {
+    let build_output: Vec<&str> = entries
+        .iter()
+        .map(|entry| entry.name.as_str())
+        .filter(|name| is_workspace_build_output(name))
+        .collect();
+    if !build_output.is_empty() {
+        let shown: Vec<&str> = build_output.iter().take(5).copied().collect();
+        return Err(format!(
+            "carries {} workspace build-output entries (first: {})",
+            build_output.len(),
+            shown.join(", ")
+        ));
+    }
+    if entries.len() > max_entries {
+        return Err(format!(
+            "carries {} entries, above the {max_entries}-entry bound",
+            entries.len()
+        ));
+    }
+    let uncompressed: u64 = entries.iter().map(|entry| entry.size).sum();
+    if uncompressed > max_uncompressed_bytes {
+        return Err(format!(
+            "unpacks to {uncompressed} bytes, above the {max_uncompressed_bytes}-byte bound"
+        ));
+    }
+    Ok(())
+}
+
+fn is_workspace_build_output(name: &str) -> bool {
+    if name.starts_with("extension/target/") {
+        return true;
+    }
+    if name
+        .split('/')
+        .any(|segment| segment == ".fingerprint" || segment == "incremental")
+    {
+        return true;
+    }
+    name.ends_with(".rlib") || name.ends_with(".rmeta")
 }
 
 fn vscode_test() -> Result<(), String> {
