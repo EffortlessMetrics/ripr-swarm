@@ -518,7 +518,8 @@ mod tests {
     #[cfg(windows)]
     fn wait_for_descendant_marker(marker_path: &std::path::Path) -> Result<u32, String> {
         let mut last = "marker not written".to_string();
-        for _ in 0..300 {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
             match std::fs::read_to_string(marker_path) {
                 Ok(text) => match text.trim().parse::<u32>() {
                     Ok(pid) => return Ok(pid),
