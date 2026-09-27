@@ -538,6 +538,23 @@ are scoped or reviewed.
 
 ### Fixed
 
+- A generated command prints no PowerShell form only when PowerShell reads it
+  the same way. Commands with a quoted program path, `$` expansion, globs,
+  braces, `~`, `@`, comments, `--%`, non-spaced `>` forms, a second redirect or
+  an unbalanced quote used to be labelled as running unchanged in PowerShell.
+  They now get a translation (a quoted program path gains the `&` call
+  operator) or a "PowerShell form unavailable" line
+  ([#4244](https://github.com/EffortlessMetrics/ripr-swarm/issues/4244)).
+
+- With TypeScript enabled, a diff that classifies no TypeScript owner (for
+  example a Rust-only change) is no longer reported
+  `partial_with_limitations` because some unchanged TypeScript test file uses
+  a test shape the adapter cannot extract. The
+  `typescript_test_extraction_partial` limitation is still reported when a
+  changed TypeScript or JavaScript owner, or a Bun cross-language finding,
+  reads the test index
+  ([#4261](https://github.com/EffortlessMetrics/ripr-swarm/issues/4261)).
+
 - `ripr check --candidate-tree` no longer reads the worktree `ripr.toml`. A
   subject run configures itself from its candidate tree, but the CLI still
   loaded the worktree file first, so an unparseable worktree file, or a
