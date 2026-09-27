@@ -11,6 +11,11 @@
 //! same validator the gate uses, and reports discovered and validated counts
 //! separately so a qualification run can replay it on the frozen candidate.
 //!
+//! Every byte it validates, schemas included, is read from one explicit commit
+//! (`--rev`, default `HEAD`) through `git archive`, never from the working
+//! tree, so a dirty or artifact-littered release checkout cannot change the
+//! denominator or pass bytes the candidate does not carry.
+//!
 //! It is not wired into a required check. The binding table below is the
 //! reviewed rule for which committed bytes are producer output, which are
 //! consumer-input stimulus, and which schemas have no committed producer bytes
@@ -18,19 +23,19 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::verification_contracts::{published_schema_paths, validate_value_against_schema};
+use crate::verification_contracts::validate_value_against_schema;
 
 const REPORT_PATH: &str = "target/ripr/reports/schema-producer-sweep.json";
-const USAGE: &str =
-    "usage: cargo xtask schema-producer-sweep [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...";
-
-/// Directories that never hold committed producer documents.
-const SKIPPED_DIRECTORIES: &[&str] = &[".git", "target", "node_modules", "schemas"];
+const USAGE: &str = "usage: cargo xtask schema-producer-sweep [--rev REV] [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...";
+/// Every JSON file under this directory is a published schema, the same rule
+/// `check-verification-contracts` applies to the working tree.
+const SCHEMAS_PREFIX: &str = "schemas/";
 
 /// Which committed documents a binding validates.
 enum Corpus {
@@ -222,9 +227,10 @@ struct Artifact {
 }
 
 pub(crate) fn schema_producer_sweep(args: &[String]) -> Result<(), String> {
-    let artifacts = parse_args(args)?;
+    let options = parse_args(args)?;
     let root = crate::repo_root()?;
-    let report = sweep(&root, BINDINGS, &artifacts)?;
+    let tree = load_tree(&root, &options.rev)?;
+    let report = sweep(&tree, BINDINGS, &options.artifacts)?;
     let text = serde_json::to_string_pretty(&report.packet)
         .map_err(|error| format!("serialize schema producer sweep: {error}"))?;
     let path = root.join(REPORT_PATH);
@@ -237,7 +243,10 @@ pub(crate) fn schema_producer_sweep(args: &[String]) -> Result<(), String> {
     for line in &report.summary {
         println!("{line}");
     }
-    println!("Wrote {REPORT_PATH} (packet sha256:{})", report.digest);
+    println!(
+        "Wrote {REPORT_PATH} for commit {} (rows sha256:{})",
+        tree.commit, report.digest
+    );
     if report.violations.is_empty() {
         Ok(())
     } else {
@@ -253,14 +262,25 @@ pub(crate) fn schema_producer_sweep(args: &[String]) -> Result<(), String> {
     }
 }
 
-fn parse_args(args: &[String]) -> Result<Vec<Artifact>, String> {
+struct Options {
+    rev: String,
+    artifacts: Vec<Artifact>,
+}
+
+fn parse_args(args: &[String]) -> Result<Options, String> {
+    let mut rev = "HEAD".to_string();
     let mut artifacts = Vec::new();
     let mut remaining = args.iter();
     while let Some(arg) = remaining.next() {
+        let value = remaining.next().ok_or_else(|| USAGE.to_string())?;
+        if arg == "--rev" && !value.is_empty() {
+            rev = value.clone();
+            continue;
+        }
         if arg != "--artifact" {
             return Err(USAGE.to_string());
         }
-        let spec = remaining.next().ok_or_else(|| USAGE.to_string())?;
+        let spec = value;
         let (schema, file) = spec.split_once('=').ok_or_else(|| USAGE.to_string())?;
         let (schema_path, schema_pointer) = split_pointer(schema);
         let (file, subject_pointer) = split_pointer(file);
@@ -274,7 +294,7 @@ fn parse_args(args: &[String]) -> Result<Vec<Artifact>, String> {
             subject_pointer,
         });
     }
-    Ok(artifacts)
+    Ok(Options { rev, artifacts })
 }
 
 fn split_pointer(text: &str) -> (&str, Option<String>) {
@@ -302,9 +322,18 @@ struct RowCounts {
     subjects: Vec<Value>,
 }
 
-fn sweep(root: &Path, bindings: &[Binding], artifacts: &[Artifact]) -> Result<SweepReport, String> {
+fn sweep(
+    tree: &CandidateTree,
+    bindings: &[Binding],
+    artifacts: &[Artifact],
+) -> Result<SweepReport, String> {
     let mut violations = Vec::new();
-    let inventory = published_schema_paths(root)?;
+    let inventory: Vec<String> = tree
+        .files
+        .keys()
+        .filter(|path| path.starts_with(SCHEMAS_PREFIX))
+        .cloned()
+        .collect();
     if inventory.is_empty() {
         violations.push(
             "schemas/ holds no published schema, so the sweep has no denominator".to_string(),
@@ -321,14 +350,13 @@ fn sweep(root: &Path, bindings: &[Binding], artifacts: &[Artifact]) -> Result<Sw
         }
     }
 
-    let documents = committed_documents(root)?;
+    let documents = committed_documents(tree);
     let mut schemas = BTreeMap::new();
     for schema_path in &inventory {
-        let bytes = fs::read(root.join(schema_path))
-            .map_err(|error| format!("read {schema_path}: {error}"))?;
-        let schema: Value = serde_json::from_slice(&bytes)
-            .map_err(|error| format!("parse {schema_path}: {error}"))?;
-        schemas.insert(schema_path.clone(), (schema, sha256(&bytes)));
+        let bytes = &tree.files[schema_path];
+        let schema: Value = serde_json::from_slice(bytes)
+            .map_err(|error| format!("parse {schema_path} at {}: {error}", tree.commit))?;
+        schemas.insert(schema_path.clone(), (schema, sha256(bytes)));
     }
 
     let mut rows = Vec::new();
@@ -533,6 +561,7 @@ fn sweep(root: &Path, bindings: &[Binding], artifacts: &[Artifact]) -> Result<Sw
     let packet = json!({
         "schema_version": "0.1",
         "kind": "schema_producer_sweep",
+        "commit": tree.commit,
         "validator": "xtask/src/verification_contracts.rs validate_value_against_schema",
         "published_schemas": inventory,
         "rows": rows,
@@ -640,59 +669,67 @@ fn file_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-/// Every parseable `.json` document under `root`, keyed by repository-relative
-/// path with forward slashes, with its byte digest.
-fn committed_documents(root: &Path) -> Result<BTreeMap<String, (Value, String)>, String> {
-    let mut documents = BTreeMap::new();
-    collect_documents(root, root, &mut documents)?;
-    Ok(documents)
+/// The `.json` blobs of one commit: the sweep's only input besides
+/// `--artifact` files.
+struct CandidateTree {
+    commit: String,
+    files: BTreeMap<String, Vec<u8>>,
 }
 
-fn collect_documents(
-    root: &Path,
-    directory: &Path,
-    documents: &mut BTreeMap<String, (Value, String)>,
-) -> Result<(), String> {
-    let entries = fs::read_dir(directory)
-        .map_err(|error| format!("read {}: {error}", directory.display()))?;
-    for entry in entries {
+/// Read every `.json` blob of `rev` in `root` through one `git archive`, so
+/// nothing untracked or uncommitted can reach the sweep.
+fn load_tree(root: &Path, rev: &str) -> Result<CandidateTree, String> {
+    let commit = git(
+        root,
+        &["rev-parse", "--verify", &format!("{rev}^{{commit}}")],
+    )?;
+    let commit = String::from_utf8_lossy(&commit).trim().to_string();
+    let archive = git(
+        root,
+        &["archive", "--format=tar", &commit, "--", ":(glob)**/*.json"],
+    )?;
+    let mut files = BTreeMap::new();
+    let mut entries = tar::Archive::new(archive.as_slice());
+    for entry in entries
+        .entries()
+        .map_err(|error| format!("read git archive of {commit}: {error}"))?
+    {
+        let mut entry = entry.map_err(|error| format!("read git archive of {commit}: {error}"))?;
+        if !entry.header().entry_type().is_file() {
+            continue;
+        }
         let path = entry
-            .map_err(|error| format!("read an entry of {}: {error}", directory.display()))?
-            .path();
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default();
-        if path.is_dir() {
-            let skipped = if directory == root {
-                SKIPPED_DIRECTORIES.contains(&name)
-            } else {
-                name == "node_modules"
-            };
-            if skipped {
-                continue;
-            }
-            collect_documents(root, &path, documents)?;
-            continue;
-        }
-        if !name.ends_with(".json") {
-            continue;
-        }
-        let bytes = fs::read(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
-        // A document that does not parse is not a JSON producer subject; the
-        // formats that own it (JSONC configs, deliberately malformed inputs)
-        // are checked by their own gates.
-        let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
-            continue;
-        };
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|error| format!("{} is outside the repository: {error}", path.display()))?
+            .path()
+            .map_err(|error| format!("read git archive path: {error}"))?
             .to_string_lossy()
             .replace('\\', "/");
-        documents.insert(relative, (value, sha256(&bytes)));
+        let mut bytes = Vec::new();
+        entry
+            .read_to_end(&mut bytes)
+            .map_err(|error| format!("read {path} from {commit}: {error}"))?;
+        files.insert(path, bytes);
     }
-    Ok(())
+    Ok(CandidateTree { commit, files })
+}
+
+fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    let args: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+    crate::run::capture_process_output_in("git", &args, Some(root), &[], &[], &[])
+        .map_err(|error| error.message)
+}
+
+/// Every committed document outside `schemas/` that parses, with its digest.
+/// A file that does not parse is not a JSON producer subject; the formats that
+/// own it (JSONC configs, deliberately malformed inputs) have their own gates.
+fn committed_documents(tree: &CandidateTree) -> BTreeMap<String, (Value, String)> {
+    tree.files
+        .iter()
+        .filter(|(path, _)| !path.starts_with(SCHEMAS_PREFIX))
+        .filter_map(|(path, bytes)| {
+            let value = serde_json::from_slice::<Value>(bytes).ok()?;
+            Some((path.clone(), (value, sha256(bytes))))
+        })
+        .collect()
 }
 
 fn sha256(bytes: &[u8]) -> String {
@@ -740,12 +777,48 @@ mod tests {
         }
     }
 
+    /// Commit everything under `root` except `live.json`, which stands for a
+    /// per-run artifact outside the candidate.
+    fn commit(root: &Path) -> Result<(), String> {
+        for args in [
+            vec!["init", "-q"],
+            vec!["add", "-A", "--", ".", ":(exclude)live.json"],
+            vec![
+                "-c",
+                "user.name=sweep",
+                "-c",
+                "user.email=sweep@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "candidate",
+            ],
+        ] {
+            git(root, &args)?;
+        }
+        Ok(())
+    }
+
+    fn sweep_committed(
+        root: &Path,
+        bindings: &[Binding],
+        artifacts: &[Artifact],
+    ) -> Result<SweepReport, String> {
+        commit(root)?;
+        sweep(&load_tree(root, "HEAD")?, bindings, artifacts)
+    }
+
     fn run(
         root: &Path,
         bindings: &[Binding],
         artifacts: &[Artifact],
     ) -> Result<SweepReport, String> {
-        let report = sweep(root, bindings, artifacts);
+        let report = sweep_committed(root, bindings, artifacts);
         let _ = fs::remove_dir_all(root);
         report
     }
@@ -817,7 +890,7 @@ mod tests {
             &root.join("fixtures/a/inputs/renamed.json"),
             r#"{"schema_version":"0.1","status":"pass"}"#,
         );
-        let unbound = sweep(
+        let unbound = sweep_committed(
             &root,
             &[binding(Corpus::FileName("example.json"), &[])],
             &[],
@@ -893,7 +966,7 @@ mod tests {
         );
         let runtime = || binding(Corpus::RuntimeOnly("per-run bytes"), &[]);
 
-        let not_run = sweep(&root, &[runtime()], &[])?;
+        let not_run = sweep_committed(&root, &[runtime()], &[])?;
         if !not_run.violations.is_empty()
             || not_run.packet["rows"][0]["disposition"]["state"] != "not_run"
         {
@@ -923,6 +996,39 @@ mod tests {
                 "an invalid live artifact passed: {:?}",
                 supplied.violations
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_sweep_reads_the_commit_not_the_working_tree() -> Result<(), String> {
+        let root = example_root();
+        let golden = root.join("fixtures/a/expected/example.json");
+        write(&golden, r#"{"schema_version":"0.1","status":"pass"}"#);
+        commit(&root)?;
+        // After the commit: the tracked golden is broken in the working tree
+        // and an untracked lookalike appears. Neither is candidate bytes.
+        write(&golden, r#"{"schema_version":"0.1"}"#);
+        write(
+            &root.join("rc.json"),
+            r#"{"schema_version":"0.1","status":"pass"}"#,
+        );
+        let tree = load_tree(&root, "HEAD");
+        let _ = fs::remove_dir_all(&root);
+        let tree = tree?;
+        let report = sweep(
+            &tree,
+            &[binding(Corpus::FileName("example.json"), &[])],
+            &[],
+        )?;
+        if !report.violations.is_empty() || report.packet["commit"] != tree.commit.as_str() {
+            return Err(format!(
+                "working-tree bytes reached the sweep: {:?}",
+                report.violations
+            ));
+        }
+        if tree.files.contains_key("rc.json") {
+            return Err("an untracked file was read as candidate bytes".to_string());
         }
         Ok(())
     }
@@ -962,7 +1068,10 @@ mod tests {
             "schemas/ripr/repair-assurance.schema.json#/$defs/execution_result=out.json#/result"
                 .to_string(),
         ])?;
-        let [artifact] = parsed.as_slice() else {
+        if parsed.rev != "HEAD" {
+            return Err(format!("--rev must default to HEAD, got {}", parsed.rev));
+        }
+        let [artifact] = parsed.artifacts.as_slice() else {
             return Err("expected one artifact".to_string());
         };
         if artifact.schema_pointer.as_deref() != Some("/$defs/execution_result")
@@ -971,10 +1080,21 @@ mod tests {
         {
             return Err("pointers were not split from the paths".to_string());
         }
-        if parse_args(&["--artifact".to_string()]).is_ok()
-            || parse_args(&["--check".to_string()]).is_ok()
-        {
-            return Err("a malformed argument list was accepted".to_string());
+        for malformed in [
+            vec!["--artifact"],
+            vec!["--check"],
+            vec!["--artifact", "no-separator"],
+        ] {
+            let args: Vec<String> = malformed.iter().map(|arg| (*arg).to_string()).collect();
+            match parse_args(&args) {
+                Err(error) if error == USAGE => {}
+                Err(error) => {
+                    return Err(format!(
+                        "{malformed:?} failed with `{error}`, not the usage text"
+                    ));
+                }
+                Ok(_) => return Err(format!("{malformed:?} was accepted")),
+            }
         }
         Ok(())
     }
@@ -987,11 +1107,16 @@ mod tests {
     /// (#3919).
     #[test]
     fn the_binding_table_covers_exactly_the_published_inventory() -> Result<(), String> {
-        let inventory = published_schema_paths(&crate::repo_root()?)?;
+        let tree = load_tree(&crate::repo_root()?, "HEAD")?;
+        let inventory: Vec<&String> = tree
+            .files
+            .keys()
+            .filter(|path| path.starts_with(SCHEMAS_PREFIX))
+            .collect();
         for schema_path in &inventory {
             if !BINDINGS
                 .iter()
-                .any(|binding| binding.schema_path == schema_path)
+                .any(|binding| binding.schema_path == schema_path.as_str())
             {
                 return Err(format!("{schema_path} has no sweep binding"));
             }
@@ -999,7 +1124,7 @@ mod tests {
         for binding in BINDINGS {
             if !inventory
                 .iter()
-                .any(|schema_path| schema_path == binding.schema_path)
+                .any(|schema_path| schema_path.as_str() == binding.schema_path)
             {
                 return Err(format!("binding names unpublished {}", binding.schema_path));
             }

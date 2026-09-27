@@ -491,7 +491,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "check-badge-diff-policy",
         "check-generated-clean",
         "check-verification-contracts [--check]",
-        "schema-producer-sweep [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...",
+        "schema-producer-sweep [--rev REV] [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...",
         "check-dependencies",
         "check-supply-chain",
         "check-process-policy",
@@ -1718,7 +1718,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Writes or checks verification contract reports depending on --check.",
         ),
         command_entry(
-            "schema-producer-sweep [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...",
+            "schema-producer-sweep [--rev REV] [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...",
             "report_only",
             "target/ripr/reports/schema-producer-sweep.json",
             false,

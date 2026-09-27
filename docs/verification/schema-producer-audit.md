@@ -92,14 +92,17 @@ validates every committed producer document instead, so a qualification run does
 not depend on which subjects someone remembered to register (#3919, #3920):
 
 ```bash
-cargo xtask schema-producer-sweep \
+cargo xtask schema-producer-sweep [--rev REV] \
   [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...
 ```
 
-It uses the same validator as the registered contracts and writes
+Every schema and document it validates is read from one commit (`--rev`,
+default `HEAD`) through `git archive`, never from the working tree, so
+uncommitted edits and untracked files such as live artifacts cannot change the
+result. It uses the same validator as the registered contracts and writes
 `target/ripr/reports/schema-producer-sweep.json`: per schema row, the schema
 digest, discovered and validated producer counts, edge fixtures, excluded
-stimulus, live artifacts, every subject's byte digest, and one digest over all
+stimulus, live artifacts, every subject's byte digest, the commit, and a `rows_sha256` digest over all
 rows. The binding table in `xtask/src/schema_producer_sweep.rs` is the reviewed
 rule for which bytes count:
 
