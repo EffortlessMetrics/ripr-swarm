@@ -1263,7 +1263,7 @@ mod tests {
         let prefix = "const VERSION: &str = \"";
         let source = "const VERSION: &str = \"0.1\";";
         let doc = "| `schemas/ripr/example.schema.json` | `0.1` | producer |";
-        let check = |pinned, source, doc| {
+        let check = |pinned: Option<&str>, source: &str, doc: &str| {
             version_mismatch(path, pinned, source_path, source, prefix, 1, doc)
         };
 
