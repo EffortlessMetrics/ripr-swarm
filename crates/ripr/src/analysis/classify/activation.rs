@@ -2660,7 +2660,15 @@ assert_eq!(input.amount, 100);"#
                 "score(1.0);",
                 Expect::Missing("amount == 1.5f64"),
             ),
-            // A type suffix is not a second literal: `99u32` is 99, not 32.
+            // A type suffix is not a second literal: `9.5f64` is 9.5, not
+            // 64, and `99u32` is 99, not 32.
+            (
+                "    amount > 9.5f64",
+                "amount > 9.5f64",
+                2,
+                "score(64.0);",
+                Expect::Missing("amount == 9.5f64"),
+            ),
             (
                 "    amount > 99u32",
                 "amount > 99u32",
@@ -2911,8 +2919,8 @@ assert_eq!(input.amount, 100);"#
             ]
         );
         assert_eq!(
-            scalar_values("f(99u32, 1.5f64, x1, 100_u8)"),
-            vec!["1.5".to_string(), "100_".to_string(), "99".to_string()]
+            scalar_values("f(99u32, 9.5f64, x1, 100_u8)"),
+            vec!["100_".to_string(), "9.5".to_string(), "99".to_string()]
         );
         assert_eq!(
             scalar_values("f(0..5, 2.max(3), 1.2.3)"),

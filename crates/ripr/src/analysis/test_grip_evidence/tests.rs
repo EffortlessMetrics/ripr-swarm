@@ -1387,7 +1387,15 @@ fn given_whole_literal_or_later_shadow_when_test_hits_boundary_then_grip_closes(
             "fee(1.5)",
             "1.5",
         ),
-        // A type suffix is not a second literal: `99u32` is 99, not 32.
+        // A type suffix is not a second literal: `9.5f64` is 9.5, not 64,
+        // and `99u32` is 99, not 32.
+        (
+            "pub fn fee(amount: f64) -> u64 {\n    if amount > 9.5f64 { 0 } else { 5 }\n}\n",
+            "amount > 9.5f64",
+            "fee(64)",
+            "fee(9.5)",
+            "9.5",
+        ),
         (
             "pub fn fee(amount: u32) -> u64 {\n    if amount > 99u32 { 0 } else { 5 }\n}\n",
             "amount > 99u32",
