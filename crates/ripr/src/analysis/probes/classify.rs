@@ -259,17 +259,18 @@ pub fn should_ignore_changed_line(text: &str) -> bool {
         || text.starts_with("pub use ")
         || text.starts_with("mod ")
         || text.starts_with("#")
-        || is_structural_delimiter_line(text)
 }
 
-/// A line that only closes or opens a block (`}`, `});`, `} else {`,
-/// `else {`) carries no expression of its own. Opening `(`/`[` are not
-/// delimiters here, so a unit `()` or empty `[]` value stays a candidate: the behavior sits on the
-/// branch condition and the branch body lines, which keep their probes.
-/// Seeding a probe here only mints `static_unknown` noise (#4216 row 5).
-/// Any other token, including `else if`, a tail value, or a call, keeps
-/// the line a probe candidate.
-fn is_structural_delimiter_line(text: &str) -> bool {
+/// A line that only opens or closes a block (`}`, `});`, `} else {`,
+/// `else {`) carries no expression of its own (#4216 row 5). Opening `(`
+/// and `[` are not delimiters here, so a unit `()` or empty `[]` value is
+/// never structural; nor is `else if`, a tail value, or a call.
+///
+/// Structural is not the same as ignorable: inserting `} else {` alone
+/// splits a block and changes behavior. The diff producer skips a
+/// structural line only when its contiguous changed run also holds a
+/// behavioral line that seeds the probe for that change.
+pub(crate) fn is_structural_delimiter_line(text: &str) -> bool {
     let rest = text.trim_matches(|ch: char| {
         matches!(ch, '{' | '}' | ')' | ']' | ';' | ',') || ch.is_whitespace()
     });
@@ -291,17 +292,21 @@ mod tests {
         assert!(!should_ignore_changed_line("let x = 5;"));
     }
 
-    /// #4216 row 5: brace-only and else-only lines carry no expression, so
-    /// they seed no probe; every line that still holds a token of behavior
-    /// (a tail value, `else if` condition, call, unit value) stays a candidate.
+    /// #4216 row 5: brace-only and else-only lines are structural; every
+    /// line that still holds a token of behavior (a tail value, `else if`
+    /// condition, call, unit value) is not.
     #[test]
-    fn structural_delimiter_lines_are_not_probe_candidates() {
-        for ignored in [
+    fn structural_delimiter_lines_are_recognized() {
+        for structural in [
             "}", "{", "} else {", "else {", "} else", "});", "},", "};", "]", ")",
         ] {
             assert!(
-                should_ignore_changed_line(ignored),
-                "`{ignored}` should be ignored"
+                is_structural_delimiter_line(structural),
+                "`{structural}` is structural"
+            );
+            assert!(
+                !should_ignore_changed_line(structural),
+                "`{structural}` is never ignored unconditionally"
             );
         }
         for kept in [
@@ -316,8 +321,8 @@ mod tests {
             "} else_value",
         ] {
             assert!(
-                !should_ignore_changed_line(kept),
-                "`{kept}` must stay a candidate"
+                !is_structural_delimiter_line(kept),
+                "`{kept}` is not structural"
             );
         }
     }
