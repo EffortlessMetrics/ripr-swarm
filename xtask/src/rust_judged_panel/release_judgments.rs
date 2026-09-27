@@ -333,6 +333,12 @@ fn validate_row(
             row_roles.len()
         ));
     }
+    // An empty summary does not record the disagreement, whatever the terminal.
+    if let Some(disagreement) = &row.disagreement
+        && disagreement.summary.trim().is_empty()
+    {
+        violations.push(format!("{subject}.disagreement.summary: must be non-empty"));
+    }
     match (&row.disagreement, row.terminal.as_str()) {
         (Some(disagreement), "inconclusive_disagreement") if disagreement.resolution.is_some() => {
             violations.push(format!(
@@ -342,19 +348,16 @@ fn validate_row(
         (None, "inconclusive_disagreement") => violations.push(format!(
             "{subject}.disagreement: inconclusive_disagreement must record the disagreement"
         )),
-        (Some(disagreement), terminal) if terminal.starts_with("confirmed_") => {
-            if disagreement
-                .resolution
-                .as_deref()
-                .is_none_or(|resolution| resolution.trim().is_empty())
-            {
-                violations.push(format!(
-                    "{subject}.disagreement: a confirmed terminal needs the cited resolution"
-                ));
-            }
-            if disagreement.summary.trim().is_empty() {
-                violations.push(format!("{subject}.disagreement.summary: must be non-empty"));
-            }
+        (Some(disagreement), terminal)
+            if terminal.starts_with("confirmed_")
+                && disagreement
+                    .resolution
+                    .as_deref()
+                    .is_none_or(|resolution| resolution.trim().is_empty()) =>
+        {
+            violations.push(format!(
+                "{subject}.disagreement: a confirmed terminal needs the cited resolution"
+            ));
         }
         _ => {}
     }
@@ -664,6 +667,18 @@ mod tests {
                     serde_json::json!({ "summary": "roles differ", "resolution": null });
             },
             "needs the cited resolution",
+        )?;
+        expect_violation(
+            |value| {
+                let row = row_mut(value, "p1744-quiet-test-only");
+                row["terminal"] = "inconclusive_disagreement".into();
+                row["disagreement"] = serde_json::json!({ "summary": " ", "resolution": null });
+                row["reference_outcome"] = serde_json::json!({
+                    "observation": "x", "false_actionable": null, "false_exposed": null,
+                    "under_credit": null, "limitation_correct": null
+                });
+            },
+            "disagreement.summary: must be non-empty",
         )
     }
 
