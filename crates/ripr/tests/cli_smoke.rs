@@ -93,9 +93,9 @@ fn run_command_with_env(
 /// from a `fork` that has not reached `exec` (#4296). Three attempts and a
 /// 25ms pause match the doctor shim probe. Any other error, and any process
 /// that actually started, is returned unchanged.
-fn output_retrying_text_file_busy(
-    mut run: impl FnMut() -> Result<Output, std::io::Error>,
-) -> Result<Output, std::io::Error> {
+fn output_retrying_text_file_busy<T>(
+    mut run: impl FnMut() -> Result<T, std::io::Error>,
+) -> Result<T, std::io::Error> {
     let mut attempt = 0usize;
     loop {
         attempt += 1;
@@ -132,6 +132,76 @@ fn text_file_busy_retry_stops_at_three_and_ignores_other_errors() {
         1
     ));
     assert!(!retry_text_file_busy(std::io::ErrorKind::WouldBlock, 1));
+}
+
+/// The predicate test above cannot see the loop: a wrapper reduced to one
+/// `run()` call would still pass it. A scripted closure pins what the wrapper
+/// does with each result: how many times it runs, and what it returns.
+#[test]
+fn text_file_busy_wrapper_reruns_only_busy_and_returns_the_final_result() -> Result<(), String> {
+    use std::io::{Error, ErrorKind};
+    fn scripted(script: Vec<Result<u8, ErrorKind>>) -> (Result<u8, ErrorKind>, usize) {
+        let mut script = script.into_iter();
+        let mut calls = 0usize;
+        let result = output_retrying_text_file_busy(|| {
+            calls += 1;
+            match script.next() {
+                Some(Ok(value)) => Ok(value),
+                Some(Err(kind)) => Err(Error::from(kind)),
+                None => Err(Error::other("script exhausted")),
+            }
+        });
+        (result.map_err(|error| error.kind()), calls)
+    }
+    let busy = ErrorKind::ExecutableFileBusy;
+    // (name, scripted results, expected result, expected calls)
+    type Case = (
+        &'static str,
+        Vec<Result<u8, ErrorKind>>,
+        Result<u8, ErrorKind>,
+        usize,
+    );
+    let cases: [Case; 5] = [
+        ("started first time", vec![Ok(7)], Ok(7), 1),
+        (
+            "busy twice then started",
+            vec![Err(busy), Err(busy), Ok(9)],
+            Ok(9),
+            3,
+        ),
+        (
+            "busy on every attempt",
+            vec![Err(busy), Err(busy), Err(busy), Ok(1)],
+            Err(busy),
+            3,
+        ),
+        (
+            "other error is not retried",
+            vec![Err(ErrorKind::NotFound), Ok(1)],
+            Err(ErrorKind::NotFound),
+            1,
+        ),
+        (
+            "other error after busy is returned",
+            vec![Err(busy), Err(ErrorKind::PermissionDenied), Ok(1)],
+            Err(ErrorKind::PermissionDenied),
+            2,
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, script, expected, expected_calls) in cases {
+        let (result, calls) = scripted(script);
+        if result != expected || calls != expected_calls {
+            failures.push(format!(
+                "{name}: got {result:?} after {calls} calls, expected {expected:?} after {expected_calls}"
+            ));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
 }
 
 fn run_isolated_binary(
