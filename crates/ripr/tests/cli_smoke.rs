@@ -3964,10 +3964,22 @@ fn agent_start_writes_source_edit_free_workflow_packet() -> Result<(), Box<dyn s
     assert!(workflow_json.contains(r#""llm_api_calls": false"#));
     assert!(workflow_json.contains(seam_id));
     // #4000: generated commands bind the selected root the invocation resolved.
-    assert!(workflow_json.contains(&format!(
-        "ripr agent verify --root {}/fixtures/boundary_gap/input",
-        workspace_root().to_string_lossy().replace('\\', "/")
-    )));
+    // The expected root uses the renderer's shell quoting, so a checkout path
+    // with spaces or other shell metacharacters still matches exactly.
+    let expected_verify = format!(
+        "ripr agent verify --root {} ",
+        renderer_shell_arg(&format!(
+            "{}/fixtures/boundary_gap/input",
+            workspace_root().to_string_lossy().replace('\\', "/")
+        ))
+    );
+    let workflow: serde_json::Value = serde_json::from_str(&workflow_json)?;
+    assert!(
+        json_strings(&workflow)
+            .iter()
+            .any(|value| value.contains(&expected_verify)),
+        "workflow.json should carry `{expected_verify}`: {workflow_json}"
+    );
     assert!(commands_md.contains("# RIPR Agent Workflow"));
     assert!(commands_md.contains("Does not edit source files."));
     assert!(commands_md.contains("Does not call an LLM API."));
@@ -14928,6 +14940,63 @@ fn agent_status_follows_a_focused_test_committed_between_the_phases()
     Ok(())
 }
 
+/// Quote one argument exactly as the product's generated-command renderer
+/// (`agent::loop_commands::shell_arg`) does: a plain token stays bare, any
+/// other value is POSIX single-quoted.
+fn renderer_shell_arg(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '/' | '_' | '-' | ':'))
+    {
+        return value.to_string();
+    }
+    shell_single_quoted(value)
+}
+
+/// Decode one rendered POSIX shell word (bare, single-quoted, or `'\''`
+/// concatenations) back to its argument value. Returns `None` for an
+/// unterminated quote so a malformed rendering fails the caller's oracle.
+fn decode_shell_token(token: &str) -> Option<String> {
+    let mut decoded = String::new();
+    let mut chars = token.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\'' => loop {
+                match chars.next()? {
+                    '\'' => break,
+                    inner => decoded.push(inner),
+                }
+            },
+            '\\' => decoded.push(chars.next()?),
+            other => decoded.push(other),
+        }
+    }
+    Some(decoded)
+}
+
+#[test]
+fn decode_shell_token_inverts_the_renderer_quoting() {
+    for value in ["/tmp/plain", "/tmp/with space/repo", "/tmp/it's here", ""] {
+        assert_eq!(
+            decode_shell_token(&renderer_shell_arg(value)).as_deref(),
+            Some(value),
+            "round trip for {value:?}"
+        );
+    }
+    assert_eq!(decode_shell_token("'unterminated"), None);
+}
+
+/// Every string value in a JSON document, depth first.
+fn json_strings(value: &serde_json::Value) -> Vec<&str> {
+    match value {
+        serde_json::Value::String(text) => vec![text.as_str()],
+        serde_json::Value::Array(items) => items.iter().flat_map(json_strings).collect(),
+        serde_json::Value::Object(map) => map.values().flat_map(json_strings).collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// POSIX single quotes around a path, as the status command templates print.
 fn shell_single_quoted(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
@@ -16287,8 +16356,9 @@ fn first_pr_check_missing_packet_recovers_without_a_resolvable_base() -> Result<
     let bound_recovery = stderr
         .split_once("Create and validate it with:\n  ripr first-pr --root ")
         .and_then(|(_, rest)| rest.split_once(" --head HEAD --out-dir "))
-        .is_some_and(|(bound_root, _)| {
-            std::path::Path::new(bound_root).is_absolute()
+        .and_then(|(token, _)| decode_shell_token(token))
+        .is_some_and(|bound_root| {
+            std::path::Path::new(&bound_root).is_absolute()
                 && bound_root
                     .trim_end_matches(['/', '\\'])
                     .ends_with(&repo_name)

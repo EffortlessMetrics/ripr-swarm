@@ -1,6 +1,6 @@
 # Golden Output Changes
 
-## Pending
+## Pending — boundary_gap (4)
 
 Reason:
 RIPR-SPEC-0020 / RIPR-SPEC-0023, #3999/#4000 merged with #4304: the first-action commands #4304 added (`commands.analysis_outcome`, the persisted `agent verify` redirect) and the `agent status` handoff now carry the bound `--root <cwd>/fixtures/boundary_gap/input` like every other first-action command, so the analyzed subject and the redirect anchor name the same repository. The front panel echoes those commands. The typed verify/receipt `command_specs` keep the portable `--root .` with `cwd` at the repository root.
