@@ -425,8 +425,10 @@ mod candidate_index_tests {
     #[test]
     fn new_queries_inspect_only_indexed_candidates() {
         let mut index = NameModuleCandidateIndex::default();
+        // Every noise name shares the query's `tar` trigram, so only the
+        // rarest-trigram choice keeps the candidate list at one entry.
         for i in 0..4096 {
-            index.insert(i, &format!("noise_{i}"), Some("unrelated/tests"));
+            index.insert(i, &format!("noise_tar_{i}"), Some("unrelated/tests"));
         }
         index.insert(4096, "prefix_target_suffix", Some("target/nested"));
         assert_eq!(index.name_candidates("target", 4097), [4096]);
