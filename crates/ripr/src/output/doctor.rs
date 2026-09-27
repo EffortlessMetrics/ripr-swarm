@@ -1680,7 +1680,7 @@ mod tests {
             || report.status != DoctorStatus::Pass
         {
             return Err(format!(
-                "mixed root must require cargo: {:?}",
+                "mixed root must disclose missing cargo as advisory: {:?}",
                 report.checks
             ));
         }
@@ -1792,7 +1792,7 @@ mod tests {
         let json = report.render_json()?;
         let parsed: serde_json::Value =
             serde_json::from_str(&json).map_err(|e| format!("invalid JSON: {e}"))?;
-        assert_eq!(parsed["schema_version"], "0.2");
+        assert_eq!(parsed["schema_version"], "0.3");
         assert_eq!(parsed["tool"], "ripr");
         assert_eq!(parsed["status"], "pass");
         assert_eq!(parsed["checks"][0]["name"], "root_directory");

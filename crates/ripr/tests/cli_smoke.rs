@@ -6758,7 +6758,7 @@ fn doctor_json_reports_current_schema() -> Result<(), String> {
 
     let report: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|err| format!("doctor JSON did not parse: {err}"))?;
-    assert_eq!(report["schema_version"], "0.2");
+    assert_eq!(report["schema_version"], "0.3");
     assert_eq!(report["tool"], "ripr");
     assert!(
         report["runtime_probes"].is_array(),
