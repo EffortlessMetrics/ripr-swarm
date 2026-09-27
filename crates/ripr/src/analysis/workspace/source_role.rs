@@ -247,18 +247,28 @@ pub(crate) fn classify(path: &Path) -> SourceRole {
     SourceRole::ProductionSubject
 }
 
-/// Whether the path lives under the repository's own automation
-/// directory. Automation files are evidence-role for repo-mode indexing,
-/// but a *changed* automation file is reviewed behavior: the pre-#3283
-/// diff loop seeded probes for every non-test changed file, and the
-/// `diff_analysis_seeds_probes_for_changed_repo_automation_files`
-/// pins probe seeding for `xtask/` changes. The Rust diff-probe loop consults this
-/// alongside [`SourceRole::seeds_production_findings`] so the evidence
-/// taxonomy keeps repo-mode scope without silencing automation diffs.
-fn is_repo_automation_path(path: &Path) -> bool {
-    normalize(path)
-        .components()
-        .any(|component| component.as_os_str() == "xtask")
+/// Whether a changed file is repository automation source that the Rust
+/// diff loop still probes. `xtask/` is evidence role for repo-mode
+/// indexing, but a *changed* automation source file is reviewed behavior:
+/// the pre-#3283 diff loop seeded probes for every non-test changed file,
+/// and `diff_analysis_seeds_probes_for_changed_repo_automation_files` pins
+/// the p1745 regression where a 329-line `xtask/` diff yielded no probes.
+///
+/// The exemption is narrow: only the root `xtask/` directory, only files
+/// whose resolved role is the `xtask` catch-all (declared targets and
+/// harness registrations still win), and only paths the layout would
+/// treat as production inside `xtask/`. `xtask/tests/**`, `tests.rs`
+/// stems, autodiscovered benches/examples, and non-`src` files keep
+/// their evidence role; an `xtask` segment nested under `fixtures/` or
+/// any other directory is not repository automation.
+fn is_repo_automation_subject(path: &Path, role: SourceRole) -> bool {
+    if role != SourceRole::FixtureOrReceiptEvidence {
+        return false;
+    }
+    let normalized = normalize(path);
+    normalized
+        .strip_prefix("xtask")
+        .is_ok_and(|inner| classify(inner) == SourceRole::ProductionSubject)
 }
 
 /// Whether a *changed* Rust file at this path seeds diff probes, and so
@@ -270,7 +280,7 @@ fn is_repo_automation_path(path: &Path) -> bool {
 /// shapes also seed when changed, because Cargo compiles them and a change
 /// there is reviewed behavior rather than data:
 ///
-/// - repository automation (`xtask/`, see [`is_repo_automation_path`]);
+/// - repository automation (`xtask/`, see [`is_repo_automation_subject`]);
 /// - Cargo build scripts (`build.rs`), which sit outside any `src` layout.
 ///
 /// Repo mode keeps both out of the seam inventory. Registered non-source
@@ -280,7 +290,7 @@ fn is_repo_automation_path(path: &Path) -> bool {
 pub(crate) fn seeds_diff_probes(path: &Path, context: &SourceRoleContext) -> bool {
     match classify_with(path, context) {
         role if role.seeds_production_findings() => true,
-        SourceRole::FixtureOrReceiptEvidence => {
+        role @ SourceRole::FixtureOrReceiptEvidence => {
             let normalized = normalize(path);
             let in_non_source_directory = normalized.components().any(|component| {
                 component
@@ -288,9 +298,9 @@ pub(crate) fn seeds_diff_probes(path: &Path, context: &SourceRoleContext) -> boo
                     .to_str()
                     .is_some_and(|name| NON_SOURCE_DIRECTORIES.contains(&name))
             });
-            !in_non_source_directory
-                && (is_repo_automation_path(path)
-                    || normalized
+            is_repo_automation_subject(path, role)
+                || (!in_non_source_directory
+                    && normalized
                         .file_name()
                         .is_some_and(|name| name == "build.rs"))
         }
@@ -570,22 +580,18 @@ mod tests {
     }
 
     #[test]
-    fn repo_automation_paths_are_flagged_for_diff_seeding() {
-        // `xtask/` stays evidence-role for repo-mode indexing, but the
-        // path flag lets the diff-probe loop seed changed automation
-        // files (pre-#3283 diff behavior).
-        assert!(super::is_repo_automation_path(Path::new(
-            "xtask/src/windows_advisory.rs"
-        )));
-        assert!(super::is_repo_automation_path(Path::new(
-            "xtask\\src\\main.rs"
-        )));
-        assert!(!super::is_repo_automation_path(Path::new(
-            "crates/ripr/src/lib.rs"
-        )));
-        assert!(!super::is_repo_automation_path(Path::new(
-            "fixtures/entropy/input/src/lib.rs"
-        )));
+    fn repo_automation_subjects_are_root_xtask_sources_only() {
+        let subject = |path: &str| super::is_repo_automation_subject(Path::new(path), role(path));
+        assert!(subject("xtask/src/windows_advisory.rs"));
+        assert!(subject("xtask\\src\\main.rs"));
+        // Evidence roles inside xtask keep their role.
+        assert!(!subject("xtask/tests/help_hierarchy.rs"));
+        assert!(!subject("xtask/src/tests.rs"));
+        assert!(!subject("xtask/benches/scan.rs"));
+        assert!(!subject("xtask/build.rs"));
+        // A nested `xtask` segment is not repository automation.
+        assert!(!subject("fixtures/case/input/xtask/src/main.rs"));
+        assert!(!subject("crates/ripr/src/lib.rs"));
     }
 
     #[test]
@@ -599,7 +605,10 @@ mod tests {
             ("crates\\ripr\\build.rs", true),
             ("examples/sample/build.rs", true),
             ("tests/cli.rs", false),
+            ("xtask/build.rs", true),
             ("xtask/tests/cli.rs", false),
+            ("xtask/tests/support/helpers.rs", false),
+            ("fixtures/case/input/xtask/src/main.rs", false),
             ("xtask/fixtures/sample/src/lib.rs", false),
             ("metrics/panel/subjects/case/source.after.rs", false),
             ("scripts/tool.rs", false),
