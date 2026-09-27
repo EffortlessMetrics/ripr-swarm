@@ -802,10 +802,33 @@ fn test_mocks_owner_module(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> bool {
+    let owner_module = normalized_module_path(&owner.file);
     test.mocks_in_file.iter().any(|source| {
-        normalized_relative_import_module(&test.file, source, alias_map, workspace_root)
-            .is_some_and(|module| module == normalized_module_path(&owner.file))
+        source == UNRESOLVED_MOCK_SPECIFIER
+            || root_relative_mock_names_module(source, &owner_module)
+            || normalized_relative_import_module(&test.file, source, alias_map, workspace_root)
+                .is_some_and(|module| module == owner_module)
     })
+}
+
+/// `true` when a root-relative mock specifier (`/src/cart`) may name
+/// `module`. The runner resolves it against its own root, which the adapter
+/// does not model, so any whole-segment suffix of the module path matches:
+/// an unknown root errs toward withholding the relation (#4294).
+fn root_relative_mock_names_module(source: &str, module: &str) -> bool {
+    let Some(rooted) = source
+        .replace('\\', "/")
+        .strip_prefix('/')
+        .map(ToString::to_string)
+    else {
+        return false;
+    };
+    let rooted = strip_typescript_module_extension(&rooted);
+    !rooted.is_empty()
+        && (module == rooted
+            || module
+                .strip_suffix(rooted.as_str())
+                .is_some_and(|prefix| prefix.ends_with('/')))
 }
 
 /// Fabrication method shapes that replace a spy's observed value (#4103
