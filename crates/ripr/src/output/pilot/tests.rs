@@ -341,14 +341,23 @@ fn pilot_summary_md_spells_out_first_screen_recommendation() {
         "## Top Recommendation",
         "- Inspected seam:",
         "- Why it matters: missing discriminator: input that hits the boundary: amount >= discount_threshold",
-        "- Focused test: not applicable (route limited: producer-owned route readiness is not eligible for a repair target)",
+        "- Focused test: none: this seam has no test target that `ripr agent repair` can use (for example, the only tests are in another crate, or static evidence names no exact discriminator), so it will not start a repair attempt here",
         "Target seam:",
         "Target placement blocked:",
+        "## Ranked Seams\n\nNone of these seams can start a repair attempt (`ripr agent repair`); they are ranked for inspection by hand.",
         "## Next Commands",
+        "No repair attempt is available for the top seam. Next, add a test for `pricing::discounted_total` in the crate that owns src/pricing.rs, then rerun repo exposure and compare the snapshots:",
         "ripr outcome --before target/ripr/pilot/repo-exposure.json",
     ] {
         assert!(md.contains(needle), "missing markdown needle: {needle}");
     }
+    // #4216 row 3: a list with no repair start is not headed "actionable",
+    // and the producer's route-readiness jargon stays in the JSON packets.
+    assert!(!md.contains("## Ranked Actionable Seams"), "{md}");
+    assert!(
+        !md.contains("- Focused test: not applicable (route limited"),
+        "{md}"
+    );
 }
 
 /// The bash fence content is pinned byte-for-byte: adding the PowerShell
@@ -436,13 +445,13 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
         "Top recommendation:",
         "inspected seam:",
         "why it matters: missing discriminator: input that hits the boundary: amount >= discount_threshold",
-        "focused test: not applicable (route limited: producer-owned route readiness is not eligible for a repair target)",
+        "focused test: none: this seam has no test target that `ripr agent repair` can use (for example, the only tests are in another crate, or static evidence names no exact discriminator), so it will not start a repair attempt here",
         "assertion: not_applicable",
         "Detailed brief:",
         "target/ripr/pilot/pilot-summary.md",
         "Structured packet:",
         "target/ripr/pilot/agent-seam-packets.json",
-        "Run after producer evidence makes a repair route actionable:",
+        "Next, by hand: add a test for `pricing::discounted_total` in the crate that owns src/pricing.rs, then compare against this run:",
         "ripr outcome --before target/ripr/pilot/repo-exposure.json",
     ] {
         assert!(
@@ -460,6 +469,11 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
     // A route-limited seam keeps the snapshot comparison: the repair
     // transaction has no target here (#3906).
     assert!(!terminal.contains("Next, in order:"), "{terminal}");
+    // #4216 row 3: no producer jargon and no wait on "producer evidence" the
+    // user cannot supply; the next step is a test the user writes.
+    assert!(!terminal.contains("route limited"), "{terminal}");
+    assert!(!terminal.contains("producer"), "{terminal}");
+    assert!(!terminal.contains("ripr pilot"), "{terminal}");
 
     // The id leads the line, so the next documented step
     // (`ripr agent repair --seam-id <id>`) is reachable from the screen alone.
@@ -1025,6 +1039,16 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
     let required = PilotLanguageRoutes::from_discovered(root, false, &enabled, &files);
     assert_eq!(required.state, PilotLanguageRoutesState::Required);
     assert_eq!(required.state.as_str(), "required");
+    // A language this binary cannot analyze (#4252: TypeScript and Python
+    // in a Rust-only build, Perl without `lang-perl`) gets the unavailable
+    // route whatever ripr.toml enables: no command, the adapter notice.
+    let assert_unavailable = |route: &super::language_routes::PilotLanguageRoute| {
+        assert_eq!(route.language_status(), "unavailable");
+        assert_eq!(route.route(), "unavailable_in_this_binary");
+        assert_eq!(route.command, None);
+        assert_eq!(route.guidance, route.language.unavailable_adapter_notice());
+    };
+    let typescript_available = LanguageId::TypeScript.is_available();
     let summary = required
         .routes
         .iter()
@@ -1033,14 +1057,18 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
     assert_eq!(
         summary,
         vec![
-            (LanguageId::TypeScript, 2, true),
+            (LanguageId::TypeScript, 2, typescript_available),
             // JavaScript runs through the TypeScript-family adapter.
-            (LanguageId::JavaScript, 1, true),
+            (LanguageId::JavaScript, 1, typescript_available),
             (LanguageId::Python, 1, false),
             (LanguageId::Perl, 1, false),
         ]
     );
     for route in &required.routes[..2] {
+        if !typescript_available {
+            assert_unavailable(route);
+            continue;
+        }
         assert_eq!(route.command.as_deref(), Some("ripr check --root ."));
         assert_eq!(route.guidance_category, Some(TsFullRepoGuidance::CATEGORY));
         assert_eq!(
@@ -1049,28 +1077,35 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
         );
     }
     let python = &required.routes[2];
-    assert_eq!(python.command.as_deref(), Some("ripr check --root ."));
-    assert_eq!(
-        python.guidance_category,
-        Some(PythonRepoExposureGuidance::CATEGORY)
-    );
-    assert_eq!(
-        python.guidance.as_deref(),
-        Some(PythonRepoExposureGuidance::REPAIR_ROUTE)
-    );
+    if LanguageId::Python.is_available() {
+        assert_eq!(python.command.as_deref(), Some("ripr check --root ."));
+        assert_eq!(
+            python.guidance_category,
+            Some(PythonRepoExposureGuidance::CATEGORY)
+        );
+        assert_eq!(
+            python.guidance.as_deref(),
+            Some(PythonRepoExposureGuidance::REPAIR_ROUTE)
+        );
+    } else {
+        assert_unavailable(python);
+    }
     let perl = &required.routes[3];
     if LanguageId::Perl.is_available() {
         assert_eq!(perl.language_status(), "preview");
         assert_eq!(perl.command.as_deref(), Some("ripr check --root ."));
     } else {
-        assert_eq!(perl.language_status(), "unavailable");
-        assert_eq!(perl.route(), "unavailable_in_this_binary");
-        assert_eq!(perl.command, None);
-        assert_eq!(perl.guidance, LanguageId::Perl.unavailable_adapter_notice());
+        assert_unavailable(perl);
     }
+    let expected_commands: Vec<&str> = if typescript_available || LanguageId::Python.is_available()
+    {
+        vec!["ripr check --root ."]
+    } else {
+        Vec::new()
+    };
     assert_eq!(
         PilotLanguageRoutes::commands(&required.routes),
-        vec!["ripr check --root ."]
+        expected_commands
     );
 
     let supplementary = PilotLanguageRoutes::from_discovered(root, true, &enabled, &files);
@@ -1080,6 +1115,9 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
 }
 
 #[test]
+// Compares the route label across runnable TypeScript and Python routes;
+// a build lacking either has no such pair (#4252).
+#[cfg(all(feature = "lang-typescript", feature = "lang-python"))]
 fn pilot_terminal_route_label_has_one_shape_for_every_language() {
     use crate::domain::LanguageId;
     use crate::output::repo_exposure::{PythonRepoExposureGuidance, TsFullRepoGuidance};
@@ -1189,23 +1227,43 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         !terminal.contains("none ranked by the default pilot policy"),
         "{terminal}"
     );
-    assert!(
-        terminal.contains("typescript: 1 file (preview, diff-first; not enabled in ripr.toml [languages])\n    route: ripr check --root .\n"),
-        "{terminal}"
-    );
-    assert!(
-        terminal.ends_with(
-            "Next, analyze the changed code in these languages:\n  ripr check --root .\n"
-        ),
-        "{terminal}"
-    );
-    assert!(!terminal.contains("ripr outcome --before"), "{terminal}");
     let md = render_pilot_summary_md(&[], context);
     assert!(
         md.contains("## Languages Outside The Rust Seam Scan"),
         "{md}"
     );
-    assert!(md.contains("```bash\nripr check --root .\n```"), "{md}");
+    if let Some(notice) = LanguageId::TypeScript.unavailable_adapter_notice() {
+        // #4252: a Rust-only build names the rebuild and invents no route.
+        assert!(
+            terminal.contains(&format!(
+                "typescript: 1 file (not available in this build)\n    {notice}\n"
+            )),
+            "{terminal}"
+        );
+        assert!(md.contains(&notice), "{md}");
+        if !LanguageId::Perl.is_available() {
+            // Neither discovered language is analyzable: no command at all.
+            assert!(!terminal.contains("route: ripr check"), "{terminal}");
+            assert!(
+                terminal.ends_with("No follow-up command applies: this ripr binary cannot analyze the languages listed above.\n"),
+                "{terminal}"
+            );
+            assert!(!md.contains("```bash"), "{md}");
+        }
+    } else {
+        assert!(
+            terminal.contains("typescript: 1 file (preview, diff-first; not enabled in ripr.toml [languages])\n    route: ripr check --root .\n"),
+            "{terminal}"
+        );
+        assert!(
+            terminal.ends_with(
+                "Next, analyze the changed code in these languages:\n  ripr check --root .\n"
+            ),
+            "{terminal}"
+        );
+        assert!(md.contains("```bash\nripr check --root .\n```"), "{md}");
+    }
+    assert!(!terminal.contains("ripr outcome --before"), "{terminal}");
     assert!(!md.contains("ripr outcome --before"), "{md}");
     let json = render_pilot_summary_json(&[], context);
     assert!(json.contains("\"state\": \"required\""), "{json}");

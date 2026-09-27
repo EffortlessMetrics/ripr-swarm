@@ -16,14 +16,28 @@ use std::path::{Path, PathBuf};
 
 pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
     let mut json_output = false;
+    let mut profile = output::doctor::DoctorProfile::Analysis;
     let mut root_args: Vec<&str> = Vec::new();
-    for arg in args {
+    let mut arguments = args.iter();
+    while let Some(arg) = arguments.next() {
         match arg.as_str() {
             "--help" | "-h" => {
                 help::print_doctor_help();
                 return Ok(());
             }
             "--json" => json_output = true,
+            "--profile" => {
+                profile = match arguments.next().map(String::as_str) {
+                    Some("analysis") => output::doctor::DoctorProfile::Analysis,
+                    Some("source-build") => output::doctor::DoctorProfile::SourceBuild,
+                    Some(other) => {
+                        return Err(format!(
+                            "unknown doctor profile `{other}`; expected analysis or source-build"
+                        ));
+                    }
+                    None => return Err("missing value for --profile".to_string()),
+                };
+            }
             _ => root_args.push(arg.as_str()),
         }
     }
@@ -35,18 +49,33 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
     };
 
     if json_output {
-        return doctor_json(&root);
+        return doctor_json(&root, profile);
     }
 
     // Human-readable path.
-    let core_evaluation =
-        output::doctor::evaluate_doctor_core_with_config(&root, &detect_languages(&root));
+    let core_evaluation = output::doctor::evaluate_doctor_core_with_config_for_profile(
+        &root,
+        &detect_languages(&root),
+        profile,
+    );
     let mut report = core_evaluation.report;
     let core_report = &report;
     let mut ok = matches!(core_report.status, output::doctor::DoctorStatus::Pass);
     let enabled_languages = enabled_languages(&core_evaluation.config);
     println!("ripr doctor");
     println!("- root: {}", root.display());
+    for line in output::doctor_binary::probe_binary_identity().human_lines() {
+        println!("{line}");
+    }
+    println!(
+        "- RIPR {} (source build requires Rust {})",
+        report.ripr_version, report.ripr_build_msrv
+    );
+    let profile_name = match profile {
+        output::doctor::DoctorProfile::Analysis => "analysis",
+        output::doctor::DoctorProfile::SourceBuild => "source-build",
+    };
+    println!("- profile: {profile_name}");
 
     ok &= report_doctor_core_check(core_report, "root_directory");
     ok &= report_doctor_core_check(core_report, "cargo_toml");
@@ -79,10 +108,14 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
 /// probes as structured values. Deeper sub-checks (cache, Perl, and test
 /// surfaces) remain on the human-oriented path for a follow-up PR to type
 /// individually. See #1771 / #1614.
-fn doctor_json(root: &Path) -> Result<(), String> {
-    let evaluation =
-        output::doctor::evaluate_doctor_core_with_config(root, &detect_languages(root));
+fn doctor_json(root: &Path, profile: output::doctor::DoctorProfile) -> Result<(), String> {
+    let evaluation = output::doctor::evaluate_doctor_core_with_config_for_profile(
+        root,
+        &detect_languages(root),
+        profile,
+    );
     let mut report = evaluation.report;
+    report.binary = Some(output::doctor_binary::probe_binary_identity());
     let enabled_languages = enabled_languages(&evaluation.config);
     let _ =
         add_language_runtime_probes(root, &enabled_languages, &mut report, false, probe_runtime);
@@ -107,6 +140,7 @@ fn report_doctor_core_check(report: &output::doctor::DoctorReport, name: &str) -
     let marker = match check.status {
         output::doctor::DoctorCheckStatus::Pass => "✓",
         output::doctor::DoctorCheckStatus::Fail => "!",
+        output::doctor::DoctorCheckStatus::Advisory => "~",
         output::doctor::DoctorCheckStatus::Skipped => "-",
     };
     println!(
@@ -267,8 +301,10 @@ fn detect_languages(root: &Path) -> Vec<LanguageId> {
         found.push(LanguageId::Python);
     }
 
-    // Perl: .pl or .pm files
-    if shallow_has_extension(root, "pl") || shallow_has_extension(root, "pm") {
+    // Perl: the same predicate that gates the Perl preview section, so a
+    // CPAN layout with modules below `lib/Name/` is detected and a `.t` under
+    // `target/` is not.
+    if perl_project_detected(root) {
         found.push(LanguageId::Perl);
     }
 
@@ -292,7 +328,11 @@ where
     let mut ok = true;
     for (language, tool, hint) in language_runtime_probes_for(root, enabled) {
         let (status, evidence) = probe(tool, tool == "yarn");
-        let required = runtime_probe_is_required(language, tool, enabled);
+        // A language runtime is an analysis capability, not a prerequisite
+        // for building RIPR from source: the source-build profile keeps the
+        // probe visible but never lets it decide that profile's status.
+        let required = report.profile == output::doctor::DoctorProfile::Analysis
+            && runtime_probe_is_required(language, tool, enabled);
         report.add_runtime_probe(language, tool, status, &evidence, required, hint);
         if required && status == output::doctor::DoctorStatus::Fail {
             ok = false;
@@ -654,6 +694,36 @@ fn detected_test_surface_lines(root: &Path) -> Vec<String> {
 /// Count files with a given extension under the root (recursive). Used by the
 /// Perl preview to report real .pm/.pl/.t counts. Campaign 31 item 5: the
 /// prior `shallow_has_extension as usize` returned only 0/1, not a real count.
+/// Hidden and build/dependency directories that the Perl file walks skip,
+/// so vendored or generated files neither inflate counts nor detect Perl.
+fn is_skipped_walk_dir(path: &Path) -> bool {
+    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    name.starts_with('.') || matches!(name, "target" | "node_modules" | "blib")
+}
+
+/// True when the workspace has a CPAN build marker or any `.pm`, `.pl` or
+/// `.t` file outside skipped directories. One walk that stops at the first
+/// hit; `detect_languages` and the Perl preview share this definition.
+fn perl_project_detected(root: &Path) -> bool {
+    fn any_perl_file(dir: &Path) -> bool {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return false;
+        };
+        entries.flatten().any(|entry| {
+            let path = entry.path();
+            if path.is_dir() {
+                !is_skipped_walk_dir(&path) && any_perl_file(&path)
+            } else {
+                matches!(
+                    path.extension().and_then(|e| e.to_str()),
+                    Some("pm" | "pl" | "t")
+                )
+            }
+        })
+    }
+    has_perl_project_markers(root) || any_perl_file(root)
+}
+
 fn count_files(root: &Path, ext: &str) -> usize {
     fn count_recursive(dir: &Path, ext: &str) -> usize {
         let Ok(entries) = std::fs::read_dir(dir) else {
@@ -663,9 +733,7 @@ fn count_files(root: &Path, ext: &str) -> usize {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                // Skip hidden + build/dependency dirs that inflate counts.
-                let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                if name.starts_with('.') || matches!(name, "target" | "node_modules" | "blib") {
+                if is_skipped_walk_dir(&path) {
                     continue;
                 }
                 n += count_recursive(&path, ext);
@@ -738,13 +806,12 @@ fn which(bin: &str) -> bool {
 /// determine. No claim is made that the producer works end-to-end (that is the
 /// two-binary proof, item 3). Prints only when Perl markers are detected.
 fn report_perl_preview(root: &Path) {
+    if !perl_project_detected(root) {
+        return;
+    }
     let pm_count = count_files(root, "pm");
     let pl_count = count_files(root, "pl");
     let t_count = count_files(root, "t");
-    let has_markers = pm_count > 0 || pl_count > 0 || t_count > 0 || has_perl_project_markers(root);
-    if !has_markers {
-        return;
-    }
 
     println!("- Perl preview:");
     println!("  project: {pm_count} .pm, {pl_count} .pl, {t_count} .t");
@@ -1072,11 +1139,11 @@ fn perl_next_command(
         // enabled through config, and check then runs the enabled set.
         // Name the additive edit, not a replacement list, so a user with
         // TypeScript/Python already enabled keeps them (#2105 review).
-        "add \"perl\" to [languages] enabled in ripr.toml, then: ripr check --base origin/main --head HEAD".to_string()
+        "add \"perl\" to [languages] enabled in ripr.toml, then: ripr check".to_string()
     } else if managed {
         // Managed mode configured but no compatible producer.
         format!(
-            "install a compatible Perl fact exporter (`{}`, not yet published) on PATH or set [perl].executable, and add \"perl\" to [languages] enabled in ripr.toml, then: ripr check --base origin/main --head HEAD",
+            "install a compatible Perl fact exporter (`{}`, not yet published) on PATH or set [perl].executable, and add \"perl\" to [languages] enabled in ripr.toml, then: ripr check",
             crate::domain::PERL_FACT_EXPORTER
         )
     } else {
@@ -1312,6 +1379,38 @@ mod tests {
     }
 
     #[test]
+    fn detect_languages_finds_a_cpan_layout_perl_project() -> Result<(), String> {
+        // A module two levels under `lib/` is below the shallow scan, yet
+        // the Perl preview counts it; detection must agree, or doctor prints
+        // "none detected" beside a Perl section counting files. Files under a
+        // skipped directory (`target/`, `node_modules/`) detect nothing.
+        let cases: [(&str, &[&str]); 4] = [
+            ("deep", &["lib/Acme/Calc.pm", "README"]),
+            ("tests", &["t/calc.t"]),
+            ("marker", &["Makefile.PL"]),
+            ("none", &["target/example.t", "node_modules/pkg/lib/X.pm"]),
+        ];
+        for (name, files) in cases {
+            let root = unique_command_test_dir(&format!("detect-perl-{name}"));
+            for file in files {
+                let path = root.join(file);
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|err| format!("mkdir: {err}"))?;
+                }
+                std::fs::write(&path, "1;\n").map_err(|err| format!("write {file}: {err}"))?;
+            }
+            let expected = if name == "none" {
+                Vec::new()
+            } else {
+                vec![LanguageId::Perl]
+            };
+            assert_eq!(detect_languages(&root), expected, "{name}");
+            std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn detect_languages_treats_modern_ts_js_extensions_as_language_markers() -> Result<(), String> {
         // #4116: .mts/.cts are TypeScript markers and .mjs/.cjs are
         // JavaScript markers through the shared extension authority; a
@@ -1505,6 +1604,83 @@ mod tests {
     }
 
     #[test]
+    fn source_build_profile_keeps_enabled_language_runtime_failure_advisory() -> Result<(), String>
+    {
+        // PR #4196 review: an enabled TypeScript root with no node is an
+        // analysis failure, but not a RIPR source-build prerequisite. The
+        // same probe outcome must fail analysis and stay advisory for
+        // source-build, while still being reported.
+        let root = unique_command_test_dir("runtime-probe-source-build");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(root.join("package.json"), "{}")
+            .map_err(|err| format!("write package marker: {err}"))?;
+        let missing_node = |tool: &str, _isolated: bool| {
+            if tool == "node" {
+                (
+                    output::doctor::DoctorStatus::Fail,
+                    "node not available".to_string(),
+                )
+            } else {
+                (
+                    output::doctor::DoctorStatus::Pass,
+                    format!("{tool} available"),
+                )
+            }
+        };
+        let mut outcomes = Vec::new();
+        for profile in [
+            output::doctor::DoctorProfile::Analysis,
+            output::doctor::DoctorProfile::SourceBuild,
+        ] {
+            let mut report = output::doctor::DoctorReport::new(&root.display().to_string());
+            report.profile = profile;
+            let ok = add_language_runtime_probes(
+                &root,
+                &[LanguageId::TypeScript],
+                &mut report,
+                false,
+                missing_node,
+            );
+            let node = report
+                .runtime_probes
+                .iter()
+                .find(|probe| probe.tool == "node")
+                .ok_or_else(|| format!("missing node probe for {profile:?}"))?;
+            outcomes.push((
+                profile,
+                ok,
+                report.status,
+                node.required,
+                node.status,
+                output::doctor::doctor_report_result(&report).is_ok(),
+            ));
+        }
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        assert_eq!(
+            outcomes,
+            vec![
+                (
+                    output::doctor::DoctorProfile::Analysis,
+                    false,
+                    output::doctor::DoctorStatus::Fail,
+                    true,
+                    output::doctor::DoctorStatus::Fail,
+                    false,
+                ),
+                (
+                    output::doctor::DoctorProfile::SourceBuild,
+                    true,
+                    output::doctor::DoctorStatus::Pass,
+                    false,
+                    output::doctor::DoctorStatus::Fail,
+                    true,
+                ),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
     #[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
     fn doctor_reports_unittest_and_package_only_ts_frameworks() -> Result<(), String> {
         // #2106 review: doctor output coverage for frameworks only visible
@@ -1565,7 +1741,11 @@ mod tests {
         // The managed-present branch points at the config-driven route.
         let managed = perl_next_command(true, Some("perllsp"), Some("perllsp"));
         assert!(managed.contains("[languages]"));
-        assert!(managed.contains("ripr check --base origin/main --head HEAD"));
+        // #3886: a bare `ripr check` resolves the default branch; `check`
+        // has no `--head`, and `origin/main` need not exist.
+        assert!(managed.ends_with("then: ripr check"));
+        let unpublished = perl_next_command(true, Some("perllsp"), None);
+        assert!(unpublished.ends_with("then: ripr check"));
         // The packet-mode branch is unchanged.
         let packet = perl_next_command(true, None, None);
         assert!(packet.contains("--perl-facts"));
@@ -1756,7 +1936,7 @@ mod tests {
         std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
         std::fs::write(dir.join(CONFIG_FILE_NAME), "[invalid\n")
             .map_err(|err| format!("write invalid config: {err}"))?;
-        if doctor_json(&dir).is_ok() {
+        if doctor_json(&dir, output::doctor::DoctorProfile::Analysis).is_ok() {
             let _ = std::fs::remove_dir_all(&dir);
             return Err("invalid JSON doctor report unexpectedly passed".to_string());
         }

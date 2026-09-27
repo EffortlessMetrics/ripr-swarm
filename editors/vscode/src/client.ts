@@ -11,7 +11,7 @@ import {
 } from 'vscode-languageclient/node';
 import { getConfig, RiprConfig } from './config';
 import { requestedServerVersion, resolveServer, ResolveFailure, ResolvedServer } from './serverResolver';
-import { setupFilePath, hasUnsafeShellMetacharacter, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue } from './packetJson';
+import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue } from './packetJson';
 import { riprDocumentSelectorsForWorkspace, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
 import type { WorkspaceRootPickItem } from './workspaceHelpers';
 import { statusText, statusSummary, statusBarColors, canProjectFirstUsefulAction } from './statusRender';
@@ -35,6 +35,7 @@ import {
 import type { RiprFirstPrPacketState, RiprFirstPrPacketStatus } from './firstPrProjection';
 import {
   DEFAULT_LIFECYCLE_SETTLE_BUDGET_MS,
+  RiprClientLifecycleTimeoutError,
   waitForLifecyclePromise
 } from './lifecycleCoordinator';
 
@@ -238,7 +239,7 @@ export interface RiprAgentLoopCommandTarget {
   command?: string;
   label?: string;
   root?: string;
-  base?: string;
+  base?: string | null;
   mode?: string;
   seam_id?: string;
   target_artifact?: string;
@@ -278,14 +279,14 @@ export type RiprClientLifecycleWait = (
   description: string
 ) => Promise<void>;
 
-export class RiprClientLifecycleTimeoutError extends Error {
-  constructor(description: string, budgetMs: number) {
-    super(
-      `${description} did not settle within ${budgetMs}ms; refusing an unsafe ripr lifecycle transition.`
-    );
-    this.name = 'RiprClientLifecycleTimeoutError';
-  }
-}
+// The typed timeout lives beside its shared default producer so real
+// lifecycle timeouts carry `kind === 'timedOut'` (#2822).
+export { RiprClientLifecycleTimeoutError };
+
+/** A completed controller stop. Timeout and client-stop failures reject instead. */
+export type RiprClientStopResult = {
+  kind: 'alreadyStopped' | 'cancelled' | 'startupFailed' | 'stopped' | 'replaced';
+};
 
 export interface RiprClientRuntime {
   getConfig(resource?: vscode.Uri): RiprConfig;
@@ -361,7 +362,7 @@ const defaultRuntime: RiprClientRuntime = {
 export class RiprClientController {
   private client: RiprLanguageClient | undefined;
   private server: ResolvedServer | undefined;
-  private readonly notificationDisposables: vscode.Disposable[] = [];
+  private readonly notificationDisposables = new Map<RiprLanguageClient, vscode.Disposable[]>();
   private receivedTypedAnalysisStatus = false;
   private typedAnalysisStatusState: RiprAnalysisStatusPayload['state'] | undefined;
   private readonly dirtyRiprDocuments = new Set<string>();
@@ -604,10 +605,10 @@ export class RiprClientController {
     );
     this.client = client;
     client.setTrace(traceFromConfig(config.traceServer));
-    this.notificationDisposables.push(
+    this.notificationDisposables.set(client, [
       client.onNotification('ripr/analysisStatus', (params) => this.handleAnalysisStatus(params)),
       client.onNotification('window/logMessage', (params) => this.handleServerLog(params))
-    );
+    ]);
     try {
       await client.start();
       // Re-apply the configured trace level after the handshake (#2082
@@ -622,13 +623,17 @@ export class RiprClientController {
       // instead of returning early against stale state. Only clear this.client
       // if it still points at OUR client — a replacement start() may have
       // already installed a different one (the restart race, #2123).
+      try {
+        await client.stop();
+      } catch (stopError) {
+        // A failed cleanup may still own a process. Keep its client visible
+        // for an explicit stop retry, and report both failed transitions.
+        throw new AggregateError([error, stopError], 'ripr startup and cleanup both failed');
+      }
       if (this.client === client) {
         this.client = undefined;
       }
-      while (this.notificationDisposables.length > 0) {
-        this.notificationDisposables.pop()?.dispose();
-      }
-      await client.stop().catch(() => undefined);
+      this.disposeNotifications(client);
       throw error;
     }
     // If stop() ran during `await this.client.start()`, the generation no
@@ -761,9 +766,18 @@ export class RiprClientController {
     return this.client !== undefined;
   }
 
-  async stop(): Promise<void> {
+  private disposeNotifications(client: RiprLanguageClient): void {
+    const registrations = this.notificationDisposables.get(client);
+    this.notificationDisposables.delete(client);
+    for (const registration of registrations ?? []) {
+      registration.dispose();
+    }
+  }
+
+  async stop(): Promise<RiprClientStopResult> {
     const client = this.client;
     const starting = this.startingPromise;
+    let startupFailed = false;
     // Bump the generation so any in-flight startOnce() detects that stop()
     // ran during its async setup window. The captured start is awaited before
     // the client is cleared or stopped, so a stop during startup cannot lose
@@ -773,7 +787,7 @@ export class RiprClientController {
     if (starting) {
       const waitForLifecycle = this.runtime.waitForLifecycle ?? waitForLifecyclePromise;
       await waitForLifecycle(
-        starting.catch(() => undefined),
+        starting.catch(() => { startupFailed = true; }),
         DEFAULT_LIFECYCLE_SETTLE_BUDGET_MS,
         'ripr server startup'
       );
@@ -784,24 +798,26 @@ export class RiprClientController {
     if (this.startingPromise === starting) {
       this.startingPromise = undefined;
     }
-    if (client && this.client === client) {
+    if (this.client !== client) {
+      return { kind: this.client ? 'replaced' : startupFailed ? 'startupFailed' : 'cancelled' };
+    }
+    if (client) {
       await client.stop();
       this.client = undefined;
+      this.disposeNotifications(client);
     }
     this.server = undefined;
     this.receivedTypedAnalysisStatus = false;
     this.typedAnalysisStatusState = undefined;
     this.firstUsefulAction = undefined;
     this.dirtyRiprDocuments.clear();
-    while (this.notificationDisposables.length > 0) {
-      this.notificationDisposables.pop()?.dispose();
-    }
     this.updateStatus({
       kind: 'stopped',
       summary: 'ripr server has stopped.',
       detail: 'Run ripr: Restart Server to start analysis again.',
       nextStep: 'Run ripr: Restart Server.'
     });
+    return { kind: client ? 'stopped' : startupFailed ? 'startupFailed' : starting ? 'cancelled' : 'alreadyStopped' };
   }
 
   markWorkspaceStale(document: vscode.TextDocument): void {
@@ -1084,7 +1100,7 @@ export class RiprClientController {
       return;
     }
 
-    const command = validatedAgentLoopCommand(target);
+    const command = validatedAgentLoopCommand(target, await workspaceRedirectRoots(this.workspaceRoot));
     if (!command) {
       this.runtime.showInformationMessage('No ripr agent loop command is available for this diagnostic.');
       return;
@@ -3607,13 +3623,14 @@ export async function readActionableGapQueueStatus(
       detail: 'actionable-gaps queue missing; run cargo xtask evidence-quality-audit'
     };
   }
-  return validateActionableGapQueue(raw, workspaceRoot, filePath);
+  return validateActionableGapQueue(raw, workspaceRoot, filePath, await workspaceRedirectRoots(workspaceRoot));
 }
 
 function validateActionableGapQueue(
   raw: string,
   workspaceRoot: string,
-  filePath: string
+  filePath: string,
+  redirectRoots: readonly string[]
 ): RiprActionableGapQueueStatus {
   const base = {
     relativePath: ACTIONABLE_GAP_QUEUE_RELATIVE_PATH,
@@ -3721,7 +3738,7 @@ function validateActionableGapQueue(
       };
     }
     for (const command of actionableGapQueuePacketCommands(packetObject)) {
-      if (!actionableGapQueueCommandIsSafe(command)) {
+      if (!actionableGapQueueCommandIsSafe(command, redirectRoots)) {
         return {
           ...base,
           state: 'unsafeCommand',
@@ -3897,7 +3914,8 @@ export async function readFirstPrPacketStatus(
       artifact.jsonRelativePath,
       artifact.markdownRelativePath,
       jsonPath,
-      setupFilePath(workspaceRoot, artifact.markdownRelativePath)
+      setupFilePath(workspaceRoot, artifact.markdownRelativePath),
+      await workspaceRedirectRoots(workspaceRoot)
     );
   }
   return {
@@ -4023,10 +4041,11 @@ function firstRawFindingString(packet: Record<string, unknown>, field: string): 
   return undefined;
 }
 
-function actionableGapQueueCommandIsSafe(command: string): boolean {
+function actionableGapQueueCommandIsSafe(command: string, redirectRoots: readonly string[]): boolean {
   const normalized = command.trim().replace(/\s+/g, ' ');
   return normalized !== ''
     && !hasUnsafeShellMetacharacter(normalized)
+    && redirectStaysInWorkspace(normalized, redirectRoots)
     && ACTIONABLE_QUEUE_SAFE_COMMAND_PREFIXES.some((prefix) =>
       normalized === prefix || normalized.startsWith(`${prefix} `)
     );
@@ -4225,9 +4244,18 @@ const FIRST_USEFUL_ACTION_AUDIENCES = new Set([
 
 interface AgentLoopCommandContract {
   targetArtifact?: string;
-  startsWith: string;
-  includes: string[];
-  requiresSeamId: boolean;
+  // The exact command the server renders from this payload (`loop_commands.rs`
+  // with `shell_arg` quoting), without the redirect; `undefined` when the
+  // payload cannot have produced one. Equality leaves no room for an extra
+  // token such as `$(cmd)` (#4225).
+  expectedBody?: (target: RiprAgentLoopCommandTarget) => string | undefined;
+  // Labels the payload does not pin down are checked by prefix and substrings.
+  startsWith?: string;
+  includes?: string[];
+  // The command ends in `> <targetArtifact>`. Since #3938 the server anchors
+  // that redirect at the resolved `--root`, so the tail is checked by
+  // `redirectTargetMatches` rather than as fixed text.
+  redirectsToTargetArtifact?: boolean;
 }
 
 const AGENT_LOOP_COMMAND_CONTRACTS: Record<string, AgentLoopCommandContract> = {
@@ -4237,53 +4265,72 @@ const AGENT_LOOP_COMMAND_CONTRACTS: Record<string, AgentLoopCommandContract> = {
   // target/ripr/repair-attempts.
   agent_repair: {
     targetArtifact: 'target/ripr/repair-attempts',
-    startsWith: 'ripr agent repair --root . --seam-id ',
-    includes: [' --phase before'],
-    requiresSeamId: true
+    expectedBody: withSeamId((seamId) => `ripr agent repair --root . --seam-id ${seamId} --phase before`)
   },
   agent_packet: {
     targetArtifact: 'target/ripr/agent/agent-packet.json',
-    startsWith: 'ripr agent packet --root . --seam-id ',
-    includes: [' --json > target/ripr/agent/agent-packet.json'],
-    requiresSeamId: true
+    expectedBody: withSeamId((seamId) => `ripr agent packet --root . --seam-id ${seamId} --json`),
+    redirectsToTargetArtifact: true
   },
   agent_brief: {
     targetArtifact: 'target/ripr/agent/agent-brief.json',
-    startsWith: 'ripr agent brief --root . --seam-id ',
-    includes: [' --json > target/ripr/agent/agent-brief.json'],
-    requiresSeamId: true
+    expectedBody: withSeamId((seamId) => `ripr agent brief --root . --seam-id ${seamId} --json`),
+    redirectsToTargetArtifact: true
   },
   after_snapshot: {
     targetArtifact: 'target/ripr/pilot/after.repo-exposure.json',
-    startsWith: 'ripr check --root .',
-    includes: [' --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json'],
-    requiresSeamId: false
+    expectedBody: afterSnapshotBody,
+    redirectsToTargetArtifact: true
   },
   agent_verify: {
     targetArtifact: 'target/ripr/agent/agent-verify.json',
-    startsWith: 'ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json',
-    includes: [' > target/ripr/agent/agent-verify.json'],
-    requiresSeamId: false
+    expectedBody: () => 'ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json',
+    redirectsToTargetArtifact: true
   },
   agent_receipt: {
     targetArtifact: 'target/ripr/agent/agent-receipt.json',
-    startsWith: 'ripr agent receipt --root . --verify-json target/ripr/agent/agent-verify.json --seam-id ',
-    includes: [' --json --out target/ripr/agent/agent-receipt.json'],
-    requiresSeamId: true
+    expectedBody: withSeamId((seamId) =>
+      `ripr agent receipt --root . --verify-json target/ripr/agent/agent-verify.json --seam-id ${seamId} --json --out target/ripr/agent/agent-receipt.json`
+    )
   },
   gap_verify: {
     startsWith: 'ripr agent verify --root .',
-    includes: ['--json'],
-    requiresSeamId: false
+    includes: ['--json']
   },
   gap_receipt: {
     startsWith: 'ripr agent receipt --root .',
-    includes: ['--json'],
-    requiresSeamId: false
+    includes: ['--json']
   }
 };
 
-function validatedAgentLoopCommand(target?: RiprAgentLoopCommandTarget): string | undefined {
+function withSeamId(
+  render: (seamId: string) => string
+): (target: RiprAgentLoopCommandTarget) => string | undefined {
+  return (target) =>
+    boundedPayloadString(target.seam_id) ? render(serverShellArg(target.seam_id)) : undefined;
+}
+
+// `check_repo_exposure_command_with_base`: `--base` appears exactly when the
+// payload names one.
+function afterSnapshotBody(target: RiprAgentLoopCommandTarget): string | undefined {
+  const mode = target.mode;
+  if (typeof mode !== 'string' || !['instant', 'draft', 'fast', 'deep', 'ready'].includes(mode)) {
+    return undefined;
+  }
+  let base = '';
+  if (target.base !== undefined && target.base !== null) {
+    if (!boundedPayloadString(target.base)) {
+      return undefined;
+    }
+    base = ` --base ${serverShellArg(target.base)}`;
+  }
+  return `ripr check --root .${base} --mode ${mode} --format repo-exposure-json`;
+}
+
+export function validatedAgentLoopCommand(
+  target: RiprAgentLoopCommandTarget | undefined,
+  redirectRoots: readonly string[]
+): string | undefined {
   if (!target) {
     return undefined;
   }
@@ -4293,10 +4340,7 @@ function validatedAgentLoopCommand(target?: RiprAgentLoopCommandTarget): string 
     return undefined;
   }
   const command = typeof target?.command === 'string' ? target.command.trim() : '';
-  if (!command || hasUnsafeShellMetacharacter(command)) {
-    return undefined;
-  }
-  if (target.root !== '.') {
+  if (!command || target.root !== '.') {
     return undefined;
   }
   if (
@@ -4306,42 +4350,57 @@ function validatedAgentLoopCommand(target?: RiprAgentLoopCommandTarget): string 
   ) {
     return undefined;
   }
-  if (contract.requiresSeamId && !boundedPayloadString(target.seam_id)) {
+  let body = command;
+  if (contract.redirectsToTargetArtifact && contract.targetArtifact !== undefined) {
+    const redirectAt = command.lastIndexOf(' > ');
+    if (
+      redirectAt < 0 ||
+      !redirectTargetMatches(
+        command.slice(redirectAt + ' > '.length),
+        contract.targetArtifact,
+        redirectRoots
+      )
+    ) {
+      return undefined;
+    }
+    body = command.slice(0, redirectAt);
+  }
+  // The redirect tail is owned by `redirectTargetMatches`, which lets a
+  // quoted workspace path keep its `&` or `$`; everything before it is not.
+  if (hasUnsafeShellMetacharacter(body)) {
     return undefined;
   }
+  if (contract.expectedBody) {
+    return body === contract.expectedBody(target) ? command : undefined;
+  }
+  // One redirect only: a `>` here would truncate some other file.
   if (
-    contract.requiresSeamId &&
-    !command.includes(` --seam-id ${shellArgToken(target.seam_id)} `)
-  ) {
-    return undefined;
-  }
-  if (!command.startsWith(contract.startsWith)) {
-    return undefined;
-  }
-  if (!contract.includes.every((expected) => command.includes(expected))) {
-    return undefined;
-  }
-  if (label === 'after_snapshot' && !afterSnapshotModeMatches(target.mode, command)) {
-    return undefined;
-  }
-  if (
-    label === 'after_snapshot' &&
-    boundedPayloadString(target.base) &&
-    !command.includes(` --base ${shellArgToken(target.base)} `)
+    body.includes('>') ||
+    !body.startsWith(contract.startsWith ?? '') ||
+    !(contract.includes ?? []).every((expected) => body.includes(expected))
   ) {
     return undefined;
   }
   return command;
 }
 
-function afterSnapshotModeMatches(mode: unknown, command: string): boolean {
-  if (typeof mode !== 'string' || !['instant', 'draft', 'fast', 'deep', 'ready'].includes(mode)) {
-    return false;
+/**
+ * Roots a `--root .` redirect may be anchored at: the cwd of the server or
+ * CLI that rendered it, which is the workspace root. That cwd is read back
+ * from the OS, which resolves symlinks, so the real path is accepted too.
+ */
+async function workspaceRedirectRoots(workspaceRoot: string | undefined): Promise<string[]> {
+  if (!workspaceRoot) {
+    return [];
   }
-  return command.includes(` --mode ${mode} `);
+  try {
+    return [workspaceRoot, await fs.realpath(workspaceRoot)];
+  } catch {
+    return [workspaceRoot];
+  }
 }
 
-function boundedPayloadString(value: unknown): boolean {
+function boundedPayloadString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 256;
 }
 
@@ -4492,15 +4551,6 @@ function startRepairActionDescription(command: vscode.Command): string | undefin
     default:
       return undefined;
   }
-}
-
-function shellArgToken(value: unknown): string {
-  if (typeof value !== 'string') {
-    return '';
-  }
-  return /^[A-Za-z0-9_./:-]+$/.test(value)
-    ? value
-    : `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
 function activeDocumentRelativePath(workspaceRoot: string | undefined): string | undefined {

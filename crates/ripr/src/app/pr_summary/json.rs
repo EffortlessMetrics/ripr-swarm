@@ -427,17 +427,20 @@ fn derive_local_reproduction_commands(
         commands.push(command.to_string());
     }
 
-    let base = value_path(diff_report_value, &["base"])
+    // #3886: replay the base the artifacts recorded. Without one, omit
+    // `--base` so ripr resolves the repository's default branch rather than
+    // naming an `origin/main` that need not exist.
+    let base_arg = value_path(diff_report_value, &["base"])
+        .or_else(|| value_path(start_here_value, &["inputs", "base"]))
         .and_then(Value::as_str)
-        .unwrap_or("origin/main");
+        .map(|base| format!(" --base {base}"))
+        .unwrap_or_default();
     let head = value_path(diff_report_value, &["head"])
         .and_then(Value::as_str)
         .unwrap_or("HEAD");
 
-    commands.push(format!("ripr check --base {base}"));
-    commands.push(format!(
-        "ripr first-pr --root . --base {base} --head {head}"
-    ));
+    commands.push(format!("ripr check{base_arg}"));
+    commands.push(format!("ripr first-pr --root .{base_arg} --head {head}"));
 
     // Add the verify_command from the top repair when it is a real command.
     let verify = value_path(start_here_value, &["selected", "verify_command"])
@@ -802,7 +805,7 @@ mod tests {
                 .local_reproduction_commands
                 .first()
                 .map(String::as_str),
-            Some("ripr check --base origin/main")
+            Some("ripr check")
         );
         let json = render_pr_evidence_summary_json(&without);
         assert!(!json.contains("repair_command"), "{json}");
@@ -849,11 +852,11 @@ mod tests {
         // A command that runs unchanged in PowerShell keeps its bash bytes and
         // gains no second, identical block (F60-12).
         assert!(
-            markdown.contains("```bash\nripr check --base origin/main\n```\n\n"),
+            markdown.contains("```bash\nripr check\n```\n\n"),
             "bash form drifted:\n{markdown}"
         );
         assert!(
-            !markdown.contains("```powershell\nripr check --base origin/main\n```"),
+            !markdown.contains("```powershell\nripr check\n```"),
             "an unchanged command must not repeat as a PowerShell block:\n{markdown}"
         );
         // A redirecting verify command round-trips through the shared
@@ -904,8 +907,7 @@ mod tests {
         );
         // The disclosure names the command; no powershell fence is emitted for
         // it.
-        let disclosure =
-            "PowerShell form unavailable for compound commands: `cargo test a && cargo test b`\n\n";
+        let disclosure = "PowerShell form unavailable for unsupported or compound commands: `cargo test a && cargo test b`\n\n";
         assert!(
             markdown.contains(disclosure),
             "compound disclosure missing:\n{markdown}"
@@ -949,7 +951,7 @@ mod tests {
             markdown.contains(bash_form),
             "bash input-redirect command drifted:\n{markdown}"
         );
-        let disclosure = "PowerShell form unavailable for compound commands: `cargo run --bin replay < input.json`\n\n";
+        let disclosure = "PowerShell form unavailable for unsupported or compound commands: `cargo run --bin replay < input.json`\n\n";
         assert!(
             markdown.contains(disclosure),
             "input-redirect disclosure missing:\n{markdown}"
