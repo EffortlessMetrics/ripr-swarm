@@ -40062,6 +40062,26 @@ fn actionable_gap_outcomes_treat_receipt_verification_not_run_as_missing() -> Re
         crate::actionable_gap_outcomes_missing_verify_result_count(&value),
         1
     );
+
+    // Alternate control: a real status is still the verify result, so the
+    // filter drops only the not-run sentinel.
+    let mut ran = receipt.clone();
+    ran["verification"]["status"] = serde_json::json!("passed");
+    let report = actionable_gap_outcomes_report_from_values(
+        &packets,
+        Some(&ran),
+        None,
+        "target/ripr/reports/actionable-gaps.json".to_string(),
+        Some("target/ripr/reports/agent-receipt.json".to_string()),
+        None,
+    )?;
+    let value: serde_json::Value = serde_json::from_str(&actionable_gap_outcomes_json(&report)?)
+        .map_err(|err| err.to_string())?;
+    assert_eq!(value["outcomes"][0]["verify_result"], "passed");
+    assert_eq!(
+        crate::actionable_gap_outcomes_missing_verify_result_count(&value),
+        0
+    );
     Ok(())
 }
 
