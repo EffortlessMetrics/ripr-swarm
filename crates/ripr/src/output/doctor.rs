@@ -678,7 +678,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
                 {
                     report.add_advisory_check(
                         &name,
-                        format!("{evidence}; project verification and source builds require their own toolchain"),
+                        analysis_advisory_toolchain_evidence(tool, &evidence),
                     );
                 } else {
                     report.add_check(&name, status, Some(evidence));
@@ -722,12 +722,38 @@ pub(crate) fn doctor_tool_check(tool: &str) -> (DoctorStatus, String) {
 }
 
 fn doctor_tool_check_for_root(tool: &str, root: &Path) -> (DoctorStatus, String) {
-    if tool == "rustc" {
-        doctor_tool_check_with_timeout_result_at(tool, DOCTOR_TOOL_TIMEOUT, Some(root))
-            .into_public()
+    doctor_tool_check_with_timeout_result_at(
+        tool,
+        DOCTOR_TOOL_TIMEOUT,
+        doctor_tool_probe_dir(tool, root),
+    )
+    .into_public()
+}
+
+/// The directory a core tool probe runs in. `cargo` and `rustc` resolve
+/// through rustup's per-directory toolchain selection (`rust-toolchain.toml`,
+/// overrides), so both are probed in the selected root: that is the toolchain
+/// a source build there uses and the `cargo` the analyzer's `cargo metadata`
+/// probe runs. Other tools keep the caller's directory.
+fn doctor_tool_probe_dir<'a>(tool: &str, root: &'a Path) -> Option<&'a Path> {
+    RUST_TOOLCHAIN_TOOLS.contains(&tool).then_some(root)
+}
+
+/// Evidence for an unavailable Cargo/rustc capability under the analysis
+/// profile. The installed binary's static analysis does not compile the
+/// workspace, but it does read `cargo metadata` for the custom test-harness
+/// target inventory, so a missing `cargo` withholds that evidence (the
+/// harness verdict fails closed as `manifest_unavailable`). Doctor names that
+/// degradation instead of implying analysis is unaffected.
+fn analysis_advisory_toolchain_evidence(tool: &str, evidence: &str) -> String {
+    let analysis_effect = if tool == "cargo" {
+        "static analysis continues, but evidence that reads `cargo metadata` in the selected root (custom test-harness target inventory) is withheld"
     } else {
-        doctor_tool_check(tool)
-    }
+        "the installed binary's static analysis does not run rustc"
+    };
+    format!(
+        "{evidence}; {analysis_effect}; project verification and source builds require their own toolchain"
+    )
 }
 
 fn doctor_tool_check_with_timeout(tool: &str, timeout: Duration) -> (DoctorStatus, String) {
@@ -1604,6 +1630,59 @@ mod tests {
         if report.status != DoctorStatus::Pass {
             return Err("missing cargo must not fail installed analysis".to_string());
         }
+        // PR #4196 review: the analyzer reads `cargo metadata` for the custom
+        // harness inventory, so a missing cargo is a disclosed analysis
+        // degradation, while a missing rustc is not claimed as one.
+        let cargo = check(&report, "tool_cargo")?
+            .evidence
+            .clone()
+            .unwrap_or_default();
+        let rustc = check(&report, "tool_rustc")?
+            .evidence
+            .clone()
+            .unwrap_or_default();
+        if !cargo.contains("`cargo metadata`")
+            || !cargo.contains("is withheld")
+            || rustc.contains("cargo metadata")
+            || !rustc.contains("does not run rustc")
+        {
+            return Err(format!(
+                "cargo advisory must disclose the cargo-metadata limitation: {cargo:?} / {rustc:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// PR #4196 review: `cargo` resolves through rustup's per-directory
+    /// toolchain just like `rustc`, so the source-build profile must probe it
+    /// in the selected root, not the caller's directory.
+    #[cfg(unix)]
+    #[test]
+    fn doctor_cargo_probe_uses_selected_root() -> Result<(), String> {
+        let dir = unique_test_dir("selected-root-cargo");
+        let selected_root = dir.join("selected-root");
+        std::fs::create_dir_all(&selected_root).map_err(|err| format!("create root: {err}"))?;
+        let shim = publish_doctor_test_tool(
+            &dir,
+            "cargo-root-probe",
+            "#!/bin/sh\ncase \"$PWD\" in\n  *selected-root) printf 'cargo 1.95.0 (target-root)\\n' ;;\n  *) exit 1 ;;\nesac\n",
+        )?;
+        let shim_str: &str = shim
+            .to_str()
+            .ok_or_else(|| "shim path is not UTF-8".to_string())?;
+        let result = probe_published_tool_with_command(
+            "cargo",
+            || doctor_tool_command(shim_str),
+            SHIM_PROBE_TEST_CEILING,
+            doctor_tool_probe_dir("cargo", &selected_root),
+        );
+        let git_dir = doctor_tool_probe_dir("git", &selected_root);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            (result.status, result.evidence.as_str()),
+            (DoctorStatus::Pass, "cargo 1.95.0 (target-root)"),
+        );
+        assert_eq!(git_dir, None, "git keeps the caller directory");
         Ok(())
     }
 

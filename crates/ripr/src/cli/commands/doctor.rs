@@ -328,7 +328,11 @@ where
     let mut ok = true;
     for (language, tool, hint) in language_runtime_probes_for(root, enabled) {
         let (status, evidence) = probe(tool, tool == "yarn");
-        let required = runtime_probe_is_required(language, tool, enabled);
+        // A language runtime is an analysis capability, not a prerequisite
+        // for building RIPR from source: the source-build profile keeps the
+        // probe visible but never lets it decide that profile's status.
+        let required = report.profile == output::doctor::DoctorProfile::Analysis
+            && runtime_probe_is_required(language, tool, enabled);
         report.add_runtime_probe(language, tool, status, &evidence, required, hint);
         if required && status == output::doctor::DoctorStatus::Fail {
             ok = false;
@@ -1596,6 +1600,83 @@ mod tests {
         );
         std::fs::remove_dir_all(&configured_only_root)
             .map_err(|err| format!("remove configured-only root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn source_build_profile_keeps_enabled_language_runtime_failure_advisory() -> Result<(), String>
+    {
+        // PR #4196 review: an enabled TypeScript root with no node is an
+        // analysis failure, but not a RIPR source-build prerequisite. The
+        // same probe outcome must fail analysis and stay advisory for
+        // source-build, while still being reported.
+        let root = unique_command_test_dir("runtime-probe-source-build");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(root.join("package.json"), "{}")
+            .map_err(|err| format!("write package marker: {err}"))?;
+        let missing_node = |tool: &str, _isolated: bool| {
+            if tool == "node" {
+                (
+                    output::doctor::DoctorStatus::Fail,
+                    "node not available".to_string(),
+                )
+            } else {
+                (
+                    output::doctor::DoctorStatus::Pass,
+                    format!("{tool} available"),
+                )
+            }
+        };
+        let mut outcomes = Vec::new();
+        for profile in [
+            output::doctor::DoctorProfile::Analysis,
+            output::doctor::DoctorProfile::SourceBuild,
+        ] {
+            let mut report = output::doctor::DoctorReport::new(&root.display().to_string());
+            report.profile = profile;
+            let ok = add_language_runtime_probes(
+                &root,
+                &[LanguageId::TypeScript],
+                &mut report,
+                false,
+                missing_node,
+            );
+            let node = report
+                .runtime_probes
+                .iter()
+                .find(|probe| probe.tool == "node")
+                .ok_or_else(|| format!("missing node probe for {profile:?}"))?;
+            outcomes.push((
+                profile,
+                ok,
+                report.status,
+                node.required,
+                node.status,
+                output::doctor::doctor_report_result(&report).is_ok(),
+            ));
+        }
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        assert_eq!(
+            outcomes,
+            vec![
+                (
+                    output::doctor::DoctorProfile::Analysis,
+                    false,
+                    output::doctor::DoctorStatus::Fail,
+                    true,
+                    output::doctor::DoctorStatus::Fail,
+                    false,
+                ),
+                (
+                    output::doctor::DoctorProfile::SourceBuild,
+                    true,
+                    output::doctor::DoctorStatus::Pass,
+                    false,
+                    output::doctor::DoctorStatus::Fail,
+                    true,
+                ),
+            ]
+        );
         Ok(())
     }
 

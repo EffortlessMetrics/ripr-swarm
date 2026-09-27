@@ -82,7 +82,9 @@ that family's version only.
 when requested. Each `checks[].status` is `pass`, `fail`, `advisory`, or `skipped`;
 `advisory` (added in schema `0.3`) reports an unavailable Cargo/rustc
 capability without failing installed-binary analysis. The source-build profile
-fails on missing tools or rustc below RIPR's build MSRV. It does not establish
+fails on missing tools or rustc below RIPR's build MSRV, and reports its
+language `runtime_probes` with `required: false` because a language runtime is
+an analysis capability, not a build prerequisite. It does not establish
 whether project verification will succeed; that requires running the selected
 project verification command with its own toolchain.
 `skipped` (additive in schema `0.2`) marks a check that does not apply to the
