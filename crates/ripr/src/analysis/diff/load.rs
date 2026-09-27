@@ -141,7 +141,11 @@ pub fn load_worktree_diff_with_effective_base(
 /// ran is never allowed to assert a bad ref, and an unusable root keeps
 /// producing the `failed to run git diff: ...` text that the `context` and
 /// `explain` invalid-root contract pins.
-fn resolve_effective_base(
+///
+/// This is the one base authority for every command that diffs committed
+/// history (#3952, #3886): `check`, `diff`, `first-pr` and `pr-evidence` all
+/// resolve an omitted `--base` here instead of assuming `origin/main`.
+pub fn resolve_effective_base(
     root: &Path,
     base: Option<&str>,
     git_timeout: Option<Duration>,
