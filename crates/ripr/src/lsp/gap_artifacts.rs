@@ -1374,17 +1374,13 @@ pub(super) fn command_payload_is_safe(root: &Path, command: &str) -> bool {
     if trimmed.is_empty() || trimmed.contains('\n') || trimmed.contains('\r') {
         return false;
     }
-    // `$`, `(` and `)` open command or process substitution (`$(cmd)`,
-    // `<(cmd)`, PowerShell `$(...)`/`@(...)`). The check is not quote-aware:
-    // bash, fish, PowerShell and cmd.exe disagree about what a quoted span
-    // protects, so every client gets the same refusal the VS Code extension
-    // applies (#4225, #4239).
-    if trimmed.chars().any(|character| {
-        matches!(
-            character,
-            ';' | '&' | '|' | '<' | '>' | '`' | '$' | '(' | ')' | '\0'
-        )
-    }) {
+    if trimmed
+        .chars()
+        .any(|character| matches!(character, ';' | '&' | '|' | '<' | '>' | '`' | '\0'))
+    {
+        return false;
+    }
+    if !substitution_is_quoted(trimmed) {
         return false;
     }
     if trimmed.contains("../") || trimmed.contains("..\\") {
@@ -1408,6 +1404,29 @@ pub(super) fn command_payload_is_safe(root: &Path, command: &str) -> bool {
         }
     }
     true
+}
+
+/// `$`, `(` and `)` open command or process substitution (`$(cmd)`, `<(cmd)`,
+/// PowerShell `$(...)`/`@(...)`), so they may appear only inside a
+/// single-quoted span, where `shell_arg` puts them (a gap id such as
+/// `'...:len(x)'`). That span is inert in bash, zsh, fish and PowerShell only
+/// when the command has no `"`, `\` or typographic quote, so those refuse the
+/// allowance, as does an unterminated span. Mirrors the VS Code client's
+/// `hasUnsafeShellMetacharacter` (#4225, #4239).
+fn substitution_is_quoted(command: &str) -> bool {
+    let is_substitution = |character: char| matches!(character, '$' | '(' | ')');
+    if !command.contains(is_substitution) {
+        return true;
+    }
+    if command.contains(|character| matches!(character, '"' | '\\' | '\u{2018}'..='\u{201f}')) {
+        return false;
+    }
+    let spans: Vec<&str> = command.split('\'').collect();
+    spans.len() % 2 == 1
+        && spans
+            .iter()
+            .step_by(2)
+            .all(|span| !span.contains(is_substitution))
 }
 
 fn command_program_is_allowed(tokens: &[String]) -> bool {
@@ -2860,20 +2879,37 @@ mod tests {
         for command in [
             "cargo test $(id)",
             "cargo test $HOME",
-            "ripr agent verify --root . --json '$(id)'",
             "pytest tests/test_pricing.py (id",
             "cargo test foo)",
             "cargo test foo\0bar",
+            // Unterminated span: the `(` is not quoted.
+            "cargo test 'foo (id",
+            // A `"` or `\\` elsewhere can end or escape the span in some shell.
+            "ripr receipt write --gap 'gap:len(x)' --out \"target/r.json\"",
+            "ripr receipt write --gap 'gap:len(x)' --out target\\r.json",
+            // PowerShell closes a `'` span on U+2019, exposing `$(id)`.
+            "ripr receipt write --gap 'gap:len(x)\u{2019} $(id) \u{2018}'",
         ] {
             assert!(
                 !command_payload_is_safe(&workspace, command),
                 "accepted {command:?}"
             );
         }
-        assert!(command_payload_is_safe(
-            &workspace,
-            "cargo test -p ripr 'name with spaces' -- --exact"
-        ));
+        for command in [
+            "cargo test -p ripr 'name with spaces' -- --exact",
+            // `shell_arg` quotes a gap id built from an expression; this is the
+            // real receipt renderer's output, not hand-written text.
+            &crate::output::receipt_write::receipt_write_command(
+                "gap:rust:src/lib.rs:total:predicate_boundary:items.len()",
+                "cargo test -p pricing total_boundary",
+                Some("target/ripr/receipts/gap.json"),
+            ),
+        ] {
+            assert!(
+                command_payload_is_safe(&workspace, command),
+                "refused {command:?}"
+            );
+        }
     }
 
     #[test]
