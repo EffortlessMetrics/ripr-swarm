@@ -4343,6 +4343,10 @@ function validatedAgentLoopCommand(
       return undefined;
     }
     body = command.slice(0, redirectAt);
+    // One redirect only: an earlier `>` would truncate some other file.
+    if (body.includes('>')) {
+      return undefined;
+    }
   }
   if (!contract.includes.every((expected) => body.includes(expected))) {
     return undefined;
