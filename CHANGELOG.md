@@ -11,6 +11,15 @@ are scoped or reviewed.
 
 ### Added
 
+- `ripr --version` now names the commit the binary was built from, as
+  `ripr <version> (<commit>)`, with `-dirty` when the sources that build it differed
+  from that commit. Packaged crates (crates.io, `cargo install ripr`) read the
+  commit that `cargo package` recorded, so an installed candidate can be bound
+  to source without hashing it. `ripr doctor` reports the same identity with
+  the running executable and the first `ripr` on PATH, and warns, without
+  failing, when that PATH entry is a Cargo workspace build or a different
+  binary ([#4256](https://github.com/EffortlessMetrics/ripr-swarm/issues/4256)).
+
 - New repository-governed Rust test-harness registry
   (`[analysis.test_harnesses]` in `ripr.toml`): repositories can teach
   ripr, through exact registrations only, about bounded custom test
@@ -539,6 +548,23 @@ are scoped or reviewed.
   the test body declares or reassigns, a callback parameter, a hook write
   that is conditional or made through a closure, a write to a hook-local
   variable, and a shadowed class or namespace name still do not relate.
+
+- A generated command prints no PowerShell form only when PowerShell reads it
+  the same way. Commands with a quoted program path, `$` expansion, globs,
+  braces, `~`, `@`, comments, `--%`, non-spaced `>` forms, a second redirect or
+  an unbalanced quote used to be labelled as running unchanged in PowerShell.
+  They now get a translation (a quoted program path gains the `&` call
+  operator) or a "PowerShell form unavailable" line
+  ([#4244](https://github.com/EffortlessMetrics/ripr-swarm/issues/4244)).
+
+- With TypeScript enabled, a diff that classifies no TypeScript owner (for
+  example a Rust-only change) is no longer reported
+  `partial_with_limitations` because some unchanged TypeScript test file uses
+  a test shape the adapter cannot extract. The
+  `typescript_test_extraction_partial` limitation is still reported when a
+  changed TypeScript or JavaScript owner, or a Bun cross-language finding,
+  reads the test index
+  ([#4261](https://github.com/EffortlessMetrics/ripr-swarm/issues/4261)).
 
 - An improved `agent receipt` (including the one `ripr agent repair --phase
   after` writes) no longer says "Keep the focused test": ripr never runs the

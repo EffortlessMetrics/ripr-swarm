@@ -64,6 +64,18 @@ root, such as the `cargo_toml`, `tool_cargo`, and `tool_rustc` checks on a
 root where Rust is not in scope. A skipped check never fails the report, and
 its `evidence` states why it was skipped. See [Exit codes](EXIT_CODES.md).
 
+`ripr doctor --json` also carries an additive `binary` object (schema `0.2`)
+naming which `ripr` is running and which one PATH selects: `version` (the
+`ripr --version` line), `commit` (full id or `null`), `commit_dirty`,
+`executable` (or `null` when the platform does not report it),
+`executable_is_cargo_build_output`, `path_ripr` (first `ripr` on
+PATH, symlinks resolved, or `null`), `path_ripr_is_cargo_build_output`,
+`path_ripr_is_running_executable` (`null` when either side is unknown), and
+`warnings`. Cargo build output means a binary beside Cargo's `deps/` and
+`.fingerprint/` directories in a `target/<profile>/` directory. The warnings are
+advisory: they never change `status` or the exit code, because a workspace build
+on PATH is a legitimate development setup.
+
 ## JSON object key ordering
 
 JSON object key order is not part of the semantic contract for ordinary
@@ -14757,6 +14769,8 @@ JSON shape:
   ],
   "first_useful_action": {
     "default_ci_blocking": false,
+    "rendered_cases": 6,
+    "total_cases": 6,
     "receipt_dir": "fixtures/boundary_gap/expected/first-useful-action",
     "cases": [
       {
@@ -14828,6 +14842,8 @@ JSON shape:
   },
   "pr_review_front_panel": {
     "default_ci_blocking": false,
+    "rendered_cases": 13,
+    "total_cases": 13,
     "receipt_dir": "fixtures/boundary_gap/expected/pr-review-front-panel",
     "cases": [
       {
@@ -14861,6 +14877,8 @@ JSON shape:
   },
   "report_packet_index": {
     "default_ci_blocking": false,
+    "rendered_cases": 7,
+    "total_cases": 7,
     "receipt_dir": "fixtures/boundary_gap/expected/report-packet-index",
     "cases": [
       {
