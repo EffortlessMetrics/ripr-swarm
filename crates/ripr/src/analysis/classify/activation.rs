@@ -1386,7 +1386,7 @@ fn owner_calls_passing_constant(
         .collect()
 }
 
-fn literal_operand_value(operand: &str) -> Option<String> {
+pub(in crate::analysis) fn literal_operand_value(operand: &str) -> Option<String> {
     scalar_values(operand).into_iter().next()
 }
 
@@ -2641,6 +2641,13 @@ assert_eq!(input.amount, 100);"#
                 2,
                 "score(1.2);",
                 Expect::Missing("amount == 1.5"),
+            ),
+            (
+                "    amount > 1.5f64",
+                "amount > 1.5f64",
+                2,
+                "score(1);",
+                Expect::Missing("amount == 1.5f64"),
             ),
             // The evaluator cannot fold these initializers, so a test at
             // 100 could never close them: no repair is named.

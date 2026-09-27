@@ -1378,6 +1378,15 @@ fn given_whole_literal_or_later_shadow_when_test_hits_boundary_then_grip_closes(
             "fee(1.5)",
             "1.5",
         ),
+        // A suffixed decimal keeps its fraction too: `fee(1)` does not
+        // hit `1.5f64`.
+        (
+            "pub fn fee(amount: f64) -> u64 {\n    if amount > 1.5f64 { 0 } else { 5 }\n}\n",
+            "amount > 1.5f64",
+            "fee(1)",
+            "fee(1.5)",
+            "1.5",
+        ),
         (
             "pub fn fee(amount: f64) -> u64 {\n    if -1.5 < amount { 0 } else { 5 }\n}\n",
             "-1.5 < amount",

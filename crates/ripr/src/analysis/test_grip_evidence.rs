@@ -1477,6 +1477,18 @@ fn boundary_rhs_token(expression: &str) -> String {
 /// paths keep the identifier-prefix spelling because `check` does not
 /// read them as whole values either (#4228).
 fn boundary_token(operand: &str) -> String {
+    // A numeric boundary is read by `check`'s own literal reader, so a
+    // suffixed literal (`1.5f64`, `100u32`) spells the same value in both
+    // owners instead of grip's identifier prefix (`1`, `100u32`).
+    let trimmed = operand.trim();
+    if trimmed
+        .strip_prefix('-')
+        .unwrap_or(trimmed)
+        .starts_with(|ch: char| ch.is_ascii_digit())
+        && let Some(literal) = super::classify::literal_operand_value(trimmed)
+    {
+        return literal;
+    }
     match scalar_values(operand).into_iter().next() {
         Some(literal) if !literal.contains("::") => literal,
         _ => boundary_identifier_prefix(operand),
