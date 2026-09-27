@@ -535,6 +535,10 @@ GapRecords, can copy a full repair card with a current validated GapRecord
 freshness cue, can copy a fail-fast pytest skeleton, and can open the
 suggested test file when the repair route carries a bare test name.
 
+The single-literal expected-value rule (including one triple-quoted string,
+and excluding compounds and adjacent-string concatenation) is covered by
+`crates/ripr/src/analysis/language/python/tests.rs::classify_change_never_restates_changed_expression_as_discriminator`.
+
 ## Implementation Mapping
 
 Follow-up implementation belongs to Campaign 27 work item

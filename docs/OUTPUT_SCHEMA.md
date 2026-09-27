@@ -15446,7 +15446,12 @@ Python static-limit findings with `static_limit_kind` become report-only
 `StaticLimitation` records with `repairability = "analyzer_limitation"` and no
 agent-packet projection. Visibility-unknown presentation text and Python static
 limits remain limitations and do not become generic `static_unknown` repair
-instructions.
+instructions. A TypeScript preview finding whose repair packet the shared
+validator kept closed becomes a report-only `StaticLimitation` record with
+`static_limit_kind = "typescript_repair_packet_not_delegatable"`, and a weakly
+exposed Python preview finding without a `python_repair_card` becomes one with
+`static_limit_kind = "python_repair_card_unavailable"`; neither carries a repair
+route, verify command, or receipt (RIPR-SPEC-0046).
 
 The command writes JSON to `target/ripr/reports/gap-decision-ledger.json` and
 Markdown to `target/ripr/reports/gap-decision-ledger.md` by default. It does
