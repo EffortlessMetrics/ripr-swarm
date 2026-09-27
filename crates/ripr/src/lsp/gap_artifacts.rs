@@ -1374,10 +1374,17 @@ pub(super) fn command_payload_is_safe(root: &Path, command: &str) -> bool {
     if trimmed.is_empty() || trimmed.contains('\n') || trimmed.contains('\r') {
         return false;
     }
-    if trimmed
-        .chars()
-        .any(|character| matches!(character, ';' | '&' | '|' | '<' | '>' | '`'))
-    {
+    // `$`, `(` and `)` open command or process substitution (`$(cmd)`,
+    // `<(cmd)`, PowerShell `$(...)`/`@(...)`). The check is not quote-aware:
+    // bash, fish, PowerShell and cmd.exe disagree about what a quoted span
+    // protects, so every client gets the same refusal the VS Code extension
+    // applies (#4225, #4239).
+    if trimmed.chars().any(|character| {
+        matches!(
+            character,
+            ';' | '&' | '|' | '<' | '>' | '`' | '$' | '(' | ')' | '\0'
+        )
+    }) {
         return false;
     }
     if trimmed.contains("../") || trimmed.contains("..\\") {
@@ -2844,6 +2851,29 @@ mod tests {
         let command = "ripr agent verify --root \"/workspace\" --json";
 
         assert!(command_payload_is_safe(&workspace, command));
+    }
+
+    #[test]
+    fn command_payload_refuses_substitution_metacharacters() {
+        let workspace = root();
+
+        for command in [
+            "cargo test $(id)",
+            "cargo test $HOME",
+            "ripr agent verify --root . --json '$(id)'",
+            "pytest tests/test_pricing.py (id",
+            "cargo test foo)",
+            "cargo test foo\0bar",
+        ] {
+            assert!(
+                !command_payload_is_safe(&workspace, command),
+                "accepted {command:?}"
+            );
+        }
+        assert!(command_payload_is_safe(
+            &workspace,
+            "cargo test -p ripr 'name with spaces' -- --exact"
+        ));
     }
 
     #[test]
