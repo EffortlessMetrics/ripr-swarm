@@ -46117,6 +46117,12 @@ fn vsix_inventory_rejects_workspace_build_output_sentinel() -> Result<(), String
             super::VSIX_MAX_ENTRIES,
             super::VSIX_MAX_UNCOMPRESSED_BYTES,
         )?;
+        // The production path `vscode-package` runs after `vsce package`.
+        let summary = super::verify_packaged_vsix_inventory(&clean)?;
+        assert!(
+            summary.starts_with(&format!("VSIX inventory: {} entries, ", approved.len())),
+            "{summary}"
+        );
 
         let sentinel = "extension/target/debug/ripr-1775-sentinel.bin";
         let mut polluted_members = approved.to_vec();
@@ -46133,6 +46139,11 @@ fn vsix_inventory_rejects_workspace_build_output_sentinel() -> Result<(), String
         };
         assert!(error.contains(sentinel), "{error}");
         assert!(error.contains("1 workspace build-output"), "{error}");
+        let Err(error) = super::verify_packaged_vsix_inventory(&polluted) else {
+            return Err("vscode-package must reject the polluted VSIX".to_string());
+        };
+        assert!(error.contains("packaged VSIX"), "{error}");
+        assert!(error.contains(sentinel), "{error}");
         Ok(())
     })
 }

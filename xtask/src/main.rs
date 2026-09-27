@@ -1349,16 +1349,22 @@ fn vscode_package() -> Result<(), String> {
         .map_err(|err| format!("failed to create {}: {err}", dist.display()))?;
     let version = vscode_package_version(&extension_dir.join("package.json"))?;
     run_cwd_command(&vscode_package_command(&version))?;
-    let vsix_path = dist.join(format!("ripr-{version}.vsix"));
-    let inventory = read_vsix_inventory(&vsix_path)?;
+    let summary = verify_packaged_vsix_inventory(&dist.join(format!("ripr-{version}.vsix")))?;
+    println!("{summary}");
+    Ok(())
+}
+
+/// Reads the built VSIX and applies the production inventory bounds. Returns
+/// the one-line summary `vscode-package` prints.
+fn verify_packaged_vsix_inventory(vsix_path: &Path) -> Result<String, String> {
+    let inventory = read_vsix_inventory(vsix_path)?;
     check_vsix_inventory(&inventory, VSIX_MAX_ENTRIES, VSIX_MAX_UNCOMPRESSED_BYTES)
         .map_err(|err| format!("packaged VSIX {} {err}", vsix_path.display()))?;
-    println!(
+    Ok(format!(
         "VSIX inventory: {} entries, {} bytes unpacked",
         inventory.len(),
         inventory.iter().map(|entry| entry.size).sum::<u64>()
-    );
-    Ok(())
+    ))
 }
 
 /// Upper bounds on the packaged VSIX. The 0.11 extension packs about 410
