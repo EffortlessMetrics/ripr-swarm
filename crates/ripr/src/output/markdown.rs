@@ -690,6 +690,16 @@ fn main() -> ExitCode {
 }
 "#;
 
+    /// Removes a native-proof root when the case ends, pass or fail, so
+    /// repeated runs do not accumulate compiled recorders under the temp dir.
+    struct RemoveOnDrop(std::path::PathBuf);
+
+    impl Drop for RemoveOnDrop {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
     /// Disposable root for one native-proof case. Unique per call (timestamp
     /// plus pid) so parallel tests never share it.
     fn native_proof_root(name: &str) -> Result<std::path::PathBuf, String> {
@@ -749,6 +759,7 @@ fn main() -> ExitCode {
     #[test]
     fn native_proof_recorder_source_compiles() -> Result<(), String> {
         let root = native_proof_root("compile")?;
+        let _cleanup = RemoveOnDrop(root.clone());
         let exe = compile_native_proof_recorder(&root)?;
         assert!(exe.exists(), "recorder executable missing after compile");
         Ok(())
@@ -810,6 +821,7 @@ fn main() -> ExitCode {
         use crate::agent::loop_commands::shell_arg;
 
         let root = native_proof_root("argv")?;
+        let _cleanup = RemoveOnDrop(root.clone());
         let recorder = compile_native_proof_recorder(&root)?;
         resolve_pwsh("pwsh").map_err(|_| {
             "pwsh is required for the native proof and was not found: failing closed instead of skipping"
