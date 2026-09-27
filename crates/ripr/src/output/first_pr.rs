@@ -472,6 +472,25 @@ fn render_start_here_packet_with_selection(
         );
     }
 
+    let mut selected = selection.to_json();
+    // The repo-exposure report and gap ledger are both prerequisites for the
+    // first Rust start-here selection. Keep the primary recovery route, but
+    // disclose the second missing input now instead of making the operator
+    // discover it on the next invocation. Other artifact rows are optional
+    // until a particular selection needs them.
+    if selected["artifact"]["id"] == "repo_exposure"
+        && let Some(ledger) = artifacts
+            .iter()
+            .find(|artifact| artifact["id"] == "gap_ledger" && artifact["status"] == "missing")
+    {
+        selected["also_missing"] = json!([{
+            "id": "gap_ledger",
+            "label": "Gap decision ledger",
+            "path": options.gap_ledger,
+            "regeneration_command": ledger["regeneration_command"]
+        }]);
+    }
+
     let mut packet = json!({
         "schema_version": SCHEMA_VERSION,
         "tool": "ripr",
@@ -480,7 +499,7 @@ fn render_start_here_packet_with_selection(
         "posture": "advisory",
         "root": options.root,
         "inputs": inputs,
-        "selected": selection.to_json(),
+        "selected": selected,
         "commands": selection.commands_json(root, options),
         "artifacts": artifacts,
         "authority": {
@@ -1453,8 +1472,12 @@ impl RepoExposureLatencySummary {
 
 fn repo_exposure_latency_report_summary(root: &Path) -> Option<RepoExposureLatencySummary> {
     let report = read_json(&resolve_path(root, DEFAULT_REPO_EXPOSURE_LATENCY_JSON)).ok()?;
-    if string_path(&report, &["schema_version"]).as_deref() != Some(SCHEMA_VERSION)
-        || string_path(&report, &["tool"]).as_deref() != Some("ripr")
+    // 0.2 (#3864) only added the file-fact cache receipt; the run status and
+    // trace fields read here are unchanged, so both versions stay usable.
+    if !matches!(
+        string_path(&report, &["schema_version"]).as_deref(),
+        Some("0.1" | "0.2")
+    ) || string_path(&report, &["tool"]).as_deref() != Some("ripr")
         || string_path(&report, &["report"]).as_deref() != Some("repo-exposure-latency")
     {
         return None;
@@ -2711,6 +2734,26 @@ mod tests {
             "Missing artifact: Repo exposure report at `target/ripr/reports/repo-exposure.json`"
         ));
         assert!(summary.contains("Regeneration command: `ripr check --root . --mode instant"));
+        assert_eq!(packet["selected"]["also_missing"][0]["id"], "gap_ledger");
+        assert_eq!(
+            packet["selected"]["also_missing"][0]["path"],
+            DEFAULT_GAP_LEDGER
+        );
+        assert!(
+            packet["selected"]["also_missing"][0]["regeneration_command"]
+                .as_str()
+                .is_some_and(|command| command.contains("ripr reports gap-ledger"))
+        );
+        assert!(summary.contains(
+            "Also missing: Gap decision ledger at `target/ripr/reports/gap-decision-ledger.json`"
+        ));
+        assert!(summary.contains("Then run: `ripr reports gap-ledger"));
+        assert!(
+            summary.find("Regeneration command:") < summary.find("Also missing:"),
+            "repo exposure recovery must precede the dependent ledger: {summary}"
+        );
+        let markdown = render_start_here_markdown(&packet);
+        assert!(markdown.contains("- Also missing: Gap decision ledger"));
         check_first_pr(&repo, &options)?;
         cleanup(&repo)
     }
@@ -2792,7 +2835,17 @@ mod tests {
 
     #[test]
     fn missing_repo_exposure_uses_existing_latency_report_before_rerun() -> Result<(), String> {
-        let repo = temp_repo("first-pr-existing-latency-timeout")?;
+        // 0.2 is what `repo-exposure-latency-report` writes since #3864.
+        for schema_version in ["0.1", "0.2"] {
+            existing_latency_timeout_report_is_used(schema_version)?;
+        }
+        Ok(())
+    }
+
+    fn existing_latency_timeout_report_is_used(schema_version: &str) -> Result<(), String> {
+        let repo = temp_repo(&format!(
+            "first-pr-existing-latency-timeout-{schema_version}"
+        ))?;
         fs::create_dir_all(repo.join("xtask/src"))
             .map_err(|err| format!("mkdir xtask src: {err}"))?;
         fs::write(
@@ -2803,7 +2856,7 @@ mod tests {
         write_json(
             &repo.join(DEFAULT_REPO_EXPOSURE_LATENCY_JSON),
             json!({
-                "schema_version": "0.1",
+                "schema_version": schema_version,
                 "tool": "ripr",
                 "report": "repo-exposure-latency",
                 "status": "warn",
@@ -2992,6 +3045,7 @@ mod tests {
         assert_eq!(packet["selected"]["state"], "missing_artifact");
         assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
         assert_eq!(packet["selected"]["artifact"]["id"], "gap_ledger");
+        assert!(packet["selected"].get("also_missing").is_none());
         assert!(
             packet["selected"]["regeneration_command"]
                 .as_str()
@@ -3559,6 +3613,53 @@ mod tests {
         );
         assert!(
             !reason.contains("refresh the first-run evidence"),
+            "{reason}"
+        );
+        assert!(packet["commands"].get("agent_packet").is_none(), "{packet}");
+        cleanup(&repo)
+    }
+
+    /// #4216: a weakly exposed Python finding without a repair card used to
+    /// leave first-pr at a bare generic "no actionable gap". The ledger now
+    /// carries a non-delegatable static-limitation record, and first-pr names
+    /// why no card exists and the manual step, as advisory no-action.
+    #[test]
+    fn python_finding_without_repair_card_names_limitation_and_manual_step() -> Result<(), String> {
+        use crate::output::gap_decision_ledger::{
+            GapDecisionLedgerInput, GapDecisionLedgerSourceKind, build_gap_decision_ledger_report,
+            render_gap_decision_ledger_json,
+        };
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: ".".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "check.json".to_string(),
+            records_json: Ok(include_str!(
+                "../../../../fixtures/python_same_stem_sibling_owner_not_related/expected/check.json"
+            )
+            .to_string()),
+        });
+        let ledger_json = render_gap_decision_ledger_json(&report)?;
+        let repo = temp_repo("first-pr-python-no-card")?;
+        let ledger_value: Value =
+            serde_json::from_str(&ledger_json).map_err(|err| format!("parse ledger: {err}"))?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_value)?;
+        write_json(
+            &repo.join(DEFAULT_REVIEW_COMMENTS),
+            review_comments_report(Vec::new()),
+        )?;
+        let packet = render_start_here_packet(&repo, &FirstPrOptions::default());
+        assert_eq!(packet["status"], "no_action", "{packet}");
+        assert_eq!(packet["selected"]["output_state"], "no_actionable_gap");
+        let reason = packet["selected"]["reason"].as_str().unwrap_or_default();
+        assert!(
+            reason.contains(
+                "Static limitation `python_repair_card_unavailable` at `pricing.py:5`: this Python preview finding has no repair card (static evidence names no concrete missing discriminator)"
+            ),
+            "{reason}"
+        );
+        assert!(
+            reason.contains("add or strengthen a test by hand, then rerun `ripr check`"),
             "{reason}"
         );
         assert!(packet["commands"].get("agent_packet").is_none(), "{packet}");

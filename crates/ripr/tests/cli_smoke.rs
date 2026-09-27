@@ -88,21 +88,139 @@ fn run_command_with_env(
     spawn_command(program, Some(current_dir), args, env, None)
 }
 
+/// Retry only `ETXTBSY` (`ExecutableFileBusy`). Copying `ripr` and executing
+/// the copy can fail while another test still holds a writable descriptor
+/// from a `fork` that has not reached `exec` (#4296). Three attempts and a
+/// 25ms pause match the doctor shim probe. Any other error, and any process
+/// that actually started, is returned unchanged.
+fn output_retrying_text_file_busy<T>(
+    mut run: impl FnMut() -> Result<T, std::io::Error>,
+) -> Result<T, std::io::Error> {
+    let mut attempt = 0usize;
+    loop {
+        attempt += 1;
+        match run() {
+            Err(error) if retry_text_file_busy(error.kind(), attempt) => {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            other => return other,
+        }
+    }
+}
+
+fn retry_text_file_busy(kind: std::io::ErrorKind, attempt: usize) -> bool {
+    kind == std::io::ErrorKind::ExecutableFileBusy && attempt < 3
+}
+
+#[test]
+fn text_file_busy_retry_stops_at_three_and_ignores_other_errors() {
+    assert!(retry_text_file_busy(
+        std::io::ErrorKind::ExecutableFileBusy,
+        1
+    ));
+    assert!(retry_text_file_busy(
+        std::io::ErrorKind::ExecutableFileBusy,
+        2
+    ));
+    assert!(!retry_text_file_busy(
+        std::io::ErrorKind::ExecutableFileBusy,
+        3
+    ));
+    assert!(!retry_text_file_busy(std::io::ErrorKind::NotFound, 1));
+    assert!(!retry_text_file_busy(
+        std::io::ErrorKind::PermissionDenied,
+        1
+    ));
+    assert!(!retry_text_file_busy(std::io::ErrorKind::WouldBlock, 1));
+}
+
+/// The predicate test above cannot see the loop: a wrapper reduced to one
+/// `run()` call would still pass it. A scripted closure pins what the wrapper
+/// does with each result: how many times it runs, and what it returns.
+#[test]
+fn text_file_busy_wrapper_reruns_only_busy_and_returns_the_final_result() -> Result<(), String> {
+    use std::io::{Error, ErrorKind};
+    fn scripted(script: Vec<Result<u8, ErrorKind>>) -> (Result<u8, ErrorKind>, usize) {
+        let mut script = script.into_iter();
+        let mut calls = 0usize;
+        let result = output_retrying_text_file_busy(|| {
+            calls += 1;
+            match script.next() {
+                Some(Ok(value)) => Ok(value),
+                Some(Err(kind)) => Err(Error::from(kind)),
+                None => Err(Error::other("script exhausted")),
+            }
+        });
+        (result.map_err(|error| error.kind()), calls)
+    }
+    let busy = ErrorKind::ExecutableFileBusy;
+    // (name, scripted results, expected result, expected calls)
+    type Case = (
+        &'static str,
+        Vec<Result<u8, ErrorKind>>,
+        Result<u8, ErrorKind>,
+        usize,
+    );
+    let cases: [Case; 5] = [
+        ("started first time", vec![Ok(7)], Ok(7), 1),
+        (
+            "busy twice then started",
+            vec![Err(busy), Err(busy), Ok(9)],
+            Ok(9),
+            3,
+        ),
+        (
+            "busy on every attempt",
+            vec![Err(busy), Err(busy), Err(busy), Ok(1)],
+            Err(busy),
+            3,
+        ),
+        (
+            "other error is not retried",
+            vec![Err(ErrorKind::NotFound), Ok(1)],
+            Err(ErrorKind::NotFound),
+            1,
+        ),
+        (
+            "other error after busy is returned",
+            vec![Err(busy), Err(ErrorKind::PermissionDenied), Ok(1)],
+            Err(ErrorKind::PermissionDenied),
+            2,
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, script, expected, expected_calls) in cases {
+        let (result, calls) = scripted(script);
+        if result != expected || calls != expected_calls {
+            failures.push(format!(
+                "{name}: got {result:?} after {calls} calls, expected {expected:?} after {expected_calls}"
+            ));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
 fn run_isolated_binary(
     binary: &Path,
     current_dir: &Path,
     args: &[&str],
     coverage_profile: Option<&Path>,
 ) -> Result<Output, std::io::Error> {
-    let mut command = Command::new(binary);
-    command.current_dir(current_dir).env_clear();
-    if let Ok(path) = std::env::var("PATH") {
-        command.env("PATH", path);
-    }
-    if let Some(profile) = coverage_profile {
-        command.env("LLVM_PROFILE_FILE", profile);
-    }
-    command.args(args).output()
+    output_retrying_text_file_busy(|| {
+        let mut command = Command::new(binary);
+        command.current_dir(current_dir).env_clear();
+        if let Ok(path) = std::env::var("PATH") {
+            command.env("PATH", path);
+        }
+        if let Some(profile) = coverage_profile {
+            command.env("LLVM_PROFILE_FILE", profile);
+        }
+        command.args(args).output()
+    })
 }
 
 fn cleanup_temp_dir(path: Option<&Path>) -> Result<(), std::io::Error> {
@@ -2234,9 +2352,17 @@ fn first_action_cli_writes_actionable_report() -> Result<(), Box<dyn std::error:
         json_pointer_str(&report, "/selected/seam_id")?,
         "67fc764ba37d77bd"
     );
+    // #4304: verify persists to the file the receipt reads, anchored at the
+    // resolved --root (the workspace root here), and the analysis outcome the
+    // receipt needs lands beside it.
+    let prefix = format!("{}/", workspace_root().to_string_lossy().replace('\\', "/"));
     assert_eq!(
-        json_pointer_str(&report, "/commands/verify")?,
-        "ripr agent verify --root fixtures/boundary_gap/input --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
+        json_pointer_str(&report, "/commands/verify")?.replace(&prefix, "<cwd>/"),
+        "ripr agent verify --root fixtures/boundary_gap/input --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > <cwd>/fixtures/boundary_gap/input/target/ripr/workflow/agent-verify.json"
+    );
+    assert_eq!(
+        json_pointer_str(&report, "/commands/analysis_outcome")?.replace(&prefix, "<cwd>/"),
+        "ripr check --root fixtures/boundary_gap/input --mode draft --format json > <cwd>/fixtures/boundary_gap/input/target/ripr/workflow/analysis-outcome.json"
     );
     assert_eq!(
         json_pointer_str(&report, "/target/suggested_test_name")?,
@@ -2517,10 +2643,14 @@ fn first_pr_check_missing_packet_recovers_without_a_resolvable_base()
         stderr.contains("Replace <ref> with the branch or commit this PR is based on"),
         "{stderr}"
     );
+    assert!(
+        stderr.contains("could not resolve a default base"),
+        "the recovery must name why --base is required:\n{stderr}"
+    );
     assert!(!stderr.contains("origin/main --head"), "{stderr}");
 
     // The suggested write names the base it needs; with a real ref filled in
-    // it writes the packet.
+    // it writes a packet that `--check` with the same base accepts.
     let mut write = suggested_first_pr_write(&stderr)?;
     let base = write
         .iter()
@@ -2539,6 +2669,8 @@ fn first_pr_check_missing_packet_recovers_without_a_resolvable_base()
             .join("target/ripr/reports/start-here.json")
             .is_file()
     );
+    let recheck = run_ripr(&["first-pr", "--root", &root, "--base", "HEAD", "--check"]);
+    assert_success(&recheck);
     ignore_remove_dir_all(&workspace);
     Ok(())
 }
@@ -2686,6 +2818,110 @@ fn agent_packet_expands_one_brief_seam_by_id() -> Result<(), Box<dyn std::error:
     assert!(packet_stdout.contains(&format!(r#""seam_id": "{seam_id}""#)));
     assert!(packet_stdout.contains(r#""task": "write_targeted_test""#));
     std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// The `unchanged_after_attempt` route is reachable only from a promotable
+/// receipt: a live verify pair, its analysis outcome, and a receipt bound to
+/// both (#4268). The committed unchanged-after-attempt receipt is
+/// portable-normalized and fails closed, so this chain is the route's proof.
+#[test]
+fn first_action_routes_live_unchanged_receipt_to_revise_focused_test()
+-> Result<(), Box<dyn std::error::Error>> {
+    let seam_id = "67fc764ba37d77bd";
+    // Own directory: the improved-receipt chain above writes its own
+    // verify pair and analysis outcome under `test-agent-verify`.
+    let artifact_rel = "target/ripr/test-agent-verify-unchanged";
+    let artifact_dir = workspace_root().join(artifact_rel);
+    std::fs::create_dir_all(&artifact_dir)?;
+    // The same pre-attempt snapshot on both sides: the attempt moved nothing.
+    let snapshot = workspace_root()
+        .join("fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json");
+    for side in ["before", "after"] {
+        bind_repo_exposure_fixture_with_worktree(
+            &workspace_root(),
+            &snapshot,
+            &artifact_dir.join(format!("{side}.repo-exposure.json")),
+            "dirty",
+        )?;
+    }
+    let before_path = format!("{artifact_rel}/before.repo-exposure.json");
+    let after_path = format!("{artifact_rel}/after.repo-exposure.json");
+    let verify = run_ripr_in_workspace(&[
+        "agent",
+        "verify",
+        "--root",
+        ".",
+        "--before",
+        &before_path,
+        "--after",
+        &after_path,
+        "--json",
+    ])?;
+    assert_success(&verify);
+    std::fs::write(artifact_dir.join("agent-verify.json"), &verify.stdout)?;
+    let analysis_outcome = run_ripr_in_workspace(&[
+        "check", "--root", ".", "--mode", "draft", "--base", "HEAD", "--format", "json",
+    ])?;
+    assert_success(&analysis_outcome);
+    std::fs::write(
+        artifact_dir.join("analysis-outcome.json"),
+        &analysis_outcome.stdout,
+    )?;
+
+    let out_dir = unique_temp_workspace("first-action-unchanged-receipt");
+    std::fs::create_dir_all(&out_dir)?;
+    let receipt_path = out_dir.join("agent-receipt.json");
+    let receipt_arg = receipt_path
+        .to_str()
+        .ok_or("receipt path should be utf-8")?;
+    let verify_path = format!("{artifact_rel}/agent-verify.json");
+    let receipt = run_ripr_in_workspace(&[
+        "agent",
+        "receipt",
+        "--root",
+        ".",
+        "--verify-json",
+        &verify_path,
+        "--seam-id",
+        seam_id,
+        "--json",
+        "--out",
+        receipt_arg,
+    ])?;
+    assert_success(&receipt);
+    let receipt_value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&receipt_path)?)?;
+    // Assert the stimulus before the route: a complete receipt that records
+    // unchanged movement for the seam.
+    assert_eq!(receipt_value["analysis_outcome_status"], "complete");
+    assert_eq!(receipt_value["provenance"]["movement"], "unchanged");
+
+    let first_action_out = out_dir.join("first-action.json");
+    let first_action_md = out_dir.join("first-action.md");
+    let first_action = run_ripr_in_workspace(&[
+        "first-action",
+        "--root",
+        ".",
+        "--receipt",
+        receipt_arg,
+        "--out",
+        first_action_out
+            .to_str()
+            .ok_or("first-action output path should be utf-8")?,
+        "--out-md",
+        first_action_md
+            .to_str()
+            .ok_or("first-action markdown path should be utf-8")?,
+    ])?;
+    assert_success(&first_action);
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&first_action_out)?)?;
+    assert_eq!(report["status"], "unchanged_after_attempt", "{report:#}");
+    assert_eq!(report["action_kind"], "revise_focused_test");
+    assert_eq!(report["evidence"]["static_movement"], "unchanged");
+    assert_eq!(report["fallback"]["kind"], "unchanged_after_attempt");
+    std::fs::remove_dir_all(out_dir)?;
     Ok(())
 }
 
@@ -7092,12 +7328,14 @@ fn doctor_json_with_path_prefix(
     .map_err(|error| format!("build PATH: {error}"))?;
     let search_path = search_path.to_string_lossy().into_owned();
     let root_arg = root.display().to_string();
-    let output = run_command_with_env(
-        &binary.to_string_lossy(),
-        root,
-        &["doctor", "--root", &root_arg, "--json"],
-        &[("PATH", &search_path)],
-    )
+    let output = output_retrying_text_file_busy(|| {
+        run_command_with_env(
+            &binary.to_string_lossy(),
+            root,
+            &["doctor", "--root", &root_arg, "--json"],
+            &[("PATH", &search_path)],
+        )
+    })
     .map_err(|error| format!("run doctor: {error}"))?;
     let report = serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("doctor JSON did not parse: {error}"))?;
@@ -9813,6 +10051,7 @@ fn pilot_language_fixture_repo(
 /// they cannot do, while pilot, first-pr and status each pointed at another
 /// command. The safe next action must name why no route exists and the
 /// manual step that is left, with no route back into pilot.
+#[cfg(feature = "lang-python")]
 fn python_check_safe_action(
     label: &str,
     source_base: &str,
@@ -9857,6 +10096,7 @@ fn python_check_safe_action(
 }
 
 #[test]
+#[cfg(feature = "lang-python")]
 fn check_python_finding_without_repair_card_names_the_terminal_manual_step() -> Result<(), String> {
     let line = python_check_safe_action(
         "check-py-no-card",
@@ -9875,6 +10115,7 @@ fn check_python_finding_without_repair_card_names_the_terminal_manual_step() -> 
 // Discriminating control: a Python finding that DOES carry a repair card is
 // routed by that card, so it must not get the no-card terminal line.
 #[test]
+#[cfg(feature = "lang-python")]
 fn check_python_finding_with_repair_card_points_at_the_card() -> Result<(), String> {
     let line = python_check_safe_action(
         "check-py-card",
