@@ -122,7 +122,6 @@ fn read_error_report(
     warnings.push(format!("missing required artifact: {path}"));
     Some(missing_required_report(
         input,
-        parsed,
         inputs,
         generated_at,
         MissingRequired::for_input_label(label),
@@ -142,7 +141,6 @@ fn receipt_report(
     if let Err(reason) = validate_receipt_projection(input, receipt, &movement) {
         return Some(missing_required_report(
             input,
-            parsed,
             inputs,
             generated_at,
             MissingRequired::CompleteReceipt,
@@ -705,7 +703,6 @@ fn missing_assistant_proof_report(
     ));
     Some(missing_required_report(
         input,
-        parsed,
         inputs,
         generated_at,
         MissingRequired::AssistantProof,
@@ -946,7 +943,6 @@ impl<'a> MissingRequired<'a> {
 
 fn missing_required_report(
     input: &FirstUsefulActionInput,
-    parsed: &ParsedSources,
     inputs: &ActionInputs,
     generated_at: &str,
     required: MissingRequired<'_>,
@@ -973,9 +969,14 @@ fn missing_required_report(
                 "Receipt movement routes only from a complete analysis outcome.",
                 "The report must not promote receipt movement it cannot validate.",
             ],
+            // A complete receipt needs a persisted verify file and its sibling
+            // analysis outcome, and the seam may be unknown when the receipt
+            // is unreadable. `agent status` owns that sequence and names the
+            // command for each missing workflow artifact, so route there
+            // rather than offer a partial chain.
             ActionCommands {
-                context_packet: None,
-                ..seam_commands(input, parsed)
+                status: Some(loop_commands::agent_status_command(&input.root, None)),
+                ..ActionCommands::default()
             },
         ),
         MissingRequired::UnreadableInput(label) => (

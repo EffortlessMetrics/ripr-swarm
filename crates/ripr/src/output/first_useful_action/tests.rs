@@ -97,14 +97,7 @@ fn first_useful_action_matches_unchanged_after_attempt_fixture() -> Result<(), S
         report.title,
         "Regenerate a complete agent receipt before routing"
     );
-    assert_eq!(report.commands.assistant_proof, None);
-    let verify = report.commands.verify.as_deref().unwrap_or_default();
-    assert!(verify.starts_with("ripr agent verify "), "verify: {verify}");
-    let receipt = report.commands.receipt.as_deref().unwrap_or_default();
-    assert!(
-        receipt.starts_with("ripr agent receipt "),
-        "receipt: {receipt}"
-    );
+    assert_receipt_recovery_routes_to_agent_status(&report);
     Ok(())
 }
 
@@ -570,8 +563,26 @@ fn unreadable_receipt_asks_for_a_complete_receipt() -> Result<(), String> {
         report.title,
         "Regenerate a complete agent receipt before routing"
     );
-    assert_eq!(report.commands.assistant_proof, None);
+    assert_receipt_recovery_routes_to_agent_status(&report);
     Ok(())
+}
+
+/// A complete receipt needs a persisted verify file and its sibling analysis
+/// outcome, and an unreadable receipt carries no seam. A bare verify/receipt
+/// pair cannot produce one, so recovery routes to `agent status`, which names
+/// the command for each missing workflow artifact.
+fn assert_receipt_recovery_routes_to_agent_status(report: &FirstUsefulActionReport) {
+    let status = report.commands.status.as_deref().unwrap_or_default();
+    assert!(status.starts_with("ripr agent status "), "status: {status}");
+    assert_eq!(report.commands.assistant_proof, None);
+    assert_eq!(report.commands.verify, None);
+    assert_eq!(report.commands.receipt, None);
+    assert_eq!(report.commands.after_snapshot, None);
+    let markdown = render_first_useful_action_markdown(report);
+    assert!(
+        markdown.contains(&format!("## Check Workflow Status\n\n`{status}`")),
+        "markdown must show the status command: {markdown}"
+    );
 }
 
 // ── receipt_report: improved/resolved ────────────────────────────────────

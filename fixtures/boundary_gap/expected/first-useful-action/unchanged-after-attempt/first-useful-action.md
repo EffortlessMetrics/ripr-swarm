@@ -14,8 +14,8 @@ Regenerate a complete agent receipt before routing.
 - Current evidence strength: `missing_required_artifact`
 - Missing discriminator: missing discriminator unavailable
 - Focused proof intent: Regenerate a complete agent receipt before routing
-- Verify after the test edit: `ripr agent verify --root fixtures/boundary_gap/input --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json`
-- Receipt after verify: `ripr agent receipt --root fixtures/boundary_gap/input --verify-json target/ripr/workflow/agent-verify.json --seam-id 67fc764ba37d77bd --json`
+- Verify after the test edit: `not_available`
+- Receipt after verify: `not_available`
 - Artifacts: `fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-guidance.json`, `fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/assistant-proof.json`, `fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json`
 - Boundary: static advisory evidence only; not runtime, coverage, mutation, or gate proof.
 
@@ -24,13 +24,9 @@ Regenerate a complete agent receipt before routing.
 - Receipt movement routes only from a complete analysis outcome.
 - The report must not promote receipt movement it cannot validate.
 
-## Verify After The Test Edit
+## Check Workflow Status
 
-`ripr agent verify --root fixtures/boundary_gap/input --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json`
-
-## Receipt After Verify
-
-`ripr agent receipt --root fixtures/boundary_gap/input --verify-json target/ripr/workflow/agent-verify.json --seam-id 67fc764ba37d77bd --json`
+`ripr agent status --root fixtures/boundary_gap/input --json`
 
 ## Fallback
 

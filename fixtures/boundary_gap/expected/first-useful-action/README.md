@@ -29,7 +29,9 @@ Files:
   improved evidence. Because the receipt is portable-normalized, it carries no
   complete analysis outcome, so `ripr first-action` fails closed on it with
   `missing_required_artifact` rather than routing `unchanged` movement, and
-  offers the verify and receipt commands that produce a complete receipt.
+  hands off to `ripr agent status`, which names the command for each missing
+  workflow artifact (the persisted verify file and its sibling analysis
+  outcome) that a complete receipt needs.
   The `unchanged_after_attempt` route itself is exercised by a live
   verify/receipt chain in the `cli_smoke` test
   `first_action_routes_live_unchanged_receipt_to_revise_focused_test`.

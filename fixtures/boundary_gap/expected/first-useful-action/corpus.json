@@ -499,9 +499,10 @@
         "target": null,
         "commands": {
           "context_packet": null,
-          "after_snapshot": "ripr check --root fixtures/boundary_gap/input --mode draft --format repo-exposure-json > <cwd>/fixtures/boundary_gap/input/target/ripr/workflow/after.repo-exposure.json",
-          "verify": "ripr agent verify --root fixtures/boundary_gap/input --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json",
-          "receipt": "ripr agent receipt --root fixtures/boundary_gap/input --verify-json target/ripr/workflow/agent-verify.json --seam-id 67fc764ba37d77bd --json"
+          "after_snapshot": null,
+          "verify": null,
+          "receipt": null,
+          "status": "ripr agent status --root fixtures/boundary_gap/input --json"
         },
         "fallback": {
           "kind": "missing_required_artifact",
@@ -516,7 +517,7 @@
           "Does not change CI blocking."
         ]
       },
-      "reason": "A movement token is promotable only as a projection of a complete, identity-bound verify transaction. This receipt is portable-normalized (no complete analysis outcome), so first-action fails closed instead of routing `unchanged` movement to a revised test, and asks for a complete receipt (verify, then receipt) rather than the assistant proof it already has. The unchanged route itself is exercised by a live verify/receipt chain in `first_action_routes_live_unchanged_receipt_to_revise_focused_test` (cli_smoke)."
+      "reason": "A movement token is promotable only as a projection of a complete, identity-bound verify transaction. This receipt is portable-normalized (no complete analysis outcome), so first-action fails closed instead of routing `unchanged` movement to a revised test, and asks for a complete receipt rather than the assistant proof it already has. It hands off to `agent status`, which names the command for each missing workflow artifact; a bare verify/receipt pair cannot produce a complete receipt because it neither persists the verify output nor writes the sibling analysis outcome. The unchanged route itself is exercised by a live verify/receipt chain in `first_action_routes_live_unchanged_receipt_to_revise_focused_test` (cli_smoke)."
     }
   ]
 }
