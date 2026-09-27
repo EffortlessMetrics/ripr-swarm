@@ -361,6 +361,9 @@ fn collect_mock_paths(
                         collect_mock_paths(runner, &body.statements, out);
                     }
                 }
+                Some(oxc_ast::ast::Declaration::ClassDeclaration(class)) => {
+                    collect_mock_paths_from_class(runner, class, out)
+                }
                 _ => {}
             },
             _ => {}
@@ -368,7 +371,8 @@ fn collect_mock_paths(
     }
 }
 
-/// Class static blocks and method bodies run test code too.
+/// Class static blocks, property initializers and method bodies run test
+/// code too.
 fn collect_mock_paths_from_class(
     runner: &mut MockRunner,
     class: &oxc_ast::ast::Class<'_>,
@@ -382,6 +386,11 @@ fn collect_mock_paths_from_class(
             oxc_ast::ast::ClassElement::MethodDefinition(method) => {
                 if let Some(body) = &method.value.body {
                     collect_mock_paths(runner, &body.statements, out);
+                }
+            }
+            oxc_ast::ast::ClassElement::PropertyDefinition(property) => {
+                if let Some(value) = &property.value {
+                    collect_mock_path_from_expression(runner, value, out);
                 }
             }
             _ => {}

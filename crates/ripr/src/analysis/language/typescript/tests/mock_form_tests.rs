@@ -301,6 +301,14 @@ fn mock_calls_in_other_positions_withhold() -> Result<(), String> {
                 "import { it, expect, vi } from 'vitest';\nexport default function setup() { vi.doMock('../src/cart'); }\n",
             ),
             (
+                "exported-class-static-block",
+                "import { it, expect, vi } from 'vitest';\nexport class Setup { static { vi.doMock('../src/cart'); } }\n",
+            ),
+            (
+                "class-property-initializer",
+                "import { it, expect, vi } from 'vitest';\nclass Setup { static reg = vi.doMock('../src/cart'); }\n",
+            ),
+            (
                 "class-static-block",
                 "import { it, expect, vi } from 'vitest';\nclass Setup { static { vi.doMock('../src/cart'); } }\n",
             ),
@@ -465,4 +473,40 @@ fn mocks_of_other_modules_still_relate() -> Result<(), String> {
         ],
         ExposureClass::Exposed,
     )
+}
+
+#[test]
+fn unresolved_specifier_is_named_as_such_in_limit_evidence() -> Result<(), String> {
+    // A function owner keeps a proximity link under a mock, so the finding
+    // carries `mocked_module` evidence; the marker must not read as a path.
+    let root = ts_unique_tempdir("unresolved-evidence")?;
+    ts_write_file(
+        &root.join("src/pricing.ts"),
+        "export function applyDiscount(amount: number, threshold: number): number {\n    if (amount >= threshold) {\n        return 0.9;\n    }\n    return 1;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/pricing.test.ts"),
+        "import { it, expect, vi } from 'vitest';\nimport { applyDiscount } from '../src/pricing';\nconst target = '../src/pricing';\nvi.mock(target);\nit('boundary', () => {\n  expect(applyDiscount(100, 100)).toBe(0.9);\n});\n",
+    )?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/pricing.ts",
+            &[(2, "    if (amount >= threshold) {")],
+        )],
+    )?;
+    let _ = std::fs::remove_dir_all(&root);
+    let finding = result
+        .findings
+        .first()
+        .ok_or_else(|| "expected a finding for `applyDiscount`".to_string())?;
+    let text = format!("{:?} {:?}", finding.evidence, finding.missing);
+    if !text.contains("static_limit mocked_module: an unresolved specifier") {
+        return Err(format!("expected named unresolved specifier, got {text}"));
+    }
+    if text.contains(UNRESOLVED_MOCK_SPECIFIER) {
+        return Err(format!("marker leaked into output: {text}"));
+    }
+    Ok(())
 }
