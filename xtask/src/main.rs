@@ -10678,6 +10678,8 @@ fn repo_exposure_file_fact_cache_from_stderr(
     stderr: &str,
 ) -> (Option<RepoExposureFileFactCache>, Option<String>) {
     const PREFIX: &str = "ripr_file_fact_cache_receipt ";
+    // Mirrors the producer's `MAX_STORE_FAILURE_ROWS` row cap.
+    const MAX_RETAINED_STORE_FAILURES: usize = 32;
     let mut records = stderr.lines().filter_map(|line| line.strip_prefix(PREFIX));
     let Some(record) = records.next() else {
         return (None, Some("cache_phase_not_observed".to_string()));
@@ -10689,12 +10691,14 @@ fn repo_exposure_file_fact_cache_from_stderr(
         return (None, Some("malformed_cache_receipt".to_string()));
     };
     if value.schema_version != "0.1"
-        || value.store_failures.len() > 32
+        || value.store_failures.len() > MAX_RETAINED_STORE_FAILURES
         || value
             .store_failures
             .len()
             .checked_add(value.store_failures_dropped)
-            .is_none_or(|count| count > value.store_errors)
+            .is_none_or(|count| count != value.store_errors)
+        || (value.store_failures.len() < MAX_RETAINED_STORE_FAILURES
+            && value.store_failures_dropped > 0)
         || value.store_failures.iter().any(|row| {
             !matches!(row.stage.as_str(), "create_dir" | "encode" | "write")
                 || row.path.is_empty()

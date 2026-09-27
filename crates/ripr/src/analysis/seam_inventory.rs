@@ -1835,10 +1835,19 @@ mod tests {
                 message: "portable failure".to_string(),
             },
         );
+        stats.record_store_failure(
+            PathBuf::from("src\\bar.rs"),
+            super::super::seam_cache::FileFactStoreError {
+                stage: super::super::seam_cache::FileFactStoreStage::Encode,
+                message: "second failure".to_string(),
+            },
+        );
         let value = file_fact_cache_receipt(&stats);
-        assert_eq!(value["store_errors"], 1);
+        assert_eq!(value["store_errors"], 2);
         assert_eq!(value["store_failures"][0]["path"], "src/foo..rs");
         assert_eq!(value["store_failures"][0]["stage"], "write");
+        assert_eq!(value["store_failures"][1]["path"], "src/bar.rs");
+        assert_eq!(value["store_failures"][1]["stage"], "encode");
         assert_eq!(value["store_failures_dropped"], 0);
     }
 

@@ -46668,6 +46668,23 @@ fn repo_exposure_latency_retains_bounded_cache_failures_and_missing_state() -> R
     ));
     assert!(cache.is_some());
     assert!(limitation.is_none());
+    // `store_errors` is authoritative: retained rows plus the dropped count
+    // must account for every failure, and rows are dropped only past the cap.
+    let mut uncounted = receipt.clone();
+    uncounted["store_errors"] = Value::from(36);
+    let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr(&format!(
+        "ripr_file_fact_cache_receipt {uncounted}"
+    ));
+    assert!(cache.is_none());
+    assert_eq!(limitation.as_deref(), Some("invalid_cache_receipt"));
+    let mut early_drop = receipt.clone();
+    early_drop["store_failures"] = serde_json::json!([]);
+    early_drop["store_errors"] = Value::from(3);
+    let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr(&format!(
+        "ripr_file_fact_cache_receipt {early_drop}"
+    ));
+    assert!(cache.is_none());
+    assert_eq!(limitation.as_deref(), Some("invalid_cache_receipt"));
     let (cache, limitation) =
         repo_exposure_file_fact_cache_from_stderr("ripr_file_fact_cache_receipt {broken}\n");
     assert!(cache.is_none());
