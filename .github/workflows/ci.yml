@@ -71,6 +71,27 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  rust-only-features:
+    # #4252: the Rust-only feature lane (#2400, #3128) otherwise runs only in
+    # the Windows advisory workflow, whose verdict hid this step's result
+    # until #4229. Running it on Linux for every PR shows a test that assumes
+    # the TypeScript or Python adapter, or a Rust-only product defect, before
+    # merge instead of after.
+    name: Rust-only feature lane
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ripr-rust-only-1.95-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Test --no-default-features --features lang-rust
+        run: cargo test -p ripr --locked --no-default-features --features lang-rust --no-fail-fast
+
   msrv:
     # Routed Rust already runs the declared 1.95.0 toolchain on every ordinary
     # PR and main push. Keep the duplicate named proof only for explicit full
