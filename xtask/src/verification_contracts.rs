@@ -1268,7 +1268,12 @@ mod tests {
         };
 
         assert!(check(Some("0.1"), source, doc).is_none());
-        assert!(check(Some("0.2"), source, doc).is_some());
+        assert_eq!(
+            check(Some("0.2"), source, doc).as_deref(),
+            Some(
+                "schemas/ripr/example.schema.json version mismatch: schema=Some(\"0.2\"), producer.rs=[\"0.1\"] (expected 1 producer occurrences), docs/OUTPUT_SCHEMA.md=[\"0.1\"]"
+            )
+        );
         assert!(check(Some("0.1"), "const VERSION: &str = \"0.2\";", doc).is_some());
         assert!(
             check(
