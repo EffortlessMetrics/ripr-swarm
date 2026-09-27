@@ -7574,6 +7574,7 @@ tests = [
   "crates/ripr/src/output/human.rs::tests::preview_limited_safe_action_names_terminal_manual_step_for_closed_packet",
   "crates/ripr/src/output/human.rs::tests::preview_limited_safe_action_says_no_repair_for_exposed_typescript",
   "crates/ripr/src/output/human.rs::tests::preview_limited_closed_packet_unknown_class_asks_for_manual_check",
+  "crates/ripr/src/output/human.rs::tests::preview_limited_closed_packet_shows_validator_cause_over_preamble",
   "crates/ripr/src/output/human.rs::tests::preview_limited_safe_action_names_complete_but_advisory_packet",
   "crates/ripr/src/output/human.rs::tests::preview_limited_safe_action_names_limitation_block_when_no_fields_missing",
   "crates/ripr/src/output/human.rs::tests::preview_limited_safe_action_uses_closed_packet_line_without_static_limit_kind",

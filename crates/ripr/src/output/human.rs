@@ -1237,6 +1237,33 @@ mod tests {
         }
     }
 
+    // #4216: a long generic preamble must not crowd out the validator's
+    // specific cause under the line budget; the cause is what the user acts on.
+    #[test]
+    fn preview_limited_closed_packet_shows_validator_cause_over_preamble() {
+        let mut finding = typescript_preview_finding(false);
+        finding
+            .evidence
+            .retain(|line| !line.starts_with("why_not_actionable: "));
+        finding.evidence.push(format!(
+            "why_not_actionable: generic preamble {}; validator: boundary constant `DISCOUNT_THRESHOLD` is unresolved",
+            "p".repeat(300)
+        ));
+        let output = single_finding_output(finding);
+
+        let rendered = render(&output);
+
+        let line = rendered
+            .lines()
+            .find(|line| line.starts_with("  Safe next action:"))
+            .unwrap_or_default();
+        assert!(
+            line.contains("(boundary constant `DISCOUNT_THRESHOLD` is unresolved)"),
+            "{line}"
+        );
+        assert!(!line.contains("generic preamble"), "{line}");
+    }
+
     // #4216: an exposed TypeScript preview finding has nothing to repair; its
     // safe action matches the Python exposed wording, not the packet lines.
     #[test]

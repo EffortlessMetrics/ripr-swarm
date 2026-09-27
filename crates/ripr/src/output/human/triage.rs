@@ -235,7 +235,13 @@ fn packet_closed_preview_safe_action(finding: &Finding, why_not_actionable: &str
     };
     // Only the quoted reason is bounded; the routing and manual-step parts
     // stay whole.
-    let reason = one_line(why_not_actionable);
+    // The authority's reason opens with a generic preview preamble and ends
+    // with `validator: <specific cause>`; under the line budget the specific
+    // cause is the part the user can act on, so show it when present.
+    let specific = why_not_actionable
+        .split_once("validator: ")
+        .map_or(why_not_actionable, |(_, cause)| cause);
+    let reason = one_line(specific);
     format!(
         "  Safe next action: this {language} preview finding's repair packet is not ready ({reason}); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; {manual_step}, then rerun `ripr check`.\n"
     )

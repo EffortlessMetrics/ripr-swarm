@@ -64,3 +64,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_repair_packet_boundary_unreachable (6)
+
+Reason:
+RIPR-SPEC-0122: closed-packet safe next action shows the validator's specific cause instead of the generic preview preamble under the line budget (#4216)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_unreachable --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
