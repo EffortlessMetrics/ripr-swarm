@@ -4691,7 +4691,7 @@ let _ = (result, note, raw);"##,
 
         let result = RustAdapter.analyze_diff(
             &AnalysisOptions {
-                root,
+                root: root.clone(),
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Ready,
@@ -4725,6 +4725,7 @@ let _ = (result, note, raw);"##,
             "the changed xtask predicate must become a probe: {:?}",
             result.findings
         );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }
 
