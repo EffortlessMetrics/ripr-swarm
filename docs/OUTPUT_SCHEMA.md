@@ -1517,7 +1517,7 @@ nothing yet prints empty:
   {
     "scope_status": "no_scope_provided",
     "category": "no_scope_disclosure",
-    "why": "no analysis scope provided; ripr check is diff-first; empty result does not mean changed behavior is covered; run ripr check --base origin/main or ripr check --root . --mode fast"
+    "why": "no analysis scope provided; ripr check is diff-first; empty result does not mean changed behavior is covered; run ripr check --base BASE with BASE set to an existing ref or ripr check --root . --format repo-exposure-md"
   }
 ]
 ```
@@ -1528,7 +1528,7 @@ requires no disclosure.
 
 - `scope_status` — always `"no_scope_provided"` for machine filtering
 - `category` — always `"no_scope_disclosure"` for machine filtering
-- `why` — advisory rationale string guiding the user to the correct invocation
+- `why` — advisory rationale, not a stable key. When a default base was resolved, it names the compared ref and empty range; without a resolved base it names an explicit `BASE` placeholder to replace with an existing ref. Consumers must use structured scope and base fields for decisions.
 
 ### `unanalyzed_working_tree` (top-level additive boolean, RIPR-SPEC-0112)
 
@@ -16372,6 +16372,61 @@ correctness, coverage adequacy, or complete broader-input invalidation.
 p50 no greater than 30 seconds, and a cold-full-to-warm-targeted p50 speedup of
 at least 5x. Otherwise the receipt remains `inconclusive` and preserves the
 measured values.
+
+## Python repair verification records
+
+`ripr agent repair --phase prepare` retains a schema-`0.1`
+`python_repair_driver_binding` record (RIPR-SPEC-0176) under the attempt and
+projects it to `target/ripr/workflow/python-repair-trust-binding.json`.
+`--phase after` writes a separate
+`target/ripr/workflow/python-repair-driver-after.json` with the **same kind and
+schema version**, `phase: "apply"`, and an `apply` block: `patch_sha256`,
+`changed_paths`, `cage_status`, `repository_head_after`, and `current`. The
+prepare record has `phase: "prepare"` and no `apply` block. Both carry the
+seam and repository head; driver binary digest/version; config profile; input
+packet and before-snapshot digests; trust selection,
+`selection_manifest_path` (string), and target identity;
+allowed/forbidden edit surface; explicit authorization; and non-claims. The
+apply record additionally binds the durable attempt ID and retained binding
+artifact digest. A recorded edit-cage verdict is neither verification nor
+static movement nor closure.
+
+`ripr agent repair --phase verify` writes an immutable candidate receipt,
+schema `0.1`, kind `python_repair_verification_receipt`, spec
+`RIPR-SPEC-0176`, phase `verify`, and projects it to
+`target/ripr/workflow/python-repair-driver-verification.json`. Its envelope
+binds durable/trust attempt IDs, seam ID, repository head, target path, and
+`identities` for packet, before snapshot, patch, selection manifest, selection
+digest, binding artifact, config profile, and analyzer binary. `command`
+contains nullable producer-owned command-spec digest/display and the explicit
+authorization status, authority, and method.
+
+The `execution` block records a state (`passed`, `failed`, `timed_out`,
+`cancelled`, `unavailable`, `not_run`, or `invalid`), process disposition,
+nullable exit status/signal and output digests/byte counts, truncation flags,
+nullable currentness/duration, cancellation request, and nullable reason.
+`movement` independently records a state (`closed`, `improved`, `unchanged`,
+`regressed`, `limited`, `stale`, or `uncertain`), reason, native identity
+(`family`, `owner`, `discriminator`, `relation`, `oracle`), before/after seam,
+grip, oracle and headline join facts, unrelated actionable counts and
+regression/improvement flags, and the after-snapshot digest/run status.
+`rollback` has state (`proved`, `blocked`, or `not_run`), reason, and nullable
+post-rollback head. `non_claims` and `claim_boundary` state that these are
+separate draft evidence axes: neither a passed command nor static movement
+implies correctness, lifecycle acceptance, closure, support promotion, or a
+gate/badge decision.
+
+The bounded execution rail also writes
+`target/ripr/workflow/python-repair-driver-verification-execution.json`.
+That typed execution response is a process observation with
+`schema_version: "1"` and `disposition`; it has no `kind`, so it is not a
+`kind|...` registry entry. `python-repair-trust check-verification` emits a
+schema-`0.1` `python_repair_verification_check_report` with spec, manifest,
+receipt input, count, per-receipt record/attempt and execution/movement/
+rollback summaries, `unrelated_regressed` and `unrelated_improved` booleans
+per receipt, violations, verdict, and claim boundary. The report
+checks receipt structure; it does not promote draft evidence to an accepted
+repair.
 
 ## Python Eval Sweep Accepted Receipt
 
