@@ -128,7 +128,8 @@ pub(crate) struct TypeScriptScopeBinding {
     /// scope starts: the last hook write in its innermost scope, or else every
     /// declaration there. `None` when that value is anything else, is
     /// ambiguous (a conditional write, or a write that can run between
-    /// tests), or is only declared.
+    /// tests), is only declared, or anything else in the file could rebind
+    /// the name or the class.
     pub(crate) constructed_by: Option<String>,
 }
 

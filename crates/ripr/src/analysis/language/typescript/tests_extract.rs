@@ -29,15 +29,17 @@ pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
         let imports = extract_imports_from_statements(&ret.program.body);
         let mocks = extract_mocks_from_statements(&ret.program.body);
         let mut tests = Vec::new();
+        let mut scope = TestScope::default();
         collect_tests_from_statements(
             &ret.program.body,
             file,
             source,
             &mocks,
             &imports,
-            &mut TestScope::default(),
+            &mut scope,
             &mut tests,
         );
+        withhold_rebound_scope_receivers(source, &scope.sites, &mut tests);
         tests
     }) else {
         return Vec::new();
@@ -208,46 +210,7 @@ pub(crate) fn collect_tests_from_statements(
     for stmt in statements {
         collect_scope_bindings(stmt, source, &mut level, &mut sites);
     }
-    // Any other write to a bound name anywhere in this scope is ambiguous. A
-    // write inside a test, an `afterEach`/`afterAll` hook or a nested
-    // `describe` at this level runs between this level's tests, so a
-    // `beforeEach` still resets the name after it. Any other unseen write (a
-    // scope-level reassignment, a helper a hook calls, a hook passed by
-    // reference) may run after every hook, so it decides.
-    if let (Some(first), Some(last)) = (statements.first(), statements.last()) {
-        let start = first.span().start as usize;
-        let text = source
-            .get(start..last.span().end as usize)
-            .unwrap_or_default();
-        let between_tests: Vec<std::ops::Range<usize>> = statements
-            .iter()
-            .filter(|stmt| {
-                test_from_statement(stmt, file, source, &[]).is_some()
-                    || describe_body_from_statement(stmt).is_some()
-                    || statement_calls(stmt, &["afterEach", "afterAll"])
-            })
-            .map(|stmt| stmt.span().start as usize..stmt.span().end as usize)
-            .collect();
-        let unaccounted: Vec<ScopeEntry> = identifier_writes(text)
-            .into_iter()
-            .filter(|(name, offset)| {
-                !sites.contains(&(start + offset))
-                    && level.iter().any(|(bound, _, _)| bound == name)
-            })
-            .map(|(name, offset)| {
-                let phase = if between_tests
-                    .iter()
-                    .any(|span| span.contains(&(start + offset)))
-                {
-                    Phase::Interleaved
-                } else {
-                    Phase::Unseen
-                };
-                (name, ScopeValue::Other, phase)
-            })
-            .collect();
-        level.extend(unaccounted);
-    }
+    scope.sites.extend(sites);
     // A `beforeEach`/`beforeAll` the file declares, or imports from anything
     // but a test runner, is not known to run before each test: its writes are
     // only ambiguous.
@@ -319,6 +282,8 @@ pub(crate) struct TestScope {
     describe_names: Vec<String>,
     /// Name bindings of the file and each enclosing describe, outermost first.
     levels: Vec<Vec<ScopeEntry>>,
+    /// Source offsets of every declaration and hook write the walk recorded.
+    sites: Vec<usize>,
 }
 
 /// One binding a scope-level statement makes, and when it runs.
@@ -328,15 +293,13 @@ type ScopeEntry = (String, ScopeValue, Phase);
 /// declarations while the file or `describe` callback runs, then `beforeAll`
 /// hooks, then writes that may run between tests (another test, an
 /// `afterEach` hook, a nested `describe`), then `beforeEach` hooks, which
-/// reset the name before every test, then writes whose timing is unknown.
+/// reset the name before every test.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Phase {
     Declaration,
     BeforeAll,
     Interleaved,
     BeforeEach,
-    /// A write the syntax walk did not see and cannot place: it may run last.
-    Unseen,
 }
 
 /// What one setup statement binds a name to.
@@ -435,9 +398,7 @@ fn collect_scope_bindings(
                         None => ScopeValue::Declared,
                         Some(init) => constructed_value(init),
                     };
-                    if declarator.init.is_some() {
-                        sites.push(identifier.span.start as usize);
-                    }
+                    sites.push(identifier.span.start as usize);
                     out.push((identifier.name.to_string(), value, Phase::Declaration));
                 } else {
                     for identifier in declarator.id.get_binding_identifiers() {
@@ -493,16 +454,40 @@ fn collect_scope_bindings(
                 locals.retain(|(_, _, phase)| *phase == Phase::Declaration);
                 let mut writes = Vec::new();
                 for inner in body {
-                    collect_hook_assignment(inner, source, &mut writes, sites);
+                    // Only a runner hook's writes are recorded; any other
+                    // callback's writes stay unrecorded, so they withhold.
+                    let mut callback_sites = Vec::new();
+                    collect_hook_assignment(inner, source, &mut writes, &mut callback_sites);
+                    if phase != Phase::Interleaved {
+                        sites.extend(callback_sites);
+                    }
                 }
+                let writes: Vec<ScopeEntry> = writes
+                    .into_iter()
+                    .filter(|(name, _)| !locals.iter().any(|(local, _, _)| local == name))
+                    .map(|(name, value)| match phase {
+                        Phase::Interleaved => (name, ScopeValue::Other, phase),
+                        _ => (name, value, phase),
+                    })
+                    .collect();
+                // Two hooks of one kind writing the same name may run in
+                // parallel (Vitest `sequence.hooks: 'parallel'`): neither
+                // write is known to be last.
+                let raced: Vec<String> = writes
+                    .iter()
+                    .filter(|(name, _, _)| {
+                        phase != Phase::Interleaved
+                            && out
+                                .iter()
+                                .any(|(bound, _, earlier)| bound == name && *earlier == phase)
+                    })
+                    .map(|(name, _, _)| name.clone())
+                    .collect();
+                out.extend(writes);
                 out.extend(
-                    writes
+                    raced
                         .into_iter()
-                        .filter(|(name, _)| !locals.iter().any(|(local, _, _)| local == name))
-                        .map(|(name, value)| match phase {
-                            Phase::Interleaved => (name, ScopeValue::Other, phase),
-                            _ => (name, value, phase),
-                        }),
+                        .map(|name| (name, ScopeValue::Other, phase)),
                 );
             }
         }
@@ -580,6 +565,121 @@ fn constructed_value(expression: &Expression<'_>) -> ScopeValue {
         },
         _ => ScopeValue::Other,
     }
+}
+
+/// Withhold every scope receiver the file could rebind in a way the syntax
+/// walk did not record. Outside strings and comments, each occurrence of a
+/// credited name must be a recorded declaration or hook write, a member
+/// access (`cart.total()`), `expect(cart)` or `typeof cart`; anything else (a
+/// parameter, a cast target, another declaration, an unrecorded write) may
+/// rebind it. The constructor must not be declared or written anywhere in
+/// the file either (`class Cart {}` in a hook, `const { Cart } = ...`).
+fn withhold_rebound_scope_receivers(source: &str, sites: &[usize], tests: &mut [TypeScriptTest]) {
+    let code = code_only(source);
+    let rebound_constructors: Vec<String> = identifier_writes(&code)
+        .into_iter()
+        .map(|(name, _)| name)
+        .chain(declared_class_names(&code))
+        .collect();
+    for test in tests {
+        for binding in &mut test.scope_bindings {
+            let Some(constructor) = &binding.constructed_by else {
+                continue;
+            };
+            let root = constructor.split('.').next().unwrap_or(constructor);
+            if rebound_constructors.iter().any(|name| name == root)
+                || identifier_occurrences(&code, &binding.name)
+                    .any(|at| !sites.contains(&at) && !is_plain_read(&code, at, &binding.name))
+            {
+                binding.constructed_by = None;
+            }
+        }
+    }
+}
+
+/// Byte offsets of `identifier` as a whole word, not a member name.
+fn identifier_occurrences<'a>(
+    code: &'a str,
+    identifier: &'a str,
+) -> impl Iterator<Item = usize> + 'a {
+    code.match_indices(identifier).filter_map(move |(at, _)| {
+        let before = code[..at].chars().next_back();
+        let after = code[at + identifier.len()..].chars().next();
+        let word = |ch: Option<char>| {
+            ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+        };
+        let member =
+            code[..at].trim_end().ends_with('.') && !code[..at].trim_end().ends_with("...");
+        (!word(before) && !word(after) && !member).then_some(at)
+    })
+}
+
+/// `cart.x`, `cart?.x`, `expect(cart)` or `typeof cart`: reads that cannot
+/// rebind the name.
+fn is_plain_read(code: &str, at: usize, identifier: &str) -> bool {
+    let before = code[..at].trim_end();
+    let after = code[at + identifier.len()..].trim_start();
+    (after.starts_with('.') && !after.starts_with("..."))
+        || after.starts_with("?.")
+        || (before.ends_with("expect(") && after.starts_with(')'))
+        || before.ends_with("typeof")
+}
+
+/// Names declared with `class Name`.
+fn declared_class_names(code: &str) -> Vec<String> {
+    identifier_occurrences(code, "class")
+        .filter_map(|at| {
+            let rest = code[at + "class".len()..].trim_start();
+            let end = rest
+                .find(|ch: char| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+                .unwrap_or(rest.len());
+            (end > 0).then(|| rest[..end].to_string())
+        })
+        .collect()
+}
+
+/// `source` with string, template and comment contents replaced by spaces,
+/// byte offsets unchanged.
+fn code_only(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut out = bytes.to_vec();
+    let mut index = 0;
+    while index < bytes.len() {
+        let (end, blank_from) = match bytes[index] {
+            b'/' if bytes.get(index + 1) == Some(&b'/') => (
+                bytes[index..]
+                    .iter()
+                    .position(|&byte| byte == b'\n')
+                    .map_or(bytes.len(), |offset| index + offset),
+                index,
+            ),
+            b'/' if bytes.get(index + 1) == Some(&b'*') => (
+                source[index + 2..]
+                    .find("*/")
+                    .map_or(bytes.len(), |offset| index + 2 + offset + 2),
+                index,
+            ),
+            quote @ (b'\'' | b'"' | b'`') => {
+                let mut cursor = index + 1;
+                while cursor < bytes.len() && bytes[cursor] != quote {
+                    cursor += if bytes[cursor] == b'\\' { 2 } else { 1 };
+                }
+                ((cursor + 1).min(bytes.len()), index + 1)
+            }
+            _ => {
+                index += 1;
+                continue;
+            }
+        };
+        for byte in &mut out[blank_from..end] {
+            if *byte != b'\n' && byte.is_ascii() {
+                *byte = b' ';
+            }
+        }
+        index = end.max(index + 1);
+    }
+    // Only ASCII bytes were replaced, so the result is still valid UTF-8.
+    String::from_utf8(out).unwrap_or_default()
 }
 
 /// Identifiers written as an assignment target anywhere in `text`, each
@@ -708,19 +808,6 @@ fn statement_callback_parameter_names(stmt: &Statement<'_>, index: usize) -> Vec
         .get(index)
         .map(argument_parameter_names)
         .unwrap_or_default()
-}
-
-/// `true` when `stmt` is a call to one of the plain identifiers `names`.
-fn statement_calls(stmt: &Statement<'_>, names: &[&str]) -> bool {
-    matches!(
-        stmt,
-        Statement::ExpressionStatement(expr_stmt)
-            if matches!(
-                &expr_stmt.expression,
-                Expression::CallExpression(call)
-                    if matches!(&call.callee, Expression::Identifier(callee) if names.contains(&callee.name.as_str()))
-            )
-    )
 }
 
 /// Names a callback argument binds as parameters; empty for anything else.

@@ -347,11 +347,11 @@ fn write_between_tests_makes_shared_receiver_ambiguous() -> Result<(), String> {
         "adv-after-each-write",
         "describe('C', () => {\n  let cart: any = new Cart();\n  afterEach(() => {\n    cart = { total: () => 1 };\n  });\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
     )?;
-    assert_related(
-        "before-each-resets",
-        &format!(
-            "{HEAD}describe('C', () => {{\n  let cart: any;\n  beforeEach(() => {{\n    cart = new Cart();\n  }});\n  it('swaps', () => {{\n    let other = 1;\n    cart = {{ total: () => other }};\n  }});\n  it('t', () => {{\n    expect(cart.total()).toBe(1);\n  }});\n}});\n"
-        ),
+    // Even with a `beforeEach` reset: `it.concurrent` or a concurrent
+    // sequence runs the swapping body between the reset and the read.
+    unrelated_with_head(
+        "adv-sibling-write-despite-reset",
+        "describe('C', () => {\n  let cart: any;\n  beforeEach(() => {\n    cart = new Cart();\n  });\n  it.concurrent('swaps', async () => {\n    cart = { total: () => 1 };\n  });\n  it.concurrent('t', async () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
     )
 }
 
@@ -416,5 +416,58 @@ fn unseen_scope_write_decides_over_before_each() -> Result<(), String> {
     unrelated_with_head(
         "adv-hook-calls-helper",
         "describe('C', () => {\n  let cart: any;\n  function reset() {\n    cart = { total: () => 1 };\n  }\n  beforeEach(() => {\n    cart = new Cart();\n    reset();\n  });\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+    )
+}
+
+/// Shapes from the 97d99bd adversarial pass: each rebinds or replaces the
+/// receiver in a way the syntax walk does not record.
+#[test]
+fn unrecorded_rebinding_anywhere_in_the_file_withholds_the_receiver() -> Result<(), String> {
+    for (label, rest) in [
+        (
+            "adv-callback-param-in-body",
+            "describe('C', () => {\n  let cart: Cart;\n  beforeEach(() => {\n    cart = new Cart();\n  });\n  it('t', () => {\n    const fakes = [{ total: () => 1 }];\n    fakes.forEach((cart) => {\n      expect(cart.total()).toBe(1);\n    });\n  });\n});\n",
+        ),
+        (
+            "adv-outer-helper",
+            "let cart: any;\nfunction useFake() {\n  cart = { total: () => 1 };\n}\ndescribe('C', () => {\n  beforeEach(() => {\n    cart = new Cart();\n    useFake();\n  });\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+        ),
+        (
+            "adv-cast-target",
+            "describe('C', () => {\n  let cart: Cart;\n  beforeEach(() => {\n    cart = new Cart();\n  });\n  it('t', () => {\n    (cart as any) = { total: () => 1 };\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+        ),
+        (
+            "adv-typed-redeclaration",
+            "describe('C', () => {\n  const cart = new Cart();\n  it('t', () => { const cart: any = { total: () => 1 }; expect(cart.total()).toBe(1); });\n});\n",
+        ),
+        (
+            "adv-outer-after-each",
+            "describe('C', () => {\n  let cart: any;\n  afterEach(() => {\n    cart = { total: () => 1 };\n  });\n  describe('inner', () => {\n    beforeAll(() => {\n      cart = new Cart();\n    });\n    it('adds', () => {\n      cart.add(1);\n    });\n    it('t', () => {\n      expect(cart.total()).toBe(1);\n    });\n  });\n});\n",
+        ),
+        (
+            "adv-class-in-hook",
+            "describe('C', () => {\n  let cart: any;\n  beforeEach(() => {\n    class Cart { total() { return 1; } }\n    cart = new Cart();\n  });\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+        ),
+        (
+            "adv-constructor-from-dynamic-import",
+            "let cart: any;\nbeforeEach(async () => {\n  const { Cart } = await import('./fake-cart');\n  cart = new Cart();\n});\nit('t', () => {\n  expect(cart.total()).toBe(1);\n});\n",
+        ),
+        (
+            "adv-parallel-hooks",
+            "describe('C', () => {\n  let cart: any;\n  beforeEach(async () => {\n    await Promise.resolve();\n    cart = { total: () => 1 };\n  });\n  beforeEach(() => {\n    cart = new Cart();\n  });\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+        ),
+    ] {
+        unrelated_with_head(label, rest)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn test_names_comments_and_plain_reads_keep_the_receiver() -> Result<(), String> {
+    assert_related(
+        "names-and-reads",
+        &format!(
+            "{HEAD}describe('cart = new Cart()', () => {{\n  // cart = somethingElse\n  let cart: Cart;\n  beforeEach(() => {{\n    cart = new Cart();\n  }});\n  it('cart totals', () => {{\n    expect(cart).toBeDefined();\n    expect(typeof cart).toBe('object');\n    cart.add(2);\n    expect(cart?.total()).toBe(3);\n  }});\n}});\n"
+        ),
     )
 }

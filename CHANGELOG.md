@@ -544,14 +544,14 @@ are scoped or reviewed.
   `beforeEach`/`beforeAll` hook, a default import of the owner's
   default-exported class, or a namespace import (`new shop.Cart()`). Scope
   bindings are read from the syntax tree and resolved to the innermost scope,
-  where the last hook write wins over the declaration's initializer. A name
-  the test body declares or reassigns, a callback parameter, a hook write
-  that is conditional or made through a closure, a write to a hook-local
-  variable or hook parameter, a `beforeEach`/`beforeAll` the file defines
-  or imports under another name or from something other than a test runner,
-  a destructuring or other write the scope makes outside a recognized hook, a `beforeAll` write that an enclosing `beforeEach` or a sibling
-  test, `afterEach` hook or nested `describe` may overwrite, and a shadowed
-  class or namespace name still do not relate.
+  where the last hook write wins over the declaration's initializer. The
+  receiver is withheld when anything in the file could rebind it outside a
+  recognized declaration or hook write: a write anywhere else (including
+  destructuring, casts and closures), a parameter or redeclaration of the
+  same name, a second hook of the same kind writing it, a hook the file
+  defines or imports under another name, or a declaration or write of the
+  class name itself. Member reads, `expect(cart)`, `typeof cart`, strings and
+  comments do not count.
 
 - A generated command prints no PowerShell form only when PowerShell reads it
   the same way. Commands with a quoted program path, `$` expansion, globs,
