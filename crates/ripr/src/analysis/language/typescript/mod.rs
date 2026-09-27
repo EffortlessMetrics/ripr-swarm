@@ -323,6 +323,16 @@ impl LanguageAdapter for TypeScriptAdapter {
                 }
                 continue;
             }
+            // A decorator on the line above a method is invisible to the
+            // one-line annotation-only check, so any decorator in the file
+            // keeps method lines probed (#4282).
+            let file_has_decorators = source_by_normalized
+                .get(&normalized_path(&changed.path))
+                .is_none_or(|source| {
+                    source
+                        .lines()
+                        .any(|line| line.trim_start().starts_with('@'))
+                });
             for added in &changed.added_lines {
                 if should_ignore_typescript_changed_line(&added.text) {
                     continue;
@@ -340,6 +350,7 @@ impl LanguageAdapter for TypeScriptAdapter {
                             &changed.path,
                             &removed.text,
                             &added.text,
+                            file_has_decorators,
                         )
                     })
                 {

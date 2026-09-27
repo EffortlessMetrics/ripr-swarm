@@ -3,7 +3,29 @@
 use super::*;
 
 fn annotation_only(old: &str, new: &str) -> bool {
-    is_annotation_only_signature_change(Path::new("src/t.ts"), old, new)
+    is_annotation_only_signature_change(Path::new("src/t.ts"), old, new, false)
+}
+
+/// A decorator on the line above a method (`@Get()` then `find(id: string) {`)
+/// makes its types runtime metadata under `emitDecoratorMetadata`, so in a
+/// file with decorators a method line keeps its probe; functions do not take
+/// decorators and are unaffected.
+#[test]
+fn decorated_file_keeps_method_lines_probed() {
+    let file = Path::new("src/t.ts");
+    let method = ("  find(id: string) {", "  find(id: number) {");
+    assert!(is_annotation_only_signature_change(
+        file, method.0, method.1, false
+    ));
+    assert!(!is_annotation_only_signature_change(
+        file, method.0, method.1, true
+    ));
+    assert!(is_annotation_only_signature_change(
+        file,
+        "function f(a: string) {",
+        "function f(a: number) {",
+        true,
+    ));
 }
 
 #[test]

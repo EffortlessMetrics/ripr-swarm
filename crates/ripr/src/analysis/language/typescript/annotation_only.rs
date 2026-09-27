@@ -21,12 +21,14 @@ use oxc_ast::ast::MethodDefinitionKind;
 
 /// Whether a paired removed/added line change touches ONLY TypeScript type
 /// syntax. Fails closed (returns `false`) on identical lines, on lines that do
-/// not parse as a function/method signature or a variable declaration, and on
-/// any runtime difference.
+/// not parse as a function/method signature or a variable declaration, on any
+/// runtime difference, and on a method line when `file_has_decorators` (its
+/// decorator may sit on a line above).
 pub(crate) fn is_annotation_only_signature_change(
     file: &Path,
     old_line: &str,
     new_line: &str,
+    file_has_decorators: bool,
 ) -> bool {
     // Decorators can turn erased types into runtime values: with
     // `emitDecoratorMetadata`, a decorated class's parameter and return types
@@ -39,6 +41,7 @@ pub(crate) fn is_annotation_only_signature_change(
         runtime_skeleton(file, old_line),
         runtime_skeleton(file, new_line),
     ) {
+        (Some(RuntimeSkeleton::Method { .. }), _) if file_has_decorators => false,
         (Some(old), Some(new)) => old == new,
         _ => false,
     }
