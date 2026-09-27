@@ -529,13 +529,12 @@ are scoped or reviewed.
 
 ### Fixed
 
-- The packaged VSIX no longer includes Cargo build output. `npm run compile`
-  in `editors/vscode` runs `cargo xtask`, whose target directory is relative
-  to the working directory, and `vsce package` then packed
-  `editors/vscode/target/` (a 725 MB VSIX on the 0.11.0 trial join, 781 KB
-  once excluded). `editors/vscode/.vscodeignore` now excludes `target/**`,
-  and `cargo xtask vscode-package` reads the built archive and fails if it
-  carries workspace build output or exceeds 1,500 entries or 64 MiB unpacked.
+- `cargo xtask vscode-package` now reads the built VSIX and fails if it
+  carries workspace build output (anything under `extension/target/`, Cargo
+  `.fingerprint` or `incremental` state, `.rlib` or `.rmeta`) or exceeds 1,500
+  entries or 64 MiB unpacked. On the 0.11.0 trial join, Cargo output left under
+  `editors/vscode/target/` was packed into a 725 MB VSIX; this check fails
+  packaging if an ignore rule ever misses that output again.
 
 - The LSP local file-URI decoder refuses a parent-directory segment (`..`),
   including one written with percent-encoding or backslashes, instead of
