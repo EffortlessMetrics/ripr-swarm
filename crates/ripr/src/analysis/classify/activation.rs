@@ -520,22 +520,20 @@ fn owner_declares_local(owner: &FunctionSummary, operand: &str) -> bool {
         return false;
     }
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
-    masked
-        .split(|ch: char| ch == ';' || ch == '{' || ch == '}')
-        .any(|statement| {
-            let statement = statement.trim();
-            let Some(rest) = statement.strip_prefix("let ") else {
-                return false;
-            };
-            let rest = rest.trim_start();
-            let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
-            rest.strip_prefix(operand).is_some_and(|after| {
-                !after
-                    .chars()
-                    .next()
-                    .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-            })
+    masked.split([';', '{', '}']).any(|statement| {
+        let statement = statement.trim();
+        let Some(rest) = statement.strip_prefix("let ") else {
+            return false;
+        };
+        let rest = rest.trim_start();
+        let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+        rest.strip_prefix(operand).is_some_and(|after| {
+            !after
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
         })
+    })
 }
 
 /// The initializer of a local binding whose live span (per the #3294
