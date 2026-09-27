@@ -538,6 +538,15 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr first-pr --check` without a start-here packet in a checkout where
+  no default base resolves (a detached HEAD with no branches, as in some CI
+  checkouts) now prints a recovery command that requires `--base <ref>` and
+  names the resolution error, instead of a write command that fails on the
+  same missing base. When a default base resolves, the recovery still omits
+  `--base`
+  ([#4285](https://github.com/EffortlessMetrics/ripr-swarm/issues/4285),
+  [#4290](https://github.com/EffortlessMetrics/ripr-swarm/pull/4290)).
+
 - `ripr gate evaluate --gap-ledger` no longer reports an already-observed
   (closed) gap under "Suppressed" as configured-hidden. The ledger's
   `not_policy_targeted` state also covers no-action records, so the gate now
