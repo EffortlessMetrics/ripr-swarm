@@ -863,7 +863,7 @@ fn legacy_next_command(
             warnings.push(AgentStatusWarning {
                 kind: "pilot_found_no_repair_target".to_string(),
                 artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
-                message: "the last complete `ripr pilot` run offered no repair attempt: its top seam has no test that `ripr agent repair` can target, and running pilot again ranks the same seams. Read `target/ripr/pilot/pilot-summary.md` for that seam and add a test for it by hand in the crate that owns it".to_string(),
+                message: "the last complete `ripr pilot` run offered no repair attempt: its top seam is not eligible for `ripr agent repair`, and running pilot again unchanged ranks the same seams. Read `target/ripr/pilot/pilot-summary.md` for that seam, add a test for it by hand in the crate that owns it, then rerun `ripr pilot` to rank the seams against that test".to_string(),
             });
             return None;
         }

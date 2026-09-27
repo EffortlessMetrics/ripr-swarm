@@ -1390,6 +1390,15 @@ fn gap_record_from_typescript_not_delegatable_finding(
     {
         return None;
     }
+    // Only a weakly exposed finding is a gap whose repair packet failed
+    // closed. An exposed finding has nothing to repair, and a no-path finding
+    // is a test gap rather than an analyzer limitation; neither may be framed
+    // as a not-delegatable static limitation (#4226 review).
+    if string_at(finding, &["classification"]) != Some("weakly_exposed")
+        || string_at(actionability, &["gap_state"]) == Some("already_observed")
+    {
+        return None;
+    }
     let reason = string_at(actionability, &["why_not_actionable"]).and_then(non_empty)?;
     let category =
         string_at(actionability, &["actionability_category"]).unwrap_or("incomplete_repair_packet");
@@ -4422,6 +4431,27 @@ mod tests {
         );
         assert_eq!(report.summary.static_limitation_total, 1);
         Ok(())
+    }
+
+    // #4226 review: an exposed TypeScript finding also carries
+    // `repair_packet_ready: false`, but it has nothing to repair; it must not
+    // become a not-delegatable static limitation.
+    #[test]
+    fn check_output_typescript_exposed_finding_is_not_a_static_limitation() {
+        let check = include_str!(
+            "../../../../fixtures/ts_predicate_boundary_optional_chaining/expected/check.json"
+        );
+        assert!(check.contains("\"already_observed\""));
+        let report = check_output_ledger(check.to_string());
+        assert!(
+            report
+                .records
+                .iter()
+                .all(|record| record.static_limit_kind.as_deref()
+                    != Some("typescript_repair_packet_not_delegatable")),
+            "{:?}",
+            report.records
+        );
     }
 
     #[test]

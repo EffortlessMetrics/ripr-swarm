@@ -1268,7 +1268,7 @@ fn no_test_reaches_owner_prompt(root: &Path, entry: &ClassifiedSeam) -> String {
         _ => " A new test for it would usually go in one of the crate's integration test files under `tests/`.".to_string(),
     };
     format!(
-        "No existing test reaches `{owner}`: static evidence finds no test path to this changed owner (`no_static_path`), so no current test checks the changed behavior `{expression}`. This is a test gap in the change, not a RIPR analysis limitation. RIPR does not propose a target for a first test, so no repair route, verify command, or receipt is offered.{placement}",
+        "No existing test reaches `{owner}`: static evidence finds no test path to this changed owner (`no_static_path`), so static evidence shows no current test checking the changed behavior `{expression}`. This is a test gap in the change, not a RIPR analysis limitation. RIPR does not propose a target for a first test, so no repair route, verify command, or receipt is offered.{placement}",
         owner = seam.owner(),
         expression = seam.expression(),
     )

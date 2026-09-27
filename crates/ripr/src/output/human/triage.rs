@@ -223,9 +223,14 @@ fn python_preview_safe_action(finding: &Finding) -> String {
             "no Python test reaches this code",
             "add a test that calls it by hand",
         )
-    } else {
+    } else if finding.activation.missing_discriminators.is_empty() {
         (
             "static evidence names no concrete missing discriminator",
+            "add or strengthen a test by hand",
+        )
+    } else {
+        (
+            "its test placement or related-test evidence is incomplete",
             "add or strengthen a test by hand",
         )
     };
