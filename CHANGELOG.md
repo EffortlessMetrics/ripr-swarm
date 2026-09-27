@@ -540,8 +540,7 @@ are scoped or reviewed.
 
 - `cargo xtask actionable-gap-outcomes` no longer reports an agent receipt's
   `verification.status: "verification_not_run"` as the attempt's verify
-  result. It counts as a missing verify result, and a targeted-test outcome's
-  result is used instead when one exists
+  result. It counts as a missing verify result
   ([#4234](https://github.com/EffortlessMetrics/ripr-swarm/issues/4234)).
 
 - A generated command prints no PowerShell form only when PowerShell reads it
