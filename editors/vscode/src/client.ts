@@ -35,6 +35,7 @@ import {
 import type { RiprFirstPrPacketState, RiprFirstPrPacketStatus } from './firstPrProjection';
 import {
   DEFAULT_LIFECYCLE_SETTLE_BUDGET_MS,
+  RiprClientLifecycleTimeoutError,
   waitForLifecyclePromise
 } from './lifecycleCoordinator';
 
@@ -278,15 +279,9 @@ export type RiprClientLifecycleWait = (
   description: string
 ) => Promise<void>;
 
-export class RiprClientLifecycleTimeoutError extends Error {
-  readonly kind = 'timedOut' as const;
-  constructor(description: string, budgetMs: number) {
-    super(
-      `${description} did not settle within ${budgetMs}ms; refusing an unsafe ripr lifecycle transition.`
-    );
-    this.name = 'RiprClientLifecycleTimeoutError';
-  }
-}
+// The typed timeout lives beside its shared default producer so real
+// lifecycle timeouts carry `kind === 'timedOut'` (#2822).
+export { RiprClientLifecycleTimeoutError };
 
 /** A completed controller stop. Timeout and client-stop failures reject instead. */
 export type RiprClientStopResult = {
