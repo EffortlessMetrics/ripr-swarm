@@ -12729,8 +12729,9 @@ fn execute_command_collect_evidence_context_returns_editor_packet_for_known_seam
 fn oversized_diff_warning_snapshot_prepares_commits_and_publishes() -> Result<(), String> {
     // #4325: the production oversized-diff construction (one root-URI warning
     // batch) must satisfy the publication invariant and survive the real
-    // prepare -> commit path, so the warning actually publishes instead of
-    // failing the refresh as an inconsistent snapshot.
+    // prepare -> commit path, and the warning must reach editors through BOTH
+    // delivered surfaces: the push publication's batch selection and the pull
+    // report for the root URI — not merely sit in the committed snapshot.
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -12772,6 +12773,62 @@ fn oversized_diff_warning_snapshot_prepares_commits_and_publishes() -> Result<()
         if plan.publish_batches.len() != 1 || plan.publish_batches[0].uri != root_uri {
             return Err("expected exactly one publish batch at the root URI".to_string());
         }
+        let publish_batch = &plan.publish_batches[0];
+        if publish_batch.diagnostics.len() != 1 {
+            return Err(format!(
+                "expected the publish batch to carry exactly one warning, got {}",
+                publish_batch.diagnostics.len()
+            ));
+        }
+        if publish_batch.diagnostics[0].code
+            != Some(tower_lsp_server::ls_types::NumberOrString::String(
+                super::diagnostic_catalog::DIFF_SCOPE_OVERSIZED_CODE.to_string(),
+            ))
+        {
+            return Err("expected the governed scope code in the publish batch".to_string());
+        }
+
+        // Delivered push surface (#1973): the stored selection is the one
+        // membership authority push publication filters the batch through.
+        let selection = snapshot
+            .delivery_selection
+            .clone()
+            .ok_or_else(|| "expected the prepared delivery selection".to_string())?;
+        let crate::lsp::diagnostic_budget::DiagnosticDeliveryOutcome::Applied {
+            result, ..
+        } = &selection.outcome
+        else {
+            return Err("expected an applied delivery selection".to_string());
+        };
+        if result.total_canonical_items != 1
+            || result.eligible_items != 1
+            || result.selected.len() != 1
+            || !result.omitted.is_empty()
+            || result.overflowed
+        {
+            return Err(format!(
+                "the warning must be the one selected delivered item: total={}, eligible={}, selected={:?}, omitted={:?}",
+                result.total_canonical_items,
+                result.eligible_items,
+                result.selected,
+                result.omitted
+            ));
+        }
+        if result.selected[0].document != root_uri.as_str() {
+            return Err(format!(
+                "expected the warning selected at the root document, got {:?}",
+                result.selected[0].document
+            ));
+        }
+        let push_delivered =
+            selection.diagnostics_for_document(root_uri.as_str(), &publish_batch.diagnostics);
+        if push_delivered.len() != 1
+            || push_delivered[0].code != publish_batch.diagnostics[0].code
+        {
+            return Err(format!(
+                "the push selection must deliver exactly the warning, got {push_delivered:?}"
+            ));
+        }
 
         let pending_analyzed = BTreeMap::new();
         let pending_entered = Vec::new();
@@ -12801,6 +12858,32 @@ fn oversized_diff_warning_snapshot_prepares_commits_and_publishes() -> Result<()
         }
         if !published[0].message.contains("diff_scope_oversized") {
             return Err("expected the published guard message".to_string());
+        }
+        // Delivered pull surface (#1973): the pull report for the root URI
+        // serves exactly the stored selection's per-document set, so the
+        // warning must appear here too — profile filtering must not drop it
+        // after the snapshot committed it.
+        let served = committed.served_diagnostics_for_uri(&root_uri);
+        if served.len() != 1 {
+            return Err(format!(
+                "expected exactly one delivered warning in the pull report, got {}",
+                served.len()
+            ));
+        }
+        if served[0].severity
+            != Some(tower_lsp_server::ls_types::DiagnosticSeverity::WARNING)
+        {
+            return Err("expected the delivered warning severity".to_string());
+        }
+        if served[0].code
+            != Some(tower_lsp_server::ls_types::NumberOrString::String(
+                super::diagnostic_catalog::DIFF_SCOPE_OVERSIZED_CODE.to_string(),
+            ))
+        {
+            return Err("expected the governed scope code delivered".to_string());
+        }
+        if !served[0].message.contains("diff_scope_oversized") {
+            return Err("expected the delivered guard message".to_string());
         }
         Ok(())
     })

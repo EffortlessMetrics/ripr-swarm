@@ -1159,8 +1159,13 @@ fn git_timeout_limited_diagnostics(
 /// are the authority and `diagnostics_by_uri` is derived from them, so the
 /// publication invariant checked by `prepare_refresh_transaction`
 /// (`snapshot.diagnostics_by_uri == diagnostics_by_uri_from_batches`) holds
-/// by construction (#4325). Pure so the conversion contract is testable
-/// without an oversized diff.
+/// by construction (#4325). The producer also stamps the ordinary
+/// `delivery_eligible` signal on the warning (the same producer-owned stamp
+/// profile-admitted findings carry), because the delivery budget admits only
+/// explicit producer signals and fails closed on missing data — without the
+/// stamp the warning would be profile-filtered out of both the push
+/// publication and the pull report (#4325). Pure so the conversion contract
+/// is testable without an oversized diff.
 pub(super) fn oversized_diff_limited_diagnostics(
     root: &Path,
     config: &LspAnalysisConfig,
@@ -1191,7 +1196,14 @@ pub(super) fn oversized_diff_limited_diagnostics(
                     message: bounded_message,
                     related_information: None,
                     tags: None,
-                    data: None,
+                    // Producer authority (RIPR-SPEC-0126), same stamp as
+                    // profile-admitted findings: the delivery budget reads
+                    // this explicit signal after the gap/seam/preview
+                    // authorities and fails closed without it, so the
+                    // governed code alone admits nothing.
+                    data: Some(serde_json::json!({
+                        "delivery_eligible": true,
+                    })),
                 }],
             }])
         }
@@ -1623,6 +1635,20 @@ fn oversized_diff_error_converts_to_a_committed_limited_snapshot_with_one_warnin
         return Err(format!(
             "expected the guard kind and actual counts, got {:?}",
             diagnostic.message
+        ));
+    }
+    // #4325: the producer stamps the ordinary delivery-eligibility signal so
+    // the delivery budget admits the warning; the governed code alone admits
+    // nothing (the budget fails closed on missing data).
+    if diagnostic
+        .data
+        .as_ref()
+        .and_then(|data| data.get("delivery_eligible"))
+        != Some(&serde_json::Value::Bool(true))
+    {
+        return Err(format!(
+            "the scope-guard disclosure must carry the producer delivery signal: {:?}",
+            diagnostic.data
         ));
     }
     if diagnostics.snapshot.component_outcomes.len() != 1 {
