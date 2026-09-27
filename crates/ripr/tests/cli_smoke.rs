@@ -2495,7 +2495,7 @@ fn first_pr_check_missing_packet_recovers_without_a_resolvable_base()
     );
     assert!(stderr.contains("ripr first-pr --root "), "{stderr}");
     assert!(!stderr.contains("--base"), "{stderr}");
-    std::fs::remove_dir_all(workspace)?;
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
