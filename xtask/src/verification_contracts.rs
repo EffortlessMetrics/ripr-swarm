@@ -99,6 +99,21 @@ const CONTRACTS: &[VerificationContract] = &[
             "limits_note",
         ],
     },
+    // The `--gap-ledger` route writes the same review-comments artifact but
+    // renders an `inputs.gap_ledger` disclosure and gap-variant `suppressed[]`
+    // items (`gap_id`, nullable `file`/`line`) that the diff-scoped fixture
+    // above never carries; the generation-time `--check` in
+    // `xtask/src/reports/review_comments.rs` shells `ripr review-comments`
+    // without `--gap-ledger`, so nothing consumed this shape before this row
+    // while the closed published schema rejected it.
+    VerificationContract {
+        schema_path: "schemas/ripr/review-comments.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/review-comments.gap-ledger.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["inputs", "gap_ledger"],
+    },
     VerificationContract {
         schema_path: "schemas/ripr/gate-decision.schema.json",
         schema_pointer: None,
@@ -143,6 +158,30 @@ const CONTRACTS: &[VerificationContract] = &[
         doc_markers: &[
             "decisions[].baseline_match_kind",
             "\"legacy_path_line_class\"",
+        ],
+    },
+    // `causal_comparison` and the per-decision canonical delta fields
+    // (`delta_attribution`, `base_state`, `head_state`, `attribution_basis`,
+    // `comparison_confidence`) are projected whenever the canonical PR delta
+    // artifact loads in the gate path
+    // (`crates/ripr/src/app/causal_projection.rs`), and `cargo xtask ripr-pr`
+    // writes that artifact deterministically, so the standard workflow emits
+    // gate-decision JSON carrying these fields. The hand-written fixture
+    // above never carries them, so before this row the closed published
+    // schema rejected live gate output whenever the delta artifact existed.
+    VerificationContract {
+        schema_path: "schemas/ripr/gate-decision.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/gate-decision.causal-delta.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &[
+            "causal_comparison",
+            "delta_attribution",
+            "base_state",
+            "head_state",
+            "attribution_basis",
+            "comparison_confidence",
         ],
     },
     VerificationContract {

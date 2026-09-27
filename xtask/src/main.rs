@@ -279,14 +279,15 @@ pub(crate) use reports::{
     extract_json_object_usize_map, extract_json_string, extract_json_warnings,
     limited_badge_artifacts_json, limited_badge_artifacts_markdown,
     parse_repo_badge_artifact_options, parse_repo_exposure_summary_counts,
-    read_repo_exposure_summary_artifact, repo_badge_artifact_command_args,
-    repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
-    repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
-    ripr_plus_receipt_from_badge, ripr_plus_receipt_from_options,
-    ripr_plus_receipt_from_repo_badge_json, ripr_plus_receipt_from_repo_exposure_summary_json,
+    read_badge_artifact_diff_governed, read_repo_exposure_summary_artifact,
+    repo_badge_artifact_command_args, repo_badge_artifact_jobs,
+    repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
+    repo_badge_artifacts_summary_markdown, ripr_plus_receipt_from_badge,
+    ripr_plus_receipt_from_options, ripr_plus_receipt_from_repo_badge_json,
+    ripr_plus_receipt_from_repo_exposure_summary_json,
     ripr_plus_receipt_from_repo_exposure_summary_json_with_source, ripr_plus_receipt_markdown,
     run_repo_badge_artifact_command, validate_shields_endpoint_bytes,
-    write_badge_artifacts_after_build, write_badge_artifacts_from_diff,
+    write_badge_artifacts_after_build, write_badge_artifacts_from_diff, write_badge_input_identity,
 };
 pub(crate) use reports::{
     FixtureCheckFormat, fixture_dirs, goldens_check, is_manifest_only_fixture_dir,
@@ -347,7 +348,8 @@ pub(crate) use ripr_swarm::{
 use run::{
     TimedFileOutput, TimedOutput, capture_output, capture_output_with_timeout,
     capture_stdout_to_file_with_timeout, command_success_owned, run, run_in_dir,
-    run_in_dir_with_envs, run_output, run_output_optional, run_output_owned, run_output_owned_in,
+    run_in_dir_with_envs, run_output, run_output_bytes, run_output_optional,
+    run_output_optional_bytes, run_output_owned, run_output_owned_in,
     run_output_owned_with_timeout, run_owned, run_with_envs, tool_build_timeout,
 };
 
@@ -539,6 +541,7 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-spec-numbering",
     "check-fixture-contracts",
     "check-rust-judged-panel",
+    "check-release-challenge-selection",
     "check-python-judged-panel",
     "check-traceability",
     "check-capabilities",
@@ -580,6 +583,7 @@ fn precommit() -> Result<(), String> {
     check_spec_numbering()?;
     check_fixture_contracts()?;
     check_rust_judged_panel()?;
+    check_release_challenge_selection()?;
     check_python_judged_panel()?;
     check_traceability()?;
     check_capabilities()?;
@@ -609,6 +613,10 @@ fn precommit() -> Result<(), String> {
 
 fn check_rust_judged_panel() -> Result<(), String> {
     rust_judged_panel::check_canonical()
+}
+
+fn check_release_challenge_selection() -> Result<(), String> {
+    rust_judged_panel::check_release_selection()
 }
 
 fn check_python_judged_panel() -> Result<(), String> {
@@ -1346,7 +1354,111 @@ fn vscode_package() -> Result<(), String> {
     fs::create_dir_all(&dist)
         .map_err(|err| format!("failed to create {}: {err}", dist.display()))?;
     let version = vscode_package_version(&extension_dir.join("package.json"))?;
-    run_cwd_command(&vscode_package_command(&version))
+    run_cwd_command(&vscode_package_command(&version))?;
+    let summary = verify_packaged_vsix_inventory(&dist.join(format!("ripr-{version}.vsix")))?;
+    println!("{summary}");
+    Ok(())
+}
+
+/// Reads the built VSIX and applies the production inventory bounds. Returns
+/// the one-line summary `vscode-package` prints.
+fn verify_packaged_vsix_inventory(vsix_path: &Path) -> Result<String, String> {
+    let inventory = read_vsix_inventory(vsix_path)?;
+    check_vsix_inventory(&inventory, VSIX_MAX_ENTRIES, VSIX_MAX_UNCOMPRESSED_BYTES)
+        .map_err(|err| format!("packaged VSIX {} {err}", vsix_path.display()))?;
+    Ok(format!(
+        "VSIX inventory: {} entries, {} bytes unpacked",
+        inventory.len(),
+        inventory.iter().map(|entry| entry.size).sum::<u64>()
+    ))
+}
+
+/// Upper bounds on the packaged VSIX. The 0.11 extension packs about 410
+/// entries and 3 MiB uncompressed. Packing `editors/vscode/target/` (#1775)
+/// produced 2,805 entries and about 2.3 GB. The bounds leave room for
+/// dependency growth and still fail that class of regression without pinning
+/// one machine's compressed size.
+const VSIX_MAX_ENTRIES: usize = 1_500;
+const VSIX_MAX_UNCOMPRESSED_BYTES: u64 = 64 * 1024 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VsixEntry {
+    name: String,
+    size: u64,
+    compressed_size: u64,
+}
+
+fn read_vsix_inventory(vsix_path: &Path) -> Result<Vec<VsixEntry>, String> {
+    let file = fs::File::open(vsix_path)
+        .map_err(|err| format!("packaged VSIX {} is missing: {err}", vsix_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|err| format!("packaged VSIX {} is not a zip: {err}", vsix_path.display()))?;
+    let mut entries = Vec::with_capacity(archive.len());
+    for index in 0..archive.len() {
+        let member = archive.by_index_raw(index).map_err(|err| {
+            format!(
+                "failed to read {} member {index}: {err}",
+                vsix_path.display()
+            )
+        })?;
+        entries.push(VsixEntry {
+            name: member.name().to_string(),
+            size: member.size(),
+            compressed_size: member.compressed_size(),
+        });
+    }
+    Ok(entries)
+}
+
+/// Rejects workspace build output in the packaged extension (#1775). The
+/// `cargo xtask` alias builds into a cwd-relative target directory, so
+/// `npm run compile` in `editors/vscode` leaves Cargo output beside the
+/// extension. The check reads the real archive entries rather than trusting
+/// `.vscodeignore`, so a lost ignore rule fails here instead of shipping.
+fn check_vsix_inventory(
+    entries: &[VsixEntry],
+    max_entries: usize,
+    max_uncompressed_bytes: u64,
+) -> Result<(), String> {
+    let build_output: Vec<&str> = entries
+        .iter()
+        .map(|entry| entry.name.as_str())
+        .filter(|name| is_workspace_build_output(name))
+        .collect();
+    if !build_output.is_empty() {
+        let shown: Vec<&str> = build_output.iter().take(5).copied().collect();
+        return Err(format!(
+            "carries {} workspace build-output entries (first: {})",
+            build_output.len(),
+            shown.join(", ")
+        ));
+    }
+    if entries.len() > max_entries {
+        return Err(format!(
+            "carries {} entries, above the {max_entries}-entry bound",
+            entries.len()
+        ));
+    }
+    let uncompressed: u64 = entries.iter().map(|entry| entry.size).sum();
+    if uncompressed > max_uncompressed_bytes {
+        return Err(format!(
+            "unpacks to {uncompressed} bytes, above the {max_uncompressed_bytes}-byte bound"
+        ));
+    }
+    Ok(())
+}
+
+fn is_workspace_build_output(name: &str) -> bool {
+    if name.starts_with("extension/target/") {
+        return true;
+    }
+    if name
+        .split('/')
+        .any(|segment| segment == ".fingerprint" || segment == "incremental")
+    {
+        return true;
+    }
+    name.ends_with(".rlib") || name.ends_with(".rmeta")
 }
 
 fn vscode_test() -> Result<(), String> {
@@ -4502,7 +4614,7 @@ fn receipts_report_markdown(
 }
 
 fn precommit_report_body() -> String {
-    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
+    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
 }
 
 /// Compose the check-pr report for either terminal state (#3036). One
@@ -6506,6 +6618,14 @@ fn finish_traceability_report(violations: &[String], advisories: &[String]) -> R
          discoverable for long-context human and agent work.",
     );
     body.push_str("\n\n");
+    body.push_str("## Scope of this result\n\n");
+    body.push_str(
+        "A pass checks the authored `[[behavior]]` entries, spec coverage, fixture spec IDs, \
+         and the file paths named by registered references. It does not enumerate Rust tests. \
+         It does not require every newly added test to appear in `.ripr/traceability.toml`. \
+         A `::symbol` suffix remains advisory and is not proof that the symbol exists, has \
+         a test role, ran, or establishes the behavior (see #2345).\n\n",
+    );
 
     if violations.is_empty() {
         body.push_str("## Violations\n\nNone detected.\n\n");
@@ -13283,9 +13403,47 @@ fn check_output_contracts() -> Result<(), String> {
                     &mut violations,
                 );
             }
+            "kind" => {
+                let producer = match value.as_str() {
+                    "python_repair_driver_binding" => {
+                        "crates/ripr/src/app/python_repair_binding.rs"
+                    }
+                    "python_repair_verification_receipt" => {
+                        "crates/ripr/src/app/python_repair_verification.rs"
+                    }
+                    "python_repair_verification_check_report" => {
+                        "xtask/src/reports/python_repair_verification.rs"
+                    }
+                    other => {
+                        violations.push(format!("unrecognized output kind `{other}`"));
+                        continue;
+                    }
+                };
+                let source = read_text_lossy(Path::new(producer))?;
+                require_contract_value(producer, &source, value, kind, &mut violations);
+                require_contract_value(
+                    "docs/OUTPUT_SCHEMA.md",
+                    &schema,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+            }
             other => violations.push(format!(
                 "policy/output_contracts.txt uses unsupported kind `{other}`"
             )),
+        }
+    }
+
+    // These producer-owned kinds are durable artifacts in the governed Python
+    // repair path. Removing a registry row must fail too, not just a bad row.
+    for value in [
+        "python_repair_driver_binding",
+        "python_repair_verification_check_report",
+        "python_repair_verification_receipt",
+    ] {
+        if !seen.contains(&format!("kind|{value}")) {
+            violations.push(format!("missing output contract entry: kind|{value}"));
         }
     }
 
@@ -18363,21 +18521,32 @@ fn report_index_next_commands(
 }
 
 fn collect_pr_changes() -> Result<Vec<ChangedPath>, String> {
+    // Raw NUL-delimited inventories (#4006): every git call below passes
+    // `-z`, so records are never C-quoted and never line-split; parsing
+    // rules come from the shared authority, not from tab/line splitting
+    // here. The advisory-packet contract is unchanged (path plus status
+    // set); only identity handling is exact now.
     let mut changes = BTreeMap::<String, BTreeSet<String>>::new();
 
-    add_name_status_output(
+    add_name_status_bytes(
         &mut changes,
-        &run_output_optional("git", &["diff", "--name-status", "origin/main...HEAD"])?,
-    );
-    add_name_status_output(
+        &run_output_optional_bytes(
+            "git",
+            &["diff", "--name-status", "-z", "origin/main...HEAD"],
+        )?,
+    )?;
+    add_name_status_bytes(
         &mut changes,
-        &run_output("git", &["diff", "--name-status"])?,
-    );
-    add_name_status_output(
+        &run_output_bytes("git", &["diff", "--name-status", "-z"])?,
+    )?;
+    add_name_status_bytes(
         &mut changes,
-        &run_output("git", &["diff", "--cached", "--name-status"])?,
-    );
-    add_short_status_output(&mut changes, &run_output("git", &["status", "--short"])?);
+        &run_output_bytes("git", &["diff", "--cached", "--name-status", "-z"])?,
+    )?;
+    add_porcelain_bytes(
+        &mut changes,
+        &run_output_bytes("git", &["status", "--porcelain=v1", "-z"])?,
+    )?;
 
     Ok(changes
         .into_iter()
@@ -18387,51 +18556,115 @@ fn collect_pr_changes() -> Result<Vec<ChangedPath>, String> {
 
 fn collect_worktree_status_changes() -> Result<Vec<ChangedPath>, String> {
     let mut changes = BTreeMap::<String, BTreeSet<String>>::new();
-    add_short_status_output(&mut changes, &run_output("git", &["status", "--short"])?);
+    add_porcelain_bytes(
+        &mut changes,
+        &run_output_bytes("git", &["status", "--porcelain=v1", "-z"])?,
+    )?;
     Ok(changes
         .into_iter()
         .map(|(path, statuses)| ChangedPath { path, statuses })
         .collect())
 }
 
-fn add_name_status_output(changes: &mut BTreeMap<String, BTreeSet<String>>, output: &str) {
-    for line in output.lines() {
-        let parts = line.split('\t').collect::<Vec<_>>();
-        if parts.len() < 2 {
-            continue;
-        }
-        let status = parts[0].trim();
-        let Some(path) = parts.last() else {
-            continue;
-        };
-        add_changed_path(changes, path, status);
+/// Decode raw `--name-status -z` bytes through the shared NUL status-record
+/// authority (#4006). Strict: truncated records and non-UTF-8 fields fail
+/// loudly instead of attributing a change to half a record or collapsing
+/// through lossy conversion (the old tab-split route did both: it kept
+/// C-quoted octal names verbatim and silently dropped rename sources).
+/// Rename/copy records attribute the target path — the path present at the
+/// head — matching the old `parts.last()` projection with exact bytes.
+fn add_name_status_bytes(
+    changes: &mut BTreeMap<String, BTreeSet<String>>,
+    output: &[u8],
+) -> Result<(), String> {
+    let records = ripr::analysis::parse_git_status_records(output)
+        .map_err(|err| format!("pr-change name-status inventory: {err}"))?;
+    for record in &records {
+        let path = record.path.to_str().ok_or_else(|| {
+            format!(
+                "pr-change name-status inventory: decoded path {} is not valid UTF-8",
+                record.path.display()
+            )
+        })?;
+        add_changed_path(changes, path, &record.status);
     }
+    Ok(())
 }
 
-fn add_short_status_output(changes: &mut BTreeMap<String, BTreeSet<String>>, output: &str) {
-    for line in output.lines() {
-        if line.len() < 4 {
-            continue;
-        }
-        let status = line[..2].trim();
-        let mut path = line[3..].trim();
-        if let Some((_, new_path)) = path.split_once(" -> ") {
-            path = new_path.trim();
-        }
-        if status.is_empty() {
-            continue;
-        }
-        add_changed_path(changes, path, status);
+/// Decode raw `git status --porcelain=v1 -z` bytes (#4006). Entries are
+/// `XY␣path\0`; rename/copy entries append the source as a bare second
+/// field (`XY␣new\0old\0`, verified against real git output for both the
+/// staged `R ` and the worktree ` R` columns — the latter occurs for
+/// intent-to-add renames). Output is never C-quoted and never line-split,
+/// so exotic names survive byte-exact — including names containing ` -> `,
+/// which the old `split_once(" -> ")` projection mis-split. Rename entries
+/// attribute the target path, matching the old projection with exact bytes.
+/// A non-empty input missing its trailing NUL fails loudly: real git always
+/// terminates every record, so a missing terminator is truncation, not a
+/// final field.
+fn add_porcelain_bytes(
+    changes: &mut BTreeMap<String, BTreeSet<String>>,
+    output: &[u8],
+) -> Result<(), String> {
+    if output.is_empty() {
+        return Ok(());
     }
+    if output.last() != Some(&0) {
+        return Err(
+            "pr-change porcelain inventory: output is truncated or misframed (missing trailing NUL)"
+                .to_string(),
+        );
+    }
+    let mut fields: Vec<&[u8]> = output.split(|byte| *byte == 0).collect();
+    fields.pop();
+    let mut fields = fields.into_iter();
+    while let Some(field) = fields.next() {
+        let (status, path) = porcelain_entry(field)?;
+        if status.iter().any(|byte| matches!(byte, b'R' | b'C')) {
+            let _source = fields.next().ok_or_else(|| {
+                format!("pr-change porcelain inventory: rename entry for `{path}` is missing its paired path")
+            })?;
+        }
+        let status_text = std::str::from_utf8(status)
+            .map_err(|err| format!("pr-change porcelain inventory: status is not ASCII: {err}"))?;
+        add_changed_path(changes, path, status_text.trim());
+    }
+    Ok(())
+}
+
+/// Split one `XY␣path` porcelain field into its status prefix and path.
+/// Fails loudly on misframed input instead of inventing an entry.
+fn porcelain_entry(field: &[u8]) -> Result<(&[u8], &str), String> {
+    if field.len() < 4 || field[2] != b' ' {
+        return Err(format!(
+            "pr-change porcelain inventory: misframed entry of {} bytes",
+            field.len()
+        ));
+    }
+    let path = std::str::from_utf8(&field[3..]).map_err(|err| {
+        format!("pr-change porcelain inventory: entry path is not valid UTF-8: {err}")
+    })?;
+    if path.is_empty() {
+        return Err("pr-change porcelain inventory: entry path is empty".to_string());
+    }
+    Ok((&field[..2], path))
 }
 
 fn add_changed_path(changes: &mut BTreeMap<String, BTreeSet<String>>, path: &str, status: &str) {
-    let normalized = normalize_slashes(path.trim().trim_matches('"'));
-    if normalized.is_empty() {
+    // Identity-exact (#4006 item 5): the map key is the decoded path
+    // verbatim. All feeders pass `-z` git output, which always uses `/`
+    // separators even on Windows, so there is no separator folding to do —
+    // and folding would be wrong: the literal-backslash filename `a\b.rs`
+    // and the nested path `a/b.rs` are distinct tracked paths that folding
+    // collapsed to one key, omitting an inventory path while returning
+    // success. No trimming either: leading/trailing spaces are path bytes.
+    // Display-time normalization, if ever needed, belongs at the render
+    // call site — never in the identity map.
+    if path.is_empty() {
         return;
     }
     changes
-        .entry(normalized)
+        .entry(path.to_string())
         .or_default()
         .insert(status.to_string());
 }

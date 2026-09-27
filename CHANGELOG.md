@@ -529,6 +529,47 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `cargo xtask vscode-package` now reads the built VSIX and fails if it
+  carries workspace build output (anything under `extension/target/`, Cargo
+  `.fingerprint` or `incremental` state, `.rlib` or `.rmeta`) or exceeds 1,500
+  entries or 64 MiB unpacked. On the 0.11.0 trial join, Cargo output left under
+  `editors/vscode/target/` was packed into a 725 MB VSIX; this check fails
+  packaging if an ignore rule ever misses that output again.
+
+- The LSP local file-URI decoder refuses a parent-directory segment (`..`),
+  including one written with percent-encoding or backslashes, instead of
+  admitting it as an absolute path. Saved-content digest reads use only an
+  admitted path, so a refused URI's display fallback is not opened even when
+  the working directory contains a `file:` directory that would let that
+  relative string follow `..`. A path this process builds may still contain
+  `..` from a relative join, and that spelling is collapsed before a `file:`
+  URI is emitted. Filenames that only contain two dots (`foo..bar`,
+  `..hidden`) stay ordinary local paths. This refuses the client-supplied
+  read; it is not a claim that a client can disclose the bytes
+  ([#4145](https://github.com/EffortlessMetrics/ripr-swarm/issues/4145)).
+- `check-file-policy` builds test binaries before it lists `covered_by`
+  subjects. A cold compile is no longer charged against the five-minute
+  list cap, and a timeout is reported as an instrument failure rather than
+  an unresolved pointer. A `--doc` pointer cannot use `--no-run`, and Cargo
+  recompiles doctests on every listing, so that pointer is enumerated once
+  under the compile budget instead of again under the five-minute cap
+  ([#4141](https://github.com/EffortlessMetrics/ripr-swarm/issues/4141)).
+- `ripr init --ci github` encodes PR guidance annotations inside jq. The
+  previous TSV round-trip rewrote backslash, tab, CR, and LF before GitHub
+  workflow-command escaping, so a path or message could display transport
+  text instead of the comment bytes
+  ([#4089](https://github.com/EffortlessMetrics/ripr-swarm/issues/4089)).
+- TypeScript and JavaScript diff analysis no longer counts vendored, built,
+  or generated files it does not inspect. `node_modules`, `dist`, `build`,
+  `out`, `coverage`, `.next`, `.cache`, `vendor`, `__generated__`, and
+  `*.generated.*` are refused before the changed-file tally, and the
+  workspace walk prunes the same directories so they cannot back findings.
+  Near-misses such as `src/build.ts` and `generated.ts` stay ordinary
+  source. A repair packet may name a Jest/Vitest, Node, Cypress, Jasmine,
+  or `__tests__` test path as its edit target when the TypeScript adapter
+  is compiled; a production file still cannot
+  ([#3743](https://github.com/EffortlessMetrics/ripr-swarm/issues/3743)).
+
 - Gate baselines now treat canonical gap identity as the normal authority and
   disclose every legacy fallback match. `ripr baseline create` refuses
   `path:line:static_class` fallback identity as primary authority for new

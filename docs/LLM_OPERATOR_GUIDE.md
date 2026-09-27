@@ -78,9 +78,13 @@ ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 The before phase writes the before snapshot, brief, packet, and workflow files
 and prints the exact `--attempt` command for the after phase. The after phase
 writes the after snapshot, analysis outcome, verify JSON, and receipt. Its
-stdout is exactly one JSON document — the verify outcome with the status
-report embedded under `agent_status` — so an orchestrator can `JSON.parse`
-stdout once; narration stays on stderr. For the
+stdout is exactly one JSON document — the versioned `repair_after_result`
+envelope (`schema_version` `0.1`) carrying the verify 0.3 document unchanged
+under `verify` with the status report embedded beside it under
+`agent_status` — so an orchestrator can `JSON.parse` stdout once and every
+stdout document's shape is identifiable from its `schema_version`; narration
+stays on stderr. When the after phase refuses after the verify render, stdout
+is the bare verify 0.3 document alone. For the
 separately authorized `verify` phase of a trust-bound Python attempt, see
 [Repair attempt identity](REPAIR_ATTEMPT.md). The numbered steps below are the
 lower-level manual equivalent, kept for explicit control and debugging.
@@ -173,6 +177,30 @@ If the operator needs the full seam packet as well:
 ```bash
 ripr agent packet --root . --seam-id <seam-id> --json > target/ripr/workflow/agent-packet.json
 ```
+
+If the operator is starting from a gap decision ledger instead of live seam
+analysis, the same packet envelope can be rendered straight from a ledger
+record:
+
+```bash
+ripr agent packet --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --gap-id <gap-id> --json > target/ripr/workflow/agent-packet.json
+```
+
+This route does not rerun analysis: the record is read from the ledger named
+in the envelope's `inputs.gap_ledger`, and the packet reports
+`source: "gap_decision_ledger"`. It requires the record to carry a
+`repair_route` and at least one `verification_commands` entry; `--seam-id`
+and `--gap-ledger`/`--gap-id` are mutually exclusive. Against the seam
+packet, the per-gap packet fields add gap identity and governance state —
+`gap_id`, `canonical_gap_id`, `gap_kind`, `language`, `policy_state`,
+`gap_state`, `evidence_class`, `repairability`, `current_evidence_strength` —
+plus `allowed_edit_surface`/`allowed_files`/`forbidden_files`,
+`conflict_group`, `stop_conditions`, `must_not_change`,
+`discriminator_guidance`, `recommended_test`, `verify_command`,
+`receipt_command`, `receipt_status`, a `repair_card`, and `llm_guidance`
+with the prompt, stop conditions, and a copyable packet. The edit-surface
+authority, stop conditions, and verify/receipt commands carry the same
+advisory boundary as the seam packet.
 
 If the operator is starting from a working set rather than one seam, use a
 brief command instead:

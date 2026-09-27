@@ -1,6 +1,6 @@
 # RIPR Report Packet Index
 
-Status: pass
+Status: warn
 
 Start here:
 - PR review front panel: target/ripr/reports/pr-review-front-panel.md

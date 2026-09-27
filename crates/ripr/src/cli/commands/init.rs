@@ -339,7 +339,13 @@ on:
 
 permissions:
   contents: read
+  # Used only when RIPR_COMMENT_MODE is `inline`, to post review comments.
+  # With the default `off`, nothing writes to the pull request. Set this to
+  # `read` if you keep RIPR_COMMENT_MODE at `off`.
   pull-requests: write
+  # Used only to upload SARIF to code scanning while RIPR_UPLOAD_SARIF is
+  # "true" (the default). Remove this line and set RIPR_UPLOAD_SARIF to
+  # "false" if the repository does not use code scanning.
   security-events: write
 
 env:
@@ -471,12 +477,12 @@ jobs:
           mkdir -p target/ripr/reports
           # Pinned diff contract (#4005): the same presentation pins as the
           # production loaders. Ambient external-diff, textconv, color,
-          # context, and path-quoting configuration must not change the
-          # bytes RIPR analyzes.
+          # context, path-quoting, and side-prefix configuration must not
+          # change the bytes RIPR analyzes.
           base_ref="origin/${{ github.base_ref }}"
           base_sha="$(git rev-parse --verify "${base_ref}^{commit}")" || { echo "ripr: cannot resolve base ref $base_ref" >&2; exit 1; }
           head_sha="$(git rev-parse --verify "HEAD^{commit}")" || { echo "ripr: cannot resolve HEAD" >&2; exit 1; }
-          git -c core.quotePath=true diff --binary --no-ext-diff --no-textconv --no-color --unified=3 --inter-hunk-context=0 "${base_sha}...${head_sha}" > target/ripr/reports/pr.diff || { echo "ripr: git diff failed for ${base_sha}...${head_sha}" >&2; exit 1; }
+          git -c core.quotePath=true diff --binary --no-ext-diff --no-textconv --no-color --src-prefix=a/ --dst-prefix=b/ --unified=3 --inter-hunk-context=0 "${base_sha}...${head_sha}" > target/ripr/reports/pr.diff || { echo "ripr: git diff failed for ${base_sha}...${head_sha}" >&2; exit 1; }
           byte_count="$(wc -c < target/ripr/reports/pr.diff | tr -d ' ')"
           digest="$(sha256sum target/ripr/reports/pr.diff)" || {
             echo "ripr: failed to compute SHA-256 for patch" >&2
@@ -727,11 +733,6 @@ jobs:
             --mode ready \
             --format repo-badge-shields \
             > target/ripr/reports/repo-ripr-badge-shields.json
-
-      - name: Render RIPR operator cockpit
-        if: always() && hashFiles('crates/ripr/Cargo.toml') != '' && hashFiles('xtask/src/reports/operator.rs') != ''
-        continue-on-error: true
-        run: cargo xtask operator-cockpit
 
       - name: Evaluate RIPR gate decision
         if: always() && env.RIPR_GATE_MODE != '' && hashFiles('target/ripr/review/comments.json') != ''
@@ -1185,10 +1186,16 @@ jobs:
       - name: Render RIPR first-pr start-here
         if: always()
         continue-on-error: true
+        # first-pr checks its base resolves and that the review cards were
+        # built for the same base. Without --base it assumes origin/main,
+        # so a repository whose PRs target another branch got a blocked
+        # start-here. A manual run has no PR base; use the default branch.
         run: |
           mkdir -p target/ripr/reports
           ripr first-pr \
             --root . \
+            --base "origin/${{ github.base_ref || github.event.repository.default_branch }}" \
+            --head HEAD \
             --gap-ledger target/ripr/reports/gap-decision-ledger.json \
             --first-action target/ripr/reports/first-useful-action.json \
             --review-comments target/ripr/review/comments.json \
@@ -1281,36 +1288,25 @@ jobs:
         if: always() && hashFiles('target/ripr/review/comments.json') != ''
         continue-on-error: true
         run: |
-          escape_github_message() {
-            local value="$1"
-            value="${value//'%'/'%25'}"
-            value="${value//$'\r'/'%0D'}"
-            value="${value//$'\n'/'%0A'}"
-            printf '%s' "$value"
-          }
-
-          escape_github_property() {
-            local value="$1"
-            value="${value//'%'/'%25'}"
-            value="${value//$'\r'/'%0D'}"
-            value="${value//$'\n'/'%0A'}"
-            value="${value//':'/'%3A'}"
-            value="${value//','/'%2C'}"
-            printf '%s' "$value"
-          }
-
-          jq -r '.comments[]? | select(.placement.path and .placement.line) | [.placement.path, (.placement.line | tostring), (.reason // "RIPR targeted test guidance"), (.llm_guidance.command // "")] | @tsv' target/ripr/review/comments.json \
-            | while IFS="$(printf '\t')" read -r path line reason command; do
-                message="$reason"
-                if [ -n "$command" ] && [ "$command" != "null" ]; then
-                  message="$message Command: $command"
-                fi
-                annotation_path="$(escape_github_property "$path")"
-                annotation_line="$(escape_github_property "$line")"
-                annotation_title="$(escape_github_property "RIPR targeted test guidance")"
-                message="$(escape_github_message "$message")"
-                echo "::warning file=$annotation_path,line=$annotation_line,title=$annotation_title::$message"
-              done
+          # Encode the workflow command in jq. Routing the fields through a
+          # TSV round-trip rewrites backslash, tab, CR, and LF into transport
+          # text before GitHub's encoder can see the original bytes (#4089). An annotation names the repair start only when
+          # that field is present. Literal "null" stays absent. The brief
+          # command is not interpolated: it points at this runner's checkout.
+          jq -r '
+            def escape_data:
+              gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A");
+            def escape_property:
+              escape_data | gsub(":"; "%3A") | gsub(","; "%2C");
+            .comments[]?
+            | select(.placement.path and .placement.line)
+            | (.llm_guidance.repair_command // "") as $repair_start
+            | ((.reason // "RIPR targeted test guidance")
+                + (if $repair_start != "" and $repair_start != "null"
+                   then " Start the repair: " + $repair_start
+                   else "" end)) as $message
+            | "::warning file=\(.placement.path | escape_property),line=\(.placement.line | tostring | escape_property),title=RIPR targeted test guidance::\($message | escape_data)"
+          ' target/ripr/review/comments.json
 
       - name: Add RIPR advisory summary
         if: always()
@@ -1428,7 +1424,11 @@ jobs:
               echo "- Boundary: start-here is advisory first-run guidance only; gate decision remains separate pass/fail authority when configured."
               if [ -f target/ripr/reports/start-here.md ]; then
                 echo
+                echo '<details><summary>Full report: target/ripr/reports/start-here.md</summary>'
+                echo
                 cat target/ripr/reports/start-here.md
+                echo
+                echo '</details>'
               fi
             elif [ -f target/ripr/reports/first-useful-action.json ]; then
               first_json=target/ripr/reports/first-useful-action.json
@@ -1496,7 +1496,7 @@ jobs:
             else
               echo "- Status: \`missing_start_here\`"
               echo "- State: \`missing_artifact\`"
-              echo "- Safe next action: run \`ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports\`."
+              echo "- Safe next action: run \`ripr first-pr --root . --base origin/${{ github.base_ref || github.event.repository.default_branch }} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports\`."
               echo "- Fallback safe next action: run \`ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md\` after attaching at least one explicit input."
               echo "- Boundary: missing start-here packet does not fail generated CI or create gate authority."
             fi
@@ -1679,7 +1679,11 @@ jobs:
                 echo
               fi
               if [ -f target/ripr/reports/pr-review-front-panel.md ]; then
+                echo '<details><summary>Full report: target/ripr/reports/pr-review-front-panel.md</summary>'
+                echo
                 cat target/ripr/reports/pr-review-front-panel.md
+                echo
+                echo '</details>'
               fi
             else
               echo 'PR review summary was not generated. It runs when existing PR guidance, first-useful-action, assistant proof, health, ledger, baseline, gate, calibration, coverage/grip, or receipt artifacts are available.'
@@ -1740,7 +1744,11 @@ jobs:
                 echo
               fi
               if [ -f target/ripr/reports/first-useful-action.md ]; then
+                echo '<details><summary>Full report: target/ripr/reports/first-useful-action.md</summary>'
+                echo
                 cat target/ripr/reports/first-useful-action.md
+                echo
+                echo '</details>'
               fi
             else
               echo 'Recommended next test was not generated. It runs when existing PR guidance, assistant proof, ledger, baseline, receipt, gate, coverage/grip, or editor context artifacts are available.'
@@ -1749,7 +1757,11 @@ jobs:
             echo
             echo '### Top recommendation'
             if [ -f target/ripr/pilot/pilot-summary.md ]; then
+              echo '<details><summary>Full report: target/ripr/pilot/pilot-summary.md</summary>'
+              echo
               cat target/ripr/pilot/pilot-summary.md
+              echo
+              echo '</details>'
             else
               echo "Pilot summary was not generated. Inspect the uploaded artifact packet and job logs."
             fi
@@ -1778,7 +1790,11 @@ jobs:
               fi
               echo '- Full packet: `target/ripr/workflow/agent-review-summary.md` (workflow artifact).'
             elif [ -f target/ripr/workflow/agent-review-summary.md ]; then
+              echo '<details><summary>Full report: target/ripr/workflow/agent-review-summary.md</summary>'
+              echo
               cat target/ripr/workflow/agent-review-summary.md
+              echo
+              echo '</details>'
             else
               echo 'Agent review summary was not generated. Run `ripr agent status --root .` locally or inspect uploaded workflow artifacts.'
             fi
@@ -1831,7 +1847,11 @@ jobs:
                 echo
               fi
               if [ -f target/ripr/reports/index.md ]; then
+                echo '<details><summary>Full report: target/ripr/reports/index.md</summary>'
+                echo
                 cat target/ripr/reports/index.md
+                echo
+                echo '</details>'
               fi
             else
               echo 'Uploaded review artifacts summary was not generated. It runs when existing RIPR report, review, receipt, workflow, agent, pilot, or CI artifacts are available.'
@@ -1885,7 +1905,14 @@ jobs:
               fi
               echo "- Status: \`$ledger_status\`"
               echo "- Gate: mode=\`$ledger_gate_mode\`, decision=\`$ledger_gate_decision\`"
-              echo "- Counts: new_policy_eligible=\`$ledger_new_policy_eligible\`, baseline_still_present=\`$ledger_still_present\`, baseline_resolved=\`$ledger_resolved\`, acknowledged=\`$ledger_acknowledged\`, suppressed=\`$ledger_suppressed\`, blocking_candidates=\`$ledger_blocking\`, visible_unresolved=\`$ledger_visible\`"
+              # F60-4: counts with no baseline delta or RIPR Zero status
+              # behind them were never measured; do not print their zeros.
+              ledger_count_source="$(jq -r '.movement.count_source // "unknown"' "$ledger_json" 2>/dev/null || echo unknown)"
+              if [ "$ledger_count_source" = "not_measured" ]; then
+                echo "- Counts: gap counts not measured (no baseline debt delta or RIPR Zero status); acknowledged=\`$ledger_acknowledged\`, suppressed=\`$ledger_suppressed\`, blocking_candidates=\`$ledger_blocking\`"
+              else
+                echo "- Counts: new_policy_eligible=\`$ledger_new_policy_eligible\`, baseline_still_present=\`$ledger_still_present\`, baseline_resolved=\`$ledger_resolved\`, acknowledged=\`$ledger_acknowledged\`, suppressed=\`$ledger_suppressed\`, blocking_candidates=\`$ledger_blocking\`, visible_unresolved=\`$ledger_visible\`"
+              fi
               echo "- Top repair route: \`$ledger_route\`"
               echo "- $ledger_verify_label: \`$ledger_verify\`"
               if [ "$ledger_agent" != "$ledger_repair" ]; then
@@ -1898,7 +1925,11 @@ jobs:
               echo
             fi
             if [ -f target/ripr/reports/pr-evidence-ledger.md ]; then
+              echo '<details><summary>Full report: target/ripr/reports/pr-evidence-ledger.md</summary>'
+              echo
               cat target/ripr/reports/pr-evidence-ledger.md
+              echo
+              echo '</details>'
             elif [ -f target/ripr/review/comments.json ]; then
               echo 'PR evidence ledger was not generated. Inspect `target/ripr/review/comments.json` and rerun `ripr pr-ledger record` locally.'
             else
@@ -1942,7 +1973,11 @@ jobs:
                 echo
               fi
               if [ -f target/ripr/reports/test-oracle-assistant-proof.md ]; then
+                echo '<details><summary>Full report: target/ripr/reports/test-oracle-assistant-proof.md</summary>'
+                echo
                 cat target/ripr/reports/test-oracle-assistant-proof.md
+                echo
+                echo '</details>'
               fi
               echo
             fi
@@ -1989,7 +2024,11 @@ jobs:
                 echo
               fi
               if [ -f target/ripr/reports/assistant-loop-health.md ]; then
+                echo '<details><summary>Full report: target/ripr/reports/assistant-loop-health.md</summary>'
+                echo
                 cat target/ripr/reports/assistant-loop-health.md
+                echo
+                echo '</details>'
               fi
               echo
             fi
@@ -2029,7 +2068,11 @@ jobs:
               echo
             fi
             if [ -f target/ripr/reports/policy-readiness.md ]; then
+              echo '<details><summary>Full report: target/ripr/reports/policy-readiness.md</summary>'
+              echo
               cat target/ripr/reports/policy-readiness.md
+              echo
+              echo '</details>'
             else
               echo 'Policy readiness was not generated. It is advisory and requires existing policy artifacts to be useful.'
             fi
@@ -2064,7 +2107,11 @@ jobs:
               echo
             fi
             if [ -f target/ripr/reports/policy-operations.md ]; then
+              echo '<details><summary>Full report: target/ripr/reports/policy-operations.md</summary>'
+              echo
               cat target/ripr/reports/policy-operations.md
+              echo
+              echo '</details>'
             else
               echo 'Policy operations was not generated. It requires policy-readiness and keeps promotion advisory until packet review.'
             fi
@@ -2101,7 +2148,11 @@ jobs:
               echo
             fi
             if [ -f target/ripr/reports/policy-history.md ]; then
+              echo '<details><summary>Full report: target/ripr/reports/policy-history.md</summary>'
+              echo
               cat target/ripr/reports/policy-history.md
+              echo
+              echo '</details>'
             else
               echo 'Policy history was not generated. It requires policy-operations and never writes history automatically.'
             fi
@@ -2145,7 +2196,11 @@ jobs:
               target/ripr/reports/policy-promotion-calibrated-gate.md; do
               if [ -f "$promotion_md" ]; then
                 echo
+                echo "<details><summary>Full report: $promotion_md</summary>"
+                echo
                 cat "$promotion_md"
+                echo
+                echo '</details>'
               fi
             done
             echo
@@ -2180,7 +2235,11 @@ jobs:
             for preview_md in target/ripr/reports/preview-promotion-*-*.md; do
               if [ -f "$preview_md" ]; then
                 echo
+                echo "<details><summary>Full report: $preview_md</summary>"
+                echo
                 cat "$preview_md"
+                echo
+                echo '</details>'
               fi
             done
             echo
@@ -2212,7 +2271,11 @@ jobs:
               echo
             fi
             if [ -f target/ripr/reports/waiver-aging.md ]; then
+              echo '<details><summary>Full report: target/ripr/reports/waiver-aging.md</summary>'
+              echo
               cat target/ripr/reports/waiver-aging.md
+              echo
+              echo '</details>'
             elif [ -f target/ripr/reports/pr-evidence-ledger.json ]; then
               echo 'Waiver aging was not generated. Inspect `target/ripr/reports/pr-evidence-ledger.json` and rerun `ripr policy waiver-aging` locally.'
             else
@@ -2254,7 +2317,11 @@ jobs:
               echo
             fi
             if [ -f target/ripr/reports/suppression-health.md ]; then
+              echo '<details><summary>Full report: target/ripr/reports/suppression-health.md</summary>'
+              echo
               cat target/ripr/reports/suppression-health.md
+              echo
+              echo '</details>'
             else
               echo 'Suppression health was not generated. It is advisory and reads the durable suppression manifest when present.'
             fi
@@ -2312,7 +2379,11 @@ jobs:
               echo
             fi
             if [ -f target/ripr/reports/gate-decision.md ]; then
+              echo '<details><summary>Full report: target/ripr/reports/gate-decision.md</summary>'
+              echo
               cat target/ripr/reports/gate-decision.md
+              echo
+              echo '</details>'
             else
               echo 'Gate decision was not run. Set `RIPR_GATE_MODE` to `visible-only`, `acknowledgeable`, `baseline-check`, or `calibrated-gate` to opt in.'
             fi
@@ -2350,7 +2421,11 @@ jobs:
               echo
             fi
             if [ -f target/ripr/reports/baseline-debt-delta.md ]; then
+              echo '<details><summary>Full report: target/ripr/reports/baseline-debt-delta.md</summary>'
+              echo
               cat target/ripr/reports/baseline-debt-delta.md
+              echo
+              echo '</details>'
             elif [ -n "${RIPR_GATE_BASELINE:-}" ]; then
               echo 'Baseline debt delta was not generated. Check that `RIPR_GATE_MODE` produced `target/ripr/reports/gate-decision.json` and that `RIPR_GATE_BASELINE` points at a readable baseline.'
             else
@@ -2403,7 +2478,11 @@ jobs:
               echo
             fi
             if [ -f target/ripr/reports/ripr-zero-status.md ]; then
+              echo '<details><summary>Full report: target/ripr/reports/ripr-zero-status.md</summary>'
+              echo
               cat target/ripr/reports/ripr-zero-status.md
+              echo
+              echo '</details>'
             elif [ -f target/ripr/reports/baseline-debt-delta.json ]; then
               echo 'RIPR Zero status was not generated. Inspect `target/ripr/reports/baseline-debt-delta.json` and rerun `ripr zero status` locally.'
             else
@@ -2454,7 +2533,11 @@ jobs:
               echo "- Boundary: inline comments remain opt-in; gate decisions remain separate pass/fail authority."
               echo
               if [ -f target/ripr/review/comment-publish-plan.md ]; then
+                echo '<details><summary>Full report: target/ripr/review/comment-publish-plan.md</summary>'
+                echo
                 cat target/ripr/review/comment-publish-plan.md
+                echo
+                echo '</details>'
               fi
             else
               echo '- Inline comments are disabled by default. Set `RIPR_COMMENT_MODE` to `plan` to inspect a publish plan or `inline` to publish same-repo changed-line comments when permissions are safe.'

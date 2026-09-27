@@ -731,11 +731,15 @@ fn ledger_source_path(path: &Path) -> Result<String, String> {
 
 fn typescript_limitations(args: &[String]) -> Result<(), String> {
     let options = parse_typescript_limitations_options(args)?;
+    // An unreadable check output means the command could not complete:
+    // surface the read failure (exit 2 per docs/EXIT_CODES.md) instead of
+    // writing a `blocked` report and exiting 0 as if the run succeeded.
+    let check_output_json = read_optional_text_for_report("check output", &options.check_output)?;
     let input = output::typescript_limitations::TypeScriptLimitationLeaderboardInput {
         root: options.root,
         generated_at: typescript_limitations_generated_at()?,
         check_output_path: output::baseline_delta::display_path(&options.check_output),
-        check_output_json: read_optional_text_for_report("check output", &options.check_output),
+        check_output_json: Ok(check_output_json),
     };
     let report =
         output::typescript_limitations::build_typescript_limitation_leaderboard_report(input);
@@ -752,14 +756,16 @@ fn typescript_limitations(args: &[String]) -> Result<(), String> {
 
 fn typescript_false_actionable(args: &[String]) -> Result<(), String> {
     let options = parse_typescript_false_actionable_options(args)?;
+    // An unreadable corpus means the command could not complete: surface the
+    // read failure (exit 2 per docs/EXIT_CODES.md) instead of writing a
+    // `blocked` report and exiting 0 as if the run succeeded.
+    let corpus_json =
+        read_optional_text_for_report("TypeScript false-actionable audit corpus", &options.corpus)?;
     let input = output::typescript_false_actionable::TypeScriptFalseActionableAuditInput {
         root: options.root,
         generated_at: typescript_false_actionable_generated_at()?,
         corpus_path: output::baseline_delta::display_path(&options.corpus),
-        corpus_json: read_optional_text_for_report(
-            "TypeScript false-actionable audit corpus",
-            &options.corpus,
-        ),
+        corpus_json: Ok(corpus_json),
     };
     let report =
         output::typescript_false_actionable::build_typescript_false_actionable_audit_report(input);
@@ -3731,7 +3737,6 @@ mod tests {
                 "pr-comments plan",
                 "ripr agent status",
                 "ripr agent review-summary",
-                "cargo xtask operator-cockpit",
             ],
             artifact_paths: &[
                 "target/ripr/pilot",
@@ -3849,7 +3854,6 @@ mod tests {
                 "Prepare RIPR editor-agent artifacts",
                 "Generate RIPR agent loop artifacts",
                 "Render RIPR repo badge artifacts",
-                "Render RIPR operator cockpit",
                 "Render RIPR baseline debt delta",
                 "Render RIPR Zero status",
                 "Render RIPR PR evidence ledger",
@@ -4068,6 +4072,29 @@ mod tests {
     }
 
     #[test]
+    fn reports_ts_limitations_fails_closed_on_unreadable_check_output() -> Result<(), String> {
+        // Per docs/EXIT_CODES.md an unreadable input means the command could
+        // not complete: the CLI must return the read error (exit 2 at the
+        // process boundary) instead of writing a `blocked` report and
+        // exiting 0.
+        let missing =
+            unique_command_test_dir("ts-limitations-missing").join("definitely-missing-check.json");
+        let result = reports(&args(&[
+            "ts-limitations",
+            "--check-output",
+            &missing.display().to_string(),
+        ]));
+        let err = result.err().ok_or_else(|| {
+            "unreadable check output must fail closed, not exit cleanly".to_string()
+        })?;
+        assert!(
+            err.contains("read check output") && err.contains("failed"),
+            "error must name the unreadable input, got: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn reports_ts_false_actionable_requires_corpus_input() {
         assert_eq!(
             reports(&args(&["ts-false-actionable"])),
@@ -4105,7 +4132,7 @@ mod tests {
             .map_err(|err| format!("parse TypeScript false-actionable JSON: {err}"))?;
         assert_eq!(value["kind"], "typescript_false_actionable_audit");
         assert_eq!(value["status"], "advisory");
-        assert_eq!(value["summary"]["cases_total"], 14);
+        assert_eq!(value["summary"]["cases_total"], 15);
         assert_eq!(value["summary"]["false_actionable_total"], 0);
         assert_eq!(value["summary"]["false_actionable_rate"], 0.0);
         assert_eq!(value["summary"]["preview_boundary_violation_total"], 0);
@@ -4116,13 +4143,36 @@ mod tests {
         let markdown = std::fs::read_to_string(&out_md)
             .map_err(|err| format!("read TypeScript false-actionable Markdown: {err}"))?;
         assert!(markdown.contains("# RIPR TypeScript False-Actionable Audit"));
-        assert!(markdown.contains("False actionable: `0` / `14` (`0.000`)"));
+        assert!(markdown.contains("False actionable: `0` / `15` (`0.000`)"));
         assert!(
             markdown.contains("Gate-decision and badge artifacts keep their existing authority")
         );
 
         std::fs::remove_dir_all(&dir)
             .map_err(|err| format!("remove TypeScript false-actionable dir: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn reports_ts_false_actionable_fails_closed_on_unreadable_corpus() -> Result<(), String> {
+        // Per docs/EXIT_CODES.md an unreadable input means the command could
+        // not complete: the CLI must return the read error (exit 2 at the
+        // process boundary) instead of writing a `blocked` report and
+        // exiting 0.
+        let missing = unique_command_test_dir("ts-false-actionable-missing")
+            .join("definitely-missing-corpus.json");
+        let result = reports(&args(&[
+            "ts-false-actionable",
+            "--corpus",
+            &missing.display().to_string(),
+        ]));
+        let err = result
+            .err()
+            .ok_or_else(|| "unreadable corpus must fail closed, not exit cleanly".to_string())?;
+        assert!(
+            err.contains("read TypeScript false-actionable audit corpus") && err.contains("failed"),
+            "error must name the unreadable input, got: {err}"
+        );
         Ok(())
     }
 
@@ -7408,10 +7458,14 @@ language = "rust"
         assert!(workflow.contains("name: Render RIPR PR review front panel"));
         assert!(workflow.contains("name: Render RIPR first-pr start-here"));
         assert!(workflow.contains("name: Render RIPR report packet index"));
-        assert!(workflow.contains("escape_github_property()"));
-        assert!(workflow.contains("annotation_path=\"$(escape_github_property \"$path\")\""));
-        assert!(workflow.contains("::warning file=$annotation_path,line=$annotation_line"));
-        assert!(workflow.contains("title=$annotation_title"));
+        assert!(workflow.contains("def escape_data:"));
+        assert!(workflow.contains("def escape_property:"));
+        assert!(!workflow.contains("@tsv"));
+        assert!(!workflow.contains("escape_github_property()"));
+        assert!(workflow.contains(
+            r#"::warning file=\(.placement.path | escape_property),line=\(.placement.line | tostring | escape_property)"#
+        ));
+        assert!(workflow.contains("title=RIPR targeted test guidance::"));
         assert!(workflow.contains("name: Add RIPR advisory summary"));
         assert!(workflow.contains("## RIPR advisory summary"));
         assert!(workflow.contains("### Start here"));
@@ -7511,7 +7565,8 @@ language = "rust"
         assert!(workflow.contains("RIPR_TOP_SEAM_ID"));
         assert!(workflow.contains(".top_actionable_seams[0].seam_id"));
         assert!(!workflow.contains(".top_seams[0].seam_id"));
-        assert!(workflow.contains("cargo xtask operator-cockpit"));
+        // An adopter repository has no xtask; the workflow must not call it.
+        assert!(!workflow.contains("cargo xtask"));
         assert!(workflow.contains("cat target/ripr/pilot/pilot-summary.md"));
         assert!(workflow.contains("cat target/ripr/workflow/agent-review-summary.md"));
         assert!(workflow.contains("repo-ripr-badge.json"));
@@ -7552,6 +7607,13 @@ language = "rust"
         assert!(workflow.contains(".coverage_grip_frontier.status // \"not_available\""));
         assert!(workflow.contains(".history.trend // \"not_available\""));
         assert!(workflow.contains("Counts: new_policy_eligible=\\`$ledger_new_policy_eligible\\`"));
+        // F60-4: counts with no baseline delta or RIPR Zero status behind them
+        // print as not measured, not as zeros.
+        assert!(workflow.contains(".movement.count_source // \"unknown\""));
+        assert!(
+            workflow
+                .contains("gap counts not measured (no baseline debt delta or RIPR Zero status)")
+        );
         assert!(workflow.contains("sed 's/`/\\\\`/g'"));
         assert!(workflow.contains("Blocking reason (\\`$blocking\\`): \\`$blocking_reason\\`"));
         assert!(workflow.contains("Boundary: $limits_note"));
@@ -7606,8 +7668,9 @@ language = "rust"
         assert!(workflow.contains("index_has_input=true"));
         assert!(workflow.contains("Set `RIPR_GATE_MODE`"));
         assert!(workflow.contains("No runtime mutation execution is performed"));
-        assert!(workflow.contains("hashFiles('crates/ripr/Cargo.toml')"));
-        assert!(workflow.contains("hashFiles('xtask/src/reports/operator.rs')"));
+        // The RIPR-source-tree-only cockpit step is gone from the adopter
+        // workflow (F60-8).
+        assert!(!workflow.contains("hashFiles('xtask/src/reports/operator.rs')"));
         assert!(workflow.contains("if: env.RIPR_UPLOAD_SARIF == 'true'"));
         assert!(workflow.contains(
             "if: env.RIPR_UPLOAD_SARIF == 'true' && github.event_name == 'pull_request'"
@@ -7778,13 +7841,13 @@ language = "rust"
         assert!(summary.contains("missing_start_here"));
         assert!(summary.contains("State: \\`missing_artifact\\`"));
         assert!(summary.contains(
-            "Safe next action: run \\`ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json"
+            "Safe next action: run \\`ripr first-pr --root . --base origin/${{ github.base_ref || github.event.repository.default_branch }} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json"
         ));
         assert!(summary.contains(
             "start-here is advisory first-run guidance only; gate decision remains separate pass/fail authority"
         ));
         assert!(summary.contains(
-            "ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json"
+            "ripr first-pr --root . --base origin/${{ github.base_ref || github.event.repository.default_branch }} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json"
         ));
         assert!(summary.contains(
             "Fallback safe next action: run \\`ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md\\`"
@@ -7877,6 +7940,12 @@ language = "rust"
 
         let prepare = workflow_step(&workflow, "Prepare RIPR editor-agent artifacts");
         assert!(prepare.contains("RIPR_TOP_SEAM_ID"));
+        // first-pr checks the review cards were built for its base; the
+        // cards use the PR's base, so first-pr must too (F60-8).
+        let first_pr = workflow_step(&workflow, "Render RIPR first-pr start-here");
+        assert!(first_pr.contains(
+            "--base \"origin/${{ github.base_ref || github.event.repository.default_branch }}\""
+        ));
         assert!(prepare.contains(".top_actionable_seams[0].seam_id"));
         assert!(
             !prepare.contains(".top_seams[0].seam_id"),
@@ -8470,9 +8539,11 @@ language = "rust"
 
         let annotations = workflow_step(&workflow, "Emit RIPR PR guidance annotations");
         assert!(annotations.contains("hashFiles('target/ripr/review/comments.json')"));
-        assert!(annotations.contains("escape_github_message()"));
-        assert!(annotations.contains("escape_github_property()"));
-        assert!(annotations.contains("::warning file=$annotation_path,line=$annotation_line"));
+        assert!(annotations.contains("def escape_data:"));
+        assert!(annotations.contains("def escape_property:"));
+        assert!(!annotations.contains("@tsv"));
+        assert!(!annotations.contains("escape_github_message()"));
+        assert!(annotations.contains("::warning file="));
 
         let summary = workflow_step(&workflow, "Add RIPR advisory summary");
         assert!(summary.contains("### PR review summary"));
@@ -8534,7 +8605,7 @@ language = "rust"
         assert!(summary.contains("Boundary: \\`$start_boundary\\`"));
         assert!(summary.contains("missing_start_here"));
         assert!(summary.contains(
-            "ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json"
+            "ripr first-pr --root . --base origin/${{ github.base_ref || github.event.repository.default_branch }} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json"
         ));
         assert!(summary.contains(".summary.start_here // \"not_available\""));
         assert!(

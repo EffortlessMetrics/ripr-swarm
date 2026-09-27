@@ -34,11 +34,19 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    load_diff, load_diff_range, load_worktree_diff, parse_unified_diff, resolve_base_commit,
-    resolve_default_base_commit, working_tree_has_tracked_changes,
+    load_diff, load_worktree_diff, parse_unified_diff, resolve_base_commit,
+    working_tree_has_tracked_changes,
 };
+/// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
+/// diff assembly (#4003): the one named owner for badge input base/diff,
+/// consumed by the analysis route and the xtask badge route alike. Neither
+/// route may hardcode a base ref or rebuild the diff argv inline.
+pub use diff::{load_diff_range, resolve_default_base_commit};
 pub(crate) use facts::validated_file_wide_harness_targets;
-pub(crate) use language::{DIFF_SCOPE_OVERSIZED_PREFIX, is_diff_scope_oversized};
+pub(crate) use language::{
+    DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS,
+    TsJsSourceKind, is_diff_scope_oversized, is_ts_js_source_extension, ts_js_source_kind,
+};
 pub use language::{
     PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
     PartialDiffStopReason,

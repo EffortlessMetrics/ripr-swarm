@@ -50,7 +50,7 @@ need to run it.
 | Seam diagnostics | Saved-workspace LSP seam diagnostics are on, with explicit config or initialization options allowed to disable them. |
 | Report caps | Context packets and collect-context commands include up to `5` related tests by default. |
 | Suppressions | Badge renderers look for `.ripr/suppressions.toml`; a missing file is normal. |
-| Badges | Repo badges count configured-visible unresolved seam gaps and stay advisory unless an explicit failure policy is selected. |
+| Badges | Public repo badges count unresolved canonical actionable gaps, or explicit gap-decision-ledger projection targets when a ledger is supplied. Seam-native counts remain internal inventory. Badge rendering stays advisory unless an explicit failure policy is selected. |
 | Cache | Full repo seam cache stores up to `20000` seams by default, compact repo seam cache stores up to `100000` seams by default, and large repos can opt into higher process-local limits. |
 | CI | Generated GitHub workflows upload advisory pilot/report/agent artifacts, keep SARIF rendering/upload optional, and use `continue-on-error` by default. |
 | Calibration | Runtime data is imported only when explicitly supplied; `ripr` does not run mutation testing by default. |
@@ -91,8 +91,8 @@ Optional. Writes a repo-local `ripr.toml` at the selected workspace root that
 materializes the built-in defaults as repo policy so a team can review, commit,
 and tune them. `ripr.toml` is not required — missing config uses the same
 defaults. With `--ci github`, `ripr init` also writes a non-blocking GitHub
-Actions workflow for pilot/report/agent artifacts, optional repo-local cockpit
-rendering, and optional SARIF rendering/upload. It does not run mutation
+Actions workflow for pilot/report/agent artifacts and optional SARIF
+rendering/upload. It does not run mutation
 testing, enable CI blocking policy, or unlock basic CLI usefulness.
 
 ```text
@@ -584,9 +584,9 @@ Validation rules (all enforced; violations fail `test-efficiency-report`):
 | Unmatched declarations rejected | A declared `test`/`path` selector that matches no test fails the report. |
 | Ambiguous name-only selectors rejected | If `test = "..."` matches multiple entries and no `path` is given, fail and list the candidates. |
 
-Future `ripr+` will use the `declared_intent` metadata to exclude
-declared intentional test-efficiency findings from its count. See
-[Badge policy](BADGE_POLICY.md).
+`ripr+` uses the `declared_intent` metadata to keep the analyzer's original
+class visible while excluding declared intentional test-efficiency findings
+from its actionable count. See [Badge policy](BADGE_POLICY.md).
 
 ### `.ripr/suppressions.toml`
 
@@ -722,11 +722,14 @@ Analysis formats, diff-scoped:
 | `github` | `--format github` | GitHub Actions annotations. |
 | `sarif` | `--format sarif` | SARIF consumers, including GitHub code scanning. |
 
-Badge formats, diff-scoped, for README status: `badge-json`, `badge-shields`,
-`badge-plus-json`, `badge-plus-shields`.
+Badge formats, diff-scoped, for PR and CI artifacts only: `badge-json`,
+`badge-shields`, `badge-plus-json`, `badge-plus-shields`. These are not public
+README, crate-page, or store headline authority.
 
-Badge formats, repo-scoped, rendered from the gap ledger: `repo-badge-json`,
-`repo-badge-shields`, `repo-badge-plus-json`, `repo-badge-plus-shields`.
+Badge formats, repo-scoped, for public baseline status: `repo-badge-json`,
+`repo-badge-shields`, `repo-badge-plus-json`, `repo-badge-plus-shields`. They
+use canonical actionable gaps by default, or explicit gap-decision-ledger
+projection targets when `--gap-ledger` is supplied.
 
 Repo-scope formats, rendered against the full repo baseline rather than a diff:
 `repo-seams-json`, `repo-seams-md`, `repo-exposure-json`,
@@ -765,6 +768,32 @@ them. It does not enable runtime mutation execution or CI blocking policy.
 | --- | --- | --- | --- |
 | `mode` | enum: `instant` \| `draft` \| `fast` \| `deep` \| `ready` | `draft` | Default analysis mode when not set by a CLI flag or LSP initialization option. |
 | `include_unchanged_tests` | boolean | `true` | Whether unchanged tests may be indexed as static evidence. |
+| `production_like_targets` | array of repository-relative paths | `[]` (empty — no opt-in) | Workspace-relative targets opted in as production-like test infrastructure (#3283, RIPR-SPEC-0153): analyzed as production behavior rather than test evidence. Paths must be repository-relative with `/` separators — backslashes, drive/scheme prefixes, leading `/`, and `..` escape fail closed at parse time. |
+| `test_harnesses` | array of `[[analysis.test_harnesses]]` tables | `[]` (empty — no registration recognized) | Repository-governed test-harness registrations (#3532, RIPR-SPEC-0153). Registration is explicit configuration only: without an entry, no custom harness or registered test producer is recognized. See `[analysis.test_harnesses]` entries below. |
+
+#### `[analysis.test_harnesses]` entries
+
+Each registration names one exact Cargo target and one exact harness family.
+Unknown kinds or adapters, a kind/adapter mismatch, duplicate
+`registration_id` or `target` values, or a non-exact `marker` are config
+errors that fail closed at parse time.
+
+| Field | Type | Allowed values | Effect |
+| --- | --- | --- | --- |
+| `registration_id` | string | unique across registrations | Stable identifier named in limitations and subject provenance. |
+| `target` | repository-relative path | one unique target file per registration | Exact workspace-relative Cargo target file the registration claims. |
+| `kind` | enum | `custom_harness` \| `registered_attribute` | `custom_harness`: a `[[test]]` target with `harness = false`, evidence role file-wide. `registered_attribute`: a test-producing attribute applied to functions inside one exact target file. |
+| `adapter` | enum | `libtest_mimic_v1` \| `exact_attribute_v1` | Adapter generation bound to the kind: `libtest_mimic_v1` supports `custom_harness`; `exact_attribute_v1` supports `registered_attribute`. |
+| `marker` | exact identifier path | e.g. `libtest_mimic`, `myco::contract_test` | Exact source marker: the harness crate path for `custom_harness` or the exact attribute path for `registered_attribute`. Prefix/suffix lookalikes never match. |
+
+A registration classifies source and describes a selector route; it cannot
+execute anything during passive analysis and grants no process, network,
+edit, GitHub, or publication capability.
+
+Both `production_like_targets` and `test_harnesses` are opt-in keys with
+empty defaults, so the generated `ripr.toml.example` profile (which
+materializes built-in defaults only, per the `ripr.toml` section above) does
+not list them.
 
 ### `[oracles]`
 
@@ -836,7 +865,7 @@ Seam severities affect LSP seam diagnostics. Valid values are `off`, `info`,
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `enabled` | array of strings | `["rust"]` | Language adapters the analysis pipeline will dispatch to. Valid values: `rust`, `typescript`, `python`, `perl`. Unknown values and duplicate entries are rejected. TypeScript covers `.ts`, `.tsx`, `.js`, and `.jsx`; Python covers `.py`. Perl consumes externally-produced `ripr-perl-facts-v1` packets and does not parse Perl source directly. Supply one with `--perl-facts <path>`, or configure a managed exporter under `[perl]`; without a packet or available exporter, Perl analysis is unavailable. `perl` is accepted only by a ripr built with Cargo feature `lang-perl`; default builds reject it at config load. Rust remains the reference adapter and the only adapter that may be `stable` per [RIPR-SPEC-0026](specs/RIPR-SPEC-0026-language-adapter-contract.md); TypeScript, Python, and Perl remain preview adapters. See [Support Tiers](status/SUPPORT_TIERS.md) and Campaign 31, #1379. |
+| `enabled` | array of strings | `["rust"]` | Language adapters the analysis pipeline will dispatch to. Valid values: `rust`, `typescript`, `python`, `perl`. Unknown values and duplicate entries are rejected. TypeScript covers `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`; Python covers `.py`. Perl consumes externally-produced `ripr-perl-facts-v1` packets and does not parse Perl source directly. Supply one with `--perl-facts <path>`, or configure a managed exporter under `[perl]`; without a packet or available exporter, Perl analysis is unavailable. `perl` is accepted only by a ripr built with Cargo feature `lang-perl`; default builds reject it at config load. Rust remains the reference adapter and the only adapter that may be `stable` per [RIPR-SPEC-0026](specs/RIPR-SPEC-0026-language-adapter-contract.md); TypeScript, Python, and Perl remain preview adapters. See [Support Tiers](status/SUPPORT_TIERS.md) and Campaign 31, #1379. |
 
 `[languages.rust]` configures the stable Rust adapter:
 

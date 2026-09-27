@@ -13,6 +13,8 @@ use std::path::{Component, Path, PathBuf};
 
 mod model;
 mod python;
+#[cfg(feature = "lang-typescript")]
+mod typescript;
 
 use model::{BunUbProfileConfig, FindingSeverityConfig, ProfilesConfig, SeamSeverityConfig};
 pub use model::{
@@ -28,6 +30,11 @@ pub(crate) use python::{
     is_detectable_python_source_name, is_python_dir_pruned_from_repo_discovery,
     is_python_excluded_dir_everywhere, python_project_marker_name, python_source_dir_marker_name,
     source_dir_contains_detectable_python,
+};
+#[cfg(feature = "lang-typescript")]
+pub(crate) use typescript::{
+    is_detectable_excluded_typescript_path, is_detectable_generated_typescript_path,
+    is_typescript_dir_pruned_from_discovery,
 };
 
 pub(crate) const CONFIG_FILE_NAME: &str = "ripr.toml";

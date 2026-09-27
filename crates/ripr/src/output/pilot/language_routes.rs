@@ -13,7 +13,7 @@
 
 use crate::agent::loop_commands::shell_path;
 use crate::domain::LanguageId;
-use crate::output::repo_exposure::TsFullRepoGuidance;
+use crate::output::repo_exposure::{PythonRepoExposureGuidance, TsFullRepoGuidance};
 use std::path::{Path, PathBuf};
 
 /// Languages pilot routes elsewhere, in stable display order.
@@ -63,7 +63,8 @@ pub(crate) struct PilotLanguageRoute {
     /// Stable category of the reused guidance, when one applies.
     pub(crate) guidance_category: Option<&'static str>,
     /// Reused guidance text: the `typescript_diff_first` repair route for
-    /// TypeScript/JavaScript, or the unavailable-adapter notice.
+    /// TypeScript/JavaScript, the `python_diff_first` repair route for Python,
+    /// or the unavailable-adapter notice.
     pub(crate) guidance: Option<String>,
 }
 
@@ -166,13 +167,26 @@ fn route_for(
     } else {
         language
     };
+    let (guidance_category, guidance) = if typescript_family {
+        (
+            Some(TsFullRepoGuidance::CATEGORY),
+            Some(TsFullRepoGuidance::REPAIR_ROUTE.to_string()),
+        )
+    } else if language == LanguageId::Python {
+        (
+            Some(PythonRepoExposureGuidance::CATEGORY),
+            Some(PythonRepoExposureGuidance::REPAIR_ROUTE.to_string()),
+        )
+    } else {
+        (None, None)
+    };
     PilotLanguageRoute {
         language,
         file_count,
         available,
         enabled: enabled_languages.contains(&config_language),
         command: Some(format!("ripr check --root {}", shell_path(root))),
-        guidance_category: typescript_family.then_some(TsFullRepoGuidance::CATEGORY),
-        guidance: typescript_family.then(|| TsFullRepoGuidance::REPAIR_ROUTE.to_string()),
+        guidance_category,
+        guidance,
     }
 }

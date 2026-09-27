@@ -45,6 +45,7 @@ map is:
 | `ripr agent packet` | `schema_version` | `0.4` |
 | `ripr agent receipt` | `schema_version` | `0.5` |
 | `ripr agent verify` | `schema_version` | `0.3` |
+| `ripr agent repair --phase after` success stdout | `schema_version` | `0.1` |
 | `ripr agent status` | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
 | `ripr receipt write/check` | `schema_version` | `0.1` |
@@ -893,7 +894,13 @@ The evidence-first fields are additive in schema `0.2`:
     runner evidence; no verify command can be derived; strong fail-closed case),
     `typescript_test_runner_unresolved` (neither framework nor runner could be
     resolved to a bounded verify command; emitted when `verify_command_for_discovery`
-    returns `None`; fail-closed per RIPR-SPEC-0085 §"Fail-closed").
+    returns `None`; fail-closed per RIPR-SPEC-0085 §"Fail-closed"),
+    `typescript_test_runner_ambiguous` (two or more distinct framework signals
+    matched, e.g. `jest` + `vitest` devDeps; the reported runner is the first
+    match by fixed priority, so confidence is capped at `medium`),
+    `typescript_package_manifest_read_capped` (a `package.json` was found but
+    exceeded the capped read limit, so its manifest evidence could not be
+    inspected; fail-closed, no root and no fabricated values).
     When `typescript_package_root_unresolved` is present, no
     `typescript_package_root` line is emitted (fail-closed per RIPR-SPEC-0085).
   - `typescript_verify_command: <cmd>` — evidence-backed verify command for the
@@ -945,6 +952,23 @@ The evidence-first fields are additive in schema `0.2`:
       confirms the cross-package exclusion by comparing candidates with vs.
       without the package-local filter. Only emitted when `workspace_root` is
       `Some` (i.e. in production, not in unit tests without a workspace root).
+    - `typescript_path_alias_unresolved` — fired (RIPR-SPEC-0099) when a related
+      test imports a symbol name-matched to the owner from a NON-RELATIVE
+      specifier (`@/...`, `#...`, bare package name) that the adapter could not
+      resolve to a unique workspace file, so no credit was given. The real
+      producer is `static_limit.rs::named_limitations_for_alias_unresolved`;
+      it requires all three conditions (non-relative import, imported name
+      matches the owner name, and the import did not credit the owner) and is
+      classification-neutral (additive disclosure only).
+    - `typescript_relative_import_unresolved` — fired (#4104-C) when an
+      uncredited related test name-matches the owner through a RELATIVE
+      specifier that resolves to no workspace file (module renamed or moved
+      without updating the import). The real producer is
+      `static_limit.rs::named_limitations_for_relative_import_unresolved`;
+      the exclusion itself is correct (`owner_name_shadowed_by_unrelated_import`),
+      and this limitation discloses why, so `no_static_path` is known to be a
+      possible false negative. Classification-neutral (additive disclosure
+      only).
   - `typescript_limitation_sample: <name> at <file>:<line>` — additive; the
     `file:line` of the real AST evidence that triggered the named limitation.
   - `typescript_limitation_why: <name> — <why>` — additive; human-readable
@@ -1193,7 +1217,7 @@ JSON fields:
   `typescript_preview_card.repair_packet_ready == true` (i.e., the full RIPR-SPEC-0087
   contract is satisfied). It is an advisory repair-work packet projected via the shared
   renderer from the GapRecord computed by `typescript_gap_record_for`. It carries
-  `schema_version` (`"0.3"`), `source` (`"typescript_preview_projection"`),
+  `schema_version` (`"0.4"`), `source` (`"typescript_preview_projection"`),
   `gap_id`, `canonical_gap_id`, `language`, `language_status` (`"preview"`),
   `authority_boundary` (`"preview_advisory_only"`), optional `file`, optional `line`,
   optional `owner`, `verify_command`, optional `receipt_command`, `allowed_edit_surface[]`,
@@ -1207,6 +1231,21 @@ JSON fields:
   When absent, the human output contains a named `status: not actionable` limitation
   section instead. This field is RIPR-SPEC-0088 §2.2. It is not a gate, badge, or
   public repair authority; authority boundary remains `preview_advisory_only`.
+  `assertion_shape` derivation (issue #4105): the shape reuses the observed
+  oracle expression (`typescript_oracle_observed`) only when the observed call
+  input reaches the named missing discriminator, or when that reachability is
+  not statically decidable (non-literal boundaries such as `amount >= threshold`,
+  multi-argument calls without signature evidence, escaped string literals, or
+  callees that do not resolve to the owner). When the observed call input
+  provably does NOT reach the boundary — for example the discriminator is
+  `user.length == 3` while the observed call is `login('alice')` (length 5) —
+  the shape becomes an explicit boundary placeholder,
+  `login(/* boundary input for user.length == 3 */)`, and the packet fails
+  closed: `repair_packet_ready` stays `false`, `typescript_repair_packet` is
+  not emitted, and the human limitation section shows the shape as
+  `target shape (not delegatable)` together with a stop condition forbidding
+  reuse of the observed call input. A complete packet must not instruct a
+  duplicate of a non-discriminating assertion.
 - `perl_preview_card` is an additive optional object for Perl preview findings
   that already have strict fact-packet evidence, canonical gap identity,
   related-test evidence, missing discriminator evidence, verify-command
@@ -1478,7 +1517,7 @@ nothing yet prints empty:
   {
     "scope_status": "no_scope_provided",
     "category": "no_scope_disclosure",
-    "why": "no analysis scope provided; ripr check is diff-first; empty result does not mean changed behavior is covered; run ripr check --base origin/main or ripr check --root . --mode fast"
+    "why": "no analysis scope provided; ripr check is diff-first; empty result does not mean changed behavior is covered; run ripr check --base BASE with BASE set to an existing ref or ripr check --root . --format repo-exposure-md"
   }
 ]
 ```
@@ -1489,7 +1528,7 @@ requires no disclosure.
 
 - `scope_status` — always `"no_scope_provided"` for machine filtering
 - `category` — always `"no_scope_disclosure"` for machine filtering
-- `why` — advisory rationale string guiding the user to the correct invocation
+- `why` — advisory rationale, not a stable key. When a default base was resolved, it names the compared ref and empty range; without a resolved base it names an explicit `BASE` placeholder to replace with an existing ref. Consumers must use structured scope and base fields for decisions.
 
 ### `unanalyzed_working_tree` (top-level additive boolean, RIPR-SPEC-0112)
 
@@ -1613,6 +1652,13 @@ suppression.
 - `unknown`
 
 `static_limit_kind` values:
+
+TypeScript exception: a TypeScript static limit sets `gap_state:
+static_limitation` and blocks the repair packet (`repair_packet_ready:
+false`) but does NOT suppress exposure classification — the finding keeps
+its independently-derived classification (e.g. `exposed` with
+`typescript_dynamic_assertion_unresolved` coexisting, as pinned by
+fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 
 - `dynamic_dispatch`
 - `metaprogramming`
@@ -2817,6 +2863,14 @@ Field contract:
     `run_status` remains `"complete"` because the Rust repo-exposure scan
     completed. It carries `ts_file_count`, `repair_route`, and the optional
     nested `typescript_readiness` object.
+  - `category: "python_diff_first"` appears when a workspace has Python
+    files, no Rust files, and zero classified seams. `run_status` remains
+    `"complete"`. It carries `python_file_count`, `authority_boundary`
+    (`preview_advisory_only`), `analysis_model` (`diff_first`),
+    `non_claims`, and `repair_route`. The route points at diff-scoped
+    `ripr check`. This inventory still does not render Python findings, so
+    a zero-seam result is not a clean Python result. It does not claim that
+    full-repo Python analysis is unmodeled.
   - `typescript_readiness.source` is
     `"repo_exposure_typescript_readiness.v1"`.
   - `typescript_readiness.authority_boundary` is
@@ -6645,6 +6699,54 @@ Field contract:
 - `new_gaps[]` / `resolved_gaps[]` - seam identity and static class for seam IDs
   present in only one snapshot.
 
+### Agent repair after-phase stdout
+
+`ripr agent repair --attempt <id> --phase after` holds the verify render until
+its post-verify tail (edit-cage finish, receipt write, apply record) settles,
+then prints exactly one JSON document on stdout. On success the document is
+its own versioned envelope, not a mutated verify document:
+
+```json
+{
+  "schema_version": "0.1",
+  "kind": "repair_after_result",
+  "verify": {
+    "schema_version": "0.3",
+    "tool": "ripr",
+    "status": "advisory"
+  },
+  "agent_status": {
+    "schema_version": "0.1",
+    "status": "complete"
+  }
+}
+```
+
+Field contract:
+
+- `schema_version` - currently `"0.1"`, versioning the envelope contract
+  independently of both children. The envelope exists so every stdout
+  document's shape is identifiable from its `schema_version`: the success
+  document wraps the two children instead of splicing `agent_status` into the
+  verify 0.3 document, which would leave two documents sharing one
+  `schema_version` with different shapes depending on the invocation path.
+- `kind` - always `"repair_after_result"`.
+- `verify` - the agent verify `0.3` document: every verify field keeps its
+  name and value, including the verify outcome's own top-level `status`
+  (keys are re-serialized in sorted order, so bytes may differ from a direct
+  `ripr agent verify --json` capture even though every field is identical). Consumers must read the verify
+  outcome under `verify`, not at the envelope top level.
+- `agent_status` - what `ripr agent status --json` prints at this point (agent
+  status `0.1`), embedded beside the verify document because the verify
+  outcome already owns the `status` field name.
+- Refusal paths are the exception, not the envelope: when the after phase
+  refuses after the verify render (for example the receipt is not
+  receipt-ready or the apply record failed), stdout is the bare agent verify
+  `0.3` document alone — a pure verify document, honestly labeled, still one
+  parseable document. A consumer dispatching on `schema_version` therefore
+  sees `0.1` only for the two-child envelope and `0.3` only for the pure
+  verify document, whichever path produced it.
+
 ## Agent Verify Execute
 
 `ripr agent verify-execute --root <workspace> --packet <packet-json>
@@ -6918,7 +7020,10 @@ Field contract:
   `null` for one-sided new/resolved gaps.
 - `seam.grip_class` - one-sided grip class for `new` or `resolved` gaps, or
   `null` for matched seams.
-- `test_changed` - optional focused test name supplied by the caller.
+- `test_changed` - optional focused test the edit changed. `ripr agent receipt`
+  takes it from `--test-changed`. The after phase of `ripr agent repair` sets it
+  to the attempt's selected test file when the edit cage is compliant and
+  recorded that file changing, and leaves it null otherwise.
 - `verification.commands_run` - optional commands supplied by the caller. The
   receipt records them; it does not run them.
 - `summary.remaining_gap` / `summary.next_recommendation` - static advisory
@@ -10125,7 +10230,8 @@ JSON shape:
     "suppressed": 0,
     "blocking_candidates": 0,
     "visible_unresolved": 41,
-    "ripr_zero_state": "not_yet"
+    "ripr_zero_state": "not_yet",
+    "count_source": "baseline_delta"
   },
   "gate": {
     "mode": "baseline-check",
@@ -10219,6 +10325,11 @@ Field contract:
   or all evidence sources are missing.
 - `movement.*` - copied or derived from existing gate, baseline delta, and RIPR
   Zero status artifacts. The ledger must not recompute analyzer semantics.
+- `movement.count_source` - `baseline_delta`, `ripr_zero_status`, or
+  `not_measured`. With `not_measured` neither artifact was supplied, so
+  `new_policy_eligible`, `baseline_still_present`, `baseline_resolved`, and
+  `visible_unresolved` hold their zero defaults and are not evidence of zero
+  gaps; the Markdown renders those rows as `not measured`.
 - `gate.pass_fail_authority` - names `ripr gate evaluate` whenever a gate
   decision is present.
 - `waivers[]` - PR-time visible acknowledgement records. Waivers do not hide
@@ -11996,6 +12107,15 @@ Field contract:
 - `artifacts[]` - one entry for each required fixed artifact. `bytes` and
   `modified_unix_ms` are `null` when the artifact is missing or the filesystem
   does not expose the timestamp.
+- Volatile fields: `artifacts[].modified_unix_ms` is wall-clock state read
+  from the filesystem at report time, not analysis output. Two consecutive
+  `agent status --json` runs over an unchanged artifact tree can produce
+  different bytes for this field alone. Snapshot-based consumers must exclude
+  `artifacts[].modified_unix_ms` from snapshot assertions (and from any
+  byte-equality diff of the document). `artifacts[].bytes` is content-derived
+  and is stable while the artifact bytes are unchanged. The same rule applies
+  to the `agent_status` document embedded by `ripr agent repair --phase after`
+  (#4052), which is the same schema.
 - `missing_commands[]` - one command for each missing artifact in workflow
   order: before snapshot, packet, brief, after snapshot, verify, receipt. If no
   seam can be recovered, packet, brief, and receipt commands use `<seam-id>`.
@@ -12049,10 +12169,11 @@ Field contract:
   `ripr pilot --root <root>` (`select_seam`) and a missing workflow directory
   routes to a new repair attempt. It is `null` when nothing is missing, and
   also when status cannot choose honestly: an unreadable attempt manifest,
-  several current awaiting attempts, several open seams, or an unreadable
-  `HEAD`. A warning (`repair_attempt_unreadable`, `ambiguous_repair_attempts`,
-  `multiple_open_repair_seams`, `repair_attempt_head_unknown`) then names the
-  choices.
+  several current awaiting attempts, several open seams, an unreadable
+  `HEAD`, or a complete pilot summary whose top seam recorded no repair start.
+  A warning (`repair_attempt_unreadable`, `ambiguous_repair_attempts`,
+  `multiple_open_repair_seams`, `repair_attempt_head_unknown`,
+  `pilot_found_no_repair_target`) then names the choices.
 - `warnings[]` - stale-looking or unreadable-artifact hints. Timestamp warnings
   are emitted when `agent verify` is older than a before/after snapshot or
   `agent receipt` is older than `agent verify`. For a seam with no attempt
@@ -12148,7 +12269,7 @@ The JSON schema is version `0.1`:
       "state": "computed",
       "status": "complete",
       "required": true,
-      "summary": "6 required artifacts present, 0 missing, 0 warnings."
+      "summary": "6 of 6 required artifacts present, 0 missing, 0 warnings."
     }
   ],
   "ci_artifacts": [
@@ -13039,7 +13160,7 @@ The queue envelope is:
         "reason": "repo-exposure source input identity no longer matches the current producer configuration; regenerate the source and ledger before assignment"
       },
       "refresh_commands": [
-        "ripr agent check-repo-exposure --root . --repo-exposure target/ripr/reports/repo-exposure.json --mode draft",
+        "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/reports/repo-exposure.json",
         "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --root . --out target/ripr/reports/gap-decision-ledger.json"
       ]
     }
@@ -14141,8 +14262,9 @@ Field contract:
   (`check_diff_first` or `unavailable_in_this_binary`), `command` (the diff-first
   `ripr check --root <root>`, which resolves the default base itself, or `null`),
   and `guidance_category`/`guidance`: the existing `typescript_diff_first`
-  repair route for TypeScript and JavaScript, the unavailable-adapter notice for
-  a language this binary cannot analyze, otherwise `null`.
+  repair route for TypeScript and JavaScript, the `python_diff_first` repair
+  route for Python, the unavailable-adapter notice for a language this binary
+  cannot analyze, otherwise `null`.
 - `next` — advisory follow-up commands. Complete summaries include the public
   `ripr outcome` before/after receipt command, and `repair_command`: the
   `ripr agent repair --seam-id <id> --phase before` command for the top seam
@@ -14738,7 +14860,7 @@ JSON shape:
         "markdown_path": "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.md",
         "expected_report": "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.json",
         "expected_markdown": "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.md",
-        "status": "pass",
+        "status": "warn",
         "missing_expected": 0,
         "warnings": 0,
         "failures": 0,
@@ -14754,7 +14876,7 @@ JSON shape:
           "validation_receipts",
           "sarif_badges"
         ],
-        "expected_status": "pass",
+        "expected_status": "warn",
         "expected_missing_expected": 0,
         "expected_warnings": 0,
         "expected_failures": 0,
@@ -15090,13 +15212,13 @@ The checked report-packet index receipt cases are:
 
 | Case | Expected status | Purpose |
 | --- | --- | --- |
-| `complete_packet` | `pass` | Shows the complete reviewer-first packet, including start-here and gate-authority links. |
+| `complete_packet` | `warn` | Shows the complete reviewer-first packet, including start-here and gate-authority links. |
 | `sparse_advisory` | `warn` | Keeps sparse adoption advisory while showing missing optional surfaces. |
 | `missing_front_panel` | `warn` | Makes a missing first-screen front panel visible instead of forcing artifact archaeology. |
 | `blocked_gate` | `fail` | Preserves a configured blocked gate state while naming gate decision as authority. |
 | `missing_assistant_proof` | `warn` | Routes users to regenerate missing assistant proof instead of hiding the gap. |
 | `missing_receipts` | `warn` | Shows missing validation receipts and their regeneration commands. |
-| `coverage_grip_present` | `pass` | Keeps coverage/grip context findable as calibration context, not runtime confirmation. |
+| `coverage_grip_present` | `warn` | Keeps coverage/grip context findable as calibration context, not runtime confirmation. |
 
 The checked generated-CI cockpit receipt cases are:
 
@@ -16245,6 +16367,61 @@ correctness, coverage adequacy, or complete broader-input invalidation.
 p50 no greater than 30 seconds, and a cold-full-to-warm-targeted p50 speedup of
 at least 5x. Otherwise the receipt remains `inconclusive` and preserves the
 measured values.
+
+## Python repair verification records
+
+`ripr agent repair --phase prepare` retains a schema-`0.1`
+`python_repair_driver_binding` record (RIPR-SPEC-0176) under the attempt and
+projects it to `target/ripr/workflow/python-repair-trust-binding.json`.
+`--phase after` writes a separate
+`target/ripr/workflow/python-repair-driver-after.json` with the **same kind and
+schema version**, `phase: "apply"`, and an `apply` block: `patch_sha256`,
+`changed_paths`, `cage_status`, `repository_head_after`, and `current`. The
+prepare record has `phase: "prepare"` and no `apply` block. Both carry the
+seam and repository head; driver binary digest/version; config profile; input
+packet and before-snapshot digests; trust selection,
+`selection_manifest_path` (string), and target identity;
+allowed/forbidden edit surface; explicit authorization; and non-claims. The
+apply record additionally binds the durable attempt ID and retained binding
+artifact digest. A recorded edit-cage verdict is neither verification nor
+static movement nor closure.
+
+`ripr agent repair --phase verify` writes an immutable candidate receipt,
+schema `0.1`, kind `python_repair_verification_receipt`, spec
+`RIPR-SPEC-0176`, phase `verify`, and projects it to
+`target/ripr/workflow/python-repair-driver-verification.json`. Its envelope
+binds durable/trust attempt IDs, seam ID, repository head, target path, and
+`identities` for packet, before snapshot, patch, selection manifest, selection
+digest, binding artifact, config profile, and analyzer binary. `command`
+contains nullable producer-owned command-spec digest/display and the explicit
+authorization status, authority, and method.
+
+The `execution` block records a state (`passed`, `failed`, `timed_out`,
+`cancelled`, `unavailable`, `not_run`, or `invalid`), process disposition,
+nullable exit status/signal and output digests/byte counts, truncation flags,
+nullable currentness/duration, cancellation request, and nullable reason.
+`movement` independently records a state (`closed`, `improved`, `unchanged`,
+`regressed`, `limited`, `stale`, or `uncertain`), reason, native identity
+(`family`, `owner`, `discriminator`, `relation`, `oracle`), before/after seam,
+grip, oracle and headline join facts, unrelated actionable counts and
+regression/improvement flags, and the after-snapshot digest/run status.
+`rollback` has state (`proved`, `blocked`, or `not_run`), reason, and nullable
+post-rollback head. `non_claims` and `claim_boundary` state that these are
+separate draft evidence axes: neither a passed command nor static movement
+implies correctness, lifecycle acceptance, closure, support promotion, or a
+gate/badge decision.
+
+The bounded execution rail also writes
+`target/ripr/workflow/python-repair-driver-verification-execution.json`.
+That typed execution response is a process observation with
+`schema_version: "1"` and `disposition`; it has no `kind`, so it is not a
+`kind|...` registry entry. `python-repair-trust check-verification` emits a
+schema-`0.1` `python_repair_verification_check_report` with spec, manifest,
+receipt input, count, per-receipt record/attempt and execution/movement/
+rollback summaries, `unrelated_regressed` and `unrelated_improved` booleans
+per receipt, violations, verdict, and claim boundary. The report
+checks receipt structure; it does not promote draft evidence to an accepted
+repair.
 
 ## Python Eval Sweep Accepted Receipt
 

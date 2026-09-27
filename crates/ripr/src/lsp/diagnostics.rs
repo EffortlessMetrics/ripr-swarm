@@ -5,7 +5,10 @@ use super::gap_artifacts::{
     validate_workspace_gap_artifact_report,
 };
 use super::state::{AnalysisSnapshot, HarnessFactsOnSnapshot, RefreshMetadata};
-use super::uri::{absolute_join, display_path, file_uri_for_path, path_from_file_uri};
+use super::uri::{
+    CappedArtifactRead, absolute_join, display_path, file_uri_for_path, path_from_file_uri,
+    read_artifact_capped,
+};
 use crate::agent::command_specs::{command_display_is_nonblank, command_displays_are_complete};
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::AnalysisCancellationToken;
@@ -27,7 +30,6 @@ use crate::output::preview_actionability::{
 };
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 #[cfg(test)]
@@ -1351,13 +1353,15 @@ fn load_gap_ledger_records(
         )
     };
     let ledger_path = root.join(DEFAULT_GAP_DECISION_LEDGER_OUT);
-    let contents = match fs::read_to_string(&ledger_path) {
-        Ok(contents) => contents,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return (None, None),
-        Err(err) => {
+    let contents = match read_artifact_capped(&ledger_path) {
+        CappedArtifactRead::Contents(contents) => contents,
+        // An absent ledger is a normal state and records no outcome.
+        CappedArtifactRead::Missing => return (None, None),
+        CappedArtifactRead::Unusable => {
             return failed(
                 "gap_ledger_read_failed",
-                format!("gap diagnostics skipped: read failed: {err}"),
+                "gap diagnostics skipped: ledger read failed or exceeds the artifact size limit"
+                    .to_string(),
             );
         }
     };
@@ -2409,6 +2413,7 @@ mod seam_diagnostic_tests {
     use crate::analysis::test_grip_evidence::TestGripEvidence;
     use crate::domain::{Confidence, StageEvidence, StageState};
     use crate::output::gap_decision_ledger::{GapAnchor, GapRepairRoute, ProjectionEligibility};
+    use std::fs;
 
     fn stage(state: StageState) -> StageEvidence {
         StageEvidence::new(state, Confidence::Medium, "test stage")

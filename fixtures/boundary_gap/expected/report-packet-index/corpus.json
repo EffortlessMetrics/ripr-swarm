@@ -15,7 +15,7 @@
       "expected_report": "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.json",
       "expected_markdown": "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.md",
       "expected": {
-        "status": "pass",
+        "status": "warn",
         "missing_expected": 0,
         "failures": 0,
         "warnings": 0,
@@ -149,7 +149,7 @@
       "expected_report": "fixtures/boundary_gap/expected/report-packet-index/coverage-grip-present/index.json",
       "expected_markdown": "fixtures/boundary_gap/expected/report-packet-index/coverage-grip-present/index.md",
       "expected": {
-        "status": "pass",
+        "status": "warn",
         "missing_expected": 0,
         "failures": 0,
         "warnings": 0,

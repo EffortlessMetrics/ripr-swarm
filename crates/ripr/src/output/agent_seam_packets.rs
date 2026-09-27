@@ -2521,20 +2521,30 @@ fn explicit_external_observer_target(test: &RelatedTestGrip) -> bool {
         && matches!(test.oracle_strength, crate::domain::OracleStrength::Strong)
 }
 
+/// Published label for a related test written in an external language.
+///
+/// Consumes the routed TypeScript/JavaScript extension authority from
+/// `analysis::language::router`, the same owner the repair route's fail-closed
+/// cross-language gate reads, so a `.mts`/`.cts` observer is labeled
+/// `typescript` here and blocks the packet in `analysis::repair_route` for the
+/// same reason.
 fn external_language_for_related_test(test: &RelatedTestGrip) -> Option<&'static str> {
-    match test
+    let extension = test
         .file
         .extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| extension.to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("ts" | "tsx") => Some("typescript"),
-        Some("js" | "jsx" | "mjs" | "cjs") => Some("javascript"),
-        Some("py") => Some("python"),
-        Some("rb") => Some("ruby"),
-        Some("java") => Some("java"),
-        _ => None,
+        .and_then(|extension| extension.to_str())?;
+    // #4116: the TS/JS family consumes the shared extension authority, so
+    // .mts/.cts label typescript and .mjs/.cjs label javascript instead of
+    // falling through to unlabeled.
+    match crate::analysis::ts_js_source_kind(&extension.to_ascii_lowercase()) {
+        Some(crate::analysis::TsJsSourceKind::TypeScript) => Some("typescript"),
+        Some(crate::analysis::TsJsSourceKind::JavaScript) => Some("javascript"),
+        None => match extension.to_ascii_lowercase().as_str() {
+            "py" => Some("python"),
+            "rb" => Some("ruby"),
+            "java" => Some("java"),
+            _ => None,
+        },
     }
 }
 
@@ -3260,6 +3270,38 @@ mod tests {
         }
     }
 
+    /// A configured TypeScript-bridge observer with a Strong exact-value
+    /// oracle: the shape that projects a navigation-only external target.
+    fn external_observer_test() -> RelatedTestGrip {
+        RelatedTestGrip {
+            test_name: "blob copies resizable buffers".to_string(),
+            file: PathBuf::from("test/js/web/fetch/blob.test.ts"),
+            line: 41,
+            test_target: None,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            evidence_summary: "configured TypeScript bridge exact value observer".to_string(),
+            relation_reason: RelationReason::DirectOwnerCall,
+            relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
+        }
+    }
+
+    fn external_entry(test: RelatedTestGrip) -> ClassifiedSeam {
+        let seam = RepoSeam::new(
+            "src/jsc/Blob.rs",
+            "Blob::from_js_without_defer_gc",
+            SeamKind::PredicateBoundary,
+            42,
+            88,
+            "array_buffer.shared || array_buffer.resizable",
+            RequiredDiscriminator::BoundaryValue {
+                description: "array_buffer.shared || array_buffer.resizable".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        classified_with(seam, SeamGripClass::Ungripped, vec![test])
+    }
+
     fn weakly_gripped_classified() -> ClassifiedSeam {
         let seam = boundary_seam();
         let evidence = TestGripEvidence {
@@ -3408,6 +3450,69 @@ mod tests {
         Ok(())
     }
 
+    /// The projection side of the routed extension authority: a `.mts`/`.cts`
+    /// observer must reach the agent brief as a navigation-only external target
+    /// labeled `typescript`, exactly like the `.ts` control, and a near-miss
+    /// suffix must project no external target at all.
+    ///
+    /// `external_language_labels_cover_modern_ts_js_extensions` pins the label
+    /// lookup itself; this test pins what the operator actually sees. Before
+    /// #4116 the modern suffixes produced no label, so the projection silently
+    /// degraded to a generic block.
+    ///
+    /// Honesty note on what is decision versus what is a pin: the label and the
+    /// presence-or-absence of a target are **decisions** taken from
+    /// `ts_js_source_kind`, and removing a suffix from that authority makes
+    /// these rows fail. `repair_packet_ready` is a constant in the
+    /// navigation-only projection, not a computed decision, so asserting it here
+    /// is a pin that catches someone flipping that constant — it is not
+    /// independent evidence that the fail-closed behaviour was evaluated.
+    #[test]
+    fn navigation_only_external_target_labels_modern_ts_js_extensions() -> Result<(), String> {
+        for (extension, expected) in [
+            ("ts", "typescript"),
+            ("mts", "typescript"),
+            ("cts", "typescript"),
+            ("mjs", "javascript"),
+            ("cjs", "javascript"),
+        ] {
+            let mut test = external_observer_test();
+            test.file = PathBuf::from(format!("test/js/web/fetch/blob.test.{extension}"));
+            let target = navigation_only_external_target_for(&external_entry(test))
+                .ok_or_else(|| format!(".{extension} observer must project a navigation target"))?;
+            if target.language != expected {
+                return Err(format!(
+                    ".{extension} observer must publish language {expected}; got {}",
+                    target.language
+                ));
+            }
+            if !target.reason.contains(expected) {
+                return Err(format!(
+                    ".{extension} reason must name {expected}: {}",
+                    target.reason
+                ));
+            }
+            if target.repair_packet_ready {
+                return Err(format!(
+                    ".{extension} navigation-only external evidence must not be repair-ready"
+                ));
+            }
+        }
+
+        // Fail closed: an unknown near-miss suffix publishes no label, so no
+        // navigation-only external target is invented.
+        for extension in ["mtsx", "ctsx", "mjsx"] {
+            let mut test = external_observer_test();
+            test.file = PathBuf::from(format!("test/js/web/fetch/blob.test.{extension}"));
+            if navigation_only_external_target_for(&external_entry(test)).is_some() {
+                return Err(format!(
+                    ".{extension} is a near-miss suffix and must not project an external label"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn external_language_related_test_excludes_entry_from_packet_queue() -> Result<(), String> {
         // Surface-level parity for the authority's cross-language gate: an
@@ -3423,6 +3528,41 @@ mod tests {
             return Err(format!(
                 "cross-language-unresolved entry must not enter the packet queue: {json}"
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn external_language_labels_cover_modern_ts_js_extensions() -> Result<(), String> {
+        // #4116: .mts/.cts must label typescript and .mjs/.cjs javascript
+        // through the shared extension authority; near-misses stay
+        // unlabeled. The expected labels are pinned here as a removal
+        // control, not read back from the authority.
+        let base_test = weakly_gripped_classified().evidence.related_tests[0].clone();
+        let cases = [
+            ("ts", Some("typescript")),
+            ("tsx", Some("typescript")),
+            ("mts", Some("typescript")),
+            ("cts", Some("typescript")),
+            ("js", Some("javascript")),
+            ("jsx", Some("javascript")),
+            ("mjs", Some("javascript")),
+            ("cjs", Some("javascript")),
+            ("py", Some("python")),
+            ("mt", None),
+            ("mjsx", None),
+            ("ctsx", None),
+        ];
+
+        for (extension, expected) in cases {
+            let mut test = base_test.clone();
+            test.file = PathBuf::from(format!("tests/pricing.{extension}"));
+            let actual = external_language_for_related_test(&test);
+            if actual != expected {
+                return Err(format!(
+                    ".{extension}: expected language {expected:?}, got {actual:?}"
+                ));
+            }
         }
         Ok(())
     }
@@ -5381,29 +5521,7 @@ mod tests {
 
     #[test]
     fn targeted_test_brief_surfaces_external_observer_as_navigation_only() -> Result<(), String> {
-        let seam = RepoSeam::new(
-            "src/jsc/Blob.rs",
-            "Blob::from_js_without_defer_gc",
-            SeamKind::PredicateBoundary,
-            42,
-            88,
-            "array_buffer.shared || array_buffer.resizable",
-            RequiredDiscriminator::BoundaryValue {
-                description: "array_buffer.shared || array_buffer.resizable".to_string(),
-            },
-            ExpectedSink::ReturnValue,
-        );
-        let external_target = RelatedTestGrip {
-            test_name: "blob copies resizable buffers".to_string(),
-            file: PathBuf::from("test/js/web/fetch/blob.test.ts"),
-            line: 41,
-            test_target: None,
-            oracle_kind: OracleKind::ExactValue,
-            oracle_strength: OracleStrength::Strong,
-            evidence_summary: "configured TypeScript bridge exact value observer".to_string(),
-            relation_reason: RelationReason::DirectOwnerCall,
-            relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
-        };
+        let external_target = external_observer_test();
         assert!(explicit_external_observer_target(&external_target));
         let mut unconfigured_external_target = external_target.clone();
         unconfigured_external_target.evidence_summary =
@@ -5411,7 +5529,7 @@ mod tests {
         assert!(!explicit_external_observer_target(
             &unconfigured_external_target
         ));
-        let entry = classified_with(seam, SeamGripClass::Ungripped, vec![external_target]);
+        let entry = external_entry(external_target);
         let brief = targeted_test_brief_for_classified_seam(&entry);
 
         for needle in [

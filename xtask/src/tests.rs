@@ -12,6 +12,7 @@ fn ignore_remove_dir_all(path: impl AsRef<std::path::Path>) {
 use std::io::Read;
 
 use crate::acquire_test_cwd_write_guard;
+use crate::python_judged_panel_replay::sha256_hex;
 use ripr::output::receipt_lifecycle::{
     RECEIPT_MISSING, RECEIPT_MOVEMENT_IMPROVED, RECEIPT_NOT_APPLICABLE,
 };
@@ -22,6 +23,8 @@ use super::RiprSwarmAttemptLedgerReport;
 use super::RiprSwarmCommand;
 use super::RiprSwarmReadinessInput;
 use super::XtaskCommand;
+use super::add_name_status_bytes;
+use super::add_porcelain_bytes;
 use super::dispatch;
 use super::is_network_policy_candidate;
 use super::lane1_runtime_status_full;
@@ -158,12 +161,12 @@ use super::{
     pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_warnings,
     pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
     pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
-    public_contract_rows, read_json_value, read_lsp_cockpit_json_value, read_mutation_input_json,
-    read_repo_exposure_summary_artifact, receipt_json, receipt_specs, receipt_status_from_reports,
-    repo_badge_artifact_command_args, repo_badge_artifact_jobs,
-    repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
-    repo_badge_artifacts_summary_markdown, repo_exposure_latency_json,
-    repo_exposure_latency_markdown, repo_exposure_latency_run,
+    public_contract_rows, read_badge_artifact_diff_governed, read_json_value,
+    read_lsp_cockpit_json_value, read_mutation_input_json, read_repo_exposure_summary_artifact,
+    receipt_json, receipt_specs, receipt_status_from_reports, repo_badge_artifact_command_args,
+    repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
+    repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
+    repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
     repo_exposure_latency_run_from_output, repo_exposure_latency_status,
     repo_exposure_latency_trace, repo_exposure_summary_report_timeout_ms_from_env, repo_root,
     repo_seam_inventory_command_args_for_root, report_index_lane1_overall_status,
@@ -205,7 +208,8 @@ use super::{
     windows_absolute_path_tokens, workflow_bare_self_hosted_violations,
     workflow_review_thread_mutation_violations, workflow_runtime_violations, worktree,
     worktree_doctor_findings, write_badge_artifacts_after_build, write_badge_artifacts_from_diff,
-    write_evidence_health_report_with_runner, write_evidence_health_report_with_runners,
+    write_badge_input_identity, write_evidence_health_report_with_runner,
+    write_evidence_health_report_with_runners,
     write_lane1_evidence_audit_repo_exposure_with_runner, write_repo_exposure_latency_report,
     write_repo_exposure_summary_report_with_runner,
 };
@@ -7861,6 +7865,105 @@ fn release_server_manifest_writes_assets_and_checksums() -> Result<(), String> {
     })
 }
 
+#[test]
+fn release_server_manifest_embeds_the_editor_distribution_descriptor() -> Result<(), String> {
+    with_temp_cwd("release-server-descriptor", |root| {
+        let dist = root.join("dist");
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"),
+            "linux",
+        );
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz.sha256"),
+            "linux-sha\n",
+        );
+
+        let args = vec![
+            "--version".to_string(),
+            "v1.2.3".to_string(),
+            "--repository".to_string(),
+            "EffortlessMetrics/ripr".to_string(),
+        ];
+
+        super::release_server_manifest(&args)?;
+
+        let descriptor_path = root
+            .join("editors")
+            .join("vscode")
+            .join("src")
+            .join("serverDescriptor.ts");
+        let descriptor = fs::read_to_string(&descriptor_path)
+            .map_err(|err| format!("read editor distribution descriptor: {err}"))?;
+        let manifest_sha256 = super::sha256_file(&dist.join("ripr-server-manifest-v1.2.3.json"))?;
+        assert!(
+            descriptor.contains(&format!(
+                "{{ generation: \"1.2.3\", manifestSha256: \"{manifest_sha256}\" }}"
+            )),
+            "the descriptor must embed the exact generation and the manifest's raw-byte digest"
+        );
+        assert!(
+            descriptor.contains("SERVER_DISTRIBUTION_DESCRIPTORS"),
+            "the descriptor must declare the editor's admitted-descriptor list"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn release_server_manifest_rejects_prerelease_version_before_descriptor() -> Result<(), String> {
+    // The editor descriptor admits a distribution generation
+    // (MAJOR.MINOR.PATCH) and the downloader only ever looks the generation
+    // up, so a prerelease or build-metadata version would embed a descriptor
+    // row no request can match and silently leave the packaged RC extension
+    // without a fallback.
+    // A four-component version can never match the downloader's
+    // three-component generation lookup either.
+    for version in ["1.2.3-rc.1", "1.2.3+meta", "1.2.3.4"] {
+        with_temp_cwd("release-server-descriptor-prerelease", |root| {
+            let dist = root.join("dist");
+            let asset_name = format!("ripr-server-v{version}-x86_64-unknown-linux-gnu.tar.gz");
+            write(&dist.join(&asset_name), "linux");
+            write(&dist.join(format!("{asset_name}.sha256")), "linux-sha\n");
+
+            let args = vec![
+                "--version".to_string(),
+                format!("v{version}"),
+                "--repository".to_string(),
+                "EffortlessMetrics/ripr".to_string(),
+            ];
+
+            let Err(err) = super::release_server_manifest(&args) else {
+                return Err(format!(
+                    "prerelease/build-metadata version `{version}` must not write the descriptor"
+                ));
+            };
+            assert!(
+                err.contains("MAJOR.MINOR.PATCH"),
+                "the error must name the required distribution generation form; got: {err}"
+            );
+
+            // The guard sits exactly at the descriptor boundary: the
+            // generation-keyed run artifacts exist, the descriptor does not.
+            assert!(
+                dist.join(format!("ripr-server-manifest-v{version}.json"))
+                    .exists(),
+                "the manifest write precedes the refused descriptor write"
+            );
+            let descriptor_path = root
+                .join("editors")
+                .join("vscode")
+                .join("src")
+                .join("serverDescriptor.ts");
+            assert!(
+                !descriptor_path.exists(),
+                "a prerelease/build-metadata version must never write the editor descriptor"
+            );
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
 pub(crate) fn with_temp_cwd<T>(name: &str, f: impl FnOnce(&Path) -> T) -> T {
     let lock = acquire_test_cwd_write_guard();
     let old = std::env::current_dir().unwrap();
@@ -9231,6 +9334,49 @@ jobs:
 }
 
 #[test]
+fn swarm_server_binary_rehearsal_cannot_publish() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest should have a repository parent".to_string())?;
+    let path = root.join(".github/workflows/release-server-binaries.yml");
+    let workflow = fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let validate = |candidate: &str| -> Result<(), String> {
+        if !candidate.contains("permissions:\n  contents: read")
+            || !candidate.contains("uses: ./.github/workflows/server-archive-qualification.yml")
+            || !candidate.contains("candidate_sha: ${{ github.sha }}")
+            || !candidate.contains("version: ${{ inputs.version }}")
+            || candidate.contains("contents: write")
+            || candidate.contains("release-upload-assets")
+            || candidate.contains("gh release")
+            || candidate.contains("GH_TOKEN")
+            || candidate.contains("github.token")
+            || candidate.contains("secrets.")
+            || candidate.contains("run:")
+            || candidate.contains("steps:")
+            || candidate.contains("push:")
+        {
+            return Err("swarm server-binary entrypoint must delegate exact-SHA read-only qualification without a publication path".to_string());
+        }
+        Ok(())
+    };
+    validate(&workflow)?;
+    for broken in [
+        workflow.replace("contents: read", "contents: write"),
+        format!("{workflow}\n# release-upload-assets"),
+        workflow.replace(
+            "candidate_sha: ${{ github.sha }}",
+            "candidate_sha: ${{ github.ref }}",
+        ),
+    ] {
+        if validate(&broken).is_ok() {
+            return Err("rehearsal publication negative control was accepted".to_string());
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> Result<(), String> {
     const QUALIFICATION_COMMIT_TYPE_COMMAND: &str = r#"git -C "${GITHUB_WORKSPACE}" cat-file -t"#;
     let workflow_path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -9320,11 +9466,11 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         if candidate
             .matches("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")
             .count()
-            != 2
+            != 3
             || candidate
                 .matches("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c")
                 .count()
-                != 1
+                != 2
             || candidate.contains("release-upload-assets")
             || candidate.contains("gh release")
             || candidate.contains("gh api")
@@ -13388,7 +13534,7 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
     assert!(markdown.contains("Full top-3 capture cases: 1 / 1 evals"));
     assert!(markdown.contains("TypeScript Preview Repair-Loop Receipts"));
     assert!(markdown.contains("TypeScript False-Actionable Audit"));
-    assert!(markdown.contains("False actionable: 0 / 14 checked rows"));
+    assert!(markdown.contains("False actionable: 0 / 15 checked rows"));
     assert!(markdown.contains("Bun UB Cross-Language Witness Receipts"));
     assert!(markdown.contains("bun_blob_31648_known_good"));
     assert!(markdown.contains("User Surface Projection Alignment Receipts"));
@@ -13768,7 +13914,7 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
         typescript_false_actionable_summary
             .get("cases")
             .and_then(Value::as_u64),
-        Some(14)
+        Some(15)
     );
     assert_eq!(
         typescript_false_actionable_summary
@@ -13782,7 +13928,7 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
             .get("false_actionable_rate")
             .and_then(|value| value.get("checked"))
             .and_then(Value::as_u64),
-        Some(14)
+        Some(15)
     );
     assert_eq!(
         typescript_false_actionable_summary
@@ -13795,7 +13941,7 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
         .get("cases")
         .and_then(Value::as_array)
         .ok_or_else(|| "typescript_false_actionable_audit cases missing".to_string())?;
-    assert_eq!(typescript_false_actionable_cases.len(), 14);
+    assert_eq!(typescript_false_actionable_cases.len(), 15);
     assert!(
         typescript_false_actionable_cases
             .iter()
@@ -18386,8 +18532,8 @@ fn dogfood_typescript_false_actionable_audit_summary_flags_packet_ready_rows() -
         let cases = super::typescript_preview_false_actionable_audit_cases();
         let summary = super::dogfood_typescript_false_actionable_audit_summary(&cases);
         assert_eq!(summary.gate_status, "pass");
-        assert_eq!(summary.cases, 14);
-        assert_eq!(summary.must_remain_non_actionable, 14);
+        assert_eq!(summary.cases, 15);
+        assert_eq!(summary.must_remain_non_actionable, 15);
         assert_eq!(summary.false_actionable, 0);
         assert_eq!(summary.repair_packet_ready_true, 0);
 
@@ -19227,7 +19373,11 @@ fn dogfood_language_preview_run_checks_static_limit_receipt() -> Result<(), Stri
         assert_eq!(run.preview_findings, 1);
         assert_eq!(run.missing_preview_status, 0);
         assert_eq!(run.related_tests, 1);
-        assert_eq!(run.classifications, vec!["exposed".to_string()]);
+        // The #4103/#4102 relation gates hold a vi.mock'd owner module at
+        // weakly_exposed with the mocked_module limit disclosed: the mocked
+        // observation cannot witness the real changed sink. The fixture
+        // goldens were blessed for exactly this classification.
+        assert_eq!(run.classifications, vec!["weakly_exposed".to_string()]);
         assert_eq!(run.static_limit_kinds, vec!["mocked_module".to_string()]);
         assert!(run.json_path.exists());
         assert!(run.human_path.exists());
@@ -19730,13 +19880,13 @@ fn dogfood_report_packet_index_scenarios_have_checked_receipts() -> Result<(), S
     with_repo_cwd(|| {
         let scenarios = dogfood_report_packet_index_scenarios();
         for required in [
-            ("complete_packet", "pass"),
+            ("complete_packet", "warn"),
             ("sparse_advisory", "warn"),
             ("missing_front_panel", "warn"),
             ("blocked_gate", "fail"),
             ("missing_assistant_proof", "warn"),
             ("missing_receipts", "warn"),
-            ("coverage_grip_present", "pass"),
+            ("coverage_grip_present", "warn"),
         ] {
             assert!(
                 scenarios.iter().any(|scenario| scenario.name == required.0
@@ -21717,6 +21867,208 @@ fn badge_artifact_command_args_substitutes_format_only() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+// ---- #4003: the badge input must come from the actual resolved base through
+// the shared authorities, with a pinned Git presentation. These are real-Git
+// fixture tests: a mocked diff runner cannot prove the Git boundary. ----
+
+fn badge_fixture_git(args: &[&str]) -> Result<(), String> {
+    let status = run("git", args)?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("badge fixture git command failed: {args:?}"))
+    }
+}
+
+fn badge_fixture_commit(message: &str) -> Result<(), String> {
+    badge_fixture_git(&[
+        "-c",
+        "user.email=badge-fixture@example.com",
+        "-c",
+        "user.name=badge fixture",
+        "commit",
+        "--quiet",
+        "-m",
+        message,
+    ])
+}
+
+fn badge_fixture_base_and_edit_commits() -> Result<(), String> {
+    fs::write("subject.txt", "kept line\nbadge-secret-line\n").map_err(|err| err.to_string())?;
+    badge_fixture_git(&["add", "."])?;
+    badge_fixture_commit("badge fixture base")?;
+    badge_fixture_git(&["checkout", "--quiet", "-b", "feature/badge-input"])?;
+    fs::write(
+        "subject.txt",
+        "kept line\nbadge-secret-line\nbadge-secret-line added\n",
+    )
+    .map_err(|err| err.to_string())?;
+    badge_fixture_git(&["add", "."])?;
+    badge_fixture_commit("badge fixture edit")
+}
+
+fn assert_badge_commit_identity(value: &str, label: &str) -> Result<(), String> {
+    if value.len() < 40 || !value.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(format!(
+            "expected a resolved {label} commit identity, got {value:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn badge_diff_reader_resolves_a_non_main_default_base_and_diffs_it() -> Result<(), String> {
+    with_temp_cwd(
+        "badge-diff-non-main-default",
+        |root| -> Result<(), String> {
+            // master-default repo with no remote: the shared default-base
+            // authority must pick master, not fabricate origin/main
+            // (#4003, RIPR-SPEC-0084).
+            badge_fixture_git(&["init", "--initial-branch=master", "--quiet"])?;
+            badge_fixture_base_and_edit_commits()?;
+            let input = read_badge_artifact_diff_governed(root)?;
+            if input.base_ref != "master" {
+                return Err(format!(
+                    "badge input resolved the wrong base: expected master, got {:?}",
+                    input.base_ref
+                ));
+            }
+            if !input.diff.contains("+badge-secret-line added") {
+                return Err(format!(
+                    "badge input must contain the branch edit; got: {}",
+                    input.diff
+                ));
+            }
+            assert_badge_commit_identity(&input.base_commit, "base")?;
+            assert_badge_commit_identity(&input.head_commit, "head")?;
+            assert_badge_commit_identity(&input.head_tree, "head tree")?;
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn badge_diff_reader_fails_closed_when_no_base_resolves() -> Result<(), String> {
+    with_temp_cwd("badge-diff-no-base", |root| -> Result<(), String> {
+        // A repository with no commits has no resolvable base. The badge
+        // producer must fail with a named cause, never write an empty patch
+        // that renders as a clean zero-change badge (#4003).
+        badge_fixture_git(&["init", "--initial-branch=main", "--quiet"])?;
+        let Err(err) = read_badge_artifact_diff_governed(root) else {
+            return Err(
+                "a repo with no resolvable base must fail the badge input, not return an empty diff"
+                    .to_string(),
+            );
+        };
+        if !err.contains("base") {
+            return Err(format!(
+                "badge input failure must name the base cause: {err}"
+            ));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn badge_diff_reader_pins_the_git_presentation_against_ambient_config() -> Result<(), String> {
+    with_temp_cwd(
+        "badge-diff-pinned-presentation",
+        |root| -> Result<(), String> {
+            badge_fixture_git(&["init", "--initial-branch=master", "--quiet"])?;
+            // Ambient configuration the pre-#4003 producer absorbed: a textconv
+            // driver that hides the changed source line, ANSI color, an expanded
+            // ambient context, and an external diff driver that would fail
+            // loudly if spawned.
+            fs::write(".gitattributes", "*.txt diff=badge-wordifier\n")
+                .map_err(|err| err.to_string())?;
+            badge_fixture_git(&[
+                "config",
+                "diff.badge-wordifier.textconv",
+                "sed /badge-secret-line/d",
+            ])?;
+            badge_fixture_git(&["config", "color.diff", "always"])?;
+            badge_fixture_git(&["config", "diff.context", "8"])?;
+            badge_fixture_git(&[
+                "config",
+                "diff.external",
+                "ripr-badge-fixture-no-such-external-diff-driver",
+            ])?;
+            badge_fixture_base_and_edit_commits()?;
+            let input = read_badge_artifact_diff_governed(root)?;
+            if input.diff.contains('\u{1b}') {
+                return Err(
+                    "ambient color.diff=always leaked ANSI escapes into the badge input"
+                        .to_string(),
+                );
+            }
+            if !input.diff.contains("+badge-secret-line added") {
+                return Err(
+                    "the textconv driver hid the changed source from the badge input".to_string(),
+                );
+            }
+            if input.diff.lines().any(|line| line.starts_with(' ')) {
+                return Err(
+                "ambient diff.context expanded the badge input beyond the pinned zero-context presentation"
+                    .to_string(),
+            );
+            }
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn badge_input_identity_receipt_records_the_analyzed_subject() -> Result<(), String> {
+    with_temp_cwd(
+        "badge-input-identity-receipt",
+        |root| -> Result<(), String> {
+            badge_fixture_git(&["init", "--initial-branch=master", "--quiet"])?;
+            badge_fixture_base_and_edit_commits()?;
+            let input = read_badge_artifact_diff_governed(root)?;
+            write_badge_input_identity(&input, "input", &[])?;
+            let receipt_path = root.join("target/ripr/reports/badge-artifacts-identity.json");
+            let receipt = fs::read_to_string(&receipt_path)
+                .map_err(|err| format!("failed to read {}: {err}", receipt_path.display()))?;
+            let value: serde_json::Value = serde_json::from_str(&receipt)
+                .map_err(|err| format!("identity receipt is not valid JSON: {err}"))?;
+            if value["input"]["base_ref"] != "master" {
+                return Err(format!("receipt base_ref should be master: {receipt}"));
+            }
+            if value["input"]["diff_sha256"] != sha256_hex(input.diff.as_bytes()) {
+                return Err("receipt diff digest must match the badge input bytes".to_string());
+            }
+            let presentation = value["input"]["presentation"]["argv"]
+                .as_str()
+                .unwrap_or_default();
+            for pin in [
+                "core.quotePath=true",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+                "--unified=0",
+                "--inter-hunk-context=0",
+            ] {
+                if !presentation.contains(pin) {
+                    return Err(format!("receipt presentation must name the {pin} pin"));
+                }
+            }
+            if !value["input"]["base_resolution"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("RIPR-SPEC-0084")
+            {
+                return Err("receipt must name the shared base resolution authority".to_string());
+            }
+            if value["phase"] != "input" {
+                return Err(format!("unexpected receipt phase: {receipt}"));
+            }
+            Ok(())
+        },
+    )
 }
 
 #[test]
@@ -27816,6 +28168,27 @@ fn traceability_failure_report_renders_recommended_fixes() -> Result<(), String>
 }
 
 #[test]
+fn traceability_pass_report_discloses_registered_only_scope() -> Result<(), String> {
+    with_temp_cwd("traceability-pass-scope-report", |_| {
+        finish_traceability_report(
+            &[],
+            &["RIPR-SPEC-0027 symbol suffix unverified".to_string()],
+        )?;
+        let report = fs::read_to_string("target/ripr/reports/traceability.md")
+            .map_err(|err| format!("read traceability pass report: {err}"))?;
+
+        assert!(report.contains("Status: pass"));
+        assert!(report.contains("## Scope of this result"));
+        assert!(report.contains("does not enumerate Rust tests"));
+        assert!(report.contains("does not require every newly added test"));
+        assert!(report.contains("a test role, ran, or establishes the behavior"));
+        assert!(report.contains("Advisories (non-blocking)"));
+        assert!(report.contains("symbol suffix unverified"));
+        Ok(())
+    })
+}
+
+#[test]
 fn spec_ids_in_text_extracts_four_digit_ids_only() {
     let ids = spec_ids_in_text(
         "RIPR-SPEC-0001 RIPR-SPEC-001 RIPR-SPEC-9999 RIPR-SPEC-abcd RIPR-SPEC-12345",
@@ -28391,7 +28764,7 @@ fn command_catalog_pins_ci_enforced_classification() -> Result<(), String> {
     assert!(ci_enforced("check-static-language")?);
     assert!(ci_enforced("goldens check")?);
     assert!(ci_enforced("check-doc-index")?);
-    assert!(ci_enforced("release-upload-assets --version <version>")?);
+    assert!(!ci_enforced("release-upload-assets --version <version>")?);
     assert!(ci_enforced("release-readiness --version <version>")?);
     // Issue #2258: the routed-rust lanes invoke `cargo xtask precommit` as the
     // shared required gate table, so precommit and every gate it runs are
@@ -45691,6 +46064,177 @@ fn lane1_audit_sample_json() -> &'static str {
         }"#
 }
 
+fn write_packaging_test_vsix(
+    path: &std::path::Path,
+    members: &[(&str, &str)],
+) -> Result<(), String> {
+    let file = fs::File::create(path)
+        .map_err(|err| format!("failed to create {}: {err}", path.display()))?;
+    let mut writer = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default();
+    for (name, body) in members {
+        writer
+            .start_file(*name, options)
+            .map_err(|err| format!("failed to stage {name}: {err}"))?;
+        std::io::Write::write_all(&mut writer, body.as_bytes())
+            .map_err(|err| format!("failed to write {name}: {err}"))?;
+    }
+    writer
+        .finish()
+        .map_err(|err| format!("failed to seal {}: {err}", path.display()))?;
+    Ok(())
+}
+
+fn vsix_entry(name: &str, size: u64) -> super::VsixEntry {
+    super::VsixEntry {
+        name: name.to_string(),
+        size,
+        compressed_size: size / 4,
+    }
+}
+
+#[test]
+fn vsix_inventory_rejects_workspace_build_output_sentinel() -> Result<(), String> {
+    with_temp_cwd("vsix-inventory-sentinel", |root| {
+        let approved = [
+            ("[Content_Types].xml", "<Types/>"),
+            ("extension.vsixmanifest", "<PackageManifest/>"),
+            ("extension/package.json", "{}"),
+            ("extension/distribution.json", "{\"schema\":2}"),
+            ("extension/out/src/client.js", "exports.x = 1;"),
+            // A dependency's own `target/` directory is not workspace output.
+            (
+                "extension/node_modules/dep/target/index.js",
+                "module.exports = 1;",
+            ),
+        ];
+        let clean = root.join("clean.vsix");
+        write_packaging_test_vsix(&clean, &approved)?;
+        let entries = super::read_vsix_inventory(&clean)?;
+        assert_eq!(entries.len(), approved.len());
+        super::check_vsix_inventory(
+            &entries,
+            super::VSIX_MAX_ENTRIES,
+            super::VSIX_MAX_UNCOMPRESSED_BYTES,
+        )?;
+        // The production path `vscode-package` runs after `vsce package`.
+        let summary = super::verify_packaged_vsix_inventory(&clean)?;
+        assert!(
+            summary.starts_with(&format!("VSIX inventory: {} entries, ", approved.len())),
+            "{summary}"
+        );
+
+        let sentinel = "extension/target/debug/ripr-1775-sentinel.bin";
+        let mut polluted_members = approved.to_vec();
+        polluted_members.push((sentinel, "cargo build output"));
+        let polluted = root.join("polluted.vsix");
+        write_packaging_test_vsix(&polluted, &polluted_members)?;
+        let entries = super::read_vsix_inventory(&polluted)?;
+        let Err(error) = super::check_vsix_inventory(
+            &entries,
+            super::VSIX_MAX_ENTRIES,
+            super::VSIX_MAX_UNCOMPRESSED_BYTES,
+        ) else {
+            return Err("a packaged editors/vscode/target sentinel must be rejected".to_string());
+        };
+        assert!(error.contains(sentinel), "{error}");
+        assert!(error.contains("1 workspace build-output"), "{error}");
+        let Err(error) = super::verify_packaged_vsix_inventory(&polluted) else {
+            return Err("vscode-package must reject the polluted VSIX".to_string());
+        };
+        assert!(error.contains("packaged VSIX"), "{error}");
+        assert!(error.contains(sentinel), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_inventory_rejects_cargo_artifacts_outside_target() -> Result<(), String> {
+    for name in [
+        "extension/out/libripr-0123.rlib",
+        "extension/out/libripr-0123.rmeta",
+        "extension/build/.fingerprint/ripr-0123/lib-ripr",
+        "extension/build/incremental/ripr-0123/s-abc/query-cache.bin",
+    ] {
+        let entries = vec![
+            vsix_entry("extension/package.json", 2),
+            vsix_entry(name, 10),
+        ];
+        let Err(error) = super::check_vsix_inventory(&entries, 10, 1_000) else {
+            return Err(format!("{name} must be rejected as build output"));
+        };
+        assert!(error.contains(name), "{error}");
+    }
+    Ok(())
+}
+
+#[test]
+fn vsix_inventory_fails_closed_on_missing_or_non_zip_package() -> Result<(), String> {
+    with_temp_cwd("vsix-inventory-unreadable", |root| {
+        // A package step that produced no archive must fail, not pass an empty inventory.
+        let missing = root.join("missing.vsix");
+        let Err(error) = super::read_vsix_inventory(&missing) else {
+            return Err("a missing VSIX must not yield an inventory".to_string());
+        };
+        assert!(error.contains("is missing"), "{error}");
+
+        let not_zip = root.join("not-zip.vsix");
+        fs::write(&not_zip, "not a zip archive")
+            .map_err(|err| format!("failed to write {}: {err}", not_zip.display()))?;
+        let Err(error) = super::read_vsix_inventory(&not_zip) else {
+            return Err("a non-zip VSIX must not yield an inventory".to_string());
+        };
+        assert!(error.contains("is not a zip"), "{error}");
+
+        // An intact central directory over a corrupt member header must fail
+        // at the member read, not produce a partial inventory.
+        let corrupt = root.join("corrupt-member.vsix");
+        write_packaging_test_vsix(&corrupt, &[("extension/package.json", "{}")])?;
+        let mut bytes = fs::read(&corrupt)
+            .map_err(|err| format!("failed to read {}: {err}", corrupt.display()))?;
+        assert_eq!(bytes.get(..4), Some(&b"PK\x03\x04"[..]));
+        bytes[..2].copy_from_slice(b"XX");
+        fs::write(&corrupt, &bytes)
+            .map_err(|err| format!("failed to write {}: {err}", corrupt.display()))?;
+        let Err(error) = super::read_vsix_inventory(&corrupt) else {
+            return Err("a corrupt VSIX member must not yield an inventory".to_string());
+        };
+        assert!(error.contains("member 0"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_inventory_bounds_entry_count_and_unpacked_size() -> Result<(), String> {
+    let three = vec![
+        vsix_entry("extension/package.json", 10),
+        vsix_entry("extension/out/a.js", 10),
+        vsix_entry("extension/out/b.js", 10),
+    ];
+    super::check_vsix_inventory(&three, 3, 30)?;
+    let Err(count) = super::check_vsix_inventory(&three, 2, 30) else {
+        return Err("an entry count above the bound must be rejected".to_string());
+    };
+    assert!(
+        count.contains("3 entries, above the 2-entry bound"),
+        "{count}"
+    );
+    let Err(size) = super::check_vsix_inventory(&three, 3, 29) else {
+        return Err("an unpacked size above the bound must be rejected".to_string());
+    };
+    assert!(size.contains("30 bytes, above the 29-byte bound"), "{size}");
+    // The production bounds sit between the observed 0.11 package (about 410
+    // entries, 3 MiB) and the #1775 defect (2,805 entries, about 2.3 GB).
+    const { assert!(super::VSIX_MAX_ENTRIES > 410 && super::VSIX_MAX_ENTRIES < 2_805) };
+    const {
+        assert!(
+            super::VSIX_MAX_UNCOMPRESSED_BYTES > 3 * 1024 * 1024
+                && super::VSIX_MAX_UNCOMPRESSED_BYTES < 2_300 * 1024 * 1024
+        )
+    };
+    Ok(())
+}
+
 #[test]
 fn vscode_package_version_reads_extension_manifest() -> Result<(), String> {
     with_temp_cwd("vscode-package-version", |root| {
@@ -49448,4 +49992,195 @@ fn check_pr_report_publication_failure_is_distinguishable() {
             && err.contains("publishing the failure report also failed")),
         "a failed gate plus failed report publication must stay distinguishable and preserve the gate diagnostic and reproduce command: {result:?}"
     );
+}
+
+#[test]
+fn pr_change_name_status_bytes_decode_exotic_names_exact() -> Result<(), String> {
+    // Real `--name-status -z` grammar (space, non-ASCII UTF-8, scored
+    // rename): the old tab-split route without `-z` kept git's C-quoted
+    // octal form verbatim, so byte-exactness here discriminates the
+    // migration. Rename records attribute the target, matching the old
+    // `parts.last()` projection.
+    let mut changes = BTreeMap::new();
+    add_name_status_bytes(
+        &mut changes,
+        "M\0sp ace.txt\0A\0uni-é.txt\0R100\0old.txt\0new.txt\0".as_bytes(),
+    )?;
+    let expected: BTreeMap<String, BTreeSet<String>> = [
+        ("sp ace.txt".to_string(), ["M".to_string()].into()),
+        ("uni-é.txt".to_string(), ["A".to_string()].into()),
+        ("new.txt".to_string(), ["R100".to_string()].into()),
+    ]
+    .into();
+    if changes != expected {
+        return Err(format!(
+            "exotic name-status inventory mismatch: got {changes:?}, want {expected:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_name_status_bytes_reject_non_utf8() -> Result<(), String> {
+    // The old route lossy-decoded through `run_output`, collapsing this
+    // record into replacement characters and returning success; the strict
+    // route must fail loudly instead.
+    let mut changes = BTreeMap::new();
+    let err = match add_name_status_bytes(&mut changes, b"M\0ok.txt\0A\0\xffbad\0") {
+        Err(err) => err,
+        Ok(()) => return Err(format!("non-UTF-8 inventory must fail, got {changes:?}")),
+    };
+    if !err.contains("not valid UTF-8") {
+        return Err(format!("unexpected strict-decode error: {err}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_name_status_bytes_reject_legacy_line_grammar() -> Result<(), String> {
+    // Legacy non-`-z` git output (C-quoted, newline-delimited) fed to the
+    // new decoder must fail, not silently mangle: this pins the `-z`
+    // requirement at the decode boundary. The old tab-split parser accepted
+    // this shape and inventoried the quoted octal form as a path.
+    let mut changes = BTreeMap::new();
+    let legacy = b"M\t\"uni-\\303\\251.txt\"\n";
+    match add_name_status_bytes(&mut changes, legacy) {
+        Err(_) => Ok(()),
+        Ok(()) => Err(format!(
+            "legacy line grammar must fail strict decode, got {changes:?}"
+        )),
+    }
+}
+
+#[test]
+fn pr_change_porcelain_bytes_decode_exotic_names_exact() -> Result<(), String> {
+    // Real `status --porcelain=v1 -z` grammar (verified against git):
+    // `XY␣path\0`, renames as `XY␣new\0old\0`, no quoting. The ` -> ` in
+    // the fourth name is literal path bytes: the old `split_once(" -> ")`
+    // projection would have inventoried `b.txt` instead.
+    let mut changes = BTreeMap::new();
+    add_porcelain_bytes(
+        &mut changes,
+        b"M  sp ace.txt\0R  new name.txt\0old name.txt\0?? uni-\xc3\xa9.txt\0M  a -> b.txt\0M  li\nne.txt\0",
+    )?;
+    let expected: BTreeMap<String, BTreeSet<String>> = [
+        ("sp ace.txt".to_string(), ["M".to_string()].into()),
+        ("new name.txt".to_string(), ["R".to_string()].into()),
+        ("uni-é.txt".to_string(), ["??".to_string()].into()),
+        ("a -> b.txt".to_string(), ["M".to_string()].into()),
+        ("li\nne.txt".to_string(), ["M".to_string()].into()),
+    ]
+    .into();
+    if changes != expected {
+        return Err(format!(
+            "exotic porcelain inventory mismatch: got {changes:?}, want {expected:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_porcelain_bytes_attribute_worktree_column_rename() -> Result<(), String> {
+    // Worktree-column renames (` R`, e.g. intent-to-add via `git add -N`,
+    // verified against real git output) carry the paired source exactly
+    // like staged ones. Checking only the index column left the source
+    // field unconsumed, failing closed on legitimate state — or worse,
+    // misreading a source name with a space at byte index 2 as a new
+    // entry. Exactly one entry for the target, status trimmed to `R`.
+    let mut changes = BTreeMap::new();
+    add_porcelain_bytes(&mut changes, b" R new.txt\0old.txt\0")?;
+    let expected: BTreeMap<String, BTreeSet<String>> =
+        [("new.txt".to_string(), ["R".to_string()].into())].into();
+    if changes != expected {
+        return Err(format!(
+            "worktree rename inventory mismatch: got {changes:?}, want {expected:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_porcelain_bytes_reject_missing_trailing_nul() -> Result<(), String> {
+    // Real git always NUL-terminates every record, so a non-empty input
+    // without a trailing NUL is truncation, not a final field: fail
+    // loudly instead of parsing a truncated path.
+    let mut changes = BTreeMap::new();
+    match add_porcelain_bytes(&mut changes, b"M  path_long") {
+        Err(err) if err.contains("missing trailing NUL") => Ok(()),
+        Err(err) => Err(format!("unexpected truncation error: {err}")),
+        Ok(()) => Err(format!("truncated input must fail, got {changes:?}")),
+    }
+}
+
+#[test]
+fn pr_change_porcelain_bytes_reject_truncated_rename() -> Result<(), String> {
+    // A rename entry missing its paired source must fail, not attribute
+    // the change to half a record.
+    let mut changes = BTreeMap::new();
+    let err = match add_porcelain_bytes(&mut changes, b"R  new.txt\0") {
+        Err(err) => err,
+        Ok(()) => return Err(format!("truncated rename must fail, got {changes:?}")),
+    };
+    if !err.contains("missing its paired path") {
+        return Err(format!("unexpected strict-decode error: {err}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_porcelain_bytes_reject_misframed_entries() -> Result<(), String> {
+    // Truncated fields must fail loudly instead of inventing entries. Note
+    // what is deliberately NOT rejected here: embedded newlines are legal
+    // path bytes (pinned by
+    // `pr_change_porcelain_bytes_decode_exotic_names_exact`), so a
+    // newline-bearing field decodes as one entry — the `-z` framing, not
+    // content sniffing, is what separates records.
+    let mut changes = BTreeMap::new();
+    match add_porcelain_bytes(&mut changes, b"xy") {
+        Err(_) => Ok(()),
+        Ok(()) => Err(format!(
+            "misframed porcelain input must fail, got {changes:?}"
+        )),
+    }
+}
+
+#[test]
+fn pr_change_backslash_name_stays_distinct_from_nested_path() -> Result<(), String> {
+    // Item-5 identity control (#4006): the literal-backslash filename
+    // `a\b.rs` and the nested path `a/b.rs` are distinct tracked paths
+    // (real Linux git fixture). Folding separators before map insertion
+    // collapsed them to one key, omitting an inventory path while
+    // returning success. Both decoders must preserve two entries.
+    // Byte literals carry the exact `-z` grammar (Rust string escapes,
+    // not shell quoting, keep the backslash literal).
+    let mut changes = BTreeMap::new();
+    add_name_status_bytes(&mut changes, b"M\0a\\b.rs\0M\0a/b.rs\0")?;
+    if changes.len() != 2 || !changes.contains_key("a\\b.rs") || !changes.contains_key("a/b.rs") {
+        return Err(format!(
+            "name-status backslash/nested collision: got {changes:?}, want two distinct keys"
+        ));
+    }
+    let mut porcelain = BTreeMap::new();
+    add_porcelain_bytes(&mut porcelain, b"M  a\\b.rs\0M  a/b.rs\0")?;
+    if porcelain.len() != 2
+        || !porcelain.contains_key("a\\b.rs")
+        || !porcelain.contains_key("a/b.rs")
+    {
+        return Err(format!(
+            "porcelain backslash/nested collision: got {porcelain:?}, want two distinct keys"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_change_inventory_bytes_accept_empty() -> Result<(), String> {
+    // A real zero-change run decodes to an empty inventory on both routes.
+    let mut changes = BTreeMap::new();
+    add_name_status_bytes(&mut changes, b"")?;
+    add_porcelain_bytes(&mut changes, b"")?;
+    if !changes.is_empty() {
+        return Err(format!("empty inventory must stay empty, got {changes:?}"));
+    }
+    Ok(())
 }

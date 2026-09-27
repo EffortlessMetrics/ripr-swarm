@@ -6,13 +6,15 @@ const RECEIPT_FILE = 'install-receipt.json';
 const LOCK_WAIT_MS = 120_000;
 const LOCK_POLL_MS = 50;
 const LOCK_HEARTBEAT_MS = 30_000;
-const MANAGED_VERSION_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const MANAGED_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
 export interface InstallReceiptV1 {
   readonly schemaVersion: 1;
   readonly installationState: 'complete';
   readonly requestedVersion: string;
   readonly manifestVersion: string;
+  readonly manifestPlacement?: ManifestPlacement;
+  readonly manifestUrl?: string;
   readonly platformTarget: string;
   readonly executableName: string;
   readonly archiveSha256: string;
@@ -38,7 +40,16 @@ export interface ResolvedArchive {
   readonly manifestVersion: string;
   readonly expectedSha256: string;
   readonly bytes: Buffer;
+  readonly manifestUrl?: string;
+  readonly manifestPlacement?: ManifestPlacement;
 }
+
+/**
+ * Which exact manifest placement produced an installation's content, recorded
+ * separately from that content identity (#3798): a byte-identical RC-placed
+ * cache stays content-current but never claims stable observation.
+ */
+export type ManifestPlacement = 'stable' | 'rc_after_stable_absent';
 
 export interface ManagedServerInstallOperations {
   resolveArchive(): Promise<ResolvedArchive>;
@@ -60,6 +71,20 @@ export function validateManagedServerVersion(version: string): string {
     );
   }
   return version;
+}
+
+/**
+ * The placement-neutral distribution generation of a requested server version
+ * (#3798): the release's major.minor.patch core without prerelease or build
+ * metadata. A generation's manifest bytes are identical across its stable and
+ * RC placements, so one admitted manifest digest authorizes both.
+ */
+export function distributionGeneration(version: string): string {
+  const match = validateManagedServerVersion(version).match(MANAGED_VERSION_PATTERN);
+  if (!match) {
+    throw new Error(`Invalid ripr server version ${JSON.stringify(version)}.`);
+  }
+  return `${match[1]}.${match[2]}.${match[3]}`;
 }
 
 export function combineActiveManagedServerIdentity<T extends { readonly binaryVersion?: string }>(
@@ -189,7 +214,11 @@ async function stageAndPromote(
 
   try {
     const resolved = await operations.resolveArchive();
-    if (resolved.manifestVersion !== request.version) {
+    // A prerelease request is admitted by its distribution generation's
+    // manifest when the manifest bytes are placement-neutral (#3798); the
+    // requested version itself stays the requested identity in the receipt.
+    const admittedManifestVersions = new Set([request.version, distributionGeneration(request.version)]);
+    if (!admittedManifestVersions.has(resolved.manifestVersion)) {
       throw new Error(
         `Server manifest version ${resolved.manifestVersion} does not match requested version ${request.version}.`
       );
@@ -227,6 +256,8 @@ async function stageAndPromote(
       installationState: 'complete',
       requestedVersion: request.version,
       manifestVersion: resolved.manifestVersion,
+      ...(resolved.manifestPlacement !== undefined ? { manifestPlacement: resolved.manifestPlacement } : {}),
+      ...(resolved.manifestUrl !== undefined && resolved.manifestUrl.length > 0 ? { manifestUrl: resolved.manifestUrl } : {}),
       platformTarget: request.platformTarget,
       executableName: request.executableName,
       archiveSha256,
@@ -289,10 +320,14 @@ function isMatchingReceipt(value: unknown, request: ManagedServerInstallRequest)
     return false;
   }
   const receipt = value as Record<string, unknown>;
+  // A placement-neutral generation manifest (RC-channel install) records the
+  // generation as its manifest version (#3798); the requested version remains
+  // the cache identity either way.
+  const admittedManifestVersions = new Set([request.version, distributionGeneration(request.version)]);
   return receipt.schemaVersion === 1
     && receipt.installationState === 'complete'
     && receipt.requestedVersion === request.version
-    && receipt.manifestVersion === request.version
+    && admittedManifestVersions.has(receipt.manifestVersion as string)
     && receipt.platformTarget === request.platformTarget
     && receipt.executableName === request.executableName
     && typeof receipt.binaryVersion === 'string'
@@ -307,7 +342,7 @@ function isSha256(value: string): boolean {
   return /^[0-9a-f]{64}$/i.test(value);
 }
 
-function safeDigestEquals(left: string, right: string): boolean {
+export function safeDigestEquals(left: string, right: string): boolean {
   if (!isSha256(left) || !isSha256(right)) {
     return false;
   }

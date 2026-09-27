@@ -439,7 +439,8 @@ fn run_workspace_cargo_metadata(
     let parsed = std::fs::File::create(&stdout_path)
         .ok()
         .and_then(|stdout_file| {
-            std::process::Command::new("cargo")
+            let mut command = std::process::Command::new("cargo");
+            command
                 .args([
                     "metadata",
                     "--no-deps",
@@ -466,9 +467,10 @@ fn run_workspace_cargo_metadata(
                 .current_dir(workspace_root)
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::from(stdout_file))
-                .stderr(std::process::Stdio::null())
-                .spawn()
-                .ok()
+                .stderr(std::process::Stdio::null());
+            // The owned-subprocess authority (#3803) keeps the bounded
+            // probe's tree termination Job-Object-backed on Windows.
+            crate::process_owner::OwnedProcess::spawn(command).ok()
         })
         .and_then(|mut child| {
             let outcome = crate::git::poll_child(
@@ -483,6 +485,11 @@ fn run_workspace_cargo_metadata(
                         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
                         .map(|value| workspace_test_target_owners(&value))
                 }
+                // Tree cleanup could not be confirmed after the probe
+                // ended abnormally: the wait contract only guarantees a
+                // terminated tree for the other non-Exited arms, so the
+                // probe result is unusable either way.
+                crate::git::ChildWait::CleanupFailed(_) => None,
                 _ => None,
             }
         });

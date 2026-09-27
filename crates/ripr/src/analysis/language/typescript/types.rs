@@ -14,7 +14,62 @@ pub(crate) struct TypeScriptOwner {
     pub(crate) owner_kind: OwnerKind,
     pub(crate) class_name: Option<String>,
     pub(crate) decorated: bool,
+    /// `true` when the owner declaration is the module's default export
+    /// (`export default function name(...)`, `export default const name = ...`).
+    /// A default import (`import local from './owner'`) binds exactly this
+    /// declaration, so the relation gate may credit a call through `local`
+    /// only when this fact is recorded (#4103 under-credit: a named default
+    /// export imported under a different local name was previously
+    /// unreachable from every relation arm).
+    pub(crate) exported_as_default: bool,
     pub(crate) imports: Vec<TypeScriptImport>,
+    /// Positional parameter names of the owner function, in signature order
+    /// (issue #4102). The single parameter-name list shared by the boundary
+    /// witness, shadow guards, and relation guards. Empty means the adapter
+    /// recorded no parameter facts: either the owner is not a callable with a
+    /// fixed positional signature (module initializer, computed method) or
+    /// the signature uses patterns the syntax-first extractor refuses to
+    /// summarize (destructuring, rest). Fail-closed pairing with `arity`:
+    /// non-empty exactly when `arity` is `Some`, with `params.len()` equal to
+    /// it; with no facts the position checks keep the position-blind
+    /// behaviour.
+    pub(crate) params: Vec<String>,
+    /// Method-shape refinement for `OwnerKind::Method` owners: a getter is
+    /// invoked by property READS on a receiver, and the constructor runs on
+    /// every `new ClassName(...)` — both change which relation needle is
+    /// honest for the owner (#4104-B).
+    pub(crate) method_kind: TypeScriptMethodKind,
+    /// `true` when the owner's CONTAINING CLASS is the module's default
+    /// export (`export default class Cart { ... }`). A class default export
+    /// has no class-level owner entry — only its methods are indexed — so
+    /// each method carries this marker instead, and `exported_as_default`
+    /// stays false for them: a method is not itself the module's default
+    /// export. Constructor matching uses it to credit
+    /// `new <default-import local>(...)` (#4104-B, review #4138).
+    pub(crate) class_default_export: bool,
+    /// `Some(n)` only when every parameter is a plain binding identifier and
+    /// there is no rest parameter; `None` when the list could not be resolved
+    /// (destructuring, rest, or extraction unavailable). A boundary witness
+    /// may only credit an argument position a parameter could actually read.
+    pub(crate) arity: Option<usize>,
+    /// The owner's own source text from its declaration start to its end, when
+    /// extraction had the containing source. Enables expected-semantics checks
+    /// that need the owner body (predicate expected-side liveness, #4102).
+    pub(crate) source_text: Option<String>,
+}
+
+/// Syntactic method-shape refinement recorded during owner extraction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(crate) enum TypeScriptMethodKind {
+    /// An ordinary callable method — invoked only by member CALLS.
+    #[default]
+    Ordinary,
+    /// `get total()` — invoked by property reads (`cart.total`).
+    Getter,
+    /// `set total(v)` — invoked by property writes (`cart.total = v`).
+    Setter,
+    /// `constructor(...)` — invoked by `new ClassName(...)`.
+    Constructor,
 }
 
 impl TypeScriptOwner {
@@ -71,6 +126,45 @@ pub(crate) struct TypeScriptImport {
 pub(crate) struct TypeScriptParseLimit {
     pub(crate) file: PathBuf,
     pub(crate) reason: String,
+}
+
+/// A workspace file that could not be read at all (permissions, encoding,
+/// transient I/O). Unlike a parse limit the adapter has no syntax facts at
+/// all for this path; the file silently vanished from both the owner index
+/// and the test index before this record existed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TypeScriptReadFailure {
+    pub(crate) file: PathBuf,
+    pub(crate) error: String,
+}
+
+/// One concrete, observed gap between the tests a recognized test file
+/// registers and the tests the syntax-first extractor actually indexed.
+/// Produced by `detect_partial_test_extraction`; consumed by the
+/// `typescript_test_extraction_partial` named-limitation producer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TypeScriptTestExtractionGap {
+    pub(crate) file: PathBuf,
+    pub(crate) sample_line: usize,
+    /// Detected shape, one of `template-literal title`, `tagged-template .each`,
+    /// or `test/it call in loop/callback/nested body`.
+    pub(crate) shape: &'static str,
+    /// Source snippet (single-line, bounded) of the unextracted registration.
+    pub(crate) snippet: String,
+}
+
+/// Owner-shaped construct the syntax-first owner extractor does not index
+/// (#4104-A). One per affected changed file (the first detected shape).
+pub(crate) struct TypeScriptOwnerExtractionGap {
+    pub(crate) file: PathBuf,
+    pub(crate) sample_line: usize,
+    /// Detected shape, one of `arrow-function class field`,
+    /// `class method with unsupported key`, `class static block`,
+    /// `accessor auto-accessor`, `enum declaration`, or
+    /// `module/namespace declaration`.
+    pub(crate) shape: &'static str,
+    /// Source snippet (single-line, bounded) of the unextracted owner shape.
+    pub(crate) snippet: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

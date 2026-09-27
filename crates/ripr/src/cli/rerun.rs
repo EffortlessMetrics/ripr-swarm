@@ -813,10 +813,14 @@ fn push_scope_unresolved(
 
 #[cfg(feature = "lang-typescript")]
 fn is_typescript_scope(scope: &GapRerunScope) -> bool {
-    matches!(
-        scope.file.extension().and_then(|ext| ext.to_str()),
-        Some("ts" | "tsx" | "js" | "jsx")
-    )
+    // #4116: consume the shared TS/JS extension authority so a targeted
+    // rerun scope on .mts/.cts/.mjs/.cjs selects the same seam surface the
+    // router already admitted.
+    scope
+        .file
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(crate::analysis::is_ts_js_source_extension)
 }
 
 #[cfg(feature = "lang-typescript")]
@@ -2046,12 +2050,13 @@ mod tests {
     #[cfg(feature = "lang-typescript")]
     #[test]
     fn typescript_rerun_covers_every_accepted_extension() -> Result<(), String> {
-        for extension in ["ts", "tsx", "js", "jsx"] {
+        for extension in ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"] {
             let root = unique_temp_root(&format!("ts-rerun-ext-{extension}"))?;
             let source = format!("src/discount.{extension}");
-            // Type annotations only in TypeScript-family fixtures; .js/.jsx
-            // fixtures must be plain ECMAScript or the control is unfaithful.
-            let body = if extension.starts_with("ts") {
+            // Type annotations only in TypeScript-family fixtures (.ts/.tsx/
+            // .mts/.cts); JavaScript-family fixtures must be plain
+            // ECMAScript or the control is unfaithful.
+            let body = if matches!(extension, "ts" | "tsx" | "mts" | "cts") {
                 "export function applyDiscount(amount: number, discount: number) {\n  return amount - discount;\n}\n"
             } else {
                 "export function applyDiscount(amount, discount) {\n  return amount - discount;\n}\n"

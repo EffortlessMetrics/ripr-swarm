@@ -88,9 +88,9 @@ RIPR-SPEC-0026 owner-kind vocabulary explicitly adds a class value.
 
 Test discovery:
 
-- `pytest` test functions named `test_*` at module level
-- pytest test methods under `class Test*`
-- `unittest.TestCase` subclasses and their `test_*` methods
+- `pytest` test functions with the default `test` name prefix at module level
+- pytest test methods with the same prefix under `class Test*`
+- `unittest.TestCase` subclasses and their default `test`-prefixed methods
 - parametrized tests via `@pytest.mark.parametrize` (recognised
   syntactically)
 - pytest fixture and parameter names captured from test function signatures
@@ -100,6 +100,13 @@ Test discovery:
 - framework-shaped verify commands for related tests when the static selector
   is known: `pytest path::node` for pytest and
   `python -m unittest module.Class.test_method` for unittest
+
+The default name prefix is case-sensitive and does not require an underscore:
+`test`, `testCamelCase`, and `test_with_underscore` all qualify. `_test_private`,
+`contest`, and `TestWrongCase` do not. The prefix rule applies to both `def`
+and `async def`; it does not change test-file or class selection. Custom
+`python_functions` patterns, modified `TestLoader.testMethodPrefix` values,
+and collection hooks are not resolved by this syntax-only collector.
 
 Assertions / oracles the adapter must recognise:
 
@@ -490,6 +497,12 @@ Expected static evidence:
   registration.
 
 ## Test Mapping
+
+Default-prefix regression cases live in
+`crates/ripr/src/analysis/language/python/owners_tests/tests.rs`. They exercise
+module functions, pytest methods, unittest methods, and async definitions;
+exclude near-miss names and helpers; and check that collected tests retain
+framework-specific selectors and relate only to the referenced owner.
 
 Follow-up fixtures and tests cover the owner, test, assertion, related
 test, probe, and static-limit cases listed under Required Evidence, plus

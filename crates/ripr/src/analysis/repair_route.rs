@@ -522,7 +522,7 @@ fn fact_discriminator_key(
                 .strip_suffix(" (equality boundary)")
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .map(normalize_identifier)?;
+                .map(normalize_discriminator_text)?;
             Some(DiscriminatorCompatibilityKey::EqualityBoundary { right })
         }
         RequiredDiscriminator::ReturnValue { .. } => exact_key("return_value", fact),
@@ -542,8 +542,8 @@ fn exact_key(kind: &'static str, value: &str) -> Option<DiscriminatorCompatibili
 fn comparison_parts(value: &str) -> Option<(String, String, String)> {
     for operator in [" >= ", " <= ", " == ", " != ", " > ", " < "] {
         if let Some((left, right)) = value.split_once(operator) {
-            let left = normalize_identifier(left);
-            let right = normalize_identifier(right);
+            let left = normalize_discriminator_text(left);
+            let right = normalize_discriminator_text(right);
             if !left.is_empty() && !right.is_empty() {
                 return Some((left, operator.trim().to_string(), right));
             }
@@ -553,11 +553,9 @@ fn comparison_parts(value: &str) -> Option<(String, String, String)> {
 }
 
 fn normalize_discriminator_text(value: &str) -> String {
-    value.trim().to_ascii_lowercase()
-}
-
-fn normalize_identifier(value: &str) -> String {
-    value.trim().to_ascii_lowercase()
+    // Source identities are case-sensitive, including literal contents.
+    // Only surrounding formatting whitespace may be discarded.
+    value.trim().to_string()
 }
 
 fn direct_owner_related_test(evidence: &TestGripEvidence) -> Option<&RelatedTestGrip> {
@@ -676,25 +674,23 @@ fn has_external_language_related_test(entry: &ClassifiedSeam) -> bool {
     })
 }
 
+// One shared inventory, not a private list: #4094 routed `.mts`/`.cts` into the
+// TypeScript adapter, so a modern related test is cross-language evidence here
+// exactly like a `.ts` one. The TS/JS family consumes the routed extension
+// authority from `analysis::language::router`, the same owner the router itself
+// and the agent packet projection read; the remaining bridge languages keep
+// their historical lowercase fold here. See
+// `tests::external_language_test_extensions_cover_bridge_language_families` and
+// `tests::modern_ts_related_tests_keep_the_repair_packet_fail_closed`.
 fn is_external_language_extension(extension: &str) -> bool {
-    matches!(
-        extension.to_ascii_lowercase().as_str(),
-        "ts" | "tsx"
-            | "js"
-            | "jsx"
-            | "mjs"
-            | "cjs"
-            | "py"
-            | "rb"
-            | "java"
-            | "c"
-            | "cc"
-            | "cpp"
-            | "cxx"
-            | "swift"
-            | "kt"
-            | "kts"
-    )
+    let extension = extension.to_ascii_lowercase();
+    // #4116: the TS/JS family consumes the shared extension authority; the
+    // remaining bridge languages keep their historical lowercase fold.
+    crate::analysis::is_ts_js_source_extension(&extension)
+        || matches!(
+            extension.as_str(),
+            "py" | "rb" | "java" | "c" | "cc" | "cpp" | "cxx" | "swift" | "kt" | "kts"
+        )
 }
 
 fn cross_language_surface_hint(entry: &ClassifiedSeam) -> bool {
@@ -777,6 +773,8 @@ fn text_has_cross_language_marker(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    mod case_identity;
+
     use super::{
         ClassifiedSeam, RepairPacketIneligibility, cross_language_oracle_visibility_unresolved,
         discriminator_fact_matches, is_safe_for_repair_packet, repair_packet_eligibility,
@@ -963,11 +961,16 @@ mod tests {
         Ok(())
     }
 
+    /// Every routed TypeScript/JavaScript extension, including the modern
+    /// `.mts`/`.cts` suffixes from #4094, must stay visible to the
+    /// fail-closed cross-language gate. `.mts`/`.cts` are the discriminating
+    /// rows: without the shared external-language authority this seam looks
+    /// repair-ready while its only related test is a TypeScript observer.
     #[test]
     fn external_language_test_extensions_cover_bridge_language_families() -> Result<(), String> {
         for extension in [
-            "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "rb", "java", "c", "cc", "cpp", "cxx",
-            "swift", "kt", "kts",
+            "ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "py", "rb", "java", "c", "cc",
+            "cpp", "cxx", "swift", "kt", "kts",
         ] {
             let mut related_test = external_related_test();
             related_test.file = PathBuf::from(format!("tests/bridge.{extension}"));
@@ -983,7 +986,9 @@ mod tests {
             );
         }
 
-        for extension in ["rs", "txt"] {
+        // Near-miss suffixes stay unknown: admitting routed extensions must not
+        // become broad suffix matching, or an unrelated file would block repair.
+        for extension in ["rs", "txt", "mt", "mjsx", "ctsx"] {
             let mut related_test = external_related_test();
             related_test.file = PathBuf::from(format!("tests/bridge.{extension}"));
             let entry = classified_with(
@@ -998,6 +1003,38 @@ mod tests {
             );
         }
 
+        Ok(())
+    }
+
+    /// End-to-end control for the modern suffixes: a `.mts` related test must
+    /// produce the same fail-closed ineligibility a `.ts` one does, with the
+    /// named reason. #4116/#4120 routed `.mts`/`.cts` through the shared
+    /// extension authority; before that the entry reported repair-ready, which
+    /// is the fail-open this pin guards. `external_language_test_extensions_
+    /// cover_bridge_language_families` pins the extension list itself, so this
+    /// test is the one that fails if the gate stops consulting it.
+    #[test]
+    fn modern_ts_related_tests_keep_the_repair_packet_fail_closed() -> Result<(), String> {
+        for extension in ["ts", "mts", "cts", "tsx"] {
+            let mut related_test = external_related_test();
+            related_test.file = PathBuf::from(format!("tests/bridge.{extension}"));
+            let entry = classified_with(
+                boundary_seam(),
+                SeamGripClass::WeaklyGripped,
+                vec![related_test],
+            );
+
+            let eligibility = repair_packet_eligibility(&entry);
+            assert_eq!(
+                eligibility.ineligibility,
+                Some(RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved),
+                ".{extension} related test must block the packet with the cross-language reason"
+            );
+            assert!(
+                !is_safe_for_repair_packet(&entry),
+                ".{extension} related test must not be repair-ready"
+            );
+        }
         Ok(())
     }
 

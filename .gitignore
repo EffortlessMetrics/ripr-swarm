@@ -26,3 +26,5 @@ crates/ripr/examples/**/target/
 # Test-run residue: ripr tests spawn the binary with cwd=crates/ripr,
 # which writes target/ under that directory (see #2157).
 crates/ripr/target/
+# Editor test/build artifacts (mirrors the root target/ ignore).
+editors/vscode/target/

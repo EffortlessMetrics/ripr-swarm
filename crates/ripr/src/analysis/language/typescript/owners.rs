@@ -3,16 +3,24 @@
 use super::*;
 
 pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> {
-    let allocator = Allocator::default();
-    let ret = Parser::new(&allocator, source, source_type_for(file)).parse();
-    if !ret.errors.is_empty() {
+    // Parse (and walk) on the dedicated large-stack worker behind the
+    // nesting budget (#4101): a refused source or a failed worker yields no
+    // owners, exactly like the previous parse-error path, while the oxc
+    // recursion no longer runs on the caller's small stack.
+    let Ok(owners) = parse_on_worker(file, source, |file, source, allocator| {
+        let ret = Parser::new(allocator, source, source_type_for(file)).parse();
+        if !ret.errors.is_empty() {
+            return Vec::new();
+        }
+        let imports = extract_imports_from_statements(&ret.program.body);
+        let mut owners = Vec::new();
+        for stmt in &ret.program.body {
+            owners.extend(owners_from_statement(stmt, file, source, &imports));
+        }
+        owners
+    }) else {
         return Vec::new();
-    }
-    let imports = extract_imports_from_statements(&ret.program.body);
-    let mut owners = Vec::new();
-    for stmt in &ret.program.body {
-        owners.extend(owners_from_statement(stmt, file, source, &imports));
-    }
+    };
     owners
 }
 
@@ -109,7 +117,7 @@ pub(crate) fn owners_from_default_export(
     source: &str,
     imports: &[TypeScriptImport],
 ) -> Vec<TypeScriptOwner> {
-    match decl {
+    let mut owners = match decl {
         ExportDefaultDeclarationKind::FunctionDeclaration(func) => {
             let name = func
                 .id
@@ -139,7 +147,29 @@ pub(crate) fn owners_from_default_export(
             imports,
         )],
         _ => Vec::new(),
+    };
+    // The relation gate may only credit a default import
+    // (`import local from './owner'`) against an owner that IS the module's
+    // default export (#4103 under-credit). Function and arrow owners carved
+    // from `export default <declaration>` are that export. A default
+    // EXPORTED CLASS has no class-level owner entry — `owners_from_class`
+    // yields only its methods — so those methods carry the separate
+    // `class_default_export` marker (constructor matching, #4104-B) while
+    // `exported_as_default` stays false: a method is not itself the
+    // module's default export (review #4138).
+    match decl {
+        ExportDefaultDeclarationKind::ClassDeclaration(_) => {
+            for owner in &mut owners {
+                owner.class_default_export = true;
+            }
+        }
+        _ => {
+            for owner in &mut owners {
+                owner.exported_as_default = true;
+            }
+        }
     }
+    owners
 }
 
 pub(crate) fn owners_from_variable_declaration(
@@ -189,9 +219,38 @@ pub(crate) fn owner_from_variable_declarator(
             owner_kind: OwnerKind::ModuleFunction,
             class_name: None,
             decorated: false,
+            exported_as_default: false,
             imports: imports.to_vec(),
+            method_kind: TypeScriptMethodKind::Ordinary,
+            class_default_export: false,
+            // Non-function initializers carry no resolvable signature facts:
+            // no fixed positional signature the boundary witness could
+            // arity-check against.
+            params: Vec::new(),
+            arity: None,
+            source_text: None,
         }),
     }
+}
+
+/// Parameter facts for the owner signature (issue #4102): `(Some(n), names)`
+/// when every parameter is a plain binding identifier and there is no rest
+/// parameter; `(None, [])` otherwise (destructuring, rest, or empty list is
+/// still resolvable — a zero-parameter function is `Some(0)`).
+fn parameter_facts(params: &FormalParameters<'_>) -> (Option<usize>, Vec<String>) {
+    if params.rest.is_some() {
+        return (None, Vec::new());
+    }
+    let mut names = Vec::with_capacity(params.items.len());
+    for item in &params.items {
+        match binding_identifier_name(&item.pattern) {
+            Some(name) => names.push(name.to_string()),
+            // Destructured / pattern parameters cannot be mapped to an
+            // argument position — fail closed to unknown arity.
+            None => return (None, Vec::new()),
+        }
+    }
+    (Some(names.len()), names)
 }
 
 pub(crate) fn owner_from_function(
@@ -203,6 +262,7 @@ pub(crate) fn owner_from_function(
     decorated: bool,
     imports: &[TypeScriptImport],
 ) -> TypeScriptOwner {
+    let (arity, params) = parameter_facts(&func.params);
     TypeScriptOwner {
         name: name.to_string(),
         file: file.to_path_buf(),
@@ -211,7 +271,13 @@ pub(crate) fn owner_from_function(
         owner_kind,
         class_name: None,
         decorated,
+        exported_as_default: false,
         imports: imports.to_vec(),
+        method_kind: TypeScriptMethodKind::Ordinary,
+        class_default_export: false,
+        params,
+        arity,
+        source_text: Some(source[func.span.start as usize..func.span.end as usize].to_string()),
     }
 }
 
@@ -224,6 +290,7 @@ pub(crate) fn owner_from_arrow(
     decorated: bool,
     imports: &[TypeScriptImport],
 ) -> TypeScriptOwner {
+    let (arity, params) = parameter_facts(&arrow.params);
     TypeScriptOwner {
         name: name.to_string(),
         file: file.to_path_buf(),
@@ -232,7 +299,13 @@ pub(crate) fn owner_from_arrow(
         owner_kind: arrow_owner_kind(file, source, name, arrow.span.start, arrow.span.end),
         class_name: None,
         decorated,
+        exported_as_default: false,
         imports: imports.to_vec(),
+        method_kind: TypeScriptMethodKind::Ordinary,
+        class_default_export: false,
+        params,
+        arity,
+        source_text: Some(source[arrow.span.start as usize..arrow.span.end as usize].to_string()),
     }
 }
 
@@ -277,6 +350,7 @@ pub(crate) fn owner_from_method(
         return None;
     }
     let name = property_key_name(&method.key)?;
+    let (arity, params) = parameter_facts(&method.value.params);
     Some(TypeScriptOwner {
         name,
         file: file.to_path_buf(),
@@ -289,7 +363,18 @@ pub(crate) fn owner_from_method(
         },
         class_name: class_name.map(str::to_string),
         decorated: class_decorated || !method.decorators.is_empty(),
+        exported_as_default: false,
         imports: imports.to_vec(),
+        method_kind: match method.kind {
+            oxc_ast::ast::MethodDefinitionKind::Constructor => TypeScriptMethodKind::Constructor,
+            oxc_ast::ast::MethodDefinitionKind::Get => TypeScriptMethodKind::Getter,
+            oxc_ast::ast::MethodDefinitionKind::Set => TypeScriptMethodKind::Setter,
+            oxc_ast::ast::MethodDefinitionKind::Method => TypeScriptMethodKind::Ordinary,
+        },
+        class_default_export: false,
+        params,
+        arity,
+        source_text: Some(source[method.span.start as usize..method.span.end as usize].to_string()),
     })
 }
 
@@ -578,4 +663,185 @@ pub(crate) fn module_export_name_text(name: &ModuleExportName<'_>) -> Option<Str
         ModuleExportName::IdentifierReference(ident) => Some(ident.name.as_str().to_string()),
         ModuleExportName::StringLiteral(literal) => Some(literal.value.to_string()),
     }
+}
+
+// ── Owner-extraction gap detection (#4104-A) ─────────────────────────────────
+
+/// Detect the first changed owner-shaped construct the syntax-first owner
+/// extractor does not index (#4104-A).
+///
+/// Real producer for the `typescript_owner_extraction_partial` named
+/// limitation (classification-neutral additive disclosure, mirroring
+/// `typescript_test_extraction_partial`): the owner universe still contains
+/// exactly what `extract_owners` extracts; this function only reports that
+/// it is PARTIAL for the changed lines, so a silent zero-finding result
+/// (`analysis_complete: true`, no findings, no other limitations) is known
+/// to mean "the changed line sits in an unsupported owner shape", not "the
+/// changed behavior has no owning seam".
+///
+/// Detected shapes (bounded preview slice — extracting these shapes is a
+/// separate backlog item; this lane only discloses them):
+///
+/// - `class C { f = (a) => {...} }` — arrow-function class fields.
+/// - `class C { #adjust(a) {...} }` (also string/numeric/computed keys) —
+///   class methods whose key the extractor cannot name.
+/// - `class C { static {...} }` — class static blocks.
+/// - `class C { accessor level = 1 }` — TC39 auto-accessors.
+/// - `enum PlanRate { Basic = 9 }` — TS enum member value changes.
+/// - `namespace Pricing { export function tax ... }` — TS module/namespace
+///   declarations.
+///
+/// Returns `None` when the file fails to parse (parse-error disclosure owns
+/// that case), when no changed line is supplied, or when every changed line
+/// falls inside supported owner shapes (the negative-control contract).
+pub(crate) fn detect_owner_extraction_gap(
+    file: &Path,
+    source: &str,
+    changed_lines: &[usize],
+) -> Option<TypeScriptOwnerExtractionGap> {
+    if changed_lines.is_empty() {
+        return None;
+    }
+    let changed: std::collections::HashSet<usize> = changed_lines.iter().copied().collect();
+    let Ok(gap) = parse_on_worker(file, source, move |file, source, allocator| {
+        let ret = Parser::new(allocator, source, source_type_for(file)).parse();
+        if !ret.errors.is_empty() {
+            // Parse-error disclosure owns this case; do not double-report.
+            return None;
+        }
+        find_owner_extraction_gap(&ret.program.body, source, &changed)
+    }) else {
+        return None;
+    };
+    gap.map(|(sample_line, shape, span)| TypeScriptOwnerExtractionGap {
+        file: file.to_path_buf(),
+        sample_line,
+        shape,
+        snippet: snippet_for_span(source, span.0, span.1),
+    })
+}
+
+/// Walk top-level statements for unsupported owner shapes intersecting a
+/// changed line. Returns `(sample_line, shape, (span_start, span_end))`.
+fn find_owner_extraction_gap(
+    statements: &oxc_allocator::Vec<'_, Statement<'_>>,
+    source: &str,
+    changed: &std::collections::HashSet<usize>,
+) -> Option<(usize, &'static str, (usize, usize))> {
+    for stmt in statements {
+        match stmt {
+            Statement::TSEnumDeclaration(decl) => {
+                if let Some(hit) = span_hits_changed_line(decl.span, source, changed) {
+                    return Some((
+                        hit,
+                        "enum declaration",
+                        (decl.span.start as usize, decl.span.end as usize),
+                    ));
+                }
+            }
+            Statement::TSModuleDeclaration(decl) => {
+                if let Some(hit) = span_hits_changed_line(decl.span, source, changed) {
+                    return Some((
+                        hit,
+                        "module/namespace declaration",
+                        (decl.span.start as usize, decl.span.end as usize),
+                    ));
+                }
+            }
+            Statement::ClassDeclaration(class) => {
+                if let Some(gap) = unsupported_class_element_gap(class, source, changed) {
+                    return Some(gap);
+                }
+            }
+            Statement::ExportNamedDeclaration(export) => match export.declaration.as_ref() {
+                Some(Declaration::TSEnumDeclaration(decl)) => {
+                    if let Some(hit) = span_hits_changed_line(decl.span, source, changed) {
+                        return Some((
+                            hit,
+                            "enum declaration",
+                            (decl.span.start as usize, decl.span.end as usize),
+                        ));
+                    }
+                }
+                Some(Declaration::TSModuleDeclaration(decl)) => {
+                    if let Some(hit) = span_hits_changed_line(decl.span, source, changed) {
+                        return Some((
+                            hit,
+                            "module/namespace declaration",
+                            (decl.span.start as usize, decl.span.end as usize),
+                        ));
+                    }
+                }
+                Some(Declaration::ClassDeclaration(class)) => {
+                    if let Some(gap) = unsupported_class_element_gap(class, source, changed) {
+                        return Some(gap);
+                    }
+                }
+                _ => {}
+            },
+            Statement::ExportDefaultDeclaration(export) => {
+                if let ExportDefaultDeclarationKind::ClassDeclaration(class) = &export.declaration
+                    && let Some(gap) = unsupported_class_element_gap(class, source, changed)
+                {
+                    return Some(gap);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Scan class body elements for the unsupported member shapes the extractor
+/// skips, returning the first one that intersects a changed line.
+fn unsupported_class_element_gap(
+    class: &Class<'_>,
+    source: &str,
+    changed: &std::collections::HashSet<usize>,
+) -> Option<(usize, &'static str, (usize, usize))> {
+    for element in &class.body.body {
+        let (shape, span) = match element {
+            ClassElement::PropertyDefinition(prop) => {
+                // Only function-valued fields are owner-shaped; a plain data
+                // field change is not an extracted-owner regression.
+                let is_function_init = matches!(
+                    prop.value.as_ref(),
+                    Some(Expression::ArrowFunctionExpression(_))
+                        | Some(Expression::FunctionExpression(_))
+                );
+                if !is_function_init {
+                    continue;
+                }
+                ("arrow-function class field", prop.span)
+            }
+            ClassElement::StaticBlock(block) => ("class static block", block.span),
+            ClassElement::AccessorProperty(accessor) => ("accessor auto-accessor", accessor.span),
+            ClassElement::MethodDefinition(method) => {
+                // `#private`, string-literal, numeric, and computed keys are
+                // all skipped by `property_key_name`; changed lines inside
+                // them are silent today (#4104-A F2b).
+                if property_key_name(&method.key).is_some() {
+                    continue;
+                }
+                ("class method with unsupported key", method.span)
+            }
+            _ => continue,
+        };
+        if let Some(hit) = span_hits_changed_line(span, source, changed) {
+            return Some((hit, shape, (span.start as usize, span.end as usize)));
+        }
+    }
+    None
+}
+
+/// First changed line inside `span`'s line range, if any.
+fn span_hits_changed_line(
+    span: impl GetSpan,
+    source: &str,
+    changed: &std::collections::HashSet<usize>,
+) -> Option<usize> {
+    let span = span.span();
+    let start_line = line_for_offset(source, span.start as usize);
+    let end_line = line_for_offset(source, span.end as usize);
+    (start_line..=end_line).find(|line| changed.contains(line))
 }

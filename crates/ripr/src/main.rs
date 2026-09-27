@@ -2,17 +2,19 @@
 
 mod startup;
 
+use ripr::cli::CommandError;
+
 fn main() {
     run_startup(startup::run);
 }
 
-fn run_startup(startup_run: impl FnOnce() -> Result<(), String>) {
+fn run_startup(startup_run: impl FnOnce() -> Result<(), CommandError>) {
     install_panic_hook();
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(startup_run)) {
         Ok(Ok(())) => {}
         Ok(Err(err)) => {
             report_failure(&err);
-            std::process::exit(exit_code());
+            std::process::exit(err.exit_code());
         }
         Err(_) => std::process::exit(exit_code()),
     }
@@ -21,6 +23,8 @@ fn run_startup(startup_run: impl FnOnce() -> Result<(), String>) {
 /// Install a panic hook so an unexpected panic produces a recognizable
 /// `ripr:` error message. The top-level startup boundary maps a main-thread
 /// panic to code 2; worker panics remain available to their joiners (#2660).
+/// A typed command error keeps its own contract instead: failures exit 2 and
+/// blocking decisions / typed refusals exit 3 (docs/EXIT_CODES.md).
 fn install_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
         let payload = info.payload();
@@ -54,10 +58,14 @@ fn format_panic_report(message: &str, location: Option<(&str, u32)>) -> String {
     format!("ripr: internal error (this is a bug): {message}{location}")
 }
 
-fn report_failure(err: &str) {
+fn report_failure(err: &CommandError) {
     eprintln!("ripr: {err}");
 }
 
+/// The panic-boundary exit code. A main-thread panic is an internal error,
+/// indistinguishable operationally from any other "could not complete"
+/// condition, so it stays on code 2. Blocking decisions and typed refusals
+/// take the dedicated code 3 through `CommandError::exit_code` instead.
 const fn exit_code() -> i32 {
     2
 }

@@ -78,6 +78,15 @@ fn generated_workflow_batches_compact_review_comments() -> Result<(), Box<dyn Er
 fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box<dyn Error>> {
     for tool in ["bash", "git", "jq"] {
         if !replay::tool_available(tool) {
+            // A hosted runner always has these tools, so a missing one there
+            // is a broken runner, not a reason to skip the strongest oracle
+            // for the generated workflow.
+            if std::env::var_os("GITHUB_ACTIONS").is_some() {
+                return Err(format!(
+                    "`{tool}` is not on PATH under GitHub Actions; the generated-workflow replay cannot be skipped in CI"
+                )
+                .into());
+            }
             eprintln!(
                 "SKIPPED generated_workflow_replay_prints_only_runnable_next_steps: `{tool}` is not on PATH; the generated workflow needs it"
             );
@@ -184,6 +193,62 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
         !summary.contains("Safe next action command: `none`"),
         "summary still says there is no safe next action"
     );
+    // Each full report is collapsed under its at-a-glance lines: every
+    // `Full report` opener has its own closer, and no report's top-level
+    // heading (the workflow's own headings are `##` and deeper) is visible
+    // outside a collapsed block.
+    let openers = summary.matches("<details><summary>Full report: ").count();
+    assert!(openers > 0, "summary collapses no full report:\n{summary}");
+    assert_eq!(
+        openers,
+        summary.matches("</details>").count(),
+        "every collapsed full report must close"
+    );
+    let mut collapsed = false;
+    for line in summary.lines() {
+        if line.starts_with("<details><summary>Full report: ") {
+            collapsed = true;
+        } else if line == "</details>" {
+            collapsed = false;
+        } else if !collapsed {
+            assert!(
+                !line.starts_with("# "),
+                "a full report's heading is visible outside its collapsed block: {line}"
+            );
+        }
+    }
+
+    // The annotation GitHub places on the changed line carries the same
+    // repair start, and nothing that points into this runner's checkout
+    // (F60-7): the reader is on another machine.
+    let annotations = runs
+        .iter()
+        .find(|run| run.name == "Emit RIPR PR guidance annotations")
+        .ok_or("the annotation step did not run")?;
+    let warnings = annotations
+        .output
+        .lines()
+        .filter(|line| line.starts_with("::warning "))
+        .collect::<Vec<_>>();
+    assert!(
+        !warnings.is_empty(),
+        "no annotation was emitted:\n{}",
+        annotations.output
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|line| line.ends_with(&format!(" Start the repair: {repair_command}"))),
+        "no annotation names the repair start:\n{}",
+        warnings.join("\n")
+    );
+    let checkout = root.display().to_string();
+    for line in &warnings {
+        assert!(
+            !line.contains(&checkout) && !line.contains("agent brief"),
+            "annotation points into the runner checkout or at the brief: {line}"
+        );
+    }
 
     // Every at-a-glance block whose artifact carries the same repair start
     // leads with it and its after phase (#3906, F60-14). Precondition: each
@@ -446,7 +511,9 @@ fn far_above_threshold_discounts() {
     }
 
     /// A one-crate repo whose PR moves `>` to `>=` on a named threshold that
-    /// the tests never exercise at the boundary: a repair-ready gap.
+    /// the tests never exercise at the boundary: a repair-ready gap. The PR
+    /// targets `trunk`, not `main`, so a step that falls back to a
+    /// hardcoded `origin/main` fails here instead of passing by accident.
     pub(super) fn write_pr_fixture(root: &Path) -> TestResult<()> {
         fs::create_dir_all(root.join("src"))?;
         fs::create_dir_all(root.join("tests"))?;
@@ -456,10 +523,10 @@ fn far_above_threshold_discounts() {
         )?;
         fs::write(root.join("src/lib.rs"), LIB_BASE)?;
         fs::write(root.join("tests/pricing.rs"), TESTS)?;
-        git(root, &["init", "-q", "-b", "main"])?;
+        git(root, &["init", "-q", "-b", "trunk"])?;
         git(root, &["add", "-A"])?;
         git(root, &["commit", "-q", "-m", "initial pricing crate"])?;
-        git(root, &["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+        git(root, &["update-ref", "refs/remotes/origin/trunk", "HEAD"])?;
         git(root, &["checkout", "-q", "-b", "feature"])?;
         fs::write(
             root.join("src/lib.rs"),
@@ -622,7 +689,10 @@ fn far_above_threshold_discounts() {
 
     fn github_expression(expression: &str, head_sha: &str) -> Option<String> {
         let value = match expression {
-            "github.base_ref" => "main",
+            "github.base_ref" => "trunk",
+            // A pull_request event carries base_ref, so the default-branch
+            // fallback never applies in this replay.
+            "github.base_ref || github.event.repository.default_branch" => "trunk",
             "github.event_name" => "pull_request",
             "github.repository" => "ripr-test/pricing",
             "github.event.number" | "github.event.pull_request.number" => "1",
@@ -742,7 +812,7 @@ fn far_above_threshold_discounts() {
             ),
             ("GITHUB_EVENT_PATH".to_string(), event.display().to_string()),
             ("GITHUB_EVENT_NAME".to_string(), "pull_request".to_string()),
-            ("GITHUB_BASE_REF".to_string(), "main".to_string()),
+            ("GITHUB_BASE_REF".to_string(), "trunk".to_string()),
             ("GITHUB_HEAD_REF".to_string(), "feature".to_string()),
             (
                 "GITHUB_REPOSITORY".to_string(),
@@ -929,6 +999,8 @@ fn generated_capture_step_uses_pinned_diff_contract() -> Result<(), Box<dyn Erro
         "--no-ext-diff",
         "--no-textconv",
         "--no-color",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
         "--unified=3",
         "--inter-hunk-context=0",
         "core.quotePath",
@@ -1045,6 +1117,8 @@ fn pinned_capture_flags_retain_edit_hidden_by_textconv() -> Result<(), Box<dyn E
             "--no-ext-diff",
             "--no-textconv",
             "--no-color",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
             "--unified=3",
             "--inter-hunk-context=0",
             range,
@@ -1147,6 +1221,16 @@ fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
     let base_sha = fixture_git_output(&repo, &["rev-parse", "--verify", "main^{commit}"])?;
     let head_sha = fixture_git_output(&repo, &["rev-parse", "--verify", "HEAD^{commit}"])?;
 
+    // Make the ambient repository hostile to the parser's expected side
+    // prefixes. The unpinned control proves the fixture actually changes Git's
+    // presentation; the generated command must override it back to a/ and b/.
+    fixture_git_ok(&repo, &["config", "--local", "diff.noprefix", "true"])?;
+    let unpinned = fixture_git_output(&repo, &["diff", "main...HEAD"])?;
+    assert!(
+        unpinned.contains("diff --git probe.txt probe.txt"),
+        "diff.noprefix control must remove side prefixes; got:\n{unpinned}"
+    );
+
     // Positive: the step resolves main, captures the edit, and retains a
     // receipt whose identities and byte count match the run.
     let script = body
@@ -1159,9 +1243,14 @@ fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
         String::from_utf8_lossy(&run.stderr)
     );
     let patch = fs::read(repo.join("target/ripr/reports/pr.diff"))?;
+    let patch_text = String::from_utf8_lossy(&patch);
     assert!(
-        String::from_utf8_lossy(&patch).contains("after"),
+        patch_text.contains("after"),
         "captured patch must contain the feature-branch edit"
+    );
+    assert!(
+        patch_text.contains("diff --git a/probe.txt b/probe.txt"),
+        "generated capture must restore canonical side prefixes despite diff.noprefix; got:\n{patch_text}"
     );
     let receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
         repo.join("target/ripr/reports/pr-diff.receipt.json"),
@@ -1270,6 +1359,235 @@ fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// #4089: the generated annotation step must keep path and message bytes.
+/// The old `@tsv` | `read` loop stored jq's transport escapes, so a later
+/// GitHub workflow-command decode could not recover a backslash, tab, or
+/// line break.
+#[cfg(unix)]
+#[test]
+fn generated_annotation_script_preserves_path_and_message_bytes() -> Result<(), Box<dyn Error>> {
+    let tools = run_sh(
+        "command -v bash >/dev/null && command -v jq >/dev/null",
+        std::env::temp_dir().as_path(),
+    )?;
+    if !tools.status.success() {
+        eprintln!(
+            "skipping generated_annotation_script_preserves_path_and_message_bytes: bash or jq missing"
+        );
+        return Ok(());
+    }
+
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-annotation-bytes-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root)?;
+    let output = run_ripr_init(&root)?;
+    if !output.status.success() {
+        let _ = fs::remove_dir_all(&root);
+        return Err(format!(
+            "ripr init failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    let workflow = fs::read_to_string(root.join(".github/workflows/ripr.yml"))?;
+    let script = annotation_run_script(&workflow)?;
+
+    let path_backslash = "src\\app.py";
+    let path_newline = "src/a\nb.py";
+    let reason_mixed = "line one\nline\ttwo\\nkept";
+    let repair = "cargo test -- --exact";
+    fs::create_dir_all(root.join("target/ripr/review"))?;
+    fs::write(
+        root.join("target/ripr/review/comments.json"),
+        format!(
+            r#"{{
+  "comments": [
+    {{
+      "placement": {{"path": {path}, "line": 12}},
+      "reason": {reason},
+      "llm_guidance": {{"repair_command": {repair_json}}}
+    }},
+    {{
+      "placement": {{"path": {backslash}, "line": 4}},
+      "reason": "plain",
+      "llm_guidance": {{"repair_command": ""}}
+    }},
+    {{
+      "placement": {{"path": {newline}, "line": 7}},
+      "reason": {mixed},
+      "llm_guidance": {{"repair_command": "null"}}
+    }},
+    {{
+      "placement": {{"path": "src/absent.py", "line": 1}},
+      "reason": "no repair field",
+      "llm_guidance": {{"repair_command": null}}
+    }}
+  ]
+}}"#,
+            path = json_string("src/app.py"),
+            reason = json_string("Result::Err, 100%"),
+            repair_json = json_string(repair),
+            backslash = json_string(path_backslash),
+            newline = json_string(path_newline),
+            mixed = json_string(reason_mixed),
+        ),
+    )?;
+
+    let ran = run_sh(&script, &root)?;
+    let stdout = String::from_utf8_lossy(&ran.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&ran.stderr).to_string();
+    if !ran.status.success() {
+        let _ = fs::remove_dir_all(&root);
+        return Err(format!("annotation script failed\nstderr: {stderr}\nstdout: {stdout}").into());
+    }
+    let mut warnings = Vec::new();
+    for line in stdout.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        warnings.push(parse_warning(line.trim())?);
+    }
+    let _ = fs::remove_dir_all(&root);
+
+    let ordinary = warnings
+        .iter()
+        .find(|row| row.0 == "src/app.py")
+        .ok_or("missing ordinary annotation")?;
+    assert_eq!(ordinary.1, "12");
+    assert_eq!(ordinary.2, "RIPR targeted test guidance");
+    assert_eq!(
+        ordinary.3,
+        format!("Result::Err, 100% Start the repair: {repair}")
+    );
+
+    let slashed = warnings
+        .iter()
+        .find(|row| row.0 == path_backslash)
+        .ok_or("backslash path was rewritten")?;
+    assert_eq!(slashed.1, "4");
+    assert_eq!(slashed.3, "plain");
+
+    let broken = warnings
+        .iter()
+        .find(|row| row.0 == path_newline)
+        .ok_or("newline path was rewritten")?;
+    assert_eq!(broken.1, "7");
+    assert_eq!(broken.3, reason_mixed);
+
+    let absent = warnings
+        .iter()
+        .find(|row| row.0 == "src/absent.py")
+        .ok_or("null repair command dropped the row")?;
+    assert_eq!(absent.3, "no repair field");
+    assert!(!absent.3.contains("Start the repair"));
+    Ok(())
+}
+
+/// Unix-only like its callers: the shell-backed tests that use this
+/// helper are `#[cfg(unix)]`, and an ungated helper is dead code (and a
+/// `-D warnings` failure) on Windows builds.
+#[cfg(unix)]
+fn annotation_run_script(workflow: &str) -> Result<String, String> {
+    let marker = "- name: Emit RIPR PR guidance annotations";
+    let start = workflow.find(marker).ok_or("missing annotation step")?;
+    let rest = &workflow[start..];
+    let run_marker = "\n        run: |\n";
+    let run_at = rest.find(run_marker).ok_or("missing annotation run")?;
+    let body = &rest[run_at + run_marker.len()..];
+    let end = body
+        .find("\n      - name:")
+        .ok_or("annotation step does not end")?;
+    let script = body[..end].trim_end();
+    if !script.contains("def escape_data:") || script.contains("@tsv") {
+        return Err("annotation script is not the jq encoder".to_string());
+    }
+    Ok(script.to_string())
+}
+
+/// Unix-only like its callers: the shell-backed tests that use this
+/// helper are `#[cfg(unix)]`, and an ungated helper is dead code (and a
+/// `-D warnings` failure) on Windows builds.
+#[cfg(unix)]
+fn json_string(value: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Unix-only like its callers: the shell-backed tests that use this
+/// helper are `#[cfg(unix)]`, and an ungated helper is dead code (and a
+/// `-D warnings` failure) on Windows builds.
+#[cfg(unix)]
+fn decode_github(value: &str) -> Result<String, String> {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).unwrap_or("");
+            if let Ok(byte) = u8::from_str_radix(hex, 16)
+                && matches!(byte, b'%' | b'\r' | b'\n' | b':' | b',')
+            {
+                out.push(byte);
+                index += 3;
+                continue;
+            }
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8(out).map_err(|err| format!("annotation is not utf-8: {err}"))
+}
+
+/// Unix-only like its callers: the shell-backed tests that use this
+/// helper are `#[cfg(unix)]`, and an ungated helper is dead code (and a
+/// `-D warnings` failure) on Windows builds.
+#[cfg(unix)]
+fn parse_warning(line: &str) -> Result<(String, String, String, String), String> {
+    let rest = line
+        .strip_prefix("::warning ")
+        .ok_or_else(|| format!("not a warning: {line}"))?;
+    let (props, message) = rest
+        .split_once("::")
+        .ok_or_else(|| format!("no message separator: {line}"))?;
+    let mut file = None;
+    let mut line_no = None;
+    let mut title = None;
+    for part in props.split(',') {
+        let (key, value) = part
+            .split_once('=')
+            .ok_or_else(|| format!("bad property: {part}"))?;
+        let decoded = decode_github(value)?;
+        match key {
+            "file" => file = Some(decoded),
+            "line" => line_no = Some(decoded),
+            "title" => title = Some(decoded),
+            other => return Err(format!("unexpected property {other}")),
+        }
+    }
+    Ok((
+        file.ok_or("missing file")?,
+        line_no.ok_or("missing line")?,
+        title.ok_or("missing title")?,
+        decode_github(message)?,
+    ))
+}
+
 /// One spawn site for the built-binary `ripr init` invocations below
 /// (process-policy bound).
 fn run_ripr_init(root: &std::path::Path) -> Result<std::process::Output, Box<dyn Error>> {
@@ -1283,8 +1601,8 @@ fn run_ripr_init(root: &std::path::Path) -> Result<std::process::Output, Box<dyn
 /// One spawn site for executing extracted capture-step shell (process-policy
 /// bound). GitHub Actions runs a `run:` step without `shell:` as `bash -e`
 /// on ubuntu-latest, so the helper mirrors that invocation instead of a
-/// bare `sh -c`, which would not enable errexit. Unix-only like its single
-/// caller, so Windows builds never see a dead helper.
+/// bare `sh -c`, which would not enable errexit. Unix-only, so Windows
+/// builds never see a dead helper.
 #[cfg(unix)]
 fn run_sh(script: &str, cwd: &std::path::Path) -> Result<std::process::Output, Box<dyn Error>> {
     Ok(Command::new("bash")

@@ -1883,10 +1883,24 @@ fn path_matches_diagnostic_language(data: &Value, path: &str) -> bool {
     match string_at(data, &["language"]) {
         Some("rust") => path.ends_with(".rs"),
         Some("python") => path.ends_with(".py"),
-        Some("typescript") => path.ends_with(".ts") || path.ends_with(".tsx"),
-        Some("javascript") => path.ends_with(".js") || path.ends_with(".jsx"),
+        Some("typescript") => {
+            path_matches_ts_js_language(path, crate::analysis::TsJsSourceKind::TypeScript)
+        }
+        Some("javascript") => {
+            path_matches_ts_js_language(path, crate::analysis::TsJsSourceKind::JavaScript)
+        }
         _ => false,
     }
+}
+
+// #4116: diagnostics and related-test paths on .mts/.cts/.mjs/.cjs must
+// match their producer-owned language; the check consumes the shared
+// extension authority instead of a private `.ts`/`.tsx` suffix list.
+fn path_matches_ts_js_language(path: &str, kind: crate::analysis::TsJsSourceKind) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| crate::analysis::ts_js_source_kind(extension) == Some(kind))
 }
 
 fn static_limit_note_target(params: &CodeActionParams, diagnostic: &Diagnostic) -> Option<LSPAny> {
@@ -2311,6 +2325,41 @@ mod tests {
     use tower_lsp_server::ls_types::{
         CodeActionContext, DiagnosticSeverity, Position, Range, TextDocumentIdentifier, Uri,
     };
+
+    #[test]
+    fn path_matches_diagnostic_language_covers_modern_ts_js_extensions() {
+        // #4116: diagnostic↔path language matching consumes the shared
+        // extension authority, so .mts/.cts match typescript diagnostics and
+        // .mjs/.cjs match javascript diagnostics; near-misses and
+        // cross-family paths stay unmatched.
+        let cases = [
+            ("typescript", "src/a.ts", true),
+            ("typescript", "src/a.tsx", true),
+            ("typescript", "src/a.mts", true),
+            ("typescript", "src/a.cts", true),
+            ("typescript", "src/a.d.ts", true),
+            ("javascript", "src/a.js", true),
+            ("javascript", "src/a.jsx", true),
+            ("javascript", "src/a.mjs", true),
+            ("javascript", "src/a.cjs", true),
+            ("typescript", "src/a.mjs", false),
+            ("javascript", "src/a.mts", false),
+            ("typescript", "src/a.mt", false),
+            ("typescript", "src/a.mjsx", false),
+            ("javascript", "src/a.ctsx", false),
+            ("rust", "src/a.mts", false),
+            ("python", "src/a.py", true),
+        ];
+
+        for (language, path, expected) in cases {
+            let data = serde_json::json!({ "language": language });
+            assert_eq!(
+                path_matches_diagnostic_language(&data, path),
+                expected,
+                "{language} {path}"
+            );
+        }
+    }
 
     #[test]
     fn gap_diagnostic_without_snapshot_gets_refresh_only() -> Result<(), String> {

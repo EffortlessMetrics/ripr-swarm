@@ -981,6 +981,13 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
         Err(CardFallback::NoCard(note)) => {
             let mut reason = "No repairable PR-local stable Rust or preview Python/TypeScript gap was selected from the gap decision ledger."
                 .to_string();
+            if let Some(limitation) = records
+                .iter()
+                .find_map(|record| static_limitation_note(record))
+            {
+                reason.push(' ');
+                reason.push_str(&limitation);
+            }
             if let Some(note) = note {
                 reason.push(' ');
                 reason.push_str(&note);
@@ -1422,6 +1429,47 @@ fn ledger_reports_empty_diff(value: &Value) -> bool {
             .as_deref(),
         Some("empty_diff")
     )
+}
+
+/// Name a PR-local static limitation the ledger recorded (#4224), so a
+/// finding whose repair packet failed closed reads as that limitation instead
+/// of a bare "no action". The detail and target shape are the ledger record's
+/// own fields; nothing here makes the record delegatable.
+fn static_limitation_note(record: &Value) -> Option<String> {
+    if string_path(record, &["scope"]).as_deref() != Some("pr_local")
+        || string_path(record, &["gap_state"]).as_deref() != Some("static_limitation")
+    {
+        return None;
+    }
+    let detail = string_path(record, &["static_limit_detail"])?;
+    let kind = string_path(record, &["static_limit_kind"])
+        .unwrap_or_else(|| "static_limitation".to_string());
+    let location = match (
+        string_path(record, &["anchor", "file"]),
+        record
+            .get("anchor")
+            .and_then(|anchor| anchor.get("line"))
+            .and_then(Value::as_u64),
+    ) {
+        (Some(file), Some(line)) => format!(" at `{file}:{line}`"),
+        (Some(file), None) => format!(" at `{file}`"),
+        _ => String::new(),
+    };
+    let mut note = format!("Static limitation `{kind}`{location}: {detail}.");
+    let shape = record
+        .get("static_limits")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|limit| {
+            limit.get("kind").and_then(Value::as_str) == Some("not_delegatable_target_shape")
+        })
+        .and_then(|limit| limit.get("detail").and_then(Value::as_str))
+        .filter(|shape| !shape.trim().is_empty());
+    if let Some(shape) = shape {
+        note.push_str(&format!(" Target shape (not delegatable): {shape}"));
+    }
+    Some(note)
 }
 
 fn ledger_reports_blocked(value: &Value) -> bool {
@@ -1945,9 +1993,14 @@ fn dir_contains_typescript_source(dir: &Path) -> bool {
 }
 
 fn is_typescript_source_file(path: &Path) -> bool {
+    // #4116: consume the shared TS/JS extension authority so .mts/.cts
+    // first-use sources are detected exactly like .ts/.tsx.
     path.extension()
         .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| matches!(extension, "ts" | "tsx"))
+        .is_some_and(|extension| {
+            crate::analysis::ts_js_source_kind(extension)
+                == Some(crate::analysis::TsJsSourceKind::TypeScript)
+        })
 }
 
 fn regenerate_repo_exposure_command(root: &str) -> String {
@@ -1967,10 +2020,15 @@ fn git_rev_exists(root: &Path, rev: &str) -> Result<bool, String> {
 }
 
 fn git_diff_range_valid(root: &Path, base: &str, head: &str) -> Result<(), String> {
+    // Validity probe only (#4006): the exit status is the entire signal —
+    // stdout is never parsed, so no path identity flows from this call. It
+    // still passes `-z` so the grammar is unambiguous and no C-quoted
+    // rendering is ever produced on this route.
     let range = format!("{base}...{head}");
     let output = Command::new("git")
         .arg("diff")
         .arg("--name-only")
+        .arg("-z")
         .arg("--no-ext-diff")
         .arg(&range)
         .current_dir(root)
@@ -2027,6 +2085,12 @@ fn verify_ref_command(options: &FirstPrOptions, rev: &str) -> String {
     )
 }
 
+/// Human-facing suggested command (#4006 named non-claim): this string is
+/// rendered into a blocked-selection message for the operator to read and
+/// run — it is never executed by ripr and its output is never machine-parsed,
+/// so no path identity flows through it. It intentionally stays
+/// human-readable (no `-z`): NUL-delimited output is a machine grammar, and
+/// suggesting it to a human reader would degrade the message it lives in.
 fn diff_range_command(options: &FirstPrOptions) -> String {
     format!(
         "git -C {} diff --name-only --no-ext-diff {}",
@@ -2087,6 +2151,37 @@ fn repo_root() -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn is_typescript_source_file_recognizes_modern_ts_extensions() {
+        // #4116: first-use TypeScript-source detection consumes the shared
+        // extension authority; .mts/.cts join .ts/.tsx, JavaScript-family
+        // and near-miss extensions stay excluded, and `.d.ts` keeps its
+        // accepted declaration-file routing via the "ts" extension.
+        let cases = [
+            ("src/a.ts", true),
+            ("src/a.tsx", true),
+            ("src/a.mts", true),
+            ("src/a.cts", true),
+            ("src/a.d.ts", true),
+            ("src/a.js", false),
+            ("src/a.jsx", false),
+            ("src/a.mjs", false),
+            ("src/a.cjs", false),
+            ("src/a.mt", false),
+            ("src/a.mjsx", false),
+            ("src/a.ctsx", false),
+            ("Makefile", false),
+        ];
+
+        for (path, expected) in cases {
+            assert_eq!(
+                super::is_typescript_source_file(Path::new(path)),
+                expected,
+                "{path}"
+            );
+        }
+    }
+
     #[test]
     fn resolve_path_drops_the_roots_own_cur_dir() {
         // `--root .` used to render every emitted artifact as
@@ -3248,6 +3343,65 @@ mod tests {
         assert_eq!(packet["status"], "no_action");
         assert_eq!(packet["selected"]["state"], "no_action");
         assert_eq!(packet["selected"]["output_state"], "no_actionable_gap");
+        cleanup(&repo)
+    }
+
+    /// #4224: a TypeScript finding whose repair packet failed closed used to
+    /// leave the ledger empty (`blocked`), and first-pr looped on "refresh
+    /// the first-run evidence". The ledger built from real check output now
+    /// carries a non-delegatable static-limitation record, and first-pr names
+    /// that limitation and target shape as advisory no-action.
+    #[test]
+    fn fail_closed_typescript_packet_names_limitation_instead_of_blocked() -> Result<(), String> {
+        use crate::output::gap_decision_ledger::{
+            GapDecisionLedgerInput, GapDecisionLedgerSourceKind, build_gap_decision_ledger_report,
+            render_gap_decision_ledger_json,
+        };
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: ".".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "check.json".to_string(),
+            records_json: Ok(include_str!(
+                "../../../../fixtures/ts_repair_packet_boundary_unreachable/expected/check.json"
+            )
+            .to_string()),
+        });
+        let ledger_json = render_gap_decision_ledger_json(&report)?;
+        let repo = temp_repo("first-pr-ts-fail-closed")?;
+        let ledger_value: Value =
+            serde_json::from_str(&ledger_json).map_err(|err| format!("parse ledger: {err}"))?;
+        assert_eq!(ledger_value["status"], "advisory", "{ledger_value}");
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_value)?;
+        write_json(
+            &repo.join(DEFAULT_REVIEW_COMMENTS),
+            review_comments_report(Vec::new()),
+        )?;
+        let packet = render_start_here_packet(&repo, &FirstPrOptions::default());
+        assert_eq!(packet["status"], "no_action", "{packet}");
+        assert_eq!(packet["selected"]["output_state"], "no_actionable_gap");
+        let reason = packet["selected"]["reason"].as_str().unwrap_or_default();
+        assert!(
+            reason.contains(
+                "Static limitation `typescript_repair_packet_not_delegatable` at `src/auth.ts:2`"
+            ),
+            "{reason}"
+        );
+        assert!(
+            reason.contains("does not reach the missing discriminator `user.length == 3`"),
+            "{reason}"
+        );
+        assert!(
+            reason.contains(
+                "Target shape (not delegatable): Add an exact boundary assertion for `user.length == 3`."
+            ),
+            "{reason}"
+        );
+        assert!(
+            !reason.contains("refresh the first-run evidence"),
+            "{reason}"
+        );
+        assert!(packet["commands"].get("agent_packet").is_none(), "{packet}");
         cleanup(&repo)
     }
 

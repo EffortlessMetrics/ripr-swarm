@@ -1,7 +1,9 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
+
+use ripr::process_owner::OwnedProcess;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -16,9 +18,6 @@ use std::time::{Duration, Instant};
 /// typical `~100 ms` group-kill propagation delay while still being a hard
 /// upper bound.
 const POST_KILL_DRAIN_GRACE: Duration = Duration::from_secs(5);
-
-#[cfg(windows)]
-const WINDOWS_TREE_EXIT_GRACE: Duration = Duration::from_millis(500);
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -272,6 +271,30 @@ pub(crate) fn run_output(program: &str, args: &[&str]) -> Result<String, String>
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// `run_output` returning raw stdout bytes (#4006). Path inventories decode
+/// through the shared NUL authority at the call site; `String::from_utf8_lossy`
+/// here would collapse non-UTF-8 names before identity comparison.
+/// Delegates to the shared capture spawn site, so this adds no new process
+/// spawn for the process-policy gate; failure messages carry the shared
+/// runner's stdout/stderr context instead of `run_output`'s terse form.
+pub(crate) fn run_output_bytes(program: &str, args: &[&str]) -> Result<Vec<u8>, String> {
+    let owned: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+    capture_process_output_in(program, &owned, None, &[], &[], &[]).map_err(|error| error.message)
+}
+
+/// `run_output_optional` returning raw stdout bytes (#4006): success yields
+/// stdout, exit failure yields empty output, launch failure still errors —
+/// the exact `run_output_optional` contract, without lossy decoding and
+/// without a new spawn site (see `run_output_bytes`).
+pub(crate) fn run_output_optional_bytes(program: &str, args: &[&str]) -> Result<Vec<u8>, String> {
+    let owned: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+    match capture_process_output_in(program, &owned, None, &[], &[], &[]) {
+        Ok(stdout) => Ok(stdout),
+        Err(error) if matches!(error.kind, ProcessErrorKind::Exit) => Ok(Vec::new()),
+        Err(error) => Err(error.message),
+    }
+}
+
 pub(crate) fn run_output_owned(program: &str, args: &[String]) -> Result<String, String> {
     run_output_owned_with_envs(program, args, &[])
 }
@@ -463,17 +486,20 @@ pub(crate) fn capture_output_with_timeout(
     for (name, value) in envs {
         command.env(name, value);
     }
-    let mut child = command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+    // The timed-child spawn goes through the shared owned-subprocess
+    // authority (#3803): on Windows the child is assigned to a
+    // kill-on-termination Job Object before its user code runs, so the
+    // timeout path below owns the whole tree instead of shelling out to
+    // `taskkill /T /F`.
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = OwnedProcess::spawn(command)
         .map_err(|err| format!("failed to run {error_context}: {err}"))?;
     let stdout = child
-        .stdout
+        .stdout_pipe()
         .take()
         .ok_or_else(|| format!("failed to capture stdout for {error_context}"))?;
     let stderr = child
-        .stderr
+        .stderr_pipe()
         .take()
         .ok_or_else(|| format!("failed to capture stderr for {error_context}"))?;
     let echo_latency_trace = envs
@@ -540,17 +566,16 @@ pub(crate) fn capture_bytes_in_dir_with_timeout(
     for (name, value) in envs {
         command.env(name, value);
     }
-    let mut child = command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+    // Same owned-subprocess spawn as `capture_output_with_timeout` (#3803).
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = OwnedProcess::spawn(command)
         .map_err(|err| format!("failed to run {error_context}: {err}"))?;
     let stdout = child
-        .stdout
+        .stdout_pipe()
         .take()
         .ok_or_else(|| format!("failed to capture stdout for {error_context}"))?;
     let stderr = child
-        .stderr
+        .stderr_pipe()
         .take()
         .ok_or_else(|| format!("failed to capture stderr for {error_context}"))?;
     let (stdout_handle, stdout_rx) = spawn_byte_reader_channel(stdout);
@@ -601,7 +626,9 @@ pub(crate) fn capture_stdout_to_file_with_timeout(
     for (name, value) in envs {
         command.env(name, value);
     }
-    let mut child = match command.stderr(Stdio::piped()).spawn() {
+    // Same owned-subprocess spawn as `capture_output_with_timeout` (#3803).
+    command.stderr(Stdio::piped());
+    let mut child = match OwnedProcess::spawn(command) {
         Ok(child) => child,
         Err(err) => {
             let _ = fs::remove_file(&stdout_tmp_path);
@@ -609,11 +636,11 @@ pub(crate) fn capture_stdout_to_file_with_timeout(
         }
     };
     let stdout = child
-        .stdout
+        .stdout_pipe()
         .take()
         .ok_or_else(|| format!("failed to capture stdout for {error_context}"))?;
     let stderr = child
-        .stderr
+        .stderr_pipe()
         .take()
         .ok_or_else(|| format!("failed to capture stderr for {error_context}"))?;
     let echo_latency_trace = envs
@@ -701,7 +728,7 @@ fn publish_stdout_capture(
 }
 
 fn wait_for_child_with_timeout(
-    child: &mut Child,
+    child: &mut OwnedProcess,
     started: Instant,
     timeout: Duration,
     error_context: &str,
@@ -749,7 +776,7 @@ fn timeout_was_enforced(termination_requested: bool, _status: &ExitStatus) -> bo
     termination_requested
 }
 
-fn terminate_after_timeout(child: &mut Child, error_context: &str) -> Result<bool, String> {
+fn terminate_after_timeout(child: &mut OwnedProcess, error_context: &str) -> Result<bool, String> {
     if child
         .try_wait()
         .map_err(|err| format!("failed to poll {error_context}: {err}"))?
@@ -757,105 +784,66 @@ fn terminate_after_timeout(child: &mut Child, error_context: &str) -> Result<boo
     {
         return Ok(false);
     }
-    let tree_terminated = terminate_timed_process_tree(child);
-    if tree_terminated {
-        #[cfg(windows)]
-        {
-            // `taskkill /T /F` can report success before the direct parent
-            // has actually exited. Confirm the parent is gone before
-            // returning; otherwise its post-wait continuation can still run.
-            // If it remains alive, the direct kill below is the bounded
-            // fallback while the tree kill remains responsible for descendants.
-            if wait_for_child_exit(child, WINDOWS_TREE_EXIT_GRACE, error_context)? {
-                return Ok(true);
-            }
-        }
-        #[cfg(not(windows))]
-        {
-            return Ok(true);
-        }
-    }
-    match child.kill() {
-        Ok(()) => Ok(true),
-        Err(kill_err) => {
-            if child
-                .try_wait()
-                .map_err(|err| format!("failed to poll {error_context}: {err}"))?
-                .is_some()
-            {
-                // A successful Windows tree-kill request still represents an
-                // enforced timeout even if the parent exits in the race
-                // between the final poll and the direct-kill fallback.
-                Ok(tree_terminated)
-            } else {
-                Err(format!(
-                    "failed to terminate timed-out {error_context}: {kill_err}"
-                ))
-            }
-        }
-    }
-}
-
-#[cfg(windows)]
-fn wait_for_child_exit(
-    child: &mut Child,
-    grace: Duration,
-    error_context: &str,
-) -> Result<bool, String> {
-    let started = Instant::now();
-    let deadline = started
-        .checked_add(grace)
-        .ok_or_else(|| format!("failed to establish child-exit deadline for {error_context}"))?;
-    loop {
-        if Instant::now() >= deadline {
-            return Ok(false);
-        }
-
-        let exited = child
-            .try_wait()
-            .map_err(|err| format!("failed to poll {error_context}: {err}"))?;
-        if exited.is_some() {
-            // Only accept an exit observed strictly before the bounded grace
-            // deadline. A late observation must not turn a failed tree-kill
-            // test into a pass merely because the child eventually exited.
-            return Ok(Instant::now() < deadline);
-        }
-
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Ok(false);
-        }
-        thread::sleep(remaining.min(Duration::from_millis(10)));
-    }
-}
-
-fn terminate_timed_process_tree(child: &Child) -> bool {
-    #[cfg(unix)]
-    {
-        let group = format!("-{}", child.id());
-        let status = Command::new("kill")
-            .args(["-KILL", "--", group.as_str()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        status.is_ok_and(|status| status.success())
-    }
     #[cfg(windows)]
     {
-        let pid = child.id().to_string();
-        let status = Command::new("taskkill")
-            .args(["/PID", pid.as_str(), "/T", "/F"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        status.is_ok_and(|status| status.success())
+        // Owned Job Object termination (#3803): one typed request kills the
+        // whole assigned tree, and the direct child cannot linger past it
+        // the way the `taskkill /T /F` report-before-exit race allowed, so
+        // no exit-grace confirmation is needed before the caller's reap.
+        match child.terminate_tree() {
+            Ok(()) => Ok(true),
+            Err(err) => {
+                if child
+                    .try_wait()
+                    .map_err(|err| format!("failed to poll {error_context}: {err}"))?
+                    .is_some()
+                {
+                    // The tree died in the race between the termination
+                    // request and its failure report; still an enforced
+                    // timeout.
+                    Ok(true)
+                } else {
+                    Err(format!(
+                        "failed to terminate timed-out {error_context}: {err}"
+                    ))
+                }
+            }
+        }
     }
-    #[cfg(not(unix))]
     #[cfg(not(windows))]
     {
-        let _ = child;
-        false
+        let tree_terminated = terminate_timed_process_tree(child);
+        if tree_terminated {
+            return Ok(true);
+        }
+        match child.kill() {
+            Ok(()) => Ok(true),
+            Err(kill_err) => {
+                if child
+                    .try_wait()
+                    .map_err(|err| format!("failed to poll {error_context}: {err}"))?
+                    .is_some()
+                {
+                    Ok(tree_terminated)
+                } else {
+                    Err(format!(
+                        "failed to terminate timed-out {error_context}: {kill_err}"
+                    ))
+                }
+            }
+        }
     }
+}
+
+#[cfg(not(windows))]
+fn terminate_timed_process_tree(child: &OwnedProcess) -> bool {
+    let group = format!("-{}", child.id());
+    let status = Command::new("kill")
+        .args(["-KILL", "--", group.as_str()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    status.is_ok_and(|status| status.success())
 }
 
 fn read_stream<T: Read>(mut stream: T) -> Result<String, String> {
@@ -1065,6 +1053,7 @@ mod tests {
         terminate_after_timeout, timeout_was_enforced,
     };
     use crate::acquire_test_cwd_read_guard;
+    use ripr::process_owner::OwnedProcess;
     use std::fs;
     use std::io::{Cursor, Read};
     use std::path::Path;
@@ -1450,9 +1439,10 @@ mod tests {
         let args = vec!["-NoProfile".to_string(), "-Command".to_string(), script];
         let marker_env = marker.to_string_lossy().into_owned();
         let envs = [("RIPR_XTASK_DESCENDANT_MARKER", marker_env.as_str())];
-        // Same race as the unix variant: give the parent ample time to spawn
-        // the PowerShell descendant before the timeout's taskkill /T fires, so
-        // the tree-kill reliably catches it under parallel load (#1022).
+        // The owned Job Object (#3803) contains descendants from process
+        // creation, so even a descendant started late in the run dies with
+        // the tree: assignment precedes any child user code and there is no
+        // snapshot window to escape through (#1022's race is structural now).
         let output = capture_output_with_timeout(
             "powershell",
             &args,
@@ -1548,12 +1538,11 @@ mod tests {
     #[test]
     fn terminate_after_timeout_returns_false_for_already_finished_child() -> Result<(), String> {
         let _cwd_guard = acquire_test_cwd_read_guard();
-        let mut child = Command::new("rustc")
-            .arg("--version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|err| format!("spawn rustc version: {err}"))?;
+        let mut command = Command::new("rustc");
+        command.arg("--version");
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+        let mut child =
+            OwnedProcess::spawn(command).map_err(|err| format!("spawn rustc version: {err}"))?;
 
         loop {
             if child
@@ -1603,10 +1592,10 @@ mod tests {
     /// `drain_stream_reader_bounded` grace-timeout path at the unit level
     /// without spawning a real process tree.
     ///
-    /// Note on Windows/platform portability: spawning a real grandchild that
-    /// keeps a pipe open across a `taskkill /T /F` is inherently racy and
-    /// unreliable in CI, so this unit-level seam test is the authoritative check
-    /// for the bounded-drain guarantee on all platforms.
+    /// Note on Windows/platform portability: the owned Job Object tree now
+    /// terminates descendants deterministically (see #3803), but this
+    /// unit-level seam test remains the authoritative check for the
+    /// bounded-drain guarantee on all platforms without a real process tree.
     struct BlockingRead {
         /// Receiving on this channel blocks until the sender half is dropped,
         /// i.e. forever from the `Read` side.

@@ -65,7 +65,8 @@ language-adapter, or RIPR-SPEC-0027 PR or issue carrying this work in either
 
 Router and config:
 
-- `.ts`, `.tsx`, `.js`, and `.jsx` route to the TypeScript-family adapter.
+- `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs` route to the
+  TypeScript-family adapter.
 - `[languages] enabled = ["rust"]` remains the default.
 - Adding `typescript` enables the preview adapter when the binary has the
   `lang-typescript` feature.
@@ -84,7 +85,7 @@ Adapter facts:
 - TypeScript/JavaScript findings project structural `probe.owner` metadata and
   `owner_kind` through human and JSON output.
 - Test files are detected by `.test` and `.spec` suffixes for `.ts`, `.tsx`,
-  `.js`, and `.jsx`.
+  `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`.
 - Test extraction covers top-level and nested `test(...)` / `it(...)` calls,
   including array-form `test.each(...)` and `it.each(...)`.
 - Assertion extraction covers exact-value matchers, broad `toThrow`, async

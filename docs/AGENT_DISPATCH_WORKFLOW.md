@@ -464,8 +464,9 @@ agent action:
 When a test is deliberately a smoke test (e.g. an integration probe),
 declaring intent prevents `ripr` from emitting an actionable packet:
 
-- record the intent in `.ripr/intents.toml` (declared-intent file path
-  is documented in `docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md`);
+- record the intent in `.ripr/test_intent.toml` (declared-intent file
+  path is documented in `docs/CONFIGURATION.md` section
+  "`.ripr/test_intent.toml`" and `docs/BADGE_POLICY.md`);
 - the seam classifies as `intentional` and is visible in the repo
   exposure report but produces no agent packet.
 

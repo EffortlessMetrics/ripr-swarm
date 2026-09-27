@@ -619,6 +619,15 @@ pub(crate) fn load_edit_cage_policy(
     root: &Path,
     attempt_id: &RepairAttemptId,
 ) -> Result<crate::edit_cage::EditCagePolicy, String> {
+    Ok(load_edit_cage_baseline(root, attempt_id)?.policy().clone())
+}
+
+/// Loads the retained edit-cage baseline of a durable attempt from its staged
+/// artifact, re-verifying the artifact digest first.
+pub(crate) fn load_edit_cage_baseline(
+    root: &Path,
+    attempt_id: &RepairAttemptId,
+) -> Result<crate::edit_cage::AttemptBaseline, String> {
     let root = root
         .canonicalize()
         .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
@@ -632,9 +641,8 @@ pub(crate) fn load_edit_cage_policy(
     {
         return Err("repair attempt edit-cage baseline binding failed".to_string());
     }
-    let baseline: crate::edit_cage::AttemptBaseline = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("decode edit-cage baseline failed: {error}"))?;
-    Ok(baseline.policy().clone())
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("decode edit-cage baseline failed: {error}"))
 }
 
 /// Reserve the attempt transaction exclusively. Creating the directory with
@@ -692,6 +700,21 @@ fn manifest_before_bytes(manifest: &RepairAttemptManifest) -> Result<Vec<u8>, St
     before.last_after_refusal = None;
     serde_json::to_vec_pretty(&before)
         .map_err(|error| format!("serialize repair attempt commitment failed: {error}"))
+}
+
+/// Text of the test-surface requirement, matching exactly what
+/// [`crate::analysis::is_test_surface_path`] accepts in this build.
+/// A Rust-only binary does not compile the TypeScript conventions, so it
+/// must not tell the user those paths are accepted.
+fn test_surface_requirement() -> &'static str {
+    #[cfg(feature = "lang-typescript")]
+    {
+        "a `tests` or `test` path component, or a `test_*.py`/`*_test.py`/`*_tests.py`/`*_test.rs`/`*_tests.rs` file-name convention, or a TypeScript/JavaScript test path such as `*.test.ts`, `*.spec.*`, `*.cy.*`, or `__tests__`, is required"
+    }
+    #[cfg(not(feature = "lang-typescript"))]
+    {
+        "a `tests` or `test` path component, or a `test_*.py`/`*_test.py`/`*_tests.py`/`*_test.rs`/`*_tests.rs` file-name convention, is required"
+    }
 }
 
 /// Constructs the edit-cage policy from a repair packet, refusing any packet
@@ -775,7 +798,8 @@ pub(crate) fn edit_cage_policy_from_packet(
     };
     if !is_test_surface_path(selected_target_text) {
         return Err(format!(
-            "repair packet selected edit target `{selected_target_text}` is not a test surface (a `tests` or `test` path component, or a `test_*.py`/`*_test.py`/`*_tests.py`/`*_test.rs`/`*_tests.rs` file-name convention, is required); a production file is never the authored edit target and no edit cage is constructed"
+            "repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a production file is never the authored edit target and no edit cage is constructed",
+            test_surface_requirement()
         ));
     }
     let paths = |name: &str| -> Result<Vec<crate::edit_cage::CagePathRule>, String> {
@@ -2039,8 +2063,15 @@ mod tests {
     fn cage_policy_proceeds_for_test_surface_selected_edit_targets() -> Result<(), String> {
         // A focused test file under `tests/` proceeds, and so does a
         // test-surface helper: the `tests` path component is the positive
-        // signal, independent of the file-name convention.
-        for target in ["tests/pricing.rs", "tests/helpers/mod.rs", "test/smoke.py"] {
+        // signal, independent of the file-name convention. TypeScript
+        // conventions are accepted only when that adapter is compiled.
+        let mut targets = vec!["tests/pricing.rs", "tests/helpers/mod.rs", "test/smoke.py"];
+        #[cfg(feature = "lang-typescript")]
+        {
+            targets.push("src/cart.test.ts");
+            targets.push("src/__tests__/Header.tsx");
+        }
+        for target in targets {
             let packet = serde_json::json!({
                 "seam_id": "seam:sample",
                 "allowed_edit_surface": [target],

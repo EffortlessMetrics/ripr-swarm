@@ -89,8 +89,20 @@ The extension downloads a manifest from GitHub Releases unless
 `ripr.server.downloadBaseUrl` is set:
 
 ```text
-https://github.com/EffortlessMetrics/ripr/releases/download/v<VERSION>/ripr-server-manifest-v<VERSION>.json
+https://github.com/EffortlessMetrics/ripr/releases/download/v<GENERATION>/ripr-server-manifest-v<GENERATION>.json
 ```
+
+`<GENERATION>` is the release's major.minor.patch core without prerelease or
+build metadata: the manifest is placement-neutral per distribution generation.
+A release-candidate extension requests its own version (for example
+`0.11.0-rc.1`) and resolves those same manifest bytes on the exact stable
+placement first; only after an authoritative direct 404 does it select the one
+predeclared RC placement (`.../download/v0.11.0-rc.1/ripr-server-manifest-v0.11.0.json`),
+admitted by the same embedded manifest digest
+(`editors/vscode/src/serverDescriptor.ts`, #3798). Redirected 404s, transport
+failures, 401/403/5xx responses, and contradictory manifests never fall back;
+a generation without an embedded digest has no fallback row and stable absence
+stays terminal.
 
 The manifest shape is:
 

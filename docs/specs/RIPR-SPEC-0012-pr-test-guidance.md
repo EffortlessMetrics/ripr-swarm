@@ -310,6 +310,13 @@ Generated CI should publish this report in two default levels:
 Check annotations are the default line-level surface because they provide file
 and line guidance without adding persistent review-thread noise.
 
+The generated workflow encodes each `comments[]` row as one workflow command
+inside jq. Property values escape `%`, CR, LF, `:`, and `,`. The message
+escapes `%`, CR, and LF. The encoder must not round-trip those bytes through
+TSV: `@tsv` rewrites backslash, tab, CR, and LF before the workflow-command
+escapes run, so the annotation would name a different path and display
+transport text instead of the comment (#4089).
+
 The `ripr annotations` comments loader determines file presence with one
 direct read (#1958): a `NotFound` outcome is the intended optional-comments
 state, and every other I/O failure (permission denied, directory input,

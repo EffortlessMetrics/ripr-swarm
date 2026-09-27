@@ -91,6 +91,11 @@ pub(crate) mod agent;
 #[doc(hidden)]
 pub mod analysis;
 pub(crate) mod git;
+// Shared owned-subprocess authority (#3803): one Job-Object-backed owner for
+// every shipped bounded Windows subprocess path. `xtask` consumes the same
+// adapter so there is no second process-owner implementation; keep the
+// surface to the single owner type.
+pub mod process_owner;
 // Kept public for compatibility; prefer the crate-root re-exports for new
 // integrations.
 #[doc(hidden)]

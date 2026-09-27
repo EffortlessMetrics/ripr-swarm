@@ -23,7 +23,10 @@
 //! `proof_route`, `review_comments`, `source_promotion`, `release_scope`,
 //! `main` (`changed_files_vs_base`), alongside the landed xtask
 //! `pr_evidence` (#4036). Slice 2b (product): `repair_attempt`
-//! (`git_paths`) and product `pr_evidence` (`changed_files`). Out of scope:
+//! (`git_paths`) and product `pr_evidence` (`changed_files`). Slice 3
+//! (xtask repo-ops): `main` (`collect_pr_changes`, `collect_worktree_status_changes`)
+//! through the status-record decoder plus a local porcelain-`-z` decoder.
+//! Out of scope:
 //! `first_pr` (range validation only, no path decoding), the `init`
 //! template receipt (a NUL count, not an inventory), `edit_cage` and
 //! `precommit_v2` (already `-z` through their own strict local decoders;

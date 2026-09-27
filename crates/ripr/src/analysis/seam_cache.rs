@@ -897,6 +897,18 @@ struct CorpusFingerprintEnvelope {
 /// ```text
 /// {workspace_root}/target/ripr/cache/repo-corpus-fingerprint/{schema_version}/{fingerprint}.json
 /// ```
+/// Typed outcome of a corpus fingerprint mapping read (issue #3859).
+/// `Missing` is a cold cache; `Corrupt` is a present-but-undecodable
+/// entry; `Incompatible` names the field that rejected a decodable
+/// entry (schema version, workspace root, or fingerprint).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CorpusFingerprintLookup {
+    Hit(String),
+    Missing,
+    Corrupt(String),
+    Incompatible(String),
+}
+
 pub(crate) struct RepoCorpusFingerprintCache {
     dir: PathBuf,
 }
@@ -923,17 +935,46 @@ impl RepoCorpusFingerprintCache {
     /// fingerprint. Every failure mode is a conservative miss: the caller
     /// then recomputes the hash from file contents exactly as before.
     pub(crate) fn lookup(&self, workspace_root: &Path, fingerprint: &str) -> Option<String> {
-        let path = self.entry_path(fingerprint);
-        let bytes = std::fs::read(path).ok()?;
-        let envelope = codec::decode_corpus_fingerprint(&bytes).ok()?;
-        if envelope.fingerprint_cache_schema_version == CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION
-            && envelope.workspace_root_hash == hash_str(&workspace_root.to_string_lossy())
-            && envelope.fingerprint == fingerprint
-        {
-            Some(envelope.files_content_hash)
-        } else {
-            None
+        match self.lookup_detailed(workspace_root, fingerprint) {
+            CorpusFingerprintLookup::Hit(files_content_hash) => Some(files_content_hash),
+            CorpusFingerprintLookup::Missing
+            | CorpusFingerprintLookup::Corrupt(_)
+            | CorpusFingerprintLookup::Incompatible(_) => None,
         }
+    }
+
+    /// Typed form of [`Self::lookup`] (issue #3859). Distinguishes a cold
+    /// cache (`Missing`) from a present-but-unusable entry so callers can
+    /// name their fallback reason instead of treating every miss alike.
+    /// Behavior is identical to `lookup`: only a fully compatible entry
+    /// yields its hash.
+    pub(crate) fn lookup_detailed(
+        &self,
+        workspace_root: &Path,
+        fingerprint: &str,
+    ) -> CorpusFingerprintLookup {
+        let path = self.entry_path(fingerprint);
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(_) => return CorpusFingerprintLookup::Missing,
+        };
+        let envelope = match codec::decode_corpus_fingerprint(&bytes) {
+            Ok(envelope) => envelope,
+            Err(reason) => return CorpusFingerprintLookup::Corrupt(reason),
+        };
+        if envelope.fingerprint_cache_schema_version != CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION {
+            return CorpusFingerprintLookup::Incompatible(format!(
+                "schema {}",
+                envelope.fingerprint_cache_schema_version
+            ));
+        }
+        if envelope.workspace_root_hash != hash_str(&workspace_root.to_string_lossy()) {
+            return CorpusFingerprintLookup::Incompatible("workspace root".to_owned());
+        }
+        if envelope.fingerprint != fingerprint {
+            return CorpusFingerprintLookup::Incompatible("fingerprint".to_owned());
+        }
+        CorpusFingerprintLookup::Hit(envelope.files_content_hash)
     }
 
     /// Persist `fingerprint -> files_content_hash`. Written to a temp file
@@ -1412,6 +1453,24 @@ pub(crate) struct FileFactStoreFailure {
 pub(crate) const MAX_STORE_FAILURE_ROWS: usize = 32;
 
 impl FileFactCacheStats {
+    /// Explicit zero-work state (issue #3859): no file fact was read,
+    /// reused, recomputed, stored, or invalidated. The no-impact fast
+    /// path reports this instead of the counters a full index build
+    /// would have produced, so skipped work stays observable rather
+    /// than borrowing the previous run's numbers.
+    pub(crate) fn zero_work() -> Self {
+        Self {
+            hits: 0,
+            misses: 0,
+            corrupt_ignored: 0,
+            stores: 0,
+            store_errors: 0,
+            invalidated_files: BTreeSet::new(),
+            store_failures: Vec::new(),
+            store_failures_dropped: 0,
+        }
+    }
+
     /// Record one store failure against `store_errors`, retaining the
     /// bounded diagnostic row.
     pub(crate) fn record_store_failure(&mut self, path: PathBuf, error: FileFactStoreError) {
@@ -5624,6 +5683,108 @@ mod tests {
 
         ignore_remove_dir_all(&dir);
         Ok(())
+    }
+
+    #[test]
+    fn corpus_fingerprint_lookup_detailed_names_the_miss_kind() -> Result<(), String> {
+        // Issue #3859: the warm no-impact fast path needs more than
+        // hit/miss — a cold cache, a corrupt entry, and an incompatible
+        // entry each trace a different fallback reason. Fabricated
+        // fingerprints keep this platform-independent.
+        let dir = isolated_dir("fingerprint-lookup-kind");
+        ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir: {err}"))?;
+        let cache = RepoCorpusFingerprintCache::at_dir(dir.join("cache"));
+        let fingerprint = "0123456789abcdef";
+        assert_eq!(
+            cache.lookup_detailed(&dir, fingerprint),
+            CorpusFingerprintLookup::Missing,
+            "absent entry must report Missing"
+        );
+        cache
+            .store(&dir, fingerprint, "hash-of-contents")
+            .map_err(|err| format!("store: {err}"))?;
+        assert_eq!(
+            cache.lookup_detailed(&dir, fingerprint),
+            CorpusFingerprintLookup::Hit("hash-of-contents".to_owned()),
+            "compatible entry must report Hit"
+        );
+        assert_eq!(
+            cache.lookup(&dir, fingerprint),
+            Some("hash-of-contents".to_owned()),
+            "lookup must keep delegating Hit to Some"
+        );
+        assert_eq!(
+            cache.lookup(&dir, "other-fingerprint"),
+            None,
+            "lookup must keep degrading every non-hit to None"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn corpus_fingerprint_lookup_detailed_rejects_undecodable_entry() -> Result<(), String> {
+        let dir = isolated_dir("fingerprint-lookup-corrupt");
+        ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir: {err}"))?;
+        let cache = RepoCorpusFingerprintCache::at_dir(dir.join("cache"));
+        let fingerprint = "0123456789abcdef";
+        cache
+            .store(&dir, fingerprint, "hash-of-contents")
+            .map_err(|err| format!("store: {err}"))?;
+        // Locate the single stored entry without reaching into the
+        // private entry path (`at_dir` uses the given dir directly;
+        // only `at` appends the schema version).
+        let entry = std::fs::read_dir(dir.join("cache"))
+            .map_err(|err| format!("list cache: {err}"))?
+            .next()
+            .ok_or("expected one stored mapping")?
+            .map_err(|err| format!("entry: {err}"))?
+            .path();
+        std::fs::write(&entry, b"{not valid json").map_err(|err| format!("corrupt: {err}"))?;
+        match cache.lookup_detailed(&dir, fingerprint) {
+            CorpusFingerprintLookup::Corrupt(_) => Ok(()),
+            other => Err(format!(
+                "undecodable entry must report Corrupt, got {other:?}"
+            )),
+        }?;
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn corpus_fingerprint_lookup_detailed_rejects_foreign_root_entry() -> Result<(), String> {
+        let dir = isolated_dir("fingerprint-lookup-foreign");
+        ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir: {err}"))?;
+        let cache = RepoCorpusFingerprintCache::at_dir(dir.join("cache"));
+        let fingerprint = "0123456789abcdef";
+        cache
+            .store(&dir, fingerprint, "hash-of-contents")
+            .map_err(|err| format!("store: {err}"))?;
+        let foreign = dir.join("elsewhere");
+        match cache.lookup_detailed(&foreign, fingerprint) {
+            CorpusFingerprintLookup::Incompatible(_) => Ok(()),
+            other => Err(format!(
+                "entry stored for another root must report Incompatible, got {other:?}"
+            )),
+        }?;
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn file_fact_cache_zero_work_reports_empty_counters() {
+        let stats = FileFactCacheStats::zero_work();
+        assert_eq!(
+            stats.status_label(),
+            "hits_0_misses_0_corrupt_0_store_errors_0",
+            "zero-work state must trace as all-zero counters"
+        );
+        assert!(stats.invalidated_files.is_empty());
+        assert!(stats.store_failures.is_empty());
+        assert_eq!(stats.store_failures_dropped, 0);
     }
 
     #[test]
