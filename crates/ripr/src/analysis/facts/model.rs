@@ -97,6 +97,17 @@ impl WorkspaceRootAuthority {
         seam_file: &Path,
         source: &str,
     ) -> bool {
+        self.validates_target_digest(test_file, seam_file, &source_digest(source.as_bytes()))
+    }
+
+    /// `validates_target` for a caller that already holds the SHA-256 of the
+    /// test file's indexed source, so a hot loop can hash each file once.
+    pub(crate) fn validates_target_digest(
+        &self,
+        test_file: &Path,
+        seam_file: &Path,
+        test_source_digest: &str,
+    ) -> bool {
         let Some(file) = self.files.get(test_file) else {
             return false;
         };
@@ -108,7 +119,7 @@ impl WorkspaceRootAuthority {
         }
         let test_current = self.current_file_is_current(test_file, file);
         let seam_current = self.current_file_is_current(seam_file, seam);
-        test_current && seam_current && source_digest(source.as_bytes()) == file.source_digest
+        test_current && seam_current && test_source_digest == file.source_digest
     }
 
     fn current_file_is_current(&self, path: &Path, authority: &WorkspaceFileAuthority) -> bool {
@@ -172,7 +183,7 @@ fn append_metadata_fingerprint(output: &mut String, path: &Path) {
     }
 }
 
-fn source_digest(bytes: &[u8]) -> String {
+pub(crate) fn source_digest(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     format!("sha256:{digest:x}")
 }
@@ -330,8 +341,13 @@ pub struct ModuleDeclarationFact {
 }
 
 /// The `#[path]` target shape of one out-of-line module declaration (#3533).
+///
+/// Adjacently tagged: serde cannot serialize an internally tagged newtype
+/// variant holding a string, so `tag` alone made every file with a literal
+/// `#[path]` fail its file-fact cache store (#4171). Unit variants keep the
+/// `{"kind": ...}` shape they always had, so existing entries still decode.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", content = "path", rename_all = "snake_case")]
 pub enum ModulePathTarget {
     /// No `#[path]` attribute: default resolution relative to the declaring
     /// file's module directory (`<stem>/<name>.rs`, `<stem>/<name>/mod.rs`).
@@ -813,6 +829,31 @@ mod tests {
         assert!(index.files.is_empty());
         assert!(index.tests.is_empty());
         assert!(index.functions.is_empty());
+    }
+
+    #[test]
+    fn module_path_target_encodes_literal_and_decodes_pre_4171_unit_entries()
+    -> Result<(), serde_json::Error> {
+        let literal = ModulePathTarget::Literal("other.rs".to_string());
+        let encoded = serde_json::to_value(&literal)?;
+        assert_eq!(
+            encoded,
+            serde_json::json!({"kind": "literal", "path": "other.rs"})
+        );
+        assert_eq!(
+            serde_json::from_value::<ModulePathTarget>(encoded)?,
+            literal
+        );
+        // Cache entries written before #4171 hold only unit variants in the
+        // internally tagged shape; they must keep decoding.
+        for (legacy, expected) in [
+            (r#"{"kind":"default"}"#, ModulePathTarget::Default),
+            (r#"{"kind":"unknown"}"#, ModulePathTarget::Unknown),
+        ] {
+            assert_eq!(serde_json::from_str::<ModulePathTarget>(legacy)?, expected);
+            assert_eq!(serde_json::to_string(&expected)?, legacy);
+        }
+        Ok(())
     }
 
     #[test]

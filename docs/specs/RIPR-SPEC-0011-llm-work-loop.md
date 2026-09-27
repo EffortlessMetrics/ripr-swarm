@@ -247,11 +247,11 @@ next-action guidance are present:
   },
   "summary": {
     "remaining_gap": "No remaining static gap is named by this receipt; inspect the current seam packet if review needs final assertion detail.",
-    "next_recommendation": "Keep the focused test and attach this receipt with the agent verify JSON.",
+    "next_recommendation": "Run the focused test with the project's test command and keep it only if it passes; ripr compared static evidence and did not run it. Then attach this receipt with the agent verify JSON.",
     "next_action": {
       "kind": "improved",
       "summary": "Static grip improved.",
-      "recommended_action": "Keep the focused test and include this receipt in review.",
+      "recommended_action": "Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review.",
       "safe_to_merge": false
     }
   }
@@ -263,7 +263,7 @@ selected seam movement in the saved `agent verify` JSON:
 
 | Movement | `next_action.kind` | Guidance |
 | --- | --- | --- |
-| `improved` | `improved` | Keep the focused test and include the receipt in review. |
+| `improved` | `improved` | Run the focused test and keep it only if it passes; ripr did not run it. Then include the receipt in review. |
 | `changed` | `changed` | Inspect the evidence delta and strengthen the discriminator named by the packet. |
 | `regressed` | `regressed` | Revisit the test or code change before merge. |
 | `unchanged` | `unchanged` | Add the missing discriminator or stronger assertion named by the packet. |
@@ -299,7 +299,7 @@ The agent review summary uses schema version `0.1`:
     "next_action": {
       "kind": "improved",
       "summary": "Static grip improved.",
-      "recommended_action": "Keep the focused test and include this receipt in review."
+      "recommended_action": "Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review."
     }
   },
   "next_command": null,
@@ -309,7 +309,7 @@ The agent review summary uses schema version `0.1`:
     "headline": "Review packet is ready for seam 67fc764ba37d77bd.",
     "what_changed": "Static movement is improved (weakly_gripped -> strongly_gripped).",
     "evidence": "Review target/ripr/reports/agent-receipt.json with target/ripr/workflow/agent-verify.json.",
-    "remaining": "Keep the focused test and include this receipt in review.",
+    "remaining": "Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review.",
     "reviewer_should_inspect": [
       "target/ripr/reports/agent-receipt.json",
       "target/ripr/workflow/agent-verify.json"
@@ -363,7 +363,23 @@ after phase applies) and selects `next_command` in this order:
    nothing and warn `multiple_open_repair_seams`, listing each start command.
 6. **Legacy loop.** Otherwise the first missing artifact's command, with two
    refusals. With no known seam the next command is `ripr pilot --root
-   <root>` (step `select_seam`), never a `<seam-id>` placeholder. When the
+   <root>` (step `select_seam`), never a `<seam-id>` placeholder, except
+   that a complete pilot summary whose top seam recorded no repair start
+   (`next.repair_command: null`) selects nothing and warns
+   `pilot_found_no_repair_target`: rerunning pilot would rank the same seam
+   again, so the warning names the hand step (a test in the seam's own
+   crate) instead. Likewise a complete pilot summary that ranked no seam,
+   recorded no repair card (`python_first_use` absent, `null`, or status
+   `no_python_findings` or `no_repair_cards`; `analysis_unavailable` is not
+   this fact), routed the code to `ripr check` (`language_routes.state:
+   required` with a recorded route command) and recorded no repair start
+   selects nothing and warns `pilot_routed_to_check_no_repair_target`, for
+   any routed language. For an enabled route the warning names the recorded
+   check command and the hand step (add or strengthen a test, then rerun
+   that check); for a route with `enabled: false` it names the enable step
+   (add the language to `[languages] enabled` in `ripr.toml`) instead. It
+   also says to rerun pilot if the workspace changed since that run. A
+   timed-out, missing or unreadable summary still routes to pilot. When the
    first missing artifact's directory does not exist and the seam is known,
    the next command starts a repair attempt, which writes the workflow
    artifacts itself, instead of redirecting into the missing directory.
@@ -540,6 +556,7 @@ The LLM work loop must not:
 - `crates/ripr/src/app/agent_status.rs::tests::agent_status_refuses_to_choose_between_open_seams`
 - `crates/ripr/src/app/agent_status.rs::tests::agent_status_does_not_restart_a_seam_that_finished`
 - `crates/ripr/src/app/agent_status.rs::tests::agent_status_never_redirects_into_a_missing_workflow_directory`
+- `crates/ripr/src/app/agent_status.rs::tests::agent_status_stops_when_pilot_routed_changed_code_to_check`
 - `crates/ripr/tests/cli_smoke.rs::agent_status_routes_a_fresh_workspace_to_pilot`
 - `crates/ripr/tests/cli_smoke.rs::agent_status_resumes_the_current_awaiting_repair_attempt`
 - `crates/ripr/tests/cli_smoke.rs::agent_status_resumes_only_the_current_attempt_and_refuses_to_guess`
