@@ -14947,6 +14947,55 @@ JSON shape:
       }
     ]
   },
+  "editor_gap_cockpit": {
+    "default_ci_blocking": false,
+    "evidence_source": "committed_declarations",
+    "rendered_cases": 0,
+    "editor_behavior": "saved-workspace projection-only",
+    "receipt_dir": "fixtures/editor_gap_cockpit",
+    "cases": [
+      {
+        "name": "rust_actionable",
+        "expected_dir": "fixtures/editor_gap_cockpit/rust_actionable/expected",
+        "projection_path": "fixtures/editor_gap_cockpit/rust_actionable/expected/gap-projection.json",
+        "diagnostics_path": "fixtures/editor_gap_cockpit/rust_actionable/expected/lsp-diagnostics.json",
+        "hover_path": "fixtures/editor_gap_cockpit/rust_actionable/expected/lsp-hover.md",
+        "code_actions_path": "fixtures/editor_gap_cockpit/rust_actionable/expected/lsp-code-actions.json",
+        "status_path": "fixtures/editor_gap_cockpit/rust_actionable/expected/vscode-status.json",
+        "state": "actionable",
+        "language": "rust",
+        "language_status": "stable",
+        "diagnostics_projected": 1,
+        "actual_diagnostics": 1,
+        "fail_closed": false,
+        "actions_projected": [
+          "copy_repair_packet",
+          "open_related_test",
+          "copy_verify_command",
+          "copy_receipt_command",
+          "refresh"
+        ],
+        "actual_actions": 5,
+        "static_limit_kind": null,
+        "hover_static_before_action": false,
+        "expected_state": "actionable",
+        "expected_language": "rust",
+        "expected_language_status": "stable",
+        "expected_diagnostics": 1,
+        "expected_fail_closed": false,
+        "expected_actions": [
+          "copy_repair_packet",
+          "open_related_test",
+          "copy_verify_command",
+          "copy_receipt_command",
+          "refresh"
+        ],
+        "expected_static_limit_kind": null,
+        "reason": "Rust stable gap projects a related test, repair packet, verify command, and receipt command.",
+        "errors": []
+      }
+    ]
+  },
   "finding_alignment": {
     "default_ci_blocking": false,
     "receipt_dir": "fixtures/finding-alignment-dogfood",
