@@ -11,16 +11,26 @@ const BODY: &str =
     "\nit('totals', () => {\n  const cart = new Cart();\n  expect(cart.total()).toBe(1);\n});\n";
 
 fn total_class(label: &str, header: &str) -> Result<ExposureClass, String> {
+    total_class_at(label, "src/cart.ts", "../src/cart", header)
+}
+
+/// `owner_file` holds `Cart`; the test imports it from `import_path`.
+fn total_class_at(
+    label: &str,
+    owner_file: &str,
+    import_path: &str,
+    header: &str,
+) -> Result<ExposureClass, String> {
     let root = ts_unique_tempdir(label)?;
-    ts_write_file(&root.join("src/cart.ts"), CART)?;
+    ts_write_file(&root.join(owner_file), CART)?;
     ts_write_file(
         &root.join("tests/cart.test.ts"),
-        &format!("{header}import {{ Cart }} from '../src/cart';\n{BODY}"),
+        &format!("{header}import {{ Cart }} from '{import_path}';\n{BODY}"),
     )?;
     let result = TypeScriptAdapter.analyze_diff(
         &ts_analysis_options(root.clone()),
         &OraclePolicy::default(),
-        &[changed_with_lines("src/cart.ts", &[TOTAL_LINE])],
+        &[changed_with_lines(owner_file, &[TOTAL_LINE])],
     )?;
     let _ = std::fs::remove_dir_all(&root);
     result
@@ -234,6 +244,10 @@ fn aliases_bound_as_values_or_later_withhold() -> Result<(), String> {
                 "import { it, expect, vi } from 'vitest';\nconst { doMock = () => {} } = vi;\ndoMock('../src/cart');\n",
             ),
             (
+                "reassigned-alias",
+                "import { it, expect, vi } from 'vitest';\nlet m: typeof vi;\nm = vi;\nm.mock('../src/cart');\n",
+            ),
+            (
                 "alias-after-callback",
                 "import { it, expect, vi, beforeEach } from 'vitest';\nbeforeEach(() => { m.doMock('../src/cart'); });\nconst m = vi;\n",
             ),
@@ -250,6 +264,14 @@ fn aliases_bound_as_values_or_later_withhold() -> Result<(), String> {
 fn mock_calls_in_other_positions_withhold() -> Result<(), String> {
     assert_all(
         &[
+            (
+                "assigned",
+                "import { it, expect, vi, beforeAll } from 'vitest';\nlet setup: unknown;\nbeforeAll(() => { setup = vi.doMock('../src/cart'); });\n",
+            ),
+            (
+                "array-element",
+                "import { it, expect, vi } from 'vitest';\nconst regs = [vi.doMock('../src/cart')];\n",
+            ),
             (
                 "returned",
                 "import { it, expect, vi, beforeAll } from 'vitest';\nfunction setup() { return vi.doMock('../src/cart'); }\nbeforeAll(setup);\n",
@@ -288,6 +310,50 @@ fn mock_calls_in_other_positions_withhold() -> Result<(), String> {
 }
 
 #[test]
+fn directory_mock_withholds_index_owner() -> Result<(), String> {
+    // Control: the index-owner fixture relates with no mock. The test
+    // imports `../src/cart/index`; a directory import does not relate on
+    // its own, so that spelling cannot reach this guard.
+    let control = total_class_at(
+        "index-control",
+        "src/cart/index.ts",
+        "../src/cart/index",
+        "import { it, expect } from 'vitest';\n",
+    )?;
+    let mut misses = Vec::new();
+    if control != ExposureClass::Exposed {
+        misses.push(format!("index-control: expected Exposed, got {control:?}"));
+    }
+    for (label, header, expected) in [
+        (
+            "index-relative",
+            "import { it, expect, vi } from 'vitest';\nvi.mock('../src/cart');\n",
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "index-root-relative",
+            "import { it, expect, vi } from 'vitest';\nvi.mock('/src/cart');\n",
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "index-other-directory",
+            "import { it, expect, vi } from 'vitest';\nvi.mock('../src/other');\n",
+            ExposureClass::Exposed,
+        ),
+    ] {
+        let class = total_class_at(label, "src/cart/index.ts", "../src/cart/index", header)?;
+        if class != expected {
+            misses.push(format!("{label}: expected {expected:?}, got {class:?}"));
+        }
+    }
+    if misses.is_empty() {
+        Ok(())
+    } else {
+        Err(misses.join("; "))
+    }
+}
+
+#[test]
 fn other_runner_module_mock_apis_withhold() -> Result<(), String> {
     assert_all(
         &[
@@ -302,6 +368,14 @@ fn other_runner_module_mock_apis_withhold() -> Result<(), String> {
             (
                 "bun-mock-module",
                 "import { it, expect, mock } from 'bun:test';\nmock.module('../src/cart', () => ({}));\n",
+            ),
+            (
+                "node-namespace-mock-module",
+                "import { it } from 'node:test';\nimport * as node from 'node:test';\nimport { expect } from 'vitest';\nnode.mock.module('../src/cart', {});\n",
+            ),
+            (
+                "bun-mock-alias",
+                "import { it, expect, mock } from 'bun:test';\nconst m = mock;\nm.module('../src/cart', () => ({}));\n",
             ),
             (
                 "node-mock-module",

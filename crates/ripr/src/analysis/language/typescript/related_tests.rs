@@ -803,11 +803,23 @@ fn test_mocks_owner_module(
     workspace_root: Option<&Path>,
 ) -> bool {
     let owner_module = normalized_module_path(&owner.file);
+    // A mock of a directory (`../src/cart`) replaces its `index` module.
+    let owner_modules = [
+        Some(owner_module.as_str()),
+        owner_module.strip_suffix("/index"),
+    ];
     test.mocks_in_file.iter().any(|source| {
         source == UNRESOLVED_MOCK_SPECIFIER
-            || root_relative_mock_names_module(source, &owner_module)
-            || normalized_relative_import_module(&test.file, source, alias_map, workspace_root)
-                .is_some_and(|module| module == owner_module)
+            || owner_modules.iter().flatten().any(|module| {
+                root_relative_mock_names_module(source, module)
+                    || normalized_relative_import_module(
+                        &test.file,
+                        source,
+                        alias_map,
+                        workspace_root,
+                    )
+                    .is_some_and(|mocked| mocked == *module)
+            })
     })
 }
 

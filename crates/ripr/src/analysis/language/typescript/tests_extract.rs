@@ -158,6 +158,9 @@ impl MockRunner {
             oxc_ast::ast::BindingPattern::BindingIdentifier(id) if self.is_mock_method(init) => {
                 self.functions.push(id.name.to_string());
             }
+            oxc_ast::ast::BindingPattern::BindingIdentifier(id) if self.is_module_mocker(init) => {
+                self.module_mockers.push(id.name.to_string());
+            }
             oxc_ast::ast::BindingPattern::ObjectPattern(pattern) => {
                 let from_object = self.is_object(init);
                 let from_namespace = self.is_namespace(init);
@@ -177,6 +180,8 @@ impl MockRunner {
                         self.functions.push(local);
                     } else if from_namespace && RUNNER_OBJECTS.contains(&key.as_ref()) {
                         self.objects.push(local);
+                    } else if from_namespace && key == "mock" {
+                        self.module_mockers.push(local);
                     }
                 }
             }
@@ -213,6 +218,21 @@ impl MockRunner {
         })
     }
 
+    /// `true` for the `mock` export of `bun:test`/`node:test` (whose
+    /// `module` method registers a module mock), imported, aliased, or read
+    /// from a namespace import (`node.mock`).
+    fn is_module_mocker(&self, expression: &Expression<'_>) -> bool {
+        let expression = expression.get_inner_expression();
+        if let Expression::Identifier(ident) = expression {
+            return self
+                .module_mockers
+                .iter()
+                .any(|name| name == ident.name.as_str());
+        }
+        member_parts(expression)
+            .is_some_and(|(object, property)| property == "mock" && self.is_namespace(object))
+    }
+
     /// `true` when calling `callee` registers a module mock.
     fn is_mock_callee(&self, callee: &Expression<'_>) -> bool {
         let mut callee = callee.get_inner_expression();
@@ -231,9 +251,7 @@ impl MockRunner {
         }
         self.is_mock_method(callee)
             || member_parts(callee).is_some_and(|(object, property)| {
-                property == "module"
-                    && matches!(object.get_inner_expression(), Expression::Identifier(ident)
-                        if self.module_mockers.iter().any(|name| name == ident.name.as_str()))
+                property == "module" && self.is_module_mocker(object)
             })
     }
 }
@@ -431,6 +449,23 @@ fn collect_mock_path_from_expression(
         Expression::ConditionalExpression(conditional) => {
             collect_mock_path_from_expression(runner, &conditional.consequent, out);
             return collect_mock_path_from_expression(runner, &conditional.alternate, out);
+        }
+        Expression::AssignmentExpression(assign) => {
+            // `m = vi` binds an alias like a declaration does.
+            if let oxc_ast::ast::AssignmentTarget::AssignmentTargetIdentifier(target) = &assign.left
+                && runner.is_object(&assign.right)
+            {
+                runner.objects.push(target.name.to_string());
+            }
+            return collect_mock_path_from_expression(runner, &assign.right, out);
+        }
+        Expression::ArrayExpression(array) => {
+            for element in &array.elements {
+                if let Some(element) = element.as_expression() {
+                    collect_mock_path_from_expression(runner, element, out);
+                }
+            }
+            return;
         }
         Expression::ObjectExpression(object) => {
             for property in &object.properties {
