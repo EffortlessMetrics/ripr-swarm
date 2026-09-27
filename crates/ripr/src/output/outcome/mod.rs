@@ -418,7 +418,7 @@ fn parse_check_output_findings(findings: &[Value]) -> Result<Vec<StaticSeamRecor
     // receipt cannot hide real movement.
     if records.is_empty() && !findings.is_empty() {
         return Err(format!(
-            "check-output snapshot has {} finding(s) but none carries a canonical gap id, so `ripr outcome` cannot match them; capture both snapshots with `ripr check --format repo-exposure-json` instead",
+            "check-output snapshot has {} finding(s) but none carries a canonical gap id, so `ripr outcome` cannot match them; for Rust, capture both snapshots with `ripr check --format repo-exposure-json` instead; preview-language findings (Python, TypeScript) without a canonical gap id have no comparable outcome receipt",
             findings.len()
         ));
     }
@@ -1705,6 +1705,22 @@ mod tests {
             matches!(&result, Err(message) if message.contains("none carries a canonical gap id")
                 && message.contains("--format repo-exposure-json")),
             "expected a refusal, got {result:?}"
+        );
+
+        // Preview-language findings without canonical ids are refused too,
+        // and the message must not send them to repo exposure, which carries
+        // no Python or TypeScript seams.
+        let python = r#"{"schema_version":"0.2","findings":[{"id":"probe:src_discount.py:2:python_preview","classification":"weakly_exposed"}]}"#;
+        let result = targeted_test_outcome_report_from_json(
+            python,
+            python,
+            "before.json".to_string(),
+            "after.json".to_string(),
+        );
+        assert!(
+            matches!(&result, Err(message) if message.contains("preview-language findings (Python, TypeScript)")
+                && message.contains("no comparable outcome receipt")),
+            "expected a preview-language refusal, got {result:?}"
         );
 
         let empty = r#"{"schema_version":"0.2","findings":[]}"#;

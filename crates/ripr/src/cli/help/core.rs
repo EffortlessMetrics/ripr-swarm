@@ -86,7 +86,9 @@ The outcome receipt is advisory. It compares static repo-exposure snapshots by
 seam_id and check-output snapshots by canonical_gap_id, then reports moved,
 unchanged, regressed, new, and removed gaps or seams. Check output whose
 findings carry no canonical_gap_id (Rust `ripr check --json` today) is refused
-rather than compared; use `ripr check --format repo-exposure-json` for both. Its
+rather than compared. For Rust, use `ripr check --format repo-exposure-json`
+for both; repo exposure carries no Python or TypeScript seams, so preview
+findings without a canonical_gap_id have no comparable receipt. Its
 review receipt summarizes what changed, what RIPR flagged before, which focused
 proof signals moved, what remains weak or unknown, and what reviewers should
 inspect or avoid inferring. It does not run analysis, edit source, generate
