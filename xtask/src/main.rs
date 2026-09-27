@@ -10528,7 +10528,8 @@ struct RepoExposureFileFactCache {
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 struct RepoExposureStoreFailure {
-    path: String,
+    /// `None` when the producer found no portable spelling for the file.
+    path: Option<String>,
     stage: String,
     error: String,
 }
@@ -10701,15 +10702,16 @@ fn repo_exposure_file_fact_cache_from_stderr(
             && value.store_failures_dropped > 0)
         || value.store_failures.iter().any(|row| {
             !matches!(row.stage.as_str(), "create_dir" | "encode" | "write")
-                || row.path.is_empty()
-                || row.path.starts_with('/')
-                || row
-                    .path
-                    .split('/')
-                    .any(|part| part == "." || part == ".." || part.is_empty())
-                || row.path.contains('\\')
-                || row.path.contains(':')
-                || row.path.chars().any(char::is_control)
+                || row.path.as_deref().is_some_and(|path| {
+                    path.is_empty()
+                        || path.starts_with('/')
+                        || path
+                            .split('/')
+                            .any(|part| part == "." || part == ".." || part.is_empty())
+                        || path.contains('\\')
+                        || path.contains(':')
+                        || path.chars().any(char::is_control)
+                })
         })
     {
         return (None, Some("invalid_cache_receipt".to_string()));
@@ -10881,7 +10883,10 @@ fn repo_exposure_latency_markdown(report: &RepoExposureLatencyReport) -> String 
                 for row in &cache.store_failures {
                     body.push_str(&format!(
                         "| {} | {} | {} |\n",
-                        latency_markdown_cell(&row.path),
+                        row.path.as_deref().map_or_else(
+                            || "_unrepresentable path_".to_string(),
+                            latency_markdown_cell
+                        ),
                         row.stage,
                         latency_markdown_cell(&row.error)
                     ));

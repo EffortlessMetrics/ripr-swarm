@@ -46668,6 +46668,30 @@ fn repo_exposure_latency_retains_bounded_cache_failures_and_missing_state() -> R
     ));
     assert!(cache.is_some());
     assert!(limitation.is_none());
+    // A producer row with no portable spelling keeps its counters and says so.
+    let mut unrepresentable = receipt.clone();
+    unrepresentable["store_failures"][0]["path"] = Value::Null;
+    let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr(&format!(
+        "ripr_file_fact_cache_receipt {unrepresentable}"
+    ));
+    assert!(limitation.is_none());
+    let unrepresentable_report = RepoExposureLatencyReport {
+        runs: vec![RepoExposureLatencyRun {
+            file_fact_cache: cache,
+            ..report.runs[0].clone()
+        }],
+        ..report.clone()
+    };
+    let json: Value = serde_json::from_str(&repo_exposure_latency_json(&unrepresentable_report))
+        .map_err(|err| format!("invalid latency JSON: {err}"))?;
+    assert_eq!(
+        json["runs"][0]["file_fact_cache"]["store_failures"][0]["path"],
+        Value::Null
+    );
+    assert!(
+        repo_exposure_latency_markdown(&unrepresentable_report)
+            .contains("| _unrepresentable path_ | write | portable failure |")
+    );
     // `store_errors` is authoritative: retained rows plus the dropped count
     // must account for every failure, and rows are dropped only past the cap.
     let mut uncounted = receipt.clone();

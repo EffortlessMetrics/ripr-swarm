@@ -6278,7 +6278,9 @@ Field contract:
   warm runs retain their own rows. Retained rows plus `store_failures_dropped`
   must equal `store_errors`, and rows are dropped only past the 32-row cap;
   otherwise the receipt is `invalid_cache_receipt`. Paths containing control characters are
-  refused as nonportable receipt identities. A cache hit that skips the file-fact phase
+  refused as nonportable receipt identities. A row's `path` is `null` when the
+  file name has no portable spelling (not UTF-8, or a literal backslash in a
+  Unix name); its counters still count. A cache hit that skips the file-fact phase
   does not fabricate zero counters.
 - `runs[].file_fact_cache_limitation` - `null` when the receipt is present;
   otherwise a named unavailable state, including skipped, missing, malformed,

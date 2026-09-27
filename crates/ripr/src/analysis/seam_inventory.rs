@@ -363,7 +363,7 @@ fn file_fact_cache_receipt(stats: &FileFactCacheStats) -> serde_json::Value {
         .iter()
         .map(|failure| {
             serde_json::json!({
-                "path": failure.path.to_string_lossy().replace('\\', "/"),
+                "path": portable_store_failure_path(&failure.path),
                 "stage": failure.stage,
                 "error": failure.error,
             })
@@ -380,6 +380,22 @@ fn file_fact_cache_receipt(stats: &FileFactCacheStats) -> serde_json::Value {
         "store_failures": rows,
         "store_failures_dropped": stats.store_failures_dropped,
     })
+}
+
+/// Join path components with `/`. Components come from the native parser, so
+/// a Windows `\\` separator splits while a literal `\\` in a Unix file name
+/// does not. A name that is not UTF-8 or that holds a `\\` has no portable
+/// spelling: it is `null` rather than a lossy rewrite that names another file.
+fn portable_store_failure_path(path: &Path) -> Option<String> {
+    let mut parts = Vec::new();
+    for component in path.components() {
+        let part = component.as_os_str().to_str()?;
+        if part.contains('\\') {
+            return None;
+        }
+        parts.push(part);
+    }
+    Some(parts.join("/"))
 }
 
 fn cache_store_status_label(reason: &str) -> String {
@@ -1846,9 +1862,34 @@ mod tests {
         assert_eq!(value["store_errors"], 2);
         assert_eq!(value["store_failures"][0]["path"], "src/foo..rs");
         assert_eq!(value["store_failures"][0]["stage"], "write");
-        assert_eq!(value["store_failures"][1]["path"], "src/bar.rs");
+        // A backslash is a separator only on Windows; on Unix it is part of
+        // the file name, and rewriting it would name a different file.
+        let expected_bar = if cfg!(windows) {
+            serde_json::json!("src/bar.rs")
+        } else {
+            serde_json::Value::Null
+        };
+        assert_eq!(value["store_failures"][1]["path"], expected_bar);
         assert_eq!(value["store_failures"][1]["stage"], "encode");
         assert_eq!(value["store_failures_dropped"], 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cache_receipt_names_non_utf8_failure_paths_as_unrepresentable() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let mut stats = FileFactCacheStats::zero_work();
+        stats.record_store_failure(
+            Path::new("src").join(OsStr::from_bytes(b"bad\xff.rs")),
+            super::super::seam_cache::FileFactStoreError {
+                stage: super::super::seam_cache::FileFactStoreStage::Write,
+                message: "lossy failure".to_string(),
+            },
+        );
+        let value = file_fact_cache_receipt(&stats);
+        assert_eq!(value["store_errors"], 1);
+        assert_eq!(value["store_failures"][0]["path"], serde_json::Value::Null);
     }
 
     #[test]
