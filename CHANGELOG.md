@@ -538,6 +538,14 @@ are scoped or reviewed.
 
 ### Fixed
 
+- A TypeScript change that only edits type syntax on a signature or
+  declaration line (a return type, a parameter or variable annotation, an
+  optional marker, a generic parameter list) no longer produces a `predicate`
+  probe. TypeScript erases those types, so there is no behavior for a test to
+  notice. A default-value, parameter, body, or export change on the same line
+  keeps its probe
+  ([#4282](https://github.com/EffortlessMetrics/ripr-swarm/issues/4282)).
+
 - An improved `agent receipt` (including the one `ripr agent repair --phase
   after` writes) no longer says "Keep the focused test": ripr never runs the
   project's tests, and a test that fails `cargo test` can still move static
