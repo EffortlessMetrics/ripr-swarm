@@ -3282,7 +3282,58 @@ fn classify_change_never_restates_changed_expression_as_discriminator() -> Resul
         missing_discriminator_values(&computed_field),
         vec!["self.total == <expected value>"]
     );
+
+    // A string-delimited compound expression starts and ends with a quote but
+    // is not a literal; a `+` inside the quotes still is one.
+    for (changed, expected) in [
+        (
+            "        return \"Hello, \" + name + \"!\"",
+            vec!["return value == <expected value>"],
+        ),
+        (
+            "        self.label = \"a\" + suffix + \"b\"",
+            vec!["self.label == <expected value>"],
+        ),
+        ("        return \"a+b\"", vec!["return value == \"a+b\""]),
+        // A constructor keyword bound to a bare name echoes that name.
+        (
+            "        return Order(total=name)",
+            vec!["result.total == <expected value>"],
+        ),
+        ("        return Order(total=5)", vec!["result.total == 5"]),
+    ] {
+        let finding = classify_one_cart_line(changed)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{changed}");
+        assert_eq!(
+            missing_discriminator_values(&finding),
+            expected,
+            "{changed}"
+        );
+    }
+    // A conditional expression classifies as a predicate with no comparison
+    // to read, so it names no discriminator rather than restating a branch.
+    let conditional = classify_one_cart_line("        return \"yes\" if flag else \"no\"")?;
+    assert_eq!(conditional.probe.family, ProbeFamily::Predicate);
+    assert!(missing_discriminator_values(&conditional).is_empty());
     Ok(())
+}
+
+fn classify_one_cart_line(changed: &str) -> Result<Finding, String> {
+    let source = format!(
+        "class Cart:\n    def __init__(self, items):\n        self.items = items\n\n    def total_quantity(self, name, suffix, flag):\n{changed}\n"
+    );
+    classify_change(
+        Path::new("app/cart.py"),
+        6,
+        changed,
+        &extract_owners(Path::new("app/cart.py"), &source),
+        &extract_tests(
+            Path::new("tests/test_cart.py"),
+            "from app.cart import Cart\n\n\
+                def test_total_quantity():\n    cart = Cart([])\n    assert cart.total_quantity(\"x\", \"y\", True)\n",
+        ),
+    )
+    .ok_or_else(|| format!("`{changed}` should classify"))
 }
 
 #[test]

@@ -131,13 +131,15 @@ fn python_field_value_discriminator(line_text: &str, owner: &PythonOwner) -> Opt
         return Some(format!("{field} == {value}"));
     }
     if let Some((_constructor, field, value)) = python_return_constructor_field_parts(text) {
+        let value = python_expected_value_or_placeholder(&value);
         return Some(format!("result.{field} == {value}"));
     }
     if let Some((target, _constructor, field, value)) =
         python_assignment_constructor_field_parts(text)
     {
+        let value = python_expected_value_or_placeholder(&value);
         if !owner.route_paths.is_empty() {
-            return python_route_response_field_discriminator(&field, &value);
+            return python_route_response_field_discriminator(&field, value);
         }
         return Some(format!("{target}.{field} == {value}"));
     }
@@ -610,9 +612,29 @@ pub(super) fn python_string_literal_value(text: &str) -> Option<String> {
     if !trimmed.ends_with(quote) || trimmed.len() < quote.len_utf8() * 2 {
         return None;
     }
-    trimmed
-        .get(quote.len_utf8()..trimmed.len() - quote.len_utf8())
-        .map(str::to_string)
+    // One literal only: the first unescaped closing quote must be the last
+    // character. `"Hello, " + name + "!"` or `"yes" if flag else "no"` start
+    // and end with a quote but are compound expressions (#4216 row 6).
+    let close = quote.len_utf8() + python_closing_quote_offset(chars.as_str(), quote)?;
+    if close != trimmed.len() - quote.len_utf8() {
+        return None;
+    }
+    trimmed.get(quote.len_utf8()..close).map(str::to_string)
+}
+
+/// Byte offset in `body` of the first unescaped `quote`.
+fn python_closing_quote_offset(body: &str, quote: char) -> Option<usize> {
+    let mut escaped = false;
+    for (idx, ch) in body.char_indices() {
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == quote {
+            return Some(idx);
+        }
+    }
+    None
 }
 
 fn strip_python_control_prefix(line_text: &str) -> String {

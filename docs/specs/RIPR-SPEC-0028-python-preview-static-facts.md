@@ -304,10 +304,14 @@ changed `logger.warning("coupon expired")` call can emit
 `log contains "coupon expired"`. A missing discriminator never restates the
 changed production expression as its own oracle: an assertion such as
 `result == sum(i.quantity for i in self.items) + 1` passes for every mutant of
-that expression. When the returned or assigned value is not an independent
-literal, the expected side is the `<expected value>` placeholder
-(`return value == <expected value>`, `self.total == <expected value>`), and no
-concrete expected value is claimed. These facts are evidence only until a later
+that expression. The expected side of a returned value, returned-dict field,
+constructor keyword, or plain assignment is kept only when it is one
+independent literal (a single string, number, `True`, `False`, or `None`; a
+string-delimited compound such as `"Hello, " + name + "!"` is not one).
+Otherwise it is the `<expected value>` placeholder
+(`return value == <expected value>`, `self.total == <expected value>`,
+`result.total == <expected value>`), and no concrete expected value is
+claimed. These facts are evidence only until a later
 repair-card contract supplies the test shape, verify command, receipt command,
 and edit boundaries. Heuristic-only links, no related-test paths, and static
 limits must not emit repair guidance.
