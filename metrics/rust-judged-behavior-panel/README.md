@@ -142,7 +142,7 @@ validates it and reports the acceptance floors without lowering them.
 validates it against the selection bytes it names.
 
 - `selection_sha256` binds the packet to the exact selection; a stale digest
-  rejects before any row is read.
+  rejects before any row is parsed or read.
 - Every selection row has exactly one judgment, and `expected_direction` is
   copied, not re-decided. `terminal` is one of `confirmed_should_gap`,
   `confirmed_should_stay_quiet`, `confirmed_should_limit`,
@@ -152,8 +152,14 @@ validates it against the selection bytes it names.
 - Limit rows, gap rows, departures and disputed rows need two independent
   declared roles. A disagreement stays recorded; a confirmed terminal needs its
   cited resolution, and a resolved disagreement cannot stay inconclusive.
+- Each review verdict (`discriminated`, `no_production_behavior`,
+  `weakly_discriminated`, `not_discriminated`, `limited`) supports one
+  direction. Reviews that support different directions, or not the confirmed
+  one, must carry a recorded disagreement.
 - `reference_outcome` labels compare with one named analyzer run, not the #1609
-  candidate. `false_actionable` and `false_exposed` are mutually exclusive;
+  candidate. `false_actionable` and `false_exposed` are mutually exclusive,
+  `false_exposed` can be true only on a confirmed gap or limit row, and
+  `false_actionable` only on a confirmed quiet or limit row;
   `under_credit` and `limitation_correct` are separate observations; `null`
   means not established. Inconclusive rows carry no labels.
 - Judgments bind to the anchored behavior (file, line, expression). The
