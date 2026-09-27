@@ -1339,6 +1339,89 @@ fn given_reversed_or_local_boundary_when_test_hits_boundary_then_grip_closes() -
     Ok(())
 }
 
+/// #4228 review: a reversed negative or char literal is named whole, and
+/// a same-named local declared only after the predicate does not hide the
+/// constant the predicate compares.
+#[test]
+fn given_whole_literal_or_later_shadow_when_test_hits_boundary_then_grip_closes()
+-> Result<(), String> {
+    // (production source, compared subject, off-boundary call, boundary
+    // call, missing token).
+    let cases = [
+        (
+            "pub fn fee(amount: i64) -> u64 {\n    if -100 < amount { 0 } else { 5 }\n}\n",
+            "-100 < amount",
+            "fee(-99)",
+            "fee(-100)",
+            "-100",
+        ),
+        (
+            "pub fn fee(grade: char) -> u64 {\n    if 'm' < grade { 0 } else { 5 }\n}\n",
+            "'m' < grade",
+            "fee('n')",
+            "fee('m')",
+            "'m'",
+        ),
+        (
+            "const LIMIT: u64 = 100;\npub fn fee(amount: u64) -> u64 {\n    let charged = if amount > LIMIT { 0 } else { 5 };\n    let LIMIT = 200;\n    charged + LIMIT - LIMIT\n}\n",
+            "amount > LIMIT",
+            "fee(101)",
+            "fee(100)",
+            "LIMIT",
+        ),
+    ];
+    for (prod_src, subject, off_call, at_call, token) in cases {
+        for (call, expect_closed) in [(off_call, false), (at_call, true)] {
+            let tests_src = format!(
+                "#[test]\nfn far() {{ assert_eq!({far}, 5); }}\n#[test]\nfn boundary() {{ assert_eq!({call}, {expected}); }}\n",
+                expected = if expect_closed { 5 } else { 0 },
+                far = off_call
+                    .replace("-99", "-150")
+                    .replace("'n'", "'a'")
+                    .replace("101", "50"),
+            );
+            let index = index_from_files(&[
+                (PathBuf::from("src/lib.rs"), prod_src),
+                (PathBuf::from("tests/fee.rs"), tests_src.as_str()),
+            ])?;
+            let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+            let predicate = seams
+                .iter()
+                .find(|seam| {
+                    seam.kind() == SeamKind::PredicateBoundary
+                        && seam.expression().contains(subject)
+                })
+                .ok_or_else(|| format!("expected a predicate seam for `{subject}`"))?;
+            let evidence = evidence_for_seam(predicate, &index);
+            if evidence.related_tests.is_empty() {
+                return Err(format!("`{subject}` fixture should relate its tests"));
+            }
+            let missing: Vec<&str> = evidence
+                .missing_discriminators
+                .iter()
+                .map(|fact| fact.value.as_str())
+                .collect();
+            let class = crate::analysis::seam_classification::classify_seam(predicate, &evidence);
+            if expect_closed {
+                if !missing.is_empty() {
+                    return Err(format!(
+                        "`{subject}` with {call} must close, got {} {missing:?}",
+                        class.as_str()
+                    ));
+                }
+            } else if missing != [format!("{token} (equality boundary)")]
+                || class == SeamGripClass::StronglyGripped
+            {
+                return Err(format!(
+                    "`{subject}` with {call} must name `{token}` as missing, got {} {missing:?}",
+                    class.as_str()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn given_boundary_seam_when_test_uses_equal_value_and_exact_assertion_then_discriminate_evidence_is_yes()
 -> Result<(), String> {

@@ -1435,7 +1435,7 @@ fn predicate_boundary_operand(
     let reversed = boundary_operand_argument(owner_fn, &parameters, &left).is_none()
         && !scalar_values(&left).is_empty()
         && boundary_operand_argument(owner_fn, &parameters, &right).is_some();
-    let token = boundary_identifier_prefix(if reversed { &left } else { &right });
+    let token = boundary_token(if reversed { &left } else { &right });
     if token.is_empty() {
         return None;
     }
@@ -1455,6 +1455,18 @@ fn boundary_rhs_token(expression: &str) -> String {
         }
     }
     String::new()
+}
+
+/// The boundary operand as observed values spell it: a whole integer,
+/// char or string literal (`-100`, `'m'`), else its identifier prefix.
+/// Decimal literals and enum paths keep the identifier-prefix spelling
+/// because `check` does not read them as whole values either; widening
+/// one owner alone would split grip from `check` (#4228).
+fn boundary_token(operand: &str) -> String {
+    match scalar_values(operand).into_iter().next() {
+        Some(literal) if !literal.contains('.') && !literal.contains("::") => literal,
+        _ => boundary_identifier_prefix(operand),
+    }
 }
 
 /// An operand up to its first non-identifier character.

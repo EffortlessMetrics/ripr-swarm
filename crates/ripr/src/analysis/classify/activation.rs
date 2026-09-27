@@ -502,17 +502,19 @@ pub(in crate::analysis) fn local_boundary(
     {
         return LocalBoundary::Exact(value.render());
     }
-    if owner_declares_local(owner, operand) {
+    if owner_declares_local(owner, operand, predicate_line) {
         LocalBoundary::Unresolved
     } else {
         LocalBoundary::NotLocal
     }
 }
 
-/// Whether the owner's body declares `operand` with `let` (or `let mut`),
-/// on any line. Comments and strings are masked first; an operand that is
-/// not an identifier (a literal such as `100`) returns early.
-fn owner_declares_local(owner: &FunctionSummary, operand: &str) -> bool {
+/// Whether the owner's body declares `operand` with `let` (or `let mut`)
+/// on or before the predicate line. A declaration after the predicate
+/// cannot be the compared binding (a same-named constant still is), so it
+/// does not count. Comments and strings are masked first; an operand that
+/// is not an identifier (a literal such as `100`) returns early.
+fn owner_declares_local(owner: &FunctionSummary, operand: &str, predicate_line: usize) -> bool {
     let is_identifier = operand
         .chars()
         .next()
@@ -524,20 +526,25 @@ fn owner_declares_local(owner: &FunctionSummary, operand: &str) -> bool {
         return false;
     }
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
-    masked.split([';', '{', '}']).any(|statement| {
-        let statement = statement.trim();
-        let Some(rest) = statement.strip_prefix("let ") else {
-            return false;
-        };
-        let rest = rest.trim_start();
-        let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
-        rest.strip_prefix(operand).is_some_and(|after| {
-            !after
-                .chars()
-                .next()
-                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    masked
+        .lines()
+        .enumerate()
+        .take_while(|(offset, _)| owner.start_line + offset <= predicate_line)
+        .flat_map(|(_, line)| line.split([';', '{', '}']))
+        .any(|statement| {
+            let statement = statement.trim();
+            let Some(rest) = statement.strip_prefix("let ") else {
+                return false;
+            };
+            let rest = rest.trim_start();
+            let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+            rest.strip_prefix(operand).is_some_and(|after| {
+                !after
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            })
         })
-    })
 }
 
 /// The initializer of a local binding whose live span (per the #3294
@@ -1258,7 +1265,9 @@ fn oriented_comparison_operands(
     let owner_bound = |operand: &str| {
         boundary_operand_parameter(owner, parameters, operand).is_some()
             || live_local_initializer(owner, operand, predicate_line).is_some()
-            || owner_declares_local(owner, operand)
+            // Any declared local keeps the left side, as before #4228:
+            // the swap exists for literals, not to reinterpret locals.
+            || owner_declares_local(owner, operand, usize::MAX)
     };
     if !owner_bound(&left) && owner_bound(&right) {
         return Some((right, left));
@@ -2550,6 +2559,20 @@ assert_eq!(input.amount, 100);"#
                 2,
                 "score(99);",
                 Expect::Missing("amount == 100"),
+            ),
+            (
+                "    -100 < amount",
+                "-100 < amount",
+                2,
+                "score(-100);",
+                Expect::Closed,
+            ),
+            (
+                "    -100 < amount",
+                "-100 < amount",
+                2,
+                "score(-99);",
+                Expect::Missing("amount == -100"),
             ),
             (
                 "    let limit = 100;\n    amount > limit",
