@@ -204,8 +204,49 @@ pub(crate) fn collect_tests_from_statements(
     // level. Collected before any test so a hook written after a test still
     // counts, as it does at runtime.
     let mut level = Vec::new();
+    let mut sites = Vec::new();
     for stmt in statements {
-        collect_scope_bindings(stmt, source, &mut level);
+        collect_scope_bindings(stmt, source, &mut level, &mut sites);
+    }
+    // Any other write to a bound name anywhere in this scope is ambiguous. A
+    // write inside a test, an `afterEach`/`afterAll` hook or a nested
+    // `describe` at this level runs between this level's tests, so a
+    // `beforeEach` still resets the name after it. Any other unseen write (a
+    // scope-level reassignment, a helper a hook calls, a hook passed by
+    // reference) may run after every hook, so it decides.
+    if let (Some(first), Some(last)) = (statements.first(), statements.last()) {
+        let start = first.span().start as usize;
+        let text = source
+            .get(start..last.span().end as usize)
+            .unwrap_or_default();
+        let between_tests: Vec<std::ops::Range<usize>> = statements
+            .iter()
+            .filter(|stmt| {
+                test_from_statement(stmt, file, source, &[]).is_some()
+                    || describe_body_from_statement(stmt).is_some()
+                    || statement_calls(stmt, &["afterEach", "afterAll"])
+            })
+            .map(|stmt| stmt.span().start as usize..stmt.span().end as usize)
+            .collect();
+        let unaccounted: Vec<ScopeEntry> = identifier_writes(text)
+            .into_iter()
+            .filter(|(name, offset)| {
+                !sites.contains(&(start + offset))
+                    && level.iter().any(|(bound, _, _)| bound == name)
+            })
+            .map(|(name, offset)| {
+                let phase = if between_tests
+                    .iter()
+                    .any(|span| span.contains(&(start + offset)))
+                {
+                    Phase::Interleaved
+                } else {
+                    Phase::Unseen
+                };
+                (name, ScopeValue::Other, phase)
+            })
+            .collect();
+        level.extend(unaccounted);
     }
     // A `beforeEach`/`beforeAll` the file declares, or imports from anything
     // but a test runner, is not known to run before each test: its writes are
@@ -221,7 +262,9 @@ pub(crate) fn collect_tests_from_statements(
             .flatten()
             .any(|(name, _, entry_phase)| name == hook && *entry_phase == Phase::Declaration)
             || imports.iter().any(|import| {
-                import.local == hook && !TEST_RUNNER_MODULES.contains(&import.source.as_str())
+                import.local == hook
+                    && (!TEST_RUNNER_MODULES.contains(&import.source.as_str())
+                        || import.imported.as_deref() != Some(hook))
             });
         if shadowed {
             for entry in level
@@ -285,13 +328,15 @@ type ScopeEntry = (String, ScopeValue, Phase);
 /// declarations while the file or `describe` callback runs, then `beforeAll`
 /// hooks, then writes that may run between tests (another test, an
 /// `afterEach` hook, a nested `describe`), then `beforeEach` hooks, which
-/// reset the name before every test.
+/// reset the name before every test, then writes whose timing is unknown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Phase {
     Declaration,
     BeforeAll,
     Interleaved,
     BeforeEach,
+    /// A write the syntax walk did not see and cannot place: it may run last.
+    Unseen,
 }
 
 /// What one setup statement binds a name to.
@@ -374,7 +419,14 @@ impl TestScope {
 /// and, as ambiguous, writes made by any other callback at this level (a
 /// sibling test, an `afterEach` hook, a nested `describe`). A callback's own
 /// local declarations stay local.
-fn collect_scope_bindings(stmt: &Statement<'_>, source: &str, out: &mut Vec<ScopeEntry>) {
+/// `sites` receives the source offset of every write recorded here, so the
+/// caller can tell them from writes this walk does not see.
+fn collect_scope_bindings(
+    stmt: &Statement<'_>,
+    source: &str,
+    out: &mut Vec<ScopeEntry>,
+    sites: &mut Vec<usize>,
+) {
     match stmt {
         Statement::VariableDeclaration(declaration) => {
             for declarator in &declaration.declarations {
@@ -383,6 +435,9 @@ fn collect_scope_bindings(stmt: &Statement<'_>, source: &str, out: &mut Vec<Scop
                         None => ScopeValue::Declared,
                         Some(init) => constructed_value(init),
                     };
+                    if declarator.init.is_some() {
+                        sites.push(identifier.span.start as usize);
+                    }
                     out.push((identifier.name.to_string(), value, Phase::Declaration));
                 } else {
                     for identifier in declarator.id.get_binding_identifiers() {
@@ -433,12 +488,12 @@ fn collect_scope_bindings(stmt: &Statement<'_>, source: &str, out: &mut Vec<Scop
                     .map(|name| (name, ScopeValue::Other, Phase::Declaration))
                     .collect();
                 for inner in body {
-                    collect_scope_bindings(inner, source, &mut locals);
+                    collect_scope_bindings(inner, source, &mut locals, &mut Vec::new());
                 }
                 locals.retain(|(_, _, phase)| *phase == Phase::Declaration);
                 let mut writes = Vec::new();
                 for inner in body {
-                    collect_hook_assignment(inner, source, &mut writes);
+                    collect_hook_assignment(inner, source, &mut writes, sites);
                 }
                 out.extend(
                     writes
@@ -463,6 +518,7 @@ fn collect_hook_assignment(
     stmt: &Statement<'_>,
     source: &str,
     out: &mut Vec<(String, ScopeValue)>,
+    sites: &mut Vec<usize>,
 ) {
     match stmt {
         // A hook's own declarations are local to the hook, but an
@@ -491,6 +547,7 @@ fn collect_hook_assignment(
                 && let oxc_ast::ast::AssignmentTarget::AssignmentTargetIdentifier(target) =
                     &assignment.left
             {
+                sites.push(target.span.start as usize);
                 out.push((
                     target.name.to_string(),
                     constructed_value(&assignment.right),
@@ -525,13 +582,35 @@ fn constructed_value(expression: &Expression<'_>) -> ScopeValue {
     }
 }
 
-/// Identifiers written as an assignment target anywhere in `text`
-/// (`name =`, `name +=`, `name ??=`), excluding comparisons and arrows, and
-/// member targets (`this.name =`). Over-reports on purpose: a false entry only
-/// withholds a relation.
+/// Identifiers written as an assignment target anywhere in `text`, each
+/// named once.
 fn assigned_identifier_names(text: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for (name, _) in identifier_writes(text) {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// `true` when `text` may write `identifier`; see [`identifier_writes`].
+pub(crate) fn identifier_written_in(text: &str, identifier: &str) -> bool {
+    identifier_writes(text)
+        .iter()
+        .any(|(name, _)| name == identifier)
+}
+
+/// Every identifier `text` may write, with its byte offset: an assignment
+/// target (`name =`, `name +=`, `name ??=`, not `==` or `=>`), `++`/`--`, a
+/// `for (name of ...)` target, and any identifier inside a bracketed group
+/// that is itself assigned (`[name] = ...`, `({ name } = ...)`). Member
+/// targets (`this.name =`) are not writes. Comments and strings are not
+/// skipped: a false entry only withholds a relation.
+fn identifier_writes(text: &str) -> Vec<(String, usize)> {
     let bytes = text.as_bytes();
-    let mut names = Vec::new();
+    let destructured = destructuring_ranges(text);
+    let mut writes = Vec::new();
     let mut index = 0;
     while index < bytes.len() {
         let ch = bytes[index] as char;
@@ -546,7 +625,10 @@ fn assigned_identifier_names(text: &str) -> Vec<String> {
         } {
             index += 1;
         }
-        let preceded_by_member = text[..start].trim_end().ends_with('.');
+        let before = text[..start].trim_end();
+        if before.ends_with('.') && !before.ends_with("...") {
+            continue;
+        }
         let rest = text[index..].trim_start();
         let operator_end = rest
             .find(|ch: char| {
@@ -560,11 +642,57 @@ fn assigned_identifier_names(text: &str) -> Vec<String> {
         let assigns = after_operator.starts_with('=')
             && !after_operator[1..].starts_with(['=', '>'])
             && !matches!(&rest[..operator_end], "<" | ">" | "!");
-        if assigns && !preceded_by_member && !names.iter().any(|name| name == &text[start..index]) {
-            names.push(text[start..index].to_string());
+        let steps = rest.starts_with("++")
+            || rest.starts_with("--")
+            || before.ends_with("++")
+            || before.ends_with("--");
+        let loop_target = ["let", "const", "var"]
+            .iter()
+            .fold(before, |prefix, keyword| {
+                prefix.strip_suffix(keyword).unwrap_or(prefix).trim_end()
+            })
+            .strip_suffix('(')
+            .is_some_and(|prefix| {
+                let prefix = prefix.trim_end();
+                prefix.ends_with("for") || prefix.ends_with("await")
+            });
+        let in_target = destructured.iter().any(|range| range.contains(&start));
+        if assigns || steps || loop_target || in_target {
+            writes.push((text[start..index].to_string(), start));
         }
     }
-    names
+    writes
+}
+
+/// Byte ranges of `[...]` and `{...}` groups directly followed by an
+/// assignment `=`: destructuring targets.
+fn destructuring_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
+    let bytes = text.as_bytes();
+    let mut ranges = Vec::new();
+    for (close, &byte) in bytes.iter().enumerate() {
+        let open_byte = match byte {
+            b']' => b'[',
+            b'}' => b'{',
+            _ => continue,
+        };
+        let rest = text[close + 1..].trim_start();
+        if !rest.starts_with('=') || rest[1..].starts_with(['=', '>']) {
+            continue;
+        }
+        let mut depth = 0usize;
+        for open in (0..close).rev() {
+            if bytes[open] == byte {
+                depth += 1;
+            } else if bytes[open] == open_byte {
+                if depth == 0 {
+                    ranges.push(open..close);
+                    break;
+                }
+                depth -= 1;
+            }
+        }
+    }
+    ranges
 }
 
 /// Parameter names of the callback at `index` in a statement's call
@@ -580,6 +708,19 @@ fn statement_callback_parameter_names(stmt: &Statement<'_>, index: usize) -> Vec
         .get(index)
         .map(argument_parameter_names)
         .unwrap_or_default()
+}
+
+/// `true` when `stmt` is a call to one of the plain identifiers `names`.
+fn statement_calls(stmt: &Statement<'_>, names: &[&str]) -> bool {
+    matches!(
+        stmt,
+        Statement::ExpressionStatement(expr_stmt)
+            if matches!(
+                &expr_stmt.expression,
+                Expression::CallExpression(call)
+                    if matches!(&call.callee, Expression::Identifier(callee) if names.contains(&callee.name.as_str()))
+            )
+    )
 }
 
 /// Names a callback argument binds as parameters; empty for anything else.

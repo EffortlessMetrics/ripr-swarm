@@ -626,7 +626,7 @@ pub(crate) fn receiver_owner_call_relation(
             .as_ref()
             .is_some_and(|constructor| constructor_names.contains(constructor))
             && !local_identifier_declared_in_test_body(&test.body_text, &binding.name)
-            && !body_assigns_identifier(&test.body_text, &binding.name)
+            && !super::tests_extract::identifier_written_in(&test.body_text, &binding.name)
         {
             push_unique_string(&mut receiver_names, binding.name.clone());
         }
@@ -742,28 +742,6 @@ pub(crate) fn constructor_names_for_method_owner(
             && !local_identifier_declared_in_test_body(&test.body_text, local)
     });
     names
-}
-
-/// `true` when the test body assigns `identifier` (`cart = other;`,
-/// `cart ??= other`), outside comments and strings. Member targets
-/// (`this.cart =`) and comparisons do not count.
-fn body_assigns_identifier(body_text: &str, identifier: &str) -> bool {
-    body_text.match_indices(identifier).any(|(idx, _)| {
-        let before_clean = body_text[..idx]
-            .chars()
-            .next_back()
-            .is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '.');
-        let rest = body_text[idx + identifier.len()..].trim_start();
-        let operator_end = rest
-            .find(|ch: char| !matches!(ch, '+' | '-' | '*' | '/' | '%' | '&' | '|' | '^' | '?'))
-            .unwrap_or(rest.len());
-        let after = &rest[operator_end..];
-        before_clean
-            && after.starts_with('=')
-            && !after[1..].starts_with(['=', '>'])
-            && !line_prefix_looks_like_comment_or_string(body_text, idx)
-            && !inside_block_comment(body_text, idx)
-    })
 }
 
 pub(crate) fn receiver_names_for_constructor_calls(

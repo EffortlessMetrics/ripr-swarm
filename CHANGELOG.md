@@ -548,7 +548,8 @@ are scoped or reviewed.
   the test body declares or reassigns, a callback parameter, a hook write
   that is conditional or made through a closure, a write to a hook-local
   variable or hook parameter, a `beforeEach`/`beforeAll` the file defines
-  or imports from something other than a test runner, a `beforeAll` write that an enclosing `beforeEach` or a sibling
+  or imports under another name or from something other than a test runner,
+  a destructuring or other write the scope makes outside a recognized hook, a `beforeAll` write that an enclosing `beforeEach` or a sibling
   test, `afterEach` hook or nested `describe` may overwrite, and a shadowed
   class or namespace name still do not relate.
 

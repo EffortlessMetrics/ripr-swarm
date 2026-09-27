@@ -374,3 +374,47 @@ fn hook_callback_parameter_write_does_not_bind() -> Result<(), String> {
         "describe('C', () => {\n  let cart: any = { total: () => 1 };\n  beforeEach((cart: any) => {\n    cart = new Cart();\n  });\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
     )
 }
+
+#[test]
+fn destructuring_write_in_body_does_not_relate() -> Result<(), String> {
+    unrelated_with_head(
+        "adv-array-destructure",
+        "describe('C', () => {\n  let cart: any;\n  beforeEach(() => {\n    cart = new Cart();\n  });\n  it('t', () => {\n    [cart] = [{ total: () => 1 }];\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+    )?;
+    unrelated_with_head(
+        "adv-object-destructure",
+        "const fixtures = { cart: { total: () => 1 } };\ndescribe('C', () => {\n  let cart: any;\n  beforeEach(() => {\n    cart = new Cart();\n  });\n  it('t', () => {\n    ({ cart } = fixtures);\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+    )
+}
+
+#[test]
+fn aliased_runner_hook_is_not_setup() -> Result<(), String> {
+    assert_unrelated(
+        "adv-hook-alias",
+        "import { describe, it, expect, afterAll as beforeEach } from 'vitest';\nimport { Cart } from '../src/cart';\n\ndescribe('C', () => {\n  let cart: any = { total: () => 1 };\n  beforeEach(() => {\n    cart = new Cart();\n  });\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+    )
+}
+
+#[test]
+fn scope_level_reassignment_is_ambiguous() -> Result<(), String> {
+    unrelated_with_head(
+        "adv-scope-reassign",
+        "describe('C', () => {\n  let cart: any = new Cart();\n  cart = { total: () => 1 };\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+    )?;
+    unrelated_with_head(
+        "adv-scope-destructure",
+        "describe('C', () => {\n  let cart: any = new Cart();\n  [cart] = [{ total: () => 1 }];\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+    )
+}
+
+#[test]
+fn unseen_scope_write_decides_over_before_each() -> Result<(), String> {
+    unrelated_with_head(
+        "adv-hook-by-reference",
+        "describe('C', () => {\n  let cart: any;\n  const swap = () => {\n    cart = { total: () => 1 };\n  };\n  beforeEach(() => {\n    cart = new Cart();\n  });\n  beforeEach(swap);\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+    )?;
+    unrelated_with_head(
+        "adv-hook-calls-helper",
+        "describe('C', () => {\n  let cart: any;\n  function reset() {\n    cart = { total: () => 1 };\n  }\n  beforeEach(() => {\n    cart = new Cart();\n    reset();\n  });\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+    )
+}
