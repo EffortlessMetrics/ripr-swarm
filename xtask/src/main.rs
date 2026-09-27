@@ -61,8 +61,8 @@ use command::{
 use command::{help_message, unknown_command_message};
 #[cfg(test)]
 pub(crate) use dogfood::{
-    BunUbPreviewSummaryArgs, ConfiguredBridgeInventoryArgs, CrossLanguageOracleGraphCase,
-    CrossLanguageOracleGraphRawRef, DogfoodBunUbCrossLanguageRun,
+    ArtifactRouterInput, BunUbPreviewSummaryArgs, ConfiguredBridgeInventoryArgs,
+    CrossLanguageOracleGraphCase, CrossLanguageOracleGraphRawRef, DogfoodBunUbCrossLanguageRun,
     DogfoodBunUbCrossLanguageScenario, DogfoodEditorFirstPrBridgeRun, DogfoodEditorGapCockpitRun,
     DogfoodFindingAlignmentRun, DogfoodFindingAlignmentScenario, DogfoodFirstActionRun,
     DogfoodFirstPrRun, DogfoodFrontPanelRun, DogfoodGateRun, DogfoodGeneratedCiCockpitRun,

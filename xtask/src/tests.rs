@@ -50,19 +50,19 @@ use super::run::{
 use super::scratch_gc_concurrency_violations;
 use super::validate_bless_reason;
 use super::{
-    BUN_UB_CROSS_LANGUAGE_DOGFOOD_REQUIRED_CASES, BadgeArtifactJob, BadgeBasisReport,
-    BadgeBasisSignal, BadgeCanonicalProjection, BadgeCountBreakdown, BadgeEndpointSnapshot,
-    BadgeNativeAuditSnapshot, BadgeNativeSlot, Capability, ChangedPath, CheckReport, CheckStatus,
-    CheckViolation, CiFullEvidenceGate, CommandCatalogEntry, CwdCommand, DOC_ARTIFACT_LEDGER,
-    DogfoodBunUbCrossLanguageScenario, DogfoodEditorFirstPrBridgeRun, DogfoodEditorGapCockpitRun,
-    DogfoodFindingAlignmentRun, DogfoodFindingAlignmentScenario, DogfoodFirstActionRun,
-    DogfoodFirstPrRun, DogfoodFrontPanelRun, DogfoodGateRun, DogfoodGeneratedCiCockpitRun,
-    DogfoodLanguagePreviewRun, DogfoodPrInlineCommentRun, DogfoodPreviewProjectionRuns,
-    DogfoodPythonNoActionEvalScenario, DogfoodPythonRealRepoEvalScenario,
-    DogfoodPythonStaticLimitEvalScenario, DogfoodRealRepairAttemptScenario, DogfoodReportInputs,
-    DogfoodReportPacketIndexRun, DogfoodRun, DogfoodSurfaceProjectionAlignmentScenario,
-    DogfoodTypescriptPreviewRepairLoopScenario, DogfoodUserSurfaceProjectionScenario,
-    EVIDENCE_QUALITY_SCORECARD_AUDIT_REGENERATION_FAILED,
+    ArtifactRouterInput, BUN_UB_CROSS_LANGUAGE_DOGFOOD_REQUIRED_CASES, BadgeArtifactJob,
+    BadgeBasisReport, BadgeBasisSignal, BadgeCanonicalProjection, BadgeCountBreakdown,
+    BadgeEndpointSnapshot, BadgeNativeAuditSnapshot, BadgeNativeSlot, Capability, ChangedPath,
+    CheckReport, CheckStatus, CheckViolation, CiFullEvidenceGate, CommandCatalogEntry, CwdCommand,
+    DOC_ARTIFACT_LEDGER, DogfoodBunUbCrossLanguageScenario, DogfoodEditorFirstPrBridgeRun,
+    DogfoodEditorGapCockpitRun, DogfoodFindingAlignmentRun, DogfoodFindingAlignmentScenario,
+    DogfoodFirstActionRun, DogfoodFirstPrRun, DogfoodFrontPanelRun, DogfoodGateRun,
+    DogfoodGeneratedCiCockpitRun, DogfoodLanguagePreviewRun, DogfoodPrInlineCommentRun,
+    DogfoodPreviewProjectionRuns, DogfoodPythonNoActionEvalScenario,
+    DogfoodPythonRealRepoEvalScenario, DogfoodPythonStaticLimitEvalScenario,
+    DogfoodRealRepairAttemptScenario, DogfoodReportInputs, DogfoodReportPacketIndexRun, DogfoodRun,
+    DogfoodSurfaceProjectionAlignmentScenario, DogfoodTypescriptPreviewRepairLoopScenario,
+    DogfoodUserSurfaceProjectionScenario, EVIDENCE_QUALITY_SCORECARD_AUDIT_REGENERATION_FAILED,
     EVIDENCE_QUALITY_TREND_PREVIOUS_ARTIFACT_UNAVAILABLE, EvidenceQualityScorecardInput,
     EvidenceQualityScorecardInputs, EvidenceQualityScorecardReport, EvidenceQualityTrendInputs,
     EvidenceQualityTrendReport, FixKind, GENERATED_CI_FIRST_ACTION_REPAIR,
@@ -19965,6 +19965,32 @@ fn artifact_router_path_violation_rejects_paths_outside_the_render_root() {
             "`{path}` should be rejected as a render-root input path"
         );
     }
+}
+
+#[test]
+fn artifact_router_inputs_never_copy_build_output_from_the_checkout() {
+    // A declared-absent `target/...` input stays absent even when an earlier
+    // run left a file at that path in the checkout.
+    let absent = ArtifactRouterInput::at(
+        "assistant-proof",
+        "target/ripr/reports/test-oracle-assistant-proof.json",
+    );
+    assert_eq!(absent.copy_source(), None);
+
+    let committed = ArtifactRouterInput::at("ledger", "fixtures/x/ledger.json");
+    assert_eq!(
+        committed.copy_source(),
+        Some(Path::new("fixtures/x/ledger.json"))
+    );
+    let sourced = ArtifactRouterInput::from(
+        "ledger",
+        "target/ripr/reports/pr-evidence-ledger.json",
+        "fixtures/x/inputs/pr-evidence-ledger.json",
+    );
+    assert_eq!(
+        sourced.copy_source(),
+        Some(Path::new("fixtures/x/inputs/pr-evidence-ledger.json"))
+    );
 }
 
 #[test]

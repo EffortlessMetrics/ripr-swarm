@@ -3026,6 +3026,20 @@ impl ArtifactRouterInput {
             source: Some(source.to_string()),
         }
     }
+
+    /// The checkout file this input's bytes are copied from, if any.
+    ///
+    /// A source-less `target/...` path names build output, so it is never
+    /// read from the checkout: a file left there by an earlier run would turn
+    /// an input the case declares absent (front-panel `missing_proof`) into a
+    /// present one. Such an input is passed as a flag with nothing behind it.
+    pub(crate) fn copy_source(&self) -> Option<&Path> {
+        match &self.source {
+            Some(source) => Some(Path::new(source)),
+            None if Path::new(&self.path).starts_with("target") => None,
+            None => Some(Path::new(&self.path)),
+        }
+    }
 }
 
 /// What one production render of an artifact-router case produced, with the
@@ -3099,15 +3113,14 @@ pub(crate) fn render_artifact_router_case(
         .collect::<Vec<_>>();
     args.extend(["--root".to_string(), case.root.to_string()]);
     for input in case.inputs {
-        let source = Path::new(input.source.as_deref().unwrap_or(&input.path));
-        if input.source.is_some() && !source.is_file() {
-            return Err(format!(
-                "{} input source is missing: {}",
-                case.family,
-                normalize_path(source)
-            ));
-        }
-        if source.is_file() {
+        if let Some(source) = input.copy_source() {
+            if !source.is_file() {
+                return Err(format!(
+                    "{} input source is missing or not a plain file: {}",
+                    case.family,
+                    normalize_path(source)
+                ));
+            }
             let target = render_root.join(&input.path);
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)
@@ -3115,12 +3128,6 @@ pub(crate) fn render_artifact_router_case(
             }
             fs::copy(source, &target)
                 .map_err(|err| format!("failed to copy into {}: {err}", normalize_path(&target)))?;
-        } else if source.exists() {
-            return Err(format!(
-                "{} input is not a plain file: {}",
-                case.family,
-                normalize_path(source)
-            ));
         }
         args.extend([format!("--{}", input.flag), input.path.clone()]);
     }
