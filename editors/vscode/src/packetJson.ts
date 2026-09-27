@@ -30,14 +30,23 @@ export function stringValues(value: Record<string, unknown> | undefined): string
 /**
  * Check if a command contains shell metacharacters that could inject.
  *
- * `$` and parentheses close command and process substitution (`$(cmd)`,
- * `<(cmd)`, `>(cmd)`, PowerShell `$(...)`/`@(...)`); the server never emits
- * them bare, since `shell_arg` quotes both (#4225). The check is not
- * quote-aware on purpose: bash, fish, PowerShell and cmd.exe disagree about
- * what a single-quoted span protects, so quoted server text gets no pass.
+ * Refused anywhere: line breaks, NUL, `` ` ``, `;`, `&`, `|`, `\`, `"` and
+ * the typographic quotes PowerShell treats as quotes (U+2018..U+201F). The
+ * server's `shell_arg` emits none of them outside a single-quoted span, and
+ * with them gone a single-quoted span means the same thing in bash, zsh,
+ * fish and PowerShell: nothing inside it expands.
+ *
+ * Refused outside single-quoted spans: `$`, `(` and `)`, which open command
+ * and process substitution (`$(cmd)`, `<(cmd)`, `>(cmd)`; #4225). The server
+ * quotes all three, so a quoted gap id such as `'len(x)>0'` still passes.
+ * An unterminated span is refused.
  */
 export function hasUnsafeShellMetacharacter(command: string): boolean {
-  return /[\r\n\0`;&|\\$()]/.test(command);
+  if (/[\r\n\0`;&|\\"\u2018-\u201f]/.test(command)) {
+    return true;
+  }
+  const spans = command.split("'");
+  return spans.length % 2 === 0 || spans.some((span, index) => index % 2 === 0 && /[$()]/.test(span));
 }
 
 /**

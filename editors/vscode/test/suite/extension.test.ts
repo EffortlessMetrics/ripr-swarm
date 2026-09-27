@@ -3652,6 +3652,12 @@ suite('Extension Smoke', () => {
     }
     assert.ok(hasUnsafeShellMetacharacter('ripr check $(id)'));
     assert.ok(hasUnsafeShellMetacharacter('ripr check >(id)'));
+    assert.ok(hasUnsafeShellMetacharacter('ripr check "$(id)"'));
+    assert.ok(hasUnsafeShellMetacharacter(`ripr check "it's $(id) it's"`));
+    assert.ok(hasUnsafeShellMetacharacter("ripr check 'unterminated $(id)"));
+    assert.ok(hasUnsafeShellMetacharacter("ripr check 'a\u2019 $(id) \u2019b'"));
+    // The server single-quotes a gap id built from an expression; it stays inert.
+    assert.ok(!hasUnsafeShellMetacharacter("ripr agent packet --gap-id 'gap:len(x)>0' --json > out.json"));
   });
 
   test('agent loop command handlers ignore malformed args without throwing', async () => {
