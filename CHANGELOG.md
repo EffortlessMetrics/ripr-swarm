@@ -529,6 +529,15 @@ are scoped or reviewed.
 
 ### Fixed
 
+- TypeScript/JavaScript preview: a class method tested through an instance
+  built outside the test body is no longer reported `no_static_path`. The
+  receiver may now come from the enclosing `describe` scope, a
+  `beforeEach`/`beforeAll` hook, a default import of the owner's
+  default-exported class, or a namespace import (`new shop.Cart()`). A test
+  body that declares its own local of that name, `afterEach` hooks, skipped
+  tests, sibling `describe` blocks, and a scope that also assigns the name to
+  something else still do not relate.
+
 - `cargo xtask vscode-package` now reads the built VSIX and fails if it
   carries workspace build output (anything under `extension/target/`, Cargo
   `.fingerprint` or `incremental` state, `.rlib` or `.rmeta`) or exceeds 1,500

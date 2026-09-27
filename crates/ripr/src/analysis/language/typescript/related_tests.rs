@@ -615,7 +615,18 @@ pub(crate) fn receiver_owner_call_relation(
     }
     let constructor_names =
         constructor_names_for_method_owner(test, owner, alias_map, workspace_root);
-    let receiver_names = receiver_names_for_constructor_calls(&test.body_text, &constructor_names);
+    let mut receiver_names =
+        receiver_names_for_constructor_calls(&test.body_text, &constructor_names);
+    // A receiver built in the enclosing scope (`const cart = new Cart()` in a
+    // `describe`, or `cart = new Cart()` in a `beforeEach`) is the same object
+    // the test body calls, unless the body declares its own local of that name.
+    for receiver in
+        scope_receiver_names_for_constructor_calls(&test.scope_setup_text, &constructor_names)
+    {
+        if !local_identifier_declared_in_test_body(&test.body_text, &receiver) {
+            push_unique_string(&mut receiver_names, receiver);
+        }
+    }
     if receiver_names
         .iter()
         .any(|receiver| contains_member_call_name(&test.body_text, receiver, &owner.name))
@@ -699,16 +710,66 @@ pub(crate) fn constructor_names_for_method_owner(
         push_unique_string(&mut names, class_name.to_string());
     }
     for import in &test.imports_in_file {
-        if import.namespace
-            || !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
-        {
+        if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root) {
             continue;
         }
-        if import.imported.as_deref() == Some(class_name) {
+        if import.namespace {
+            // `import * as pricing from './cart'` + `new pricing.Cart()`.
+            push_unique_string(&mut names, format!("{}.{class_name}", import.local));
+        } else if import.imported.as_deref() == Some(class_name)
+            || (owner.class_default_export
+                && import.imported.as_deref() == Some("default")
+                && !local_identifier_declared_in_test_body(&test.body_text, &import.local))
+        {
+            // A named import, or a default import of the owner's
+            // default-exported class under any local name.
             push_unique_string(&mut names, import.local.clone());
         }
     }
     names
+}
+
+/// Receivers the enclosing test scope binds to a new instance of one of
+/// `constructor_names`: declarations (`const cart = new Cart();`) and plain
+/// assignments to an earlier declaration (`cart = new Cart();` in a
+/// `beforeEach`). A name the setup also assigns anything else to is ambiguous
+/// and is dropped.
+fn scope_receiver_names_for_constructor_calls(
+    setup_text: &str,
+    constructor_names: &[String],
+) -> Vec<String> {
+    let mut constructed = Vec::new();
+    let mut reassigned = Vec::new();
+    for line in setup_text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//") {
+            continue;
+        }
+        let Some((target, initializer)) = trimmed.split_once('=') else {
+            continue;
+        };
+        // `==`/`=>`/`<=` and friends are not assignments.
+        if initializer.starts_with(['=', '>']) || target.ends_with(['!', '<', '>', '=']) {
+            continue;
+        }
+        let target = ["const ", "let ", "var "]
+            .into_iter()
+            .find_map(|keyword| target.strip_prefix(keyword))
+            .unwrap_or(target);
+        let Some(target) = receiver_name_from_declaration(target) else {
+            continue;
+        };
+        if constructor_names
+            .iter()
+            .any(|constructor| contains_new_constructor_call(initializer, constructor))
+        {
+            push_unique_string(&mut constructed, target);
+        } else {
+            push_unique_string(&mut reassigned, target);
+        }
+    }
+    constructed.retain(|name| !reassigned.contains(name));
+    constructed
 }
 
 pub(crate) fn receiver_names_for_constructor_calls(

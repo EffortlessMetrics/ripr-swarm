@@ -112,6 +112,12 @@ pub(crate) struct TypeScriptTest {
     /// file. Used only to map relative named or namespace imports back to a
     /// source owner before considering alias calls related.
     pub(crate) imports_in_file: Vec<TypeScriptImport>,
+    /// Setup text from the enclosing scopes, outermost first: variable
+    /// declarations and `beforeEach`/`beforeAll` hooks at the file and each
+    /// enclosing `describe` level. Used only to find receivers constructed
+    /// outside the test body (`cart = new Cart()` in a hook); never read for
+    /// owner calls or assertions, which must sit in `body_text`.
+    pub(crate) scope_setup_text: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

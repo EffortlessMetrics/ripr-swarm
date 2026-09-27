@@ -35,7 +35,7 @@ pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
             source,
             &mocks,
             &imports,
-            &mut Vec::new(),
+            &mut TestScope::default(),
             &mut tests,
         );
         tests
@@ -196,30 +196,69 @@ pub(crate) fn collect_tests_from_statements(
     source: &str,
     mocks: &[String],
     imports: &[TypeScriptImport],
-    describe_stack: &mut Vec<String>,
+    scope: &mut TestScope,
     tests: &mut Vec<TypeScriptTest>,
 ) {
+    // Setup that runs for every test in this scope: variable declarations and
+    // `beforeEach`/`beforeAll` hooks at this level. Collected before any test
+    // so a hook written after a test still counts, as it does at runtime.
+    let setup_depth = scope.setup.len();
+    for stmt in statements {
+        if let Some(setup) = scope_setup_snippet(stmt, source) {
+            scope.setup.push(setup);
+        }
+    }
     for stmt in statements {
         if let Some((describe_name, body)) = describe_body_from_statement(stmt) {
-            describe_stack.push(describe_name);
-            collect_tests_from_statements(
-                body,
-                file,
-                source,
-                mocks,
-                imports,
-                describe_stack,
-                tests,
-            );
-            describe_stack.pop();
+            scope.describe_names.push(describe_name);
+            collect_tests_from_statements(body, file, source, mocks, imports, scope, tests);
+            scope.describe_names.pop();
             continue;
         }
-        if let Some(mut test) = test_from_statement(stmt, file, source, describe_stack) {
+        if let Some(mut test) = test_from_statement(stmt, file, source, &scope.describe_names) {
             test.mocks_in_file = mocks.to_vec();
             test.imports_in_file = imports.to_vec();
+            test.scope_setup_text = scope.setup.join("\n");
             tests.push(test);
         }
     }
+    scope.setup.truncate(setup_depth);
+}
+
+/// The enclosing `describe` scopes of the statements being walked.
+#[derive(Default)]
+pub(crate) struct TestScope {
+    /// Describe names, outermost first.
+    describe_names: Vec<String>,
+    /// Setup snippets (`scope_setup_snippet`) of the file and each enclosing
+    /// describe, outermost first.
+    setup: Vec<String>,
+}
+
+/// Source text of a statement that sets up state for every test in its scope:
+/// a variable declaration (`let cart: Cart;`, `const cart = new Cart();`) or a
+/// `beforeEach`/`beforeAll` hook. Tests, `describe` blocks, `afterEach` hooks
+/// and skipped tests are not setup, so their locals never leak into a test.
+fn scope_setup_snippet(stmt: &Statement<'_>, source: &str) -> Option<String> {
+    let span = match stmt {
+        Statement::VariableDeclaration(declaration) => declaration.span,
+        Statement::ExpressionStatement(expr_stmt) => {
+            let Expression::CallExpression(call) = &expr_stmt.expression else {
+                return None;
+            };
+            let Expression::Identifier(callee) = &call.callee else {
+                return None;
+            };
+            if !matches!(callee.name.as_str(), "beforeEach" | "beforeAll") {
+                return None;
+            }
+            expr_stmt.span
+        }
+        _ => return None,
+    };
+    source
+        .get(span.start as usize..span.end as usize)
+        .map(str::to_string)
 }
 
 pub(crate) fn describe_body_from_statement<'a>(
@@ -266,6 +305,7 @@ pub(crate) fn test_from_statement(
         // per file before the test is returned to the caller.
         mocks_in_file: Vec::new(),
         imports_in_file: Vec::new(),
+        scope_setup_text: String::new(),
     })
 }
 
