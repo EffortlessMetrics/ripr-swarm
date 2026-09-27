@@ -585,7 +585,7 @@ fn precommit() -> Result<(), String> {
     check_fixture_contracts()?;
     check_rust_judged_panel()?;
     check_release_challenge_selection()?;
-    rust_judged_panel::check_release_judgments()?;
+    check_release_challenge_judgments()?;
     check_python_judged_panel()?;
     check_traceability()?;
     check_capabilities()?;
@@ -619,6 +619,10 @@ fn check_rust_judged_panel() -> Result<(), String> {
 
 fn check_release_challenge_selection() -> Result<(), String> {
     rust_judged_panel::check_release_selection()
+}
+
+fn check_release_challenge_judgments() -> Result<(), String> {
+    rust_judged_panel::check_release_judgments()
 }
 
 fn check_python_judged_panel() -> Result<(), String> {
