@@ -886,11 +886,12 @@ fn main() -> ExitCode {
         if artifact_bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
             return Err("artifact carries a UTF-8 BOM".to_string());
         }
-        if !artifact_bytes
-            .windows(b"RECORDER_OK".len())
-            .any(|window| window == b"RECORDER_OK")
-        {
-            return Err("artifact misses the recorder stdout marker".to_string());
+        // Byte-exact: `Out-String` ends the captured line with CRLF, so this
+        // fails if the `.Replace` LF normalization is dropped or altered.
+        if artifact_bytes != b"RECORDER_OK\n" {
+            return Err(format!(
+                "artifact bytes {artifact_bytes:?} are not exactly RECORDER_OK LF"
+            ));
         }
 
         // Failure control: a nonzero invocation throws without publishing
