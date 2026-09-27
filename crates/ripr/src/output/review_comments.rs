@@ -3085,6 +3085,44 @@ mod tests {
         Ok(())
     }
 
+    /// Eligibility does not require a related test or target file, so an
+    /// eligible card projects null test-navigation fields. The published
+    /// schema's gap-ledger branch admits exactly this shape
+    /// (`review_comments_gap_ledger_card_has_its_own_schema_branch`).
+    #[test]
+    fn review_comments_gap_ledger_card_without_related_test_keeps_null_navigation()
+    -> Result<(), String> {
+        let mut record = eligible_gap_record_json("gap:no-related-test", "dedupe:no-related");
+        record["repair_route"]
+            .as_object_mut()
+            .ok_or("repair route fixture should be an object")?
+            .remove("target_file");
+        let records_json = serde_json::json!({ "records": [record] }).to_string();
+        let records = crate::output::gap_decision_ledger::parse_gap_records_json(&records_json)?;
+        let rendered = render_gap_record_review_comments_json(
+            Path::new("."),
+            "main",
+            "HEAD",
+            &Mode::Draft,
+            "target/ripr/reports/gap-decision-ledger.json",
+            &records,
+        )?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse JSON: {err}"))?;
+        assert_eq!(value["summary"]["comments"], 1);
+        let suggested = &value["comments"][0]["suggested_test"];
+        for field in [
+            "recommended_file",
+            "recommended_name",
+            "near_test",
+            "related_test",
+        ] {
+            assert_eq!(suggested[field], Value::Null, "{field}");
+        }
+        assert!(value["comments"][0]["repair_card"].is_object());
+        Ok(())
+    }
+
     #[test]
     fn review_comments_gap_ledger_rejects_blank_and_mixed_verification_commands()
     -> Result<(), String> {

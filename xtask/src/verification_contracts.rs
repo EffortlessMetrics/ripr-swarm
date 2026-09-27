@@ -117,6 +117,7 @@ const CONTRACTS: &[VerificationContract] = &[
             "gap_ledger",
             "gap_record_anchor",
             "comments[].gap_id",
+            "gap_repair_card",
         ],
     },
     VerificationContract {
@@ -1369,6 +1370,52 @@ mod tests {
             .remove("repair_card");
         assert!(!check(&missing_repair_card).is_empty());
 
+        // Key presence alone is not a repair card: `null`, an empty object,
+        // and a card without verification commands carry no repair guidance.
+        for (label, card) in [
+            ("null", Value::Null),
+            ("empty object", serde_json::json!({})),
+        ] {
+            let mut hollow = packet.clone();
+            hollow["comments"][0]["repair_card"] = card;
+            assert!(!check(&hollow).is_empty(), "{label} repair_card accepted");
+        }
+        let mut no_commands = packet.clone();
+        no_commands["comments"][0]["repair_card"]["verification_commands"] =
+            serde_json::json!([]);
+        assert!(!check(&no_commands).is_empty());
+
+        // An eligible GapRecord needs no related test or target file.
+        // gap_record_comment_json then projects null test-navigation fields,
+        // which the gap-ledger card must admit.
+        let mut no_related_test = packet.clone();
+        {
+            let suggested = &mut no_related_test["comments"][0]["suggested_test"];
+            suggested["recommended_name"] = Value::Null;
+            suggested["near_test"] = Value::Null;
+            suggested["related_test"] = Value::Null;
+        }
+        no_related_test["comments"][0]["repair_card"]["repair_route"]
+            .as_object_mut()
+            .ok_or("missing fixture repair route")?
+            .remove("related_test");
+        assert!(
+            check(&no_related_test).is_empty(),
+            "{:#?}",
+            check(&no_related_test)
+        );
+        let mut no_test_location = no_related_test.clone();
+        no_test_location["comments"][0]["suggested_test"]["recommended_file"] = Value::Null;
+        no_test_location["comments"][0]["repair_card"]["repair_route"]
+            .as_object_mut()
+            .ok_or("missing fixture repair route")?
+            .remove("target_file");
+        assert!(
+            check(&no_test_location).is_empty(),
+            "{:#?}",
+            check(&no_test_location)
+        );
+
         let mut wrong_placement = packet.clone();
         wrong_placement["comments"][0]["placement"]["mode"] =
             Value::String("exact_seam_line".to_string());
@@ -1382,6 +1429,16 @@ mod tests {
                 .ok_or("missing default comments")?
                 .is_empty()
         );
+        assert!(check(&default_packet).is_empty(), "{:#?}", check(&default_packet));
+        // Working-set cards keep their string test-navigation contract.
+        for field in ["recommended_file", "recommended_name"] {
+            let mut null_navigation = default_packet.clone();
+            null_navigation["comments"][0]["suggested_test"][field] = Value::Null;
+            assert!(
+                !check(&null_navigation).is_empty(),
+                "working-set null {field} accepted"
+            );
+        }
         default_packet["comments"][0]["placement"]["mode"] =
             Value::String("gap_record_anchor".to_string());
         assert!(!check(&default_packet).is_empty());

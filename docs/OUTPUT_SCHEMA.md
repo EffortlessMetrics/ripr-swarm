@@ -7302,6 +7302,11 @@ JSON shape:
         "changed_behavior": "amount == discount_threshold",
         "why_this_matters": "Changed behavior `amount == discount_threshold` has a repairable MissingBoundaryAssertion gap.",
         "repair": "Assert the returned discount behavior directly.",
+        "repair_route": {
+          "route_kind": "AddBoundaryAssertion",
+          "target_file": "tests/pricing.rs",
+          "changed_behavior": "amount == discount_threshold"
+        },
         "evidence_ids": ["evidence:pricing-threshold-reached"],
         "verification_commands": ["cargo xtask fixtures boundary_gap"],
         "verify_command": "cargo xtask fixtures boundary_gap",
@@ -7401,6 +7406,12 @@ Field contract:
   object adds a directly navigable `file:line` when the related-test location
   is resolved. On the gap-ledger card path `file` and `line` may be `null`
   when the supplied repair route names only the related test.
+- `comments[].suggested_test.recommended_file` /
+  `comments[].suggested_test.recommended_name` - strings on working-set cards
+  (`not_applicable` on non-actionable cards). On `--gap-ledger` cards they are
+  `null` when the supplied repair route names no related test
+  (`recommended_name`) or neither a target file nor a related test
+  (`recommended_file`); eligibility does not require either.
 - `comments[].llm_guidance` - bounded handoff command and prompt for one
   focused test. It is not a request for free-form diff review.
 - `comments[].llm_guidance.repair_command` - present only on an actionable
@@ -7411,11 +7422,16 @@ Field contract:
   ineligible, and gap-ledger cards; consumers must not derive it from
   `seam_id`. Inline publish planning closes the comment body with it in place
   of the bare `ripr agent verify` line.
-- `comments[].repair_card` - optional GapRecord-backed repair card. When
+- `comments[].repair_card` - GapRecord-backed repair card. Absent on
+  working-set cards; required on every `--gap-ledger` card
+  (`source: "gap_decision_ledger"`), where the published schema validates the
+  `gap_repair_card` shape: a non-empty `gap_kind`, nullable `changed_behavior`,
+  non-empty `why_this_matters` and `repair`, a `repair_route` object carrying
+  `route_kind`, `evidence_ids`, at least one non-empty `verification_commands`
+  entry, a non-empty `verify_command` and `source_artifact`, and
+  `authority_boundary`. A `null` or empty-object card is invalid. When
   present, inline publish planning should use this field for the human/LLM
-  comment body instead of raw static classes. It carries gap kind, changed
-  behavior when available, why the gap matters, the bounded repair route,
-  evidence IDs, verification commands, source artifact, and authority boundary.
+  comment body instead of raw static classes.
 - `comments[].oracle_kind` / `comments[].oracle_strength` - card-level oracle
   facts (RIPR-SPEC-0068) projecting the representative related test's oracle
   (the nearest strong related test, else the top-ranked related test). When no
