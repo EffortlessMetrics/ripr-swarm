@@ -510,13 +510,17 @@ pub(in crate::analysis) fn local_boundary(
 }
 
 /// Whether the owner's body declares `operand` with `let` (or `let mut`),
-/// on any line. Comments and strings are masked first.
+/// on any line. Comments and strings are masked first; an operand that is
+/// not an identifier (a literal such as `100`) returns early.
 fn owner_declares_local(owner: &FunctionSummary, operand: &str) -> bool {
-    if operand.is_empty()
-        || !operand
+    let is_identifier = operand
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && operand
             .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-    {
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+    if !is_identifier {
         return false;
     }
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
