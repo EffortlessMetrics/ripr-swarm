@@ -12171,13 +12171,18 @@ Field contract:
   also when status cannot choose honestly: an unreadable attempt manifest,
   several current awaiting attempts, several open seams, an unreadable
   `HEAD`, a complete pilot summary whose top seam recorded no repair start,
-  or a complete pilot summary that ranked no seam, recorded no repair card and
-  routed the changed code to `ripr check` (`language_routes.state: required`).
+  or a complete pilot summary that ranked no seam, recorded no repair card
+  (`python_first_use` absent, `null`, or status `no_python_findings` or
+  `no_repair_cards`) and routed the code to `ripr check`
+  (`language_routes.state: required` with a recorded route command).
   A warning (`repair_attempt_unreadable`, `ambiguous_repair_attempts`,
   `multiple_open_repair_seams`, `repair_attempt_head_unknown`,
   `pilot_found_no_repair_target`, `pilot_routed_to_check_no_repair_target`)
-  then names the choices; the last names the recorded check command and the
-  hand step (add or strengthen a test, then rerun that check).
+  then names the choices. The last names the recorded check command and the
+  hand step (add or strengthen a test, then rerun that check) for an enabled
+  route, the enable step (add the language to `[languages] enabled` in
+  `ripr.toml`) for a route with `enabled: false`, and says to rerun pilot if
+  the workspace changed since that run.
 - `warnings[]` - stale-looking or unreadable-artifact hints. Timestamp warnings
   are emitted when `agent verify` is older than a before/after snapshot or
   `agent receipt` is older than `agent verify`. For a seam with no attempt

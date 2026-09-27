@@ -838,16 +838,33 @@ fn pilot_found_no_repair_target(root: &Path) -> bool {
             .is_some_and(Value::is_null)
 }
 
+/// Python first-use statuses that record "pilot produced no repair card"
+/// (`output::pilot::types::PilotPythonFirstUseStatus`). `analysis_unavailable`
+/// is a failed analysis, not that fact, and `ready` has repair cards.
+const PILOT_NO_REPAIR_CARD_PYTHON_STATUSES: &[&str] = &["no_python_findings", "no_repair_cards"];
+
 /// The diff-first routes a complete `ripr pilot` run recorded when it ranked
-/// no seam, produced no repair card, and recorded no repair start: its
-/// `language_routes.state` is `required`, so pilot itself sends the changed
-/// code to `ripr check`, which offers no `ripr agent repair` start. Sending
-/// the user back to pilot then only routes them to `ripr check` again, for
-/// any routed language (#4216, Python and TypeScript re-walks). Returns the
-/// routed languages and their distinct recorded commands. A missing,
-/// unreadable, timed-out, seam-ranking, repair-card-bearing, or command-less
-/// summary is not this fact.
-fn pilot_routed_changed_code_to_check(root: &Path) -> Option<(Vec<String>, Vec<String>)> {
+/// no seam, produced no repair card, and recorded no repair start.
+struct PilotCheckRoutes {
+    /// Languages whose route is enabled in `[languages]`, with their
+    /// distinct recorded check commands.
+    enabled_languages: Vec<String>,
+    commands: Vec<String>,
+    /// Routed languages the effective config does not enable, as the
+    /// `[languages] enabled` entry that turns each on.
+    disabled_config_languages: Vec<String>,
+}
+
+/// Reads the retained pilot summary (#4216, Python and TypeScript
+/// re-walks): `status: complete`, empty `top_actionable_seams`, an explicit
+/// null `next.repair_command`, `language_routes.state: required` (pilot
+/// itself sends the code to `ripr check`, which offers no `ripr agent
+/// repair` start), and no repair card (`python_first_use` absent, null, or
+/// a no-repair-card status). Sending the user back to pilot then only routes
+/// them to `ripr check` again, for any routed language. A missing,
+/// unreadable, timed-out, seam-ranking, repair-card-bearing,
+/// analysis-unavailable, or command-less summary is not this fact.
+fn pilot_routed_changed_code_to_check(root: &Path) -> Option<PilotCheckRoutes> {
     let text = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)).ok()?;
     let summary = serde_json::from_str::<Value>(&text).ok()?;
     let complete = summary.pointer("/status").and_then(Value::as_str) == Some("complete");
@@ -866,13 +883,19 @@ fn pilot_routed_changed_code_to_check(root: &Path) -> Option<(Vec<String>, Vec<S
         .pointer("/python_first_use")
         .filter(|first_use| !first_use.is_null())
         .is_none_or(|first_use| {
-            first_use.get("repair_cards_total").and_then(Value::as_u64) == Some(0)
+            first_use
+                .get("status")
+                .and_then(Value::as_str)
+                .is_some_and(|status| PILOT_NO_REPAIR_CARD_PYTHON_STATUSES.contains(&status))
         });
     if !(complete && no_seams && no_repair_start && routes_required && no_repair_cards) {
         return None;
     }
-    let mut languages = Vec::new();
-    let mut commands = Vec::new();
+    let mut routes = PilotCheckRoutes {
+        enabled_languages: Vec::new(),
+        commands: Vec::new(),
+        disabled_config_languages: Vec::new(),
+    };
     for route in summary
         .pointer("/language_routes/routes")
         .and_then(Value::as_array)?
@@ -880,14 +903,83 @@ fn pilot_routed_changed_code_to_check(root: &Path) -> Option<(Vec<String>, Vec<S
         let Some(command) = route.get("command").and_then(Value::as_str) else {
             continue;
         };
-        if let Some(language) = route.get("language").and_then(Value::as_str) {
-            languages.push(language.to_string());
-        }
-        if !commands.iter().any(|known| known == command) {
-            commands.push(command.to_string());
+        let language = route.get("language").and_then(Value::as_str);
+        if route.get("enabled").and_then(Value::as_bool) == Some(true) {
+            if let Some(language) = language {
+                routes.enabled_languages.push(language.to_string());
+            }
+            if !routes.commands.iter().any(|known| known == command) {
+                routes.commands.push(command.to_string());
+            }
+        } else if let Some(language) = language {
+            // JavaScript runs through the TypeScript-family adapter, which
+            // the `typescript` entry turns on (pilot `language_routes`).
+            let config_language = if language == "javascript" {
+                "typescript"
+            } else {
+                language
+            };
+            if !routes
+                .disabled_config_languages
+                .iter()
+                .any(|known| known == config_language)
+            {
+                routes
+                    .disabled_config_languages
+                    .push(config_language.to_string());
+            }
         }
     }
-    (!commands.is_empty()).then_some((languages, commands))
+    (!routes.commands.is_empty() || !routes.disabled_config_languages.is_empty()).then_some(routes)
+}
+
+/// "the python, typescript code", or "the code" for an empty list.
+fn routed_code_phrase(languages: &[String]) -> String {
+    if languages.is_empty() {
+        "the code".to_string()
+    } else {
+        format!("the {} code", languages.join(", "))
+    }
+}
+
+fn pilot_routed_to_check_message(routes: &PilotCheckRoutes, root_display: &str) -> String {
+    let mut message =
+        "the last complete `ripr pilot` run ranked no seam and produced no repair card".to_string();
+    if !routes.commands.is_empty() {
+        let commands = routes
+            .commands
+            .iter()
+            .map(|command| format!("`{command}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        message.push_str(&format!(
+            ": it routed {} to {commands}, which reviews changes diff-first and offers no `ripr agent repair` start, and running pilot again unchanged routes there again. Read the findings from {commands}, add or strengthen a test for the changed behavior by hand, then rerun {commands} to see whether static evidence now finds a discriminator",
+            routed_code_phrase(&routes.enabled_languages)
+        ));
+    }
+    if !routes.disabled_config_languages.is_empty() {
+        let entries = routes
+            .disabled_config_languages
+            .iter()
+            .map(|language| format!("\"{language}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let lead = if routes.commands.is_empty() {
+            ": "
+        } else {
+            ". Also, "
+        };
+        message.push_str(&format!(
+            "{lead}{} is not enabled in ripr.toml [languages], so `ripr check` does not analyze it yet: add {entries} to `[languages] enabled` in ripr.toml, then run `ripr check --root {}`",
+            routed_code_phrase(&routes.disabled_config_languages),
+            shell_arg(root_display)
+        ));
+    }
+    message.push_str(&format!(
+        ". If the workspace changed since that run, rerun `ripr pilot --root {}`",
+        shell_arg(root_display)
+    ));
+    message
 }
 
 /// The legacy seven-artifact loop, kept for `agent start` and manual users,
@@ -919,19 +1011,11 @@ fn legacy_next_command(
             });
             return None;
         }
-        if let Some((languages, commands)) = pilot_routed_changed_code_to_check(root) {
-            let commands = commands
-                .iter()
-                .map(|command| format!("`{command}`"))
-                .collect::<Vec<_>>()
-                .join(", ");
+        if let Some(routes) = pilot_routed_changed_code_to_check(root) {
             warnings.push(AgentStatusWarning {
                 kind: "pilot_routed_to_check_no_repair_target".to_string(),
                 artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
-                message: format!(
-                    "the last complete `ripr pilot` run ranked no seam and produced no repair card: it routed the changed {} code to {commands}, which reviews it diff-first and offers no `ripr agent repair` start, and running pilot again unchanged routes there again. Read the findings from {commands}, add or strengthen a test for the changed behavior by hand, then rerun {commands} to see whether static evidence now finds a discriminator",
-                    languages.join(", ")
-                ),
+                message: pilot_routed_to_check_message(&routes, root_display),
             });
             return None;
         }
@@ -2350,27 +2434,30 @@ mod tests {
     }
 
     /// #4216 (Python and TypeScript re-walks): a complete pilot run that
-    /// ranked no seam, produced no repair card, and routed the changed code
-    /// to `ripr check` is terminal for status, whatever the language. Status
+    /// ranked no seam, produced no repair card, and routed the code to
+    /// `ripr check` is terminal for status, whatever the language. Status
     /// names the hand step and the recorded check command instead of looping
-    /// back to pilot. Timed-out, missing, unreadable, repair-card-bearing and
-    /// non-required summaries still route to pilot.
+    /// back to pilot; a route not enabled in `[languages]` names the enable
+    /// step instead of promising a discriminator. Every other summary still
+    /// routes to pilot.
     #[test]
     fn agent_status_stops_when_pilot_routed_changed_code_to_check() -> Result<(), String> {
         let root = unique_agent_status_test_dir("pilot-routed-to-check");
-        let summary = |status: &str, state: &str, python_first_use: &str| {
+        let enabled_routes = r#"[{"language": "typescript", "enabled": true, "command": "ripr check --root ."}, {"language": "python", "enabled": true, "command": "ripr check --root ."}]"#;
+        let summary = |status: &str, state: &str, first_use: &str, routes: &str, repair: &str| {
             format!(
-                r#"{{"status": "{status}", "top_actionable_seams": [], "python_first_use": {python_first_use}, "language_routes": {{"state": "{state}", "routes": [{{"language": "typescript", "command": "ripr check --root ."}}, {{"language": "python", "command": "ripr check --root ."}}]}}, "next": {{"repair_command": null}}}}"#
+                r#"{{"status": "{status}", "top_actionable_seams": [], {first_use} "language_routes": {{"state": "{state}", "routes": {routes}}}, "next": {{"repair_command": {repair}}}}}"#
             )
         };
-        let no_cards = r#"{"status": "no_repair_cards", "repair_cards_total": 0}"#;
-        for python_first_use in ["null", no_cards] {
-            write_file(
-                &root.join(PILOT_SUMMARY_ARTIFACT),
-                &summary("complete", "required", python_first_use),
-            )?;
+        let stopped = |text: &str| -> Result<String, String> {
+            write_file(&root.join(PILOT_SUMMARY_ARTIFACT), text)?;
             let report = build_agent_status_report(&root, Path::new("."));
-            assert_eq!(report.next_command, None, "{:?}", report.next_command);
+            if report.next_command.is_some() {
+                return Err(format!(
+                    "expected no next command for {text}: {:?}",
+                    report.next_command
+                ));
+            }
             let warning = report
                 .warnings
                 .iter()
@@ -2379,23 +2466,104 @@ mod tests {
                     format!("expected a routed-to-check warning: {:?}", report.warnings)
                 })?;
             assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
-            for expected in [
-                "changed typescript, python code to `ripr check --root .`",
-                "add or strengthen a test for the changed behavior by hand, then rerun `ripr check --root .`",
-            ] {
-                assert!(warning.message.contains(expected), "{}", warning.message);
-            }
             let rendered = render_agent_status_markdown(&report);
-            assert!(!rendered.contains("ripr pilot --root"), "{rendered}");
+            assert!(
+                !rendered.contains("```bash\nripr pilot --root"),
+                "{rendered}"
+            );
+            assert!(!warning.message.contains("  "), "{}", warning.message);
+            Ok(warning.message.clone())
+        };
+
+        // Positive: python_first_use null, missing key, or a no-repair-card
+        // status; the enabled routes name the check command and hand step.
+        for first_use in [
+            r#""python_first_use": null,"#,
+            "",
+            r#""python_first_use": {"status": "no_repair_cards", "repair_cards_total": 0},"#,
+            r#""python_first_use": {"status": "no_python_findings", "repair_cards_total": 0},"#,
+        ] {
+            let message = stopped(&summary(
+                "complete",
+                "required",
+                first_use,
+                enabled_routes,
+                "null",
+            ))?;
+            for expected in [
+                "routed the typescript, python code to `ripr check --root .`",
+                "add or strengthen a test for the changed behavior by hand, then rerun `ripr check --root .`",
+                "If the workspace changed since that run, rerun `ripr pilot --root .`",
+            ] {
+                assert!(message.contains(expected), "{message}");
+            }
         }
 
+        // A route not enabled in `[languages]` names the enable step and
+        // promises no discriminator.
+        let message = stopped(&summary(
+            "complete",
+            "required",
+            "",
+            r#"[{"language": "javascript", "enabled": false, "command": "ripr check --root ."}]"#,
+            "null",
+        ))?;
+        assert!(
+            message.contains("the typescript code is not enabled in ripr.toml [languages]"),
+            "{message}"
+        );
+        assert!(
+            message.contains(r#"add "typescript" to `[languages] enabled` in ripr.toml"#),
+            "{message}"
+        );
+        assert!(!message.contains("discriminator"), "{message}");
+
+        // A route without a language renders without a double space.
+        let message = stopped(&summary(
+            "complete",
+            "required",
+            "",
+            r#"[{"enabled": true, "command": "ripr check --root ."}]"#,
+            "null",
+        ))?;
+        assert!(
+            message.contains("routed the code to `ripr check --root .`"),
+            "{message}"
+        );
+
         // Controls: every other summary keeps status on `select_seam`.
-        let with_cards = r#"{"status": "ready", "repair_cards_total": 1}"#;
         for control in [
-            summary("timed_out", "required", "null"),
-            summary("complete", "supplementary", "null"),
-            summary("complete", "not_detected", "null"),
-            summary("complete", "required", with_cards),
+            summary("timed_out", "required", "", enabled_routes, "null"),
+            summary("complete", "supplementary", "", enabled_routes, "null"),
+            summary("complete", "not_detected", "", enabled_routes, "null"),
+            summary(
+                "complete",
+                "required",
+                r#""python_first_use": {"status": "ready", "repair_cards_total": 1},"#,
+                enabled_routes,
+                "null",
+            ),
+            summary(
+                "complete",
+                "required",
+                r#""python_first_use": {"status": "analysis_unavailable", "repair_cards_total": 0},"#,
+                enabled_routes,
+                "null",
+            ),
+            summary(
+                "complete",
+                "required",
+                "",
+                enabled_routes,
+                r#""ripr check --root .""#,
+            ),
+            summary(
+                "complete",
+                "required",
+                "",
+                r#"[{"language": "perl", "enabled": false, "command": null}]"#,
+                "null",
+            ),
             "{ not json".to_string(),
         ] {
             write_file(&root.join(PILOT_SUMMARY_ARTIFACT), &control)?;
