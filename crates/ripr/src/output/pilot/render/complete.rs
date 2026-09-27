@@ -431,6 +431,9 @@ pub(crate) fn render_pilot_terminal(
         out.push_str(&format!("  1. {command}\n"));
         out.push_str("  2. add the focused test named above (test files only)\n");
         out.push_str("  3. run the `--attempt ... --phase after` command that step 1 prints\n");
+        out.push_str(
+            "  (do not redirect these commands' output into the checkout, for example `> packet.json`: the edit cage counts that file as an edit; use target/ripr/ or a directory outside the repository)\n",
+        );
         return out;
     }
     if let Some(routes) = routes {
