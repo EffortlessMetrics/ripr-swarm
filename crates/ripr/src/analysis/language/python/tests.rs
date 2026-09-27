@@ -3295,6 +3295,24 @@ fn classify_change_never_restates_changed_expression_as_discriminator() -> Resul
             vec!["self.label == <expected value>"],
         ),
         ("        return \"a+b\"", vec!["return value == \"a+b\""]),
+        // One triple-quoted literal is a literal; a compound of two is not,
+        // and adjacent-string concatenation stays non-literal.
+        (
+            r#"        return """abc""""#,
+            vec![r#"return value == """abc""""#],
+        ),
+        (
+            "        return '''abc'''",
+            vec!["return value == '''abc'''"],
+        ),
+        (
+            r#"        return """a""" + name + """b""""#,
+            vec!["return value == <expected value>"],
+        ),
+        (
+            "        return \"a\" \"b\"",
+            vec!["return value == <expected value>"],
+        ),
         // A constructor keyword bound to a bare name echoes that name.
         (
             "        return Order(total=name)",

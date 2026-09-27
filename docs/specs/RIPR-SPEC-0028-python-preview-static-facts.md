@@ -306,8 +306,10 @@ changed production expression as its own oracle: an assertion such as
 `result == sum(i.quantity for i in self.items) + 1` passes for every mutant of
 that expression. The expected side of a returned value, returned-dict field,
 constructor keyword, or plain assignment is kept only when it is one
-independent literal (a single string, number, `True`, `False`, or `None`; a
-string-delimited compound such as `"Hello, " + name + "!"` is not one).
+independent literal (a single string, including one triple-quoted string,
+number, `True`, `False`, or `None`; a string-delimited compound such as
+`"Hello, " + name + "!"` is not one, and adjacent-string concatenation such
+as `"a" "b"` is conservatively not one either).
 Otherwise it is the `<expected value>` placeholder
 (`return value == <expected value>`, `self.total == <expected value>`,
 `result.total == <expected value>`), and no concrete expected value is

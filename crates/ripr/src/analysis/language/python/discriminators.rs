@@ -604,6 +604,17 @@ pub(super) fn first_python_string_literal(text: &str) -> Option<String> {
 
 pub(super) fn python_string_literal_value(text: &str) -> Option<String> {
     let trimmed = text.trim();
+    // One triple-quoted literal: the first unescaped closing delimiter must
+    // end the text. Adjacent-string concatenation (`"a" "b"`) stays
+    // non-literal.
+    for delimiter in [r#"""""#, "'''"] {
+        if let Some(body) = trimmed.strip_prefix(delimiter) {
+            let close = python_closing_delimiter_offset(body, delimiter)?;
+            return (close + delimiter.len() == body.len())
+                .then(|| body.get(..close).map(str::to_string))
+                .flatten();
+        }
+    }
     let mut chars = trimmed.chars();
     let quote = chars.next()?;
     if quote != '\'' && quote != '"' {
@@ -620,6 +631,24 @@ pub(super) fn python_string_literal_value(text: &str) -> Option<String> {
         return None;
     }
     trimmed.get(quote.len_utf8()..close).map(str::to_string)
+}
+
+/// Byte offset in `body` of the first unescaped triple-quote `delimiter`.
+fn python_closing_delimiter_offset(body: &str, delimiter: &str) -> Option<usize> {
+    let mut escaped = false;
+    for (idx, ch) in body.char_indices() {
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if body
+            .get(idx..)
+            .is_some_and(|rest| rest.starts_with(delimiter))
+        {
+            return Some(idx);
+        }
+    }
+    None
 }
 
 /// Byte offset in `body` of the first unescaped `quote`.
