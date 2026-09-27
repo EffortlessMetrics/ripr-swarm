@@ -530,7 +530,7 @@ impl VerificationContract {
 /// it from disk is what makes that claim checkable: a schema added without a
 /// README link or an audit row is reported here instead of sitting unaudited
 /// behind a passing gate.
-fn published_schema_paths(root: &Path) -> Result<Vec<String>, String> {
+pub(crate) fn published_schema_paths(root: &Path) -> Result<Vec<String>, String> {
     let mut paths = Vec::new();
     collect_published_schemas(root, &root.join(SCHEMAS_DIRECTORY), &mut paths)?;
     paths.sort();
@@ -694,7 +694,7 @@ fn validate_schema_document(path: &str, schema: &Value, violations: &mut Vec<Str
     }
 }
 
-fn validate_value_against_schema(
+pub(crate) fn validate_value_against_schema(
     value: &Value,
     schema: &Value,
     root_schema: &Value,
