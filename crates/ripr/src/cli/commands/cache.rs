@@ -711,6 +711,41 @@ mod tests {
     }
 
     #[test]
+    fn clear_derives_every_producer_layer_and_preserves_unrelated_data() -> Result<(), String> {
+        let root = temp_dir("all-layers");
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        for &layer in CACHE_LAYER_NAMES {
+            let path = root.join(layer);
+            fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+            fs::write(path.join("entry.json"), b"{}").map_err(|error| error.to_string())?;
+        }
+        let unrelated = root.join("KEEP.txt");
+        fs::write(&unrelated, b"user data").map_err(|error| error.to_string())?;
+
+        let planned = build_clear_plan(&root)?.layers.len();
+        clear_cache_dir(
+            &root,
+            ClearOptions {
+                dry_run: false,
+                force: true,
+            },
+        )?;
+        let intact = root.is_dir()
+            && unrelated.is_file()
+            && CACHE_LAYER_NAMES
+                .iter()
+                .all(|layer| !root.join(layer).exists());
+        remove_base(&root)?;
+        if planned != CACHE_LAYER_NAMES.len() {
+            return Err(format!("cache plan omitted a producer layer: {planned}"));
+        }
+        if !intact {
+            return Err("clear failed the producer-layer or unrelated-sibling boundary".into());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn default_suffix_does_not_bless_unrelated_siblings() -> Result<(), String> {
         let base = temp_dir("default-mixed");
         let root = base.join("target").join("ripr").join("cache");
