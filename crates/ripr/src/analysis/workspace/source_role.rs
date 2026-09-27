@@ -283,10 +283,13 @@ pub(crate) fn seeds_diff_probes(path: &Path, context: &SourceRoleContext) -> boo
         SourceRole::FixtureOrReceiptEvidence => {
             let normalized = normalize(path);
             let in_non_source_directory = normalized.components().any(|component| {
-                NON_SOURCE_DIRECTORIES.contains(&component_name(&component).as_str())
+                component
+                    .as_os_str()
+                    .to_str()
+                    .is_some_and(|name| NON_SOURCE_DIRECTORIES.contains(&name))
             });
             !in_non_source_directory
-                && (is_repo_automation_path(&normalized)
+                && (is_repo_automation_path(path)
                     || normalized
                         .file_name()
                         .is_some_and(|name| name == "build.rs"))
