@@ -23,7 +23,7 @@ fn test_owner(name: &str, file: &str) -> TypeScriptOwner {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -56,7 +56,12 @@ fn weak_direct_test_for(owner_name: &str) -> TypeScriptTest {
         body_text: format!("const result = {owner_name}(50, 100);\nexpect(result).toBeTruthy();"),
         assertions: vec![smoke_assertion()],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/lib".to_string(),
+            imported: Some(owner_name.to_string()),
+            local: owner_name.to_string(),
+            namespace: false,
+        }],
     }
 }
 
@@ -104,12 +109,18 @@ fn mock_interaction_test_for(owner_name: &str) -> TypeScriptTest {
             oracle_confidence: OracleConfidence::Medium,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/lib".to_string(),
+            imported: Some(owner_name.to_string()),
+            local: owner_name.to_string(),
+            namespace: false,
+        }],
     }
 }
 
 fn direct_test_with_assertion(
     test_name: &str,
+    owner_name: &str,
     body_text: impl Into<String>,
     matcher: &str,
     argument_count: usize,
@@ -137,7 +148,12 @@ fn direct_test_with_assertion(
             oracle_confidence: OracleConfidence::Unknown,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/lib".to_string(),
+            imported: Some(owner_name.to_string()),
+            local: owner_name.to_string(),
+            namespace: false,
+        }],
     }
 }
 
@@ -724,6 +740,8 @@ fn classify_change_projects_trusted_related_bun_array_buffer_facts_as_advisory_e
     let tests = extract_tests(
         Path::new("test/js/web/fetch/blob.test.ts"),
         r#"
+import { hydrateBlob } from "../../../../src/blob";
+
 test("Blob copies ArrayBuffer-backed bytes", async () => {
   const shared = new SharedArrayBuffer(4);
   const fixed = new ArrayBuffer(4);
@@ -1661,7 +1679,7 @@ fn find_related_tests_matches_by_call_name() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -1710,7 +1728,7 @@ fn find_related_tests_ignores_object_method_calls_for_function_owners() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -1745,7 +1763,7 @@ fn find_related_tests_matches_bounded_method_receiver_calls() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -1788,7 +1806,7 @@ fn find_related_tests_keeps_factory_receiver_calls_unrelated_for_method_owners()
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -1822,7 +1840,7 @@ fn find_related_tests_keeps_dynamic_method_receiver_calls_unrelated() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -1857,7 +1875,7 @@ fn find_related_tests_keeps_mocked_method_receiver_calls_unrelated() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -1897,7 +1915,7 @@ fn find_related_tests_keeps_mocked_function_owner_call_at_proximity() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -1947,7 +1965,7 @@ fn find_related_tests_keeps_mocked_arrow_function_owner_call_at_proximity() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2002,7 +2020,7 @@ fn find_related_tests_keeps_mocked_namespace_import_owner_call_at_proximity() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2050,7 +2068,7 @@ fn find_related_tests_credits_unmocked_function_owner_call() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2090,7 +2108,7 @@ fn classify_change_stays_weakly_exposed_when_test_mocks_owner_module() -> Result
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2157,7 +2175,7 @@ fn find_related_tests_matches_bounded_class_method_calls() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2199,7 +2217,7 @@ fn find_related_tests_keeps_shadowed_class_method_calls_unrelated() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2233,7 +2251,7 @@ fn find_related_tests_matches_same_file_class_method_calls() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2274,7 +2292,7 @@ fn find_related_tests_keeps_namespace_class_method_calls_unrelated() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2307,7 +2325,7 @@ fn find_related_tests_keeps_mocked_class_method_calls_unrelated() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2342,7 +2360,7 @@ fn find_related_tests_requires_class_name_for_class_method_calls() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2375,7 +2393,7 @@ fn find_related_tests_matches_module_initializer_named_import_observer() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2417,7 +2435,7 @@ fn find_related_tests_matches_module_initializer_namespace_observer() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2452,7 +2470,7 @@ fn find_related_tests_keeps_module_initializer_shadow_and_non_expect_references_
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2495,7 +2513,7 @@ fn find_related_tests_matches_named_import_alias_calls() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2549,7 +2567,7 @@ fn find_related_tests_alias_wrong_name_not_credited() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2590,7 +2608,7 @@ fn find_related_tests_alias_shadowed_local_not_credited_high() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2631,7 +2649,7 @@ fn find_related_tests_non_alias_import_still_direct_owner_call() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2680,7 +2698,7 @@ fn find_related_tests_namespace_import_unchanged_imported_owner_call() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2729,7 +2747,7 @@ fn find_related_tests_matches_namespace_import_member_calls() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2763,7 +2781,7 @@ fn find_related_tests_ignores_unrelated_and_type_only_import_aliases() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2806,7 +2824,7 @@ fn find_related_tests_ignores_call_shaped_string_mentions() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2841,7 +2859,7 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2889,7 +2907,7 @@ fn related_test_candidates_use_name_and_proximity_links_as_uncertain_relations()
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2966,7 +2984,7 @@ fn related_test_name_proximity_ignores_partial_tokens() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -2999,7 +3017,7 @@ fn classify_change_uses_heuristic_links_as_weak_uncertain_proximity() -> Result<
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -3055,7 +3073,7 @@ fn classify_change_returns_weakly_exposed_when_related_test_exists() -> Result<(
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -3139,6 +3157,7 @@ fn typescript_preview_weak_oracle_guidance_names_snapshot_exact_value_shape() ->
     let owner = test_owner("renderSummary", "src/lib.ts");
     let test = direct_test_with_assertion(
         "renders summary snapshot",
+        "renderSummary",
         "const value = renderSummary(status);\nexpect(value).toMatchSnapshot();",
         "toMatchSnapshot",
         0,
@@ -3212,6 +3231,7 @@ fn typescript_preview_weak_oracle_guidance_keeps_broad_error_advisory() -> Resul
     let owner = test_owner("parseUser", "src/lib.ts");
     let test = direct_test_with_assertion(
         "rejects empty user broadly",
+        "parseUser",
         "expect(() => parseUser('')).toThrow();",
         "toThrow",
         0,
@@ -3315,7 +3335,8 @@ fn typescript_preview_mock_payload_guidance_names_literal_payload_without_repair
     let owner = test_owner("notifyReady", "src/lib.ts");
     let tests = extract_tests(
         Path::new("tests/lib.test.ts"),
-        r#"test("records ready status", () => {
+        r#"import { notifyReady } from "../src/lib";
+test("records ready status", () => {
     const sink = { record: vi.fn() };
     notifyReady(sink);
     expect(sink.record).toHaveBeenCalledWith("ready");
@@ -3388,7 +3409,7 @@ fn classify_change_labels_javascript_sources_separately() -> Result<(), String> 
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -3436,7 +3457,7 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             exported_as_default: false,
             class_default_export: false,
             arity: None,
-            parameters: Vec::new(),
+            params: Vec::new(),
             source_text: None,
             imports: Vec::new(),
             method_kind: TypeScriptMethodKind::Ordinary,
@@ -3452,7 +3473,7 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             exported_as_default: false,
             class_default_export: false,
             arity: None,
-            parameters: Vec::new(),
+            params: Vec::new(),
             source_text: None,
             imports: Vec::new(),
             method_kind: TypeScriptMethodKind::Ordinary,
@@ -4183,7 +4204,7 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -4211,7 +4232,12 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
             oracle_confidence: OracleConfidence::Medium,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/lib".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/lib.ts"),
@@ -4254,7 +4280,7 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -4281,7 +4307,12 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/lib".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/lib.ts"),
@@ -4321,7 +4352,7 @@ fn classify_change_returns_no_static_path_when_no_related_test() -> Result<(), S
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -4359,7 +4390,7 @@ fn classify_change_returns_none_when_line_is_outside_any_owner() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -5775,6 +5806,28 @@ test("alpha", () => {
 }
 
 #[test]
+fn extract_tests_collects_mock_paths_in_try_finally() {
+    // Every try-statement arm (block, handler, finalizer) must be walked:
+    // a `jest.mock` hoisted into a `finally` block still counts (#4103).
+    let source = r#"
+test("alpha", () => {
+    try {
+        jest.mock("./repository");
+    } finally {
+        jest.mock("./service");
+    }
+    expect(applyDiscount(50, 100)).toBe(50);
+});
+"#;
+    let tests = extract_tests(Path::new("tests/lib.test.ts"), source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(
+        tests[0].mocks_in_file,
+        vec!["./repository".to_string(), "./service".to_string()]
+    );
+}
+
+#[test]
 fn extract_tests_returns_empty_mock_list_when_no_mock_call() {
     let source = r#"
 test("alpha", () => {
@@ -5799,7 +5852,7 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -5814,7 +5867,12 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             body_text: "applyDiscount(1, 2)".to_string(),
             assertions: Vec::new(),
             mocks_in_file: vec!["./api".to_string()],
-            imports_in_file: Vec::new(),
+            imports_in_file: vec![TypeScriptImport {
+                source: "../src/lib".to_string(),
+                imported: Some("applyDiscount".to_string()),
+                local: "applyDiscount".to_string(),
+                namespace: false,
+            }],
         },
         TypeScriptTest {
             name: "beta".to_string(),
@@ -5825,7 +5883,12 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             body_text: "applyDiscount(3, 4)".to_string(),
             assertions: Vec::new(),
             mocks_in_file: vec!["./api".to_string()],
-            imports_in_file: Vec::new(),
+            imports_in_file: vec![TypeScriptImport {
+                source: "../src/lib".to_string(),
+                imported: Some("applyDiscount".to_string()),
+                local: "applyDiscount".to_string(),
+                namespace: false,
+            }],
         },
     ];
     let paths = collect_related_mock_paths(&owner, &tests, None, &ReExportIndex::empty(), None);
@@ -5845,7 +5908,7 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -5878,7 +5941,7 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -5912,7 +5975,7 @@ fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -5992,9 +6055,9 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         exported_as_default: false,
         class_default_export: false,
         imports: Vec::new(),
+        params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
-        parameters: Vec::new(),
         source_text: None,
     };
     // The test body calls the owner (it would be credited without the
@@ -6051,9 +6114,9 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         exported_as_default: false,
         class_default_export: false,
         imports: Vec::new(),
+        params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
-        parameters: Vec::new(),
         source_text: None,
     };
     let unfiltered = classify_change(
@@ -6102,7 +6165,7 @@ fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() 
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -6186,7 +6249,7 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: vec![TypeScriptImport {
             source: "./labels".to_string(),
@@ -6359,6 +6422,7 @@ fn named_limitation_custom_matcher_not_emitted_for_recognised_matcher() -> Resul
     let owner = test_owner("applyDiscount", "src/lib.ts");
     let test = direct_test_with_assertion(
         "discount test",
+        "applyDiscount",
         "applyDiscount(100, 100)",
         "toBe",
         1,
@@ -6846,7 +6910,12 @@ fn named_limitation_dynamic_assertion_emitted_for_dynamic_matcher_arg() -> Resul
             oracle_confidence: OracleConfidence::Medium,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/clamp".to_string(),
+            imported: Some("clamp".to_string()),
+            local: "clamp".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/clamp.ts"),
@@ -6907,7 +6976,12 @@ fn named_limitation_table_case_emitted_for_table_dynamic_matcher_arg() -> Result
             oracle_confidence: OracleConfidence::Medium,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/clamp".to_string(),
+            imported: Some("clamp".to_string()),
+            local: "clamp".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/clamp.ts"),
@@ -7067,7 +7141,7 @@ fn package_local_filter_selects_same_package_test() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -7081,7 +7155,12 @@ fn package_local_filter_selects_same_package_test() {
         body_text: "doWork();".to_string(),
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/work".to_string(),
+            imported: Some("doWork".to_string()),
+            local: "doWork".to_string(),
+            namespace: false,
+        }],
     };
 
     let tests_slice = [test.clone()];
@@ -7134,7 +7213,7 @@ fn package_local_filter_rejects_cross_package_test() {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -7283,7 +7362,7 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -7323,7 +7402,12 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         body_text: "applyDiscount(100, 20);".to_string(),
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
 
     let all_owners = vec![owner.clone()];
@@ -7417,7 +7501,7 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -7462,7 +7546,12 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
             },
         ],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     // Changed line: SideEffect (console.log call) — the `amount` and `audit`
     // tokens are not in any assertion's observed_expression.
@@ -7521,7 +7610,7 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -7548,7 +7637,12 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -7598,9 +7692,9 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
         exported_as_default: false,
         class_default_export: false,
         imports: Vec::new(),
+        params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
-        parameters: Vec::new(),
         source_text: None,
     };
     let test = TypeScriptTest {
@@ -7626,7 +7720,12 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -7677,9 +7776,9 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
         exported_as_default: false,
         class_default_export: false,
         imports: Vec::new(),
+        params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
-        parameters: Vec::new(),
         source_text: None,
     };
     let test = TypeScriptTest {
@@ -7704,7 +7803,12 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -7752,9 +7856,9 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
         exported_as_default: false,
         class_default_export: false,
         imports: Vec::new(),
+        params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
-        parameters: Vec::new(),
         source_text: None,
     };
     let test = TypeScriptTest {
@@ -7780,7 +7884,12 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -7827,9 +7936,9 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
         exported_as_default: false,
         class_default_export: false,
         imports: Vec::new(),
+        params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
-        parameters: Vec::new(),
         source_text: None,
     };
     let test = TypeScriptTest {
@@ -7856,7 +7965,12 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -7906,7 +8020,7 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -7949,7 +8063,12 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
             },
         ],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     // Changed line: SideEffect (console.log call)
     let finding = classify_change(
@@ -7993,7 +8112,7 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -8020,7 +8139,12 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/config".to_string(),
+            imported: Some("buildConfig".to_string()),
+            local: "buildConfig".to_string(),
+            namespace: false,
+        }],
     };
     // Changed line: a field value assignment (FieldConstruction)
     let finding = classify_change(
@@ -8070,9 +8194,9 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
         exported_as_default: false,
         class_default_export: false,
         imports: Vec::new(),
+        params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
-        parameters: Vec::new(),
         source_text: None,
     };
     let test = TypeScriptTest {
@@ -8097,7 +8221,12 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/config".to_string(),
+            imported: Some("buildConfig".to_string()),
+            local: "buildConfig".to_string(),
+            namespace: false,
+        }],
     };
     // Changed line: a field value assignment (FieldConstruction).
     let finding = classify_change(
@@ -8214,7 +8343,7 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -8244,7 +8373,12 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -8293,9 +8427,9 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
         exported_as_default: false,
         class_default_export: false,
         imports: Vec::new(),
+        params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
-        parameters: Vec::new(),
         source_text: None,
     };
     // The observed expression names the owner (so the side-channel arm does
@@ -8322,7 +8456,12 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/tracker".to_string(),
+            imported: Some("trackLogin".to_string()),
+            local: "trackLogin".to_string(),
+            namespace: false,
+        }],
     };
     // Changed line: SideEffect member call — the effect never escapes.
     let finding = classify_change(
@@ -8416,7 +8555,7 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -8489,7 +8628,7 @@ fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> 
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -8585,7 +8724,7 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -8652,7 +8791,7 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -8713,9 +8852,9 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
         exported_as_default: false,
         class_default_export: false,
         imports: Vec::new(),
+        params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
-        parameters: Vec::new(),
         source_text: None,
     };
     // Test only imports the React default binding — unrelated to the owner.
@@ -8772,9 +8911,9 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
         exported_as_default: false,
         class_default_export: false,
         imports: Vec::new(),
+        params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
-        parameters: Vec::new(),
         source_text: None,
     };
     let test = TypeScriptTest {
@@ -8833,7 +8972,7 @@ fn tsconfig_alias_advice_names_map_unavailable_cause() -> Result<(), String> {
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
     };
     let test = TypeScriptTest {
@@ -8908,7 +9047,7 @@ fn tsconfig_alias_advice_names_unmatched_pattern_cause() -> Result<(), String> {
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
     };
     let test = TypeScriptTest {
@@ -8984,7 +9123,7 @@ fn tsconfig_alias_advice_names_unresolved_candidate_cause() -> Result<(), String
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
     };
     let test = TypeScriptTest {
@@ -9069,7 +9208,7 @@ fn tsconfig_alias_advice_names_absolute_base_url_cause() -> Result<(), String> {
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
     };
     let test = TypeScriptTest {
@@ -9138,7 +9277,7 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -9166,7 +9305,12 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
             oracle_confidence: OracleConfidence::Medium,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     // Test B: return-value observer — toBeGreaterThan(0) — Weak, RelationalCheck.
     // This test DOES match the ReturnValue seam family, but only weakly.
@@ -9191,7 +9335,12 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
             oracle_confidence: OracleConfidence::Low,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     // Changed line: the gold-tier return value (ReturnValue seam).
     let finding = classify_change(
@@ -9244,7 +9393,7 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -9270,7 +9419,12 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -9312,7 +9466,7 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -9338,7 +9492,12 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     let finding = classify_change(
         Path::new("src/discount.ts"),
@@ -9388,7 +9547,7 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -9440,7 +9599,12 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
             },
         ],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }],
     };
     // Changed line: the gold-tier return value (ReturnValue seam).
     let finding = classify_change(
@@ -9996,7 +10160,7 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
         exported_as_default: false,
         class_default_export: false,
         arity: None,
-        parameters: Vec::new(),
+        params: Vec::new(),
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -10022,7 +10186,12 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/limiter".to_string(),
+            imported: Some("parseLimit".to_string()),
+            local: "parseLimit".to_string(),
+            namespace: false,
+        }],
     };
     (owner, test)
 }
@@ -10114,7 +10283,12 @@ fn exact_value_test(owner_name: &str, observed: &str, expected: &str) -> TypeScr
             oracle_confidence: OracleConfidence::High,
         }],
         mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/lib".to_string(),
+            imported: Some(owner_name.to_string()),
+            local: owner_name.to_string(),
+            namespace: false,
+        }],
     }
 }
 
@@ -10295,9 +10469,9 @@ fn spec_0027_namespace_import_member_call_witnesses_boundary() -> Result<(), Str
         exported_as_default: false,
         class_default_export: false,
         imports: Vec::new(),
+        params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
-        parameters: Vec::new(),
         source_text: None,
     };
     let mut test = exact_value_test("applyDiscount", "pricing.applyDiscount(100, 100)", "90");
@@ -10468,6 +10642,519 @@ fn spec_0027_boundary_witness_leaves_return_value_family_exposed() -> Result<(),
     Ok(())
 }
 
+// ── #4102/#4103 over-credit controls: predicate boundary witness shapes ─────
+// ── and relation-gate shapes (issues #4102, #4103) ──────────────────────────
+
+/// Owner with parameter facts for the #4102 position-aware boundary witness:
+/// `applyDiscount(total)` in `src/pricing.ts`.
+fn priced_owner() -> TypeScriptOwner {
+    TypeScriptOwner {
+        params: vec!["total".to_string()],
+        arity: Some(1),
+        ..test_owner("applyDiscount", "src/pricing.ts")
+    }
+}
+
+/// Strong exact-value test importing `owner_name` from the owner's own module
+/// (`../src/pricing`), so the #4103 declaration-anchor gate is satisfied and
+/// only the shape under test can decide the classification.
+fn priced_test(owner_name: &str, observed: &str, expected: &str) -> TypeScriptTest {
+    let mut test = exact_value_test(owner_name, observed, expected);
+    test.imports_in_file = vec![TypeScriptImport {
+        source: "../src/pricing".to_string(),
+        imported: Some(owner_name.to_string()),
+        local: owner_name.to_string(),
+        namespace: false,
+    }];
+    test
+}
+
+fn classify_pricing_line(
+    owner: &TypeScriptOwner,
+    line_text: &str,
+    tests: &[TypeScriptTest],
+) -> Result<Finding, String> {
+    classify_change(
+        Path::new("src/pricing.ts"),
+        2,
+        line_text,
+        std::slice::from_ref(owner),
+        tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| format!("expected a finding for `{line_text}`"))
+}
+
+/// #4102 shape 1: a boundary literal parked in an argument position at or
+/// beyond the owner's declared arity never reaches the changed comparison
+/// (`applyDiscount(150, 100)` against `applyDiscount(total)` — the owner
+/// never reads `100`), so it must not witness the boundary. The same literal
+/// in the live parameter position still witnesses.
+#[test]
+fn overcredit_4102_dead_argument_position_does_not_witness_boundary() -> Result<(), String> {
+    let owner = priced_owner();
+    let dead = [priced_test(
+        "applyDiscount",
+        "applyDiscount(150, 100)",
+        "90",
+    )];
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &dead)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("changed predicate boundary `total == 100`")),
+        "boundary limitation must be named: {:?}",
+        finding.missing
+    );
+
+    let live = [priced_test("applyDiscount", "applyDiscount(100)", "90")];
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &live)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+/// #4102 shape 2: only a whole-argument literal witnesses the boundary — a
+/// literal token nested inside a larger expression (`price + 100` evaluates
+/// to 160, not 100) never does.
+#[test]
+fn overcredit_4102_nested_literal_expression_does_not_witness_boundary() -> Result<(), String> {
+    let owner = priced_owner();
+    let nested = [priced_test(
+        "applyDiscount",
+        "applyDiscount(price + 100)",
+        "160",
+    )];
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &nested)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a literal nested in a larger expression must not witness the boundary"
+    );
+
+    let whole = [priced_test("applyDiscount", "applyDiscount(100)", "160")];
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &whole)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+/// #4102 shape 3 (receiver-qualified; landed in #4092 and pinned here): a
+/// same-named method on a TEST-LOCAL object
+/// (`const pricing = { applyDiscount: (t) => 200 }`) never witnesses the
+/// owner's boundary, even when its argument carries the boundary literal.
+/// The test also fails the owner-reference heuristic (object-literal keys and
+/// foreign member calls do not reference the owner), so the honest outcome is
+/// `no_static_path`, not a downgraded weak finding.
+#[test]
+fn overcredit_4102_test_local_receiver_method_does_not_witness_boundary() -> Result<(), String> {
+    let owner = priced_owner();
+    let mut local = priced_test("applyDiscount", "pricing.applyDiscount(100)", "200");
+    local.body_text = "const pricing = { applyDiscount: (t: number) => 200 };\n\
+                       expect(pricing.applyDiscount(100)).toBe(200);"
+        .to_string();
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &[local])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::NoStaticPath,
+        "a test-local receiver method must not witness the owner's boundary"
+    );
+    Ok(())
+}
+
+/// #4102 shape 4: a body-local declaration of the owner name shadows the bare
+/// call — `expect(applyDiscount(100)).toBe(42)` observing a body-local
+/// function never reaches the owner, so it must not witness the boundary.
+/// The shadowed test also fails the owner-reference heuristic, so the honest
+/// outcome is `no_static_path`. Without the local declaration the same call
+/// witnesses.
+#[test]
+fn overcredit_4102_body_local_shadow_blocks_bare_call_witness() -> Result<(), String> {
+    let owner = priced_owner();
+    let mut shadowed = priced_test("applyDiscount", "applyDiscount(100)", "42");
+    shadowed.body_text = "function applyDiscount(x: number) { return 42; }\n\
+                          expect(applyDiscount(100)).toBe(42);"
+        .to_string();
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &[shadowed])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::NoStaticPath,
+        "a body-local shadow of the owner name must not witness the boundary"
+    );
+
+    let direct = [priced_test("applyDiscount", "applyDiscount(100)", "90")];
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &direct)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+/// #4102 shape 5: the expected side of a boundary assertion must pin a
+/// statically resolvable value. A self-comparing tautology
+/// (`expect(applyDiscount(100)).toBe(applyDiscount(100))`) and a dynamically
+/// resolved expectation both pass under either side of the changed
+/// comparison and must not witness; a pinned literal does.
+#[test]
+fn overcredit_4102_unpinned_expected_side_does_not_witness_boundary() -> Result<(), String> {
+    let owner = priced_owner();
+
+    let tautology = [priced_test(
+        "applyDiscount",
+        "applyDiscount(100)",
+        "applyDiscount(100)",
+    )];
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &tautology)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a self-comparing assertion cannot discriminate the changed comparison"
+    );
+
+    let mut dynamic = priced_test("applyDiscount", "applyDiscount(100)", "90");
+    for assertion in &mut dynamic.assertions {
+        assertion.expected_value_or_variant = None;
+        assertion.has_dynamic_matcher_arg = true;
+    }
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &[dynamic])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a dynamically resolved expected side cannot discriminate the changed comparison"
+    );
+
+    let pinned = [priced_test("applyDiscount", "applyDiscount(100)", "90")];
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &pinned)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+/// #4102 shape 5 residual (disclosed typed limitation): a pinned expected
+/// literal that contradicts the real owner output (`toBe(999)`) is
+/// indistinguishable from a strict expectation without runtime facts, so the
+/// static adapter keeps crediting it. This control pins that residual
+/// over-credit boundary so a future change must address it deliberately.
+#[test]
+fn overcredit_4102_dead_expected_literal_stays_credited_known_residual() -> Result<(), String> {
+    let owner = priced_owner();
+    let dead_expected = [priced_test("applyDiscount", "applyDiscount(100)", "999")];
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &dead_expected)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "pinned-literal credit is kept; contradicting expectations need runtime facts (disclosed limitation)"
+    );
+    Ok(())
+}
+
+/// #4103 shape 1: a bare `ownerName(...)` call with no declaration anchoring
+/// the name to the owner (not the owner's own file, no import of the owner
+/// from the owner's module) must not be credited `DirectOwnerCall`; the
+/// heuristic fallback keeps the test advisory at most. With the import
+/// anchor, the same call is a genuine `DirectOwnerCall` and exposes a
+/// return-value change.
+#[test]
+fn overcredit_4103_unanchored_bare_call_is_not_a_direct_owner_call() -> Result<(), String> {
+    let owner = priced_owner();
+    let mut unanchored = priced_test("applyDiscount", "applyDiscount(100)", "90");
+    unanchored.file = PathBuf::from("tests/helper.test.ts");
+    unanchored.imports_in_file = Vec::new();
+    let finding = classify_pricing_line(&owner, "  return 0;", &[unanchored])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "an unanchored bare call must fall back to the heuristic relation"
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("related_test_relation: direct_owner_call")),
+        "no direct_owner_call relation may be disclosed: {:?}",
+        finding.evidence
+    );
+
+    let anchored = [priced_test("applyDiscount", "applyDiscount(100)", "90")];
+    let finding = classify_pricing_line(&owner, "  return 0;", &anchored)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+/// #4103 shape 1 (relation side of #4102 shape 4): a body-local function
+/// declaration of the owner name blocks the trusted relation even when an
+/// import anchor exists — the bare call reaches the local, not the owner.
+/// The shadowed test also fails the owner-reference heuristic, so the honest
+/// outcome is `no_static_path`.
+#[test]
+fn overcredit_4103_body_local_declaration_blocks_direct_owner_call() -> Result<(), String> {
+    let owner = priced_owner();
+    let mut shadowed = priced_test("applyDiscount", "applyDiscount(100)", "42");
+    shadowed.body_text = "function applyDiscount(x: number) { return 42; }\n\
+                          expect(applyDiscount(100)).toBe(42);"
+        .to_string();
+    let finding = classify_pricing_line(&owner, "  return 0;", &[shadowed])?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("related_test_relation: direct_owner_call")),
+        "a body-local shadow must not be credited as a direct owner call: {:?}",
+        finding.evidence
+    );
+
+    let direct = [priced_test("applyDiscount", "applyDiscount(100)", "90")];
+    let finding = classify_pricing_line(&owner, "  return 0;", &direct)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+/// #4103 shape 1: destructuring the owner name out of an unrelated module
+/// (`const { applyDiscount } = require("../src/factory")`) binds the bare
+/// call to that module's export, not the owner. Destructuring from the
+/// owner's own module stays a genuine owner call.
+#[test]
+fn overcredit_4103_unrelated_destructure_blocks_direct_owner_call() -> Result<(), String> {
+    let owner = priced_owner();
+    let mut foreign = priced_test("applyDiscount", "applyDiscount(100)", "90");
+    foreign.body_text = "const { applyDiscount } = require(\"../src/factory\");\n\
+                         expect(applyDiscount(100)).toBe(90);"
+        .to_string();
+    let finding = classify_pricing_line(&owner, "  return 0;", &[foreign])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a destructure from an unrelated source must not be credited as an owner call"
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("related_test_relation: direct_owner_call")),
+        "an unrelated destructure must not be credited as a direct owner call: {:?}",
+        finding.evidence
+    );
+
+    let mut owned = priced_test("applyDiscount", "applyDiscount(100)", "90");
+    owned.body_text = "const { applyDiscount } = require(\"../src/pricing\");\n\
+                       expect(applyDiscount(100)).toBe(90);"
+        .to_string();
+    let finding = classify_pricing_line(&owner, "  return 0;", &[owned])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "destructuring from the owner's own module is a genuine owner call"
+    );
+    Ok(())
+}
+
+/// #4103 shape 1 (anchor complement): a CommonJS test with NO recorded
+/// import whose body destructures the owner from the owner's module
+/// (`const { applyDiscount } = require("../src/pricing")` inside the test
+/// body) anchors the bare call itself — the import layer extracts only
+/// top-level statements, so the anchor must come from the body-local
+/// destructure and the finding must be a credited `DirectOwnerCall`, not
+/// the heuristic fallback. The unrelated-source control still refuses.
+#[test]
+fn overcredit_4103_body_local_owner_destructure_anchors_direct_owner_call() -> Result<(), String> {
+    let owner = priced_owner();
+
+    let mut commonjs = priced_test("applyDiscount", "applyDiscount(100)", "90");
+    commonjs.body_text = "const { applyDiscount } = require(\"../src/pricing\");\n\
+                          expect(applyDiscount(100)).toBe(90);"
+        .to_string();
+    commonjs.imports_in_file = Vec::new();
+    assert_eq!(
+        owner_call_relation(&commonjs, &owner, &ReExportIndex::empty(), None, None),
+        Some(TypeScriptRelationKind::DirectOwnerCall),
+        "the body-local owner-module destructure must anchor the direct relation"
+    );
+    let finding = classify_pricing_line(&owner, "  return 0;", &[commonjs])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a body-local destructure from the owner's module anchors the bare call"
+    );
+
+    let mut foreign = priced_test("applyDiscount", "applyDiscount(100)", "90");
+    foreign.body_text = "const { applyDiscount } = require(\"../src/factory\");\n\
+                         expect(applyDiscount(100)).toBe(90);"
+        .to_string();
+    foreign.imports_in_file = Vec::new();
+    let finding = classify_pricing_line(&owner, "  return 0;", &[foreign])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a body-local destructure from an unrelated source must stay uncredited"
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("related_test_relation: direct_owner_call")),
+        "an unrelated destructure must not be credited as a direct owner call: {:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+/// #4103 shapes 2/3: `jest.doMock(...)` and `describe`-nested `vi.mock(...)`
+/// are mock registrations the extractor must collect into
+/// `mocks_in_file` (`doMock` itself is the non-hoisted variant — collecting
+/// it is the conservative owner-module mock treatment, not a hoisting
+/// claim); with the owner module mocked the finding stays
+/// `weakly_exposed` under the `mocked_module` static limit instead of
+/// promoting on fabricated evidence.
+#[test]
+fn overcredit_4103_domock_and_describe_nested_mock_are_collected() -> Result<(), String> {
+    let tests = extract_tests(
+        Path::new("tests/pricing.test.ts"),
+        r#"import { applyDiscount } from "../src/pricing";
+
+jest.doMock("../src/pricing");
+
+test("applies discount", () => {
+    expect(applyDiscount(100)).toBe(90);
+});
+
+describe("pricing", () => {
+    vi.mock("../src/pricing");
+    it("applies inside describe", () => {
+        expect(applyDiscount(100)).toBe(90);
+    });
+});
+"#,
+    );
+    assert_eq!(tests.len(), 2, "fixture must parse both tests");
+    assert!(
+        tests.iter().all(|test| test
+            .mocks_in_file
+            .iter()
+            .any(|mock| mock == "../src/pricing")),
+        "doMock and describe-nested vi.mock must be collected into every test, got {:?}",
+        tests
+            .iter()
+            .map(|test| &test.mocks_in_file)
+            .collect::<Vec<_>>()
+    );
+
+    let owner = priced_owner();
+    let finding = classify_pricing_line(&owner, "  if (total >= 100) {", &tests)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::MockedModule)
+    );
+    Ok(())
+}
+
+/// #4103 shape 4: `vi.spyOn(module, 'applyDiscount').mockReturnValue(42)`
+/// replaces the owner implementation — the observed value is the fabrication,
+/// not the changed sink — so no trusted owner-call relation may be credited
+/// and the finding must name the `typescript_spy_fabricated_observer`
+/// limitation. A bare call-through spyOn is unaffected.
+#[test]
+fn overcredit_4103_spy_fabrication_blocks_owner_credit_and_names_limitation() -> Result<(), String>
+{
+    let owner = priced_owner();
+    let mut spied = priced_test("applyDiscount", "applyDiscount(100)", "42");
+    spied.body_text = "const spy = vi.spyOn(pricing, 'applyDiscount').mockReturnValue(42);\n\
+                       expect(applyDiscount(100)).toBe(42);"
+        .to_string();
+    let finding = classify_pricing_line(&owner, "  return 0;", &[spied])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a fabricated spy observes the fabrication, not the changed sink"
+    );
+    assert_evidence_contains(
+        &finding,
+        "typescript_limitation: typescript_spy_fabricated_observer",
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("related_test_relation: direct_owner_call")),
+        "a fabricated spy must not be credited as a direct owner call: {:?}",
+        finding.evidence
+    );
+
+    let mut through = priced_test("applyDiscount", "applyDiscount(100)", "90");
+    through.body_text = "const spy = vi.spyOn(pricing, 'applyDiscount');\n\
+                         expect(applyDiscount(100)).toBe(90);"
+        .to_string();
+    let finding = classify_pricing_line(&owner, "  return 0;", &[through])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a bare call-through spyOn still observes the owner"
+    );
+    Ok(())
+}
+
+/// #4103 shape 4 (fabrication tied to the owner spy): a call-through owner
+/// spyOn plus an unrelated `logger.mockReturnValue(...)` must NOT refuse the
+/// owner relation — the mock does not fabricate the owner spy's value, so
+/// the limitation must stay silent and the anchored relation must survive.
+/// The same fabrication invoked on the variable bound to the owner spy still
+/// refuses and names `typescript_spy_fabricated_observer`.
+#[test]
+fn overcredit_4103_spy_fabrication_must_be_tied_to_owner_spy() -> Result<(), String> {
+    let owner = priced_owner();
+
+    let mut unrelated = priced_test("applyDiscount", "applyDiscount(100)", "90");
+    unrelated.body_text = "const logger = getLogger();\n\
+                           logger.mockReturnValue(\"noise\");\n\
+                           const spy = vi.spyOn(pricing, 'applyDiscount');\n\
+                           expect(applyDiscount(100)).toBe(90);"
+        .to_string();
+    assert_eq!(
+        owner_call_relation(&unrelated, &owner, &ReExportIndex::empty(), None, None),
+        Some(TypeScriptRelationKind::DirectOwnerCall),
+        "the anchored owner relation must survive an unrelated mock"
+    );
+    let finding = classify_pricing_line(&owner, "  return 0;", &[unrelated])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "an unrelated mock must not refuse a call-through owner spy"
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("typescript_spy_fabricated_observer")),
+        "an unrelated mock must not disclose the spy-fabrication limitation: {:?}",
+        finding.evidence
+    );
+
+    let mut bound = priced_test("applyDiscount", "applyDiscount(100)", "42");
+    bound.body_text = "const spy = vi.spyOn(pricing, 'applyDiscount');\n\
+                       spy.mockReturnValue(42);\n\
+                       expect(applyDiscount(100)).toBe(42);"
+        .to_string();
+    let finding = classify_pricing_line(&owner, "  return 0;", &[bound])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a fabrication on the bound owner spy observes the fabrication, not the changed sink"
+    );
+    assert_evidence_contains(
+        &finding,
+        "typescript_limitation: typescript_spy_fabricated_observer",
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("related_test_relation: direct_owner_call")),
+        "a fabricated owner spy must not be credited as a direct owner call: {:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
 // ── RIPR-SPEC-0027 boundary-witness identity and liveness guards (#4102) ─────
 
 /// Owner facts mirroring the #4102 fixture owner: a single-parameter
@@ -10490,7 +11177,7 @@ fn boundary_witness_owner() -> TypeScriptOwner {
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: Some(1),
-        parameters: vec!["total".to_string()],
+        params: vec!["total".to_string()],
         source_text: Some(
             concat!(
                 "export function applyDiscount(total: number): number {\n",
@@ -10746,6 +11433,803 @@ fn spec_0027_object_pin_at_read_position_stays_exposed() -> Result<(), String> {
         finding.class,
         ExposureClass::Exposed,
         "an object pin of the read operand at the boundary is a genuine witness"
+    );
+    Ok(())
+}
+
+// ── #4104 E: conservative under-credit improvements ──────────────────────────
+
+/// #4104-E1 red: the canonical idiom `const result = applyDiscount(100);
+/// expect(result).toBe(90)` observes the owner call through a one-hop local
+/// binding. The bare-local `observed_expression` carries no owner reference,
+/// but the initializer IS the owner call at the boundary input, so the
+/// predicate boundary must be witnessed exactly as for the direct call.
+#[test]
+fn e4104_const_result_local_binding_witnesses_predicate_boundary() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    let mut test = exact_value_test("applyDiscount", "result", "90");
+    test.body_text = "const result = applyDiscount(100);\n  expect(result).toBe(90);".to_string();
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[test])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a one-hop const binding of the owner call at the boundary input witnesses the changed predicate"
+    );
+    // The same idiom through an unreassigned `let` witnesses too: the single
+    // initializer is still the owner call, and no mutation follows it.
+    let mut let_test = exact_value_test("applyDiscount", "result", "90");
+    let_test.body_text = "let result = applyDiscount(100);\n  expect(result).toBe(90);".to_string();
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[let_test])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "an unreassigned `let` binding of the owner call witnesses exactly like the const idiom"
+    );
+    Ok(())
+}
+
+/// #4104-E2 red: a changed predicate containing `?.` must boundary-witness
+/// after operand normalization (`order?.role` → `order.role`); today the
+/// comparison parser rejects `?` so the witness can never fire.
+#[test]
+fn e4104_optional_chaining_predicate_witnesses_boundary() -> Result<(), String> {
+    let mut owner = boundary_witness_owner();
+    owner.name = "userIsAdmin".to_string();
+    owner.params = vec!["order".to_string()];
+    owner.arity = Some(1);
+    owner.source_text = Some(
+        concat!(
+            "export function userIsAdmin(order: Order): boolean {\n",
+            "    if (order?.role === \"admin\") {\n",
+            "        return true;\n",
+            "    }\n",
+            "    return false;\n",
+            "}",
+        )
+        .to_string(),
+    );
+    let tests = [exact_value_test(
+        "userIsAdmin",
+        "userIsAdmin({ role: \"admin\" })",
+        "true",
+    )];
+    let finding =
+        classify_boundary_line_for_owner(&owner, "    if (order?.role === \"admin\") {", &tests)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "an optional-chaining predicate normalizes to a comparable boundary and witnesses via the object pin"
+    );
+    Ok(())
+}
+
+/// #4104-E2 red: a nullish-coalescing predicate (`if (name ?? "temp") {`)
+/// must boundary-witness. The nullish input (`pickLabel(null)`) is the
+/// boundary input that flips the changed fallback, so it witnesses at the
+/// left operand's read position.
+#[test]
+fn e4104_nullish_coalescing_predicate_witnesses_boundary() -> Result<(), String> {
+    let mut owner = boundary_witness_owner();
+    owner.name = "pickLabel".to_string();
+    owner.params = vec!["name".to_string()];
+    owner.arity = Some(1);
+    owner.source_text = Some(
+        concat!(
+            "export function pickLabel(name: string | null): string {\n",
+            "    if (name ?? \"temp\") {\n",
+            "        return \"named\";\n",
+            "    }\n",
+            "    return \"anonymous\";\n",
+            "}",
+        )
+        .to_string(),
+    );
+    let tests = [exact_value_test(
+        "pickLabel",
+        "pickLabel(null)",
+        "\"named\"",
+    )];
+    let finding = classify_boundary_line_for_owner(&owner, "    if (name ?? \"temp\") {", &tests)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a nullish boundary witnesses from the nullish input at the read position"
+    );
+    Ok(())
+}
+
+/// #4104-E2 red: a changed `yield <comparison>` tail in a generator owner is
+/// a predicate whose boundary must be witnessable; today the line falls to
+/// the ambiguous fallback probe and can never be witnessed.
+#[test]
+fn e4104_yield_predicate_witnesses_boundary() -> Result<(), String> {
+    let mut owner = boundary_witness_owner();
+    owner.name = "thresholdsAbove".to_string();
+    owner.params = vec!["total".to_string()];
+    owner.arity = Some(1);
+    owner.source_text = Some(
+        concat!(
+            "export function* thresholdsAbove(total: number): Generator<number> {\n",
+            "    yield total >= 100;\n",
+            "    yield total;\n",
+            "}",
+        )
+        .to_string(),
+    );
+    let tests = [exact_value_test(
+        "thresholdsAbove",
+        "thresholdsAbove(100)",
+        "true",
+    )];
+    let finding = classify_boundary_line_for_owner(&owner, "    yield total >= 100;", &tests)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a yield-tail predicate witnesses through the stripped keyword"
+    );
+    Ok(())
+}
+
+/// #4104-E3 red: `applyDiscount(DISCOUNT_THRESHOLD)` with a single immutable
+/// `const DISCOUNT_THRESHOLD = 100` in the test body must boundary-witness
+/// like the Rust `named_constant` path does: the argument resolves to `100`,
+/// which stands alone at the read position of `total >= 100`.
+#[test]
+fn e4104_named_constant_test_body_declaration_witnesses_boundary() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    let mut test = exact_value_test("applyDiscount", "applyDiscount(DISCOUNT_THRESHOLD)", "90");
+    test.body_text =
+        "const DISCOUNT_THRESHOLD = 100;\n  expect(applyDiscount(DISCOUNT_THRESHOLD)).toBe(90);"
+            .to_string();
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[test])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a single immutable integer const in the test body resolves the argument to the boundary value"
+    );
+    Ok(())
+}
+
+/// #4104-E3 red: the same resolution when the constant is imported from the
+/// owner's own module (entity identity through the import record and the
+/// owner's single module-level `export const` declaration).
+#[test]
+fn e4104_named_constant_owner_module_argument_witnesses_boundary() -> Result<(), String> {
+    let mut owner = boundary_witness_owner();
+    owner.source_text = Some(
+        concat!(
+            "export const DISCOUNT_THRESHOLD = 100;\n",
+            "\n",
+            "export function applyDiscount(total: number): number {\n",
+            "    if (total >= DISCOUNT_THRESHOLD) {\n",
+            "        return total * 0.9;\n",
+            "    }\n",
+            "    return total;\n",
+            "}",
+        )
+        .to_string(),
+    );
+    let mut test = exact_value_test("applyDiscount", "applyDiscount(DISCOUNT_THRESHOLD)", "90");
+    test.imports_in_file.push(TypeScriptImport {
+        source: "../src/lib".to_string(),
+        imported: Some("DISCOUNT_THRESHOLD".to_string()),
+        local: "DISCOUNT_THRESHOLD".to_string(),
+        namespace: false,
+    });
+    let finding = classify_boundary_line_for_owner(
+        &owner,
+        "    if (total >= DISCOUNT_THRESHOLD) {",
+        &[test],
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "an imported constant from the owner's own module resolves through the import record"
+    );
+    Ok(())
+}
+
+/// #4104-E1 negative: the one-hop credit requires the initializer to BE the
+/// owner call. A wrapper around the owner call leaves the observed value
+/// unknown, and an off-boundary input stays on the weak path.
+#[test]
+fn e4104_const_result_wrapper_and_off_boundary_stay_weak() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    let cases = [
+        // The local binds a wrapper call that CONTAINS the owner call: the
+        // observed value is the wrapper's, not the owner's.
+        "const result = withTax(applyDiscount(100));\n  expect(result).toBe(90);",
+        // The local binds a derived value: the owner result no longer stands
+        // alone behind the binding.
+        "const result = applyDiscount(100) * 2;\n  expect(result).toBe(180);",
+        // The owner call is off the changed boundary.
+        "const result = applyDiscount(150);\n  expect(result).toBe(90);",
+        // The local is reassigned after the owner call.
+        "let result = applyDiscount(100);\n  result = other();\n  expect(result).toBe(90);",
+        // The local is compound-reassigned after the owner call: the observed
+        // value is derived, so the initializer's arguments cannot witness.
+        "let result = applyDiscount(100);\n  result += 1;\n  expect(result).toBe(90);",
+        // The name is declared twice: the observed binding is ambiguous.
+        "const result = applyDiscount(100);\n  const result = applyDiscount(150);\n  expect(result).toBe(90);",
+    ];
+    for body in cases {
+        let mut test = exact_value_test("applyDiscount", "result", "90");
+        test.body_text = body.to_string();
+        let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[test])?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "the one-hop const-result credit must stay fail-closed for `{body}`"
+        );
+    }
+    Ok(())
+}
+
+/// #4104-E1 controls: a dead-position literal behind the local binding and a
+/// shadowed owner name stay closed; the direct-call boundary assertion keeps
+/// working unchanged.
+#[test]
+fn e4104_const_result_dead_position_and_shadow_stay_closed() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    let mut dead = exact_value_test("applyDiscount", "result", "90");
+    dead.body_text =
+        "const result = applyDiscount(150, 100);\n  expect(result).toBe(90);".to_string();
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[dead])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a boundary literal in an unread argument position must not witness through the local binding"
+    );
+    Ok(())
+}
+
+/// #4104-E2 negatives: normalization must not open the over-credit doors —
+/// an off-boundary input, a shadowed candidate, and a dead expected side stay
+/// closed under the normalized operands, and the parenthesized compound
+/// nullish form keeps failing closed.
+#[test]
+fn e4104_optional_chaining_negatives_stay_closed() -> Result<(), String> {
+    let mut owner = boundary_witness_owner();
+    owner.name = "userIsAdmin".to_string();
+    owner.params = vec!["order".to_string()];
+    owner.arity = Some(1);
+    owner.source_text = Some(
+        concat!(
+            "export function userIsAdmin(order: Order): boolean {\n",
+            "    if (order?.role === \"admin\") {\n",
+            "        return true;\n",
+            "    }\n",
+            "    return false;\n",
+            "}",
+        )
+        .to_string(),
+    );
+    // Off-boundary input: the wrong string literal does not witness.
+    let off = [exact_value_test(
+        "userIsAdmin",
+        "userIsAdmin({ role: \"viewer\" })",
+        "true",
+    )];
+    let finding =
+        classify_boundary_line_for_owner(&owner, "    if (order?.role === \"admin\") {", &off)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "an off-boundary literal must not witness the normalized optional-chaining boundary"
+    );
+    // `?.` inside a string literal must not corrupt the operand: the quoted
+    // text keeps its `?`, which stays unparseable (fail closed, unchanged).
+    let quoted = [exact_value_test(
+        "userIsAdmin",
+        "userIsAdmin(\"a?.b\")",
+        "true",
+    )];
+    let finding =
+        classify_boundary_line_for_owner(&owner, "    if (mode === \"a?.b\") {", &quoted)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a `?.` inside a string literal must not normalize into an operand"
+    );
+    Ok(())
+}
+
+/// #4104-E2 negative: the nullish-argument rule honors position liveness —
+/// a null in an argument the owner never reads cannot witness, and an
+/// ambiguous-fallback line still never witnesses.
+#[test]
+fn e4104_nullish_dead_position_and_ambiguous_stay_closed() -> Result<(), String> {
+    let mut owner = boundary_witness_owner();
+    owner.name = "pickLabel".to_string();
+    owner.params = vec!["name".to_string()];
+    owner.arity = Some(1);
+    owner.source_text = Some(
+        concat!(
+            "export function pickLabel(name: string | null): string {\n",
+            "    if (name ?? \"temp\") {\n",
+            "        return \"named\";\n",
+            "    }\n",
+            "    return \"anonymous\";\n",
+            "}",
+        )
+        .to_string(),
+    );
+    let dead = [exact_value_test(
+        "pickLabel",
+        "pickLabel(5, null)",
+        "\"named\"",
+    )];
+    let finding = classify_boundary_line_for_owner(&owner, "    if (name ?? \"temp\") {", &dead)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a nullish literal parked only in an unread argument position must not witness"
+    );
+    let no_null = [exact_value_test("pickLabel", "pickLabel(5)", "\"named\"")];
+    let finding =
+        classify_boundary_line_for_owner(&owner, "    if (name ?? \"temp\") {", &no_null)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "without a nullish boundary input the nullish boundary stays unwitnessed"
+    );
+    Ok(())
+}
+
+/// #4104-E2 negative: a `??` inside a string literal is not a nullish
+/// coalesce. The quoted operand stays a string boundary literal, and the
+/// nullish-input path must stay armed only for a real nullish boundary, so a
+/// `null` argument at the read position cannot witness it.
+#[test]
+fn e4104_quoted_nullish_operand_stays_closed() -> Result<(), String> {
+    let mut owner = boundary_witness_owner();
+    owner.name = "tagMatches".to_string();
+    owner.params = vec!["mode".to_string()];
+    owner.arity = Some(1);
+    owner.source_text = Some(
+        concat!(
+            "export function tagMatches(mode: string): boolean {\n",
+            "    if (mode === \"a ?? b\") {\n",
+            "        return true;\n",
+            "    }\n",
+            "    return false;\n",
+            "}",
+        )
+        .to_string(),
+    );
+    let tests = [exact_value_test("tagMatches", "tagMatches(null)", "true")];
+    let finding =
+        classify_boundary_line_for_owner(&owner, "    if (mode === \"a ?? b\") {", &tests)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a quoted `??` is not a nullish boundary: the null argument must not witness"
+    );
+    Ok(())
+}
+
+/// Verified control (#4104 E): an async `await expect(owner(...)).resolves`
+/// assertion witnesses the changed predicate boundary exactly like the sync
+/// direct call — the observed owner call survives the `.resolves` chain and
+/// its input stands alone at the read position.
+#[test]
+fn e4104_async_resolves_direct_call_stays_exposed() -> Result<(), String> {
+    let mut owner = boundary_witness_owner();
+    owner.name = "loadTier".to_string();
+    owner.params = vec!["tier".to_string()];
+    owner.source_text = Some(
+        concat!(
+            "export async function loadTier(tier: number): Promise<number> {\n",
+            "    if (tier >= 100) {\n",
+            "        return 90;\n",
+            "    }\n",
+            "    return tier;\n",
+            "}",
+        )
+        .to_string(),
+    );
+    let tests = extract_tests(
+        Path::new("tests/lib.test.ts"),
+        r#"import { loadTier } from '../src/lib';
+
+test("async boundary", async () => {
+    await expect(loadTier(100)).resolves.toBe(90);
+});
+"#,
+    );
+    assert_eq!(tests.len(), 1, "the async `.resolves` test must parse");
+    let finding = classify_boundary_line_for_owner(&owner, "    if (tier >= 100) {", &tests)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "an async `.resolves` boundary assertion stays exposed through the unwrapped owner call"
+    );
+    Ok(())
+}
+
+/// #4104-E3 negatives: the named-constant resolution follows the Rust
+/// `named_constant` strictness — `let`, computed initializers, ambiguous
+/// declarations, and off-value constants all fail closed to the weak path.
+#[test]
+fn e4104_named_constant_fail_closed_shapes() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    let cases = [
+        // `let` is not an immutable declaration.
+        (
+            "let DISCOUNT_THRESHOLD = 100;\n  expect(applyDiscount(DISCOUNT_THRESHOLD)).toBe(90);",
+            "a `let` binding must not resolve",
+        ),
+        // Computed initializer: the value is not a plain integer literal.
+        (
+            "const DISCOUNT_THRESHOLD = 50 * 2;\n  expect(applyDiscount(DISCOUNT_THRESHOLD)).toBe(90);",
+            "a computed initializer must not resolve",
+        ),
+        // Ambiguous: declared twice in the test body.
+        (
+            "const DISCOUNT_THRESHOLD = 100;\n  const DISCOUNT_THRESHOLD = 150;\n  expect(applyDiscount(DISCOUNT_THRESHOLD)).toBe(90);",
+            "a repeated declaration must not resolve",
+        ),
+        // Off-value: the constant resolves, but not to the boundary value.
+        (
+            "const DISCOUNT_THRESHOLD = 150;\n  expect(applyDiscount(DISCOUNT_THRESHOLD)).toBe(90);",
+            "an off-value constant must not witness",
+        ),
+    ];
+    for (body, reason) in cases {
+        let mut test = exact_value_test("applyDiscount", "applyDiscount(DISCOUNT_THRESHOLD)", "90");
+        test.body_text = body.to_string();
+        let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[test])?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{reason}");
+    }
+    Ok(())
+}
+
+/// #4104-E3 negative: a constant imported from a module that is NOT the
+/// owner's own module must not resolve — the declaring module is unknown to
+/// the adapter, so the argument keeps its name and fails the literal path.
+#[test]
+fn e4104_named_constant_non_owner_import_stays_closed() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    let mut test = exact_value_test("applyDiscount", "applyDiscount(DISCOUNT_THRESHOLD)", "90");
+    test.imports_in_file.push(TypeScriptImport {
+        source: "../src/config".to_string(),
+        imported: Some("DISCOUNT_THRESHOLD".to_string()),
+        local: "DISCOUNT_THRESHOLD".to_string(),
+        namespace: false,
+    });
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[test])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a constant from an unresolvable non-owner module must not witness"
+    );
+    Ok(())
+}
+
+/// #4104-E3 control: when the owner module declares the boundary constant,
+/// the boundary literal input (`applyDiscount(100)`) also witnesses through
+/// the substituted operand — the input equals the owner's own constant.
+#[test]
+fn e4104_named_constant_value_input_witnesses() -> Result<(), String> {
+    let mut owner = boundary_witness_owner();
+    owner.source_text = Some(
+        concat!(
+            "export const DISCOUNT_THRESHOLD = 100;\n",
+            "\n",
+            "export function applyDiscount(total: number): number {\n",
+            "    if (total >= DISCOUNT_THRESHOLD) {\n",
+            "        return total * 0.9;\n",
+            "    }\n",
+            "    return total;\n",
+            "}",
+        )
+        .to_string(),
+    );
+    let tests = [exact_value_test(
+        "applyDiscount",
+        "applyDiscount(100)",
+        "90",
+    )];
+    let finding =
+        classify_boundary_line_for_owner(&owner, "    if (total >= DISCOUNT_THRESHOLD) {", &tests)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "the literal input equal to the owner module's constant witnesses the constant boundary"
+    );
+    Ok(())
+}
+
+// #4213 review repairs (threads PRRT_kwDOSiSx0c6mUkkI / UkkL / UkkO / UnSc):
+// the red/green pairs below pin each repair to its discriminating shape.
+// For every case the PRE-repair code classified the negative shape
+// `exposed` (or armed the wrong witness path) and the positive control
+// `exposed`; the repairs must keep the controls exposed while the
+// over-credit shapes stay on the weak path.
+// ── #4213 review repair 1 (thread PRRT_kwDOSiSx0c6mUkkI) ────────────────────
+
+/// The nullish fallback literal is never a creditable boundary input: for
+/// `name ?? ""` → `name ?? "temp"`, a non-nullish call `pickLabel("temp")`
+/// never evaluates the fallback and behaves identically before and after, so
+/// only the nullish input at the left operand's read position may witness.
+#[test]
+fn e4104_nullish_right_fallback_literal_is_never_creditable() -> Result<(), String> {
+    let mut owner = boundary_witness_owner();
+    owner.name = "pickLabel".to_string();
+    owner.params = vec!["name".to_string()];
+    owner.arity = Some(1);
+    owner.source_text = Some(
+        concat!(
+            "export function pickLabel(name: string | null): string {\n",
+            "    if (name ?? \"temp\") {\n",
+            "        return \"named\";\n",
+            "    }\n",
+            "    return \"anonymous\";\n",
+            "}",
+        )
+        .to_string(),
+    );
+    let fallback_call = [exact_value_test(
+        "pickLabel",
+        "pickLabel(\"temp\")",
+        "\"named\"",
+    )];
+    let finding =
+        classify_boundary_line_for_owner(&owner, "    if (name ?? \"temp\") {", &fallback_call)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "the right fallback literal is not a boundary input: a non-nullish call never evaluates it"
+    );
+    // Control: the nullish input at the left operand's read position still
+    // witnesses — that is the only creditable boundary input.
+    let nullish_call = [exact_value_test(
+        "pickLabel",
+        "pickLabel(null)",
+        "\"named\"",
+    )];
+    let finding =
+        classify_boundary_line_for_owner(&owner, "    if (name ?? \"temp\") {", &nullish_call)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "the nullish input at the left read position still witnesses the nullish boundary"
+    );
+    Ok(())
+}
+
+// ── #4213 review repair 2 (threads PRRT_kwDOSiSx0c6mUkkL / VW3) ─────────────
+
+/// A same-name declaration inside the owner's own span at any non-top-level
+/// scope is a shadow: the changed predicate may lexically read the local
+/// binding instead of the module constant, and the line-based scan cannot
+/// prove otherwise, so resolution FAILS CLOSED — the operand keeps its name,
+/// no file-level fallback runs, and a boundary call carrying the top-level
+/// value cannot witness. The shadow-free control still witnesses.
+#[test]
+fn e4104_nested_owner_module_constant_stays_fail_closed() -> Result<(), String> {
+    // A helper-local `const` alone is not the module constant: the operand
+    // stays unresolved and the boundary call cannot witness.
+    let mut owner = boundary_witness_owner();
+    owner.source_text = Some(
+        concat!(
+            "export function helper() {\n",
+            "    const DISCOUNT_THRESHOLD = 100;\n",
+            "}\n",
+            "\n",
+            "export function applyDiscount(total: number): number {\n",
+            "    if (total >= DISCOUNT_THRESHOLD) {\n",
+            "        return total * 0.9;\n",
+            "    }\n",
+            "    return total;\n",
+            "}",
+        )
+        .to_string(),
+    );
+    let boundary_100 = [exact_value_test(
+        "applyDiscount",
+        "applyDiscount(100)",
+        "90",
+    )];
+    let finding = classify_boundary_line_for_owner(
+        &owner,
+        "    if (total >= DISCOUNT_THRESHOLD) {",
+        &boundary_100,
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a nested helper declaration is not the module-level constant"
+    );
+
+    // The shadow over-credit shape (thread PRRT_kwDOSiSx0c6mVW3_): a
+    // top-level `export const` beside a block-local `const` of the same
+    // name that the changed predicate actually reads. The boundary input
+    // 100 equals the top-level value, but the changed read observes the
+    // local 50, so the boundary call must NOT witness.
+    let mut shadowed = boundary_witness_owner();
+    shadowed.source_text = Some(
+        concat!(
+            "export const DISCOUNT_THRESHOLD = 100;\n",
+            "\n",
+            "export function applyDiscount(total: number): number {\n",
+            "    if (total > 0) {\n",
+            "        const DISCOUNT_THRESHOLD = 50;\n",
+            "        if (total >= DISCOUNT_THRESHOLD) {\n",
+            "            return total * 0.9;\n",
+            "        }\n",
+            "    }\n",
+            "    return total;\n",
+            "}",
+        )
+        .to_string(),
+    );
+    let finding = classify_boundary_line_for_owner(
+        &shadowed,
+        "        if (total >= DISCOUNT_THRESHOLD) {",
+        &boundary_100,
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a block-local shadow of the module constant must block the top-level value's witness"
+    );
+
+    // Control: the same owner WITHOUT the local shadow — the module-level
+    // declaration resolves and the boundary input 100 witnesses.
+    let mut control = boundary_witness_owner();
+    control.source_text = Some(
+        concat!(
+            "export const DISCOUNT_THRESHOLD = 100;\n",
+            "\n",
+            "export function applyDiscount(total: number): number {\n",
+            "    if (total >= DISCOUNT_THRESHOLD) {\n",
+            "        return total * 0.9;\n",
+            "    }\n",
+            "    return total;\n",
+            "}",
+        )
+        .to_string(),
+    );
+    let finding = classify_boundary_line_for_owner(
+        &control,
+        "    if (total >= DISCOUNT_THRESHOLD) {",
+        &boundary_100,
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "without the shadow, the module constant resolves and the boundary input witnesses"
+    );
+
+    // Conservative blanket: even a same-name local in a SIBLING function the
+    // changed predicate cannot read keeps the whole resolution closed — the
+    // scan cannot place the shadow, so it never substitutes the top-level
+    // value (fail closed over wrong credit).
+    let mut sibling = boundary_witness_owner();
+    sibling.source_text = Some(
+        concat!(
+            "export const DISCOUNT_THRESHOLD = 150;\n",
+            "\n",
+            "export function helper() {\n",
+            "    const DISCOUNT_THRESHOLD = 100;\n",
+            "}\n",
+            "\n",
+            "export function applyDiscount(total: number): number {\n",
+            "    if (total >= DISCOUNT_THRESHOLD) {\n",
+            "        return total * 0.9;\n",
+            "    }\n",
+            "    return total;\n",
+            "}",
+        )
+        .to_string(),
+    );
+    let boundary_150 = [exact_value_test(
+        "applyDiscount",
+        "applyDiscount(150)",
+        "135",
+    )];
+    let finding = classify_boundary_line_for_owner(
+        &sibling,
+        "    if (total >= DISCOUNT_THRESHOLD) {",
+        &boundary_150,
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a sibling-function same-name declaration fails the whole resolution closed"
+    );
+    Ok(())
+}
+
+// ── #4213 review repair 3 (thread PRRT_kwDOSiSx0c6mUkkO) ────────────────────
+
+/// The observed-local resolver binds the assertion's read, not the sole
+/// same-named declaration anywhere in the body: an outer assertion on an
+/// imported `result` is never attributed to a nested helper's
+/// `const result = applyDiscount(100)`, while an assertion inside that same
+/// scope still witnesses through it.
+#[test]
+fn e4104_nested_local_declaration_does_not_bind_outer_assertion() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    // The assertion sits OUTSIDE the helper block, so the helper's nested
+    // `const result` does not bind the observed read — fail closed.
+    let mut outer = exact_value_test("applyDiscount", "result", "90");
+    outer.body_text = concat!(
+        "expect(result).toBe(90);\n",
+        "function helper() {\n",
+        "    const result = applyDiscount(100);\n",
+        "    return result;\n",
+        "}\n",
+        "helper();",
+    )
+    .to_string();
+    outer.assertions[0].line = 1;
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[outer])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "an assertion outside a nested declaration's scope is not attributed to it"
+    );
+    // Control: the assertion INSIDE the helper block observes the helper's
+    // own binding, so the one-hop credit applies unchanged.
+    let mut inner = exact_value_test("applyDiscount", "result", "90");
+    inner.body_text = concat!(
+        "function helper() {\n",
+        "    const result = applyDiscount(100);\n",
+        "    expect(result).toBe(90);\n",
+        "}\n",
+        "helper();",
+    )
+    .to_string();
+    inner.assertions[0].line = 3;
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[inner])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "an assertion inside the declaration's own scope still witnesses through the local"
+    );
+    // Uniqueness control (the finding's import + nested shape): a top-level
+    // declaration alongside the nested one stays ambiguous — fail closed.
+    let mut ambiguous = exact_value_test("applyDiscount", "result", "90");
+    ambiguous.body_text = concat!(
+        "const result = otherImport();\n",
+        "function helper() {\n",
+        "    const result = applyDiscount(100);\n",
+        "}\n",
+        "expect(result).toBe(90);",
+    )
+    .to_string();
+    ambiguous.assertions[0].line = 5;
+    let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[ambiguous])?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a repeated declaration across scopes keeps the one-hop credit closed"
+    );
+    Ok(())
+}
+
+// ── #4213 review repair 4 (thread PRRT_kwDOSiSx0c6mUnSc) ────────────────────
+
+/// `nullish` must come from the quote-aware normalization, not a raw
+/// `contains("??")`: in `total >= 100 && "??"` the only coalesce-looking
+/// text is inside a string literal, so the nullish-input witness path stays
+/// disarmed and a `null` argument cannot credit the comparison boundary.
+#[test]
+fn e4104_quoted_nullish_flag_does_not_arm_nullish_witness() -> Result<(), String> {
+    let owner = boundary_witness_owner();
+    let tests = [exact_value_test(
+        "applyDiscount",
+        "applyDiscount(null)",
+        "90",
+    )];
+    let finding =
+        classify_boundary_line_for_owner(&owner, "  if (total >= 100 && \"??\") {", &tests)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a `??` inside a string literal is not a nullish boundary: the null argument must not witness"
     );
     Ok(())
 }
