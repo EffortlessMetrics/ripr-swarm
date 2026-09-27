@@ -1102,41 +1102,50 @@ fn far_above_threshold_discounts() {
 #[test]
 fn given_strict_boundary_seam_when_tests_skip_equal_value_then_grip_names_missing_boundary()
 -> Result<(), String> {
-    // (operator, boundary test input, expected missing equality boundary)
+    // (operator, boundary literal, boundary test input, expected missing
+    // equality boundary). Inputs are source spellings so digit separators
+    // can differ between the predicate and the test.
     let cases = [
-        (">", None, true),
-        ("<", None, true),
-        (">", Some(101), true),
-        ("<", Some(99), true),
-        (">", Some(100), false),
-        ("<", Some(100), false),
-        (">=", None, true),
-        (">=", Some(100), false),
+        (">", "100", None, true),
+        ("<", "100", None, true),
+        (">", "100", Some("101"), true),
+        ("<", "100", Some("99"), true),
+        (">", "100", Some("100"), false),
+        ("<", "100", Some("100"), false),
+        (">=", "100", None, true),
+        (">=", "100", Some("100"), false),
+        (">", "1_000", Some("1000"), false),
+        (">", "1000", Some("1_000"), false),
+        (">", "1_000", Some("1001"), true),
     ];
-    for (operator, boundary_input, expect_missing) in cases {
+    for (operator, boundary, boundary_input, expect_missing) in cases {
         let prod = PathBuf::from("src/lib.rs");
         let prod_src = format!(
-            "pub fn fee(amount: u64) -> u64 {{ if amount {operator} 100 {{ 0 }} else {{ 5 }} }}\n"
+            "pub fn fee(amount: u64) -> u64 {{ if amount {operator} {boundary} {{ 0 }} else {{ 5 }} }}\n"
         );
+        let numeric = |literal: &str| literal.replace('_', "").parse::<u64>();
+        let threshold = numeric(boundary).map_err(|error| error.to_string())?;
         // Keep every fixture assertion true for its operator.
         let fee = |amount: u64| {
             let taken = match operator {
-                ">" => amount > 100,
-                "<" => amount < 100,
-                _ => amount >= 100,
+                ">" => amount > threshold,
+                "<" => amount < threshold,
+                _ => amount >= threshold,
             };
             if taken { 0 } else { 5 }
         };
-        let boundary_test = boundary_input.map_or_else(String::new, |value| {
-            format!(
-                "#[test]\nfn near_boundary() {{ assert_eq!(fee({value}), {}); }}\n",
-                fee(value)
-            )
-        });
+        let boundary_test = match boundary_input {
+            Some(input) => format!(
+                "#[test]\nfn near_boundary() {{ assert_eq!(fee({input}), {}); }}\n",
+                fee(numeric(input).map_err(|error| error.to_string())?)
+            ),
+            None => String::new(),
+        };
+        let (low, high) = (threshold / 2, threshold * 2);
         let tests_src = format!(
-            "#[test]\nfn low() {{ assert_eq!(fee(50), {}); }}\n#[test]\nfn high() {{ assert_eq!(fee(200), {}); }}\n{boundary_test}",
-            fee(50),
-            fee(200)
+            "#[test]\nfn low() {{ assert_eq!(fee({low}), {}); }}\n#[test]\nfn high() {{ assert_eq!(fee({high}), {}); }}\n{boundary_test}",
+            fee(low),
+            fee(high)
         );
         let tests = PathBuf::from("tests/fee.rs");
         let index = index_from_files(&[(prod, prod_src.as_str()), (tests, tests_src.as_str())])?;
@@ -1144,8 +1153,10 @@ fn given_strict_boundary_seam_when_tests_skip_equal_value_then_grip_names_missin
         let predicate = seams
             .iter()
             .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
-            .ok_or_else(|| format!("expected a predicate seam for `amount {operator} 100`"))?;
-        if predicate.expression().trim() != format!("amount {operator} 100") {
+            .ok_or_else(|| {
+                format!("expected a predicate seam for `amount {operator} {boundary}`")
+            })?;
+        if predicate.expression().trim() != format!("amount {operator} {boundary}") {
             return Err(format!(
                 "fixture parsed the wrong subject: `{}`",
                 predicate.expression()
@@ -1165,19 +1176,19 @@ fn given_strict_boundary_seam_when_tests_skip_equal_value_then_grip_names_missin
             .collect();
         let class = crate::analysis::seam_classification::classify_seam(predicate, &evidence);
         if expect_missing {
-            if missing != ["100 (equality boundary)"] {
+            if missing != [format!("{boundary} (equality boundary)")] {
                 return Err(format!(
-                    "`{operator}` with boundary input {boundary_input:?} must name the equality boundary, got {missing:?}"
+                    "`{operator} {boundary}` with boundary input {boundary_input:?} must name the equality boundary, got {missing:?}"
                 ));
             }
             if class == SeamGripClass::StronglyGripped {
                 return Err(format!(
-                    "`{operator}` with boundary input {boundary_input:?} must not be strongly gripped"
+                    "`{operator} {boundary}` with boundary input {boundary_input:?} must not be strongly gripped"
                 ));
             }
         } else if !missing.is_empty() || class != SeamGripClass::StronglyGripped {
             return Err(format!(
-                "`{operator}` with the equality input observed should be strongly gripped with nothing missing, got {} {missing:?}",
+                "`{operator} {boundary}` with boundary input {boundary_input:?} should be strongly gripped with nothing missing, got {} {missing:?}",
                 class.as_str()
             ));
         }

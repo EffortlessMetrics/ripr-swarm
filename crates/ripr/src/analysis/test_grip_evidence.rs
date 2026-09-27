@@ -1270,14 +1270,14 @@ fn missing_discriminators_for(
             // so we can only flag that the equality boundary is not
             // explicitly named in the observed value set.
             //
-            // Use exact equality rather than `contains` to avoid false
-            // matches like `boundary_token = "10"` matching observed
-            // value `"100"`. Observed values are literal scalars produced
-            // by `scalar_values`, so byte-for-byte equality is the right
-            // contract here.
+            // Use whole-value equality rather than `contains` to avoid
+            // false matches like `boundary_token = "10"` matching observed
+            // value `"100"`. Compare through `comparable_value` so digit
+            // separators do not matter (`1_000` names `1000`).
+            let boundary_value = comparable_value(&boundary_token);
             let equality_seen = observed
                 .iter()
-                .any(|v| v.value.as_str() == boundary_token.as_str());
+                .any(|v| comparable_value(&v.value) == boundary_value);
             if equality_seen {
                 Vec::new()
             } else {
