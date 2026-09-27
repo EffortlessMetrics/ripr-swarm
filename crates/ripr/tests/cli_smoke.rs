@@ -15986,34 +15986,62 @@ fn history_commands_resolve_the_default_base_without_origin() -> Result<(), Stri
 
 /// #4285: `first-pr --check` with no packet answers with the command that
 /// creates one even when no default base resolves (a detached shallow CI
-/// clone, a repo without `origin`). The recovery needs no base, so a base
-/// failure must not preempt it, and an omitted `--base` stays omitted rather
-/// than naming a placeholder the write run would never use.
+/// clone, a repo without `origin`). The recovery needs no base to be printed,
+/// but the write it suggests does, so it asks for `--base <rev>` rather than
+/// advertising a command that fails on the same missing base. Filling the
+/// slot with a real revision must create a packet that `--check` accepts.
 #[test]
 fn first_pr_check_missing_packet_recovers_without_a_resolvable_base() -> Result<(), String> {
     let root = no_origin_master_repo("check-missing-packet-unresolvable-base", "trunk")?;
-    let output = run_command(
-        env!("CARGO_BIN_EXE_ripr"),
-        Some(&root),
-        &["first-pr", "--root", ".", "--check"],
-    )
-    .map_err(|err| format!("spawn ripr first-pr --check: {err}"))?;
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let recovered = !output.status.success()
-        && stderr.contains("it does not create one")
-        && stderr.contains(
-            "Create and validate it with:\n  ripr first-pr --root . --head HEAD --out-dir ",
-        )
-        && !stderr.contains("--base")
-        && !stderr.contains("could not resolve a default base");
+    let bin = env!("CARGO_BIN_EXE_ripr");
+    let check = run_command(bin, Some(&root), &["first-pr", "--root", ".", "--check"])
+        .map_err(|err| format!("spawn ripr first-pr --check: {err}"))?;
+    let stderr = String::from_utf8_lossy(&check.stderr).to_string();
+    let prefix = "Create and validate it with:\n  ";
+    let advertised = stderr
+        .split_once(prefix)
+        .and_then(|(_, rest)| rest.lines().next())
+        .map(str::to_string);
+    let mut failures = Vec::new();
+    if check.status.success()
+        || !stderr.contains("it does not create one")
+        || !stderr.contains("could not resolve a default base")
+        || !stderr.contains("Replace `<rev>` above with the PR base revision.")
+    {
+        failures.push(format!(
+            "first-pr --check without a packet must print its recovery and name the unresolved base; status {:?}, stderr:\n{stderr}",
+            check.status.code()
+        ));
+    }
+    match advertised.as_deref().and_then(|line| line.strip_prefix("ripr ")) {
+        Some(command) if command.starts_with("first-pr --root . --base <rev> --head HEAD --out-dir ") => {
+            let args: Vec<&str> = command
+                .split(' ')
+                .map(|arg| if arg == "<rev>" { "trunk" } else { arg.trim_matches('\'') })
+                .collect();
+            let write = run_command(bin, Some(&root), &args)
+                .map_err(|err| format!("spawn advertised write: {err}"))?;
+            let recheck = run_command(bin, Some(&root), &["first-pr", "--root", ".", "--base", "trunk", "--check"])
+                .map_err(|err| format!("spawn recheck: {err}"))?;
+            if !write.status.success() || !recheck.status.success() {
+                failures.push(format!(
+                    "the advertised write with `<rev>` = trunk must create a packet --check accepts; write {:?}:\n{}\nrecheck {:?}:\n{}",
+                    write.status.code(),
+                    String::from_utf8_lossy(&write.stderr),
+                    recheck.status.code(),
+                    String::from_utf8_lossy(&recheck.stderr)
+                ));
+            }
+        }
+        other => failures.push(format!(
+            "recovery must advertise `ripr first-pr --root . --base <rev> --head HEAD --out-dir ...`; got {other:?}"
+        )),
+    }
     ignore_remove_dir_all(&root);
-    if recovered {
+    if failures.is_empty() {
         Ok(())
     } else {
-        Err(format!(
-            "first-pr --check without a packet must print its recovery, not a base error; status {:?}, stderr:\n{stderr}",
-            output.status.code()
-        ))
+        Err(failures.join("\n\n"))
     }
 }
 

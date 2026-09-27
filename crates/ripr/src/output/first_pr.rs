@@ -223,7 +223,7 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
 }
 
 /// The start-here packet `--check` validates, or the recovery that creates
-/// it. Needs no base: only the root and `--out-dir` locate the packet.
+/// it. Locating the packet needs no base: only the root and `--out-dir`.
 fn require_start_here_packet(
     repo: &Path,
     options: &FirstPrOptions,
@@ -238,11 +238,20 @@ fn require_start_here_packet(
     let json_path = out_dir.join(START_HERE_JSON);
     let markdown_path = out_dir.join(START_HERE_MD);
     if !json_path.exists() || !markdown_path.exists() {
+        // The write run resolves an omitted base itself; when nothing
+        // resolves here, it would fail the same way, so the recovery must
+        // ask for an explicit `--base` instead (#4285).
+        let base_error = if options.base_explicit {
+            None
+        } else {
+            resolve_omitted_base(repo, &mut options.clone()).err()
+        };
         return Err(first_pr_missing_packet_recovery_error(
             &json_path,
             &markdown_path,
             options,
             &out_dir,
+            base_error.as_deref(),
         ));
     }
     Ok((json_path, markdown_path))
@@ -253,6 +262,7 @@ fn first_pr_missing_packet_recovery_error(
     markdown_path: &Path,
     options: &FirstPrOptions,
     out_dir: &Path,
+    base_error: Option<&str>,
 ) -> String {
     let missing = if !json_path.exists() {
         json_path
@@ -263,25 +273,36 @@ fn first_pr_missing_packet_recovery_error(
     // reproduce the exact directory `--check` validated, even when pasted
     // from a different working directory, and paths render with stable
     // separators on every host.
+    let base_note = base_error.map_or_else(String::new, |err| {
+        format!("\n\n{err}\nReplace `<rev>` above with the PR base revision.")
+    });
     format!(
-        "first-pr --check validates an existing start-here packet; it does not create one.\n\nMissing:\n  {}\n\nCreate and validate it with:\n  {}",
+        "first-pr --check validates an existing start-here packet; it does not create one.\n\nMissing:\n  {}\n\nCreate and validate it with:\n  {}{base_note}",
         display_path(missing),
-        first_pr_write_command(options, out_dir)
+        first_pr_write_command(options, out_dir, base_error.is_some())
     )
 }
 
-fn first_pr_write_command(options: &FirstPrOptions, out_dir: &Path) -> String {
+fn first_pr_write_command(
+    options: &FirstPrOptions,
+    out_dir: &Path,
+    base_unresolved: bool,
+) -> String {
     let mut parts = vec![
         "ripr".to_string(),
         "first-pr".to_string(),
         "--root".to_string(),
         shell_arg(&options.root),
     ];
-    // An omitted `--base` stays omitted: the write run resolves the default
-    // branch itself, and the placeholder was never a resolved base (#4285).
+    // An omitted `--base` stays omitted when the write run can resolve the
+    // default branch itself; the parse-time default was never a resolved
+    // base. When nothing resolves, name the slot the user must fill (#4285).
     if options.base_explicit {
         parts.push("--base".to_string());
         parts.push(shell_arg(&options.base));
+    } else if base_unresolved {
+        parts.push("--base".to_string());
+        parts.push("<rev>".to_string());
     }
     parts.push("--head".to_string());
     parts.push(shell_arg(&options.head));
@@ -2317,6 +2338,7 @@ mod tests {
             Path::new("/repo/target/ripr/foo/reports/start-here.md"),
             &options,
             Path::new("/repo/target/ripr/foo/reports"),
+            None,
         );
 
         assert!(err.contains("first-pr --check validates an existing start-here packet"));
@@ -2332,7 +2354,7 @@ mod tests {
     fn first_pr_write_command_preserves_explicit_gap_ledger_only() {
         let implicit = FirstPrOptions::default();
         assert!(
-            !first_pr_write_command(&implicit, Path::new("target/ripr/reports"))
+            !first_pr_write_command(&implicit, Path::new("target/ripr/reports"), false)
                 .contains("--gap-ledger")
         );
 
@@ -2342,26 +2364,33 @@ mod tests {
             ..FirstPrOptions::default()
         };
         assert!(
-            first_pr_write_command(&explicit, Path::new("target/ripr/reports"))
+            first_pr_write_command(&explicit, Path::new("target/ripr/reports"), false)
                 .contains("--gap-ledger target/custom/gaps.json")
         );
     }
 
     #[test]
-    fn first_pr_write_command_renders_base_only_when_explicit() {
+    fn first_pr_write_command_renders_base_only_when_explicit_or_unresolved() {
         let out_dir = Path::new("target/ripr/reports");
-        let omitted = first_pr_write_command(&FirstPrOptions::default(), out_dir);
+        let omitted = first_pr_write_command(&FirstPrOptions::default(), out_dir, false);
         assert!(!omitted.contains("--base"), "{omitted}");
+        let unresolved = first_pr_write_command(&FirstPrOptions::default(), out_dir, true);
+        assert!(
+            unresolved.contains("--base <rev> --head HEAD"),
+            "{unresolved}"
+        );
         let explicit = FirstPrOptions {
             base: "origin/trunk".to_string(),
             base_explicit: true,
             ..FirstPrOptions::default()
         };
-        let rendered = first_pr_write_command(&explicit, out_dir);
-        assert!(
-            rendered.contains("--base origin/trunk --head HEAD"),
-            "{rendered}"
-        );
+        for base_unresolved in [false, true] {
+            let rendered = first_pr_write_command(&explicit, out_dir, base_unresolved);
+            assert!(
+                rendered.contains("--base origin/trunk --head HEAD"),
+                "{rendered}"
+            );
+        }
     }
 
     #[test]
@@ -2369,7 +2398,7 @@ mod tests {
         let options = FirstPrOptions::default();
         // Mixed-case anchored path: proves the resolved directory renders
         // verbatim (no CWD-relative fallback, no separator or case folding).
-        let rendered = first_pr_write_command(&options, Path::new("/Repo/out/Reports"));
+        let rendered = first_pr_write_command(&options, Path::new("/Repo/out/Reports"), false);
         assert!(rendered.contains("--out-dir /Repo/out/Reports"));
         assert!(!rendered.contains("--out-dir target/ripr/reports"));
     }
