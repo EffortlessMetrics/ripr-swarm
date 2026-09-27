@@ -49,7 +49,7 @@
     },
     {
       "id": "assembler-runtime",
-      "method": "Targeted mutants run by the assembling session for the xtask cases (p1745, p1617) that the runtime-mutation context was not given: each mutant planned from the static review's mutant list, applied at the case head, the named or full xtask suite run, and the file restored with git checkout.",
+      "method": "Targeted mutants run by the assembling session where the runtime-mutation context was not given them: the xtask cases (p1745, p1617), and after the #4280 review the s3755 FC-gate residual. Each mutant was planned from the static review's residual list, applied at the case head, the named or full suite run, and the file restored with git checkout.",
       "blind_to": [
         "nothing: the assembler had read the static reviews; the evidence is the runtime result, not the reading"
       ]
@@ -333,7 +333,7 @@
     {
       "case_id": "p1741-helper-rows-quiet",
       "expected_direction": "should_stay_quiet",
-      "terminal": "confirmed_should_stay_quiet",
+      "terminal": "confirmed_should_gap",
       "structural": {
         "owner": "crates/ripr/src/edit_cage.rs:506-520 agent_attributable_delta: `changes` built by filtering operational paths (:518) and `comparable: delta.comparable` (:511)",
         "activation": "same-diff unit test agent_delta_ignores_operational_churn_but_binds_agent_surface (edit_cage.rs:~2670) feeds a delta with operational and agent paths",
@@ -341,7 +341,7 @@
         "observer": "agent_delta_ignores_operational_churn_but_binds_agent_surface",
         "oracle": "strong for `changes` (exact filtered set, :2687); partial for `comparable` (asserts true only, :2686)",
         "target": "aligned: the test is about this helper",
-        "limitation": "none; the test only ever feeds comparable: true, so a constant-true pass-through survives"
+        "limitation": "none; the test only ever feeds comparable: true, so a constant-true pass-through of the anchored field construction survives"
       },
       "reviews": [
         {
@@ -361,16 +361,19 @@
           ]
         }
       ],
-      "disagreement": null,
+      "disagreement": {
+        "summary": "Both reviews gave the row the verdict discriminated on its filter behavior, and both recorded that `comparable: delta.comparable` (:511) survives a constant-true mutant (H1). The frozen row anchors the whole agent_attributable_delta owner, and its selection reason credits the field_construction probes that include :511.",
+        "resolution": "Resolved to confirmed_should_gap by the H1 runtime survivor (Codex review on #4280). A confirmed quiet row needs every non-equivalent sub-behavior of its anchored owner discriminated; the missing discriminator is an input with comparable: false."
+      },
       "reference_outcome": {
-        "observation": "edit_cage.rs:511 exposed via direct_owner_call; :510 and :512 weakly_exposed. The :511 exposed credit is stronger than runtime supports (H1 constant-true survives); the filter rows are under-credited as weak",
+        "observation": "edit_cage.rs:511 exposed via direct_owner_call; :510 and :512 weakly_exposed. The :511 exposed credit is stronger than runtime supports (H1 constant-true survives), and the filter rows are under-credited as weak; row-level credit is judged against the gap terminal, so the weak filter rows are not counted as under-credit",
         "false_actionable": null,
-        "false_exposed": false,
-        "under_credit": true,
+        "false_exposed": true,
+        "under_credit": false,
         "limitation_correct": null
       },
       "non_claims": [
-        "The `comparable` pass-through is only half-discriminated (constant-true survives); the row stays quiet on the filter behavior it is named for, not on that residual."
+        "The filter behavior (:518) and comparable: false (H2) are discriminated; the gap is the constant-true pass-through alone."
       ]
     },
     {
@@ -696,7 +699,7 @@
         "observer": "dedup_finding_probe_ids_suffixes_repeats_and_rebinds_evidence",
         "oracle": "strong: exact assert_eq! on the suffixed probe id and Finding.id (:331-339), evidence contains source_id=...2, first occurrence unsuffixed, uniqueness count (:362)",
         "target": "aligned: same-diff test of this owner",
-        "limitation": "none; `finding.id == old` is always true in the fixture, so a constant-true guard would survive"
+        "limitation": "none; `finding.id == old` (:126) is always true in the fixture, but every production Finding constructor sets id from the probe id (classifier/finding.rs:67 at the case head), so a constant-true guard is equivalent there"
       },
       "reviews": [
         {
@@ -818,7 +821,7 @@
     {
       "case_id": "p1705-passthrough-rows-quiet",
       "expected_direction": "should_stay_quiet",
-      "terminal": "confirmed_should_stay_quiet",
+      "terminal": "confirmed_should_gap",
       "structural": {
         "owner": "crates/ripr/src/output/markdown.rs:242-244 allowlist passthrough arm `_ if ch.is_alphanumeric() || ch.is_ascii_whitespace() || matches!(ch, '.' | '/' | '_' | '-' | ':') => {}` inside is_compound_bash_command, not markdown_text (markdown.rs:23 is unchanged)",
         "activation": "powershell_command_quotes_the_default_unquoted_redirect_target (:365) and siblings feed alphanumerics, space, `.`, `/`, `-`; first_pr.rs start_here_markdown_offers_verify_and_agent_packet_powershell_variants (:1935) feeds `:`; no test feeds an unquoted `_`",
@@ -846,16 +849,19 @@
           ]
         }
       ],
-      "disagreement": null,
+      "disagreement": {
+        "summary": "Both reviews gave the row the verdict discriminated, and static-source recorded that the `_` member of the anchored matches! expression has no activating input. The frozen anchor is that expression (markdown.rs:244), `_` included.",
+        "resolution": "Resolved to confirmed_should_gap (Codex review on #4280). A confirmed quiet row needs every non-equivalent sub-behavior of its anchored expression discriminated. Dropping `_` makes an unquoted underscore take the default `return true` arm, and no test feeds one."
+      },
       "reference_outcome": {
-        "observation": "markdown.rs:242 weakly_exposed / infection_unknown and :244 weakly_exposed on every row; the credited same-file observer does not reach the arm",
+        "observation": "markdown.rs:242 weakly_exposed / infection_unknown and :244 weakly_exposed on every row. The weak class fits the `_` residual, but the credited same-file observer does not reach the arm",
         "false_actionable": null,
         "false_exposed": false,
-        "under_credit": true,
+        "under_credit": false,
         "limitation_correct": null
       },
       "non_claims": [
-        "The `_` member is a residual undiscriminated sub-behavior and is not judged as this row."
+        "The arm and its `.`, `/`, `-`, `:`, alphanumeric and whitespace members are discriminated (T1, T2); the gap is the `_` member alone. No mutant dropping `_` was run; its survival is inferred from the absence of an activating input."
       ]
     },
     {
@@ -947,7 +953,7 @@
     {
       "case_id": "s3755-weak-rows-gap",
       "expected_direction": "should_gap",
-      "terminal": "confirmed_should_stay_quiet",
+      "terminal": "confirmed_should_gap",
       "structural": {
         "owner": "crates/ripr/src/analysis/probes/classify/parameters.rs:14 parameter_declaration_shape and parameter_line_span (:70), called from parser_probe_shapes_for_changed_line (classify.rs:83-90): refusal guards (lexical fallback :19, exact current-line equality :27, fn-only parameter list :44-47, parse-error refusal) and span-walk returns (:80, :89)",
         "activation": "same-file parameters::tests (4 tests, also in the diff) feed lexical-fallback, mismatched-line, non-fn and parse-error inputs; the boundary module feeds the accept paths",
@@ -955,7 +961,7 @@
         "observer": "parameters::tests parameter_shape_requires_current_parser_owned_source and parameter_shape_rejects_non_fn_context_and_shared_body",
         "oracle": "strong: exact None / shape asserts",
         "target": "aligned: same-diff unit tests of this owner (not the claimed boundary module)",
-        "limitation": "none; residual rows (:20 FC-gate removal, :27 is_empty, :44 ParamList continue, :89 multiline return, classify.rs:83 -> true) are near-equivalent by static reading"
+        "limitation": "none; the FieldConstruction gate (:20) has no discriminating input: a parameter line the lexical rule does not call field-shaped (`&self,`, or a type path with `::`) is refused only by that gate. The other residuals (:27 is_empty, :44 ParamList continue, :89 multiline return, classify.rs:83 -> true) are near-equivalent by static reading"
       },
       "reviews": [
         {
@@ -973,19 +979,31 @@
           "evidence": [
             "S1 (:19 lexical-fallback guard off), S2 (:27 equality off), S3 (fn-only check off) and S7 (parse-error refusal off) each survive parameter_boundary_tests 7/7 but fail parameters::tests; no mutant passed the full lib (5228)"
           ]
+        },
+        {
+          "role": "assembler-runtime",
+          "judgment": "not_discriminated",
+          "confidence": "high",
+          "evidence": [
+            "S8 (:20 `|| !classify_changed_line(..).contains(&FieldConstruction)` removed) survives parameter tests 27/27 and the full lib 5228/5228 at 745402ab; S9 (:27 `text.is_empty() ||` removed) survives the parameter tests 27/27 and is equivalent (an empty line is not field-shaped, so the :20 gate already refuses it)"
+          ]
         }
       ],
-      "disagreement": null,
+      "disagreement": {
+        "summary": "static-source and runtime-mutation gave the row the verdict discriminated, leaving the residual rows as near-equivalent by static reading. After the Codex review on #4280, assembler-runtime mutated the :20 FieldConstruction gate, and that mutant survives the full lib.",
+        "resolution": "Resolved to confirmed_should_gap by the S8 survivor. The gate is not equivalent: lexical.rs has_field_shape rejects `&self,` and any line containing `::`, so without the gate those parameter lines in an unsafe fn gain a declaration shape. A confirmed quiet row needs every non-equivalent sub-behavior of its anchored owner discriminated."
+      },
       "reference_outcome": {
-        "observation": "parameters.rs refusal and span rows mostly weakly_exposed or static_unknown; the reference credits neither same-diff module",
+        "observation": "parameters.rs refusal and span rows mostly weakly_exposed or static_unknown; the reference credits neither same-diff module. The weak class fits the gap terminal",
         "false_actionable": null,
         "false_exposed": false,
-        "under_credit": true,
+        "under_credit": false,
         "limitation_correct": null
       },
       "non_claims": [
-        "The historical gap reading was the unlinked same-diff observer (a recall gap in observer linking), not an undiscriminated behavior.",
-        "Near-equivalent residual rows are inferred statically and were not mutated."
+        "The majority of guards are discriminated by parameters::tests (S1, S2, S3, S7); the gap is the FieldConstruction gate alone.",
+        "The historical gap reading was about the unlinked same-diff observer; this row's gap is a different, undiscriminated guard.",
+        "The other residual rows are near-equivalent by static reading and were not mutated beyond S9."
       ]
     }
   ]
