@@ -271,8 +271,15 @@ fn detect_languages(root: &Path) -> Vec<LanguageId> {
         found.push(LanguageId::Python);
     }
 
-    // Perl: .pl or .pm files
-    if shallow_has_extension(root, "pl") || shallow_has_extension(root, "pm") {
+    // Perl: .pl/.pm/.t files or a CPAN build marker. A CPAN layout keeps
+    // modules below `lib/Name/` (deeper than the shallow scan) and tests in
+    // `t/`, so `.t` and the build markers keep this line in agreement with
+    // the Perl section, which counts files recursively.
+    if shallow_has_extension(root, "pl")
+        || shallow_has_extension(root, "pm")
+        || shallow_has_extension(root, "t")
+        || has_perl_project_markers(root)
+    {
         found.push(LanguageId::Perl);
     }
 
@@ -1310,6 +1317,36 @@ mod tests {
                 .map(|(_, candidate, _)| *candidate)
                 .collect();
             assert_eq!(tools, vec!["node", tool], "lockfile {lockfile}");
+            std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn detect_languages_finds_a_cpan_layout_perl_project() -> Result<(), String> {
+        // A module two levels under `lib/` is below the shallow scan; the
+        // `t/*.t` test or the CPAN build marker must still detect Perl, or
+        // doctor prints "none detected" beside a Perl section counting files.
+        let cases: [(&str, &[&str]); 3] = [
+            ("tests", &["lib/Acme/Calc.pm", "t/calc.t"]),
+            ("marker", &["lib/Acme/Calc.pm", "Makefile.PL"]),
+            ("none", &["lib/Acme/Calc.pm", "README"]),
+        ];
+        for (name, files) in cases {
+            let root = unique_command_test_dir(&format!("detect-perl-{name}"));
+            for file in files {
+                let path = root.join(file);
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|err| format!("mkdir: {err}"))?;
+                }
+                std::fs::write(&path, "1;\n").map_err(|err| format!("write {file}: {err}"))?;
+            }
+            let expected = if name == "none" {
+                Vec::new()
+            } else {
+                vec![LanguageId::Perl]
+            };
+            assert_eq!(detect_languages(&root), expected, "{name}");
             std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         }
         Ok(())
