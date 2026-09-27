@@ -4703,6 +4703,37 @@ mod tests {
         Ok(())
     }
 
+    // The other reason branch: a finding that names a missing discriminator
+    // but still has no card is held by incomplete placement or related-test
+    // evidence, and says so.
+    #[test]
+    fn check_output_python_no_repair_card_with_discriminator_names_incomplete_evidence()
+    -> Result<(), String> {
+        let mut payload: Value = serde_json::from_str(&python_no_repair_card_check_output())
+            .map_err(|error| format!("parse fixture check output: {error}"))?;
+        let findings = payload["findings"]
+            .as_array_mut()
+            .ok_or_else(|| "findings missing".to_string())?;
+        for finding in findings
+            .iter_mut()
+            .filter(|finding| finding["classification"] == "weakly_exposed")
+        {
+            finding["missing_discriminators"] =
+                serde_json::json!([{"value": "amount == discount_threshold"}]);
+        }
+        let report = check_output_ledger(payload.to_string());
+        let records = python_no_repair_card_records(&report);
+        assert_eq!(records.len(), 1, "{:?}", report.records);
+        assert_eq!(
+            records[0].static_limit_detail.as_deref(),
+            Some(
+                "this Python preview finding has no repair card (its test placement or related-test evidence is incomplete), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
+            )
+        );
+        assert!(records[0].repair_route.is_none());
+        Ok(())
+    }
+
     // #4226 review, carried to Python: an exposed finding has nothing to
     // repair and a no-path finding is a test gap, not an analyzer limitation.
     // A card, a static limit, or a heuristic-only link also keeps the finding

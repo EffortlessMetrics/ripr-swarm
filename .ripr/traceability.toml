@@ -3636,6 +3636,7 @@ tests = [
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::check_output_typescript_repair_packet_becomes_agent_packet_gap_record",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::check_output_python_no_repair_card_finding_is_never_delegatable",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::check_output_python_no_repair_card_record_excludes_other_findings",
+  "crates/ripr/src/output/gap_decision_ledger.rs::tests::check_output_python_no_repair_card_with_discriminator_names_incomplete_evidence",
   "crates/ripr/src/output/first_pr.rs::tests::python_finding_without_repair_card_names_limitation_and_manual_step",
   "crates/ripr/src/cli/commands.rs::tests::reports_gap_ledger_requires_records_input",
   "crates/ripr/src/cli/commands.rs::tests::reports_gap_ledger_derives_repo_scoped_records_from_repo_exposure",
