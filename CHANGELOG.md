@@ -547,7 +547,8 @@ are scoped or reviewed.
   where the last hook write wins over the declaration's initializer. A name
   the test body declares or reassigns, a callback parameter, a hook write
   that is conditional or made through a closure, a write to a hook-local
-  variable, a `beforeAll` write that an enclosing `beforeEach` or a sibling
+  variable or hook parameter, a `beforeEach`/`beforeAll` the file defines
+  or imports from something other than a test runner, a `beforeAll` write that an enclosing `beforeEach` or a sibling
   test, `afterEach` hook or nested `describe` may overwrite, and a shadowed
   class or namespace name still do not relate.
 

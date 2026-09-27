@@ -207,6 +207,32 @@ pub(crate) fn collect_tests_from_statements(
     for stmt in statements {
         collect_scope_bindings(stmt, source, &mut level);
     }
+    // A `beforeEach`/`beforeAll` the file declares, or imports from anything
+    // but a test runner, is not known to run before each test: its writes are
+    // only ambiguous.
+    for (hook, phase) in [
+        ("beforeAll", Phase::BeforeAll),
+        ("beforeEach", Phase::BeforeEach),
+    ] {
+        let shadowed = scope
+            .levels
+            .iter()
+            .chain(std::iter::once(&level))
+            .flatten()
+            .any(|(name, _, entry_phase)| name == hook && *entry_phase == Phase::Declaration)
+            || imports.iter().any(|import| {
+                import.local == hook && !TEST_RUNNER_MODULES.contains(&import.source.as_str())
+            });
+        if shadowed {
+            for entry in level
+                .iter_mut()
+                .filter(|(_, _, entry_phase)| *entry_phase == phase)
+            {
+                entry.1 = ScopeValue::Other;
+                entry.2 = Phase::Interleaved;
+            }
+        }
+    }
     scope.levels.push(level);
     for stmt in statements {
         if let Some((describe_name, body)) = describe_body_from_statement(stmt) {
@@ -239,6 +265,9 @@ pub(crate) fn collect_tests_from_statements(
     }
     scope.levels.pop();
 }
+
+/// Modules whose `beforeEach`/`beforeAll` run before every test in scope.
+const TEST_RUNNER_MODULES: [&str; 4] = ["vitest", "@jest/globals", "bun:test", "node:test"];
 
 /// The enclosing scopes of the statements being walked.
 #[derive(Default)]
@@ -393,13 +422,16 @@ fn collect_scope_bindings(stmt: &Statement<'_>, source: &str, out: &mut Vec<Scop
                 Expression::Identifier(callee) if callee.name == "beforeEach" => Phase::BeforeEach,
                 _ => Phase::Interleaved,
             };
-            for body in call
-                .arguments
-                .iter()
-                .filter_map(function_body_statements_from_argument)
-            {
-                // Writes to the callback's own declarations stay in it.
-                let mut locals = Vec::new();
+            for argument in &call.arguments {
+                let Some(body) = function_body_statements_from_argument(argument) else {
+                    continue;
+                };
+                // Writes to the callback's own parameters and declarations
+                // stay in it.
+                let mut locals: Vec<ScopeEntry> = argument_parameter_names(argument)
+                    .into_iter()
+                    .map(|name| (name, ScopeValue::Other, Phase::Declaration))
+                    .collect();
                 for inner in body {
                     collect_scope_bindings(inner, source, &mut locals);
                 }
@@ -544,9 +576,17 @@ fn statement_callback_parameter_names(stmt: &Statement<'_>, index: usize) -> Vec
     let Expression::CallExpression(call) = &expr_stmt.expression else {
         return Vec::new();
     };
-    let params = match call.arguments.get(index) {
-        Some(oxc_ast::ast::Argument::ArrowFunctionExpression(arrow)) => &arrow.params,
-        Some(oxc_ast::ast::Argument::FunctionExpression(function)) => &function.params,
+    call.arguments
+        .get(index)
+        .map(argument_parameter_names)
+        .unwrap_or_default()
+}
+
+/// Names a callback argument binds as parameters; empty for anything else.
+fn argument_parameter_names(argument: &oxc_ast::ast::Argument<'_>) -> Vec<String> {
+    let params = match argument {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => &arrow.params,
+        oxc_ast::ast::Argument::FunctionExpression(function) => &function.params,
         _ => return Vec::new(),
     };
     params

@@ -354,3 +354,23 @@ fn write_between_tests_makes_shared_receiver_ambiguous() -> Result<(), String> {
         ),
     )
 }
+
+#[test]
+fn locally_defined_hook_is_not_setup() -> Result<(), String> {
+    unrelated_with_head(
+        "adv-local-hook",
+        "const beforeEach = (_setup: () => void) => {};\ndescribe('C', () => {\n  let cart: any = { total: () => 1 };\n  beforeEach(() => {\n    cart = new Cart();\n  });\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+    )?;
+    assert_unrelated(
+        "adv-imported-hook",
+        "import { describe, it, expect } from 'vitest';\nimport { beforeEach } from './my-hooks';\nimport { Cart } from '../src/cart';\n\ndescribe('C', () => {\n  let cart: any = { total: () => 1 };\n  beforeEach(() => {\n    cart = new Cart();\n  });\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+    )
+}
+
+#[test]
+fn hook_callback_parameter_write_does_not_bind() -> Result<(), String> {
+    unrelated_with_head(
+        "adv-hook-param",
+        "describe('C', () => {\n  let cart: any = { total: () => 1 };\n  beforeEach((cart: any) => {\n    cart = new Cart();\n  });\n  it('t', () => {\n    expect(cart.total()).toBe(1);\n  });\n});\n",
+    )
+}
