@@ -14794,6 +14794,8 @@ JSON shape:
   },
   "first_successful_pr": {
     "default_ci_blocking": false,
+    "evidence_source": "committed_declarations",
+    "rendered_cases": 0,
     "receipt_dir": "fixtures/first_successful_pr",
     "metrics": {
       "first_run_packets_total": 5,
