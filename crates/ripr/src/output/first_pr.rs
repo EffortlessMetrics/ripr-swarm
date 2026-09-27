@@ -113,15 +113,21 @@ pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
     print_side_effect_disclosure(&options);
 
     let repo = repo_root()?;
-    // A missing packet is answered before the base is resolved (#4285):
-    // `--check` never diffs, so a repository where no default base resolves
-    // must still get the recovery command instead of the base failure.
+    let resolution = omitted_base_resolution(&repo, &options);
+    // A missing packet is answered before a base failure (#4285): `--check`
+    // never diffs, so a repository where no default base resolves still gets
+    // the recovery, and that recovery demands the `--base` its write needs.
     if options.check {
         let root = resolve_path(&repo, &options.root);
         let root_recovery = root_preflight_recovery(&root, &options).is_some();
-        check_packet_paths(&repo, &root, root_recovery, &options)?;
+        let base_error = resolution.as_ref().and_then(|result| result.as_ref().err());
+        check_packet_paths(&repo, &root, root_recovery, base_error, &options)?;
     }
-    resolve_omitted_base(&repo, &mut options)?;
+    match resolution {
+        Some(Ok(base)) => options.base = base,
+        Some(Err(err)) => return Err(format!("first-pr: {err}")),
+        None => {}
+    }
     if options.check {
         check_first_pr(&repo, &options)
     } else {
@@ -137,19 +143,22 @@ pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
 /// Only a root that is a Git work tree is resolved. A missing root or a
 /// non-repository keeps the placeholder so the root and Git preflights still
 /// write their own recovery packets; those block before the base is used.
-/// When the root is a work tree and nothing resolves, the run fails with the
-/// loader's named error rather than recording a guessed base.
-fn resolve_omitted_base(repo: &Path, options: &mut FirstPrOptions) -> Result<(), String> {
+/// When the root is a work tree and nothing resolves, the result is the
+/// loader's named error: the run fails with it rather than recording a
+/// guessed base. `None` means nothing is resolved (explicit base, or a root
+/// the preflights handle).
+fn omitted_base_resolution(
+    repo: &Path,
+    options: &FirstPrOptions,
+) -> Option<Result<String, String>> {
     if options.base_explicit {
-        return Ok(());
+        return None;
     }
     let root = resolve_path(repo, &options.root);
     if !root.is_dir() || git_worktree_available_with_ceiling(&root, None) != Ok(true) {
-        return Ok(());
+        return None;
     }
-    options.base = crate::analysis::resolve_effective_base(&root, None, None)
-        .map_err(|err| format!("first-pr: {err}"))?;
-    Ok(())
+    Some(crate::analysis::resolve_effective_base(&root, None, None))
 }
 
 /// Print the side-effect and cost disclosure for the *resolved* invocation, so
@@ -211,11 +220,13 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
 /// The packet `--check` validates lives under the root, or under the
 /// invocation directory when the root failed its preflight (where the write
 /// run puts that recovery packet). A missing packet file is the validate-only
-/// recovery error, never a later preflight or base failure.
+/// recovery error, never a later preflight or base failure; `base_error` is
+/// the default-base failure the suggested write would otherwise hit.
 fn check_packet_paths(
     repo: &Path,
     root: &Path,
     root_recovery: bool,
+    base_error: Option<&String>,
     options: &FirstPrOptions,
 ) -> Result<(PathBuf, PathBuf), String> {
     let output_root = if root_recovery { repo } else { root };
@@ -228,6 +239,7 @@ fn check_packet_paths(
             &markdown_path,
             options,
             &out_dir,
+            base_error.map(String::as_str),
         ));
     }
     Ok((json_path, markdown_path))
@@ -237,7 +249,7 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
     let root = resolve_path(repo, &options.root);
     let root_recovery = root_preflight_recovery(&root, options);
     let (json_path, markdown_path) =
-        check_packet_paths(repo, &root, root_recovery.is_some(), options)?;
+        check_packet_paths(repo, &root, root_recovery.is_some(), None, options)?;
     let preflight_recovery = root_recovery.or_else(|| git_preflight_recovery(&root, options));
     let packet = validate_start_here_packet(&json_path, &markdown_path)?;
     validate_current_preflight_recovery(&packet, &root, options, preflight_recovery)?;
@@ -254,6 +266,7 @@ fn first_pr_missing_packet_recovery_error(
     markdown_path: &Path,
     options: &FirstPrOptions,
     out_dir: &Path,
+    base_error: Option<&str>,
 ) -> String {
     let missing = if !json_path.exists() {
         json_path
@@ -264,25 +277,37 @@ fn first_pr_missing_packet_recovery_error(
     // reproduce the exact directory `--check` validated, even when pasted
     // from a different working directory, and paths render with stable
     // separators on every host.
-    format!(
+    let mut message = format!(
         "first-pr --check validates an existing start-here packet; it does not create one.\n\nMissing:\n  {}\n\nCreate and validate it with:\n  {}",
         display_path(missing),
-        first_pr_write_command(options, out_dir)
-    )
+        first_pr_write_command(options, out_dir, base_error.is_some())
+    );
+    // Without a resolvable default base the write needs an explicit one; the
+    // placeholder is never filled with a guess (#4285).
+    if let Some(err) = base_error {
+        message.push_str(&format!(
+            "\n\nReplace <ref> with the branch or commit this PR is based on: {err}"
+        ));
+    }
+    message
 }
 
-fn first_pr_write_command(options: &FirstPrOptions, out_dir: &Path) -> String {
+fn first_pr_write_command(options: &FirstPrOptions, out_dir: &Path, base_required: bool) -> String {
     let mut parts = vec![
         "ripr".to_string(),
         "first-pr".to_string(),
         "--root".to_string(),
         shell_arg(&options.root),
     ];
-    // An omitted base stays omitted: the write run resolves it through the
-    // diff loader (#3952), and rendering a default here would be a guess.
+    // An omitted base stays omitted when the write run can resolve it through
+    // the diff loader (#3952); rendering a default here would be a guess. When
+    // nothing resolves, the command names the `--base` the user must supply.
     if options.base_explicit {
         parts.push("--base".to_string());
         parts.push(shell_arg(&options.base));
+    } else if base_required {
+        parts.push("--base".to_string());
+        parts.push("<ref>".to_string());
     }
     parts.push("--head".to_string());
     parts.push(shell_arg(&options.head));
@@ -2318,6 +2343,7 @@ mod tests {
             Path::new("/repo/target/ripr/foo/reports/start-here.md"),
             &options,
             Path::new("/repo/target/ripr/foo/reports"),
+            None,
         );
 
         assert!(err.contains("first-pr --check validates an existing start-here packet"));
@@ -2333,20 +2359,27 @@ mod tests {
     fn first_pr_write_command_renders_only_an_explicit_base() {
         // #4285: an omitted base is resolved by the write run itself.
         let out = Path::new("target/ripr/reports");
-        assert!(!first_pr_write_command(&FirstPrOptions::default(), out).contains("--base"));
+        assert!(!first_pr_write_command(&FirstPrOptions::default(), out, false).contains("--base"));
         let explicit = FirstPrOptions {
             base: "upstream/trunk".to_string(),
             base_explicit: true,
             ..FirstPrOptions::default()
         };
-        assert!(first_pr_write_command(&explicit, out).contains("--base upstream/trunk --head"));
+        assert!(
+            first_pr_write_command(&explicit, out, false).contains("--base upstream/trunk --head")
+        );
+        // Nothing resolves: the command demands a base instead of guessing one.
+        assert!(
+            first_pr_write_command(&FirstPrOptions::default(), out, true)
+                .contains("--base <ref> --head")
+        );
     }
 
     #[test]
     fn first_pr_write_command_preserves_explicit_gap_ledger_only() {
         let implicit = FirstPrOptions::default();
         assert!(
-            !first_pr_write_command(&implicit, Path::new("target/ripr/reports"))
+            !first_pr_write_command(&implicit, Path::new("target/ripr/reports"), false)
                 .contains("--gap-ledger")
         );
 
@@ -2356,7 +2389,7 @@ mod tests {
             ..FirstPrOptions::default()
         };
         assert!(
-            first_pr_write_command(&explicit, Path::new("target/ripr/reports"))
+            first_pr_write_command(&explicit, Path::new("target/ripr/reports"), false)
                 .contains("--gap-ledger target/custom/gaps.json")
         );
     }
@@ -2366,7 +2399,7 @@ mod tests {
         let options = FirstPrOptions::default();
         // Mixed-case anchored path: proves the resolved directory renders
         // verbatim (no CWD-relative fallback, no separator or case folding).
-        let rendered = first_pr_write_command(&options, Path::new("/Repo/out/Reports"));
+        let rendered = first_pr_write_command(&options, Path::new("/Repo/out/Reports"), false);
         assert!(rendered.contains("--out-dir /Repo/out/Reports"));
         assert!(!rendered.contains("--out-dir target/ripr/reports"));
     }

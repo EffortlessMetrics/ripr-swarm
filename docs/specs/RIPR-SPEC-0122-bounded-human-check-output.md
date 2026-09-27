@@ -264,6 +264,10 @@ inputs where present.
 - `crates/ripr/src/cli/commands.rs::tests::diff_json_with_base_does_not_emit_repo_scope_warning`
 - `crates/ripr/src/output/first_pr.rs::tests::first_pr_check_missing_packet_error_explains_validate_only_mode`
 - `crates/ripr/src/output/first_pr.rs::tests::first_pr_write_command_preserves_explicit_gap_ledger_only`
+- `crates/ripr/src/output/first_pr.rs::tests::first_pr_write_command_renders_only_an_explicit_base`
+- `crates/ripr/tests/cli_smoke.rs::first_pr_check_missing_packet_suggests_rooted_out_dir`
+- `crates/ripr/tests/cli_smoke.rs::first_pr_check_missing_packet_recovers_without_a_resolvable_base`
+- `crates/ripr/tests/cli_smoke.rs::first_pr_check_recovery_write_resolves_the_default_base`
 - `cargo xtask goldens check`
 
 ## Implementation Mapping

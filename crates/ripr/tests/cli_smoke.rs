@@ -2454,14 +2454,38 @@ fn first_pr_check_missing_packet_suggests_rooted_out_dir() -> Result<(), Box<dyn
     Ok(())
 }
 
+/// The write command a `first-pr --check` missing-packet recovery suggests,
+/// as arguments after `ripr` (quotes stripped; the fixture paths have no
+/// spaces).
+fn suggested_first_pr_write(stderr: &str) -> Result<Vec<String>, String> {
+    let line = stderr
+        .split("Create and validate it with:\n")
+        .nth(1)
+        .and_then(|rest| rest.lines().next())
+        .ok_or_else(|| format!("no suggested write command:\n{stderr}"))?;
+    let mut args = line
+        .split_whitespace()
+        .map(|arg| arg.trim_matches('\'').to_string())
+        .collect::<Vec<_>>();
+    if args.first().map(String::as_str) != Some("ripr") {
+        return Err(format!("suggested command is not a ripr command: {line}"));
+    }
+    args.remove(0);
+    Ok(args)
+}
+
+fn run_ripr_owned(args: &[String]) -> Output {
+    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    run_ripr(&args)
+}
+
 /// #4285: `--check` never diffs, so a repository where no default base
 /// resolves (no origin, no main/master: a CI merge-ref checkout) must still
-/// answer a missing packet with the recovery command, not the base failure.
+/// answer a missing packet with the recovery, not the base failure. Its
+/// suggested write cannot resolve a base either, so it must demand `--base`
+/// rather than omit or guess it; filled in, that command writes the packet.
 /// (Windows Advisory surfaced it: the suite's temp root is under the checkout,
 /// and the lane's shallow PR checkout has no default base.)
-/// The workspace is its own repository so the outcome does not depend on the
-/// checkout the suite runs in. The suggested write omits `--base` so that run
-/// resolves it rather than being handed a guessed `origin/main`.
 #[test]
 fn first_pr_check_missing_packet_recovers_without_a_resolvable_base()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -2490,18 +2514,39 @@ fn first_pr_check_missing_packet_recovers_without_a_resolvable_base()
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("it does not create one"), "{stderr}");
     assert!(
-        !stderr.contains("could not resolve a default base"),
+        stderr.contains("Replace <ref> with the branch or commit this PR is based on"),
         "{stderr}"
     );
-    assert!(stderr.contains("ripr first-pr --root "), "{stderr}");
-    assert!(!stderr.contains("--base"), "{stderr}");
+    assert!(!stderr.contains("origin/main --head"), "{stderr}");
+
+    // The suggested write names the base it needs; with a real ref filled in
+    // it writes the packet.
+    let mut write = suggested_first_pr_write(&stderr)?;
+    let base = write
+        .iter()
+        .position(|arg| arg == "--base")
+        .ok_or_else(|| format!("the suggested write must demand --base:\n{stderr}"))?;
+    assert_eq!(
+        write.get(base + 1).map(String::as_str),
+        Some("<ref>"),
+        "{stderr}"
+    );
+    write[base + 1] = "HEAD".to_string();
+    let written = run_ripr_owned(&write);
+    assert_success(&written);
+    assert!(
+        workspace
+            .join("target/ripr/reports/start-here.json")
+            .is_file()
+    );
     ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
-/// #4285 positive half: the recovery command's omitted `--base` resolves the
-/// same default at run time (#4260), and once the packet exists `--check`
-/// still resolves the omitted base, so the packet it validates is current.
+/// #4285 positive half: where the default base resolves, the recovery's
+/// suggested write omits `--base` and, run exactly as printed, resolves the
+/// same default (#4260) and writes the packet; `--check` then resolves the
+/// omitted base too, so the packet it validates is current.
 #[test]
 fn first_pr_check_recovery_write_resolves_the_default_base() -> Result<(), String> {
     let root = no_origin_master_repo("first-pr-check-default-base", "master")?;
@@ -2512,7 +2557,7 @@ fn first_pr_check_recovery_write_resolves_the_default_base() -> Result<(), Strin
     assert!(stderr.contains("it does not create one"), "{stderr}");
     assert!(!stderr.contains("--base"), "{stderr}");
 
-    let write = run_ripr(&["first-pr", "--root", &root_str]);
+    let write = run_ripr_owned(&suggested_first_pr_write(&stderr)?);
     assert_success(&write);
     let base = json_string_at(
         &root.join("target/ripr/reports/start-here.json"),
