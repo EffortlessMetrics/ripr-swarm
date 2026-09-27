@@ -335,6 +335,19 @@ enum StaticComparisonOp {
     Less,         // <
 }
 
+impl StaticComparisonOp {
+    /// The operator with its operands swapped: `a >= b` is `b <= a`.
+    fn mirrored(self) -> Self {
+        match self {
+            Self::Equal | Self::NotEqual => self,
+            Self::GreaterEqual => Self::LessEqual,
+            Self::LessEqual => Self::GreaterEqual,
+            Self::Greater => Self::Less,
+            Self::Less => Self::Greater,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum StaticBoundary {
     Int(i64),
@@ -392,8 +405,20 @@ fn parse_static_comparison(discriminator: &str) -> Option<StaticComparison> {
         }
     }
     let (position, len, op) = best?;
-    let receiver = discriminator[..position].trim();
-    let boundary_raw = discriminator[position + len..].trim();
+    let left = discriminator[..position].trim();
+    let right = discriminator[position + len..].trim();
+    // The analysis side keeps operand order (`DISCOUNT_THRESHOLD <= amount`
+    // becomes `DISCOUNT_THRESHOLD == amount`), so a boundary written first
+    // is read with the operator mirrored (#4215 review).
+    static_comparison_from(left, op, right)
+        .or_else(|| static_comparison_from(right, op.mirrored(), left))
+}
+
+fn static_comparison_from(
+    receiver: &str,
+    op: StaticComparisonOp,
+    boundary_raw: &str,
+) -> Option<StaticComparison> {
     let receiver_is_length = parse_static_receiver(receiver)?;
     let boundary = parse_static_literal(boundary_raw).or_else(|| {
         is_constant_shaped_operand(boundary_raw)
@@ -1563,6 +1588,32 @@ mod tests {
             .map_err(|error| format!("literal boundary hit must stay delegatable; got: {error}"))
     }
 
+    /// A literal written first is read with the operator mirrored:
+    /// `3 < amount` is `amount > 3`.
+    #[test]
+    fn target_shape_literal_first_mirrors_the_operator() {
+        let hit = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "limit(5)",
+            Some("3 < amount"),
+            Some("limit"),
+        );
+        assert!(
+            matches!(hit, TargetAssertionShape::Observed { .. }),
+            "{hit:?}"
+        );
+        let miss = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "limit(2)",
+            Some("3 < amount"),
+            Some("limit"),
+        );
+        assert!(
+            matches!(miss, TargetAssertionShape::Unreachable { .. }),
+            "{miss:?}"
+        );
+    }
+
     #[test]
     fn target_shape_constant_boundary_is_judged_at_any_arity_unless_an_argument_names_it() {
         for (observed, discriminator) in [
@@ -1586,6 +1637,23 @@ mod tests {
                 "`{observed}` vs `{discriminator}` must fail closed: {shape:?}"
             );
         }
+        // A constant written first is still the boundary (the analysis side
+        // keeps operand order: `DISCOUNT_THRESHOLD <= amount` becomes
+        // `DISCOUNT_THRESHOLD == amount`).
+        let constant_first = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "discountedTotal(20000)",
+            Some("DISCOUNT_THRESHOLD == amount"),
+            Some("discountedTotal"),
+        );
+        assert!(
+            matches!(
+                constant_first,
+                TargetAssertionShape::UnresolvedBoundary { ref constant, .. }
+                    if constant == "DISCOUNT_THRESHOLD"
+            ),
+            "a leading constant boundary must fail closed: {constant_first:?}"
+        );
         // An argument that IS the constant may hit the boundary: undecided.
         let names_constant = typescript_target_assertion_shape(
             &ProbeFamily::Predicate,
