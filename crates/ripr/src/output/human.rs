@@ -38,7 +38,7 @@ fn render_no_scope_note(output: &CheckOutput) -> String {
         )
     } else {
         "\nNote: no analysis scope was provided — `ripr check` is diff-first. \
-         Run `ripr check --base origin/main` to analyze your changes, or \
+         Run `ripr check --base BASE` with BASE set to an existing ref to analyze your changes, or \
          `ripr check --root . --format repo-exposure-md` for a full-repo scan. \
          An empty result here does NOT mean your changed behavior is covered.\n"
             .to_string()
@@ -1238,6 +1238,27 @@ mod tests {
             "  Safe next action: preview-language evidence is advisory; complete the missing repair-packet fields before acting.\n"
         ));
         assert!(!rendered.contains("blocked by the named static limitation"));
+    }
+
+    // #4216 row 1: a Python preview finding that no test reaches has no
+    // repair card and no test to strengthen; the safe action says so and
+    // names the manual step, never "complete the missing fields".
+    #[test]
+    fn preview_limited_python_no_static_path_names_untested_code() {
+        let mut finding = unknown_finding();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.language = Some(LanguageId::Python);
+        finding.language_status = Some(LanguageStatus::Preview);
+        finding.probe.location = SourceLocation::new("pricing/__init__.py", 11, 1);
+        let output = single_finding_output(finding);
+
+        let rendered = render(&output);
+
+        assert!(rendered.contains("State: preview_limited"), "{rendered}");
+        assert!(rendered.contains(
+            "  Safe next action: this Python preview finding has no repair card (no Python test reaches this code), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add a test that calls it by hand, then rerun `ripr check`.\n"
+        ), "{rendered}");
+        assert!(!rendered.contains("complete the missing repair-packet fields"));
     }
 
     fn single_finding_output(finding: Finding) -> CheckOutput {
@@ -2649,9 +2670,10 @@ mod tests {
             "expected no-scope guidance; got:\n{rendered}"
         );
         assert!(
-            rendered.contains("`ripr check --base origin/main`"),
+            rendered.contains("`ripr check --base BASE`"),
             "expected --base guidance; got:\n{rendered}"
         );
+        assert!(!rendered.contains("--base origin/main"));
         assert!(
             rendered.contains("does NOT mean your changed behavior is covered"),
             "expected honesty note; got:\n{rendered}"
