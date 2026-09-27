@@ -50,6 +50,8 @@ mod oracle;
 mod owners;
 mod package;
 pub(crate) use package::detect_framework_for_root;
+#[cfg(test)]
+mod ambient_declaration_tests;
 mod parse;
 mod paths;
 mod probe_shape;
@@ -286,6 +288,11 @@ impl LanguageAdapter for TypeScriptAdapter {
             // operates on production owners. Test file edits are still
             // counted in the file tally.
             if is_test_file(&changed.path) {
+                continue;
+            }
+            // Declaration files are counted but never probed: they are
+            // type-only and have no runtime behavior a test could observe.
+            if is_typescript_declaration_file(&changed.path) {
                 continue;
             }
 

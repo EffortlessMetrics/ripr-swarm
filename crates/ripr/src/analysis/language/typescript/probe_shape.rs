@@ -156,6 +156,13 @@ pub(crate) fn should_ignore_typescript_changed_line(line_text: &str) -> bool {
         || text.starts_with("//")
         || text.starts_with("/*")
         || text.starts_with("*/")
+        // Ambient declarations (`declare function f(): T;`, `export declare
+        // const V: T;`, `declare module 'x' {`) are type-only and erased at
+        // compile time, so they carry no runtime behavior to probe.
+        || text
+            .strip_prefix("export ")
+            .unwrap_or(text)
+            .starts_with("declare ")
         || text.chars().all(|ch| {
             matches!(ch, '{' | '}' | '(' | ')' | '[' | ']' | ';' | ',') || ch.is_whitespace()
         })
