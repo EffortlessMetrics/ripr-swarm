@@ -28,7 +28,11 @@ Files:
   remain weak/unchanged when the canonical boundary-gap journey advances to
   improved evidence. Because the receipt is portable-normalized, it carries no
   complete analysis outcome, so `ripr first-action` fails closed on it with
-  `missing_required_artifact` rather than routing `unchanged` movement.
+  `missing_required_artifact` rather than routing `unchanged` movement, and
+  offers the verify and receipt commands that produce a complete receipt.
+  The `unchanged_after_attempt` route itself is exercised by a live
+  verify/receipt chain in the `cli_smoke` test
+  `first_action_routes_live_unchanged_receipt_to_revise_focused_test`.
 - `<case>/inputs/` holds the committed artifacts a case renders from when the
   report names a `target/ripr/...` input path (`stale`, `baseline-only`,
   `no-actionable-seam`). `cargo xtask dogfood` copies each input to the path
