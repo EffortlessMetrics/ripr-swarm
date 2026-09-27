@@ -1121,6 +1121,47 @@ mod tests {
         Ok(())
     }
 
+    /// #4216 row 5: a newly added function seeds probes only on lines that
+    /// carry an expression. Brace-only and else-only lines emitted
+    /// `static_unknown` probes that inflated the summary; the tail value
+    /// `amount` is the else-branch return value and keeps its probe.
+    #[test]
+    fn probes_for_file_skips_brace_and_else_lines_of_new_function() {
+        let lines = [
+            (
+                28,
+                "pub fn loyalty_price(amount: u64, member_years: u32) -> u64 {",
+            ),
+            (29, "    if member_years >= 5 {"),
+            (30, "        amount - amount * 5 / 100"),
+            (31, "    } else {"),
+            (32, "        amount"),
+            (33, "    }"),
+            (34, "}"),
+        ];
+        let changed = ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: lines
+                .iter()
+                .map(|(line, text)| ChangedLine {
+                    line: *line,
+                    new_side_line: *line,
+                    text: (*text).to_string(),
+                })
+                .collect(),
+            removed_lines: vec![],
+        };
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &RustIndex::default());
+        let mut probe_lines = probes
+            .iter()
+            .map(|probe| probe.location.line)
+            .collect::<Vec<_>>();
+        probe_lines.dedup();
+
+        assert_eq!(probe_lines, vec![28, 29, 30, 32], "probes: {probes:?}");
+    }
+
     #[test]
     fn probes_for_file_falls_back_to_static_unknown_without_syntax_shape() {
         let changed = ChangedFile {

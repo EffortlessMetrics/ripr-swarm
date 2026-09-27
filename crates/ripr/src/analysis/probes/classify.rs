@@ -259,6 +259,21 @@ pub fn should_ignore_changed_line(text: &str) -> bool {
         || text.starts_with("pub use ")
         || text.starts_with("mod ")
         || text.starts_with("#")
+        || is_structural_delimiter_line(text)
+}
+
+/// A line that only closes or opens a block (`}`, `});`, `} else {`,
+/// `else {`) carries no expression of its own. Opening `(`/`[` are not
+/// delimiters here, so a unit `()` or empty `[]` value stays a candidate: the behavior sits on the
+/// branch condition and the branch body lines, which keep their probes.
+/// Seeding a probe here only mints `static_unknown` noise (#4216 row 5).
+/// Any other token, including `else if`, a tail value, or a call, keeps
+/// the line a probe candidate.
+fn is_structural_delimiter_line(text: &str) -> bool {
+    let rest = text.trim_matches(|ch: char| {
+        matches!(ch, '{' | '}' | ')' | ']' | ';' | ',') || ch.is_whitespace()
+    });
+    rest.is_empty() || rest == "else"
 }
 
 #[cfg(test)]
@@ -274,6 +289,37 @@ mod tests {
     fn classify_functions_are_callable() {
         assert!(should_ignore_changed_line("// comment"));
         assert!(!should_ignore_changed_line("let x = 5;"));
+    }
+
+    /// #4216 row 5: brace-only and else-only lines carry no expression, so
+    /// they seed no probe; every line that still holds a token of behavior
+    /// (a tail value, `else if` condition, call, unit value) stays a candidate.
+    #[test]
+    fn structural_delimiter_lines_are_not_probe_candidates() {
+        for ignored in [
+            "}", "{", "} else {", "else {", "} else", "});", "},", "};", "]", ")",
+        ] {
+            assert!(
+                should_ignore_changed_line(ignored),
+                "`{ignored}` should be ignored"
+            );
+        }
+        for kept in [
+            "amount",
+            "} else if amount > 5 {",
+            "} else { amount }",
+            "}))?;",
+            "()",
+            "[]",
+            "Ok(())",
+            "elsewhere",
+            "} else_value",
+        ] {
+            assert!(
+                !should_ignore_changed_line(kept),
+                "`{kept}` must stay a candidate"
+            );
+        }
     }
 
     #[test]
