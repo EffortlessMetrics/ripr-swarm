@@ -424,10 +424,16 @@ gave 53 conflicting paths in two groups:
   `analysis/classify/activation.rs`, `reveal.rs`, the TypeScript adapter,
   `seam_cache.rs`, `cli/commands.rs` and `xtask/src/main.rs`.
 
-For 0.11.0, J must land on source `main` before 2026-10-01. Source's
-`deny.toml` `unic-*` suppressions expire that day and fail its required
-dependency check; swarm already carries the extension (#3890), which reaches
-source only through J.
+For 0.11.0, J lands on Monday 2026-09-28, before `v0.11.0-rc.1`, and in any
+case before 2026-10-01: source's `deny.toml` `unic-*` suppressions expire that
+day and fail its required dependency check. Swarm already carries the
+extension (#3890), which reaches source only through J.
+
+A release can take several syncs: J before the RC, then J2, J3, … for blocker
+fixes that land on swarm after it, with one sync landing before the stable
+tag. Each later sync carries only what landed on swarm since the previous one,
+uses the same guarded constructor, and replays the per-path resolutions
+recorded in the previous J PR instead of deciding them again.
 
 **Publication workflows.** Swarm #4219 makes a `v*` tag push publish nothing
 and moves each marketplace to its own dispatch. Once it is on swarm `main`,
