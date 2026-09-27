@@ -9692,6 +9692,7 @@ fn pilot_language_fixture_repo(
 /// they cannot do, while pilot, first-pr and status each pointed at another
 /// command. The safe next action must name why no route exists and the
 /// manual step that is left, with no route back into pilot.
+#[cfg(feature = "lang-python")]
 fn python_check_safe_action(
     label: &str,
     source_base: &str,
@@ -9736,6 +9737,7 @@ fn python_check_safe_action(
 }
 
 #[test]
+#[cfg(feature = "lang-python")]
 fn check_python_finding_without_repair_card_names_the_terminal_manual_step() -> Result<(), String> {
     let line = python_check_safe_action(
         "check-py-no-card",
@@ -9754,6 +9756,7 @@ fn check_python_finding_without_repair_card_names_the_terminal_manual_step() -> 
 // Discriminating control: a Python finding that DOES carry a repair card is
 // routed by that card, so it must not get the no-card terminal line.
 #[test]
+#[cfg(feature = "lang-python")]
 fn check_python_finding_with_repair_card_points_at_the_card() -> Result<(), String> {
     let line = python_check_safe_action(
         "check-py-card",
@@ -15981,6 +15984,39 @@ fn history_commands_resolve_the_default_base_without_origin() -> Result<(), Stri
         Ok(())
     } else {
         Err(failures.join("\n\n"))
+    }
+}
+
+/// #4285: `first-pr --check` with no packet answers with the command that
+/// creates one even when no default base resolves (a detached shallow CI
+/// clone, a repo without `origin`). The recovery needs no base, so a base
+/// failure must not preempt it, and an omitted `--base` stays omitted rather
+/// than naming a placeholder the write run would never use.
+#[test]
+fn first_pr_check_missing_packet_recovers_without_a_resolvable_base() -> Result<(), String> {
+    let root = no_origin_master_repo("check-missing-packet-unresolvable-base", "trunk")?;
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &["first-pr", "--root", ".", "--check"],
+    )
+    .map_err(|err| format!("spawn ripr first-pr --check: {err}"))?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let recovered = !output.status.success()
+        && stderr.contains("it does not create one")
+        && stderr.contains(
+            "Create and validate it with:\n  ripr first-pr --root . --head HEAD --out-dir ",
+        )
+        && !stderr.contains("--base")
+        && !stderr.contains("could not resolve a default base");
+    ignore_remove_dir_all(&root);
+    if recovered {
+        Ok(())
+    } else {
+        Err(format!(
+            "first-pr --check without a packet must print its recovery, not a base error; status {:?}, stderr:\n{stderr}",
+            output.status.code()
+        ))
     }
 }
 

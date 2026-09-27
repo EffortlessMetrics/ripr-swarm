@@ -113,6 +113,13 @@ pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
     print_side_effect_disclosure(&options);
 
     let repo = repo_root()?;
+    if options.check {
+        // A missing packet is answered before an omitted `--base` resolves
+        // (#4285): the recovery needs no base, and a checkout with no
+        // resolvable default branch (a detached shallow CI clone, a repo
+        // without `origin`) must still get the command that creates it.
+        require_start_here_packet(&repo, &options)?;
+    }
     resolve_omitted_base(&repo, &mut options)?;
     if options.check {
         check_first_pr(&repo, &options)
@@ -201,12 +208,32 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
 }
 
 fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
+    let (json_path, markdown_path) = require_start_here_packet(repo, options)?;
     let root = resolve_path(repo, &options.root);
-    let root_recovery = root_preflight_recovery(&root, options);
-    let preflight_recovery = root_recovery
-        .clone()
-        .or_else(|| git_preflight_recovery(&root, options));
-    let output_root = if root_recovery.is_some() { repo } else { &root };
+    let preflight_recovery =
+        root_preflight_recovery(&root, options).or_else(|| git_preflight_recovery(&root, options));
+    let packet = validate_start_here_packet(&json_path, &markdown_path)?;
+    validate_current_preflight_recovery(&packet, &root, options, preflight_recovery)?;
+    print!(
+        "{}",
+        start_here_cli_summary(&packet, &json_path, &markdown_path)
+    );
+    println!("First PR start-here packet ok: {}", json_path.display());
+    Ok(())
+}
+
+/// The start-here packet `--check` validates, or the recovery that creates
+/// it. Needs no base: only the root and `--out-dir` locate the packet.
+fn require_start_here_packet(
+    repo: &Path,
+    options: &FirstPrOptions,
+) -> Result<(PathBuf, PathBuf), String> {
+    let root = resolve_path(repo, &options.root);
+    let output_root = if root_preflight_recovery(&root, options).is_some() {
+        repo
+    } else {
+        &root
+    };
     let out_dir = resolve_path(output_root, &options.out_dir);
     let json_path = out_dir.join(START_HERE_JSON);
     let markdown_path = out_dir.join(START_HERE_MD);
@@ -218,14 +245,7 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
             &out_dir,
         ));
     }
-    let packet = validate_start_here_packet(&json_path, &markdown_path)?;
-    validate_current_preflight_recovery(&packet, &root, options, preflight_recovery)?;
-    print!(
-        "{}",
-        start_here_cli_summary(&packet, &json_path, &markdown_path)
-    );
-    println!("First PR start-here packet ok: {}", json_path.display());
-    Ok(())
+    Ok((json_path, markdown_path))
 }
 
 fn first_pr_missing_packet_recovery_error(
@@ -256,11 +276,15 @@ fn first_pr_write_command(options: &FirstPrOptions, out_dir: &Path) -> String {
         "first-pr".to_string(),
         "--root".to_string(),
         shell_arg(&options.root),
-        "--base".to_string(),
-        shell_arg(&options.base),
-        "--head".to_string(),
-        shell_arg(&options.head),
     ];
+    // An omitted `--base` stays omitted: the write run resolves the default
+    // branch itself, and the placeholder was never a resolved base (#4285).
+    if options.base_explicit {
+        parts.push("--base".to_string());
+        parts.push(shell_arg(&options.base));
+    }
+    parts.push("--head".to_string());
+    parts.push(shell_arg(&options.head));
     if let Some(check_output) = &options.check_output {
         parts.push("--check-output".to_string());
         parts.push(shell_arg(check_output));
@@ -1403,8 +1427,12 @@ impl RepoExposureLatencySummary {
 
 fn repo_exposure_latency_report_summary(root: &Path) -> Option<RepoExposureLatencySummary> {
     let report = read_json(&resolve_path(root, DEFAULT_REPO_EXPOSURE_LATENCY_JSON)).ok()?;
-    if string_path(&report, &["schema_version"]).as_deref() != Some(SCHEMA_VERSION)
-        || string_path(&report, &["tool"]).as_deref() != Some("ripr")
+    // 0.2 (#3864) only added the file-fact cache receipt; the run status and
+    // trace fields read here are unchanged, so both versions stay usable.
+    if !matches!(
+        string_path(&report, &["schema_version"]).as_deref(),
+        Some("0.1" | "0.2")
+    ) || string_path(&report, &["tool"]).as_deref() != Some("ripr")
         || string_path(&report, &["report"]).as_deref() != Some("repo-exposure-latency")
     {
         return None;
@@ -2324,6 +2352,23 @@ mod tests {
     }
 
     #[test]
+    fn first_pr_write_command_renders_base_only_when_explicit() {
+        let out_dir = Path::new("target/ripr/reports");
+        let omitted = first_pr_write_command(&FirstPrOptions::default(), out_dir);
+        assert!(!omitted.contains("--base"), "{omitted}");
+        let explicit = FirstPrOptions {
+            base: "origin/trunk".to_string(),
+            base_explicit: true,
+            ..FirstPrOptions::default()
+        };
+        let rendered = first_pr_write_command(&explicit, out_dir);
+        assert!(
+            rendered.contains("--base origin/trunk --head HEAD"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn first_pr_write_command_renders_resolved_out_dir() {
         let options = FirstPrOptions::default();
         // Mixed-case anchored path: proves the resolved directory renders
@@ -2721,7 +2766,17 @@ mod tests {
 
     #[test]
     fn missing_repo_exposure_uses_existing_latency_report_before_rerun() -> Result<(), String> {
-        let repo = temp_repo("first-pr-existing-latency-timeout")?;
+        // 0.2 is what `repo-exposure-latency-report` writes since #3864.
+        for schema_version in ["0.1", "0.2"] {
+            existing_latency_timeout_report_is_used(schema_version)?;
+        }
+        Ok(())
+    }
+
+    fn existing_latency_timeout_report_is_used(schema_version: &str) -> Result<(), String> {
+        let repo = temp_repo(&format!(
+            "first-pr-existing-latency-timeout-{schema_version}"
+        ))?;
         fs::create_dir_all(repo.join("xtask/src"))
             .map_err(|err| format!("mkdir xtask src: {err}"))?;
         fs::write(
@@ -2732,7 +2787,7 @@ mod tests {
         write_json(
             &repo.join(DEFAULT_REPO_EXPOSURE_LATENCY_JSON),
             json!({
-                "schema_version": "0.1",
+                "schema_version": schema_version,
                 "tool": "ripr",
                 "report": "repo-exposure-latency",
                 "status": "warn",
@@ -3488,6 +3543,53 @@ mod tests {
         );
         assert!(
             !reason.contains("refresh the first-run evidence"),
+            "{reason}"
+        );
+        assert!(packet["commands"].get("agent_packet").is_none(), "{packet}");
+        cleanup(&repo)
+    }
+
+    /// #4216: a weakly exposed Python finding without a repair card used to
+    /// leave first-pr at a bare generic "no actionable gap". The ledger now
+    /// carries a non-delegatable static-limitation record, and first-pr names
+    /// why no card exists and the manual step, as advisory no-action.
+    #[test]
+    fn python_finding_without_repair_card_names_limitation_and_manual_step() -> Result<(), String> {
+        use crate::output::gap_decision_ledger::{
+            GapDecisionLedgerInput, GapDecisionLedgerSourceKind, build_gap_decision_ledger_report,
+            render_gap_decision_ledger_json,
+        };
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: ".".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "check.json".to_string(),
+            records_json: Ok(include_str!(
+                "../../../../fixtures/python_same_stem_sibling_owner_not_related/expected/check.json"
+            )
+            .to_string()),
+        });
+        let ledger_json = render_gap_decision_ledger_json(&report)?;
+        let repo = temp_repo("first-pr-python-no-card")?;
+        let ledger_value: Value =
+            serde_json::from_str(&ledger_json).map_err(|err| format!("parse ledger: {err}"))?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_value)?;
+        write_json(
+            &repo.join(DEFAULT_REVIEW_COMMENTS),
+            review_comments_report(Vec::new()),
+        )?;
+        let packet = render_start_here_packet(&repo, &FirstPrOptions::default());
+        assert_eq!(packet["status"], "no_action", "{packet}");
+        assert_eq!(packet["selected"]["output_state"], "no_actionable_gap");
+        let reason = packet["selected"]["reason"].as_str().unwrap_or_default();
+        assert!(
+            reason.contains(
+                "Static limitation `python_repair_card_unavailable` at `pricing.py:5`: this Python preview finding has no repair card (static evidence names no concrete missing discriminator)"
+            ),
+            "{reason}"
+        );
+        assert!(
+            reason.contains("add or strengthen a test by hand, then rerun `ripr check`"),
             "{reason}"
         );
         assert!(packet["commands"].get("agent_packet").is_none(), "{packet}");

@@ -11,6 +11,7 @@ use std::os::unix::fs::symlink as symlink_file;
 #[cfg(windows)]
 use std::os::windows::fs::symlink_file;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn index_from_files(files: &[(PathBuf, &str)]) -> Result<FixtureIndex, String> {
@@ -122,6 +123,18 @@ fn authority_fixture_target(root: &Path) -> Result<(RustIndex, RepoSeam, String)
     ))
 }
 
+/// Resolve one test target through a fresh evidence context, as the
+/// production seam loop does; fresh so each call sees the index as mutated.
+fn target_for_index(
+    index: &RustIndex,
+    seam: &RepoSeam,
+    test: &TestSummary,
+    relation: RelationReason,
+) -> Option<TestTargetEvidence> {
+    let context = CompactGripContext::new(index);
+    test_target_evidence(&context, seam, test, relation)
+}
+
 #[test]
 fn production_manifestless_directories_keep_distinct_package_identity() -> Result<(), String> {
     struct FixtureCleanup(PathBuf);
@@ -218,6 +231,128 @@ fn production_target_evidence_carries_portable_root_and_currentness_authority() 
 }
 
 #[test]
+fn production_target_evidence_hashes_each_test_file_once_per_context() -> Result<(), String> {
+    let root = authority_fixture_root("digest-memo")?;
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub fn score(amount: i32, threshold: i32) -> i32 { if amount >= threshold { 1 } else { 0 } }\n#[cfg(test)]\nmod tests {\n#[test] fn score_boundary() { assert_eq!(super::score(1, 1), 1); }\n#[test] fn score_below() { assert_eq!(super::score(0, 1), 0); }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let (index, seam, _) = authority_fixture_target(&root)?;
+    let file = PathBuf::from("src/lib.rs");
+    let authority_digest = index
+        .workspace_authority
+        .as_ref()
+        .and_then(|authority| authority.files.get(&file))
+        .map(|file| file.source_digest.clone())
+        .ok_or_else(|| "missing file authority".to_string())?;
+    let context = CompactGripContext::new(&index);
+    let related = context
+        .tests
+        .iter()
+        .filter(|indexed| indexed.test.file == file)
+        .map(|indexed| indexed.test)
+        .collect::<Vec<_>>();
+    if related.len() < 2 {
+        return Err(format!(
+            "fixture needs two tests in one file, got {}",
+            related.len()
+        ));
+    }
+    for test in &related {
+        if test_target_evidence(&context, &seam, test, RelationReason::DirectOwnerCall).is_none() {
+            return Err(format!("current target `{}` was rejected", test.name));
+        }
+    }
+    let cache = context.source_digest_cache.borrow();
+    if cache.len() != 1 || cache.get(file.as_path()) != Some(&authority_digest) {
+        return Err(format!(
+            "expected one memoized digest equal to the authority digest, got {cache:?}"
+        ));
+    }
+    drop(cache);
+    // Reuse, not just presence: a poisoned memo entry must decide the next
+    // validation, so a lookup that recomputes the digest would be caught.
+    context
+        .source_digest_cache
+        .borrow_mut()
+        .insert(file.as_path(), "sha256:poisoned".to_string());
+    if test_target_evidence(&context, &seam, related[0], RelationReason::DirectOwnerCall).is_some()
+    {
+        return Err("validation recomputed the digest instead of reusing the memo".to_string());
+    }
+    if context
+        .indexed_source_digest(Path::new("src/unindexed.rs"))
+        .is_some()
+    {
+        return Err("unindexed file produced a digest".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn value_facts_share_one_file_scan_per_file() -> Result<(), String> {
+    let root = authority_fixture_root("file-scan-memo")?;
+    fs::write(
+        root.join("src/lib.rs"),
+        "const LIMIT: i32 = 7;\npub fn score(amount: i32, threshold: i32) -> i32 { if amount >= threshold { 1 } else { 0 } }\n#[cfg(test)]\nmod tests {\n#[test] fn score_boundary() { assert_eq!(super::score(LIMIT, LIMIT), 1); }\n#[test] fn score_below() { assert_eq!(super::score(0, LIMIT), 0); }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    fs::write(
+        root.join("src/other.rs"),
+        "#[test] fn other_score() { assert_eq!(crate::score(2, 1), 1); }\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let files = [PathBuf::from("src/lib.rs"), PathBuf::from("src/other.rs")];
+    let index = build_index(&root, &files)?;
+    let context = CompactGripContext::new(&index);
+    let in_file = |file: &Path| {
+        context
+            .tests
+            .iter()
+            .filter(|indexed| indexed.test.file == file)
+            .collect::<Vec<_>>()
+    };
+    let lib_tests = in_file(&files[0]);
+    let other_tests = in_file(&files[1]);
+    let ([first, second], [other]) = (lib_tests.as_slice(), other_tests.as_slice()) else {
+        return Err(format!(
+            "fixture expects two lib tests and one other test, got {} and {}",
+            lib_tests.len(),
+            other_tests.len()
+        ));
+    };
+    if !Arc::ptr_eq(&first.file_value_scan, &second.file_value_scan) {
+        return Err("tests in one file must share one file scan".to_string());
+    }
+    if Arc::ptr_eq(&first.file_value_scan, &other.file_value_scan) {
+        return Err("tests in different files must not share a file scan".to_string());
+    }
+    first.value_facts(&index);
+    if second.file_value_scan.get().is_none() {
+        return Err("first test's facts did not populate the shared file scan".to_string());
+    }
+    // Identity alone would pass with an empty shared scan: both tests must
+    // still resolve the same-file constant through it.
+    let seam = inventory_seams_from_index(&files[..1], &index)
+        .into_iter()
+        .next()
+        .ok_or_else(|| "expected a fixture seam".to_string())?;
+    for indexed in [first, second] {
+        let env =
+            crate::analysis::value_resolution::ValueEnv::new(&seam, indexed.value_facts(&index));
+        let resolved = env.resolve("LIMIT");
+        if !resolved.iter().any(|(value, _)| value == "7") {
+            return Err(format!(
+                "`{}` did not resolve LIMIT through the shared scan: {resolved:?}",
+                indexed.test.name
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn production_target_evidence_rejects_authority_failures() -> Result<(), String> {
     let root = authority_fixture_root("negative")?;
     let (mut index, seam, source) = authority_fixture_target(&root)?;
@@ -228,18 +363,18 @@ fn production_target_evidence_rejects_authority_failures() -> Result<(), String>
         .and_then(|facts| facts.tests.first())
         .cloned()
         .ok_or_else(|| "missing fixture test".to_string())?;
-    if test_target_evidence(&index, &seam, &test, RelationReason::DirectOwnerCall).is_none() {
+    if target_for_index(&index, &seam, &test, RelationReason::DirectOwnerCall).is_none() {
         return Err("baseline authority target unexpectedly missing".to_string());
     }
 
     fs::write(root.join(&file), format!("{source}// stale\n"))
         .map_err(|error| error.to_string())?;
-    if test_target_evidence(&index, &seam, &test, RelationReason::DirectOwnerCall).is_some() {
+    if target_for_index(&index, &seam, &test, RelationReason::DirectOwnerCall).is_some() {
         return Err("stale source was accepted".to_string());
     }
     fs::write(root.join(&file), &source).map_err(|error| error.to_string())?;
     fs::remove_file(root.join(&file)).map_err(|error| error.to_string())?;
-    if test_target_evidence(&index, &seam, &test, RelationReason::DirectOwnerCall).is_some() {
+    if target_for_index(&index, &seam, &test, RelationReason::DirectOwnerCall).is_some() {
         return Err("missing source was accepted".to_string());
     }
     fs::write(root.join(&file), &source).map_err(|error| error.to_string())?;
@@ -249,7 +384,7 @@ fn production_target_evidence_rejects_authority_failures() -> Result<(), String>
         .as_mut()
         .ok_or_else(|| "missing authority".to_string())?
         .root = root.join("wrong-root");
-    if test_target_evidence(&index, &seam, &test, RelationReason::DirectOwnerCall).is_some() {
+    if target_for_index(&index, &seam, &test, RelationReason::DirectOwnerCall).is_some() {
         return Err("wrong root authority was accepted".to_string());
     }
     index
@@ -286,7 +421,7 @@ fn production_target_evidence_rejects_authority_failures() -> Result<(), String>
         seam.required_discriminator().clone(),
         seam.expected_sink(),
     );
-    if test_target_evidence(
+    if target_for_index(
         &index,
         &mismatch_seam,
         &test,
@@ -327,7 +462,7 @@ fn production_target_evidence_rejects_authority_failures() -> Result<(), String>
         .ok_or_else(|| "missing file facts".to_string())?
         .functions
         .push(duplicate);
-    if test_target_evidence(&index, &seam, &test, RelationReason::DirectOwnerCall).is_some() {
+    if target_for_index(&index, &seam, &test, RelationReason::DirectOwnerCall).is_some() {
         return Err("duplicate target identity was accepted".to_string());
     }
 
@@ -340,7 +475,7 @@ fn production_target_evidence_rejects_authority_failures() -> Result<(), String>
     if authority.validates_target(&traversal.file, seam.file(), &source) {
         return Err("authority accepted traversal target".to_string());
     }
-    if test_target_evidence(&index, &seam, &traversal, RelationReason::DirectOwnerCall).is_some() {
+    if target_for_index(&index, &seam, &traversal, RelationReason::DirectOwnerCall).is_some() {
         return Err("traversal target was accepted".to_string());
     }
     let mut absolute = test;
@@ -348,7 +483,7 @@ fn production_target_evidence_rejects_authority_failures() -> Result<(), String>
     if authority.validates_target(&absolute.file, seam.file(), &source) {
         return Err("authority accepted absolute target".to_string());
     }
-    if test_target_evidence(&index, &seam, &absolute, RelationReason::DirectOwnerCall).is_some() {
+    if target_for_index(&index, &seam, &absolute, RelationReason::DirectOwnerCall).is_some() {
         return Err("absolute target was accepted".to_string());
     }
     Ok(())
@@ -1201,8 +1336,8 @@ fn given_strict_boundary_seam_when_tests_skip_equal_value_then_grip_names_missin
 /// #4228: a reversed literal (`100 < amount`) or a local boundary
 /// (`let limit = 100;`) names its boundary and closes only when a test
 /// passes the boundary value. The same shapes close in `check`
-/// (`classify::activation` tests). A local no evaluator can fold, or a
-/// local on the left of a reversed predicate, stays a static limitation,
+/// (`classify::activation` tests), including a folded local on the left
+/// (#4270). A local no evaluator can fold stays a static limitation,
 /// never strongly gripped.
 #[test]
 fn given_reversed_or_local_boundary_when_test_hits_boundary_then_grip_closes() -> Result<(), String>
@@ -1237,6 +1372,20 @@ fn given_reversed_or_local_boundary_when_test_hits_boundary_then_grip_closes() -
         ),
         (
             "    let limit = 100;\n    if limit < amount { 0 } else { 5 }",
+            "limit < amount",
+            false,
+            Some("limit"),
+        ),
+        (
+            "    let limit = 100;\n    if limit <= amount { 0 } else { 5 }",
+            "limit <= amount",
+            true,
+            Some("limit"),
+        ),
+        // #4270: only a local the evaluator folds orients the predicate;
+        // an input-derived left-hand local stays a static limitation.
+        (
+            "    let limit = amount / 2 + 50;\n    if limit < amount { 0 } else { 5 }",
             "limit < amount",
             false,
             None,
@@ -1354,6 +1503,54 @@ fn given_whole_literal_or_later_shadow_when_test_hits_boundary_then_grip_closes(
             "fee(-99)",
             "fee(-100)",
             "-100",
+        ),
+        // #4271: a decimal boundary is read whole, so a test at `1.2`
+        // does not stand in for the boundary `1.5`.
+        (
+            "pub fn fee(amount: f64) -> u64 {\n    if amount > 1.5 { 0 } else { 5 }\n}\n",
+            "amount > 1.5",
+            "fee(1.2)",
+            "fee(1.5)",
+            "1.5",
+        ),
+        // A suffixed decimal keeps its fraction too: `fee(1.0)` does not
+        // hit `1.5f64`.
+        (
+            "pub fn fee(amount: f64) -> u64 {\n    if amount > 1.5f64 { 0 } else { 5 }\n}\n",
+            "amount > 1.5f64",
+            "fee(1.0)",
+            "fee(1.5)",
+            "1.5",
+        ),
+        // A type suffix is not a second literal: `9.5f64` is 9.5, not 64,
+        // and `99u32` is 99, not 32.
+        (
+            "pub fn fee(amount: f64) -> u64 {\n    if amount > 9.5f64 { 0 } else { 5 }\n}\n",
+            "amount > 9.5f64",
+            "fee(64)",
+            "fee(9.5)",
+            "9.5",
+        ),
+        (
+            "pub fn fee(amount: u32) -> u64 {\n    if amount > 99u32 { 0 } else { 5 }\n}\n",
+            "amount > 99u32",
+            "fee(32)",
+            "fee(99)",
+            "99",
+        ),
+        (
+            "pub fn fee(amount: f64) -> u64 {\n    if 1.5f64 < amount { 0 } else { 5 }\n}\n",
+            "1.5f64 < amount",
+            "fee(1.0)",
+            "fee(1.5)",
+            "1.5",
+        ),
+        (
+            "pub fn fee(amount: f64) -> u64 {\n    if -1.5 < amount { 0 } else { 5 }\n}\n",
+            "-1.5 < amount",
+            "fee(-1.2)",
+            "fee(-1.5)",
+            "-1.5",
         ),
         (
             "pub fn fee(grade: char) -> u64 {\n    if 'm' < grade { 0 } else { 5 }\n}\n",
@@ -3177,7 +3374,7 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
         ExpectedSink::ReturnValue,
     );
 
-    assert!(test_target_evidence(&index, &seam, &test, RelationReason::DirectOwnerCall,).is_none());
+    assert!(target_for_index(&index, &seam, &test, RelationReason::DirectOwnerCall,).is_none());
     Ok(())
 }
 
@@ -11450,7 +11647,7 @@ pub fn discounted_total(raw_amount: Option<i32>, raw_amount_extra: Option<i32>, 
 }
 
 #[test]
-fn given_boundary_owner_call_when_match_alias_is_comment_then_operand_stays_unresolved()
+fn given_boundary_owner_call_when_match_alias_is_comment_then_local_boundary_stays_open()
 -> Result<(), String> {
     let prod_src = r#"
 pub fn discounted_total(raw_amount: Option<i32>, threshold: i32) -> i32 {
@@ -11462,7 +11659,7 @@ pub fn discounted_total(raw_amount: Option<i32>, threshold: i32) -> i32 {
     let test = (
         "tests/pricing_tests.rs",
         "#[test] fn at_threshold() { \
-                 assert_eq!(discounted_total(Some(50), 50), -9); \
+                 assert_eq!(discounted_total(Some(50), 50), 1); \
              }\n",
     );
     let mut files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/pricing.rs"), prod_src)];
@@ -11476,22 +11673,11 @@ pub fn discounted_total(raw_amount: Option<i32>, threshold: i32) -> i32 {
                 && s.expression().contains("amount >= threshold")
         })
         .ok_or_else(|| "amount predicate seam present".to_string())?;
-    let evidence = evidence_for_seam(predicate, &index);
-    assert!(
-        evidence.observed_values.is_empty(),
-        "commented match aliases must not resolve boundary operands; got {:?}",
-        evidence.observed_values
-    );
-    assert!(
-        evidence.missing_discriminators.is_empty(),
-        "unresolved commented match alias should stay a limitation, not an exact repair candidate; got {:?}",
-        evidence.missing_discriminators
-    );
-    Ok(())
+    assert_commented_alias_leaves_local_boundary_open(predicate, &index)
 }
 
 #[test]
-fn given_boundary_owner_call_when_inline_match_alias_is_comment_then_operand_stays_unresolved()
+fn given_boundary_owner_call_when_inline_match_alias_is_comment_then_local_boundary_stays_open()
 -> Result<(), String> {
     let prod_src = r#"
 pub fn discounted_total(raw_amount: Option<i32>, threshold: i32) -> i32 {
@@ -11503,7 +11689,7 @@ pub fn discounted_total(raw_amount: Option<i32>, threshold: i32) -> i32 {
     let test = (
         "tests/pricing_tests.rs",
         "#[test] fn at_threshold() { \
-                 assert_eq!(discounted_total(Some(50), 50), -9); \
+                 assert_eq!(discounted_total(Some(50), 50), 1); \
              }\n",
     );
     let mut files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/pricing.rs"), prod_src)];
@@ -11517,22 +11703,11 @@ pub fn discounted_total(raw_amount: Option<i32>, threshold: i32) -> i32 {
                 && s.expression().contains("amount >= threshold")
         })
         .ok_or_else(|| "amount predicate seam present".to_string())?;
-    let evidence = evidence_for_seam(predicate, &index);
-    assert!(
-        evidence.observed_values.is_empty(),
-        "inline commented match aliases must not resolve boundary operands; got {:?}",
-        evidence.observed_values
-    );
-    assert!(
-        evidence.missing_discriminators.is_empty(),
-        "unresolved inline commented match alias should stay a limitation, not an exact repair candidate; got {:?}",
-        evidence.missing_discriminators
-    );
-    Ok(())
+    assert_commented_alias_leaves_local_boundary_open(predicate, &index)
 }
 
 #[test]
-fn given_boundary_owner_call_when_match_wrapper_is_comment_then_operand_stays_unresolved()
+fn given_boundary_owner_call_when_match_wrapper_is_comment_then_local_boundary_stays_open()
 -> Result<(), String> {
     let prod_src = r#"
 pub fn discounted_total(raw_amount: Option<i32>, threshold: i32) -> i32 {
@@ -11545,7 +11720,7 @@ pub fn discounted_total(raw_amount: Option<i32>, threshold: i32) -> i32 {
     let test = (
         "tests/pricing_tests.rs",
         "#[test] fn at_threshold() { \
-                 assert_eq!(discounted_total(Some(50), 50), -9); \
+                 assert_eq!(discounted_total(Some(50), 50), 1); \
              }\n",
     );
     let mut files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/pricing.rs"), prod_src)];
@@ -11559,22 +11734,11 @@ pub fn discounted_total(raw_amount: Option<i32>, threshold: i32) -> i32 {
                 && s.expression().contains("amount >= threshold")
         })
         .ok_or_else(|| "amount predicate seam present".to_string())?;
-    let evidence = evidence_for_seam(predicate, &index);
-    assert!(
-        evidence.observed_values.is_empty(),
-        "commented wrapper patterns must not resolve boundary operands; got {:?}",
-        evidence.observed_values
-    );
-    assert!(
-        evidence.missing_discriminators.is_empty(),
-        "unresolved commented wrapper pattern should stay a limitation, not an exact repair candidate; got {:?}",
-        evidence.missing_discriminators
-    );
-    Ok(())
+    assert_commented_alias_leaves_local_boundary_open(predicate, &index)
 }
 
 #[test]
-fn given_boundary_owner_call_when_inline_match_wrapper_is_comment_then_operand_stays_unresolved()
+fn given_boundary_owner_call_when_inline_match_wrapper_is_comment_then_local_boundary_stays_open()
 -> Result<(), String> {
     let prod_src = r#"
 pub fn discounted_total(raw_amount: Option<i32>, threshold: i32) -> i32 {
@@ -11586,7 +11750,7 @@ pub fn discounted_total(raw_amount: Option<i32>, threshold: i32) -> i32 {
     let test = (
         "tests/pricing_tests.rs",
         "#[test] fn at_threshold() { \
-                 assert_eq!(discounted_total(Some(50), 50), -9); \
+                 assert_eq!(discounted_total(Some(50), 50), 1); \
              }\n",
     );
     let mut files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/pricing.rs"), prod_src)];
@@ -11600,17 +11764,40 @@ pub fn discounted_total(raw_amount: Option<i32>, threshold: i32) -> i32 {
                 && s.expression().contains("amount >= threshold")
         })
         .ok_or_else(|| "amount predicate seam present".to_string())?;
-    let evidence = evidence_for_seam(predicate, &index);
-    assert!(
-        evidence.observed_values.is_empty(),
-        "inline commented wrapper patterns must not resolve boundary operands; got {:?}",
-        evidence.observed_values
-    );
-    assert!(
-        evidence.missing_discriminators.is_empty(),
-        "unresolved inline commented wrapper should stay a limitation, not an exact repair candidate; got {:?}",
-        evidence.missing_discriminators
-    );
+    assert_commented_alias_leaves_local_boundary_open(predicate, &index)
+}
+
+/// #4270: with the commented alias ignored, `amount` is the local
+/// `let amount = 1;`, so both owners compare `threshold` against 1. The
+/// test passes `threshold = 50` while `raw_amount` is also 50: reading the
+/// commented alias would make `amount` equal `threshold` and close the
+/// boundary. The local reading leaves `amount == threshold` open, as
+/// `check` reports it (`classify::activation` commented-alias test).
+fn assert_commented_alias_leaves_local_boundary_open(
+    predicate: &RepoSeam,
+    index: &RustIndex,
+) -> Result<(), String> {
+    let evidence = evidence_for_seam(predicate, index);
+    let observed: Vec<&str> = evidence
+        .observed_values
+        .iter()
+        .map(|fact| fact.value.as_str())
+        .collect();
+    let missing: Vec<&str> = evidence
+        .missing_discriminators
+        .iter()
+        .map(|fact| fact.value.as_str())
+        .collect();
+    let class = crate::analysis::seam_classification::classify_seam(predicate, &evidence);
+    if observed != ["50"]
+        || missing != ["amount (equality boundary)"]
+        || class == SeamGripClass::StronglyGripped
+    {
+        return Err(format!(
+            "a commented alias must not close `amount >= threshold`; expected the local boundary open, got {} observed {observed:?} missing {missing:?}",
+            class.as_str()
+        ));
+    }
     Ok(())
 }
 
