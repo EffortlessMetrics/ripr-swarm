@@ -806,6 +806,62 @@ fn review_card_and_gate_commands_persist_fresh_receipt_inputs() -> Result<(), St
             "verify": guidance.get("verify_command"),
             "receipt": receipt,
         }});
+        // A complete outcome in another sibling must not rescue the invalid
+        // canonical input. Keep the root and every other printed step intact.
+        let outcome_command = printed_command(&funnel, "analysis_outcome")?;
+        let canonical_target = "target/ripr/workflow/analysis-outcome.json";
+        if outcome_command.matches(canonical_target).count() != 1 {
+            return Err(format!(
+                "{label} must name exactly one canonical outcome target"
+            ));
+        }
+        let mut wrong_sibling = funnel.clone();
+        wrong_sibling["commands"]["analysis_outcome"] =
+            serde_json::json!(outcome_command.replacen(
+                canonical_target,
+                "target/ripr/workflow/wrong-analysis-outcome.json",
+                1,
+            ));
+        std::fs::write(
+            workflow_artifact(&journey.root, "wrong-analysis-outcome.json"),
+            "{\"decoy\":true}",
+        )
+        .map_err(|error| error.to_string())?;
+        let refused =
+            execute_funnel_with_receipt_file(&journey, &wrong_sibling, Some(&receipt_path))?;
+        let wrong_outcome = read_json(&workflow_artifact(
+            &journey.root,
+            "wrong-analysis-outcome.json",
+        ))?;
+        if wrong_outcome
+            .pointer("/analysis_outcome/analysis_complete")
+            .and_then(Value::as_bool)
+            != Some(true)
+            || sha256_file(&analysis_path)? != analysis_decoy_digest
+            || sha256_file(&verify_path)? == decoy_digest
+            || sha256_file(&receipt_path)? == receipt_decoy_digest
+        {
+            return Err(format!(
+                "{label} wrong-sibling control did not exercise fresh producers"
+            ));
+        }
+        if refused.get("status").and_then(Value::as_str) != Some("invalid")
+            || refused
+                .get("analysis_outcome_status")
+                .and_then(Value::as_str)
+                != Some("invalid")
+            || refused.get("analysis_outcome") != Some(&Value::Null)
+            || !refused
+                .get("analysis_outcome_error")
+                .and_then(Value::as_str)
+                .is_some_and(|error| !error.is_empty())
+        {
+            return Err(format!(
+                "{label} accepted an outcome written to the wrong sibling: {refused}"
+            ));
+        }
+        std::fs::write(&verify_path, "{\"decoy\":true}").map_err(|error| error.to_string())?;
+        std::fs::write(&receipt_path, "{\"decoy\":true}").map_err(|error| error.to_string())?;
         let receipt = execute_funnel_with_receipt_file(&journey, &funnel, Some(&receipt_path))
             .map_err(|error| format!("{label}: {error}"))?;
         assert_funnel_writes_bind_fresh_artifacts(&journey, &receipt)?;
