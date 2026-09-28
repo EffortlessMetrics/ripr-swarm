@@ -4106,8 +4106,13 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
     );
     assert_eq!(
         commands[2].2[0]["command"],
+        // The producer binds its selected root (#4287); `/workspace` is
+        // drive-relative on Windows, so the expectation binds it the same way.
         format!(
-            "ripr agent repair --root /workspace --seam-id {} --phase before",
+            "ripr agent repair --root {} --seam-id {} --phase before",
+            crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+                "/workspace"
+            )),
             seam.seam.id().as_str()
         )
     );
@@ -4242,7 +4247,10 @@ fn repair_start_is_offered_only_for_a_seam_past_the_repair_packet_flip() -> Resu
     ));
 
     let expected = format!(
-        "ripr agent repair --root /workspace --seam-id {} --phase before",
+        "ripr agent repair --root {} --seam-id {} --phase before",
+        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+            "/workspace"
+        )),
         eligible.seam.id().as_str()
     );
 
@@ -12734,7 +12742,7 @@ fn execute_command_collect_evidence_context_returns_editor_packet_for_known_seam
         assert_eq!(
             packet["after_snapshot_command"],
             crate::agent::loop_commands::check_repo_exposure_command_with_base(
-                "/workspace",
+                &crate::agent::loop_commands::bound_root("/workspace"),
                 Some("origin/main"),
                 "draft",
                 "target/ripr/pilot/after.repo-exposure.json",
@@ -12744,7 +12752,7 @@ fn execute_command_collect_evidence_context_returns_editor_packet_for_known_seam
         assert_eq!(
             packet["verify_command"],
             crate::agent::loop_commands::agent_verify_command(
-                "/workspace",
+                &crate::agent::loop_commands::bound_root("/workspace"),
                 "target/ripr/pilot/repo-exposure.json",
                 "target/ripr/pilot/after.repo-exposure.json",
                 Some("target/ripr/agent/agent-verify.json"),
