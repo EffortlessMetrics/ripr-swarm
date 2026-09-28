@@ -40,7 +40,12 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::tests::probes_for_file_skips_brace_and_else_lines_of_new_function",
   "crates/ripr/src/analysis/probes/diff.rs::tests::probes_for_file_keeps_lone_structural_line_hunks",
   "crates/ripr/src/analysis/probes/diff.rs::tests::probes_for_file_keeps_structural_line_closing_outside_block_in_mixed_run",
-  "crates/ripr/src/analysis/pipeline.rs::tests::lone_else_split_hunk_is_not_no_behavioral_candidates"
+  "crates/ripr/src/analysis/pipeline.rs::tests::lone_else_split_hunk_is_not_no_behavioral_candidates",
+  "crates/ripr/src/output/observed_values.rs::tests::under_the_cap_every_value_is_kept_in_order",
+  "crates/ripr/src/output/observed_values.rs::tests::over_the_cap_input_values_outrank_assertion_arguments_and_keep_order",
+  "crates/ripr/src/output/json/mod.rs::tests::json_caps_observed_values_on_distinct_lines_and_discloses_the_total",
+  "crates/ripr/src/output/json/mod.rs::tests::json_omits_observed_values_total_when_nothing_is_dropped",
+  "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_reports_no_value_delta_across_a_capped_value_list"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -647,6 +652,8 @@ tests = [
   "crates/ripr/src/output/sarif.rs::tests::sarif_uses_configured_seam_severity",
   "crates/ripr/src/output/sarif.rs::tests::sarif_omits_off_seam_class",
   "crates/ripr/src/output/sarif.rs::tests::sarif_attaches_suppression_metadata",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_caps_observed_values_and_discloses_the_total",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_omits_observed_values_total_under_the_cap",
   "xtask/src/main.rs::tests::sarif_policy_passes_when_no_new_results",
   "xtask/src/main.rs::tests::sarif_policy_flags_new_warning_result",
   "xtask/src/main.rs::tests::sarif_policy_ignores_note_when_threshold_warning",
@@ -6165,6 +6172,8 @@ id = "RIPR-SPEC-0094"
 name = "observation_unverified guard generalization"
 spec = "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md"
 tests = [
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::strongest_oracle_cannot_borrow_weaker_assertion_confirmation",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::equally_strong_confirmed_oracle_preserves_discrimination_in_either_order",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::return_value_family_match_only_without_token_downgrades_discriminate_to_weak",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::return_value_with_token_match_keeps_discriminate_yes",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::field_construction_family_match_only_without_token_downgrades_to_weak",
@@ -6181,6 +6190,7 @@ tests = [
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
+  "fixtures/oracle_confirmation_mixed",
   "fixtures/observation_unverified_return_value",
   "fixtures/observation_verified_return_value",
   "fixtures/observation_unverified_field_construction",
@@ -6196,6 +6206,9 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md",
+  "fixtures/oracle_confirmation_mixed/expected/check.json",
+  "fixtures/oracle_confirmation_mixed/expected/human.txt",
+  "fixtures/oracle_confirmation_mixed/expected/human-full.txt",
   "fixtures/observation_unverified_return_value/expected/check.json",
   "fixtures/observation_unverified_return_value/expected/human.txt",
   "fixtures/observation_verified_return_value/expected/check.json",
@@ -7927,9 +7940,10 @@ tests = [
   "crates/ripr/src/lsp/tests.rs::framed_lsp_protocol_smoke_logs_successful_refresh_completion",
   "crates/ripr/src/lsp/tests.rs::initialize_result_exposes_existing_lsp_capabilities",
   "crates/ripr/src/lsp/tests.rs::code_action_response_keeps_current_commands",
-  "crates/ripr/src/lsp/tests.rs::code_action_response_honors_only_quickfix_when_no_repair_actions_exist",
-  "crates/ripr/src/lsp/tests.rs::code_action_response_only_source_ripr_navigate_keeps_only_navigation",
-  "crates/ripr/src/lsp/tests.rs::code_action_response_only_source_or_absent_only_keeps_every_action",
+  "crates/ripr/src/lsp/tests.rs::code_action_response_only_quickfix_keeps_finding_actions_and_drops_refresh",
+  "crates/ripr/src/lsp/tests.rs::code_action_response_only_quickfix_ripr_navigate_keeps_only_navigation",
+  "crates/ripr/src/lsp/tests.rs::code_action_response_only_source_keeps_only_refresh_and_absent_only_keeps_every_action",
+  "crates/ripr/src/lsp/tests.rs::code_action_response_gap_inspect_action_is_a_quickfix_not_a_source_action",
   "crates/ripr/src/lsp/tests.rs::code_action_response_only_filter_compounds_with_client_command_filter",
   "crates/ripr/src/lsp/tests.rs::code_action_response_emitted_kinds_stay_within_the_advertised_set",
   "crates/ripr/src/lsp/action_contract.rs::tests::closed_disabled_reason_vocabulary_is_disjoint_unique_and_complete",
@@ -9152,7 +9166,7 @@ tests = [
   "crates/ripr/src/analysis/workspace/select.rs::tests::draft_and_fast_keep_nested_multi_target_crate_together",
   "crates/ripr/src/analysis/workspace/select.rs::tests::instant_selection_leaves_integration_tests_behind_for_bin_only_change",
   "crates/ripr/src/analysis/workspace/select.rs::tests::module_closure_brings_lib_sibling_for_bin_only_change",
-  "crates/ripr/src/analysis/workspace/select.rs::tests::custom_target_change_without_dependents_stays_changed_files_only",
+  "crates/ripr/src/analysis/workspace/select.rs::tests::custom_target_change_keeps_its_manifest_package_together",
   "crates/ripr/src/analysis/workspace/select.rs::tests::dependent_custom_target_files_enter_selection_by_root_prefix",
   "crates/ripr/src/analysis/workspace/select.rs::tests::nested_crate_inside_dependent_stays_out_unless_itself_dependent",
   "crates/ripr/src/analysis/workspace/select.rs::tests::dependent_packages_enter_draft_and_fast_selection",

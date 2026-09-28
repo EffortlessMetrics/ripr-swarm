@@ -66,6 +66,12 @@ It keeps compatibility copies of packet, brief, verify, and receipt JSON under
 
 ## Ordinary path: `ripr agent repair`
 
+For Rust, ignore Cargo's entire `target/` directory before starting (for example
+`/target/` in `.gitignore`, or an equivalent Git exclude rule). The before phase
+checks the effective rule even with no build output and refuses before preparing
+workflow artifacts or an attempt if it is missing. This keeps the focused Cargo
+test's build output separate from the enforced test-only edit surface.
+
 For one named gap, the repair transaction writes the snapshot, packet, verify,
 and receipt artifacts above for you:
 
@@ -115,7 +121,7 @@ or receipt files, and prints one next command:
 | A seam whose attempt failed, went stale, or was prepared at a `HEAD` the current one does not descend from | `ripr agent repair --seam-id <seam-id> --phase before`, which starts a new attempt; for rewritten history the reason first names the `git reset --soft <prepared-head>` recovery that resumes the attempt |
 | A seam whose finished attempt's receipt shows grip `unchanged`, `changed`, or `regressed` | `ripr agent repair --seam-id <seam-id> --phase before`: the gap is still open, so start a new attempt and strengthen the test |
 | A finished attempt whose receipt is `invalid` or `incomplete`, or whose evidence was recorded at another `HEAD` | none; status is `warning` and the warning says which |
-| Every artifact present, and any finished attempt's receipt is `advisory` with grip `improved` at the current `HEAD` | none; status is `complete` |
+| Every artifact present, and any finished attempt's receipt is `advisory` with grip `improved` at the current `HEAD` | none; status is `complete`, and `test_run.status` is `not_recorded`: run the focused test yourself and keep it only if it passes |
 | Otherwise | the first missing artifact's command below |
 
 When picking would mean guessing (two waiting attempts, several open seams, an
