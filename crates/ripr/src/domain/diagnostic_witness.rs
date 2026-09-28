@@ -70,7 +70,11 @@ impl DiagnosticWitness {
             return None;
         }
 
-        let best_test = best_related_test(&finding.related_tests);
+        // The analyzer's suggested repair test, when it is one of the
+        // related tests, is the fix site: `check`, `explain` and the repair
+        // card already name it, so every surface points at the same test.
+        let best_test =
+            suggested_related_test(finding).or_else(|| best_related_test(&finding.related_tests));
         // `observed_values` is finding-wide and does not identify the
         // selected related test.  Do not guess an assertion location by
         // matching text; the test's own line remains the only producer-owned
@@ -144,6 +148,22 @@ impl DiagnosticWitness {
             limitations,
         })
     }
+}
+
+fn suggested_related_test(finding: &Finding) -> Option<&RelatedTest> {
+    let name = finding
+        .evidence
+        .iter()
+        .find_map(|line| line.strip_prefix("suggested_test_name: "))
+        .map(str::trim)
+        .filter(|name| !name.is_empty())?;
+    let mut matches = finding
+        .related_tests
+        .iter()
+        .filter(|test| test.name == name);
+    let first = matches.next()?;
+    // Two related tests with the same name are ambiguous: fall back.
+    matches.next().is_none().then_some(first)
 }
 
 fn best_related_test(related_tests: &[RelatedTest]) -> Option<&RelatedTest> {
@@ -271,6 +291,57 @@ mod tests {
                 .any(|item| item.kind == "suggested_assertion_unavailable")
         );
         Ok(())
+    }
+
+    /// RC walk (py-pricing): `check` and the repair card named
+    /// `test_discount_far_above_threshold` while the context witness named the
+    /// first strong related test. The suggested repair test is the fix site
+    /// when it is one of the related tests; otherwise the ranking decides.
+    #[test]
+    fn fix_site_follows_the_suggested_repair_test() {
+        let related = |name: &str, line: usize| RelatedTest {
+            name: name.to_string(),
+            file: PathBuf::from("tests/test_pricing.py"),
+            line,
+            oracle: Some(format!("assert {name}()")),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            relation_reason: None,
+            relation_confidence: None,
+        };
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "amount == DISCOUNT_THRESHOLD".to_string(),
+            reason: "no related input at the boundary".to_string(),
+            flow_sink: None,
+        }];
+        finding.related_tests = vec![
+            related("test_no_discount_below_threshold", 4),
+            related("test_discount_far_above_threshold", 8),
+        ];
+        let fix_test = |finding: &Finding| {
+            DiagnosticWitness::from_finding(finding)
+                .and_then(|witness| witness.fix_site)
+                .map(|site| site.test_name)
+        };
+        let ranked = fix_test(&finding);
+
+        finding.evidence =
+            vec!["suggested_test_name: test_discount_far_above_threshold".to_string()];
+        assert_eq!(
+            fix_test(&finding).as_deref(),
+            Some("test_discount_far_above_threshold")
+        );
+        finding.evidence =
+            vec!["suggested_test_name: test_no_discount_below_threshold".to_string()];
+        assert_eq!(
+            fix_test(&finding).as_deref(),
+            Some("test_no_discount_below_threshold")
+        );
+        // A suggestion that names no related test falls back to the ranking.
+        finding.evidence = vec!["suggested_test_name: test_new_boundary".to_string()];
+        assert_eq!(fix_test(&finding), ranked);
     }
 
     #[test]

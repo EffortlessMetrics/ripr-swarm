@@ -58,6 +58,12 @@ are scoped or reviewed.
   command that keeps base, head, and root arguments literal when copied, including
   refs with shell syntax and roots with spaces (#4367).
 
+- `ripr receipt check --ledger` explains each cross-reference state after its
+  token. `receipt_ok` now says it only means the ledger still lists the
+  receipt's gap, not that the gap is closed, so it no longer reads as a fix
+  confirmation. The Python context witness's `fix_site` names the same
+  suggested test as `check`, `explain` and the repair card.
+
 - TypeScript preview boundary findings get a delegatable repair packet when
   the boundary input is statically derivable: a changed `amount >= 5000` or
   `amount >= DISCOUNT_THRESHOLD` (single immutable integer module `const`)
