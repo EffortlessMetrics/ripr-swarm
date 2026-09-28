@@ -627,6 +627,10 @@ fn parse_integer_literal(raw: &str) -> Option<i64> {
     if !raw.contains('_') {
         return raw.parse::<i64>().ok();
     }
+    // JavaScript rejects separators in a legacy leading-zero literal.
+    if raw.trim_start_matches(['-', '+']).starts_with('0') {
+        return None;
+    }
     let bytes = raw.as_bytes();
     let separators_between_digits = bytes.iter().enumerate().all(|(index, byte)| {
         *byte != b'_'
@@ -2005,7 +2009,7 @@ mod tests {
         );
         assert_eq!(shape.shape(), "expect(shipping(5000)).toBe(expected)");
         assert!(shape.packet_ineligibility_reason().is_none());
-        for malformed in ["5__000", "5000_", "_5000"] {
+        for malformed in ["5__000", "5000_", "_5000", "0_5"] {
             assert_eq!(parse_integer_literal(malformed), None, "{malformed}");
         }
         Ok(())

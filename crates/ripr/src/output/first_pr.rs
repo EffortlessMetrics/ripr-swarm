@@ -4400,6 +4400,47 @@ mod tests {
         assert_eq!(ledger, ledger_only);
     }
 
+    /// The stale branch itself must route a supplied `--check-output` to the
+    /// rewriting command, not the ledger-only one.
+    #[test]
+    fn stale_supplied_check_output_routes_to_a_check_rerun() -> Result<(), String> {
+        let repo = temp_python_repo("first-pr-python-stale-check-output")?;
+        fs::create_dir_all(repo.join("app")).map_err(|err| format!("mkdir app: {err}"))?;
+        let source = repo.join("app/pricing.py");
+        fs::write(
+            &source,
+            "def calculate_discount(amount, threshold):\n    return amount >= threshold\n",
+        )
+        .map_err(|err| format!("write app/pricing.py: {err}"))?;
+        run_git_setup(&repo, &["add", "app/pricing.py"])?;
+        run_git_setup(&repo, &["commit", "-m", "change pricing"])?;
+        let check_output = repo.join(DEFAULT_CHECK_OUTPUT);
+        write_json(&check_output, check_output_with_python_repair_card())?;
+        let written = fs::metadata(&check_output)
+            .and_then(|metadata| metadata.modified())
+            .map_err(|err| format!("check output mtime: {err}"))?;
+        fs::File::options()
+            .write(true)
+            .open(&source)
+            .and_then(|file| file.set_modified(written + std::time::Duration::from_mins(1)))
+            .map_err(|err| format!("set mtime: {err}"))?;
+
+        let options = FirstPrOptions {
+            check_output: Some(DEFAULT_CHECK_OUTPUT.to_string()),
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["selected"]["state"], "stale_artifact");
+        let next = packet["selected"]["next_command"].as_str().unwrap_or("");
+        let (check, _) = next.split_once(" && ").unwrap_or((next, ""));
+        assert!(
+            check.starts_with("ripr check --root ") && check.ends_with(DEFAULT_CHECK_OUTPUT),
+            "stale recovery must rewrite the supplied check output: {next}"
+        );
+        cleanup(&repo)
+    }
+
     #[test]
     fn python_check_output_materializes_gap_ledger_for_start_here() -> Result<(), String> {
         let repo = temp_python_repo("first-pr-python-check-output")?;
