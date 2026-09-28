@@ -1642,13 +1642,12 @@ impl RepoFileFactCache {
             let Ok(bytes) = std::fs::read(path) else {
                 continue;
             };
-            if let Ok(envelope) = codec::decode_file_facts(&bytes) {
-                if envelope.file_fact_cache_schema_version == FILE_FACT_CACHE_SCHEMA_VERSION
-                    && envelope.analyzer_version == env!("CARGO_PKG_VERSION")
-                    && envelope.validate_integrity().is_ok()
-                {
-                    paths.insert(envelope.file_path);
-                }
+            if let Ok(envelope) = codec::decode_file_facts(&bytes)
+                && envelope.file_fact_cache_schema_version == FILE_FACT_CACHE_SCHEMA_VERSION
+                && envelope.analyzer_version == env!("CARGO_PKG_VERSION")
+                && envelope.validate_integrity().is_ok()
+            {
+                paths.insert(envelope.file_path);
             }
         }
         paths
