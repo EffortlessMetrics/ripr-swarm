@@ -4053,7 +4053,9 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
         Vec::new(),
     );
     snapshot.classified_seams = vec![seam.clone()];
-    let workspace = snapshot.root.to_string_lossy().into_owned();
+    // The producer binds the selected root before building loop commands
+    // (#4287); `/workspace` is drive-relative on Windows, so bind it here too.
+    let workspace = crate::agent::loop_commands::bound_root(&snapshot.root.to_string_lossy());
     let actions = code_action_response(
         &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
         Some(&snapshot),
