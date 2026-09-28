@@ -1105,7 +1105,7 @@ fn md_warning(value: &str) -> String {
     // Warnings are list prose, not table cells. A retry must be code: Markdown
     // consumes backslashes before punctuation and interprets entities, tags,
     // and emphasis in ordinary prose, changing copied shell arguments.
-    let flattened = value.replace('\r', " ").replace('\n', " ");
+    let flattened = value.replace(['\r', '\n'], " ");
     if flattened.starts_with("ripr check for PR evidence timed out after ")
         && let Some((context, tail)) = flattened.split_once("; retry command (")
         && let Some((shell, command)) = tail.split_once("): ")
