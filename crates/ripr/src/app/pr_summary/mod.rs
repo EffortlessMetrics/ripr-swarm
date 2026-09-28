@@ -251,7 +251,7 @@ mod tests {
         ]
         .map(str::to_string);
         let options = parse_options(&args)?;
-        if options.root != PathBuf::from("selected répo")
+        if options.root.as_path() != Path::new("selected répo")
             || !options.check
             || options.baseline.as_deref() != Some("before.json")
         {
