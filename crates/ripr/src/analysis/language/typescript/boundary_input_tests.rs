@@ -487,3 +487,22 @@ fn whole_side_comparisons_accept_common_line_shapes() {
         );
     }
 }
+
+/// A compared value derived from the parameter (`scaled = amount * 10`) is
+/// not the parameter, so no input is derived for `fee(3)`-style calls; the
+/// derivation only binds a comparison side that is the owner's own
+/// read-only positional parameter.
+#[test]
+fn comparison_on_a_value_derived_from_the_parameter_stays_unresolved() {
+    let source = "export function fee(amount: number): number {\n  const scaled = amount * 10;\n  if (scaled > 30) {\n    return 5;\n  }\n  return 0;\n}\n";
+    let owners = extract_owners(Path::new("src/pricing.ts"), source);
+    // Setup: the owner parsed with its single plain parameter.
+    assert_eq!(
+        owners
+            .iter()
+            .find(|owner| owner.name == "fee")
+            .map(|owner| owner.params.clone()),
+        Some(vec!["amount".to_string()])
+    );
+    assert_eq!(input_for(source, "fee", "  if (scaled > 30) {"), Some(None));
+}
