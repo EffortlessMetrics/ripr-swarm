@@ -399,6 +399,14 @@ defaults:
   run:
     shell: bash
 
+# One run per PR: a newer push cancels the older run. Only the newest head's
+# placements are valid, and two overlapping runs would each snapshot the
+# existing inline comments before either publishes, then both create the
+# same cards.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ripr:
     name: RIPR advisory reports
@@ -421,7 +429,11 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned to a commit SHA for the same reason as rust-cache below.
+      # dtolnay/rust-toolchain stable branch = 6bed0761d98439e5a578e2877258200ad565ba87.
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
 
       # Cache the cargo registry, git checkouts, and installed binaries
       # (#2008): an uncached `cargo install ripr` recompiles for minutes on
@@ -601,6 +613,8 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          RIPR_ACTOR: ${{ github.actor }}
+          RIPR_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           mkdir -p target/ripr/review
           comment_args=(
@@ -623,7 +637,15 @@ jobs:
           else
             comment_args+=(--no-token)
           fi
-          comment_args+=(--write-permission)
+          # GitHub gives Dependabot runs a read-only token whatever the
+          # permissions block says, so the plan must not claim write. Check
+          # the PR author too: a maintainer who reopens a Dependabot PR is the
+          # event actor, and the run can still carry the read-only token.
+          if [ "${RIPR_ACTOR:-}" = "dependabot[bot]" ] || [ "${RIPR_PR_AUTHOR:-}" = "dependabot[bot]" ]; then
+            comment_args+=(--no-write-permission)
+          else
+            comment_args+=(--write-permission)
+          fi
           ripr "${comment_args[@]}"
 
       - name: Publish RIPR inline comments
