@@ -5624,11 +5624,14 @@ tests = [
   "crates/ripr/src/analysis/diff/load.rs::tests::resolve_default_base_uses_origin_master_when_symbolic_ref_points_there",
   "crates/ripr/src/analysis/diff/load.rs::tests::resolve_default_base_uses_local_main_when_no_remote",
   "crates/ripr/src/analysis/diff/load.rs::tests::resolve_default_base_returns_named_error_when_nothing_resolves",
-  "crates/ripr/src/analysis/diff/load.rs::tests::explicit_base_is_used_as_is_without_resolution"
+  "crates/ripr/src/analysis/diff/load.rs::tests::explicit_base_is_used_as_is_without_resolution",
+  "crates/ripr/tests/cli_smoke.rs::first_pr_check_missing_packet_recovers_without_a_resolvable_base",
+  "crates/ripr/tests/cli_smoke.rs::first_pr_check_recovery_write_resolves_the_default_base"
 ]
 fixtures = []
 code = [
   "crates/ripr/src/analysis/diff/load.rs",
+  "crates/ripr/src/output/first_pr.rs",
   "policy/process_allowlist.txt"
 ]
 outputs = [
@@ -7631,6 +7634,10 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::diff_json_with_base_does_not_emit_repo_scope_warning",
   "crates/ripr/src/output/first_pr.rs::tests::first_pr_check_missing_packet_error_explains_validate_only_mode",
   "crates/ripr/src/output/first_pr.rs::tests::first_pr_write_command_preserves_explicit_gap_ledger_only",
+  "crates/ripr/src/output/first_pr.rs::tests::first_pr_write_command_renders_only_an_explicit_base",
+  "crates/ripr/tests/cli_smoke.rs::first_pr_check_missing_packet_suggests_rooted_out_dir",
+  "crates/ripr/tests/cli_smoke.rs::first_pr_check_missing_packet_recovers_without_a_resolvable_base",
+  "crates/ripr/tests/cli_smoke.rs::first_pr_check_recovery_write_resolves_the_default_base",
 ]
 fixtures = []
 code = [
@@ -7794,9 +7801,11 @@ tests = [
   "crates/ripr/src/lsp/diagnostic_budget.rs::tests::diagnostic_bridge_preserves_identity_and_actionability",
   "crates/ripr/src/lsp/diagnostic_budget.rs::tests::diagnostic_bridge_uses_explicit_seam_and_preview_eligibility",
   "crates/ripr/src/lsp/diagnostic_budget.rs::tests::diagnostic_bridge_reads_ordinary_eligibility_after_family_authority",
+  "crates/ripr/src/lsp/diagnostic_budget.rs::tests::scope_guard_disclosure_delivers_only_through_the_producer_signal",
   "crates/ripr/src/lsp/diagnostic_budget.rs::tests::legacy_fallback_identity_is_stable_when_diagnostics_are_reordered",
   "crates/ripr/src/lsp/diagnostics.rs::tests::profile_admitted_findings_stamp_delivery_eligibility",
   "crates/ripr/src/lsp/backend.rs::diagnostic_budget_projection_tests::workspace_status_budget_json_preserves_all_reason_variants",
+  "crates/ripr/src/lsp/tests.rs::oversized_diff_warning_snapshot_prepares_commits_and_publishes",
   "crates/ripr/src/lsp/tests.rs::execute_command_collect_workspace_status_no_snapshot_returns_no_snapshot_status",
   "crates/ripr/src/lsp/tests.rs::execute_command_collect_workspace_status_with_snapshot_returns_diagnostics_counts",
   "crates/ripr/src/lsp/tests.rs::workspace_status_budget_identity_changes_with_diagnostic_snapshot",
@@ -8300,6 +8309,7 @@ tests = [
   "crates/ripr/src/lsp/tests.rs::framed_lsp_component_degradation_is_typed_logged_and_recovers",
   "crates/ripr/src/lsp/diagnostics.rs::oversized_diff_error_converts_to_a_committed_limited_snapshot_with_one_warning",
   "crates/ripr/src/lsp/diagnostics.rs::repo_scope_and_wrapped_guard_errors_do_not_convert",
+  "crates/ripr/src/lsp/tests.rs::oversized_diff_warning_snapshot_prepares_commits_and_publishes",
 ]
 fixtures = []
 code = [

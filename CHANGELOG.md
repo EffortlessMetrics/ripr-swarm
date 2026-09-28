@@ -550,17 +550,18 @@ are scoped or reviewed.
 
 ### Fixed
 
-- Generated `first-pr`, first-useful-action, PR-review front-panel and
-  agent workflow commands now carry the absolute selected root in `--root`
-  (and anchor their `--repo-exposure` and redirect paths to it), so a
-  copied command analyzes the same repository from any working directory
-  instead of re-resolving a relative root such as `.` against wherever it
-  is pasted. A user-authored `--root .` keeps its ordinary meaning, and
-  typed `command_specs` keep the portable `--root .` with `cwd` at the
-  repository root
-  ([#3999](https://github.com/EffortlessMetrics/ripr-swarm/issues/3999),
-  [#4000](https://github.com/EffortlessMetrics/ripr-swarm/issues/4000),
-  [#4287](https://github.com/EffortlessMetrics/ripr-swarm/pull/4287)).
+- `ripr outcome` no longer reports zero movement for check-output snapshots
+  whose findings carry no canonical gap id, such as Rust `ripr check --json`.
+  It refuses the pair, points Rust users to `ripr check --format
+  repo-exposure-json`, and says that preview-language findings without an id
+  have no comparable receipt
+  ([#3797](https://github.com/EffortlessMetrics/ripr-swarm/issues/3797)).
+- `cargo install ripr` without `--locked` compiles. It had resolved
+  `unicode-ident` 1.0.26, which fails a compile-time Unicode-version assert in
+  `ra-ap-rustc_lexer`; the 1.0.24 pin moved from `Cargo.lock` into the
+  `lang-rust` feature's manifest, and release CI now builds the packaged crate
+  from a fresh resolution
+  ([#3787](https://github.com/EffortlessMetrics/ripr-swarm/issues/3787)).
 - `cargo xtask actionable-gap-outcomes` no longer reports an agent receipt's
   `verification.status: "verification_not_run"` as the attempt's verify
   result. It counts as a missing verify result
@@ -1106,6 +1107,26 @@ are scoped or reviewed.
   first. Commands the translator cannot translate keep only the bash
   line, which stays byte-identical
   ([#3870](https://github.com/EffortlessMetrics/ripr-swarm/issues/3870)).
+
+- `ripr first-pr --check` without a start-here packet in a checkout where
+  no default base resolves (a detached HEAD with no branches, as in some CI
+  checkouts) now prints a recovery command that requires `--base <ref>` and
+  names the resolution error, instead of a write command that fails on the
+  same missing base. When a default base resolves, the recovery still omits
+  `--base`
+  ([#4285](https://github.com/EffortlessMetrics/ripr-swarm/issues/4285),
+  [#4290](https://github.com/EffortlessMetrics/ripr-swarm/pull/4290)).
+- Generated `first-pr`, first-useful-action, PR-review front-panel and
+  agent workflow commands now carry the absolute selected root in `--root`
+  (and anchor their `--repo-exposure` and redirect paths to it), so a
+  copied command analyzes the same repository from any working directory
+  instead of re-resolving a relative root such as `.` against wherever it
+  is pasted. A user-authored `--root .` keeps its ordinary meaning, and
+  typed `command_specs` keep the portable `--root .` with `cwd` at the
+  repository root
+  ([#3999](https://github.com/EffortlessMetrics/ripr-swarm/issues/3999),
+  [#4000](https://github.com/EffortlessMetrics/ripr-swarm/issues/4000),
+  [#4287](https://github.com/EffortlessMetrics/ripr-swarm/pull/4287)).
 
 ### Docs
 
