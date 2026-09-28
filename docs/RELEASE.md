@@ -246,8 +246,10 @@ cargo run -p ripr -- explain --diff crates/ripr/examples/sample/example.diff pro
 cargo run -p ripr -- context --diff crates/ripr/examples/sample/example.diff --at probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250 --json
 ```
 
-The version smoke must print exactly `ripr <CARGO_PKG_VERSION>` with one
-trailing newline, exit 0, and leave stderr empty. `--version`/`-V` is a
+The version smoke must print exactly `ripr <CARGO_PKG_VERSION> (<commit>)`
+with one trailing newline, exit 0, and leave stderr empty; `<commit>` is the
+full commit the candidate was built or packaged from (see
+[installation verification](INSTALLATION_VERIFICATION.md)). `--version`/`-V` is a
 side-effect-free identity query and takes precedence over help, JSON, and
 verbose-looking flags; it must not emit the help screen or write analysis
 artifacts. Command-local version routes such as `ripr lsp --version` retain
@@ -346,6 +348,15 @@ git tag v0.8.0
 git push origin v0.8.0
 ```
 
+Pushing the tag publishes nothing by itself. The release workflows run only by
+`workflow_dispatch`, one channel at a time, in the order and with the receipts
+that [RELEASE_TRANSACTION.md](RELEASE_TRANSACTION.md) gives: create the GitHub
+Release, then dispatch `release-server-binaries.yml`, then
+`publish-extension.yml` on the tag (`--ref v0.8.0`) with exactly one of
+`publish_vs_marketplace=true` or `publish_open_vsx=true`; the workflow refuses
+zero or two channels. The extension workflow attaches its VSIX to the existing
+`v<version>` Release without creating or replacing it.
+
 Update docs or release notes if the install command or package metadata changed.
 
 ## Public-Surface Copy
@@ -374,12 +385,16 @@ existing GitHub Release rather than replacing it.
    and fixes only the broken path. Merge it.
 2. Rerun the failed workflow via `workflow_dispatch` with the same
    `version` input as the tag, for example
-   `gh workflow run release-server-binaries.yml -f version=0.8.0`. The
+   `gh workflow run release-server-binaries.yml --repo EffortlessMetrics/ripr -f version=0.8.0`. The
    asset names continue to use the original version, so they overlay
    correctly on the existing Release.
 3. After server assets are present and verified, rerun any downstream
    workflow that was gated on them, for example
-   `gh workflow run publish-extension.yml -f version=0.8.0`.
+   `gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref v0.8.0 -f version=0.8.0 -f publish_vs_marketplace=true -f publish_open_vsx=false`,
+   or the reverse pair for Open VSX. Exactly one channel must be `true`; the
+   workflow refuses zero or two. If the fix-forward repaired this workflow
+   itself, dispatch with `--ref main` instead: the VSIX still attaches to the
+   `v<version>` Release named by `version`, not to the execution ref.
 4. Do not retag and do not delete the GitHub Release. Leave the tag at
    the release-prep commit; the fix-forward commit is on `main` and any
    subsequent point release will include it.

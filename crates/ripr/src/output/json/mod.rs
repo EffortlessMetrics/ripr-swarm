@@ -4,7 +4,9 @@ mod formatter;
 mod report;
 
 pub use context_packet::render_context_packet;
-pub(crate) use context_packet::render_context_packet_dto;
+pub(crate) use context_packet::{
+    render_context_packet_dto, render_context_packet_with_explain_command,
+};
 pub use report::render;
 pub(crate) use report::render_with_config;
 
@@ -1591,6 +1593,8 @@ mod tests {
             rendered.contains("diff-first"),
             "expected diff-first guidance in why; got:\n{rendered}"
         );
+        assert!(rendered.contains("--base BASE"));
+        assert!(!rendered.contains("--base origin/main"));
         // Bug 2 regression guard: the why field must recommend --format repo-exposure-md,
         // not --mode fast (which is a speed tier, not a scope provider).
         assert!(

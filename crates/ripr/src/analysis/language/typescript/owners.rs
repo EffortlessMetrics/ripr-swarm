@@ -223,9 +223,11 @@ pub(crate) fn owner_from_variable_declarator(
             imports: imports.to_vec(),
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
-            // Non-function initializers carry no resolvable signature facts.
+            // Non-function initializers carry no resolvable signature facts:
+            // no fixed positional signature the boundary witness could
+            // arity-check against.
+            params: Vec::new(),
             arity: None,
-            parameters: Vec::new(),
             source_text: None,
         }),
     }
@@ -260,7 +262,7 @@ pub(crate) fn owner_from_function(
     decorated: bool,
     imports: &[TypeScriptImport],
 ) -> TypeScriptOwner {
-    let (arity, parameters) = parameter_facts(&func.params);
+    let (arity, params) = parameter_facts(&func.params);
     TypeScriptOwner {
         name: name.to_string(),
         file: file.to_path_buf(),
@@ -273,8 +275,8 @@ pub(crate) fn owner_from_function(
         imports: imports.to_vec(),
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
+        params,
         arity,
-        parameters,
         source_text: Some(source[func.span.start as usize..func.span.end as usize].to_string()),
     }
 }
@@ -288,7 +290,7 @@ pub(crate) fn owner_from_arrow(
     decorated: bool,
     imports: &[TypeScriptImport],
 ) -> TypeScriptOwner {
-    let (arity, parameters) = parameter_facts(&arrow.params);
+    let (arity, params) = parameter_facts(&arrow.params);
     TypeScriptOwner {
         name: name.to_string(),
         file: file.to_path_buf(),
@@ -301,8 +303,8 @@ pub(crate) fn owner_from_arrow(
         imports: imports.to_vec(),
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
+        params,
         arity,
-        parameters,
         source_text: Some(source[arrow.span.start as usize..arrow.span.end as usize].to_string()),
     }
 }
@@ -348,7 +350,7 @@ pub(crate) fn owner_from_method(
         return None;
     }
     let name = property_key_name(&method.key)?;
-    let (arity, parameters) = parameter_facts(&method.value.params);
+    let (arity, params) = parameter_facts(&method.value.params);
     Some(TypeScriptOwner {
         name,
         file: file.to_path_buf(),
@@ -370,8 +372,8 @@ pub(crate) fn owner_from_method(
             oxc_ast::ast::MethodDefinitionKind::Method => TypeScriptMethodKind::Ordinary,
         },
         class_default_export: false,
+        params,
         arity,
-        parameters,
         source_text: Some(source[method.span.start as usize..method.span.end as usize].to_string()),
     })
 }
@@ -717,6 +719,42 @@ pub(crate) fn detect_owner_extraction_gap(
         shape,
         snippet: snippet_for_span(source, span.0, span.1),
     })
+}
+
+/// 1-based inclusive line ranges of top-level ambient declarations
+/// (`declare function`, `export declare const`, `declare module 'x' { ... }`,
+/// `declare global { ... }`), read from the syntax tree. They are type-only
+/// and erased at compile time, so a changed line inside one has no runtime
+/// behavior to probe. A file that does not parse yields no ranges, so its
+/// lines stay probed.
+pub(crate) fn ambient_declaration_lines(file: &Path, source: &str) -> Vec<(usize, usize)> {
+    parse_on_worker(file, source, |file, source, allocator| {
+        let ret = Parser::new(allocator, source, source_type_for(file)).parse();
+        if !ret.errors.is_empty() {
+            return Vec::new();
+        }
+        ret.program
+            .body
+            .iter()
+            .filter(|stmt| match stmt {
+                Statement::ExportNamedDeclaration(export) => export
+                    .declaration
+                    .as_ref()
+                    .is_some_and(|declaration| declaration.declare()),
+                _ => stmt
+                    .as_declaration()
+                    .is_some_and(|declaration| declaration.declare()),
+            })
+            .map(|stmt| {
+                let span = stmt.span();
+                (
+                    line_for_offset(source, span.start as usize),
+                    line_for_offset(source, span.end as usize),
+                )
+            })
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 /// Walk top-level statements for unsupported owner shapes intersecting a

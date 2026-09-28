@@ -23,10 +23,9 @@ Rust 1.95 is RIPR's build/install MSRV, not a minimum compiler version for the
 repository being analyzed. An already-built CLI or bundled server can perform
 static analysis for a repository that pins an older Rust toolchain. Project
 verification still uses that repository's selected toolchain and can succeed,
-fail, or be unavailable independently. Current 0.11 development builds can
-still report an older workspace compiler as a `doctor` failure; that is a known
-pre-release defect, not evidence that `ripr check` invoked or required that
-compiler.
+fail, or be unavailable independently. `ripr doctor` discloses an older or
+missing workspace compiler as an advisory for installed-binary analysis;
+`ripr doctor --profile source-build` checks RIPR's build prerequisites.
 
 The latest GitHub release is [0.10.0](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0).
 This guide describes **0.11 development**, including `--worktree`, bounded
@@ -231,10 +230,12 @@ TypeScript and JavaScript are opt-in previews. Diff analysis recognizes:
 .ts  .tsx  .mts  .cts  .js  .jsx  .mjs  .cjs
 ```
 
-The modern module suffixes are analysis inputs, but some downstream repair,
-related-test, targeted-rerun, and packet surfaces can still under-emit for
-`.mts`, `.cts`, `.mjs`, and `.cjs`. An absent repair packet is therefore not
-evidence that the file was ignored or that the change is safe.
+In the development build, these extensions also share the language
+classification used by repair eligibility, related-test packet labels, and
+targeted reruns. Recognizing a file does not make its findings repairable:
+a complete supported route and sufficient evidence are still required. Read
+the reported limitation or next action; an absent repair packet is not evidence
+that the change is safe.
 
 Perl needs a `lang-perl` build and the unpublished `perl-ripr-facts` exporter,
 so it is not usable from a released build/exporter combination.

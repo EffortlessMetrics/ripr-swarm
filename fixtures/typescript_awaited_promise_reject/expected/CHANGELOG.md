@@ -419,3 +419,51 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_awaited_promise_reject (4)
+
+Reason:
+RIPR-SPEC-0027: the #4103 relation-anchor gate holds tests that only token-call the owner (no import/declaration anchor, mock/spy-only observation, or off-position boundary literal) at weakly_exposed with the missing anchor disclosed, instead of exposed; the fixture's assertion shape is one of the audited anchor-gate classes and its evidence lines are unchanged
+
+Command:
+`cargo xtask goldens bless typescript_awaited_promise_reject --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_awaited_promise_reject (5)
+
+Reason:
+RIPR-SPEC-0027: oracle classification is independent of relation credit - the unanchored bare owner call still classifies its broad toThrow assertion (broad_error/weak) so the recommendation names the exact-payload repair intent; exposure stays weakly_exposed under the #4103 anchor gate
+
+Command:
+`cargo xtask goldens bless typescript_awaited_promise_reject --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_awaited_promise_reject (6)
+
+Reason:
+RIPR-SPEC-0122 (#4216): TS/JS preview safe next action is terminal for a closed repair packet (quotes the validator's why_not_actionable) and says no repair for an exposed finding
+
+Command:
+`cargo xtask goldens bless typescript_awaited_promise_reject --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_awaited_promise_reject (7)
+
+Reason:
+RIPR-SPEC-0122 (#4216 review): closed-packet TS/JS safe action bounds the quoted reason, drops the causal 'so', and asks unknown-class findings for a manual check
+
+Command:
+`cargo xtask goldens bless typescript_awaited_promise_reject --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

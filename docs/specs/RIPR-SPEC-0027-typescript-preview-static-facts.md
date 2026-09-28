@@ -208,8 +208,26 @@ Probes the adapter must generate (syntax-first):
   resolved through a syntactic `vi.fn()` / `jest.fn()` initializer
 
 Added lines that are blank, comment-only, or punctuation-only (`}`, `});`,
-`)`) produce no probe. An unrecognised line keeps the non-specific predicate
+`)`) produce no probe. Neither do lines inside a top-level ambient
+declaration found in the parsed syntax tree (`declare function`,
+`export declare const`, `declare module 'x' { ... }`, `declare global`), or
+any line of a `.d.ts`/`.d.mts`/`.d.cts` declaration file: these are type-only
+and erased at compile time. Declaration files still count as changed files.
+`declare` used as a runtime identifier, or at the start of a template-literal
+line, is still probed. An unrecognised line keeps the non-specific predicate
 fallback and is never classified `exposed`.
+
+A changed line whose in-place removed counterpart differs only in erased
+TypeScript type syntax also produces no probe (#4282). Both sides must parse
+as a single-line function, method, or variable declaration, and their runtime
+parts must match exactly: names, parameter patterns, default values, parameter
+properties, `async`/generator, export shape, and body or initializer text. A
+line with a decorator, a constructor line, and a method line in a file that
+uses decorators keep their probe: under `emitDecoratorMetadata` decorated
+parameter and return types are emitted as runtime metadata. Return types, parameter and variable annotations, optional
+markers, generic parameter lists, and `this` parameters are ignored. Type
+syntax inside an expression (`as`, `satisfies`, generic call arguments) and
+multi-line signature fragments are not compared and keep their probe.
 
 A changed predicate is `exposed` only when a strong, family-matching
 assertion's observed expression (`expect(<expr>)`) calls the owner at the
@@ -220,6 +238,44 @@ operands to the same value. Predicates without a comparable boundary (such as
 `Number.isNaN(n)`) and boundaries reached only through locals or computed
 values stay `weakly_exposed`; the literal or operand-pair boundary becomes the
 missing discriminator when one is known.
+
+Three one-hop input resolutions credit the idiom shapes that reach the same
+boundary without changing the guards (#4104 E):
+
+- **Local-binding idiom**: a bare-local `observed_expression` whose single
+  `const`/`let` initializer IS the owner call (`const result =
+  applyDiscount(100); expect(result).toBe(90)`) witnesses through the
+  initializer's arguments — position, arity, standalone-literal, and
+  anchoring guards unchanged. The declaration must be the binding visible at
+  the assertion (the same lexical scope walk as the shadow guard: a
+  top-level declaration binds the whole body; a declaration inside a nested
+  block binds only that block, so an outer assertion is never attributed to
+  a nested helper's same-named `const`). A wrapper around the call, a
+  derived value, a `let` reassigned after the call (plain or compound
+  assignment, or an increment/decrement), or a twice-declared name stays
+  fail-closed.
+- **Operand shapes the comparison parser previously rejected**: `?.`
+  normalizes to member access and `??` reads as the nullish boundary
+  comparison (quote-aware, so literal contents never normalize — and a
+  quoted `??` never arms the nullish-input path); a `yield <comparison>`
+  tail classifies as a predicate and strips the keyword. For a nullish
+  boundary the nullish input (`null`/`undefined`) at the left operand's read
+  position is the ONLY creditable boundary input: the right-hand fallback
+  literal is never creditable (a non-nullish call never evaluates it and
+  behaves identically before and after), and parenthesized compound forms
+  and call-shaped tails stay fail-closed.
+- **Named constants**: an UPPER_CASE comparison operand resolves through a
+  single immutable integer module-level `const` in the owner's own module
+  (the recorded owner span first, then the owner file through the workspace
+  root; a same-name declaration at any non-top-level scope is a shadow the
+  changed read may observe, so resolution fails closed — the operand keeps
+  its name and the file-level fallback never runs), and an UPPER_CASE
+  argument resolves through the test body or — via the import record — a
+  single such declaration in the owner's own module, mirroring the Rust
+  `value_resolution::named_constant` strictness. `let`/`var`, computed
+  initializers, repeated declarations, off-value constants, and constants
+  imported from a module the adapter cannot resolve to the owner stay
+  fail-closed.
 
 When the adapter cannot classify, it emits one of the `static_limit_kind`
 values defined in RIPR-SPEC-0026:

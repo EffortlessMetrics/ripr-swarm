@@ -58,7 +58,7 @@ use crate::output::agent_seam_packets::{
 use crate::output::evidence_record::repair_start_command_for;
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
 use crate::output::gap_decision_ledger::{
-    DEFAULT_GAP_DECISION_LEDGER_OUT, GapRecord, parse_gap_records_json,
+    DEFAULT_GAP_DECISION_LEDGER_OUT, GapRecord, parse_gap_records_json_for_root,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -2701,10 +2701,13 @@ fn path_is_detectable_source_dir_python(root: &Path, path: &Path) -> bool {
 
 /// Root-relative components of `path` when `path` sits below `root`. Root
 /// components compare with the platform path rule (case-insensitive on
-/// Windows), mirroring the LSP URI authority's containment rule; `.` and
-/// `..` segments resolve before classification; non-UTF-8 components fail
-/// closed.
+/// Windows), mirroring the LSP URI authority's containment rule. `.` and
+/// `..` resolve on both sides first, including a root this process built
+/// with a relative join (`crates/ripr/../..`). A collapsed file URI and
+/// that uncollapsed root are the same directory.
 fn root_relative_components(root: &Path, path: &Path) -> Option<Vec<String>> {
+    let root = super::uri::normalize_path(root);
+    let path = super::uri::normalize_path(path);
     fn component_names(path: &Path) -> Vec<Option<String>> {
         path.components()
             .filter(|component| {
@@ -2717,8 +2720,8 @@ fn root_relative_components(root: &Path, path: &Path) -> Option<Vec<String>> {
             .collect()
     }
 
-    let root_names = component_names(root);
-    let path_names = component_names(path);
+    let root_names = component_names(&root);
+    let path_names = component_names(&path);
     if path_names.len() < root_names.len() {
         return None;
     }
@@ -2811,6 +2814,43 @@ mod workspace_input_tests {
 
         assert!(WorkspaceInputKind::PythonProjectMarker.reloads_repository_config());
         assert!(!WorkspaceInputKind::PythonProjectMarker.invalidates_workspace_graph());
+        Ok(())
+    }
+
+    #[test]
+    fn parent_segments_in_the_workspace_root_still_classify_root_python_sources()
+    -> Result<(), String> {
+        let repo =
+            std::env::temp_dir().join(format!("ripr-root-parent-segments-{}", std::process::id()));
+        let nested = repo.join("crates").join("pkg");
+        std::fs::create_dir_all(&nested).map_err(|err| err.to_string())?;
+        let root = nested.join("..").join("..");
+        let source = repo.join("src").join("app.py");
+        let dotted_source = repo.join("src").join("nested").join("..").join("app.py");
+        let outside = repo.join("scripts").join("app.py");
+        let generated = repo.join("src").join("client_pb2.py");
+        let escaped = repo.join("src").join("..").join("..").join("outside.py");
+        let source_kind = workspace_input_kind(&root, &source);
+        let dotted_kind = workspace_input_kind(&root, &dotted_source);
+        let outside_kind = workspace_input_kind(&root, &outside);
+        let generated_kind = workspace_input_kind(&root, &generated);
+        let escaped_kind = workspace_input_kind(&root, &escaped);
+        let _ = std::fs::remove_dir_all(&repo);
+        if source_kind != Some(WorkspaceInputKind::PythonSourcePresence) {
+            return Err(format!(
+                "src/app.py under a root with parent segments was {source_kind:?}"
+            ));
+        }
+        if dotted_kind != Some(WorkspaceInputKind::PythonSourcePresence) {
+            return Err(format!(
+                "src/nested/../app.py was not collapsed before classification: {dotted_kind:?}"
+            ));
+        }
+        if outside_kind.is_some() || generated_kind.is_some() || escaped_kind.is_some() {
+            return Err(format!(
+                "non-inputs were classified: outside={outside_kind:?} generated={generated_kind:?} escaped={escaped_kind:?}"
+            ));
+        }
         Ok(())
     }
 
@@ -3298,7 +3338,9 @@ fn cancellation_outcome(request: &RefreshRequest) -> RefreshAttemptOutcome {
     }
 }
 
-fn diagnostics_by_uri_from_batches(batches: &[DiagnosticBatch]) -> BTreeMap<Uri, Vec<Diagnostic>> {
+pub(super) fn diagnostics_by_uri_from_batches(
+    batches: &[DiagnosticBatch],
+) -> BTreeMap<Uri, Vec<Diagnostic>> {
     batches
         .iter()
         .map(|batch| (batch.uri.clone(), batch.diagnostics.clone()))
@@ -5251,7 +5293,7 @@ fn workspace_status_receipt_summary(
     // receipt_status: movement from ledger.
     let ledger_path = root.join(DEFAULT_GAP_DECISION_LEDGER_OUT);
     let receipt_movement = top_gap
-        .map(|artifact| receipt_status_from_ledger(&ledger_path, artifact).0)
+        .map(|artifact| receipt_status_from_ledger(root, &ledger_path, artifact).0)
         .unwrap_or_else(|| serde_json::Value::String("not_available".to_string()));
 
     // latest_attempt_outcome from swarm-attempt-ledger.json.
@@ -6149,7 +6191,7 @@ fn collect_gap_record_context_packet(
             return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON));
         }
     };
-    let records = match parse_gap_records_json(&contents) {
+    let records = match parse_gap_records_json_for_root(&contents, Some(root)) {
         Ok(records) => records,
         Err(_) => return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON)),
     };
@@ -6194,7 +6236,7 @@ impl Backend {
 
         // Fallback: gap-decision-ledger.json using the existing GapRecord machinery.
         let ledger_path = absolute_join(&root, Path::new(DEFAULT_GAP_DECISION_LEDGER_OUT));
-        collect_repair_packet_from_ledger(&ledger_path, gap_id_arg.as_deref())
+        collect_repair_packet_from_ledger(&root, &ledger_path, gap_id_arg.as_deref())
     }
 
     fn collect_top_limitation(&self) -> Option<LSPAny> {
@@ -6320,7 +6362,7 @@ fn collect_receipt_status_fields(
     let ledger_path =
         root.join(crate::output::gap_decision_ledger::DEFAULT_GAP_DECISION_LEDGER_OUT);
     let (receipt_status_val, missing_receipt_reason_val) =
-        receipt_status_from_ledger(&ledger_path, artifact);
+        receipt_status_from_ledger(root, &ledger_path, artifact);
 
     // copy_receipt_command: only for complete packets (verify + receipt
     // commands both present). Incomplete packets → not_available.
@@ -6359,6 +6401,7 @@ fn collect_receipt_status_fields(
 /// Read the gap-decision-ledger to get the real receipt movement + missing_reason
 /// for the given gap artifact. Falls back to not_available on any read/parse error.
 fn receipt_status_from_ledger(
+    root: &std::path::Path,
     ledger_path: &std::path::Path,
     artifact: &super::gap_artifacts::ValidatedGapArtifact,
 ) -> (serde_json::Value, serde_json::Value) {
@@ -6373,7 +6416,10 @@ fn receipt_status_from_ledger(
             );
         }
     };
-    let records = match crate::output::gap_decision_ledger::parse_gap_records_json(&contents) {
+    let records = match crate::output::gap_decision_ledger::parse_gap_records_json_for_root(
+        &contents,
+        Some(root),
+    ) {
         Ok(r) => r,
         Err(_) => {
             return (
@@ -6735,7 +6781,11 @@ fn validate_and_render_actionable_gap_packet(packet: &serde_json::Value) -> Opti
     serde_json::from_value(result).ok()
 }
 
-fn collect_repair_packet_from_ledger(path: &Path, gap_id: Option<&str>) -> Option<LSPAny> {
+fn collect_repair_packet_from_ledger(
+    root: &Path,
+    path: &Path,
+    gap_id: Option<&str>,
+) -> Option<LSPAny> {
     let contents = match read_artifact_capped(path) {
         CappedArtifactRead::Contents(contents) => contents,
         // Absent artifact: no packet is available, which is a normal state.
@@ -6745,7 +6795,7 @@ fn collect_repair_packet_from_ledger(path: &Path, gap_id: Option<&str>) -> Optio
             return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON));
         }
     };
-    let records = match parse_gap_records_json(&contents) {
+    let records = match parse_gap_records_json_for_root(&contents, Some(root)) {
         Ok(records) => records,
         Err(_) => return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON)),
     };
@@ -6838,6 +6888,10 @@ fn gap_record_matches(record: &GapRecord, gap_id: &str) -> bool {
 }
 
 fn evidence_context_packet(snapshot: &AnalysisSnapshot, entry: &ClassifiedSeam) -> LSPAny {
+    // #4001/#3999: loop commands bind the snapshot's selected workspace root,
+    // not the language-server process working directory; the packet's
+    // `root` field stays the portable role.
+    let root = loop_commands::bound_root(&snapshot.root.to_string_lossy());
     let seam = &entry.seam;
     let evidence = &entry.evidence;
     let seam_id = seam.id().as_str();
@@ -6908,31 +6962,31 @@ fn evidence_context_packet(snapshot: &AnalysisSnapshot, entry: &ClassifiedSeam) 
         // The repair start only for a seam `agent repair` would accept (the
         // fail-closed repair-packet flip, RIPR-SPEC-0087 §8, plus a
         // test-surface target); `null` otherwise (#3906).
-        "repair_command": repair_start_command_for(entry),
+        "repair_command": repair_start_command_for(entry, &root),
         "agent_packet_command": loop_commands::agent_packet_command(
-            ".",
+            &root,
             seam_id,
             loop_commands::EDITOR_AGENT_PACKET_ARTIFACT,
         ),
         "agent_brief_command": loop_commands::agent_brief_command(
-            ".",
+            &root,
             seam_id,
             loop_commands::EDITOR_AGENT_BRIEF_ARTIFACT,
         ),
         "after_snapshot_command": loop_commands::check_repo_exposure_command_with_base(
-            ".",
+            &root,
             snapshot.base.as_deref(),
             snapshot.mode.as_str(),
             loop_commands::PILOT_AFTER_SNAPSHOT_ARTIFACT,
         ),
         "verify_command": loop_commands::agent_verify_command(
-            ".",
+            &root,
             loop_commands::PILOT_BEFORE_SNAPSHOT_ARTIFACT,
             loop_commands::PILOT_AFTER_SNAPSHOT_ARTIFACT,
             Some(loop_commands::EDITOR_AGENT_VERIFY_ARTIFACT),
         ),
         "receipt_command": loop_commands::agent_receipt_command(
-            ".",
+            &root,
             loop_commands::EDITOR_AGENT_VERIFY_ARTIFACT,
             seam_id,
             Some(loop_commands::EDITOR_AGENT_RECEIPT_ARTIFACT),
@@ -7363,7 +7417,7 @@ mod gap_record_context_tests {
 
     #[test]
     fn gap_record_matches_compares_pr_local_and_canonical_ids() -> Result<(), String> {
-        let records = parse_gap_records_json(gap_ledger_json())
+        let records = crate::output::gap_decision_ledger::parse_gap_records_json(gap_ledger_json())
             .map_err(|err| format!("parse fixture ledger failed: {err}"))?;
         let record = records
             .first()

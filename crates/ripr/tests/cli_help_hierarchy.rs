@@ -15,6 +15,7 @@ use std::process::Command;
 const COMMAND_HIERARCHY_DOC: &str = include_str!("../../../docs/COMMAND_HIERARCHY.md");
 const ROOT_README: &str = include_str!("../../../README.md");
 const QUICKSTART_DOC: &str = include_str!("../../../docs/QUICKSTART.md");
+const EXIT_CODES_DOC: &str = include_str!("../../../docs/EXIT_CODES.md");
 
 fn rendered_help(args: &[&str]) -> Result<String, String> {
     let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
@@ -74,10 +75,10 @@ fn exhaustive_help_keeps_the_same_roles_and_boundaries() -> Result<(), String> {
     let stdout = normalized(&rendered_help(&["help", "--all"])?);
     for needle in [
         "Diagnose setup ripr doctor",
-        "Inspect one change ripr check --base origin/main",
+        "Inspect one change ripr check",
         "Guided repo adoption ripr pilot --root .",
         "Repair one named gap ripr agent repair --seam-id ID --phase before|after|verify",
-        "Compose PR evidence ripr first-pr --root . --base origin/main --head HEAD",
+        "Compose PR evidence ripr first-pr --root . --base BASE --head HEAD",
         "Adopt advisory CI ripr init --ci github",
         "`ripr check` is the ordinary first-value analysis; `ripr pilot` is the guided repo-adoption workflow.",
         "`ripr first-pr` and `ripr start-here` compose `target/ripr/reports/start-here.{json,md}` from existing artifacts; they do not run analysis or repair a gap.",
@@ -249,8 +250,8 @@ fn agent_repair_help_names_the_primary_transaction_and_its_limits() -> Result<()
 }
 
 /// `check --help` must teach the loader's real default-base resolution order
-/// (#3885), not the old `origin/main` shorthand; `diff --help` keeps stating
-/// its literal default because `diff` passes the base to git unchanged.
+/// (#3885), not the old `origin/main` shorthand. `diff` resolves an omitted
+/// base through the same authority (#3952), so its help states the same order.
 #[test]
 fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
     let check = normalized(&rendered_help(&["check", "--help"])?);
@@ -270,8 +271,11 @@ fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
     assert_contains(
         "diff help (`ripr diff --help`)",
         &diff,
-        "Defaults to origin/main, used exactly as given",
+        "the local origin/HEAD ref, then origin/main, origin/master, main, and master",
     )?;
+    if diff.contains("Defaults to origin/main") {
+        return Err("diff help still teaches the origin/main default".to_string());
+    }
     Ok(())
 }
 
@@ -432,6 +436,35 @@ fn first_run_guard_does_not_credit_a_later_correct_example() -> Result<(), Strin
     if first_bash_block(&wrong)? == "ripr check" {
         return Err(
             "the CLI section credited a later check instead of its first command".to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// PR #4196 review: the doctor exit-code guide must describe both profiles.
+/// The default analysis profile keeps a missing or old toolchain advisory
+/// (exit `0`); only `--profile source-build` fails on it. A guide that still
+/// says a Rust root fails on a missing toolchain contradicts the binary.
+#[test]
+fn doctor_exit_code_guide_distinguishes_analysis_and_source_build() -> Result<(), String> {
+    let section = normalized(&doc_section(EXIT_CODES_DOC, "## `ripr doctor` exit codes")?);
+    let help = normalized(&rendered_help(&["doctor", "--help"])?);
+    for needle in [
+        "--profile source-build",
+        "`advisory`",
+        "does not change the exit code",
+    ] {
+        assert_contains("docs/EXIT_CODES.md doctor section", &section, needle)?;
+    }
+    assert_contains(
+        "ripr doctor --help",
+        &help,
+        "--profile analysis|source-build",
+    )?;
+    if section.contains("fail on a missing manifest or toolchain") {
+        return Err(
+            "docs/EXIT_CODES.md still says the default doctor fails on a missing toolchain"
+                .to_string(),
         );
     }
     Ok(())
