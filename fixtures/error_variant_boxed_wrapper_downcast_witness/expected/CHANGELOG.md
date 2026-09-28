@@ -141,3 +141,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (12)
+
+Reason:
+RIPR-SPEC-0133: whole-word name matching relates parse_summary_boxed_variant_propagates_malformed_source through the probe token MalformedSource, so the reach line lists both tests and the discriminator line names that test's exact value or pattern oracle; class unchanged
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
