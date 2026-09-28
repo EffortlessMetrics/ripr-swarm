@@ -153,6 +153,12 @@ not expose receipt commands, edit-boundary authority, or agent packets, and
 remains advisory review context rather than verify, receipt, gate, badge, or
 RIPR Zero authority.
 
+GitHub Actions displays at most 10 annotations of each level (error, warning,
+notice) per step and drops the rest silently. Disclosure notices therefore lead
+the stream: the unannotated-denominator notice (suppressed or not-current
+findings) and, when any level exceeds 10, a notice naming how many annotations
+of that level were emitted. Per-finding annotations follow.
+
 `ripr check --format human` is the bounded default terminal surface. It prints
 header and summary counts, then one `Start here:` triage block with a closed
 state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or
@@ -1592,8 +1598,10 @@ ALL of the following are true:
    bare `ripr check` that resolved the default base (#3888).
 2. None of `--diff <file>`, `--worktree`, or `--candidate-tree` was supplied,
    and the format is not repo-scope.
-3. The working tree has at least one uncommitted change to a tracked source
-   file, as reported by `git status --porcelain`.
+3. At least one file a language adapter reads (a source or test file) has
+   uncommitted changes: staged or unstaged edits, or an untracked new file.
+   The run read those files as committed at `HEAD`, so the changes count
+   neither in the diff nor as test evidence.
 
 Absent (not emitted) when `false`. Does not bump `schema_version`.
 
@@ -1609,10 +1617,12 @@ Example:
 "unanalyzed_working_tree": true
 ```
 
-The field is absent when the worktree is clean, when `--diff <file>` or
+The field is absent when no source or test file has uncommitted changes (an
+edited README does not count), when `--diff <file>` or
 `--candidate-tree` was used, when a repo-scope format was requested, when `--worktree` was used to include staged and unstaged
-tracked edits in the analyzed diff, or when `git status --porcelain` cannot be
-run (fail-closed: no fabricated disclosure).
+tracked edits in the analyzed diff. When the committed-content probe cannot
+run, the check fails with the git step named instead of analyzing mixed
+content.
 
 ### `suppression_policy` and suppressed findings (top-level additive, #1441)
 
