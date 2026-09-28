@@ -1357,8 +1357,14 @@ mod tests {
             let limitation = outcome
                 .limitations
                 .iter()
+                // A build without the typescript feature also reports that
+                // adapter as unavailable; select the rust exclusion itself.
                 .find(|limitation| {
                     limitation.kind == AnalysisLimitationKind::LanguageAdapterUnavailable
+                        && limitation
+                            .bounded_detail
+                            .as_deref()
+                            .is_some_and(|detail| detail.starts_with("rust changed"))
                 })
                 .ok_or_else(|| format!("{label}: exclusion limitation missing"))?;
             assert_eq!(limitation.affected_items, Some(1), "{label}");
