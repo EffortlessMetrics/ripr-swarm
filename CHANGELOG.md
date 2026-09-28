@@ -718,11 +718,27 @@ are scoped or reviewed.
   gain related-test evidence; a relation alone does not establish a
   discriminating oracle
   ([#4103](https://github.com/EffortlessMetrics/ripr-swarm/issues/4103)).
+- TypeScript owner-call relations no longer credit unanchored bare calls,
+  unrelated destructures, calls into supported mocked modules, or spies that
+  fabricate the owner's value. These cases retain weaker advisory evidence
+  where available instead of crediting observation of the changed behavior;
+  genuine anchored calls and call-through spies remain eligible
+  ([#4125](https://github.com/EffortlessMetrics/ripr-swarm/pull/4125)).
 - TypeScript and JavaScript preview repair, targeted rerun, and output paths
   now recognize `.mts`, `.cts`, `.mjs`, and `.cjs` sources and tests through
   the same extension authority used by analysis. These module forms no longer
   disappear solely because a later consumer used the narrower extension list
   ([#4116](https://github.com/EffortlessMetrics/ripr-swarm/issues/4116)).
+- Oversized diffs stop parsing when the distinct accepted file count exceeds
+  the configured limit, before reading the remaining file bodies. The error
+  reports an observed lower bound and no partial analysis result; this does
+  not cap the bytes of one large file or the already acquired diff text
+  ([#3858](https://github.com/EffortlessMetrics/ripr-swarm/issues/3858)).
+- Perl preview evidence preserves static observations when the producer
+  reports a missing test runner. Runner absence still blocks repair authority;
+  it does not by itself cap the static exposure class. This bounded consistency
+  repair does not complete the broader Perl fact-packet integration
+  ([#4059](https://github.com/EffortlessMetrics/ripr-swarm/pull/4059)).
 - `check-file-policy` builds test binaries before it lists `covered_by`
   subjects. A cold compile is no longer charged against the five-minute
   list cap, and a timeout is reported as an instrument failure rather than
