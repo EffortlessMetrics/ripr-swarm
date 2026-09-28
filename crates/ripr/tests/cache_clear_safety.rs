@@ -26,6 +26,16 @@ fn remove_base(base: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The one spawn site for the exact `ripr` binary in this file.
+fn run_ripr(base: &Path, cache_dir: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(args)
+        .current_dir(base)
+        .env(CACHE_DIR_ENV, cache_dir)
+        .output()
+        .map_err(|error| format!("run exact ripr binary {args:?}: {error}"))
+}
+
 #[test]
 fn cache_clear_force_preserves_unrelated_siblings_through_exact_binary() -> Result<(), String> {
     let base = temp_dir("mixed-root");
@@ -36,12 +46,7 @@ fn cache_clear_force_preserves_unrelated_siblings_through_exact_binary() -> Resu
     let sentinel = cache_dir.join("KEEP.txt");
     fs::write(&sentinel, b"unrelated user data").map_err(|error| error.to_string())?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .args(["cache", "clear", "--force"])
-        .current_dir(&base)
-        .env(CACHE_DIR_ENV, &cache_dir)
-        .output()
-        .map_err(|error| format!("run exact ripr cache clear binary: {error}"))?;
+    let output = run_ripr(&base, &cache_dir, &["cache", "clear", "--force"])?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -72,14 +77,7 @@ fn cache_status_hint_names_a_published_command_that_clears_the_same_dir() -> Res
     fs::create_dir_all(&layer).map_err(|error| error.to_string())?;
     fs::write(layer.join("entry.json"), b"{}").map_err(|error| error.to_string())?;
 
-    let run = |args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_ripr"))
-            .args(args)
-            .current_dir(&base)
-            .env(CACHE_DIR_ENV, &cache_dir)
-            .output()
-            .map_err(|error| format!("run exact ripr binary {args:?}: {error}"))
-    };
+    let run = |args: &[&str]| run_ripr(&base, &cache_dir, args);
     let status = run(&["cache", "status"])?;
     let hint = String::from_utf8_lossy(&status.stderr).to_string();
     let preview = run(&["cache", "clear", "--dry-run"])?;

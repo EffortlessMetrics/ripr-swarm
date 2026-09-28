@@ -42,7 +42,7 @@ pub(in crate::analysis) fn build_finding(
             && evidence.reach.state == StageState::No
             && !context.owner_assertion_shaped
         {
-            // A new untested function yields several unclassifiable lines;
+            // A new function no test calls yields several unclassifiable lines;
             // "escalate to real mutation" is useless while no test reaches
             // the owner at all. The class stays static_unknown.
             Some(STATIC_UNKNOWN_UNREACHED_NEXT_STEP.to_string())

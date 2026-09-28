@@ -152,6 +152,14 @@ pub(super) fn one_line(value: &str) -> String {
         {
             truncated.truncate(space);
         }
+        // Never leave a code span open: "input `discountedTotal(…" reads as
+        // a broken command. Cut before the unmatched backtick instead.
+        if truncated.matches('`').count() % 2 == 1
+            && let Some(open) = truncated.rfind('`')
+        {
+            truncated.truncate(open);
+            truncated.truncate(truncated.trim_end().len());
+        }
         truncated.push('…');
         truncated
     }
@@ -1102,6 +1110,19 @@ mod one_line_tests {
         let rendered = one_line(&text);
         assert!(rendered.ends_with("places…"), "{rendered}");
         assert!(rendered.chars().count() <= LINE_BUDGET + 1);
+    }
+
+    #[test]
+    fn one_line_never_leaves_a_code_span_open() {
+        // Rewalk (TypeScript): the safe-next-action reason ended
+        // "the observed call input `discountedTotal(…" with an open span.
+        let text = format!(
+            "{}missing discriminator `amount == DISCOUNT_THRESHOLD` is absent",
+            "word ".repeat(29)
+        );
+        let rendered = one_line(&text);
+        assert_eq!(rendered.matches('`').count() % 2, 0, "{rendered}");
+        assert!(rendered.ends_with("missing discriminator…"), "{rendered}");
     }
 
     #[test]
