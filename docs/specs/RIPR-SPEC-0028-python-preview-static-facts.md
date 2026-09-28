@@ -158,8 +158,11 @@ re-export (`import naturaldelta as delta`) is not followed. A star re-export
 never carries a `_private` name, and when the source module binds `__all__`
 at top level the name must be listed in it; a binding other than a literal
 list or tuple of strings (or a `+=` of one) fails closed, and a mention of
-`__all__` in a comment or docstring is not a binding. Methods and module owners
-are never re-exported. The test must still call the owner's own name through
+`__all__` in a comment or docstring is not a binding. When the initializer
+also binds the name to something else (a second import under that name, a star
+import from another module that defines it, or its own top-level definition),
+the re-export is not followed, because the reader does not order bindings.
+Methods and module owners are never re-exported. The test must still call the owner's own name through
 the package, so a test that only calls a sibling name from the same package
 stays unrelated, and a test that binds a local named like the package alias
 (a parameter, fixture or assignment) calls that local, not the package. Diff
@@ -570,8 +573,9 @@ Package re-export reach is covered end to end, in diff and repo mode, by
 through an explicit `__init__.py` re-export, `from package import name`
 module identity, a star re-export honoring `__all__`, and the negative
 controls (a name `__all__` omits, a name quoted elsewhere but not in
-`__all__`, a sibling name, a renamed re-export, a shadowed package alias) and
-a docstring that mentions `__all__` without binding it.
+`__all__`, a sibling name, a renamed re-export, a shadowed package alias, an
+initializer that binds the name twice) and a docstring that mentions `__all__`
+without binding it.
 
 ## Implementation Mapping
 
