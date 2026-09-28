@@ -193,12 +193,15 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
                 unary_run = unary_run.saturating_add(1);
                 estimate.depth = estimate.depth.max(depth.saturating_add(unary_run));
             }
-            b'+' | b'-' | b'*' | b'/' | b'%' | b'^' | b'|' | b'&' | b'<' | b'>' | b'=' => {
+            // Postfix `.` and `?` count too: a long method or field chain is
+            // a left-nested tree just like a binary-operator run.
+            b'.' | b'?' | b'+' | b'-' | b'*' | b'/' | b'%' | b'^' | b'|' | b'&' | b'<' | b'>'
+            | b'=' => {
                 if let Some(run) = operators.get_mut(depth) {
                     *run = run.saturating_add(1);
                     estimate.operator_run = estimate.operator_run.max(*run);
                 }
-                after_operand = false;
+                after_operand = byte == b'?';
             }
             _ => {
                 after_operand = false;
@@ -365,6 +368,14 @@ mod tests {
                 "Vec<".repeat(3_000),
                 ">".repeat(3_000)
             ),
+            format!(
+                "pub fn f(x: i32) -> i32 {{ x{} }}\n",
+                ".clone()".repeat(5_000)
+            ),
+            format!(
+                "pub fn g(o: &S) -> Option<i32> {{ Some(o{}.v) }}\n",
+                ".s.as_ref()?".repeat(20_000)
+            ),
         ];
         for (case, source) in cases.iter().enumerate() {
             assert!(
@@ -402,6 +413,16 @@ mod tests {
         let source = format!("pub fn f(x: i32) -> i32 {{\n{statements}0 }}\n");
         let estimate = estimate_rust_nesting(&source);
         assert!(estimate.operator_run < 10, "{estimate:?}");
+        assert!(rust_nesting_refusal(&source).is_none());
+
+        // Ordinary field and method chains, floats, ranges and `?` reset per
+        // statement too, so a long body of them stays within budget.
+        let statements: String = (0..5_000)
+            .map(|i| format!("let v{i} = self.a.b.get({i}..2).map(|x| x * 1.5)?;\n"))
+            .collect();
+        let source = format!("fn f(&self) -> Option<f64> {{\n{statements}None }}\n");
+        let estimate = estimate_rust_nesting(&source);
+        assert!(estimate.operator_run < 16, "{estimate:?}");
         assert!(rust_nesting_refusal(&source).is_none());
     }
 }
