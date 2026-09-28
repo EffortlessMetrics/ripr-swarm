@@ -661,9 +661,13 @@ fn changed_line_inside_a_block_comment_stays_unresolved() {
         owner.and_then(|owner| ts_boundary_input_in_source(source, line, text, owner))
     };
     assert_eq!(derive(3, "  if (amount >= 5000) {"), None);
+    // Fifth review: a tree that does not match the diff (here the diff says
+    // `>=` where the module says `>`) fails closed, since the reach rules
+    // read this tree.
+    assert_eq!(derive(5, "  if (amount >= 9000) {"), None);
     // Control: the real code line with its own operand derives.
     assert_eq!(
-        derive(5, "  if (amount >= 9000) {").map(|input| input.value),
+        derive(5, "  if (amount > 9000) {").map(|input| input.value),
         Some(9000)
     );
 }

@@ -118,8 +118,8 @@ pub(crate) fn ts_boundary_input_in_source(
         owner_start_line: owner.start_line,
         owner_end_line: owner.end_line,
         constant,
-        operand: operand.to_string(),
         changed_line: line,
+        changed_text: line_text.to_string(),
     };
     let file = owner.file.clone();
     let owned_source = source.to_string();
@@ -286,9 +286,10 @@ struct ModuleRequest {
     owner_start_line: usize,
     owner_end_line: usize,
     constant: Option<String>,
-    operand: String,
     /// 1-based line of the changed comparison in the owner's module.
     changed_line: usize,
+    /// The diff's text for that line.
+    changed_text: String,
 }
 
 #[derive(Clone, Copy)]
@@ -520,10 +521,11 @@ fn changed_line_runs_on_every_call(source: &str, tokens: &[Tok], request: &Modul
     // branch, or an expression continued from the previous line (`? :`,
     // `&&`, `=>`) would otherwise pass with a balanced stack.
     let line_end = line_starts.get(changed).copied().unwrap_or(source.len());
-    // The module's own line must hold the same comparison: a line inside a
-    // block comment, or a workspace that does not match the diff, fails.
+    // The module's own line must be the diff's changed line: a line inside a
+    // block comment, or a tree that does not match the diff (the reach rules
+    // below read this tree), fails.
     let source_line = source.get(line_start..line_end).unwrap_or("");
-    if !comparison_has_whole_sides(source_line, &request.parameter, &request.operand) {
+    if source_line.trim() != request.changed_text.trim() {
         return false;
     }
     // Generators run no body code until iterated.
