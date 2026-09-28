@@ -24,6 +24,21 @@ are scoped or reviewed.
   ([#4376](https://github.com/EffortlessMetrics/ripr-swarm/issues/4376),
   [#4395](https://github.com/EffortlessMetrics/ripr-swarm/issues/4395)).
 
+- First-hour output no longer strands the reader. `--format human-full` carries
+  each finding's `ripr explain` / `ripr context` commands, which the digest
+  sends readers there for
+  ([#4379](https://github.com/EffortlessMetrics/ripr-swarm/issues/4379)).
+  `--format github` prints a denominator notice when findings are suppressed by
+  policy or are base-side, so an all-suppressed run is no longer silent
+  ([#4393](https://github.com/EffortlessMetrics/ripr-swarm/issues/4393)).
+  `ripr cache status` points at `ripr cache clear` instead of repository-only
+  xtask, and corrupt cache warnings name the entry file
+  ([#4383](https://github.com/EffortlessMetrics/ripr-swarm/issues/4383)). The
+  digest's "Why weakly_exposed" line names the incomplete stage; unclassifiable
+  lines in a function no test reaches ask for a test first instead of real
+  mutation testing; zero-count languages and the empty-result caveat on
+  non-empty preview runs are dropped; and digest lines no longer end mid-word.
+
 - LSP fallback diagnostics explain their static classification and point to
   hover evidence without promising an unavailable clipboard action or repair
   route. Missing-path guidance remains explicitly static (#4328).
