@@ -6138,7 +6138,7 @@ mod tests {
     fn prepared_packet_continuation_preserves_required_python_authorization() -> Result<(), String>
     {
         let entry = weakly_gripped_classified();
-        let suffix = crate::agent::loop_commands::PYTHON_REPAIR_AUTHORIZATION_SUFFIX;
+        let suffix = crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX;
         for authorization_suffix in [None, Some(suffix)] {
             let rendered = render_agent_seam_packet_json_with_context(
                 &entry,

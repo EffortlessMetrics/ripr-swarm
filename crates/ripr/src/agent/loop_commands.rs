@@ -1,9 +1,6 @@
 use std::path::{Component, Path, PathBuf};
 
 pub(crate) const AGENT_LOOP_COMMAND_TEMPLATE_VERSION: &str = "0.1";
-/// Trust-bound repair continuations require a fresh, explicit authorization.
-pub(crate) const PYTHON_REPAIR_AUTHORIZATION_SUFFIX: &str =
-    " --edit-authorized --edit-authority <operator-or-agent-identity>";
 
 pub(crate) const WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT: &str =
     "target/ripr/workflow/before.repo-exposure.json";

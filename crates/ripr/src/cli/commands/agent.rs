@@ -705,7 +705,7 @@ fn run_agent_repair_phase(
                     root: &packet_root,
                     authorization_suffix: python_repair_trust
                         .as_ref()
-                        .map(|_| crate::agent::loop_commands::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
+                        .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
                 },
             )?;
             let policy =

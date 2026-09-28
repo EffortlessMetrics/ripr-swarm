@@ -232,7 +232,7 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
             // driver never persists a granted authorization.
             next_command_suffix: binding
                 .as_ref()
-                .map(|_| crate::agent::loop_commands::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
+                .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
         },
     )?;
     if let Some(binding) = &binding {
