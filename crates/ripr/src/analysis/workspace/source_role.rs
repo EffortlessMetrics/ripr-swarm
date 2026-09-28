@@ -114,6 +114,25 @@ pub(crate) struct SourceRoleContext {
     /// `package.build` names. Only these seed changed-file probes outside
     /// a `src` layout.
     pub(crate) build_scripts: BTreeSet<PathBuf>,
+    /// Relative paths of explicit `[lib]` / `[[bin]]` `path = ...` crate
+    /// roots. Cargo compiles them wherever they sit, so a changed one
+    /// seeds probes even outside a `src` layout.
+    pub(crate) declared_production_roots: BTreeSet<PathBuf>,
+    /// Directories holding a declared crate root outside the package
+    /// directory itself (`lib/` for `[lib] path = "lib/foo.rs"`): Rust
+    /// resolves that root's out-of-line modules there, so changed files
+    /// below them seed probes too.
+    pub(crate) declared_production_module_dirs: BTreeSet<PathBuf>,
+}
+
+impl SourceRoleContext {
+    fn declares_production_source(&self, normalized: &Path) -> bool {
+        self.declared_production_roots.contains(normalized)
+            || self
+                .declared_production_module_dirs
+                .iter()
+                .any(|dir| normalized.starts_with(dir))
+    }
 }
 
 impl SourceRoleContext {
@@ -307,7 +326,9 @@ pub(crate) fn seeds_diff_probes(path: &Path, context: &SourceRoleContext) -> boo
                     .is_some_and(|name| NON_SOURCE_DIRECTORIES.contains(&name))
             });
             is_repo_automation_subject(path, role)
-                || (!in_non_source_directory && context.build_scripts.contains(&normalized))
+                || (!in_non_source_directory
+                    && (context.build_scripts.contains(&normalized)
+                        || context.declares_production_source(&normalized)))
         }
         _ => false,
     }
@@ -657,6 +678,56 @@ mod tests {
         // changed-file surfaces widen.
         assert_eq!(
             classify(Path::new("build.rs")),
+            SourceRole::FixtureOrReceiptEvidence
+        );
+    }
+
+    #[test]
+    fn declared_crate_roots_outside_src_seed_diff_probes() {
+        // `[lib] path = "lib/odd.rs"` and `[[bin]] path = "tools/cli.rs"`:
+        // Cargo compiles these roots, and Rust resolves the lib root's
+        // out-of-line modules under `lib/`. A crate root beside its
+        // manifest (`lib.rs`) contributes the file only, never the whole
+        // package directory.
+        let mut context = SourceRoleContext::empty();
+        for root in ["lib/odd.rs", "tools/cli.rs", "pkg/lib.rs"] {
+            context
+                .declared_production_roots
+                .insert(PathBuf::from(root));
+        }
+        for dir in ["lib", "tools"] {
+            context
+                .declared_production_module_dirs
+                .insert(PathBuf::from(dir));
+        }
+        for (path, seeds) in [
+            ("lib/odd.rs", true),
+            ("lib\\odd.rs", true),
+            ("lib/odd/helper.rs", true),
+            ("lib/helper.rs", true),
+            ("tools/cli.rs", true),
+            ("pkg/lib.rs", true),
+            // Not declared, or under a module dir the root does not own.
+            ("pkg/other.rs", false),
+            ("library/odd.rs", false),
+            ("scripts/tool.rs", false),
+            // Evidence layouts and non-source directories still win.
+            ("lib/tests/odd.rs", false),
+            ("lib/fixtures/sample.rs", false),
+        ] {
+            assert_eq!(
+                super::seeds_diff_probes(Path::new(path), &context),
+                seeds,
+                "{path}"
+            );
+        }
+        assert!(
+            !super::seeds_diff_probes(Path::new("lib/odd.rs"), &SourceRoleContext::empty()),
+            "without the manifest declaration a loose file stays non-production"
+        );
+        // Repo mode is unchanged: the seam inventory still keys on layout.
+        assert_eq!(
+            classify(Path::new("lib/odd.rs")),
             SourceRole::FixtureOrReceiptEvidence
         );
     }

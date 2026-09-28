@@ -54,6 +54,10 @@ pub(crate) struct DeclaredCargoTargets {
     pub(crate) benches: BTreeSet<PathBuf>,
     /// The build script Cargo compiles for this package, if any.
     pub(crate) build_script: Option<PathBuf>,
+    /// Explicit `path = ...` entries of the `[lib]` table and the
+    /// `[[bin]]` array: production crate roots that may sit outside any
+    /// `src` layout (`[lib] path = "lib/foo.rs"`).
+    pub(crate) production_roots: BTreeSet<PathBuf>,
 }
 
 /// Read `path = ...` entries from the `[[test]]` and `[[bench]]` arrays
@@ -69,6 +73,19 @@ pub(crate) fn declared_targets_from_manifest(
     };
     collect_explicit_paths(value.get("test"), manifest_dir, &mut targets.tests);
     collect_explicit_paths(value.get("bench"), manifest_dir, &mut targets.benches);
+    collect_explicit_paths(
+        value.get("bin"),
+        manifest_dir,
+        &mut targets.production_roots,
+    );
+    if let Some(lib) = value.get("lib") {
+        // `[lib]` is a single table; reuse the array walker on it.
+        collect_explicit_paths(
+            Some(&toml::Value::Array(vec![lib.clone()])),
+            manifest_dir,
+            &mut targets.production_roots,
+        );
+    }
     targets.build_script = build_script_from_manifest(&value, manifest_dir);
     targets
 }
@@ -666,14 +683,12 @@ where
     let mut context = SourceRoleContext::empty();
     for file in files {
         let anchored = workspace_root.join(file);
-        // A build script sits beside its manifest, outside every source
-        // layout, so its own directory is the package-root candidate.
-        let Some(root) = package_root_of(&anchored).or_else(|| {
-            anchored
-                .parent()
-                .filter(|parent| parent.join("Cargo.toml").is_file())
-                .map(Path::to_path_buf)
-        }) else {
+        // Files outside every source layout (a build script beside its
+        // manifest, or a declared `[lib] path = "lib/foo.rs"` root) belong
+        // to the nearest ancestor manifest inside the workspace.
+        let Some(root) =
+            package_root_of(&anchored).or_else(|| nearest_manifest_dir(workspace_root, &anchored))
+        else {
             continue;
         };
         if !manifests.contains_key(&root) {
@@ -693,6 +708,27 @@ where
                 workspace_root,
                 &targets.build_script.iter().cloned().collect(),
             ));
+            let package_dir = normalize(&root);
+            let module_dirs = targets
+                .production_roots
+                .iter()
+                .filter_map(|target| target.parent().map(normalize))
+                // A crate root beside its manifest would make the whole
+                // package directory a source tree; keep only the file.
+                .filter(|dir| *dir != package_dir)
+                .collect();
+            // `path = "./lib/foo.rs"` must compare equal to the diff's
+            // `lib/foo.rs`, so resolve `.`/`..` after rooting.
+            context.declared_production_roots.extend(
+                strip_root(workspace_root, &targets.production_roots)
+                    .iter()
+                    .map(|path| lexical(path)),
+            );
+            context.declared_production_module_dirs.extend(
+                strip_root(workspace_root, &module_dirs)
+                    .iter()
+                    .map(|path| lexical(path)),
+            );
         }
     }
     context
@@ -712,6 +748,17 @@ fn strip_root(workspace_root: &Path, targets: &BTreeSet<PathBuf>) -> BTreeSet<Pa
                 .map(normalize)
         })
         .collect()
+}
+
+/// The nearest ancestor directory of `file` that holds a `Cargo.toml`,
+/// bounded by the workspace root so a manifest above the analyzed
+/// workspace is never consulted.
+fn nearest_manifest_dir(workspace_root: &Path, file: &Path) -> Option<PathBuf> {
+    file.ancestors()
+        .skip(1)
+        .take_while(|dir| dir.starts_with(workspace_root))
+        .find(|dir| dir.join("Cargo.toml").is_file())
+        .map(Path::to_path_buf)
 }
 
 /// The package root owning `file`: the nearest ancestor directory that
@@ -973,6 +1020,63 @@ mod context {
                 PathBuf::from("custom/tools/gen.rs"),
                 PathBuf::from("default/build.rs"),
             ])
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn context_for_files_records_declared_lib_and_bin_roots() -> Result<(), String> {
+        // `[lib]` is a table and `[[bin]]` an array; both may point outside
+        // `src/`. A `./` spelling resolves to the diff's identity, a root
+        // beside its manifest records no module directory, and a package
+        // with no explicit paths records nothing.
+        let dir = unique_workspace("production-roots-ctx");
+        let files = [
+            (
+                "Cargo.toml",
+                "[package]\nname='odd'\nversion='0.1.0'\n[lib]\npath='./lib/odd.rs'\n[[bin]]\nname='cli'\npath='tools/cli.rs'\n",
+            ),
+            ("lib/odd.rs", "pub fn f() {}\n"),
+            ("lib/odd/helper.rs", "pub fn g() {}\n"),
+            ("tools/cli.rs", "fn main() {}\n"),
+            (
+                "flat/Cargo.toml",
+                "[package]\nname='flat'\nversion='0.1.0'\n[lib]\npath='lib.rs'\n",
+            ),
+            ("flat/lib.rs", "pub fn f() {}\n"),
+            (
+                "plain/Cargo.toml",
+                "[package]\nname='plain'\nversion='0.1.0'\n",
+            ),
+            ("plain/src/lib.rs", "pub fn f() {}\n"),
+        ];
+        for (path, text) in files {
+            let target = dir.join(path);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(&target, text).map_err(|e| e.to_string())?;
+        }
+        let rust_files = [
+            "lib/odd/helper.rs",
+            "tools/cli.rs",
+            "flat/lib.rs",
+            "plain/src/lib.rs",
+        ]
+        .map(PathBuf::from);
+        let context = context_for_files(&dir, rust_files.iter().map(PathBuf::as_path));
+        assert_eq!(
+            context.declared_production_roots,
+            BTreeSet::from([
+                PathBuf::from("flat/lib.rs"),
+                PathBuf::from("lib/odd.rs"),
+                PathBuf::from("tools/cli.rs"),
+            ])
+        );
+        assert_eq!(
+            context.declared_production_module_dirs,
+            BTreeSet::from([PathBuf::from("lib"), PathBuf::from("tools")])
         );
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
