@@ -9628,8 +9628,8 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             "sed -n '/^Version needs section/,/^Version .* section/p'",
             "if [ \"${highest}\" != \"${GLIBC_FLOOR}\" ]; then",
             "requires glibc ${required}, above the ${GLIBC_FLOOR} floor\"\n            exit 1\n          fi",
-            "needs a named glibc ABI version above the ${GLIBC_FLOOR} floor\"\n            exit 1\n          fi",
-            "if grep -v -x -E '[0-9][0-9.]*|PRIVATE' glibc-need-names.txt; then",
+            "needs a non-numeric glibc version that the ${GLIBC_FLOOR} floor cannot bound\"\n            exit 1\n          fi",
+            "if grep -v -x -E '[0-9][0-9.]*' glibc-need-names.txt; then",
             "      - name: Verify Linux glibc floor\n        if: runner.os == 'Linux'\n",
         ] {
             if !candidate.contains(marker) {
@@ -9742,16 +9742,24 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         (
             "named glibc need that cannot fail",
             workflow.replacen(
-                "needs a named glibc ABI version above the ${GLIBC_FLOOR} floor\"\n            exit 1",
-                "needs a named glibc ABI version above the ${GLIBC_FLOOR} floor\"\n            true",
+                "needs a non-numeric glibc version that the ${GLIBC_FLOOR} floor cannot bound\"\n            exit 1",
+                "needs a non-numeric glibc version that the ${GLIBC_FLOOR} floor cannot bound\"\n            true",
                 1,
             ),
         ),
         (
             "named glibc needs ignored",
             workflow.replacen(
-                "if grep -v -x -E '[0-9][0-9.]*|PRIVATE' glibc-need-names.txt; then",
+                "if grep -v -x -E '[0-9][0-9.]*' glibc-need-names.txt; then",
                 "if false; then",
+                1,
+            ),
+        ),
+        (
+            "private glibc need allowed",
+            workflow.replacen(
+                "if grep -v -x -E '[0-9][0-9.]*' glibc-need-names.txt; then",
+                "if grep -v -x -E '[0-9][0-9.]*|PRIVATE' glibc-need-names.txt; then",
                 1,
             ),
         ),

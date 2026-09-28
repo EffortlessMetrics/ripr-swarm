@@ -265,9 +265,10 @@ jobs:
             | sed -n '/^Version needs section/,/^Version .* section/p' \
             | grep -o 'Name: GLIBC_[A-Za-z0-9_.]*' | sed 's/^Name: GLIBC_//' | sort -uV > glibc-need-names.txt
           # Named needs such as GLIBC_ABI_DT_RELR (glibc 2.36) have no numeric
-          # version to compare, so any name other than GLIBC_PRIVATE fails.
-          if grep -v -x -E '[0-9][0-9.]*|PRIVATE' glibc-need-names.txt; then
-            echo "::error::extracted/${EXECUTABLE} needs a named glibc ABI version above the ${GLIBC_FLOOR} floor"
+          # version to compare, and GLIBC_PRIVATE has no stable ABI, so every
+          # non-numeric need fails.
+          if grep -v -x -E '[0-9][0-9.]*' glibc-need-names.txt; then
+            echo "::error::extracted/${EXECUTABLE} needs a non-numeric glibc version that the ${GLIBC_FLOOR} floor cannot bound"
             exit 1
           fi
           grep -x -E '[0-9][0-9.]*' glibc-need-names.txt > glibc-needs.txt
