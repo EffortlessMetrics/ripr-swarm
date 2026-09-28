@@ -4951,6 +4951,15 @@ mod tests {
             gap_ledger: "inputs/reports/gap-decision-ledger.json".to_string(),
             ..FirstPrOptions::default()
         };
+        // The checked-in ledger stands for evidence generated just now. A
+        // checkout writes files in no fixed order, so without this a test file
+        // can look newer than the ledger and trip the stale-evidence guard.
+        let ledger = case.join(&options.gap_ledger);
+        fs::File::options()
+            .write(true)
+            .open(&ledger)
+            .and_then(|file| file.set_modified(std::time::SystemTime::now()))
+            .map_err(|err| format!("refresh ledger mtime {}: {err}", ledger.display()))?;
         let actual_json = render_start_here_packet(&case, &options);
         let actual_md = render_start_here_markdown(&actual_json);
         // Issue #3872: funnel redirect targets anchor at the resolved --root,
