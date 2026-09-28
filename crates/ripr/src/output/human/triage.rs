@@ -346,9 +346,7 @@ fn triage_rank(finding: &Finding) -> (u8, u8, u8, u8, u8, i32, &std::path::Path,
         ExposureClass::Exposed => 9,
     };
     let preview_rank = u8::from(is_preview_limited(finding));
-    let repair_rank = if finding.class != ExposureClass::Exposed
-        && !is_preview_limited(finding)
-        && has_repair_route(finding)
+    let repair_rank = if finding.class != ExposureClass::Exposed && has_ranked_repair_route(finding)
     {
         0
     } else {
@@ -364,6 +362,19 @@ fn triage_rank(finding: &Finding) -> (u8, u8, u8, u8, u8, i32, &std::path::Path,
         finding.probe.location.file.as_path(),
         finding.probe.location.line,
     )
+}
+
+/// A stable finding ranks by its repair route; a preview finding only by the
+/// repair authority for its language (#4216 rc rehearsal): a Python finding
+/// with a repair card outranks one without, so Start here does not pick a
+/// card-less finding that no ripr command routes over one pilot and first-pr
+/// do route. Other preview languages keep their class rank. Classification is
+/// unchanged; only the selection order moves.
+fn has_ranked_repair_route(finding: &Finding) -> bool {
+    if !is_preview_limited(finding) {
+        return has_repair_route(finding);
+    }
+    finding.language == Some(LanguageId::Python) && python_repair_card(finding).is_some()
 }
 
 fn has_repair_route(finding: &Finding) -> bool {

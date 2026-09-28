@@ -689,6 +689,90 @@ mod tests {
         assert!(rendered.contains(&format!("  ripr context --at {finding_id}\n")));
     }
 
+    /// A Python preview finding; `carded` controls whether the Python repair
+    /// card authority (`python_repair_card`) can build a card for it.
+    fn python_preview_finding(line: usize, carded: bool) -> Finding {
+        let mut finding = sample_finding();
+        finding.id = format!("probe:pricing___init__.py:python_preview:{line}");
+        finding.probe.location = SourceLocation::new("pricing/__init__.py", line, 5);
+        finding.language = Some(LanguageId::Python);
+        finding.language_status = Some(LanguageStatus::Preview);
+        finding.confidence = 0.4;
+        finding.canonical_gap = Some(FindingCanonicalGap {
+            id: format!(
+                "gap:python:pricing/__init__.py:owner{line}:predicate_boundary:predicate:x"
+            ),
+            language: "python".to_string(),
+            file: "pricing/__init__.py".to_string(),
+            owner: format!("owner{line}"),
+            behavior_kind: "predicate_boundary".to_string(),
+            probe_kind: "predicate".to_string(),
+            normalized_discriminator: "x".to_string(),
+        });
+        if carded {
+            finding.evidence = vec![
+                "suggested_test_file: tests/test_pricing.py".to_string(),
+                "suggested_test_name: test_small_order_pays_shipping".to_string(),
+                "suggested_verify_command: pytest tests/test_pricing.py::test_small_order_pays_shipping".to_string(),
+                "suggested_verify_command_confidence: high".to_string(),
+            ];
+        } else {
+            finding.activation.missing_discriminators.clear();
+        }
+        finding
+    }
+
+    /// rc rehearsal (py-pricing): Start here picked the card-less constant
+    /// finding at line 5 over the carded literal finding at line 11, so check
+    /// said "no ripr command routes this" while pilot had a card. A Python
+    /// finding with a repair card now outranks one without; classification
+    /// stays the same.
+    #[test]
+    fn start_here_prefers_a_python_finding_with_a_repair_card() {
+        let uncarded = python_preview_finding(5, false);
+        let carded = python_preview_finding(11, true);
+        assert!(crate::output::python_repair_card::python_repair_card(&uncarded).is_none());
+        assert!(crate::output::python_repair_card::python_repair_card(&carded).is_some());
+        for findings in [
+            vec![uncarded.clone(), carded.clone()],
+            vec![carded.clone(), uncarded.clone()],
+        ] {
+            let output = CheckOutput {
+                harness_projections: Vec::new(),
+                schema_version: "0.1".to_string(),
+                tool: "ripr".to_string(),
+                mode: Mode::Draft,
+                root: PathBuf::from("repo"),
+                base: None,
+                summary: Summary {
+                    probes: 2,
+                    findings: 2,
+                    weakly_exposed: 2,
+                    ..Summary::default()
+                },
+                findings,
+                preview_language_advisories: Vec::new(),
+                language_runs: Vec::new(),
+                no_scope_provided: false,
+                unanalyzed_working_tree: false,
+                suppression: None,
+                analysis_outcome: None,
+                partial_scope: None,
+            };
+            let rendered = render(&output);
+            assert!(rendered.contains("State: preview_limited"), "{rendered}");
+            assert!(
+                rendered.contains("  File: pricing/__init__.py:11\n"),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("has no repair card"), "{rendered}");
+            assert!(
+                rendered.contains("apply the next step below to the suggested test"),
+                "{rendered}"
+            );
+        }
+    }
+
     /// #2567: nothing was omitted, so the render must not advertise a hidden
     /// remainder. The format pointers stay under `More:`.
     #[test]

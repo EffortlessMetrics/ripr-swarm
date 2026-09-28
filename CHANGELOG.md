@@ -56,6 +56,15 @@ are scoped or reviewed.
   Rebindable (`let`/`var`), computed, imported, or shadowed constants and
   written parameters still fail closed.
 
+- `ripr check`'s Start here prefers a Python preview finding that has a
+  repair card over one that has none, so it no longer reports "no repair card"
+  while `ripr pilot` and `ripr first-pr` route a card for the same diff.
+
+- `ripr check` now names the repair loop for a Rust top gap that has a repair
+  route: one `Repair loop:` line under the drill-in commands points to
+  `ripr pilot --root <root>`, which prints the `ripr agent repair` start.
+  Preview-language, static-limited, and route-less findings do not get it.
+
 - `ripr init --ci github` pins the workflow's install to the ripr version
   that generated it (`cargo install ripr --version <version> --locked`), so CI
   no longer installs an older release that lacks the commands the workflow
