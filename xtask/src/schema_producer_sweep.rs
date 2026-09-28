@@ -350,7 +350,10 @@ fn sweep(
         }
     }
 
-    let (documents, malformed) = committed_documents(tree, bindings);
+    let CommittedDocuments {
+        parsed: documents,
+        malformed,
+    } = committed_documents(tree, bindings);
     let mut schemas = BTreeMap::new();
     for schema_path in &inventory {
         let bytes = &tree.files[schema_path];
@@ -740,13 +743,12 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
 /// Parse committed documents outside `schemas/`. A malformed file selected by
 /// a path or filename binding is a failed producer, not a missing subject.
 /// Other non-JSON files (including JSONC stimulus) are outside this sweep.
-fn committed_documents(
-    tree: &CandidateTree,
-    bindings: &[Binding],
-) -> (
-    BTreeMap<String, (Value, String)>,
-    BTreeMap<String, (String, String)>,
-) {
+struct CommittedDocuments {
+    parsed: BTreeMap<String, (Value, String)>,
+    malformed: BTreeMap<String, (String, String)>,
+}
+
+fn committed_documents(tree: &CandidateTree, bindings: &[Binding]) -> CommittedDocuments {
     let mut documents = BTreeMap::new();
     let mut malformed = BTreeMap::new();
     for (path, bytes) in tree
@@ -772,7 +774,10 @@ fn committed_documents(
             Err(_) => {}
         }
     }
-    (documents, malformed)
+    CommittedDocuments {
+        parsed: documents,
+        malformed,
+    }
 }
 
 fn corpus_binds_path(corpus: &Corpus, path: &str) -> bool {
