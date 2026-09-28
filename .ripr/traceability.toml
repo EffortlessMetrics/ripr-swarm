@@ -7309,6 +7309,7 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::agent_verify_rejects_tampered_committed_artifact",
   "crates/ripr/tests/cli_smoke.rs::agent_verify_rejects_plausible_uncommitted_json",
   "crates/ripr/tests/cli_smoke.rs::agent_verify_rejects_incomparable_analysis_inputs",
+  "crates/ripr/tests/cli_smoke.rs::agent_verify_missing_snapshot_named_like_a_refusal_is_operational",
   "crates/ripr/tests/cli_smoke.rs::agent_verify_accepts_historical_comparable_pair_with_disclosure",
   "crates/ripr/tests/cli_smoke.rs::agent_verify_discloses_current_head_with_dirty_worktree",
   "crates/ripr/tests/cli_smoke.rs::agent_verify_and_receipt_disclose_historical_before_current_after_pair",

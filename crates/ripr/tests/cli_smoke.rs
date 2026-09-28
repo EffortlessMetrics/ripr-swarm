@@ -5801,7 +5801,7 @@ fn agent_repair_admits_a_focused_test_committed_between_the_phases()
     // Exit 3 carries exactly one typed refusal document on stdout.
     let document: serde_json::Value = serde_json::from_slice(&after.stdout)?;
     assert_eq!(document["kind"], "repair_after_refusal", "{document:#}");
-    assert_eq!(document["schema_version"], "0.1", "{document:#}");
+    assert_eq!(document["schema_version"], "0.2", "{document:#}");
     assert_eq!(document["attempt_id"], attempt_id.as_str(), "{document:#}");
     assert!(
         document["error"]
@@ -6105,6 +6105,40 @@ fn agent_verify_rejects_incomparable_analysis_inputs() -> Result<(), Box<dyn std
         output.stdout.is_empty(),
         "a refused verify renders nothing to its stdout (the verify artifact)"
     );
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// #4331 review: an operational error that echoes a user path containing a
+/// refusal phrase stays an operational failure (exit 2), not a refusal.
+#[test]
+fn agent_verify_missing_snapshot_named_like_a_refusal_is_operational()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("agent-verify-refusal-named-path");
+    std::fs::create_dir_all(&root)?;
+    init_git_fixture_repo(&root)?;
+    for missing in [
+        "analysis input identities differ",
+        "no repository movement between before and after artifacts",
+    ] {
+        let output = run_ripr(&[
+            "agent",
+            "verify",
+            "--root",
+            &root.display().to_string(),
+            "--before",
+            missing,
+            "--after",
+            missing,
+            "--json",
+        ]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{missing}: {stderr}");
+        assert!(
+            stderr.contains(missing),
+            "the error names the path: {stderr}"
+        );
+    }
     std::fs::remove_dir_all(root)?;
     Ok(())
 }

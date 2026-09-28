@@ -49,8 +49,10 @@ const REPAIR_AFTER_RESULT_SCHEMA_VERSION: &str = "0.1";
 /// happens before any verify document exists (a diverged HEAD, drifted
 /// analysis inputs, a no-movement verify refusal) exits 3 with this document
 /// on stdout, so the phase keeps its one-stdout-document contract on every
-/// exit-3 path.
-const REPAIR_AFTER_REFUSAL_SCHEMA_VERSION: &str = "0.1";
+/// exit-3 path. Its version is distinct from the success envelope's `0.1`
+/// and the bare verify document's `0.3`, so every after-phase stdout shape
+/// stays identifiable from `schema_version` alone.
+const REPAIR_AFTER_REFUSAL_SCHEMA_VERSION: &str = "0.2";
 
 pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     let command = parse_agent_args(args)?;
@@ -363,12 +365,21 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
     )
 }
 
+/// Exact `render_agent_verify` error for drifted analysis inputs.
+const AGENT_VERIFY_INPUT_DRIFT_ERROR: &str =
+    "agent verify artifacts are incomparable: analysis input identities differ";
+
+/// Prefix of the `render_agent_verify` error for a no-movement refusal.
+const AGENT_VERIFY_NO_MOVEMENT_PREFIX: &str =
+    "agent verify no repository movement between before and after artifacts";
+
 /// True when a `render_agent_verify` error is a deliberate named refusal
 /// (input-identity drift or a no-movement verify refusal) rather than an
-/// operational failure.
+/// operational failure. Matched on the whole message or its leading clause,
+/// never a substring: path-bearing operational errors echo user-supplied
+/// paths, and a path must not turn an unreadable input into a refusal.
 fn agent_verify_error_is_typed_refusal(error: &str) -> bool {
-    error.contains("analysis input identities differ")
-        || error.contains("no repository movement between before and after artifacts")
+    error == AGENT_VERIFY_INPUT_DRIFT_ERROR || error.starts_with(AGENT_VERIFY_NO_MOVEMENT_PREFIX)
 }
 
 fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), CommandError> {
@@ -926,7 +937,7 @@ fn run_agent_repair_phase(
                     // validation, and rendering failures are operational
                     // (exit 2) even though the attempt was already selected.
                     if agent_verify_error_is_typed_refusal(&error) {
-                        if error.contains("analysis input identities differ") {
+                        if error == AGENT_VERIFY_INPUT_DRIFT_ERROR {
                             for line in repair_after_input_drift_lines(&root, &attempt) {
                                 refusal.narrate(line);
                             }
