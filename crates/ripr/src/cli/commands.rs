@@ -3571,7 +3571,6 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // that blocks until EOF with no visible sign of why, so the cli adapter
     // discloses the read before dispatching; the analysis loader itself
     // stays silent for library callers.
-    disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
     let rendered = match from_artifact.as_deref() {
         Some(artifact_path) => app::explain_finding_from_artifact_with_navigation_mode(
             input,
@@ -3581,12 +3580,15 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
             asserted_base.as_deref(),
             explicit.mode,
         )?,
-        None => app::explain_finding_with_config_and_navigation_mode(
-            input,
-            &selector,
-            &config,
-            explicit.mode,
-        )?,
+        None => {
+            disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
+            app::explain_finding_with_config_and_navigation_mode(
+                input,
+                &selector,
+                &config,
+                explicit.mode,
+            )?
+        }
     };
     println!("{rendered}");
     Ok(())

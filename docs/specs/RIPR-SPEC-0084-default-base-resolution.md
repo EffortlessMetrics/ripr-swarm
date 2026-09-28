@@ -147,10 +147,13 @@ problem and the two remediation paths.
   (`check`, `explain`, `context`), gated on `IsTerminal`; the analysis
   loader stays silent so library callers of the public API never receive
   CLI-branded stderr text, and piped, redirected, or captured stdin stays
-  byte-identical. No automated test can attach a real terminal, so the
-  on-terminal emission is verified by the manual spot-check plus the pure
-  decision test; the piped-silence direction is pinned end-to-end by a
-  subprocess test.
+  byte-identical. A shared emitter test injects the terminal state and
+  captures the actual emission callback, pinning exactly one note for
+  terminal stdin and none for piped stdin or file sources. This observes
+  the production decision and emission path without assuming a PTY is
+  available. The real terminal-detection/stderr adapter still requires a
+  terminal spot-check; piped silence and successful JSON analysis are
+  pinned end-to-end by a subprocess test.
 
 ### Non-claims
 
@@ -221,6 +224,7 @@ problem and the two remediation paths.
 - `crates/ripr/tests/cli_smoke.rs::first_pr_check_recovery_write_resolves_the_default_base`
 - `crates/ripr/src/cli/parse.rs::tests::base_and_diff_conflict_error_names_the_command_and_both_flags`
 - `crates/ripr/src/cli/parse.rs::tests::attached_terminal_stdin_note_fires_only_for_a_terminal`
+- `crates/ripr/src/cli/parse.rs::tests::terminal_stdin_disclosure_emits_once_only_for_a_terminal_diff_source`
 - `crates/ripr/src/cli/commands.rs::tests::explain_rejects_base_and_diff_together_at_parse_time`
 - `crates/ripr/src/cli/commands.rs::tests::explain_keeps_base_and_diff_as_from_artifact_assertions`
 - `crates/ripr/src/cli/commands/context.rs::tests::context_rejects_base_and_diff_together_at_parse_time`

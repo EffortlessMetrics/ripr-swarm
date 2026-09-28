@@ -118,7 +118,6 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // that blocks until EOF with no visible sign of why, so the cli adapter
     // discloses the read before dispatching; the analysis loader itself
     // stays silent for library callers.
-    disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
     let rendered = match from_artifact.as_deref() {
         Some(artifact_path) => app::collect_context_from_artifact(
             input,
@@ -128,7 +127,10 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
             artifact_path,
             asserted_base.as_deref(),
         )?,
-        None => app::collect_context_with_config(input, &selector, max_tests, &config)?,
+        None => {
+            disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
+            app::collect_context_with_config(input, &selector, max_tests, &config)?
+        }
     };
     println!("{rendered}");
     Ok(())

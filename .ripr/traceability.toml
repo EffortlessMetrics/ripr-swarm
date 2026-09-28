@@ -5633,6 +5633,7 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::first_pr_check_recovery_write_resolves_the_default_base",
   "crates/ripr/src/cli/parse.rs::tests::base_and_diff_conflict_error_names_the_command_and_both_flags",
   "crates/ripr/src/cli/parse.rs::tests::attached_terminal_stdin_note_fires_only_for_a_terminal",
+  "crates/ripr/src/cli/parse.rs::tests::terminal_stdin_disclosure_emits_once_only_for_a_terminal_diff_source",
   "crates/ripr/src/cli/commands.rs::tests::explain_rejects_base_and_diff_together_at_parse_time",
   "crates/ripr/src/cli/commands.rs::tests::explain_keeps_base_and_diff_as_from_artifact_assertions",
   "crates/ripr/src/cli/commands/context.rs::tests::context_rejects_base_and_diff_together_at_parse_time",

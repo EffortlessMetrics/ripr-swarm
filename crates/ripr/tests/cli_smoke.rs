@@ -16452,9 +16452,9 @@ index 1111111..2222222 100644\n\
 /// disclosure at the cli boundary (`cli::parse::disclose_attached_terminal_stdin_read`):
 /// the note may be emitted only when the child's stdin is an attached
 /// terminal, so a piped run must keep the note text off stderr entirely.
-/// This is the production-branch discriminator: deleting the emission, or
-/// gating it on something other than `IsTerminal`, puts the verbatim note
-/// below on this pipe's stderr and fails the test.
+/// This challenges accidental emission on non-terminal stdin. The shared
+/// emitter's positive callback is challenged separately in cli/parse.rs;
+/// deleting the disclosure cannot be detected by a silence assertion.
 ///
 /// The terminal-positive arm cannot be produced under cargo's captured
 /// stdio (no PTY/winpty in this environment), so the on-terminal emission
@@ -16464,11 +16464,24 @@ index 1111111..2222222 100644\n\
 fn check_diff_stdin_from_a_pipe_stays_silent_about_terminal_disclosure()
 -> Result<(), Box<dyn std::error::Error>> {
     let note = "ripr: reading the diff from the attached terminal; paste the diff and press Ctrl+Z then Enter on Windows, or Ctrl+D on Unix, to end input";
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/boundary_gap/input");
     let output = run_ripr_with_stdin(
-        &["check", "--diff", "-"],
+        &[
+            "check",
+            "--root",
+            &root.display().to_string(),
+            "--diff",
+            "-",
+            "--json",
+        ],
         UNIFIED_DIFF_FOR_STDIN_PROBE.as_bytes(),
     )?;
     let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "piped diff analysis failed: {stderr}"
+    );
+    let _: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(
         stderr.matches(note).count(),
         0,

@@ -53,11 +53,21 @@ pub(crate) fn attached_terminal_stdin_note(stdin_is_terminal: bool) -> Option<&'
 /// Silent unless stdin is an attached terminal, so piped, redirected, and
 /// captured stdin keep byte-identical output.
 pub(crate) fn disclose_attached_terminal_stdin_read(diff_file: Option<&std::path::Path>) {
+    emit_attached_terminal_stdin_note(diff_file, std::io::stdin().is_terminal(), |note| {
+        eprintln!("{note}");
+    });
+}
+
+fn emit_attached_terminal_stdin_note(
+    diff_file: Option<&std::path::Path>,
+    stdin_is_terminal: bool,
+    mut emit: impl FnMut(&str),
+) {
     if diff_file != Some(std::path::Path::new("-")) {
         return;
     }
-    if let Some(note) = attached_terminal_stdin_note(std::io::stdin().is_terminal()) {
-        eprintln!("{note}");
+    if let Some(note) = attached_terminal_stdin_note(stdin_is_terminal) {
+        emit(note);
     }
 }
 
@@ -343,11 +353,10 @@ mod tests {
     /// #4319: the note is a constant behind a pure predicate at the cli
     /// boundary, so the exact phrasing is pinned without a tty. The `false`
     /// arm is the piped or captured-stdin path, which must stay silent; its
-    /// end-to-end guarantee lives in the cli_smoke subprocess test. No test
-    /// can attach a real terminal to cargo's captured stdio, so the
-    /// terminal arm's stderr emission itself remains a manual
-    /// `check --diff -` spot-check (winpty/PTY is unavailable in this
-    /// environment).
+    /// end-to-end guarantee lives in the cli_smoke subprocess test. The
+    /// shared emitter's positive callback is tested below with an injected
+    /// terminal state; actual terminal detection and stderr remain a runtime
+    /// terminal spot-check.
     #[test]
     fn attached_terminal_stdin_note_fires_only_for_a_terminal() {
         // Pinned as a literal, not via the const, so a wording change is a
@@ -359,5 +368,28 @@ mod tests {
             )
         );
         assert_eq!(attached_terminal_stdin_note(false), None);
+    }
+
+    #[test]
+    fn terminal_stdin_disclosure_emits_once_only_for_a_terminal_diff_source() {
+        let mut emitted = Vec::new();
+        for (path, terminal) in [(None, true), (Some("file.diff"), true), (Some("-"), false)] {
+            emit_attached_terminal_stdin_note(path.map(std::path::Path::new), terminal, |note| {
+                emitted.push(note.to_owned());
+            });
+        }
+        assert!(
+            emitted.is_empty(),
+            "non-terminal or file sources emitted {emitted:?}"
+        );
+        emit_attached_terminal_stdin_note(Some(std::path::Path::new("-")), true, |note| {
+            emitted.push(note.to_owned());
+        });
+        assert_eq!(
+            emitted,
+            [
+                "ripr: reading the diff from the attached terminal; paste the diff and press Ctrl+Z then Enter on Windows, or Ctrl+D on Unix, to end input"
+            ]
+        );
     }
 }
