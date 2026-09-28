@@ -19,13 +19,28 @@ are scoped or reviewed.
   report, and uses the exporter on PATH unless the user sets
   `RIPR_ALLOW_REPO_PERL_EXECUTABLE=1`. The VS Code extension already required
   a trusted workspace to start the server.
-
+- Rust: a changed function that no test calls now reads `no_static_path`.
+  Before, a same-file test of a sibling function made it `weakly_exposed`
+  with "strong oracle found", and its unknown-shape lines said "escalate to
+  real mutation testing". This applies only when nothing in the workspace
+  names the function outside its own `fn` line: a caller, function pointer,
+  `use` alias, doctest or macro block that names it, a crate that includes a
+  README as docs, a trait-impl method, or a nearby test that invokes a
+  non-assertion macro keeps reach undecided.
+- Rust: a struct-field initializer is no longer `exposed` when no assertion
+  reads that field. On anyhow, a `Box` token in an unrelated downcast
+  assertion credited `ptr: NonNull::from(Box::leak(ptr))` with confidence 1.00
+  while its own evidence said nothing observes the field. An assertion that
+  reads the field on the function's result (`cfg.retries` after
+  `let cfg = default_config()`) still counts; the same field name on another
+  value does not.
+- Rust: the one-line signature of a new function whose body is added too is no
+  longer probed; it only repeated the body's findings.
 - `review-comments` observes its cooperative analysis budget during canonical
   inventory and rejects cancelled evidence before classification. Git diff
   discovery consumes the remaining budget; deadline cancellation records a
   typed timeout while ordinary source failures retain their failure status.
   Individual operations can still overrun a checkpoint interval (#1778).
-
 - Cold LLM-agent walks of 0.11 no longer dead-end on four routes. Passing a
   `ripr check` finding ID (`probe:...`) to `ripr agent repair --seam-id` now
   says it is not a seam ID and names `ripr pilot --root .`. The
@@ -47,10 +62,17 @@ are scoped or reviewed.
   CI checkout no longer stops at raw `fatal: ... no merge base`; it names
   `git fetch --unshallow` and `fetch-depth: 0`. A repository with no
   commits, or whose default branch is not `main`/`master`, is told which
-  `--base` would work.
+  `--base` would work. A branch that shares no history with HEAD is never
+  offered as that base.
 - A diff that touches conflict markers in a file no enabled adapter reads
   (for example resolving markers committed to a workflow `.yml`) no longer
   turns the whole run into `unsupported_input`.
+- `--root` at a workspace member scopes the diff to that member and reads
+  its paths relative to it. Repository-relative paths used to miss the
+  member's files, so a tested change read as `no_static_path`.
+- In diff analysis, the generated-code skip limitation names up to three
+  skipped files and lists the generated-code conventions and the
+  `[languages.rust] generated_file_patterns` setting.
 - An empty `ripr check --diff` result now leads with its true cause. A config
   whose `[languages].enabled` leaves out `rust` records a typed
   `language_adapter_unavailable` limitation for the Rust files it skipped
@@ -105,12 +127,29 @@ are scoped or reviewed.
 - LSP fallback diagnostics explain their static classification and point to
   hover evidence without promising an unavailable clipboard action or repair
   route. Missing-path guidance remains explicitly static (#4328).
-
+- TypeScript/JavaScript and Python preview adapters no longer probe the
+  declaration line of a new function whose body adds its own lines. The line
+  had no behavior of its own, so it either stayed `weakly_exposed` after a
+  correct test was added or, in Python, claimed unearned `exposed` credit
+  beside a weakly exposed body predicate. Changed signatures, default values,
+  and one-line bodies keep their probe.
 - Static discrimination keeps oracle strength and confirmation on the same
   assertion. An unrelated exact assertion can no longer borrow a weaker
   assertion's token match to promote a finding to `exposed`; equally strong
   confirmed assertions retain their classification regardless of order
   ([#4404](https://github.com/EffortlessMetrics/ripr-swarm/issues/4404)).
+- Diff-scoped SARIF (`ripr check --format sarif`) now renders the same
+  `artifactLocation.uri`, `fingerprints` and `partialFingerprints` whether
+  `--root` is `.`, `./` or the checkout's absolute path. An absolute root used
+  to leak the checkout path into the uri and change every fingerprint between
+  a local and a CI run. SARIF shares the path owner GitHub annotations already
+  used.
+- Server qualification builds the Linux server archives, which the editor
+  extension downloads, on Ubuntu 22.04 with `--locked`, and fails a Linux
+  binary that needs a glibc newer than 2.35. The 0.10.0 Linux archives were
+  built on Ubuntu 24.04 and failed on Ubuntu 22.04 and Debian 12 with
+  `GLIBC_2.39 not found`. The source release workflow takes the same runners
+  and check at the release sync.
 
 ### Added
 
