@@ -228,7 +228,8 @@ Environment variables:
                                     invocation in the diff-load path. A git command
                                     that exceeds the deadline is terminated and the
                                     error names git_invocation_timeout. 0 disables
-                                    the deadline. Default: 300 (5 minutes).
+                                    the deadline. Invalid values fail closed.
+                                    Default: 300 (5 minutes).
 
 Examples:
   ripr check

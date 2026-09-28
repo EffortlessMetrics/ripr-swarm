@@ -74,36 +74,44 @@ fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<(), String>
 }
 
 fn parse_git_timeout(value: &str) -> Result<Option<std::time::Duration>, String> {
-    let secs: u64 = value.parse().map_err(|_parse_err| {
-        format!("--git-timeout requires a non-negative integer (seconds); got {value:?}")
-    })?;
-    validate_git_timeout_secs(secs)
+    parse_git_timeout_from("--git-timeout", value)
 }
 
-fn validate_git_timeout_secs(secs: u64) -> Result<Option<std::time::Duration>, String> {
+/// Parses a git-timeout value for the named source (`--git-timeout` or
+/// `RIPR_GIT_TIMEOUT`) so both twins fail closed with the same message shape.
+fn parse_git_timeout_from(
+    source: &str,
+    value: &str,
+) -> Result<Option<std::time::Duration>, String> {
+    let secs: u64 = value.parse().map_err(|_parse_err| {
+        format!("{source} requires a non-negative integer (seconds); got {value:?}")
+    })?;
     let timeout = std::time::Duration::from_secs(secs);
     if std::time::Instant::now().checked_add(timeout).is_none() {
         return Err(format!(
-            "--git-timeout is too large for the platform deadline; got {secs} seconds"
+            "{source} is too large for the platform deadline; got {secs} seconds"
         ));
     }
     Ok((secs > 0).then_some(timeout))
 }
 
+/// #4374: an invalid `RIPR_GIT_TIMEOUT` fails closed like every sibling
+/// `RIPR_*` override. Silently falling back to the default would leave a user
+/// believing a deadline they typo'd is in force.
 fn git_timeout_from_env(
     explicit: bool,
-    env_value: Option<&str>,
+    env_value: Result<String, std::env::VarError>,
 ) -> Result<Option<Option<std::time::Duration>>, String> {
     if explicit {
         return Ok(None);
     }
-    let Some(value) = env_value else {
-        return Ok(None);
-    };
-    let Ok(secs) = value.parse::<u64>() else {
-        return Ok(None);
-    };
-    validate_git_timeout_secs(secs).map(Some)
+    match env_value {
+        Ok(value) => parse_git_timeout_from("RIPR_GIT_TIMEOUT", value.trim()).map(Some),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err("RIPR_GIT_TIMEOUT must be valid UTF-8".to_string())
+        }
+    }
 }
 
 pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
@@ -252,7 +260,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // not passed on the command line. Seconds; 0 disables the deadline.
     if let Some(timeout) = git_timeout_from_env(
         git_timeout_explicitly_provided,
-        std::env::var("RIPR_GIT_TIMEOUT").ok().as_deref(),
+        std::env::var("RIPR_GIT_TIMEOUT"),
     )? {
         input.git_timeout = timeout;
     }
@@ -1166,18 +1174,43 @@ mod tests {
 
     #[test]
     fn git_timeout_environment_is_a_fallback_and_zero_disables() -> Result<(), String> {
+        let env = |value: &str| Ok::<String, std::env::VarError>(value.to_string());
         assert_eq!(
-            git_timeout_from_env(false, Some("12")),
+            git_timeout_from_env(false, env("12")),
             Ok(Some(Some(std::time::Duration::from_secs(12))))
         );
-        assert_eq!(git_timeout_from_env(false, Some("0")), Ok(Some(None)));
-        assert_eq!(git_timeout_from_env(false, Some("invalid")), Ok(None));
-        assert_eq!(git_timeout_from_env(false, None), Ok(None));
-        assert_eq!(git_timeout_from_env(true, Some("12")), Ok(None));
-        let error = git_timeout_from_env(false, Some("18446744073709551615"))
+        assert_eq!(
+            git_timeout_from_env(false, env(" 12 ")),
+            Ok(Some(Some(std::time::Duration::from_secs(12))))
+        );
+        assert_eq!(git_timeout_from_env(false, env("0")), Ok(Some(None)));
+        assert_eq!(
+            git_timeout_from_env(false, Err(std::env::VarError::NotPresent)),
+            Ok(None)
+        );
+        assert_eq!(git_timeout_from_env(true, env("12")), Ok(None));
+        assert_eq!(git_timeout_from_env(true, env("invalid")), Ok(None));
+        let error = git_timeout_from_env(false, env("18446744073709551615"))
             .err()
-            .ok_or("an overflowing timeout should fail closed")?;
-        assert!(error.contains("too large"));
+            .ok_or("a timeout past the platform deadline should fail closed")?;
+        assert!(error.contains("RIPR_GIT_TIMEOUT is too large"), "{error}");
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_git_timeout_environment_fails_closed_naming_the_variable() -> Result<(), String> {
+        let env = |value: &str| Ok::<String, std::env::VarError>(value.to_string());
+        for value in ["notanumber", "99999999999999999999", "-5", "1.5", ""] {
+            let error = git_timeout_from_env(false, env(value))
+                .err()
+                .ok_or_else(|| format!("RIPR_GIT_TIMEOUT={value:?} should fail closed"))?;
+            assert_eq!(
+                error,
+                format!(
+                    "RIPR_GIT_TIMEOUT requires a non-negative integer (seconds); got {value:?}"
+                )
+            );
+        }
         Ok(())
     }
 

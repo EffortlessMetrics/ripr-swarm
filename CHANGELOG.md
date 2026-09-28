@@ -11,6 +11,11 @@ are scoped or reviewed.
 
 ### Fixed
 
+- CLI: an invalid `RIPR_GIT_TIMEOUT` (non-numeric, negative, fractional,
+  empty, or past `u64`) now fails closed with exit 2 and names the variable,
+  like `--git-timeout` and every other `RIPR_*` override. Before, it was
+  silently ignored and the default 300-second deadline applied (#4374).
+
 - Rust: a changed function that no test calls now reads `no_static_path`.
   Before, a same-file test of a sibling function made it `weakly_exposed`
   with "strong oracle found", and its unknown-shape lines said "escalate to
