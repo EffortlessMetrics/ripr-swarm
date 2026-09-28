@@ -1055,8 +1055,9 @@ fn perl_exporter_lines(exporter: &PerlExporterProbe) -> Vec<String> {
             ),
         ],
         PerlExporterProbe::NotFound => vec![format!(
-            "exporter: NOT found (expected `{}` or a `perllsp` wrapper on PATH, or [perl].executable); `{}` is not yet published",
+            "exporter: NOT found (expected `{}` or a `perllsp` wrapper on PATH, or [perl].executable with {}=1); `{}` is not yet published",
             crate::domain::PERL_FACT_EXPORTER,
+            crate::config::PERL_EXECUTABLE_OPT_IN_ENV,
             crate::domain::PERL_FACT_EXPORTER
         )],
     }
@@ -1173,8 +1174,9 @@ fn perl_next_command(
     } else if managed {
         // Managed mode configured but no compatible producer.
         format!(
-            "install a compatible Perl fact exporter (`{}`, not yet published) on PATH or set [perl].executable, and add \"perl\" to [languages] enabled in ripr.toml, then: ripr check",
-            crate::domain::PERL_FACT_EXPORTER
+            "install a compatible Perl fact exporter (`{}`, not yet published) on PATH, or set [perl].executable and {}=1, and add \"perl\" to [languages] enabled in ripr.toml, then: ripr check",
+            crate::domain::PERL_FACT_EXPORTER,
+            crate::config::PERL_EXECUTABLE_OPT_IN_ENV
         )
     } else {
         // Explicit packet mode (or producer absent): supply --perl-facts.
@@ -1806,6 +1808,12 @@ mod tests {
         assert!(managed.ends_with("then: ripr check"));
         let unpublished = perl_next_command(true, Some("perllsp"), None);
         assert!(unpublished.ends_with("then: ripr check"));
+        // A repo `[perl].executable` is ignored without the user opt-in, so
+        // recommending it must name the opt-in.
+        assert!(
+            unpublished.contains("set [perl].executable and RIPR_ALLOW_REPO_PERL_EXECUTABLE=1"),
+            "{unpublished}"
+        );
         // The packet-mode branch is unchanged.
         let packet = perl_next_command(true, None, None);
         assert!(packet.contains("--perl-facts"));

@@ -17439,7 +17439,7 @@ fn history_commands_without_a_resolvable_default_base_fail_named() -> Result<(),
 }
 
 /// A cloned repository's `ripr.toml` must not choose a program for ripr to
-/// run. `[perl].executable = "sh"` plus a committed `ripr-facts` script made
+/// run. `[perl].executable = "sh"` plus a `ripr-facts` script in the checkout made
 /// `ripr check` (and the LSP sidecar on open/save, and `ripr doctor`) run
 /// repository code, because the managed argv starts with `ripr-facts`. The
 /// refused runs must leave no marker; the opted-in run must still reach the
