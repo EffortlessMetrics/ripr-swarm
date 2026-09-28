@@ -28,8 +28,8 @@ are scoped or reviewed.
 - `--root` at a workspace member scopes the diff to that member and reads
   its paths relative to it. Repository-relative paths used to miss the
   member's files, so a tested change read as `no_static_path`.
-- The generated-code skip limitation names up to three skipped files and
-  the conventions that matched them.
+- In diff analysis, the generated-code skip limitation names up to three
+  skipped files and the conventions that matched them.
 - An empty `ripr check --diff` result now leads with its true cause. A config
   whose `[languages].enabled` leaves out `rust` records a typed
   `language_adapter_unavailable` limitation for the Rust files it skipped

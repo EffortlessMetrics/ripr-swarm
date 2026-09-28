@@ -465,7 +465,7 @@ fn run_pipeline_for_diff_text(
                             "Not analyzed as generated code: {listed}. ripr treats `gen/`, \
                              `generated/` and `out/` directories and `generated.rs`, `schema.rs`, \
                              `bindings.rs`, `*.gen.rs`, `*_generated.rs` and `generated_*` files, \
-                             plus `[rust] generated_file_patterns`, as generated; if one of these \
+                             plus `[languages.rust] generated_file_patterns`, as generated; if one of these \
                              is hand-written, its changes stay outside this analysis."
                         ),
                     )?,
