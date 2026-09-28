@@ -332,3 +332,82 @@ fn repo_mode_relates_package_attribute_calls_through_init_reexport() -> Result<(
     }
     Ok(())
 }
+
+#[test]
+fn shadowed_package_alias_stays_unrelated() -> Result<(), String> {
+    let finding = analyze_one_line(
+        "shadowed-alias",
+        &[
+            ("src/humanize/time.py", TIME_PY),
+            (
+                "src/humanize/__init__.py",
+                "from .time import naturaldelta\n",
+            ),
+            (
+                "tests/test_time.py",
+                "import humanize\n\n\ndef test_naturaldelta(humanize):\n    assert humanize.naturaldelta(730) == \"2\"\n",
+            ),
+        ],
+        "src/humanize/time.py",
+        2,
+    )?;
+    if finding.class != ExposureClass::NoStaticPath {
+        return Err(format!(
+            "a fixture parameter named `humanize` shadows the package; got {:?} with {:?}",
+            finding.class,
+            related_names(&finding)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn all_mentioned_only_in_a_docstring_does_not_filter_star_exports() -> Result<(), String> {
+    let finding = analyze_one_line(
+        "all-in-docstring",
+        &[
+            (
+                "pkg/more.py",
+                "\"\"\"This module intentionally has no __all__.\"\"\"\n\n\ndef one(items):\n    if len(items) != 1:\n        raise ValueError('expected one')\n    return items[0]\n",
+            ),
+            ("pkg/__init__.py", "from .more import *\n"),
+            (
+                "tests/test_more.py",
+                "import pkg\n\n\ndef test_one():\n    assert pkg.one([7]) == 7\n",
+            ),
+        ],
+        "pkg/more.py",
+        5,
+    )?;
+    if finding.class == ExposureClass::NoStaticPath {
+        return Err("a docstring mention of `__all__` is not a declaration".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn quoted_name_outside_all_does_not_satisfy_all() -> Result<(), String> {
+    let finding = analyze_one_line(
+        "quoted-elsewhere",
+        &[
+            (
+                "pkg/more.py",
+                "__all__ = ['two']\n\n\ndef one(items):\n    if len(items) != 1:\n        raise ValueError('one')\n    return items[0]\n\n\ndef two():\n    return 2\n",
+            ),
+            ("pkg/__init__.py", "from .more import *\n"),
+            (
+                "tests/test_more.py",
+                "import pkg\n\n\ndef test_one():\n    assert pkg.one([7]) == 7\n",
+            ),
+        ],
+        "pkg/more.py",
+        5,
+    )?;
+    if finding.class != ExposureClass::NoStaticPath {
+        return Err(format!(
+            "`'one'` quoted in a message is not an `__all__` entry; got {:?}",
+            finding.class
+        ));
+    }
+    Ok(())
+}

@@ -18,7 +18,8 @@
 //! - an explicit re-export must keep the owner's name (`import x as y`
 //!   renames are not followed);
 //! - a star re-export never carries a `_private` name, and when the source
-//!   module declares `__all__`, the name must appear quoted in that file;
+//!   module binds `__all__` at top level, the name must be listed in it (a
+//!   binding that is not a literal list/tuple of strings fails closed);
 //! - methods and module owners are never re-exported;
 //! - the chain stops after [`MAX_REEXPORT_HOPS`] packages.
 //!
@@ -27,8 +28,11 @@
 //! path, so an unrelated name imported from the same package stays unrelated.
 
 use super::related_tests::owner_module_paths;
+use super::source_facts::parse_module_result;
 use super::{PythonImport, PythonOwner};
 use crate::domain::OwnerKind;
+use rustpython_parser::ast::{self, Expr, Mod, Stmt};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Maximum number of package `__init__.py` hops followed from the owner module.
@@ -80,16 +84,20 @@ pub(super) fn apply_package_reexports_from<'s>(
     source_of: impl Fn(&Path) -> Option<&'s str>,
 ) {
     let exporters = package_exporters(init_owners);
+    let mut star_exports = StarExports {
+        source_of,
+        declared: HashMap::new(),
+    };
     for owner in owners.iter_mut() {
-        owner.reexport_modules = package_reexport_modules(owner, &exporters, &source_of);
+        owner.reexport_modules = package_reexport_modules(owner, &exporters, &mut star_exports);
     }
 }
 
 /// The dotted package paths that re-export `owner` under its own name.
-fn package_reexport_modules<'s>(
+fn package_reexport_modules<'s, F: Fn(&Path) -> Option<&'s str>>(
     owner: &PythonOwner,
     exporters: &[PackageExporter<'_>],
-    source_of: &impl Fn(&Path) -> Option<&'s str>,
+    star_exports: &mut StarExports<'s, F>,
 ) -> Vec<String> {
     if owner.is_module_owner()
         || matches!(
@@ -115,7 +123,7 @@ fn package_reexport_modules<'s>(
             let reexports = frontier.iter().any(|(paths, source_file)| {
                 exporter.imports.iter().any(|import| {
                     paths.contains(&import.source_module)
-                        && imports_name(import, name, source_file, source_of)
+                        && imports_name(import, name, source_file, star_exports)
                 })
             });
             if reexports {
@@ -136,32 +144,122 @@ fn package_reexport_modules<'s>(
     out
 }
 
-fn imports_name<'s>(
+fn imports_name<'s, F: Fn(&Path) -> Option<&'s str>>(
     import: &PythonImport,
     name: &str,
     source_file: &Path,
-    source_of: &impl Fn(&Path) -> Option<&'s str>,
+    star_exports: &mut StarExports<'s, F>,
 ) -> bool {
     if import.imported == name {
         return import.alias == name;
     }
-    import.imported == "*"
-        && !name.starts_with('_')
-        && star_exports_name(source_of(source_file), name)
+    import.imported == "*" && !name.starts_with('_') && star_exports.exports(source_file, name)
 }
 
-/// A star import exports every public name unless the source module declares
-/// `__all__`; then only names listed there. The `__all__` check is textual and
-/// conservative: the name must appear as a quoted string somewhere in the
-/// file. An unreadable source fails closed.
-fn star_exports_name(source: Option<&str>, name: &str) -> bool {
-    let Some(source) = source else {
+/// What a module's `__all__` says about its star export.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum AllDeclaration {
+    /// No top-level `__all__` binding: every public name is exported.
+    Absent,
+    /// A literal list/tuple of string names (including `+=` extensions).
+    Names(Vec<String>),
+    /// `__all__` is built in a way this reader does not evaluate, or the
+    /// source is unreadable or unparsable: fail closed.
+    Unresolved,
+}
+
+/// Star-export answers per source module, parsing each module once.
+struct StarExports<'s, F: Fn(&Path) -> Option<&'s str>> {
+    source_of: F,
+    declared: HashMap<PathBuf, AllDeclaration>,
+}
+
+impl<'s, F: Fn(&Path) -> Option<&'s str>> StarExports<'s, F> {
+    fn exports(&mut self, file: &Path, name: &str) -> bool {
+        let source_of = &self.source_of;
+        let declaration =
+            self.declared
+                .entry(file.to_path_buf())
+                .or_insert_with(|| match source_of(file) {
+                    Some(source) => all_declaration(file, source),
+                    None => AllDeclaration::Unresolved,
+                });
+        match declaration {
+            AllDeclaration::Absent => true,
+            AllDeclaration::Names(names) => names.iter().any(|listed| listed == name),
+            AllDeclaration::Unresolved => false,
+        }
+    }
+}
+
+/// Reads the module's top-level `__all__` from the parsed AST. A mention in
+/// a comment or docstring is not a declaration; any binding other than a
+/// literal list/tuple of strings (or a `+=` of one) is unresolved.
+fn all_declaration(file: &Path, source: &str) -> AllDeclaration {
+    let Ok(Mod::Module(module)) = parse_module_result(file, source) else {
+        return AllDeclaration::Unresolved;
+    };
+    let mut declaration = AllDeclaration::Absent;
+    for stmt in &module.body {
+        let (value, extends) = match stmt {
+            Stmt::Assign(assign) if assign.targets.iter().any(is_all_name) => {
+                (Some(assign.value.as_ref()), false)
+            }
+            Stmt::AnnAssign(assign) if is_all_name(&assign.target) => {
+                (assign.value.as_deref(), false)
+            }
+            Stmt::AugAssign(assign) if is_all_name(&assign.target) => {
+                if !matches!(assign.op, ast::Operator::Add) {
+                    return AllDeclaration::Unresolved;
+                }
+                (Some(assign.value.as_ref()), true)
+            }
+            Stmt::Expr(expr) if mutates_all(&expr.value) => return AllDeclaration::Unresolved,
+            _ => continue,
+        };
+        let Some(names) = value.and_then(literal_string_names) else {
+            return AllDeclaration::Unresolved;
+        };
+        declaration = match (declaration, extends) {
+            (AllDeclaration::Names(mut existing), true) => {
+                existing.extend(names);
+                AllDeclaration::Names(existing)
+            }
+            (AllDeclaration::Absent, true) => return AllDeclaration::Unresolved,
+            _ => AllDeclaration::Names(names),
+        };
+    }
+    declaration
+}
+
+fn is_all_name(expr: &Expr) -> bool {
+    matches!(expr, Expr::Name(name) if name.id.as_str() == "__all__")
+}
+
+/// `__all__.extend(...)`, `__all__.append(...)` and similar calls.
+fn mutates_all(expr: &Expr) -> bool {
+    let Expr::Call(call) = expr else {
         return false;
     };
-    if !source.contains("__all__") {
-        return true;
-    }
-    source.contains(&format!("\"{name}\"")) || source.contains(&format!("'{name}'"))
+    matches!(call.func.as_ref(), Expr::Attribute(attribute) if is_all_name(&attribute.value))
+}
+
+fn literal_string_names(expr: &Expr) -> Option<Vec<String>> {
+    let elements = match expr {
+        Expr::List(list) => &list.elts,
+        Expr::Tuple(tuple) => &tuple.elts,
+        _ => return None,
+    };
+    elements
+        .iter()
+        .map(|element| match element {
+            Expr::Constant(constant) => match &constant.value {
+                ast::Constant::Str(value) => Some(value.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
 }
 
 fn is_package_init(file: &Path) -> bool {

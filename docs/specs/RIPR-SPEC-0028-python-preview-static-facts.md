@@ -155,11 +155,15 @@ naturaldelta` in `src/humanize/__init__.py` lets `import humanize` +
 `__init__.py` module imports whose source module is the owner's module (or an
 earlier re-exporting package), for at most three packages. A renamed
 re-export (`import naturaldelta as delta`) is not followed. A star re-export
-never carries a `_private` name, and when the source module declares
-`__all__` the name must appear quoted in that file. Methods and module owners
+never carries a `_private` name, and when the source module binds `__all__`
+at top level the name must be listed in it; a binding other than a literal
+list or tuple of strings (or a `+=` of one) fails closed, and a mention of
+`__all__` in a comment or docstring is not a binding. Methods and module owners
 are never re-exported. The test must still call the owner's own name through
 the package, so a test that only calls a sibling name from the same package
-stays unrelated. Diff mode and repo mode apply the same rule.
+stays unrelated, and a test that binds a local named like the package alias
+(a parameter, fixture or assignment) calls that local, not the package. Diff
+mode and repo mode apply the same rule.
 Test-name and fixture-name proximity may provide a suggested repair location,
 but these links must be marked uncertain, must keep weak reachability, and must
 not promote unrelated assertions to strong revealability.
@@ -565,7 +569,9 @@ Package re-export reach is covered end to end, in diff and repo mode, by
 `crates/ripr/src/analysis/language/python/reexport_tests.rs`: attribute calls
 through an explicit `__init__.py` re-export, `from package import name`
 module identity, a star re-export honoring `__all__`, and the negative
-controls (a name `__all__` omits, a sibling name, a renamed re-export).
+controls (a name `__all__` omits, a name quoted elsewhere but not in
+`__all__`, a sibling name, a renamed re-export, a shadowed package alias) and
+a docstring that mentions `__all__` without binding it.
 
 ## Implementation Mapping
 
