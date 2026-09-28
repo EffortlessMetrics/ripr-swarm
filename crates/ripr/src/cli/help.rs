@@ -1055,8 +1055,10 @@ mod tests {
     /// (`--perl-facts` inside CHECK_HELP's `--write-artifact` entry) leaves
     /// the flag undiscoverable and unsuggestible, so the miner reads only
     /// the two surfaces a reader scans for accepted syntax. This is the same
-    /// prose exclusion `suggest.rs` applies when it mines suggestion
-    /// candidates.
+    /// documented-surface definition `suggest.rs` mines for suggestion
+    /// candidates (Options lines plus the command's own usage lines, scoped
+    /// per sibling there), so a flag this gate counts as documented is
+    /// suggestible on a typo with no second edit.
     fn extract_flags(help: &str) -> Vec<String> {
         let mut flags: Vec<String> = Vec::new();
         let mut in_usage_block = false;
@@ -1280,6 +1282,32 @@ mod tests {
 
     /// The flags one command's parser accepts: flag-shaped string literals
     /// in the listed function bodies of its parser source.
+    ///
+    /// Honest boundary of this net: it has no notion of match-arm scrutinee
+    /// position. It collects every string literal in a listed body whose
+    /// decoded content is exactly `--` plus name characters, wherever that
+    /// literal sits — an argv match arm, an `expect_value(args, i, "--flag")`
+    /// value label, or any other position, including inside a nested helper
+    /// as long as the helper's body lies within a listed function's span. A
+    /// literal in prose position survives only when the whole literal is
+    /// flag-shaped: `"--flag"` counts, but a format string like
+    /// `"invalid --flag: {err}"` carries spaces and braces and does not.
+    ///
+    /// The practical decay vector is that a literal which outlives its parse
+    /// arm — kept alive by a diagnostic, an error label, or a helper — keeps
+    /// this direction of the gate green for one more edit. The second layer
+    /// that catches the actual parser change is the per-command argv tests,
+    /// which drive the real parsers and fail once an arm stops matching:
+    /// `*_requires_values_for_value_flags`, `*_rejects_unknown_argument`, and
+    /// `*_suggests_the_nearest_flag_for_a_typo` in `commands/context.rs`,
+    /// `commands/check.rs`, `commands/doctor.rs`, `commands/pilot.rs`,
+    /// `commands/config.rs`, `commands/receipt.rs`, `commands.rs`, and
+    /// `agent.rs`. The suggestion scoping tests in `suggest.rs` pin which of
+    /// those flags belong to which sibling of a shared help body. Tightening
+    /// this scanner to scrutinee position without a real Rust parser would
+    /// risk silently dropping genuine arms — a false "documented but accepted
+    /// by no parser" drift — so the imprecision is disclosed instead of
+    /// pretended away.
     ///
     /// `None` means the table lookup or a function-body span failed to
     /// resolve; the parity test asserts both cases with the offending name
