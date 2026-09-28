@@ -439,11 +439,12 @@ recorded in the previous J PR instead of deciding them again.
 and moves each marketplace to its own dispatch. Once it is on swarm `main`,
 take the swarm side of `publish-extension.yml` in the join, and drop the
 `push` tag trigger from source's `release-server-binaries.yml`; swarm's copy
-is dispatch-only. Source's copy builds the public server archives, so the join
-also moves its two Linux legs from `ubuntu-latest` and `ubuntu-24.04-arm` to
-`ubuntu-22.04` and `ubuntu-22.04-arm` and ports the "Verify Linux glibc floor"
-step from swarm's `server-archive-qualification.yml`. Archives built on 24.04
-need glibc 2.39 and do not load on Ubuntu 22.04 or Debian 12. Do not re-apply
+is dispatch-only. Source's copy builds the public server archives on
+`ubuntu-22.04` and `ubuntu-22.04-arm`, and `cargo xtask release-server-archive`
+refuses a Linux binary that needs glibc above 2.34; keep both in the join.
+Swarm's "Verify Linux glibc floor" qualification step uses the same 2.34 floor.
+Archives built on 24.04 need glibc 2.39 and do not load on Ubuntu 22.04 or
+Debian 12. Do not re-apply
 #4218's VSIX inventory gate or #4219's `.vscodeignore` rule in the resolution:
 both are swarm commits and arrive through J.
 

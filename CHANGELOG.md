@@ -117,10 +117,9 @@ are scoped or reviewed.
   used.
 - Server qualification builds the Linux server archives, which the editor
   extension downloads, on Ubuntu 22.04 with `--locked`, and fails a Linux
-  binary that needs a glibc newer than 2.35. The 0.10.0 Linux archives were
-  built on Ubuntu 24.04 and failed on Ubuntu 22.04 and Debian 12 with
-  `GLIBC_2.39 not found`. The source release workflow takes the same runners
-  and check at the release sync.
+  binary that needs a glibc newer than 2.34 (RHEL 9), the floor the release
+  build enforces. The 0.10.0 Linux archives were built on Ubuntu 24.04 and
+  failed on Ubuntu 22.04 and Debian 12 with `GLIBC_2.39 not found`.
 
 ### Added
 
