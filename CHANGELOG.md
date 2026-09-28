@@ -11,6 +11,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Explicit per-seam agent packets bind their printed repair commands and
+  artifact paths to the selected root. Prepared repair packets advertise the
+  durable after-phase continuation instead of an incompatible manual receipt
+  recipe; standalone packets include the outcome producer needed by receipts
+  (#4000).
+
 - `review-comments` observes its cooperative analysis budget during canonical
   inventory and rejects cancelled evidence before classification. Git diff
   discovery consumes the remaining budget; deadline cancellation records a

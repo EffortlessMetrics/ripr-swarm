@@ -686,6 +686,154 @@ impl Drop for ReviewCardFixture {
     }
 }
 
+/// Execute the actual prepared packet continuation from a competing root.
+#[test]
+fn prepared_packet_next_commands_stay_in_selected_root_from_foreign_cwd() -> Result<(), String> {
+    rooted_packet_next_journey(true)
+}
+
+#[test]
+fn standalone_packet_next_commands_stay_in_selected_root_from_foreign_cwd() -> Result<(), String> {
+    rooted_packet_next_journey(false)
+}
+
+fn rooted_packet_next_journey(prepared_repair: bool) -> Result<(), String> {
+    let Some(bash) = shell_prerequisite()? else {
+        return Ok(());
+    };
+    let base = unique_temp_workspace("rooted-packet-next");
+    std::fs::create_dir(&base).map_err(|error| format!("claim fixture: {error}"))?;
+    let owned = ReviewCardFixture(base);
+    let selected = owned.0.join("dépôt selected root");
+    let (mut journey, _) = start_journey_at_root(&selected, &bash)?;
+    std::fs::write(selected.join(".gitignore"), "/target/\n")
+        .map_err(|error| format!("declare build ignore: {error}"))?;
+    let foreign = owned.0.join("foreign decoy root");
+    std::fs::create_dir(&foreign).map_err(|error| format!("claim decoy: {error}"))?;
+    init_producer_fixture_repo(&foreign)?;
+    fixture_git_ok(&foreign, &["branch", "-M", "main"])
+        .map_err(|error| format!("declare decoy default base: {error}"))?;
+    journey.launch_dir = foreign;
+    let selected_source = sha256_file(&selected.join("src/lib.rs"))?;
+    let decoy_source = sha256_file(&journey.launch_dir.join("src/lib.rs"))?;
+    let mut packet_args = vec![
+        "agent",
+        "packet",
+        "--root",
+        &journey.root_arg,
+        "--seam-id",
+        &journey.seam_id,
+        "--json",
+    ];
+    if prepared_repair {
+        packet_args = vec![
+            "agent",
+            "repair",
+            "--root",
+            &journey.root_arg,
+            "--seam-id",
+            &journey.seam_id,
+            "--phase",
+            "before",
+        ];
+    }
+    let prepared = run_ripr(&journey.launch_dir, &packet_args)?;
+    assert_success(&prepared, "prepare actual rooted repair packet")?;
+    let packet = if prepared_repair {
+        read_json(&workflow_artifact(&selected, "agent-packet.json"))?
+    } else {
+        serde_json::from_slice::<Value>(&prepared.stdout)
+            .map_err(|error| format!("parse standalone packet: {error}"))?
+    };
+    // Execute actual advertised alternatives, not the separately correct
+    // durable --attempt continuation. The decoy is a valid competing repo.
+    let manual_fields = [
+        "before_snapshot_command",
+        "after_snapshot_command",
+        "analysis_outcome_command",
+        "verify_after_edit",
+        "receipt_after_verify",
+    ];
+    let fields: &[&str] = if prepared_repair {
+        for field in manual_fields {
+            if packet.pointer(&format!("/next/{field}")) != Some(&Value::Null) {
+                return Err(format!("prepared packet advertises incompatible {field}"));
+            }
+        }
+        observe_selected_boundary(&selected)?;
+        &["repair_after_command"]
+    } else {
+        &manual_fields
+    };
+    for field in fields {
+        let command = packet
+            .pointer(&format!("/next/{field}"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("packet omitted {field}"))?;
+        let output = run_in_shell(&journey, command)?;
+        assert_success(&output, &format!("actual packet.next.{field}"))?;
+        if journey.launch_dir.join("target").exists() {
+            return Err(format!("packet.next.{field} wrote into foreign decoy root"));
+        }
+        if *field == "before_snapshot_command" {
+            // The advertised recipe brackets a real test edit; verify refuses
+            // two snapshots of the same repository revision.
+            observe_selected_boundary(&selected)?;
+        }
+    }
+    let receipt = read_json(&selected.join("target/ripr/reports/agent-receipt.json"))?;
+    if receipt.get("status").and_then(Value::as_str) != Some("advisory")
+        || receipt
+            .get("analysis_outcome_status")
+            .and_then(Value::as_str)
+            != Some("complete")
+    {
+        return Err(format!(
+            "packet recipe did not produce a complete advisory receipt: {receipt}"
+        ));
+    }
+    if receipt
+        .pointer("/provenance/movement")
+        .and_then(Value::as_str)
+        != Some("improved")
+    {
+        return Err(format!(
+            "packet receipt does not report real selected-seam improvement: {receipt}"
+        ));
+    }
+    for (name, file) in [
+        ("verify_artifact", "agent-verify.json"),
+        ("before_artifact", "before.repo-exposure.json"),
+        ("after_artifact", "after.repo-exposure.json"),
+    ] {
+        let expected = sha256_file(&workflow_artifact(&selected, file))?;
+        if receipt
+            .pointer(&format!("/provenance/{name}/sha256"))
+            .and_then(Value::as_str)
+            != Some(expected.as_str())
+        {
+            return Err(format!("packet receipt did not consume selected {name}"));
+        }
+    }
+    if sha256_file(&journey.launch_dir.join("src/lib.rs"))? != decoy_source {
+        return Err("packet commands changed foreign source".to_string());
+    }
+    if sha256_file(&selected.join("src/lib.rs"))? != selected_source {
+        return Err("packet recipe changed selected production source".to_string());
+    }
+    Ok(())
+}
+
+fn observe_selected_boundary(selected: &Path) -> Result<(), String> {
+    let test_path = selected.join("tests/pricing.rs");
+    let mut source = std::fs::read_to_string(&test_path)
+        .map_err(|error| format!("read test for focused edit: {error}"))?;
+    source.push_str("\n#[test]\nfn selected_boundary_is_observed() { assert_eq!(discounted_total(100, 100), 90); }\n");
+    std::fs::write(&test_path, source)
+        .map_err(|error| format!("write focused test edit: {error}"))?;
+    commit_fixture(selected, "observe the selected boundary")
+}
+
 /// Execute commands obtained from the actual review-card and inherited gate
 /// producers, with fresh artifacts and a foreign launch directory.
 #[test]

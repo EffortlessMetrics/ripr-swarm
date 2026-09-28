@@ -883,6 +883,44 @@ fn clean_test_only_edit_binds_prepare_and_apply() -> Result<(), String> {
             ));
         }
     }
+    let packet_path = fixture
+        .root
+        .join("target/ripr/repair-attempts")
+        .join(&attempt_id)
+        .join("artifacts/agent-packet.json");
+    let packet_text = std::fs::read_to_string(&packet_path)
+        .map_err(|error| format!("read retained prepared packet: {error}"))?;
+    let packet = parse_json(&packet_text, "retained prepared packet")?;
+    let continuation = packet
+        .pointer("/next/repair_after_command")
+        .and_then(Value::as_str)
+        .ok_or("prepared packet carries no durable continuation")?;
+    let selected_root_prefix = next_command
+        .split_once(" --attempt ")
+        .map(|(prefix, _)| prefix)
+        .ok_or("published command carries no exact attempt selector")?;
+    if !continuation.starts_with(&format!("{selected_root_prefix} --seam-id "))
+        || !continuation
+            .ends_with(" --edit-authorized --edit-authority <operator-or-agent-identity>")
+        || !continuation.contains(" --phase after")
+    {
+        return Err(format!(
+            "retained Python packet lost selected root or required authorization: {continuation}"
+        ));
+    }
+    for field in [
+        "before_snapshot_command",
+        "after_snapshot_command",
+        "analysis_outcome_command",
+        "verify_after_edit",
+        "receipt_after_verify",
+    ] {
+        if packet.pointer(&format!("/next/{field}")) != Some(&Value::Null) {
+            return Err(format!(
+                "prepared Python packet advertises incompatible {field}"
+            ));
+        }
+    }
     let record = prepare_record(&fixture, &attempt_id)?;
     assert_prepare_record_identity(&record)?;
     if record

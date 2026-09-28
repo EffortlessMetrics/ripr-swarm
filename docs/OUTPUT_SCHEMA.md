@@ -13941,6 +13941,28 @@ Field contract:
   packet and is `null` for a repo-wide envelope containing multiple seams.
   These commands are advisory handoff instructions and do not execute a test,
   approve a patch, or authorize a merge.
+  Compound recipes use Bash-style quoting, directory creation, and redirects,
+  consistent with the structured workflow's `command_shell: "bash"`; they do
+  not establish PowerShell recipe compatibility. Read the structured workflow
+  for its shell contract before executing commands.
+  Explicit standalone per-seam CLI `agent packet` binds these commands,
+  including directory creation, to the selected repository root.
+  Its optional `next.analysis_outcome_command` writes the static outcome
+  consumed by the receipt, between the after snapshot and verify steps.
+  Portable bulk/check-format wrappers omit this additive field and retain
+  their repository-local recipe; they are not a complete foreign-CWD receipt
+  workflow. GapRecord and editor routes are unchanged. Static receipt
+  completeness does not establish project-test execution.
+  A packet emitted by `agent repair --phase before` instead sets the manual
+  snapshot, outcome, verify, and receipt fields to `null` and advertises
+  `next.repair_after_command`. This selected-root command resumes the existing
+  durable repair route after the permitted focused edit, including the edit
+  cage, outcome, verify, after verdict, and receipt. Seam selection refuses
+  multiple awaiting attempts; use the preferred exact `--attempt` command
+  from the published manifest or stderr to disambiguate. Trust-bound Python
+  continuations retain the required explicit authorization placeholders;
+  rendering the command does not grant authorization. Packet bytes remain
+  unchanged after publication.
 
 The packet is the agent's work order: it names the seam, the missing
 discriminator, the oracle shape, and either a producer-backed assertion

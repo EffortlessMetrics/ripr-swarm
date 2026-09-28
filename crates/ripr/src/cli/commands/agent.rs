@@ -261,6 +261,17 @@ fn unknown_seam_id_hint(root: &Path, seam_id: &str) -> String {
 }
 
 fn render_agent_packet(options: &AgentPacketOptions) -> Result<String, String> {
+    let root = crate::agent::loop_commands::bound_root(&options.root.to_string_lossy());
+    render_agent_packet_with_context(
+        options,
+        output::agent_seam_packets::PacketCommandContext::Standalone { root: &root },
+    )
+}
+
+fn render_agent_packet_with_context(
+    options: &AgentPacketOptions,
+    context: output::agent_seam_packets::PacketCommandContext<'_>,
+) -> Result<String, String> {
     if let (Some(gap_ledger), Some(gap_id)) = (&options.gap_ledger, &options.gap_id) {
         return render_agent_packet_from_gap_ledger(&options.root, gap_ledger, gap_id);
     }
@@ -286,9 +297,7 @@ fn render_agent_packet(options: &AgentPacketOptions) -> Result<String, String> {
         return Err(format!("agent packet seam_id {seam_id} {reason}"));
     }
 
-    Ok(output::agent_seam_packets::render_agent_seam_packet_json(
-        entry,
-    ))
+    Ok(output::agent_seam_packets::render_agent_seam_packet_json_with_context(entry, context))
 }
 
 fn run_agent_verify(options: AgentVerifyOptions) -> Result<(), String> {
@@ -662,7 +671,7 @@ fn run_agent_repair_phase(
         // The before-phase half runs the workflow only; the digest-bound
         // binding is produced in `cli::run` once the workflow artifacts exist
         // (see `persist_before_repair_attempt`).
-        python_repair_trust: _,
+        python_repair_trust,
         edit_authorization,
         verify_authorization,
         verify_rollback,
@@ -683,13 +692,22 @@ fn run_agent_repair_phase(
             // packet names no test file ripr may edit refuses here, before any
             // workflow artifact is written, so neither this phase nor
             // `ripr agent status` reads as a started repair.
-            let packet = render_agent_packet(&AgentPacketOptions {
-                root: root.clone(),
-                seam_id: Some(seam_id.clone()),
-                gap_ledger: None,
-                gap_id: None,
-                json: true,
-            })?;
+            let packet_root = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
+            let packet = render_agent_packet_with_context(
+                &AgentPacketOptions {
+                    root: root.clone(),
+                    seam_id: Some(seam_id.clone()),
+                    gap_ledger: None,
+                    gap_id: None,
+                    json: true,
+                },
+                output::agent_seam_packets::PacketCommandContext::Prepared {
+                    root: &packet_root,
+                    authorization_suffix: python_repair_trust
+                        .as_ref()
+                        .map(|_| crate::agent::loop_commands::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
+                },
+            )?;
             let policy =
                 crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
                     .map_err(|error| before_phase_refusal(&seam_id, &error))?;
