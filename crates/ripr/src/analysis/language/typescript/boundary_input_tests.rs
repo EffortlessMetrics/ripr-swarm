@@ -568,9 +568,11 @@ fn changed_line_behind_an_early_exit_or_nested_block_stays_unresolved() {
             Some(None),
             "{label}: {source}"
         );
-    } // The changed line must start a fresh statement: a braceless body, an
-    // `else` branch, or an expression continued from the previous line may
-    // skip it (independent review on #4429).
+    }
+    // The changed line must start a fresh statement: a braceless body or an
+    // `else` branch may skip it (independent review on #4429). The continued
+    // expressions are already refused by the line checks; they stay here as
+    // guards for the same skip.
     let owner = |body: &str| {
         format!("export function shipping(amount: number): number {{\n{body}  return 2;\n}}\n")
     };
