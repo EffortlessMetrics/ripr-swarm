@@ -56,6 +56,28 @@ pub(crate) fn powershell_form(command: &str) -> PowershellForm {
     }
 }
 
+/// Statement that makes PowerShell decode the captured producer stdout as
+/// UTF-8. PowerShell decodes native stdout with `[Console]::OutputEncoding`,
+/// which is the OEM code page (437, 850, ...) in Windows PowerShell 5.1 and
+/// in pwsh without the UTF-8 system locale, so a non-ASCII byte such as the
+/// `—` in check JSON was re-encoded as `ΓÇö` before the BOM-free write and
+/// broke `agent verify` content commitments. The setter fails without an
+/// attached console; the `catch` keeps the command running in that case,
+/// where there is also no console code page to misdecode through.
+const POWERSHELL_UTF8_STDOUT: &str =
+    "try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; ";
+
+/// Saves the session's console encoding before [`POWERSHELL_UTF8_STDOUT`]
+/// so the capture can restore it: the setting is process-wide, and a pasted
+/// line must not leave later native tools in a long-lived session decoding
+/// their OEM output as UTF-8.
+const POWERSHELL_SAVE_ENCODING: &str = "$riprEncoding = [Console]::OutputEncoding; ";
+
+/// Restores the saved encoding in a `finally`, so a throwing capture
+/// restores it too.
+const POWERSHELL_RESTORE_ENCODING: &str =
+    " finally { try { [Console]::OutputEncoding = $riprEncoding } catch {} }";
+
 /// Translate a bash-rendered advisory command into its PowerShell form.
 ///
 /// The bash string stays authoritative (`agent::loop_commands::shell_arg`
@@ -114,17 +136,6 @@ pub(crate) fn powershell_form(command: &str) -> PowershellForm {
 /// Windows-gated `powershell_translation_preserves_native_argv_and_artifact_bytes`
 /// executes the translated lines under a real `pwsh` on the Windows lane,
 /// where a missing `pwsh` fails closed instead of skipping.
-/// Statement that makes PowerShell decode the captured producer stdout as
-/// UTF-8. PowerShell decodes native stdout with `[Console]::OutputEncoding`,
-/// which is the OEM code page (437, 850, ...) in Windows PowerShell 5.1 and
-/// in pwsh without the UTF-8 system locale, so a non-ASCII byte such as the
-/// `—` in check JSON was re-encoded as `ΓÇö` before the BOM-free write and
-/// broke `agent verify` content commitments. The setter fails without an
-/// attached console; the `catch` keeps the command running in that case,
-/// where there is also no console code page to misdecode through.
-const POWERSHELL_UTF8_STDOUT: &str =
-    "try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; ";
-
 pub(crate) fn powershell_command(command: &str) -> Option<String> {
     if is_compound_bash_command(command) {
         return None;
@@ -142,7 +153,7 @@ pub(crate) fn powershell_command(command: &str) -> Option<String> {
         }
         let output = powershell_literal(target);
         return Some(format!(
-            "{POWERSHELL_UTF8_STDOUT}$ripr = (({invocation}) | Out-String); if ($LASTEXITCODE -eq 0) {{ [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath({output}), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) }} else {{ throw \"ripr exited with code $LASTEXITCODE\" }}"
+            "{POWERSHELL_SAVE_ENCODING}{POWERSHELL_UTF8_STDOUT}try {{ $ripr = (({invocation}) | Out-String) }}{POWERSHELL_RESTORE_ENCODING}; if ($LASTEXITCODE -eq 0) {{ [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath({output}), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) }} else {{ throw \"ripr exited with code $LASTEXITCODE\" }}"
         ));
     }
     Some(invoke_quoted_program(&command))
@@ -369,7 +380,7 @@ mod tests {
         );
         assert_eq!(
             powershell_command("ripr check --root 'café' > 'résumé.json'"),
-            Some("try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; $ripr = ((ripr check --root 'café') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('résumé.json'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$riprEncoding = [Console]::OutputEncoding; try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; try { $ripr = ((ripr check --root 'café') | Out-String) } finally { try { [Console]::OutputEncoding = $riprEncoding } catch {} }; if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('résumé.json'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
@@ -389,7 +400,7 @@ mod tests {
     fn powershell_command_finds_real_redirect_after_double_quoted_argument() {
         assert_eq!(
             powershell_command("ripr check --root \"café > owner's repo\" > 'résumé.json'"),
-            Some("try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; $ripr = ((ripr check --root \"café > owner's repo\") | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('résumé.json'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$riprEncoding = [Console]::OutputEncoding; try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; try { $ripr = ((ripr check --root \"café > owner's repo\") | Out-String) } finally { try { [Console]::OutputEncoding = $riprEncoding } catch {} }; if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('résumé.json'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
@@ -397,7 +408,7 @@ mod tests {
     fn powershell_command_keeps_double_quote_literal_inside_single_quotes() {
         assert_eq!(
             powershell_command("cargo test 'a \" > b' > evidence.txt"),
-            Some("try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; $ripr = ((cargo test 'a \" > b') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('evidence.txt'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$riprEncoding = [Console]::OutputEncoding; try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; try { $ripr = ((cargo test 'a \" > b') | Out-String) } finally { try { [Console]::OutputEncoding = $riprEncoding } catch {} }; if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('evidence.txt'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
@@ -449,7 +460,7 @@ mod tests {
         );
         assert_eq!(
             powershell_command("'my tools\\recorder.exe' --gap > 'out\\after.json'"),
-            Some("try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; $ripr = ((& 'my tools\\recorder.exe' --gap) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('out\\after.json'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$riprEncoding = [Console]::OutputEncoding; try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; try { $ripr = ((& 'my tools\\recorder.exe' --gap) | Out-String) } finally { try { [Console]::OutputEncoding = $riprEncoding } catch {} }; if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('out\\after.json'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
         assert_eq!(
             powershell_command("cargo test --gap"),
@@ -474,7 +485,7 @@ mod tests {
             powershell_command(
                 "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json"
             ),
-            Some("try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; $ripr = ((ripr check --root . --mode draft --format repo-exposure-json) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('target/ripr/pilot/after.repo-exposure.json'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$riprEncoding = [Console]::OutputEncoding; try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; try { $ripr = ((ripr check --root . --mode draft --format repo-exposure-json) | Out-String) } finally { try { [Console]::OutputEncoding = $riprEncoding } catch {} }; if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('target/ripr/pilot/after.repo-exposure.json'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
@@ -489,7 +500,7 @@ mod tests {
         assert_eq!(powershell_command("ripr check --root . > it's.json"), None);
         assert_eq!(
             powershell_command("ripr check --root . > 'it'\\''s.json'"),
-            Some("try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; $ripr = ((ripr check --root .) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('it''s.json'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$riprEncoding = [Console]::OutputEncoding; try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; try { $ripr = ((ripr check --root .) | Out-String) } finally { try { [Console]::OutputEncoding = $riprEncoding } catch {} }; if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('it''s.json'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
@@ -681,7 +692,7 @@ mod tests {
     fn powershell_command_keeps_redirect_after_quoted_newline() {
         assert_eq!(
             powershell_command("ripr check --root 'café\nrepo' > 'résumé.json'"),
-            Some("try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; $ripr = ((ripr check --root 'café\nrepo') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('résumé.json'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$riprEncoding = [Console]::OutputEncoding; try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; try { $ripr = ((ripr check --root 'café\nrepo') | Out-String) } finally { try { [Console]::OutputEncoding = $riprEncoding } catch {} }; if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('résumé.json'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
@@ -935,8 +946,11 @@ fn main() -> ExitCode {
         // statement must garble them, which proves this instrument can see
         // the misdecode rather than passing on a UTF-8 host.
         let oem = "[Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding(437); ";
+        // The trailing probe prints the session's encoding after the line,
+        // so the capture must also have restored code page 437.
+        let probe = "; [Console]::OutputEncoding.CodePage";
         let oem_output = run_pwsh_line(
-            &format!("{oem}{redirect_line}"),
+            &format!("{oem}{redirect_line}{probe}"),
             &root,
             &redirect_record,
             "0",
@@ -945,6 +959,26 @@ fn main() -> ExitCode {
             return Err(format!(
                 "translated redirect under code page 437 failed: {}",
                 String::from_utf8_lossy(&oem_output.stderr)
+            ));
+        }
+        if String::from_utf8_lossy(&oem_output.stdout).trim() != "437" {
+            return Err(format!(
+                "the capture left the session encoding changed: {:?}",
+                String::from_utf8_lossy(&oem_output.stdout)
+            ));
+        }
+        // A failing invocation throws inside the capture; `finally` must
+        // still restore the session encoding.
+        let failed_restore = run_pwsh_line(
+            &format!("{oem}try {{ {redirect_line} }} catch {{}}{probe}"),
+            &root,
+            &redirect_record,
+            "1",
+        )?;
+        if String::from_utf8_lossy(&failed_restore.stdout).trim() != "437" {
+            return Err(format!(
+                "a failing capture left the session encoding changed: {:?}",
+                String::from_utf8_lossy(&failed_restore.stdout)
             ));
         }
         let oem_bytes = std::fs::read(&artifact)

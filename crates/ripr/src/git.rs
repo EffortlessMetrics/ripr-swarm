@@ -117,8 +117,12 @@ pub(crate) fn run_git_output_with_deadline(
 /// separator `SetCurrentDirectoryW` appends).
 const WINDOWS_MAX_WORKING_DIRECTORY_UNITS: usize = 258;
 
-/// `ERROR_FILE_NOT_FOUND`: `CreateProcessW` could not find the program.
-const WINDOWS_ERROR_FILE_NOT_FOUND: i32 = 2;
+/// Win32 codes `CreateProcessW` returns for a working directory it cannot
+/// use because of its length: `ERROR_DIRECTORY` (267, observed on #4350)
+/// and `ERROR_FILENAME_EXCED_RANGE` (206). Any other code, such as a
+/// missing or denied program, keeps its own message: moving the checkout
+/// would not fix it.
+const WINDOWS_PATH_LIMIT_ERRORS: [i32; 2] = [267, 206];
 
 /// What a spawn failure message needs from a [`Command`] that the spawn
 /// consumes.
@@ -153,13 +157,13 @@ impl SpawnSite {
     }
 
     fn failure_message_on(&self, is_windows: bool, describe: &str, err: &std::io::Error) -> String {
-        // A missing program (ERROR_FILE_NOT_FOUND) is not a path-limit
-        // failure: moving the checkout would not install git.
-        let program_missing = err.raw_os_error() == Some(WINDOWS_ERROR_FILE_NOT_FOUND);
+        let path_limit_error = err
+            .raw_os_error()
+            .is_some_and(|code| WINDOWS_PATH_LIMIT_ERRORS.contains(&code));
         match self
             .working_directory
             .as_deref()
-            .filter(|_| !program_missing)
+            .filter(|_| path_limit_error)
             .and_then(|dir| windows_overlong_working_directory(is_windows, dir))
         {
             Some(units) => format!(
@@ -727,9 +731,7 @@ mod tests {
 
     #[test]
     fn spawn_site_measures_a_relative_root_joined_to_the_process_directory() -> Result<(), String> {
-        let mut command = Command::new("git");
-        command.current_dir("relative-root");
-        let site = SpawnSite::of(&command);
+        let site = SpawnSite::of(&git_command(Path::new("relative-root"), &[]));
         let cwd = std::env::current_dir().map_err(|err| err.to_string())?;
         assert_eq!(
             site.working_directory,
@@ -768,12 +770,23 @@ mod tests {
             format!("failed to run {describe}: {err}"),
             "other platforms keep the established spawn-failure text"
         );
-        let missing_git = std::io::Error::from_raw_os_error(2);
-        assert_eq!(
-            site.failure_message_on(true, &describe, &missing_git),
-            format!("failed to run {describe}: {missing_git}"),
-            "a missing git is not a path-limit failure, however long the root"
+        let too_long = std::io::Error::from_raw_os_error(206);
+        assert!(
+            site.failure_message_on(true, &describe, &too_long)
+                .starts_with("failed to run git: the workspace root is 387 characters long"),
+            "ERROR_FILENAME_EXCED_RANGE is the other path-limit code"
         );
+        for other in [
+            std::io::Error::from_raw_os_error(2),
+            std::io::Error::from_raw_os_error(5),
+            std::io::Error::from(std::io::ErrorKind::NotFound),
+        ] {
+            assert_eq!(
+                site.failure_message_on(true, &describe, &other),
+                format!("failed to run {describe}: {other}"),
+                "a missing or denied git is not a path-limit failure, however long the root"
+            );
+        }
         let short = SpawnSite {
             program: "git".to_string(),
             working_directory: Some(PathBuf::from(format!(r"{DRIVE}\repo"))),
