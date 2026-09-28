@@ -1862,7 +1862,11 @@ fn gap_record_diagnostic_message(record: &GapRecord) -> String {
         .as_ref()
         .and_then(|route| non_empty(&route.route_kind))
         .unwrap_or("InspectGap");
-    let mut message = format!("ripr gap: {kind}; repair route: {route}");
+    let mut message = if route == "InspectGap" {
+        format!("ripr gap: {kind}; inspect the gap with the 'Inspect gap: copy context' code action")
+    } else {
+        format!("ripr gap: {kind}; repair route: {route}")
+    };
     if let Some(route) = &record.repair_route {
         if let Some(changed) = route.changed_behavior.as_deref().and_then(non_empty) {
             message.push_str(&format!("; changed behavior: {changed}"));
@@ -2338,7 +2342,16 @@ fn lsp_severity(severity: ConfigSeverity) -> Option<DiagnosticSeverity> {
 fn lsp_message(finding: &Finding) -> String {
     let reconciled = reconcile_next_step(finding);
     let base = if reconciled.is_empty() {
-        format!("{} static RIPR exposure", finding.class.as_str())
+        let explanation = match &finding.class {
+            crate::domain::ExposureClass::Exposed => "A test appears to observe the changed behavior",
+            crate::domain::ExposureClass::WeaklyExposed => "Related tests may not distinguish the changed behavior",
+            crate::domain::ExposureClass::ReachableUnrevealed => "A test reaches the change without observing its effect",
+            crate::domain::ExposureClass::NoStaticPath => "No test path to this change was found",
+            crate::domain::ExposureClass::InfectionUnknown => "The changed value could not be traced",
+            crate::domain::ExposureClass::PropagationUnknown => "The changed effect could not be traced to a test",
+            crate::domain::ExposureClass::StaticUnknown => "Static analysis could not classify this change",
+        };
+        format!("{explanation}. Use the 'Inspect finding: copy context' code action for the evidence and next step.")
     } else {
         reconciled
     };
@@ -2751,7 +2764,8 @@ mod seam_diagnostic_tests {
                 diagnostic.severity
             ));
         }
-        if !diagnostic.message.contains("repair route: InspectGap")
+        if !diagnostic.message.contains("Inspect gap: copy context")
+            || diagnostic.message.contains("repair route: InspectGap")
             || !diagnostic.message.contains("preview advisory evidence")
         {
             return Err(format!(
@@ -4430,6 +4444,20 @@ mod lsp_next_step_parity_tests {
             "TypeScript preview advisory: add or strengthen a focused assertion; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.".to_string(),
         );
         f
+    }
+
+    #[test]
+    fn unwitnessed_finding_fallback_explains_class_and_inspection() {
+        let mut finding = complete_ts_finding();
+        finding.class = crate::domain::ExposureClass::NoStaticPath;
+        finding.recommended_next_step = None;
+        finding.language = None;
+        finding.language_status = None;
+        let message = lsp_message(&finding);
+        assert_eq!(
+            message,
+            "No test path to this change was found. Use the 'Inspect finding: copy context' code action for the evidence and next step."
+        );
     }
 
     /// PARITY: complete packet → LSP diagnostic message must NOT contain the
