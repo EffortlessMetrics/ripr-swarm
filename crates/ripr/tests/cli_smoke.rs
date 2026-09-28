@@ -4,6 +4,7 @@
 )]
 
 use sha2::{Digest, Sha256};
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -32,12 +33,19 @@ fn run_ripr_in_workspace(args: &[&str]) -> Result<Output, std::io::Error> {
     run_command(bin, Some(&root), args)
 }
 
+/// Run `ripr` with the given bytes piped to its stdin, the way a shell
+/// `git diff origin/main | ripr check --diff -` feeds the process (#4319).
+fn run_ripr_with_stdin(args: &[&str], stdin: &[u8]) -> Result<Output, std::io::Error> {
+    let bin = env!("CARGO_BIN_EXE_ripr");
+    spawn_command(bin, None, args, &[], None, Some(stdin))
+}
+
 fn run_command(
     program: &str,
     current_dir: Option<&Path>,
     args: &[&str],
 ) -> Result<Output, std::io::Error> {
-    spawn_command(program, current_dir, args, &[], None)
+    spawn_command(program, current_dir, args, &[], None, None)
 }
 
 /// The single process spawn point for this harness. Both `run_command` and
@@ -45,13 +53,17 @@ fn run_command(
 /// spawn site rather than one per calling convention. With `redirect`, the
 /// child's stdout and stderr go to those files the way a shell `> out 2> err`
 /// sends them (each file is created before the child starts), and the
-/// returned `Output` carries empty captured streams.
+/// returned `Output` carries empty captured streams. With `stdin`, the bytes
+/// are piped to the child the way a shell `printf … | command` does: the
+/// write end is closed after writing so the child sees EOF, and the child's
+/// stdout/stderr are captured unless `redirect` sends them to files.
 fn spawn_command(
     program: &str,
     current_dir: Option<&Path>,
     args: &[&str],
     env: &[(&str, &str)],
     redirect: Option<(&Path, &Path)>,
+    stdin: Option<&[u8]>,
 ) -> Result<Output, std::io::Error> {
     let mut command = Command::new(program);
     if let Some(current_dir) = current_dir {
@@ -61,9 +73,9 @@ fn spawn_command(
         command.env(name, value);
     }
     command.args(args);
-    match redirect {
-        None => command.output(),
-        Some((stdout, stderr)) => {
+    match (stdin, redirect) {
+        (None, None) => command.output(),
+        (None, Some((stdout, stderr))) => {
             command
                 .stdout(std::fs::File::create(stdout)?)
                 .stderr(std::fs::File::create(stderr)?);
@@ -72,6 +84,29 @@ fn spawn_command(
                 stdout: Vec::new(),
                 stderr: Vec::new(),
             })
+        }
+        (Some(input), redirect) => {
+            command.stdin(Stdio::piped());
+            match redirect {
+                None => {
+                    command.stdout(Stdio::piped());
+                    command.stderr(Stdio::piped());
+                }
+                Some((stdout, stderr)) => {
+                    command
+                        .stdout(std::fs::File::create(stdout)?)
+                        .stderr(std::fs::File::create(stderr)?);
+                }
+            }
+            let mut child = command.spawn()?;
+            let mut pipe = child
+                .stdin
+                .take()
+                .ok_or_else(|| std::io::Error::other("child stdin was not captured"))?;
+            pipe.write_all(input)?;
+            // Close our write end so the child sees EOF instead of blocking.
+            drop(pipe);
+            child.wait_with_output()
         }
     }
 }
@@ -85,7 +120,7 @@ fn run_command_with_env(
     args: &[&str],
     env: &[(&str, &str)],
 ) -> Result<Output, std::io::Error> {
-    spawn_command(program, Some(current_dir), args, env, None)
+    spawn_command(program, Some(current_dir), args, env, None, None)
 }
 
 /// Retry only `ETXTBSY` (`ExecutableFileBusy`). Copying `ripr` and executing
@@ -4712,6 +4747,7 @@ fn run_repair_phase_redirected(
         &args,
         &[],
         Some((stdout, stderr)),
+        None,
     )
 }
 
@@ -16303,24 +16339,11 @@ index 1111111..2222222 100644\n\
 #[test]
 fn check_diff_stdin_from_a_pipe_stays_silent_about_terminal_disclosure()
 -> Result<(), Box<dyn std::error::Error>> {
-    use std::io::Write;
-
     let note = "ripr: reading the diff from the attached terminal; paste the diff and press Ctrl+Z then Enter on Windows, or Ctrl+D on Unix, to end input";
-    let bin = env!("CARGO_BIN_EXE_ripr");
-    let mut child = Command::new(bin)
-        .args(["check", "--diff", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    child
-        .stdin
-        .as_mut()
-        .ok_or("child stdin was not captured")?
-        .write_all(UNIFIED_DIFF_FOR_STDIN_PROBE.as_bytes())?;
-    // Close our write end so the child sees EOF instead of blocking.
-    drop(child.stdin.take());
-    let output = child.wait_with_output()?;
+    let output = run_ripr_with_stdin(
+        &["check", "--diff", "-"],
+        UNIFIED_DIFF_FOR_STDIN_PROBE.as_bytes(),
+    )?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(
         stderr.matches(note).count(),
