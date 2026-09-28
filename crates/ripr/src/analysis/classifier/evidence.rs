@@ -110,6 +110,25 @@ impl ClassifiedProbeEvidence {
 
         let discriminate =
             tuple_match::discrimination(context, &observe, &discriminate).unwrap_or(discriminate);
+        // The missing-field fact is the authority on whether an assertion
+        // observes the constructed field. A token that merely coincides with
+        // the field value (`Box` in `downcast_ref::<Box<dyn E>>()`) must not
+        // make the finding `exposed` while that fact says nothing observes it.
+        let discriminate = if matches!(context.probe.family, ProbeFamily::FieldConstruction)
+            && discriminate.state == StageState::Yes
+            && activation.missing_discriminators.iter().any(|fact| {
+                fact.flow_sink
+                    .as_ref()
+                    .is_some_and(|sink| sink.kind == FlowSinkKind::StructField)
+            }) {
+            StageEvidence::new(
+                StageState::Weak,
+                Confidence::Medium,
+                "Discriminator unconfirmed: no field-value assertion observes the constructed field",
+            )
+        } else {
+            discriminate
+        };
         // Tests kept only as suggested locations never run the owner, so
         // they neither activate the change nor observe it.
         let unreached = |stage: StageEvidence, verb: &str| {

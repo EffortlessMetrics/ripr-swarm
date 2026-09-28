@@ -795,6 +795,50 @@ mod tests {
         assert_eq!(finding.flow_sinks[0].text, "total: computed_total");
     }
 
+    // anyhow `Own::new`: a token that merely coincides with the field value
+    // (`Box` in a downcast type) made the finding `exposed` while the
+    // missing-field fact said no assertion observes the constructed field.
+    #[test]
+    fn given_field_construction_observed_only_by_token_coincidence_when_classified_then_not_exposed()
+     {
+        let index = RustIndex {
+            functions: vec![function("src/lib.rs", "score")],
+            tests: vec![test(
+                "tests/score.rs",
+                "score_boxed",
+                "score(1)",
+                "assert_eq!(score(1).downcast_ref::<Box<dyn E>>().is_some(), true);",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = Probe {
+            id: ProbeId("probe:src_lib_rs:2:field_construction".to_string()),
+            location: SourceLocation::new("src/lib.rs", 2, 1),
+            owner: Some(SymbolId("src/lib.rs::score".to_string())),
+            family: ProbeFamily::FieldConstruction,
+            delta: DeltaKind::Value,
+            before: None,
+            after: Some("ptr: NonNull::from(Box::leak(ptr))".to_string()),
+            expression: "ptr: NonNull::from(Box::leak(ptr))".to_string(),
+            expected_sinks: vec![],
+            required_oracles: vec![],
+        };
+
+        let finding = classify_probe(&probe, &index, true, None);
+
+        assert!(
+            finding
+                .activation
+                .missing_discriminators
+                .iter()
+                .any(|fact| fact.reason.starts_with("No field-value assertion observes")),
+            "premise: the missing-field fact is present: {:?}",
+            finding.activation.missing_discriminators
+        );
+        assert_ne!(finding.class, ExposureClass::Exposed);
+        assert_ne!(finding.ripr.reveal.discriminate.state, StageState::Yes);
+    }
+
     #[test]
     fn given_changed_match_arm_when_arm_returns_value_then_flow_sink_is_match_arm_return() {
         let index = RustIndex {
@@ -1844,7 +1888,10 @@ mod tests {
         let finding = classify_probe(&probe, &index, true, None);
 
         assert!(
-            finding.related_tests.iter().any(|test| test.name == "eu_tax"),
+            finding
+                .related_tests
+                .iter()
+                .any(|test| test.name == "eu_tax"),
             "premise: the sibling test stays listed as a suggested location: {:?}",
             finding.related_tests
         );
@@ -1858,15 +1905,17 @@ mod tests {
     // A production caller may carry a test's reach through a chain the
     // relation stage did not resolve, so proximity stays weak reach there.
     #[test]
-    fn given_proximity_only_owner_with_production_caller_when_classified_then_not_no_static_path()
-    {
+    fn given_proximity_only_owner_with_production_caller_when_classified_then_not_no_static_path() {
         let index = uncalled_owner_index(true);
         let probe = fragile_fee_probe(ProbeFamily::Predicate, "fragile_fee");
 
         let finding = classify_probe(&probe, &index, true, None);
 
         assert!(
-            finding.related_tests.iter().any(|test| test.name == "eu_tax"),
+            finding
+                .related_tests
+                .iter()
+                .any(|test| test.name == "eu_tax"),
             "premise: the sibling test is listed: {:?}",
             finding.related_tests
         );

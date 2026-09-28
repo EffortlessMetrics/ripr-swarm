@@ -907,6 +907,9 @@ fn missing_field_value_discriminator(
     // The match uses word-boundary semantics via `contains_as_whole_word` to
     // avoid token coincidence (e.g. `id` matching inside `provider`), the
     // recurring false-observation family. See reveal.rs:413 for the same guard.
+    // A read of the field by name (`cfg.retries`) observes it as well as the
+    // whole initializer text does.
+    let field_read = constructed_field_name(&probe.expression).map(|name| format!(".{name}"));
     let field_already_observed = related_tests.iter().any(|test| {
         test.assertions.iter().any(|assertion| {
             matches!(
@@ -915,7 +918,10 @@ fn missing_field_value_discriminator(
                     | OracleKind::WholeObjectEquality
                     | OracleKind::RelationalCheck
                     | OracleKind::Snapshot
-            ) && super::reveal::contains_as_whole_word(&assertion.text, &probe.expression)
+            ) && (super::reveal::contains_as_whole_word(&assertion.text, &probe.expression)
+                || field_read
+                    .as_deref()
+                    .is_some_and(|read| reads_field(&assertion.text, read)))
         })
     });
     if field_already_observed {
@@ -932,6 +938,34 @@ fn missing_field_value_discriminator(
             .iter()
             .find(|sink| sink.kind == FlowSinkKind::StructField)
             .cloned(),
+    })
+}
+
+/// The field a struct-literal initializer line constructs: `retries: 1,` and
+/// the shorthand `retries,` both name `retries`. `None` for anything that is
+/// not a plain `ident: value` or `ident` initializer.
+fn constructed_field_name(expression: &str) -> Option<&str> {
+    let trimmed = expression.trim().trim_end_matches(',').trim();
+    let name = match trimmed.find(':') {
+        Some(colon) if trimmed[colon..].starts_with("::") => return None,
+        Some(colon) => trimmed[..colon].trim(),
+        None => trimmed,
+    };
+    let mut chars = name.chars();
+    let starts_ident = chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_');
+    (starts_ident && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')).then_some(name)
+}
+
+/// Whether `text` contains the field read `read` (`.retries`) not followed by
+/// more identifier characters (`.retries_left` is a different field).
+fn reads_field(text: &str, read: &str) -> bool {
+    text.match_indices(read).any(|(start, matched)| {
+        !text[start + matched.len()..]
+            .chars()
+            .next()
+            .is_some_and(|next| next.is_ascii_alphanumeric() || next == '_')
     })
 }
 
@@ -1692,6 +1726,24 @@ fn looks_like_builder_method(line: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn constructed_field_name_reads_plain_and_shorthand_initializers() {
+        assert_eq!(constructed_field_name("retries: 1,"), Some("retries"));
+        assert_eq!(constructed_field_name("retries,"), Some("retries"));
+        assert_eq!(
+            constructed_field_name("ptr: NonNull::from(Box::leak(ptr))"),
+            Some("ptr")
+        );
+        assert_eq!(constructed_field_name("Self::default()"), None);
+        assert_eq!(constructed_field_name("a + b"), None);
+        assert!(reads_field("assert_eq!(cfg.retries, 3);", ".retries"));
+        assert!(!reads_field("assert_eq!(cfg.retries_left, 3);", ".retries"));
+        assert!(!reads_field(
+            "assert!(e.downcast_ref::<Box<dyn E>>().is_some());",
+            ".ptr"
+        ));
+    }
+
     use super::*;
     use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::rust_index::{CallFact, OracleFact};
