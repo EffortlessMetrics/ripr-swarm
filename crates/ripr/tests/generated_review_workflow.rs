@@ -682,6 +682,188 @@ fn generated_first_pr_artifact_commands_run_from_a_foreign_working_directory()
     Ok(())
 }
 
+/// Review comments and `::warning` annotations are placed on the PR head's
+/// lines, so the generated workflow must analyze the PR head. On a
+/// `pull_request` event `actions/checkout` defaults to `refs/pull/N/merge`;
+/// when the base branch has moved lines in a changed file, merge-commit line
+/// numbers point past the change on the head, and GitHub rejects the whole
+/// review when a comment line falls outside the PR diff.
+///
+/// The fixture's base branch adds four doc lines above the changed `>=`
+/// after the PR branched: the change is line 4 on the head and line 8 on the
+/// merge commit. The test checks out what the generated checkout step names
+/// (the merge commit when it names no ref), replays the diff, guidance, and
+/// annotation steps, and requires every placement to land on the changed
+/// line of the PR head.
+#[cfg(unix)]
+#[test]
+fn generated_workflow_places_findings_on_pr_head_lines_when_base_moved()
+-> Result<(), Box<dyn Error>> {
+    for tool in ["bash", "git", "jq"] {
+        if !replay::tool_available(tool) {
+            if std::env::var_os("GITHUB_ACTIONS").is_some() {
+                return Err(format!("`{tool}` is not on PATH under GitHub Actions").into());
+            }
+            eprintln!(
+                "SKIPPED generated_workflow_places_findings_on_pr_head_lines_when_base_moved: `{tool}` is not on PATH"
+            );
+            return Ok(());
+        }
+    }
+    let rev_parse = |root: &std::path::Path, rev: &str| {
+        fixture_git_output(root, &["rev-parse", "--verify", rev]).map(|sha| sha.trim().to_string())
+    };
+
+    let base = replay::unique_temp_dir("head-lines")?;
+    let root = base.join("repo");
+    replay::write_pr_fixture(&root)?;
+    let init = replay::ripr(&root, &["init", "--root", ".", "--ci", "github"])?;
+    assert!(
+        init.status.success(),
+        "ripr init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    replay::git(&root, &["add", "-A"])?;
+    replay::git(&root, &["commit", "-q", "-m", "add ripr advisory workflow"])?;
+    let head_sha = rev_parse(&root, "HEAD")?;
+
+    // The base branch moves on: four doc lines above the threshold check.
+    replay::git(&root, &["checkout", "-q", "trunk"])?;
+    let lib = fs::read_to_string(root.join("src/lib.rs"))?;
+    fs::write(
+        root.join("src/lib.rs"),
+        format!(
+            "//! Pricing.\n//! Discounts apply above the threshold.\n//! Amounts are in cents.\n\n{lib}"
+        ),
+    )?;
+    replay::git(&root, &["commit", "-q", "-a", "-m", "document pricing"])?;
+    replay::git(&root, &["update-ref", "refs/remotes/origin/trunk", "HEAD"])?;
+
+    // What GitHub builds as refs/pull/N/merge: base first, PR head second.
+    replay::git(&root, &["checkout", "-q", "--detach", "trunk"])?;
+    replay::git(
+        &root,
+        &[
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "Merge feature into trunk",
+            "feature",
+        ],
+    )?;
+    let merge_sha = rev_parse(&root, "HEAD")?;
+
+    let head_lib = fixture_git_output(&root, &["show", &format!("{head_sha}:src/lib.rs")])?;
+    let merge_lib = fs::read_to_string(root.join("src/lib.rs"))?;
+    let changed_line = |text: &str| {
+        text.lines()
+            .position(|line| line.contains("amount >= DISCOUNT_THRESHOLD"))
+            .map(|index| index + 1)
+    };
+    // Precondition: the fixture really moves the changed line.
+    assert_eq!(changed_line(&head_lib), Some(4), "{head_lib}");
+    assert_eq!(changed_line(&merge_lib), Some(8), "{merge_lib}");
+
+    // Resolve the generated checkout step the way actions/checkout does for
+    // a pull_request event: no `ref` means the merge commit.
+    let workflow = fs::read_to_string(root.join(".github/workflows/ripr.yml"))?;
+    let checkout = workflow
+        .split("      - uses: actions/checkout@")
+        .nth(1)
+        .and_then(|rest| rest.split("\n\n").next())
+        .ok_or("generated workflow has no actions/checkout step")?;
+    let checkout_ref = checkout
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("ref:"))
+        .map(str::trim);
+    let checkout_sha = match checkout_ref {
+        None => merge_sha.clone(),
+        Some("${{ github.event.pull_request.head.sha || github.sha }}") => head_sha.clone(),
+        Some(other) => return Err(format!("test does not model checkout ref `{other}`").into()),
+    };
+    replay::git(&root, &["checkout", "-q", "--detach", &checkout_sha])?;
+
+    let wanted = [
+        "Capture pull request diff",
+        "Run RIPR PR guidance report",
+        "Emit RIPR PR guidance annotations",
+    ];
+    let steps = replay::parse_steps(&workflow)
+        .into_iter()
+        .filter(|step| wanted.contains(&step.name.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(steps.len(), wanted.len(), "template step names changed");
+    let runs = replay::run_workflow(&root, &base, &steps)?;
+    for run in &runs {
+        assert_eq!(
+            run.exit_code,
+            Some(0),
+            "{} failed:\n{}",
+            run.name,
+            run.output
+        );
+    }
+
+    let on_head_change = |path: &str, line: u64| {
+        path == "src/lib.rs" && usize::try_from(line).ok() == changed_line(&head_lib)
+    };
+    let comments: serde_json::Value = serde_json::from_str(&fs::read_to_string(
+        root.join("target/ripr/review/comments.json"),
+    )?)?;
+    let placements = comments["comments"]
+        .as_array()
+        .ok_or("comments.json has no comments array")?
+        .iter()
+        .filter_map(|comment| {
+            Some((
+                comment.pointer("/placement/path")?.as_str()?.to_string(),
+                comment.pointer("/placement/line")?.as_u64()?,
+            ))
+        })
+        .collect::<Vec<_>>();
+    // Precondition: the fixture's gap produced a line-placed card.
+    assert!(
+        !placements.is_empty(),
+        "no line-placed review card: {comments}"
+    );
+    for (path, line) in &placements {
+        assert!(
+            on_head_change(path, *line),
+            "review card placed at {path}:{line}; the PR head changed src/lib.rs:4"
+        );
+    }
+
+    let annotations = runs
+        .iter()
+        .find(|run| run.name == "Emit RIPR PR guidance annotations")
+        .ok_or("annotation step did not run")?
+        .output
+        .lines()
+        .filter_map(|line| line.strip_prefix("::warning file="))
+        .map(|rest| {
+            let (path, rest) = rest.split_once(",line=").unwrap_or((rest, ""));
+            let line = rest
+                .split([',', ':'])
+                .next()
+                .unwrap_or("")
+                .parse::<u64>()
+                .unwrap_or(0);
+            (path.to_string(), line)
+        })
+        .collect::<Vec<_>>();
+    assert!(!annotations.is_empty(), "no annotation was emitted");
+    for (path, line) in &annotations {
+        assert!(
+            on_head_change(path, *line),
+            "annotation placed at {path}:{line}; the PR head changed src/lib.rs:4"
+        );
+    }
+
+    fs::remove_dir_all(base)?;
+    Ok(())
+}
+
 #[cfg(unix)]
 mod replay {
     use std::collections::BTreeMap;
@@ -1617,6 +1799,118 @@ fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
     fs::remove_dir_all(init_root)?;
     fs::remove_dir_all(repo)?;
     Ok(())
+}
+
+/// The existing-comment capture must read back the whole dedupe key the
+/// publish step wrote. The key embeds the seam file path, so a path with a
+/// space was cut at the space, no existing comment matched its
+/// recommendation, and every rerun planned a duplicate create.
+#[cfg(unix)]
+#[test]
+fn generated_existing_comment_capture_reads_keys_with_spaces() -> Result<(), Box<dyn Error>> {
+    let tools = run_sh(
+        "command -v bash >/dev/null && command -v jq >/dev/null",
+        std::env::temp_dir().as_path(),
+    )?;
+    if !tools.status.success() {
+        eprintln!(
+            "skipping generated_existing_comment_capture_reads_keys_with_spaces: bash or jq missing"
+        );
+        return Ok(());
+    }
+
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-existing-comment-keys-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root)?;
+    let output = run_ripr_init(&root)?;
+    if !output.status.success() {
+        let _ = fs::remove_dir_all(&root);
+        return Err(format!(
+            "ripr init failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    let workflow = fs::read_to_string(root.join(".github/workflows/ripr.yml"))?;
+    let script = existing_comment_capture_script(&workflow)?;
+
+    // Bodies as the publish step writes them (compact marker) and as older
+    // workflows wrote them (legacy marker), in `gh api --paginate --slurp`
+    // page shape.
+    let compact_key = "ripr:seam-1:src/we ird/pricing.rs:12";
+    let legacy_key = "ripr:seam-2:src/lib.rs:3";
+    let compact_body = format!(
+        "**ripr: gap**\n\n<details><summary>Full RIPR repair card</summary>\n\ncard\n\n</details>\n\n<!-- ripr:dedupe={compact_key} presentation=compact-v1 -->"
+    );
+    let legacy_body = format!("legacy card\n\n<!-- ripr:dedupe={legacy_key} -->");
+    // Negatives: a human comment with no marker, and a marker that never
+    // closes. Neither may become an existing RIPR comment, and neither may
+    // fail the step.
+    let unmarked_body = "LGTM, but see ripr:dedupe docs";
+    let unclosed_body = "<!-- ripr:dedupe=ripr:seam-3:src/x.rs:1";
+    let raw = format!(
+        "[[{{\"id\":1,\"body\":{},\"path\":\"src/we ird/pricing.rs\",\"line\":12}},{{\"id\":2,\"body\":{},\"path\":\"src/lib.rs\",\"line\":3}},{{\"id\":3,\"body\":{},\"path\":\"src/lib.rs\",\"line\":4}},{{\"id\":4,\"body\":{},\"path\":\"src/x.rs\",\"line\":1}}]]",
+        json_string(&compact_body),
+        json_string(&legacy_body),
+        json_string(unmarked_body),
+        json_string(unclosed_body)
+    );
+    fs::create_dir_all(root.join("target/ripr/review"))?;
+    fs::write(
+        root.join("target/ripr/review/existing-comments.raw.json"),
+        raw,
+    )?;
+
+    let run = run_sh(&script, &root)?;
+    let captured = fs::read_to_string(root.join("target/ripr/review/existing-comments.json"));
+    let _ = fs::remove_dir_all(&root);
+    assert!(
+        run.status.success(),
+        "capture script failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let captured: serde_json::Value = serde_json::from_str(&captured?)?;
+    let keys = captured["comments"]
+        .as_array()
+        .map(|comments| {
+            comments
+                .iter()
+                .map(|comment| comment["dedupe_key"].as_str().unwrap_or_default())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    assert_eq!(keys, vec![compact_key, legacy_key], "{captured}");
+    assert_eq!(captured["comments"][0]["body"], "card", "{captured}");
+    Ok(())
+}
+
+/// The capture step's `run:` body after its `gh api` fetch, which the test
+/// replaces with a fixture page file.
+#[cfg(unix)]
+fn existing_comment_capture_script(workflow: &str) -> Result<String, String> {
+    let marker = "- name: Capture existing RIPR inline comments";
+    let start = workflow
+        .find(marker)
+        .ok_or("missing existing-comment step")?;
+    let rest = &workflow[start..];
+    let run_marker = "\n        run: |\n";
+    let run_at = rest
+        .find(run_marker)
+        .ok_or("missing existing-comment run")?;
+    let body = &rest[run_at + run_marker.len()..];
+    let end = body
+        .find("\n      - name:")
+        .ok_or("existing-comment step does not end")?;
+    let body = &body[..end];
+    let fetch_end = "> target/ripr/review/existing-comments.raw.json\n";
+    let jq_at = body
+        .find(fetch_end)
+        .ok_or("existing-comment step does not fetch into the raw file")?;
+    Ok(body[jq_at + fetch_end.len()..].trim_end().to_string())
 }
 
 /// #4089: the generated annotation step must keep path and message bytes.
