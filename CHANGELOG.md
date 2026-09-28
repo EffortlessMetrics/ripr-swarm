@@ -11,6 +11,19 @@ are scoped or reviewed.
 
 ### Fixed
 
+- An empty `ripr check --diff` result now leads with its true cause. A config
+  whose `[languages].enabled` leaves out `rust` records a typed
+  `language_adapter_unavailable` limitation for the Rust files it skipped
+  (`partial_with_limitations`, naming the effective set) instead of claiming a
+  complete analysis, and the zero-findings stderr line names a disabled or
+  unavailable adapter instead of suggesting the diff may be invalid; that
+  diff-validity hint now appears only when nothing parsed. The non-source
+  disclosure names extensionless and `.`-ending paths and no longer calls the
+  empty result correct for a truncated `+++` header, and a directory passed as
+  `--diff` is reported as a directory rather than as the OS read error
+  ([#4376](https://github.com/EffortlessMetrics/ripr-swarm/issues/4376),
+  [#4395](https://github.com/EffortlessMetrics/ripr-swarm/issues/4395)).
+
 - LSP fallback diagnostics explain their static classification and point to
   hover evidence without promising an unavailable clipboard action or repair
   route. Missing-path guidance remains explicitly static (#4328).
