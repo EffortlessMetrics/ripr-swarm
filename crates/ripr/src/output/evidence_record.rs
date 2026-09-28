@@ -598,12 +598,27 @@ fn canonical_item_for(
                     .map(alignment_related_test_for_recommended_target)
             }),
         verify_command: recommendation.verify_command.clone(),
-        receipt_command: canonical_receipt_command_for(entry, gap_state),
-        repair_command: canonical_repair_command_for(entry, gap_state),
+        receipt_command: canonical_receipt_command_for(
+            entry,
+            gap_state,
+            crate::agent::command_specs::PORTABLE_ROOT,
+        ),
+        repair_command: canonical_repair_command_for(
+            entry,
+            gap_state,
+            crate::agent::command_specs::PORTABLE_ROOT,
+        ),
         verify_command_spec: recommendation
             .verify_command
             .as_deref()
-            .and_then(crate::agent::command_specs::agent_command_spec_from_display),
+            // The canonical verify display is the portable `--root .` shape,
+            // so recovery needs no concrete selected root.
+            .and_then(|display| {
+                crate::agent::command_specs::agent_command_spec_from_display(
+                    display,
+                    std::path::Path::new(crate::agent::command_specs::PORTABLE_ROOT),
+                )
+            }),
         receipt_command_spec: (gap_state == "actionable").then(|| {
             crate::agent::command_specs::agent_receipt_command_spec(
                 ".",
@@ -904,16 +919,19 @@ fn recommendation_for(
 pub(crate) fn canonical_repair_command_for(
     entry: &ClassifiedSeam,
     gap_state: &str,
+    root: &str,
 ) -> Option<String> {
     if gap_state != "actionable" {
         return None;
     }
-    repair_start_command_for(entry)
+    repair_start_command_for(entry, root)
 }
 
 /// The `agent repair ... --phase before` command for a seam, or `None` when
 /// the repair transaction would refuse it. Every surface that offers the
-/// repair start builds it here.
+/// repair start builds it here. `root` is the producer's `--root` token:
+/// portable `.` inside durable artifacts, the bound selected root in
+/// copy/paste guidance (#3999/#4000).
 ///
 /// Two conditions, both fail-closed:
 /// - the repair-packet flip (`repair_packet_eligibility(..).eligible()`);
@@ -923,7 +941,7 @@ pub(crate) fn canonical_repair_command_for(
 ///   test lives in an inline `#[cfg(test)]` module of a source file passes the
 ///   flip but cannot start a repair. Offering it would print a command that
 ///   fails (#3906).
-pub(crate) fn repair_start_command_for(entry: &ClassifiedSeam) -> Option<String> {
+pub(crate) fn repair_start_command_for(entry: &ClassifiedSeam, root: &str) -> Option<String> {
     if !repair_packet_eligibility(entry).eligible() {
         return None;
     }
@@ -931,7 +949,8 @@ pub(crate) fn repair_start_command_for(entry: &ClassifiedSeam) -> Option<String>
         return None;
     }
     Some(format!(
-        "ripr agent repair --root . --seam-id {} --phase before",
+        "ripr agent repair --root {} --seam-id {} --phase before",
+        shell_arg(root),
         shell_arg(entry.seam.id().as_str())
     ))
 }
@@ -939,13 +958,14 @@ pub(crate) fn repair_start_command_for(entry: &ClassifiedSeam) -> Option<String>
 pub(crate) fn canonical_receipt_command_for(
     entry: &ClassifiedSeam,
     gap_state: &str,
+    root: &str,
 ) -> Option<String> {
     if gap_state != "actionable" {
         return None;
     }
 
     Some(agent_receipt_command(
-        ".",
+        root,
         WORKFLOW_AGENT_VERIFY_ARTIFACT,
         entry.seam.id().as_str(),
         Some(WORKFLOW_AGENT_RECEIPT_ARTIFACT),
@@ -1097,7 +1117,13 @@ pub(crate) fn static_limitations_for(
                     entry.seam.owner()
                 )
             } else {
-                route_readiness.missing_evidence.join("; ")
+                // A prose reason, not a bare noun list: every consumer (the
+                // card's `why_not_actionable`, the gate headline, the
+                // evidence record) shows this text as-is (#4216 row 2 review).
+                format!(
+                    "the repair route is missing evidence: {}",
+                    route_readiness.missing_evidence.join("; ")
+                )
             },
             category: if no_test_reaches_owner {
                 NO_TEST_REACHES_OWNER_CATEGORY.to_string()
@@ -2207,6 +2233,20 @@ mod tests {
                 .iter()
                 .any(|evidence| evidence == "safe test target")
         );
+        // #4216 row 2 review (F2): the projected limitation reason reads as
+        // missing evidence, not as a bare noun list, because the review card
+        // and the gate headline show it verbatim.
+        let reasons = static_limitations_for(&entry)
+            .into_iter()
+            .map(|limitation| limitation.reason)
+            .collect::<Vec<_>>();
+        assert!(
+            reasons.iter().any(|reason| {
+                reason.starts_with("the repair route is missing evidence: ")
+                    && reason.ends_with("; safe test target")
+            }),
+            "{reasons:?}"
+        );
         entry.evidence.related_tests[0].test_target = Some(test_target_fixture(
             "below_threshold_has_no_discount",
             "tests/pricing_tests.rs",
@@ -2489,7 +2529,7 @@ mod tests {
             // the record above cannot tell the two checks apart. Hand the
             // builder an actionable state directly: the flip alone must still
             // withhold the command if actionability ever drifts wider.
-            if canonical_repair_command_for(&entry, "actionable").is_some() != want {
+            if canonical_repair_command_for(&entry, "actionable", ".").is_some() != want {
                 return Err(format!(
                     "builder must follow the flip, not gap_state, for eligible={want}"
                 ));
@@ -2519,7 +2559,7 @@ mod tests {
             if is_test_surface_path(&target) != want {
                 return Err(format!("fixture edit target `{target}` for want={want}"));
             }
-            if repair_start_command_for(&entry).is_some() != want {
+            if repair_start_command_for(&entry, ".").is_some() != want {
                 return Err(format!("repair start for edit target `{target}`"));
             }
             let json = evidence_record_json_value(&evidence_record_for(&entry, None));

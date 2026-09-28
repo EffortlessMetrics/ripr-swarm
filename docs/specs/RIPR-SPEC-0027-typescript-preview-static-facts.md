@@ -50,6 +50,13 @@ emits an explicit `static_limit_kind` instead of silently coercing to
 
 ## Inputs
 
+Source reads use a no-follow open followed by opened-handle regular-file
+validation. On supported Linux and macOS targets the open is nonblocking, so
+a file replaced with a FIFO between path inspection and open cannot wait for
+a writer. Windows opens the reparse point itself and validates the handle;
+other targets refuse the guarded open. The FIFO regression must bound its
+child process and verify that the intended child test actually executed.
+
 - TypeScript or JavaScript source files routed to this adapter.
 - Diff spans inside those files.
 - Repo configuration including `[languages] enabled` and any future
@@ -208,8 +215,26 @@ Probes the adapter must generate (syntax-first):
   resolved through a syntactic `vi.fn()` / `jest.fn()` initializer
 
 Added lines that are blank, comment-only, or punctuation-only (`}`, `});`,
-`)`) produce no probe. An unrecognised line keeps the non-specific predicate
+`)`) produce no probe. Neither do lines inside a top-level ambient
+declaration found in the parsed syntax tree (`declare function`,
+`export declare const`, `declare module 'x' { ... }`, `declare global`), or
+any line of a `.d.ts`/`.d.mts`/`.d.cts` declaration file: these are type-only
+and erased at compile time. Declaration files still count as changed files.
+`declare` used as a runtime identifier, or at the start of a template-literal
+line, is still probed. An unrecognised line keeps the non-specific predicate
 fallback and is never classified `exposed`.
+
+A changed line whose in-place removed counterpart differs only in erased
+TypeScript type syntax also produces no probe (#4282). Both sides must parse
+as a single-line function, method, or variable declaration, and their runtime
+parts must match exactly: names, parameter patterns, default values, parameter
+properties, `async`/generator, export shape, and body or initializer text. A
+line with a decorator, a constructor line, and a method line in a file that
+uses decorators keep their probe: under `emitDecoratorMetadata` decorated
+parameter and return types are emitted as runtime metadata. Return types, parameter and variable annotations, optional
+markers, generic parameter lists, and `this` parameters are ignored. Type
+syntax inside an expression (`as`, `satisfies`, generic call arguments) and
+multi-line signature fragments are not compared and keep their probe.
 
 A changed predicate is `exposed` only when a strong, family-matching
 assertion's observed expression (`expect(<expr>)`) calls the owner at the

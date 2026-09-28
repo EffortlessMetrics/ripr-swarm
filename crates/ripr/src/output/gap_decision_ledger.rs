@@ -5,6 +5,7 @@ use crate::output::receipt_write::receipt_write_command;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 const SCHEMA_VERSION: &str = "0.1";
 const REPORT_KIND: &str = "gap_decision_ledger";
@@ -192,7 +193,7 @@ where
 /// report-regeneration routes gain their typed specs at read time — a pure
 /// enrichment; records whose routes are not canonical keep empty typed
 /// collections and stay legacy-string-only.
-fn recover_regeneration_command_specs(record: &mut GapRecord) {
+fn recover_regeneration_command_specs(record: &mut GapRecord, selected_root: &Path) {
     let already_typed = record
         .command_specs
         .as_ref()
@@ -203,7 +204,10 @@ fn recover_regeneration_command_specs(record: &mut GapRecord) {
     let mut recovered = Vec::new();
     for display in &record.regeneration_commands {
         if let Some(spec) =
-            crate::agent::command_specs::report_regeneration_command_spec_from_display(display)
+            crate::agent::command_specs::report_regeneration_command_spec_from_display(
+                display,
+                selected_root,
+            )
         {
             recovered.push(spec);
         }
@@ -437,7 +441,7 @@ pub(crate) fn build_gap_decision_ledger_report(
     // every downstream surface (LSP projections, first-pr, review packets)
     // sees the typed form without any upstream emitter change.
     for record in &mut records {
-        recover_regeneration_command_specs(record);
+        recover_regeneration_command_specs(record, Path::new(&input.root));
     }
 
     for record in &records {
@@ -646,12 +650,38 @@ pub(crate) fn render_gap_decision_ledger_markdown(report: &GapDecisionLedgerRepo
     out
 }
 
+/// Parse a persisted ledger for a CLI consumer. The CLI resolves `--root .`
+/// against its own working directory, so that directory is the selected root
+/// typed recovery binds to (#3999).
 pub(crate) fn parse_gap_records_json(contents: &str) -> Result<Vec<GapRecord>, String> {
     parse_gap_record_source_json(contents).map(|source| source.records)
 }
 
+/// Parse a persisted ledger for a consumer that owns its selected root
+/// rather than inheriting the process working directory (#4287). The LSP
+/// passes its workspace root, so a root-bound regeneration display keeps its
+/// typed route when the editor starts the server elsewhere. `None` is the
+/// legacy-only path for a caller without a trusted root: records keep their
+/// displays and gain no recovered typed regeneration specs.
+pub(crate) fn parse_gap_records_json_for_root(
+    contents: &str,
+    selected_root: Option<&Path>,
+) -> Result<Vec<GapRecord>, String> {
+    parse_gap_record_source_json_with_root(contents, selected_root).map(|source| source.records)
+}
+
 pub(crate) fn parse_gap_record_source_json(
     contents: &str,
+) -> Result<ParsedGapRecordSource, String> {
+    parse_gap_record_source_json_with_root(
+        contents,
+        Some(Path::new(crate::agent::command_specs::PORTABLE_ROOT)),
+    )
+}
+
+fn parse_gap_record_source_json_with_root(
+    contents: &str,
+    selected_root: Option<&Path>,
 ) -> Result<ParsedGapRecordSource, String> {
     let value: Value =
         serde_json::from_str(contents).map_err(|err| format!("invalid JSON: {err}"))?;
@@ -670,9 +700,16 @@ pub(crate) fn parse_gap_record_source_json(
     // legacy string-only records with the typed regeneration specs, so the
     // LSP loaders (diagnostics/backend) see the typed form too. The
     // enrichment is idempotent: a record already carrying typed
-    // regeneration specs is left untouched.
-    for record in &mut records {
-        recover_regeneration_command_specs(record);
+    // regeneration specs is left untouched. A persisted ledger carries no
+    // selected-root authority of its own (its `root` field is producer text,
+    // not a consumer selection), so a display bound to a concrete root gains
+    // a typed spec here only when that root is the consumer's selected root;
+    // any other bound root stays legacy-string-only (#3999). Without a
+    // trusted selected root nothing is recovered (#4287).
+    if let Some(selected_root) = selected_root {
+        for record in &mut records {
+            recover_regeneration_command_specs(record, selected_root);
+        }
     }
     Ok(ParsedGapRecordSource {
         root,
@@ -771,6 +808,7 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
                 .or_else(|| gap_record_from_typescript_not_delegatable_finding(finding, index))
                 .or_else(|| gap_record_from_python_static_limit_finding(finding, index))
                 .or_else(|| gap_record_from_python_no_action_finding(finding, index))
+                .or_else(|| gap_record_from_python_no_repair_card_finding(finding, index))
                 .or_else(|| gap_record_from_perl_preview_finding(finding, index))
             else {
                 continue;
@@ -1829,6 +1867,115 @@ fn gap_record_from_python_no_action_finding(finding: &Value, index: usize) -> Op
             false,
             has_local_anchor,
             gap_state,
+        ),
+        verification_commands: Vec::new(),
+        command_specs: None,
+        receipt_command: None,
+        regeneration_commands: Vec::new(),
+        receipt: None,
+        safe_gate_predicate: None,
+        authority_boundary: "preview_advisory_only".to_string(),
+    })
+}
+
+/// A weakly exposed Python preview finding that `check` emitted without a
+/// repair card (the card is the Python repair-route authority) and without a
+/// structured static limit. Without this record the ledger held only no-action
+/// records and first-pr ended at a bare generic "no actionable gap", while
+/// check already said why no ripr command routes the finding (#4216). Mirrors
+/// the TypeScript not-delegatable record (#4224): it never promotes, carries
+/// no repair route, verify command, receipt or gate predicate, and every
+/// authority projection stays off. Exposed and no-path findings are not
+/// analyzer limitations, and heuristic-only findings already get a no-action
+/// record, so none of them reach this producer.
+fn gap_record_from_python_no_repair_card_finding(
+    finding: &Value,
+    index: usize,
+) -> Option<GapRecord> {
+    if string_at(finding, &["language"]) != Some("python")
+        || finding.get("python_repair_card").is_some()
+        || string_at(finding, &["static_limit_kind"]).is_some()
+        || string_at(finding, &["classification"]) != Some("weakly_exposed")
+        || python_finding_is_heuristic_only(finding)
+    {
+        return None;
+    }
+    let static_limit_kind = "python_repair_card_unavailable";
+    let reason = if first_missing_discriminator_value(finding).is_none() {
+        "static evidence names no concrete missing discriminator"
+    } else {
+        "its test placement or related-test evidence is incomplete"
+    };
+    let detail = format!(
+        "this Python preview finding has no repair card ({reason}), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
+    );
+    let behavior_kind = string_at(finding, &["canonical_gap", "behavior_kind"])
+        .or_else(|| string_at(finding, &["probe", "family"]))
+        .unwrap_or("python_preview");
+    let source_file = string_at(finding, &["canonical_gap", "file"])
+        .or_else(|| string_at(finding, &["probe", "file"]))
+        .map(ToString::to_string);
+    let source_line = u64_at(finding, &["probe", "line"]);
+    let changed_owner = string_at(finding, &["canonical_gap", "owner"])
+        .or_else(|| string_at(finding, &["probe", "owner"]))
+        .map(ToString::to_string);
+    let canonical_gap_id = string_at(finding, &["canonical_gap_id"])
+        .or_else(|| string_at(finding, &["canonical_gap", "id"]))
+        .map(ToString::to_string)
+        .unwrap_or_else(|| {
+            python_static_limit_gap_id(
+                source_file.as_deref(),
+                changed_owner.as_deref(),
+                behavior_kind,
+                static_limit_kind,
+                index,
+            )
+        });
+    let has_local_anchor = source_file.is_some() && source_line.is_some();
+    let anchor = GapAnchor {
+        file: source_file,
+        line: source_line,
+        owner: changed_owner,
+        dedupe_fingerprint: Some(canonical_gap_id.clone()),
+    };
+    let mut evidence_ids = Vec::new();
+    if let Some(id) = string_at(finding, &["id"]) {
+        evidence_ids.push(id.to_string());
+    }
+    if !evidence_ids.iter().any(|id| id == &canonical_gap_id) {
+        evidence_ids.push(canonical_gap_id.clone());
+    }
+
+    Some(GapRecord {
+        source_currentness: None,
+        gap_id: format!("gap:pr:{canonical_gap_id}"),
+        canonical_gap_id,
+        seam_id: None,
+        kind: "StaticLimitation".to_string(),
+        language: "python".to_string(),
+        language_status: string_at(finding, &["language_status"])
+            .unwrap_or("preview")
+            .to_string(),
+        scope: "pr_local".to_string(),
+        evidence_class: static_limit_kind.to_string(),
+        gap_state: "static_limitation".to_string(),
+        policy_state: "not_policy_targeted".to_string(),
+        repairability: "analyzer_limitation".to_string(),
+        repair_route: None,
+        static_limit_kind: Some(static_limit_kind.to_string()),
+        static_limit_detail: Some(detail.clone()),
+        static_limits: vec![serde_json::json!({
+            "kind": static_limit_kind,
+            "detail": detail,
+        })],
+        anchor: Some(anchor),
+        evidence_ids,
+        projection_eligibility: projection_eligibility_from_pr_evidence(
+            "analyzer_limitation",
+            false,
+            false,
+            has_local_anchor,
+            "static_limitation",
         ),
         verification_commands: Vec::new(),
         command_specs: None,
@@ -4513,6 +4660,171 @@ mod tests {
         Ok(())
     }
 
+    fn python_no_repair_card_check_output() -> String {
+        include_str!(
+            "../../../../fixtures/python_same_stem_sibling_owner_not_related/expected/check.json"
+        )
+        .to_string()
+    }
+
+    fn python_no_repair_card_records(report: &GapDecisionLedgerReport) -> Vec<&GapRecord> {
+        report
+            .records
+            .iter()
+            .filter(|record| {
+                record.static_limit_kind.as_deref() == Some("python_repair_card_unavailable")
+            })
+            .collect()
+    }
+
+    // #4216: a weakly exposed Python finding that check emitted without a
+    // repair card and without a static limit used to form no ledger record, so
+    // first-pr ended at a bare generic "no actionable gap". It now forms a
+    // non-delegatable static-limitation record that names why and the manual
+    // step, and never promotes.
+    #[test]
+    fn check_output_python_no_repair_card_finding_is_never_delegatable() -> Result<(), String> {
+        let payload = python_no_repair_card_check_output();
+        // Fixture premise: one weakly exposed Python finding with no card, no
+        // static limit, no missing discriminator and a non-heuristic relation.
+        let value: Value = serde_json::from_str(&payload)
+            .map_err(|error| format!("parse fixture check output: {error}"))?;
+        let weak = value["findings"]
+            .as_array()
+            .ok_or_else(|| "findings missing".to_string())?
+            .iter()
+            .filter(|finding| finding["classification"] == "weakly_exposed")
+            .collect::<Vec<_>>();
+        assert_eq!(weak.len(), 1);
+        assert_eq!(weak[0]["language"], "python");
+        assert!(weak[0].get("python_repair_card").is_none());
+        assert!(weak[0].get("static_limit_kind").is_none());
+        assert!(!python_finding_is_heuristic_only(weak[0]));
+
+        let report = check_output_ledger(payload);
+        let records = python_no_repair_card_records(&report);
+        assert_eq!(records.len(), 1, "{:?}", report.records);
+        let record = records[0];
+        assert_eq!(record.kind, "StaticLimitation");
+        assert_eq!(record.gap_state, "static_limitation");
+        assert_eq!(record.repairability, "analyzer_limitation");
+        assert_eq!(
+            record.static_limit_detail.as_deref(),
+            Some(
+                "this Python preview finding has no repair card (static evidence names no concrete missing discriminator), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
+            )
+        );
+        assert!(record.repair_route.is_none());
+        assert!(record.verification_commands.is_empty());
+        assert!(record.receipt_command.is_none());
+        assert!(record.safe_gate_predicate.is_none());
+        for projection in [
+            "agent_packet",
+            "pr_comment",
+            "gate_candidate",
+            "lsp_diagnostic",
+            "ripr_zero_count",
+            "ripr_plus_count",
+        ] {
+            assert!(
+                !projection_eligible(record, projection),
+                "{projection} must stay ineligible"
+            );
+        }
+        assert!(
+            crate::output::agent_seam_packets::validate_agent_gap_record_packet(record).is_err(),
+            "the shared validator must reject the non-delegatable record"
+        );
+        assert_eq!(report.summary.projection_agent_packet_eligible, 0);
+        assert_eq!(report.summary.projection_gate_candidate, 0);
+        Ok(())
+    }
+
+    // The other reason branch: a finding that names a missing discriminator
+    // but still has no card is held by incomplete placement or related-test
+    // evidence, and says so.
+    #[test]
+    fn check_output_python_no_repair_card_with_discriminator_names_incomplete_evidence()
+    -> Result<(), String> {
+        let mut payload: Value = serde_json::from_str(&python_no_repair_card_check_output())
+            .map_err(|error| format!("parse fixture check output: {error}"))?;
+        let findings = payload["findings"]
+            .as_array_mut()
+            .ok_or_else(|| "findings missing".to_string())?;
+        for finding in findings
+            .iter_mut()
+            .filter(|finding| finding["classification"] == "weakly_exposed")
+        {
+            finding["missing_discriminators"] =
+                serde_json::json!([{"value": "amount == discount_threshold"}]);
+        }
+        let report = check_output_ledger(payload.to_string());
+        let records = python_no_repair_card_records(&report);
+        assert_eq!(records.len(), 1, "{:?}", report.records);
+        assert_eq!(
+            records[0].static_limit_detail.as_deref(),
+            Some(
+                "this Python preview finding has no repair card (its test placement or related-test evidence is incomplete), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
+            )
+        );
+        assert!(records[0].repair_route.is_none());
+        Ok(())
+    }
+
+    // #4226 review, carried to Python: an exposed finding has nothing to
+    // repair and a no-path finding is a test gap, not an analyzer limitation.
+    // A card, a static limit, or a heuristic-only link also keeps the finding
+    // on its own existing path. None may become this static limitation.
+    #[test]
+    fn check_output_python_no_repair_card_record_excludes_other_findings() -> Result<(), String> {
+        type FindingMutation = (&'static str, fn(&mut Value));
+        let mutations: [FindingMutation; 5] = [
+            ("exposed", |finding| {
+                finding["classification"] = Value::from("exposed");
+            }),
+            ("no_static_path", |finding| {
+                finding["classification"] = Value::from("no_static_path");
+            }),
+            ("repair card", |finding| {
+                finding["python_repair_card"] = serde_json::json!({});
+            }),
+            ("static limit", |finding| {
+                finding["static_limit_kind"] = Value::from("dynamic_dispatch");
+            }),
+            ("heuristic only", |finding| {
+                if let Some(evidence) = finding["evidence"].as_array_mut() {
+                    evidence.push(Value::from("related_test_uncertain: name similarity"));
+                }
+            }),
+        ];
+        for (label, mutate) in mutations {
+            let mut payload: Value = serde_json::from_str(&python_no_repair_card_check_output())
+                .map_err(|error| format!("parse fixture check output: {error}"))?;
+            let findings = payload["findings"]
+                .as_array_mut()
+                .ok_or_else(|| "findings missing".to_string())?;
+            for finding in findings
+                .iter_mut()
+                .filter(|finding| finding["classification"] == "weakly_exposed")
+            {
+                mutate(finding);
+                // The producer's own gate, independent of dispatch order
+                // (the no-action producer runs first for exposed/no-path).
+                assert!(
+                    gap_record_from_python_no_repair_card_finding(finding, 0).is_none(),
+                    "{label} finding must not form a no-repair-card record"
+                );
+            }
+            let report = check_output_ledger(payload.to_string());
+            assert!(
+                python_no_repair_card_records(&report).is_empty(),
+                "{label} finding must not become a no-repair-card static limitation: {:?}",
+                report.records
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn check_output_typescript_fixture_synthesizes_receipt_write_for_packet() -> Result<(), String>
     {
@@ -6306,7 +6618,7 @@ mod tests {
     #[test]
     fn regeneration_collection_shares_object_or_array_contract() -> Result<(), String> {
         let spec = crate::agent::command_specs::report_regeneration_command_spec_from_display(
-            "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md",
+            "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md", std::path::Path::new(".")
         )
         .ok_or("canonical gap-ledger route was not recoverable")?;
         // Null collection deserializes to empty.
@@ -6389,6 +6701,69 @@ mod tests {
         Ok(())
     }
 
+    /// #3999: a persisted ledger carries no selected-root authority, so a
+    /// regeneration display bound to some other absolute root stays
+    /// legacy-string-only when read; the same display bound to the reading
+    /// directory recovers the portable typed route.
+    #[test]
+    fn parse_keeps_a_display_bound_to_a_foreign_root_legacy_string_only() -> Result<(), String> {
+        use crate::agent::loop_commands::{bound_root, check_repo_exposure_command};
+        let record = |display: &str| {
+            serde_json::json!([{
+                "gap_id": "gap:bound-regen",
+                "kind": "MissingValueAssertion",
+                "regeneration_commands": [display]
+            }])
+            .to_string()
+        };
+        let reading_root = bound_root(".");
+        let foreign_root = bound_root("../ripr-foreign-selected-root");
+        assert_ne!(reading_root, foreign_root);
+
+        // Control: bound to the reading directory, the route is typed and
+        // its argv carries the portable root.
+        let local = check_repo_exposure_command(
+            &reading_root,
+            "instant",
+            "target/ripr/reports/repo-exposure.json",
+        );
+        let records = parse_gap_records_json(&record(&local))?;
+        let specs = records[0]
+            .command_specs
+            .as_ref()
+            .ok_or_else(|| format!("reading-root display was not typed: {local}"))?;
+        if specs.regeneration.len() != 1
+            || !specs.regeneration[0]
+                .args
+                .windows(2)
+                .any(|pair| pair == ["--root", "."])
+        {
+            return Err(format!("unexpected typed route: {:?}", specs.regeneration));
+        }
+
+        // Foreign root: the display is kept, no typed spec is invented.
+        let foreign = check_repo_exposure_command(
+            &foreign_root,
+            "instant",
+            "target/ripr/reports/repo-exposure.json",
+        );
+        let records = parse_gap_records_json(&record(&foreign))?;
+        if records[0].regeneration_commands != vec![foreign.clone()] {
+            return Err(format!("legacy display was not kept: {:?}", records[0]));
+        }
+        if records[0]
+            .command_specs
+            .as_ref()
+            .is_some_and(|specs| !specs.regeneration.is_empty())
+        {
+            return Err(format!(
+                "a display bound to a foreign root gained typed authority: {:?}",
+                records[0].command_specs
+            ));
+        }
+        Ok(())
+    }
+
     /// FIX (round-1 review): every persisted-ledger parse path enriches
     /// legacy string-only records with typed regeneration specs, and the
     /// enrichment is idempotent — producer-carried collections are never
@@ -6446,7 +6821,7 @@ mod tests {
         );
         let mut producer_spec =
             crate::agent::command_specs::report_regeneration_command_spec_from_display(
-                "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md",
+                "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md", std::path::Path::new(".")
             )
             .ok_or("canonical gap-ledger route was not recoverable")?;
         producer_spec.command_id = "ripr:producer:gap-ledger".to_string();
@@ -6484,6 +6859,7 @@ mod tests {
     -> Result<(), String> {
         let spec = crate::agent::command_specs::report_regeneration_command_spec_from_display(
             "ripr check --root . --mode instant --format repo-exposure-json > repo.json",
+            std::path::Path::new("."),
         )
         .ok_or("canonical repo-exposure route was not recoverable")?;
         let base = serde_json::json!({

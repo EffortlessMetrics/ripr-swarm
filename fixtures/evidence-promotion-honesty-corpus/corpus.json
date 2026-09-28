@@ -5,6 +5,20 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "rust_oracle_confirmation_mixed",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/oracle_confirmation_mixed",
+      "vector": "unrelated_exact_oracle_borrows_weak_assertion_confirmation",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
       "id": "py_multiline_docstring_interior_no_behavior",
       "language": "python",
       "tier": "pure",
@@ -458,6 +472,24 @@
       "assertions": [
         { "type": "must_not_report_clean" },
         { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_tuple_derived_return_before_assertion_no_promotion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/match_arm_tuple_derived_return_before_assertion",
+      "vector": "relation_assertion_after_direct_return_does_not_certify_derived_tuple_arm",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_disclose_scope" },
+        { "type": "must_not_emit_repair_packet" },
+        { "type": "must_not_have_verify_command" },
+        { "type": "must_not_have_receipt_command" },
+        { "type": "must_not_promote" },
+        { "type": "expected_finding_count", "count": 2 },
         { "type": "expected_class", "class": "weakly_exposed" },
         { "type": "maximum_class", "class": "weakly_exposed" }
       ]
@@ -1509,6 +1541,22 @@
       "tier": "pure",
       "source_fixture": "fixtures/ts_domock_relation_gate",
       "vector": "domock_hoisted_registration_treated_as_owner_module_mock",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_disclose_scope" },
+        { "type": "must_emit_limitation", "expected_limit_kind": "mocked_module" },
+        { "type": "must_not_emit_repair_packet" },
+        { "type": "must_not_have_receipt_command" },
+        { "type": "must_not_promote" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "ts_mock_forms_owner_module",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/ts_mock_forms_owner_module",
+      "vector": "renamed_runner_typed_import_mock_treated_as_owner_module_mock",
       "assertions": [
         { "type": "must_not_report_clean" },
         { "type": "must_disclose_scope" },

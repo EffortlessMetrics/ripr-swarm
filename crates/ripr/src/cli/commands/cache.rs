@@ -1,5 +1,5 @@
 use crate::analysis::seam_cache::{
-    CACHE_DIR_ENV, CacheStatus, cache_base_dir_from_env, inspect_cache_dir,
+    CACHE_DIR_ENV, CACHE_LAYER_NAMES, CacheStatus, cache_base_dir_from_env, inspect_cache_dir,
 };
 use crate::cli::suggest::unknown_argument;
 use serde_json::json;
@@ -18,7 +18,12 @@ pub(in crate::cli) const CACHE_STATUS_HELP: &str = r#"Usage: ripr cache status [
 Report the resolved analysis cache directory (RIPR_CACHE_DIR when set,
 otherwise target/ripr/cache under the Cargo workspace root).
 
-  --json    Print machine-readable status JSON.
+  --json    Print machine-readable status JSON. Its `schema_version` is the
+            version of this status report, not of the on-disk cache layers
+            (those carry their own version in their directory names).
+
+The cache is disposable: deleting it only costs a slower next run. Use
+`ripr cache clear` to remove it.
 "#;
 /// Help body for `ripr cache clear`. Also the flag source for unknown-argument
 /// suggestions; keep accepted flags on option-list lines.
@@ -31,22 +36,6 @@ root). The cache root and unrelated sibling files or directories are preserved.
   --dry-run   Report what would be removed and remove nothing.
   --force     Required to remove cache layers that hold entries.
 "#;
-
-/// Directory names `ripr` itself creates under the cache base directory.
-///
-/// `clear` is deliberately bounded to these direct children. A path suffix or
-/// one known child never grants ownership of the configured parent (#3843).
-/// This list mirrors the cache layers in `analysis::seam_cache`; a layer added
-/// there but missed here makes `clear` more conservative, never less.
-const CACHE_ROOT_MARKERS: &[&str] = &[
-    "repo-seam-facts",
-    "repo-seam-facts-sharded",
-    "repo-compact-classified-seams",
-    "repo-compact-classified-seams-sharded",
-    "repo-corpus-fingerprint",
-    "repo-file-facts",
-    "repo-seam-counts",
-];
 
 /// Whether the resolved cache root exists on disk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -248,7 +237,7 @@ fn layer_from_status(
 
 fn build_clear_plan(cache_dir: &Path) -> Result<ClearPlan, String> {
     let mut plan = ClearPlan::default();
-    for &marker in CACHE_ROOT_MARKERS {
+    for &marker in CACHE_LAYER_NAMES {
         let layer_path = cache_dir.join(marker);
         match std::fs::symlink_metadata(&layer_path) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
@@ -422,18 +411,17 @@ fn run_status(args: &[String]) -> Result<(), String> {
     let status = inspect_cache_dir(&cache_dir);
     println!("{}", render_status(&cache_dir, &status, is_json)?);
     if !is_json {
-        eprintln!("{}", cleanup_hint(&cache_dir));
+        eprintln!("{CLEANUP_HINT}");
     }
 
     Ok(())
 }
 
-fn cleanup_hint(cache_dir: &Path) -> String {
-    let path = cache_dir.display();
-    format!(
-        "To clean up {path}, run: {CACHE_DIR_ENV}={path} cargo xtask cache gc [--dry-run] [--max-size-gb N] [--ttl-days N]"
-    )
-}
+/// Names the published cleanup command (#4383). `ripr cache clear` resolves
+/// the same directory from the same working directory and `RIPR_CACHE_DIR`,
+/// so the hint needs no path to retype; `cargo xtask cache gc` is repository
+/// automation that users of the published crate do not have.
+const CLEANUP_HINT: &str = "The cache is disposable; ripr rebuilds it on the next run. To clear it, run `ripr cache clear --dry-run` to preview, then `ripr cache clear --force`.";
 
 fn run_clear(args: &[String]) -> Result<(), String> {
     if matches!(args, [arg] if arg == "--help" || arg == "-h") {
@@ -722,6 +710,41 @@ mod tests {
             return Err(format!(
                 "clear did not disclose its bounded scope: {result}"
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn clear_derives_every_producer_layer_and_preserves_unrelated_data() -> Result<(), String> {
+        let root = temp_dir("all-layers");
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        for &layer in CACHE_LAYER_NAMES {
+            let path = root.join(layer);
+            fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+            fs::write(path.join("entry.json"), b"{}").map_err(|error| error.to_string())?;
+        }
+        let unrelated = root.join("KEEP.txt");
+        fs::write(&unrelated, b"user data").map_err(|error| error.to_string())?;
+
+        let planned = build_clear_plan(&root)?.layers.len();
+        clear_cache_dir(
+            &root,
+            ClearOptions {
+                dry_run: false,
+                force: true,
+            },
+        )?;
+        let intact = root.is_dir()
+            && unrelated.is_file()
+            && CACHE_LAYER_NAMES
+                .iter()
+                .all(|layer| !root.join(layer).exists());
+        remove_base(&root)?;
+        if planned != CACHE_LAYER_NAMES.len() {
+            return Err(format!("cache plan omitted a producer layer: {planned}"));
+        }
+        if !intact {
+            return Err("clear failed the producer-layer or unrelated-sibling boundary".into());
         }
         Ok(())
     }

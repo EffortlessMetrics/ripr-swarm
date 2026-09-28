@@ -8,9 +8,10 @@ import {
   RiprAgentLoopCommandTarget,
   RiprWorkspaceRootState,
   readActionableGapQueueStatus,
-  readFirstPrPacketStatus
+  readFirstPrPacketStatus,
+  validatedAgentLoopCommand
 } from '../../src/client';
-import { redirectTargetMatches } from '../../src/packetJson';
+import { hasUnsafeShellMetacharacter, redirectStaysInWorkspace, redirectTargetMatches, serverShellArg } from '../../src/packetJson';
 import { compatibleLspEvidence } from './testCompatibility';
 
 suite('Extension Smoke', () => {
@@ -406,6 +407,11 @@ suite('Extension Smoke', () => {
     }
 
     const uri = workspaceFileUri('src/lib.rs');
+    const selectedRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    assert.ok(selectedRoot, 'real-server workspace root must be open');
+    const displayRoot = selectedRoot.replace(/\\/g, '/');
+    const rootArg = serverShellArg(displayRoot);
+    const anchored = (artifact: string) => serverShellArg(`${displayRoot}/${artifact}`);
     const config = vscode.workspace.getConfiguration('ripr', uri);
     const previousProfile = config.get<'actionable' | 'full'>('diagnosticProfile', 'actionable');
     try {
@@ -513,30 +519,30 @@ suite('Extension Smoke', () => {
 
     await vscode.commands.executeCommand(packetCommand.command, ...(packetCommand.arguments ?? []));
     const packetText = await waitForClipboardText((text) => text.includes('ripr agent packet'));
-    assert.ok(packetText.includes('ripr agent packet --root . --seam-id 67fc764ba37d77bd'), packetText);
-    assert.ok(packetText.includes('target/ripr/agent/agent-packet.json'), packetText);
+    assert.ok(packetText.includes(`ripr agent packet --root ${rootArg} --seam-id 67fc764ba37d77bd`), packetText);
+    assert.ok(packetText.endsWith(` > ${anchored('target/ripr/agent/agent-packet.json')}`), packetText);
 
     await vscode.commands.executeCommand(briefCommand.command, ...(briefCommand.arguments ?? []));
     const briefText = await waitForClipboardText((text) => text.includes('ripr agent brief'));
-    assert.ok(briefText.includes('ripr agent brief --root . --seam-id 67fc764ba37d77bd'), briefText);
-    assert.ok(briefText.includes('target/ripr/agent/agent-brief.json'), briefText);
+    assert.ok(briefText.includes(`ripr agent brief --root ${rootArg} --seam-id 67fc764ba37d77bd`), briefText);
+    assert.ok(briefText.endsWith(` > ${anchored('target/ripr/agent/agent-brief.json')}`), briefText);
 
     await vscode.commands.executeCommand(afterSnapshotCommand.command, ...(afterSnapshotCommand.arguments ?? []));
     const afterSnapshotText = await waitForClipboardText((text) =>
       text.includes('ripr check') && text.includes('target/ripr/pilot/after.repo-exposure.json')
     );
-    assert.ok(afterSnapshotText.includes('ripr check --root . --base '), afterSnapshotText);
+    assert.ok(afterSnapshotText.includes(`ripr check --root ${rootArg} --base `), afterSnapshotText);
     assert.ok(afterSnapshotText.includes('--format repo-exposure-json'), afterSnapshotText);
-    assert.ok(afterSnapshotText.includes('target/ripr/pilot/after.repo-exposure.json'), afterSnapshotText);
+    assert.ok(afterSnapshotText.endsWith(` > ${anchored('target/ripr/pilot/after.repo-exposure.json')}`), afterSnapshotText);
 
     await vscode.commands.executeCommand(verifyCommand.command, ...(verifyCommand.arguments ?? []));
     const verifyText = await waitForClipboardText((text) => text.includes('ripr agent verify'));
-    assert.ok(verifyText.includes('ripr agent verify --root .'), verifyText);
-    assert.ok(verifyText.includes('target/ripr/pilot/after.repo-exposure.json'), verifyText);
+    assert.ok(verifyText.includes(`ripr agent verify --root ${rootArg}`), verifyText);
+    assert.ok(verifyText.endsWith(` > ${anchored('target/ripr/agent/agent-verify.json')}`), verifyText);
 
     await vscode.commands.executeCommand(receiptCommand.command, ...(receiptCommand.arguments ?? []));
     const receiptText = await waitForClipboardText((text) => text.includes('ripr agent receipt'));
-    assert.ok(receiptText.includes('ripr agent receipt --root .'), receiptText);
+    assert.ok(receiptText.includes(`ripr agent receipt --root ${rootArg}`), receiptText);
     assert.ok(receiptText.includes('--seam-id 67fc764ba37d77bd'), receiptText);
     assert.ok(receiptText.includes('target/ripr/agent/agent-receipt.json'), receiptText);
 
@@ -1417,6 +1423,52 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('refresh failures suggest editor recovery without restarting the server', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      context.client.emitNotification('window/logMessage', {
+        message: 'ripr analysis refresh failed: the base `origin/main` does not resolve to a commit'
+      });
+      assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        failure: { kind: 'analysis_error', message: 'temporary timeout' }
+      });
+      assert.ok(String(context.status.tooltip).includes('Run ripr: Refresh Diagnostics to retry'));
+      assert.ok(!String(context.status.tooltip).includes('Restart Server'));
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        retry_command: 'ripr.refresh',
+        failure: { kind: 'analysis_error', message: 'the base `origin/main` does not resolve to a commit. Fetch the ref or pass --base <ref>.' }
+      });
+      assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
+      assert.ok(String(context.status.tooltip).includes('ripr: Refresh Diagnostics'));
+
+      for (const [retryCommand, expectedCommand] of [
+        ['ripr.refresh', 'ripr: Refresh Diagnostics'],
+        ['ripr.refreshDiagnostics', 'ripr: Refresh Diagnostics'],
+        ['   ', 'ripr: Refresh Diagnostics'],
+        ['server-owned recovery', 'server-owned recovery']
+      ]) {
+        context.client.emitNotification('ripr/analysisStatus', {
+          schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+          retry_command: retryCommand,
+          failure: { kind: 'analysis_error', message: 'temporary timeout' }
+        });
+        assert.ok(
+          String(context.status.tooltip).includes(`Run ${expectedCommand} to retry`),
+          `unexpected editor recovery for ${JSON.stringify(retryCommand)}`
+        );
+      }
+
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('typed analysis status surfaces server-owned ambiguous root state', async () => {
     const context = createControllerTestContext({});
     try {
@@ -1487,6 +1539,196 @@ suite('Extension Smoke', () => {
       assert.ok(context.status.text.includes('ripr: stale'));
       assert.ok(String(context.status.tooltip).includes('unsaved routed-file changes remain'));
       assert.ok(String(context.status.tooltip).includes('Current diagnostics describe the last saved workspace state.'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('typed succeeded status discloses limited run statuses instead of completed', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+
+      const emitSucceededWithRunStatus = (runStatus: string) => {
+        context.client.emitNotification('ripr/analysisStatus', {
+          schema_version: '0.1',
+          tool: 'ripr',
+          kind: 'analysis_status',
+          state: 'succeeded',
+          run_status: runStatus,
+          attempt_id: 'run-1',
+          snapshot_id: 'snapshot:run-1'
+        });
+      };
+      const assertDegraded = (expectedLines: string[]) => {
+        // Degraded presentations use the dedicated analysisLimited status
+        // kind: warning icon and text, never the healthy
+        // `$(check) ripr: diagnostics` presentation.
+        assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
+        assert.ok(!context.status.text.includes('ripr: diagnostics'), context.status.text);
+        const tooltip = String(context.status.tooltip);
+        for (const expected of expectedLines) {
+          assert.ok(tooltip.includes(expected), tooltip);
+        }
+      };
+
+      // Git-timeout shape: a limited snapshot may carry zero findings, so the
+      // summary must not read as a healthy completion.
+      emitSucceededWithRunStatus('limited');
+      assertDegraded([
+        'ripr analysis completed with limited evidence.',
+        'for example a git invocation timeout',
+        'findings may be missing',
+        'Next safe action: Run ripr: Refresh Diagnostics'
+      ]);
+
+      emitSucceededWithRunStatus('cache_limited');
+      assertDegraded([
+        'ripr analysis completed with a limited evidence cache.',
+        'Gap-artifact cache entries were rejected this refresh',
+        'Next safe action: Rerun ripr check to regenerate the rejected gap-artifact reports'
+      ]);
+
+      emitSucceededWithRunStatus('limited_partial_scope');
+      assertDegraded([
+        'ripr analysis completed on a bounded partition of the diff.',
+        'the remainder was not evaluated',
+        'Next safe action: Raise RIPR_PARTIAL_DIFF_FILE_BUDGET or narrow the diff'
+      ]);
+
+      emitSucceededWithRunStatus('limited_incomplete_input');
+      assertDegraded([
+        'ripr analysis completed with incomplete input.',
+        'The run input was incomplete',
+        'Next safe action: Run ripr: Refresh Diagnostics'
+      ]);
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('typed succeeded status discloses deferred seam evidence instead of completed', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'succeeded',
+        run_status: 'seams_deferred',
+        attempt_id: 'save-1',
+        snapshot_id: 'snapshot:save-1'
+      });
+
+      assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
+      assert.ok(!context.status.text.includes('ripr: diagnostics'), context.status.text);
+      const tooltip = String(context.status.tooltip);
+      assert.ok(tooltip.includes('ripr analysis completed; seam and gap evidence is deferred.'), tooltip);
+      assert.ok(tooltip.includes('Interactive saves defer the seam inventory'), tooltip);
+      assert.ok(
+        tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics to compute the full seam inventory.'),
+        tooltip
+      );
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('limited run statuses do not gate repair packet copies as stale', async () => {
+    const context = createControllerTestContext({
+      files: {
+        'target/ripr/reports/actionable-gaps.json': actionableGapsReport({})
+      }
+    });
+    try {
+      await context.controller.start();
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'succeeded',
+        run_status: 'seams_deferred',
+        attempt_id: 'save-1',
+        snapshot_id: 'snapshot:save-1'
+      });
+
+      // The degraded disclosure must not reuse the stale kind's action gates:
+      // the published snapshot is not stale, only seam evidence is deferred.
+      await context.controller.copyCurrentRepairPacket();
+      const copied = context.clipboardWrites.at(-1) ?? '';
+      assert.ok(copied.includes('RIPR current repair packet'), copied);
+      assert.ok(copied.includes('gap:rust:pricing:discount:threshold-boundary'), copied);
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('typed succeeded status keeps healthy presentation for full and unknown run statuses', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+
+      const emitSucceededWithRunStatus = (runStatus: string | undefined) => {
+        context.client.emitNotification('ripr/analysisStatus', {
+          schema_version: '0.1',
+          tool: 'ripr',
+          kind: 'analysis_status',
+          state: 'succeeded',
+          run_status: runStatus,
+          attempt_id: 'run-1',
+          snapshot_id: 'snapshot:run-1'
+        });
+      };
+
+      emitSucceededWithRunStatus('full');
+      assert.ok(context.status.text.includes('$(check) ripr: diagnostics'), context.status.text);
+      assert.ok(String(context.status.tooltip).includes('ripr saved-workspace analysis completed.'));
+
+      // Unknown run_status values keep today's healthy presentation.
+      emitSucceededWithRunStatus('not_yet_a_server_status');
+      assert.ok(context.status.text.includes('$(check) ripr: diagnostics'), context.status.text);
+
+      emitSucceededWithRunStatus(undefined);
+      assert.ok(context.status.text.includes('$(check) ripr: diagnostics'), context.status.text);
+
+      // 'stale' keeps today's degraded presentation and retry wording.
+      emitSucceededWithRunStatus('stale');
+      assert.ok(context.status.text.includes('$(warning) ripr: stale'), context.status.text);
+      const staleTooltip = String(context.status.tooltip);
+      assert.ok(staleTooltip.includes('ripr analysis completed with stale or limited evidence.'), staleTooltip);
+      assert.ok(
+        staleTooltip.includes('Next safe action: Run ripr: Restart Server after resolving the reported limitation.'),
+        staleTooltip
+      );
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('dirty routed files compose ahead of the deferred seam disclosure', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      const document = await vscode.workspace.openTextDocument(workspaceFileUri('src/lib.rs'));
+      context.controller.markWorkspaceStale(document);
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'succeeded',
+        run_status: 'seams_deferred',
+        attempt_id: 'dirty-deferred',
+        snapshot_id: 'snapshot:dirty-deferred'
+      });
+
+      assert.ok(context.status.text.includes('ripr: stale'), context.status.text);
+      const tooltip = String(context.status.tooltip);
+      assert.ok(tooltip.includes('unsaved routed-file changes remain'), tooltip);
+      assert.ok(tooltip.includes('Current diagnostics describe the last saved workspace state.'), tooltip);
     } finally {
       await context.dispose();
     }
@@ -1780,6 +2022,25 @@ suite('Extension Smoke', () => {
     }));
     assert.strictEqual(unsafeCommand.state, 'unsafeCommand');
 
+    // #4265: the CLI anchors the packet redirect at --root; a redirect that
+    // leaves the workspace is refused even though no metacharacter is.
+    const agentPacketTo = (target: string) => firstPrPacket({
+      commands: {
+        verify: 'cargo xtask fixtures boundary_gap',
+        agent_packet: `ripr agent packet --root . --gap-id 'gap:pr:amount>=threshold' --json > ${target}`
+      }
+    });
+    const anchoredPacket = await readFirstPrPacketStatus(workspaceRoot, firstPrReadFile(workspaceRoot, {
+      'target/ripr/reports/start-here.json': agentPacketTo(
+        serverShellArg(`${workspaceRoot.replace(/\\/g, '/')}/target/ripr/workflow/agent-packet.json`)
+      )
+    }));
+    assert.strictEqual(anchoredPacket.state, 'topRepairableGap');
+    const escapingPacket = await readFirstPrPacketStatus(workspaceRoot, firstPrReadFile(workspaceRoot, {
+      'target/ripr/reports/start-here.json': agentPacketTo(`${path.resolve('/elsewhere').replace(/\\/g, '/')}/.bashrc`)
+    }));
+    assert.strictEqual(escapingPacket.state, 'unsafeCommand');
+
     const unsafePathPacket = JSON.parse(firstPrPacket({})) as Record<string, unknown>;
     unsafePathPacket.selected = {
       ...(unsafePathPacket.selected as Record<string, unknown>),
@@ -1930,6 +2191,18 @@ suite('Extension Smoke', () => {
     }));
     assert.strictEqual(unsafeCommand.state, 'unsafeCommand');
 
+    // #4265: a queue command may redirect into the workspace, not out of it.
+    const queueVerifyTo = async (target: string) => {
+      const queue = JSON.parse(actionableGapsReport({})) as Record<string, unknown>;
+      (queue.packets as Array<Record<string, unknown>>)[0].verify_command =
+        `ripr agent verify --root . --json > ${target}`;
+      return (await readActionableGapQueueStatus(workspaceRoot, firstPrReadFile(workspaceRoot, {
+        'target/ripr/reports/actionable-gaps.json': JSON.stringify(queue)
+      }))).state;
+    };
+    assert.notStrictEqual(await queueVerifyTo('target/ripr/agent/agent-verify.json'), 'unsafeCommand');
+    assert.strictEqual(await queueVerifyTo('../outside/agent-verify.json'), 'unsafeCommand');
+
     const unsafePathPacket = JSON.parse(actionableGapsReport({})) as Record<string, unknown>;
     (unsafePathPacket.packets as Array<Record<string, unknown>>)[0].target_test =
       '../outside.rs::test_escape';
@@ -1952,7 +2225,7 @@ suite('Extension Smoke', () => {
       await context.controller.start();
       const statusOutput = await showStatusReport(context);
       assert.ok(statusOutput.includes('First PR packet: missing; target/ripr/reports/start-here.json was not found.'));
-      assert.ok(statusOutput.includes('Next safe first-pr action: run cargo xtask first-pr'));
+      assert.ok(statusOutput.includes('Next safe first-pr action: run ripr first-pr --root .'));
       const diagnosis = await diagnoseSetupReport(context);
       assert.ok(diagnosis.includes('First PR packet: missing; target/ripr/reports/start-here.json was not found.'));
       assert.strictEqual(context.runRiprCalls.length, 0);
@@ -2035,7 +2308,7 @@ suite('Extension Smoke', () => {
       context.controller.markWorkspaceStale(document);
       const statusOutput = await showStatusReport(context);
       assert.ok(statusOutput.includes('First PR packet: stale; target/ripr/reports/start-here.json exists, but editor evidence is stale.'));
-      assert.ok(statusOutput.includes('Refresh saved-workspace evidence and rerun cargo xtask first-pr before inspecting or copying first-pr packet content.'));
+      assert.ok(statusOutput.includes('Refresh saved-workspace evidence and rerun ripr first-pr --root . before inspecting or copying first-pr packet content.'));
       assert.ok(!statusOutput.includes('top repairable gap available'));
       assert.strictEqual(context.runRiprCalls.length, 0);
     });
@@ -2617,7 +2890,7 @@ suite('Extension Smoke', () => {
       assert.ok(context.infoMessages.at(-1)?.includes('current saved-workspace evidence'));
 
       await context.controller.copyFirstPrRegenerationGuidance();
-      assert.ok(context.clipboardWrites.at(-1)?.includes('cargo xtask first-pr'));
+      assert.ok(context.clipboardWrites.at(-1)?.includes('ripr first-pr --root .'));
       assert.ok(context.clipboardWrites.at(-1)?.includes('editor does not run the command'));
       assert.strictEqual(context.runRiprCalls.length, 0);
     });
@@ -2631,7 +2904,7 @@ suite('Extension Smoke', () => {
       assert.ok(context.infoMessages.at(-1)?.includes('first-pr packet is missing'));
 
       await context.controller.copyFirstPrRegenerationGuidance();
-      assert.ok(context.clipboardWrites.at(-1)?.includes('cargo xtask first-pr'));
+      assert.ok(context.clipboardWrites.at(-1)?.includes('ripr first-pr --root .'));
       assert.strictEqual(context.runRiprCalls.length, 0);
     });
 
@@ -2734,7 +3007,7 @@ suite('Extension Smoke', () => {
         'Missing configured ripr server path for this test.',
         'Server: not resolved',
         'Server started: no; server unavailable',
-        'Next safe action: Set ripr.server.path'
+        'Next safe action: Enable ripr.server.autoDownload, install with cargo install ripr, or set ripr.server.path. Then run ripr: Restart Server.'
       ]);
       assert.strictEqual(context.client.startCalls, 0);
     });
@@ -3101,7 +3374,7 @@ suite('Extension Smoke', () => {
         'Status: Select one workspace folder before using ripr repair actions.',
         'Workspace root state: workspace_multi_root_ambiguous',
         'Root-scoped repair actions are suppressed until one workspace folder is selected.',
-        'Next safe action: Run ripr: Select Workspace Root, or open a Rust or enabled preview-language file from one workspace folder'
+        'Next safe action: Run ripr: Select Workspace Root, or open a file from one workspace folder.'
       ]);
     } finally {
       await context.dispose();
@@ -3176,7 +3449,7 @@ suite('Extension Smoke', () => {
       assert.ok(String(context.status.tooltip).includes('Server: not resolved'));
       assert.ok(String(context.status.tooltip).includes('Server started: no; server unavailable'));
       assert.ok(String(context.status.tooltip).includes('Config: ripr.toml'));
-      assert.ok(String(context.status.tooltip).includes('Next safe action: Set ripr.server.path'));
+      assert.ok(String(context.status.tooltip).includes('Next safe action: Enable ripr.server.autoDownload, install with cargo install ripr, or set ripr.server.path. Then run ripr: Restart Server.'));
       assert.strictEqual(context.errorMessages.length, 1);
       assert.strictEqual(context.client.startCalls, 0);
     } finally {
@@ -3450,40 +3723,45 @@ suite('Extension Smoke', () => {
       await writeWorkspaceFile(relativePath, 'pub fn agent_loop_command_target() {}\n');
       const document = await vscode.workspace.openTextDocument(uri);
       await vscode.window.showTextDocument(document);
+      await context.controller.start();
       const seamId = '67fc764ba37d77bd';
+      const selectedRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      assert.ok(selectedRoot, 'test workspace root must be open');
+      const rootArg = serverShellArg(selectedRoot.replace(/\\/g, '/'));
+      const anchored = (artifact: string) => serverShellArg(`${selectedRoot.replace(/\\/g, '/')}/${artifact}`);
       const targets = [
         agentLoopCommandTarget(
           'agent_repair',
-          `ripr agent repair --root . --seam-id ${seamId} --phase before`,
+          `ripr agent repair --root ${rootArg} --seam-id ${seamId} --phase before`,
           'target/ripr/repair-attempts',
           { seamId }
         ),
         agentLoopCommandTarget(
           'agent_packet',
-          `ripr agent packet --root . --seam-id ${seamId} --json > target/ripr/agent/agent-packet.json`,
+          `ripr agent packet --root ${rootArg} --seam-id ${seamId} --json > ${anchored('target/ripr/agent/agent-packet.json')}`,
           'target/ripr/agent/agent-packet.json',
           { seamId }
         ),
         agentLoopCommandTarget(
           'agent_brief',
-          `ripr agent brief --root . --seam-id ${seamId} --json > target/ripr/agent/agent-brief.json`,
+          `ripr agent brief --root ${rootArg} --seam-id ${seamId} --json > ${anchored('target/ripr/agent/agent-brief.json')}`,
           'target/ripr/agent/agent-brief.json',
           { seamId }
         ),
         agentLoopCommandTarget(
           'after_snapshot',
-          'ripr check --root . --base "origin/main with space" --mode ready --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json',
+          `ripr check --root ${rootArg} --base 'origin/main with space' --mode ready --format repo-exposure-json > ${anchored('target/ripr/pilot/after.repo-exposure.json')}`,
           'target/ripr/pilot/after.repo-exposure.json',
           { base: 'origin/main with space', mode: 'ready' }
         ),
         agentLoopCommandTarget(
           'agent_verify',
-          'ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > target/ripr/agent/agent-verify.json',
+          `ripr agent verify --root ${rootArg} --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > ${anchored('target/ripr/agent/agent-verify.json')}`,
           'target/ripr/agent/agent-verify.json'
         ),
         agentLoopCommandTarget(
           'agent_receipt',
-          `ripr agent receipt --root . --verify-json target/ripr/agent/agent-verify.json --seam-id ${seamId} --json --out target/ripr/agent/agent-receipt.json`,
+          `ripr agent receipt --root ${rootArg} --verify-json target/ripr/agent/agent-verify.json --seam-id ${seamId} --json --out target/ripr/agent/agent-receipt.json`,
           'target/ripr/agent/agent-receipt.json',
           { seamId }
         ),
@@ -3513,8 +3791,8 @@ suite('Extension Smoke', () => {
   });
 
   test('copyAgentLoopCommand accepts redirects anchored at the session root (#4220)', async () => {
-    // Since #3938 the server writes `> <cwd>/<artifact>` for `--root .`,
-    // and its cwd is the session workspace root.
+    // The server binds both the root argument and redirect to the selected
+    // session workspace root.
     const relativePath = 'src/agent-loop-anchored.rs';
     const uri = workspaceFileUri(relativePath);
     const context = createControllerTestContext({});
@@ -3525,10 +3803,11 @@ suite('Extension Smoke', () => {
       const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       assert.ok(root, 'test workspace root must be open');
       const anchored = (artifact: string) => serverShellArg(`${root.replace(/\\/g, '/')}/${artifact}`);
+      const rootArg = serverShellArg(root.replace(/\\/g, '/'));
       const seamId = '67fc764ba37d77bd';
       const packetTo = (redirect: string) => agentLoopCommandTarget(
         'agent_packet',
-        `ripr agent packet --root . --seam-id ${seamId} --json > ${redirect}`,
+        `ripr agent packet --root ${rootArg} --seam-id ${seamId} --json > ${redirect}`,
         'target/ripr/agent/agent-packet.json',
         { seamId }
       );
@@ -3536,19 +3815,19 @@ suite('Extension Smoke', () => {
         packetTo(anchored('target/ripr/agent/agent-packet.json')),
         agentLoopCommandTarget(
           'agent_brief',
-          `ripr agent brief --root . --seam-id ${seamId} --json > ${anchored('target/ripr/agent/agent-brief.json')}`,
+          `ripr agent brief --root ${rootArg} --seam-id ${seamId} --json > ${anchored('target/ripr/agent/agent-brief.json')}`,
           'target/ripr/agent/agent-brief.json',
           { seamId }
         ),
         agentLoopCommandTarget(
           'after_snapshot',
-          `ripr check --root . --base origin/main --mode fast --format repo-exposure-json > ${anchored('target/ripr/pilot/after.repo-exposure.json')}`,
+          `ripr check --root ${rootArg} --base origin/main --mode fast --format repo-exposure-json > ${anchored('target/ripr/pilot/after.repo-exposure.json')}`,
           'target/ripr/pilot/after.repo-exposure.json',
           { mode: 'fast' }
         ),
         agentLoopCommandTarget(
           'agent_verify',
-          `ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > ${anchored('target/ripr/agent/agent-verify.json')}`,
+          `ripr agent verify --root ${rootArg} --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > ${anchored('target/ripr/agent/agent-verify.json')}`,
           'target/ripr/agent/agent-verify.json'
         )
       ];
@@ -3595,6 +3874,124 @@ suite('Extension Smoke', () => {
     assert.ok(!redirectTargetMatches(`${slash(root)}/sub/../${artifact}`, artifact, [root]));
     assert.ok(!redirectTargetMatches(`${slash(root)}/${artifact} extra`, artifact, [root]));
     assert.ok(!redirectTargetMatches('target/ripr/agent/../agent/agent-packet.json', artifact, [root]));
+  });
+
+  test('redirectStaysInWorkspace keeps every redirect inside the workspace (#4265)', () => {
+    const root = path.resolve('/work/repo');
+    const inRoot = `${root.replace(/\\/g, '/')}/target/ripr/out.json`;
+    const accepts = (command: string) => redirectStaysInWorkspace(command, [root]);
+
+    assert.ok(accepts('ripr first-pr --json'));
+    assert.ok(accepts('ripr agent verify --root . --json > target/ripr/out.json'));
+    assert.ok(accepts(`ripr agent verify --root . --json > ${serverShellArg(inRoot)}`));
+    // A quoted `>` is an argument, not a redirect.
+    assert.ok(accepts("ripr receipt write --gap 'gap:amount>=threshold' --verify-command 'cargo test > log' --status not_run"));
+    assert.ok(accepts("ripr agent packet --gap-id 'gap:a>b' --json > target/ripr/agent-packet.json"));
+
+    for (const command of [
+      'ripr first-pr --json > /etc/profile',
+      `ripr first-pr --json > '${path.resolve('/work/repo-other').replace(/\\/g, '/')}/out.json'`,
+      'ripr first-pr --json > ../outside.json',
+      'ripr first-pr --json > target/../../outside.json',
+      'ripr first-pr --json > C:outside.json',
+      'ripr first-pr --json >> target/ripr/out.json',
+      'ripr first-pr --json >/etc/passwd',
+      'ripr first-pr --json 2> target/ripr/out.json',
+      'ripr first-pr --json > target/ripr/out.json extra',
+      'ripr first-pr --json > target/a.json > target/b.json',
+      'ripr first-pr --json > ',
+      'ripr first-pr --json < target/ripr/in.json',
+      "ripr first-pr --json > 'target/ripr/a\u2019b.json'"
+    ]) {
+      assert.ok(!accepts(command), command);
+    }
+  });
+
+  test('agent loop commands must equal the body the server renders from the payload (#4225)', () => {
+    const seamId = '67fc764ba37d77bd';
+    const root = path.resolve('/work/R&D/$repo');
+    const rootDisplay = root.replace(/\\/g, '/');
+    const anchored = (artifact: string) => `'${rootDisplay}/${artifact}'`;
+    const accepts = (target: RiprAgentLoopCommandTarget) =>
+      validatedAgentLoopCommand(target, [root]) === target.command;
+    const packet = (body: string, redirect = anchored('target/ripr/agent/agent-packet.json')) =>
+      agentLoopCommandTarget('agent_packet', `${body} > ${redirect}`, 'target/ripr/agent/agent-packet.json', { seamId });
+    const snapshot = (commandBase: string, payloadBase: string | null): RiprAgentLoopCommandTarget => ({
+      ...agentLoopCommandTarget(
+        'after_snapshot',
+        `ripr check --root ${commandRoot}${commandBase} --mode fast --format repo-exposure-json > ${anchored('target/ripr/pilot/after.repo-exposure.json')}`,
+        'target/ripr/pilot/after.repo-exposure.json',
+        { mode: 'fast' }
+      ),
+      base: payloadBase
+    });
+
+    // The real server binds the selected root in the command while the payload
+    // retains its portable `root: "."` role. This must fail on the old client.
+    const commandRoot = process.platform === 'win32' ? `'${rootDisplay}'` : "'/work/R&D/$repo'";
+    assert.ok(accepts(packet(`ripr agent packet --root ${commandRoot} --seam-id ${seamId} --json`)));
+    assert.ok(!accepts(packet(`ripr agent packet --root . --seam-id ${seamId} --json`)));
+    const otherRoot = path.resolve('/work/other').replace(/\\/g, '/');
+    assert.ok(!accepts(packet(`ripr agent packet --root ${otherRoot} --seam-id ${seamId} --json`)));
+    assert.ok(!accepts(packet(
+      `ripr agent packet --root ${commandRoot} --seam-id ${seamId} --json`,
+      `${otherRoot}/target/ripr/agent/agent-packet.json`
+    )));
+    // Both spellings may be selected (symlink and realpath), but the command
+    // and redirect must use the SAME one. A relative tail is not a bound tail.
+    const otherPacket = packet(
+      `ripr agent packet --root ${otherRoot} --seam-id ${seamId} --json`,
+      `${otherRoot}/target/ripr/agent/agent-packet.json`
+    );
+    assert.strictEqual(validatedAgentLoopCommand(otherPacket, [root, otherRoot]), otherPacket.command);
+    assert.strictEqual(validatedAgentLoopCommand(packet(
+      `ripr agent packet --root ${commandRoot} --seam-id ${seamId} --json`,
+      `${otherRoot}/target/ripr/agent/agent-packet.json`
+    ), [root, otherRoot]), undefined);
+    assert.ok(!accepts(packet(`ripr agent packet --root ${commandRoot} --seam-id ${seamId} --json`,
+      'target/ripr/agent/agent-packet.json')));
+    assert.ok(!accepts(packet(`ripr agent packet --root ${commandRoot} --seam-id ${seamId} --json`,
+      serverShellArg(`${root.replace(/\\/g, '/')}/../other/target/ripr/agent/agent-packet.json`))));
+    // Bases the server single-quotes, and no `--base` when the payload has none.
+    for (const base of ['HEAD~1', 'HEAD^', '@{u}', 'origin/main with space']) {
+      assert.ok(accepts(snapshot(` --base ${serverShellArg(base)}`, base)), base);
+    }
+    assert.ok(accepts(snapshot('', null)));
+
+    // Extra tokens before the redirect, including command substitution.
+    assert.ok(!accepts(packet(`ripr agent packet --root ${commandRoot} --seam-id ${seamId} $(touch pwned) --json`)));
+    assert.ok(!accepts(packet(`ripr agent packet --root ${commandRoot} --seam-id ${seamId} --json --extra`)));
+    assert.ok(!accepts(agentLoopCommandTarget(
+      'agent_verify',
+      'ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json $(touch pwned) > target/ripr/agent/agent-verify.json',
+      'target/ripr/agent/agent-verify.json'
+    )));
+    assert.ok(!accepts(agentLoopCommandTarget('gap_verify', 'ripr agent verify --root . --json $(touch pwned)')));
+    assert.ok(!accepts(agentLoopCommandTarget('gap_verify', 'ripr agent verify --root . --json <(touch pwned)')));
+    // The double-quoted base the client used to expect, and a base the payload
+    // does not carry.
+    assert.ok(!accepts(snapshot(' --base "HEAD~1"', 'HEAD~1')));
+    assert.ok(!accepts(snapshot(' --base origin/main', null)));
+    assert.ok(!accepts(snapshot(' --base other', 'origin/main')));
+    // `'\\''` needs a backslash, which fish reads differently: still refused.
+    assert.ok(!accepts(snapshot(` --base ${serverShellArg("it's")}`, "it's")));
+    // The quoted redirect span may not carry a line break, a backslash, or a
+    // typographic quote that PowerShell reads as the end of the span.
+    for (const bad of ['\n', '\\', '\u2019']) {
+      assert.ok(!redirectTargetMatches(
+        `'/work/a${bad}b/target/ripr/agent/agent-packet.json'`,
+        'target/ripr/agent/agent-packet.json',
+        [`/work/a${bad}b`]
+      ), JSON.stringify(bad));
+    }
+    assert.ok(hasUnsafeShellMetacharacter('ripr check $(id)'));
+    assert.ok(hasUnsafeShellMetacharacter('ripr check >(id)'));
+    assert.ok(hasUnsafeShellMetacharacter('ripr check "$(id)"'));
+    assert.ok(hasUnsafeShellMetacharacter(`ripr check "it's $(id) it's"`));
+    assert.ok(hasUnsafeShellMetacharacter("ripr check 'unterminated $(id)"));
+    assert.ok(hasUnsafeShellMetacharacter("ripr check 'a\u2019 $(id) \u2019b'"));
+    // The server single-quotes a gap id built from an expression; it stays inert.
+    assert.ok(!hasUnsafeShellMetacharacter("ripr agent packet --gap-id 'gap:len(x)>0' --json > out.json"));
   });
 
   test('agent loop command handlers ignore malformed args without throwing', async () => {
@@ -4050,10 +4447,6 @@ interface ControllerTestOptions {
 }
 
 // Mirror of the server's `shell_arg` (crates/ripr/src/agent/loop_commands.rs).
-function serverShellArg(value: string): string {
-  return /^[A-Za-z0-9._/:-]+$/.test(value) ? value : `'${value.replace(/'/g, "'\\''")}'`;
-}
-
 function agentLoopCommandTarget(
   label: string,
   command: string,

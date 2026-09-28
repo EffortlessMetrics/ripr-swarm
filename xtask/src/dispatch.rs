@@ -42,6 +42,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::PerlMigrationRefresh(args) => super::reports::perl_migration_refresh(&args),
         XtaskCommand::ModuleHealth(args) => super::reports::module_health(&args),
         XtaskCommand::WindowsAdvisorySummary(args) => super::windows_advisory::run(&args),
+        XtaskCommand::WindowsAdvisoryIsolatedSummary(args) => {
+            super::windows_advisory::run_isolated(&args)
+        }
         XtaskCommand::EvalSweep(args) => super::reports::eval_sweep(&args),
         XtaskCommand::SuggestedFixes => super::suggested_fixes(),
         XtaskCommand::Precommit => precommit_v2::run(),
@@ -55,6 +58,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckRustJudgedPanel => super::check_rust_judged_panel(),
         XtaskCommand::CheckReleaseChallengeSelection => {
             super::rust_judged_panel::check_release_selection()
+        }
+        XtaskCommand::CheckReleaseChallengeJudgments => {
+            super::rust_judged_panel::check_release_judgments()
         }
         XtaskCommand::PythonJudgedPanel(args) => super::python_judged_panel::run(&args),
         XtaskCommand::CheckPythonJudgedPanel => super::check_python_judged_panel(),
@@ -175,6 +181,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckGeneratedClean => super::check_generated_clean(),
         XtaskCommand::CheckVerificationContracts(args) => {
             super::verification_contracts::check_verification_contracts(&args)
+        }
+        XtaskCommand::SchemaProducerSweep(args) => {
+            super::schema_producer_sweep::schema_producer_sweep(&args)
         }
         XtaskCommand::CheckDependencies => super::check_dependencies(),
         XtaskCommand::CheckSupplyChain => super::check_supply_chain(),

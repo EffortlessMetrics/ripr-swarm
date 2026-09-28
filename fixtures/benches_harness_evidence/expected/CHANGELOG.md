@@ -47,3 +47,51 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — benches_harness_evidence (4)
+
+Reason:
+RIPR-SPEC-0001 (#4216 row 5): brace-only and else-only changed lines (`}`, `} else {`) no longer seed static_unknown probes. Only those findings are removed; every remaining finding is byte-identical, and summary/outcome counts drop by the removed count.
+
+Command:
+`cargo xtask goldens bless benches_harness_evidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — benches_harness_evidence (5)
+
+Reason:
+RIPR-SPEC-0122: human-full carries per-finding drill-in commands (#4379); digest why-line names the incomplete stage; unreached static_unknown asks for a test first
+
+Command:
+`cargo xtask goldens bless benches_harness_evidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — benches_harness_evidence (6)
+
+Reason:
+RIPR-SPEC-0122: omit zero-count languages, keep the empty-result caveat to empty runs, cut digest lines at word boundaries
+
+Command:
+`cargo xtask goldens bless benches_harness_evidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — benches_harness_evidence (7)
+
+Reason:
+RIPR-SPEC-0122: unreached static_unknown next step hedges macro and integration reach
+
+Command:
+`cargo xtask goldens bless benches_harness_evidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -793,6 +793,10 @@ fn review_recommendation_json(
     let candidate_values = agent_seam_packets::candidate_values_for(entry, &missing);
     let assertion_shape = agent_seam_packets::assertion_shape_for_entry(entry);
     let seam_id = seam.id().as_str();
+    // Review cards are published into pull requests, where a checkout path
+    // from the machine that rendered them (often a CI runner) names nothing
+    // the reader has: their commands keep the portable `--root` the report
+    // was invoked with, meaning the reader's own checkout root (#4000).
     let root_display = display_path(root);
     let missing_value = missing.first().map(|record| record.value.clone());
     let seam_file = display_path(seam.file());
@@ -812,7 +816,7 @@ fn review_recommendation_json(
     };
 
     // receipt_command: only for actionable cards; reuses canonical_receipt_command_for.
-    let receipt_command = canonical_receipt_command_for(entry, gap_state);
+    let receipt_command = canonical_receipt_command_for(entry, gap_state, &root_display);
 
     // why_not_actionable + non_claims: for static_limitation cards.
     let static_limitations = if gap_state == "static_limitation" {
@@ -960,7 +964,7 @@ fn review_recommendation_json(
     // repair-packet flip. The evidence record owns the decision; the card
     // projects it.
     if let (Some(cmd), Some(guidance)) = (
-        canonical_repair_command_for(entry, gap_state),
+        canonical_repair_command_for(entry, gap_state, &root_display),
         recommendation
             .get_mut("llm_guidance")
             .and_then(Value::as_object_mut),
@@ -3031,6 +3035,14 @@ mod tests {
         assert_eq!(value["suppressed"][0]["reason"], "missing_seam_identity");
         assert_eq!(value["suppressed"][1]["reason"], "not_pr_comment_eligible");
 
+        // The schema fixture must retain the real eligible producer shape;
+        // validating only zero-comment ledgers misses this route's card.
+        let schema_fixture: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/verification/ripr/review-comments.gap-ledger.valid.json"
+        ))
+        .map_err(|err| format!("parse schema fixture: {err}"))?;
+        assert_eq!(value["comments"][0], schema_fixture["comments"][0]);
+
         let markdown = render_gap_record_review_comments_markdown(
             Path::new("."),
             "main",
@@ -3074,6 +3086,44 @@ mod tests {
         assert_eq!(value["summary"]["comments"], 0);
         assert_eq!(value["summary"]["suppressed"], 1);
         assert_eq!(value["suppressed"][0]["reason"], "missing_seam_identity");
+        Ok(())
+    }
+
+    /// Eligibility does not require a related test or target file, so an
+    /// eligible card projects null test-navigation fields. The published
+    /// schema's gap-ledger branch admits exactly this shape
+    /// (`review_comments_gap_ledger_card_has_its_own_schema_branch`).
+    #[test]
+    fn review_comments_gap_ledger_card_without_related_test_keeps_null_navigation()
+    -> Result<(), String> {
+        let mut record = eligible_gap_record_json("gap:no-related-test", "dedupe:no-related");
+        record["repair_route"]
+            .as_object_mut()
+            .ok_or("repair route fixture should be an object")?
+            .remove("target_file");
+        let records_json = serde_json::json!({ "records": [record] }).to_string();
+        let records = crate::output::gap_decision_ledger::parse_gap_records_json(&records_json)?;
+        let rendered = render_gap_record_review_comments_json(
+            Path::new("."),
+            "main",
+            "HEAD",
+            &Mode::Draft,
+            "target/ripr/reports/gap-decision-ledger.json",
+            &records,
+        )?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse JSON: {err}"))?;
+        assert_eq!(value["summary"]["comments"], 1);
+        let suggested = &value["comments"][0]["suggested_test"];
+        for field in [
+            "recommended_file",
+            "recommended_name",
+            "near_test",
+            "related_test",
+        ] {
+            assert_eq!(suggested[field], Value::Null, "{field}");
+        }
+        assert!(value["comments"][0]["repair_card"].is_object());
         Ok(())
     }
 

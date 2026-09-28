@@ -50,6 +50,7 @@ mod ripr_swarm;
 mod run;
 mod rust_judged_panel;
 mod rust_region_scan;
+mod schema_producer_sweep;
 mod verification_contracts;
 mod version;
 mod windows_advisory;
@@ -61,8 +62,8 @@ use command::{
 use command::{help_message, unknown_command_message};
 #[cfg(test)]
 pub(crate) use dogfood::{
-    BunUbPreviewSummaryArgs, ConfiguredBridgeInventoryArgs, CrossLanguageOracleGraphCase,
-    CrossLanguageOracleGraphRawRef, DogfoodBunUbCrossLanguageRun,
+    ArtifactRouterInput, BunUbPreviewSummaryArgs, ConfiguredBridgeInventoryArgs,
+    CrossLanguageOracleGraphCase, CrossLanguageOracleGraphRawRef, DogfoodBunUbCrossLanguageRun,
     DogfoodBunUbCrossLanguageScenario, DogfoodEditorFirstPrBridgeRun, DogfoodEditorGapCockpitRun,
     DogfoodFindingAlignmentRun, DogfoodFindingAlignmentScenario, DogfoodFirstActionRun,
     DogfoodFirstPrRun, DogfoodFrontPanelRun, DogfoodGateRun, DogfoodGeneratedCiCockpitRun,
@@ -75,30 +76,32 @@ pub(crate) use dogfood::{
     DogfoodUserSurfaceProjectionRun, GENERATED_CI_FIRST_ACTION_REPAIR,
     GENERATED_CI_FIRST_PR_REPAIR, GENERATED_CI_FRONT_PANEL_REPAIR,
     GENERATED_CI_PACKET_INDEX_REPAIR, TypeScriptBunUbCalibrationCase,
-    bun_ub_calibration_report_markdown, bun_ub_calibration_report_value,
-    bun_ub_preview_summary_markdown, bun_ub_preview_summary_report_value,
-    configured_bridge_inventory_markdown, configured_bridge_inventory_report_value,
-    cross_language_oracle_graph_cases, cross_language_oracle_graph_corpus_path,
-    dogfood_bun_ub_cross_language_scenarios, dogfood_class_counts,
-    dogfood_editor_first_pr_bridge_run, dogfood_editor_first_pr_bridge_scenarios,
-    dogfood_editor_gap_cockpit_run, dogfood_editor_gap_cockpit_scenarios,
+    artifact_router_path_violation, bun_ub_calibration_report_markdown,
+    bun_ub_calibration_report_value, bun_ub_preview_summary_markdown,
+    bun_ub_preview_summary_report_value, configured_bridge_inventory_markdown,
+    configured_bridge_inventory_report_value, cross_language_oracle_graph_cases,
+    cross_language_oracle_graph_corpus_path, dogfood_bun_ub_cross_language_scenarios,
+    dogfood_class_counts, dogfood_editor_first_pr_bridge_run,
+    dogfood_editor_first_pr_bridge_scenarios, dogfood_editor_gap_cockpit_run,
+    dogfood_editor_gap_cockpit_scenarios, dogfood_failed_families, dogfood_first_action_run,
     dogfood_first_action_scenarios, dogfood_first_pr_metrics, dogfood_first_pr_run,
     dogfood_first_pr_scenarios, dogfood_gate_adoption_run, dogfood_gate_adoption_scenarios,
-    dogfood_generated_ci_cockpit_run_from_workflow, dogfood_language_preview_run,
-    dogfood_language_preview_scenarios, dogfood_pr_inline_comment_run,
-    dogfood_pr_inline_comment_scenarios, dogfood_pr_review_front_panel_run,
-    dogfood_pr_review_front_panel_scenarios, dogfood_push_python_quality_ratio_json,
-    dogfood_push_python_ranked_findings_json, dogfood_python_no_action_eval_scenarios,
-    dogfood_python_ranked_findings, dogfood_python_real_repo_eval_scenarios,
-    dogfood_python_static_limit_eval_scenarios, dogfood_report_json, dogfood_report_markdown,
-    dogfood_report_packet_index_run, dogfood_report_packet_index_scenarios,
+    dogfood_gate_result, dogfood_generated_ci_cockpit_run_from_workflow,
+    dogfood_language_preview_run, dogfood_language_preview_scenarios,
+    dogfood_pr_inline_comment_run, dogfood_pr_inline_comment_scenarios,
+    dogfood_pr_review_front_panel_run, dogfood_pr_review_front_panel_scenarios,
+    dogfood_push_python_quality_ratio_json, dogfood_push_python_ranked_findings_json,
+    dogfood_python_no_action_eval_scenarios, dogfood_python_ranked_findings,
+    dogfood_python_real_repo_eval_scenarios, dogfood_python_static_limit_eval_scenarios,
+    dogfood_report_json, dogfood_report_markdown, dogfood_report_packet_index_run,
+    dogfood_report_packet_index_scenarios, dogfood_report_status,
     dogfood_typescript_false_actionable_audit_summary,
     dogfood_typescript_preview_repair_loop_scenarios, finding_alignment_verify_command_is_missing,
-    json_number_after, parse_bun_ub_preview_summary_args, parse_configured_bridge_inventory_args,
-    pin_report_packet_index_generated_at, repo_rooted_fixture_path,
-    report_packet_index_case_id_violation, report_packet_index_generated_at_violation,
-    report_packet_index_render_plan, typescript_bun_ub_calibration_cases,
-    typescript_preview_false_actionable_audit_cases,
+    front_panel_case_inputs, json_number_after, parse_bun_ub_preview_summary_args,
+    parse_configured_bridge_inventory_args, pin_report_packet_index_generated_at,
+    repo_rooted_fixture_path, report_packet_index_case_id_violation,
+    report_packet_index_generated_at_violation, report_packet_index_render_plan,
+    typescript_bun_ub_calibration_cases, typescript_preview_false_actionable_audit_cases,
 };
 pub(crate) use dogfood::{
     DogfoodSurfaceProjectionAlignmentScenario, DogfoodUserSurfaceProjectionScenario,
@@ -542,6 +545,7 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-fixture-contracts",
     "check-rust-judged-panel",
     "check-release-challenge-selection",
+    "check-release-challenge-judgments",
     "check-python-judged-panel",
     "check-traceability",
     "check-capabilities",
@@ -584,6 +588,7 @@ fn precommit() -> Result<(), String> {
     check_fixture_contracts()?;
     check_rust_judged_panel()?;
     check_release_challenge_selection()?;
+    check_release_challenge_judgments()?;
     check_python_judged_panel()?;
     check_traceability()?;
     check_capabilities()?;
@@ -617,6 +622,10 @@ fn check_rust_judged_panel() -> Result<(), String> {
 
 fn check_release_challenge_selection() -> Result<(), String> {
     rust_judged_panel::check_release_selection()
+}
+
+fn check_release_challenge_judgments() -> Result<(), String> {
+    rust_judged_panel::check_release_judgments()
 }
 
 fn check_python_judged_panel() -> Result<(), String> {
@@ -4614,7 +4623,7 @@ fn receipts_report_markdown(
 }
 
 fn precommit_report_body() -> String {
-    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
+    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
 }
 
 /// Compose the check-pr report for either terminal state (#3036). One
@@ -10513,6 +10522,31 @@ struct RepoExposureLatencyRun {
     stdout_bytes: usize,
     stderr_bytes: usize,
     trace: Vec<RepoExposureLatencyTrace>,
+    file_fact_cache: Option<RepoExposureFileFactCache>,
+    file_fact_cache_limitation: Option<String>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct RepoExposureFileFactCache {
+    schema_version: String,
+    hits: usize,
+    misses: usize,
+    invalidated: usize,
+    corrupt_ignored: usize,
+    stores: usize,
+    store_errors: usize,
+    store_failures: Vec<RepoExposureStoreFailure>,
+    store_failures_dropped: usize,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct RepoExposureStoreFailure {
+    /// `None` when the producer found no portable spelling for the file.
+    path: Option<String>,
+    stage: String,
+    error: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -10578,6 +10612,8 @@ where
             stdout_bytes: 0,
             stderr_bytes: 0,
             trace: Vec::new(),
+            file_fact_cache: None,
+            file_fact_cache_limitation: Some("format_skipped".to_string()),
         });
     }
 
@@ -10639,6 +10675,8 @@ fn repo_exposure_latency_run_from_output(
     } else {
         "fail"
     };
+    let (file_fact_cache, file_fact_cache_limitation) =
+        repo_exposure_file_fact_cache_from_stderr(&output.stderr);
     RepoExposureLatencyRun {
         format: format.to_string(),
         status: status.to_string(),
@@ -10647,7 +10685,53 @@ fn repo_exposure_latency_run_from_output(
         stdout_bytes: output.stdout.len(),
         stderr_bytes: output.stderr.len(),
         trace: repo_exposure_latency_trace(&output.stderr),
+        file_fact_cache,
+        file_fact_cache_limitation,
     }
+}
+
+fn repo_exposure_file_fact_cache_from_stderr(
+    stderr: &str,
+) -> (Option<RepoExposureFileFactCache>, Option<String>) {
+    const PREFIX: &str = "ripr_file_fact_cache_receipt ";
+    // Mirrors the producer's `MAX_STORE_FAILURE_ROWS` row cap.
+    const MAX_RETAINED_STORE_FAILURES: usize = 32;
+    let mut records = stderr.lines().filter_map(|line| line.strip_prefix(PREFIX));
+    let Some(record) = records.next() else {
+        return (None, Some("cache_phase_not_observed".to_string()));
+    };
+    if records.next().is_some() {
+        return (None, Some("duplicate_cache_receipt".to_string()));
+    }
+    let Ok(value) = serde_json::from_str::<RepoExposureFileFactCache>(record) else {
+        return (None, Some("malformed_cache_receipt".to_string()));
+    };
+    if value.schema_version != "0.1"
+        || value.store_failures.len() > MAX_RETAINED_STORE_FAILURES
+        || value
+            .store_failures
+            .len()
+            .checked_add(value.store_failures_dropped)
+            .is_none_or(|count| count != value.store_errors)
+        || (value.store_failures.len() < MAX_RETAINED_STORE_FAILURES
+            && value.store_failures_dropped > 0)
+        || value.store_failures.iter().any(|row| {
+            !matches!(row.stage.as_str(), "create_dir" | "encode" | "write")
+                || row.path.as_deref().is_some_and(|path| {
+                    path.is_empty()
+                        || path.starts_with('/')
+                        || path
+                            .split('/')
+                            .any(|part| part == "." || part == ".." || part.is_empty())
+                        || path.contains('\\')
+                        || path.contains(':')
+                        || path.chars().any(char::is_control)
+                })
+        })
+    {
+        return (None, Some("invalid_cache_receipt".to_string()));
+    }
+    (Some(value), None)
 }
 
 fn repo_exposure_latency_status(runs: &[RepoExposureLatencyRun]) -> String {
@@ -10692,7 +10776,7 @@ fn repo_exposure_latency_trace(stderr: &str) -> Vec<RepoExposureLatencyTrace> {
 fn repo_exposure_latency_json(report: &RepoExposureLatencyReport) -> String {
     let mut body = String::new();
     body.push_str("{\n");
-    body.push_str("  \"schema_version\": \"0.1\",\n");
+    body.push_str("  \"schema_version\": \"0.2\",\n");
     body.push_str("  \"tool\": \"ripr\",\n");
     body.push_str("  \"report\": \"repo-exposure-latency\",\n");
     body.push_str(&format!(
@@ -10725,6 +10809,17 @@ fn repo_exposure_latency_json(report: &RepoExposureLatencyReport) -> String {
         }
         body.push_str(&format!("      \"stdout_bytes\": {},\n", run.stdout_bytes));
         body.push_str(&format!("      \"stderr_bytes\": {},\n", run.stderr_bytes));
+        body.push_str("      \"file_fact_cache\": ");
+        match &run.file_fact_cache {
+            Some(cache) => body.push_str(&serde_json::json!(cache).to_string()),
+            None => body.push_str("null"),
+        }
+        body.push_str(",\n      \"file_fact_cache_limitation\": ");
+        match &run.file_fact_cache_limitation {
+            Some(limitation) => body.push_str(&serde_json::json!(limitation).to_string()),
+            None => body.push_str("null"),
+        }
+        body.push_str(",\n");
         body.push_str("      \"trace\": [");
         for (trace_index, trace) in run.trace.iter().enumerate() {
             if trace_index > 0 {
@@ -10789,6 +10884,39 @@ fn repo_exposure_latency_markdown(report: &RepoExposureLatencyReport) -> String 
             body.push('\n');
         }
     }
+    body.push_str("\n## File Fact Cache\n\n");
+    for run in &report.runs {
+        body.push_str(&format!("### `{}`\n\n", run.format));
+        if let Some(cache) = &run.file_fact_cache {
+            body.push_str(&format!(
+                "Hits: {}; misses: {}; invalidated: {}; corrupt ignored: {}; stores: {}; store errors: {}; retained failures: {}; dropped failures: {}.\n\n",
+                cache.hits, cache.misses, cache.invalidated, cache.corrupt_ignored,
+                cache.stores, cache.store_errors, cache.store_failures.len(), cache.store_failures_dropped
+            ));
+            if !cache.store_failures.is_empty() {
+                body.push_str("| Path | Stage | Error |\n| --- | --- | --- |\n");
+                for row in &cache.store_failures {
+                    body.push_str(&format!(
+                        "| {} | {} | {} |\n",
+                        row.path.as_deref().map_or_else(
+                            || "_unrepresentable path_".to_string(),
+                            latency_markdown_cell
+                        ),
+                        row.stage,
+                        latency_markdown_cell(&row.error)
+                    ));
+                }
+                body.push('\n');
+            }
+        } else {
+            body.push_str(&format!(
+                "Unavailable: `{}`. No zero cache counts are inferred.\n\n",
+                run.file_fact_cache_limitation
+                    .as_deref()
+                    .unwrap_or("unknown")
+            ));
+        }
+    }
     body.push_str("\n## Next Step\n\n");
     body.push_str(
         "Use this report to identify whether the repo-exposure path is waiting on \
@@ -10796,6 +10924,23 @@ cache collection, cache load, cold compute, cache store, or rendering before \
 changing cache behavior.\n",
     );
     body
+}
+
+fn latency_markdown_cell(value: &str) -> String {
+    let mut escaped = String::new();
+    for ch in value.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '`' => escaped.push_str("&#96;"),
+            '\\' => escaped.push_str("&#92;"),
+            '|' => escaped.push_str("\\|"),
+            control if control.is_control() => escaped.push(' '),
+            other => escaped.push(other),
+        }
+    }
+    escaped
 }
 
 /// Run the agent seam packet renderer and write

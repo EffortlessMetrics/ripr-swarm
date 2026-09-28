@@ -191,3 +191,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_runner_detect_no_runner (4)
+
+Reason:
+RIPR-SPEC-0122 (#4216): TS/JS preview safe next action is terminal for a closed repair packet (quotes the validator's why_not_actionable) and says no repair for an exposed finding
+
+Command:
+`cargo xtask goldens bless ts_runner_detect_no_runner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_runner_detect_no_runner (5)
+
+Reason:
+RIPR-SPEC-0122: omit zero-count languages, keep the empty-result caveat to empty runs, cut digest lines at word boundaries
+
+Command:
+`cargo xtask goldens bless ts_runner_detect_no_runner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

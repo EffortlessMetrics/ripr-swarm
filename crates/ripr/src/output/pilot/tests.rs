@@ -315,13 +315,16 @@ fn pilot_summary_json_contains_config_state_artifacts_and_next_commands() {
         language_routes: None,
     };
 
-    let json = render_pilot_summary_json(&[entry], context);
+    let json = crate::testing::cwd_placeholder::project_cwd_text(&render_pilot_summary_json(
+        &[entry],
+        context,
+    ));
     assert!(json.contains(r#""schema_version": "0.2""#));
     assert!(json.contains(r#""status": "complete""#));
     assert!(json.contains(r#""state": "loaded""#));
     assert!(json.contains(r#""top_actionable_seams""#));
     assert!(json.contains(r#""missing_discriminator""#));
-    assert!(json.contains("ripr outcome --before target/ripr/pilot/repo-exposure.json"));
+    assert!(json.contains("ripr outcome --before <cwd>/target/ripr/pilot/repo-exposure.json"));
 }
 
 #[test]
@@ -334,7 +337,10 @@ fn pilot_summary_md_spells_out_first_screen_recommendation() {
         vec![related_test()],
     );
     let artifacts = pilot_artifacts();
-    let md = render_pilot_summary_md(&[entry], pilot_context(&artifacts));
+    let md = crate::testing::cwd_placeholder::project_cwd_text(&render_pilot_summary_md(
+        &[entry],
+        pilot_context(&artifacts),
+    ));
 
     for needle in [
         "## What Was Inspected",
@@ -347,7 +353,7 @@ fn pilot_summary_md_spells_out_first_screen_recommendation() {
         "## Ranked Seams\n\nNone of these seams can start a repair attempt (`ripr agent repair`); they are ranked for inspection by hand.",
         "## Next Commands",
         "No repair attempt is available for the top seam. Next, add a test for `pricing::discounted_total` in the crate that owns src/pricing.rs, then rerun repo exposure and compare the snapshots:",
-        "ripr outcome --before target/ripr/pilot/repo-exposure.json",
+        "ripr outcome --before <cwd>/target/ripr/pilot/repo-exposure.json",
     ] {
         assert!(md.contains(needle), "missing markdown needle: {needle}");
     }
@@ -373,14 +379,18 @@ fn pilot_summary_md_pairs_bash_next_commands_with_powershell_variants() -> Resul
     );
     let artifacts = pilot_artifacts();
     let md = render_pilot_summary_md(&[entry], pilot_context(&artifacts));
+    let cwd = crate::agent::loop_commands::bound_root(".");
 
     // Issue #3872: the after-snapshot redirect anchors at the resolved --root,
     // so both presented forms build from the same builder output the pilot
     // renderer uses (the anchor math itself is pinned in loop_commands tests).
-    let after_snapshot =
-        check_repo_exposure_command(".", "draft", "target/ripr/pilot/after.repo-exposure.json");
+    let after_snapshot = check_repo_exposure_command(
+        &crate::agent::loop_commands::bound_root("."),
+        "draft",
+        "target/ripr/pilot/after.repo-exposure.json",
+    );
     let bash_block = format!(
-        "```bash\n{after_snapshot}\nripr outcome --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json\n```"
+        "```bash\n{after_snapshot}\nripr outcome --before {cwd}/target/ripr/pilot/repo-exposure.json --after {cwd}/target/ripr/pilot/after.repo-exposure.json\n```"
     );
     assert!(
         md.contains(bash_block.as_str()),
@@ -417,7 +427,7 @@ fn pilot_summary_md_pairs_bash_next_commands_with_powershell_variants() -> Resul
         .ok_or_else(|| format!("pilot markdown must fence the powershell commands: {md}"))?;
     assert!(
         powershell_block.contains(
-            "ripr outcome --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json"
+            &format!("ripr outcome --before {cwd}/target/ripr/pilot/repo-exposure.json --after {cwd}/target/ripr/pilot/after.repo-exposure.json")
         ),
         "powershell outcome command missing:\n{powershell_block}"
     );
@@ -435,7 +445,10 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
     );
     let seam_id = entry.seam.id().as_str().to_string();
     let artifacts = pilot_artifacts();
-    let terminal = render_pilot_terminal(&[entry], pilot_context(&artifacts));
+    let terminal = crate::testing::cwd_placeholder::project_cwd_text(&render_pilot_terminal(
+        &[entry],
+        pilot_context(&artifacts),
+    ));
 
     for needle in [
         "Inspected:",
@@ -452,7 +465,7 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
         "Structured packet:",
         "target/ripr/pilot/agent-seam-packets.json",
         "Next, by hand: add a test for `pricing::discounted_total` in the crate that owns src/pricing.rs, then compare against this run:",
-        "ripr outcome --before target/ripr/pilot/repo-exposure.json",
+        "ripr outcome --before <cwd>/target/ripr/pilot/repo-exposure.json",
     ] {
         assert!(
             terminal.contains(needle),
@@ -460,10 +473,14 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
         );
     }
     // Issue #3872: the after-snapshot redirect anchors at the resolved --root.
-    let after_snapshot =
-        check_repo_exposure_command(".", "draft", "target/ripr/pilot/after.repo-exposure.json");
+    let after_snapshot = check_repo_exposure_command(
+        &crate::agent::loop_commands::bound_root("."),
+        "draft",
+        "target/ripr/pilot/after.repo-exposure.json",
+    );
     assert!(
-        terminal.contains(after_snapshot.as_str()),
+        terminal
+            .contains(crate::testing::cwd_placeholder::project_cwd_text(&after_snapshot).as_str()),
         "missing anchored after-snapshot needle:\n{terminal}"
     );
     // A route-limited seam keeps the snapshot comparison: the repair
@@ -520,7 +537,10 @@ fn timeout_summary_json_is_partial_and_points_to_retry() {
     assert!(json.contains(r#""status": "partial""#));
     assert!(json.contains(r#""reason": "timeout""#));
     assert!(json.contains(r#""actionable_seams_total": null"#));
-    assert!(json.contains("ripr pilot --root . --out target/ripr/pilot --mode draft"));
+    assert!(json.contains(&format!(
+        "ripr pilot --root {0} --out {0}/target/ripr/pilot --mode draft",
+        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root("."))
+    )));
     assert!(json.contains("--timeout-ms 120000"));
 }
 
@@ -550,7 +570,9 @@ fn pilot_context_without_config<'a>(artifacts: &'a PilotArtifacts) -> PilotSumma
 #[test]
 fn timeout_summary_md_explains_partial_status_and_retry_command() {
     let artifacts = pilot_artifacts();
-    let md = render_pilot_timeout_summary_md(pilot_context(&artifacts));
+    let md = crate::testing::cwd_placeholder::project_cwd_text(&render_pilot_timeout_summary_md(
+        pilot_context(&artifacts),
+    ));
 
     for needle in [
         "# RIPR Pilot Summary",
@@ -562,7 +584,7 @@ fn timeout_summary_md_explains_partial_status_and_retry_command() {
         "Analysis did not finish within the pilot budget",
         "- Pilot summary JSON: `target/ripr/pilot/pilot-summary.json`",
         "## Next Command",
-        "ripr pilot --root . --out target/ripr/pilot --mode draft",
+        "ripr pilot --root <cwd> --out <cwd>/target/ripr/pilot --mode draft",
         "--timeout-ms 120000",
     ] {
         assert!(md.contains(needle), "missing timeout-md needle: {needle}");
@@ -577,7 +599,10 @@ fn timeout_summary_md_pairs_bash_retry_with_powershell_variant() -> Result<(), S
     let artifacts = pilot_artifacts();
     let md = render_pilot_timeout_summary_md(pilot_context(&artifacts));
 
-    let retry = "ripr pilot --root . --out target/ripr/pilot --mode draft --max-seams 5 --timeout-ms 120000";
+    let retry = format!(
+        "ripr pilot --root {0} --out {0}/target/ripr/pilot --mode draft --max-seams 5 --timeout-ms 120000",
+        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root("."))
+    );
     assert!(
         md.contains(&format!("```bash\n{retry}\n```")),
         "bash retry block drifted:\n{md}"
@@ -612,7 +637,9 @@ fn timeout_summary_md_reports_missing_config_branch_when_no_config_loaded() {
 #[test]
 fn timeout_terminal_lists_written_files_and_retry_command() {
     let artifacts = pilot_artifacts();
-    let terminal = render_pilot_timeout_terminal(pilot_context(&artifacts));
+    let terminal = crate::testing::cwd_placeholder::project_cwd_text(
+        &render_pilot_timeout_terminal(pilot_context(&artifacts)),
+    );
 
     for needle in [
         "RIPR pilot partial.",
@@ -624,7 +651,7 @@ fn timeout_terminal_lists_written_files_and_retry_command() {
         "target/ripr/pilot/pilot-summary.json",
         "target/ripr/pilot/pilot-summary.md",
         "Next:",
-        "ripr pilot --root . --out target/ripr/pilot --mode draft",
+        "ripr pilot --root <cwd> --out <cwd>/target/ripr/pilot --mode draft",
     ] {
         assert!(
             terminal.contains(needle),
@@ -956,7 +983,8 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
             ));
         }
         let command = format!(
-            "ripr agent repair --root . --seam-id {} --phase before",
+            "ripr agent repair --root {} --seam-id {} --phase before",
+            crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(".")),
             entry.seam.id().as_str()
         );
         let entries = [entry];
@@ -1039,6 +1067,16 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
     let required = PilotLanguageRoutes::from_discovered(root, false, &enabled, &files);
     assert_eq!(required.state, PilotLanguageRoutesState::Required);
     assert_eq!(required.state.as_str(), "required");
+    // A language this binary cannot analyze (#4252: TypeScript and Python
+    // in a Rust-only build, Perl without `lang-perl`) gets the unavailable
+    // route whatever ripr.toml enables: no command, the adapter notice.
+    let assert_unavailable = |route: &super::language_routes::PilotLanguageRoute| {
+        assert_eq!(route.language_status(), "unavailable");
+        assert_eq!(route.route(), "unavailable_in_this_binary");
+        assert_eq!(route.command, None);
+        assert_eq!(route.guidance, route.language.unavailable_adapter_notice());
+    };
+    let typescript_available = LanguageId::TypeScript.is_available();
     let summary = required
         .routes
         .iter()
@@ -1047,14 +1085,18 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
     assert_eq!(
         summary,
         vec![
-            (LanguageId::TypeScript, 2, true),
+            (LanguageId::TypeScript, 2, typescript_available),
             // JavaScript runs through the TypeScript-family adapter.
-            (LanguageId::JavaScript, 1, true),
+            (LanguageId::JavaScript, 1, typescript_available),
             (LanguageId::Python, 1, false),
             (LanguageId::Perl, 1, false),
         ]
     );
     for route in &required.routes[..2] {
+        if !typescript_available {
+            assert_unavailable(route);
+            continue;
+        }
         assert_eq!(route.command.as_deref(), Some("ripr check --root ."));
         assert_eq!(route.guidance_category, Some(TsFullRepoGuidance::CATEGORY));
         assert_eq!(
@@ -1063,28 +1105,35 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
         );
     }
     let python = &required.routes[2];
-    assert_eq!(python.command.as_deref(), Some("ripr check --root ."));
-    assert_eq!(
-        python.guidance_category,
-        Some(PythonRepoExposureGuidance::CATEGORY)
-    );
-    assert_eq!(
-        python.guidance.as_deref(),
-        Some(PythonRepoExposureGuidance::REPAIR_ROUTE)
-    );
+    if LanguageId::Python.is_available() {
+        assert_eq!(python.command.as_deref(), Some("ripr check --root ."));
+        assert_eq!(
+            python.guidance_category,
+            Some(PythonRepoExposureGuidance::CATEGORY)
+        );
+        assert_eq!(
+            python.guidance.as_deref(),
+            Some(PythonRepoExposureGuidance::REPAIR_ROUTE)
+        );
+    } else {
+        assert_unavailable(python);
+    }
     let perl = &required.routes[3];
     if LanguageId::Perl.is_available() {
         assert_eq!(perl.language_status(), "preview");
         assert_eq!(perl.command.as_deref(), Some("ripr check --root ."));
     } else {
-        assert_eq!(perl.language_status(), "unavailable");
-        assert_eq!(perl.route(), "unavailable_in_this_binary");
-        assert_eq!(perl.command, None);
-        assert_eq!(perl.guidance, LanguageId::Perl.unavailable_adapter_notice());
+        assert_unavailable(perl);
     }
+    let expected_commands: Vec<&str> = if typescript_available || LanguageId::Python.is_available()
+    {
+        vec!["ripr check --root ."]
+    } else {
+        Vec::new()
+    };
     assert_eq!(
         PilotLanguageRoutes::commands(&required.routes),
-        vec!["ripr check --root ."]
+        expected_commands
     );
 
     let supplementary = PilotLanguageRoutes::from_discovered(root, true, &enabled, &files);
@@ -1094,6 +1143,9 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
 }
 
 #[test]
+// Compares the route label across runnable TypeScript and Python routes;
+// a build lacking either has no such pair (#4252).
+#[cfg(all(feature = "lang-typescript", feature = "lang-python"))]
 fn pilot_terminal_route_label_has_one_shape_for_every_language() {
     use crate::domain::LanguageId;
     use crate::output::repo_exposure::{PythonRepoExposureGuidance, TsFullRepoGuidance};
@@ -1203,23 +1255,43 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         !terminal.contains("none ranked by the default pilot policy"),
         "{terminal}"
     );
-    assert!(
-        terminal.contains("typescript: 1 file (preview, diff-first; not enabled in ripr.toml [languages])\n    route: ripr check --root .\n"),
-        "{terminal}"
-    );
-    assert!(
-        terminal.ends_with(
-            "Next, analyze the changed code in these languages:\n  ripr check --root .\n"
-        ),
-        "{terminal}"
-    );
-    assert!(!terminal.contains("ripr outcome --before"), "{terminal}");
     let md = render_pilot_summary_md(&[], context);
     assert!(
         md.contains("## Languages Outside The Rust Seam Scan"),
         "{md}"
     );
-    assert!(md.contains("```bash\nripr check --root .\n```"), "{md}");
+    if let Some(notice) = LanguageId::TypeScript.unavailable_adapter_notice() {
+        // #4252: a Rust-only build names the rebuild and invents no route.
+        assert!(
+            terminal.contains(&format!(
+                "typescript: 1 file (not available in this build)\n    {notice}\n"
+            )),
+            "{terminal}"
+        );
+        assert!(md.contains(&notice), "{md}");
+        if !LanguageId::Perl.is_available() {
+            // Neither discovered language is analyzable: no command at all.
+            assert!(!terminal.contains("route: ripr check"), "{terminal}");
+            assert!(
+                terminal.ends_with("No follow-up command applies: this ripr binary cannot analyze the languages listed above.\n"),
+                "{terminal}"
+            );
+            assert!(!md.contains("```bash"), "{md}");
+        }
+    } else {
+        assert!(
+            terminal.contains("typescript: 1 file (preview, diff-first; not enabled in ripr.toml [languages])\n    route: ripr check --root .\n"),
+            "{terminal}"
+        );
+        assert!(
+            terminal.ends_with(
+                "Next, analyze the changed code in these languages:\n  ripr check --root .\n"
+            ),
+            "{terminal}"
+        );
+        assert!(md.contains("```bash\nripr check --root .\n```"), "{md}");
+    }
+    assert!(!terminal.contains("ripr outcome --before"), "{terminal}");
     assert!(!md.contains("ripr outcome --before"), "{md}");
     let json = render_pilot_summary_json(&[], context);
     assert!(json.contains("\"state\": \"required\""), "{json}");

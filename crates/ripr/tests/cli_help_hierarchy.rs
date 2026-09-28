@@ -15,12 +15,17 @@ use std::process::Command;
 const COMMAND_HIERARCHY_DOC: &str = include_str!("../../../docs/COMMAND_HIERARCHY.md");
 const ROOT_README: &str = include_str!("../../../README.md");
 const QUICKSTART_DOC: &str = include_str!("../../../docs/QUICKSTART.md");
+const EXIT_CODES_DOC: &str = include_str!("../../../docs/EXIT_CODES.md");
 
-fn rendered_help(args: &[&str]) -> Result<String, String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+fn run_ripr(args: &[&str]) -> Result<std::process::Output, String> {
+    Command::new(env!("CARGO_BIN_EXE_ripr"))
         .args(args)
         .output()
-        .map_err(|error| format!("failed to run ripr {args:?}: {error}"))?;
+        .map_err(|error| format!("failed to run ripr {args:?}: {error}"))
+}
+
+fn rendered_help(args: &[&str]) -> Result<String, String> {
+    let output = run_ripr(args)?;
     if !output.status.success() {
         return Err(format!(
             "ripr {args:?} failed\nstdout:\n{}\nstderr:\n{}",
@@ -248,9 +253,54 @@ fn agent_repair_help_names_the_primary_transaction_and_its_limits() -> Result<()
     Ok(())
 }
 
+/// The `help` index must route a subcommand to that subcommand's own help
+/// (#4378): `ripr help agent repair` printed the parent `agent` overview
+/// because the injected `--help` preceded `repair`. An unknown subcommand
+/// errors instead of printing unrelated help.
+#[test]
+fn help_index_routes_agent_repair_to_repair_help() -> Result<(), String> {
+    let via_index = rendered_help(&["help", "agent", "repair"])?;
+    let direct = rendered_help(&["agent", "repair", "--help"])?;
+    if via_index != direct {
+        return Err(format!(
+            "`ripr help agent repair` must print the same help as `ripr agent repair --help`\n\
+             help index:\n{via_index}\ndirect:\n{direct}"
+        ));
+    }
+    let unknown = run_ripr(&["help", "agent", "no-such-subcommand"])?;
+    if unknown.status.success() {
+        return Err(format!(
+            "`ripr help agent no-such-subcommand` must fail, got stdout:\n{}",
+            String::from_utf8_lossy(&unknown.stdout)
+        ));
+    }
+    assert_contains(
+        "unknown agent subcommand via help index",
+        &String::from_utf8_lossy(&unknown.stderr),
+        "unknown agent subcommand",
+    )
+}
+
+/// `check` and `context` must say what each `--mode` value means and where
+/// the full table lives (#4378), not only list the bare names.
+#[test]
+fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), String> {
+    for command in ["check", "context"] {
+        let help = normalized(&rendered_help(&[command, "--help"])?);
+        for needle in [
+            "instant (changed files only, cheapest)",
+            "deep and ready (whole workspace, slowest)",
+            "See docs/CONFIGURATION.md \"Analysis modes\"",
+        ] {
+            assert_contains(&format!("{command} --help --mode line"), &help, needle)?;
+        }
+    }
+    Ok(())
+}
+
 /// `check --help` must teach the loader's real default-base resolution order
-/// (#3885), not the old `origin/main` shorthand; `diff --help` keeps stating
-/// its literal default because `diff` passes the base to git unchanged.
+/// (#3885), not the old `origin/main` shorthand. `diff` resolves an omitted
+/// base through the same authority (#3952), so its help states the same order.
 #[test]
 fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
     let check = normalized(&rendered_help(&["check", "--help"])?);
@@ -270,8 +320,11 @@ fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
     assert_contains(
         "diff help (`ripr diff --help`)",
         &diff,
-        "Defaults to origin/main, used exactly as given",
+        "the local origin/HEAD ref, then origin/main, origin/master, main, and master",
     )?;
+    if diff.contains("Defaults to origin/main") {
+        return Err("diff help still teaches the origin/main default".to_string());
+    }
     Ok(())
 }
 
@@ -432,6 +485,35 @@ fn first_run_guard_does_not_credit_a_later_correct_example() -> Result<(), Strin
     if first_bash_block(&wrong)? == "ripr check" {
         return Err(
             "the CLI section credited a later check instead of its first command".to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// PR #4196 review: the doctor exit-code guide must describe both profiles.
+/// The default analysis profile keeps a missing or old toolchain advisory
+/// (exit `0`); only `--profile source-build` fails on it. A guide that still
+/// says a Rust root fails on a missing toolchain contradicts the binary.
+#[test]
+fn doctor_exit_code_guide_distinguishes_analysis_and_source_build() -> Result<(), String> {
+    let section = normalized(&doc_section(EXIT_CODES_DOC, "## `ripr doctor` exit codes")?);
+    let help = normalized(&rendered_help(&["doctor", "--help"])?);
+    for needle in [
+        "--profile source-build",
+        "`advisory`",
+        "does not change the exit code",
+    ] {
+        assert_contains("docs/EXIT_CODES.md doctor section", &section, needle)?;
+    }
+    assert_contains(
+        "ripr doctor --help",
+        &help,
+        "--profile analysis|source-build",
+    )?;
+    if section.contains("fail on a missing manifest or toolchain") {
+        return Err(
+            "docs/EXIT_CODES.md still says the default doctor fails on a missing toolchain"
+                .to_string(),
         );
     }
     Ok(())

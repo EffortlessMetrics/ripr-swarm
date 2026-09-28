@@ -9,7 +9,62 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Fixed
+
+- An empty `ripr check --diff` result now leads with its true cause. A config
+  whose `[languages].enabled` leaves out `rust` records a typed
+  `language_adapter_unavailable` limitation for the Rust files it skipped
+  (`partial_with_limitations`, naming the effective set) instead of claiming a
+  complete analysis, and the zero-findings stderr line names a disabled or
+  unavailable adapter instead of suggesting the diff may be invalid; that
+  diff-validity hint now appears only when nothing parsed. The non-source
+  disclosure names extensionless and `.`-ending paths and no longer calls the
+  empty result correct for a truncated `+++` header, and a directory passed as
+  `--diff` is reported as a directory rather than as the OS read error
+  ([#4376](https://github.com/EffortlessMetrics/ripr-swarm/issues/4376),
+  [#4395](https://github.com/EffortlessMetrics/ripr-swarm/issues/4395)).
+
+- First-hour output no longer strands the reader. `--format human-full` carries
+  each finding's `ripr explain` / `ripr context` commands, which the digest
+  sends readers there for
+  ([#4379](https://github.com/EffortlessMetrics/ripr-swarm/issues/4379)).
+  `--format github` prints a denominator notice when findings are suppressed by
+  policy or are base-side, so an all-suppressed run is no longer silent
+  ([#4393](https://github.com/EffortlessMetrics/ripr-swarm/issues/4393)).
+  `ripr cache status` points at `ripr cache clear` instead of repository-only
+  xtask, and corrupt cache warnings name the entry file
+  ([#4383](https://github.com/EffortlessMetrics/ripr-swarm/issues/4383)). The
+  digest's "Why weakly_exposed" line names the incomplete stage; unclassifiable
+  lines in a function no test reaches ask for a test first instead of real
+  mutation testing; zero-count languages and the empty-result caveat on
+  non-empty preview runs are dropped; digest lines no longer end mid-word or
+  inside an open code span; and a closed stdout pipe (`ripr doctor | head`)
+  ends quietly with exit `2` instead of an internal-error report.
+
+- `cargo xtask ripr-pr` timeout packets now give one host-shell-labeled retry
+  command that keeps base, head, and root arguments literal when copied, including
+  refs with shell syntax and roots with spaces (#4367).
+
+- LSP fallback diagnostics explain their static classification and point to
+  hover evidence without promising an unavailable clipboard action or repair
+  route. Missing-path guidance remains explicitly static (#4328).
+
+- Static discrimination keeps oracle strength and confirmation on the same
+  assertion. An unrelated exact assertion can no longer borrow a weaker
+  assertion's token match to promote a finding to `exposed`; equally strong
+  confirmed assertions retain their classification regardless of order
+  ([#4404](https://github.com/EffortlessMetrics/ripr-swarm/issues/4404)).
+
 ### Added
+
+- `ripr --version` now names the commit the binary was built from, as
+  `ripr <version> (<commit>)`, with `-dirty` when the sources that build it differed
+  from that commit. Packaged crates (crates.io, `cargo install ripr`) read the
+  commit that `cargo package` recorded, so an installed candidate can be bound
+  to source without hashing it. `ripr doctor` reports the same identity with
+  the running executable and the first `ripr` on PATH, and warns, without
+  failing, when that PATH entry is a Cargo workspace build or a different
+  binary ([#4256](https://github.com/EffortlessMetrics/ripr-swarm/issues/4256)).
 
 - New repository-governed Rust test-harness registry
   (`[analysis.test_harnesses]` in `ripr.toml`): repositories can teach
@@ -295,6 +350,18 @@ are scoped or reviewed.
 
 ### Changed
 
+- `ripr doctor` now separates installed-binary analysis readiness from the
+  prerequisites for building RIPR from source. The default `analysis` profile
+  reports a missing `cargo` or `rustc`, or a workspace `rustc` older than
+  RIPR's build MSRV (1.95), as `advisory` and exits `0`, so a workspace pinned
+  to an older toolchain is no longer told it cannot be analyzed; a missing
+  `cargo` still discloses that evidence read from `cargo metadata` is
+  withheld. `--profile source-build` fails on those conditions and exits `2`.
+  Both toolchain probes run in the selected root. `ripr doctor --json` moves
+  to schema `0.3`, with top-level `profile`, `ripr_version`, and `ripr_build_msrv`
+  fields and an `advisory` check status
+  ([#3907](https://github.com/EffortlessMetrics/ripr-swarm/issues/3907)).
+
 - xtask tests no longer discard `remove_dir_all`, `remove_file`, or
   panic-path `set_current_dir` with `let _ =`. Directory cleanup matches
   the `io::Result` in `ignore_remove_dir_all` and still ignores a failure.
@@ -529,6 +596,174 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Advisory report outputs refuse planted destination links and nonregular files
+  before truncation while preserving fresh writes and regular-file updates.
+  The shared index, outcome, calibration, and agent-receipt write path uses
+  no-follow acquisition; supported Unix FIFO outputs do not wait for a reader.
+  Review-comments receipts exclusively create staging files, refusing planted
+  temp paths without clobbering their targets (#4360). This is leaf acquisition
+  hardening, not ancestor-directory or hard-link confinement.
+
+- `ripr explain` and `ripr context` now reject an explicit `--base` combined
+  with `--diff` at parse time, in either flag order and before any pipeline
+  run, instead of silently analyzing the `--diff` input while appearing to
+  assert the base (the loader gave `--diff` precedence and never validated
+  `--base` beside it). Beside `--from`, both flags remain scope assertions
+  verified against the recording and are unaffected. Running a `--diff -`
+  command directly at a prompt (instead of piped) now prints a one-line
+  stderr disclosure before ripr blocks reading the diff from the attached
+  terminal, so the documented `git diff origin/main | ripr check --diff -`
+  right half no longer looks like a silent hang; the disclosure lives in the
+  CLI adapter and piped, redirected, or captured stdin — including library
+  calls into the analysis API — stay silent and byte-identical
+  ([#4319](https://github.com/EffortlessMetrics/ripr-swarm/issues/4319)).
+
+- Every flag `ripr` parses is now documented on a surface a reader scans,
+  and mistyped flags can be suggested from anywhere the command's help
+  documents them. An audit against the parsers found parsed-but-undocumented
+  flags (check's `--perl-facts`, context's `--finding`, agent status's
+  `--out`) that were invisible to `ripr <command> --help` and could never be
+  proposed by a typo suggestion; those help entries now exist. Unknown-flag
+  suggestions mine the same surfaces the flag/help parity gate checks — the
+  Options list plus the command's own `Usage:` line — so a flag documented
+  only in usage syntax (explain's `--base`, context's `--at`) is suggestible
+  too: `ripr explain --bas x` now suggests `--base`. The #2342 parity gate is
+  revived as a two-directional test: for every command that ships a help
+  body, each parsed flag must be documented and each documented flag must be
+  parsed, with `--help` and named hidden aliases as the only exceptions
+  ([#4317](https://github.com/EffortlessMetrics/ripr-swarm/issues/4317)).
+
+- The VS Code download test no longer commits a localhost TLS private key.
+  The suite generates a one-day `127.0.0.1` certificate when it starts.
+  The removed pair was self-signed for that name only
+  ([#4143](https://github.com/EffortlessMetrics/ripr-swarm/issues/4143)).
+
+- Python pytest and unittest verify commands single-quote a test path that
+  is not a plain relative path, matching the TypeScript command quoter.
+  A name containing a shell metacharacter stays inside quotes in the command
+  text. The stored test path and node id stay unquoted, and a path made only
+  of letters, digits, `.`, `_`, `/`, and `-` is unchanged
+  ([#4211](https://github.com/EffortlessMetrics/ripr-swarm/issues/4211)).
+
+- `ripr outcome` no longer reports zero movement for check-output snapshots
+  whose findings carry no canonical gap id, such as Rust `ripr check --json`.
+  It refuses the pair, points Rust users to `ripr check --format
+  repo-exposure-json`, and says that preview-language findings without an id
+  have no comparable receipt
+  ([#3797](https://github.com/EffortlessMetrics/ripr-swarm/issues/3797)).
+- `cargo install ripr` without `--locked` compiles. It had resolved
+  `unicode-ident` 1.0.26, which fails a compile-time Unicode-version assert in
+  `ra-ap-rustc_lexer`; the 1.0.24 pin moved from `Cargo.lock` into the
+  `lang-rust` feature's manifest, and release CI now builds the packaged crate
+  from a fresh resolution
+  ([#3787](https://github.com/EffortlessMetrics/ripr-swarm/issues/3787)).
+- `cargo xtask actionable-gap-outcomes` no longer reports an agent receipt's
+  `verification.status: "verification_not_run"` as the attempt's verify
+  result. It counts as a missing verify result
+  ([#4234](https://github.com/EffortlessMetrics/ripr-swarm/issues/4234)).
+
+- `ripr gate evaluate --gap-ledger` no longer reports an already-observed
+  (closed) gap under "Suppressed" as configured-hidden. The ledger's
+  `not_policy_targeted` state also covers no-action records, so the gate now
+  reads suppression only from an explicit suppressed state or predicate. Such a
+  record is `not_applicable` with the reason "already observed; no action
+  required", and `evidence.configured_off` is `false`. The gate stays
+  non-blocking and the status is unchanged
+  ([#3903](https://github.com/EffortlessMetrics/ripr-swarm/issues/3903)).
+
+- A TypeScript change that only edits type syntax on a signature or
+  declaration line (a return type, a parameter or variable annotation, an
+  optional marker, a generic parameter list) no longer produces a `predicate`
+  probe. TypeScript erases those types, so there is no behavior for a test to
+  notice. A default-value, parameter, body, or export change on the same line
+  keeps its probe
+  ([#4282](https://github.com/EffortlessMetrics/ripr-swarm/issues/4282)).
+
+- The CLI smoke test that copies `ripr` and runs `doctor` retries only
+  `ETXTBSY` (`ExecutableFileBusy`), up to three times. A parallel test can
+  `fork` while that copy is still open for writing, and the copy cannot be
+  executed until the child reaches `exec`. Any other error, and any process
+  that actually started, is still returned unchanged. The same bound covers
+  the other smoke test that executes a copied binary
+  ([#4296](https://github.com/EffortlessMetrics/ripr-swarm/issues/4296)).
+
+- TypeScript/JavaScript preview: a class method tested through an instance
+  built outside the test body is no longer reported `no_static_path`. The
+  receiver may now come from the enclosing `describe` scope, a
+  `beforeEach`/`beforeAll` hook, a default import of the owner's
+  default-exported class, or a namespace import (`new shop.Cart()`). Scope
+  bindings are read from the syntax tree and resolved to the innermost scope,
+  where the last hook write wins over the declaration's initializer. The
+  receiver is withheld when anything in the file could rebind it outside a
+  recognized declaration or hook write: a write anywhere else (including
+  destructuring, casts and closures), a parameter or redeclaration of the
+  same name, a second hook of the same kind writing it, a hook the file
+  defines or imports under another name, or a declaration or write of the
+  class name itself (`class Cart` or `function Cart` in a hook), a method
+  assignment such as `cart.total = ...` or any use of `Cart.prototype` (a
+  spy or replaced method), a hook write that follows a possible early
+  `return`, a generator hook, or any `eval` or escaped identifier in the
+  file. Member reads, `expect(cart)`, `typeof cart`, comments, import paths
+  and describe/test/mock name strings do not count; any other string or
+  template that mentions the name does.
+
+- A generated command prints no PowerShell form only when PowerShell reads it
+  the same way. Commands with a quoted program path, `$` expansion, globs,
+  braces, `~`, `@`, comments, `--%`, non-spaced `>` forms, a second redirect or
+  an unbalanced quote used to be labelled as running unchanged in PowerShell.
+  They now get a translation (a quoted program path gains the `&` call
+  operator) or a "PowerShell form unavailable" line
+  ([#4244](https://github.com/EffortlessMetrics/ripr-swarm/issues/4244)).
+
+- With TypeScript enabled, a diff that classifies no TypeScript owner (for
+  example a Rust-only change) is no longer reported
+  `partial_with_limitations` because some unchanged TypeScript test file uses
+  a test shape the adapter cannot extract. The
+  `typescript_test_extraction_partial` limitation is still reported when a
+  changed TypeScript or JavaScript owner, or a Bun cross-language finding,
+  reads the test index
+  ([#4261](https://github.com/EffortlessMetrics/ripr-swarm/issues/4261)).
+
+- `ripr check --candidate-tree` no longer reads the worktree `ripr.toml`. A
+  subject run configures itself from its candidate tree, but the CLI still
+  loaded the worktree file first, so an unparseable worktree file, or a
+  `languages.enabled` entry the binary lacks (for example `python` in a
+  Rust-only build), made the subject run exit 2, and a worktree
+  `[analysis] mode` reached a subject whose tree sets none. The Rust-only
+  feature set (`--no-default-features --features lang-rust`) now passes its
+  test suite, and CI runs it on Linux for pull requests that change the Rust
+  crate, fixtures or Cargo manifests, and on every push to `main`
+  ([#4252](https://github.com/EffortlessMetrics/ripr-swarm/issues/4252)).
+
+- An improved `agent receipt` (including the one `ripr agent repair --phase
+  after` writes) no longer says "Keep the focused test": ripr never runs the
+  project's tests, and a test that fails `cargo test` can still move static
+  grip. The guidance now says to run the focused test and keep it only if it
+  passes, and `verification` carries `status: "verification_not_run"` and the
+  non-claim `static_only_assurance`
+  ([#4234](https://github.com/EffortlessMetrics/ripr-swarm/issues/4234)).
+
+- TypeScript/JavaScript preview: a changed ambient declaration
+  (`declare function`, `export declare const`, `declare module`) or any
+  change in a `.d.ts`/`.d.mts`/`.d.cts` declaration file no longer yields a
+  `predicate` probe reading `no_static_path`. These are type-only and erased
+  at compile time; declaration files still count as changed files. Ambient
+  statements are found from the syntax tree, so `declare` used as a
+  JavaScript identifier, or at the start of a template-literal line, is still
+  probed.
+
+- Perl preview: with Perl enabled but no fact packet, the reason now says
+  to pass `--perl-facts <packet.json>` or configure `[perl].producer` instead
+  of citing an internal campaign issue, and the note reads "1 Perl file was
+  not analyzed".
+
+- `ripr doctor` now lists Perl under "Detected languages" whenever its Perl
+  section appears: any `.pm`, `.pl` or `.t` file at any depth, such as a
+  CPAN module under `lib/Name/`, or a `Makefile.PL`, `Build.PL` or `cpanfile`.
+  It no longer prints "none detected" beside a Perl section that counts the
+  same files. Files under `target/`, `node_modules/`, `blib/` or hidden
+  directories detect nothing, as they already counted nothing.
+
 - `cargo xtask vscode-package` now reads the built VSIX and fails if it
   carries workspace build output (anything under `extension/target/`, Cargo
   `.fingerprint` or `incremental` state, `.rlib` or `.rmeta`) or exceeds 1,500
@@ -547,6 +782,46 @@ are scoped or reviewed.
   `..hidden`) stay ordinary local paths. This refuses the client-supplied
   read; it is not a claim that a client can disclose the bytes
   ([#4145](https://github.com/EffortlessMetrics/ripr-swarm/issues/4145)).
+
+- Local LSP file URIs now treat an empty authority and `localhost` as the
+  same local path. Workspace paths spelled as UNC shares or Windows
+  extended-length/device paths are refused when producing a local file URI,
+  instead of emitting a URI the server cannot read back. Workspaces on those
+  paths remain unsupported by this local-only URI path
+  ([#4060](https://github.com/EffortlessMetrics/ripr-swarm/issues/4060)).
+- TypeScript predicate-boundary evidence no longer credits assertions whose
+  boundary value is in an unread argument or nested expression, whose owner
+  name is shadowed, or whose expected value cannot discriminate the change.
+  These cases may move from `exposed` to a weaker class and regain guidance
+  to add a discriminating test; live boundary assertions retain their credit
+  ([#4102](https://github.com/EffortlessMetrics/ripr-swarm/issues/4102)).
+- TypeScript related-test discovery now recognizes supported optional-chain
+  calls, awaited dynamic imports, named default exports, and re-exports
+  through star or default-as barrels. Findings backed by those relations can
+  gain related-test evidence; a relation alone does not establish a
+  discriminating oracle
+  ([#4103](https://github.com/EffortlessMetrics/ripr-swarm/issues/4103)).
+- TypeScript owner-call relations no longer credit unanchored bare calls,
+  unrelated destructures, calls into supported mocked modules, or spies that
+  fabricate the owner's value. These cases retain weaker advisory evidence
+  where available instead of crediting observation of the changed behavior;
+  genuine anchored calls and call-through spies remain eligible
+  ([#4125](https://github.com/EffortlessMetrics/ripr-swarm/pull/4125)).
+- TypeScript and JavaScript preview repair, targeted rerun, and output paths
+  now recognize `.mts`, `.cts`, `.mjs`, and `.cjs` sources and tests through
+  the same extension authority used by analysis. These module forms no longer
+  disappear solely because a later consumer used the narrower extension list
+  ([#4116](https://github.com/EffortlessMetrics/ripr-swarm/issues/4116)).
+- Oversized diffs stop parsing when the distinct accepted file count exceeds
+  the configured limit, before reading the remaining file bodies. The error
+  reports an observed lower bound and no partial analysis result; this does
+  not cap the bytes of one large file or the already acquired diff text
+  ([#3858](https://github.com/EffortlessMetrics/ripr-swarm/issues/3858)).
+- Perl preview evidence preserves static observations when the producer
+  reports a missing test runner. Runner absence still blocks repair authority;
+  it does not by itself cap the static exposure class. This bounded consistency
+  repair does not complete the broader Perl fact-packet integration
+  ([#4059](https://github.com/EffortlessMetrics/ripr-swarm/pull/4059)).
 - `check-file-policy` builds test binaries before it lists `covered_by`
   subjects. A cold compile is no longer charged against the five-minute
   list cap, and a timeout is reported as an instrument failure rather than
@@ -968,7 +1243,34 @@ are scoped or reviewed.
   line, which stays byte-identical
   ([#3870](https://github.com/EffortlessMetrics/ripr-swarm/issues/3870)).
 
+- `ripr first-pr --check` without a start-here packet in a checkout where
+  no default base resolves (a detached HEAD with no branches, as in some CI
+  checkouts) now prints a recovery command that requires `--base <ref>` and
+  names the resolution error, instead of a write command that fails on the
+  same missing base. When a default base resolves, the recovery still omits
+  `--base`
+  ([#4285](https://github.com/EffortlessMetrics/ripr-swarm/issues/4285),
+  [#4290](https://github.com/EffortlessMetrics/ripr-swarm/pull/4290)).
+- Generated `first-pr`, first-useful-action, PR-review front-panel and
+  agent workflow commands now carry the absolute selected root in `--root`
+  (and anchor their `--repo-exposure` and redirect paths to it), so a
+  copied command analyzes the same repository from any working directory
+  instead of re-resolving a relative root such as `.` against wherever it
+  is pasted. A user-authored `--root .` keeps its ordinary meaning, and
+  typed `command_specs` keep the portable `--root .` with `cwd` at the
+  repository root
+  ([#3999](https://github.com/EffortlessMetrics/ripr-swarm/issues/3999),
+  [#4000](https://github.com/EffortlessMetrics/ripr-swarm/issues/4000),
+  [#4287](https://github.com/EffortlessMetrics/ripr-swarm/pull/4287)).
+
 ### Docs
+
+- The README and quickstart first run now define "discriminator" where it
+  first appears and state `ripr check`'s exit codes. They add a one-line
+  `cargo install --locked --git` development install and a short section on
+  running ripr from a coding agent, including keeping `target/` gitignored
+  between repair phases. A stale `ripr doctor` troubleshooting claim was removed
+  ([#4413](https://github.com/EffortlessMetrics/ripr-swarm/pull/4413)).
 
 - `docs/REPAIR_ATTEMPT.md` and `docs/COMMAND_HIERARCHY.md` now document
   the three-phase governed Python repair sequence: trust-selection flags

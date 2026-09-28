@@ -615,7 +615,22 @@ pub(crate) fn receiver_owner_call_relation(
     }
     let constructor_names =
         constructor_names_for_method_owner(test, owner, alias_map, workspace_root);
-    let receiver_names = receiver_names_for_constructor_calls(&test.body_text, &constructor_names);
+    let mut receiver_names =
+        receiver_names_for_constructor_calls(&test.body_text, &constructor_names);
+    // A receiver built in the enclosing scope (`const cart = new Cart()` in a
+    // `describe`, `cart = new Cart()` in a `beforeEach`) is the object the
+    // body calls, unless the body declares or reassigns that name itself.
+    for binding in &test.scope_bindings {
+        if binding
+            .constructed_by
+            .as_ref()
+            .is_some_and(|constructor| constructor_names.contains(constructor))
+            && !local_identifier_declared_in_test_body(&test.body_text, &binding.name)
+            && !super::tests_extract::identifier_written_in(&test.body_text, &binding.name)
+        {
+            push_unique_string(&mut receiver_names, binding.name.clone());
+        }
+    }
     if receiver_names
         .iter()
         .any(|receiver| contains_member_call_name(&test.body_text, receiver, &owner.name))
@@ -699,15 +714,33 @@ pub(crate) fn constructor_names_for_method_owner(
         push_unique_string(&mut names, class_name.to_string());
     }
     for import in &test.imports_in_file {
-        if import.namespace
-            || !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
-        {
+        if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root) {
             continue;
         }
-        if import.imported.as_deref() == Some(class_name) {
+        if import.namespace {
+            // `import * as shop from './cart'` + `new shop.Cart()`. A
+            // default-exported class is `shop.default`, never `shop.Cart`.
+            if !owner.class_default_export {
+                push_unique_string(&mut names, format!("{}.{class_name}", import.local));
+            }
+        } else if import.imported.as_deref() == Some(class_name)
+            || (owner.class_default_export && import.imported.as_deref() == Some("default"))
+        {
+            // A named import, or a default import of the owner's
+            // default-exported class under any local name.
             push_unique_string(&mut names, import.local.clone());
         }
     }
+    // A constructor name the test scope or body rebinds (`const Cart =
+    // class {}`, `const shop = {...}`) constructs something else.
+    names.retain(|name| {
+        let local = name.split('.').next().unwrap_or(name);
+        !test
+            .scope_bindings
+            .iter()
+            .any(|binding| binding.name == local)
+            && !local_identifier_declared_in_test_body(&test.body_text, local)
+    });
     names
 }
 
@@ -769,10 +802,52 @@ fn test_mocks_owner_module(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> bool {
+    let owner_module = normalized_module_path(&owner.file);
+    // A mock of a directory (`../src/cart`) replaces its `index` module.
+    let owner_modules = [
+        Some(owner_module.as_str()),
+        owner_module.strip_suffix("/index"),
+    ];
     test.mocks_in_file.iter().any(|source| {
-        normalized_relative_import_module(&test.file, source, alias_map, workspace_root)
-            .is_some_and(|module| module == normalized_module_path(&owner.file))
+        source == UNRESOLVED_MOCK_SPECIFIER
+            || owner_modules.iter().flatten().any(|module| {
+                root_relative_mock_names_module(source, module)
+                    || normalized_relative_import_module(
+                        &test.file,
+                        source,
+                        alias_map,
+                        workspace_root,
+                    )
+                    .is_some_and(|mocked| mocked == *module)
+            })
     })
+}
+
+/// `true` when a root-relative mock specifier (`/src/cart`) may name
+/// `module`. The runner resolves it against its own root, which the adapter
+/// does not model, so any whole-segment suffix of the module path matches:
+/// an unknown root errs toward withholding the relation (#4294). A query
+/// (`?raw`), empty and `.` segments are dropped first, so `//src/./cart`
+/// reads as `src/cart`; a `..` segment makes the path unknowable and matches.
+fn root_relative_mock_names_module(source: &str, module: &str) -> bool {
+    let source = source.replace('\\', "/");
+    let Some(rooted) = source.strip_prefix('/') else {
+        return false;
+    };
+    let rooted = rooted.split(['?', '#']).next().unwrap_or_default();
+    let segments: Vec<&str> = rooted
+        .split('/')
+        .filter(|segment| !segment.is_empty() && *segment != ".")
+        .collect();
+    if segments.contains(&"..") {
+        return true;
+    }
+    let rooted = strip_typescript_module_extension(&segments.join("/"));
+    !rooted.is_empty()
+        && (module == rooted
+            || module
+                .strip_suffix(rooted.as_str())
+                .is_some_and(|prefix| prefix.ends_with('/')))
 }
 
 /// Fabrication method shapes that replace a spy's observed value (#4103

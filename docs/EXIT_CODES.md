@@ -33,11 +33,18 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
 
 ## When you see exit code 2
 
-- **Analysis error**: the diff could not be parsed, the base ref could not
-  be resolved, or the workspace root could not be determined.
+- **Analysis error**: the diff could not be read (a missing or unreadable
+  `--diff` path, or a directory), the diff exceeded its scope limits
+  (`diff_scope_oversized`), the base ref could not be resolved, or the
+  workspace root could not be determined. A diff that is read but does not
+  parse (no file headers or hunks) is not an exit-2 error: `ripr check` exits
+  `0` with the typed outcome `unsupported_input (analysis incomplete)`.
 - **User error**: unknown command, missing required argument, or invalid
   config.
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
+- **Closed output pipe**: the reader of stdout went away early (for example
+  `ripr doctor | head`). ripr stops quietly with `2`, not `0`, because its
+  output was cut short; it never turns a would-be `3` into a pass.
 
 ## When you see exit code 3
 
@@ -68,7 +75,15 @@ scope for the root: Rust is enabled and either Rust markers (`Cargo.toml` or
 Python-only or TypeScript-only root reports those checks as `skipped` with
 the reason and does not fail on them. A Rust root, a root with Rust sources but no
 `Cargo.toml`, and an empty root under the Rust-only default still fail on a
-missing manifest or toolchain.
+missing manifest.
+
+The toolchain checks depend on the profile. Under the default `analysis`
+profile, a missing `cargo` or `rustc`, or a workspace `rustc` older than
+RIPR's build MSRV, is reported as `advisory` and does not change the exit
+code: the installed binary can still analyze the workspace. A missing `cargo`
+still withholds evidence that reads `cargo metadata`. Under
+`--profile source-build`, the same conditions are failures and exit `2`, while
+enabled language runtimes stay visible but do not decide that profile's exit.
 
 ## CI integration
 

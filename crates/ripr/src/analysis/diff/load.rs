@@ -38,6 +38,10 @@ pub fn load_diff_with_effective_base(
 ) -> Result<LoadedDiff, String> {
     if let Some(diff_file) = diff_file {
         if diff_file == std::path::Path::new("-") {
+            // #4319: this read blocks until EOF. On an attached terminal that
+            // looks like a silent hang, so the CLI adapters disclose the read
+            // before dispatching here; the loader itself stays silent so
+            // library callers never receive CLI-branded stderr text.
             let mut buffer = String::new();
             std::io::stdin()
                 .read_to_string(&mut buffer)
@@ -46,6 +50,16 @@ pub fn load_diff_with_effective_base(
                 text: buffer,
                 effective_base: None,
             });
+        }
+        // #4376(c): a directory is the common wrong `--diff` argument. On
+        // Windows its read fails as "Access is denied", which sends the user
+        // chasing ACLs; name the real cause. Genuine permission failures on a
+        // file still surface the OS error below.
+        if diff_file.is_dir() {
+            return Err(format!(
+                "failed to read diff file {}: the path is a directory, not a unified diff file; pass a diff file path, or `-` to read the diff from stdin",
+                diff_file.display()
+            ));
         }
         let text = std::fs::read_to_string(diff_file)
             .map_err(|err| format!("failed to read diff file {}: {err}", diff_file.display()))?;
@@ -141,7 +155,11 @@ pub fn load_worktree_diff_with_effective_base(
 /// ran is never allowed to assert a bad ref, and an unusable root keeps
 /// producing the `failed to run git diff: ...` text that the `context` and
 /// `explain` invalid-root contract pins.
-fn resolve_effective_base(
+///
+/// This is the one base authority for every command that diffs committed
+/// history (#3952, #3886): `check`, `diff`, `first-pr` and `pr-evidence` all
+/// resolve an omitted `--base` here instead of assuming `origin/main`.
+pub fn resolve_effective_base(
     root: &Path,
     base: Option<&str>,
     git_timeout: Option<Duration>,
@@ -191,7 +209,7 @@ fn not_a_work_tree(root: &Path, git_timeout: Option<Duration>) -> Option<String>
         return None;
     }
     Some(format!(
-        "`{}` is not inside a Git work tree (the analysis did not run). `ripr check` diffs \
+        "`{}` is not inside a Git work tree (the analysis did not run). ripr diffs \
          committed history, so run it from inside your repository, or pass `--root <path>` \
          pointing at one. For a repository-free scan of the current sources, use \
          `ripr check --root . --format repo-exposure-md`.",
@@ -240,8 +258,8 @@ fn resolve_default_base(root: &Path, git_timeout: Option<Duration>) -> Result<St
     // not run because there was no base to diff against.
     Err(
         "could not resolve a default base (no origin/main, origin/master, or local main/master \
-         found). Pass `--base <ref>` to diff against a specific ref, or \
-         `--root . --format repo-exposure-md` for a full-repo scan."
+         found). Pass `--base <ref>` to diff against a specific ref, or run \
+         `ripr check --root . --format repo-exposure-md` for a full-repo scan."
             .to_string(),
     )
 }
@@ -646,127 +664,67 @@ mod tests {
     }
 
     #[test]
-    fn given_ambient_diff_prefix_settings_when_range_loaded_then_repository_paths_keep_identity()
-    -> std::io::Result<()> {
-        // #4086: the parser strips Git's ordinary a/ and b/ side prefixes.
-        // Without explicit loader pins, diff.noprefix=true turns b/identity.rs
-        // into a marker that is indistinguishable from identity.rs after that
-        // strip. diff.mnemonicPrefix is deliberately not in this matrix: it
-        // only rewrites worktree/index comparisons, so a <base>...HEAD range
-        // diff keeps canonical prefixes and the leg could never discriminate.
-        let dir = unique_fixture_root("diff-side-prefix-identity")?;
-        init_git_repo(&dir, "main")?;
-        fs::create_dir_all(dir.join("b"))?;
-        fs::write(dir.join("identity.rs"), "pub fn outer() -> u32 { 1 }\n")?;
-        fs::write(
-            dir.join("b").join("identity.rs"),
-            "pub fn nested() -> u32 { 2 }\n",
-        )?;
-        run_git_checked(&dir, &["add", "."])?;
-        run_git_checked(&dir, &["commit", "-m", "base paths", "--quiet"])?;
-
-        fs::write(dir.join("identity.rs"), "pub fn outer() -> u32 { 10 }\n")?;
-        fs::write(
-            dir.join("b").join("identity.rs"),
-            "pub fn nested() -> u32 { 20 }\n",
-        )?;
-        run_git_checked(&dir, &["add", "."])?;
-        run_git_checked(&dir, &["commit", "-m", "change paths", "--quiet"])?;
-
-        {
-            let (setting, value) = ("diff.noprefix", "true");
-            run_git_checked(&dir, &["config", setting, value])?;
-
-            let raw = Command::new("git")
-                .args(["diff", "HEAD~1...HEAD"])
-                .current_dir(&dir)
-                .output()?;
-            assert!(
-                raw.status.success(),
-                "{setting} raw-control git diff failed: {}",
-                String::from_utf8_lossy(&raw.stderr)
-            );
-            let raw = String::from_utf8_lossy(&raw.stdout);
-            assert!(
-                raw.contains("identity.rs") && raw.contains("b/identity.rs"),
-                "{setting} raw control did not contain both fixture paths:\n{raw}"
-            );
-            assert!(
-                !raw.contains("diff --git a/identity.rs b/identity.rs"),
-                "{setting} raw control retained canonical prefixes, so the fixture does not discriminate:\n{raw}"
-            );
-
-            let diff = load_diff_range(&dir, "HEAD~1", "HEAD").map_err(std::io::Error::other)?;
-
-            assert!(
-                diff.contains("diff --git a/identity.rs b/identity.rs"),
-                "{setting} must not change the canonical outer-file boundary:\n{diff}"
-            );
-            assert!(
-                diff.contains("diff --git a/b/identity.rs b/b/identity.rs"),
-                "{setting} must not change the canonical nested-file boundary:\n{diff}"
-            );
-
-            let parsed = super::super::parse::parse_unified_diff(&diff);
-            let mut paths: Vec<PathBuf> = parsed.iter().map(|file| file.path.clone()).collect();
-            paths.sort();
-            assert_eq!(
-                paths,
-                vec![PathBuf::from("b/identity.rs"), PathBuf::from("identity.rs")],
-                "{setting} must not collapse distinct repository paths"
-            );
-
-            run_git_checked(&dir, &["config", "--unset", setting])?;
-        }
-
+    fn directory_diff_path_names_the_directory_cause_not_the_os_error() -> std::io::Result<()> {
+        // #4376(c): a directory passed as the diff file must be named as a
+        // directory, not surfaced as the OS read error ("Access is denied"
+        // on Windows, "Is a directory" on Unix).
+        let dir = unique_fixture_root("load-diff-directory")?;
         ignore_remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("crates"))?;
+        let as_diff = dir.join("crates");
+
+        let result = load_diff(&dir, None, Some(&as_diff), None);
+        ignore_remove_dir_all(&dir);
+        let Err(message) = result else {
+            return Err(std::io::Error::other(
+                "a directory --diff path must fail to load",
+            ));
+        };
+        assert!(
+            message.contains("is a directory, not a unified diff file"),
+            "directory cause must be named: {message}"
+        );
+        assert!(
+            message.contains(&as_diff.display().to_string()),
+            "the offending path must be named: {message}"
+        );
+        assert!(
+            !message.contains("os error"),
+            "the OS error text must not stand in for the cause: {message}"
+        );
         Ok(())
     }
 
     #[test]
-    fn shared_diff_authority_overrides_conflicting_prefix_extras() -> std::io::Result<()> {
-        // The shared authority appends its identity pins after caller extras.
-        // A future caller adding its own presentation flags must not be able to
-        // move the parser onto a different side-prefix dialect.
-        let dir = unique_fixture_root("diff-side-prefix-extra-precedence")?;
-        init_git_repo(&dir, "main")?;
-        fs::create_dir_all(dir.join("src"))?;
-        fs::write(
-            dir.join("src").join("lib.rs"),
-            "pub fn value() -> u32 { 1 }\n",
-        )?;
-        run_git_checked(&dir, &["add", "."])?;
-        run_git_checked(&dir, &["commit", "-m", "base source", "--quiet"])?;
-
-        fs::write(
-            dir.join("src").join("lib.rs"),
-            "pub fn value() -> u32 { 2 }\n",
-        )?;
-        run_git_checked(&dir, &["add", "."])?;
-        run_git_checked(&dir, &["commit", "-m", "change source", "--quiet"])?;
-
-        let bytes = run_git_diff_bytes(
-            &dir,
-            "HEAD~1...HEAD",
-            &["--src-prefix=old/", "--dst-prefix=new/"],
-            "0",
-            None,
-        )
-        .map_err(std::io::Error::other)?;
-        let diff = String::from_utf8(bytes).map_err(std::io::Error::other)?;
-
-        assert!(
-            diff.contains("diff --git a/src/lib.rs b/src/lib.rs"),
-            "{diff}"
-        );
-        assert!(diff.contains("--- a/src/lib.rs"), "{diff}");
-        assert!(diff.contains("+++ b/src/lib.rs"), "{diff}");
-        assert!(!diff.contains("old/src/lib.rs"), "{diff}");
-        assert!(!diff.contains("new/src/lib.rs"), "{diff}");
-
+    fn missing_diff_file_keeps_the_os_read_error() -> std::io::Result<()> {
+        // #4376(c) negative control: a path that is not a directory keeps the
+        // OS error, so genuine read failures (missing file, ACL denial) are
+        // still reported as read failures rather than as the directory cause.
+        let dir = unique_fixture_root("load-diff-missing")?;
         ignore_remove_dir_all(&dir);
+        fs::create_dir_all(&dir)?;
+        let missing = dir.join("absent.diff");
+
+        let result = load_diff(&dir, None, Some(&missing), None);
+        ignore_remove_dir_all(&dir);
+        let Err(message) = result else {
+            return Err(std::io::Error::other("a missing diff file must fail"));
+        };
+        assert!(
+            message.starts_with("failed to read diff file "),
+            "{message}"
+        );
+        assert!(message.contains("os error"), "{message}");
+        assert!(!message.contains("is a directory"), "{message}");
         Ok(())
     }
+
+    // The ambient side-prefix and caller-extras controls for the loader's
+    // `--src-prefix=a/`/`--dst-prefix=b/` identity pins live in
+    // `super::contract_tests`, the owner for the Git source-patch contract
+    // (#3850, #4086): they need the shared `Repo` fixture, its hostile-config
+    // helper and the Windows readonly-bit teardown, none of which this
+    // module's local fixture helpers provide.
 
     #[test]
     #[cfg(unix)]

@@ -13,6 +13,7 @@
 
 use crate::config::{CONFIG_FILE_NAME, RiprConfig, load_for_root};
 use crate::domain::LanguageId;
+use crate::output::path::human_path;
 use serde::Serialize;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -154,9 +155,9 @@ fn minimum_rustc_version() -> Option<RustcVersion> {
 /// producers have their own prerequisites; this advisory does not establish
 /// their compatibility.
 ///
-/// So a version below the minimum is disclosed, not failed. A version that
-/// cannot be parsed still fails: an unreadable `rustc` is a real unknown, and
-/// an unknown must not read as a pass.
+/// A version below the minimum fails the source-build prerequisite; the
+/// analysis profile projects that failure as advisory. An unreadable version
+/// is also not evidence that source builds work.
 enum RustcVersionVerdict {
     /// Parsed and at or above ripr's build minimum.
     Current,
@@ -165,6 +166,11 @@ enum RustcVersionVerdict {
     /// Not parseable, with the failure to report.
     Unreadable(String),
 }
+
+/// The below-minimum rustc note already states what that means for the
+/// running binary's analysis; the analysis-profile advisory must not say it a
+/// second time (clean-install walk, 0.11).
+const RUSTC_ANALYSIS_SCOPE: &str = "The already-running ripr binary's built-in static analysis does not directly run rustc; configured external producers have their own prerequisites.";
 
 fn validate_rustc_version(output: &str) -> RustcVersionVerdict {
     let Some(minimum) = minimum_rustc_version() else {
@@ -180,7 +186,7 @@ fn validate_rustc_version(output: &str) -> RustcVersionVerdict {
     };
     if version < minimum {
         return RustcVersionVerdict::BelowBuildMinimum(format!(
-            "{}; below ripr's build minimum {minimum}. That minimum is what building or installing ripr from source requires. The already-running ripr binary's built-in static analysis does not directly run rustc; configured external producers have their own prerequisites. Run `rustup update stable` before building ripr from source.",
+            "{}; below ripr's build minimum {minimum}. That minimum is what building or installing ripr from source requires. {RUSTC_ANALYSIS_SCOPE} Run `rustup update stable` before building ripr from source.",
             output.trim()
         ));
     }
@@ -220,10 +226,22 @@ pub(crate) enum DoctorStatus {
 pub(crate) enum DoctorCheckStatus {
     /// The check ran and passed.
     Pass,
-    /// The check ran and failed; the report fails.
+    /// The check ran and failed; the report fails in the selected profile.
     Fail,
+    /// The observed capability is unavailable, but is not required by this profile.
+    Advisory,
     /// The check does not apply to this root and was not run.
     Skipped,
+}
+
+/// The requested doctor capability. An installed binary can analyze a Rust
+/// workspace without compiling RIPR or running the project's verification.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum DoctorProfile {
+    #[default]
+    Analysis,
+    SourceBuild,
 }
 
 impl From<DoctorStatus> for DoctorCheckStatus {
@@ -275,7 +293,11 @@ pub(crate) struct DoctorRuntimeProbe {
 pub(crate) struct DoctorReport {
     pub(crate) schema_version: &'static str,
     pub(crate) tool: &'static str,
+    pub(crate) ripr_version: &'static str,
+    pub(crate) ripr_build_msrv: &'static str,
     pub(crate) root: String,
+    /// Which capability the top-level status evaluates.
+    pub(crate) profile: DoctorProfile,
     pub(crate) status: DoctorStatus,
     pub(crate) checks: Vec<DoctorCheck>,
     pub(crate) sections: Vec<DoctorSection>,
@@ -284,21 +306,29 @@ pub(crate) struct DoctorReport {
     /// the typed surface the generated CI consumes instead of parsing the
     /// human "Enabled languages:" line.
     pub(crate) languages: Vec<String>,
+    /// The running binary and the `ripr` on PATH (additive in schema `0.2`).
+    /// The command adapter fills it; core evaluation leaves it unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) binary: Option<super::doctor_binary::DoctorBinaryIdentity>,
 }
 
 impl DoctorReport {
-    pub(crate) const SCHEMA_VERSION: &'static str = "0.2";
+    pub(crate) const SCHEMA_VERSION: &'static str = "0.3";
 
     pub(crate) fn new(root: &str) -> Self {
         Self {
             schema_version: Self::SCHEMA_VERSION,
             tool: "ripr",
+            ripr_version: env!("CARGO_PKG_VERSION"),
+            ripr_build_msrv: MINIMUM_RUSTC_VERSION,
             root: root.to_string(),
+            profile: DoctorProfile::Analysis,
             status: DoctorStatus::Pass,
             checks: Vec::new(),
             sections: Vec::new(),
             runtime_probes: Vec::new(),
             languages: Vec::new(),
+            binary: None,
         }
     }
 
@@ -320,6 +350,14 @@ impl DoctorReport {
         self.checks.push(DoctorCheck {
             name: name.to_string(),
             status: DoctorCheckStatus::Skipped,
+            evidence: Some(evidence),
+        });
+    }
+
+    pub(crate) fn add_advisory_check(&mut self, name: &str, evidence: String) {
+        self.checks.push(DoctorCheck {
+            name: name.to_string(),
+            status: DoctorCheckStatus::Advisory,
             evidence: Some(evidence),
         });
     }
@@ -364,10 +402,15 @@ impl DoctorReport {
         let mut out = String::new();
         out.push_str("ripr doctor\n");
         out.push_str(&format!("- root: {}\n", self.root));
+        out.push_str(&format!(
+            "- RIPR {} (source build requires Rust {})\n",
+            self.ripr_version, self.ripr_build_msrv
+        ));
         for check in &self.checks {
             let icon = match check.status {
                 DoctorCheckStatus::Pass => "✓",
                 DoctorCheckStatus::Fail => "!",
+                DoctorCheckStatus::Advisory => "~",
                 DoctorCheckStatus::Skipped => "-",
             };
             if let Some(evidence) = &check.evidence {
@@ -514,26 +557,46 @@ fn is_inside_work_tree(root: &Path) -> Option<bool> {
 /// without going through the redacted JSON evidence. `detected` is the
 /// caller's marker scan of the root, used only to decide whether the Rust
 /// toolchain checks apply (see [`rust_toolchain_scope`]).
+#[cfg(test)]
 pub(crate) fn evaluate_doctor_core_with_config(
     root: &Path,
     detected: &[LanguageId],
 ) -> DoctorCoreEvaluation {
-    evaluate_doctor_core_with_probe(root, detected, doctor_tool_check_for_root)
+    evaluate_doctor_core_with_config_for_profile(root, detected, DoctorProfile::Analysis)
 }
 
+pub(crate) fn evaluate_doctor_core_with_config_for_profile(
+    root: &Path,
+    detected: &[LanguageId],
+    profile: DoctorProfile,
+) -> DoctorCoreEvaluation {
+    evaluate_doctor_core_with_probe_for_profile(root, detected, profile, doctor_tool_check_for_root)
+}
+
+#[cfg(test)]
 fn evaluate_doctor_core_with_probe(
     root: &Path,
     detected: &[LanguageId],
+    probe_tool: impl FnMut(&str, &Path) -> (DoctorStatus, String),
+) -> DoctorCoreEvaluation {
+    evaluate_doctor_core_with_probe_for_profile(root, detected, DoctorProfile::Analysis, probe_tool)
+}
+
+fn evaluate_doctor_core_with_probe_for_profile(
+    root: &Path,
+    detected: &[LanguageId],
+    profile: DoctorProfile,
     mut probe_tool: impl FnMut(&str, &Path) -> (DoctorStatus, String),
 ) -> DoctorCoreEvaluation {
     let mut report = DoctorReport::new(&root.display().to_string());
+    report.profile = profile;
     let config = load_for_root(root);
     let rust_scope = rust_toolchain_scope(&config, detected);
     if root.is_dir() {
         report.add_check(
             "root_directory",
             DoctorStatus::Pass,
-            Some(format!("root directory exists at {}", root.display())),
+            Some(format!("root directory exists at {}", human_path(root))),
         );
     } else {
         report.add_check(
@@ -541,7 +604,7 @@ fn evaluate_doctor_core_with_probe(
             DoctorStatus::Fail,
             Some(format!(
                 "root directory does not exist at {}",
-                root.display()
+                human_path(root)
             )),
         );
     }
@@ -553,21 +616,21 @@ fn evaluate_doctor_core_with_probe(
             DoctorStatus::Pass,
             Some(format!(
                 "Cargo.toml found at {}",
-                root.join("Cargo.toml").display()
+                human_path(&root.join("Cargo.toml"))
             )),
         );
     } else {
         report.add_check(
             "cargo_toml",
             DoctorStatus::Fail,
-            Some(format!("no Cargo.toml found at {}", root.display())),
+            Some(format!("no Cargo.toml found at {}", human_path(root))),
         );
     }
     match is_inside_work_tree(root) {
         Some(true) => report.add_check(
             "git_repository",
             DoctorStatus::Pass,
-            Some(format!("inside a Git work tree at {}", root.display())),
+            Some(format!("inside a Git work tree at {}", human_path(root))),
         ),
         Some(false) => report.add_check(
             "git_repository",
@@ -576,7 +639,7 @@ fn evaluate_doctor_core_with_probe(
                 "not inside a Git work tree at {}; the diff-scoped commands read committed \
                  history and cannot run here. For a repository-free scan, run `ripr check --root \
                  {} --format repo-exposure-md`",
-                root.display(),
+                human_path(root),
                 root.display()
             )),
         ),
@@ -586,7 +649,7 @@ fn evaluate_doctor_core_with_probe(
             Some(format!(
                 "could not determine whether {} is inside a Git work tree; the git tool check \
                  below carries the reason",
-                root.display()
+                human_path(root)
             )),
         ),
     }
@@ -595,7 +658,7 @@ fn evaluate_doctor_core_with_probe(
             "config",
             DoctorStatus::Pass,
             Some(match config.source_path() {
-                Some(path) => format!("loaded {} at {}", CONFIG_FILE_NAME, path.display()),
+                Some(path) => format!("loaded {} at {}", CONFIG_FILE_NAME, human_path(path)),
                 None => format!("{CONFIG_FILE_NAME} not found; using built-in defaults"),
             }),
         ),
@@ -608,12 +671,24 @@ fn evaluate_doctor_core_with_probe(
     for tool in DOCTOR_TOOLS {
         let name = format!("tool_{tool}");
         match &rust_scope {
-            RustToolchainScope::NotInScope(reason) if RUST_TOOLCHAIN_TOOLS.contains(&tool) => {
+            RustToolchainScope::NotInScope(reason)
+                if RUST_TOOLCHAIN_TOOLS.contains(&tool) && profile == DoctorProfile::Analysis =>
+            {
                 report.add_skipped_check(&name, format!("{tool} check skipped: {reason}"));
             }
             _ => {
                 let (status, evidence) = probe_tool(tool, root);
-                report.add_check(&name, status, Some(evidence));
+                if RUST_TOOLCHAIN_TOOLS.contains(&tool)
+                    && profile == DoctorProfile::Analysis
+                    && status == DoctorStatus::Fail
+                {
+                    report.add_advisory_check(
+                        &name,
+                        analysis_advisory_toolchain_evidence(tool, &evidence),
+                    );
+                } else {
+                    report.add_check(&name, status, Some(evidence));
+                }
             }
         }
     }
@@ -645,7 +720,62 @@ pub(crate) fn doctor_tool_check_isolated(tool: &str) -> (DoctorStatus, String) {
 }
 
 fn doctor_tool_command(tool: &str) -> std::process::Command {
-    std::process::Command::new(tool)
+    // Windows: std's program lookup for a bare `pnpm` only resolves
+    // `pnpm.exe` on PATH, so a tool installed as a batch shim (npm/corepack
+    // install `pnpm.cmd` and `yarn.cmd`) would be misreported as not
+    // installed. When no `.exe` exists, run the resolved shim by full path;
+    // std launches `.cmd`/`.bat` through cmd.exe with its batch-argument
+    // escaping. Other platforms keep the plain tool name unchanged.
+    let mut program = std::ffi::OsString::from(tool);
+    if cfg!(windows) {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let pathext = std::env::var("PATHEXT").ok();
+        let dirs: Vec<std::path::PathBuf> = std::env::split_paths(&path).collect();
+        if let Some(shim) =
+            resolve_windows_batch_shim(tool, &dirs, pathext.as_deref(), &|p| p.is_file())
+        {
+            // A relative PATH entry was checked against this process's
+            // directory; pin that before a probe moves the child's cwd.
+            program = std::path::absolute(&shim).unwrap_or(shim).into_os_string();
+        }
+    }
+    std::process::Command::new(program)
+}
+
+/// Resolve a Windows batch shim (`<tool>.cmd`/`<tool>.bat`) on PATH for a bare
+/// tool name that has no `<tool>.exe` anywhere on PATH. Returns `None` when the
+/// native lookup should be used: the name already carries a path or
+/// extension, a `.exe` exists (it wins, matching `Command`'s own lookup), or no
+/// shim exists. Pure over its inputs so the policy is testable on any host.
+fn resolve_windows_batch_shim(
+    tool: &str,
+    path_dirs: &[std::path::PathBuf],
+    pathext: Option<&str>,
+    is_file: &dyn Fn(&Path) -> bool,
+) -> Option<std::path::PathBuf> {
+    if tool.is_empty() || tool.contains(['/', '\\', '.']) {
+        return None;
+    }
+    if path_dirs
+        .iter()
+        .any(|dir| is_file(&dir.join(format!("{tool}.exe"))))
+    {
+        return None;
+    }
+    // Only batch extensions, in PATHEXT order; PATHEXT's other entries
+    // (`.com`, `.vbs`, `.js`, ...) are not run by the doctor.
+    let batch_exts: Vec<String> = pathext
+        .unwrap_or(".COM;.EXE;.BAT;.CMD")
+        .split(';')
+        .map(str::to_ascii_lowercase)
+        .filter(|ext| ext == ".cmd" || ext == ".bat")
+        .collect();
+    path_dirs.iter().find_map(|dir| {
+        batch_exts
+            .iter()
+            .map(|ext| dir.join(format!("{tool}{ext}")))
+            .find(|candidate| is_file(candidate))
+    })
 }
 
 pub(crate) fn doctor_tool_check(tool: &str) -> (DoctorStatus, String) {
@@ -653,12 +783,41 @@ pub(crate) fn doctor_tool_check(tool: &str) -> (DoctorStatus, String) {
 }
 
 fn doctor_tool_check_for_root(tool: &str, root: &Path) -> (DoctorStatus, String) {
-    if tool == "rustc" {
-        doctor_tool_check_with_timeout_result_at(tool, DOCTOR_TOOL_TIMEOUT, Some(root))
-            .into_public()
-    } else {
-        doctor_tool_check(tool)
+    doctor_tool_check_with_timeout_result_at(
+        tool,
+        DOCTOR_TOOL_TIMEOUT,
+        doctor_tool_probe_dir(tool, root),
+    )
+    .into_public()
+}
+
+/// The directory a core tool probe runs in. `cargo` and `rustc` resolve
+/// through rustup's per-directory toolchain selection (`rust-toolchain.toml`,
+/// overrides), so both are probed in the selected root: that is the toolchain
+/// a source build there uses and the `cargo` the analyzer's `cargo metadata`
+/// probe runs. Other tools keep the caller's directory.
+fn doctor_tool_probe_dir<'a>(tool: &str, root: &'a Path) -> Option<&'a Path> {
+    RUST_TOOLCHAIN_TOOLS.contains(&tool).then_some(root)
+}
+
+/// Evidence for an unavailable Cargo/rustc capability under the analysis
+/// profile. The installed binary's static analysis does not compile the
+/// workspace, but it does read `cargo metadata` for the custom test-harness
+/// target inventory, so a missing `cargo` withholds that evidence (the
+/// harness verdict fails closed as `manifest_unavailable`). Doctor names that
+/// degradation instead of implying analysis is unaffected.
+fn analysis_advisory_toolchain_evidence(tool: &str, evidence: &str) -> String {
+    if evidence.contains(RUSTC_ANALYSIS_SCOPE) {
+        return evidence.to_string();
     }
+    let analysis_effect = if tool == "cargo" {
+        "static analysis continues, but evidence that reads `cargo metadata` in the selected root (custom test-harness target inventory) is withheld"
+    } else {
+        "the installed binary's static analysis does not run rustc"
+    };
+    format!(
+        "{evidence}; {analysis_effect}; project verification and source builds require their own toolchain"
+    )
 }
 
 fn doctor_tool_check_with_timeout(tool: &str, timeout: Duration) -> (DoctorStatus, String) {
@@ -704,7 +863,7 @@ fn doctor_tool_check_success(tool: &str, stdout: &[u8]) -> DoctorToolCheckResult
     }
     match validate_rustc_version(&evidence) {
         RustcVersionVerdict::Current => DoctorToolCheckResult::pass(evidence),
-        RustcVersionVerdict::BelowBuildMinimum(note) => DoctorToolCheckResult::pass(note),
+        RustcVersionVerdict::BelowBuildMinimum(note) => DoctorToolCheckResult::failure(note),
         RustcVersionVerdict::Unreadable(error) => DoctorToolCheckResult::failure(error),
     }
 }
@@ -958,6 +1117,76 @@ mod tests {
         }
     }
 
+    fn shim_dirs() -> Vec<std::path::PathBuf> {
+        vec![
+            std::path::PathBuf::from("first-bin"),
+            std::path::PathBuf::from("npm-global"),
+        ]
+    }
+
+    #[test]
+    fn windows_shim_resolves_cmd_when_no_exe_exists() {
+        let dirs = shim_dirs();
+        let shim = dirs[1].join("pnpm.cmd");
+        let resolved =
+            resolve_windows_batch_shim("pnpm", &dirs, Some(".COM;.EXE;.BAT;.CMD"), &|p| {
+                p == shim.as_path()
+            });
+        assert_eq!(resolved, Some(shim.clone()));
+        // PATHEXT absent falls back to the Windows default list.
+        assert_eq!(
+            resolve_windows_batch_shim("pnpm", &dirs, None, &|p| p == shim.as_path()),
+            Some(shim)
+        );
+    }
+
+    #[test]
+    fn windows_shim_defers_to_exe_anywhere_on_path() {
+        let dirs = shim_dirs();
+        let cmd = dirs[0].join("yarn.cmd");
+        let exe = dirs[1].join("yarn.exe");
+        let resolved = resolve_windows_batch_shim("yarn", &dirs, Some(".EXE;.CMD"), &|p| {
+            p == cmd.as_path() || p == exe.as_path()
+        });
+        assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn windows_shim_absent_stays_unresolved() {
+        let dirs = shim_dirs();
+        assert_eq!(
+            resolve_windows_batch_shim("pnpm", &dirs, Some(".EXE;.CMD"), &|_| false),
+            None
+        );
+        // A non-batch PATHEXT match is not run as a shim.
+        let js = dirs[0].join("pnpm.js");
+        assert_eq!(
+            resolve_windows_batch_shim("pnpm", &dirs, Some(".JS;.EXE"), &|p| p == js.as_path()),
+            None
+        );
+        // Names that already carry a path or extension use native lookup.
+        assert_eq!(
+            resolve_windows_batch_shim(r"npm-global\pnpm", &dirs, None, &|_| true),
+            None
+        );
+    }
+
+    #[test]
+    fn windows_shim_honours_pathext_order_within_a_directory() {
+        let dirs = shim_dirs();
+        let bat = dirs[0].join("yarn.bat");
+        let cmd = dirs[0].join("yarn.cmd");
+        let exists = |p: &Path| p == bat.as_path() || p == cmd.as_path();
+        assert_eq!(
+            resolve_windows_batch_shim("yarn", &dirs, Some(".EXE;.CMD;.BAT"), &exists),
+            Some(cmd.clone())
+        );
+        assert_eq!(
+            resolve_windows_batch_shim("yarn", &dirs, Some(".EXE;.BAT;.CMD"), &exists),
+            Some(bat)
+        );
+    }
+
     #[test]
     fn empty_report_is_pass() {
         let report = DoctorReport::new("/workspace");
@@ -982,7 +1211,8 @@ mod tests {
         assert_eq!(report.status, DoctorStatus::Fail);
     }
 
-    /// A toolchain below ripr's own `rust-version` is disclosed, not failed:
+    /// A toolchain below ripr's own `rust-version` is disclosed as advisory
+    /// by the analysis profile, but fails the source-build capability:
     /// that minimum is what building or installing ripr from source takes,
     /// while the already-running binary's built-in static analysis does not
     /// directly run `rustc`. The malformed-output and parser controls below
@@ -998,7 +1228,7 @@ mod tests {
         let cases = [
             (
                 below.clone(),
-                DoctorStatus::Pass,
+                DoctorStatus::Fail,
                 "below ripr's build minimum",
             ),
             (
@@ -1104,11 +1334,30 @@ mod tests {
     }
 
     #[test]
+    fn analysis_advisory_states_the_rustc_analysis_scope_once() -> Result<(), String> {
+        let below = below_minimum_rustc_output()?;
+        let rustc = doctor_tool_check_success("rustc", below.as_bytes());
+        let advisory = analysis_advisory_toolchain_evidence("rustc", &rustc.evidence);
+        if advisory.matches("run rustc").count() != 1 {
+            return Err(format!(
+                "the rustc analysis scope must appear once: {advisory:?}"
+            ));
+        }
+        let missing = analysis_advisory_toolchain_evidence("rustc", "rustc not found on PATH");
+        if !missing.contains("the installed binary's static analysis does not run rustc") {
+            return Err(format!(
+                "a missing rustc still needs the analysis scope: {missing:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn below_minimum_rustc_advises_through_public_doctor_projection() -> Result<(), String> {
         let below = below_minimum_rustc_output()?;
         let rustc = doctor_tool_check_success("rustc", below.as_bytes());
         let mut report = DoctorReport::new("/workspace");
-        report.add_check("tool_rustc", rustc.status, Some(rustc.evidence.clone()));
+        report.add_advisory_check("tool_rustc", rustc.evidence.clone());
 
         if report.status != DoctorStatus::Pass {
             return Err(format!("below-minimum advisory must pass: {report:?}"));
@@ -1138,8 +1387,8 @@ mod tests {
                 "unexpected doctor JSON status projection: {parsed}"
             ));
         }
-        if parsed["checks"][0]["status"] != "pass" {
-            return Err(format!("rustc check must render as pass: {parsed}"));
+        if parsed["checks"][0]["status"] != "advisory" {
+            return Err(format!("rustc check must render as advisory: {parsed}"));
         }
         let evidence = parsed["checks"][0]["evidence"]
             .as_str()
@@ -1261,8 +1510,9 @@ mod tests {
         // The subject here is which directory the probe ran in, so the oracle
         // is the shim's own per-directory marker rather than the verdict: the
         // selected root prints `target-root`, the caller root `caller-root`.
-        // A version below ripr's build minimum is now a disclosure rather than
-        // a failure, so a status assertion would no longer discriminate.
+        // The probe reports the source-build prerequisite as failed; the
+        // analysis profile projects that observation as advisory. The root
+        // discriminator remains the shim's own per-directory marker.
         assert!(
             result.evidence.contains("target-root"),
             "probe must run in the selected root; evidence: {}",
@@ -1275,7 +1525,7 @@ mod tests {
         );
         assert_eq!(
             result.status,
-            DoctorStatus::Pass,
+            DoctorStatus::Fail,
             "evidence: {}",
             result.evidence
         );
@@ -1509,7 +1759,7 @@ mod tests {
     }
 
     #[test]
-    fn rust_root_with_missing_cargo_still_fails() -> Result<(), String> {
+    fn rust_root_with_missing_cargo_discloses_verification_limitation() -> Result<(), String> {
         let root = doctor_scope_root(
             "scope-rust-no-cargo",
             &[
@@ -1523,22 +1773,136 @@ mod tests {
             return Err(format!("Cargo.toml must pass: {:?}", report.checks));
         }
         for tool in ["tool_cargo", "tool_rustc"] {
-            let failed = check(&report, tool)?;
-            if failed.status != DoctorCheckStatus::Fail {
-                return Err(format!("{tool} must fail on a Rust root: {failed:?}"));
+            let advisory = check(&report, tool)?;
+            if advisory.status != DoctorCheckStatus::Advisory {
+                return Err(format!(
+                    "{tool} must be advisory for installed analysis: {advisory:?}"
+                ));
             }
         }
-        if report.status != DoctorStatus::Fail {
-            return Err("missing cargo must fail a Rust root".to_string());
+        if report.status != DoctorStatus::Pass {
+            return Err("missing cargo must not fail installed analysis".to_string());
+        }
+        // PR #4196 review: the analyzer reads `cargo metadata` for the custom
+        // harness inventory, so a missing cargo is a disclosed analysis
+        // degradation, while a missing rustc is not claimed as one.
+        let cargo = check(&report, "tool_cargo")?
+            .evidence
+            .clone()
+            .unwrap_or_default();
+        let rustc = check(&report, "tool_rustc")?
+            .evidence
+            .clone()
+            .unwrap_or_default();
+        if !cargo.contains("`cargo metadata`")
+            || !cargo.contains("is withheld")
+            || rustc.contains("cargo metadata")
+            || !rustc.contains("does not run rustc")
+        {
+            return Err(format!(
+                "cargo advisory must disclose the cargo-metadata limitation: {cargo:?} / {rustc:?}"
+            ));
         }
         Ok(())
     }
 
-    /// A mixed Rust + Python root is a Rust root: the Python markers do not
-    /// excuse a missing Rust toolchain.
+    /// PR #4196 review: `cargo` resolves through rustup's per-directory
+    /// toolchain just like `rustc`, so the source-build profile must probe it
+    /// in the selected root, not the caller's directory.
+    #[cfg(unix)]
+    #[test]
+    fn doctor_cargo_probe_uses_selected_root() -> Result<(), String> {
+        let dir = unique_test_dir("selected-root-cargo");
+        let selected_root = dir.join("selected-root");
+        std::fs::create_dir_all(&selected_root).map_err(|err| format!("create root: {err}"))?;
+        let shim = publish_doctor_test_tool(
+            &dir,
+            "cargo-root-probe",
+            "#!/bin/sh\ncase \"$PWD\" in\n  *selected-root) printf 'cargo 1.95.0 (target-root)\\n' ;;\n  *) exit 1 ;;\nesac\n",
+        )?;
+        let shim_str: &str = shim
+            .to_str()
+            .ok_or_else(|| "shim path is not UTF-8".to_string())?;
+        let result = probe_published_tool_with_command(
+            "cargo",
+            || doctor_tool_command(shim_str),
+            SHIM_PROBE_TEST_CEILING,
+            doctor_tool_probe_dir("cargo", &selected_root),
+        );
+        let git_dir = doctor_tool_probe_dir("git", &selected_root);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            (result.status, result.evidence.as_str()),
+            (DoctorStatus::Pass, "cargo 1.95.0 (target-root)"),
+        );
+        assert_eq!(git_dir, None, "git keeps the caller directory");
+        Ok(())
+    }
+
+    #[test]
+    fn old_workspace_compiler_is_advisory_for_analysis_and_fails_source_build() -> Result<(), String>
+    {
+        let root = doctor_scope_root(
+            "scope-old-compiler",
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname = \"probe\"\nversion = \"0.1.0\"\n",
+                ),
+                ("src/lib.rs", "pub fn f() {}\n"),
+            ],
+        )?;
+        git_in(&root, &["init", "."])?;
+        let old = below_minimum_rustc_output()?;
+        let probe = |tool: &str, _root: &Path| {
+            if tool == "rustc" {
+                doctor_tool_check_success(tool, old.as_bytes()).into_public()
+            } else {
+                (DoctorStatus::Pass, format!("{tool} available"))
+            }
+        };
+        let analysis = evaluate_doctor_core_with_probe_for_profile(
+            &root,
+            &[LanguageId::Rust],
+            DoctorProfile::Analysis,
+            &probe,
+        )
+        .report;
+        let build = evaluate_doctor_core_with_probe_for_profile(
+            &root,
+            &[LanguageId::Rust],
+            DoctorProfile::SourceBuild,
+            &probe,
+        )
+        .report;
+        let _ = std::fs::remove_dir_all(&root);
+        if check(&analysis, "tool_rustc")?.status != DoctorCheckStatus::Advisory
+            || check(&build, "tool_rustc")?.status != DoctorCheckStatus::Fail
+            || analysis.profile != DoctorProfile::Analysis
+            || build.profile != DoctorProfile::SourceBuild
+        {
+            return Err(format!(
+                "wrong capability projection: {analysis:?} {build:?}"
+            ));
+        }
+        let analysis_json = analysis.render_json()?;
+        let build_json = build.render_json()?;
+        if !analysis_json.contains("\"advisory\"")
+            || !build_json.contains("\"source-build\"")
+            || doctor_report_result(&analysis).is_err()
+            || doctor_report_result(&build).is_ok()
+        {
+            return Err(format!(
+                "wrong rendered/exit projection: {analysis_json} {build_json}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// A mixed root still reports unavailable Rust verification tools.
     #[test]
     #[cfg(feature = "lang-python")]
-    fn mixed_rust_and_python_root_keeps_rust_toolchain_required() -> Result<(), String> {
+    fn mixed_rust_and_python_root_reports_rust_toolchain_advisory() -> Result<(), String> {
         let root = doctor_scope_root(
             "scope-mixed",
             &[
@@ -1549,11 +1913,11 @@ mod tests {
         let (report, _probed) =
             evaluate_without_rust_toolchain(&root, &[LanguageId::Rust, LanguageId::Python]);
         let _ = std::fs::remove_dir_all(&root);
-        if check(&report, "tool_cargo")?.status != DoctorCheckStatus::Fail
-            || report.status != DoctorStatus::Fail
+        if check(&report, "tool_cargo")?.status != DoctorCheckStatus::Advisory
+            || report.status != DoctorStatus::Pass
         {
             return Err(format!(
-                "mixed root must require cargo: {:?}",
+                "mixed root must disclose missing cargo as advisory: {:?}",
                 report.checks
             ));
         }
@@ -1665,7 +2029,7 @@ mod tests {
         let json = report.render_json()?;
         let parsed: serde_json::Value =
             serde_json::from_str(&json).map_err(|e| format!("invalid JSON: {e}"))?;
-        assert_eq!(parsed["schema_version"], "0.2");
+        assert_eq!(parsed["schema_version"], "0.3");
         assert_eq!(parsed["tool"], "ripr");
         assert_eq!(parsed["status"], "pass");
         assert_eq!(parsed["checks"][0]["name"], "root_directory");

@@ -3,7 +3,8 @@ use super::state::{AnalysisSnapshot, format_duration};
 use super::uri::{CappedArtifactRead, read_artifact_capped};
 use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
-use crate::domain::{DiagnosticWitness, Finding, StageEvidence, StageState};
+use crate::config::LspDiagnosticProfile;
+use crate::domain::{DiagnosticWitness, ExposureClass, Finding, StageEvidence, StageState};
 use crate::output::agent_seam_packets::{
     allowed_edit_surface_for_gap_route, gap_record_packet_do_not_do,
     suggested_assertion_for_classified_seam, targeted_test_brief_outline_for_classified_seam,
@@ -45,6 +46,70 @@ pub(super) fn finding_hover_response(finding: &Finding, diagnostic: &Diagnostic)
             value: finding_hover_markdown(diagnostic, finding),
         }),
         range: Some(diagnostic.range),
+    }
+}
+
+/// Bound on findings rendered in one line hover; the rest are counted.
+const MAX_LINE_HOVER_FINDINGS: usize = 5;
+
+/// Hover for a position with no published diagnostic but with snapshot
+/// findings on its line — the findings the code lens on that line shows.
+/// Under the `actionable` profile these are route-less or exposed findings
+/// the profile does not publish; describing them here keeps the editor
+/// surfaces consistent instead of sending the reader to the CLI.
+pub(super) fn line_findings_hover_response(
+    findings: &[&Finding],
+    profile: LspDiagnosticProfile,
+) -> Hover {
+    let mut lines = vec![
+        "**ripr** no published diagnostic at this position".to_string(),
+        String::new(),
+        format!(
+            "The current analysis snapshot has {} finding(s) on this line; the code lens shows the same findings.",
+            findings.len()
+        ),
+    ];
+    if profile == LspDiagnosticProfile::Actionable {
+        lines.push(
+            "The `actionable` diagnostic profile publishes only current `weakly_exposed`, `reachable_unrevealed` or `no_static_path` findings with a producer-backed repair route (a named missing discriminator and a fix site), so these are not diagnostics. Set `ripr.diagnosticProfile` to `full` to publish them with their Inspect finding quick fix."
+                .to_string(),
+        );
+    } else {
+        lines.push(
+            "They have no published diagnostic under the current severity configuration."
+                .to_string(),
+        );
+    }
+    for finding in findings.iter().take(MAX_LINE_HOVER_FINDINGS) {
+        lines.push(String::new());
+        lines.push(format!(
+            "### `{}` {} `{}`",
+            finding.class.as_str(),
+            finding.probe.family.as_str(),
+            finding.probe.expression
+        ));
+        lines.push(format!("Finding: `{}`", finding.id));
+        lines.extend([
+            stage_line("reach", &finding.ripr.reach),
+            stage_line("infection", &finding.ripr.infect),
+            stage_line("propagation", &finding.ripr.propagate),
+            stage_line("observation", &finding.ripr.reveal.observe),
+            discriminator_stage_line(finding),
+        ]);
+    }
+    if findings.len() > MAX_LINE_HOVER_FINDINGS {
+        lines.push(String::new());
+        lines.push(format!(
+            "{} more finding(s) on this line are not shown.",
+            findings.len() - MAX_LINE_HOVER_FINDINGS
+        ));
+    }
+    Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: lines.join("\n"),
+        }),
+        range: None,
     }
 }
 
@@ -383,7 +448,7 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
         stage_line("infection", &finding.ripr.infect),
         stage_line("propagation", &finding.ripr.propagate),
         stage_line("observation", &finding.ripr.reveal.observe),
-        stage_line("discriminator", &finding.ripr.reveal.discriminate),
+        discriminator_stage_line(finding),
     ]);
     if let Some(gap) = &finding.canonical_gap {
         lines.push(String::new());
@@ -636,6 +701,38 @@ fn stage_line(name: &str, stage: &StageEvidence) -> String {
     format!("* {name} {}: {}", stage.state.as_str(), stage.summary)
 }
 
+/// The producer's `discriminate` stage grades the strongest related oracle.
+/// For a finding that is not `exposed`, a `yes` there reads as "a
+/// discriminator exists" and contradicts the code lens ("no static
+/// discriminator"). Keep the oracle grade, but lead with the missing
+/// discriminating input the producer named (or say the discriminator is not
+/// established) so hover and lens agree.
+fn discriminator_stage_line(finding: &Finding) -> String {
+    let stage = &finding.ripr.reveal.discriminate;
+    if finding.class == ExposureClass::Exposed || stage.state != StageState::Yes {
+        return stage_line("discriminator", stage);
+    }
+    let missing = finding
+        .activation
+        .missing_discriminators
+        .iter()
+        .map(|fact| format!("`{}`", fact.value))
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        format!(
+            "* discriminator not established ({}); related oracle: {}",
+            finding.class.as_str(),
+            stage.summary
+        )
+    } else {
+        format!(
+            "* discriminator missing: {}; related oracle: {}",
+            missing.join(", "),
+            stage.summary
+        )
+    }
+}
+
 fn number_or_string_label(value: &NumberOrString) -> String {
     match value {
         NumberOrString::Number(number) => number.to_string(),
@@ -788,21 +885,33 @@ fn push_editor_commands(
     entry: &ClassifiedSeam,
     snapshot: Option<&AnalysisSnapshot>,
 ) {
-    let mode = snapshot.map_or("draft", |snapshot| snapshot.mode.as_str());
-    let base = snapshot.and_then(|snapshot| snapshot.base.as_deref());
     let seam_id = entry.seam.id().as_str();
     lines.push(String::new());
     lines.push("## Handoff, verify, and receipt commands".to_string());
+    // #4001/#3999: the commands bind the snapshot's selected workspace root.
+    // Without a snapshot there is no selected root, and the language-server
+    // process working directory is never a substitute, so no command is
+    // offered.
+    let Some(snapshot) = snapshot else {
+        lines.push(
+            "- unavailable: no analysis snapshot selects a workspace root; refresh analysis first"
+                .to_string(),
+        );
+        return;
+    };
+    let mode = snapshot.mode.as_str();
+    let base = snapshot.base.as_deref();
+    let root = loop_commands::bound_root(&snapshot.root.to_string_lossy());
     // Only a seam `agent repair` would accept (the fail-closed repair-packet
     // flip, RIPR-SPEC-0087 §8, plus a test-surface target) names the repair
     // start; any other seam's hover stays as it was (#3906).
-    if let Some(repair) = repair_start_command_for(entry) {
+    if let Some(repair) = repair_start_command_for(entry, &root) {
         lines.push(format!("- repair (start here): `{repair}`"));
     }
     lines.push(format!(
         "- packet: `{}`",
         loop_commands::agent_packet_command(
-            ".",
+            &root,
             seam_id,
             loop_commands::EDITOR_AGENT_PACKET_ARTIFACT,
         )
@@ -810,7 +919,7 @@ fn push_editor_commands(
     lines.push(format!(
         "- brief: `{}`",
         loop_commands::agent_brief_command(
-            ".",
+            &root,
             seam_id,
             loop_commands::EDITOR_AGENT_BRIEF_ARTIFACT,
         )
@@ -818,7 +927,7 @@ fn push_editor_commands(
     lines.push(format!(
         "- after snapshot: `{}`",
         loop_commands::check_repo_exposure_command_with_base(
-            ".",
+            &root,
             base,
             mode,
             loop_commands::PILOT_AFTER_SNAPSHOT_ARTIFACT,
@@ -827,7 +936,7 @@ fn push_editor_commands(
     lines.push(format!(
         "- verify: `{}`",
         loop_commands::agent_verify_command(
-            ".",
+            &root,
             loop_commands::PILOT_BEFORE_SNAPSHOT_ARTIFACT,
             loop_commands::PILOT_AFTER_SNAPSHOT_ARTIFACT,
             Some(loop_commands::EDITOR_AGENT_VERIFY_ARTIFACT),
@@ -836,7 +945,7 @@ fn push_editor_commands(
     lines.push(format!(
         "- receipt: `{}`",
         loop_commands::agent_receipt_command(
-            ".",
+            &root,
             loop_commands::EDITOR_AGENT_VERIFY_ARTIFACT,
             seam_id,
             Some(loop_commands::EDITOR_AGENT_RECEIPT_ARTIFACT),
@@ -1441,7 +1550,7 @@ mod seam_hover_tests {
     #[test]
     fn gap_diagnostic_hover_recognizes_serialized_command_spec() -> Result<(), String> {
         let spec = crate::agent::command_specs::report_regeneration_command_spec_from_display(
-            "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md",
+            "ripr reports gap-ledger --repo-exposure repo.json --out ledger.json --out-md ledger.md", std::path::Path::new(".")
         )
         .ok_or("canonical gap-ledger route was not recoverable")?;
         let serialized = serde_json::to_value(&spec)
@@ -1647,32 +1756,54 @@ mod seam_hover_tests {
         let snapshot = sample_snapshot(Mode::Ready);
         let hover = classified_seam_hover_response(&seam, &diagnostic, Some(&snapshot));
         let md = extract_markup(&hover)?;
+        // #3999/#4001: every handoff command binds the snapshot's selected
+        // workspace root — `--root` and the redirect target alike — never
+        // the language-server process working directory.
+        let workspace = snapshot.root.to_string_lossy();
+        let root = loop_commands::shell_arg(&loop_commands::bound_root(&workspace));
+        let anchored = |tail: &str| {
+            loop_commands::shell_arg(&loop_commands::anchored_redirect_target(&workspace, tail))
+        };
         for needle in [
-            "## Handoff, verify, and receipt commands",
-            "- packet: `ripr agent packet --root . --seam-id",
-            "- brief: `ripr agent brief --root . --seam-id",
-            "- after snapshot: `ripr check --root . --mode ready --format repo-exposure-json > ",
-            "- verify: `ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > ",
-            "ripr agent receipt --root . --verify-json target/ripr/agent/agent-verify.json --seam-id",
-            "--json --out target/ripr/agent/agent-receipt.json",
+            "## Handoff, verify, and receipt commands".to_string(),
+            format!("- packet: `ripr agent packet --root {root} --seam-id"),
+            format!("- brief: `ripr agent brief --root {root} --seam-id"),
+            format!(
+                "- after snapshot: `ripr check --root {root} --mode ready --format repo-exposure-json > "
+            ),
+            format!(
+                "- verify: `ripr agent verify --root {root} --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > "
+            ),
+            format!(
+                "ripr agent receipt --root {root} --verify-json target/ripr/agent/agent-verify.json --seam-id"
+            ),
+            "--json --out target/ripr/agent/agent-receipt.json".to_string(),
+            format!(
+                "--json > {}",
+                anchored("target/ripr/agent/agent-packet.json")
+            ),
+            format!(
+                "--json > {}",
+                anchored("target/ripr/agent/agent-brief.json")
+            ),
+            format!(
+                "--format repo-exposure-json > {}",
+                anchored("target/ripr/pilot/after.repo-exposure.json")
+            ),
+            format!(
+                "--json > {}",
+                anchored("target/ripr/agent/agent-verify.json")
+            ),
         ] {
-            if !md.contains(needle) {
+            if !md.contains(&needle) {
                 return Err(format!("missing {needle:?} in:\n{md}"));
             }
         }
-        // Issue #3872: handoff redirects anchor at the resolved --root. The
-        // markup projects to `<cwd>/` first, so the needles hold on
-        // checkouts whose machine prefix needs shell quoting.
-        let md = crate::testing::cwd_placeholder::project_cwd_text(md);
-        for needle in [
-            "--json > <cwd>/target/ripr/agent/agent-packet.json",
-            "--json > <cwd>/target/ripr/agent/agent-brief.json",
-            "--format repo-exposure-json > <cwd>/target/ripr/pilot/after.repo-exposure.json",
-            "--json > <cwd>/target/ripr/agent/agent-verify.json",
-        ] {
-            if !md.contains(needle) {
-                return Err(format!("missing anchored {needle:?} in:\n{md}"));
-            }
+        // Discriminator: the process working directory is not the
+        // workspace, and no handoff command may name it.
+        let process_root = loop_commands::bound_root(".");
+        if process_root != loop_commands::bound_root(&workspace) && md.contains(&process_root) {
+            return Err(format!("hover named the process working directory:\n{md}"));
         }
         Ok(())
     }
