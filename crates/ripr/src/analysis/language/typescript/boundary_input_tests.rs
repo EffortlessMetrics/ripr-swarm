@@ -435,6 +435,7 @@ fn comparisons_with_arithmetic_or_signed_sides_stay_unresolved() {
         "  if (order.amount >= DISCOUNT_THRESHOLD) {",
         "  if (amount >= DISCOUNT_THRESHOLD",
         "  amount >= DISCOUNT_THRESHOLD ? 1 : 0;",
+        "  if (amount > OFFSET) { log('amount >= DISCOUNT_THRESHOLD ;'); }",
     ] {
         assert_eq!(
             input_for(&source, "discountedTotal", changed),
@@ -459,6 +460,17 @@ fn whole_side_comparisons_accept_common_line_shapes() {
         ("  if (amount >= LIMIT", false),
         ("  amount >= LIMIT ? 1 : 0;", false),
         ("  return amount >= LIMIT", false),
+        // Literal and comment spans are not tokenized as code.
+        (
+            "  msg = amount > CAP ? \"over: amount >= LIMIT, deny\" : ok;",
+            false,
+        ),
+        (
+            "  msg = amount > CAP ? `over: amount >= LIMIT, deny` : ok;",
+            false,
+        ),
+        ("  ok = amount > CAP; // note: amount >= LIMIT ;", false),
+        ("  ok = amount > CAP; /* amount >= LIMIT ; */", false),
     ] {
         let operand = if line.contains("5_000") {
             "5_000"

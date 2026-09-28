@@ -16,8 +16,10 @@
 //!   name in the module is a plain read (no parameter, local, catch, import,
 //!   function, class, enum, or destructuring binding of the same name).
 //!
-//! The rules run on the oxc token stream, so comments, strings, templates,
-//! and regular expressions never pass for code. Anything the rules do not
+//! The module rules run on the oxc token stream, so comments, strings,
+//! templates, and regular expressions never pass for code there; the changed
+//! line itself must compare the parameter and the operand as whole sides and
+//! carry no literal or comment span at all. Anything the rules do not
 //! positively recognize fails closed: no evidence line, and the projection
 //! keeps the packet non-delegatable.
 
@@ -197,6 +199,12 @@ pub(super) fn comparison_has_whole_sides(line: &str, parameter: &str, operand: &
         "(", "&&", "||", "?", ":", ",", "=", "=>", "return", "{", ";",
     ];
     const AFTER: &[&str] = &[")", "&&", "||", "?", ":", ";", ",", "}"];
+    // The line tokenizer does not know literal or comment spans, so a string,
+    // template, regular expression, or comment could carry a look-alike
+    // comparison (`"over: amount >= LIMIT"`). Refuse any line that has one.
+    if line.contains(['"', '\'', '`', '/']) {
+        return false;
+    }
     let tokens = line_tokens(line);
     let mut found = 0usize;
     for (at, token) in tokens.iter().enumerate() {
