@@ -1863,7 +1863,9 @@ fn gap_record_diagnostic_message(record: &GapRecord) -> String {
         .and_then(|route| non_empty(&route.route_kind))
         .unwrap_or("InspectGap");
     let mut message = if route == "InspectGap" {
-        format!("ripr gap: {kind}; inspect the gap with the 'Inspect gap: copy context' code action")
+        format!(
+            "ripr gap: {kind}; inspect the gap with the 'Inspect gap: copy context' code action"
+        )
     } else {
         format!("ripr gap: {kind}; repair route: {route}")
     };
@@ -2343,15 +2345,29 @@ fn lsp_message(finding: &Finding) -> String {
     let reconciled = reconcile_next_step(finding);
     let base = if reconciled.is_empty() {
         let explanation = match &finding.class {
-            crate::domain::ExposureClass::Exposed => "A test appears to observe the changed behavior",
-            crate::domain::ExposureClass::WeaklyExposed => "Related tests may not distinguish the changed behavior",
-            crate::domain::ExposureClass::ReachableUnrevealed => "A test reaches the change without observing its effect",
+            crate::domain::ExposureClass::Exposed => {
+                "A test appears to observe the changed behavior"
+            }
+            crate::domain::ExposureClass::WeaklyExposed => {
+                "Related tests may not distinguish the changed behavior"
+            }
+            crate::domain::ExposureClass::ReachableUnrevealed => {
+                "A test reaches the change without observing its effect"
+            }
             crate::domain::ExposureClass::NoStaticPath => "No test path to this change was found",
-            crate::domain::ExposureClass::InfectionUnknown => "The changed value could not be traced",
-            crate::domain::ExposureClass::PropagationUnknown => "The changed effect could not be traced to a test",
-            crate::domain::ExposureClass::StaticUnknown => "Static analysis could not classify this change",
+            crate::domain::ExposureClass::InfectionUnknown => {
+                "The changed value could not be traced"
+            }
+            crate::domain::ExposureClass::PropagationUnknown => {
+                "The changed effect could not be traced to a test"
+            }
+            crate::domain::ExposureClass::StaticUnknown => {
+                "Static analysis could not classify this change"
+            }
         };
-        format!("{explanation}. Use the 'Inspect finding: copy context' code action for the evidence and next step.")
+        format!(
+            "{explanation}. Use the 'Inspect finding: copy context' code action for the evidence and next step."
+        )
     } else {
         reconciled
     };
