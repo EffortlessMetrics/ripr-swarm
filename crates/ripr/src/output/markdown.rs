@@ -21,15 +21,43 @@ pub(crate) fn render_string_section(out: &mut String, title: &str, values: &[Str
 }
 
 /// Render an artifact value inline: as a code span when it is a bare value,
-/// and as-is when it already carries its own code spans (F60-12). Wrapping
+/// and as prose when it already carries its own code spans (F60-12). Wrapping
 /// text such as ``Add the proof in `tests/a.rs`: `assert_eq!(..)`.`` in one
 /// more pair of backticks inverts every span inside it.
+///
+/// The prose keeps link, image and HTML syntax inert outside its code spans,
+/// because the values can carry PR-controlled source text. Prose whose spans
+/// are unbalanced or use multi-backtick fences is rendered as one code span.
 pub(crate) fn inline_code_or_text(value: &str) -> String {
-    if value.contains('`') {
-        value.to_string()
-    } else {
-        format!("`{value}`")
+    if !value.contains('`') {
+        return code_span(value);
     }
+    if value.contains("``") || value.matches('`').count() % 2 != 0 {
+        return code_span(value);
+    }
+    value
+        .split('`')
+        .enumerate()
+        .map(|(index, segment)| {
+            if index % 2 == 0 {
+                escape_inline_markup(segment)
+            } else {
+                segment.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("`")
+}
+
+fn escape_inline_markup(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if matches!(ch, '[' | ']' | '<' | '>' | '!') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 /// Render a bare value as one code span, whatever backticks it contains: the
@@ -383,6 +411,12 @@ mod tests {
     fn inline_code_or_text_wraps_bare_values_and_keeps_formatted_prose() {
         assert_eq!(inline_code_or_text("a >= b"), "`a >= b`");
         assert_eq!(inline_code_or_text("Add `x` to `y`."), "Add `x` to `y`.");
+        assert_eq!(
+            inline_code_or_text("See [a](http://x) in `f(y)`!"),
+            "See \\[a\\](http://x) in `f(y)`\\!"
+        );
+        assert_eq!(inline_code_or_text("`[a](b)` only"), "`[a](b)` only");
+        assert_eq!(inline_code_or_text("odd ` tick"), "``odd ` tick``");
     }
 
     #[test]
