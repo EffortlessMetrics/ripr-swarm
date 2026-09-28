@@ -54,8 +54,9 @@ immediate caller files and reports that narrowed basis as
 Within that scope, seams on changed lines and in changed owner functions are
 evaluated first. Only those seams can take the two highest selection
 priorities, so when they already fill every review slot the rest of the scope
-is not evaluated; a warning names how many seams were skipped, and
-`classified_seams_considered` counts only the seams evaluated. When they do not
+is not evaluated: `analysis_scope.unevaluated_seams` and a warning give the
+skipped count, `classified_seams_considered` counts only the seams evaluated,
+and the brief-cap warning reads "at least N". When they do not
 fill the slots, the whole scope is evaluated. Past the first ten hidden matching
 seams, omission warnings are counted per reason instead of named.
 It writes review-ready JSON and Markdown without posting to GitHub.

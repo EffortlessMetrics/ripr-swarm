@@ -75,7 +75,6 @@ pub use model::{
     SourceRoleProvenanceEdge, SourceRoleProvenanceEdgeKind, TestFact, TestSummary,
 };
 // Hot evidence loops hash each indexed file once and validate by digest.
-#[cfg(test)]
-pub(crate) use model::WorkspaceFileAuthority;
-pub(crate) use model::WorkspaceRootAuthority;
 pub(crate) use model::source_digest;
+#[cfg(test)]
+pub(crate) use model::{WorkspaceFileAuthority, WorkspaceRootAuthority};

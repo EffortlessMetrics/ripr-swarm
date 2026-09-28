@@ -804,14 +804,19 @@ impl AgentBriefOmission {
 
     /// Count line for omitted seams past the per-seam warning bound.
     fn more(self, count: usize) -> String {
+        let (noun, verb) = if count == 1 {
+            ("seam", "is")
+        } else {
+            ("seams", "are")
+        };
         match self {
             Self::ConfiguredOff(class) => format!(
-                "{count} more matching seams are configured off for {} seams and are not \
+                "{count} more matching {noun} {verb} configured off for {} seams and not \
                  included in agent brief results",
                 class.as_str()
             ),
             Self::NotActionable(class) => format!(
-                "{count} more matching seams are {} and are not included in agent brief results",
+                "{count} more matching {noun} {verb} {} and not included in agent brief results",
                 class.as_str()
             ),
         }
@@ -1876,19 +1881,61 @@ weakly_gripped = "off"
     }
 
     #[test]
+    fn changed_owner_seam_routed_through_a_changed_related_test_does_not_fill_a_slot() {
+        // A changed-owner seam whose related test's exact line also
+        // changed sorts at the related-test priority, where unevaluated
+        // caller seams can outrank it; it must not count toward the slots.
+        let mut seams = (10..19)
+            .map(|line| weak_at("src/pricing.rs", line, "pricing::discounted_total"))
+            .collect::<Vec<_>>();
+        let mut owner_seam = weak_at("src/pricing.rs", 40, "pricing::taxed_total");
+        related_test(
+            &mut owner_seam,
+            "tests/sample.rs",
+            7,
+            RelationConfidence::High,
+        );
+        seams.push(owner_seam);
+        let mut changed_lines = (10..19)
+            .map(|line| AgentBriefLine::new("src/pricing.rs", line))
+            .collect::<Vec<_>>();
+        changed_lines.push(AgentBriefLine::new("src/pricing.rs", 41));
+        changed_lines.push(AgentBriefLine::new("tests/sample.rs", 7));
+        let working_set =
+            AgentBriefResolvedWorkingSet::base("main", changed_lines).with_changed_owners(vec![
+                AgentBriefChangedOwner::new("src/pricing.rs", 41, "pricing::taxed_total"),
+            ]);
+        let config = RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        let scope = AgentBriefChangedScope::new(&working_set);
+
+        assert!(seams.iter().all(|entry| scope.contains(&entry.seam)));
+        let owner_pick = select(&seams, &working_set, 10)
+            .top_seams
+            .into_iter()
+            .find(|entry| entry.seam.seam.owner() == "pricing::taxed_total")
+            .map(|entry| entry.why_now.reason);
+        assert_eq!(
+            owner_pick,
+            Some(AgentBriefWhyNowReason::ChangedTestForRelatedSeam),
+            "fixture must route the owner seam through its changed related test"
+        );
+        assert!(!scope.fills_selection(&seams, 10, policy));
+        assert!(scope.fills_selection(&seams, 9, policy));
+    }
+
+    #[test]
     fn hidden_matching_seams_past_the_named_bound_are_counted_per_reason() -> Result<(), String> {
         let mut seams = (1..=12)
             .map(|line| weak_at("src/pricing.rs", line, "pricing::discounted_total"))
             .collect::<Vec<_>>();
-        seams.extend((13..=14).map(|line| {
-            classified(
-                "src/pricing.rs",
-                line,
-                "pricing::discounted_total",
-                "flag",
-                SeamGripClass::StronglyGripped,
-            )
-        }));
+        seams.push(classified(
+            "src/pricing.rs",
+            13,
+            "pricing::discounted_total",
+            "flag",
+            SeamGripClass::StronglyGripped,
+        ));
         let working_set =
             AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/pricing.rs")]);
         let config = tests_only_parse(
@@ -1910,9 +1957,9 @@ weakly_gripped = "off"
         assert_eq!(
             selection.warnings[AGENT_BRIEF_MAX_NAMED_OMISSIONS..],
             [
-                "2 more matching seams are configured off for weakly_gripped seams and are not \
+                "2 more matching seams are configured off for weakly_gripped seams and not \
                  included in agent brief results",
-                "2 more matching seams are configured off for strongly_gripped seams and are not \
+                "1 more matching seam is configured off for strongly_gripped seams and not \
                  included in agent brief results",
             ]
         );

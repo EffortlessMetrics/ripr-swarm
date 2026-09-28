@@ -1,11 +1,7 @@
 use super::*;
-use crate::analysis::facts::WorkspaceRootAuthority;
 use crate::analysis::value_resolution::{FileValueScan, ValueEnvFacts};
 use std::cell::{OnceCell, RefCell};
 use std::sync::{Arc, OnceLock};
-
-/// Test file -> seam file -> (test source digest, authority verdict).
-type TargetAuthorityCache = RefCell<BTreeMap<PathBuf, BTreeMap<PathBuf, (String, bool)>>>;
 
 /// Precomputed per-test facts for repo seam evidence consumers. This
 /// avoids repeatedly tokenizing the same test assertions and import
@@ -30,9 +26,6 @@ pub(crate) struct CompactGripContext<'a> {
     /// Per test file: evidence-role function indices grouped by start line,
     /// built on first use. See [`Self::unique_evidence_function`].
     evidence_functions_by_line_cache: RefCell<BTreeMap<&'a Path, BTreeMap<usize, Vec<usize>>>>,
-    /// Workspace-authority verdicts per (test file, seam file) for this
-    /// evidence pass. See [`Self::validates_target_once_per_pass`].
-    target_authority_cache: TargetAuthorityCache,
 }
 
 /// Candidate generation only: the existing `contains` and `same_module`
@@ -363,51 +356,7 @@ impl<'a> CompactGripContext<'a> {
             same_module_cache: RefCell::new(BTreeMap::new()),
             source_digest_cache: RefCell::new(BTreeMap::new()),
             evidence_functions_by_line_cache: RefCell::new(BTreeMap::new()),
-            target_authority_cache: RefCell::new(BTreeMap::new()),
         })
-    }
-
-    /// Whether the workspace authority accepts `test_file` as a target for a
-    /// seam in `seam_file`, checked once per (test file, seam file) for the
-    /// lifetime of this context, which is one evidence pass (#4292).
-    ///
-    /// `validates_target_digest` re-reads filesystem metadata for both files
-    /// and every ancestor `Cargo.toml` on each call. Called per seam x
-    /// related-test pair, that stat walk dominated `review-comments` on large
-    /// diffs. Freshness is therefore checked at pass granularity: a file that
-    /// changes after its first check in a pass is caught by the next pass, not
-    /// mid-pass. The per-call check was already racy against the later read,
-    /// so no in-pass guarantee is lost. The first check in each pass still
-    /// runs the full authority, so stale, missing, wrong-root and
-    /// package-mismatch targets are rejected as before.
-    pub(in crate::analysis::test_grip_evidence) fn validates_target_once_per_pass(
-        &self,
-        authority: &WorkspaceRootAuthority,
-        test_file: &Path,
-        seam_file: &Path,
-        test_source_digest: &str,
-    ) -> bool {
-        // The verdict is reused only for the same test-source digest, so a
-        // caller holding a different digest still gets a full check.
-        if let Some((digest, valid)) = self
-            .target_authority_cache
-            .borrow()
-            .get(test_file)
-            .and_then(|by_seam| by_seam.get(seam_file))
-            && digest == test_source_digest
-        {
-            return *valid;
-        }
-        let valid = authority.validates_target_digest(test_file, seam_file, test_source_digest);
-        self.target_authority_cache
-            .borrow_mut()
-            .entry(test_file.to_path_buf())
-            .or_default()
-            .insert(
-                seam_file.to_path_buf(),
-                (test_source_digest.to_string(), valid),
-            );
-        valid
     }
 
     /// The single evidence-role function in `path` named `name` that starts

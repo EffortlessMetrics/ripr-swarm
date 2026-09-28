@@ -1545,11 +1545,22 @@ fn review_comments_with_diff_loader_at(
         policy,
     );
     if scoped_inventory.unevaluated_seams > 0 {
+        // The cap count covers only evaluated seams, so it is a floor.
+        for warning in &mut selection.warnings {
+            if warning.ends_with("omitted by the brief cap") {
+                *warning = format!("at least {warning}");
+            }
+        }
+        let skipped = scoped_inventory.unevaluated_seams;
+        let (noun, verb) = if skipped == 1 {
+            ("seam", "was")
+        } else {
+            ("seams", "were")
+        };
         selection.warnings.push(format!(
-            "{} scoped seams outside changed lines and changed owner functions were not \
-             evaluated: seams on changed lines and in changed owners already filled all {} \
+            "{skipped} scoped {noun} outside changed lines and changed owner functions {verb} \
+             not evaluated: seams on changed lines and in changed owners already filled all {} \
              review slots",
-            scoped_inventory.unevaluated_seams,
             output::review_comments::DEFAULT_REVIEW_MAX_SUMMARY_ITEMS
         ));
     }
@@ -6672,7 +6683,7 @@ language = "rust"
         assert!(rendered_md.contains("scoped production files: 2/3"));
         assert!(rendered_md.contains("review_comments_diff_scope_only"));
         assert!(
-            !rendered_json.contains("were not evaluated"),
+            !rendered_json.contains("not evaluated") && scope.get("unevaluated_seams").is_none(),
             "a scope the changed lines cannot fill is evaluated in full"
         );
 
@@ -6740,18 +6751,31 @@ language = "rust"
             !rendered_json.contains("untouched"),
             "the unchanged function's seam must not be evaluated or rendered"
         );
-        let warnings = value["warnings"]
+        assert_eq!(value["analysis_scope"]["unevaluated_seams"], 1);
+        let messages = value["warnings"]
             .as_array()
-            .ok_or("warnings must be an array")?;
-        let skipped = warnings
+            .ok_or("warnings must be an array")?
             .iter()
             .filter_map(|warning| warning["message"].as_str())
-            .find(|message| message.contains("were not evaluated"))
-            .ok_or_else(|| format!("missing staged-scope warning in {warnings:?}"))?;
+            .collect::<Vec<_>>();
         assert!(
-            skipped.starts_with("1 scoped seams outside changed lines"),
-            "one seam in `untouched` was skipped: {skipped}"
+            messages.contains(
+                &"1 scoped seam outside changed lines and changed owner functions was not \
+                  evaluated: seams on changed lines and in changed owners already filled all 10 \
+                  review slots"
+            ),
+            "missing staged-scope warning in {messages:?}"
         );
+        assert!(
+            messages
+                .iter()
+                .filter(|message| message.contains("omitted by the brief cap"))
+                .all(|message| message.starts_with("at least ")),
+            "a cap count over evaluated seams only is a floor: {messages:?}"
+        );
+        let rendered_md = std::fs::read_to_string(out.with_extension("md"))
+            .map_err(|err| format!("read review comments Markdown: {err}"))?;
+        assert!(rendered_md.contains("- scoped seams not evaluated: 1"));
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
         Ok(())

@@ -1333,6 +1333,7 @@ fn classify_scoped_seams(
     stages: Option<&DiffScopeEvidenceStages<'_>>,
 ) -> Result<(Vec<ClassifiedSeam>, usize), String> {
     let evidence_started = Instant::now();
+    let pass = test_grip_evidence::EvidencePass::new(index);
     let mut evidence = Vec::new();
     let mut evaluated = vec![false; seams.len()];
     if let Some(stages) = stages {
@@ -1354,7 +1355,7 @@ fn classify_scoped_seams(
             ),
             Duration::ZERO,
         );
-        evidence = test_grip_evidence::evidence_for_seams(&first, index);
+        evidence = pass.evidence_for(&first);
         cancellation::checkpoint()?;
         let classified_first = seam_classification::classify_seams(&first, &evidence);
         if (stages.sufficient)(&classified_first) {
@@ -1380,7 +1381,7 @@ fn classify_scoped_seams(
     // Evidence is per seam and pairs by id, so first-stage evidence
     // joins the rest without changing any seam's classification or the
     // original seam order.
-    evidence.extend(test_grip_evidence::evidence_for_seams(&rest, index));
+    evidence.extend(pass.evidence_for(&rest));
     trace_latency_phase(
         "evidence_for_seams",
         "review_scope_ok",
@@ -2087,10 +2088,19 @@ marker = "libtest_mimic::Trial"
         Ok(index)
     }
 
-    fn class_by_id(classified: &[ClassifiedSeam]) -> Vec<(String, &'static str)> {
+    /// Seam id, class and the full evidence payload, so a stage that
+    /// changed any rendered evidence (related tests, stages, values)
+    /// shows up, not only a changed class.
+    fn class_by_id(classified: &[ClassifiedSeam]) -> Vec<(String, &'static str, String)> {
         classified
             .iter()
-            .map(|entry| (entry.seam.id().as_str().to_string(), entry.class.as_str()))
+            .map(|entry| {
+                (
+                    entry.seam.id().as_str().to_string(),
+                    entry.class.as_str(),
+                    serde_json::to_string(&entry.evidence).unwrap_or_default(),
+                )
+            })
             .collect()
     }
 
@@ -2126,8 +2136,12 @@ fn taxed_total_runs() {
         let first_ids = unstaged
             .iter()
             .filter(|entry| first(&entry.seam))
-            .map(|entry| (entry.seam.id().as_str().to_string(), entry.class.as_str()))
+            .cloned()
             .collect::<Vec<_>>();
+        let first_ids = class_by_id(&first_ids);
+        if first_ids.iter().any(|(_, _, evidence)| evidence.is_empty()) {
+            return Err("evidence must serialize".to_string());
+        }
         if unstaged_skipped != 0 || first_ids.is_empty() || first_ids.len() == unstaged.len() {
             return Err(format!(
                 "fixture must split into both stages: {} of {} seams first, {unstaged_skipped} skipped",
