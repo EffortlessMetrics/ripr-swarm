@@ -13,6 +13,7 @@
 
 use crate::config::{CONFIG_FILE_NAME, RiprConfig, load_for_root};
 use crate::domain::LanguageId;
+use crate::output::path::human_path;
 use serde::Serialize;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -590,7 +591,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
         report.add_check(
             "root_directory",
             DoctorStatus::Pass,
-            Some(format!("root directory exists at {}", root.display())),
+            Some(format!("root directory exists at {}", human_path(root))),
         );
     } else {
         report.add_check(
@@ -598,7 +599,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
             DoctorStatus::Fail,
             Some(format!(
                 "root directory does not exist at {}",
-                root.display()
+                human_path(root)
             )),
         );
     }
@@ -610,21 +611,21 @@ fn evaluate_doctor_core_with_probe_for_profile(
             DoctorStatus::Pass,
             Some(format!(
                 "Cargo.toml found at {}",
-                root.join("Cargo.toml").display()
+                human_path(&root.join("Cargo.toml"))
             )),
         );
     } else {
         report.add_check(
             "cargo_toml",
             DoctorStatus::Fail,
-            Some(format!("no Cargo.toml found at {}", root.display())),
+            Some(format!("no Cargo.toml found at {}", human_path(root))),
         );
     }
     match is_inside_work_tree(root) {
         Some(true) => report.add_check(
             "git_repository",
             DoctorStatus::Pass,
-            Some(format!("inside a Git work tree at {}", root.display())),
+            Some(format!("inside a Git work tree at {}", human_path(root))),
         ),
         Some(false) => report.add_check(
             "git_repository",
@@ -633,7 +634,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
                 "not inside a Git work tree at {}; the diff-scoped commands read committed \
                  history and cannot run here. For a repository-free scan, run `ripr check --root \
                  {} --format repo-exposure-md`",
-                root.display(),
+                human_path(root),
                 root.display()
             )),
         ),
@@ -643,7 +644,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
             Some(format!(
                 "could not determine whether {} is inside a Git work tree; the git tool check \
                  below carries the reason",
-                root.display()
+                human_path(root)
             )),
         ),
     }
@@ -652,7 +653,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
             "config",
             DoctorStatus::Pass,
             Some(match config.source_path() {
-                Some(path) => format!("loaded {} at {}", CONFIG_FILE_NAME, path.display()),
+                Some(path) => format!("loaded {} at {}", CONFIG_FILE_NAME, human_path(path)),
                 None => format!("{CONFIG_FILE_NAME} not found; using built-in defaults"),
             }),
         ),
