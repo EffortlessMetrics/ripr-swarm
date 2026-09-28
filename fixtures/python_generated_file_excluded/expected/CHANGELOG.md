@@ -107,3 +107,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_generated_file_excluded (4)
+
+Reason:
+RIPR-SPEC-0082 (#4372): the enabled preview advisory counts only changed files that survive the adapter's generated/excluded-path authority, so the generated src/schema_pb2.py is no longer presented as analyzed under preview support
+
+Command:
+`cargo xtask goldens bless python_generated_file_excluded --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
