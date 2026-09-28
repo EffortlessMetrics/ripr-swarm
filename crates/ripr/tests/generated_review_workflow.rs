@@ -2283,10 +2283,6 @@ fn jq_program_between(workflow: &str, open: &str, close: &str) -> Result<String,
     Ok(rest[..end].to_string())
 }
 
-/// Unix-only like its callers: the shell-backed tests that use this
-/// helper are `#[cfg(unix)]`, and an ungated helper is dead code (and a
-/// `-D warnings` failure) on Windows builds.
-#[cfg(unix)]
 /// The CI summary's PR review summary and Recommended next test blocks,
 /// collapsed full reports included, print commands a reader copies on
 /// another machine. When `ripr agent start` bound them to the runner's
@@ -2414,6 +2410,8 @@ fn generated_summary_prints_repository_relative_commands() -> Result<(), Box<dyn
     Ok(())
 }
 
+/// Unix-only like its callers (see `annotation_run_script`).
+#[cfg(unix)]
 fn summary_run_script(workflow: &str) -> Result<String, String> {
     let marker = "- name: Add RIPR advisory summary";
     let start = workflow.find(marker).ok_or("missing summary step")?;
@@ -2435,6 +2433,10 @@ fn summary_run_script(workflow: &str) -> Result<String, String> {
         .join("\n"))
 }
 
+/// Unix-only like its callers: the shell-backed tests that use this
+/// helper are `#[cfg(unix)]`, and an ungated helper is dead code (and a
+/// `-D warnings` failure) on Windows builds.
+#[cfg(unix)]
 fn annotation_run_script(workflow: &str) -> Result<String, String> {
     let marker = "- name: Emit RIPR PR guidance annotations";
     let start = workflow.find(marker).ok_or("missing annotation step")?;
