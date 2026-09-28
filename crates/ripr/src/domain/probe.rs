@@ -100,6 +100,8 @@ impl StopReason {
     /// Plain-English gloss for human output (#4323). The snake_case token
     /// stays the machine identity; this says why the static path stopped. Each
     /// gloss names a limit of ripr's model, never a coverage or runtime claim.
+    /// Reasons produced by a lexical heuristic (`FixtureOpaque`,
+    /// `AsyncBoundaryOpaque`) say "mentions ... may", not a confirmed fact.
     pub fn describe(&self) -> &'static str {
         match self {
             StopReason::MaxDepthReached => {
@@ -115,15 +117,15 @@ impl StopReason {
                 "the changed expression contains a macro call whose expansion ripr does not see"
             }
             StopReason::FixtureOpaque => {
-                "a related test builds its input through a fixture, builder, or generator \
-                 whose values ripr does not evaluate"
+                "a related test mentions a fixture, builder, or generator, so its inputs may \
+                 come from values ripr does not evaluate"
             }
             StopReason::FeatureUnknown => {
                 "the code depends on a Cargo feature or cfg ripr could not resolve"
             }
             StopReason::AsyncBoundaryOpaque => {
-                "the changed expression crosses an async or spawned-task boundary ripr does \
-                 not follow"
+                "the changed expression mentions async, spawn, or await, so the path may cross \
+                 a task boundary ripr does not follow"
             }
             StopReason::NoChangedRustLine => {
                 "ripr could not place the changed line inside a Rust function it analyzes"

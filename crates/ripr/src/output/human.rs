@@ -2272,6 +2272,30 @@ mod tests {
         );
     }
 
+    /// #4323 review: guidance just under the budget must count the label, so
+    /// the rendered line never runs past 180 characters.
+    #[test]
+    fn digest_next_step_line_counts_its_label_against_the_budget() {
+        let mut finding = sample_finding();
+        let guidance = format!("{} remedy.", "word ".repeat(34));
+        assert!(
+            (170..=180).contains(&guidance.chars().count()),
+            "{guidance}"
+        );
+        finding.recommended_next_step = Some(guidance);
+
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+        );
+
+        assert!(
+            digest.lines().all(|line| line.chars().count() <= 180),
+            "no digest line exceeds the budget; got:\n{digest}"
+        );
+        assert!(digest.contains("remedy."), "{digest}");
+    }
+
     /// #4323: the default no-path guidance is ~330 characters and ends with
     /// the remedy. The digest used to cut it at 180 characters, so the
     /// imperative ("add a co-located test ...") never rendered.

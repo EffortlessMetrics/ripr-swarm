@@ -117,11 +117,12 @@ pub(crate) fn render_finding_digest_with_config(finding: &Finding, config: &Ripr
         // ends with the imperative, so a hard cut deletes the remedy. Text
         // that fits the line budget keeps its single line.
         let next_step = reconcile_next_step(finding);
+        const NEXT_STEP_PREFIX: &str = "  Next step: ";
         let collapsed = next_step.split_whitespace().collect::<Vec<_>>().join(" ");
-        if collapsed.chars().count() <= LINE_BUDGET {
-            out.push_str(&format!("  Next step: {collapsed}\n"));
+        if NEXT_STEP_PREFIX.chars().count() + collapsed.chars().count() <= LINE_BUDGET {
+            out.push_str(&format!("{NEXT_STEP_PREFIX}{collapsed}\n"));
         } else {
-            out.push_str(&wrap_human_prose(&collapsed, "  Next step: ", "    "));
+            out.push_str(&wrap_human_prose(&collapsed, NEXT_STEP_PREFIX, "    "));
             out.push('\n');
         }
     }

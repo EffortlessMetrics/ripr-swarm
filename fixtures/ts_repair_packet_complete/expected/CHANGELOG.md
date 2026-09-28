@@ -401,3 +401,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_repair_packet_complete (7)
+
+Reason:
+RIPR-SPEC-0122: Next step counts its label against the line budget and wraps instead of overflowing; fixture_opaque gloss states the heuristic (#4323 review)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_complete --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
