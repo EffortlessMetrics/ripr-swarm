@@ -12274,13 +12274,14 @@ Field contract:
     attempt manifest's `last_after_refusal`: the final error followed by the
     cause and recovery the after phase printed, such as the changed analysis
     inputs, bounded to 4096 bytes).
-- `test_run` - `null`, or `{status, test_file, next_step}` when a repair
+- `test_run` - `null`, or `{status, test_changed, next_step}` when a repair
   receipt issued for an attempt records `verification.status`
   `verification_not_run`. `status` is `"not_recorded"`: the repair receipt
   holds no test run. A trust-bound `--phase verify` run writes a separate
-  verification receipt that this field does not read. `test_file` is the
-  receipt's `test_changed` or `null`; `next_step` says to run the focused test with the project's test command and
-  keep it only if it passes. `status: "complete"` never means the test passed:
+  verification receipt that this field does not read. `test_changed` is the
+  receipt's `test_changed` (a path or test name, as `--test` gave it) or
+  `null`; `next_step` says to run the focused test with the project's test
+  command and keep it only if it passes. `status: "complete"` never means the test passed:
   static movement `improved` survives a failing test, so a consumer that needs
   a test result runs the test itself. The Markdown form prints the same as a
   `Test run: none recorded.` line under `Seam:`.

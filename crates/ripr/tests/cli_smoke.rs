@@ -13902,6 +13902,41 @@ fn check_base_names_diff_files_with_uncommitted_edits() -> Result<(), Box<dyn st
     Ok(())
 }
 
+/// A source file name git would C-quote (here, one with a double quote) is
+/// still recognized by its extension and named in the edited-diff warning.
+#[cfg(unix)]
+#[test]
+fn check_base_names_edited_diff_files_git_would_quote() -> Result<(), Box<dyn std::error::Error>> {
+    let root =
+        std::env::temp_dir().join(format!("ripr-0112-quoted-diff-file-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src"))?;
+    run_git(&root, &["init", "-q"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"quoted-diff-file\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "mod quoted;\n")?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-q", "-m", "base"])?;
+    let quoted = root.join("src/quo\"ted.rs");
+    std::fs::write(&quoted, "pub fn q(n: u32) -> bool { n > 1 }\n")?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-q", "-m", "change"])?;
+    std::fs::write(&quoted, "// edited\npub fn q(n: u32) -> bool { n > 1 }\n")?;
+    let root_str = root.to_string_lossy().into_owned();
+    let output = run_ripr(&["check", "--root", &root_str, "--base", "HEAD~1", "--json"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("`src/quo\"ted.rs` has uncommitted edits"),
+        "{stderr}"
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// RIPR-SPEC-0112 (default base): bare `ripr check` resolves the default base
 /// and diffs committed history exactly like an explicit `--base`, so an
 /// uncommitted tracked edit is excluded there too and must be disclosed. This
@@ -15055,7 +15090,7 @@ fn agent_repair_after_a_failing_test_says_the_test_was_not_run()
     let document: serde_json::Value = serde_json::from_slice(&after.stdout)?;
     let test_run = &document["agent_status"]["test_run"];
     assert_eq!(test_run["status"], "not_recorded", "{document:#}");
-    assert_eq!(test_run["test_file"], "tests/pricing.rs", "{document:#}");
+    assert_eq!(test_run["test_changed"], "tests/pricing.rs", "{document:#}");
     assert!(
         test_run["next_step"]
             .as_str()
@@ -15073,7 +15108,7 @@ fn agent_repair_after_a_failing_test_says_the_test_was_not_run()
     assert_success(&status);
     let human = String::from_utf8_lossy(&status.stdout);
     assert!(
-        human.contains("Test run: none recorded. The repair receipt compares static evidence only and records no run of the focused test in `tests/pricing.rs`"),
+        human.contains("Test run: none recorded. The repair receipt compares static evidence only and records no run of the focused test (`tests/pricing.rs`)"),
         "{human}"
     );
 

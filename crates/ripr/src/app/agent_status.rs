@@ -1386,7 +1386,9 @@ fn test_not_run_next_step(reading: &AgentReceiptReading) -> String {
     let target = reading
         .test_changed
         .as_deref()
-        .map(|file| format!("the focused test in `{file}`"))
+        // The receipt's `test_changed` is whatever `--test` named: a path or a
+        // test identifier, so it is quoted, not presented as a file.
+        .map(|test| format!("the focused test (`{test}`)"))
         .unwrap_or_else(|| "the focused test".to_string());
     format!(
         "The repair receipt compares static evidence only and records no run of {target}; run it with the project's test command and keep it only if it passes. A failing test can still show movement `improved`."
@@ -1396,7 +1398,7 @@ fn test_not_run_next_step(reading: &AgentReceiptReading) -> String {
 fn test_not_run_json(reading: &AgentReceiptReading) -> Value {
     serde_json::json!({
         "status": "not_recorded",
-        "test_file": reading.test_changed,
+        "test_changed": reading.test_changed,
         "next_step": test_not_run_next_step(reading)
     })
 }

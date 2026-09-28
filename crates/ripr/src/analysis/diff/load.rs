@@ -409,25 +409,30 @@ pub fn working_tree_has_tracked_changes(root: &Path) -> bool {
 /// repository-relative, like the analyzed diff's. Fail-closed on disclosure:
 /// any git failure returns no paths.
 pub fn committed_diff_files_with_uncommitted_edits(root: &Path, base: &str) -> Vec<String> {
-    let names = |args: &[&str]| -> Option<BTreeSet<String>> {
-        crate::git::run_git(root, args)
+    // NUL-delimited records through the shared decoder, so a name git would
+    // C-quote (a quote, backslash or newline in it) keeps its real extension.
+    let names = |args: &[&str]| -> Option<BTreeSet<PathBuf>> {
+        let output = crate::git::run_git_output_with_deadline(root, args, None).ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        super::records::parse_git_path_records(&output.stdout)
             .ok()
-            .map(|out| out.lines().map(str::to_string).collect())
+            .map(|paths| paths.into_iter().collect())
     };
     let range = format!("{base}...HEAD");
     // Whole-repository scope and repository-relative paths match
-    // `load_diff_with_effective_base`; unquoted paths keep non-ASCII names
-    // readable in the warning.
+    // `load_diff_with_effective_base`.
     let (Some(changed), Some(edited)) = (
-        names(&["-c", "core.quotePath=false", "diff", "--name-only", &range]),
-        names(&["-c", "core.quotePath=false", "diff", "--name-only", "HEAD"]),
+        names(&["diff", "--name-only", "-z", &range]),
+        names(&["diff", "--name-only", "-z", "HEAD"]),
     ) else {
         return Vec::new();
     };
     changed
         .intersection(&edited)
-        .filter(|path| crate::analysis::language::route(Path::new(path)).is_some())
-        .cloned()
+        .filter(|path| crate::analysis::language::route(path).is_some())
+        .map(|path| path.to_string_lossy().into_owned())
         .collect()
 }
 
