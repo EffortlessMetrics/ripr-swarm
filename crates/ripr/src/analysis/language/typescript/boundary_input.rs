@@ -206,6 +206,16 @@ pub(super) fn comparison_has_whole_sides(line: &str, parameter: &str, operand: &
         return false;
     }
     let tokens = line_tokens(line);
+    // A second comparison on the line may be the one the diff changed, and
+    // the discriminator extraction cannot tell which one it paired.
+    if tokens
+        .iter()
+        .filter(|token| COMPARISONS.contains(*token))
+        .count()
+        != 1
+    {
+        return false;
+    }
     let mut found = 0usize;
     for (at, token) in tokens.iter().enumerate() {
         if !COMPARISONS.contains(token) || at == 0 {

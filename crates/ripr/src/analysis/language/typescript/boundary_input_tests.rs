@@ -460,6 +460,9 @@ fn whole_side_comparisons_accept_common_line_shapes() {
         ("  if (amount >= LIMIT", false),
         ("  amount >= LIMIT ? 1 : 0;", false),
         ("  return amount >= LIMIT", false),
+        // Another comparison on the line may be the changed one.
+        ("  if (amount >= LIMIT || amount >= CAP) {", false),
+        ("  if (amount >= LIMIT && total > 0) {", false),
         // Literal and comment spans are not tokenized as code.
         (
             "  msg = amount > CAP ? \"over: amount >= LIMIT, deny\" : ok;",
