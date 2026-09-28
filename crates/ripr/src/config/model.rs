@@ -518,7 +518,9 @@ pub struct PerlConfig {
     pub producer: Option<String>,
     /// Override path to the Perl facts exporter executable. The canonical
     /// binary is `perl-ripr-facts`; `perllsp` and `perl-lsp` are
-    /// compatibility wrappers. When `None`, uses `perllsp` from PATH.
+    /// compatibility wrappers. When `None`, the producer's default name is
+    /// resolved on PATH. A configured value is spawned only when the user
+    /// sets `RIPR_ALLOW_REPO_PERL_EXECUTABLE=1`.
     pub executable: Option<PathBuf>,
     /// Timeout in milliseconds for the producer invocation. Default: 30000.
     pub timeout_ms: u64,
