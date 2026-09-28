@@ -1863,9 +1863,7 @@ fn gap_record_diagnostic_message(record: &GapRecord) -> String {
         .and_then(|route| non_empty(&route.route_kind))
         .unwrap_or("InspectGap");
     let mut message = if route == "InspectGap" {
-        format!(
-            "ripr gap: {kind}; inspect the gap with the 'Inspect gap: copy context' code action"
-        )
+        format!("ripr gap: {kind}; Hover the highlighted code to inspect the static evidence.")
     } else {
         format!("ripr gap: {kind}; repair route: {route}")
     };
@@ -2354,7 +2352,9 @@ fn lsp_message(finding: &Finding) -> String {
             crate::domain::ExposureClass::ReachableUnrevealed => {
                 "A test reaches the change without observing its effect"
             }
-            crate::domain::ExposureClass::NoStaticPath => "No test path to this change was found",
+            crate::domain::ExposureClass::NoStaticPath => {
+                "No static test path to this change was found"
+            }
             crate::domain::ExposureClass::InfectionUnknown => {
                 "The changed value could not be traced"
             }
@@ -2365,9 +2365,7 @@ fn lsp_message(finding: &Finding) -> String {
                 "Static analysis could not classify this change"
             }
         };
-        format!(
-            "{explanation}. Use the 'Inspect finding: copy context' code action for the evidence and next step."
-        )
+        format!("{explanation}. Hover the highlighted code to inspect the static evidence.")
     } else {
         reconciled
     };
@@ -2780,7 +2778,8 @@ mod seam_diagnostic_tests {
                 diagnostic.severity
             ));
         }
-        if !diagnostic.message.contains("Inspect gap: copy context")
+        if !diagnostic.message.contains("Hover the highlighted code")
+            || diagnostic.message.contains("code action")
             || diagnostic.message.contains("repair route: InspectGap")
             || !diagnostic.message.contains("preview advisory evidence")
         {
@@ -2788,6 +2787,49 @@ mod seam_diagnostic_tests {
                 "unexpected preview gap diagnostic message: {}",
                 diagnostic.message
             ));
+        }
+        let hover = crate::lsp::hover::diagnostic_hover_response(&diagnostic);
+        let tower_lsp_server::ls_types::HoverContents::Markup(content) = hover.contents else {
+            return Err("expected rendered gap hover".to_string());
+        };
+        assert!(content.value.contains(&record.canonical_gap_id));
+        assert!(content.value.contains("inspect_only"));
+        assert_eq!(hover.range, Some(diagnostic.range));
+        let params = tower_lsp_server::ls_types::CodeActionParams {
+            text_document: tower_lsp_server::ls_types::TextDocumentIdentifier {
+                uri: "file:///repo/src/pricing.rs"
+                    .parse::<Uri>()
+                    .map_err(|error| error.to_string())?,
+            },
+            range: diagnostic.range,
+            context: tower_lsp_server::ls_types::CodeActionContext {
+                diagnostics: vec![diagnostic],
+                only: None,
+                trigger_kind: None,
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+        for enhanced in [false, true] {
+            let mut initialize = tower_lsp_server::ls_types::InitializeParams::default();
+            if enhanced {
+                initialize.capabilities.experimental = Some(serde_json::json!({
+                    "riprEditor": {"version": "0.11.0", "commands": ["ripr.copyContext"]}
+                }));
+            }
+            let profile = crate::lsp::client_features::ClientFeatureProfile::from_initialize_params(
+                &initialize,
+            );
+            assert_eq!(
+                profile.supports_client_command("ripr.copyContext"),
+                enhanced
+            );
+            let actions = crate::lsp::actions::code_action_response(&params, None, &profile);
+            assert_eq!(
+                actions.len(),
+                1,
+                "route-less gap has only the refresh action"
+            );
         }
         Ok(())
     }
@@ -4463,7 +4505,7 @@ mod lsp_next_step_parity_tests {
     }
 
     #[test]
-    fn unwitnessed_finding_fallback_explains_class_and_inspection() {
+    fn unwitnessed_finding_fallback_explains_class_and_inspection() -> Result<(), String> {
         let mut finding = complete_ts_finding();
         finding.class = crate::domain::ExposureClass::NoStaticPath;
         finding.recommended_next_step = None;
@@ -4471,11 +4513,44 @@ mod lsp_next_step_parity_tests {
         finding.language_status = None;
         finding.activation.missing_discriminators.clear();
         finding.related_tests.clear();
-        let message = lsp_message(&finding);
+        let diagnostic = super::diagnostic_for_finding(std::path::Path::new("/repo"), &finding);
         assert_eq!(
-            message,
-            "No test path to this change was found. Use the 'Inspect finding: copy context' code action for the evidence and next step."
+            diagnostic.message,
+            "No static test path to this change was found. Hover the highlighted code to inspect the static evidence."
         );
+        let hover = crate::lsp::hover::finding_hover_response(&finding, &diagnostic);
+        let tower_lsp_server::ls_types::HoverContents::Markup(content) = hover.contents else {
+            return Err("expected rendered finding hover".to_string());
+        };
+        assert!(content.value.contains(&finding.id));
+        assert!(content.value.contains("no_static_path"));
+        assert_eq!(hover.range, Some(diagnostic.range));
+        let params = tower_lsp_server::ls_types::CodeActionParams {
+            text_document: tower_lsp_server::ls_types::TextDocumentIdentifier {
+                uri: "file:///repo/src/discount.ts"
+                    .parse::<tower_lsp_server::ls_types::Uri>()
+                    .map_err(|error| error.to_string())?,
+            },
+            range: diagnostic.range,
+            context: tower_lsp_server::ls_types::CodeActionContext {
+                diagnostics: vec![diagnostic],
+                only: None,
+                trigger_kind: None,
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+        let actions = crate::lsp::actions::code_action_response(
+            &params,
+            None,
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
+        assert_eq!(
+            actions.len(),
+            1,
+            "standard clients cannot run the copy-context action"
+        );
+        Ok(())
     }
 
     /// PARITY: complete packet → LSP diagnostic message must NOT contain the
