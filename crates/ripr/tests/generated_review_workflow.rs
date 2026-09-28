@@ -884,7 +884,7 @@ fn generated_comment_plan_withholds_write_permission_for_dependabot() -> Result<
             return Ok(());
         }
     }
-    let plan_for = |actor: Option<&str>| -> Result<serde_json::Value, Box<dyn Error>> {
+    let plan_for = |overrides: &[(&str, &str)]| -> Result<serde_json::Value, Box<dyn Error>> {
         let base = replay::unique_temp_dir("dependabot-plan")?;
         let root = base.join("repo");
         replay::write_pr_fixture(&root)?;
@@ -905,11 +905,9 @@ fn generated_comment_plan_withholds_write_permission_for_dependabot() -> Result<
             .filter(|step| wanted.contains(&step.name.as_str()))
             .collect::<Vec<_>>();
         assert_eq!(steps.len(), wanted.len(), "template step names changed");
-        let mut overrides = vec![("RIPR_COMMENT_MODE", "inline")];
-        if let Some(actor) = actor {
-            overrides.push(("RIPR_ACTOR", actor));
-        }
-        let runs = replay::run_workflow_with_env(&root, &base, &steps, &overrides)?;
+        let mut env = vec![("RIPR_COMMENT_MODE", "inline")];
+        env.extend_from_slice(overrides);
+        let runs = replay::run_workflow_with_env(&root, &base, &steps, &env)?;
         assert_eq!(runs.len(), wanted.len(), "a step was skipped");
         for run in &runs {
             assert_eq!(
@@ -927,29 +925,39 @@ fn generated_comment_plan_withholds_write_permission_for_dependabot() -> Result<
         Ok(plan)
     };
 
-    let control = plan_for(None)?;
+    let control = plan_for(&[])?;
     assert_eq!(
         control.pointer("/summary/safe_to_publish"),
         Some(&serde_json::Value::Bool(true)),
         "control: a same-repo run by a user must stay publishable: {control}"
     );
 
-    let dependabot = plan_for(Some("dependabot[bot]"))?;
-    assert_eq!(
-        dependabot.pointer("/summary/safe_to_publish"),
-        Some(&serde_json::Value::Bool(false)),
-        "a Dependabot run has a read-only token: {dependabot}"
-    );
-    let reasons = dependabot["blocked"]
-        .as_array()
-        .ok_or("plan has no blocked array")?
-        .iter()
-        .filter_map(|blocked| blocked["blocked_reason"].as_str())
-        .collect::<Vec<_>>();
-    assert!(
-        reasons.contains(&"missing_write_permission"),
-        "blocked reasons: {reasons:?}"
-    );
+    // Dependabot as the event actor, and a maintainer reopening a
+    // Dependabot-authored PR (the actor is the maintainer).
+    for (case, overrides) in [
+        ("dependabot actor", [("RIPR_ACTOR", "dependabot[bot]")]),
+        (
+            "dependabot-authored PR",
+            [("RIPR_PR_AUTHOR", "dependabot[bot]")],
+        ),
+    ] {
+        let plan = plan_for(&overrides)?;
+        assert_eq!(
+            plan.pointer("/summary/safe_to_publish"),
+            Some(&serde_json::Value::Bool(false)),
+            "{case}: the run has a read-only token: {plan}"
+        );
+        let reasons = plan["blocked"]
+            .as_array()
+            .ok_or("plan has no blocked array")?
+            .iter()
+            .filter_map(|blocked| blocked["blocked_reason"].as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            reasons.contains(&"missing_write_permission"),
+            "{case}: blocked reasons: {reasons:?}"
+        );
+    }
     Ok(())
 }
 
@@ -1230,7 +1238,7 @@ fn far_above_threshold_discounts() {
             "github.event.pull_request.head.repo.full_name" => "ripr-test/pricing",
             "github.event.pull_request.head.sha" => head_sha,
             "github.token" => "replay-token-unused",
-            "github.actor" => "ripr-test-user",
+            "github.actor" | "github.event.pull_request.user.login" => "ripr-test-user",
             "vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only'" => "true",
             _ => return None,
         };

@@ -607,6 +607,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RIPR_ACTOR: ${{ github.actor }}
+          RIPR_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           mkdir -p target/ripr/review
           comment_args=(
@@ -629,9 +630,11 @@ jobs:
           else
             comment_args+=(--no-token)
           fi
-          # GitHub gives Dependabot-triggered runs a read-only token whatever
-          # the permissions block says, so the plan must not claim write.
-          if [ "${RIPR_ACTOR:-}" = "dependabot[bot]" ]; then
+          # GitHub gives Dependabot runs a read-only token whatever the
+          # permissions block says, so the plan must not claim write. Check
+          # the PR author too: a maintainer who reopens a Dependabot PR is the
+          # event actor, and the run can still carry the read-only token.
+          if [ "${RIPR_ACTOR:-}" = "dependabot[bot]" ] || [ "${RIPR_PR_AUTHOR:-}" = "dependabot[bot]" ]; then
             comment_args+=(--no-write-permission)
           else
             comment_args+=(--write-permission)
