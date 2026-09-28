@@ -1,23 +1,10 @@
-use std::io::{IsTerminal, Read};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
 #[cfg(test)]
 mod contract_tests;
-
-/// One-line stderr disclosure printed before ripr blocks reading a diff from
-/// an attached terminal (`--diff -` typed at a prompt rather than piped)
-/// (#4319). The documented example is `git diff origin/main | ripr check
-/// --diff -`; running the right half alone used to look like a silent hang.
-/// The piped or captured path must stay silent and byte-identical, so the
-/// caller gates on `std::io::IsTerminal` and this stays a pure phrasing
-/// helper.
-const ATTACHED_TERMINAL_STDIN_NOTE: &str = "ripr: reading the diff from the attached terminal; paste the diff and press Ctrl+Z then Enter on Windows, or Ctrl+D on Unix, to end input";
-
-fn attached_terminal_stdin_note(stdin_is_terminal: bool) -> Option<&'static str> {
-    stdin_is_terminal.then_some(ATTACHED_TERMINAL_STDIN_NOTE)
-}
 
 /// A loaded diff together with the base ref that produced it (#3940).
 ///
@@ -51,13 +38,10 @@ pub fn load_diff_with_effective_base(
 ) -> Result<LoadedDiff, String> {
     if let Some(diff_file) = diff_file {
         if diff_file == std::path::Path::new("-") {
-            // #4319: an attached terminal blocks here until EOF with no
-            // visible sign of why; disclose the read before blocking. Under
-            // a pipe or captured stdin this stays silent, so scripted and
-            // test behavior is byte-identical.
-            if let Some(note) = attached_terminal_stdin_note(std::io::stdin().is_terminal()) {
-                eprintln!("{note}");
-            }
+            // #4319: this read blocks until EOF. On an attached terminal that
+            // looks like a silent hang, so the CLI adapters disclose the read
+            // before dispatching here; the loader itself stays silent so
+            // library callers never receive CLI-branded stderr text.
             let mut buffer = String::new();
             std::io::stdin()
                 .read_to_string(&mut buffer)
@@ -853,23 +837,6 @@ mod tests {
         );
         result.expect_err("expected diff load to fail for missing file");
         Ok(())
-    }
-
-    #[test]
-    fn attached_terminal_stdin_note_fires_only_for_a_terminal() {
-        // #4319: the note is a constant behind a pure predicate, so the exact
-        // phrasing is pinned without a tty. The `false` arm is the piped or
-        // captured-stdin path, which must stay silent (no behavioral test can
-        // attach a real terminal to cargo's captured stdio, so the terminal
-        // arm's stderr emission itself is exercised only by the manual
-        // `check --diff -` spot-check recorded in the PR).
-        assert_eq!(
-            attached_terminal_stdin_note(true),
-            Some(
-                "ripr: reading the diff from the attached terminal; paste the diff and press Ctrl+Z then Enter on Windows, or Ctrl+D on Unix, to end input"
-            )
-        );
-        assert_eq!(attached_terminal_stdin_note(false), None);
     }
 
     // RIPR-SPEC-0084: resolution tests using real temp git repos.

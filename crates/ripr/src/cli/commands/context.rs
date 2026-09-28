@@ -6,7 +6,9 @@
 
 use crate::app::{self, CheckInput, OutputFormat};
 use crate::cli::help;
-use crate::cli::parse::{base_with_diff_conflict_error, expect_value, parse_mode};
+use crate::cli::parse::{
+    base_with_diff_conflict_error, disclose_attached_terminal_stdin_read, expect_value, parse_mode,
+};
 use crate::config::{CheckInputExplicit, apply_to_check_input, load_for_root};
 use std::path::PathBuf;
 
@@ -112,6 +114,11 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     } else {
         None
     };
+    // #4319: `--diff -` reads the diff from stdin. On an attached terminal
+    // that blocks until EOF with no visible sign of why, so the cli adapter
+    // discloses the read before dispatching; the analysis loader itself
+    // stays silent for library callers.
+    disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
     let rendered = match from_artifact.as_deref() {
         Some(artifact_path) => app::collect_context_from_artifact(
             input,

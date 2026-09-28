@@ -3,6 +3,7 @@ mod mode;
 mod value;
 
 use crate::cli::command::CliCommand;
+use std::io::IsTerminal;
 
 pub(crate) use format::parse_format;
 pub(crate) use mode::parse_mode;
@@ -22,6 +23,42 @@ pub(crate) fn base_with_diff_conflict_error(command: &str) -> String {
     format!(
         "{command} --base cannot be combined with --diff: --base and --diff are alternative diff sources; pass one"
     )
+}
+
+/// One-line stderr disclosure printed by the CLI adapters before ripr blocks
+/// reading a diff from an attached terminal (`--diff -` typed at a prompt
+/// rather than piped) (#4319). The documented example is `git diff
+/// origin/main | ripr check --diff -`; running the right half alone used to
+/// look like a silent hang.
+///
+/// This lives at the cli boundary on purpose: the analysis loader
+/// (`analysis::diff::load`) must stay silent so a library caller of
+/// `check_workspace` with `diff_file: Some("-")` never receives CLI-branded
+/// text on the host's stderr. The piped or captured path must also stay
+/// silent and byte-identical, hence the `IsTerminal` gate at the one
+/// emission site below.
+pub(crate) const ATTACHED_TERMINAL_STDIN_NOTE: &str = "ripr: reading the diff from the attached terminal; paste the diff and press Ctrl+Z then Enter on Windows, or Ctrl+D on Unix, to end input";
+
+/// The pure disclosure decision for `--diff -` (#4319): the note is emitted
+/// only when the process's stdin is an attached terminal. Keeping the
+/// predicate pure lets the exact phrasing and both arms be pinned without a
+/// tty; the piped arm additionally carries an end-to-end subprocess
+/// guarantee in `tests/cli_smoke.rs`.
+pub(crate) fn attached_terminal_stdin_note(stdin_is_terminal: bool) -> Option<&'static str> {
+    stdin_is_terminal.then_some(ATTACHED_TERMINAL_STDIN_NOTE)
+}
+
+/// The one thin emission site shared by `check`, `explain`, and `context`:
+/// each calls this right before dispatching a run that accepted `--diff -`.
+/// Silent unless stdin is an attached terminal, so piped, redirected, and
+/// captured stdin keep byte-identical output.
+pub(crate) fn disclose_attached_terminal_stdin_read(diff_file: Option<&std::path::Path>) {
+    if diff_file != Some(std::path::Path::new("-")) {
+        return;
+    }
+    if let Some(note) = attached_terminal_stdin_note(std::io::stdin().is_terminal()) {
+        eprintln!("{note}");
+    }
 }
 
 /// Whether argv requests the package version before a top-level command.
@@ -301,5 +338,26 @@ mod tests {
             base_with_diff_conflict_error("context"),
             "context --base cannot be combined with --diff: --base and --diff are alternative diff sources; pass one"
         );
+    }
+
+    /// #4319: the note is a constant behind a pure predicate at the cli
+    /// boundary, so the exact phrasing is pinned without a tty. The `false`
+    /// arm is the piped or captured-stdin path, which must stay silent; its
+    /// end-to-end guarantee lives in the cli_smoke subprocess test. No test
+    /// can attach a real terminal to cargo's captured stdio, so the
+    /// terminal arm's stderr emission itself remains a manual
+    /// `check --diff -` spot-check (winpty/PTY is unavailable in this
+    /// environment).
+    #[test]
+    fn attached_terminal_stdin_note_fires_only_for_a_terminal() {
+        // Pinned as a literal, not via the const, so a wording change is a
+        // visible contract change.
+        assert_eq!(
+            attached_terminal_stdin_note(true),
+            Some(
+                "ripr: reading the diff from the attached terminal; paste the diff and press Ctrl+Z then Enter on Windows, or Ctrl+D on Unix, to end input"
+            )
+        );
+        assert_eq!(attached_terminal_stdin_note(false), None);
     }
 }

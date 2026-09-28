@@ -5,7 +5,9 @@ use crate::app::agent_brief::{
 use crate::app::{self, CheckInput, Mode, OutputFormat};
 use crate::cli::commands_numeric::parse_positive_u64;
 use crate::cli::help;
-use crate::cli::parse::{base_with_diff_conflict_error, expect_value, parse_mode};
+use crate::cli::parse::{
+    base_with_diff_conflict_error, disclose_attached_terminal_stdin_read, expect_value, parse_mode,
+};
 use crate::cli::suggest::unknown_argument;
 #[cfg(test)]
 use crate::config::CONFIG_FILE_NAME;
@@ -3565,6 +3567,11 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     } else {
         None
     };
+    // #4319: `--diff -` reads the diff from stdin. On an attached terminal
+    // that blocks until EOF with no visible sign of why, so the cli adapter
+    // discloses the read before dispatching; the analysis loader itself
+    // stays silent for library callers.
+    disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
     let rendered = match from_artifact.as_deref() {
         Some(artifact_path) => app::explain_finding_from_artifact_with_navigation_mode(
             input,

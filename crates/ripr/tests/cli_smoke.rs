@@ -5,7 +5,7 @@
 
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[path = "../src/build_commit_record.rs"]
@@ -16114,6 +16114,58 @@ fn plus_unknown_arg_fails_clearly() {
     assert!(
         stderr.contains("unknown plus argument") || stderr.contains("--bogus"),
         "error must name the unknown arg:\n{stderr}"
+    );
+}
+
+/// A minimal unified diff piped through stdin, the documented
+/// `git diff origin/main | ripr check --diff -` shape (#4319).
+const UNIFIED_DIFF_FOR_STDIN_PROBE: &str = "diff --git a/src/lib.rs b/src/lib.rs\n\
+index 1111111..2222222 100644\n\
+--- a/src/lib.rs\n\
++++ b/src/lib.rs\n\
+@@ -1,1 +1,2 @@\n\
++fn changed() {}\n\
+ fn existing() {}\n";
+
+/// #4319 end-to-end silence guarantee for the attached-terminal stdin
+/// disclosure at the cli boundary (`cli::parse::disclose_attached_terminal_stdin_read`):
+/// the note may be emitted only when the child's stdin is an attached
+/// terminal, so a piped run must keep the note text off stderr entirely.
+/// This is the production-branch discriminator: deleting the emission, or
+/// gating it on something other than `IsTerminal`, puts the verbatim note
+/// below on this pipe's stderr and fails the test.
+///
+/// The terminal-positive arm cannot be produced under cargo's captured
+/// stdio (no PTY/winpty in this environment), so the on-terminal emission
+/// itself remains a manual `check --diff -` spot-check; the pure
+/// terminal/non-terminal decision is pinned in `cli/parse.rs`'s unit test.
+#[test]
+fn check_diff_stdin_from_a_pipe_stays_silent_about_terminal_disclosure() {
+    use std::io::Write;
+
+    let note = "ripr: reading the diff from the attached terminal; paste the diff and press Ctrl+Z then Enter on Windows, or Ctrl+D on Unix, to end input";
+    let bin = env!("CARGO_BIN_EXE_ripr");
+    let mut child = Command::new(bin)
+        .args(["check", "--diff", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(UNIFIED_DIFF_FOR_STDIN_PROBE.as_bytes())
+        .unwrap();
+    // Close our write end so the child sees EOF instead of blocking.
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.matches(note).count(),
+        0,
+        "piped `check --diff -` must stay silent about the attached-terminal stdin disclosure:\n{stderr}"
     );
 }
 
