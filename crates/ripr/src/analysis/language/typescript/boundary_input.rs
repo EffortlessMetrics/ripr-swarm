@@ -16,8 +16,9 @@
 //!   name in the module is a plain read (no parameter, local, catch, import,
 //!   function, class, enum, or destructuring binding of the same name).
 //!
-//! - the changed line runs on every call: it is a code line of the owner
-//!   holding the same comparison in the module, at the top level of a
+//! - the changed line runs on every call: the module's line at the changed
+//!   line number equals the diff's changed line (the tree at `--root` is
+//!   read as the diff's post-image), and it sits at the top level of a
 //!   block-bodied owner, after no `return`/`throw`/`break`/`continue`/`yield`
 //!   and inside no nested block; it starts a fresh statement, and that
 //!   statement opens with the comparison (`if (`, `return`, or
@@ -521,9 +522,10 @@ fn changed_line_runs_on_every_call(source: &str, tokens: &[Tok], request: &Modul
     // branch, or an expression continued from the previous line (`? :`,
     // `&&`, `=>`) would otherwise pass with a balanced stack.
     let line_end = line_starts.get(changed).copied().unwrap_or(source.len());
-    // The module's own line must be the diff's changed line: a line inside a
-    // block comment, or a tree that does not match the diff (the reach rules
-    // below read this tree), fails.
+    // The module's own line must equal the diff's changed line, which also
+    // refuses a line inside a block comment. The reach rules below read the
+    // tree at `--root` and assume it is the diff's post-image; a tree that
+    // differs elsewhere but coincides on this line is outside the claim.
     let source_line = source.get(line_start..line_end).unwrap_or("");
     if source_line.trim() != request.changed_text.trim() {
         return false;
@@ -592,10 +594,10 @@ fn changed_line_runs_on_every_call(source: &str, tokens: &[Tok], request: &Modul
             Kind::LParen | Kind::LBrack | Kind::LCurly | Kind::TemplateHead => {
                 open_groups.push(token.kind);
             }
-            Kind::RParen | Kind::RBrack | Kind::RCurly | Kind::TemplateTail => {
-                if open_groups.pop().is_none() {
-                    return false;
-                }
+            Kind::RParen | Kind::RBrack | Kind::RCurly | Kind::TemplateTail
+                if open_groups.pop().is_none() =>
+            {
+                return false;
             }
             _ => {}
         }
