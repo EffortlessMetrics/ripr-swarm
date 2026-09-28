@@ -61,6 +61,24 @@ pub(crate) const MANUAL_VERIFY_LABEL: &str = "Manual verify without a repair att
 pub(crate) const MANUAL_RECEIPT_LABEL: &str =
     "Manual receipt without a repair attempt (after the manual verify)";
 
+/// Label for the line that follows a receipt command recording `not_run`.
+pub(crate) const RECEIPT_STATUS_LABEL: &str = "Receipt status";
+/// What to pass as `--status` once verify has run. The printed receipt
+/// command records `--status not_run` so it stays runnable and true as
+/// printed; only the reader knows the verify outcome, so the line names the
+/// values that carry it instead of the command claiming one.
+pub(crate) const RECEIPT_STATUS_STEP: &str = "the command records `--status not_run` as printed; after the verify command runs, change it to `--status passed` if verify exited 0 or `--status failed` if it did not.";
+
+/// The `Receipt status` step for a receipt command that records `not_run`,
+/// `None` for any other command (a `ripr outcome` receipt, or one that already
+/// carries an outcome).
+pub(crate) fn receipt_status_step(receipt_command: &str) -> Option<&'static str> {
+    let words: Vec<&str> = receipt_command.split_whitespace().collect();
+    (receipt_command.starts_with("ripr receipt write ")
+        && words.windows(2).any(|pair| pair == ["--status", "not_run"]))
+    .then_some(RECEIPT_STATUS_STEP)
+}
+
 /// The one selector for the low-level verify and receipt labels (#3906).
 ///
 /// With a carried repair start, its after phase runs verify and writes the
@@ -2738,6 +2756,49 @@ mod tests {
             "- Why this matters: A related Rust test reaches this change, but no equality-boundary assertion was found for the changed behavior."
         ));
         cleanup(&repo)
+    }
+
+    /// A receipt command printed as the step after verify records
+    /// `--status not_run`; the line after it says which value carries the
+    /// verify outcome, on the CLI summary and in the start-here markdown.
+    #[test]
+    fn receipt_after_verify_names_the_status_that_carries_the_verify_outcome() {
+        let command = "ripr receipt write --gap 'gap:python:p.py:f' --verify-command 'python -m pytest tests/test_p.py::test_f' --status not_run --out target/ripr/receipts/g.json";
+        let packet = json!({
+            "status": "actionable",
+            "selected": {
+                "state": "top_gap",
+                "kind": "MissingBoundaryAssertion",
+                "verify_command": "python -m pytest tests/test_p.py::test_f",
+                "receipt_command": command,
+                "receipt_path": "target/ripr/receipts/g.json",
+            },
+        });
+        let step = format!("{RECEIPT_STATUS_LABEL}: {RECEIPT_STATUS_STEP}\n");
+        let summary = start_here_cli_summary(
+            &packet,
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        assert!(
+            summary.contains(&format!("Receipt after verify: `{command}`\n{step}")),
+            "{summary}"
+        );
+        let markdown = render_start_here_markdown(&packet);
+        assert!(
+            markdown.contains(&format!("- Receipt after verify: `{command}`\n- {step}")),
+            "{markdown}"
+        );
+        assert!(RECEIPT_STATUS_STEP.contains("`--status passed`"));
+        assert!(RECEIPT_STATUS_STEP.contains("`--status failed`"));
+
+        for other in [
+            "ripr outcome --before b.json --after a.json --format json --out o.json",
+            "ripr receipt write --gap g --verify-command x --status passed",
+            "ripr receipt write --gap 'x --status not_run' --verify-command x --status failed",
+        ] {
+            assert_eq!(receipt_status_step(other), None, "{other}");
+        }
     }
 
     /// The start-here markdown must present the receipt command for both

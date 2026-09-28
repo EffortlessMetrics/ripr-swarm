@@ -246,6 +246,14 @@ are scoped or reviewed.
   comes from the command's `--out` (or the ledger's recorded path) and falls
   back to the first-pr default only when first-pr builds the command itself.
 
+- `ripr first-pr` no longer leaves `--status not_run` unexplained in the
+  receipt it presents as the step after verify. A `Receipt status` line now
+  follows a `ripr receipt write ... --status not_run` command in the CLI
+  summary and `start-here.md`, telling the reader to pass `--status passed`
+  when the verify command exited 0 and `--status failed` when it did not. The
+  command itself is unchanged, still runs as printed, and records `not_run`
+  when left as is.
+
 ### Added
 
 - `ripr --version` now names the commit the binary was built from, as
