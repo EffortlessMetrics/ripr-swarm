@@ -11,6 +11,31 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Cold LLM-agent walks of 0.11 no longer dead-end on four routes. Passing a
+  `ripr check` finding ID (`probe:...`) to `ripr agent repair --seam-id` now
+  says it is not a seam ID and names `ripr pilot --root .`. The
+  uncommitted-changes note says test files outside the diff are still read
+  from disk, and `ripr check` warns on stderr when a file in the committed
+  diff also has uncommitted edits, since its probes can be misplaced or
+  missing. After a repair, the after phase and `ripr agent status` say the
+  repair receipt records no test run (`test_run.status: "not_recorded"`),
+  because a failing test can still show movement `improved`. The MCP
+  server's instructions and tool description say it does not analyze the diff
+  and name the CLI route that does; an unusable root and unknown tool or
+  resource names now carry a recovery.
+- `ripr check` analyzes Rust crate roots declared outside `src/`
+  (`[lib] path = "lib/foo.rs"`, `[[bin]] path = ...`). A change there used
+  to report zero candidate lines as a complete analysis, and Draft mode
+  dropped the package's tests, so a tested change read as
+  `no_static_path`.
+- Base-resolution failures name their cause and the next step. A shallow
+  CI checkout no longer stops at raw `fatal: ... no merge base`; it names
+  `git fetch --unshallow` and `fetch-depth: 0`. A repository with no
+  commits, or whose default branch is not `main`/`master`, is told which
+  `--base` would work.
+- A diff that touches conflict markers in a file no enabled adapter reads
+  (for example resolving markers committed to a workflow `.yml`) no longer
+  turns the whole run into `unsupported_input`.
 - An empty `ripr check --diff` result now leads with its true cause. A config
   whose `[languages].enabled` leaves out `rust` records a typed
   `language_adapter_unavailable` limitation for the Rust files it skipped
@@ -45,6 +70,16 @@ are scoped or reviewed.
   command that keeps base, head, and root arguments literal when copied, including
   refs with shell syntax and roots with spaces (#4367).
 
+- LSP `ripr.collectContext`, `ripr.collectEvidenceContext` and
+  `ripr.collectRepairPacket` no longer answer `null`. An unreadable argument
+  or an id missing from the current snapshot is a `-32602` InvalidParams
+  error naming the accepted shapes, and a repair packet with no source says
+  which artifacts are missing and names the CLI route. `ripr help lsp` lists
+  every server-executed command's arguments. `ripr/listActionableItems` adds
+  `selected` and `omitted` item lists, so its self-named continuation route
+  returns items rather than only counts, and a `hidden_gaps` list naming the
+  gaps the actionable profile never publishes because they have no repair
+  route, such as a new function no test calls.
 - LSP fallback diagnostics explain their static classification and point to
   hover evidence without promising an unavailable clipboard action or repair
   route. Missing-path guidance remains explicitly static (#4328).
