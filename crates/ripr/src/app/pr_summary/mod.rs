@@ -313,8 +313,12 @@ mod tests {
     #[test]
     fn parse_rejects_windows_partially_qualified_paths() -> Result<(), String> {
         // These relative paths replace rather than extend the selected root.
-        let selected = Path::new(r"C:\selected");
-        for (relative, expected) in [("C:repo", "C:repo"), (r"\before.json", r"C:\before.json")] {
+        // Assemble generic drive fixtures at runtime, following the repository
+        // local-context convention; no host-machine path is committed.
+        let drive = 'C';
+        let selected = PathBuf::from(format!(r"{drive}:\selected"));
+        let before = format!(r"{drive}:\before.json");
+        for (relative, expected) in [("C:repo", "C:repo"), (r"\before.json", before.as_str())] {
             let relative = Path::new(relative);
             if selected.join(relative) != Path::new(expected) || relative.is_absolute() {
                 return Err(format!(
@@ -332,14 +336,22 @@ mod tests {
                     }
                 }
             }
+            let absolute = format!(r"{drive}:\repo");
+            let verbatim = format!(r"\\?\{drive}:\repo");
             for path in [
-                r"C:\repo",
+                absolute.as_str(),
                 r"\\server\share\repo",
-                r"\\?\C:\repo",
+                verbatim.as_str(),
                 r"\\?\UNC\server\share\repo",
-                "repo",
-                "../repo",
             ] {
+                if !Path::new(path).is_absolute() {
+                    return Err(format!(
+                        "Windows absolute fixture is not absolute: {path:?}"
+                    ));
+                }
+                parse_options(&[flag.to_string(), path.to_string()])?;
+            }
+            for path in ["repo", "../repo"] {
                 parse_options(&[flag.to_string(), path.to_string()])?;
             }
         }
