@@ -72,6 +72,10 @@ pub(crate) struct StaticSeamRecord {
     oracle_kind: String,
     oracle_strength: String,
     observed_values: Vec<String>,
+    /// False when the source rendered a bounded projection of the values
+    /// (check JSON `observed_values_total`), so a value missing from the list
+    /// may still be present and value-level deltas are not established.
+    observed_values_complete: bool,
     missing_discriminators: Vec<String>,
     evidence_source: String,
     evidence_path: BTreeMap<String, StaticEvidenceStage>,
@@ -218,6 +222,7 @@ pub(crate) fn targeted_rerun_movement_from_json(
             oracle_kind: "unknown".to_string(),
             oracle_strength: "unknown".to_string(),
             observed_values: Vec::new(),
+            observed_values_complete: true,
             missing_discriminators: Vec::new(),
             evidence_source: "targeted_rerun_current".to_string(),
             evidence_path: BTreeMap::new(),
@@ -321,6 +326,7 @@ fn parse_rerun_before_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>, 
                     oracle_kind: "unknown".to_string(),
                     oracle_strength: "unknown".to_string(),
                     observed_values: Vec::new(),
+                    observed_values_complete: true,
                     missing_discriminators: Vec::new(),
                     evidence_source: "targeted_rerun_before".to_string(),
                     evidence_path: BTreeMap::new(),
@@ -389,6 +395,7 @@ fn parse_repo_exposure_seams(seams: &[Value]) -> Result<Vec<StaticSeamRecord>, S
                 "observed_values",
                 observed_value_strings,
             ),
+            observed_values_complete: true,
             missing_discriminators: evidence_record_values_or_legacy(
                 evidence_record,
                 seam,
@@ -479,6 +486,7 @@ fn static_seam_record_from_check_finding(finding: &Value) -> Option<StaticSeamRe
         oracle_kind,
         oracle_strength,
         observed_values,
+        observed_values_complete: finding.get("observed_values_total").is_none(),
         missing_discriminators,
         evidence_source: "check_output_finding".to_string(),
         evidence_path,
@@ -591,10 +599,19 @@ fn targeted_test_outcome_movement(
     let propagate_delta = stage_delta(before, after, "propagate");
     let observe_delta = stage_delta(before, after, "observe");
     let discriminate_delta = stage_delta(before, after, "discriminate");
-    let observed_values_added =
-        string_values_added(&before.observed_values, &after.observed_values);
-    let observed_values_removed =
-        string_values_removed(&before.observed_values, &after.observed_values);
+    // A bounded projection on either side cannot say which values appeared
+    // or disappeared: a changed value may sit outside the rendered subset,
+    // and a new value can displace one that is still present. Report no
+    // value-level delta rather than a wrong one.
+    let values_comparable = before.observed_values_complete && after.observed_values_complete;
+    let (observed_values_added, observed_values_removed) = if values_comparable {
+        (
+            string_values_added(&before.observed_values, &after.observed_values),
+            string_values_removed(&before.observed_values, &after.observed_values),
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
     let missing_discriminators_resolved = string_values_removed(
         &before.missing_discriminators,
         &after.missing_discriminators,
@@ -1689,6 +1706,85 @@ mod tests {
         Ok(())
     }
 
+    fn check_json_with_values(
+        classification: &str,
+        values: &[&str],
+        total: Option<usize>,
+    ) -> String {
+        let total = total
+            .map(|total| format!(r#""observed_values_total": {total},"#))
+            .unwrap_or_default();
+        let values = values
+            .iter()
+            .map(|value| format!(r#"{{"value": "{value}"}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            r#"{{
+  "schema_version": "0.1",
+  "tool": "ripr",
+  "findings": [
+    {{
+      "id": "probe:src_discount.py:2:python_preview",
+      "canonical_gap_id": "gap:python:src/discount.py:apply_discount:predicate_boundary",
+      "canonical_gap": {{"id": "gap:python:src/discount.py:apply_discount:predicate_boundary", "language": "python", "file": "src/discount.py", "owner": "apply_discount", "behavior_kind": "predicate_boundary"}},
+      "classification": "{classification}",
+      "probe": {{"family": "predicate", "file": "src/discount.py", "line": 2}},
+      "observed_values": [{values}],
+      {total}
+      "missing_discriminators": [],
+      "related_tests": []
+    }}
+  ]
+}}"#
+        )
+    }
+
+    #[test]
+    fn targeted_test_outcome_reports_no_value_delta_across_a_capped_value_list()
+    -> Result<(), String> {
+        // Both sides render a bounded subset of more than the cap. The subsets
+        // differ only because a value moved outside the rendered window, so a
+        // subset diff would invent an added and a removed value.
+        let before = check_json_with_values("weakly_exposed", &["a", "b"], Some(40));
+        let after = check_json_with_values("exposed", &["a", "c"], Some(40));
+        let report = targeted_test_outcome_report_from_json(
+            &before,
+            &after,
+            "before-check.json".to_string(),
+            "after-check.json".to_string(),
+        )?;
+        assert_eq!(report.moved.len(), 1);
+        assert!(report.moved[0].observed_values_added.is_empty());
+        assert!(report.moved[0].observed_values_removed.is_empty());
+
+        // One capped side is enough to make the comparison unsound.
+        let uncapped_before = check_json_with_values("weakly_exposed", &["a", "b"], None);
+        let report = targeted_test_outcome_report_from_json(
+            &uncapped_before,
+            &after,
+            "before-check.json".to_string(),
+            "after-check.json".to_string(),
+        )?;
+        assert!(report.moved[0].observed_values_added.is_empty());
+        assert!(report.moved[0].observed_values_removed.is_empty());
+
+        // Control: complete lists on both sides still report the delta.
+        let uncapped_after = check_json_with_values("exposed", &["a", "c"], None);
+        let report = targeted_test_outcome_report_from_json(
+            &uncapped_before,
+            &uncapped_after,
+            "before-check.json".to_string(),
+            "after-check.json".to_string(),
+        )?;
+        assert_eq!(report.moved[0].observed_values_added, vec!["c".to_string()]);
+        assert_eq!(
+            report.moved[0].observed_values_removed,
+            vec!["b".to_string()]
+        );
+        Ok(())
+    }
+
     #[test]
     fn targeted_test_outcome_refuses_check_json_without_canonical_gap_ids() {
         // Shape of Rust `ripr check --json`: findings carry a probe id but no
@@ -2459,6 +2555,7 @@ mod tests {
             oracle_kind: "exact_value".to_string(),
             oracle_strength: "unknown".to_string(),
             observed_values: Vec::new(),
+            observed_values_complete: true,
             missing_discriminators: Vec::new(),
             evidence_source: "legacy_fields".to_string(),
             evidence_path: BTreeMap::new(),

@@ -346,11 +346,6 @@ mod tests {
         )
     }
 
-    /// G1 falsifier: two packages each define `expect_response`; the test
-    /// lives in package `beta` and calls bare `expect_response` while the
-    /// probe's owner is package `alpha`'s — the bare binding is ambiguous
-    /// across packages, so the observation stays unverified. Pre-fix this
-    /// confirmed through the bare name.
     /// The memo computes a defeat once per (file, callee) and keeps
     /// different files and callees apart, so a cached answer never leaks
     /// from one test file to another.
@@ -376,6 +371,11 @@ mod tests {
         assert_eq!(calls.get(), 3);
     }
 
+    /// G1 falsifier: two packages each define `expect_response`; the test
+    /// lives in package `beta` and calls bare `expect_response` while the
+    /// probe's owner is package `alpha`'s — the bare binding is ambiguous
+    /// across packages, so the observation stays unverified. Pre-fix this
+    /// confirmed through the bare name.
     #[test]
     fn cross_package_same_name_function_defeats_owner_confirmation() {
         let index = RustIndex {

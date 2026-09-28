@@ -890,19 +890,20 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
         value
     }));
 
+    // Name only values the capped `observed_values` array also carries.
     values.extend(
-        finding
-            .activation
-            .observed_values
-            .iter()
-            .take(8)
-            .map(|fact| {
-                let context = display_label(fact.context.as_str());
-                format!(
-                    "observed {} value {} at line {}",
-                    context, fact.value, fact.line
-                )
-            }),
+        crate::output::observed_values::bounded_observed_values(
+            &finding.activation.observed_values,
+        )
+        .into_iter()
+        .take(8)
+        .map(|fact| {
+            let context = display_label(fact.context.as_str());
+            format!(
+                "observed {} value {} at line {}",
+                context, fact.value, fact.line
+            )
+        }),
     );
 
     values.extend(

@@ -1523,6 +1523,69 @@ weakly_gripped = "note"
         assert!(rendered.contains("equality boundary is absent"));
     }
 
+    fn assertion_values(count: usize) -> Vec<ValueFact> {
+        (1..=count)
+            .map(|line| ValueFact {
+                line,
+                text: format!("assert_eq!(value, {line});"),
+                value: format!("value_{line}"),
+                context: ValueContext::AssertionArgument,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn sarif_caps_observed_values_and_discloses_the_total() -> Result<(), String> {
+        use crate::output::observed_values::MAX_OBSERVED_VALUES_PER_FINDING;
+
+        let mut output = sample_output();
+        output.findings[0].activation.observed_values = assertion_values(500);
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        let props = &first_result(&sarif)?["properties"];
+        assert_eq!(
+            props["observed_values"].as_array().map(Vec::len),
+            Some(MAX_OBSERVED_VALUES_PER_FINDING)
+        );
+        assert_eq!(props["observed_values_total"], 500);
+
+        let mut seam = weakly_gripped_classified();
+        seam.evidence.observed_values = assertion_values(500);
+        let sarif = parse_json(&render_repo_seams_sarif(
+            &[seam],
+            None,
+            &RiprConfig::default(),
+        ))?;
+        let props = &first_result(&sarif)?["properties"];
+        assert_eq!(
+            props["observed_values"].as_array().map(Vec::len),
+            Some(MAX_OBSERVED_VALUES_PER_FINDING)
+        );
+        assert_eq!(props["observed_values_total"], 500);
+        Ok(())
+    }
+
+    #[test]
+    fn sarif_omits_observed_values_total_under_the_cap() -> Result<(), String> {
+        let sarif = parse_json(&render_findings_sarif(
+            &sample_output(),
+            &RiprConfig::default(),
+            &[],
+        ))?;
+        let props = &first_result(&sarif)?["properties"];
+        assert_eq!(props["observed_values"].as_array().map(Vec::len), Some(1));
+        assert!(props.get("observed_values_total").is_none());
+
+        let sarif = parse_json(&render_repo_seams_sarif(
+            &[weakly_gripped_classified()],
+            None,
+            &RiprConfig::default(),
+        ))?;
+        let props = &first_result(&sarif)?["properties"];
+        assert_eq!(props["observed_values"].as_array().map(Vec::len), Some(1));
+        assert!(props.get("observed_values_total").is_none());
+        Ok(())
+    }
+
     #[test]
     fn sarif_repo_seams_discloses_seam_limit_in_run_properties() -> Result<(), String> {
         use crate::analysis::{SeamLimitInfo, SeamLimitSource};
