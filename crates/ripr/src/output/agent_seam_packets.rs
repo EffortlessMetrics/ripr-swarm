@@ -6143,7 +6143,7 @@ mod tests {
             let rendered = render_agent_seam_packet_json_with_context(
                 &entry,
                 PacketCommandContext::Prepared {
-                    root: "C:/selected root",
+                    root: "/selected root",
                     authorization_suffix,
                 },
             );
@@ -6153,7 +6153,7 @@ mod tests {
                 .pointer("/next/repair_after_command")
                 .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| "missing prepared continuation".to_string())?;
-            if !command.contains("--root 'C:/selected root'")
+            if !command.contains("--root '/selected root'")
                 || !command.contains("--phase after")
                 || command.ends_with(suffix) != authorization_suffix.is_some()
             {
