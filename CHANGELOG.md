@@ -11,6 +11,36 @@ are scoped or reviewed.
 
 ### Fixed
 
+- An empty `ripr check --diff` result now leads with its true cause. A config
+  whose `[languages].enabled` leaves out `rust` records a typed
+  `language_adapter_unavailable` limitation for the Rust files it skipped
+  (`partial_with_limitations`, naming the effective set) instead of claiming a
+  complete analysis, and the zero-findings stderr line names a disabled or
+  unavailable adapter instead of suggesting the diff may be invalid; that
+  diff-validity hint now appears only when nothing parsed. The non-source
+  disclosure names extensionless and `.`-ending paths and no longer calls the
+  empty result correct for a truncated `+++` header, and a directory passed as
+  `--diff` is reported as a directory rather than as the OS read error
+  ([#4376](https://github.com/EffortlessMetrics/ripr-swarm/issues/4376),
+  [#4395](https://github.com/EffortlessMetrics/ripr-swarm/issues/4395)).
+
+- First-hour output no longer strands the reader. `--format human-full` carries
+  each finding's `ripr explain` / `ripr context` commands, which the digest
+  sends readers there for
+  ([#4379](https://github.com/EffortlessMetrics/ripr-swarm/issues/4379)).
+  `--format github` prints a denominator notice when findings are suppressed by
+  policy or are base-side, so an all-suppressed run is no longer silent
+  ([#4393](https://github.com/EffortlessMetrics/ripr-swarm/issues/4393)).
+  `ripr cache status` points at `ripr cache clear` instead of repository-only
+  xtask, and corrupt cache warnings name the entry file
+  ([#4383](https://github.com/EffortlessMetrics/ripr-swarm/issues/4383)). The
+  digest's "Why weakly_exposed" line names the incomplete stage; unclassifiable
+  lines in a function no test reaches ask for a test first instead of real
+  mutation testing; zero-count languages and the empty-result caveat on
+  non-empty preview runs are dropped; digest lines no longer end mid-word or
+  inside an open code span; and a closed stdout pipe (`ripr doctor | head`)
+  ends quietly with exit `2` instead of an internal-error report.
+
 - `cargo xtask ripr-pr` timeout packets now give one host-shell-labeled retry
   command that keeps base, head, and root arguments literal when copied, including
   refs with shell syntax and roots with spaces (#4367).
@@ -18,6 +48,12 @@ are scoped or reviewed.
 - LSP fallback diagnostics explain their static classification and point to
   hover evidence without promising an unavailable clipboard action or repair
   route. Missing-path guidance remains explicitly static (#4328).
+
+- Static discrimination keeps oracle strength and confirmation on the same
+  assertion. An unrelated exact assertion can no longer borrow a weaker
+  assertion's token match to promote a finding to `exposed`; equally strong
+  confirmed assertions retain their classification regardless of order
+  ([#4404](https://github.com/EffortlessMetrics/ripr-swarm/issues/4404)).
 
 ### Added
 
@@ -1228,6 +1264,13 @@ are scoped or reviewed.
   [#4287](https://github.com/EffortlessMetrics/ripr-swarm/pull/4287)).
 
 ### Docs
+
+- The README and quickstart first run now define "discriminator" where it
+  first appears and state `ripr check`'s exit codes. They add a one-line
+  `cargo install --locked --git` development install and a short section on
+  running ripr from a coding agent, including keeping `target/` gitignored
+  between repair phases. A stale `ripr doctor` troubleshooting claim was removed
+  ([#4413](https://github.com/EffortlessMetrics/ripr-swarm/pull/4413)).
 
 - `docs/REPAIR_ATTEMPT.md` and `docs/COMMAND_HIERARCHY.md` now document
   the three-phase governed Python repair sequence: trust-selection flags
