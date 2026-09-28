@@ -7526,7 +7526,6 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
     Ok(())
 }
 
-
 /// `typescript_target_unresolved` must NOT be emitted when all tests are in
 /// the same package (single-package workspace without a package.json hierarchy
 /// does not trigger cross-package detection).
