@@ -14,6 +14,7 @@
 use crate::config::{CONFIG_FILE_NAME, RiprConfig, load_for_root};
 use crate::domain::LanguageId;
 use crate::output::path::human_path;
+use crate::process_owner::OwnedProcess;
 use serde::Serialize;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -939,36 +940,74 @@ enum DoctorToolRunError {
     TimedOut,
 }
 
+/// Run one doctor probe under the shared owned-subprocess authority
+/// (#3803) so a timeout ends the whole tree, not only the direct child. On
+/// Windows a `.cmd`/`.bat` shim (pnpm, yarn) runs as `cmd.exe /c`, and
+/// killing `cmd.exe` alone left a hung node grandchild running after doctor
+/// reported the timeout; the owner's Job Object takes the grandchild with
+/// it. Other platforms keep the direct-child kill.
+///
+/// Both pipes drain on reader threads while the probe runs, so a verbose
+/// tool cannot fill the pipe buffer and read as a false timeout.
 fn run_doctor_tool(
     mut command: std::process::Command,
     timeout: Duration,
 ) -> Result<std::process::Output, DoctorToolRunError> {
     command
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    let mut child = command
-        .spawn()
-        .map_err(|err| DoctorToolRunError::Spawn(err.kind()))?;
+    let mut child =
+        OwnedProcess::spawn(command).map_err(|err| DoctorToolRunError::Spawn(err.kind()))?;
+    let stdout = child.stdout_pipe().take().map(spawn_doctor_pipe_reader);
+    let stderr = child.stderr_pipe().take().map(spawn_doctor_pipe_reader);
     let started = Instant::now();
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => {
-                return child
-                    .wait_with_output()
-                    .map_err(|_err| DoctorToolRunError::Wait);
+            Ok(Some(status)) => {
+                // Ending ownership before the joins takes down any
+                // descendant still holding a pipe on Windows, so the readers
+                // reach EOF instead of waiting on it.
+                drop(child);
+                return Ok(std::process::Output {
+                    status,
+                    stdout: join_doctor_pipe_reader(stdout)?,
+                    stderr: join_doctor_pipe_reader(stderr)?,
+                });
             }
             Ok(None) if started.elapsed() >= timeout => {
-                let _ = child.kill();
-                let _ = child.wait();
+                // Readers are detached: terminating the tree closes every
+                // write end, so they finish on their own.
+                let _ = child.terminate_tree();
                 return Err(DoctorToolRunError::TimedOut);
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(10)),
             Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                let _ = child.terminate_tree();
                 return Err(DoctorToolRunError::Wait);
             }
         }
+    }
+}
+
+type DoctorPipeReader = std::thread::JoinHandle<std::io::Result<Vec<u8>>>;
+
+fn spawn_doctor_pipe_reader(mut pipe: impl std::io::Read + Send + 'static) -> DoctorPipeReader {
+    std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        pipe.read_to_end(&mut buffer).map(|_| buffer)
+    })
+}
+
+fn join_doctor_pipe_reader(
+    reader: Option<DoctorPipeReader>,
+) -> Result<Vec<u8>, DoctorToolRunError> {
+    match reader {
+        None => Ok(Vec::new()),
+        Some(handle) => match handle.join() {
+            Ok(Ok(buffer)) => Ok(buffer),
+            Ok(Err(_)) | Err(_) => Err(DoctorToolRunError::Wait),
+        },
     }
 }
 
@@ -2317,5 +2356,54 @@ mod tests {
             Err(error) => Err(format!("expected timeout, got {error:?}")),
             Ok(_) => Err("timed-out tool unexpectedly completed".into()),
         }
+    }
+
+    /// A doctor probe that times out takes its descendants with it. A
+    /// Windows `.cmd` shim runs as `cmd.exe /c node ...`; the probe used to
+    /// kill only the direct child and left the grandchild running. The
+    /// descendant here holds the inherited pipes the way a shim's node does.
+    #[cfg(windows)]
+    #[test]
+    fn doctor_tool_timeout_terminates_pipe_inheriting_descendants() -> Result<(), String> {
+        let marker =
+            std::env::temp_dir().join(format!("ripr-doctor-descendant-{}.pid", std::process::id()));
+        let _ = std::fs::remove_file(&marker);
+        let marker_text = marker.display().to_string().replace('\'', "''");
+        let mut command = doctor_tool_command("powershell");
+        command.args([
+            "-NoProfile",
+            "-Command",
+            &format!(
+                "$p = Start-Process -FilePath powershell -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 120') -NoNewWindow -PassThru; Set-Content -LiteralPath '{marker_text}' -Value $p.Id; Wait-Process -Id $p.Id"
+            ),
+        ]);
+        let outcome = run_doctor_tool(command, Duration::from_secs(20));
+        let written = std::fs::read_to_string(&marker);
+        let _ = std::fs::remove_file(&marker);
+        if !matches!(outcome, Err(DoctorToolRunError::TimedOut)) {
+            return Err(format!("expected a timeout, got {outcome:?}"));
+        }
+        // A missing marker is a setup failure, not proof of containment.
+        let pid: u32 = written
+            .map_err(|err| format!("descendant marker was not written: {err}"))?
+            .trim()
+            .parse()
+            .map_err(|err| format!("descendant marker is not a PID: {err}"))?;
+        let mut probe = doctor_tool_command("powershell");
+        probe.args([
+            "-NoProfile",
+            "-Command",
+            &format!("if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}"),
+        ]);
+        let alive = run_doctor_tool(probe, Duration::from_secs(30))
+            .map_err(|err| format!("liveness probe failed: {err:?}"))?
+            .status
+            .success();
+        if alive {
+            return Err(format!(
+                "descendant {pid} outlived the doctor probe timeout"
+            ));
+        }
+        Ok(())
     }
 }
