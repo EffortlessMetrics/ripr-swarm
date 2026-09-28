@@ -230,6 +230,15 @@ are scoped or reviewed.
   the `RIPR_PARTIAL_*_BUDGET` overrides. It used to keep the default deadline
   silently (#4374).
 
+- Python pytest verify commands now run as `python -m pytest path::node`
+  instead of bare `pytest path::node`. `-m` puts the repository root on
+  `sys.path`, so a flat-layout package such as `pricing/__init__.py` imports
+  during collection; bare `pytest` stopped there with `ModuleNotFoundError`
+  (exit 4). The interpreter is spelled `python`, like the unittest route's
+  `python -m unittest`, because it names the virtual environment's interpreter
+  on every platform. Repair-card, LSP skeleton, and dogfood consumers accept
+  both the new form and the bare form earlier artifacts carry.
+
 ### Added
 
 - `ripr --version` now names the commit the binary was built from, as
