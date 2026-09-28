@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Python: a function a package re-exports from its `__init__.py` is now
+  related to tests that call it through the package. On humanize
+  (`import humanize`, `humanize.naturaldelta(...)`) and more-itertools
+  (`import more_itertools as mi`, `mi.one(...)` via `from .more import *`)
+  every changed line read `no_static_path` although the suite killed the
+  mutants. Renamed re-exports, `_private` names under a star import, and names
+  a declared `__all__` omits are not followed.
 - Rust: a changed function that no test calls now reads `no_static_path`.
   Before, a same-file test of a sibling function made it `weakly_exposed`
   with "strong oracle found", and its unknown-shape lines said "escalate to
