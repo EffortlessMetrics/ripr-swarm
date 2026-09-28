@@ -11,6 +11,11 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Two-way diff hunks with missing or excess body lines, or invalid numeric
+  ranges, disclose incomplete analysis instead of reporting a complete result.
+  File and piped input retain earlier changes as advisory evidence and carry
+  the typed malformed-diff recovery route (#4375).
+
 - `review-comments` observes its cooperative analysis budget during canonical
   inventory and rejects cancelled evidence before classification. Git diff
   discovery consumes the remaining budget; deadline cancellation records a

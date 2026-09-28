@@ -30,6 +30,19 @@ complete zero scope. Disabled preview-language files and configured generated
 source skips are typed limitations as well, while a producer-declared partial
 fact packet remains advisory rather than complete.
 
+For ordinary two-way hunks, malformed input includes invalid numeric ranges
+and a body that disagrees with the declared old/new line counts at EOF or a
+hunk/file boundary. Omitted counts mean one and explicit zero counts mean zero;
+the no-newline marker does not consume a source line. Previously parsed changes
+remain advisory evidence, carrying `malformed_diff`, `diff_parse`, and `retry`
+through the existing outcome projection. Valid metadata-only sections remain
+valid. This detects declared-span mismatch, not an entirely missing later
+section after a complete hunk, and does not authenticate the input producer.
+Paired plain `---`/`+++` markers are ordinary body lines while both declared
+sides can consume them: a removal/addition of source text beginning `--`/`++`
+is indistinguishable from that pair. Truncation before such an ambiguous plain
+section cannot always be identified; unambiguous boundaries remain checked.
+
 Human output must name incomplete or unsupported analysis before any empty
 finding message and must state that zero findings is not a clean result when a
 limitation exists. JSON/status output must expose the same DTO and derive

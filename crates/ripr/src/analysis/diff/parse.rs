@@ -71,21 +71,38 @@ pub(crate) struct ParsedDiff {
     pub(crate) limitations: Vec<AnalysisLimitation>,
 }
 
-fn parse_hunk_header(raw: &str) -> Option<(usize, usize)> {
-    // Format: @@ -old,count +new,count @@ optional
-    let mut parts = raw.split_whitespace();
-    let _at = parts.next()?;
-    let old = parts.next()?;
-    let new = parts.next()?;
-    Some((
-        parse_start(old.trim_start_matches('-'))?,
-        parse_start(new.trim_start_matches('+'))?,
-    ))
+struct HunkHeader {
+    old_start: usize,
+    old_count: usize,
+    new_start: usize,
+    new_count: usize,
 }
 
-fn parse_start(segment: &str) -> Option<usize> {
-    let start = segment.split(',').next()?;
-    start.parse::<usize>().ok()
+fn parse_hunk_header(raw: &str) -> Option<HunkHeader> {
+    // Format: @@ -old,count +new,count @@ optional
+    let mut parts = raw.split_whitespace();
+    if parts.next()? != "@@" {
+        return None;
+    }
+    let (old_start, old_count) = parse_range(parts.next()?.strip_prefix('-')?)?;
+    let (new_start, new_count) = parse_range(parts.next()?.strip_prefix('+')?)?;
+    if parts.next()? != "@@" {
+        return None;
+    }
+    Some(HunkHeader {
+        old_start,
+        old_count,
+        new_start,
+        new_count,
+    })
+}
+
+fn parse_range(segment: &str) -> Option<(usize, usize)> {
+    let (start, count) = match segment.split_once(',') {
+        Some((start, count)) => (start, count.parse::<usize>().ok()?),
+        None => (segment, 1),
+    };
+    Some((start.parse::<usize>().ok()?, count))
 }
 
 mod parser_state {
@@ -137,6 +154,7 @@ mod parser_state {
         old_line: usize,
         new_line: usize,
         in_hunk: bool,
+        remaining_hunk_lines: Option<(usize, usize)>,
         saw_old_path_marker: bool,
         section_old_path: Option<PathBuf>,
         deletion_section: bool,
@@ -160,12 +178,22 @@ mod parser_state {
         conflict_region: Option<ConflictSide>,
         combined_hunks: BTreeMap<Option<PathBuf>, u64>,
         conflict_regions: BTreeMap<Option<PathBuf>, u64>,
+        malformed_hunks: BTreeMap<Option<PathBuf>, u64>,
     }
 
     impl ParserState {
         /// Whether the parser is currently inside a hunk body.
         pub(super) fn in_hunk(&self) -> bool {
             self.in_hunk
+        }
+
+        pub(super) fn can_end_at_plain_boundary(&self) -> bool {
+            // A source removal of `-- a/name` and addition of `++ b/name`
+            // has exactly the same bytes as a plain section marker pair.
+            // Declared spans take precedence while both can consume it.
+            !self
+                .remaining_hunk_lines
+                .is_some_and(|(old, new)| old > 0 && new > 0)
         }
 
         pub(super) fn combined_quarantine(&self) -> bool {
@@ -236,9 +264,19 @@ mod parser_state {
                     *count,
                 )
             });
+            let malformed = self.malformed_hunks.iter().map(|(path, count)| {
+                (
+                    AnalysisLimitationKind::MalformedDiff,
+                    AnalysisRecoveryKind::Retry,
+                    "A two-way hunk has invalid ranges or its body does not match the declared old/new line counts. Obtain the complete valid unified diff and re-run; retained changed lines are advisory only.",
+                    path,
+                    *count,
+                )
+            });
 
             combined
                 .chain(conflicts)
+                .chain(malformed)
                 .filter_map(|(kind, recovery_kind, detail, path, count)| {
                     let Ok(recovery) = AnalysisRecovery::new(recovery_kind, detail) else {
                         return None;
@@ -354,9 +392,44 @@ mod parser_state {
         /// outer loop when it detects a plain-diff file-section boundary while
         /// a hunk is still open (RANK-2 fix).
         pub(super) fn close_hunk(&mut self) {
+            if let Some(remaining) = self.remaining_hunk_lines.take()
+                && remaining != (0, 0)
+            {
+                self.record_malformed_hunk();
+            }
             self.in_hunk = false;
             self.saw_old_path_marker = false;
             self.conflict_region = None;
+        }
+
+        fn record_malformed_hunk(&mut self) {
+            let path = self
+                .current_path
+                .clone()
+                .or_else(|| self.section_old_path.clone());
+            let count = self.malformed_hunks.entry(path).or_insert(0);
+            *count = count.saturating_add(1);
+        }
+
+        fn account_hunk_line(&mut self, raw: &str) {
+            let Some((old, new)) = self.remaining_hunk_lines else {
+                return;
+            };
+            let consumed = match raw.as_bytes().first() {
+                Some(b'-') => (1, 0),
+                Some(b'+') => (0, 1),
+                Some(b' ') | None => (1, 1),
+                _ => return,
+            };
+            match (old.checked_sub(consumed.0), new.checked_sub(consumed.1)) {
+                (Some(old), Some(new)) => self.remaining_hunk_lines = Some((old, new)),
+                _ => {
+                    self.record_malformed_hunk();
+                    // One record per malformed hunk; keep its earlier lines as
+                    // advisory evidence rather than discarding parsed changes.
+                    self.remaining_hunk_lines = None;
+                }
+            }
         }
 
         pub(super) fn close_combined_quarantine(&mut self) {
@@ -454,6 +527,7 @@ mod parser_state {
             if !is_boundary {
                 return false;
             }
+            self.close_hunk();
             self.current_path = None;
             self.in_hunk = false;
             self.saw_old_path_marker = false;
@@ -477,6 +551,7 @@ mod parser_state {
             if !raw.starts_with("@@") {
                 return false;
             }
+            self.close_hunk();
             self.saw_old_path_marker = false;
             self.conflict_region = None;
 
@@ -498,7 +573,7 @@ mod parser_state {
                 return true;
             }
             self.combined_quarantine = false;
-            if let Some((old_start, new_start)) = parse_hunk_header(raw) {
+            if let Some(header) = parse_hunk_header(raw) {
                 // Overflow guard: if either start coordinate is at usize::MAX,
                 // the counter cannot advance and every line in this hunk would
                 // be tagged with a meaningless line number. usize::MAX is never
@@ -511,14 +586,17 @@ mod parser_state {
                 // variant drops even that first line, because usize::MAX is
                 // not an honest coordinate for any line. See the post-merge
                 // review of #2050.
-                if old_start == usize::MAX || new_start == usize::MAX {
+                if header.old_start == usize::MAX || header.new_start == usize::MAX {
+                    self.record_malformed_hunk();
                     self.in_hunk = false;
                     return true;
                 }
-                self.old_line = old_start;
-                self.new_line = new_start;
+                self.old_line = header.old_start;
+                self.new_line = header.new_start;
+                self.remaining_hunk_lines = Some((header.old_count, header.new_count));
                 self.in_hunk = true;
             } else {
+                self.record_malformed_hunk();
                 self.in_hunk = false;
             }
             true
@@ -540,7 +618,7 @@ mod parser_state {
             if !raw.starts_with("Binary files ") || !raw.ends_with(" differ") {
                 return false;
             }
-            self.in_hunk = false;
+            self.close_hunk();
             self.saw_old_path_marker = false;
             true
         }
@@ -552,6 +630,10 @@ mod parser_state {
         ) {
             if !self.in_hunk {
                 self.saw_old_path_marker = false;
+                return;
+            }
+            self.account_hunk_line(raw);
+            if raw.starts_with("\\ No newline at end of file") {
                 return;
             }
 
