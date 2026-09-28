@@ -350,7 +350,7 @@ fn sweep(
         }
     }
 
-    let documents = committed_documents(tree);
+    let (documents, malformed) = committed_documents(tree, bindings);
     let mut schemas = BTreeMap::new();
     for schema_path in &inventory {
         let bytes = &tree.files[schema_path];
@@ -384,6 +384,25 @@ fn sweep(
         };
         let label = row_label(binding.schema_path, binding.pointer);
         let mut counts = RowCounts::default();
+
+        for (path, (digest, error)) in &malformed {
+            if !corpus_binds_path(&binding.corpus, path)
+                || binding
+                    .excluded
+                    .iter()
+                    .any(|(prefix, _)| path.starts_with(prefix))
+            {
+                continue;
+            }
+            counts.discovered += 1;
+            counts
+                .subjects
+                .push(json!({ "path": path, "sha256": digest, "role": "producer" }));
+            violations.push(format!(
+                "parse bound producer {path} at {}: {error}",
+                tree.commit
+            ));
+        }
 
         for (path, (value, digest)) in &documents {
             let subjects = corpus_subjects(&binding.corpus, path, value);
@@ -612,7 +631,7 @@ fn collect_command_specs<'a>(
                     && let Some(specs) = child.as_object()
                 {
                     for (role, spec) in specs {
-                        if spec.is_object() && (role == "verify") == verify {
+                        if (role == "verify") == verify {
                             subjects.push((format!("{child_location}/{role}"), spec));
                         }
                     }
@@ -718,18 +737,50 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         .map_err(|error| error.message)
 }
 
-/// Every committed document outside `schemas/` that parses, with its digest.
-/// A file that does not parse is not a JSON producer subject; the formats that
-/// own it (JSONC configs, deliberately malformed inputs) have their own gates.
-fn committed_documents(tree: &CandidateTree) -> BTreeMap<String, (Value, String)> {
-    tree.files
+/// Parse committed documents outside `schemas/`. A malformed file selected by
+/// a path or filename binding is a failed producer, not a missing subject.
+/// Other non-JSON files (including JSONC stimulus) are outside this sweep.
+fn committed_documents(
+    tree: &CandidateTree,
+    bindings: &[Binding],
+) -> (
+    BTreeMap<String, (Value, String)>,
+    BTreeMap<String, (String, String)>,
+) {
+    let mut documents = BTreeMap::new();
+    let mut malformed = BTreeMap::new();
+    for (path, bytes) in tree
+        .files
         .iter()
         .filter(|(path, _)| !path.starts_with(SCHEMAS_PREFIX))
-        .filter_map(|(path, bytes)| {
-            let value = serde_json::from_slice::<Value>(bytes).ok()?;
-            Some((path.clone(), (value, sha256(bytes))))
-        })
-        .collect()
+    {
+        match serde_json::from_slice::<Value>(bytes) {
+            Ok(value) => {
+                documents.insert(path.clone(), (value, sha256(bytes)));
+            }
+            Err(error)
+                if bindings.iter().any(|binding| {
+                    corpus_binds_path(&binding.corpus, path)
+                        && !binding
+                            .excluded
+                            .iter()
+                            .any(|(prefix, _)| path.starts_with(prefix))
+                }) =>
+            {
+                malformed.insert(path.clone(), (sha256(bytes), error.to_string()));
+            }
+            Err(_) => {}
+        }
+    }
+    (documents, malformed)
+}
+
+fn corpus_binds_path(corpus: &Corpus, path: &str) -> bool {
+    match corpus {
+        Corpus::FileName(name) => file_name(path) == *name,
+        Corpus::Paths(paths) => paths.contains(&path),
+        _ => false,
+    }
 }
 
 fn sha256(bytes: &[u8]) -> String {
@@ -875,6 +926,62 @@ mod tests {
         }
         if report.packet["rows"][0]["disposition"]["state"] != "failed" {
             return Err("a failed subject must not leave the row corpus_validated".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_bound_producer_json_fails_with_its_committed_path() -> Result<(), String> {
+        for corpus in [
+            Corpus::FileName("example.json"),
+            Corpus::Paths(&["fixtures/a/expected/example.json"]),
+        ] {
+            let root = example_root();
+            write(
+                &root.join("fixtures/a/expected/example.json"),
+                r#"{"schema_version":"0.1","status":"pass""#,
+            );
+            let report = run(&root, &[binding(corpus, &[])], &[])?;
+            let row = &report.packet["rows"][0];
+            if row["disposition"]["state"] != "failed"
+                || row["producer_subjects_discovered"] != 1
+                || row["producer_subjects_valid"] != 0
+                || !report.violations.iter().any(|violation| {
+                    violation.contains("fixtures/a/expected/example.json")
+                        && violation.contains("parse")
+                })
+            {
+                return Err(format!(
+                    "malformed bound producer escaped the sweep: {row}; {:?}",
+                    report.violations
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn non_object_command_spec_roles_fail_in_both_binding_rows() -> Result<(), String> {
+        for (role, verify) in [("verify", true), ("build", false)] {
+            let root = example_root();
+            write(
+                &root.join("fixtures/a/expected/packet.json"),
+                &format!(r#"{{"command_specs":{{"{role}":null}}}}"#),
+            );
+            let report = run(&root, &[binding(Corpus::CommandSpecs { verify }, &[])], &[])?;
+            let row = &report.packet["rows"][0];
+            if row["disposition"]["state"] != "failed"
+                || row["producer_subjects_discovered"] != 1
+                || row["producer_subjects_valid"] != 0
+                || !report.violations.iter().any(|violation| {
+                    violation.contains(&format!("packet.json/command_specs/{role}"))
+                })
+            {
+                return Err(format!(
+                    "non-object {role} spec escaped the sweep: {row}; {:?}",
+                    report.violations
+                ));
+            }
         }
         Ok(())
     }
