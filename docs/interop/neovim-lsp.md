@@ -40,8 +40,8 @@ qualify the configuration defaults below.
 [The retained failed run](https://github.com/EffortlessMetrics/ripr-swarm/issues/1630#issuecomment-5877217051)
 and [standard document-pull discriminator](https://github.com/EffortlessMetrics/ripr-swarm/issues/1630#issuecomment-5877452052)
 are separate evidence. Bounded manual document pulls through the built-in handler
-made one buffer diagnostic, related test information, hover and an advertised
-refresh action. This does not qualify automatic refresh, save/root-change or
+made one diagnostic available in Neovim's buffer state, with related test
+information, hover and an advertised refresh action. This does not qualify automatic refresh, save/root-change or
 encoding parity, or a real-repository journey. The server bytes are a historical
 rolling rehearsal, not a final release candidate. This recipe remains a proof
 plan rather than a support claim.
