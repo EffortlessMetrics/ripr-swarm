@@ -1,5 +1,5 @@
 use std::cell::Cell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::{ParsedDiff, parse_bounded_lines, parse_unbounded};
 use crate::analysis_outcome::AnalysisLimitationKind;
@@ -232,7 +232,7 @@ fn unfinished_declared_hunks_are_malformed_at_eof_and_boundaries() -> Result<(),
         let file = parsed
             .changed_files
             .iter()
-            .find(|file| file.path == PathBuf::from("src/a.rs"))
+            .find(|file| file.path == Path::new("src/a.rs"))
             .ok_or_else(|| "unfinished hunk lost its advisory source file".to_string())?;
         if !file.added_lines.iter().any(|line| line.text == "new")
             || !file.removed_lines.iter().any(|line| line.text == "old")
@@ -259,7 +259,7 @@ fn declared_hunk_counts_reject_excess_body_and_invalid_numbers() -> Result<(), S
         .first()
         .ok_or_else(|| "marker-body file missing".to_string())?;
     if marker_body.changed_files.len() != 1
-        || file.path != PathBuf::from("src/a.rs")
+        || file.path != Path::new("src/a.rs")
         || !file
             .removed_lines
             .iter()
@@ -267,6 +267,131 @@ fn declared_hunk_counts_reject_excess_body_and_invalid_numbers() -> Result<(), S
         || !file.added_lines.iter().any(|line| line.text == "++ b/name")
     {
         return Err("valid body marker pair was mistaken for a file section".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn declared_ranges_reject_line_zero_and_unusable_end_coordinates() -> Result<(), String> {
+    let last_usable = usize::MAX - 1;
+    let mut failures = Vec::new();
+    for body in [
+        "@@ -0,1 +1,1 @@\n-old\n+new\n".to_string(),
+        "@@ -1,1 +0,1 @@\n-old\n+new\n".to_string(),
+        format!("@@ -0,0 +{last_usable},2 @@\n+first\n+last\n"),
+        format!("@@ -{last_usable},2 +0,0 @@\n-first\n-last\n"),
+    ] {
+        let input = format!("--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 @@\n-old\n+new\n{body}");
+        if let Err(error) = check_declared_hunk_status(&input, true) {
+            failures.push(error);
+        }
+        let parsed = parse_unbounded(&input);
+        let file = parsed
+            .changed_files
+            .first()
+            .ok_or_else(|| "range control lost its file".to_string())?;
+        if !file.added_lines.iter().any(|line| line.text == "new")
+            || !file.removed_lines.iter().any(|line| line.text == "old")
+        {
+            failures.push("invalid range lost earlier advisory changes".to_string());
+        }
+    }
+    for body in [
+        "@@ -0,0 +1,1 @@\n+new\n".to_string(),
+        "@@ -1,1 +0,0 @@\n-old\n".to_string(),
+        "@@ -0,0 +0,0 @@\n".to_string(),
+        format!("@@ -0,0 +{last_usable},1 @@\n+last\n"),
+        format!("@@ -{last_usable},1 +0,0 @@\n-last\n"),
+    ] {
+        if let Err(error) =
+            check_declared_hunk_status(&format!("--- a/src/a.rs\n+++ b/src/a.rs\n{body}"), false)
+        {
+            failures.push(error);
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+#[test]
+fn excess_body_counter_overflow_keeps_only_usable_advisory_coordinates() -> Result<(), String> {
+    let start = usize::MAX - 2;
+    for (added, body) in [
+        (
+            true,
+            format!("@@ -0,0 +{start},2 @@\n+first\n+second\n+third\n+fourth\n"),
+        ),
+        (
+            false,
+            format!("@@ -{start},2 +0,0 @@\n-first\n-second\n-third\n-fourth\n"),
+        ),
+    ] {
+        let input = format!("--- a/src/a.rs\n+++ b/src/a.rs\n{body}");
+        for parsed in [
+            parse_unbounded(&input),
+            parse_bounded_lines(input.lines(), 8)?,
+        ] {
+            let file = parsed
+                .changed_files
+                .first()
+                .ok_or_else(|| "counter control lost its source file".to_string())?;
+            let lines = if added {
+                &file.added_lines
+            } else {
+                &file.removed_lines
+            };
+            if lines.len() != 2
+                || !lines
+                    .iter()
+                    .any(|line| line.line == start && line.text == "first")
+                || !lines
+                    .iter()
+                    .any(|line| line.line == start + 1 && line.text == "second")
+                || !parsed.limitations.iter().any(|item| {
+                    item.kind == AnalysisLimitationKind::MalformedDiff
+                        && item.affected_items == Some(1)
+                })
+            {
+                return Err(format!(
+                    "excess body must retain only usable advisory coordinates: {parsed:?}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn malformed_hunk_counts_are_not_duplicated_by_later_boundaries() -> Result<(), String> {
+    let prefix = "--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1,2 +1,2 @@\n-old\n+new\n";
+    for (next, expected) in [
+        ("@@ -4 +4 @@\n-before\n+after\n", 1),
+        ("@@ -4,invalid +4 @@\n", 2),
+    ] {
+        let input = format!(
+            "{prefix}{next}diff --git a/src/b.rs b/src/b.rs\n--- a/src/b.rs\n+++ b/src/b.rs\n@@ -1 +1 @@\n-before\n+after\n"
+        );
+        for parsed in [
+            parse_unbounded(&input),
+            parse_bounded_lines(input.lines(), 8)?,
+        ] {
+            let limitation = parsed
+                .limitations
+                .iter()
+                .find(|item| {
+                    item.kind == AnalysisLimitationKind::MalformedDiff
+                        && item.path.as_deref() == Some("src/a.rs")
+                })
+                .ok_or_else(|| "boundary control lost its malformed-hunk limitation".to_string())?;
+            if limitation.affected_items != Some(expected) {
+                return Err(format!(
+                    "expected {expected} distinct malformed hunks, got {limitation:?}"
+                ));
+            }
+        }
     }
     Ok(())
 }

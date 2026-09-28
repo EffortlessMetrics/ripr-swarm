@@ -33,10 +33,15 @@ fact packet remains advisory rather than complete.
 For ordinary two-way hunks, malformed input includes invalid numeric ranges
 and a body that disagrees with the declared old/new line counts at EOF or a
 hunk/file boundary. Omitted counts mean one and explicit zero counts mean zero;
-the no-newline marker does not consume a source line. Previously parsed changes
-remain advisory evidence, carrying `malformed_diff`, `diff_parse`, and `retry`
-through the existing outcome projection. Valid metadata-only sections remain
-valid. This detects declared-span mismatch, not an entirely missing later
+the no-newline marker does not consume a source line. Ranges with positive
+counts must start on a one-based line and may not reach an
+unusable `usize::MAX` coordinate. Zero-count sides may start at zero.
+If an excess body exhausts a coordinate counter, the counter backstop closes
+the hunk before emitting that unusable added/removed coordinate.
+Previously parsed changes remain advisory evidence, carrying `malformed_diff`,
+`diff_parse`, and `retry` through the existing outcome projection. Existing
+metadata-only section handling is unchanged by span accounting.
+This detects declared-span mismatch, not an entirely missing later
 section after a complete hunk, and does not authenticate the input producer.
 Paired plain `---`/`+++` markers are ordinary body lines while both declared
 sides can consume them: a removal/addition of source text beginning `--`/`++`

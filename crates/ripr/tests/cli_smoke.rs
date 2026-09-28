@@ -17314,10 +17314,10 @@ fn truncated_declared_hunk_is_incomplete_through_file_and_stdin()
                 .pointer("/counts/changed_file_count")
                 .and_then(serde_json::Value::as_u64)
                 != Some(1)
-                || !outcome
+                || outcome
                     .pointer("/counts/probe_count")
                     .and_then(serde_json::Value::as_u64)
-                    .is_some_and(|count| count > 0)
+                    .is_none_or(|count| count == 0)
             {
                 return Err(
                     "declared-hunk journey must analyze one file and nonzero probes".into(),
