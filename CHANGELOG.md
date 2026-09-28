@@ -24,9 +24,11 @@ are scoped or reviewed.
   custom notifications during `initialize`, and hover showed the generic
   `ripr check` pointer. The server now publishes the startup status from
   `initialized`, logs a warning naming the root state and folders, and shows
-  it with `window/showMessage` to clients without the VS Code integration.
-  Hover names the blocked root, or an unsaved buffer whose evidence is paused
-  until the file is saved.
+  it with `window/showMessage` to clients without the VS Code integration,
+  at startup and when a later folder change stops analysis. Hover names the
+  blocked root, a file outside the analyzed root, an edited buffer whose
+  evidence is paused until the file is saved, or a file no refresh has
+  analyzed yet.
 - A repository's `ripr.toml` can no longer choose a program for ripr to run.
   `[perl].executable` was spawned by `ripr check`, probed by `ripr doctor`, and
   spawned by `ripr lsp` on file open or save, so a cloned repository could run

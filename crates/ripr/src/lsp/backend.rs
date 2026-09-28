@@ -3587,7 +3587,13 @@ fn blocked_root_message(root: &WorkspaceRootAuthority) -> Option<String> {
             .map(|path| path.display().to_string())
             .collect::<Vec<_>>()
             .join(", ");
-        format!(" Folders: {listed}.")
+        // Removed and changed roots carry the previous root, not the
+        // folders the client sent.
+        let label = match root.state {
+            WorkspaceRootState::RootRemoved | WorkspaceRootState::RootChanged => "Previous root",
+            _ => "Folders",
+        };
+        format!(" {label}: {listed}.")
     };
     // The stored details already name the recovery for ambiguous, removed
     // and changed roots; an unavailable root only says what the client sent.
@@ -4149,7 +4155,9 @@ impl LanguageServer for Backend {
         let (outcome, root_epoch) = match delta {
             Ok(pair) => pair,
             Err(rejection) => {
+                let previous = self.workspace_root_authority();
                 self.reject_workspace_folder_update(rejection).await;
+                self.disclose_blocked_root_transition(&previous).await;
                 return;
             }
         };
@@ -4241,8 +4249,11 @@ impl LanguageServer for Backend {
             };
             (resolution, set.folder_set_epoch())
         };
+        // Reaching here means the stored set changed (an accepted delta or a
+        // drift-correction replacement), so a kept root is announced once
+        // per change.
         let kept_root = match &derived.0 {
-            Some(WorkspaceRootResolution::Selected(root)) if outcome.changed => {
+            Some(WorkspaceRootResolution::Selected(root)) => {
                 let others = {
                     let Ok(set) = self.workspace_folders.lock() else {
                         return;
@@ -4268,8 +4279,16 @@ impl LanguageServer for Backend {
         self.apply_workspace_folder_set_authority(authority, folder_set_epoch)
             .await;
         self.disclose_blocked_root_transition(&previous).await;
+        // Announce only a root that actually stayed selected: a kept root
+        // that is no longer a directory, or an application dropped for a
+        // newer event, must not claim it is still analyzed.
         if let Some((root, others)) = kept_root {
-            self.disclose_kept_root(&root, &others).await;
+            let current = self.workspace_root_authority();
+            if current.allows_analysis()
+                && current.effective_root.as_deref() == Some(root.as_path())
+            {
+                self.disclose_kept_root(&root, &others).await;
+            }
         }
         self.reload_repository_config().await;
     }

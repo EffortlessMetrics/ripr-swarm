@@ -9708,7 +9708,9 @@ fn workspace_folder_transitions_generic_client_keeps_selected_root_when_a_folder
             // client hears it on the standard channel.
             let shown = read_lsp_request(&mut client.reader, "window/showMessage").await?;
             let text = shown["params"]["message"].as_str().unwrap_or_default();
-            if !text.contains("analysis is stopped (root_changed)") {
+            if !text.contains("analysis is stopped (root_changed)")
+                || !text.contains(&format!("Previous root: {root_a_path}."))
+            {
                 return Err(format!(
                     "a root block after startup must reach a generic client: {shown}"
                 ));
@@ -9937,6 +9939,42 @@ fn workspace_folder_transitions_non_active_folder_removal_keeps_ambiguous_select
             ));
         }
         client.finish().await
+    })
+}
+
+#[test]
+fn workspace_folder_transitions_rejected_event_warns_a_generic_client() -> Result<(), String> {
+    // A rejected delta (here a duplicate addition) stops analysis with
+    // root_unavailable; a generic client hears it on the standard channel
+    // instead of going silent.
+    run_workspace_folder_transitions_exchange("generic rejection warning did not complete", async {
+        let root_a = unique_lsp_test_root("wft-reject-warn-a")?;
+        let root_a_uri = file_uri_for_path(root_a.path())?;
+        let mut client = WorkspaceFolderTransitionsClient::spawn();
+        client
+            .initialize_generic_with_workspace_folders(serde_json::json!([workspace_folder_json(
+                &root_a_uri
+            )]))
+            .await?;
+        write_lsp_message(
+            &mut client.writer,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "workspace/didChangeWorkspaceFolders",
+                "params": {"event": {"added": [workspace_folder_json(&root_a_uri)], "removed": []}}
+            }),
+        )
+        .await?;
+        let shown = read_lsp_request(&mut client.reader, "window/showMessage").await?;
+        let text = shown["params"]["message"].as_str().unwrap_or_default();
+        if !text.contains("analysis is stopped (root_unavailable)")
+            || !text.contains("duplicate_addition")
+        {
+            return Err(format!(
+                "a rejected folder event must reach a generic client: {shown}"
+            ));
+        }
+        Ok(())
     })
 }
 
