@@ -856,6 +856,46 @@ mod tests {
     }
 
     #[test]
+    fn render_limit_notice_fires_at_eleven_and_follows_the_denominator() {
+        use crate::output::suppressions::{CheckSuppressionOutcome, SuppressedCheckFinding};
+        let mut output = output_with_unknown_finding();
+        let template = output.findings[0].clone();
+        // Twelve findings, one suppressed: eleven notices remain, one past
+        // the display limit, and the denominator notice is also due.
+        output.findings = (0..12)
+            .map(|index| {
+                let mut finding = template.clone();
+                finding.id = format!("finding-{index}");
+                finding.probe.location.line = 100 + index;
+                finding
+            })
+            .collect();
+        output.suppression = Some(CheckSuppressionOutcome {
+            policy_path: "policy/ripr-suppressions.toml".to_string(),
+            suppressed: vec![SuppressedCheckFinding {
+                finding_id: "finding-0".to_string(),
+                selector: "src/**".to_string(),
+            }],
+            warnings: Vec::new(),
+        });
+
+        let rendered = render(&output);
+        let lines = rendered.lines().collect::<Vec<_>>();
+
+        assert_eq!(
+            lines.get(..2),
+            Some(
+                &[
+                    "::notice title=ripr::Annotated 11 of 12 static exposure finding(s); 1 suppressed by policy policy/ripr-suppressions.toml. Run `ripr check --format json` to list every finding.",
+                    "::notice title=ripr::Emitted 11 notice annotations; GitHub displays at most 10 per level in one step, so some are not shown. Run `ripr check --format json` to list every finding.",
+                ][..]
+            ),
+            "{rendered}"
+        );
+        assert_eq!(lines.len(), 13, "{rendered}");
+    }
+
+    #[test]
     fn render_within_github_display_limit_emits_no_limit_notice() {
         let mut output = output_with_unknown_finding();
         let template = output.findings[0].clone();
