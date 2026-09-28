@@ -3324,6 +3324,112 @@ mod tests {
         }
     }
 
+    fn integrity_scratch(label: &str) -> Result<IntegrityScratch, String> {
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| err.to_string())?.as_nanos();
+        let path = std::env::temp_dir().join(format!("ripr-integrity-{label}-{stamp}"));
+        std::fs::create_dir(&path).map_err(|err| err.to_string())?;
+        Ok(IntegrityScratch(path))
+    }
+
+    struct IntegrityScratch(PathBuf);
+    impl Drop for IntegrityScratch {
+        fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+    }
+
+    fn edit_integrity_payload(path: &Path, field: &str) -> Result<(), String> {
+        let bytes = std::fs::read(path).map_err(|err| err.to_string())?;
+        let original: serde_json::Value = serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
+        let mut edited = original.clone();
+        let target = edited.get_mut(field).ok_or_else(|| format!("missing {field}"))?;
+        *target = match field {
+            "classified_seams" => {
+                let before = serde_json::to_string(target).map_err(|err| err.to_string())?;
+                let after = before.replace("\"reach\"", "\"fabricated reach\"");
+                if before == after { return Err("must edit actual nonempty seam evidence".to_owned()); }
+                serde_json::from_str(&after).map_err(|err| err.to_string())?
+            }
+            "seam_limit_info" => serde_json::Value::Null,
+            "lexical_fallback_files" => serde_json::json!(["src/forged.rs"]),
+            _ => return Err("unsupported integrity stimulus".to_owned()),
+        };
+        if edited == original { return Err("stimulus must change semantic payload".to_owned()); }
+        for (key, value) in original.as_object().ok_or("envelope must be object")? {
+            if key != field && edited.get(key) != Some(value) {
+                return Err("stimulus changed identity, digest, or unrelated payload".to_owned());
+            }
+        }
+        std::fs::write(path, serde_json::to_vec(&edited).map_err(|err| err.to_string())?)
+            .map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn same_key_classified_payload_and_metadata_edits_are_corrupt() -> Result<(), String> {
+        for compact in [false, true] {
+            let scratch = integrity_scratch(if compact { "compact" } else { "full" })?;
+            let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+            let mut key = empty_state().cache_key();
+            if compact { key.schema_version = COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION.to_owned(); }
+            let seams = vec![sample_classified()];
+            let limit = CachedSeamLimitInfo { analyzed: 1, total: 2, source: SeamLimitSource::Configured };
+            for field in ["classified_seams", "seam_limit_info", "lexical_fallback_files"] {
+                if compact {
+                    cache.store_compact_classified_seams_with_limit_and_fallback(
+                        &key, &seams, &[PathBuf::from("src/foo.rs")], 10)?;
+                    // Compact has no capped-run input; the full owner covers that field.
+                    if field == "seam_limit_info" { continue; }
+                } else {
+                    cache.store_classified_seams_with_limit_and_fallback(
+                        &key, &seams, Some(&limit), &[PathBuf::from("src/foo.rs")], 10)?;
+                }
+                if !matches!(cache.load_classified_seams_with_fallback(&key), CacheLoad::Hit((ref loaded, _, _)) if loaded.len() == 1) {
+                    return Err("actual seeded classified entry must warm hit".to_owned());
+                }
+                edit_integrity_payload(&cache.entry_path(&key), field)?;
+                if !matches!(cache.load_classified_seams_with_fallback(&key), CacheLoad::CorruptIgnored { .. }) {
+                    return Err(format!("{field} edit must reject matching-key entry (compact={compact})"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn classified_integrity_rejects_whole_shard_set_and_never_hides_corrupt_single() -> Result<(), String> {
+        let scratch = integrity_scratch("fallback")?;
+        let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+        let key = empty_state().cache_key();
+        let seams = vec![sample_classified(); 2];
+        cache.store_classified_seams_with_limit(&key, &seams, None, 1)?;
+        if cache.entry_path(&key).exists() { return Err("sharded seed must lack single entry".to_owned()); }
+        if !matches!(cache.load_classified_seams_with_fallback(&key), CacheLoad::Hit((ref loaded, _, _)) if loaded.len() == 2) {
+            return Err("missing single must use complete valid shards".to_owned());
+        }
+        let manifest = cache.sharded_manifest_path(&key);
+        let original_manifest = std::fs::read(&manifest).map_err(|err| err.to_string())?;
+        edit_integrity_payload(&manifest, "lexical_fallback_files")?;
+        if !matches!(cache.load_classified_seams_with_fallback(&key), CacheLoad::CorruptIgnored { .. }) {
+            return Err("edited manifest provenance must reject complete shard set".to_owned());
+        }
+        std::fs::write(&manifest, original_manifest).map_err(|err| err.to_string())?;
+        let shard = cache.sharded_entry_dir(&key).join("shard-00000.json");
+        let original = std::fs::read(&shard).map_err(|err| err.to_string())?;
+        edit_integrity_payload(&shard, "classified_seams")?;
+        if !matches!(cache.load_classified_seams_with_fallback(&key), CacheLoad::CorruptIgnored { .. }) {
+            return Err("one semantically edited shard must reject entire set".to_owned());
+        }
+        std::fs::write(&shard, original).map_err(|err| err.to_string())?;
+        cache.store_classified_seams_with_limit(&key, &seams, None, 10)?;
+        if !matches!(cache.load_sharded_classified_seams(&key), CacheLoad::Hit((ref loaded, _, _)) if loaded.len() == 2) {
+            return Err("alternative shards must still be valid before corrupt-single control".to_owned());
+        }
+        edit_integrity_payload(&cache.entry_path(&key), "classified_seams")?;
+        if !matches!(cache.load_classified_seams_with_fallback(&key), CacheLoad::CorruptIgnored { .. }) {
+            return Err("corrupt single must not hide behind valid sharded fallback".to_owned());
+        }
+        Ok(())
+    }
+
     fn empty_state() -> WorkspaceState<'static> {
         WorkspaceState {
             workspace_root: Path::new("/repo"),
@@ -5984,6 +6090,48 @@ mod tests {
         );
 
         ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn same_key_valid_json_fingerprint_payload_edit_is_corrupt() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).map_err(|err| err.to_string())?.as_nanos();
+        let dir = std::env::temp_dir().join(format!("ripr-integrity-fingerprint-{stamp}"));
+        std::fs::create_dir(&dir).map_err(|err| err.to_string())?;
+        struct OwnedDirectory(PathBuf);
+        impl Drop for OwnedDirectory {
+            fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+        }
+        let _owned = OwnedDirectory(dir.clone());
+        let root = Path::new("/repo");
+        let cache = RepoCorpusFingerprintCache::at_dir(dir);
+        cache.store(root, "original-fingerprint", "source-content-hash")?;
+        let entry = cache.entry_path("original-fingerprint");
+        let bytes = std::fs::read(&entry).map_err(|err| err.to_string())?;
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
+        std::fs::write(&entry, serde_json::to_vec(&value).map_err(|err| err.to_string())?)
+            .map_err(|err| err.to_string())?;
+        if cache.lookup(root, "original-fingerprint") != Some("source-content-hash".to_owned()) {
+            return Err("reformatted valid semantic body must hit".to_owned());
+        }
+        let original = value.clone();
+        *value.get_mut("files_content_hash").ok_or("missing semantic hash")? =
+            serde_json::Value::String("fabricated-content-hash".to_owned());
+        let object = original.as_object().ok_or("envelope must be object")?;
+        for (key, expected) in object {
+            if key != "files_content_hash" && value.get(key) != Some(expected) {
+                return Err("identity/digest must remain unchanged".to_owned());
+            }
+        }
+        std::fs::write(&entry, serde_json::to_vec(&value).map_err(|err| err.to_string())?)
+            .map_err(|err| err.to_string())?;
+        if !matches!(cache.lookup_detailed(root, "original-fingerprint"), CorpusFingerprintLookup::Corrupt(_)) {
+            return Err("same-key edited aggregate hash must be typed corruption".to_owned());
+        }
+        if cache.lookup(root, "original-fingerprint").is_some() {
+            return Err("corruption must not supply aggregate identity to caller".to_owned());
+        }
         Ok(())
     }
 

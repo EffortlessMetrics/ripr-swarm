@@ -3808,6 +3808,54 @@ marker = "libtest_mimic::Trial"
 
     #[cfg(unix)]
     #[test]
+    fn same_key_fingerprint_payload_edit_declines_and_rehashes_source_truth() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!("ripr-inv-integrity-{}", unique_suffix()));
+        std::fs::create_dir(&root).map_err(|err| err.to_string())?;
+        struct OwnedRoot(PathBuf);
+        impl Drop for OwnedRoot {
+            fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+        }
+        let _owned = OwnedRoot(root.clone());
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = vec![PathBuf::from("docs/notes.md")];
+        let cold = inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], false)?;
+        if cold.total_rust_files == 0 || cold.total_production_files == 0 {
+            return Err("fingerprint consumer fixture must contain production Rust source".to_owned());
+        }
+        let entries = no_impact_fingerprint_entries(&root)?;
+        if entries.len() != 1 { return Err("expected one actual-writer fingerprint entry".to_owned()); }
+        let entry = entries.first().ok_or("missing mapping")?;
+        let mut edited: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(entry).map_err(|err| err.to_string())?
+        ).map_err(|err| err.to_string())?;
+        let original = edited.clone();
+        *edited.get_mut("files_content_hash").ok_or("missing aggregate hash")? =
+            serde_json::Value::String("fabricated-content-hash".to_owned());
+        for (key, value) in original.as_object().ok_or("mapping must be object")? {
+            if key != "files_content_hash" && edited.get(key) != Some(value) {
+                return Err("must preserve mapping identity/digest".to_owned());
+            }
+        }
+        std::fs::write(entry, serde_json::to_vec(&edited).map_err(|err| err.to_string())?)
+            .map_err(|err| err.to_string())?;
+        if !matches!(try_no_impact_fast_path(&root, &config, &changed, &[])?,
+            NoImpactOutcome::Declined(NoImpactFallbackReason::CorruptMetadata)) {
+            return Err("valid-JSON mapping corruption must decline canonical fast path".to_owned());
+        }
+        let recovered = inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], true)?;
+        if recovered.workspace_cache_key != cold.workspace_cache_key
+            || recovered.total_rust_files != cold.total_rust_files
+            || recovered.total_production_files != cold.total_production_files
+            || serde_json::to_vec(&recovered.classified).map_err(|err| err.to_string())?
+                != serde_json::to_vec(&cold.classified).map_err(|err| err.to_string())? {
+            return Err("fallback must rehash actual source and preserve complete cold evidence".to_owned());
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn no_impact_foreign_root_mapping_falls_back_incompatible() -> Result<(), String> {
         let root = make_tempdir("no-impact-foreign")?;
         no_impact_layout(&root)?;
