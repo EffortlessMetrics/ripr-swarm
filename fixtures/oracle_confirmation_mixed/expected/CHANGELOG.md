@@ -15,7 +15,7 @@ Updated:
 ## Pending — oracle_confirmation_mixed (2)
 
 Reason:
-RIPR-SPEC-0122: human-full drill-in commands (#4411) now appear on the #4421 fixture
+RIPR-SPEC-0122: human-full carries per-finding drill-in commands (#4379); fixture added by #4421 before #4411 landed, so its golden lacked the block
 
 Command:
 `cargo xtask goldens bless oracle_confirmation_mixed --reason "..."`
