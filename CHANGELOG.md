@@ -11,12 +11,12 @@ are scoped or reviewed.
 
 ### Fixed
 
-- Server qualification builds the Linux server archives, which the editor
-  extension downloads, on Ubuntu 22.04 with `--locked`, and fails a Linux
-  binary that needs a glibc newer than 2.35. The 0.10.0 Linux archives were
-  built on Ubuntu 24.04 and failed on Ubuntu 22.04 and Debian 12 with
-  `GLIBC_2.39 not found`. The source release workflow takes the same runners
-  and check at the release sync.
+- `review-comments` observes its cooperative analysis budget during canonical
+  inventory and rejects cancelled evidence before classification. Git diff
+  discovery consumes the remaining budget; deadline cancellation records a
+  typed timeout while ordinary source failures retain their failure status.
+  Individual operations can still overrun a checkpoint interval (#1778).
+
 - Cold LLM-agent walks of 0.11 no longer dead-end on four routes. Passing a
   `ripr check` finding ID (`probe:...`) to `ripr agent repair --seam-id` now
   says it is not a seam ID and names `ripr pilot --root .`. The
@@ -95,6 +95,12 @@ are scoped or reviewed.
   assertion's token match to promote a finding to `exposed`; equally strong
   confirmed assertions retain their classification regardless of order
   ([#4404](https://github.com/EffortlessMetrics/ripr-swarm/issues/4404)).
+- Server qualification builds the Linux server archives, which the editor
+  extension downloads, on Ubuntu 22.04 with `--locked`, and fails a Linux
+  binary that needs a glibc newer than 2.35. The 0.10.0 Linux archives were
+  built on Ubuntu 24.04 and failed on Ubuntu 22.04 and Debian 12 with
+  `GLIBC_2.39 not found`. The source release workflow takes the same runners
+  and check at the release sync.
 
 ### Added
 
