@@ -46,6 +46,13 @@ encoding parity, or a real-repository journey. The server bytes are a historical
 rolling rehearsal, not a final release candidate. This recipe remains a proof
 plan rather than a support claim.
 
+[The range readback](https://github.com/EffortlessMetrics/ripr-swarm/issues/1630#issuecomment-5877887011)
+also found a source-position mismatch: the supplied UTF-16 range converted
+correctly to buffer bytes, but highlighted `    if montant_é > discount_th`
+instead of the complete expression `montant_é > discount_threshold`. The
+expression-selection requirement in step 2 failed. This single conversion does
+not qualify source-range precision or the encoding matrix.
+
 ## Configure
 
 Open `lsp/ripr.lua`:
