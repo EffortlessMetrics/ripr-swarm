@@ -12051,7 +12051,7 @@ fn sample_typescript_preview_actionability_finding() -> Finding {
     finding
 }
 
-fn sample_canonical_gap() -> FindingCanonicalGap {
+pub(super) fn sample_canonical_gap() -> FindingCanonicalGap {
     FindingCanonicalGap {
         id: "gap:python:src/pricing.py:apply_discount:predicate_boundary:predicate:amount>=threshold"
             .to_string(),

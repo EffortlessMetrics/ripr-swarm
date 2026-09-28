@@ -3625,13 +3625,22 @@ impl Backend {
         // diagnostics by design (RIPR-SPEC-0069), so this list is the only
         // LSP surface that names them for an agent; each id is a valid
         // `ripr.collectContext` `finding_id`.
+        // Filter canonical-group primaries, as publishing does, so a group
+        // counts once and a published group's other members are not listed.
+        // Only the three gap classes qualify: the `*_unknown` classes are
+        // missing static evidence, not gaps, and must not be named as such.
         let hidden = if snapshot.diagnostic_profile == LspDiagnosticProfile::Actionable {
-            snapshot
-                .findings
-                .iter()
+            super::diagnostics::canonical_finding_groups(&snapshot.findings)
+                .into_iter()
+                .map(|(primary, _)| primary)
                 .filter(|finding| {
                     finding.is_candidate_actionable()
-                        && finding.class != crate::domain::ExposureClass::Exposed
+                        && matches!(
+                            finding.class,
+                            crate::domain::ExposureClass::WeaklyExposed
+                                | crate::domain::ExposureClass::ReachableUnrevealed
+                                | crate::domain::ExposureClass::NoStaticPath
+                        )
                         && !super::diagnostics::finding_is_visible_in_profile(
                             LspDiagnosticProfile::Actionable,
                             finding,
@@ -9296,22 +9305,69 @@ mod list_actionable_items_tests {
         let mut base_side = hidden.clone();
         base_side.id = "probe:pricing:92:predicate".to_string();
         base_side.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        let mut unknown = hidden.clone();
+        unknown.id = "probe:pricing:94:predicate".to_string();
+        unknown.class = crate::domain::ExposureClass::StaticUnknown;
+        // Two members of one canonical gap count once, as one diagnostic would.
+        let mut grouped_first = hidden.clone();
+        grouped_first.id = "probe:pricing:96:predicate".to_string();
+        grouped_first.probe.location.line = 96;
+        grouped_first.canonical_gap = Some(crate::lsp::tests::sample_canonical_gap());
+        let mut grouped_second = grouped_first.clone();
+        grouped_second.id = "probe:pricing:97:predicate".to_string();
+        grouped_second.probe.location.line = 97;
         let mut snapshot = snapshot_with_selection(Some(applied_selection()?));
-        snapshot.findings = vec![hidden, exposed, base_side];
+        snapshot.findings = vec![
+            hidden,
+            exposed,
+            base_side,
+            unknown,
+            grouped_first,
+            grouped_second,
+        ];
         snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
         let harness = handler_harness()?;
         install_snapshot(&harness, snapshot.clone())?;
         let response = call_handler(&harness)?;
 
-        assert_eq!(response["hidden_gap_count"], 1, "{response:#}");
+        assert_eq!(response["hidden_gap_count"], 2, "{response:#}");
+        let listed = response["hidden_gaps"]
+            .as_array()
+            .ok_or("hidden_gaps is not an array")?
+            .iter()
+            .map(|gap| gap["finding_id"].as_str().unwrap_or_default().to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            listed.contains(&"probe:pricing:88:predicate".to_string()),
+            "{response:#}"
+        );
+        assert!(
+            !listed.iter().any(|id| id.ends_with(":94:predicate")),
+            "a static_unknown finding is not a gap: {response:#}"
+        );
         assert_eq!(
-            response["hidden_gaps"],
-            serde_json::json!([{
+            listed
+                .iter()
+                .filter(|id| id.ends_with(":96:predicate") || id.ends_with(":97:predicate"))
+                .count(),
+            1,
+            "one canonical gap is listed once: {response:#}"
+        );
+        let first = response["hidden_gaps"]
+            .as_array()
+            .and_then(|gaps| {
+                gaps.iter()
+                    .find(|gap| gap["finding_id"] == "probe:pricing:88:predicate")
+            })
+            .ok_or("probe 88 missing")?;
+        assert_eq!(
+            first,
+            &serde_json::json!({
                 "finding_id": "probe:pricing:88:predicate",
                 "file": "src/pricing.rs",
                 "line": 88,
                 "class": "weakly_exposed",
-            }])
+            })
         );
 
         snapshot.diagnostic_profile = LspDiagnosticProfile::Full;

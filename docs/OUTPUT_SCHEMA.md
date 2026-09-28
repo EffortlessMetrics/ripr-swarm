@@ -7183,12 +7183,13 @@ Success payload (200-level result object, no `protocol_version`,
 - `omitted_truncated` — `true` when `omitted_count` exceeds the listed
   `omitted` entries.
 - `hidden_gaps` — `[{finding_id, file, line, class}]`, at most 50: candidate
-  findings that are not `exposed` and that the `actionable` profile does not
-  publish as diagnostics because they have no bounded repair route
-  (RIPR-SPEC-0069). A new function no test calls is the common case. `file` is
+  gaps (`weakly_exposed`, `reachable_unrevealed` or `no_static_path`, one entry
+  per canonical gap) that the `actionable` profile does not publish as
+  diagnostics because they have no bounded repair route (RIPR-SPEC-0069). The
+  `*_unknown` classes are missing evidence, not gaps, and are not listed. A new function no test calls is the common case. `file` is
   root-relative; `finding_id` is a valid `ripr.collectContext` argument.
   Always empty under the `full` profile, which publishes these findings.
-- `hidden_gap_count` — the full number of such findings.
+- `hidden_gap_count` — the full number of such canonical gaps.
 - `budget_identity` — the snapshot profile budget identity string.
 - `complete_evidence_identity` — the complete-evidence identity string.
 - `continuation_or_inspect_route` — the route string for continuing or
