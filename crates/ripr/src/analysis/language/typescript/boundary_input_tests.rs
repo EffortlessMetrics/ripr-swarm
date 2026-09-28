@@ -473,6 +473,15 @@ fn whole_side_comparisons_accept_common_line_shapes() {
         ("  return ready ? amount >= LIMIT : false;", false),
         ("  if (flag && amount >= LIMIT) {", false),
         ("  items.forEach((x) => amount >= LIMIT);", false),
+        // Only `if (`, `return`, or `const|let|var NAME =` may open the
+        // statement before the comparison (second review on #4429).
+        ("  if (express) return amount >= LIMIT ? 0 : 900;", false),
+        ("  if (skip) return 0; const big = amount >= LIMIT;", false),
+        ("  if (a) {} else if (amount >= LIMIT) {", false),
+        ("  if (ready) if (amount >= LIMIT) {", false),
+        ("  const o = { f() { return amount >= LIMIT; } };", false),
+        ("  try { g(); } catch { return amount >= LIMIT; }", false),
+        ("  let big = amount >= LIMIT;", true),
         ("  if (amount >= LIMIT + 1) {", false),
         ("  if (x + amount >= LIMIT) {", false),
         ("  if (amount >= -LIMIT) {", false),
@@ -637,4 +646,24 @@ fn changed_line_behind_an_early_exit_or_nested_block_stays_unresolved() {
             "{label}: {source}"
         );
     }
+}
+
+/// Second review on #4429: a changed line inside a block comment holds no
+/// code, so the next code line must not stand in for it. The adapter's line
+/// number is authoritative; the module's own line must hold the comparison.
+#[test]
+fn changed_line_inside_a_block_comment_stays_unresolved() {
+    let source = "export function shipping(amount: number): number {\n  /*\n  if (amount >= 5000) {\n  */\n  if (amount > 9000) {\n    return 0;\n  }\n  return 500;\n}\n";
+    let owners = extract_owners(Path::new("src/shipping.ts"), source);
+    let owner = owners.iter().find(|owner| owner.name == "shipping");
+    assert!(owner.is_some(), "setup: owner must be extracted");
+    let derive = |line: usize, text: &str| {
+        owner.and_then(|owner| ts_boundary_input_in_source(source, line, text, owner))
+    };
+    assert_eq!(derive(3, "  if (amount >= 5000) {"), None);
+    // Control: the real code line with its own operand derives.
+    assert_eq!(
+        derive(5, "  if (amount >= 9000) {").map(|input| input.value),
+        Some(9000)
+    );
 }

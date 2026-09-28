@@ -16,10 +16,14 @@
 //!   name in the module is a plain read (no parameter, local, catch, import,
 //!   function, class, enum, or destructuring binding of the same name).
 //!
-//! - the changed line runs on every call: it sits at the top level of a
+//! - the changed line runs on every call: it is a code line of the owner
+//!   holding the same comparison in the module, at the top level of a
 //!   block-bodied owner, after no `return`/`throw`/`break`/`continue`/`yield`
-//!   and inside no nested block, and nothing before the comparison on the
-//!   line can skip it (`&&`, `||`, `??`, `?:`, `?.`, a callback).
+//!   and inside no nested block; it starts a fresh statement, and that
+//!   statement opens with the comparison (`if (`, `return`, or
+//!   `const|let|var NAME =` directly before its first side). A helper call
+//!   before the line that throws only for the boundary value is a static
+//!   limit this does not see.
 //!
 //! The module rules run on the oxc token stream, so comments, strings,
 //! templates, and regular expressions never pass for code there; the changed
@@ -113,6 +117,7 @@ pub(crate) fn ts_boundary_input_in_source(
         owner_start_line: owner.start_line,
         owner_end_line: owner.end_line,
         constant,
+        operand: operand.to_string(),
         changed_line: line,
     };
     let file = owner.file.clone();
@@ -209,7 +214,6 @@ pub(super) fn comparison_has_whole_sides(line: &str, parameter: &str, operand: &
         "(", "&&", "||", "?", ":", ",", "=", "=>", "return", "{", ";",
     ];
     const AFTER: &[&str] = &[")", "&&", "||", "?", ":", ";", ",", "}"];
-    const CONDITIONAL: &[&str] = &["&&", "||", "??", "?", "?.", ":", "=>", "function"];
     // The line tokenizer does not know literal or comment spans, so a string,
     // template, regular expression, or comment could carry a look-alike
     // comparison (`"over: amount >= LIMIT"`). Refuse any line that has one.
@@ -248,13 +252,10 @@ pub(super) fn comparison_has_whole_sides(line: &str, parameter: &str, operand: &
         if !(before_ok && after_ok) {
             return false;
         }
-        // Anything before the comparison that can skip evaluating it
-        // (`ok || amount >= LIMIT`, `c ? x : amount >= LIMIT`, `a?.f(...)`,
-        // a callback body) means the boundary input may never reach it.
-        if tokens[..at - 1]
-            .iter()
-            .any(|token| CONDITIONAL.contains(token))
-        {
+        // The comparison must open the line's statement: anything else before
+        // it (`ok || `, `c ? x : `, `if (skip) return 0;`, `else if (`, a
+        // method or callback body) may skip evaluating it.
+        if !statement_opens_with_comparison(&tokens[..at - 1]) {
             return false;
         }
         found += 1;
@@ -262,11 +263,29 @@ pub(super) fn comparison_has_whole_sides(line: &str, parameter: &str, operand: &
     found == 1
 }
 
+/// Whether `prefix`, the line tokens before a comparison's first side, is
+/// one of the statement openings that always evaluate it: `if (`, `return`,
+/// or `const|let|var NAME =`.
+fn statement_opens_with_comparison(prefix: &[&str]) -> bool {
+    let is_name = |word: &str| {
+        word.starts_with(|ch: char| ch.is_ascii_alphabetic() || ch == '_' || ch == '$')
+            && word
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+    };
+    match prefix {
+        ["if", "("] | ["return"] => true,
+        [declare, name, "="] => matches!(*declare, "const" | "let" | "var") && is_name(name),
+        _ => false,
+    }
+}
+
 struct ModuleRequest {
     parameter: String,
     owner_start_line: usize,
     owner_end_line: usize,
     constant: Option<String>,
+    operand: String,
     /// 1-based line of the changed comparison in the owner's module.
     changed_line: usize,
 }
@@ -499,16 +518,24 @@ fn changed_line_runs_on_every_call(source: &str, tokens: &[Tok], request: &Modul
     // with a statement keyword. A braceless `if`/loop body, an `else`
     // branch, or an expression continued from the previous line (`? :`,
     // `&&`, `=>`) would otherwise pass with a balanced stack.
+    let line_end = line_starts.get(changed).copied().unwrap_or(source.len());
+    // The module's own line must hold the same comparison: a line inside a
+    // block comment, or a workspace that does not match the diff, fails.
+    let source_line = source.get(line_start..line_end).unwrap_or("");
+    if !comparison_has_whole_sides(source_line, &request.parameter, &request.operand) {
+        return false;
+    }
     let body = &tokens[close + 1..];
     let before_line = body
         .iter()
         .take_while(|token| token.start < line_start)
         .count();
     let starts_statement = body.get(before_line).is_some_and(|first| {
-        matches!(
-            first.kind,
-            Kind::If | Kind::Return | Kind::Const | Kind::Let | Kind::Var
-        )
+        first.start < line_end
+            && matches!(
+                first.kind,
+                Kind::If | Kind::Return | Kind::Const | Kind::Let | Kind::Var
+            )
     });
     let follows_statement = before_line
         .checked_sub(1)
