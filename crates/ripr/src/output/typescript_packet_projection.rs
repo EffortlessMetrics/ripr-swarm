@@ -40,8 +40,8 @@ pub(crate) enum TargetAssertionShape {
     Observed { shape: String },
     /// The observed call input provably does NOT reach the named boundary.
     /// `shape` carries an explicit boundary placeholder instead of the
-    /// observed input, and a stop condition forbids reusing that input; the
-    /// packet stays delegatable because the boundary itself is concrete.
+    /// observed input, and the packet must fail closed through the shared
+    /// validator.
     Unreachable {
         shape: String,
         observed_call: String,
@@ -51,8 +51,8 @@ pub(crate) enum TargetAssertionShape {
     /// (`amount == DISCOUNT_THRESHOLD`) that this projection cannot resolve
     /// to a concrete value, so no observed literal input can be shown to hit
     /// it (#4215). `shape` carries the same boundary placeholder as
-    /// `Unreachable`, but the packet fails closed: the placeholder cannot say
-    /// which value hits the boundary.
+    /// `Unreachable`, and the packet fails closed: "undecided" is not
+    /// evidence that the observed input discriminates the boundary.
     UnresolvedBoundary {
         shape: String,
         observed_call: String,
@@ -69,18 +69,21 @@ impl TargetAssertionShape {
         }
     }
 
-    /// Shared-validator ineligibility reason when the packet cannot name the
-    /// boundary the repair must hit. `None` keeps the packet eligible through
-    /// the normal complete-contract projection.
-    ///
-    /// An observed input that provably misses a literal boundary is the gap
-    /// itself, not a reason to refuse the repair: the placeholder shape names
-    /// the boundary and the stop condition forbids reusing the observed input,
-    /// the same contract as the Rust `boundary input where …` shape. Refusing
-    /// it left every TypeScript literal boundary without a repair route.
+    /// Shared-validator ineligibility reason when the observed call input
+    /// provably cannot reach the named boundary. `None` keeps the packet
+    /// eligible through the normal complete-contract projection.
     fn packet_ineligibility_reason(&self) -> Option<String> {
         match self {
-            Self::Observed { .. } | Self::Unreachable { .. } => None,
+            Self::Observed { .. } => None,
+            Self::Unreachable {
+                observed_call,
+                discriminator,
+                ..
+            } => Some(format!(
+                "observed call input `{observed_call}` does not reach the missing \
+                 discriminator `{discriminator}`; derive an input that hits the \
+                 boundary before the packet is delegatable"
+            )),
             Self::UnresolvedBoundary {
                 observed_call,
                 discriminator,
@@ -138,8 +141,8 @@ impl TargetAssertionShape {
 ///   (landed behavior for boundary-hitting fixtures).
 /// - The observed call input provably does NOT hit the boundary → a
 ///   placeholder shape naming the boundary (repo convention
-///   `/* boundary input for <discriminator> */`) replaces the observed input
-///   and a stop condition forbids reusing it; the packet stays eligible.
+///   `/* boundary input for <discriminator> */`) replaces the observed input;
+///   the caller fails the packet closed via the shared validator.
 /// - The boundary operand is an unresolved named constant
 ///   (`amount == DISCOUNT_THRESHOLD`) and no argument is that constant → the
 ///   same placeholder, failed closed (#4215). A constant is never bound by a
@@ -724,11 +727,11 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
     };
 
     // Projection eligibility: agent_packet eligible through the normal
-    // complete-contract path. A provably non-reaching observed input already
-    // swapped to the placeholder shape plus a no-reuse stop condition (#4105),
-    // so the packet never instructs a duplicate of a non-discriminating
-    // assertion. Only an unresolved boundary constant fails closed: its
-    // placeholder cannot say which value to hit.
+    // complete-contract path, unless the observed call input provably does
+    // not reach the named discriminator boundary (#4105). Then the shared
+    // validator fails the packet closed while the placeholder shape still
+    // names the boundary — a complete packet must not instruct a duplicate
+    // of a non-discriminating assertion.
     let boundary_ineligibility = target_shape
         .as_ref()
         .and_then(TargetAssertionShape::packet_ineligibility_reason);
@@ -1198,7 +1201,7 @@ mod tests {
     /// does NOT reach the `user.length == 3` boundary. The shape must become
     /// an explicit boundary placeholder and the packet must fail closed.
     #[test]
-    fn observed_input_not_reaching_boundary_downgrades_to_placeholder_and_stays_delegatable()
+    fn observed_input_not_reaching_boundary_downgrades_to_placeholder_and_fails_closed()
     -> Result<(), String> {
         let finding = boundary_finding("login('alice')", "'session-for-alice'", "user.length == 3");
         let record = typescript_gap_record_for(&finding)
@@ -1227,10 +1230,19 @@ mod tests {
             "a stop condition must forbid reusing the observed input: {:?}",
             route.stop_conditions
         );
-        // The boundary is concrete, so the placeholder names exactly what the
-        // new assertion must hit: the packet stays delegatable.
-        validate_agent_gap_record_packet(&record)
-            .map_err(|error| format!("placeholder packet must validate: {error}"))?;
+        let error = match validate_agent_gap_record_packet(&record) {
+            Err(error) => error,
+            Ok(()) => {
+                return Err(
+                    "packet must fail closed when the observed input cannot reach the boundary"
+                        .to_string(),
+                );
+            }
+        };
+        assert!(
+            error.contains("user.length == 3") && error.contains("login('alice')"),
+            "validator reason must name the boundary and the observed input: {error}"
+        );
         Ok(())
     }
 

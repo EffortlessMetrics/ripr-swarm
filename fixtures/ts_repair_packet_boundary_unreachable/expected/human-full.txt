@@ -26,11 +26,13 @@ Language
 
 Preview actionability
   authority: preview_advisory_only
-  gap state: actionable
-  category: complete_repair_packet
-  repair packet ready: true
-  why actionable: complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)
-  repair action: add a focused assertion for the missing discriminator `user.length == 3` in the related test, shaped like `expect(login(/* boundary input for user.length == 3 */)).toBe(expected)`
+  gap state: advisory
+  category: incomplete_repair_packet
+  repair packet ready: false
+  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract; validator: is not agent-packet eligible: observed call input `login('alice')` does not reach the missing discriminator `user.length == 3`; derive an input that hits the boundary before the packet is delegatable
+  repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
+  missing fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs
+  evidence needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
   raw evidence: src/auth.ts:2 (typescript_preview_probe) source=probe:src_auth.ts:typescript_preview:23e9836b owner=login
 
 Static exposure
@@ -59,33 +61,22 @@ TypeScript preview card (advisory)
   missing discriminator: user.length == 3
   suggested assertion shape: Add an exact boundary assertion for `user.length == 3`.
   verify: jest tests/auth.test.ts
-  repair packet ready: true
-  why actionable: complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)
-  repair action: add a focused assertion for the missing discriminator `user.length == 3` in the related test, shaped like `expect(login(/* boundary input for user.length == 3 */)).toBe(expected)`
+  repair packet ready: false
+  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract; validator: is not agent-packet eligible: observed call input `login('alice')` does not reach the missing discriminator `user.length == 3`; derive an input that hits the boundary before the packet is delegatable
+  repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
   limits:
     - Syntax-first TypeScript/JavaScript preview evidence only.
     - No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.
     - This card is advisory and is not a repair packet.
 
 TypeScript repair packet (advisory)
-  canonical gap: gap:typescript:typescript_preview:23e9836b
-  source: login at src/auth.ts:2
-  related test: tests/auth.test.ts::login returns a long session token
-  oracle: expect(login(/* boundary input for user.length == 3 */)).toBe(expected)
-  edit surface: tests/auth.test.ts
-  verify: jest tests/auth.test.ts
-  receipt: ripr receipt write --gap gap:typescript:typescript_preview:23e9836b --verify-command 'jest tests/auth.test.ts' --status not_run --out target/ripr/receipts/gap-typescript-typescript_preview-23e9836b.json
-  must not change:
-    - Do not edit production code unless the focused proof exposes a real product defect.
-    - Do not broaden the change beyond this GapRecord and its repair route.
-    - Do not treat static evidence as runtime mutation, coverage, or correctness proof.
-    - Do not generate tests or call external providers from this packet.
-    - Do not treat preview-language evidence as gate authority.
-  why actionable: complete-contract TypeScript finding — package root, runner, owner, oracle all resolved; no blocking limitation
-  authority: preview_advisory_only
+  status: not actionable
+  limitation: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
+  target shape (not delegatable): expect(login(/* boundary input for user.length == 3 */)).toBe(expected)
+  next capability needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
 
 Next step
-  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `user.length == 3`; the repair packet is complete and delegatable (advisory).
+  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `user.length == 3`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.
 
 
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.

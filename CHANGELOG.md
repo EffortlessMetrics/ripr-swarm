@@ -24,11 +24,6 @@ are scoped or reviewed.
   reads the field by name (`cfg.retries`) still counts.
 - Rust: the one-line signature of a new function whose body is added too is no
   longer probed; it only repeated the body's findings.
-- TypeScript: a literal boundary whose only test input misses it (`amount >
-  5000` to `>=`, tested with `shipping(1000)`) now gets a repair packet naming
-  the boundary input, instead of a refusal. The packet still forbids reusing
-  the observed input; an unresolved named-constant boundary still fails
-  closed.
 - `cargo xtask ripr-pr` timeout packets now give one host-shell-labeled retry
   command that keeps base, head, and root arguments literal when copied, including
   refs with shell syntax and roots with spaces (#4367).

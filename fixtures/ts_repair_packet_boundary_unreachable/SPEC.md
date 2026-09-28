@@ -29,19 +29,26 @@ ripr check \
 The TypeScript preview adapter:
 
 - Classifies the finding as `WeaklyExposed` (oracle strength is Weak, not Strong)
+- Sets `actionability_category: incomplete_repair_packet` (G-A passes)
 - Projects a `GapRecord` whose `assertion_shape` is the boundary placeholder
   `expect(login(/* boundary input for user.length == 3 */)).toBe(expected)` — it must NOT
   reuse the observed input `login('alice')`, which statically cannot reach the
   named boundary (G-G, #4105)
 - Adds a stop condition forbidding reuse of the observed call input
-- Keeps the packet delegatable: the boundary `user.length == 3` is concrete, so
-  the placeholder names exactly what the new assertion must hit. The observed
-  input missing the boundary is the gap the repair closes, not a reason to
-  refuse it (the Rust `boundary input where …` shape follows the same contract)
+- Fails the packet closed through the shared validator
+  (`agent_packet` ineligible): `repair_packet_ready` stays `false`
+- Keeps `actionability_category: incomplete_repair_packet` and
+  `gap_state: advisory` (no complete-packet flip)
 - Keeps `authority_boundary: preview_advisory_only` (TypeScript stays preview)
+- Omits `typescript_repair_packet` from the check JSON (never emit a partial
+  or implied packet)
+- Shows the human limitation section with
+  `target shape (not delegatable): expect(login(/* boundary input for user.length == 3 */)).toBe(expected)`
 
 ## Must Not
 
+- Emit `repair_packet_ready: true` when the observed call input provably
+  cannot reach the named discriminator boundary (#4105)
 - Present the observed call input (`login('alice')`) as the assertion shape
   for the missing discriminator — an agent following it verbatim would
   duplicate a non-discriminating assertion
@@ -49,6 +56,3 @@ The TypeScript preview adapter:
 - Change `schema_version`
 - Add new public symbols
 - Execute runtime code, call providers, or generate tests
-
-An unresolved named-constant boundary (`amount == DISCOUNT_THRESHOLD`) still
-fails closed; see `ts_repair_packet_boundary_constant_unresolved`.

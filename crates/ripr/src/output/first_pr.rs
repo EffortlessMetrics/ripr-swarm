@@ -3636,7 +3636,7 @@ mod tests {
             source_kind: GapDecisionLedgerSourceKind::CheckOutput,
             records_path: "check.json".to_string(),
             records_json: Ok(include_str!(
-                "../../../../fixtures/ts_repair_packet_boundary_constant_unresolved/expected/check.json"
+                "../../../../fixtures/ts_repair_packet_boundary_unreachable/expected/check.json"
             )
             .to_string()),
         });
@@ -3656,17 +3656,17 @@ mod tests {
         let reason = packet["selected"]["reason"].as_str().unwrap_or_default();
         assert!(
             reason.contains(
-                "Static limitation `typescript_repair_packet_not_delegatable` at `src/pricing.ts:4`"
+                "Static limitation `typescript_repair_packet_not_delegatable` at `src/auth.ts:2`"
             ),
             "{reason}"
         );
         assert!(
-            reason.contains("boundary constant `DISCOUNT_THRESHOLD` in the missing discriminator `amount == DISCOUNT_THRESHOLD` is not resolved"),
+            reason.contains("does not reach the missing discriminator `user.length == 3`"),
             "{reason}"
         );
         assert!(
             reason.contains(
-                "Target shape (not delegatable): Exact-value evidence is present; verify it targets the changed discriminator."
+                "Target shape (not delegatable): Add an exact boundary assertion for `user.length == 3`."
             ),
             "{reason}"
         );

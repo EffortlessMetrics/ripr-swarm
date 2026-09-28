@@ -586,7 +586,7 @@ mod tests {
     /// closed (stay `incomplete_repair_packet`) and the reason must name both
     /// the boundary and the non-reaching observed input.
     #[test]
-    fn boundary_unreachable_observed_input_projects_delegatable_placeholder_packet()
+    fn boundary_unreachable_observed_input_fails_packet_closed_with_boundary_reason()
     -> Result<(), String> {
         let mut finding = sample_typescript_finding();
         finding.probe.owner = Some(SymbolId("typescript:src/auth.ts::login".to_string()));
@@ -627,17 +627,24 @@ mod tests {
                 "expected structured TypeScript actionability for the wrongfam finding".to_string(),
             );
         };
-        // The observed input missing the boundary is the gap the repair
-        // closes; the packet names the boundary through a placeholder and
-        // stays delegatable (the Rust `boundary input where …` contract).
         assert!(
-            actionability.repair_packet_ready,
-            "a concrete boundary the observed input misses is a repair target: {}",
-            actionability.why_not_actionable
+            !actionability.repair_packet_ready,
+            "the packet must fail closed when the observed input cannot reach the boundary"
         );
         assert_eq!(
-            actionability.actionability_category, "complete_repair_packet",
-            "{}",
+            actionability.actionability_category, "incomplete_repair_packet",
+            "a downgraded packet must stay incomplete"
+        );
+        assert!(
+            actionability
+                .why_not_actionable
+                .contains("user.length == 3"),
+            "why_not_actionable must name the unreachable boundary: {}",
+            actionability.why_not_actionable
+        );
+        assert!(
+            actionability.why_not_actionable.contains("login('alice')"),
+            "why_not_actionable must name the non-reaching observed input: {}",
             actionability.why_not_actionable
         );
         Ok(())
