@@ -64,6 +64,7 @@ Updated:
 
 Reason:
 RIPR-SPEC-0001: a changed line inside a function no test reaches is no_static_path whatever its probe shape; static_unknown escalate-to-mutation advice no longer stands in for a missing test
+RIPR-SPEC-0122: human-full carries per-finding drill-in commands (#4379); digest why-line names the incomplete stage; unreached static_unknown asks for a test first
 
 Command:
 `cargo xtask goldens bless benches_harness_evidence --reason "..."`
@@ -76,6 +77,19 @@ Updated:
 
 Reason:
 RIPR-SPEC-0001: the one-line signature of a new function whose body is added too carries no behavior of its own and is no longer probed (parity with the TypeScript and Python adapters)
+RIPR-SPEC-0122: omit zero-count languages, keep the empty-result caveat to empty runs, cut digest lines at word boundaries
+
+Command:
+`cargo xtask goldens bless benches_harness_evidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — benches_harness_evidence (7)
+
+Reason:
+RIPR-SPEC-0122: unreached static_unknown next step hedges macro and integration reach
 
 Command:
 `cargo xtask goldens bless benches_harness_evidence --reason "..."`
