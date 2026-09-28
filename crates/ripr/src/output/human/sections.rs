@@ -145,6 +145,13 @@ pub(super) fn one_line(value: &str) -> String {
         collapsed
     } else {
         let mut truncated = collapsed.chars().take(LINE_BUDGET).collect::<String>();
+        // Cut at a word boundary when one is near, so the line never ends
+        // mid-word ("places amo…"); a long unbroken token still cuts hard.
+        if let Some(space) = truncated.rfind(" ")
+            && truncated[space..].chars().count() <= WORD_BOUNDARY_SLACK
+        {
+            truncated.truncate(space);
+        }
         truncated.push('…');
         truncated
     }
@@ -152,6 +159,9 @@ pub(super) fn one_line(value: &str) -> String {
 
 /// Maximum displayed characters for one rendered source fragment.
 const LINE_BUDGET: usize = 180;
+
+/// How far back from [`LINE_BUDGET`] `one_line` looks for a word boundary.
+const WORD_BOUNDARY_SLACK: usize = 30;
 
 /// Render a changed-source fragment for the exhaustive surface: **complete**,
 /// but hard-wrapped so no display line runs past the budget.
@@ -899,6 +909,22 @@ struct RepairPlacement<'a> {
 /// from the class name alone. The hint restates the stage evidence that put
 /// the finding in its class, so it must agree with the reach/observe lines
 /// printed beneath it (F5-10).
+/// Names the first incomplete stage instead of deferring to the full form
+/// (#4379 rewalk W4): "partially complete — see full form" told a reader
+/// nothing they could act on from the digest.
+fn partial_path_hint(ripr: &RiprEvidence) -> &'static str {
+    let incomplete = |stage: &crate::domain::StageEvidence| stage.state != StageState::Yes;
+    if incomplete(&ripr.infect) {
+        "a related test reaches this change, but no test input tells the old and new behavior apart"
+    } else if incomplete(&ripr.propagate) {
+        "a related test reaches this change, but the path from it to what the test checks is only partly traced"
+    } else if incomplete(&ripr.reveal.observe) {
+        "a related test reaches this change, but its assertions observe the result only loosely"
+    } else {
+        "a related test reaches this change, but the static evidence path is partially complete — see full form for details"
+    }
+}
+
 fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<String> {
     let reveal = &ripr.reveal;
     match class {
@@ -906,10 +932,7 @@ fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<Str
             if reveal.discriminate.state == StageState::Weak {
                 Some("a related test reaches this change but does not observe the exact changed value".to_string())
             } else {
-                Some(
-                    "the evidence path is partially complete — see full form for details"
-                        .to_string(),
-                )
+                Some(partial_path_hint(ripr).to_string())
             }
         }
         ExposureClass::ReachableUnrevealed => {
@@ -919,10 +942,7 @@ fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<Str
                         .to_string(),
                 )
             } else {
-                Some(
-                    "the evidence path is partially complete — see full form for details"
-                        .to_string(),
-                )
+                Some(partial_path_hint(ripr).to_string())
             }
         }
         ExposureClass::NoStaticPath => {
@@ -1042,5 +1062,50 @@ mod classification_hint_tests {
                 .is_some_and(|hint| !hint.contains("no related test")),
             "a reaching test must never be described as absent: {partial:?}"
         );
+    }
+
+    #[test]
+    fn weakly_exposed_hint_names_the_incomplete_stage() {
+        // Rewalk W4: the boundary gap (infection weak, exact oracle present)
+        // used to read "partially complete — see full form for details".
+        let mut evidence = ripr(StageState::Yes, StageState::Yes);
+        evidence.reveal.discriminate = StageEvidence::new(StageState::Yes, Confidence::High, "x");
+        evidence.infect = StageEvidence::new(StageState::Weak, Confidence::Medium, "x");
+        let hint = classification_hint(&ExposureClass::WeaklyExposed, &evidence);
+        assert_eq!(
+            hint.as_deref(),
+            Some(
+                "a related test reaches this change, but no test input tells the old and new behavior apart"
+            )
+        );
+
+        evidence.infect = StageEvidence::new(StageState::Yes, Confidence::High, "x");
+        evidence.reveal.observe = StageEvidence::new(StageState::Weak, Confidence::Low, "x");
+        let hint = classification_hint(&ExposureClass::WeaklyExposed, &evidence);
+        assert_eq!(
+            hint.as_deref(),
+            Some("a related test reaches this change, but its assertions observe the result only loosely")
+        );
+    }
+}
+
+#[cfg(test)]
+mod one_line_tests {
+    use super::{LINE_BUDGET, one_line};
+
+    #[test]
+    fn one_line_truncates_at_a_word_boundary() {
+        // Rewalk W4: the Python digest cut "places amount" to "places amo…".
+        let text = format!("{} places amount at the boundary", "word ".repeat(34));
+        let rendered = one_line(&text);
+        assert!(rendered.ends_with("places…"), "{rendered}");
+        assert!(rendered.chars().count() <= LINE_BUDGET + 1);
+    }
+
+    #[test]
+    fn one_line_cuts_an_unbroken_token_hard() {
+        let rendered = one_line(&"x".repeat(LINE_BUDGET + 20));
+        assert_eq!(rendered.chars().count(), LINE_BUDGET + 1);
+        assert!(rendered.ends_with('…'));
     }
 }

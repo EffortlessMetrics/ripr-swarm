@@ -53,8 +53,8 @@
       "stop_reasons": ["static_probe_unknown"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "Escalate to real mutation testing or deep static analysis for this probe.",
-      "suggested_next_action": "Escalate to real mutation testing or deep static analysis for this probe.",
+      "recommended_next_step": "No static test path reaches this change, so first add a test that exercises it and asserts the result; deep mode or real mutation testing cannot help until a test reaches it.",
+      "suggested_next_action": "No static test path reaches this change, so first add a test that exercises it and asserts the result; deep mode or real mutation testing cannot help until a test reaches it.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },
