@@ -1796,6 +1796,112 @@ mod tests {
         Ok(())
     }
 
+    fn uncalled_owner_index(caller_of_owner: bool) -> RustIndex {
+        let mut neighbour = function("src/lib.rs", "tax_bps");
+        if caller_of_owner {
+            neighbour.calls.push(CallFact {
+                line: 2,
+                name: "fragile_fee".to_string(),
+                text: "fragile_fee(input)".to_string(),
+            });
+        }
+        let mut eu_tax = test(
+            "src/lib.rs",
+            "eu_tax",
+            "tax_bps(1)",
+            "assert_eq!(tax_bps(1), 2000);",
+        );
+        eu_tax.calls[0].name = "tax_bps".to_string();
+        RustIndex {
+            functions: vec![function("src/lib.rs", "fragile_fee"), neighbour],
+            tests: vec![eu_tax],
+            ..RustIndex::default()
+        }
+    }
+
+    fn fragile_fee_probe(family: ProbeFamily, owner: &str) -> Probe {
+        Probe {
+            id: ProbeId("probe:src_lib_rs:2:fragile_fee".to_string()),
+            location: SourceLocation::new("src/lib.rs", 2, 1),
+            owner: Some(SymbolId(format!("src/lib.rs::{owner}"))),
+            family,
+            delta: DeltaKind::Control,
+            before: None,
+            after: Some("weight_grams > 2_000".to_string()),
+            expression: "weight_grams > 2_000".to_string(),
+            expected_sinks: vec![],
+            required_oracles: vec![],
+        }
+    }
+
+    // RC walk RS-1: a new function no test calls read `weakly_exposed`, with
+    // "strong oracle found", through a same-file test of a sibling function.
+    #[test]
+    fn given_uncalled_owner_with_same_file_sibling_test_when_classified_then_no_static_path() {
+        let index = uncalled_owner_index(false);
+        let probe = fragile_fee_probe(ProbeFamily::Predicate, "fragile_fee");
+
+        let finding = classify_probe(&probe, &index, true, None);
+
+        assert!(
+            finding.related_tests.iter().any(|test| test.name == "eu_tax"),
+            "premise: the sibling test stays listed as a suggested location: {:?}",
+            finding.related_tests
+        );
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert_eq!(finding.ripr.reach.state, StageState::No);
+        assert_ne!(finding.ripr.infect.state, StageState::Yes);
+        assert_eq!(finding.ripr.reveal.observe.state, StageState::No);
+        assert_eq!(finding.ripr.reveal.discriminate.state, StageState::No);
+    }
+
+    // A production caller may carry a test's reach through a chain the
+    // relation stage did not resolve, so proximity stays weak reach there.
+    #[test]
+    fn given_proximity_only_owner_with_production_caller_when_classified_then_not_no_static_path()
+    {
+        let index = uncalled_owner_index(true);
+        let probe = fragile_fee_probe(ProbeFamily::Predicate, "fragile_fee");
+
+        let finding = classify_probe(&probe, &index, true, None);
+
+        assert!(
+            finding.related_tests.iter().any(|test| test.name == "eu_tax"),
+            "premise: the sibling test is listed: {:?}",
+            finding.related_tests
+        );
+        assert_eq!(finding.ripr.reach.state, StageState::Weak);
+        assert_ne!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    // RC walk LLM-2: unknown-shape lines inside an untested function read
+    // "cannot classify; escalate to real mutation testing".
+    #[test]
+    fn given_static_unknown_probe_in_unreached_owner_when_classified_then_no_static_path() {
+        let index = RustIndex {
+            functions: vec![function("src/lib.rs", "fragile_fee")],
+            ..RustIndex::default()
+        };
+        let probe = fragile_fee_probe(ProbeFamily::StaticUnknown, "fragile_fee");
+
+        let finding = classify_probe(&probe, &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    #[test]
+    fn given_static_unknown_probe_without_resolved_owner_when_classified_then_static_unknown() {
+        let index = RustIndex {
+            functions: vec![function("src/lib.rs", "fragile_fee")],
+            ..RustIndex::default()
+        };
+        let probe = fragile_fee_probe(ProbeFamily::StaticUnknown, "not_indexed");
+
+        let finding = classify_probe(&probe, &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    }
+
     fn function(file: &str, name: &str) -> FunctionSummary {
         FunctionSummary {
             id: SymbolId(format!("{file}::{name}")),

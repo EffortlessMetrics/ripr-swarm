@@ -35,3 +35,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_uncalled_owner_same_file_tests (4)
+
+Reason:
+RIPR-SPEC-0001: an owner no test calls, with no production caller and no opaque test macro, has reach no; same-file neighbour tests stay as suggested locations and no longer read as observing it, so the finding is no_static_path instead of weakly_exposed
+
+Command:
+`cargo xtask goldens bless rust_uncalled_owner_same_file_tests --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — rust_uncalled_owner_same_file_tests (5)
+
+Reason:
+RIPR-SPEC-0001: neighbour tests that never call the owner no longer read as activating it either, so infection is no and the headline score drops with it
+
+Command:
+`cargo xtask goldens bless rust_uncalled_owner_same_file_tests --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — rust_uncalled_owner_same_file_tests (6)
+
+Reason:
+RIPR-SPEC-0001: unreached-stage wording says no test can activate, observe or discriminate the change
+
+Command:
+`cargo xtask goldens bless rust_uncalled_owner_same_file_tests --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

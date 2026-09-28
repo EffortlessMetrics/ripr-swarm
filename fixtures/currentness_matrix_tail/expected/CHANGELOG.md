@@ -59,3 +59,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_tail (4)
+
+Reason:
+RIPR-SPEC-0001: a changed line inside a function no test reaches is no_static_path whatever its probe shape; static_unknown escalate-to-mutation advice no longer stands in for a missing test
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

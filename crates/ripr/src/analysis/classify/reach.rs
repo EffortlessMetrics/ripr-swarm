@@ -4,6 +4,7 @@ use crate::domain::{Confidence, RelationReason, StageEvidence, StageState};
 pub(in crate::analysis) fn reach_evidence(
     related_tests: &[(&TestSummary, RelationReason)],
     owner_fn: Option<&FunctionSummary>,
+    owner_has_production_caller: bool,
 ) -> StageEvidence {
     if related_tests.is_empty() {
         return StageEvidence::new(
@@ -34,7 +35,12 @@ pub(in crate::analysis) fn reach_evidence(
     // A test that only shares the changed file or a name token with the
     // owner is a suggested location, not evidence that it runs the owner.
     // Treating it as reach let an uncalled function inherit a neighbour's
-    // strong assertion and report `exposed`.
+    // strong assertion and report `exposed`, and treating it as weak reach
+    // reported `weakly_exposed` for a function no test calls. Reach is `No`
+    // only when nothing else could be calling the owner unseen: it has no
+    // production caller (a test may reach it through an unresolved caller
+    // chain) and no proximity test invokes a non-assertion macro (whose
+    // expansion may call it).
     let proximity_only = !owner_anchored.is_empty()
         && related_tests
             .iter()
@@ -47,9 +53,22 @@ pub(in crate::analysis) fn reach_evidence(
             .map(|t| t.name.as_str())
             .collect::<Vec<_>>()
             .join(", ");
+        if owner_has_production_caller
+            || owner_anchored
+                .iter()
+                .any(|test| invokes_opaque_macro(&test.body))
+        {
+            return StageEvidence::new(
+                StageState::Weak,
+                Confidence::Low,
+                format!(
+                    "No test is seen calling {target}; tests share only its file or a name token: {names}"
+                ),
+            );
+        }
         return StageEvidence::new(
-            StageState::Weak,
-            Confidence::Low,
+            StageState::No,
+            Confidence::Medium,
             format!(
                 "No test is seen calling {target}; tests share only its file or a name token: {names}"
             ),
@@ -77,6 +96,59 @@ pub(in crate::analysis) fn reach_evidence(
     StageEvidence::new(StageState::Yes, Confidence::Medium, summary)
 }
 
+/// Macros whose expansion never calls a user function by itself; any other
+/// macro invocation in a test body may hide a call to the changed owner.
+const TRANSPARENT_TEST_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "assert_matches",
+    "matches",
+    "vec",
+    "format",
+    "print",
+    "println",
+    "eprint",
+    "eprintln",
+    "write",
+    "writeln",
+    "panic",
+    "todo",
+    "unimplemented",
+    "unreachable",
+    "dbg",
+    "concat",
+    "stringify",
+    "include_str",
+    "env",
+];
+
+/// True when `body` invokes a macro (`name!(`, `name![`, `name! {`) outside
+/// [`TRANSPARENT_TEST_MACROS`]. Text inside string literals counts too, which
+/// only keeps reach uncertain.
+fn invokes_opaque_macro(body: &str) -> bool {
+    let bytes = body.as_bytes();
+    bytes.iter().enumerate().any(|(bang, byte)| {
+        if *byte != b'!' {
+            return false;
+        }
+        let opener = bytes[bang + 1..]
+            .iter()
+            .find(|next| !next.is_ascii_whitespace());
+        if !matches!(opener, Some(b'(' | b'[' | b'{')) {
+            return false;
+        }
+        let start = body[..bang]
+            .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .map_or(0, |index| index + 1);
+        let name = &body[start..bang];
+        !name.is_empty() && !TRANSPARENT_TEST_MACROS.contains(&name)
+    })
+}
+
 /// Relations that come from file or name proximity alone, with no captured
 /// call, helper chain, or assertion affinity tying the test to the owner.
 fn is_proximity_only(reason: RelationReason) -> bool {
@@ -97,7 +169,7 @@ mod tests {
 
     #[test]
     fn given_no_related_tests_when_building_reach_evidence_then_stage_is_no() {
-        let evidence = reach_evidence(&[], None);
+        let evidence = reach_evidence(&[], None, false);
 
         assert_eq!(evidence.state, StageState::No);
         assert_eq!(evidence.confidence, Confidence::Medium);
@@ -121,7 +193,7 @@ mod tests {
             (&fourth, RelationReason::DirectOwnerCall),
         ];
 
-        let evidence = reach_evidence(&related, Some(&owner));
+        let evidence = reach_evidence(&related, Some(&owner), false);
 
         assert_eq!(evidence.state, StageState::Yes);
         assert_eq!(evidence.confidence, Confidence::Medium);
@@ -132,7 +204,7 @@ mod tests {
     }
 
     #[test]
-    fn given_only_proximity_relations_when_building_reach_evidence_then_reach_is_weak() {
+    fn given_only_proximity_relations_when_building_reach_evidence_then_reach_is_no() {
         let owner = function("untested_rounding");
         let neighbour = test("discount_applies_at_100");
         let token_match = test("rounding_table_loads");
@@ -143,14 +215,52 @@ mod tests {
             (&module_peer, RelationReason::SameModule),
         ];
 
-        let evidence = reach_evidence(&related, Some(&owner));
+        let evidence = reach_evidence(&related, Some(&owner), false);
 
-        assert_eq!(evidence.state, StageState::Weak);
-        assert_eq!(evidence.confidence, Confidence::Low);
+        assert_eq!(evidence.state, StageState::No);
+        assert_eq!(evidence.confidence, Confidence::Medium);
         assert_eq!(
             evidence.summary,
             "No test is seen calling untested_rounding; tests share only its file or a name token: discount_applies_at_100, rounding_table_loads, module_smoke"
         );
+    }
+
+    #[test]
+    fn given_proximity_test_invoking_a_custom_macro_when_building_reach_evidence_then_reach_stays_weak()
+     {
+        let owner = function("tax_total");
+        let mut macro_caller = test("vat_boundary_is_checked_by_macro");
+        macro_caller.body = "assert_eq!(macro_tax_case!(100), 120);".to_string();
+        let related = vec![(&macro_caller, RelationReason::WeakTokenSubstring)];
+
+        let evidence = reach_evidence(&related, Some(&owner), false);
+
+        assert_eq!(evidence.state, StageState::Weak);
+        assert_eq!(evidence.confidence, Confidence::Low);
+    }
+
+    #[test]
+    fn given_only_proximity_relations_for_an_owner_with_a_production_caller_then_reach_stays_weak()
+    {
+        let owner = function("check_score_invariants");
+        let neighbour = test("validate_score_accepts_in_range_values");
+        let related = vec![(&neighbour, RelationReason::WeakTokenSubstring)];
+
+        let evidence = reach_evidence(&related, Some(&owner), true);
+
+        assert_eq!(evidence.state, StageState::Weak);
+        assert_eq!(evidence.confidence, Confidence::Low);
+    }
+
+    #[test]
+    fn opaque_macro_detection_ignores_assertion_macros_and_operators() {
+        assert!(!invokes_opaque_macro(
+            "assert_eq!(tax_bps(\"EU\"), 2000); assert!(a != b); let v = vec![1];"
+        ));
+        assert!(!invokes_opaque_macro("assert!(!flag);"));
+        assert!(invokes_opaque_macro("assert_eq!(case!(1), 2);"));
+        assert!(invokes_opaque_macro("proptest! { }"));
+        assert!(invokes_opaque_macro("check_all![1, 2];"));
     }
 
     #[test]
@@ -164,7 +274,7 @@ mod tests {
             (&caller, RelationReason::DirectOwnerCall),
         ];
 
-        let evidence = reach_evidence(&related, Some(&owner));
+        let evidence = reach_evidence(&related, Some(&owner), false);
 
         assert_eq!(evidence.state, StageState::Yes);
     }
@@ -182,7 +292,7 @@ mod tests {
             (&second, RelationReason::SeamCalleeCall),
         ];
 
-        let evidence = reach_evidence(&related, Some(&owner));
+        let evidence = reach_evidence(&related, Some(&owner), false);
 
         assert_eq!(evidence.state, StageState::Yes);
         assert_eq!(
@@ -203,7 +313,7 @@ mod tests {
             (&anchored, RelationReason::OwnerNamedTest),
         ];
 
-        let evidence = reach_evidence(&related, Some(&owner));
+        let evidence = reach_evidence(&related, Some(&owner), false);
 
         assert_eq!(
             evidence.summary,

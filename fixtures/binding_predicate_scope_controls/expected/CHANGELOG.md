@@ -71,3 +71,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_predicate_scope_controls (3)
+
+Reason:
+RIPR-SPEC-0001: a changed line inside a function no test reaches is no_static_path whatever its probe shape; static_unknown escalate-to-mutation advice no longer stands in for a missing test
+
+Command:
+`cargo xtask goldens bless binding_predicate_scope_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
