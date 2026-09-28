@@ -1,4 +1,4 @@
-use crate::workspace_status::WorkspaceStatus;
+use crate::workspace_status::{WorkspaceState, WorkspaceStatus};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -136,7 +136,7 @@ pub(super) fn status_tool_result(
         "type": "text",
         "text": text
     })];
-    if let Some(recovery) = unavailable_recovery(&structured) {
+    if let Some(recovery) = unavailable_recovery(status) {
         content.push(json!({
             "type": "text",
             "text": recovery
@@ -154,29 +154,16 @@ pub(super) fn status_tool_result(
 
 /// One sentence a model can act on when the root is unusable. The status
 /// document carries only `root.error_code`; a host shows the text content, so
-/// name the cause and the recovery there. The server resolves its root once at
+/// name the cause and the recovery there. The cause is the root owner's own
+/// wording (`RootErrorCode::cause`). The server resolves its root once at
 /// startup (ADR 0022), so every recovery is a restart with a different root.
-fn unavailable_recovery(structured: &Value) -> Option<String> {
-    if structured
-        .pointer("/workspace/workspace_state")
-        .and_then(Value::as_str)
-        != Some("unavailable")
-    {
+fn unavailable_recovery(status: &WorkspaceStatus) -> Option<String> {
+    if status.workspace_state != WorkspaceState::Unavailable {
         return None;
     }
-    let code = structured
-        .pointer("/workspace/root/error_code")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
-    let cause = match code {
-        "root_missing" => "the configured root does not exist",
-        "root_not_directory" => "the configured root is not a directory",
-        "repository_marker_missing" => {
-            "no repository marker (.git, Cargo.toml, package.json, pyproject.toml, ...) was found at the root or its ancestors"
-        }
-        "current_directory_unavailable" => "the server's current directory could not be read",
-        "root_canonicalize_failed" => "the configured root could not be resolved",
-        _ => "the root could not be validated",
+    let (code, cause) = match status.root.error_code {
+        Some(code) => (code.as_str(), code.cause(status.root.source)),
+        None => ("unknown", "the root could not be validated".to_string()),
     };
     Some(format!(
         "Workspace unavailable ({code}): {cause}. This server resolves its root once at startup; restart it with `ripr mcp --stdio --root <repository>` pointing at the repository to analyze."

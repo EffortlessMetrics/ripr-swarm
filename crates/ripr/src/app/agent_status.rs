@@ -1228,7 +1228,7 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
     }
     if let Some(reading) = report.unrun_test_receipt() {
         rendered.push_str(&format!(
-            "Test run: not run. {}\n",
+            "Test run: none recorded. {}\n",
             test_not_run_next_step(reading)
         ));
     }
@@ -1378,8 +1378,10 @@ fn attempt_receipt_json(receipt: &AgentStatusAttemptReceipt) -> Value {
     })
 }
 
-/// One sentence for a receipt whose test never ran: what ripr did not do and
-/// the step that still decides whether the test is kept.
+/// One sentence for a repair receipt that records no test run: what the
+/// receipt does not establish and the step that still decides whether the
+/// test is kept. It speaks for the receipt only; a separate verification
+/// receipt (the trust-bound `--phase verify` route) is not read here.
 fn test_not_run_next_step(reading: &AgentReceiptReading) -> String {
     let target = reading
         .test_changed
@@ -1387,13 +1389,13 @@ fn test_not_run_next_step(reading: &AgentReceiptReading) -> String {
         .map(|file| format!("the focused test in `{file}`"))
         .unwrap_or_else(|| "the focused test".to_string());
     format!(
-        "ripr compared static evidence only and did not run {target}; run it with the project's test command and keep it only if it passes. A failing test can still show movement `improved`."
+        "The repair receipt compares static evidence only and records no run of {target}; run it with the project's test command and keep it only if it passes. A failing test can still show movement `improved`."
     )
 }
 
 fn test_not_run_json(reading: &AgentReceiptReading) -> Value {
     serde_json::json!({
-        "status": "not_run",
+        "status": "not_recorded",
         "test_file": reading.test_changed,
         "next_step": test_not_run_next_step(reading)
     })

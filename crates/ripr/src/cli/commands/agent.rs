@@ -166,7 +166,7 @@ fn write_agent_start(options: AgentStartOptions) -> Result<AgentStartWritten, St
         return Err(format!(
             "agent start seam_id {} was not found or is hidden by config. {}",
             options.seam_id,
-            unknown_seam_id_hint(&options.seam_id)
+            unknown_seam_id_hint(&options.root, &options.seam_id)
         ));
     }
 
@@ -242,12 +242,19 @@ fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
 
 /// Recovery for an unknown `--seam-id`. Cold agents most often pass the
 /// `probe:...` finding ID that `ripr check` prints; the error must name where
-/// seam IDs come from instead of leaving "not found" as a dead end.
-fn unknown_seam_id_hint(seam_id: &str) -> &'static str {
+/// seam IDs come from instead of leaving "not found" as a dead end. The
+/// pilot command names the same root the failing call used.
+fn unknown_seam_id_hint(root: &Path, seam_id: &str) -> String {
+    let root = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+        &crate::agent::loop_commands::display_path(root),
+    ));
+    let pilot = format!(
+        "`ripr pilot --root {root}` to list current seam IDs with their exact `ripr agent repair` commands."
+    );
     if seam_id.starts_with("probe:") {
-        "`probe:...` is a `ripr check` finding ID, not a seam ID; run `ripr pilot --root .` to list seam IDs with their exact `ripr agent repair` commands."
+        format!("`probe:...` is a `ripr check` finding ID, not a seam ID; run {pilot}")
     } else {
-        "Run `ripr pilot --root .` to list current seam IDs with their exact `ripr agent repair` commands."
+        format!("Run {pilot}")
     }
 }
 
@@ -268,7 +275,7 @@ fn render_agent_packet(options: &AgentPacketOptions) -> Result<String, String> {
         .ok_or_else(|| {
             format!(
                 "agent packet seam_id {seam_id} was not found. {}",
-                unknown_seam_id_hint(seam_id)
+                unknown_seam_id_hint(&options.root, seam_id)
             )
         })?;
 
@@ -1472,7 +1479,7 @@ fn repair_receipt_summary_lines(receipt: &str) -> Vec<String> {
     }
     // Static movement is not a test result: a failing focused test still
     // reads `improved`. Say so before the next step, not only inside it.
-    if text("/verification/status") == Some("verification_not_run") {
+    if text("/verification/status") == Some(crate::output::agent_receipt::VERIFICATION_NOT_RUN) {
         lines.push(
             "test run: not run. This result is static evidence only; a failing test can still show `improved`."
                 .to_string(),

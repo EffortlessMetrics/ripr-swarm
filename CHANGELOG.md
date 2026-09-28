@@ -18,8 +18,8 @@ are scoped or reviewed.
   from disk, and `ripr check` warns on stderr when a file in the committed
   diff also has uncommitted edits, since its probes can be misplaced or
   missing. After a repair, the after phase and `ripr agent status` say the
-  focused test was not run (`test_run.status: "not_run"`), because a failing
-  test can still show movement `improved`. The MCP server's instructions and
+  repair receipt records no test run (`test_run.status: "not_recorded"`),
+  because a failing test can still show movement `improved`. The MCP server's instructions and
   tool description say it does not analyze the diff and name the CLI route
   that does; an unusable root and unknown tool or resource names now carry a
   recovery.

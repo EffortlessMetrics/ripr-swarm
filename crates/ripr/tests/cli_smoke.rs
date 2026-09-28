@@ -3032,8 +3032,11 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
         stderr.contains("is a `ripr check` finding ID, not a seam ID"),
         "{stderr}"
     );
+    // The pilot route names the root the failing call used, not `.`.
     assert!(
-        stderr.contains("run `ripr pilot --root .` to list seam IDs"),
+        stderr.contains("run `ripr pilot --root ")
+            && stderr.contains("agent-packet-unknown-seam")
+            && stderr.contains("to list current seam IDs"),
         "{stderr}"
     );
 
@@ -3050,7 +3053,10 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     assert!(!repair.status.success());
     let stderr = String::from_utf8_lossy(&repair.stderr);
     assert!(stderr.contains("not a seam ID"), "{stderr}");
-    assert!(stderr.contains("ripr pilot --root ."), "{stderr}");
+    assert!(
+        stderr.contains("ripr pilot --root ") && stderr.contains("agent-packet-unknown-seam"),
+        "{stderr}"
+    );
 
     let packet = run_ripr(&[
         "agent",
@@ -3065,7 +3071,7 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     let stderr = String::from_utf8_lossy(&packet.stderr);
     assert!(!stderr.contains("not a seam ID"), "{stderr}");
     assert!(
-        stderr.contains("Run `ripr pilot --root .` to list current seam IDs"),
+        stderr.contains("Run `ripr pilot --root ") && stderr.contains("to list current seam IDs"),
         "{stderr}"
     );
     std::fs::remove_dir_all(root)?;
@@ -13854,7 +13860,10 @@ fn check_base_names_diff_files_with_uncommitted_edits() -> Result<(), Box<dyn st
         root.join("src/lib.rs"),
         "pub fn ok(n: u32) -> bool { n >= 10 }\n",
     )?;
-    run_git(&root, &["commit", "-q", "-am", "change"])?;
+    std::fs::write(root.join("README.md"), "edited diff file\n")?;
+    std::fs::write(root.join("src/naïve.rs"), "pub fn naive() -> u32 { 1 }\n")?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-q", "-m", "change"])?;
     let root_str = root.to_string_lossy().into_owned();
     let check = || run_ripr(&["check", "--root", &root_str, "--base", "HEAD~1", "--json"]);
 
@@ -13868,19 +13877,24 @@ fn check_base_names_diff_files_with_uncommitted_edits() -> Result<(), Box<dyn st
     assert!(String::from_utf8_lossy(&outside.stdout).contains("\"unanalyzed_working_tree\": true"));
     assert!(!stderr.contains("also in the analyzed"), "{stderr}");
 
-    // Edit a file in the diff: stderr names it and the recovery.
+    // Edit files in the diff: stderr names the source files and the
+    // recovery, keeps a non-ASCII path readable, and skips the README, which
+    // no adapter analyzes.
     std::fs::write(
         root.join("src/lib.rs"),
         "// moved\npub fn ok(n: u32) -> bool { n >= 10 }\n",
     )?;
+    std::fs::write(root.join("README.md"), "edited again\n")?;
+    std::fs::write(root.join("src/naïve.rs"), "pub fn naive() -> u32 { 2 }\n")?;
     let inside = check();
     let stderr = String::from_utf8_lossy(&inside.stderr);
     assert!(
         stderr.contains(
-            "`src/lib.rs` has uncommitted edits and is also in the analyzed `HEAD~1...HEAD` diff"
+            "`src/lib.rs`, `src/naïve.rs` have uncommitted edits and are also in the analyzed `HEAD~1...HEAD` diff"
         ),
         "{stderr}"
     );
+    assert!(!stderr.contains("README.md"), "{stderr}");
     assert!(stderr.contains("rerun with `--worktree`"), "{stderr}");
     assert!(!stderr.contains("tests/ok.rs"), "{stderr}");
     ignore_remove_dir_all(&root);
@@ -15038,7 +15052,7 @@ fn agent_repair_after_a_failing_test_says_the_test_was_not_run()
     );
     let document: serde_json::Value = serde_json::from_slice(&after.stdout)?;
     let test_run = &document["agent_status"]["test_run"];
-    assert_eq!(test_run["status"], "not_run", "{document:#}");
+    assert_eq!(test_run["status"], "not_recorded", "{document:#}");
     assert_eq!(test_run["test_file"], "tests/pricing.rs", "{document:#}");
     assert!(
         test_run["next_step"]
@@ -15057,7 +15071,7 @@ fn agent_repair_after_a_failing_test_says_the_test_was_not_run()
     assert_success(&status);
     let human = String::from_utf8_lossy(&status.stdout);
     assert!(
-        human.contains("Test run: not run. ripr compared static evidence only and did not run the focused test in `tests/pricing.rs`"),
+        human.contains("Test run: none recorded. The repair receipt compares static evidence only and records no run of the focused test in `tests/pricing.rs`"),
         "{human}"
     );
 

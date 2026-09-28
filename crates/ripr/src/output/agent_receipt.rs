@@ -18,7 +18,7 @@ use super::receipt_lifecycle::{
 
 pub(crate) const AGENT_RECEIPT_SCHEMA_VERSION: &str = "0.5";
 /// RIPR-SPEC-0135 verification-axis state for a receipt that ran no command.
-const VERIFICATION_NOT_RUN: &str = "verification_not_run";
+pub(crate) const VERIFICATION_NOT_RUN: &str = "verification_not_run";
 /// RIPR-SPEC-0135 non-claim every static-only receipt carries.
 const STATIC_ONLY_ASSURANCE: &str = "static_only_assurance";
 
@@ -73,7 +73,7 @@ impl AgentReceiptReading {
     /// No test ran for this receipt: its movement is static evidence only, and
     /// a failing test can still show `improved`.
     pub(crate) fn test_not_run(&self) -> bool {
-        self.verification_status.as_deref() == Some("verification_not_run")
+        self.verification_status.as_deref() == Some(VERIFICATION_NOT_RUN)
     }
 
     /// The receipt was issued over a complete, valid producer analysis outcome.
