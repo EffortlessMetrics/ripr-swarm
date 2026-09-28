@@ -3110,7 +3110,7 @@ fn code_action_response_keeps_current_commands() -> Result<(), String> {
         vec![
             (
                 "Inspect finding: copy context packet",
-                "source.ripr.inspect",
+                "quickfix.ripr.inspect",
                 "Inspect finding: copy context",
                 COPY_CONTEXT_COMMAND,
             ),
@@ -4579,30 +4579,46 @@ fn code_action_response_emitted_commands_stay_within_server_or_advertised_sets()
 }
 
 #[test]
-fn code_action_response_honors_only_quickfix_when_no_repair_actions_exist() -> Result<(), String> {
-    // `only: [quickfix]` (#1750, RIPR-SPEC-0129): `quickfix.ripr` is
-    // advertised-but-unemitted (no repair actions exist yet), so no emitted
-    // kind equals or sits under `quickfix` and the response is empty.
+fn code_action_response_only_quickfix_keeps_finding_actions_and_drops_refresh() -> Result<(), String>
+{
+    // `only: [quickfix]` (#1750, RIPR-SPEC-0129): the per-diagnostic
+    // inspect/navigate actions carry `quickfix.ripr.*` kinds so VS Code's
+    // lightbulb / Quick Fix menu (which never lists `source.*` actions)
+    // shows them. Every emitted action except the workspace-level
+    // `source.ripr.refresh` survives the filter.
     let vscode = vscode_client_features()?;
     let (mut seam_params, seam_snapshot) = seam_code_action_request()?;
     seam_params.context.only = Some(vec![CodeActionKind::QUICKFIX]);
-    let actions = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
+    let quickfix_only = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
+
+    let mut unfiltered_params = seam_params.clone();
+    unfiltered_params.context.only = None;
+    let unfiltered = code_action_response(&unfiltered_params, Some(&seam_snapshot), &vscode);
+    let expected = code_action_kinds(&unfiltered)?
+        .into_iter()
+        .filter(|kind| kind != "source.ripr.refresh")
+        .collect::<Vec<_>>();
+    if expected.len() < 2 {
+        return Err(format!(
+            "seam scenario should emit several finding actions, got {expected:?}"
+        ));
+    }
     assert_eq!(
-        actions.len(),
-        0,
-        "only: [quickfix] must filter out every source.ripr.* action"
+        code_action_kinds(&quickfix_only)?,
+        expected,
+        "only: [quickfix] must keep every per-diagnostic action and drop refresh"
     );
     Ok(())
 }
 
 #[test]
-fn code_action_response_only_source_ripr_navigate_keeps_only_navigation() -> Result<(), String> {
-    // `only: [source.ripr.navigate]` (#1750, RIPR-SPEC-0129) keeps exactly
+fn code_action_response_only_quickfix_ripr_navigate_keeps_only_navigation() -> Result<(), String> {
+    // `only: [quickfix.ripr.navigate]` (#1750, RIPR-SPEC-0129) keeps exactly
     // the related-test navigation action; every inspect/refresh action is
     // outside the requested subtree.
     let vscode = vscode_client_features()?;
     let (mut seam_params, seam_snapshot) = seam_code_action_request()?;
-    seam_params.context.only = Some(vec![CodeActionKind::new("source.ripr.navigate")]);
+    seam_params.context.only = Some(vec![CodeActionKind::new("quickfix.ripr.navigate")]);
     let actions = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
     let commands = code_action_commands(&actions)?;
     assert_eq!(
@@ -4611,35 +4627,83 @@ fn code_action_response_only_source_ripr_navigate_keeps_only_navigation() -> Res
             .map(|(_, command, _)| command.as_str())
             .collect::<Vec<_>>(),
         vec![OPEN_RELATED_TEST_COMMAND],
-        "only: [source.ripr.navigate] must keep only the navigation action"
+        "only: [quickfix.ripr.navigate] must keep only the navigation action"
     );
     Ok(())
 }
 
 #[test]
-fn code_action_response_only_source_or_absent_only_keeps_every_action() -> Result<(), String> {
-    // `only: [source]` (#1750, RIPR-SPEC-0129) dot-segment-prefixes every
-    // kind emitted today, so the response matches the unfiltered one; an
-    // absent `only` leaves the response unfiltered by kind.
+fn code_action_response_only_source_keeps_only_refresh_and_absent_only_keeps_every_action()
+-> Result<(), String> {
+    // `only: [source]` (#1750, RIPR-SPEC-0129) matches only the
+    // workspace-level `source.ripr.refresh` action; the per-diagnostic
+    // actions live under `quickfix`. An absent `only` leaves the response
+    // unfiltered by kind.
     let vscode = vscode_client_features()?;
     let (mut source_params, seam_snapshot) = seam_code_action_request()?;
     source_params.context.only = Some(vec![CodeActionKind::SOURCE]);
     let source_only = code_action_response(&source_params, Some(&seam_snapshot), &vscode);
+    assert_eq!(
+        code_action_kinds(&source_only)?,
+        vec!["source.ripr.refresh".to_string()],
+        "only: [source] must keep only the refresh action"
+    );
 
     let mut unfiltered_params = source_params.clone();
     unfiltered_params.context.only = None;
     let unfiltered = code_action_response(&unfiltered_params, Some(&seam_snapshot), &vscode);
-
     if unfiltered.len() < 2 {
         return Err(format!(
             "seam scenario should emit several actions, got {}",
             unfiltered.len()
         ));
     }
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "lang-python")]
+fn code_action_response_gap_inspect_action_is_a_quickfix_not_a_source_action() -> Result<(), String>
+{
+    // VS Code's lightbulb / Ctrl+. Quick Fix menu never lists `source.*`
+    // actions (RIPR-SPEC-0129). A gap diagnostic's "Inspect gap: copy repair
+    // packet" action must survive `only: [quickfix]` and must not survive
+    // `only: [source]`, which keeps only the workspace refresh action.
+    let vscode = vscode_client_features()?;
+    let (_gap_root, mut gap_params, gap_snapshot) = gap_kind_parity_request()?;
+
+    gap_params.context.only = Some(vec![CodeActionKind::QUICKFIX]);
+    let quickfix_only = code_action_response(&gap_params, Some(&gap_snapshot), &vscode);
+    let quickfix_literals = code_action_literals(&quickfix_only)?;
+    let inspect = quickfix_literals
+        .iter()
+        .find(|action| action.title == "Inspect gap: copy repair packet")
+        .ok_or_else(|| {
+            format!(
+                "only: [quickfix] must return the gap inspect action, got {:?}",
+                quickfix_literals
+                    .iter()
+                    .map(|action| action.title.as_str())
+                    .collect::<Vec<_>>()
+            )
+        })?;
     assert_eq!(
-        source_only.len(),
-        unfiltered.len(),
-        "only: [source] must keep every action emitted without an only filter"
+        inspect.kind.as_ref().map(CodeActionKind::as_str),
+        Some("quickfix.ripr.inspect")
+    );
+    if code_action_kinds(&quickfix_only)?
+        .iter()
+        .any(|kind| !kind.starts_with("quickfix."))
+    {
+        return Err("only: [quickfix] must not return source actions".to_string());
+    }
+
+    gap_params.context.only = Some(vec![CodeActionKind::SOURCE]);
+    let source_only = code_action_response(&gap_params, Some(&gap_snapshot), &vscode);
+    assert_eq!(
+        code_action_kinds(&source_only)?,
+        vec!["source.ripr.refresh".to_string()],
+        "only: [source] must return only the workspace refresh action"
     );
     Ok(())
 }
@@ -4647,13 +4711,13 @@ fn code_action_response_only_source_or_absent_only_keeps_every_action() -> Resul
 #[test]
 fn code_action_response_only_filter_compounds_with_client_command_filter() -> Result<(), String> {
     // Both filters apply (#1750 + #1776, RIPR-SPEC-0129): with
-    // `only: [source.ripr.inspect]` and an unenhanced client profile, the
+    // `only: [quickfix.ripr.inspect]` and an unenhanced client profile, the
     // kind filter drops the navigate and refresh actions while the
     // client-command filter strips every surviving inspect action (all are
     // client-executed) — nothing remains.
     let unenhanced = ClientFeatureProfile::unsupported();
     let (mut seam_params, seam_snapshot) = seam_code_action_request()?;
-    seam_params.context.only = Some(vec![CodeActionKind::new("source.ripr.inspect")]);
+    seam_params.context.only = Some(vec![CodeActionKind::new("quickfix.ripr.inspect")]);
     let actions = code_action_response(&seam_params, Some(&seam_snapshot), &unenhanced);
     assert_eq!(
         actions.len(),
@@ -5515,10 +5579,10 @@ fn code_action_response_disabled_actions_never_execute_across_scenarios() -> Res
 fn code_action_response_disabled_policy_keeps_only_filter_parity() -> Result<(), String> {
     // Disabled actions retain their kind (#1892): the `CodeActionContext.only`
     // filter (#1750) fail-closes on kind-less actions, so a disabled navigate
-    // action must still survive `only: [source.ripr.navigate]`.
+    // action must still survive `only: [quickfix.ripr.navigate]`.
     let disabled_capable = client_features_with_disabled_support(&[])?;
     let (mut seam_params, seam_snapshot) = seam_code_action_request()?;
-    seam_params.context.only = Some(vec![CodeActionKind::new("source.ripr.navigate")]);
+    seam_params.context.only = Some(vec![CodeActionKind::new("quickfix.ripr.navigate")]);
     let actions = code_action_response(&seam_params, Some(&seam_snapshot), &disabled_capable);
     let literals = code_action_literals(&actions)?;
     assert_eq!(
@@ -5527,7 +5591,7 @@ fn code_action_response_disabled_policy_keeps_only_filter_parity() -> Result<(),
             .map(|action| action.title.as_str())
             .collect::<Vec<_>>(),
         vec!["Write targeted test: open best related test"],
-        "only: [source.ripr.navigate] must keep the (disabled) navigation action"
+        "only: [quickfix.ripr.navigate] must keep the (disabled) navigation action"
     );
     let action = literals
         .first()
@@ -7743,7 +7807,7 @@ fn code_action_resolve_rejects_missing_data_with_stable_invalid_params() -> Resu
 
         let payloadless = CodeAction {
             title: "Inspect gap: copy repair packet".to_string(),
-            kind: Some(CodeActionKind::new("source.ripr.inspect")),
+            kind: Some(CodeActionKind::new("quickfix.ripr.inspect")),
             ..CodeAction::default()
         };
         match backend.code_action_resolve(payloadless).await {
@@ -7757,12 +7821,12 @@ fn code_action_resolve_rejects_missing_data_with_stable_invalid_params() -> Resu
 
         let foreign = CodeAction {
             title: "Inspect gap: copy repair packet".to_string(),
-            kind: Some(CodeActionKind::new("source.ripr.inspect")),
+            kind: Some(CodeActionKind::new("quickfix.ripr.inspect")),
             data: Some(serde_json::json!({
                 "schema_version": "foreign-schema-v0",
                 "action_id": "fnv1a64:0000000000000000",
                 "action_class": "inspect",
-                "action_kind": "source.ripr.inspect",
+                "action_kind": "quickfix.ripr.inspect",
                 "action_name": "copy_gap_repair_packet",
                 "required_client_capability": "ripr.copyContext"
             })),
