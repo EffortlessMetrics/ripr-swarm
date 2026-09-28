@@ -2974,8 +2974,7 @@ mod tests {
         let fixture = git_fixture("winsafe-hardlink")?;
         let source = fixture.root.join("tests/pricing.rs");
         let link = fixture.root.join("tests/pricing-link.rs");
-        fs::hard_link(&source, &link)
-            .map_err(|err| format!("create writable hard link: {err}"))?;
+        fs::hard_link(&source, &link).map_err(|err| format!("create writable hard link: {err}"))?;
         if writable_regular_file_authority(&source).is_ok() {
             return Err("winsafe authority accepted a multiply linked file".to_string());
         }
