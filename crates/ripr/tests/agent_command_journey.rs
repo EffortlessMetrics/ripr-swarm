@@ -763,7 +763,7 @@ fn prepared_packet_continuation_cannot_resume_a_later_attempt_for_the_same_seam(
         return Err(format!("A did not produce a real complete advisory receipt: {receipt}"));
     }
     let completed_a = read_json(&manifest_a_path)?;
-    if completed_a.get("state").and_then(Value::as_str) == Some("awaiting_edit")
+    if completed_a.get("state").and_then(Value::as_str) != Some("ready_to_finish")
         || completed_a.get("after").is_none_or(Value::is_null) {
         return Err("actual A continuation did not finish its durable attempt".to_owned());
     }
@@ -779,7 +779,7 @@ fn prepared_packet_continuation_cannot_resume_a_later_attempt_for_the_same_seam(
         return Err("retained A packet continuation consumed awaiting B instead of refusing finished A".to_owned());
     }
     let stderr = String::from_utf8_lossy(&stale.stderr);
-    if !stderr.contains(id_a) || !stderr.contains("awaiting") {
+    if !stderr.contains(id_a) || !stderr.contains("already finished") || !stderr.contains("ready_to_finish") {
         return Err(format!("retained A continuation did not name A's terminal-state refusal: {stderr}"));
     }
     if prepared_attempt_inventory(attempt_b)? != before_inventory
