@@ -408,10 +408,16 @@ fn split_top_level_args(inner: &str) -> Vec<String> {
     let mut depth = 0usize;
     let mut quote: Option<char> = None;
     let mut current = String::new();
+    let mut escaped = false;
     for ch in inner.chars() {
         match quote {
             Some(q) => {
-                if ch == q {
+                // `\"` inside a string neither closes it nor splits on a comma.
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == q {
                     quote = None;
                 }
                 current.push(ch);
@@ -608,10 +614,30 @@ fn parse_plain_string_literal(raw: &str) -> Option<String> {
 }
 
 fn parse_static_literal(raw: &str) -> Option<StaticBoundary> {
-    if let Ok(value) = raw.parse::<i64>() {
+    if let Some(value) = parse_integer_literal(raw) {
         return Some(StaticBoundary::Int(value));
     }
     parse_plain_string_literal(raw).map(StaticBoundary::Str)
+}
+
+/// An integer literal as `i64`, reading JavaScript numeric separators
+/// (`5_000`) the way the analysis-side boundary input does. A separator
+/// must sit between two digits.
+fn parse_integer_literal(raw: &str) -> Option<i64> {
+    if !raw.contains('_') {
+        return raw.parse::<i64>().ok();
+    }
+    let bytes = raw.as_bytes();
+    let separators_between_digits = bytes.iter().enumerate().all(|(index, byte)| {
+        *byte != b'_'
+            || (index > 0
+                && bytes[index - 1].is_ascii_digit()
+                && bytes.get(index + 1).is_some_and(u8::is_ascii_digit))
+    });
+    if !separators_between_digits {
+        return None;
+    }
+    raw.replace('_', "").parse::<i64>().ok()
 }
 
 /// A constant-shaped operand: leading ASCII uppercase, then uppercase, digits,
@@ -679,17 +705,19 @@ fn derived_boundary_call(
     let operand_matches = match &comparison.boundary {
         StaticBoundary::Constant(name) => *name == fact.operand,
         StaticBoundary::Int(value) => {
-            *value == fact.value && fact.operand.parse::<i64>().ok() == Some(*value)
+            *value == fact.value && parse_integer_literal(&fact.operand) == Some(*value)
         }
         StaticBoundary::Str(_) => false,
     };
-    // A spread argument shifts every later position; refuse to bind.
+    // A spread argument shifts every later position; refuse to bind. An
+    // escape anywhere in the arguments makes the split uncertain, and the
+    // rebuilt call copies the other arguments verbatim, so refuse that too.
     if !operand_matches
         || fact.index >= call.args.len()
         || call
             .args
             .iter()
-            .any(|argument| argument.trim_start().starts_with("..."))
+            .any(|argument| argument.trim_start().starts_with("...") || argument.contains('\\'))
     {
         return None;
     }
@@ -730,7 +758,7 @@ fn static_literal_argument_reaches_boundary(
     }
     match &comparison.boundary {
         StaticBoundary::Int(boundary) => {
-            let value = argument.parse::<i64>().ok()?;
+            let value = parse_integer_literal(argument)?;
             Some(apply_static_comparison(comparison.op, value, *boundary))
         }
         StaticBoundary::Constant(_) => None,
@@ -1963,6 +1991,35 @@ mod tests {
         Ok(())
     }
 
+    /// Codex on #4429: the analysis side reads `5_000` as 5000, so the
+    /// projection must too, or the literal route never becomes delegatable.
+    #[test]
+    fn separator_literal_boundary_derives_the_boundary_call() -> Result<(), String> {
+        let fact = parsed_fact(&boundary_input_fact("amount", 0, "5_000", 5000))?;
+        let shape = typescript_target_assertion_shape_with_boundary_input(
+            &ProbeFamily::Predicate,
+            "shipping(1_000)",
+            Some("amount == 5_000"),
+            Some("shipping"),
+            Some(&fact),
+        );
+        assert_eq!(shape.shape(), "expect(shipping(5000)).toBe(expected)");
+        assert!(shape.packet_ineligibility_reason().is_none());
+        for malformed in ["5__000", "5000_", "_5000"] {
+            assert_eq!(parse_integer_literal(malformed), None, "{malformed}");
+        }
+        Ok(())
+    }
+
+    /// An escaped quote no longer ends the string when splitting arguments.
+    #[test]
+    fn argument_split_keeps_escaped_quotes_inside_their_string() {
+        assert_eq!(
+            split_top_level_args(r#""a\",b", 50"#),
+            vec![r#""a\",b""#.to_string(), "50".to_string()]
+        );
+    }
+
     /// An observed input that already hits the boundary keeps its own shape.
     #[test]
     fn input_fact_never_overrides_an_observed_input_that_hits() -> Result<(), String> {
@@ -2027,6 +2084,12 @@ mod tests {
                 "login('alice')",
                 "user.length == 3",
                 boundary_input_fact("user", 0, "3", 3),
+            ),
+            (
+                "escaped quote in another argument",
+                r#"apply("a\",b", 50)"#,
+                "amount == 100",
+                boundary_input_fact("amount", 1, "100", 100),
             ),
         ] {
             let fact = parsed_fact(&fact)?;

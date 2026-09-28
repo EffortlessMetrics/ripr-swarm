@@ -1079,7 +1079,9 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
                 format!(
                     "The gap decision ledger predates the last edit to `{edited}`, so its repair instruction may already be done; refresh the evidence, then rerun first-pr to see whether the gap is still open."
                 ),
-                Some(regenerate_gap_ledger_command(root, options)),
+                // The freshness check reads the check output's timestamp, so
+                // the recovery must rewrite it, not only the ledger.
+                Some(rerun_check_output_gap_ledger_command(options)),
             );
         }
         return Selection::TopGap(Box::new(top_gap));
@@ -2132,6 +2134,16 @@ fn regenerate_repo_exposure_gap_ledger_command(options: &FirstPrOptions) -> Stri
 }
 
 fn regenerate_check_output_gap_ledger_command(options: &FirstPrOptions) -> String {
+    check_output_gap_ledger_command(options, options.check_output.is_none())
+}
+
+/// Rewrites the check output (the supplied `--check-output` path when there
+/// is one) before rebuilding the ledger from it.
+fn rerun_check_output_gap_ledger_command(options: &FirstPrOptions) -> String {
+    check_output_gap_ledger_command(options, true)
+}
+
+fn check_output_gap_ledger_command(options: &FirstPrOptions, rerun_check: bool) -> String {
     let root = shell_arg(&options.command_root());
     let base = shell_arg(&options.base);
     let check_output_raw = options
@@ -2141,20 +2153,18 @@ fn regenerate_check_output_gap_ledger_command(options: &FirstPrOptions) -> Strin
     let check_output = options.anchored_arg(check_output_raw);
     let out = options.anchored_arg(&options.gap_ledger);
     let out_md = options.anchored_arg(&with_extension(&options.gap_ledger, "md"));
-    if options.check_output.is_some() {
-        format!(
-            "ripr reports gap-ledger --check-output {check_output} --root {root} --out {out} --out-md {out_md}"
-        )
-    } else {
-        // The shell redirect target anchors at --root (issue #3872) so the
-        // pasted compound reproduces the validated write location from any
-        // working directory. The paired --check-output read names the same
-        // anchored file: a relative read next to an absolute write would
-        // split the compound across directories when pasted elsewhere.
-        format!(
-            "ripr check --root {root} --base {base} --json > {check_output} && ripr reports gap-ledger --check-output {check_output} --root {root} --out {out} --out-md {out_md}"
-        )
+    let ledger = format!(
+        "ripr reports gap-ledger --check-output {check_output} --root {root} --out {out} --out-md {out_md}"
+    );
+    if !rerun_check {
+        return ledger;
     }
+    // The shell redirect target anchors at --root (issue #3872) so the
+    // pasted compound reproduces the validated write location from any
+    // working directory. The paired --check-output read names the same
+    // anchored file: a relative read next to an absolute write would
+    // split the compound across directories when pasted elsewhere.
+    format!("ripr check --root {root} --base {base} --json > {check_output} && {ledger}")
 }
 
 fn detect_typescript_project(root: &Path) -> bool {
@@ -4367,6 +4377,27 @@ mod tests {
         assert!(packet["selected"].get("verify_command").is_none());
         check_first_pr(&repo, &options)?;
         cleanup(&repo)
+    }
+
+    /// Devin on #4429: with a supplied `--check-output`, the stale recovery
+    /// must rewrite that file, because the freshness check reads its
+    /// timestamp; a ledger-only command would block again on the next run.
+    #[test]
+    fn stale_recovery_rewrites_a_supplied_check_output() {
+        let options = FirstPrOptions {
+            check_output: Some("saved/check.json".to_string()),
+            ..FirstPrOptions::default()
+        };
+        let ledger_only = regenerate_check_output_gap_ledger_command(&options);
+        assert!(
+            ledger_only.starts_with("ripr reports gap-ledger"),
+            "{ledger_only}"
+        );
+        let rerun = rerun_check_output_gap_ledger_command(&options);
+        let (check, ledger) = rerun.split_once(" && ").unwrap_or((rerun.as_str(), ""));
+        assert!(check.starts_with("ripr check --root "), "{rerun}");
+        assert!(check.ends_with("saved/check.json"), "{rerun}");
+        assert_eq!(ledger, ledger_only);
     }
 
     #[test]

@@ -137,6 +137,14 @@ fn rebindable_or_non_literal_names_stay_unresolved() {
             "import sys\nfrom unittest.mock import patch\nDISCOUNT_THRESHOLD = 10_000\npatch.object(sys.modules[__name__], 'DISCOUNT_THRESHOLD', 5)\n",
         ),
         (
+            "self-alias attribute in a helper",
+            "import pricing as _self\nDISCOUNT_THRESHOLD = 10_000\ndef tweak():\n    _self.DISCOUNT_THRESHOLD = 5\n",
+        ),
+        (
+            "self-alias augmented attribute",
+            "import pricing as _self\nDISCOUNT_THRESHOLD = 10_000\n_self.DISCOUNT_THRESHOLD += 1\n",
+        ),
+        (
             "match",
             "DISCOUNT_THRESHOLD = 10_000\nmatch MODE:\n    case DISCOUNT_THRESHOLD:\n        pass\n",
         ),
@@ -144,6 +152,16 @@ fn rebindable_or_non_literal_names_stay_unresolved() {
     for (label, prelude) in cases {
         assert_eq!(visible_constants(prelude), Vec::new(), "{label}");
     }
+}
+
+/// Control for the self-alias cases: an attribute write that names a
+/// different attribute leaves the constant resolved.
+#[test]
+fn unrelated_attribute_assignment_keeps_the_constant() {
+    assert_eq!(
+        visible_constants("import config\nDISCOUNT_THRESHOLD = 10_000\nconfig.OTHER_LIMIT = 5\n"),
+        threshold()
+    );
 }
 
 #[test]
@@ -258,6 +276,11 @@ fn test_side_rebinding_blocks_the_imported_constant_binding() -> Result<(), Stri
             "function-level import",
             "from src.pricing import DISCOUNT_THRESHOLD, discounted_total\n",
             "    from src.other import DISCOUNT_THRESHOLD\n",
+        ),
+        (
+            "autouse fixture declaring global",
+            "import pytest\nfrom src.pricing import DISCOUNT_THRESHOLD, discounted_total\n\n@pytest.fixture(autouse=True)\ndef shift():\n    global DISCOUNT_THRESHOLD\n    DISCOUNT_THRESHOLD = 5\n",
+            "",
         ),
         (
             "later module import",

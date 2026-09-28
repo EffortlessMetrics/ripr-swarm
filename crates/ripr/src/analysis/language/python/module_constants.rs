@@ -10,8 +10,9 @@
 //!   or `NAME: T = <literal>` statement;
 //! - no other module-scope statement binds it (assignment, augmented
 //!   assignment, `for`/`with`/`except` target, import, `def`/`class`, `del`);
-//! - no function or class body declares it `global`, and no walrus (`:=`)
-//!   anywhere in the module targets it;
+//! - no function or class body declares it `global`, no walrus (`:=`)
+//!   anywhere in the module targets it, and no attribute assignment in the
+//!   module names it (`alias.NAME = ...` through a self-import);
 //! - the module has no star import, no module-scope `match`, and never names
 //!   a dynamic namespace writer (`exec`, `globals`, `vars`, `locals`,
 //!   `setattr`, `sys.modules`, `__dict__`), any of which can bind names static
@@ -53,12 +54,15 @@ pub(super) fn module_literal_constants(
     }
     let mut globals = Vec::new();
     collect_global_declarations(statements, &mut globals);
+    // `alias.NAME = ...` can rebind the constant through a self-import.
+    let attributes = assigned_attributes(source);
     statements
         .iter()
         .filter_map(|stmt| literal_assignment(source, stmt))
         .filter(|constant| {
             bindings.count(&constant.name) == 1
                 && !globals.contains(&constant.name)
+                && !attributes.contains(&constant.name)
                 && !walrus_targets(source, &constant.name)
         })
         .collect()
@@ -137,16 +141,22 @@ pub(super) fn python_test_rebinding(
 }
 
 /// Add one test module's facts to each of its tests: names the module binds
-/// more than once, attributes it assigns, and constructs that bind names the
-/// walk cannot enumerate. Computed once per module.
+/// more than once or any of its functions declares `global`, attributes it
+/// assigns, and constructs that bind names the walk cannot enumerate.
+/// Computed once per module.
 pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &mut [PythonTest]) {
     let mut module = ScopeBindings::default();
     collect_scope_bindings(statements, &mut module);
     let dynamic = writes_namespace_dynamically(source);
+    // A `global NAME` in any function (an autouse fixture, a helper) can
+    // rebind an imported name before another test in the module runs.
+    let mut globals = Vec::new();
+    collect_global_declarations(statements, &mut globals);
     let rebound: Vec<&String> = module
         .names
         .iter()
         .filter(|name| module.count(name) > 1)
+        .chain(globals.iter())
         .collect();
     let attributes = if dynamic {
         vec!["*".to_string()]

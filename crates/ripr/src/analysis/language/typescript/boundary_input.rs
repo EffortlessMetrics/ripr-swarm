@@ -270,6 +270,8 @@ fn integer_literal(raw: &str) -> Option<i64> {
     if raw.is_empty()
         || !raw.starts_with(|ch: char| ch.is_ascii_digit())
         || !raw.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
+        || raw.ends_with('_')
+        || raw.contains("__")
         || (raw.len() > 1 && raw.starts_with('0'))
     {
         return None;

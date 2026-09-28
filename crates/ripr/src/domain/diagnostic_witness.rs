@@ -151,18 +151,23 @@ impl DiagnosticWitness {
 }
 
 fn suggested_related_test(finding: &Finding) -> Option<&RelatedTest> {
-    let name = finding
-        .evidence
-        .iter()
-        .find_map(|line| line.strip_prefix("suggested_test_name: "))
-        .map(str::trim)
-        .filter(|name| !name.is_empty())?;
-    let mut matches = finding
-        .related_tests
-        .iter()
-        .filter(|test| test.name == name);
+    let evidence = |prefix: &str| {
+        finding
+            .evidence
+            .iter()
+            .find_map(|line| line.strip_prefix(prefix))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    };
+    let name = evidence("suggested_test_name: ")?;
+    // The file, when the producer names one, disambiguates same-named tests.
+    let file = evidence("suggested_test_file: ");
+    let mut matches = finding.related_tests.iter().filter(|test| {
+        test.name == name
+            && file.is_none_or(|file| test.file.to_string_lossy().replace('\\', "/") == file)
+    });
     let first = matches.next()?;
-    // Two related tests with the same name are ambiguous: fall back.
+    // Two related tests with the same identity are ambiguous: fall back.
     matches.next().is_none().then_some(first)
 }
 
@@ -342,6 +347,40 @@ mod tests {
         // A suggestion that names no related test falls back to the ranking.
         finding.evidence = vec!["suggested_test_name: test_new_boundary".to_string()];
         assert_eq!(fix_test(&finding), ranked);
+    }
+
+    #[test]
+    fn fix_site_matches_the_suggested_test_by_file_and_name() {
+        let related = |file: &str, line: usize| RelatedTest {
+            name: "test_boundary".to_string(),
+            file: PathBuf::from(file),
+            line,
+            oracle: None,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            relation_reason: None,
+            relation_confidence: None,
+        };
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "amount == DISCOUNT_THRESHOLD".to_string(),
+            reason: "no related input at the boundary".to_string(),
+            flow_sink: None,
+        }];
+        finding.related_tests = vec![related("tests/test_a.py", 4), related("tests/test_b.py", 8)];
+        let fix_file = |finding: &Finding| {
+            DiagnosticWitness::from_finding(finding)
+                .and_then(|witness| witness.fix_site)
+                .map(|site| site.file)
+        };
+        for file in ["tests/test_a.py", "tests/test_b.py"] {
+            finding.evidence = vec![
+                "suggested_test_name: test_boundary".to_string(),
+                format!("suggested_test_file: {file}"),
+            ];
+            assert_eq!(fix_file(&finding).as_deref(), Some(file));
+        }
     }
 
     #[test]
