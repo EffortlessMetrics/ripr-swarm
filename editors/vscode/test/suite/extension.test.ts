@@ -3677,6 +3677,7 @@ suite('Extension Smoke', () => {
       await writeWorkspaceFile(relativePath, 'pub fn agent_loop_command_target() {}\n');
       const document = await vscode.workspace.openTextDocument(uri);
       await vscode.window.showTextDocument(document);
+      await context.controller.start();
       const seamId = '67fc764ba37d77bd';
       const selectedRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       assert.ok(selectedRoot, 'test workspace root must be open');
