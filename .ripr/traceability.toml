@@ -2209,6 +2209,8 @@ id = "RIPR-SPEC-0027"
 name = "TypeScript preview static facts"
 spec = "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/bounded_read.rs::tests::no_follow_open_rejects_symlink_and_accepts_regular_file",
+  "crates/ripr/src/analysis/language/typescript/bounded_read.rs::tests::no_follow_open_rejects_fifo_without_waiting_for_writer",
   "crates/ripr/src/analysis/language/typescript/mod.rs",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::analyze_diff_credits_cross_extension_related_test_oracle_for_mts_sources",
   "crates/ripr/src/analysis/language/typescript/ambient_declaration_tests.rs::declaration_file_change_produces_no_probe_but_is_counted",
@@ -5641,12 +5643,24 @@ tests = [
   "crates/ripr/src/analysis/diff/load.rs::tests::resolve_default_base_returns_named_error_when_nothing_resolves",
   "crates/ripr/src/analysis/diff/load.rs::tests::explicit_base_is_used_as_is_without_resolution",
   "crates/ripr/tests/cli_smoke.rs::first_pr_check_missing_packet_recovers_without_a_resolvable_base",
-  "crates/ripr/tests/cli_smoke.rs::first_pr_check_recovery_write_resolves_the_default_base"
+  "crates/ripr/tests/cli_smoke.rs::first_pr_check_recovery_write_resolves_the_default_base",
+  "crates/ripr/src/cli/parse.rs::tests::base_and_diff_conflict_error_names_the_command_and_both_flags",
+  "crates/ripr/src/cli/parse.rs::tests::attached_terminal_stdin_note_fires_only_for_a_terminal",
+  "crates/ripr/src/cli/parse.rs::tests::terminal_stdin_disclosure_emits_once_only_for_a_terminal_diff_source",
+  "crates/ripr/src/cli/commands.rs::tests::explain_rejects_base_and_diff_together_at_parse_time",
+  "crates/ripr/src/cli/commands.rs::tests::explain_keeps_base_and_diff_as_from_artifact_assertions",
+  "crates/ripr/src/cli/commands/context.rs::tests::context_rejects_base_and_diff_together_at_parse_time",
+  "crates/ripr/src/cli/commands/context.rs::tests::context_keeps_base_and_diff_as_from_artifact_assertions",
+  "crates/ripr/tests/cli_smoke.rs::check_diff_stdin_from_a_pipe_stays_silent_about_terminal_disclosure"
 ]
 fixtures = []
 code = [
   "crates/ripr/src/analysis/diff/load.rs",
   "crates/ripr/src/output/first_pr.rs",
+  "crates/ripr/src/cli/parse.rs",
+  "crates/ripr/src/cli/commands/check.rs",
+  "crates/ripr/src/cli/commands/context.rs",
+  "crates/ripr/src/cli/commands.rs",
   "policy/process_allowlist.txt"
 ]
 outputs = [
@@ -7889,6 +7903,8 @@ id = "RIPR-SPEC-0129"
 name = "editor integration contract and support matrix"
 spec = "docs/specs/RIPR-SPEC-0129-editor-integration-contract.md"
 tests = [
+  "crates/ripr/src/lsp/diagnostics.rs::lsp_next_step_parity_tests::unwitnessed_finding_fallback_explains_class_and_inspection",
+  "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::gap_record_diagnostic_names_preview_inspection_route",
   "crates/ripr/src/lsp/agent_protocol.rs::tests::capability_is_fail_closed_until_handlers_land",
   "crates/ripr/src/lsp/capabilities.rs::tests::initialize_result_advertises_the_fail_closed_agent_capability",
   "crates/ripr/src/lsp/capabilities.rs::tests::initialize_result_advertises_pull_diagnostic_provider",
@@ -7950,6 +7966,8 @@ code = [
   "crates/ripr/src/lsp/agent_protocol.rs",
   "crates/ripr/src/lsp/actions.rs",
   "crates/ripr/src/lsp/action_contract.rs",
+  "crates/ripr/src/lsp/diagnostics.rs",
+  "crates/ripr/src/lsp/hover.rs",
   "editors/vscode/src/client.ts",
   "editors/vscode/package.json",
   "crates/ripr/src/lsp/client_features.rs",

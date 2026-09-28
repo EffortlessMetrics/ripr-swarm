@@ -9,6 +9,12 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Fixed
+
+- LSP fallback diagnostics explain their static classification and point to
+  hover evidence without promising an unavailable clipboard action or repair
+  route. Missing-path guidance remains explicitly static (#4328).
+
 ### Added
 
 - `ripr --version` now names the commit the binary was built from, as
@@ -557,6 +563,20 @@ are scoped or reviewed.
   Review-comments receipts exclusively create staging files, refusing planted
   temp paths without clobbering their targets (#4360). This is leaf acquisition
   hardening, not ancestor-directory or hard-link confinement.
+
+- `ripr explain` and `ripr context` now reject an explicit `--base` combined
+  with `--diff` at parse time, in either flag order and before any pipeline
+  run, instead of silently analyzing the `--diff` input while appearing to
+  assert the base (the loader gave `--diff` precedence and never validated
+  `--base` beside it). Beside `--from`, both flags remain scope assertions
+  verified against the recording and are unaffected. Running a `--diff -`
+  command directly at a prompt (instead of piped) now prints a one-line
+  stderr disclosure before ripr blocks reading the diff from the attached
+  terminal, so the documented `git diff origin/main | ripr check --diff -`
+  right half no longer looks like a silent hang; the disclosure lives in the
+  CLI adapter and piped, redirected, or captured stdin — including library
+  calls into the analysis API — stay silent and byte-identical
+  ([#4319](https://github.com/EffortlessMetrics/ripr-swarm/issues/4319)).
 
 - Every flag `ripr` parses is now documented on a surface a reader scans,
   and mistyped flags can be suggested from anywhere the command's help
