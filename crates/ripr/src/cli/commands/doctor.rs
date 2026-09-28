@@ -718,6 +718,13 @@ fn is_skipped_walk_dir(path: &Path) -> bool {
     name.starts_with('.') || matches!(name, "target" | "node_modules" | "blib")
 }
 
+/// True for a real directory entry. `DirEntry::file_type` does not follow
+/// symlinks, so a `src/loop -> .` link cannot send the Perl walks into an
+/// unbounded descent (the other workspace walkers already skip links).
+fn is_walkable_dir(entry: &std::fs::DirEntry) -> bool {
+    entry.file_type().is_ok_and(|kind| kind.is_dir())
+}
+
 /// True when the workspace has a CPAN build marker or any `.pm`, `.pl` or
 /// `.t` file outside skipped directories. One walk that stops at the first
 /// hit; `detect_languages` and the Perl preview share this definition.
@@ -728,7 +735,7 @@ fn perl_project_detected(root: &Path) -> bool {
         };
         entries.flatten().any(|entry| {
             let path = entry.path();
-            if path.is_dir() {
+            if is_walkable_dir(&entry) {
                 !is_skipped_walk_dir(&path) && any_perl_file(&path)
             } else {
                 matches!(
@@ -749,7 +756,7 @@ fn count_files(root: &Path, ext: &str) -> usize {
         let mut n = 0;
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
+            if is_walkable_dir(&entry) {
                 if is_skipped_walk_dir(&path) {
                     continue;
                 }
@@ -1428,6 +1435,29 @@ mod tests {
             assert_eq!(detect_languages(&root), expected, "{name}");
             std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         }
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn perl_walks_do_not_follow_directory_symlink_loops() -> Result<(), String> {
+        // A `src/loop -> .` link made `ripr doctor` descend forever. The walks
+        // must terminate, and a `.pm` reachable only through the link does not
+        // count, matching the Rust/Python/TypeScript walkers.
+        let root = unique_command_test_dir("perl-symlink-loop");
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).map_err(|err| format!("mkdir: {err}"))?;
+        std::os::unix::fs::symlink(".", src.join("loop"))
+            .map_err(|err| format!("symlink: {err}"))?;
+        std::os::unix::fs::symlink("../src", src.join("up"))
+            .map_err(|err| format!("symlink: {err}"))?;
+        assert!(!perl_project_detected(&root));
+        assert_eq!(count_files(&root, "pm"), 0);
+
+        std::fs::write(src.join("Real.pm"), "1;\n").map_err(|err| format!("write: {err}"))?;
+        assert!(perl_project_detected(&root));
+        assert_eq!(count_files(&root, "pm"), 1);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }
 
