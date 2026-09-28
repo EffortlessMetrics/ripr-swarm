@@ -359,7 +359,7 @@ mod tests {
         value.commands[0].command = "ripr agent start --root 'it'\\''s' > 'out'".to_string();
         let rendered = render_agent_workflow_commands_md(&value);
         assert!(
-            rendered.contains("$ripr = ((ripr agent start --root 'it''s') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('out', $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }")
+            rendered.contains("try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; $ripr = ((ripr agent start --root 'it''s') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('out'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }")
         );
     }
 
