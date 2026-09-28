@@ -314,12 +314,13 @@ mod tests {
     fn parse_rejects_windows_partially_qualified_paths() -> Result<(), String> {
         // These relative paths replace rather than extend the selected root.
         let selected = Path::new(r"C:\selected");
-        if selected.join("C:repo") != Path::new("C:repo")
-            || selected.join(r"\before.json") != Path::new(r"C:\before.json")
-            || Path::new("C:repo").is_absolute()
-            || Path::new(r"\before.json").is_absolute()
-        {
-            return Err("Windows path replacement premise changed".to_string());
+        for (relative, expected) in [("C:repo", "C:repo"), (r"\before.json", r"C:\before.json")] {
+            let relative = Path::new(relative);
+            if selected.join(relative) != Path::new(expected) || relative.is_absolute() {
+                return Err(format!(
+                    "Windows path replacement premise changed: {relative:?}"
+                ));
+            }
         }
         for flag in ["--root", "--baseline"] {
             for path in ["C:repo", "C:", r"\repo", "/repo"] {
