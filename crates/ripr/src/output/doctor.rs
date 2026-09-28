@@ -167,6 +167,11 @@ enum RustcVersionVerdict {
     Unreadable(String),
 }
 
+/// The below-minimum rustc note already states what that means for the
+/// running binary's analysis; the analysis-profile advisory must not say it a
+/// second time (clean-install walk, 0.11).
+const RUSTC_ANALYSIS_SCOPE: &str = "The already-running ripr binary's built-in static analysis does not directly run rustc; configured external producers have their own prerequisites.";
+
 fn validate_rustc_version(output: &str) -> RustcVersionVerdict {
     let Some(minimum) = minimum_rustc_version() else {
         return RustcVersionVerdict::Unreadable(format!(
@@ -181,7 +186,7 @@ fn validate_rustc_version(output: &str) -> RustcVersionVerdict {
     };
     if version < minimum {
         return RustcVersionVerdict::BelowBuildMinimum(format!(
-            "{}; below ripr's build minimum {minimum}. That minimum is what building or installing ripr from source requires. The already-running ripr binary's built-in static analysis does not directly run rustc; configured external producers have their own prerequisites. Run `rustup update stable` before building ripr from source.",
+            "{}; below ripr's build minimum {minimum}. That minimum is what building or installing ripr from source requires. {RUSTC_ANALYSIS_SCOPE} Run `rustup update stable` before building ripr from source.",
             output.trim()
         ));
     }
@@ -747,6 +752,9 @@ fn doctor_tool_probe_dir<'a>(tool: &str, root: &'a Path) -> Option<&'a Path> {
 /// harness verdict fails closed as `manifest_unavailable`). Doctor names that
 /// degradation instead of implying analysis is unaffected.
 fn analysis_advisory_toolchain_evidence(tool: &str, evidence: &str) -> String {
+    if evidence.contains(RUSTC_ANALYSIS_SCOPE) {
+        return evidence.to_string();
+    }
     let analysis_effect = if tool == "cargo" {
         "static analysis continues, but evidence that reads `cargo metadata` in the selected root (custom test-harness target inventory) is withheld"
     } else {
@@ -1196,6 +1204,25 @@ mod tests {
                     result.evidence
                 ));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn analysis_advisory_states_the_rustc_analysis_scope_once() -> Result<(), String> {
+        let below = below_minimum_rustc_output()?;
+        let rustc = doctor_tool_check_success("rustc", below.as_bytes());
+        let advisory = analysis_advisory_toolchain_evidence("rustc", &rustc.evidence);
+        if advisory.matches("run rustc").count() != 1 {
+            return Err(format!(
+                "the rustc analysis scope must appear once: {advisory:?}"
+            ));
+        }
+        let missing = analysis_advisory_toolchain_evidence("rustc", "rustc not found on PATH");
+        if !missing.contains("the installed binary's static analysis does not run rustc") {
+            return Err(format!(
+                "a missing rustc still needs the analysis scope: {missing:?}"
+            ));
         }
         Ok(())
     }

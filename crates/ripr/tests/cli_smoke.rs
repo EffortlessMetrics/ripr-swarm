@@ -13923,6 +13923,13 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
             "empty default-base run must keep the no-scope disclosure (base-naming form per #4012); got:\n{stdout}"
         ));
     }
+    // Clean-install walk (0.11): Start-here must name the flag that analyzes
+    // uncommitted edits, not only "make a change".
+    if !stdout.contains("add `--worktree` to include uncommitted edits") {
+        return Err(format!(
+            "empty-range Start-here must name `--worktree`; got:\n{stdout}"
+        ));
+    }
     if !stdout.contains("compared base was `main`") || stdout.contains("--base origin/main") {
         return Err(format!(
             "no-origin repo must name its resolved local main rather than suggest a nonexistent remote ref; got:\n{stdout}"
