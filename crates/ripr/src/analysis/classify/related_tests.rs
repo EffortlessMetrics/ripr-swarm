@@ -53,6 +53,9 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     by_test_stem: BTreeMap<String, Vec<usize>>,
     by_function_name: BTreeMap<String, Vec<usize>>,
     all_tests: Vec<usize>,
+    /// Run-scoped reveal memo filled lazily from the same index; valid for
+    /// exactly as long as the candidate lists above are.
+    file_use_statements: super::FileUseStatements,
 }
 
 impl RelatedTestCandidateIndex {
@@ -110,6 +113,12 @@ impl RelatedTestCandidateIndex {
         }
 
         candidates
+    }
+
+    /// The run-scoped per-file `use` scan shared by every probe classified
+    /// against this index.
+    pub(in crate::analysis) fn file_use_statements(&self) -> &super::FileUseStatements {
+        &self.file_use_statements
     }
 
     fn candidate_indices(

@@ -11,6 +11,10 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr check` is about a third faster. The same-name-import gate re-masked
+  every related test file's source for every probe; one scan per file now
+  serves the whole run. On a ripr commit, a warm check went from 13.5 s to
+  8.8 s and a cold one from 15.3 s to 11.0 s, with byte-identical JSON.
 - `ripr review-comments` no longer times out on a large diff. It evaluates
   seams on changed lines and in changed owner functions first, and skips the
   rest of the scope when those already fill the ten review slots; a warning
