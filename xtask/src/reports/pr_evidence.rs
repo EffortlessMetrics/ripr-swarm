@@ -475,6 +475,21 @@ fn retry_arg_is_plain(value: &str) -> bool {
 fn bash_retry_arg(value: &str) -> String {
     if retry_arg_is_plain(value) {
         value.to_string()
+    } else if value.contains('\n') || value.contains('\r') {
+        // `first_line` retains only one physical warning line in the packet.
+        // ANSI-C quoting keeps valid Unix roots with newlines copyable while
+        // still making backslashes and apostrophes literal Bash data.
+        let mut escaped = String::new();
+        for ch in value.chars() {
+            match ch {
+                '\\' => escaped.push_str("\\\\"),
+                '\'' => escaped.push_str("\\'"),
+                '\n' => escaped.push_str("\\n"),
+                '\r' => escaped.push_str("\\r"),
+                _ => escaped.push(ch),
+            }
+        }
+        format!("$'{escaped}'")
     } else {
         format!("'{}'", value.replace('\'', r"'\''"))
     }
@@ -1056,7 +1071,7 @@ fn render_pr_evidence_markdown(packet: &Value) -> String {
             out.push_str(&format!(
                 "- {}: {}\n",
                 md_escape(string_field(warning, "kind", "warning")),
-                md_escape(string_field(
+                md_warning(string_field(
                     warning,
                     "message",
                     "PR evidence generation warning"
@@ -1084,6 +1099,12 @@ fn string_field<'a>(packet: &'a Value, key: &str, fallback: &'a str) -> &'a str 
 
 fn md_escape(value: &str) -> String {
     value.replace('|', "\\|").replace('\n', " ")
+}
+
+fn md_warning(value: &str) -> String {
+    // Warnings are list prose, not table cells. Escaping `|` here changes a
+    // quoted retry argument when the displayed command is copied.
+    value.replace('\r', " ").replace('\n', " ")
 }
 
 fn repo_root() -> Result<PathBuf, String> {
@@ -1154,8 +1175,12 @@ mod tests {
     fn hostile_retry_options() -> PrEvidenceOptions {
         PrEvidenceOptions {
             base: "topic$(touch-marker)".to_string(),
-            head: "topic'name".to_string(),
-            root: "root with spaces".to_string(),
+            head: "topic'|name".to_string(),
+            root: if cfg!(windows) {
+                "root with spaces".to_string()
+            } else {
+                "root\\'$(touch-marker)\nwith spaces".to_string()
+            },
             check: false,
         }
     }
@@ -1548,8 +1573,23 @@ mod tests {
         run_git(&repo, &["add", "."])?;
         run_git(&repo, &["commit", "--no-gpg-sign", "-m", "add rust"])?;
         let options = hostile_retry_options();
+        fs::create_dir_all(repo.join(&options.root))
+            .map_err(|err| format!("create hostile root: {err}"))?;
         run_git(&repo, &["branch", &options.base, "HEAD~1"])?;
-        run_git(&repo, &["branch", &options.head, "HEAD"])?;
+        // Windows cannot store `|` in a loose-ref filename even though Git
+        // accepts it as a ref name. A packed ref exercises the real revision
+        // consumer with the same valid hostile name on every host.
+        let tip = run_git_output(&repo, &["rev-parse", "HEAD"])?;
+        fs::write(
+            repo.join(".git/packed-refs"),
+            format!(
+                "# pack-refs with: peeled fully-peeled sorted\n{} refs/heads/{}\n",
+                tip.trim(),
+                options.head
+            ),
+        )
+        .map_err(|err| format!("write hostile packed ref: {err}"))?;
+        run_git(&repo, &["rev-parse", "--verify", &options.head])?;
         write_parented_file(
             &repo.join(PR_CHECK_JSON),
             PR_CHECK_JSON,
