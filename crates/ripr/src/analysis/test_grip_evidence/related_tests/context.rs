@@ -456,9 +456,11 @@ fn value() -> i32 { 1 }
 #[test] fn second() { assert_eq!(value(), 1); }
 "#,
         )?;
-        let mut index = RustIndex::default();
-        index.tests = facts.tests.clone();
-        index.functions = facts.functions.clone();
+        let mut index = RustIndex {
+            tests: facts.tests.clone(),
+            functions: facts.functions.clone(),
+            ..RustIndex::default()
+        };
         index.files.insert(path, facts);
         if index.tests.len() != 2 {
             return Err("context fixture must admit exactly two parsed tests".to_string());
