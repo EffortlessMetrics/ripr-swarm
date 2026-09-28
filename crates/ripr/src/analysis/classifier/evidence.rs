@@ -351,6 +351,31 @@ mod tests {
     /// probe's owner is package `alpha`'s — the bare binding is ambiguous
     /// across packages, so the observation stays unverified. Pre-fix this
     /// confirmed through the bare name.
+    /// The memo computes a defeat once per (file, callee) and keeps
+    /// different files and callees apart, so a cached answer never leaks
+    /// from one test file to another.
+    #[test]
+    fn file_defeat_memo_computes_once_per_file_and_callee() {
+        use std::cell::Cell;
+        use std::path::Path;
+
+        let memo = super::FileDefeatMemo::default();
+        let calls = Cell::new(0);
+        let mut lookup = |file: &str, callee: &str, answer: bool| {
+            super::memoized_file_defeat(&memo, Path::new(file), callee, || {
+                calls.set(calls.get() + 1);
+                answer
+            })
+        };
+
+        assert!(lookup("tests/a.rs", "score", true));
+        // Cached: the second compute would answer false but never runs.
+        assert!(lookup("tests/a.rs", "score", false));
+        assert!(!lookup("tests/b.rs", "score", false));
+        assert!(!lookup("tests/a.rs", "total", false));
+        assert_eq!(calls.get(), 3);
+    }
+
     #[test]
     fn cross_package_same_name_function_defeats_owner_confirmation() {
         let index = RustIndex {
