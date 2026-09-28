@@ -115,24 +115,12 @@ pub(crate) struct SourceRoleContext {
     /// a `src` layout.
     pub(crate) build_scripts: BTreeSet<PathBuf>,
     /// Relative paths of explicit `[lib]` / `[[bin]]` `path = ...` crate
-    /// roots. Cargo compiles them wherever they sit, so a changed one
-    /// seeds probes even outside a `src` layout.
-    pub(crate) declared_production_roots: BTreeSet<PathBuf>,
-    /// Directories holding a declared crate root outside the package
-    /// directory itself (`lib/` for `[lib] path = "lib/foo.rs"`): Rust
-    /// resolves that root's out-of-line modules there, so changed files
-    /// below them seed probes too.
-    pub(crate) declared_production_module_dirs: BTreeSet<PathBuf>,
-}
-
-impl SourceRoleContext {
-    fn declares_production_source(&self, normalized: &Path) -> bool {
-        self.declared_production_roots.contains(normalized)
-            || self
-                .declared_production_module_dirs
-                .iter()
-                .any(|dir| normalized.starts_with(dir))
-    }
+    /// roots, plus the analyzed files the same package owns below a root
+    /// that sits in its own directory (`lib/` for `[lib] path =
+    /// "lib/foo.rs"`, where Rust resolves that root's modules). Cargo
+    /// compiles them wherever they sit, so a changed one seeds probes even
+    /// outside a `src` layout.
+    pub(crate) declared_production_sources: BTreeSet<PathBuf>,
 }
 
 impl SourceRoleContext {
@@ -300,7 +288,7 @@ fn is_repo_automation_subject(path: &Path, role: SourceRole) -> bool {
 ///
 /// This is the one authority for both surfaces: the Rust diff loop and the
 /// LSP out-of-scope partition must agree, or the editor silently drops
-/// findings the CLI reports. Production roles seed. Two evidence-role
+/// findings the CLI reports. Production roles seed. Three evidence-role
 /// shapes also seed when changed, because Cargo compiles them and a change
 /// there is reviewed behavior rather than data:
 ///
@@ -308,9 +296,12 @@ fn is_repo_automation_subject(path: &Path, role: SourceRole) -> bool {
 /// - Cargo build scripts, which sit outside any `src` layout. Only the
 ///   script a package manifest actually builds counts
 ///   ([`SourceRoleContext::build_scripts`]): a `build.rs` under
-///   `package.build = false`, or outside any package, is never compiled.
+///   `package.build = false`, or outside any package, is never compiled;
+/// - crate roots a manifest declares outside `src` (`[lib] path =
+///   "lib/foo.rs"`) and the files that package owns below such a root
+///   ([`SourceRoleContext::declared_production_sources`]).
 ///
-/// Repo mode keeps both out of the seam inventory. Registered non-source
+/// Repo mode keeps all three out of the seam inventory. Registered non-source
 /// directories (`fixtures/`, `target/`, ...) stay evidence even inside
 /// `xtask/`, and other loose non-`src` files (panel subjects under
 /// `metrics/`, for example) are data Cargo never compiles.
@@ -328,7 +319,7 @@ pub(crate) fn seeds_diff_probes(path: &Path, context: &SourceRoleContext) -> boo
             is_repo_automation_subject(path, role)
                 || (!in_non_source_directory
                     && (context.build_scripts.contains(&normalized)
-                        || context.declares_production_source(&normalized)))
+                        || context.declared_production_sources.contains(&normalized)))
         }
         _ => false,
     }
@@ -690,15 +681,18 @@ mod tests {
         // manifest (`lib.rs`) contributes the file only, never the whole
         // package directory.
         let mut context = SourceRoleContext::empty();
-        for root in ["lib/odd.rs", "tools/cli.rs", "pkg/lib.rs"] {
+        for source in [
+            "lib/odd.rs",
+            "lib/odd/helper.rs",
+            "lib/helper.rs",
+            "tools/cli.rs",
+            "pkg/lib.rs",
+            "lib/tests/odd.rs",
+            "lib/fixtures/sample.rs",
+        ] {
             context
-                .declared_production_roots
-                .insert(PathBuf::from(root));
-        }
-        for dir in ["lib", "tools"] {
-            context
-                .declared_production_module_dirs
-                .insert(PathBuf::from(dir));
+                .declared_production_sources
+                .insert(PathBuf::from(source));
         }
         for (path, seeds) in [
             ("lib/odd.rs", true),
@@ -707,11 +701,13 @@ mod tests {
             ("lib/helper.rs", true),
             ("tools/cli.rs", true),
             ("pkg/lib.rs", true),
-            // Not declared, or under a module dir the root does not own.
+            // Not declared: membership is exact, never a directory prefix.
+            ("lib/other.rs", false),
             ("pkg/other.rs", false),
             ("library/odd.rs", false),
             ("scripts/tool.rs", false),
-            // Evidence layouts and non-source directories still win.
+            // Evidence layouts and non-source directories still win, even
+            // if a caller declared them.
             ("lib/tests/odd.rs", false),
             ("lib/fixtures/sample.rs", false),
         ] {

@@ -163,10 +163,17 @@ pub fn resolve_effective_base(
     match git_ref_output(root, &commit, git_timeout) {
         Some(output) if !output.status.success() => Err(not_a_work_tree(root, git_timeout)
             .unwrap_or_else(|| {
+                // `git fetch origin` never deepens a shallow clone, so an
+                // ancestor base like `HEAD~5` needs the unshallow repair.
+                let fetch = if is_shallow_repository(root, git_timeout) {
+                    "This is a shallow clone: fetch the missing history with `git fetch \
+                     --unshallow` (in GitHub Actions, set `fetch-depth: 0` on actions/checkout)"
+                } else {
+                    "Fetch the ref (for example `git fetch origin`)"
+                };
                 format!(
                     "the base `{explicit}` does not resolve to a commit (the analysis did not \
-                     run). Fetch the ref (for example `git fetch origin`) or pass `--base <ref>` \
-                     for a ref this repository has."
+                     run). {fetch} or pass `--base <ref>` for a ref this repository has."
                 )
             })),
         _ => Ok(explicit.to_string()),
@@ -260,7 +267,16 @@ fn resolve_default_base(root: &Path, git_timeout: Option<Duration>) -> Result<St
 /// branch is not `main`/`master` (`trunk`, `develop`) names its branches.
 /// Empty when none applies or Git cannot answer.
 fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> String {
-    if !git_ref_exists(root, "HEAD", git_timeout) {
+    // Only a `rev-parse` that ran and answered "no" proves an unborn HEAD;
+    // a missing or timed-out Git proves nothing, so it adds no context.
+    let Ok(head) = crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--verify", "--quiet", "HEAD"],
+        git_timeout,
+    ) else {
+        return String::new();
+    };
+    if !head.status.success() {
         return " This repository has no commits yet; commit once, then analyze uncommitted \
                 edits with `--base HEAD --worktree`."
             .to_string();
@@ -289,14 +305,21 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
     let others = git_lines(&[
         "for-each-ref",
         "--count=8",
-        "--format=%(refname:short)",
+        "--format=%(refname)",
         "refs/heads",
         "refs/remotes",
     ])
     .into_iter()
-    // `origin/HEAD` is a pointer (older Git abbreviates it to `origin`),
-    // and the current branch cannot be its own base.
-    .filter(|name| !name.ends_with("/HEAD") && name != "origin" && !current.contains(name))
+    // Full ref names, shortened here: `%(refname:short)` abbreviates any
+    // remote's `HEAD` pointer to the bare remote name, which is no branch.
+    .filter(|name| !name.ends_with("/HEAD"))
+    .filter_map(|name| {
+        name.strip_prefix("refs/heads/")
+            .or_else(|| name.strip_prefix("refs/remotes/"))
+            .map(str::to_string)
+    })
+    // The current branch cannot be its own base.
+    .filter(|name| !current.contains(name))
     .take(5)
     .collect::<Vec<_>>();
     match (others.first(), current.first()) {
@@ -1256,6 +1279,12 @@ mod tests {
                 "main:refs/remotes/origin/main",
             ],
         )?;
+        let err = load_diff(&shallow, Some("HEAD~1"), None, None)
+            .expect_err("a depth-1 clone has no parent commit");
+        assert!(
+            err.contains("does not resolve to a commit") && err.contains("git fetch --unshallow"),
+            "an ancestor base in a shallow clone must name the unshallow repair, got: {err}"
+        );
         let err = load_diff(&shallow, Some("origin/main"), None, None)
             .expect_err("a shallow clone has no merge base");
         assert!(

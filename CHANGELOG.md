@@ -21,6 +21,9 @@ are scoped or reviewed.
   `git fetch --unshallow` and `fetch-depth: 0`. A repository with no
   commits, or whose default branch is not `main`/`master`, is told which
   `--base` would work.
+- A diff that touches conflict markers in a file no enabled adapter reads
+  (for example resolving markers committed to a workflow `.yml`) no longer
+  turns the whole run into `unsupported_input`.
 
 - LSP fallback diagnostics explain their static classification and point to
   hover evidence without promising an unavailable clipboard action or repair
