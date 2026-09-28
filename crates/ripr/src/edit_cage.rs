@@ -462,8 +462,11 @@ const IGNORED_LISTING: [&str; 5] = [
 ];
 
 /// Before promising a Rust repair transaction, require Git to ignore the
-/// declared build directory itself. Checking an effective rule works before
-/// any build exists and respects repository, local, and global excludes.
+/// declared build directory itself. Both callers hold the repair-attempt lock,
+/// whose creation supplies the directory even before any Cargo build exists.
+/// Query the existing directory without a trailing slash: adding one can make
+/// a child wildcard look like a whole-directory rule despite reincluded output.
+/// Git remains the authority for repository, local, and global excludes.
 /// Merely finding some ignored files would accept a partial `target/debug/`
 /// rule while Cargo's root-level output still becomes a terminal cage edit.
 /// This admission check does not change the inventory or verdict authority.
@@ -474,8 +477,27 @@ pub(crate) fn validate_build_output_precondition(
     let Some(build_output) = &policy.ignored_build_output else {
         return Ok(());
     };
+    let path = root.join(build_output.path());
+    let metadata = fs::metadata(&path).map_err(|error| {
+        format!(
+            "inspect build-output directory {} before ignore admission: {error}",
+            path.display()
+        )
+    })?;
+    if !metadata.is_dir() {
+        return Err(format!(
+            "build-output path {} must be an existing directory before ignore admission",
+            path.display()
+        ));
+    }
     let directory = format!("{}/", build_output.path());
-    let args = ["check-ignore", "--no-index", "--quiet", "--", &directory];
+    let args = [
+        "check-ignore",
+        "--no-index",
+        "--quiet",
+        "--",
+        build_output.path(),
+    ];
     let output = crate::git::run_git_output_with_deadline_and_limit(
         root,
         &args,
@@ -2061,6 +2083,53 @@ mod tests {
         let mut policy = policy()?;
         policy.ignored_build_output = Some(CagePathRule::subtree("target")?);
         Ok(policy)
+    }
+
+    #[test]
+    fn build_ignore_precondition_refuses_child_wildcards_with_reincluded_output()
+    -> Result<(), String> {
+        for rule in [
+            "/target/*\n!/target/keep.log\n",
+            "/target/**\n!/target/keep.log\n",
+        ] {
+            let fixture = git_fixture("build-ignore-child-wildcard")?;
+            write_fixture_file(&fixture, ".gitignore", rule)?;
+            write_fixture_file(&fixture, "target/keep.log", "visible Cargo-root output\n")?;
+            write_fixture_file(&fixture, ".git/empty-global-excludes", "")?;
+            let excludes = fixture.root.join(".git/empty-global-excludes");
+            let excludes = excludes
+                .to_str()
+                .ok_or("fixture exclude path is not UTF-8")?;
+            git_ok(&fixture.root, &["config", "core.excludesFile", excludes])?;
+            let listing = git_bytes(
+                &fixture.root,
+                &[
+                    "ls-files",
+                    "--others",
+                    "--exclude-standard",
+                    "-z",
+                    "--",
+                    "target",
+                ],
+            )?;
+            let paths = nul_records(&listing).collect::<Result<Vec<_>, _>>()?;
+            if !paths.contains(&"target/keep.log") {
+                return Err(format!(
+                    "fixture did not expose reincluded build output for {rule:?}"
+                ));
+            }
+            match validate_build_output_precondition(&fixture.root, &build_output_policy()?) {
+                Ok(()) => return Err(format!("child wildcard unexpectedly admitted for {rule:?}")),
+                Err(error)
+                    if error.contains("Rust repair requires") && error.contains("Git-ignored") => {}
+                Err(error) => {
+                    return Err(format!(
+                        "unexpected precondition failure for {rule:?}: {error}"
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     fn write_fixture_file(

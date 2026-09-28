@@ -4813,7 +4813,12 @@ fn disable_ambient_git_excludes(root: &Path) -> Result<(), Box<dyn std::error::E
 #[test]
 fn agent_repair_before_requires_effective_cargo_build_directory_ignore()
 -> Result<(), Box<dyn std::error::Error>> {
-    for rule in ["", "target/debug/\n"] {
+    for rule in [
+        "",
+        "target/debug/\n",
+        "/target/*\n!/target/keep.log\n",
+        "/target/**\n!/target/keep.log\n",
+    ] {
         let fixture = RepairBuildIgnoreFixture(unique_temp_workspace("agent-repair-build-ignore"));
         let root = fixture.0.as_path();
         init_producer_fixture_repo(root)?;
@@ -4888,7 +4893,7 @@ fn agent_repair_accepts_empty_effectively_ignored_build_tree_and_actual_cargo_te
     std::fs::write(manifest_path, manifest)?;
     run_git(root, &["add", "Cargo.toml"])?;
     commit_repair_fixture(root, &["-qm", "standalone adopter workspace"])?;
-    if root.join(".gitignore").exists() || root.join("target/debug").exists() {
+    if root.join(".gitignore").exists() || root.join("target").exists() {
         return Err(
             "fixture must rely on effective excludes, with no pre-existing Cargo build".into(),
         );
