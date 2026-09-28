@@ -11,6 +11,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Human output: the digest `Next step` line wraps instead of cutting at 180
+  characters, so the no-path guidance keeps its remedy ("add a co-located
+  test that reaches and observes the changed behavior"). Stop reasons now
+  carry a plain-English gloss beside the token, and the boxed-wrapper static
+  limitation no longer renders with runs of embedded spaces (#4323).
+
 - Rust: a changed function that no test calls now reads `no_static_path`.
   Before, a same-file test of a sibling function made it `weakly_exposed`
   with "strong oracle found", and its unknown-shape lines said "escalate to

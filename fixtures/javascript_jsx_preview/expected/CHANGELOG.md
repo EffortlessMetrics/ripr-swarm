@@ -455,3 +455,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — javascript_jsx_preview (9)
+
+Reason:
+RIPR-SPEC-0122: digest Next step wraps instead of cutting the remedy; stop reasons carry a gloss; boxed-wrapper limitation text has no whitespace runs (#4323)
+
+Command:
+`cargo xtask goldens bless javascript_jsx_preview --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

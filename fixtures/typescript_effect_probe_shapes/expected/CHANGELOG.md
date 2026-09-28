@@ -443,3 +443,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_effect_probe_shapes (9)
+
+Reason:
+RIPR-SPEC-0122: digest Next step wraps instead of cutting the remedy; stop reasons carry a gloss; boxed-wrapper limitation text has no whitespace runs (#4323)
+
+Command:
+`cargo xtask goldens bless typescript_effect_probe_shapes --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

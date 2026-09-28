@@ -479,3 +479,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_awaited_promise_reject (9)
+
+Reason:
+RIPR-SPEC-0122: digest Next step wraps instead of cutting the remedy; stop reasons carry a gloss; boxed-wrapper limitation text has no whitespace runs (#4323)
+
+Command:
+`cargo xtask goldens bless typescript_awaited_promise_reject --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
