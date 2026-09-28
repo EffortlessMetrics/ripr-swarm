@@ -374,6 +374,56 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn receipt_temp_refuses_planted_symlink_without_clobbering_target() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-receipt-symlink-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|time| time.as_nanos())
+                .unwrap_or(0),
+        ));
+        fs::create_dir_all(&dir).map_err(|err| format!("setup directory: {err}"))?;
+        let path = dir.join("receipt.json");
+        let mut receipt = sample_receipt();
+        // Positive control reaches the production authority before the probe.
+        receipt.write_atomic(&path)?;
+        fs::remove_file(&path).map_err(|err| format!("remove control receipt: {err}"))?;
+        let sentinel = dir.join("outside.txt");
+        fs::write(&sentinel, b"protected receipt sentinel")
+            .map_err(|err| format!("setup sentinel: {err}"))?;
+        let temp = atomic_temp_path(&path);
+        std::os::unix::fs::symlink(&sentinel, &temp)
+            .map_err(|err| format!("setup planted temp: {err}"))?;
+        let mut refused = sample_receipt();
+        let result = refused.write_atomic(&path);
+        let observed = fs::read(&sentinel).map_err(|err| format!("read sentinel: {err}"))?;
+        let untouched = observed == b"protected receipt sentinel";
+        let link_preserved = fs::symlink_metadata(&temp)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false);
+        let published = path.exists();
+        let _ = fs::remove_dir_all(&dir);
+        assert!(
+            untouched,
+            "production receipt temp write followed planted link; outside sentinel changed to {} bytes; result={result:?}",
+            observed.len()
+        );
+        assert!(
+            result.is_err(),
+            "exclusive temp acquisition must refuse planted path"
+        );
+        assert!(
+            link_preserved,
+            "refusal must not remove an attacker-owned temp path"
+        );
+        assert!(!published, "refused receipt must not publish an artifact");
+        assert_eq!(refused.atomic_write_status, "not_written");
+        Ok(())
+    }
+
     #[test]
     fn write_atomic_fails_on_unwritable_path() -> Result<(), String> {
         // On Windows, a path inside a non-existent drive is unwritable.
