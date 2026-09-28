@@ -555,6 +555,13 @@ are scoped or reviewed.
   The removed pair was self-signed for that name only
   ([#4143](https://github.com/EffortlessMetrics/ripr-swarm/issues/4143)).
 
+- Python pytest and unittest verify commands single-quote a test path that
+  is not a plain relative path, matching the TypeScript command quoter.
+  A name containing a shell metacharacter stays inside quotes in the command
+  text. The stored test path and node id stay unquoted, and a path made only
+  of letters, digits, `.`, `_`, `/`, and `-` is unchanged
+  ([#4211](https://github.com/EffortlessMetrics/ripr-swarm/issues/4211)).
+
 - `ripr outcome` no longer reports zero movement for check-output snapshots
   whose findings carry no canonical gap id, such as Rust `ripr check --json`.
   It refuses the pair, points Rust users to `ripr check --format
