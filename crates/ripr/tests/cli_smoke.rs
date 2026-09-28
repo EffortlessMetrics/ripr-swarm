@@ -5541,6 +5541,11 @@ fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
                 output.stdout.is_empty(),
                 "{format} {bad:?} wrote stdout on a failed invocation"
             );
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains(bad[1]),
+                "{format} {bad:?}: stderr does not name the rejected input: {stderr}"
+            );
         }
     }
 
