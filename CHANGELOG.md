@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- LSP: opening a second repository in the same Helix session no longer stops
+  ripr for the first. Helix adds the new repository as a workspace folder to
+  the running server, which made the folder set ambiguous and stopped
+  analysis for both. Editors without the VS Code integration now keep the
+  root they started with, are told which folder is not analyzed, and hover
+  on a file from that folder says it is outside the analyzed root. The VS
+  Code extension keeps its folder-picker behavior.
 - LSP: an editor that opens two workspace folders, or none, now hears why
   ripr is silent. Before, the server stopped analysis and sent nothing: the
   startup `ripr/analysisStatus` was dropped because the transport discards

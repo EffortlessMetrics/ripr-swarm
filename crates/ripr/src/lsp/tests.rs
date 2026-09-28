@@ -9250,9 +9250,34 @@ impl WorkspaceFolderTransitionsClient {
         id
     }
 
+    /// Initialize as the VS Code integration (`riprEditor` advertised), the
+    /// client whose folder transitions RIPR-SPEC-0139 pins: it owns root
+    /// selection, so a second folder is ambiguous. Generic clients keep a
+    /// selected root instead (#4459); see
+    /// `initialize_generic_with_workspace_folders`.
     async fn initialize_with_workspace_folders(
         &mut self,
         folders: serde_json::Value,
+    ) -> Result<(), String> {
+        self.initialize_with_capabilities(
+            folders,
+            serde_json::json!({"experimental": {"riprEditor": {"version": "0.1", "commands": []}}}),
+        )
+        .await
+    }
+
+    async fn initialize_generic_with_workspace_folders(
+        &mut self,
+        folders: serde_json::Value,
+    ) -> Result<(), String> {
+        self.initialize_with_capabilities(folders, serde_json::json!({}))
+            .await
+    }
+
+    async fn initialize_with_capabilities(
+        &mut self,
+        folders: serde_json::Value,
+        capabilities: serde_json::Value,
     ) -> Result<(), String> {
         let id = self.request_id();
         write_lsp_message(
@@ -9265,7 +9290,7 @@ impl WorkspaceFolderTransitionsClient {
                     "processId": null,
                     "workspaceFolders": folders,
                     "initializationOptions": { "checkMode": "instant" },
-                    "capabilities": {}
+                    "capabilities": capabilities
                 }
             }),
         )
@@ -9585,6 +9610,112 @@ fn workspace_folder_transitions_second_folder_becomes_ambiguous_without_fallback
             if status["repair_actions_available"].as_bool() != Some(false) {
                 return Err(format!(
                     "an ambiguous workspace must block repair authority: {status}"
+                ));
+            }
+            client.finish().await
+        },
+    )
+}
+
+#[test]
+fn workspace_folder_transitions_generic_client_keeps_selected_root_when_a_folder_is_added()
+-> Result<(), String> {
+    // #4459: Helix adds each newly opened repository to a server that
+    // supports workspace folders. A generic client keeps its selected root,
+    // is told which folder goes unanalyzed, and a file from that folder
+    // hovers as outside the root. Removing the kept root selects the other.
+    run_workspace_folder_transitions_exchange(
+        "generic kept-root transition did not complete",
+        async {
+            let root_a = unique_lsp_test_root("wft-kept-a")?;
+            let root_b = unique_lsp_test_root("wft-kept-b")?;
+            let root_a_uri = file_uri_for_path(root_a.path())?;
+            let root_b_uri = file_uri_for_path(root_b.path())?;
+            let root_a_path = server_path_text(root_a.path());
+            let root_b_path = server_path_text(root_b.path());
+            let mut client = WorkspaceFolderTransitionsClient::spawn();
+            client
+                .initialize_generic_with_workspace_folders(serde_json::json!([
+                    workspace_folder_json(&root_a_uri)
+                ]))
+                .await?;
+
+            let request = client
+                .send_folder_event(
+                    serde_json::json!([workspace_folder_json(&root_b_uri)]),
+                    serde_json::json!([]),
+                )
+                .await?;
+            client
+                .answer_workspace_folders(
+                    &request,
+                    serde_json::json!([
+                        workspace_folder_json(&root_a_uri),
+                        workspace_folder_json(&root_b_uri)
+                    ]),
+                )
+                .await?;
+            let shown = read_lsp_request(&mut client.reader, "window/showMessage").await?;
+            let text = shown["params"]["message"].as_str().unwrap_or_default();
+            if !text.contains("keeps analyzing") || !text.contains(&root_b_path) {
+                return Err(format!("the unanalyzed folder must be named: {shown}"));
+            }
+            let status = client.workspace_status().await?;
+            if status_root_state(&status) != Some("selected_single_root")
+                || status["effective_root"].as_str() != Some(root_a_path.as_str())
+            {
+                return Err(format!("the selected root must be kept: {status}"));
+            }
+
+            let other_file = file_uri_for_path(&root_b.path().join("src").join("lib.rs"))?;
+            let id = client.request_id();
+            write_lsp_message(
+                &mut client.writer,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "method": "textDocument/hover",
+                    "params": {
+                        "textDocument": {"uri": other_file.as_str()},
+                        "position": {"line": 0, "character": 0}
+                    }
+                }),
+            )
+            .await?;
+            let hover = read_lsp_response(&mut client.reader, id).await?;
+            let value = hover["result"]["contents"]["value"]
+                .as_str()
+                .unwrap_or_default();
+            if !value.contains("outside the analyzed workspace root") {
+                return Err(format!(
+                    "a file from the other folder must say why it is quiet: {hover}"
+                ));
+            }
+
+            let request = client
+                .send_folder_event(
+                    serde_json::json!([]),
+                    serde_json::json!([workspace_folder_json(&root_a_uri)]),
+                )
+                .await?;
+            client
+                .answer_workspace_folders(
+                    &request,
+                    serde_json::json!([workspace_folder_json(&root_b_uri)]),
+                )
+                .await?;
+            let status = client
+                .poll_workspace_status_until("the remaining folder", |status| {
+                    status["effective_root"].as_str() == Some(root_b_path.as_str())
+                })
+                .await?;
+            // Same transition as a direct root switch: the new root is
+            // current and the previous one is named as what changed.
+            if status_root_state(&status) != Some("root_changed")
+                || status_candidate_roots(&status) != vec![root_a_path]
+            {
+                return Err(format!(
+                    "removing the kept root must switch to the other: {status}"
                 ));
             }
             client.finish().await

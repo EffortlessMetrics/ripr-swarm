@@ -28,8 +28,9 @@ use super::refresh_scheduler::{
 use super::state::{
     AnalysisAttemptState, AnalysisFailure, AnalysisFailureKind, AnalysisHealth, AnalysisSnapshot,
     ConfigPullState, DocumentStalenessReason, DocumentStore, QuarantineTransition,
-    WorkspaceFolderEventRejection, WorkspaceFolderSelection, WorkspaceFolderSet,
-    WorkspaceRootAuthority, WorkspaceRootState, content_digest, format_duration,
+    WorkspaceFolderEntry, WorkspaceFolderEventRejection, WorkspaceFolderSelection,
+    WorkspaceFolderSet, WorkspaceRootAuthority, WorkspaceRootState, content_digest,
+    format_duration,
 };
 use super::uri::{
     CappedArtifactRead, absolute_join, display_path, file_uri_for_path, file_uri_is_within_root,
@@ -1453,6 +1454,55 @@ impl Backend {
             .await;
     }
 
+    /// The selected root to keep when a folder event leaves several folders
+    /// (#4459). Helix, and any client that shares one server across
+    /// repositories, adds each newly opened repository as a workspace folder;
+    /// treating that as ambiguous stopped analysis for the repository the
+    /// user was already in. For clients without the `riprEditor`
+    /// integration, a root that is selected, analyzable and still in the set
+    /// stays the session root and the other folders go unanalyzed. The VS
+    /// Code extension owns root selection, so it keeps the RIPR-SPEC-0139
+    /// ambiguous transition. A set with no selected root (for example two
+    /// folders at `initialize`) is still ambiguous: nothing is kept.
+    fn kept_root_for_added_folders(&self, entries: &[WorkspaceFolderEntry]) -> Option<PathBuf> {
+        let generic_client = self
+            .client_features
+            .lock()
+            .map(|features| features.ripr_editor.is_none())
+            .unwrap_or(false);
+        if !generic_client {
+            return None;
+        }
+        let current = self.workspace_root_authority();
+        if !current.allows_analysis() {
+            return None;
+        }
+        let root = current.effective_root?;
+        entries
+            .iter()
+            .any(|entry| entry.path == root)
+            .then_some(root)
+    }
+
+    /// Say which folders a kept root leaves unanalyzed, in the log and on
+    /// screen, so a user who opened a second repository learns why it has no
+    /// evidence.
+    async fn disclose_kept_root(&self, root: &Path, others: &[PathBuf]) {
+        let listed = others
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let message = format!(
+            "ripr keeps analyzing {}. Not analyzed by this server: {listed}. ripr analyzes one workspace root per server; open another repository in its own editor session to analyze it.",
+            root.display()
+        );
+        self.client
+            .log_message(MessageType::INFO, message.clone())
+            .await;
+        self.client.show_message(MessageType::INFO, message).await;
+    }
+
     /// Warn once at startup when the workspace root blocks analysis. The
     /// warning always goes to the log; clients without the `riprEditor`
     /// integration also get `window/showMessage`, because `ripr/analysisStatus`
@@ -2376,6 +2426,15 @@ impl Backend {
     fn hover_without_evidence(&self, uri: &Uri) -> Hover {
         if let Some(message) = blocked_root_message(&self.workspace_root_authority()) {
             return markdown_hover(format!("**ripr** {message}"));
+        }
+        if let Some(root) = self.effective_root()
+            && let Some(path) = path_from_file_uri(uri)
+            && !path_is_within_root(&root, &path)
+        {
+            return markdown_hover(format!(
+                "**ripr** this file is outside the analyzed workspace root {}. ripr analyzes one workspace root per server; open this file's repository in its own editor session to analyze it.",
+                root.display()
+            ));
         }
         if let Some((_, reason)) = self.document_quarantine(uri) {
             return markdown_hover(format!(
@@ -4135,15 +4194,34 @@ impl LanguageServer for Backend {
                     .first()
                     .map(|entry| WorkspaceRootResolution::Selected(entry.path.clone())),
                 WorkspaceFolderSelection::AmbiguousFolders => {
-                    Some(WorkspaceRootResolution::Ambiguous(
-                        set.entries()
-                            .iter()
-                            .map(|entry| entry.path.clone())
-                            .collect(),
-                    ))
+                    match self.kept_root_for_added_folders(set.entries()) {
+                        Some(root) => Some(WorkspaceRootResolution::Selected(root)),
+                        None => Some(WorkspaceRootResolution::Ambiguous(
+                            set.entries()
+                                .iter()
+                                .map(|entry| entry.path.clone())
+                                .collect(),
+                        )),
+                    }
                 }
             };
             (resolution, set.folder_set_epoch())
+        };
+        let kept_root = match &derived.0 {
+            Some(WorkspaceRootResolution::Selected(root)) if outcome.changed => {
+                let others = {
+                    let Ok(set) = self.workspace_folders.lock() else {
+                        return;
+                    };
+                    set.entries()
+                        .iter()
+                        .filter(|entry| &entry.path != root)
+                        .map(|entry| entry.path.clone())
+                        .collect::<Vec<_>>()
+                };
+                (!others.is_empty()).then(|| (root.clone(), others))
+            }
+            _ => None,
         };
         if derived.1 != folder_set_epoch {
             return;
@@ -4154,6 +4232,9 @@ impl LanguageServer for Backend {
         };
         self.apply_workspace_folder_set_authority(authority, folder_set_epoch)
             .await;
+        if let Some((root, others)) = kept_root {
+            self.disclose_kept_root(&root, &others).await;
+        }
         self.reload_repository_config().await;
     }
 
