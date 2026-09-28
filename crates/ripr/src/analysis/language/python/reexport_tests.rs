@@ -529,22 +529,13 @@ fn an_imported_replacement_of_all_fails_closed() -> Result<(), String> {
     Ok(())
 }
 
-/// Repo mode analyzes one production file at a time; the star sources of each
-/// initializer are loaded up front so `b.f` is known while `a.py` is analyzed.
-#[test]
-fn repo_mode_competing_star_exports_are_not_credited() -> Result<(), String> {
-    let root = unique_tempdir("repo-star-conflict")?;
-    let written = [
-        ("pkg/a.py", "def f():\n    value = 1\n    return value\n"),
-        ("pkg/b.py", "def f():\n    return 2\n"),
-        ("pkg/__init__.py", "from .a import *\nfrom .b import *\n"),
-        (
-            "tests/test_pkg.py",
-            "import pkg\n\n\ndef test_f():\n    assert pkg.f() == 2\n",
-        ),
-    ]
-    .iter()
-    .try_for_each(|(path, contents)| write_file(&root.join(path), contents));
+/// Runs repo mode over `files` and requires that no finding in `pkg/a.py`
+/// gains a related test.
+fn repo_mode_a_stays_unrelated(label: &str, files: &[(&str, &str)]) -> Result<(), String> {
+    let root = unique_tempdir(label)?;
+    let written = files
+        .iter()
+        .try_for_each(|(path, contents)| write_file(&root.join(path), contents));
     let result = written.and_then(|()| {
         PythonAdapter::analyze_repo_with_limit(
             &root,
@@ -563,16 +554,48 @@ fn repo_mode_competing_star_exports_are_not_credited() -> Result<(), String> {
         .filter(|finding| finding.probe.location.file.ends_with("a.py"))
         .collect();
     if a_findings.is_empty() {
-        return Err("expected repo-mode findings for `pkg/a.py`".to_string());
+        return Err(format!(
+            "{label}: expected repo-mode findings for `pkg/a.py`"
+        ));
     }
     for finding in a_findings {
         if !finding.related_tests.is_empty() {
             return Err(format!(
-                "`pkg.f` is bound by the later star import from `b`; `a.f` must not gain package identity, got {:?} with {:?}",
+                "{label}: `pkg.f` is not bound to `a.f`; it must not gain package identity, got {:?} with {:?}",
                 finding.class,
                 related_names(finding)
             ));
         }
     }
     Ok(())
+}
+
+const A_PY: &str = "def f():\n    value = 1\n    return value\n";
+const TEST_PKG_PY: &str = "import pkg\n\n\ndef test_f():\n    assert pkg.f() == 2\n";
+
+/// Repo mode analyzes one production file at a time; the star sources of each
+/// initializer are loaded up front so `b.f` is known while `a.py` is analyzed.
+#[test]
+fn repo_mode_competing_star_exports_are_not_credited() -> Result<(), String> {
+    repo_mode_a_stays_unrelated(
+        "repo-star-conflict",
+        &[
+            ("pkg/a.py", A_PY),
+            ("pkg/b.py", "def f():\n    return 2\n"),
+            ("pkg/__init__.py", "from .a import *\nfrom .b import *\n"),
+            ("tests/test_pkg.py", TEST_PKG_PY),
+        ],
+    )
+}
+
+#[test]
+fn repo_mode_initializer_assignment_that_replaces_the_name_is_not_credited() -> Result<(), String> {
+    repo_mode_a_stays_unrelated(
+        "repo-assign-rebind",
+        &[
+            ("pkg/a.py", A_PY),
+            ("pkg/__init__.py", "from .a import f\n\nf = lambda: 2\n"),
+            ("tests/test_pkg.py", TEST_PKG_PY),
+        ],
+    )
 }
