@@ -10,7 +10,7 @@ import {
   Trace
 } from 'vscode-languageclient/node';
 import { getConfig, RiprConfig } from './config';
-import { requestedServerVersion, resolveServer, ResolveFailure, ResolvedServer } from './serverResolver';
+import { missingServerRemedy, requestedServerVersion, resolveServer, ResolveFailure, ResolvedServer } from './serverResolver';
 import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue } from './packetJson';
 import { riprDocumentSelectorsForWorkspace, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
 import type { WorkspaceRootPickItem } from './workspaceHelpers';
@@ -517,7 +517,7 @@ export class RiprClientController {
         kind: 'serverUnavailable',
         summary: 'ripr server is not available.',
         detail: server.detail,
-        nextStep: 'Set ripr.server.path, enable ripr.server.autoDownload, install with cargo install ripr, then retry.'
+        nextStep: `${missingServerRemedy(config.autoDownload)} Then run ripr: Restart Server.`
       });
       await this.showMissingServerMessage(server.message, server.detail);
       return;
@@ -1806,7 +1806,7 @@ export class RiprClientController {
     }
     if (!resolvedPath) {
       this.runtime.showInformationMessage(
-        'No report yet — run `cargo xtask ripr-pr-summary` to generate one.'
+        'No report yet. Run `ripr pr-summary` in this workspace to generate one.'
       );
       return;
     }
@@ -2063,7 +2063,7 @@ export class RiprClientController {
       : summary;
     const separator = cause.endsWith('.') ? '' : '.';
     const selection = await this.runtime.showErrorMessage(
-      `ripr server is not available: ${cause}${separator} Enable automatic download, install with \`cargo install ripr\`, or set \`ripr.server.path\` (\`ripr.server.downloadBaseUrl\` for a mirror).`,
+      `ripr server is not available: ${cause}${separator} ${missingServerRemedy(this.runtime.getConfig().autoDownload)}`,
       'Open Settings',
       'Copy Diagnostic',
       'Copy Install Command',
@@ -2748,7 +2748,7 @@ function actionableGapQueueStatusLines(
     case 'missing':
       return [
         `Actionable gap queue: missing; ${queue.relativePath} was not found.`,
-        'Next safe queue action: run cargo xtask evidence-quality-audit or refresh saved-workspace evidence.'
+        'Next safe queue action: none required. The queue is optional repository evidence; ripr diagnostics, hover and code actions work without it.'
       ];
     case 'malformed':
       return [
@@ -2880,7 +2880,7 @@ function actionableGapQueueAllowsCurrentRepairPacket(queue: RiprActionableGapQue
 function actionableGapQueueSuppressedMessage(queue: RiprActionableGapQueueStatus): string {
   switch (queue.state) {
     case 'missing':
-      return 'ripr actionable gap queue is missing; run cargo xtask evidence-quality-audit or refresh saved-workspace evidence.';
+      return 'ripr actionable gap queue is not generated for this workspace; use the ripr diagnostic hover and code actions for the current finding.';
     case 'malformed':
       return 'ripr actionable gap queue is malformed; repair packet actions are suppressed.';
     case 'unsupportedSchema':
@@ -2963,7 +2963,7 @@ function actionableGapQueueAllowsRepoGapMap(queue: RiprActionableGapQueueStatus)
 function actionableGapQueueRepoMapSuppressedMessage(queue: RiprActionableGapQueueStatus): string {
   switch (queue.state) {
     case 'missing':
-      return 'ripr actionable gap queue is missing; run cargo xtask evidence-quality-audit before copying a repo gap map.';
+      return 'ripr actionable gap queue is not generated for this workspace, so there is no repo gap map to copy.';
     case 'malformed':
       return 'ripr actionable gap queue is malformed; repo gap map is suppressed.';
     case 'unsupportedSchema':
@@ -3033,7 +3033,7 @@ function repoGapMap(
   lines.push('');
   lines.push('Safe next commands');
   lines.push('- Refresh saved-workspace evidence before acting on stale queue state.');
-  lines.push('- Run cargo xtask evidence-quality-audit to regenerate actionable-gaps artifacts.');
+  lines.push('- Regenerate actionable-gaps artifacts with the tooling that produced them.');
   lines.push('- Use ripr: Copy Current Repair Packet only for a validated top actionable gap.');
   lines.push('');
   lines.push('Non-claims');
@@ -3059,7 +3059,7 @@ function firstPrPacketStatusLines(
   if (status.kind === 'stale' && firstPrPacketCanBecomeStale(packet.state)) {
     return [
       `First PR packet: stale; ${packet.relativePath} exists, but editor evidence is stale.`,
-      'Refresh saved-workspace evidence and rerun cargo xtask first-pr before inspecting or copying first-pr packet content.',
+      'Refresh saved-workspace evidence and rerun ripr first-pr --root . before inspecting or copying first-pr packet content.',
       'First PR packet is advisory only; it does not prove runtime adequacy, mutation coverage, policy eligibility, or gate status.'
     ];
   }
@@ -3067,7 +3067,7 @@ function firstPrPacketStatusLines(
     case 'missing':
       return [
         `First PR packet: missing; ${packet.relativePath} was not found.`,
-        'Next safe first-pr action: run cargo xtask first-pr for the current workspace after verify/receipt artifacts exist.'
+        'Next safe first-pr action: run ripr first-pr --root . for the current workspace after verify/receipt artifacts exist.'
       ];
     case 'unreadable':
       return [
@@ -3729,7 +3729,7 @@ export async function readActionableGapQueueStatus(
       relativePath: ACTIONABLE_GAP_QUEUE_RELATIVE_PATH,
       path: filePath,
       state: 'missing',
-      detail: 'actionable-gaps queue missing; run cargo xtask evidence-quality-audit'
+      detail: 'actionable-gaps queue not generated; optional repository evidence'
     };
   }
   return validateActionableGapQueue(raw, workspaceRoot, filePath, await workspaceRedirectRoots(workspaceRoot));
@@ -4033,7 +4033,7 @@ export async function readFirstPrPacketStatus(
     path: setupFilePath(workspaceRoot, RIPR_FIRST_PR_PACKET_ARTIFACTS[0].jsonRelativePath),
     markdownPath: setupFilePath(workspaceRoot, RIPR_FIRST_PR_PACKET_ARTIFACTS[0].markdownRelativePath),
     state: 'missing',
-    detail: 'first-pr start-here packet missing; run cargo xtask first-pr for the current workspace'
+    detail: 'first-pr start-here packet missing; run ripr first-pr --root . for the current workspace'
   };
 }
 

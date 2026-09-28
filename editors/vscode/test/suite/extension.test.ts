@@ -2225,7 +2225,7 @@ suite('Extension Smoke', () => {
       await context.controller.start();
       const statusOutput = await showStatusReport(context);
       assert.ok(statusOutput.includes('First PR packet: missing; target/ripr/reports/start-here.json was not found.'));
-      assert.ok(statusOutput.includes('Next safe first-pr action: run cargo xtask first-pr'));
+      assert.ok(statusOutput.includes('Next safe first-pr action: run ripr first-pr --root .'));
       const diagnosis = await diagnoseSetupReport(context);
       assert.ok(diagnosis.includes('First PR packet: missing; target/ripr/reports/start-here.json was not found.'));
       assert.strictEqual(context.runRiprCalls.length, 0);
@@ -2308,7 +2308,7 @@ suite('Extension Smoke', () => {
       context.controller.markWorkspaceStale(document);
       const statusOutput = await showStatusReport(context);
       assert.ok(statusOutput.includes('First PR packet: stale; target/ripr/reports/start-here.json exists, but editor evidence is stale.'));
-      assert.ok(statusOutput.includes('Refresh saved-workspace evidence and rerun cargo xtask first-pr before inspecting or copying first-pr packet content.'));
+      assert.ok(statusOutput.includes('Refresh saved-workspace evidence and rerun ripr first-pr --root . before inspecting or copying first-pr packet content.'));
       assert.ok(!statusOutput.includes('top repairable gap available'));
       assert.strictEqual(context.runRiprCalls.length, 0);
     });
@@ -2890,7 +2890,7 @@ suite('Extension Smoke', () => {
       assert.ok(context.infoMessages.at(-1)?.includes('current saved-workspace evidence'));
 
       await context.controller.copyFirstPrRegenerationGuidance();
-      assert.ok(context.clipboardWrites.at(-1)?.includes('cargo xtask first-pr'));
+      assert.ok(context.clipboardWrites.at(-1)?.includes('ripr first-pr --root .'));
       assert.ok(context.clipboardWrites.at(-1)?.includes('editor does not run the command'));
       assert.strictEqual(context.runRiprCalls.length, 0);
     });
@@ -2904,7 +2904,7 @@ suite('Extension Smoke', () => {
       assert.ok(context.infoMessages.at(-1)?.includes('first-pr packet is missing'));
 
       await context.controller.copyFirstPrRegenerationGuidance();
-      assert.ok(context.clipboardWrites.at(-1)?.includes('cargo xtask first-pr'));
+      assert.ok(context.clipboardWrites.at(-1)?.includes('ripr first-pr --root .'));
       assert.strictEqual(context.runRiprCalls.length, 0);
     });
 

@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- Start the server when Workspace Trust is granted or a first folder is added.
+  Activation in an untrusted or folderless window was recorded as a running
+  session, so those events did nothing until `ripr: Restart Server`.
+- Name `ripr` commands (`ripr first-pr --root .`, `ripr pr-summary`) in status
+  text, notifications and copied guidance instead of `cargo xtask` commands
+  that only exist in ripr's own repository. A missing actionable gap queue is
+  reported as optional evidence rather than a failure to fix.
+- Stop telling users to enable `ripr.server.autoDownload` when it is already
+  enabled and the download failed.
 - Copy agent-loop commands from real-server code actions when the server binds
   the selected absolute workspace root; reject cross-root, relative, or unsafe
   artifact redirects instead of leaving the previous clipboard text unchanged

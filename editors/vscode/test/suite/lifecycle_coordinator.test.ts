@@ -306,6 +306,37 @@ suite('Extension Lifecycle Coordinator', () => {
     assert.strictEqual(startCalls, 2, 'recovery starts one fresh session after rejection');
   });
 
+  test('a start that leaves no session lets a later start try again', async () => {
+    // Activation in an untrusted or folderless window resolves start()
+    // without a server. The trust-grant and folder-added listeners call
+    // start() again; it must reach the controller.
+    const coordinator = new ExtensionLifecycleCoordinator();
+    let running = false;
+    let startCalls = 0;
+    let stopCalls = 0;
+    const controller: LifecycleController = {
+      start: async () => {
+        startCalls += 1;
+        running = startCalls > 1;
+      },
+      stop: async () => {
+        stopCalls += 1;
+        running = false;
+      },
+      isRunning: () => running,
+    };
+
+    await coordinator.start(controller);
+    assert.strictEqual(running, false);
+    await coordinator.start(controller);
+    assert.strictEqual(startCalls, 2, 'the second start reaches the controller');
+    assert.strictEqual(running, true);
+    await coordinator.start(controller);
+    assert.strictEqual(startCalls, 2, 'a live session still coalesces later starts');
+    await coordinator.stop(controller);
+    assert.strictEqual(stopCalls, 1, 'terminal stop stops the live session once');
+  });
+
   test('completed startup remains single after a bounded restart timeout', async () => {
     const firstStart = deferred();
     const firstStartEntered = deferred();
