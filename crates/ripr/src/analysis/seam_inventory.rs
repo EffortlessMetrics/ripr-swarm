@@ -3875,6 +3875,17 @@ marker = "libtest_mimic::Trial"
                 "fingerprint consumer fixture must contain production Rust source".to_owned(),
             );
         }
+        // Scoped cold inventory does not write fingerprint mappings; seed its actual producer.
+        let produced_key = workspace_cache_key_at_with_config(&root, &config)?;
+        if produced_key != cold.workspace_cache_key {
+            return Err("actual fingerprint producer must match cold source identity".to_owned());
+        }
+        if !matches!(
+            try_no_impact_fast_path(&root, &config, &changed, &[])?,
+            NoImpactOutcome::Fast(_)
+        ) {
+            return Err("actual-writer mapping must yield a warm canonical hit before tamper".to_owned());
+        }
         let entries = no_impact_fingerprint_entries(&root)?;
         if entries.len() != 1 {
             return Err("expected one actual-writer fingerprint entry".to_owned());
@@ -3918,6 +3929,19 @@ marker = "libtest_mimic::Trial"
                 "fallback must rehash actual source and preserve complete cold evidence".to_owned(),
             );
         }
+        let repaired_key = workspace_cache_key_at_with_config(&root, &config)?;
+        if repaired_key != cold.workspace_cache_key
+            || !matches!(
+                try_no_impact_fast_path(&root, &config, &changed, &[])?,
+                NoImpactOutcome::Fast(_)
+            )
+        {
+            return Err("actual producer must repair the mapping for a subsequent warm hit".to_owned());
+        }
+        eprintln!(
+            "fingerprint consumer stimulus: rust_files={} production_files={} mappings={}",
+            cold.total_rust_files, cold.total_production_files, entries.len()
+        );
         Ok(())
     }
 
