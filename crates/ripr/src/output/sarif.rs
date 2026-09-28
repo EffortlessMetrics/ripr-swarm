@@ -15,7 +15,7 @@ use crate::domain::{
     StageEvidence, ValueFact,
 };
 use crate::output::next_step::reconcile_next_step;
-use crate::output::path::{display_path_text, repository_display_path};
+use crate::output::path::{display_path_text, repository_relative_path};
 use crate::output::perl_preview_card::perl_preview_card_json;
 use crate::output::preview_actionability::{
     preview_actionability_for, preview_actionability_json_value,
@@ -199,8 +199,10 @@ fn finding_result(
     let rule_id = finding_rule_id(&finding.class);
     // The location and fingerprints must not move with `--root` spelling:
     // an absolute root would otherwise leak the checkout path into the uri
-    // and change every fingerprint between a local and a CI run.
-    let file = repository_display_path(root, &finding.probe.location.file);
+    // and change every fingerprint between a local and a CI run. The text
+    // stays `normalize_path` so existing fingerprints (a literal `%` in a
+    // file name, for instance) do not change for a relative root.
+    let file = normalize_path(repository_relative_path(root, &finding.probe.location.file));
     let line = finding.probe.location.line;
     let mut result = Map::new();
     result.insert("ruleId".to_string(), json!(rule_id));
@@ -938,6 +940,17 @@ mod tests {
         }
         assert_eq!(rendered[0], rendered[1]);
         assert_eq!(rendered[0].0, "src/pricing.rs");
+
+        // A literal `%` keeps the fingerprint text it had before the root
+        // fix, so baselines keyed on it still match.
+        let mut output = sample_output();
+        output.root = PathBuf::from(".");
+        output.findings[0].probe.location.file = PathBuf::from("./src/rate%limit.rs");
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        assert_eq!(
+            first_result(&sarif)?["partialFingerprints"]["riprFingerprintV1"],
+            "ripr.finding.weakly_exposed|finding:discount|probe:src/pricing.rs:88:predicate|src/rate%limit.rs|88"
+        );
         Ok(())
     }
 

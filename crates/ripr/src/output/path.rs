@@ -5,19 +5,22 @@ pub(crate) fn display_path(path: &Path) -> String {
     display_path_text(&crate::analysis::stable_path_text(path))
 }
 
-/// Render a finding's file as the path CI consumers resolve from the
-/// checkout: an absolute `--root` prefix is dropped, a relative root keeps
-/// its spelling (it is already relative to the invoking directory), and any
-/// leading `./` is removed. `--root .`, `--root ./` and `--root "$PWD"` all
-/// render the same text, so GitHub annotations and SARIF locations and
-/// fingerprints do not move with how the root was spelled.
-pub(crate) fn repository_display_path(root: &Path, file: &Path) -> String {
-    let relative = if root.is_absolute() {
+/// The part of a finding's file that CI consumers resolve from the checkout:
+/// an absolute `--root` prefix is dropped, while a relative root keeps its
+/// spelling (it already names a path under the invoking directory).
+/// Renderers apply their own text encoding to the result.
+pub(crate) fn repository_relative_path<'a>(root: &Path, file: &'a Path) -> &'a Path {
+    if root.is_absolute() {
         file.strip_prefix(root).unwrap_or(file)
     } else {
         file
-    };
-    let mut displayed = display_path(relative);
+    }
+}
+
+/// Render [`repository_relative_path`] as stable text without a leading `./`,
+/// so `--root .`, `--root ./` and `--root "$PWD"` render the same path.
+pub(crate) fn repository_display_path(root: &Path, file: &Path) -> String {
+    let mut displayed = display_path(repository_relative_path(root, file));
     while let Some(stripped) = displayed.strip_prefix("./") {
         displayed = stripped.to_string();
     }
