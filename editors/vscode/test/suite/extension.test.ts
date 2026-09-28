@@ -1442,6 +1442,23 @@ suite('Extension Smoke', () => {
       assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
       assert.ok(String(context.status.tooltip).includes('ripr: Refresh Diagnostics'));
 
+      for (const [retryCommand, expectedCommand] of [
+        ['ripr.refresh', 'ripr: Refresh Diagnostics'],
+        ['ripr.refreshDiagnostics', 'ripr: Refresh Diagnostics'],
+        ['   ', 'ripr: Refresh Diagnostics'],
+        ['server-owned recovery', 'server-owned recovery']
+      ]) {
+        context.client.emitNotification('ripr/analysisStatus', {
+          schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+          retry_command: retryCommand,
+          failure: { kind: 'analysis_error', message: 'temporary timeout' }
+        });
+        assert.ok(
+          String(context.status.tooltip).includes(`Run ${expectedCommand} to retry`),
+          `unexpected editor recovery for ${JSON.stringify(retryCommand)}`
+        );
+      }
+
     } finally {
       await context.dispose();
     }
