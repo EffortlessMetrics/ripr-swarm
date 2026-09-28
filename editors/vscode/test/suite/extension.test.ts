@@ -8,9 +8,10 @@ import {
   RiprAgentLoopCommandTarget,
   RiprWorkspaceRootState,
   readActionableGapQueueStatus,
-  readFirstPrPacketStatus
+  readFirstPrPacketStatus,
+  validatedAgentLoopCommand
 } from '../../src/client';
-import { redirectTargetMatches } from '../../src/packetJson';
+import { hasUnsafeShellMetacharacter, redirectStaysInWorkspace, redirectTargetMatches, serverShellArg } from '../../src/packetJson';
 import { compatibleLspEvidence } from './testCompatibility';
 
 suite('Extension Smoke', () => {
@@ -1492,6 +1493,196 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('typed succeeded status discloses limited run statuses instead of completed', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+
+      const emitSucceededWithRunStatus = (runStatus: string) => {
+        context.client.emitNotification('ripr/analysisStatus', {
+          schema_version: '0.1',
+          tool: 'ripr',
+          kind: 'analysis_status',
+          state: 'succeeded',
+          run_status: runStatus,
+          attempt_id: 'run-1',
+          snapshot_id: 'snapshot:run-1'
+        });
+      };
+      const assertDegraded = (expectedLines: string[]) => {
+        // Degraded presentations use the dedicated analysisLimited status
+        // kind: warning icon and text, never the healthy
+        // `$(check) ripr: diagnostics` presentation.
+        assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
+        assert.ok(!context.status.text.includes('ripr: diagnostics'), context.status.text);
+        const tooltip = String(context.status.tooltip);
+        for (const expected of expectedLines) {
+          assert.ok(tooltip.includes(expected), tooltip);
+        }
+      };
+
+      // Git-timeout shape: a limited snapshot may carry zero findings, so the
+      // summary must not read as a healthy completion.
+      emitSucceededWithRunStatus('limited');
+      assertDegraded([
+        'ripr analysis completed with limited evidence.',
+        'for example a git invocation timeout',
+        'findings may be missing',
+        'Next safe action: Run ripr: Refresh Diagnostics'
+      ]);
+
+      emitSucceededWithRunStatus('cache_limited');
+      assertDegraded([
+        'ripr analysis completed with a limited evidence cache.',
+        'Gap-artifact cache entries were rejected this refresh',
+        'Next safe action: Rerun ripr check to regenerate the rejected gap-artifact reports'
+      ]);
+
+      emitSucceededWithRunStatus('limited_partial_scope');
+      assertDegraded([
+        'ripr analysis completed on a bounded partition of the diff.',
+        'the remainder was not evaluated',
+        'Next safe action: Raise RIPR_PARTIAL_DIFF_FILE_BUDGET or narrow the diff'
+      ]);
+
+      emitSucceededWithRunStatus('limited_incomplete_input');
+      assertDegraded([
+        'ripr analysis completed with incomplete input.',
+        'The run input was incomplete',
+        'Next safe action: Run ripr: Refresh Diagnostics'
+      ]);
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('typed succeeded status discloses deferred seam evidence instead of completed', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'succeeded',
+        run_status: 'seams_deferred',
+        attempt_id: 'save-1',
+        snapshot_id: 'snapshot:save-1'
+      });
+
+      assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
+      assert.ok(!context.status.text.includes('ripr: diagnostics'), context.status.text);
+      const tooltip = String(context.status.tooltip);
+      assert.ok(tooltip.includes('ripr analysis completed; seam and gap evidence is deferred.'), tooltip);
+      assert.ok(tooltip.includes('Interactive saves defer the seam inventory'), tooltip);
+      assert.ok(
+        tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics to compute the full seam inventory.'),
+        tooltip
+      );
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('limited run statuses do not gate repair packet copies as stale', async () => {
+    const context = createControllerTestContext({
+      files: {
+        'target/ripr/reports/actionable-gaps.json': actionableGapsReport({})
+      }
+    });
+    try {
+      await context.controller.start();
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'succeeded',
+        run_status: 'seams_deferred',
+        attempt_id: 'save-1',
+        snapshot_id: 'snapshot:save-1'
+      });
+
+      // The degraded disclosure must not reuse the stale kind's action gates:
+      // the published snapshot is not stale, only seam evidence is deferred.
+      await context.controller.copyCurrentRepairPacket();
+      const copied = context.clipboardWrites.at(-1) ?? '';
+      assert.ok(copied.includes('RIPR current repair packet'), copied);
+      assert.ok(copied.includes('gap:rust:pricing:discount:threshold-boundary'), copied);
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('typed succeeded status keeps healthy presentation for full and unknown run statuses', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+
+      const emitSucceededWithRunStatus = (runStatus: string | undefined) => {
+        context.client.emitNotification('ripr/analysisStatus', {
+          schema_version: '0.1',
+          tool: 'ripr',
+          kind: 'analysis_status',
+          state: 'succeeded',
+          run_status: runStatus,
+          attempt_id: 'run-1',
+          snapshot_id: 'snapshot:run-1'
+        });
+      };
+
+      emitSucceededWithRunStatus('full');
+      assert.ok(context.status.text.includes('$(check) ripr: diagnostics'), context.status.text);
+      assert.ok(String(context.status.tooltip).includes('ripr saved-workspace analysis completed.'));
+
+      // Unknown run_status values keep today's healthy presentation.
+      emitSucceededWithRunStatus('not_yet_a_server_status');
+      assert.ok(context.status.text.includes('$(check) ripr: diagnostics'), context.status.text);
+
+      emitSucceededWithRunStatus(undefined);
+      assert.ok(context.status.text.includes('$(check) ripr: diagnostics'), context.status.text);
+
+      // 'stale' keeps today's degraded presentation and retry wording.
+      emitSucceededWithRunStatus('stale');
+      assert.ok(context.status.text.includes('$(warning) ripr: stale'), context.status.text);
+      const staleTooltip = String(context.status.tooltip);
+      assert.ok(staleTooltip.includes('ripr analysis completed with stale or limited evidence.'), staleTooltip);
+      assert.ok(
+        staleTooltip.includes('Next safe action: Run ripr: Restart Server after resolving the reported limitation.'),
+        staleTooltip
+      );
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('dirty routed files compose ahead of the deferred seam disclosure', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      const document = await vscode.workspace.openTextDocument(workspaceFileUri('src/lib.rs'));
+      context.controller.markWorkspaceStale(document);
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'succeeded',
+        run_status: 'seams_deferred',
+        attempt_id: 'dirty-deferred',
+        snapshot_id: 'snapshot:dirty-deferred'
+      });
+
+      assert.ok(context.status.text.includes('ripr: stale'), context.status.text);
+      const tooltip = String(context.status.tooltip);
+      assert.ok(tooltip.includes('unsaved routed-file changes remain'), tooltip);
+      assert.ok(tooltip.includes('Current diagnostics describe the last saved workspace state.'), tooltip);
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('status bar projects existing first useful action report', async () => {
     const context = createControllerTestContext({
       firstActionJson: JSON.stringify({
@@ -1780,6 +1971,25 @@ suite('Extension Smoke', () => {
     }));
     assert.strictEqual(unsafeCommand.state, 'unsafeCommand');
 
+    // #4265: the CLI anchors the packet redirect at --root; a redirect that
+    // leaves the workspace is refused even though no metacharacter is.
+    const agentPacketTo = (target: string) => firstPrPacket({
+      commands: {
+        verify: 'cargo xtask fixtures boundary_gap',
+        agent_packet: `ripr agent packet --root . --gap-id 'gap:pr:amount>=threshold' --json > ${target}`
+      }
+    });
+    const anchoredPacket = await readFirstPrPacketStatus(workspaceRoot, firstPrReadFile(workspaceRoot, {
+      'target/ripr/reports/start-here.json': agentPacketTo(
+        serverShellArg(`${workspaceRoot.replace(/\\/g, '/')}/target/ripr/workflow/agent-packet.json`)
+      )
+    }));
+    assert.strictEqual(anchoredPacket.state, 'topRepairableGap');
+    const escapingPacket = await readFirstPrPacketStatus(workspaceRoot, firstPrReadFile(workspaceRoot, {
+      'target/ripr/reports/start-here.json': agentPacketTo(`${path.resolve('/elsewhere').replace(/\\/g, '/')}/.bashrc`)
+    }));
+    assert.strictEqual(escapingPacket.state, 'unsafeCommand');
+
     const unsafePathPacket = JSON.parse(firstPrPacket({})) as Record<string, unknown>;
     unsafePathPacket.selected = {
       ...(unsafePathPacket.selected as Record<string, unknown>),
@@ -1929,6 +2139,18 @@ suite('Extension Smoke', () => {
       'target/ripr/reports/actionable-gaps.json': JSON.stringify(unsafeCommandPacket)
     }));
     assert.strictEqual(unsafeCommand.state, 'unsafeCommand');
+
+    // #4265: a queue command may redirect into the workspace, not out of it.
+    const queueVerifyTo = async (target: string) => {
+      const queue = JSON.parse(actionableGapsReport({})) as Record<string, unknown>;
+      (queue.packets as Array<Record<string, unknown>>)[0].verify_command =
+        `ripr agent verify --root . --json > ${target}`;
+      return (await readActionableGapQueueStatus(workspaceRoot, firstPrReadFile(workspaceRoot, {
+        'target/ripr/reports/actionable-gaps.json': JSON.stringify(queue)
+      }))).state;
+    };
+    assert.notStrictEqual(await queueVerifyTo('target/ripr/agent/agent-verify.json'), 'unsafeCommand');
+    assert.strictEqual(await queueVerifyTo('../outside/agent-verify.json'), 'unsafeCommand');
 
     const unsafePathPacket = JSON.parse(actionableGapsReport({})) as Record<string, unknown>;
     (unsafePathPacket.packets as Array<Record<string, unknown>>)[0].target_test =
@@ -3472,7 +3694,7 @@ suite('Extension Smoke', () => {
         ),
         agentLoopCommandTarget(
           'after_snapshot',
-          'ripr check --root . --base "origin/main with space" --mode ready --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json',
+          "ripr check --root . --base 'origin/main with space' --mode ready --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json",
           'target/ripr/pilot/after.repo-exposure.json',
           { base: 'origin/main with space', mode: 'ready' }
         ),
@@ -3595,6 +3817,99 @@ suite('Extension Smoke', () => {
     assert.ok(!redirectTargetMatches(`${slash(root)}/sub/../${artifact}`, artifact, [root]));
     assert.ok(!redirectTargetMatches(`${slash(root)}/${artifact} extra`, artifact, [root]));
     assert.ok(!redirectTargetMatches('target/ripr/agent/../agent/agent-packet.json', artifact, [root]));
+  });
+
+  test('redirectStaysInWorkspace keeps every redirect inside the workspace (#4265)', () => {
+    const root = path.resolve('/work/repo');
+    const inRoot = `${root.replace(/\\/g, '/')}/target/ripr/out.json`;
+    const accepts = (command: string) => redirectStaysInWorkspace(command, [root]);
+
+    assert.ok(accepts('ripr first-pr --json'));
+    assert.ok(accepts('ripr agent verify --root . --json > target/ripr/out.json'));
+    assert.ok(accepts(`ripr agent verify --root . --json > ${serverShellArg(inRoot)}`));
+    // A quoted `>` is an argument, not a redirect.
+    assert.ok(accepts("ripr receipt write --gap 'gap:amount>=threshold' --verify-command 'cargo test > log' --status not_run"));
+    assert.ok(accepts("ripr agent packet --gap-id 'gap:a>b' --json > target/ripr/agent-packet.json"));
+
+    for (const command of [
+      'ripr first-pr --json > /etc/profile',
+      `ripr first-pr --json > '${path.resolve('/work/repo-other').replace(/\\/g, '/')}/out.json'`,
+      'ripr first-pr --json > ../outside.json',
+      'ripr first-pr --json > target/../../outside.json',
+      'ripr first-pr --json > C:outside.json',
+      'ripr first-pr --json >> target/ripr/out.json',
+      'ripr first-pr --json >/etc/passwd',
+      'ripr first-pr --json 2> target/ripr/out.json',
+      'ripr first-pr --json > target/ripr/out.json extra',
+      'ripr first-pr --json > target/a.json > target/b.json',
+      'ripr first-pr --json > ',
+      'ripr first-pr --json < target/ripr/in.json',
+      "ripr first-pr --json > 'target/ripr/a\u2019b.json'"
+    ]) {
+      assert.ok(!accepts(command), command);
+    }
+  });
+
+  test('agent loop commands must equal the body the server renders from the payload (#4225)', () => {
+    const seamId = '67fc764ba37d77bd';
+    const root = path.resolve('/work/R&D/$repo');
+    const anchored = (artifact: string) => serverShellArg(`${root.replace(/\\/g, '/')}/${artifact}`);
+    const accepts = (target: RiprAgentLoopCommandTarget) =>
+      validatedAgentLoopCommand(target, [root]) === target.command;
+    const packet = (body: string, redirect = anchored('target/ripr/agent/agent-packet.json')) =>
+      agentLoopCommandTarget('agent_packet', `${body} > ${redirect}`, 'target/ripr/agent/agent-packet.json', { seamId });
+    const snapshot = (commandBase: string, payloadBase: string | null): RiprAgentLoopCommandTarget => ({
+      ...agentLoopCommandTarget(
+        'after_snapshot',
+        `ripr check --root .${commandBase} --mode fast --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json`,
+        'target/ripr/pilot/after.repo-exposure.json',
+        { mode: 'fast' }
+      ),
+      base: payloadBase
+    });
+
+    // A workspace path the server single-quotes keeps its `&` and `$`.
+    assert.ok(accepts(packet(`ripr agent packet --root . --seam-id ${seamId} --json`)));
+    // Bases the server single-quotes, and no `--base` when the payload has none.
+    for (const base of ['HEAD~1', 'HEAD^', '@{u}', 'origin/main with space']) {
+      assert.ok(accepts(snapshot(` --base ${serverShellArg(base)}`, base)), base);
+    }
+    assert.ok(accepts(snapshot('', null)));
+
+    // Extra tokens before the redirect, including command substitution.
+    assert.ok(!accepts(packet(`ripr agent packet --root . --seam-id ${seamId} $(touch pwned) --json`)));
+    assert.ok(!accepts(packet(`ripr agent packet --root . --seam-id ${seamId} --json --extra`)));
+    assert.ok(!accepts(agentLoopCommandTarget(
+      'agent_verify',
+      'ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json $(touch pwned) > target/ripr/agent/agent-verify.json',
+      'target/ripr/agent/agent-verify.json'
+    )));
+    assert.ok(!accepts(agentLoopCommandTarget('gap_verify', 'ripr agent verify --root . --json $(touch pwned)')));
+    assert.ok(!accepts(agentLoopCommandTarget('gap_verify', 'ripr agent verify --root . --json <(touch pwned)')));
+    // The double-quoted base the client used to expect, and a base the payload
+    // does not carry.
+    assert.ok(!accepts(snapshot(' --base "HEAD~1"', 'HEAD~1')));
+    assert.ok(!accepts(snapshot(' --base origin/main', null)));
+    assert.ok(!accepts(snapshot(' --base other', 'origin/main')));
+    // `'\\''` needs a backslash, which fish reads differently: still refused.
+    assert.ok(!accepts(snapshot(` --base ${serverShellArg("it's")}`, "it's")));
+    // The quoted redirect span may not carry a line break, a backslash, or a
+    // typographic quote that PowerShell reads as the end of the span.
+    for (const bad of ['\n', '\\', '\u2019']) {
+      assert.ok(!redirectTargetMatches(
+        `'/work/a${bad}b/target/ripr/agent/agent-packet.json'`,
+        'target/ripr/agent/agent-packet.json',
+        [`/work/a${bad}b`]
+      ), JSON.stringify(bad));
+    }
+    assert.ok(hasUnsafeShellMetacharacter('ripr check $(id)'));
+    assert.ok(hasUnsafeShellMetacharacter('ripr check >(id)'));
+    assert.ok(hasUnsafeShellMetacharacter('ripr check "$(id)"'));
+    assert.ok(hasUnsafeShellMetacharacter(`ripr check "it's $(id) it's"`));
+    assert.ok(hasUnsafeShellMetacharacter("ripr check 'unterminated $(id)"));
+    assert.ok(hasUnsafeShellMetacharacter("ripr check 'a\u2019 $(id) \u2019b'"));
+    // The server single-quotes a gap id built from an expression; it stays inert.
+    assert.ok(!hasUnsafeShellMetacharacter("ripr agent packet --gap-id 'gap:len(x)>0' --json > out.json"));
   });
 
   test('agent loop command handlers ignore malformed args without throwing', async () => {
@@ -4050,10 +4365,6 @@ interface ControllerTestOptions {
 }
 
 // Mirror of the server's `shell_arg` (crates/ripr/src/agent/loop_commands.rs).
-function serverShellArg(value: string): string {
-  return /^[A-Za-z0-9._/:-]+$/.test(value) ? value : `'${value.replace(/'/g, "'\\''")}'`;
-}
-
 function agentLoopCommandTarget(
   label: string,
   command: string,

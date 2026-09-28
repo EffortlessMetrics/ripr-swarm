@@ -5,7 +5,7 @@
 //! the after phase consumes the retained before snapshot and packet attached to
 //! that exact attempt.
 
-use crate::agent::loop_commands::{display_path, shell_arg};
+use crate::agent::loop_commands::{bound_root, display_path, shell_arg};
 use crate::analysis::is_test_surface_path;
 use crate::edit_cage::{
     AttemptBaseline, EditCagePolicy, EditCageVerdict, HeadMovement,
@@ -470,7 +470,7 @@ fn complete_repair_attempt(
         .and_then(|artifacts| {
             let next_command = format!(
                 "ripr agent repair --root {} --attempt {} --phase after{}",
-                shell_arg(&display_path(publication.root_argument)),
+                shell_arg(&bound_root(&display_path(publication.root_argument))),
                 shell_arg(publication.repair_attempt_id.as_str()),
                 publication.next_command_suffix.unwrap_or_default()
             );
@@ -619,6 +619,15 @@ pub(crate) fn load_edit_cage_policy(
     root: &Path,
     attempt_id: &RepairAttemptId,
 ) -> Result<crate::edit_cage::EditCagePolicy, String> {
+    Ok(load_edit_cage_baseline(root, attempt_id)?.policy().clone())
+}
+
+/// Loads the retained edit-cage baseline of a durable attempt from its staged
+/// artifact, re-verifying the artifact digest first.
+pub(crate) fn load_edit_cage_baseline(
+    root: &Path,
+    attempt_id: &RepairAttemptId,
+) -> Result<crate::edit_cage::AttemptBaseline, String> {
     let root = root
         .canonicalize()
         .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
@@ -632,9 +641,8 @@ pub(crate) fn load_edit_cage_policy(
     {
         return Err("repair attempt edit-cage baseline binding failed".to_string());
     }
-    let baseline: crate::edit_cage::AttemptBaseline = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("decode edit-cage baseline failed: {error}"))?;
-    Ok(baseline.policy().clone())
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("decode edit-cage baseline failed: {error}"))
 }
 
 /// Reserve the attempt transaction exclusively. Creating the directory with

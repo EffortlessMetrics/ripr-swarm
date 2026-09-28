@@ -1327,20 +1327,37 @@ fn framed_lsp_protocol_smoke_logs_successful_refresh_completion() -> Result<(), 
                 .as_str()
                 .is_some_and(|value| value.contains("tests/pricing.rs"))
         );
+        // #3999/#4001 discriminator: the server was launched with root `.`
+        // (this test process's working directory) while the client selected
+        // the fixture workspace; every copied command names the workspace.
+        let workspace_root = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&repo_root.to_string_lossy()),
+        );
+        assert_ne!(
+            workspace_root,
+            crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(".")),
+            "the fixture workspace must differ from the server process directory"
+        );
         assert!(
             context_packet["result"]["agent_brief_command"]
                 .as_str()
-                .is_some_and(|value| value.starts_with("ripr agent brief --root . --seam-id "))
+                .is_some_and(|value| value.starts_with(&format!(
+                    "ripr agent brief --root {workspace_root} --seam-id "
+                )))
         );
         assert!(
             context_packet["result"]["verify_command"]
                 .as_str()
-                .is_some_and(|value| value.contains("ripr agent verify --root ."))
+                .is_some_and(
+                    |value| value.contains(&format!("ripr agent verify --root {workspace_root} "))
+                )
         );
         assert!(
             context_packet["result"]["receipt_command"]
                 .as_str()
-                .is_some_and(|value| value.contains("ripr agent receipt --root ."))
+                .is_some_and(
+                    |value| value.contains(&format!("ripr agent receipt --root {workspace_root} "))
+                )
         );
         assert_eq!(
             context_packet["result"]["limits_note"],
@@ -4036,6 +4053,8 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
         Vec::new(),
     );
     snapshot.classified_seams = vec![seam.clone()];
+    let workspace = snapshot.root.to_string_lossy().into_owned();
+    let command_root = crate::agent::loop_commands::bound_root(&workspace);
     let actions = code_action_response(
         &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
         Some(&snapshot),
@@ -4089,7 +4108,8 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
     assert_eq!(
         commands[2].2[0]["command"],
         format!(
-            "ripr agent repair --root . --seam-id {} --phase before",
+            "ripr agent repair --root {} --seam-id {} --phase before",
+            crate::agent::loop_commands::shell_arg(&command_root),
             seam.seam.id().as_str()
         )
     );
@@ -4108,12 +4128,13 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
         commands[3].2[0]["target_artifact"],
         "target/ripr/agent/agent-packet.json"
     );
-    // Issue #3872: pasted redirect targets anchor at the resolved --root
-    // (the anchor math itself is pinned in loop_commands tests).
+    // Issues #3872/#3999/#4001: loop commands bind the snapshot's selected
+    // workspace root (the anchor math itself is pinned in loop_commands
+    // tests); the payload `root` stays the portable role.
     assert_eq!(
         commands[3].2[0]["command"],
         crate::agent::loop_commands::agent_packet_command(
-            ".",
+            &command_root,
             seam.seam.id().as_str(),
             "target/ripr/agent/agent-packet.json",
         )
@@ -4123,7 +4144,7 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
     assert_eq!(
         commands[4].2[0]["command"],
         crate::agent::loop_commands::agent_brief_command(
-            ".",
+            &command_root,
             seam.seam.id().as_str(),
             "target/ripr/agent/agent-brief.json",
         )
@@ -4136,7 +4157,7 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
     assert_eq!(
         commands[5].2[0]["command"],
         crate::agent::loop_commands::check_repo_exposure_command_with_base(
-            ".",
+            &command_root,
             Some("origin/main"),
             "draft",
             "target/ripr/pilot/after.repo-exposure.json",
@@ -4147,7 +4168,7 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
     assert_eq!(
         commands[6].2[0]["command"],
         crate::agent::loop_commands::agent_verify_command(
-            ".",
+            &command_root,
             "target/ripr/pilot/repo-exposure.json",
             "target/ripr/pilot/after.repo-exposure.json",
             Some("target/ripr/agent/agent-verify.json"),
@@ -4158,7 +4179,10 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
     assert_eq!(
         commands[7].2[0]["command"],
         format!(
-            "ripr agent receipt --root . --verify-json target/ripr/agent/agent-verify.json --seam-id {} --json --out target/ripr/agent/agent-receipt.json",
+            "ripr agent receipt --root {} --verify-json target/ripr/agent/agent-verify.json --seam-id {} --json --out target/ripr/agent/agent-receipt.json",
+            crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+                &workspace
+            )),
             seam.seam.id().as_str()
         )
     );
@@ -4219,8 +4243,12 @@ fn repair_start_is_offered_only_for_a_seam_past_the_repair_packet_flip() -> Resu
         &recommended_test_for(&inline_target).file
     ));
 
+    let command_root = crate::agent::loop_commands::shell_arg(
+        &crate::agent::loop_commands::bound_root("/workspace"),
+    );
     let expected = format!(
-        "ripr agent repair --root . --seam-id {} --phase before",
+        "ripr agent repair --root {} --seam-id {} --phase before",
+        command_root,
         eligible.seam.id().as_str()
     );
 
@@ -6258,7 +6286,7 @@ fn seam_code_actions_fail_closed_for_cross_language_target_unresolved() -> Resul
 
 #[test]
 fn agent_loop_command_payloads_stay_root_anchored_for_platform_roots() -> Result<(), String> {
-    use crate::agent::loop_commands::{anchored_redirect_target, shell_arg};
+    use crate::agent::loop_commands::{anchored_redirect_target, bound_root, shell_arg};
 
     let seam = sample_classified_seam();
     let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
@@ -6279,10 +6307,13 @@ fn agent_loop_command_payloads_stay_root_anchored_for_platform_roots() -> Result
         &vscode_client_features()?,
     );
 
-    // Issue #3872: pasted redirect targets anchor at the resolved --root, so
-    // the expectations name the anchored absolute target (never a machine
-    // directory literally: the anchor builds from the renderer prefix).
-    let anchored = |tail: &str| shell_arg(&anchored_redirect_target(".", tail));
+    // Issues #3872/#3999/#4001: `--root` and the pasted redirect target both
+    // bind the snapshot's selected workspace root, so the expectations name
+    // the bound absolute root and target (never a machine directory
+    // literally: both build from the same resolution rule).
+    let workspace = snapshot.root.to_string_lossy().into_owned();
+    let root = shell_arg(&bound_root(&workspace));
+    let anchored = |tail: &str| shell_arg(&anchored_redirect_target(&workspace, tail));
     let commands = code_action_commands(&actions)?;
     let expected_commands = [
         (
@@ -6290,7 +6321,7 @@ fn agent_loop_command_payloads_stay_root_anchored_for_platform_roots() -> Result
             "agent_packet",
             "target/ripr/agent/agent-packet.json",
             format!(
-                "ripr agent packet --root . --seam-id {} --json > {}",
+                "ripr agent packet --root {root} --seam-id {} --json > {}",
                 seam.seam.id().as_str(),
                 anchored("target/ripr/agent/agent-packet.json"),
             ),
@@ -6300,7 +6331,7 @@ fn agent_loop_command_payloads_stay_root_anchored_for_platform_roots() -> Result
             "agent_brief",
             "target/ripr/agent/agent-brief.json",
             format!(
-                "ripr agent brief --root . --seam-id {} --json > {}",
+                "ripr agent brief --root {root} --seam-id {} --json > {}",
                 seam.seam.id().as_str(),
                 anchored("target/ripr/agent/agent-brief.json"),
             ),
@@ -6310,7 +6341,7 @@ fn agent_loop_command_payloads_stay_root_anchored_for_platform_roots() -> Result
             "after_snapshot",
             "target/ripr/pilot/after.repo-exposure.json",
             format!(
-                "ripr check --root . --base 'origin/main with space' --mode ready --format repo-exposure-json > {}",
+                "ripr check --root {root} --base 'origin/main with space' --mode ready --format repo-exposure-json > {}",
                 anchored("target/ripr/pilot/after.repo-exposure.json"),
             ),
         ),
@@ -6319,7 +6350,7 @@ fn agent_loop_command_payloads_stay_root_anchored_for_platform_roots() -> Result
             "agent_verify",
             "target/ripr/agent/agent-verify.json",
             format!(
-                "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > {}",
+                "ripr agent verify --root {root} --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > {}",
                 anchored("target/ripr/agent/agent-verify.json"),
             ),
         ),
@@ -6328,7 +6359,7 @@ fn agent_loop_command_payloads_stay_root_anchored_for_platform_roots() -> Result
             "agent_receipt",
             "target/ripr/agent/agent-receipt.json",
             format!(
-                "ripr agent receipt --root . --verify-json target/ripr/agent/agent-verify.json --seam-id {} --json --out target/ripr/agent/agent-receipt.json",
+                "ripr agent receipt --root {root} --verify-json target/ripr/agent/agent-verify.json --seam-id {} --json --out target/ripr/agent/agent-receipt.json",
                 seam.seam.id().as_str()
             ),
         ),
@@ -6353,13 +6384,25 @@ fn agent_loop_command_payloads_stay_root_anchored_for_platform_roots() -> Result
         let copied = argument["command"]
             .as_str()
             .ok_or_else(|| "expected command string".to_string())?;
+        // #4287: separators normalize to `/` on Windows. On Unix `\\` is a
+        // filename character, so the selected root keeps it verbatim and
+        // only the root-relative remainder is slash-separated.
+        let unrooted = copied.replace(&bound_root(&workspace), "");
         assert!(
-            !copied.contains('\\'),
+            !unrooted.contains('\\'),
             "copied commands should use slash-separated paths, got {copied}"
         );
+        assert_eq!(
+            copied.contains('\\'),
+            !cfg!(windows),
+            "only a Unix root keeps its literal backslash, got {copied}"
+        );
+        // #3999/#4001: the copied command names the selected workspace root
+        // (slash-normalized), so it analyzes that workspace from any
+        // working directory; the payload `root` above stays portable.
         assert!(
-            !copied.contains("ripr workspace"),
-            "copied commands should not leak platform-specific workspace roots, got {copied}"
+            copied.contains(&format!("--root {root} ")),
+            "copied commands must bind the selected workspace root, got {copied}"
         );
         // Shell redirects must carry an absolute anchor so the pasted command
         // reproduces the validated location from any working directory; the
@@ -10710,6 +10753,45 @@ fn workspace_diagnostics_production_only_diff_keeps_full_projection() -> Result<
 }
 
 #[test]
+fn workspace_diagnostics_keep_changed_automation_and_build_script_findings() -> Result<(), String> {
+    // The CLI seeds probes for changed `xtask/` and loose `build.rs`
+    // files; the editor partition shares that rule, so it must pin those
+    // findings instead of counting them out of scope.
+    let root = unique_lsp_test_root("lsp-test-file-scope-automation")?;
+    init_lsp_test_scope_repo(root.path())?;
+    std::fs::create_dir_all(root.path().join("xtask/src"))
+        .map_err(|err| format!("create xtask dir failed: {err}"))?;
+    std::fs::write(
+        root.path().join("xtask/src/main.rs"),
+        "fn wedged(stuck: usize, limit: usize) -> bool {\n    stuck > limit\n}\nfn main() {\n    let _ = wedged(1, 0);\n}\n",
+    )
+    .map_err(|err| format!("write changed xtask/src/main.rs failed: {err}"))?;
+    std::fs::write(
+        root.path().join("build.rs"),
+        "fn wants_rerun(stamp: u64, limit: u64) -> bool {\n    stamp > limit\n}\nfn main() {\n    let _ = wants_rerun(1, 0);\n}\n",
+    )
+    .map_err(|err| format!("write changed build.rs failed: {err}"))?;
+    commit_lsp_test_scope_change(root.path(), "change automation and build script")?;
+
+    let diagnostics =
+        workspace_diagnostics_with_config(root.path(), &lsp_test_scope_config(), true)?;
+
+    for relative in ["xtask/src/main.rs", "build.rs"] {
+        if lsp_test_scope_diagnostic_count(&diagnostics, root.path(), relative)? == 0 {
+            return Err(format!(
+                "changed {relative} received no LSP diagnostics; out_of_scope={}",
+                diagnostics.snapshot.out_of_scope_test_file_findings
+            ));
+        }
+    }
+    assert_eq!(
+        diagnostics.snapshot.out_of_scope_test_file_findings, 0,
+        "the partition must not drop findings the seeding rule produced"
+    );
+    Ok(())
+}
+
+#[test]
 fn file_uri_to_path_decodes_spaces_and_windows_drive_prefix() -> Result<(), String> {
     let uri = test_uri(&format!("file:///{}{}", "C%3A", "/path/to/ripr%20repo"))?;
 
@@ -11612,11 +11694,11 @@ fn normalize_lsp_action_argument(
     let Some(object) = argument.as_object() else {
         return Ok(argument.clone());
     };
-    // Issue #3872: copied command strings carry root-anchored absolute
-    // redirect targets, so the renderer working-directory prefix projects to
-    // `<cwd>/` — the same placeholder rule as the corpus and fixture
-    // projections (loop_commands) — keeping the golden machine-independent
-    // while still pinning the anchored shape.
+    // Issues #3872/#3999/#4001: copied command strings bind the selected
+    // workspace root — the `--root` token and every anchored redirect target
+    // — so the workspace projects to `<root>` (and any renderer
+    // working-directory prefix to `<cwd>/`), keeping the golden
+    // machine-independent while still pinning the bound shape.
     let mut normalized = serde_json::Map::new();
     for (key, value) in object {
         if key == "uri"
@@ -11633,7 +11715,9 @@ fn normalize_lsp_action_argument(
         } else if let Some(text) = value.as_str() {
             normalized.insert(
                 key.clone(),
-                serde_json::json!(crate::testing::cwd_placeholder::project_cwd_text(text)),
+                serde_json::json!(crate::testing::cwd_placeholder::project_cwd_text(
+                    &crate::testing::cwd_placeholder::project_root_text(text, root)
+                )),
             );
         } else {
             normalized.insert(key.clone(), value.clone());
@@ -12592,6 +12676,8 @@ fn execute_command_collect_evidence_context_returns_editor_packet_for_known_seam
             Vec::new(),
         );
         diagnostics.snapshot.classified_seams = vec![seam];
+        let command_root = crate::agent::loop_commands::bound_root("/workspace");
+        let workspace_root = crate::agent::loop_commands::shell_arg(&command_root);
         let Some(_) = backend.refresh_plan(diagnostics) else {
             return Err("expected refresh plan".to_string());
         };
@@ -12645,14 +12731,15 @@ fn execute_command_collect_evidence_context_returns_editor_packet_for_known_seam
         assert!(
             packet["agent_brief_command"]
                 .as_str()
-                .is_some_and(|value| value.starts_with("ripr agent brief --root . --seam-id "))
+                .is_some_and(|value| value
+                    .starts_with(&format!("ripr agent brief --root {workspace_root} --seam-id ")))
         );
         // Issue #3872: pasted redirect targets anchor at the resolved
         // --root (the anchor math itself is pinned in loop_commands tests).
         assert_eq!(
             packet["after_snapshot_command"],
             crate::agent::loop_commands::check_repo_exposure_command_with_base(
-                ".",
+                &command_root,
                 Some("origin/main"),
                 "draft",
                 "target/ripr/pilot/after.repo-exposure.json",
@@ -12662,7 +12749,7 @@ fn execute_command_collect_evidence_context_returns_editor_packet_for_known_seam
         assert_eq!(
             packet["verify_command"],
             crate::agent::loop_commands::agent_verify_command(
-                ".",
+                &command_root,
                 "target/ripr/pilot/repo-exposure.json",
                 "target/ripr/pilot/after.repo-exposure.json",
                 Some("target/ripr/agent/agent-verify.json"),
@@ -12670,18 +12757,182 @@ fn execute_command_collect_evidence_context_returns_editor_packet_for_known_seam
             .as_str()
         );
         assert!(packet["receipt_command"].as_str().is_some_and(|value| {
-            value.contains(
-                "ripr agent receipt --root . --verify-json target/ripr/agent/agent-verify.json",
-            ) && value.contains("--out target/ripr/agent/agent-receipt.json")
+            value.contains(&format!(
+                "ripr agent receipt --root {workspace_root} --verify-json target/ripr/agent/agent-verify.json",
+            )) && value.contains("--out target/ripr/agent/agent-receipt.json")
         }));
         assert_eq!(
             packet["repair_command"],
-            format!("ripr agent repair --root . --seam-id {seam_id} --phase before")
+            format!("ripr agent repair --root {workspace_root} --seam-id {seam_id} --phase before")
         );
         assert_eq!(
             packet["limits_note"],
             "Static evidence only; no runtime mutation execution."
         );
+        Ok(())
+    })
+}
+
+#[test]
+fn oversized_diff_warning_snapshot_prepares_commits_and_publishes() -> Result<(), String> {
+    // #4325: the production oversized-diff construction (one root-URI warning
+    // batch) must satisfy the publication invariant and survive the real
+    // prepare -> commit path, and the warning must reach editors through BOTH
+    // delivered surfaces: the push publication's batch selection and the pull
+    // report for the root URI — not merely sit in the committed snapshot.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        let message = "diff_scope_oversized: 2301 changed Rust lines across 42 Rust files exceed \
+                       the 2000-line guard (RIPR_MAX_DIFF_CHANGED_RUST_LINES); split the extraction PR"
+            .to_string();
+        let mut diagnostics = super::diagnostics::oversized_diff_limited_diagnostics(
+            Path::new("/workspace"),
+            &LspAnalysisConfig::default(),
+            false,
+            message,
+        );
+        // The production caller binds the input identity before prepare; the
+        // constructor leaves it unset so the identity is bound at refresh time.
+        diagnostics.snapshot.input_identity = Some(LspAnalysisInputIdentity::from_refresh_inputs(
+            diagnostics.snapshot.root.clone(),
+            1,
+            &LspAnalysisConfig::default(),
+        ));
+        if diagnostics.snapshot.diagnostics_by_uri
+            != super::backend::diagnostics_by_uri_from_batches(&diagnostics.batches)
+        {
+            return Err(
+                "the oversized snapshot must satisfy the publication invariant by construction"
+                    .to_string(),
+            );
+        }
+
+        let transaction = backend
+            .prepare_refresh_transaction(diagnostics)
+            .ok_or_else(|| "expected the oversized warning snapshot to prepare".to_string())?;
+        let super::backend::RefreshTransaction { plan, snapshot, .. } = transaction;
+        let root_uri = super::uri::file_uri_for_path(Path::new("/workspace"))
+            .map_err(|err| format!("root URI construction failed: {err}"))?;
+        if plan.publish_batches.len() != 1 || plan.publish_batches[0].uri != root_uri {
+            return Err("expected exactly one publish batch at the root URI".to_string());
+        }
+        let publish_batch = &plan.publish_batches[0];
+        if publish_batch.diagnostics.len() != 1 {
+            return Err(format!(
+                "expected the publish batch to carry exactly one warning, got {}",
+                publish_batch.diagnostics.len()
+            ));
+        }
+        if publish_batch.diagnostics[0].code
+            != Some(tower_lsp_server::ls_types::NumberOrString::String(
+                super::diagnostic_catalog::DIFF_SCOPE_OVERSIZED_CODE.to_string(),
+            ))
+        {
+            return Err("expected the governed scope code in the publish batch".to_string());
+        }
+
+        // Delivered push surface (#1973): the stored selection is the one
+        // membership authority push publication filters the batch through.
+        let selection = snapshot
+            .delivery_selection
+            .clone()
+            .ok_or_else(|| "expected the prepared delivery selection".to_string())?;
+        let crate::lsp::diagnostic_budget::DiagnosticDeliveryOutcome::Applied {
+            result, ..
+        } = &selection.outcome
+        else {
+            return Err("expected an applied delivery selection".to_string());
+        };
+        if result.total_canonical_items != 1
+            || result.eligible_items != 1
+            || result.selected.len() != 1
+            || !result.omitted.is_empty()
+            || result.overflowed
+        {
+            return Err(format!(
+                "the warning must be the one selected delivered item: total={}, eligible={}, selected={:?}, omitted={:?}",
+                result.total_canonical_items,
+                result.eligible_items,
+                result.selected,
+                result.omitted
+            ));
+        }
+        if result.selected[0].document != root_uri.as_str() {
+            return Err(format!(
+                "expected the warning selected at the root document, got {:?}",
+                result.selected[0].document
+            ));
+        }
+        let push_delivered =
+            selection.diagnostics_for_document(root_uri.as_str(), &publish_batch.diagnostics);
+        if push_delivered.len() != 1
+            || push_delivered[0].code != publish_batch.diagnostics[0].code
+        {
+            return Err(format!(
+                "the push selection must deliver exactly the warning, got {push_delivered:?}"
+            ));
+        }
+
+        let pending_analyzed = BTreeMap::new();
+        let pending_entered = Vec::new();
+        if backend
+            .commit_refresh_snapshot(snapshot, &plan, &pending_analyzed, &pending_entered)
+            .is_none()
+        {
+            return Err("expected the oversized warning snapshot to commit".to_string());
+        }
+
+        let committed = backend
+            .latest_analysis_snapshot()
+            .ok_or_else(|| "expected the committed snapshot".to_string())?;
+        let published = committed
+            .diagnostics_for_uri(&root_uri)
+            .ok_or_else(|| "expected the warning published at the root URI".to_string())?;
+        if published.len() != 1 {
+            return Err(format!(
+                "expected exactly one published warning, got {}",
+                published.len()
+            ));
+        }
+        if published[0].severity
+            != Some(tower_lsp_server::ls_types::DiagnosticSeverity::WARNING)
+        {
+            return Err("expected the published warning severity".to_string());
+        }
+        if !published[0].message.contains("diff_scope_oversized") {
+            return Err("expected the published guard message".to_string());
+        }
+        // Delivered pull surface (#1973): the pull report for the root URI
+        // serves exactly the stored selection's per-document set, so the
+        // warning must appear here too — profile filtering must not drop it
+        // after the snapshot committed it.
+        let served = committed.served_diagnostics_for_uri(&root_uri);
+        if served.len() != 1 {
+            return Err(format!(
+                "expected exactly one delivered warning in the pull report, got {}",
+                served.len()
+            ));
+        }
+        if served[0].severity
+            != Some(tower_lsp_server::ls_types::DiagnosticSeverity::WARNING)
+        {
+            return Err("expected the delivered warning severity".to_string());
+        }
+        if served[0].code
+            != Some(tower_lsp_server::ls_types::NumberOrString::String(
+                super::diagnostic_catalog::DIFF_SCOPE_OVERSIZED_CODE.to_string(),
+            ))
+        {
+            return Err("expected the governed scope code delivered".to_string());
+        }
+        if !served[0].message.contains("diff_scope_oversized") {
+            return Err("expected the delivered guard message".to_string());
+        }
         Ok(())
     })
 }

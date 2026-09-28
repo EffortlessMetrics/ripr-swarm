@@ -161,13 +161,15 @@ fn observed_discriminator_values(
     index: &crate::analysis::rust_index::RustIndex,
     workspace_complete: bool,
 ) -> Vec<ValueFact> {
-    let Some((left, right)) = comparison_operands(&probe.expression) else {
-        return Vec::new();
-    };
     let Some(owner) = owner_fn else {
         return Vec::new();
     };
     let parameters = function_parameters(owner);
+    let Some((left, right)) =
+        oriented_comparison_operands(owner, &parameters, &probe.expression, probe.location.line)
+    else {
+        return Vec::new();
+    };
     let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain);
     let left_parameter = boundary_operand_parameter(owner, &parameters, &left);
     let right_parameter = boundary_operand_parameter(owner, &parameters, &right);
@@ -472,6 +474,79 @@ struct ExactOperand {
     provenance: String,
 }
 
+/// What the owner says about a boundary operand that may be a local
+/// binding (#4228).
+pub(in crate::analysis) enum LocalBoundary {
+    /// No `let` in the owner declares the operand.
+    NotLocal,
+    /// A live local whose initializer needs no test input
+    /// (`let limit = 100;`), folded by the same binding relation and
+    /// bounded evaluator `check` uses per row.
+    Exact(String),
+    /// A local whose value depends on test inputs or that the evaluator
+    /// cannot fold. No input-free value exists to match a test against.
+    Unresolved,
+}
+
+pub(in crate::analysis) fn local_boundary(
+    owner: &FunctionSummary,
+    operand: &str,
+    predicate_line: usize,
+) -> LocalBoundary {
+    if let Some(initializer) = live_local_initializer(owner, operand, predicate_line)
+        && let super::value_transfer::EvalOutcome::Exact { value, .. } =
+            super::value_transfer::evaluate_initializer(
+                &initializer,
+                &super::value_transfer::ExactInputs::new(),
+            )
+    {
+        return LocalBoundary::Exact(value.render());
+    }
+    if owner_declares_local(owner, operand, predicate_line) {
+        LocalBoundary::Unresolved
+    } else {
+        LocalBoundary::NotLocal
+    }
+}
+
+/// Whether the owner's body declares `operand` with `let` (or `let mut`)
+/// on or before the predicate line. A declaration after the predicate
+/// cannot be the compared binding (a same-named constant still is), so it
+/// does not count. Comments and strings are masked first; an operand that
+/// is not an identifier (a literal such as `100`) returns early.
+fn owner_declares_local(owner: &FunctionSummary, operand: &str, predicate_line: usize) -> bool {
+    let is_identifier = operand
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && operand
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+    if !is_identifier {
+        return false;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    masked
+        .lines()
+        .enumerate()
+        .take_while(|(offset, _)| owner.start_line + offset <= predicate_line)
+        .flat_map(|(_, line)| line.split([';', '{', '}']))
+        .any(|statement| {
+            let statement = statement.trim();
+            let Some(rest) = statement.strip_prefix("let ") else {
+                return false;
+            };
+            let rest = rest.trim_start();
+            let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+            rest.strip_prefix(operand).is_some_and(|after| {
+                !after
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            })
+        })
+}
+
 /// The initializer of a local binding whose live span (per the #3294
 /// binding relation) covers the predicate line: the predicate must be
 /// one of the binding's direct uses, so the initializer provably feeds
@@ -585,9 +660,10 @@ fn missing_boundary_discriminator(
     index: &crate::analysis::rust_index::RustIndex,
     workspace_complete: bool,
 ) -> Option<MissingDiscriminatorFact> {
-    let (left, right) = comparison_operands(&probe.expression)?;
     let owner = owner_fn?;
     let parameters = function_parameters(owner);
+    let (left, right) =
+        oriented_comparison_operands(owner, &parameters, &probe.expression, probe.location.line)?;
     let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain);
     if call_values.is_empty() {
         return None;
@@ -688,6 +764,20 @@ fn missing_boundary_discriminator(
             .is_empty()
         });
     if equality_observed || constant_named {
+        return None;
+    }
+    // A local boundary that no row evaluates (a single-line `let`, or an
+    // initializer the bounded evaluator cannot fold) has no value a test
+    // can match, so naming it would ask for a repair ripr can never
+    // confirm (#4228). The grip path routes the same local to its
+    // unresolved-operand limitation.
+    if right_parameter.is_none()
+        && exact_rows.iter().all(|(_, rights)| rights.is_empty())
+        && matches!(
+            local_boundary(owner, &right, probe.location.line),
+            LocalBoundary::Unresolved
+        )
+    {
         return None;
     }
     // A constant ripr cannot pin to one declaration in the owner's file
@@ -1159,6 +1249,32 @@ fn comparison_operands(expression: &str) -> Option<(String, String)> {
     None
 }
 
+/// The comparison operands with the owner-bound side first. A reversed
+/// predicate (`100 < amount`) compares the parameter on the right, but
+/// every boundary resolver reads the left operand as the tested input and
+/// the right one as the boundary, so the operands swap when only the right
+/// side binds to a parameter or a local (#4228). Equality is symmetric,
+/// so the swap changes which side is looked up, not what is compared.
+fn oriented_comparison_operands(
+    owner: &FunctionSummary,
+    parameters: &[String],
+    expression: &str,
+    predicate_line: usize,
+) -> Option<(String, String)> {
+    let (left, right) = comparison_operands(expression)?;
+    let owner_bound = |operand: &str| {
+        boundary_operand_parameter(owner, parameters, operand).is_some()
+            || live_local_initializer(owner, operand, predicate_line).is_some()
+            // Any declared local keeps the left side, as before #4228:
+            // the swap exists for literals, not to reinterpret locals.
+            || owner_declares_local(owner, operand, usize::MAX)
+    };
+    if !owner_bound(&left) && owner_bound(&right) {
+        return Some((right, left));
+    }
+    Some((left, right))
+}
+
 fn clean_operand(operand: &str) -> String {
     let cleaned = operand
         .trim()
@@ -1270,7 +1386,7 @@ fn owner_calls_passing_constant(
         .collect()
 }
 
-fn literal_operand_value(operand: &str) -> Option<String> {
+pub(in crate::analysis) fn literal_operand_value(operand: &str) -> Option<String> {
     scalar_values(operand).into_iter().next()
 }
 
@@ -1509,6 +1625,17 @@ fn scalar_values(text: &str) -> Vec<String> {
                 }
             }
         }
+        // Digits inside an identifier or a type suffix (`x1`, the `32` of
+        // `99u32`, the `64` of `1.5f64`) are not a separate value: read as
+        // one they sort ahead of the real literal and become its boundary.
+        let in_identifier = idx
+            .checked_sub(1)
+            .and_then(|prev| chars.get(prev))
+            .is_some_and(|(_, prev_ch)| prev_ch.is_ascii_alphanumeric() || *prev_ch == '_');
+        if ch.is_ascii_digit() && in_identifier {
+            idx += 1;
+            continue;
+        }
         if ch.is_ascii_digit()
             || (ch == '-'
                 && chars
@@ -1517,9 +1644,19 @@ fn scalar_values(text: &str) -> Vec<String> {
         {
             let mut end = byte_idx + ch.len_utf8();
             let mut cursor = idx + 1;
+            let mut seen_fraction = false;
             while cursor < chars.len() {
                 let (next_byte, next_ch) = chars[cursor];
-                if next_ch.is_ascii_digit() || next_ch == '_' {
+                // A fraction (`1.5`) belongs to the literal: stopping at
+                // the `.` would read `amount > 1.5` as `amount > 1` (#4271).
+                // A `.` not followed by a digit is a range or method call.
+                let fraction = next_ch == '.'
+                    && !seen_fraction
+                    && chars
+                        .get(cursor + 1)
+                        .is_some_and(|(_, after)| after.is_ascii_digit());
+                if next_ch.is_ascii_digit() || next_ch == '_' || fraction {
+                    seen_fraction |= fraction;
                     end = next_byte + next_ch.len_utf8();
                     cursor += 1;
                 } else {
@@ -2405,6 +2542,264 @@ assert_eq!(input.amount, 100);"#
         assert!(!facts.iter().any(|fact| fact.value == "AuthError::Ignored"));
     }
 
+    // #4228: a reversed literal (`100 < amount`) and a local boundary
+    // (`let limit = 100;`) close at the boundary input and stay open one
+    // step off it; a local no row can evaluate names no repair at all.
+    #[test]
+    fn reversed_and_local_boundaries_close_only_at_the_boundary_value() {
+        enum Expect {
+            Closed,
+            Missing(&'static str),
+            NoRepair,
+        }
+        let cases = [
+            (
+                "    100 < amount",
+                "100 < amount",
+                2,
+                "score(100);",
+                Expect::Closed,
+            ),
+            (
+                "    100 < amount",
+                "100 < amount",
+                2,
+                "score(101);",
+                Expect::Missing("amount == 100"),
+            ),
+            (
+                "    100 <= amount",
+                "100 <= amount",
+                2,
+                "score(100);",
+                Expect::Closed,
+            ),
+            (
+                "    100 <= amount",
+                "100 <= amount",
+                2,
+                "score(99);",
+                Expect::Missing("amount == 100"),
+            ),
+            (
+                "    -100 < amount",
+                "-100 < amount",
+                2,
+                "score(-100);",
+                Expect::Closed,
+            ),
+            (
+                "    -100 < amount",
+                "-100 < amount",
+                2,
+                "score(-99);",
+                Expect::Missing("amount == -100"),
+            ),
+            (
+                "    let limit = 100;\n    amount > limit",
+                "amount > limit",
+                3,
+                "score(100);",
+                Expect::Closed,
+            ),
+            (
+                "    let limit = 100;\n    amount > limit",
+                "amount > limit",
+                3,
+                "score(101);",
+                Expect::Missing("amount == limit"),
+            ),
+            (
+                "    let limit = 100;\n    amount >= limit",
+                "amount >= limit",
+                3,
+                "score(100);",
+                Expect::Closed,
+            ),
+            (
+                "    let limit = 100;\n    limit < amount",
+                "limit < amount",
+                3,
+                "score(100);",
+                Expect::Closed,
+            ),
+            (
+                "    let limit = 100;\n    limit < amount",
+                "limit < amount",
+                3,
+                "score(101);",
+                Expect::Missing("limit == amount"),
+            ),
+            // #4271: a decimal boundary and a decimal test argument are
+            // read whole, so `1` does not hit the boundary `1.5`.
+            (
+                "    amount > 1.5",
+                "amount > 1.5",
+                2,
+                "score(1.5);",
+                Expect::Closed,
+            ),
+            (
+                "    amount > 1.5",
+                "amount > 1.5",
+                2,
+                "score(1.0);",
+                Expect::Missing("amount == 1.5"),
+            ),
+            (
+                "    1.5 < amount",
+                "1.5 < amount",
+                2,
+                "score(1.2);",
+                Expect::Missing("amount == 1.5"),
+            ),
+            (
+                "    amount > 1.5f64",
+                "amount > 1.5f64",
+                2,
+                "score(1.0);",
+                Expect::Missing("amount == 1.5f64"),
+            ),
+            // A type suffix is not a second literal: `9.5f64` is 9.5, not
+            // 64, and `99u32` is 99, not 32.
+            (
+                "    amount > 9.5f64",
+                "amount > 9.5f64",
+                2,
+                "score(64.0);",
+                Expect::Missing("amount == 9.5f64"),
+            ),
+            (
+                "    amount > 99u32",
+                "amount > 99u32",
+                2,
+                "score(32);",
+                Expect::Missing("amount == 99u32"),
+            ),
+            (
+                "    amount > 99u32",
+                "amount > 99u32",
+                2,
+                "score(99);",
+                Expect::Closed,
+            ),
+            // The evaluator cannot fold these initializers, so a test at
+            // 100 could never close them: no repair is named.
+            (
+                "    let limit = 100; amount > limit",
+                "amount > limit",
+                2,
+                "score(100);",
+                Expect::NoRepair,
+            ),
+            (
+                "    let limit = amount / 2 + 50;\n    amount > limit",
+                "amount > limit",
+                3,
+                "score(100);",
+                Expect::NoRepair,
+            ),
+        ];
+        for (body, predicate, line, call, expect) in cases {
+            // Decimal cases compare a real `f64` input.
+            let ty = if predicate.contains('.') {
+                "f64"
+            } else {
+                "i32"
+            };
+            let owner = function(&format!(
+                "pub fn score(amount: {ty}) -> bool {{\n{body}\n}}"
+            ));
+            let test = test_with_call("score_boundary", call);
+            let mut probe = probe(ProbeFamily::Predicate, predicate);
+            probe.location = SourceLocation::new("src/lib.rs", line, 5);
+            let activation = activation_evidence(
+                &probe,
+                Some(&owner),
+                &[&test],
+                &[],
+                None,
+                &crate::analysis::rust_index::RustIndex::default(),
+                false,
+            );
+            let missing: Vec<&str> = activation
+                .missing_discriminators
+                .iter()
+                .map(|fact| fact.value.as_str())
+                .collect();
+            match expect {
+                Expect::Closed => assert!(
+                    has_observed_boundary_equality(&activation) && missing.is_empty(),
+                    "`{predicate}` with {call} must close; missing {missing:?}"
+                ),
+                Expect::Missing(value) => assert!(
+                    !has_observed_boundary_equality(&activation) && missing == [value],
+                    "`{predicate}` with {call} must name {value}; missing {missing:?}"
+                ),
+                Expect::NoRepair => assert!(
+                    !has_observed_boundary_equality(&activation) && missing.is_empty(),
+                    "`{predicate}` ({body}) with {call} must not credit or name a repair; missing {missing:?}"
+                ),
+            }
+        }
+    }
+
+    // #4270: a commented `match` alias does not bind `amount`; the live
+    // `let amount = 1;` does. `check` compares `threshold` against 1, the
+    // same contract grip holds (`test_grip_evidence` commented-alias
+    // tests): `raw_amount == threshold` never closes, `threshold == 1` does.
+    #[test]
+    fn commented_alias_leaves_the_local_boundary_in_charge() {
+        let bodies = [
+            "    // match raw_amount { Some(amount) => if amount >= threshold { amount - 10 } else { amount }, _ => 0 }\n    let amount = 1;\n    if amount >= threshold { amount - 10 } else { amount }",
+            "    let _note = 0; // match raw_amount { Some(amount) => if amount >= threshold { amount - 10 } else { amount }, _ => 0 }\n    let amount = 1;\n    if amount >= threshold { amount - 10 } else { amount }",
+            "    let _seen = match raw_amount { _ => false };\n    // Some(amount)\n    let amount = 1;\n    if amount >= threshold { amount - 10 } else { amount }",
+            "    let _seen = match raw_amount { _ => false }; // Some(amount)\n    let amount = 1;\n    if amount >= threshold { amount - 10 } else { amount }",
+        ];
+        for body in bodies {
+            let mut owner = function(&format!(
+                "pub fn score(raw_amount: Option<i32>, threshold: i32) -> i32 {{\n{body}\n}}"
+            ));
+            owner.end_line = owner.body.lines().count();
+            // The predicate is the body's last line, after the signature.
+            let line = 1 + body.lines().count();
+            let mut probe = probe(ProbeFamily::Predicate, "amount >= threshold");
+            probe.location = SourceLocation::new("src/lib.rs", line, 5);
+            for (call, closes) in [
+                ("score(Some(50), 50);", false),
+                ("score(Some(50), 1);", true),
+            ] {
+                let test = test_with_call("score_boundary", call);
+                let activation = activation_evidence(
+                    &probe,
+                    Some(&owner),
+                    &[&test],
+                    &[],
+                    None,
+                    &crate::analysis::rust_index::RustIndex::default(),
+                    false,
+                );
+                let missing: Vec<&str> = activation
+                    .missing_discriminators
+                    .iter()
+                    .map(|fact| fact.value.as_str())
+                    .collect();
+                if closes {
+                    assert!(
+                        has_observed_boundary_equality(&activation) && missing.is_empty(),
+                        "{call} hits the local boundary 1 ({body:?}); missing {missing:?}"
+                    );
+                } else {
+                    assert!(
+                        !has_observed_boundary_equality(&activation)
+                            && missing == ["amount == threshold"],
+                        "{call} must leave the local boundary open ({body:?}); missing {missing:?}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn missing_boundary_handles_missing_left_and_nonliteral_target() {
         let owner = function("pub fn score(amount: i32) -> bool {\n    amount > 10\n}");
@@ -2512,6 +2907,30 @@ assert_eq!(input.amount, 100);"#
         assert_eq!(
             scalar_values(r#""a\"b" -12"#),
             vec!["\"a\\\"b\"".to_string(), "-12".to_string()]
+        );
+        // #4271: a fraction is part of the literal; a range or a method
+        // call on an integer is not.
+        assert_eq!(
+            scalar_values("f(1.5, -0.25, 1_000.5)"),
+            vec![
+                "-0.25".to_string(),
+                "1.5".to_string(),
+                "1_000.5".to_string()
+            ]
+        );
+        assert_eq!(
+            scalar_values("f(99u32, 9.5f64, x1, 100_u8)"),
+            vec!["100_".to_string(), "9.5".to_string(), "99".to_string()]
+        );
+        assert_eq!(
+            scalar_values("f(0..5, 2.max(3), 1.2.3)"),
+            vec![
+                "0".to_string(),
+                "1.2".to_string(),
+                "2".to_string(),
+                "3".to_string(),
+                "5".to_string()
+            ]
         );
 
         let mut facts = vec![

@@ -48,6 +48,11 @@ const REPAIR_ROUTE_EVIDENCE_CATEGORY: &str = "repair_route_evidence_incomplete";
 const REPAIR_ROUTE_EVIDENCE_REPAIR_ROUTE: &str = "analysis/producer-evidence-route";
 const TEST_TARGET_PROVENANCE_CATEGORY: &str = "test_target_provenance_unresolved";
 const TEST_TARGET_PROVENANCE_REPAIR_ROUTE: &str = "analysis/test-target-resolution";
+/// A changed owner that static evidence shows no existing test reaching.
+/// This is a test gap in the change, not an analyzer limitation; it keeps
+/// the fail-closed `static_limitation` gap state only because the route
+/// authority proposes no first-test target (#4216 row 2).
+pub(crate) const NO_TEST_REACHES_OWNER_CATEGORY: &str = "no_test_reaches_changed_owner";
 
 const MAX_RELATED_TESTS_PER_EVIDENCE_RECORD: usize = 8;
 const VERIFY_COMMAND: &str = "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json";
@@ -593,12 +598,27 @@ fn canonical_item_for(
                     .map(alignment_related_test_for_recommended_target)
             }),
         verify_command: recommendation.verify_command.clone(),
-        receipt_command: canonical_receipt_command_for(entry, gap_state),
-        repair_command: canonical_repair_command_for(entry, gap_state),
+        receipt_command: canonical_receipt_command_for(
+            entry,
+            gap_state,
+            crate::agent::command_specs::PORTABLE_ROOT,
+        ),
+        repair_command: canonical_repair_command_for(
+            entry,
+            gap_state,
+            crate::agent::command_specs::PORTABLE_ROOT,
+        ),
         verify_command_spec: recommendation
             .verify_command
             .as_deref()
-            .and_then(crate::agent::command_specs::agent_command_spec_from_display),
+            // The canonical verify display is the portable `--root .` shape,
+            // so recovery needs no concrete selected root.
+            .and_then(|display| {
+                crate::agent::command_specs::agent_command_spec_from_display(
+                    display,
+                    std::path::Path::new(crate::agent::command_specs::PORTABLE_ROOT),
+                )
+            }),
         receipt_command_spec: (gap_state == "actionable").then(|| {
             crate::agent::command_specs::agent_receipt_command_spec(
                 ".",
@@ -899,16 +919,19 @@ fn recommendation_for(
 pub(crate) fn canonical_repair_command_for(
     entry: &ClassifiedSeam,
     gap_state: &str,
+    root: &str,
 ) -> Option<String> {
     if gap_state != "actionable" {
         return None;
     }
-    repair_start_command_for(entry)
+    repair_start_command_for(entry, root)
 }
 
 /// The `agent repair ... --phase before` command for a seam, or `None` when
 /// the repair transaction would refuse it. Every surface that offers the
-/// repair start builds it here.
+/// repair start builds it here. `root` is the producer's `--root` token:
+/// portable `.` inside durable artifacts, the bound selected root in
+/// copy/paste guidance (#3999/#4000).
 ///
 /// Two conditions, both fail-closed:
 /// - the repair-packet flip (`repair_packet_eligibility(..).eligible()`);
@@ -918,7 +941,7 @@ pub(crate) fn canonical_repair_command_for(
 ///   test lives in an inline `#[cfg(test)]` module of a source file passes the
 ///   flip but cannot start a repair. Offering it would print a command that
 ///   fails (#3906).
-pub(crate) fn repair_start_command_for(entry: &ClassifiedSeam) -> Option<String> {
+pub(crate) fn repair_start_command_for(entry: &ClassifiedSeam, root: &str) -> Option<String> {
     if !repair_packet_eligibility(entry).eligible() {
         return None;
     }
@@ -926,7 +949,8 @@ pub(crate) fn repair_start_command_for(entry: &ClassifiedSeam) -> Option<String>
         return None;
     }
     Some(format!(
-        "ripr agent repair --root . --seam-id {} --phase before",
+        "ripr agent repair --root {} --seam-id {} --phase before",
+        shell_arg(root),
         shell_arg(entry.seam.id().as_str())
     ))
 }
@@ -934,13 +958,14 @@ pub(crate) fn repair_start_command_for(entry: &ClassifiedSeam) -> Option<String>
 pub(crate) fn canonical_receipt_command_for(
     entry: &ClassifiedSeam,
     gap_state: &str,
+    root: &str,
 ) -> Option<String> {
     if gap_state != "actionable" {
         return None;
     }
 
     Some(agent_receipt_command(
-        ".",
+        root,
         WORKFLOW_AGENT_VERIFY_ARTIFACT,
         entry.seam.id().as_str(),
         Some(WORKFLOW_AGENT_RECEIPT_ARTIFACT),
@@ -1069,6 +1094,7 @@ pub(crate) fn static_limitations_for(
             .missing_evidence
             .iter()
             .any(|evidence| evidence == "safe test target");
+        let no_test_reaches_owner = missing_target && no_test_reaches_owner(entry);
         let value_family = matches!(
             entry.seam.kind(),
             SeamKind::PredicateBoundary
@@ -1085,8 +1111,23 @@ pub(crate) fn static_limitations_for(
             }
             .to_string(),
             state: "unknown".to_string(),
-            reason: route_readiness.missing_evidence.join("; "),
-            category: if missing_target {
+            reason: if no_test_reaches_owner {
+                format!(
+                    "no existing test reaches `{}` (no static test path to the changed owner); the route authority does not propose a first-test target, so no repair route is available",
+                    entry.seam.owner()
+                )
+            } else {
+                // A prose reason, not a bare noun list: every consumer (the
+                // card's `why_not_actionable`, the gate headline, the
+                // evidence record) shows this text as-is (#4216 row 2 review).
+                format!(
+                    "the repair route is missing evidence: {}",
+                    route_readiness.missing_evidence.join("; ")
+                )
+            },
+            category: if no_test_reaches_owner {
+                NO_TEST_REACHES_OWNER_CATEGORY.to_string()
+            } else if missing_target {
                 TEST_TARGET_PROVENANCE_CATEGORY.to_string()
             } else if value_family {
                 MISSING_DISCRIMINATOR_EVIDENCE_CATEGORY.to_string()
@@ -1104,6 +1145,12 @@ pub(crate) fn static_limitations_for(
     }
 
     limitations
+}
+
+/// Static evidence names no related test and an explicit `reach: no` for
+/// the changed owner. Unknown or opaque reach stays a static limitation.
+fn no_test_reaches_owner(entry: &ClassifiedSeam) -> bool {
+    entry.evidence.related_tests.is_empty() && entry.evidence.reach.state == StageState::No
 }
 
 #[cfg(test)]
@@ -2013,6 +2060,47 @@ mod tests {
     }
 
     #[test]
+    fn evidence_record_names_owner_no_test_reaches_as_test_gap() {
+        let mut entry = sample_classified(StageState::No, SeamGripClass::Ungripped);
+        entry.evidence.related_tests.clear();
+        entry.evidence.reach = stage(StageState::No, "no static test path");
+        entry.evidence.observe = stage(StageState::No, "no reachable oracle");
+        entry.evidence.discriminate = stage(StageState::No, "no reachable assertion");
+
+        let record = evidence_record_for(&entry, None);
+        let json = evidence_record_json_value(&record);
+
+        // The flip stays fail-closed; only the limitation's framing changes.
+        assert_eq!(record.actionability.class, "static_limitation");
+        assert_eq!(json["canonical_item"]["gap_state"], "static_limitation");
+        assert_eq!(json["canonical_item"]["receipt_command"], Value::Null);
+        assert_eq!(
+            json["static_limitations"][0]["category"],
+            NO_TEST_REACHES_OWNER_CATEGORY
+        );
+        assert_eq!(
+            json["static_limitations"][0]["repair_route"],
+            TEST_TARGET_PROVENANCE_REPAIR_ROUTE
+        );
+        assert!(
+            json["static_limitations"][0]["reason"]
+                .as_str()
+                .is_some_and(|reason| reason
+                    .starts_with("no existing test reaches `pricing::discounted_total`"))
+        );
+
+        // A related test without a producer-owned target is still a target
+        // provenance limitation, not an owner that no test reaches.
+        let mut related = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
+        related.evidence.related_tests[0].test_target = None;
+        let json = evidence_record_json_value(&evidence_record_for(&related, None));
+        assert_eq!(
+            json["static_limitations"][0]["category"],
+            TEST_TARGET_PROVENANCE_CATEGORY
+        );
+    }
+
+    #[test]
     fn test_target_without_symbol_identity_is_unresolved() {
         let recommended = RecommendedTest {
             name: "discounted_total_boundary".to_string(),
@@ -2144,6 +2232,20 @@ mod tests {
                 .missing_evidence
                 .iter()
                 .any(|evidence| evidence == "safe test target")
+        );
+        // #4216 row 2 review (F2): the projected limitation reason reads as
+        // missing evidence, not as a bare noun list, because the review card
+        // and the gate headline show it verbatim.
+        let reasons = static_limitations_for(&entry)
+            .into_iter()
+            .map(|limitation| limitation.reason)
+            .collect::<Vec<_>>();
+        assert!(
+            reasons.iter().any(|reason| {
+                reason.starts_with("the repair route is missing evidence: ")
+                    && reason.ends_with("; safe test target")
+            }),
+            "{reasons:?}"
         );
         entry.evidence.related_tests[0].test_target = Some(test_target_fixture(
             "below_threshold_has_no_discount",
@@ -2427,7 +2529,7 @@ mod tests {
             // the record above cannot tell the two checks apart. Hand the
             // builder an actionable state directly: the flip alone must still
             // withhold the command if actionability ever drifts wider.
-            if canonical_repair_command_for(&entry, "actionable").is_some() != want {
+            if canonical_repair_command_for(&entry, "actionable", ".").is_some() != want {
                 return Err(format!(
                     "builder must follow the flip, not gap_state, for eligible={want}"
                 ));
@@ -2457,7 +2559,7 @@ mod tests {
             if is_test_surface_path(&target) != want {
                 return Err(format!("fixture edit target `{target}` for want={want}"));
             }
-            if repair_start_command_for(&entry).is_some() != want {
+            if repair_start_command_for(&entry, ".").is_some() != want {
                 return Err(format!("repair start for edit target `{target}`"));
             }
             let json = evidence_record_json_value(&evidence_record_for(&entry, None));
