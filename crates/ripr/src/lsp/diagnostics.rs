@@ -4453,6 +4453,8 @@ mod lsp_next_step_parity_tests {
         finding.recommended_next_step = None;
         finding.language = None;
         finding.language_status = None;
+        finding.activation.missing_discriminators.clear();
+        finding.related_tests.clear();
         let message = lsp_message(&finding);
         assert_eq!(
             message,
