@@ -3308,22 +3308,26 @@ const REFRESH_DIAGNOSTICS_COMMAND_TITLE = 'ripr: Refresh Diagnostics';
  * client must never present them as a healthy completed analysis. Keys are the
  * exact server run_status strings.
  */
-const LIMITED_RUN_STATUS_PRESENTATIONS: Record<string, { summary: string; detail: string }> = {
+const LIMITED_RUN_STATUS_PRESENTATIONS: Record<string, { summary: string; detail: string; nextStep: string }> = {
   cache_limited: {
     summary: 'ripr analysis completed with a limited evidence cache.',
-    detail: 'Gap-artifact cache entries were rejected this refresh, so cache-derived evidence is missing.'
+    detail: 'Gap-artifact cache entries were rejected this refresh, so cache-derived evidence is missing.',
+    nextStep: 'Rerun ripr check to regenerate the rejected gap-artifact reports, then run ripr: Refresh Diagnostics.'
   },
   limited: {
     summary: 'ripr analysis completed with limited evidence.',
-    detail: 'The run hit a static limit or a degraded component (for example a git invocation timeout), so findings may be missing; see ripr: Show Output for the named outcome.'
+    detail: 'The run hit a static limit or a degraded component (for example a git invocation timeout), so findings may be missing; see ripr: Show Output for the named outcome.',
+    nextStep: `Run ${REFRESH_DIAGNOSTICS_COMMAND_TITLE} to retry the analysis and restore the missing evidence.`
   },
   limited_partial_scope: {
     summary: 'ripr analysis completed on a bounded partition of the diff.',
-    detail: 'The diff exceeded the analysis scope budget, so this run covered only part of it and the remainder was not evaluated.'
+    detail: 'The diff exceeded the analysis scope budget, so this run covered only part of it and the remainder was not evaluated.',
+    nextStep: `Raise RIPR_PARTIAL_DIFF_FILE_BUDGET or narrow the diff, then run ${REFRESH_DIAGNOSTICS_COMMAND_TITLE}.`
   },
   limited_incomplete_input: {
     summary: 'ripr analysis completed with incomplete input.',
-    detail: 'The run input was incomplete, so derived evidence is missing.'
+    detail: 'The run input was incomplete, so derived evidence is missing.',
+    nextStep: `Run ${REFRESH_DIAGNOSTICS_COMMAND_TITLE} to retry the analysis and restore the missing evidence.`
   }
 };
 
@@ -3396,7 +3400,7 @@ export function statusForRunStatus(
       summary: limited.summary,
       detail: [input.detail, limited.detail]
         .filter((line): line is string => Boolean(line)).join('\n'),
-      nextStep: `Run ${REFRESH_DIAGNOSTICS_COMMAND_TITLE} to retry the analysis and restore the missing evidence.`
+      nextStep: limited.nextStep
     };
   }
   return {

@@ -1535,14 +1535,14 @@ suite('Extension Smoke', () => {
       assertDegraded([
         'ripr analysis completed with a limited evidence cache.',
         'Gap-artifact cache entries were rejected this refresh',
-        'Next safe action: Run ripr: Refresh Diagnostics'
+        'Next safe action: Rerun ripr check to regenerate the rejected gap-artifact reports'
       ]);
 
       emitSucceededWithRunStatus('limited_partial_scope');
       assertDegraded([
         'ripr analysis completed on a bounded partition of the diff.',
         'the remainder was not evaluated',
-        'Next safe action: Run ripr: Refresh Diagnostics'
+        'Next safe action: Raise RIPR_PARTIAL_DIFF_FILE_BUDGET or narrow the diff'
       ]);
 
       emitSucceededWithRunStatus('limited_incomplete_input');
