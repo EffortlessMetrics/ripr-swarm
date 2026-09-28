@@ -3863,7 +3863,8 @@ suite('Extension Smoke', () => {
   test('agent loop commands must equal the body the server renders from the payload (#4225)', () => {
     const seamId = '67fc764ba37d77bd';
     const root = path.resolve('/work/R&D/$repo');
-    const anchored = (artifact: string) => serverShellArg(`${root.replace(/\\/g, '/')}/${artifact}`);
+    const rootDisplay = root.replace(/\\/g, '/');
+    const anchored = (artifact: string) => `'${rootDisplay}/${artifact}'`;
     const accepts = (target: RiprAgentLoopCommandTarget) =>
       validatedAgentLoopCommand(target, [root]) === target.command;
     const packet = (body: string, redirect = anchored('target/ripr/agent/agent-packet.json')) =>
@@ -3880,25 +3881,25 @@ suite('Extension Smoke', () => {
 
     // The real server binds the selected root in the command while the payload
     // retains its portable `root: "."` role. This must fail on the old client.
-    const commandRoot = serverShellArg(root.replace(/\\/g, '/'));
+    const commandRoot = process.platform === 'win32' ? `'${rootDisplay}'` : "'/work/R&D/$repo'";
     assert.ok(accepts(packet(`ripr agent packet --root ${commandRoot} --seam-id ${seamId} --json`)));
     assert.ok(!accepts(packet(`ripr agent packet --root . --seam-id ${seamId} --json`)));
     const otherRoot = path.resolve('/work/other').replace(/\\/g, '/');
-    assert.ok(!accepts(packet(`ripr agent packet --root ${serverShellArg(otherRoot)} --seam-id ${seamId} --json`)));
+    assert.ok(!accepts(packet(`ripr agent packet --root ${otherRoot} --seam-id ${seamId} --json`)));
     assert.ok(!accepts(packet(
       `ripr agent packet --root ${commandRoot} --seam-id ${seamId} --json`,
-      serverShellArg(`${otherRoot}/target/ripr/agent/agent-packet.json`)
+      `${otherRoot}/target/ripr/agent/agent-packet.json`
     )));
     // Both spellings may be selected (symlink and realpath), but the command
     // and redirect must use the SAME one. A relative tail is not a bound tail.
     const otherPacket = packet(
-      `ripr agent packet --root ${serverShellArg(otherRoot)} --seam-id ${seamId} --json`,
-      serverShellArg(`${otherRoot}/target/ripr/agent/agent-packet.json`)
+      `ripr agent packet --root ${otherRoot} --seam-id ${seamId} --json`,
+      `${otherRoot}/target/ripr/agent/agent-packet.json`
     );
     assert.strictEqual(validatedAgentLoopCommand(otherPacket, [root, otherRoot]), otherPacket.command);
     assert.strictEqual(validatedAgentLoopCommand(packet(
       `ripr agent packet --root ${commandRoot} --seam-id ${seamId} --json`,
-      serverShellArg(`${otherRoot}/target/ripr/agent/agent-packet.json`)
+      `${otherRoot}/target/ripr/agent/agent-packet.json`
     ), [root, otherRoot]), undefined);
     assert.ok(!accepts(packet(`ripr agent packet --root ${commandRoot} --seam-id ${seamId} --json`,
       'target/ripr/agent/agent-packet.json')));
