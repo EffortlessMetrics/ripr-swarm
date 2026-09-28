@@ -195,6 +195,17 @@ impl RelatedTestCandidateIndex {
                 &self.by_test_name_trigram,
                 lowered.as_bytes(),
             );
+            // Whole-word name matching compares the snake spelling
+            // (`IoError` -> `io_error`); the unsplit `ioerror` query starts
+            // with a different trigram and misses `io_error_is_reported`.
+            let words = snake_words(token);
+            if words != lowered && words.len() > 2 {
+                let _ = extend_substring_bucket(
+                    &mut selected,
+                    &self.by_test_name_trigram,
+                    words.as_bytes(),
+                );
+            }
         }
 
         if let Some(chain) = helper_chain {
@@ -1569,8 +1580,10 @@ fn snake_words(token: &str) -> String {
 
 /// Whether a test file is named for the probe's source stem: the stem is a
 /// whole `_` word of the test file's own stem (`tests/pricing.rs`,
-/// `pricing_edge_tests.rs`), or the test file is a `tests`-named child of a
-/// directory named for it (`pricing/tests.rs`, `pricing/boundary_tests.rs`).
+/// `pricing_edge_tests.rs`), or the test file's immediate parent directory is
+/// named for it and the file itself has a test-like name (`tests`, `test`,
+/// `mod`, `test_*`, `*_test`, `*_tests`: `pricing/tests.rs`,
+/// `pricing/boundary_tests.rs`), wherever that directory sits.
 ///
 /// A raw substring of the whole path linked every test under a directory
 /// that merely contains the stem (`python.rs` to all of `python/**`,
@@ -1834,6 +1847,51 @@ mod tests {
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "reaches_through_helper");
         assert_eq!(related[0].1, RelationReason::HelperOwnerCall);
+    }
+
+    #[test]
+    fn indexed_and_full_scan_match_for_camel_case_token_named_by_test() {
+        let index = RustIndex {
+            tests: vec![test(
+                "tests/other_area.rs",
+                "io_error_is_reported",
+                "assert!(run().is_ok());",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = probe("src/pipeline.rs", "IoError::default()");
+
+        let indexed = find_related_tests_with_candidate_index(
+            &probe,
+            None,
+            &index,
+            true,
+            None,
+            None,
+            &RelatedTestCandidateIndex::new(&index),
+        );
+        let full_scan = find_related_tests_with_candidates(
+            &probe,
+            None,
+            &index,
+            true,
+            None,
+            None,
+            RelatedTestCandidates::FullScan,
+        );
+
+        assert_eq!(full_scan.len(), 1, "full scan relates the named test");
+        assert_eq!(full_scan[0].0.name, "io_error_is_reported");
+        assert_eq!(
+            indexed
+                .iter()
+                .map(|(test, reason)| (&test.name, *reason))
+                .collect::<Vec<_>>(),
+            full_scan
+                .iter()
+                .map(|(test, reason)| (&test.name, *reason))
+                .collect::<Vec<_>>(),
+        );
     }
 
     #[test]

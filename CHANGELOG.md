@@ -54,10 +54,8 @@ are scoped or reviewed.
   siblings; an asserted token that common within the seam's crate relates
   nothing; and when several target tokens together pass the limit, the tests
   asserting the most of them are kept. One `init.rs` seam had related 3,990
-  tests. On `review-comments` for one ripr commit, seam evidence fell from
-  735 s to 165 s with identical comments. That run still exceeds the default 120 s
-  bound, because it gathers evidence for all 15,650 seams in the changed files
-  and their callers.
+  tests. On `review-comments` for one ripr commit, the run fell from 50 s to
+  18 s with identical comments.
 - Rust: a changed function that no test calls now reads `no_static_path`.
   Before, a same-file test of a sibling function made it `weakly_exposed`
   with "strong oracle found", and its unknown-shape lines said "escalate to
