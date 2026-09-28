@@ -71,7 +71,7 @@ pub(super) fn line_findings_hover_response(
     ];
     if profile == LspDiagnosticProfile::Actionable {
         lines.push(
-            "The `actionable` diagnostic profile publishes only findings with a producer-backed repair route (a named missing discriminator and a related test to extend), so these are not diagnostics. Set `ripr.diagnosticProfile` to `full` to publish them."
+            "The `actionable` diagnostic profile publishes only current `weakly_exposed`, `reachable_unrevealed` or `no_static_path` findings with a producer-backed repair route (a named missing discriminator and a fix site), so these are not diagnostics. Set `ripr.diagnosticProfile` to `full` to publish them with their Inspect finding quick fix."
                 .to_string(),
         );
     } else {
@@ -104,11 +104,6 @@ pub(super) fn line_findings_hover_response(
             findings.len() - MAX_LINE_HOVER_FINDINGS
         ));
     }
-    lines.push(String::new());
-    lines.push(
-        "Inspect one in the editor: run `ripr.collectContext` with `{\"finding_id\": \"<finding>\"}`."
-            .to_string(),
-    );
     Hover {
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,

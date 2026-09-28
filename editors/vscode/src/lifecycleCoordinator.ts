@@ -259,7 +259,9 @@ export class ExtensionLifecycleCoordinator {
   }
 
   private async stopController(currentController: LifecycleController): Promise<void> {
-    if (!this.sessionRunning) {
+    // The controller can also start a session outside the coordinator
+    // (workspace-root picker, missing-server Retry); its own state decides.
+    if (!this.sessionRunning && !(currentController.isRunning?.() ?? false)) {
       return;
     }
     await currentController.stop();

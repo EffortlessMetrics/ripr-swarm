@@ -18412,6 +18412,14 @@ fn fix_route_rust_finding() -> Finding {
 fn actionable_profile_status(
     findings: Vec<Finding>,
 ) -> Result<(serde_json::Value, serde_json::Value, usize), String> {
+    profile_status(findings, crate::config::LspDiagnosticProfile::Actionable)
+}
+
+/// Same as [`actionable_profile_status`] for an explicit diagnostic profile.
+fn profile_status(
+    findings: Vec<Finding>,
+    profile: crate::config::LspDiagnosticProfile,
+) -> Result<(serde_json::Value, serde_json::Value, usize), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -18427,14 +18435,14 @@ fn actionable_profile_status(
             &findings,
             &crate::config::SeverityConfig::default(),
             true,
-            crate::config::LspDiagnosticProfile::Actionable,
+            profile,
             None,
             &PositionEncodingKind::UTF16,
         )?;
         let published = grouped.get(&uri).cloned().unwrap_or_default();
         let published_count = published.len();
         let mut diagnostics = sample_workspace_diagnostics(root, uri, published, findings);
-        diagnostics.snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
+        diagnostics.snapshot.diagnostic_profile = profile;
         let Some(_) = backend.refresh_plan(diagnostics) else {
             return Err("expected refresh plan".to_string());
         };
@@ -18495,6 +18503,34 @@ fn top_limitation_still_reports_route_less_findings_as_not_actionable() -> Resul
         status["diagnostics"]["actionable_diagnostics"].as_u64(),
         Some(0),
         "{status}"
+    );
+    Ok(())
+}
+
+#[test]
+fn full_profile_published_route_less_finding_is_not_counted_actionable() -> Result<(), String> {
+    // Negative control for the widened count: the full profile publishes a
+    // route-less finding, but a published diagnostic alone is not a bounded
+    // next action.
+    let (limitation, status, published) = profile_status(
+        vec![sample_finding()],
+        crate::config::LspDiagnosticProfile::Full,
+    )?;
+    if published == 0 {
+        return Err(
+            "fixture must publish the route-less finding under the full profile".to_string(),
+        );
+    }
+    assert_eq!(
+        status["diagnostics"]["actionable_diagnostics"].as_u64(),
+        Some(0),
+        "{status}"
+    );
+    // "no_actionable_item" is an actionable-profile explanation only; the
+    // full profile reports no active limitation for a published finding.
+    assert_eq!(
+        limitation["status"], "no_active_limitation_in_current_scope",
+        "{limitation}"
     );
     Ok(())
 }
@@ -18590,11 +18626,19 @@ fn hover_describes_unpublished_snapshot_findings_on_the_line() -> Result<(), Str
         "`no_static_path` predicate `weight_grams > 2_000`",
         "* reach no: No static test path found for the changed owner",
         "`probe:pricing:14:predicate`",
-        "ripr.collectContext",
+        "Set `ripr.diagnosticProfile` to `full`",
     ] {
         assert!(
             markup.value.contains(expected),
             "missing {expected:?}:\n{}",
+            markup.value
+        );
+    }
+    // Editor users cannot run a server executeCommand with JSON arguments.
+    for unexpected in ["ripr.collectContext", "finding_id"] {
+        assert!(
+            !markup.value.contains(unexpected),
+            "hover names an unrunnable command {unexpected:?}:\n{}",
             markup.value
         );
     }
