@@ -156,6 +156,15 @@ fn target_for_index(
     test_target_evidence(&context, seam, test, relation)
 }
 
+fn fixture_thread_panic(label: &str, payload: Box<dyn std::any::Any + Send>) -> String {
+    let detail = payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .unwrap_or("non-string panic payload");
+    format!("{label} index fixture thread panicked: {detail}")
+}
+
 #[test]
 fn simultaneous_same_stamp_indexes_keep_distinct_live_target_authority() -> Result<(), String> {
     let file = PathBuf::from("src/lib.rs");
@@ -176,10 +185,10 @@ fn simultaneous_same_stamp_indexes_keep_distinct_live_target_authority() -> Resu
         });
         let first = first_thread
             .join()
-            .map_err(|_| "first index fixture thread panicked".to_string())??;
+            .map_err(|payload| fixture_thread_panic("first", payload))??;
         let second = second_thread
             .join()
-            .map_err(|_| "second index fixture thread panicked".to_string())??;
+            .map_err(|payload| fixture_thread_panic("second", payload))??;
         Ok::<(FixtureIndex, FixtureIndex), String>((first, second))
     })?;
 
