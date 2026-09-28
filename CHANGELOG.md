@@ -304,6 +304,13 @@ are scoped or reviewed.
   their bound root; only the summary rendering rewrites the checkout path, and
   only where it is a whole path token.
 
+- LSP: `ripr.collectRepairPacket` and `ripr.collectContext` now reject a
+  `gap_id` that is present but not a non-empty string (such as `42`, `""`, or
+  `" "`) with an error naming `gap_id`. The repair command used to return the
+  top gap's packet instead of the one asked for, and the context command
+  blamed `seam_id` when both were sent. Omitting `gap_id` still returns the
+  top packet.
+
 ### Added
 
 - `ripr --version` now names the commit the binary was built from, as
