@@ -555,7 +555,11 @@ fn changed_line_runs_on_every_call(source: &str, tokens: &[Tok], request: &Modul
         | Kind::Question => true,
         kind => kind.is_identifier_name() && kind != Kind::Function && kind != Kind::Async,
     });
-    if !plain_head {
+    // The chosen `{` must enclose the changed line: a type literal in the
+    // return type (`: { (): number } => () => {`) closes before it.
+    let encloses_line =
+        matching_close(tokens, body_open).is_some_and(|end| tokens[end].start >= line_end);
+    if !plain_head || !encloses_line {
         return false;
     }
     let body = &tokens[close + 1..];

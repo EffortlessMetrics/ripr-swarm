@@ -696,6 +696,16 @@ fn nested_function_bodies_and_generators_stay_unresolved() {
             "export function* shipping(amount: number) {",
             "}",
         ),
+        (
+            "type literal return then thunk",
+            "export const shipping = (amount: number): { (): number } => () => {",
+            "};",
+        ),
+        (
+            "generic type literal return then async thunk",
+            "export const shipping = (amount: number): Promise<{ ok: boolean }> => async () => {",
+            "};",
+        ),
     ] {
         let source = format!("{head}\n{changed}{tail}{close}\n");
         let owners = extract_owners(Path::new("src/shipping.ts"), &source);
