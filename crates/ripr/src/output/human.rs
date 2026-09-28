@@ -83,6 +83,11 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     out
 }
 
+/// Full human form without the per-finding `Drill in:` block: the drill-in
+/// commands need the CLI's root and scope, which only
+/// [`render_full_with_config_and_navigation`] receives. Library callers of
+/// `ripr::render_check` keep this legacy all-findings form byte-for-byte
+/// (`human_full_preserves_legacy_all_findings_output`).
 pub(crate) fn render_full_with_config(output: &CheckOutput, config: &RiprConfig) -> String {
     render_full_with_config_and_navigation(output, config, None)
 }
