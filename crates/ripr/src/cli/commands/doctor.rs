@@ -719,8 +719,11 @@ fn is_skipped_walk_dir(path: &Path) -> bool {
 }
 
 /// True for a real directory entry. `DirEntry::file_type` does not follow
-/// symlinks, so a `src/loop -> .` link cannot send the Perl walks into an
-/// unbounded descent (the other workspace walkers already skip links).
+/// symlinks, so a `src/loop -> .` link cannot send doctor's walks into an
+/// unbounded descent (the other workspace walkers already skip links). An
+/// entry whose type cannot be read is not descended. Non-directory entries
+/// are counted only when `Path::is_file` holds, so a directory link named
+/// `x.pm` is neither descended nor counted as a Perl file.
 fn is_walkable_dir(entry: &std::fs::DirEntry) -> bool {
     entry.file_type().is_ok_and(|kind| kind.is_dir())
 }
@@ -738,10 +741,11 @@ fn perl_project_detected(root: &Path) -> bool {
             if is_walkable_dir(&entry) {
                 !is_skipped_walk_dir(&path) && any_perl_file(&path)
             } else {
-                matches!(
-                    path.extension().and_then(|e| e.to_str()),
-                    Some("pm" | "pl" | "t")
-                )
+                path.is_file()
+                    && matches!(
+                        path.extension().and_then(|e| e.to_str()),
+                        Some("pm" | "pl" | "t")
+                    )
             }
         })
     }
@@ -761,7 +765,7 @@ fn count_files(root: &Path, ext: &str) -> usize {
                     continue;
                 }
                 n += count_recursive(&path, ext);
-            } else if path.extension().and_then(|e| e.to_str()) == Some(ext) {
+            } else if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some(ext) {
                 n += 1;
             }
         }
@@ -1234,10 +1238,9 @@ fn dir_size_bytes(dir: &Path) -> u64 {
     };
     let mut total: u64 = 0;
     for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            total = total.saturating_add(dir_size_bytes(&path));
-        } else if let Ok(meta) = std::fs::metadata(&path) {
+        if is_walkable_dir(&entry) {
+            total = total.saturating_add(dir_size_bytes(&entry.path()));
+        } else if let Ok(meta) = entry.metadata() {
             total = total.saturating_add(meta.len());
         }
     }
@@ -1441,9 +1444,10 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn perl_walks_do_not_follow_directory_symlink_loops() -> Result<(), String> {
-        // A `src/loop -> .` link made `ripr doctor` descend forever. The walks
-        // must terminate, and a `.pm` reachable only through the link does not
-        // count, matching the Rust/Python/TypeScript walkers.
+        // A `src/loop -> .` link made `ripr doctor` descend forever. The Perl
+        // and cache-size walks must terminate, and a `.pm` reachable only
+        // through a link does not count, matching the Rust/Python/TypeScript
+        // walkers.
         let root = unique_command_test_dir("perl-symlink-loop");
         let src = root.join("src");
         std::fs::create_dir_all(&src).map_err(|err| format!("mkdir: {err}"))?;
@@ -1454,9 +1458,20 @@ mod tests {
         assert!(!perl_project_detected(&root));
         assert_eq!(count_files(&root, "pm"), 0);
 
+        // A directory link whose name ends in `.pm` is not a Perl file.
+        let other = root.join("other");
+        std::fs::create_dir_all(&other).map_err(|err| format!("mkdir: {err}"))?;
+        std::os::unix::fs::symlink("../other", src.join("linked.pm"))
+            .map_err(|err| format!("symlink: {err}"))?;
+        assert!(!perl_project_detected(&root));
+        assert_eq!(count_files(&root, "pm"), 0);
+        // The cache-size walk terminates on the same loops.
+        let size_before = dir_size_bytes(&root);
+
         std::fs::write(src.join("Real.pm"), "1;\n").map_err(|err| format!("write: {err}"))?;
         assert!(perl_project_detected(&root));
         assert_eq!(count_files(&root, "pm"), 1);
+        assert_eq!(dir_size_bytes(&root), size_before + 3);
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }
