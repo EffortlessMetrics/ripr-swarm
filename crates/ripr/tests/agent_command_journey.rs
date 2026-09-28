@@ -851,10 +851,10 @@ fn review_card_and_gate_commands_persist_fresh_receipt_inputs() -> Result<(), St
                 .and_then(Value::as_str)
                 != Some("invalid")
             || refused.get("analysis_outcome") != Some(&Value::Null)
-            || !refused
+            || refused
                 .get("analysis_outcome_error")
                 .and_then(Value::as_str)
-                .is_some_and(|error| !error.is_empty())
+                .is_none_or(|error| error.is_empty())
         {
             return Err(format!(
                 "{label} accepted an outcome written to the wrong sibling: {refused}"
