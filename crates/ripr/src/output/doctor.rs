@@ -847,11 +847,23 @@ fn doctor_tool_check_with_command(
     if let Some(root) = root {
         command.current_dir(root);
     }
-    match run_doctor_tool(command, timeout) {
+    doctor_tool_run_result(tool, timeout, run_doctor_tool(command, timeout))
+}
+
+fn doctor_tool_run_result(
+    tool: &str,
+    timeout: Duration,
+    run: Result<std::process::Output, DoctorToolRunError>,
+) -> DoctorToolCheckResult {
+    match run {
         Ok(output) if output.status.success() => doctor_tool_check_success(tool, &output.stdout),
         Err(DoctorToolRunError::TimedOut) => {
             DoctorToolCheckResult::failure(doctor_timeout_evidence(tool, timeout))
         }
+        Err(DoctorToolRunError::CleanupFailed(cleanup)) => DoctorToolCheckResult::failure(format!(
+            "{}; ripr could not confirm the probe's processes stopped and some may still be running: {cleanup}",
+            doctor_timeout_evidence(tool, timeout)
+        )),
         Err(DoctorToolRunError::Spawn(kind)) => doctor_spawn_failure(tool, kind),
         _ => DoctorToolCheckResult::failure(format!("{tool} not available")),
     }
@@ -933,11 +945,14 @@ fn doctor_timeout_evidence(tool: &str, timeout: Duration) -> String {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum DoctorToolRunError {
     Spawn(std::io::ErrorKind),
     Wait,
     TimedOut,
+    /// The deadline passed and the owner could not confirm the probe tree
+    /// was stopped; part of it may still be running.
+    CleanupFailed(String),
 }
 
 /// Run one doctor probe under the shared owned-subprocess authority
@@ -978,13 +993,17 @@ fn run_doctor_tool(
             Ok(None) if started.elapsed() >= timeout => {
                 // Readers are detached: terminating the tree closes every
                 // write end, so they finish on their own.
-                let _ = child.terminate_tree();
-                return Err(DoctorToolRunError::TimedOut);
+                return Err(match child.terminate_tree() {
+                    Ok(()) => DoctorToolRunError::TimedOut,
+                    Err(cleanup) => DoctorToolRunError::CleanupFailed(cleanup),
+                });
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(10)),
             Err(_) => {
-                let _ = child.terminate_tree();
-                return Err(DoctorToolRunError::Wait);
+                return Err(match child.terminate_tree() {
+                    Ok(()) => DoctorToolRunError::Wait,
+                    Err(cleanup) => DoctorToolRunError::CleanupFailed(cleanup),
+                });
             }
         }
     }
@@ -992,11 +1011,29 @@ fn run_doctor_tool(
 
 type DoctorPipeReader = std::thread::JoinHandle<std::io::Result<Vec<u8>>>;
 
-fn spawn_doctor_pipe_reader(mut pipe: impl std::io::Read + Send + 'static) -> DoctorPipeReader {
-    std::thread::spawn(move || {
-        let mut buffer = Vec::new();
-        pipe.read_to_end(&mut buffer).map(|_| buffer)
-    })
+/// Bytes kept per probe stream. A `--version` line is far shorter; the rest
+/// is drained and dropped so a tool that floods its pipe cannot grow
+/// doctor's memory until the deadline.
+const DOCTOR_PIPE_RETAIN_BYTES: usize = 64 * 1024;
+
+fn spawn_doctor_pipe_reader(pipe: impl std::io::Read + Send + 'static) -> DoctorPipeReader {
+    std::thread::spawn(move || drain_doctor_pipe(pipe, DOCTOR_PIPE_RETAIN_BYTES))
+}
+
+/// Read `pipe` to EOF, keeping at most `retain` bytes.
+fn drain_doctor_pipe(mut pipe: impl std::io::Read, retain: usize) -> std::io::Result<Vec<u8>> {
+    let mut kept = Vec::new();
+    let mut chunk = [0_u8; 8192];
+    loop {
+        let read = match pipe.read(&mut chunk) {
+            Ok(0) => return Ok(kept),
+            Ok(read) => read,
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(err),
+        };
+        let room = retain.saturating_sub(kept.len());
+        kept.extend_from_slice(chunk.get(..read.min(room)).unwrap_or_default());
+    }
 }
 
 fn join_doctor_pipe_reader(
@@ -2358,6 +2395,50 @@ mod tests {
         }
     }
 
+    #[test]
+    fn doctor_pipe_drain_keeps_a_bounded_prefix_and_reads_to_eof() -> Result<(), String> {
+        let flood = vec![b'x'; 300_000];
+        let mut reader = std::io::Cursor::new(flood);
+        let kept = drain_doctor_pipe(&mut reader, 1_000).map_err(|err| err.to_string())?;
+        if kept.len() != 1_000 {
+            return Err(format!(
+                "kept {} bytes, expected the 1000-byte cap",
+                kept.len()
+            ));
+        }
+        if reader.position() != 300_000 {
+            return Err(format!("pipe not drained to EOF: at {}", reader.position()));
+        }
+        let short = drain_doctor_pipe(std::io::Cursor::new(b"pnpm 9.1.0\n".to_vec()), 1_000)
+            .map_err(|err| err.to_string())?;
+        if short != b"pnpm 9.1.0\n" {
+            return Err("a short version line must be kept whole".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn doctor_timeout_with_incomplete_cleanup_names_the_leftover_processes() {
+        let result = doctor_tool_run_result(
+            "pnpm",
+            Duration::from_secs(5),
+            Err(DoctorToolRunError::CleanupFailed(
+                "job termination failed".to_string(),
+            )),
+        );
+        assert_eq!(result.status, DoctorStatus::Fail);
+        assert_eq!(
+            result.evidence,
+            "pnpm timed out after 5s; ripr could not confirm the probe's processes stopped and some may still be running: job termination failed"
+        );
+        let plain = doctor_tool_run_result(
+            "pnpm",
+            Duration::from_secs(5),
+            Err(DoctorToolRunError::TimedOut),
+        );
+        assert_eq!(plain.evidence, "pnpm timed out after 5s");
+    }
+
     /// A doctor probe that times out takes its descendants with it. A
     /// Windows `.cmd` shim runs as `cmd.exe /c node ...`; the probe used to
     /// kill only the direct child and left the grandchild running. The
@@ -2377,7 +2458,8 @@ mod tests {
                 "$p = Start-Process -FilePath powershell -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 120') -NoNewWindow -PassThru; Set-Content -LiteralPath '{marker_text}' -Value $p.Id; Wait-Process -Id $p.Id"
             ),
         ]);
-        let outcome = run_doctor_tool(command, Duration::from_secs(20));
+        // Same setup budget as the process-owner descendant test.
+        let outcome = run_doctor_tool(command, Duration::from_secs(30));
         let written = std::fs::read_to_string(&marker);
         let _ = std::fs::remove_file(&marker);
         if !matches!(outcome, Err(DoctorToolRunError::TimedOut)) {
