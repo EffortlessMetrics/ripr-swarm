@@ -16301,7 +16301,8 @@ index 1111111..2222222 100644\n\
 /// itself remains a manual `check --diff -` spot-check; the pure
 /// terminal/non-terminal decision is pinned in `cli/parse.rs`'s unit test.
 #[test]
-fn check_diff_stdin_from_a_pipe_stays_silent_about_terminal_disclosure() {
+fn check_diff_stdin_from_a_pipe_stays_silent_about_terminal_disclosure()
+-> Result<(), Box<dyn std::error::Error>> {
     use std::io::Write;
 
     let note = "ripr: reading the diff from the attached terminal; paste the diff and press Ctrl+Z then Enter on Windows, or Ctrl+D on Unix, to end input";
@@ -16311,23 +16312,22 @@ fn check_diff_stdin_from_a_pipe_stays_silent_about_terminal_disclosure() {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+        .spawn()?;
     child
         .stdin
         .as_mut()
-        .unwrap()
-        .write_all(UNIFIED_DIFF_FOR_STDIN_PROBE.as_bytes())
-        .unwrap();
+        .ok_or("child stdin was not captured")?
+        .write_all(UNIFIED_DIFF_FOR_STDIN_PROBE.as_bytes())?;
     // Close our write end so the child sees EOF instead of blocking.
     drop(child.stdin.take());
-    let output = child.wait_with_output().unwrap();
+    let output = child.wait_with_output()?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(
         stderr.matches(note).count(),
         0,
         "piped `check --diff -` must stay silent about the attached-terminal stdin disclosure:\n{stderr}"
     );
+    Ok(())
 }
 
 /// A repository with no `origin` remote whose default branch is `master`, on a
