@@ -290,8 +290,20 @@ pub(super) fn match_assertion_target_affinity(
     for token in target_tokens {
         if let Some(indices) = context.tests_by_assertion_token.get(token) {
             // A token asserted across much of the suite (`status`, `path`)
-            // says nothing about which tests read this seam (#4434).
-            if indices.len() > limit {
+            // says nothing about which tests read this seam (#4434). Only
+            // tests in the seam's package count, so another crate's common
+            // token cannot silence the local tests that assert it.
+            if indices.len() > limit
+                && indices
+                    .iter()
+                    .filter(|&&test_index| {
+                        context.tests.get(test_index).is_some_and(|indexed| {
+                            prefix.is_none_or(|prefix| indexed.path_normalized.starts_with(prefix))
+                        })
+                    })
+                    .nth(limit)
+                    .is_some()
+            {
                 continue;
             }
             for &test_index in indices {

@@ -11274,6 +11274,42 @@ fn close_module_keeps_owner_children_parent_and_test_named_siblings() {
 /// tests. Past the crowded limit a distant sibling module and a suite-wide
 /// assertion token relate nothing; below it both rules still relate.
 #[test]
+fn given_assertion_token_common_only_in_another_crate_then_local_test_still_relates()
+-> Result<(), String> {
+    let owner = PathBuf::from("crates/a/src/cancellation.rs");
+    let owner_src =
+        "pub fn cancel_after(elapsed: i32, deadline: i32) -> bool { elapsed >= deadline }\n";
+    let local_src = "#[test] fn local_deadline() { let deadline = 1; assert_eq!(deadline, 1); }\n";
+    let foreign_src =
+        "#[test] fn foreign_deadline() { let deadline = 2; assert_eq!(deadline, 2); }\n";
+    let mut files: Vec<(PathBuf, &str)> = vec![
+        (owner.clone(), owner_src),
+        (PathBuf::from("crates/a/tests/timing.rs"), local_src),
+    ];
+    for k in 0..70 {
+        files.push((
+            PathBuf::from(format!("crates/b/tests/foreign_{k}.rs")),
+            foreign_src,
+        ));
+    }
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&owner), &index);
+    let predicate = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "predicate seam present".to_string())?;
+    let related = evidence_for_seam(predicate, &index).related_tests;
+    assert!(
+        related.iter().any(|g| {
+            g.file.to_string_lossy().replace('\\', "/") == "crates/a/tests/timing.rs"
+                && g.relation_reason == RelationReason::AssertionTargetAffinity
+        }),
+        "{related:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn given_crowded_parent_module_and_common_assertion_token_then_distant_tests_do_not_relate()
 -> Result<(), String> {
     let owner = PathBuf::from("src/analysis/cancellation.rs");

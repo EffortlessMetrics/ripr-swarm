@@ -35,30 +35,29 @@ are scoped or reviewed.
 - Rust related tests are the ones that name or reach the changed code, not
   every test that shares a word with it. A test name now relates only when it
   spells a probe token as whole words (`new` no longer matches `renews_`), a
-  test file only when its own stem spells the source stem as a word or it is
-  a test file inside a directory named for that stem, and neither a
-  test-name word nor an assertion-observed token counts when more than 16
-  tests and more than 1% of the suite use it. Tests that match only the old
-  substring rules still relate when nothing else does, so the finding keeps
-  weak reach instead of reading `no_static_path`. On a 14-file diff of ripr
-  itself (246 findings), the longest related-test list on one finding fell
-  from 13,007 rows to 1,750, and the rows across all findings from 246,958
-  to 50,863. No finding gained exposure. Six lost `exposed` (three to
-  `weakly_exposed`, three to `infection_unknown`) and eight others moved to
-  `infection_unknown`. For example, a predicate in `reach.rs` read `exposed`
-  from 1,608 related tests; it now relates 129 and reads
+  test file only when its own stem spells the source stem as a word or it is a
+  test file inside a directory named for that stem, and neither a test-name
+  word nor an assertion-observed token counts when more than 16 tests and more
+  than 1% of the tests in the changed code's crate use it. Tests that match
+  only the old substring rules still relate when nothing else does, so the
+  finding keeps weak reach instead of reading `no_static_path`. On a 14-file
+  diff of ripr itself (246 findings), the longest related-test list on one
+  finding fell from 13,007 rows to 1,750, and the rows across all findings
+  from 246,958 to 50,863. No finding gained exposure. Six lost `exposed`
+  (three to `weakly_exposed`, three to `infection_unknown`) and eight others
+  moved to `infection_unknown`. For example, a predicate in `reach.rs` read
+  `exposed` from 1,608 related tests; it now relates 129 and reads
   `infection_unknown`, because none of those supplies an input at its
-  boundary.
-  The seam evidence behind `review-comments`, `agent` and repo exposure
-  uses a limit of 1% of the suite (at least 64 tests): past it, a parent
-  module relates only itself, the owner's own module and test-named
-  siblings; an asserted token that common relates nothing; and when several
-  target tokens together pass the limit, the tests asserting the most of
-  them are kept. One `init.rs` seam had related 3,990 tests. On
-  `review-comments` for one ripr commit, seam evidence fell from 735 s to
-  165 s with identical comments. That run still exceeds the default 120 s
-  bound, because it gathers evidence for all 15,650 seams in the changed
-  files and their callers.
+  boundary. The seam evidence behind `review-comments`, `agent` and repo
+  exposure uses a limit of 1% of the suite (at least 64 tests): past it, a
+  parent module relates only itself, the owner's own module and test-named
+  siblings; an asserted token that common within the seam's crate relates
+  nothing; and when several target tokens together pass the limit, the tests
+  asserting the most of them are kept. One `init.rs` seam had related 3,990
+  tests. On `review-comments` for one ripr commit, seam evidence fell from
+  735 s to 165 s with identical comments. That run still exceeds the default 120 s
+  bound, because it gathers evidence for all 15,650 seams in the changed files
+  and their callers.
 - Rust: a changed function that no test calls now reads `no_static_path`.
   Before, a same-file test of a sibling function made it `weakly_exposed`
   with "strong oracle found", and its unknown-shape lines said "escalate to

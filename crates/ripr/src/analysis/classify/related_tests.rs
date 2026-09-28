@@ -620,6 +620,11 @@ fn find_related_tests_with_candidates<'a>(
             &computed_common_tokens
         }
     };
+    let common_tokens = common_tokens.for_package(
+        owner_package_prefix
+            .as_deref()
+            .or(struct_package_prefix.as_deref()),
+    );
     let common_words = &common_tokens.name_words;
 
     // Probe tokens that are long enough, and specific enough, to assert
@@ -1404,43 +1409,79 @@ fn test_name_names_probe_token(
     format!("_{test_name}_").contains(&format!("_{words}_"))
 }
 
-/// Tokens so widespread across the suite that sharing one ties no test to a
-/// probe: test-name words and assertion-observed tokens that more than
-/// `max(16, tests / 100)` tests use. The floor keeps small workspaces' domain
-/// words (`vat`, `loyalty`) usable.
+/// Tokens so widespread across a package's tests that sharing one ties no
+/// test to a probe: test-name words and assertion-observed tokens that more
+/// than `max(16, tests / 100)` of that package's tests use. Counted per
+/// package (`package_prefix` of the test file) so another crate's common
+/// token cannot silence the only local test that asserts it. The floor
+/// keeps small workspaces' domain words (`vat`, `loyalty`) usable.
 #[derive(Clone, Debug, Default)]
 struct CommonTestTokens {
+    by_package: BTreeMap<Option<String>, PackageCommonTokens>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct PackageCommonTokens {
     name_words: BTreeSet<String>,
     assertion_tokens: BTreeSet<String>,
 }
 
+static NO_COMMON_TOKENS: PackageCommonTokens = PackageCommonTokens {
+    name_words: BTreeSet::new(),
+    assertion_tokens: BTreeSet::new(),
+};
+
 impl CommonTestTokens {
     fn new(tests: &[TestSummary]) -> Self {
-        let name_words = common_across_tests(tests, |test| {
-            test.name
-                .to_ascii_lowercase()
-                .split('_')
-                .filter(|word| !word.is_empty())
-                .map(str::to_string)
-                .collect()
-        });
-        let assertion_tokens = common_across_tests(tests, |test| {
-            test.assertions
-                .iter()
-                .flat_map(|assertion| assertion.observed_tokens.iter().cloned())
-                .collect()
-        });
-        Self {
-            name_words,
-            assertion_tokens,
+        let mut packages: BTreeMap<Option<String>, Vec<&TestSummary>> = BTreeMap::new();
+        for test in tests {
+            packages
+                .entry(package_prefix(&test.file))
+                .or_default()
+                .push(test);
         }
+        let by_package = packages
+            .into_iter()
+            .map(|(package, tests)| {
+                let name_words = common_across_tests(&tests, |test| {
+                    test.name
+                        .to_ascii_lowercase()
+                        .split('_')
+                        .filter(|word| !word.is_empty())
+                        .map(str::to_string)
+                        .collect()
+                });
+                let assertion_tokens = common_across_tests(&tests, |test| {
+                    test.assertions
+                        .iter()
+                        .flat_map(|assertion| assertion.observed_tokens.iter().cloned())
+                        .collect()
+                });
+                (
+                    package,
+                    PackageCommonTokens {
+                        name_words,
+                        assertion_tokens,
+                    },
+                )
+            })
+            .collect();
+        Self { by_package }
+    }
+
+    /// Common tokens among the tests of `package` (the owner's
+    /// `package_prefix`); none when that package has no tests.
+    fn for_package(&self, package: Option<&str>) -> &PackageCommonTokens {
+        self.by_package
+            .get(&package.map(str::to_string))
+            .unwrap_or(&NO_COMMON_TOKENS)
     }
 }
 
 /// Tokens that more than `max(16, tests / 100)` tests carry, counting each
 /// test once per token.
 fn common_across_tests(
-    tests: &[TestSummary],
+    tests: &[&TestSummary],
     tokens_of: impl Fn(&TestSummary) -> BTreeSet<String>,
 ) -> BTreeSet<String> {
     let threshold = (tests.len() / 100).max(16);
@@ -3398,7 +3439,10 @@ fn crate_c_score_test() {
             .map(|index| test("tests/t.rs", &format!("changed_changed_case_{index}"), ""))
             .chain(std::iter::once(test("tests/t.rs", "vat_boundary", "")))
             .collect::<Vec<_>>();
-        let common = super::CommonTestTokens::new(&tests).name_words;
+        let common = super::CommonTestTokens::new(&tests)
+            .for_package(None)
+            .name_words
+            .clone();
         assert!(
             common.contains("changed"),
             "17 tests exceed the floor of 16"
@@ -3408,6 +3452,7 @@ fn crate_c_score_test() {
         let sixteen = &tests[..16];
         assert!(
             !super::CommonTestTokens::new(sixteen)
+                .for_package(None)
                 .name_words
                 .contains("changed"),
             "a repeated word inside one name counts once, and 16 tests do not exceed the floor"
@@ -4396,6 +4441,50 @@ try_parse_summary(raw).map_err(Into::into)"
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "repo_lane_deserializes_fields_correctly");
         assert_eq!(related[0].1, RelationReason::AssertionTargetAffinity);
+    }
+
+    /// Another crate's common assertion token does not silence the only
+    /// local test that asserts it: commonness is counted per package.
+    #[test]
+    fn given_token_common_only_in_another_crate_then_local_assertion_still_relates() {
+        let assertion = |text: &str| {
+            vec![oracle_fact(
+                text,
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )]
+        };
+        let mut tests = (0..17)
+            .map(|index| {
+                test_with_assertions(
+                    "crates/b/tests/reports.rs",
+                    &format!("report_{index}"),
+                    "",
+                    assertion("assert_eq!(report.severity, Level::High);"),
+                )
+            })
+            .collect::<Vec<_>>();
+        tests.push(test_with_assertions(
+            "crates/a/tests/config.rs",
+            "loads_the_configured_level",
+            "",
+            assertion("assert_eq!(cfg.severity, Level::Low);"),
+        ));
+        let index = RustIndex {
+            tests,
+            ..RustIndex::default()
+        };
+        let probe = struct_field_probe("crates/a/src/settings.rs", "severity");
+
+        let related = find_related_tests(&probe, None, &index, true, None, None);
+
+        assert_eq!(
+            related
+                .iter()
+                .map(|(test, _)| test.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["loads_the_configured_level"]
+        );
     }
 
     /// The #1052 signal ties a field probe to a test through a token its
