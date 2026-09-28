@@ -73,10 +73,11 @@ pub(crate) const RECEIPT_STATUS_STEP: &str = "the command records `--status not_
 /// `None` for any other command (a `ripr outcome` receipt, or one that already
 /// carries an outcome).
 pub(crate) fn receipt_status_step(receipt_command: &str) -> Option<&'static str> {
-    let words: Vec<&str> = receipt_command.split_whitespace().collect();
-    (receipt_command.starts_with("ripr receipt write ")
-        && words.windows(2).any(|pair| pair == ["--status", "not_run"]))
-    .then_some(RECEIPT_STATUS_STEP)
+    let words = ripr_command_words(receipt_command)?;
+    let is_receipt_write = words.get(1).map(|(word, _)| word.as_str()) == Some("receipt")
+        && words.get(2).map(|(word, _)| word.as_str()) == Some("write");
+    (is_receipt_write && ripr_flag_value(&words, "--status") == Some("not_run"))
+        .then_some(RECEIPT_STATUS_STEP)
 }
 
 /// The one selector for the low-level verify and receipt labels (#3906).
@@ -1986,7 +1987,11 @@ fn why_for_gap(kind: &str, language: Option<&str>) -> String {
 /// `None` for a command with no `--out`, an empty value, a shell operator
 /// before it, or unbalanced quoting, so the caller falls back rather than
 /// naming a guessed path.
-fn receipt_command_out_path(command: &str) -> Option<String> {
+/// Shell words of a single `ripr ...` command, each with whether any part of
+/// it was quoted. `None` for a command this reader cannot take literally:
+/// unbalanced quotes, a trailing escape, another program, or an unquoted
+/// shell operator (a redirect or a chained command writes elsewhere).
+fn ripr_command_words(command: &str) -> Option<Vec<(String, bool)>> {
     let mut words: Vec<(String, bool)> = Vec::new();
     let mut current = String::new();
     let mut quoted_word = false;
@@ -2029,20 +2034,49 @@ fn receipt_command_out_path(command: &str) -> Option<String> {
     if words.first().map(|(word, _)| word.as_str()) != Some("ripr") {
         return None;
     }
-    let mut out = None;
-    for (index, (word, quoted)) in words.iter().enumerate() {
-        if !quoted && matches!(word.as_str(), ">" | ">>" | "|" | "&&" | "||" | ";") {
-            return None;
-        }
-        if !quoted && word == "--out" {
-            out = words.get(index + 1).map(|(value, _)| value.clone());
-        }
-    }
-    out.filter(|path| !path.trim().is_empty())
+    let operator = words.iter().any(|(word, quoted)| {
+        !quoted && matches!(word.as_str(), ">" | ">>" | "|" | "&&" | "||" | ";")
+    });
+    (!operator).then_some(words)
 }
 
-/// One source of truth for where the receipt lands: the `--out` the printed
-/// ledger receipt command writes, else a recorded path, else `None` so the
+/// Value of the last unquoted `flag` in a ripr command's words.
+fn ripr_flag_value<'a>(words: &'a [(String, bool)], flag: &str) -> Option<&'a str> {
+    words
+        .iter()
+        .enumerate()
+        .filter(|(_, (word, quoted))| !quoted && word == flag)
+        .filter_map(|(index, _)| words.get(index + 1).map(|(value, _)| value.as_str()))
+        .last()
+}
+
+/// The file a printed `ripr receipt write` command writes: its `--out`, or
+/// the receipt writer's own default for its `--gap` when it names no
+/// `--out`. `None` when the command cannot be read literally.
+fn receipt_command_out_path(command: &str) -> Option<String> {
+    let words = ripr_command_words(command)?;
+    if words
+        .iter()
+        .any(|(word, quoted)| !quoted && word == "--out")
+    {
+        // A flag with no usable value fails in the CLI; name no path for it.
+        return ripr_flag_value(&words, "--out")
+            .filter(|out| !out.trim().is_empty())
+            .map(str::to_string);
+    }
+    let is_receipt_write = words.get(1).map(|(word, _)| word.as_str()) == Some("receipt")
+        && words.get(2).map(|(word, _)| word.as_str()) == Some("write");
+    let gap = ripr_flag_value(&words, "--gap").filter(|gap| !gap.trim().is_empty())?;
+    is_receipt_write.then(|| {
+        crate::app::receipt::receipt_default_path(gap)
+            .to_string_lossy()
+            .replace('\\', "/")
+    })
+}
+
+/// One source of truth for where the receipt lands: the file the printed
+/// ledger receipt command writes (its `--out`, or the receipt writer's
+/// default for its `--gap`), else a recorded path, else `None` so the
 /// caller uses the first-pr default that its synthesized command then
 /// writes. A path chosen independently of the printed command named a file
 /// that command never writes (Python preview: `gap-pr-...targeted-test-outcome.json`
@@ -2801,6 +2835,9 @@ mod tests {
             "ripr outcome --before b.json --after a.json --format json --out o.json",
             "ripr receipt write --gap g --verify-command x --status passed",
             "ripr receipt write --gap 'x --status not_run' --verify-command x --status failed",
+            // Quoted text is a value, not the flag (Devin review on #4485).
+            "ripr receipt write --gap 'x --status not_run ' --verify-command x --status failed",
+            "ripr receipt write --gap \"a --status not_run b\" --status passed",
         ] {
             assert_eq!(receipt_status_step(other), None, "{other}");
         }
@@ -5083,13 +5120,37 @@ mod tests {
             .as_deref(),
             Some("target/my receipts/o'k.json")
         );
-        // A quoted `--out` is a value, not the flag.
+        // A quoted `--out` is the gap's value, not the flag: the command
+        // writes the default for that gap id.
         assert_eq!(
             receipt_command_out_path("ripr receipt write --gap '--out' --verify-command x"),
-            None
+            Some(
+                crate::app::receipt::receipt_default_path("--out")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            )
+        );
+        // Without `--out`, the command writes the receipt writer's default
+        // for its gap (Devin review on #4485).
+        assert_eq!(
+            receipt_command_out_path(
+                "ripr receipt write --gap gap:test:aabbccdd --verify-command x --status not_run"
+            )
+            .as_deref(),
+            Some(
+                crate::app::receipt::receipt_default_path("gap:test:aabbccdd")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .as_str()
+            )
+        );
+        assert!(
+            receipt_command_out_path("ripr receipt write --gap gap:test:aabbccdd")
+                .is_some_and(|path| path.starts_with("target/ripr/receipts/"))
         );
         for command in [
-            "ripr receipt write --gap g --verify-command x --status not_run",
+            "ripr receipt write --verify-command x --status not_run",
+            "ripr outcome --gap g --format json",
             "ripr receipt write --gap g --out",
             "ripr receipt write --gap g --out ''",
             "ripr outcome --json > target/o.json --out other.json",
@@ -5110,9 +5171,14 @@ mod tests {
             "the path shown must be the file the shown command writes"
         );
         assert_eq!(
-            selected_receipt_path(&record, Some("ripr receipt write --gap g")).as_deref(),
+            selected_receipt_path(&record, Some("ripr receipt write --gap g")),
+            receipt_command_out_path("ripr receipt write --gap g"),
+            "a command without --out writes the writer's default for its gap, not the recorded path"
+        );
+        assert_eq!(
+            selected_receipt_path(&record, Some("ripr outcome --json")).as_deref(),
             Some("target/ripr/receipts/recorded.json"),
-            "a command without --out falls back to the recorded path"
+            "a command that names no receipt file falls back to the recorded path"
         );
         let nested = json!({"receipt": {"path": "target/ripr/receipts/nested.json"}});
         assert_eq!(

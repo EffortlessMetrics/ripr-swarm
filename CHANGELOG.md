@@ -243,9 +243,9 @@ are scoped or reviewed.
   Python or TypeScript preview gap, `Receipt path:` named a
   `gap-pr-...targeted-test-outcome.json` file while the printed
   `ripr receipt write` command wrote `--out gap-python-....json`; the path now
-  comes from the command's `--out` (else the ledger's recorded path) and
-  falls back to the first-pr default only when first-pr builds the command
-  itself.
+  is the file the printed command writes (its `--out`, or the receipt
+  writer's default for its `--gap`), else the ledger's recorded path, and the
+  first-pr default only when first-pr builds the command itself.
 
 - `ripr first-pr` no longer leaves `--status not_run` unexplained in the
   receipt it presents as the step after verify. A `Receipt status` line now
