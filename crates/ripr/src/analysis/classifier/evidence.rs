@@ -1,8 +1,8 @@
 use crate::analysis::classify::{
     ProbeContext, PropagationWitnessV1, activation_evidence, classify, confidence_score,
-    current_path_witness, file_imports_foreign_callee_name, has_non_test_caller,
-    infection_evidence, local_flow_sinks, package_prefix, propagation_evidence_with_witness,
-    reach_evidence, reveal_evidence_with_expression,
+    current_path_witness, file_imports_foreign_callee_name, infection_evidence, local_flow_sinks,
+    owner_may_be_reached_unseen, package_prefix, propagation_evidence_with_witness, reach_evidence,
+    reveal_evidence_with_expression,
 };
 use crate::domain::*;
 
@@ -30,14 +30,11 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
 impl ClassifiedProbeEvidence {
     pub(in crate::analysis) fn gather(context: &ProbeContext<'_>, reveal_expression: &str) -> Self {
         let test_summaries = context.related_test_summaries();
-        let owner_has_production_caller = context
-            .owner_fn
-            .is_some_and(|owner| has_non_test_caller(owner, context.index));
-        let reach = reach_evidence(
-            &context.related_tests,
-            context.owner_fn,
-            owner_has_production_caller,
-        );
+        let reach = reach_evidence(&context.related_tests, context.owner_fn, || {
+            context
+                .owner_fn
+                .is_some_and(|owner| owner_may_be_reached_unseen(owner, context.index))
+        });
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let propagation_witness = current_path_witness(context.probe, &flow_sinks)
             .map(PropagationWitnessDiagnostic::from_witness);

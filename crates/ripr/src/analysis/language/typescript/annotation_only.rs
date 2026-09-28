@@ -359,11 +359,23 @@ fn is_empty_block(body: &str) -> bool {
 /// initializers) and constructors (parameter properties and decorator
 /// metadata) fail closed, as does any line [`is_signature_opening_line`]
 /// rejects.
+/// Whether `text` holds `name` as a whole JS identifier.
+fn mentions_identifier(text: &str, name: &str) -> bool {
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$';
+    !name.is_empty()
+        && text.match_indices(name).any(|(start, _)| {
+            let end = start + name.len();
+            (start == 0 || !is_ident(text.as_bytes()[start - 1]))
+                && !text.as_bytes().get(end).is_some_and(|byte| is_ident(*byte))
+        })
+}
+
 pub(crate) fn is_new_owner_opening_line(
     file: &Path,
     line: usize,
     line_text: &str,
     owners: &[TypeScriptOwner],
+    removed_texts: &[&str],
     has_added_probe_line: impl Fn(usize) -> bool,
 ) -> bool {
     let changed_file = normalized_path(file);
@@ -374,6 +386,12 @@ pub(crate) fn is_new_owner_opening_line(
             && !matches!(owner.owner_kind, OwnerKind::ModuleFunction)
             && owner.method_kind != TypeScriptMethodKind::Constructor
             && (line + 1..=owner.end_line).any(&has_added_probe_line)
+            // Git can pair a changed signature's removed line with an
+            // unrelated inserted line; an old line naming the owner means it
+            // existed before, so its signature change keeps its probe.
+            && !removed_texts
+                .iter()
+                .any(|removed| mentions_identifier(removed, &owner.name))
     });
     opens_owner_with_added_body && is_signature_opening_line(file, line_text)
 }

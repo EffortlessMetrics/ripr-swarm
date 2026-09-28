@@ -14,9 +14,10 @@ are scoped or reviewed.
 - Rust: a changed function that no test calls now reads `no_static_path`.
   Before, a same-file test of a sibling function made it `weakly_exposed`
   with "strong oracle found", and its unknown-shape lines said "escalate to
-  real mutation testing". A function with a production caller, or a nearby
-  test that invokes a non-assertion macro, keeps weak reach because a test may
-  reach it unseen.
+  real mutation testing". This applies only when nothing in the workspace
+  names the function outside its own `fn` line: a caller, function pointer,
+  `use` alias, doctest or macro block that names it, a trait-impl method, or a
+  nearby test that invokes a non-assertion macro keeps reach undecided.
 - Rust: a struct-field initializer is no longer `exposed` when no assertion
   reads that field. On anyhow, a `Box` token in an unrelated downcast
   assertion credited `ptr: NonNull::from(Box::leak(ptr))` with confidence 1.00

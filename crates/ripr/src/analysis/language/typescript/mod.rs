@@ -355,6 +355,11 @@ impl LanguageAdapter for TypeScriptAdapter {
                         .iter()
                         .any(|(start, end)| (*start..=*end).contains(&line))
             };
+            let removed_texts: Vec<&str> = changed
+                .removed_lines
+                .iter()
+                .map(|removed| removed.text.as_str())
+                .collect();
             for added in &changed.added_lines {
                 if !is_probe_candidate(added.line, &added.text) {
                     continue;
@@ -375,6 +380,7 @@ impl LanguageAdapter for TypeScriptAdapter {
                         added.line,
                         &added.text,
                         &all_owners,
+                        &removed_texts,
                         |line| {
                             changed.added_lines.iter().any(|other| {
                                 other.line == line && is_probe_candidate(other.line, &other.text)

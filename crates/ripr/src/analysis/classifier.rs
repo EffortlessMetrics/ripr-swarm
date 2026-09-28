@@ -1840,15 +1840,10 @@ mod tests {
         Ok(())
     }
 
-    fn uncalled_owner_index(caller_of_owner: bool) -> RustIndex {
-        let mut neighbour = function("src/lib.rs", "tax_bps");
-        if caller_of_owner {
-            neighbour.calls.push(CallFact {
-                line: 2,
-                name: "fragile_fee".to_string(),
-                text: "fragile_fee(input)".to_string(),
-            });
-        }
+    /// `fragile_fee` has no caller; `eu_tax` tests its same-file sibling
+    /// `tax_bps`. `extra_source` is appended to `src/lib.rs` so a case can
+    /// add something that names the owner without an indexed call.
+    fn uncalled_owner_index(extra_source: &str) -> RustIndex {
         let mut eu_tax = test(
             "src/lib.rs",
             "eu_tax",
@@ -1856,9 +1851,23 @@ mod tests {
             "assert_eq!(tax_bps(1), 2000);",
         );
         eu_tax.calls[0].name = "tax_bps".to_string();
+        let source = format!(
+            "pub fn fragile_fee(weight_grams: u32) -> u32 {{\n    if weight_grams > 2_000 {{ 1 }} else {{ 0 }}\n}}\npub fn tax_bps(region: u32) -> u32 {{ 2000 }}\n{extra_source}"
+        );
         RustIndex {
-            functions: vec![function("src/lib.rs", "fragile_fee"), neighbour],
+            functions: vec![
+                function("src/lib.rs", "fragile_fee"),
+                function("src/lib.rs", "tax_bps"),
+            ],
             tests: vec![eu_tax],
+            files: BTreeMap::from([(
+                PathBuf::from("src/lib.rs"),
+                FileFacts {
+                    path: PathBuf::from("src/lib.rs"),
+                    source,
+                    ..FileFacts::default()
+                },
+            )]),
             ..RustIndex::default()
         }
     }
@@ -1882,7 +1891,7 @@ mod tests {
     // "strong oracle found", through a same-file test of a sibling function.
     #[test]
     fn given_uncalled_owner_with_same_file_sibling_test_when_classified_then_no_static_path() {
-        let index = uncalled_owner_index(false);
+        let index = uncalled_owner_index("");
         let probe = fragile_fee_probe(ProbeFamily::Predicate, "fragile_fee");
 
         let finding = classify_probe(&probe, &index, true, None);
@@ -1904,21 +1913,68 @@ mod tests {
 
     // A production caller may carry a test's reach through a chain the
     // relation stage did not resolve, so proximity stays weak reach there.
+    // Review of #4428: tests reach a function through callers, function
+    // pointers, aliases, doctests and macro blocks without any indexed test
+    // body calling it. Anything that names the owner keeps reach undecided.
     #[test]
-    fn given_proximity_only_owner_with_production_caller_when_classified_then_not_no_static_path() {
-        let index = uncalled_owner_index(true);
-        let probe = fragile_fee_probe(ProbeFamily::Predicate, "fragile_fee");
+    fn given_proximity_only_owner_named_elsewhere_when_classified_then_not_no_static_path() {
+        for (shape, extra_source) in [
+            (
+                "production caller",
+                "pub fn quote(w: u32) -> u32 { fragile_fee(w) }\n",
+            ),
+            (
+                "test helper",
+                "#[cfg(test)]\nfn run_case(w: u32) -> u32 { fragile_fee(w) }\n",
+            ),
+            (
+                "function pointer",
+                "pub fn all(v: &[u32]) -> Vec<u32> { v.iter().copied().map(fragile_fee).collect() }\n",
+            ),
+            ("use alias", "pub use crate::fragile_fee as fee;\n"),
+            (
+                "doctest",
+                "/// assert_eq!(demo::fragile_fee(1), 0);\npub struct Demo;\n",
+            ),
+            (
+                "proptest block",
+                "proptest! {\n    fn p(w in 0u32..) { prop_assert!(fragile_fee(w) < 2); }\n}\n",
+            ),
+        ] {
+            let index = uncalled_owner_index(extra_source);
+            let probe = fragile_fee_probe(ProbeFamily::Predicate, "fragile_fee");
+
+            let finding = classify_probe(&probe, &index, true, None);
+
+            assert!(
+                finding
+                    .related_tests
+                    .iter()
+                    .any(|test| test.name == "eu_tax"),
+                "{shape}: premise: the sibling test is listed: {:?}",
+                finding.related_tests
+            );
+            assert_eq!(finding.ripr.reach.state, StageState::Weak, "{shape}");
+            assert_ne!(finding.class, ExposureClass::NoStaticPath, "{shape}");
+        }
+    }
+
+    // Review of #4428: `format!`, operators and `Deref` run trait-impl
+    // methods without spelling their names.
+    #[test]
+    fn given_proximity_only_trait_impl_owner_when_classified_then_not_no_static_path() {
+        let mut index = uncalled_owner_index("");
+        let mut owner = function("src/lib.rs", "fmt");
+        owner.id = SymbolId("src/lib.rs::impl Display for Money::fmt".to_string());
+        // Replace `fragile_fee`: nothing in the source names `fmt`.
+        index.functions[0] = owner;
+        let mut probe = fragile_fee_probe(ProbeFamily::Predicate, "fmt");
+        probe.owner = Some(SymbolId(
+            "src/lib.rs::impl Display for Money::fmt".to_string(),
+        ));
 
         let finding = classify_probe(&probe, &index, true, None);
 
-        assert!(
-            finding
-                .related_tests
-                .iter()
-                .any(|test| test.name == "eu_tax"),
-            "premise: the sibling test is listed: {:?}",
-            finding.related_tests
-        );
         assert_eq!(finding.ripr.reach.state, StageState::Weak);
         assert_ne!(finding.class, ExposureClass::NoStaticPath);
     }

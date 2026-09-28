@@ -166,3 +166,17 @@ fn new_def_header_shapes() {
         );
     }
 }
+
+/// Review of #4428: a `def` made `async` while a helper is inserted above it.
+/// Git can pair the removed old header with the inserted helper line, so the
+/// header has no in-place removed partner; the old `def` of the same name
+/// still marks it as a changed signature that keeps its probe.
+#[test]
+fn changed_header_paired_elsewhere_by_git_keeps_probe() -> Result<(), String> {
+    let source = PRICING_PY.replacen("def loyalty_price", "async def loyalty_price", 1);
+    let mut removed = line(7, "def loyalty_price(amount: int, years: int) -> int:");
+    removed.new_side_line = 7;
+    let findings = analyze("paired-elsewhere", &source, &[1, 2, 3, 4], vec![removed])?;
+    assert_eq!(classes_on(&findings, 1).len(), 1, "{findings:?}");
+    Ok(())
+}

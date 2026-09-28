@@ -1,10 +1,10 @@
-use super::super::rust_index::{FunctionSummary, TestSummary};
+use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use crate::domain::{Confidence, RelationReason, StageEvidence, StageState};
 
 pub(in crate::analysis) fn reach_evidence(
     related_tests: &[(&TestSummary, RelationReason)],
     owner_fn: Option<&FunctionSummary>,
-    owner_has_production_caller: bool,
+    owner_may_be_reached_unseen: impl FnOnce() -> bool,
 ) -> StageEvidence {
     if related_tests.is_empty() {
         return StageEvidence::new(
@@ -37,10 +37,10 @@ pub(in crate::analysis) fn reach_evidence(
     // Treating it as reach let an uncalled function inherit a neighbour's
     // strong assertion and report `exposed`, and treating it as weak reach
     // reported `weakly_exposed` for a function no test calls. Reach is `No`
-    // only when nothing else could be calling the owner unseen: it has no
-    // production caller (a test may reach it through an unresolved caller
-    // chain) and no proximity test invokes a non-assertion macro (whose
-    // expansion may call it).
+    // only when nothing could be calling the owner unseen: no source text
+    // outside its own definition names it (see
+    // `owner_may_be_reached_unseen`) and no proximity test invokes a
+    // non-assertion macro (whose expansion may call it).
     let proximity_only = !owner_anchored.is_empty()
         && related_tests
             .iter()
@@ -53,10 +53,10 @@ pub(in crate::analysis) fn reach_evidence(
             .map(|t| t.name.as_str())
             .collect::<Vec<_>>()
             .join(", ");
-        if owner_has_production_caller
-            || owner_anchored
-                .iter()
-                .any(|test| invokes_opaque_macro(&test.body))
+        if owner_anchored
+            .iter()
+            .any(|test| invokes_opaque_macro(&test.body))
+            || owner_may_be_reached_unseen()
         {
             return StageEvidence::new(
                 StageState::Weak,
@@ -94,6 +94,66 @@ pub(in crate::analysis) fn reach_evidence(
         format!("Related tests appear to reach {target}: {names}")
     };
     StageEvidence::new(StageState::Yes, Confidence::Medium, summary)
+}
+
+/// Whether a test could run `owner` without any indexed test body calling it
+/// by name.
+///
+/// A trait-impl method runs through operators, formatting macros, `Deref`
+/// and generic dispatch that never spell its name (`Money(5).to_string()`
+/// calls `Display::fmt`). Any other function is reachable only through
+/// something that names it: a caller, a function pointer (`.map(owner)`), a
+/// `use .. as` alias, a doctest, or a macro block such as `proptest!`. So
+/// when no workspace source names the owner outside its own `fn` line,
+/// nothing can reach it; when anything does, reach stays undecided.
+pub(in crate::analysis) fn owner_may_be_reached_unseen(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    is_trait_impl_method(owner)
+        || index
+            .files
+            .values()
+            .any(|file| names_identifier_outside_fn_definition(&file.source, &owner.name))
+}
+
+/// Parser-backed owner ids carry their impl segment
+/// (`src/lib.rs::impl Display for Money::fmt`).
+fn is_trait_impl_method(owner: &FunctionSummary) -> bool {
+    owner
+        .id
+        .0
+        .split("::impl ")
+        .skip(1)
+        .any(|segment| segment.contains(" for "))
+}
+
+/// Whether `source` contains `name` as a whole identifier anywhere other than
+/// directly after the `fn` keyword. Comments and strings count: a doctest or
+/// a stringly dispatched call may be what reaches the owner.
+fn names_identifier_outside_fn_definition(source: &str, name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    source.match_indices(name).any(|(start, _)| {
+        let bytes = source.as_bytes();
+        let end = start + name.len();
+        if start > 0 && is_ident(bytes[start - 1]) {
+            return false;
+        }
+        if bytes.get(end).is_some_and(|byte| is_ident(*byte)) {
+            return false;
+        }
+        let before = source[..start]
+            .strip_suffix("r#")
+            .unwrap_or(&source[..start]);
+        let is_fn_definition = before
+            .trim_end()
+            .strip_suffix("fn")
+            .is_some_and(|prefix| !prefix.bytes().last().is_some_and(is_ident));
+        !is_fn_definition
+    })
 }
 
 /// Macros whose expansion never calls a user function by itself; any other
@@ -169,7 +229,7 @@ mod tests {
 
     #[test]
     fn given_no_related_tests_when_building_reach_evidence_then_stage_is_no() {
-        let evidence = reach_evidence(&[], None, false);
+        let evidence = reach_evidence(&[], None, || false);
 
         assert_eq!(evidence.state, StageState::No);
         assert_eq!(evidence.confidence, Confidence::Medium);
@@ -193,7 +253,7 @@ mod tests {
             (&fourth, RelationReason::DirectOwnerCall),
         ];
 
-        let evidence = reach_evidence(&related, Some(&owner), false);
+        let evidence = reach_evidence(&related, Some(&owner), || false);
 
         assert_eq!(evidence.state, StageState::Yes);
         assert_eq!(evidence.confidence, Confidence::Medium);
@@ -215,7 +275,7 @@ mod tests {
             (&module_peer, RelationReason::SameModule),
         ];
 
-        let evidence = reach_evidence(&related, Some(&owner), false);
+        let evidence = reach_evidence(&related, Some(&owner), || false);
 
         assert_eq!(evidence.state, StageState::No);
         assert_eq!(evidence.confidence, Confidence::Medium);
@@ -233,23 +293,64 @@ mod tests {
         macro_caller.body = "assert_eq!(macro_tax_case!(100), 120);".to_string();
         let related = vec![(&macro_caller, RelationReason::WeakTokenSubstring)];
 
-        let evidence = reach_evidence(&related, Some(&owner), false);
+        let evidence = reach_evidence(&related, Some(&owner), || false);
 
         assert_eq!(evidence.state, StageState::Weak);
         assert_eq!(evidence.confidence, Confidence::Low);
     }
 
     #[test]
-    fn given_only_proximity_relations_for_an_owner_with_a_production_caller_then_reach_stays_weak()
-    {
+    fn given_only_proximity_relations_for_an_owner_named_elsewhere_then_reach_stays_weak() {
         let owner = function("check_score_invariants");
         let neighbour = test("validate_score_accepts_in_range_values");
         let related = vec![(&neighbour, RelationReason::WeakTokenSubstring)];
 
-        let evidence = reach_evidence(&related, Some(&owner), true);
+        let evidence = reach_evidence(&related, Some(&owner), || true);
 
         assert_eq!(evidence.state, StageState::Weak);
         assert_eq!(evidence.confidence, Confidence::Low);
+    }
+
+    #[test]
+    fn owner_name_counts_as_referenced_anywhere_but_its_fn_line() {
+        let own = "pub fn fragile_fee(w: u32) -> u32 {\n    w\n}\n";
+        assert!(!names_identifier_outside_fn_definition(own, "fragile_fee"));
+        assert!(!names_identifier_outside_fn_definition(
+            "fn r#fragile_fee() {}\nfn fragile_fees() {}\nlet x = my_fragile_fee;",
+            "fragile_fee"
+        ));
+        for referencing in [
+            "quote(fragile_fee(1))",
+            "v.map(fragile_fee)",
+            "pub use crate::fragile_fee as fee;",
+            "/// assert_eq!(fragile_fee(1), 0);",
+            "proptest! { fn p(w in 0u32..) { fragile_fee(w); } }",
+            "let f = crate::fragile_fee;",
+        ] {
+            assert!(
+                names_identifier_outside_fn_definition(
+                    &format!("{own}{referencing}"),
+                    "fragile_fee"
+                ),
+                "{referencing}"
+            );
+        }
+        // `fn` must be the keyword, not the tail of another identifier.
+        assert!(names_identifier_outside_fn_definition(
+            "let cfn fragile_fee",
+            "fragile_fee"
+        ));
+    }
+
+    #[test]
+    fn trait_impl_methods_are_recognized_from_the_owner_id() {
+        let mut owner = function("fmt");
+        owner.id = SymbolId("src/lib.rs::impl Display for Money::fmt".to_string());
+        assert!(is_trait_impl_method(&owner));
+        owner.id = SymbolId("src/lib.rs::impl Money::fmt".to_string());
+        assert!(!is_trait_impl_method(&owner));
+        owner.id = SymbolId("src/lib.rs::fmt".to_string());
+        assert!(!is_trait_impl_method(&owner));
     }
 
     #[test]
@@ -274,7 +375,7 @@ mod tests {
             (&caller, RelationReason::DirectOwnerCall),
         ];
 
-        let evidence = reach_evidence(&related, Some(&owner), false);
+        let evidence = reach_evidence(&related, Some(&owner), || false);
 
         assert_eq!(evidence.state, StageState::Yes);
     }
@@ -292,7 +393,7 @@ mod tests {
             (&second, RelationReason::SeamCalleeCall),
         ];
 
-        let evidence = reach_evidence(&related, Some(&owner), false);
+        let evidence = reach_evidence(&related, Some(&owner), || false);
 
         assert_eq!(evidence.state, StageState::Yes);
         assert_eq!(
@@ -313,7 +414,7 @@ mod tests {
             (&anchored, RelationReason::OwnerNamedTest),
         ];
 
-        let evidence = reach_evidence(&related, Some(&owner), false);
+        let evidence = reach_evidence(&related, Some(&owner), || false);
 
         assert_eq!(
             evidence.summary,

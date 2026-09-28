@@ -54,7 +54,7 @@ pub(in crate::analysis) fn is_assertion_shaped_owner(
 /// owner's bare name. Bare-name matching can collide with a different
 /// same-named function, but a collision only *blocks* the oracle reframe —
 /// the fail-closed direction.
-pub(in crate::analysis) fn has_non_test_caller(owner: &FunctionSummary, index: &RustIndex) -> bool {
+fn has_non_test_caller(owner: &FunctionSummary, index: &RustIndex) -> bool {
     index.functions.iter().any(|function| {
         !function.source_role.is_evidence_role()
             && !is_test_file(&function.file)

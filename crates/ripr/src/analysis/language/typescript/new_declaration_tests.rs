@@ -179,3 +179,20 @@ fn signature_opening_line_shapes() {
         );
     }
 }
+
+/// Review of #4428: a function made `async` while a helper is inserted above
+/// it. Git can pair the removed old signature with the inserted helper, so
+/// the signature has no in-place removed partner; the old line naming the
+/// same function still marks it as a changed signature that keeps its probe.
+#[test]
+fn changed_signature_paired_elsewhere_by_git_keeps_probe() -> Result<(), String> {
+    let source = PRICE_TS.replacen("export function", "export async function", 1);
+    let mut removed = line(
+        7,
+        "export function loyaltyPrice(amount: number, years: number): number {",
+    );
+    removed.new_side_line = 7;
+    let findings = analyze("paired-elsewhere", &source, &[1, 2, 3], vec![removed])?;
+    assert_eq!(classes_on(&findings, 1).len(), 1, "{findings:?}");
+    Ok(())
+}
