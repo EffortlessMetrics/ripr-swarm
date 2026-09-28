@@ -431,8 +431,8 @@ jobs:
       # Pinned to the ripr that generated this workflow. The steps below use
       # that version's commands and flags; an unpinned install takes the
       # newest crates.io release, whose CLI may not match. To upgrade,
-      # install the newer ripr and compare `ripr init --ci github --dry-run`
-      # with this file.
+      # install the newer ripr and compare
+      # `ripr init --ci github --force --dry-run` with this file.
       - name: Install ripr
         run: cargo install ripr --version @RIPR_VERSION@ --locked
 

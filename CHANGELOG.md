@@ -11,6 +11,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Generated GitHub workflow (`ripr init --ci github`): it now checks out the
+  PR head instead of GitHub's `refs/pull/N/merge` commit, so review comments
+  and annotations land on the PR diff's lines after the base branch moves.
+  Before, they carried merge-commit line numbers. The install now pins the
+  generating ripr version; an unpinned `cargo install ripr` took the newest
+  crates.io release, whose CLI need not match the workflow's steps.
 - Rust: a changed function that no test calls now reads `no_static_path`.
   Before, a same-file test of a sibling function made it `weakly_exposed`
   with "strong oracle found", and its unknown-shape lines said "escalate to
