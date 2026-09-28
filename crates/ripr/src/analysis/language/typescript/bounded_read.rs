@@ -217,8 +217,7 @@ fn read_source_capped(
         let remaining = budget.as_ref().map(|remaining| **remaining).unwrap_or(0);
         return Err(CappedReadError::OverWorkspaceBudget { remaining });
     }
-    let file = std::fs::File::open(path)
-        .map_err(|err| CappedReadError::Io(format!("open {}: {err}", path.display())))?;
+    let file = open_source_read_no_follow(path)?;
     let mut bytes = Vec::new();
     file.take(file_limit.saturating_add(1))
         .read_to_end(&mut bytes)
@@ -232,6 +231,75 @@ fn read_source_capped(
         *remaining = remaining.saturating_sub(text.len() as u64);
     }
     Ok(text)
+}
+
+/// Open `path` for reading without following symlinks and without blocking on
+/// FIFO or device replacement. Mirrors the edit_cage capture-open flags so a
+/// concurrent path swap cannot stall the bounded read between the metadata
+/// check above and the open; the opened handle is then validated as a regular
+/// file before any bytes are read.
+fn open_source_read_no_follow(path: &Path) -> Result<std::fs::File, CappedReadError> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        // Linux O_NOFOLLOW | O_NONBLOCK. The nonblocking bit prevents FIFO or
+        // device replacement from stalling the read before handle validation.
+        options.custom_flags(0x0002_0000 | 0x0000_0800);
+    }
+    #[cfg(all(
+        target_os = "macos",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        // Darwin O_NOFOLLOW | O_NONBLOCK.
+        options.custom_flags(0x0000_0100 | 0x0000_0004);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        // FILE_FLAG_OPEN_REPARSE_POINT keeps a replacement symlink from being
+        // followed; the opened-handle metadata check below rejects it.
+        options.custom_flags(0x0020_0000);
+    }
+    #[cfg(not(any(
+        windows,
+        all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        ),
+        all(
+            target_os = "macos",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )))]
+    {
+        return Err(CappedReadError::Io(format!(
+            "safe no-follow open unsupported on this target: {}",
+            path.display()
+        )));
+    }
+    let file = options
+        .open(path)
+        .map_err(|err| CappedReadError::Io(format!("open {}: {err}", path.display())))?;
+    // `File::metadata` describes the opened handle itself (fstat on the fd),
+    // so a reparse point or swapped non-regular file is rejected here even
+    // when the pre-open path check raced.
+    let opened = file
+        .metadata()
+        .map_err(|err| CappedReadError::Io(format!("inspect opened {}: {err}", path.display())))?;
+    if !opened.file_type().is_file() {
+        return Err(CappedReadError::Io(format!(
+            "not a regular file after open: {}",
+            path.display()
+        )));
+    }
+    Ok(file)
 }
 
 #[cfg(test)]
@@ -277,6 +345,39 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn no_follow_open_rejects_symlink_and_accepts_regular_file() -> Result<(), String> {
+        let dir = TempDir::new("no-follow-open");
+        dir.write("real.ts", b"export const x: number = 1;\n");
+        // A regular file opens cleanly through the guarded helper.
+        let regular = open_source_read_no_follow(&dir.0.join("real.ts"));
+        assert!(
+            regular.is_ok(),
+            "regular file must open, got {:?}",
+            regular.err()
+        );
+        // A symlink must not be followed even when the pre-open path check
+        // raced (issue #4356: nonblocking, no-follow open flags).
+        let link_target = dir.0.join("real.ts");
+        let link = dir.0.join("linked.ts");
+        #[cfg(unix)]
+        {
+            let created = std::os::unix::fs::symlink(&link_target, &link);
+            assert!(created.is_ok(), "create symlink: {:?}", created.err());
+            let outcome = open_source_read_no_follow(&link);
+            let Err(err) = &outcome else {
+                return Err(format!("symlink open must fail, got {outcome:?}"));
+            };
+            assert!(
+                err.reason().contains("not a regular file") || err.reason().contains("open"),
+                "symlink refusal must name the cause: {}",
+                err.reason()
+            );
+        }
+        let _ = link_target;
+        Ok(())
     }
 
     #[test]
