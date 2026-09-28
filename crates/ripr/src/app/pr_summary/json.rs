@@ -610,6 +610,18 @@ pub fn render_pr_evidence_summary_json(s: &PrEvidenceSummaryJson) -> String {
 mod tests {
     use super::*;
 
+    fn require_same<T: std::fmt::Debug + PartialEq>(
+        label: &str,
+        actual: &T,
+        expected: &T,
+    ) -> Result<(), String> {
+        if actual == expected {
+            Ok(())
+        } else {
+            Err(format!("{label}: expected {expected:?}, got {actual:?}"))
+        }
+    }
+
     /// The public pr-summary commands must pass artifact-derived Git refs as
     /// literal argv. These values are valid branch names, including Bash syntax.
     #[cfg(unix)]
@@ -659,16 +671,28 @@ mod tests {
                     None,
                 );
                 let commands = &summary.local_reproduction_commands;
-                assert_eq!(commands.len(), 4, "unexpected command denominator");
-                assert_eq!(commands[0], "ripr agent repair --phase before");
-                assert_eq!(commands[3], "cargo test boundary && cargo test nearby");
+                require_same("command denominator", &commands.len(), &4)?;
+                require_same(
+                    "carried repair command",
+                    &commands.first().map(String::as_str),
+                    &Some("ripr agent repair --phase before"),
+                )?;
+                require_same(
+                    "carried verify command",
+                    &commands.get(3).map(String::as_str),
+                    &Some("cargo test boundary && cargo test nearby"),
+                )?;
+
+                let check = commands
+                    .get(1)
+                    .ok_or_else(|| "missing generated check command".to_string())?;
+                let first_pr = commands
+                    .get(2)
+                    .ok_or_else(|| "missing generated first-pr command".to_string())?;
 
                 std::fs::write(&log, b"").map_err(|err| format!("reset argv log: {err}"))?;
-                std::fs::write(
-                    &script,
-                    format!("set -e\n{}\n{}\n", commands[1], commands[2]),
-                )
-                .map_err(|err| format!("write generated Bash script: {err}"))?;
+                std::fs::write(&script, format!("set -e\n{check}\n{first_pr}\n"))
+                    .map_err(|err| format!("write generated Bash script: {err}"))?;
                 let output = std::process::Command::new("bash")
                     .arg(&script)
                     .env("PATH", &path)
@@ -695,17 +719,23 @@ mod tests {
                 .into_iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>();
-                assert_eq!(actual, expected, "Bash changed generated argv");
+                require_same("Bash argv transcript", &actual, &expected)?;
             }
             Ok(())
         })();
-        std::fs::remove_dir_all(&fixture)
-            .map_err(|err| format!("remove Bash fixture {}: {err}", fixture.display()))?;
-        result
+        let cleanup = std::fs::remove_dir_all(&fixture)
+            .map_err(|err| format!("remove Bash fixture {}: {err}", fixture.display()));
+        match (result, cleanup) {
+            (Err(test_error), Err(cleanup_error)) => Err(format!("{test_error}; {cleanup_error}")),
+            (Err(test_error), Ok(())) => Err(test_error),
+            (Ok(()), Err(cleanup_error)) => Err(cleanup_error),
+            (Ok(()), Ok(())) => Ok(()),
+        }
     }
 
     #[test]
-    fn generated_reproduction_commands_keep_base_authority_and_carried_commands() {
+    fn generated_reproduction_commands_keep_base_authority_and_carried_commands()
+    -> Result<(), String> {
         let start_here = serde_json::json!({
             "inputs": {"base": "fallback/branch"},
             "selected": {
@@ -717,36 +747,48 @@ mod tests {
         let diff = serde_json::json!({"base": "origin/main", "head": "HEAD"});
         let selected =
             build_pr_evidence_summary(Some(&start_here), None, None, Some(&diff), None, None);
-        assert_eq!(
-            selected.local_reproduction_commands,
-            [
-                "ripr agent repair --phase before",
-                "ripr check --base origin/main",
-                "ripr first-pr --root . --base origin/main --head HEAD",
-                "cargo test boundary && cargo test nearby",
-            ]
-            .map(ToString::to_string)
-            .to_vec()
-        );
+        let selected_expected = [
+            "ripr agent repair --phase before",
+            "ripr check --base origin/main",
+            "ripr first-pr --root . --base origin/main --head HEAD",
+            "cargo test boundary && cargo test nearby",
+        ]
+        .map(ToString::to_string)
+        .to_vec();
+        require_same(
+            "diff-report base precedence and carried commands",
+            &selected.local_reproduction_commands,
+            &selected_expected,
+        )?;
 
         let fallback = build_pr_evidence_summary(Some(&start_here), None, None, None, None, None);
-        assert_eq!(
-            fallback.local_reproduction_commands[1..3].to_vec(),
-            [
-                "ripr check --base fallback/branch",
-                "ripr first-pr --root . --base fallback/branch --head HEAD",
-            ]
-            .map(ToString::to_string)
-            .to_vec()
-        );
+        let fallback_actual = fallback
+            .local_reproduction_commands
+            .get(1..3)
+            .ok_or_else(|| "missing fallback generated commands".to_string())?
+            .to_vec();
+        let fallback_expected = [
+            "ripr check --base fallback/branch",
+            "ripr first-pr --root . --base fallback/branch --head HEAD",
+        ]
+        .map(ToString::to_string)
+        .to_vec();
+        require_same(
+            "start-here base fallback",
+            &fallback_actual,
+            &fallback_expected,
+        )?;
 
         let absent = build_pr_evidence_summary(None, None, None, None, None, None);
-        assert_eq!(
-            absent.local_reproduction_commands,
-            ["ripr check", "ripr first-pr --root . --head HEAD"]
-                .map(ToString::to_string)
-                .to_vec()
-        );
+        let absent_expected = ["ripr check", "ripr first-pr --root . --head HEAD"]
+            .map(ToString::to_string)
+            .to_vec();
+        require_same(
+            "absent base and default head",
+            &absent.local_reproduction_commands,
+            &absent_expected,
+        )?;
+        Ok(())
     }
 
     fn missing_all() -> PrEvidenceSummaryJson {

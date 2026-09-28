@@ -210,12 +210,12 @@ none. The Markdown panel keeps the two apart under `## Limitations` and
 | `top_limitation` | object or absent | first entry in `limitations[]` | Omitted when limitations are empty or `"not_available"`. |
 | `local_reproduction_commands` | string[] | start-here repair_command (first, when present) + diff-report base/head + start-here verify_command | Always present; at least two commands. |
 
-For the two commands RIPR builds, the selected `base` and `head` values are
-quoted as literal Bash arguments; the diff-report base takes precedence over
-the start-here input base. Without a base, the option is omitted, and without
-a head, `HEAD` is used. The complete repair and verification commands carried
-from start-here remain byte-identical: this summary neither parses nor
-validates their shell syntax.
+For the two commands RIPR builds, the selected `base` and `head` values
+remain one literal Bash argument each, quoted when needed. The diff-report
+base takes precedence over the start-here input base. Without a base, the
+option is omitted, and without a head, `HEAD` is used. The complete repair
+and verification commands carried from start-here remain byte-identical: this
+summary neither parses nor validates their shell syntax.
 
 ## Required Evidence
 

@@ -16205,11 +16205,11 @@ comments itself. When present it is also the first entry in
 `local_reproduction_commands`, and the Markdown panel shows a `start repair`
 line before `verify`.
 
-RIPR quotes the `base` and `head` values when it builds the `ripr check`
-and `ripr first-pr` Bash lines. The complete `selected.repair_command` and
-`selected.verify_command` strings are carried unchanged from start-here;
-`pr-summary` does not parse or validate their shell syntax. Review those
-commands before execution.
+RIPR renders the `base` and `head` values as one literal Bash argument,
+quoting when needed, in the `ripr check` and `ripr first-pr` lines it builds.
+The complete `selected.repair_command` and `selected.verify_command` strings
+are carried unchanged from start-here. `pr-summary` does not parse or
+validate their shell syntax. Review those commands before execution.
 
 When `limitations` is empty or `"not_available"`, `top_limitation` is
 omitted entirely; the Markdown panel distinguishes the two, rendering
