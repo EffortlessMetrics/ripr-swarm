@@ -568,5 +568,54 @@ fn changed_line_behind_an_early_exit_or_nested_block_stays_unresolved() {
             Some(None),
             "{label}: {source}"
         );
+    } // The changed line must start a fresh statement: a braceless body, an
+    // `else` branch, or an expression continued from the previous line may
+    // skip it (independent review on #4429).
+    let owner = |body: &str| {
+        format!("export function shipping(amount: number): number {{\n{body}  return 2;\n}}\n")
+    };
+    for (label, body, line) in [
+        (
+            "else branch of a one-line if",
+            "  if (amount === 5000) log();\n  else if (amount > 5000) {\n    return 1;\n  }\n",
+            "  else if (amount > 5000) {",
+        ),
+        (
+            "else on the line after a block",
+            "  if (amount === 5000) {\n    log();\n  }\n  else if (amount > 5000) {\n    return 1;\n  }\n",
+            "  else if (amount > 5000) {",
+        ),
+        (
+            "braceless if body",
+            "  if (amount !== 5000)\n    if (amount > 5000) {\n      return 1;\n    }\n",
+            "    if (amount > 5000) {",
+        ),
+        (
+            "braceless loop body",
+            "  for (const x of [1])\n    if (amount > 5000) {\n      return 1;\n    }\n",
+            "    if (amount > 5000) {",
+        ),
+        (
+            "ternary continued",
+            "  const fee = amount === 5000 ? 0 :\n    (amount > 5000) ? 1 : 2;\n",
+            "    (amount > 5000) ? 1 : 2;",
+        ),
+        (
+            "short circuit continued",
+            "  const fee = amount !== 5000 &&\n    (amount > 5000);\n",
+            "    (amount > 5000);",
+        ),
+        (
+            "arrow body continued",
+            "  const cb = (x: number) =>\n    (amount > 5000);\n",
+            "    (amount > 5000);",
+        ),
+    ] {
+        let source = owner(body);
+        assert_eq!(
+            input_for(&source, "shipping", line),
+            Some(None),
+            "{label}: {source}"
+        );
     }
 }

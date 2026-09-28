@@ -498,11 +498,31 @@ fn changed_line_runs_on_every_call(source: &str, tokens: &[Tok], request: &Modul
     if tokens[close].end > line_start {
         return false;
     }
-    let mut open_groups: Vec<Kind> = Vec::new();
-    for token in tokens[close + 1..]
+    // The changed line must start a fresh statement: the previous token ends
+    // one (`;`, a closed block, or the body's `{`) and the line itself opens
+    // with a statement keyword. A braceless `if`/loop body, an `else`
+    // branch, or an expression continued from the previous line (`? :`,
+    // `&&`, `=>`) would otherwise pass with a balanced stack.
+    let body = &tokens[close + 1..];
+    let before_line = body
         .iter()
         .take_while(|token| token.start < line_start)
-    {
+        .count();
+    let starts_statement = body.get(before_line).is_some_and(|first| {
+        matches!(
+            first.kind,
+            Kind::If | Kind::Return | Kind::Const | Kind::Let | Kind::Var
+        )
+    });
+    let follows_statement = before_line
+        .checked_sub(1)
+        .and_then(|last| body.get(last))
+        .is_some_and(|last| matches!(last.kind, Kind::Semicolon | Kind::LCurly | Kind::RCurly));
+    if !(starts_statement && follows_statement) {
+        return false;
+    }
+    let mut open_groups: Vec<Kind> = Vec::new();
+    for token in &body[..before_line] {
         match token.kind {
             Kind::Return | Kind::Throw | Kind::Break | Kind::Continue | Kind::Yield => {
                 return false;
