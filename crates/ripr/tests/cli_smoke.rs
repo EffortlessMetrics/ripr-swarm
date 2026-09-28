@@ -4790,6 +4790,14 @@ fn add_boundary_test(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
 
 struct RepairBuildIgnoreFixture(PathBuf);
 
+impl RepairBuildIgnoreFixture {
+    fn new(root: PathBuf) -> std::io::Result<Self> {
+        // Arm recursive cleanup only after exclusively claiming this tree.
+        std::fs::create_dir(&root)?;
+        Ok(Self(root))
+    }
+}
+
 impl Drop for RepairBuildIgnoreFixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
@@ -4819,7 +4827,8 @@ fn agent_repair_before_requires_effective_cargo_build_directory_ignore()
         "/target/*\n!/target/keep.log\n",
         "/target/**\n!/target/keep.log\n",
     ] {
-        let fixture = RepairBuildIgnoreFixture(unique_temp_workspace("agent-repair-build-ignore"));
+        let fixture =
+            RepairBuildIgnoreFixture::new(unique_temp_workspace("agent-repair-build-ignore"))?;
         let root = fixture.0.as_path();
         init_producer_fixture_repo(root)?;
         // Neither ambient global excludes nor a populated build tree may
@@ -4881,8 +4890,9 @@ fn agent_repair_before_requires_effective_cargo_build_directory_ignore()
 #[test]
 fn agent_repair_accepts_empty_effectively_ignored_build_tree_and_actual_cargo_test()
 -> Result<(), Box<dyn std::error::Error>> {
-    let fixture =
-        RepairBuildIgnoreFixture(unique_temp_workspace("agent-repair-effective-build-ignore"));
+    let fixture = RepairBuildIgnoreFixture::new(unique_temp_workspace(
+        "agent-repair-effective-build-ignore",
+    ))?;
     let root = fixture.0.as_path();
     init_producer_fixture_repo(root)?;
     // The harness temp root lives under this repository's target directory;
@@ -4954,7 +4964,7 @@ fn agent_repair_accepts_empty_effectively_ignored_build_tree_and_actual_cargo_te
 fn agent_repair_names_build_ignore_drift_without_redirect_blame()
 -> Result<(), Box<dyn std::error::Error>> {
     let fixture =
-        RepairBuildIgnoreFixture(unique_temp_workspace("agent-repair-build-ignore-drift"));
+        RepairBuildIgnoreFixture::new(unique_temp_workspace("agent-repair-build-ignore-drift"))?;
     let root = fixture.0.as_path();
     init_producer_fixture_repo(root)?;
     disable_ambient_git_excludes(root)?;
