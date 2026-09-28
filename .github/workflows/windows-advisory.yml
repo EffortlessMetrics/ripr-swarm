@@ -196,35 +196,14 @@ jobs:
             statuses=("${PIPESTATUS[@]}")
             set -e
             printf '%s\n' "${statuses[0]}" > "target/nested-alias-isolated-$run.status"
-            if [ "${statuses[1]}" -ne 0 ]; then
-              echo "run $run: log capture failed" >&2
-              exit 1
-            fi
+            test "${statuses[1]}" -eq 0 || { echo "run $run: log capture failed" >&2; exit 1; }
           done
-          {
-            printf '### Nested-alias isolated native Windows repeats (#4377)\n\n'
-            failed=0
-            for run in 1 2 3; do
-              log="target/nested-alias-isolated-$run.log"
-              status_file="target/nested-alias-isolated-$run.status"
-              test -s "$log" && test -s "$status_file" || { echo "run $run: missing log or status" >&2; exit 1; }
-              observed="$(grep -cF "test $test_name ... " "$log" || true)"
-              result="$(grep -E '^test result: ' "$log" || true)"
-              if [ "$observed" -ne 1 ] || [ -z "$result" ]; then
-                echo "run $run: named test or result total not observed" >&2
-                exit 1
-              fi
-              status="$(cat "$status_file")"
-              if [ "$status" = 0 ] && [[ "$result" == 'test result: ok. 1 passed; 0 failed;'* ]]; then
-                verdict=PASS
-              else
-                verdict=FAIL
-                failed=1
-              fi
-              printf -- '- run %s: %s (cargo exit %s; %s)\n' "$run" "$verdict" "$status" "$result"
-            done
-            exit "$failed"
-          } | tee target/nested-alias-isolated-verdict.md | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Summarize isolated nested-alias repeats (#4377)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.repeat_nested_alias == true }}
+        shell: bash
+        run: |
+          cargo xtask windows-advisory-isolated-summary --dir target | tee target/nested-alias-isolated-verdict.md | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload advisory logs
         if: always()
