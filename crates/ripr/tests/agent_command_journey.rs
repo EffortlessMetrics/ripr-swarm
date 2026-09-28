@@ -706,7 +706,13 @@ fn prepared_packet_continuation_cannot_resume_a_later_attempt_for_the_same_seam(
     std::fs::create_dir(&base).map_err(|error| format!("claim fixture: {error}"))?;
     let owned = ReviewCardFixture(base);
     let selected = owned.0.join("dépôt selected root");
-    let (journey, _) = start_journey_at_root(&selected, &bash)?;
+    let (mut journey, _) = start_journey_at_root(&selected, &bash)?;
+    // Literal command scripts belong outside the edit cage, as on the
+    // existing rooted packet journey. The default helper's launch directory
+    // is under the selected repo and would introduce an unauthorized file.
+    let foreign = owned.0.join("foreign attempt continuation");
+    std::fs::create_dir(&foreign).map_err(|error| format!("claim foreign launch: {error}"))?;
+    journey.launch_dir = foreign;
     std::fs::write(selected.join(".gitignore"), "/target/\n")
         .map_err(|error| format!("declare build ignore: {error}"))?;
     let before_args = ["agent", "repair", "--root", &journey.root_arg,
