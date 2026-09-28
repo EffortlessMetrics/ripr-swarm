@@ -564,6 +564,14 @@ are scoped or reviewed.
   body, each parsed flag must be documented and each documented flag must be
   parsed, with `--help` and named hidden aliases as the only exceptions
   ([#4317](https://github.com/EffortlessMetrics/ripr-swarm/issues/4317)).
+
+- Python pytest and unittest verify commands single-quote a test path that
+  is not a plain relative path, matching the TypeScript command quoter.
+  A name containing a shell metacharacter stays inside quotes in the command
+  text. The stored test path and node id stay unquoted, and a path made only
+  of letters, digits, `.`, `_`, `/`, and `-` is unchanged
+  ([#4211](https://github.com/EffortlessMetrics/ripr-swarm/issues/4211)).
+
 - `ripr outcome` no longer reports zero movement for check-output snapshots
   whose findings carry no canonical gap id, such as Rust `ripr check --json`.
   It refuses the pair, points Rust users to `ripr check --format
@@ -1130,6 +1138,17 @@ are scoped or reviewed.
   `--base`
   ([#4285](https://github.com/EffortlessMetrics/ripr-swarm/issues/4285),
   [#4290](https://github.com/EffortlessMetrics/ripr-swarm/pull/4290)).
+- Generated `first-pr`, first-useful-action, PR-review front-panel and
+  agent workflow commands now carry the absolute selected root in `--root`
+  (and anchor their `--repo-exposure` and redirect paths to it), so a
+  copied command analyzes the same repository from any working directory
+  instead of re-resolving a relative root such as `.` against wherever it
+  is pasted. A user-authored `--root .` keeps its ordinary meaning, and
+  typed `command_specs` keep the portable `--root .` with `cwd` at the
+  repository root
+  ([#3999](https://github.com/EffortlessMetrics/ripr-swarm/issues/3999),
+  [#4000](https://github.com/EffortlessMetrics/ripr-swarm/issues/4000),
+  [#4287](https://github.com/EffortlessMetrics/ripr-swarm/pull/4287)).
 
 ### Docs
 
