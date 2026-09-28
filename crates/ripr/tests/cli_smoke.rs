@@ -4,8 +4,9 @@
 )]
 
 use sha2::{Digest, Sha256};
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[path = "../src/build_commit_record.rs"]
@@ -32,12 +33,19 @@ fn run_ripr_in_workspace(args: &[&str]) -> Result<Output, std::io::Error> {
     run_command(bin, Some(&root), args)
 }
 
+/// Run `ripr` with the given bytes piped to its stdin, the way a shell
+/// `git diff origin/main | ripr check --diff -` feeds the process (#4319).
+fn run_ripr_with_stdin(args: &[&str], stdin: &[u8]) -> Result<Output, std::io::Error> {
+    let bin = env!("CARGO_BIN_EXE_ripr");
+    spawn_command(bin, None, args, &[], None, Some(stdin))
+}
+
 fn run_command(
     program: &str,
     current_dir: Option<&Path>,
     args: &[&str],
 ) -> Result<Output, std::io::Error> {
-    spawn_command(program, current_dir, args, &[], None)
+    spawn_command(program, current_dir, args, &[], None, None)
 }
 
 /// The single process spawn point for this harness. Both `run_command` and
@@ -45,15 +53,19 @@ fn run_command(
 /// spawn site rather than one per calling convention. With `redirect`, the
 /// child's stdout and stderr go to those files the way a shell `> out 2> err`
 /// sends them (each file is created before the child starts), and the
-/// returned `Output` carries empty captured streams.
+/// returned `Output` carries empty captured streams. With `stdin`, the bytes
+/// are piped to the child the way a shell `printf … | command` does: the
+/// write end is closed after writing so the child sees EOF, and the child's
+/// stdout/stderr are captured unless `redirect` sends them to files.
 fn spawn_command(
     program: &str,
     current_dir: Option<&Path>,
     args: &[&str],
     env: &[(&str, &str)],
     redirect: Option<(&Path, &Path)>,
+    stdin: Option<&[u8]>,
 ) -> Result<Output, std::io::Error> {
-    let mut command = Command::new(program);
+    let mut command = probe_command(program);
     if let Some(current_dir) = current_dir {
         command.current_dir(current_dir);
     }
@@ -61,9 +73,9 @@ fn spawn_command(
         command.env(name, value);
     }
     command.args(args);
-    match redirect {
-        None => command.output(),
-        Some((stdout, stderr)) => {
+    match (stdin, redirect) {
+        (None, None) => command.output(),
+        (None, Some((stdout, stderr))) => {
             command
                 .stdout(std::fs::File::create(stdout)?)
                 .stderr(std::fs::File::create(stderr)?);
@@ -73,7 +85,146 @@ fn spawn_command(
                 stderr: Vec::new(),
             })
         }
+        (Some(input), redirect) => {
+            command.stdin(Stdio::piped());
+            match redirect {
+                None => {
+                    command.stdout(Stdio::piped());
+                    command.stderr(Stdio::piped());
+                }
+                Some((stdout, stderr)) => {
+                    command
+                        .stdout(std::fs::File::create(stdout)?)
+                        .stderr(std::fs::File::create(stderr)?);
+                }
+            }
+            run_owned_stdin_probe(command, input, std::time::Duration::from_secs(30))
+        }
     }
+}
+
+fn probe_command(program: &str) -> Command {
+    Command::new(program)
+}
+
+#[test]
+fn stdin_probe_fixture_entry() {
+    if std::env::var("RIPR_STDIN_PROBE_CHILD").as_deref() == Ok("hang") {
+        std::thread::sleep(std::time::Duration::from_mins(1));
+    }
+}
+
+fn stdin_probe_fixture(mode: &str) -> Result<Command, std::io::Error> {
+    let executable = std::env::current_exe()?;
+    let executable = executable
+        .to_str()
+        .ok_or_else(|| std::io::Error::other("test executable path is not UTF-8"))?;
+    let mut command = probe_command(executable);
+    command
+        .args(["--exact", "stdin_probe_fixture_entry"])
+        .env("RIPR_STDIN_PROBE_CHILD", mode)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    Ok(command)
+}
+
+#[test]
+fn stdin_probe_stalled_child_returns_bounded_timeout() -> Result<(), std::io::Error> {
+    let started = std::time::Instant::now();
+    let result = run_owned_stdin_probe(
+        stdin_probe_fixture("hang")?,
+        b"small fixture",
+        std::time::Duration::from_millis(100),
+    );
+    assert_eq!(
+        result.err().map(|err| err.kind()),
+        Some(std::io::ErrorKind::TimedOut)
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    Ok(())
+}
+
+#[test]
+fn stdin_probe_early_exit_returns_write_error() -> Result<(), std::io::Error> {
+    let result = run_owned_stdin_probe(
+        stdin_probe_fixture("exit")?,
+        &vec![b'x'; 2 * 1024 * 1024],
+        std::time::Duration::from_secs(5),
+    );
+    assert_eq!(
+        result.err().map(|err| err.kind()),
+        Some(std::io::ErrorKind::BrokenPipe)
+    );
+    Ok(())
+}
+
+/// Bound writing, process completion and capture to one deadline. The owner
+/// terminates/reaps on every returned error; no writer/drain join can stall
+/// the harness beyond that deadline.
+fn run_owned_stdin_probe(
+    command: Command,
+    input: &[u8],
+    budget: std::time::Duration,
+) -> Result<Output, std::io::Error> {
+    let deadline = std::time::Instant::now() + budget;
+    let mut child = ripr::process_owner::OwnedProcess::spawn(command)?;
+    let mut pipe = child
+        .stdin_pipe()
+        .take()
+        .ok_or_else(|| std::io::Error::other("child stdin was not captured"))?;
+    let input = input.to_vec();
+    let (write_tx, write_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = pipe.write_all(&input);
+        drop(pipe); // EOF even on a failed write.
+        let _ = write_tx.send(result);
+    });
+    fn drain<R: std::io::Read + Send + 'static>(
+        pipe: Option<R>,
+    ) -> std::sync::mpsc::Receiver<Result<Vec<u8>, std::io::Error>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let result = match pipe {
+                Some(mut pipe) => pipe.read_to_end(&mut bytes).map(|_| bytes),
+                None => Ok(bytes),
+            };
+            let _ = tx.send(result);
+        });
+        rx
+    }
+    fn receive<T>(
+        rx: &std::sync::mpsc::Receiver<Result<T, std::io::Error>>,
+        deadline: std::time::Instant,
+    ) -> Result<T, std::io::Error> {
+        rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::TimedOut, err))?
+    }
+    let stdout = drain(child.stdout_pipe().take());
+    let stderr = drain(child.stderr_pipe().take());
+    let result = (|| {
+        receive(&write_rx, deadline)?;
+        let status = loop {
+            if let Some(status) = child.try_wait()? {
+                break status;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "stdin probe exceeded its deadline",
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        Ok(Output {
+            status,
+            stdout: receive(&stdout, deadline)?,
+            stderr: receive(&stderr, deadline)?,
+        })
+    })();
+    child.terminate_tree().map_err(std::io::Error::other)?;
+    result
 }
 
 /// Run a command with extra environment variables set, so tests can plant an
@@ -85,7 +236,7 @@ fn run_command_with_env(
     args: &[&str],
     env: &[(&str, &str)],
 ) -> Result<Output, std::io::Error> {
-    spawn_command(program, Some(current_dir), args, env, None)
+    spawn_command(program, Some(current_dir), args, env, None, None)
 }
 
 /// Retry only `ETXTBSY` (`ExecutableFileBusy`). Copying `ripr` and executing
@@ -4761,6 +4912,7 @@ fn run_repair_phase_redirected(
         &args,
         &[],
         Some((stdout, stderr)),
+        None,
     )
 }
 
@@ -16400,6 +16552,58 @@ fn plus_unknown_arg_fails_clearly() {
         stderr.contains("unknown plus argument") || stderr.contains("--bogus"),
         "error must name the unknown arg:\n{stderr}"
     );
+}
+
+/// A minimal unified diff piped through stdin, the documented
+/// `git diff origin/main | ripr check --diff -` shape (#4319).
+const UNIFIED_DIFF_FOR_STDIN_PROBE: &str = "diff --git a/src/lib.rs b/src/lib.rs\n\
+index 1111111..2222222 100644\n\
+--- a/src/lib.rs\n\
++++ b/src/lib.rs\n\
+@@ -1,1 +1,2 @@\n\
++fn changed() {}\n\
+ fn existing() {}\n";
+
+/// #4319 end-to-end silence guarantee for the attached-terminal stdin
+/// disclosure at the cli boundary (`cli::parse::disclose_attached_terminal_stdin_read`):
+/// the note may be emitted only when the child's stdin is an attached
+/// terminal, so a piped run must keep the note text off stderr entirely.
+/// This challenges accidental emission on non-terminal stdin. The shared
+/// emitter's positive callback is challenged separately in cli/parse.rs;
+/// deleting the disclosure cannot be detected by a silence assertion.
+///
+/// The terminal-positive arm cannot be produced under cargo's captured
+/// stdio (no PTY/winpty in this environment), so the on-terminal emission
+/// itself remains a manual `check --diff -` spot-check; the pure
+/// terminal/non-terminal decision is pinned in `cli/parse.rs`'s unit test.
+#[test]
+fn check_diff_stdin_from_a_pipe_stays_silent_about_terminal_disclosure()
+-> Result<(), Box<dyn std::error::Error>> {
+    let note = "ripr: reading the diff from the attached terminal; paste the diff and press Ctrl+Z then Enter on Windows, or Ctrl+D on Unix, to end input";
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/boundary_gap/input");
+    let output = run_ripr_with_stdin(
+        &[
+            "check",
+            "--root",
+            &root.display().to_string(),
+            "--diff",
+            "-",
+            "--json",
+        ],
+        UNIFIED_DIFF_FOR_STDIN_PROBE.as_bytes(),
+    )?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "piped diff analysis failed: {stderr}"
+    );
+    let _: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        stderr.matches(note).count(),
+        0,
+        "piped `check --diff -` must stay silent about the attached-terminal stdin disclosure:\n{stderr}"
+    );
+    Ok(())
 }
 
 /// A repository with no `origin` remote whose default branch is `master`, on a
