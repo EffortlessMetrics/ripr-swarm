@@ -11,6 +11,17 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr check` analyzes Rust crate roots declared outside `src/`
+  (`[lib] path = "lib/foo.rs"`, `[[bin]] path = ...`). A change there used
+  to report zero candidate lines as a complete analysis, and Draft mode
+  dropped the package's tests, so a tested change read as
+  `no_static_path`.
+- Base-resolution failures name their cause and the next step. A shallow
+  CI checkout no longer stops at raw `fatal: ... no merge base`; it names
+  `git fetch --unshallow` and `fetch-depth: 0`. A repository with no
+  commits, or whose default branch is not `main`/`master`, is told which
+  `--base` would work.
+
 - LSP fallback diagnostics explain their static classification and point to
   hover evidence without promising an unavailable clipboard action or repair
   route. Missing-path guidance remains explicitly static (#4328).
