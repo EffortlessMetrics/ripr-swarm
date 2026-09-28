@@ -2148,7 +2148,7 @@ fn taxed_total_runs() {
                 first: &first,
                 sufficient: &accept,
             }),
-        );
+        )?;
         assert_eq!(offered.get(), first_ids.len());
         assert_eq!(class_by_id(&staged), first_ids);
         assert_eq!(skipped, unstaged.len() - first_ids.len());
@@ -2161,7 +2161,7 @@ fn taxed_total_runs() {
                 first: &first,
                 sufficient: &decline,
             }),
-        );
+        )?;
         assert_eq!(declined_skipped, 0);
         assert_eq!(class_by_id(&declined), class_by_id(&unstaged));
         Ok(())
@@ -3820,8 +3820,14 @@ marker = "libtest_mimic::Trial"
         // for the next call (the scoped route itself never stores;
         // the fast path stays purely opportunistic).
         workspace_cache_key_at_with_config(&root, &config)?;
-        let full =
-            inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], false, None)?;
+        let full = inventory_diff_scoped_classified_seams_inner(
+            &root,
+            &config,
+            &changed,
+            &[],
+            false,
+            None,
+        )?;
         if !full.classified.is_empty() {
             return Err("docs-only diff must classify no seams on the full path".to_owned());
         }
@@ -4037,10 +4043,22 @@ marker = "libtest_mimic::Trial"
         // Warm the mapping through its writer (the full-inventory key
         // route); the scoped route never stores.
         workspace_cache_key_at_with_config(&root, &config)?;
-        let fast =
-            inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], true, None)?;
-        let full =
-            inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], false, None)?;
+        let fast = inventory_diff_scoped_classified_seams_inner(
+            &root,
+            &config,
+            &changed,
+            &[],
+            true,
+            None,
+        )?;
+        let full = inventory_diff_scoped_classified_seams_inner(
+            &root,
+            &config,
+            &changed,
+            &[],
+            false,
+            None,
+        )?;
         // ClassifiedSeam carries evidence payloads without structural
         // equality; compare canonical seam identities instead.
         let seam_ids = |inventory: &ScopedClassifiedSeamInventory| {

@@ -1,6 +1,6 @@
-use crate::analysis::{ClassifiedSeam, RepoSeam};
 use crate::analysis::seams::SeamGripClass;
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, RelationConfidence};
+use crate::analysis::{ClassifiedSeam, RepoSeam};
 use crate::config::{ConfigSeverity, RiprConfig};
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
@@ -1817,12 +1817,10 @@ weakly_gripped = "off"
             .collect::<Vec<_>>();
         changed_lines.push(AgentBriefLine::new("src/pricing.rs", 41));
         changed_lines.push(AgentBriefLine::new("tests/sample.rs", 7));
-        let working_set = AgentBriefResolvedWorkingSet::base("main", changed_lines)
-            .with_changed_owners(vec![AgentBriefChangedOwner::new(
-                "src/pricing.rs",
-                41,
-                "pricing::taxed_total",
-            )]);
+        let working_set =
+            AgentBriefResolvedWorkingSet::base("main", changed_lines).with_changed_owners(vec![
+                AgentBriefChangedOwner::new("src/pricing.rs", 41, "pricing::taxed_total"),
+            ]);
         let config = RiprConfig::default();
         let policy = AgentBriefPolicy::from_config(&config);
         let scope = AgentBriefChangedScope::new(&working_set);

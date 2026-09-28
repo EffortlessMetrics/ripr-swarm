@@ -6732,7 +6732,10 @@ language = "rust"
             .map_err(|err| format!("parse review comments JSON: {err}"))?;
         let returned = value["comments"].as_array().map_or(0, Vec::len)
             + value["summary_only"].as_array().map_or(0, Vec::len);
-        assert_eq!(returned, output::review_comments::DEFAULT_REVIEW_MAX_SUMMARY_ITEMS);
+        assert_eq!(
+            returned,
+            output::review_comments::DEFAULT_REVIEW_MAX_SUMMARY_ITEMS
+        );
         assert!(
             !rendered_json.contains("untouched"),
             "the unchanged function's seam must not be evaluated or rendered"
