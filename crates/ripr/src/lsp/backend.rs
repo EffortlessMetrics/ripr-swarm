@@ -13,7 +13,7 @@ use super::diagnostics::{
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
     diagnostic_hover_response, finding_hover_response, hover_response, hover_with_snapshot_status,
-    is_gap_diagnostic,
+    is_gap_diagnostic, markdown_hover,
 };
 use super::lens::{LensViewIdentity, code_lens_response, lens_view_identity};
 use super::payload_bounds::{
@@ -1453,6 +1453,32 @@ impl Backend {
             .await;
     }
 
+    /// Warn once at startup when the workspace root blocks analysis. The
+    /// warning always goes to the log; clients without the `riprEditor`
+    /// integration also get `window/showMessage`, because `ripr/analysisStatus`
+    /// is the only other place the blocked state appears and generic editors
+    /// do not render it. The VS Code extension renders its own root state.
+    async fn disclose_blocked_startup_root(&self) {
+        let root = self.workspace_root_authority();
+        let Some(message) = blocked_root_message(&root) else {
+            return;
+        };
+        let message = format!("ripr {message}");
+        self.client
+            .log_message(MessageType::WARNING, message.clone())
+            .await;
+        let generic_client = self
+            .client_features
+            .lock()
+            .map(|features| features.ripr_editor.is_none())
+            .unwrap_or(true);
+        if generic_client {
+            self.client
+                .show_message(MessageType::WARNING, message)
+                .await;
+        }
+    }
+
     /// Deliver the optional client disclosures that follow an
     /// initialize-time failure commit — one `window/logMessage` warning plus
     /// one analysis-status publication — within
@@ -2342,6 +2368,22 @@ impl Backend {
             .documents
             .get(uri)
             .map(|state| state.text.clone())
+    }
+
+    /// The hover for a position with no evidence to show. A generic editor
+    /// has no other place that says why ripr is quiet, so name a blocked
+    /// root or an unsaved buffer before falling back to the CLI pointer.
+    fn hover_without_evidence(&self, uri: &Uri) -> Hover {
+        if let Some(message) = blocked_root_message(&self.workspace_root_authority()) {
+            return markdown_hover(format!("**ripr** {message}"));
+        }
+        if let Some((_, reason)) = self.document_quarantine(uri) {
+            return markdown_hover(format!(
+                "**ripr** evidence for this file is paused: {}. ripr analyzes saved files; save the file to refresh its evidence.",
+                reason.description()
+            ));
+        }
+        hover_response()
     }
 
     /// The quarantine state of an open document, as `(path, reason)`.
@@ -3437,6 +3479,38 @@ fn workspace_diagnostics_are_root_contained(
         })
 }
 
+/// The user-facing warning body (callers prefix `ripr`) for a root that
+/// blocks analysis, or `None` when analysis may run. Names the folders for an
+/// ambiguous set so the user can see which roots the editor sent.
+fn blocked_root_message(root: &WorkspaceRootAuthority) -> Option<String> {
+    if root.allows_analysis() {
+        return None;
+    }
+    let detail = root.detail.as_deref().unwrap_or("no usable workspace root");
+    let folders = if root.candidate_roots.is_empty() {
+        String::new()
+    } else {
+        let listed = root
+            .candidate_roots
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(" Folders: {listed}.")
+    };
+    // The ambiguous and removed details already name the recovery; an
+    // unavailable root only says what the client sent.
+    let recovery = if root.state == WorkspaceRootState::RootUnavailable {
+        " Open the repository folder as the editor's workspace root, then restart the language server."
+    } else {
+        ""
+    };
+    Some(format!(
+        "analysis is stopped ({}): {detail}.{folders} ripr analyzes one workspace root per server.{recovery}",
+        root.state.as_str()
+    ))
+}
+
 fn root_recovery_route(state: &WorkspaceRootState) -> &'static str {
     match state {
         WorkspaceRootState::SelectedSingleRoot => "refresh",
@@ -3782,6 +3856,14 @@ impl LanguageServer for Backend {
         if self.configuration_mode() == ConfigurationMode::Pull {
             self.schedule_configuration_pull().await;
         }
+        // tower-lsp-server suppresses custom notifications until `initialize`
+        // has returned, so the status published by the initialize-time root
+        // and config transitions never reached the client. Publish the
+        // startup state once the session is live, and name a root that
+        // blocks analysis over a standard channel: without this, a generic
+        // editor opened on two folders or on no folder sees nothing at all.
+        self.publish_analysis_status().await;
+        self.disclose_blocked_startup_root().await;
     }
 
     async fn initialize(&self, params: InitializeParams) -> LspResult<InitializeResult> {
@@ -4253,10 +4335,9 @@ impl LanguageServer for Backend {
             self.verbose_params_bytes(&params),
         )
         .await;
-        let result = Ok(Some(
-            self.hover_for_position(&params)
-                .unwrap_or_else(hover_response),
-        ));
+        let result = Ok(Some(self.hover_for_position(&params).unwrap_or_else(
+            || self.hover_without_evidence(&params.text_document_position_params.text_document.uri),
+        )));
         self.trace_response("textDocument/hover", &result).await;
         result
     }

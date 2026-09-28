@@ -11,6 +11,15 @@ are scoped or reviewed.
 
 ### Fixed
 
+- LSP: an editor that opens two workspace folders, or none, now hears why
+  ripr is silent. Before, the server stopped analysis and sent nothing: the
+  startup `ripr/analysisStatus` was dropped because the transport discards
+  custom notifications during `initialize`, and hover showed the generic
+  `ripr check` pointer. The server now publishes the startup status from
+  `initialized`, logs a warning naming the root state and folders, and shows
+  it with `window/showMessage` to clients without the VS Code integration.
+  Hover names the blocked root, or an unsaved buffer whose evidence is paused
+  until the file is saved.
 - Rust: a changed function that no test calls now reads `no_static_path`.
   Before, a same-file test of a sibling function made it `weakly_exposed`
   with "strong oracle found", and its unknown-shape lines said "escalate to

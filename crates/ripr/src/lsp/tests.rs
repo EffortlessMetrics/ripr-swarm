@@ -1039,7 +1039,13 @@ fn framed_lsp_protocol_smoke_exercises_tower_server() -> Result<(), String> {
             read_lsp_response_with_notifications(&mut client_read, 3).await?;
         assert!(refresh.get("error").is_none());
         assert_eq!(refresh["result"], serde_json::Value::Null);
-        assert!(log_notification_messages(&notifications).is_empty());
+        // The only log line is the startup root warning from `initialized`;
+        // the refresh itself logs nothing while the root blocks analysis.
+        assert!(
+            log_notification_messages(&notifications)
+                .iter()
+                .all(|message| message.starts_with("ripr analysis is stopped (root_unavailable)"))
+        );
 
         write_lsp_message(
             &mut client_write,
@@ -1058,7 +1064,9 @@ fn framed_lsp_protocol_smoke_exercises_tower_server() -> Result<(), String> {
         let hover_value = hover["result"]["contents"]["value"]
             .as_str()
             .ok_or_else(|| "expected hover markdown value".to_string())?;
-        assert!(hover_value.contains("ripr estimates static RIPR exposure"));
+        // With no workspace root the hover names the blocked root instead of
+        // the generic CLI pointer, so a generic editor learns why it is quiet.
+        assert!(hover_value.contains("analysis is stopped (root_unavailable)"));
 
         write_lsp_message(
             &mut client_write,
@@ -16471,6 +16479,72 @@ async fn dirty_document_withdraws_line_local_diagnostics_and_discloses() -> Resu
                 "workspace report wrong for {uri} (expect_empty={expect_empty}): {entry}"
             ));
         }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn hover_without_evidence_names_an_unsaved_buffer() -> Result<(), String> {
+    let fixture = quarantine_fixture("dirty-hover")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .initialize(initialize_params(
+            None,
+            Some(
+                file_uri_for_path(&fixture.root)
+                    .map_err(|err| format!("root URI failed: {err}"))?,
+            ),
+        ))
+        .await
+        .map_err(|err| format!("initialize failed: {err}"))?;
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_b, QUARANTINE_TEXT_B))
+        .await;
+    commit_quarantine_snapshot(backend, &fixture)?;
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            2,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
+        .await;
+
+    let hover_text = |hover: Option<tower_lsp_server::ls_types::Hover>| match hover
+        .map(|hover| hover.contents)
+    {
+        Some(HoverContents::Markup(markup)) => Ok(markup.value),
+        other => Err(format!("expected a markdown hover, got {other:?}")),
+    };
+    let dirty = hover_text(
+        backend
+            .hover(hover_params(fixture.uri_a.clone(), 0, 4))
+            .await
+            .map_err(|err| format!("hover failed: {err}"))?,
+    )?;
+    if !dirty.contains("evidence for this file is paused")
+        || !dirty.contains("save the file to refresh")
+    {
+        return Err(format!(
+            "dirty buffer hover must say why and how to recover: {dirty}"
+        ));
+    }
+    // A clean document keeps its evidence hover; the paused text is specific
+    // to the dirty buffer.
+    let clean = hover_text(
+        backend
+            .hover(hover_params(fixture.uri_b.clone(), 0, 4))
+            .await
+            .map_err(|err| format!("hover failed: {err}"))?,
+    )?;
+    if clean.contains("paused") {
+        return Err(format!(
+            "clean document hover must not report a pause: {clean}"
+        ));
     }
     Ok(())
 }
