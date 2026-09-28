@@ -557,7 +557,7 @@ fn string_value(expression: &Expression<'_>) -> Option<String> {
 }
 
 pub(crate) fn collect_tests_from_statements(
-    statements: &oxc_allocator::Vec<'_, Statement<'_>>,
+    statements: &[Statement<'_>],
     file: &Path,
     source: &str,
     mocks: &[String],
@@ -617,7 +617,7 @@ pub(crate) fn collect_tests_from_statements(
         if let Some(span) = name_literal_span(stmt) {
             scope.names.push(span);
         }
-        if let Some((describe_name, body)) = describe_body_from_statement(stmt) {
+        if let Some((describe_name, body)) = describe_body_from_statement(stmt, source) {
             // `describe.each(...)('x', (cart) => ...)` binds its parameters
             // for every test inside.
             scope.levels.push(
@@ -629,6 +629,20 @@ pub(crate) fn collect_tests_from_statements(
             scope.describe_names.push(describe_name);
             collect_tests_from_statements(body, file, source, mocks, imports, scope, tests);
             scope.describe_names.pop();
+            scope.levels.pop();
+            continue;
+        }
+        if let Some((loop_bindings, body)) = loop_body_from_statement(stmt) {
+            // A `for`/`for...of`/`for...in` or `.forEach` callback body
+            // registers its tests once per iteration; its loop variables or
+            // callback parameters shadow every enclosing binding.
+            scope.levels.push(
+                loop_bindings
+                    .into_iter()
+                    .map(|name| (name, ScopeValue::Other, Phase::Declaration))
+                    .collect(),
+            );
+            collect_tests_from_statements(body, file, source, mocks, imports, scope, tests);
             scope.levels.pop();
             continue;
         }
@@ -1306,6 +1320,7 @@ fn argument_parameter_names(argument: &oxc_ast::ast::Argument<'_>) -> Vec<String
 
 pub(crate) fn describe_body_from_statement<'a>(
     stmt: &'a Statement<'a>,
+    source: &str,
 ) -> Option<(String, &'a oxc_allocator::Vec<'a, Statement<'a>>)> {
     let Statement::ExpressionStatement(expr_stmt) = stmt else {
         return None;
@@ -1318,7 +1333,7 @@ pub(crate) fn describe_body_from_statement<'a>(
     {
         return None;
     }
-    let name = string_argument(call.arguments.first()?)?;
+    let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
     let body = function_body_statements_from_argument(call.arguments.get(1)?)?;
     Some((name, body))
 }
@@ -1362,7 +1377,7 @@ pub(crate) fn test_name_and_assertions_from_call(
         return None;
     }
 
-    let name = string_argument(call.arguments.first()?)?;
+    let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
     let callback = call.arguments.get(1)?;
     let receiver = test_callback_receiver_name(callback);
     let assertions = function_body_statements_from_argument(callback)
@@ -1430,11 +1445,105 @@ fn is_active_declaration_modifier(name: &str) -> bool {
     matches!(name, "only" | "concurrent" | "sequential")
 }
 
-pub(crate) fn string_argument(arg: &oxc_ast::ast::Argument<'_>) -> Option<String> {
+/// The title of a `describe`/`test`/`it` registration. A string literal or a
+/// template without substitutions keeps its text. Any other expression (a
+/// template with substitutions, a concatenation, an identifier) is a
+/// computed title: it is named by a stable placeholder and the line of the
+/// registration, so the name is deterministic and never guessed from the
+/// runtime value. A spread argument is not a title.
+fn title_argument(
+    arg: &oxc_ast::ast::Argument<'_>,
+    source: &str,
+    registration_start: usize,
+) -> Option<String> {
     match arg {
         oxc_ast::ast::Argument::StringLiteral(literal) => Some(literal.value.to_string()),
+        oxc_ast::ast::Argument::SpreadElement(_) => None,
+        oxc_ast::ast::Argument::TemplateLiteral(template) if template.single_quasi().is_some() => {
+            template.single_quasi().map(|quasi| quasi.to_string())
+        }
+        _ => Some(computed_title(line_for_offset(source, registration_start))),
+    }
+}
+
+/// Placeholder name of a registration whose title is computed at runtime.
+fn computed_title(line: usize) -> String {
+    format!("<computed title, line {line}>")
+}
+
+/// The body of a loop that registers tests once per iteration, with the
+/// names its header binds: `for (const t of tests) { ... }`,
+/// `for (const key in table) { ... }`, `for (let i = 0; ...; i++) { ... }`
+/// and `tests.forEach((t) => { ... })`. A `for...of`/`for...in` whose
+/// target is not a declaration (it writes an outer name) is not walked, and
+/// neither is a loop over a literally empty array, which registers nothing.
+fn loop_body_from_statement<'a>(
+    stmt: &'a Statement<'a>,
+) -> Option<(Vec<String>, &'a [Statement<'a>])> {
+    let (bindings, body) = match stmt {
+        Statement::ForOfStatement(for_of) => {
+            if is_empty_array_literal(&for_of.right) {
+                return None;
+            }
+            (for_left_bindings(&for_of.left)?, &for_of.body)
+        }
+        Statement::ForInStatement(for_in) => (for_left_bindings(&for_in.left)?, &for_in.body),
+        Statement::ForStatement(for_stmt) => {
+            let bindings = match &for_stmt.init {
+                Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) => {
+                    declaration_binding_names(declaration)
+                }
+                _ => Vec::new(),
+            };
+            (bindings, &for_stmt.body)
+        }
+        Statement::ExpressionStatement(expr_stmt) => {
+            let Expression::CallExpression(call) = &expr_stmt.expression else {
+                return None;
+            };
+            let Expression::StaticMemberExpression(member) = &call.callee else {
+                return None;
+            };
+            if member.property.name.as_str() != "forEach" || is_empty_array_literal(&member.object)
+            {
+                return None;
+            }
+            let callback = call.arguments.first()?;
+            let body = function_body_statements_from_argument(callback)?;
+            return Some((argument_parameter_names(callback), body.as_slice()));
+        }
+        _ => return None,
+    };
+    let body = match body {
+        Statement::BlockStatement(block) => block.body.as_slice(),
+        single => std::slice::from_ref(single),
+    };
+    Some((bindings, body))
+}
+
+fn for_left_bindings(left: &oxc_ast::ast::ForStatementLeft<'_>) -> Option<Vec<String>> {
+    match left {
+        oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) => {
+            Some(declaration_binding_names(declaration))
+        }
         _ => None,
     }
+}
+
+fn declaration_binding_names(declaration: &oxc_ast::ast::VariableDeclaration<'_>) -> Vec<String> {
+    declaration
+        .declarations
+        .iter()
+        .flat_map(|declarator| declarator.id.get_binding_identifiers())
+        .map(|identifier| identifier.name.to_string())
+        .collect()
+}
+
+fn is_empty_array_literal(expression: &Expression<'_>) -> bool {
+    matches!(
+        expression.without_parentheses(),
+        Expression::ArrayExpression(array) if array.elements.is_empty()
+    )
 }
 
 pub(crate) fn function_body_statements_from_argument<'a>(
@@ -1470,14 +1579,16 @@ pub(crate) fn qualified_test_name(describe_stack: &[String], name: &str) -> Stri
 /// Detected shapes (bounded preview slice — extracting these shapes is a
 /// separate backlog item; this lane only discloses them):
 ///
-/// - `` it(`title ${x}`, fn) `` / `` test(`title`, fn) `` — template-literal
-///   titles (`string_argument` accepts `StringLiteral` only).
 /// - `` test.each`table`('name', fn) `` / `` it.each`table`('name', fn) `` —
 ///   tagged-template `.each` (the tagged template sits in callee position, so
 ///   the extractor's identifier/member callee check never recognizes it).
-/// - `it(...)` / `test(...)` calls nested inside loop, callback, or other
-///   non-`describe` bodies — `collect_tests_from_statements` recurses only into
-///   `describe(...)` bodies.
+/// - `it(...)` / `test(...)` calls nested inside a body the extractor does not
+///   walk: an `if`/`while`/`try` block, a helper function, or a callback other
+///   than `describe(...)` and `.forEach(...)`. `for`, `for...of` and
+///   `for...in` bodies and `.forEach` callbacks are walked (with computed
+///   titles named by placeholder), so their registrations are extracted.
+///   Such a call reports `template-literal title` when its title is a
+///   template literal.
 ///
 /// Returns `None` for a fully extracted file (the negative control contract):
 /// every test-shaped call at a position the extractor visits carries a string
