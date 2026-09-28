@@ -1665,10 +1665,17 @@ fn generated_existing_comment_capture_reads_keys_with_spaces() -> Result<(), Box
         "**ripr: gap**\n\n<details><summary>Full RIPR repair card</summary>\n\ncard\n\n</details>\n\n<!-- ripr:dedupe={compact_key} presentation=compact-v1 -->"
     );
     let legacy_body = format!("legacy card\n\n<!-- ripr:dedupe={legacy_key} -->");
+    // Negatives: a human comment with no marker, and a marker that never
+    // closes. Neither may become an existing RIPR comment, and neither may
+    // fail the step.
+    let unmarked_body = "LGTM, but see ripr:dedupe docs";
+    let unclosed_body = "<!-- ripr:dedupe=ripr:seam-3:src/x.rs:1";
     let raw = format!(
-        "[[{{\"id\":1,\"body\":{},\"path\":\"src/we ird/pricing.rs\",\"line\":12}},{{\"id\":2,\"body\":{},\"path\":\"src/lib.rs\",\"line\":3}}]]",
+        "[[{{\"id\":1,\"body\":{},\"path\":\"src/we ird/pricing.rs\",\"line\":12}},{{\"id\":2,\"body\":{},\"path\":\"src/lib.rs\",\"line\":3}},{{\"id\":3,\"body\":{},\"path\":\"src/lib.rs\",\"line\":4}},{{\"id\":4,\"body\":{},\"path\":\"src/x.rs\",\"line\":1}}]]",
         json_string(&compact_body),
-        json_string(&legacy_body)
+        json_string(&legacy_body),
+        json_string(unmarked_body),
+        json_string(unclosed_body)
     );
     fs::create_dir_all(root.join("target/ripr/review"))?;
     fs::write(
