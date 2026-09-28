@@ -1076,6 +1076,13 @@ mod tests {
                 continue;
             }
             in_usage_block = false;
+            // Options definitions are indented; a column-start `--` line is
+            // prose, which known_flags in suggest.rs also skips. The two
+            // miners must agree or the "documented here means suggestible
+            // there" promise above breaks.
+            if !line.starts_with(' ') {
+                continue;
+            }
             if let Some(rest) = trimmed.strip_prefix("--") {
                 let name: String = rest
                     .chars()

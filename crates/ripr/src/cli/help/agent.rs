@@ -167,7 +167,7 @@ change cache behavior, or touch LSP/MCP surfaces.
 "#;
 pub(super) const AGENT_STATUS_HELP: &str = r#"Report local agent-loop artifact state and the next command to run.
 
-Usage: ripr agent status [--root PATH] [--json]
+Usage: ripr agent status [--root PATH] [--json] [--out PATH]
 
 Options:
   --root PATH      Workspace root. Defaults to current directory.
