@@ -11,12 +11,11 @@ are scoped or reviewed.
 
 ### Fixed
 
-- Diff-scoped SARIF (`ripr check --format sarif`) now renders the same
-  `artifactLocation.uri`, `fingerprints` and `partialFingerprints` whether
-  `--root` is `.`, `./` or the checkout's absolute path. An absolute root used
-  to leak the checkout path into the uri and change every fingerprint between
-  a local and a CI run. SARIF shares the path owner GitHub annotations already
-  used.
+- `review-comments` observes its cooperative analysis budget during canonical
+  inventory and rejects cancelled evidence before classification. Git diff
+  discovery consumes the remaining budget; deadline cancellation records a
+  typed timeout while ordinary source failures retain their failure status.
+  Individual operations can still overrun a checkpoint interval (#1778).
 
 - Cold LLM-agent walks of 0.11 no longer dead-end on four routes. Passing a
   `ripr check` finding ID (`probe:...`) to `ripr agent repair --seam-id` now
@@ -77,6 +76,13 @@ are scoped or reviewed.
   command that keeps base, head, and root arguments literal when copied, including
   refs with shell syntax and roots with spaces (#4367).
 
+- Actionable working-set review cards write the verify and analysis-outcome
+  artifacts consumed by their receipt command. Gate and onboarding projections
+  carry the complete optional command chain, preserving the selected base in
+  the analysis-outcome command even without a conventional default branch;
+  older cards and deferred
+  GapRecord routes remain compatible (#4307).
+
 - LSP `ripr.collectContext`, `ripr.collectEvidenceContext` and
   `ripr.collectRepairPacket` no longer answer `null`. An unreadable argument
   or an id missing from the current snapshot is a `-32602` InvalidParams
@@ -96,6 +102,12 @@ are scoped or reviewed.
   assertion's token match to promote a finding to `exposed`; equally strong
   confirmed assertions retain their classification regardless of order
   ([#4404](https://github.com/EffortlessMetrics/ripr-swarm/issues/4404)).
+- Diff-scoped SARIF (`ripr check --format sarif`) now renders the same
+  `artifactLocation.uri`, `fingerprints` and `partialFingerprints` whether
+  `--root` is `.`, `./` or the checkout's absolute path. An absolute root used
+  to leak the checkout path into the uri and change every fingerprint between
+  a local and a CI run. SARIF shares the path owner GitHub annotations already
+  used.
 
 ### Added
 
