@@ -122,8 +122,9 @@ their IDs belong to that run and cannot be copied from documentation.
 
 Between the repair phases, the attempt refuses any new file outside the allowed
 test files, whether Git ignores it or not. Build output under a gitignored
-`target/` is the exception, so keep `target/` in `.gitignore` before running
-tests, and redirect ripr output under `target/ripr/` or outside the repository.
+`target/` is the exception. Before starting a repair, make sure `target/` is in
+a committed `.gitignore`; changing `.gitignore` mid-attempt is itself refused.
+Redirect ripr output under `target/ripr/` or outside the repository.
 Exit `0` means the command completed and `2` means it could not, which includes
 a refused repair attempt; `3` means a gate blocked or a typed refusal answered.
 See [exit codes](docs/EXIT_CODES.md). The

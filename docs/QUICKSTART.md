@@ -162,8 +162,9 @@ route, not an arbitrary finding ID:
 ripr pilot --root .
 ```
 
-When pilot recommends a repair, run the exact `ripr agent repair ... --phase before`
-command it prints. That command carries pilot's seam ID, which names a code
+Before starting a repair, make sure `target/` is in a committed `.gitignore`
+(see below). When pilot recommends a repair, run the exact
+`ripr agent repair ... --phase before` command it prints. That command carries pilot's seam ID, which names a code
 location across the repository. The `probe:...` IDs printed by `ripr check`
 name findings in one diff and are not accepted here.
 
@@ -172,9 +173,10 @@ command. Read the allowed test files, proposed assertion, verification command,
 and stop conditions. Make the focused test edit yourself or delegate that packet
 to an external coding agent, and change only test files. Run the test yourself:
 ripr does not run it. The attempt refuses any new file outside the allowed test
-files, whether Git ignores it or not, except build output under a gitignored
-`target/`. Keep `target/` in `.gitignore` before running `cargo test`, and
-redirect ripr output under `target/ripr/` or outside the repository.
+files, whether Git ignores it or not, except build output under a `target/`
+that was already gitignored when the before phase ran; a `.gitignore` change
+made mid-attempt is itself refused. Redirect ripr output under `target/ripr/` or
+outside the repository.
 
 Then run the exact `--attempt ... --phase after` command printed before the edit.
 It records the after snapshot and a receipt of static evidence movement.
