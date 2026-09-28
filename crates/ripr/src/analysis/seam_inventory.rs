@@ -40,7 +40,7 @@ use super::test_grip_evidence;
 use super::workspace;
 use crate::analysis::cancellation;
 use crate::config::RiprConfig;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -753,6 +753,9 @@ pub(crate) struct ScopedClassifiedSeamInventory {
     pub(crate) scoped_production_files: Vec<PathBuf>,
     pub(crate) changed_production_files: Vec<PathBuf>,
     pub(crate) immediate_caller_files: Vec<PathBuf>,
+    /// Changed owner names whose callers were not added to the scope because
+    /// the name is called from too many files to identify a caller.
+    pub(crate) caller_expansion_skipped_owner_names: Vec<String>,
 }
 
 /// Cache-backed inventory for one edited test file.
@@ -1017,6 +1020,7 @@ fn try_no_impact_fast_path(
             scoped_production_files: Vec::new(),
             changed_production_files: Vec::new(),
             immediate_caller_files: Vec::new(),
+            caller_expansion_skipped_owner_names: Vec::new(),
         },
     )))
 }
@@ -1226,7 +1230,7 @@ fn inventory_diff_scoped_classified_seams_inner(
     );
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
 
-    let caller_file_set = immediate_caller_file_set(
+    let (caller_file_set, caller_expansion_skipped_owner_names) = immediate_caller_file_set(
         &cached.index,
         &production_file_set,
         &changed_file_set,
@@ -1281,15 +1285,25 @@ fn inventory_diff_scoped_classified_seams_inner(
         scoped_production_files,
         changed_production_files,
         immediate_caller_files,
+        caller_expansion_skipped_owner_names,
     })
 }
 
+/// A changed owner name called from more production files than this is too
+/// generic to name a caller (`write`, `open`, `drop`): the bare call name
+/// cannot tell `io::Write::write` from the changed method, and expanding on
+/// it turns a diff-scoped review into a whole-repo inventory.
+const MAX_CALLER_FILES_PER_OWNER_NAME: usize = 16;
+
+/// Production files outside the diff that call a changed owner by name, plus
+/// the owner names skipped because they exceed
+/// [`MAX_CALLER_FILES_PER_OWNER_NAME`].
 fn immediate_caller_file_set(
     index: &RustIndex,
     production_file_set: &BTreeSet<String>,
     changed_file_set: &BTreeSet<String>,
     changed_owner_names: &[String],
-) -> BTreeSet<String> {
+) -> (BTreeSet<String>, Vec<String>) {
     let owner_call_names = changed_owner_names
         .iter()
         .filter_map(|owner| owner.rsplit("::").next())
@@ -1298,24 +1312,39 @@ fn immediate_caller_file_set(
         .map(str::to_string)
         .collect::<BTreeSet<_>>();
     if owner_call_names.is_empty() {
-        return BTreeSet::new();
+        return (BTreeSet::new(), Vec::new());
     }
 
-    index
+    let mut callers_by_name: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
+    for function in index
         .functions
         .iter()
         .filter(|function| !function.source_role.is_evidence_role())
-        .filter_map(|function| {
-            let file = normalized_inventory_path(&function.file);
-            (production_file_set.contains(&file)
-                && !changed_file_set.contains(&file)
-                && function
-                    .calls
-                    .iter()
-                    .any(|call| owner_call_names.contains(&call.name)))
-            .then_some(file)
-        })
-        .collect()
+    {
+        let file = normalized_inventory_path(&function.file);
+        if !production_file_set.contains(&file) || changed_file_set.contains(&file) {
+            continue;
+        }
+        for call in &function.calls {
+            if let Some(name) = owner_call_names.get(call.name.as_str()) {
+                callers_by_name
+                    .entry(name.as_str())
+                    .or_default()
+                    .insert(file.clone());
+            }
+        }
+    }
+
+    let mut callers = BTreeSet::new();
+    let mut skipped = Vec::new();
+    for (name, files) in callers_by_name {
+        if files.len() > MAX_CALLER_FILES_PER_OWNER_NAME {
+            skipped.push(name.to_string());
+        } else {
+            callers.extend(files);
+        }
+    }
+    (callers, skipped)
 }
 
 fn normalized_inventory_path(path: &Path) -> String {
@@ -1840,6 +1869,78 @@ fn expected_sink_for(kind: SeamKind) -> ExpectedSink {
 mod tests {
     use super::*;
     use crate::analysis::facts::FunctionSourceRole;
+
+    fn caller_function(file: &str, callee: &str) -> crate::analysis::facts::FunctionSummary {
+        crate::analysis::facts::FunctionSummary {
+            id: crate::domain::SymbolId(format!("{file}::caller")),
+            name: "caller".to_string(),
+            file: PathBuf::from(file),
+            start_line: 1,
+            end_line: 3,
+            body: String::new(),
+            calls: vec![crate::analysis::facts::CallFact {
+                line: 2,
+                name: callee.to_string(),
+                text: format!("{callee}()"),
+            }],
+            returns: Vec::new(),
+            literals: Vec::new(),
+            source_role: FunctionSourceRole::Production,
+            attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        }
+    }
+
+    /// A changed owner named like a ubiquitous method (`write`) must not pull
+    /// every file that calls any `write` into the review scope, while a
+    /// specific owner keeps its real callers.
+    #[test]
+    fn caller_expansion_skips_owner_names_called_from_too_many_files() {
+        let generic_callers = MAX_CALLER_FILES_PER_OWNER_NAME + 1;
+        let mut functions = (0..generic_callers)
+            .map(|n| caller_function(&format!("src/generic_{n}.rs"), "write"))
+            .collect::<Vec<_>>();
+        functions.push(caller_function("src/report.rs", "write_text_file"));
+        let index = RustIndex {
+            functions,
+            ..RustIndex::default()
+        };
+        let mut production = (0..generic_callers)
+            .map(|n| format!("src/generic_{n}.rs"))
+            .collect::<BTreeSet<_>>();
+        production.insert("src/report.rs".to_string());
+        production.insert("src/io.rs".to_string());
+        let changed = BTreeSet::from(["src/io.rs".to_string()]);
+
+        let (callers, skipped) = immediate_caller_file_set(
+            &index,
+            &production,
+            &changed,
+            &[
+                "io::Sink::write".to_string(),
+                "io::write_text_file".to_string(),
+            ],
+        );
+        assert_eq!(callers, BTreeSet::from(["src/report.rs".to_string()]));
+        assert_eq!(skipped, vec!["write".to_string()]);
+
+        // At the bound the name still expands.
+        let at_bound = RustIndex {
+            functions: (0..MAX_CALLER_FILES_PER_OWNER_NAME)
+                .map(|n| caller_function(&format!("src/generic_{n}.rs"), "write"))
+                .collect(),
+            ..RustIndex::default()
+        };
+        let (callers, skipped) = immediate_caller_file_set(
+            &at_bound,
+            &production,
+            &changed,
+            &["io::Sink::write".to_string()],
+        );
+        assert_eq!(callers.len(), MAX_CALLER_FILES_PER_OWNER_NAME);
+        assert!(skipped.is_empty());
+    }
 
     #[test]
     fn cache_receipt_retains_producer_order_and_portable_failure_rows() {
