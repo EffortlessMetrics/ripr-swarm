@@ -4,6 +4,9 @@ use crate::analysis::value_resolution::{FileValueScan, ValueEnvFacts};
 use std::cell::{OnceCell, RefCell};
 use std::sync::{Arc, OnceLock};
 
+/// Test file -> seam file -> (test source digest, authority verdict).
+type TargetAuthorityCache = RefCell<BTreeMap<PathBuf, BTreeMap<PathBuf, (String, bool)>>>;
+
 /// Precomputed per-test facts for repo seam evidence consumers. This
 /// avoids repeatedly tokenizing the same test assertions and import
 /// lines while classifying every seam in a workspace.
@@ -29,7 +32,7 @@ pub(crate) struct CompactGripContext<'a> {
     evidence_functions_by_line_cache: RefCell<BTreeMap<&'a Path, BTreeMap<usize, Vec<usize>>>>,
     /// Workspace-authority verdicts per (test file, seam file) for this
     /// evidence pass. See [`Self::validates_target_once_per_pass`].
-    target_authority_cache: RefCell<BTreeMap<PathBuf, BTreeMap<PathBuf, (String, bool)>>>,
+    target_authority_cache: TargetAuthorityCache,
 }
 
 /// Candidate generation only: the existing `contains` and `same_module`
