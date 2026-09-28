@@ -3013,6 +3013,77 @@ fn agent_packet_expands_one_brief_seam_by_id() -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
+/// A cold agent's most common first repair call passes the `probe:...` finding
+/// ID printed by `ripr check`. The refusal must say where seam IDs come from,
+/// through both the packet surface and the repair transaction that wraps it.
+#[test]
+fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn std::error::Error>>
+{
+    let (root, _diff) = agent_brief_sample_workspace("agent-packet-unknown-seam")?;
+    let root_path = root.display().to_string();
+
+    let probe_id = "probe:src_lib.rs:predicate:566edf6b";
+    let packet = run_ripr(&[
+        "agent",
+        "packet",
+        "--root",
+        &root_path,
+        "--seam-id",
+        probe_id,
+        "--json",
+    ]);
+    assert!(!packet.status.success());
+    let stderr = String::from_utf8_lossy(&packet.stderr);
+    assert!(
+        stderr.contains("is a `ripr check` finding ID, not a seam ID"),
+        "{stderr}"
+    );
+    // The pilot route names the root the failing call used, not `.`.
+    assert!(
+        stderr.contains("run `ripr pilot --root ")
+            && stderr.contains("agent-packet-unknown-seam")
+            && stderr.contains("to list current seam IDs"),
+        "{stderr}"
+    );
+
+    let repair = run_ripr(&[
+        "agent",
+        "repair",
+        "--root",
+        &root_path,
+        "--seam-id",
+        probe_id,
+        "--phase",
+        "before",
+    ]);
+    assert!(!repair.status.success());
+    let stderr = String::from_utf8_lossy(&repair.stderr);
+    assert!(stderr.contains("not a seam ID"), "{stderr}");
+    assert!(
+        stderr.contains("ripr pilot --root ") && stderr.contains("agent-packet-unknown-seam"),
+        "{stderr}"
+    );
+
+    let packet = run_ripr(&[
+        "agent",
+        "packet",
+        "--root",
+        &root_path,
+        "--seam-id",
+        "0000000000000000",
+        "--json",
+    ]);
+    assert!(!packet.status.success());
+    let stderr = String::from_utf8_lossy(&packet.stderr);
+    assert!(!stderr.contains("not a seam ID"), "{stderr}");
+    assert!(
+        stderr.contains("Run `ripr pilot --root ") && stderr.contains("to list current seam IDs"),
+        "{stderr}"
+    );
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
 /// The `unchanged_after_attempt` route is reachable only from a promotable
 /// receipt: a live verify pair, its analysis outcome, and a receipt bound to
 /// both (#4268). The committed unchanged-after-attempt receipt is
@@ -8872,10 +8943,19 @@ fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result
     // previously showed the bare file name while the workflow header showed a
     // full path.
     assert!(stdout.contains("ripr init plan (dry run — nothing was written)"));
-    assert!(stdout.contains(&format!("# {}", workspace.join("ripr.toml").display())));
+    // #4378: on Windows the headers use one separator (forward slashes).
+    let shown = |path: PathBuf| {
+        let text = path.display().to_string();
+        if cfg!(windows) {
+            text.replace('\\', "/")
+        } else {
+            text
+        }
+    };
+    assert!(stdout.contains(&format!("# {}", shown(workspace.join("ripr.toml")))));
     assert!(stdout.contains(&format!(
         "# {}",
-        workspace.join(".github/workflows/ripr.yml").display()
+        shown(workspace.join(".github/workflows/ripr.yml"))
     )));
     assert!(stdout.contains("Rerun without --dry-run to apply."));
     assert!(stdout.contains(".github"));
@@ -13997,7 +14077,7 @@ fn check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosur
         .unwrap();
     let human = String::from_utf8_lossy(&output_human.stdout);
     assert!(
-        human.contains("uncommitted changes to tracked source were not analyzed"),
+        human.contains("uncommitted edits to tracked source are not in the analyzed diff"),
         "check --base HEAD with uncommitted edit must show Note in human output; got:\n{human}"
     );
     // The note must name the remedy that works. Staging does not change a
@@ -14011,6 +14091,115 @@ fn check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosur
         "the disclosure must not suggest staging, which leaves a --base diff unchanged; got:\n{human}"
     );
     ignore_remove_dir_all(&root);
+}
+
+/// RIPR-SPEC-0112: a committed-history check reads each changed file from
+/// disk but places probes at the committed diff's line numbers. When a file in
+/// the diff also has uncommitted edits (an inline test is the common case),
+/// that file's findings can be misplaced or missing, so stderr names it. An
+/// edit only to a file outside the diff keeps the generic note alone.
+#[test]
+fn check_base_names_diff_files_with_uncommitted_edits() -> Result<(), Box<dyn std::error::Error>> {
+    let root =
+        std::env::temp_dir().join(format!("ripr-0112-edited-diff-file-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::create_dir_all(root.join("tests"))?;
+    run_git(&root, &["init", "-q"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"edited-diff-file\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn ok(n: u32) -> bool { n > 10 }\n",
+    )?;
+    std::fs::write(
+        root.join("tests/ok.rs"),
+        "#[test]\nfn t() { assert!(edited_diff_file::ok(20)); }\n",
+    )?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-q", "-m", "base"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn ok(n: u32) -> bool { n >= 10 }\n",
+    )?;
+    std::fs::write(root.join("README.md"), "edited diff file\n")?;
+    std::fs::write(root.join("src/naïve.rs"), "pub fn naive() -> u32 { 1 }\n")?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-q", "-m", "change"])?;
+    let root_str = root.to_string_lossy().into_owned();
+    let check = || run_ripr(&["check", "--root", &root_str, "--base", "HEAD~1", "--json"]);
+
+    // Edit outside the diff only: generic disclosure, no per-file warning.
+    std::fs::write(
+        root.join("tests/ok.rs"),
+        "#[test]\nfn t() { assert!(edited_diff_file::ok(10)); }\n",
+    )?;
+    let outside = check();
+    let stderr = String::from_utf8_lossy(&outside.stderr);
+    assert!(String::from_utf8_lossy(&outside.stdout).contains("\"unanalyzed_working_tree\": true"));
+    assert!(!stderr.contains("also in the analyzed"), "{stderr}");
+
+    // Edit files in the diff: stderr names the source files and the
+    // recovery, keeps a non-ASCII path readable, and skips the README, which
+    // no adapter analyzes.
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "// moved\npub fn ok(n: u32) -> bool { n >= 10 }\n",
+    )?;
+    std::fs::write(root.join("README.md"), "edited again\n")?;
+    std::fs::write(root.join("src/naïve.rs"), "pub fn naive() -> u32 { 2 }\n")?;
+    let inside = check();
+    let stderr = String::from_utf8_lossy(&inside.stderr);
+    assert!(
+        stderr.contains(
+            "`src/lib.rs`, `src/naïve.rs` have uncommitted edits and are also in the analyzed `HEAD~1...HEAD` diff"
+        ),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("README.md"), "{stderr}");
+    assert!(stderr.contains("rerun with `--worktree`"), "{stderr}");
+    assert!(!stderr.contains("tests/ok.rs"), "{stderr}");
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// A source file name git would C-quote (here, one with a double quote) is
+/// still recognized by its extension and named in the edited-diff warning.
+#[cfg(unix)]
+#[test]
+fn check_base_names_edited_diff_files_git_would_quote() -> Result<(), Box<dyn std::error::Error>> {
+    let root =
+        std::env::temp_dir().join(format!("ripr-0112-quoted-diff-file-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src"))?;
+    run_git(&root, &["init", "-q"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"quoted-diff-file\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "mod quoted;\n")?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-q", "-m", "base"])?;
+    let quoted = root.join("src/quo\"ted.rs");
+    std::fs::write(&quoted, "pub fn q(n: u32) -> bool { n > 1 }\n")?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-q", "-m", "change"])?;
+    std::fs::write(&quoted, "// edited\npub fn q(n: u32) -> bool { n > 1 }\n")?;
+    let root_str = root.to_string_lossy().into_owned();
+    let output = run_ripr(&["check", "--root", &root_str, "--base", "HEAD~1", "--json"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("`src/quo\"ted.rs` has uncommitted edits"),
+        "{stderr}"
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
 }
 
 /// RIPR-SPEC-0112 (default base): bare `ripr check` resolves the default base
@@ -14073,7 +14262,7 @@ fn check_default_base_with_uncommitted_edit_shows_unanalyzed_working_tree_disclo
     let human = run_ripr(&["check", "--root", &root_str]);
     assert_success(&human);
     let human_stdout = String::from_utf8_lossy(&human.stdout);
-    if !human_stdout.contains("uncommitted changes to tracked source were not analyzed")
+    if !human_stdout.contains("uncommitted edits to tracked source are not in the analyzed diff")
         || !human_stdout.contains("add `--worktree`")
     {
         return Err(format!(
@@ -14334,7 +14523,7 @@ fn check_with_a_diff_file_does_not_show_unanalyzed_working_tree_disclosure() -> 
     let base_human_run = run_ripr(&["check", "--root", &root_str, "--base", "HEAD"]);
     assert_success(&base_human_run);
     let base_human = String::from_utf8_lossy(&base_human_run.stdout).into_owned();
-    if !base_human.contains("uncommitted changes to tracked source were not analyzed") {
+    if !base_human.contains("uncommitted edits to tracked source are not in the analyzed diff") {
         return Err(format!(
             "fixture precondition: a --base run on this dirty checkout must print the note:\n{base_human}"
         ));
@@ -14351,7 +14540,7 @@ fn check_with_a_diff_file_does_not_show_unanalyzed_working_tree_disclosure() -> 
     let human_run = run_ripr(&["check", "--root", &root_str, "--diff", &patch_str]);
     assert_success(&human_run);
     let human = String::from_utf8_lossy(&human_run.stdout).into_owned();
-    if human.contains("uncommitted changes to tracked source were not analyzed") {
+    if human.contains("uncommitted edits to tracked source are not in the analyzed diff") {
         return Err(format!(
             "a --diff run must not print the unanalyzed working tree note:\n{human}"
         ));
@@ -15138,6 +15327,62 @@ fn agent_repair_after_phase_stdout_is_one_json_document() -> Result<(), Box<dyn 
         .and_then(|attempts| attempts.first())
         .ok_or("agent_status lists no repair attempt")?;
     assert_eq!(attempt["attempt_id"], attempt_id.as_str());
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// RC rehearsal: a focused test with a wrong expected value still moves the
+/// static grip to `improved`, because ripr never runs it. Every surface a cold
+/// agent reads (after-phase stderr, the stdout envelope's status report, and
+/// `agent status` in both forms) must say the test was not run.
+#[test]
+fn agent_repair_after_a_failing_test_says_the_test_was_not_run()
+-> Result<(), Box<dyn std::error::Error>> {
+    const FAILING_BOUNDARY_TEST: &str = "\n#[test]\nfn at_threshold_discounts() {\n    assert_eq!(discounted_total(100, 100), 1);\n}\n";
+    let root = repair_route_workspace("after failing test not run")?;
+    let attempt_id = repair_route_attempt_id(&repair_route_before(&root)?)?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{REPAIR_ROUTE_WEAK_TEST}{FAILING_BOUNDARY_TEST}"),
+    )?;
+    let after = repair_route_after(&root, &attempt_id);
+    assert_success(&after);
+
+    let stderr = String::from_utf8_lossy(&after.stderr);
+    assert!(
+        stderr.contains("(improved)"),
+        "precondition: static movement improved:\n{stderr}"
+    );
+    assert!(
+        stderr
+            .contains("ripr: test run: none recorded. This receipt compares static evidence only"),
+        "{stderr}"
+    );
+    let document: serde_json::Value = serde_json::from_slice(&after.stdout)?;
+    let test_run = &document["agent_status"]["test_run"];
+    assert_eq!(test_run["status"], "not_recorded", "{document:#}");
+    assert_eq!(test_run["test_changed"], "tests/pricing.rs", "{document:#}");
+    assert!(
+        test_run["next_step"]
+            .as_str()
+            .is_some_and(|step| step.contains("keep it only if it passes")),
+        "{test_run}"
+    );
+    let attempt = &document["agent_status"]["repair_attempts"][0];
+    assert_eq!(
+        attempt["receipt"]["verification_status"],
+        "verification_not_run"
+    );
+
+    let root_arg = root.to_string_lossy().into_owned();
+    let status = run_ripr(&["agent", "status", "--root", &root_arg]);
+    assert_success(&status);
+    let human = String::from_utf8_lossy(&status.stdout);
+    assert!(
+        human.contains("Test run: none recorded. The repair receipt compares static evidence only and records no run of the focused test (`tests/pricing.rs`)"),
+        "{human}"
+    );
 
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
@@ -17200,4 +17445,65 @@ fn history_commands_without_a_resolvable_default_base_fail_named() -> Result<(),
     } else {
         Err(failures.join("\n\n"))
     }
+}
+
+/// A cloned repository's `ripr.toml` must not choose a program for ripr to
+/// run. `[perl].executable = "sh"` plus a `ripr-facts` script in the checkout made
+/// `ripr check` (and the LSP sidecar on open/save, and `ripr doctor`) run
+/// repository code, because the managed argv starts with `ripr-facts`. The
+/// refused runs must leave no marker; the opted-in run must still reach the
+/// configured executable, so the gate is the only thing that changed.
+#[cfg(unix)]
+#[test]
+fn repo_config_perl_executable_runs_only_with_user_opt_in() -> Result<(), Box<dyn std::error::Error>>
+{
+    // Outside the ripr workspace: cargo points TMPDIR at target/, where root
+    // discovery would climb to this repository's Cargo.toml.
+    let root = unique_external_workspace("perl-executable-opt-in")?;
+    init_producer_fixture_repo(&root)?;
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[perl]\nproducer = \"perl-ripr-facts\"\nexecutable = \"sh\"\n",
+    )?;
+    std::fs::write(root.join("lib.pm"), "package Lib;\n1;\n")?;
+    let marker = root.join("repo-code-ran");
+    std::fs::write(
+        root.join("ripr-facts"),
+        format!("touch '{}'\n", marker.display()),
+    )?;
+    let bin = env!("CARGO_BIN_EXE_ripr");
+    let opt_in = "RIPR_ALLOW_REPO_PERL_EXECUTABLE";
+
+    let check = run_command_with_env(bin, &root, &["check", "--base", "HEAD"], &[(opt_in, "0")])?;
+    let stderr = String::from_utf8_lossy(&check.stderr);
+    assert!(
+        !marker.exists(),
+        "ripr check ran repository code without opt-in\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("ignoring [perl].executable `sh` from ripr.toml")
+            && stderr.contains(opt_in),
+        "refusal must name the ignored executable and the opt-in: {stderr}"
+    );
+
+    let doctor = run_command_with_env(bin, &root, &["doctor"], &[(opt_in, "0")])?;
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(
+        !marker.exists(),
+        "ripr doctor ran repository code without opt-in\nstdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("ignoring [perl].executable `sh` from ripr.toml (not run)"),
+        "doctor must say the executable was not run: {stdout}"
+    );
+
+    let trusted = run_command_with_env(bin, &root, &["check", "--base", "HEAD"], &[(opt_in, "1")])?;
+    assert!(
+        marker.exists(),
+        "opted-in check must run the configured executable\nstderr:\n{}",
+        String::from_utf8_lossy(&trusted.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
 }
