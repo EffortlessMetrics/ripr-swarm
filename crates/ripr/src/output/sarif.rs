@@ -296,6 +296,8 @@ fn sarif_level(severity: ConfigSeverity) -> Option<&'static str> {
 }
 
 fn physical_location(file: &str, line: usize, column: Option<usize>) -> Value {
+    let uri = sarif_uri_reference(file);
+    let file = uri.as_str();
     // SARIF 2.1.0: `region` is optional. When the finding has no known line
     // (line == 0 — an unlocated probe or a producer bug), omit the region
     // entirely rather than fabricating startLine:1, which would point SARIF
@@ -872,6 +874,25 @@ fn all_exposure_classes() -> [ExposureClass; 7] {
         ExposureClass::PropagationUnknown,
         ExposureClass::StaticUnknown,
     ]
+}
+
+/// Percent-encode a repository path as an RFC 3986 relative reference for
+/// `artifactLocation.uri` (SARIF 2.1.0 §3.4.3). A raw `#` or `?` would be
+/// read as a fragment or query and point consumers at a different file; a
+/// space or a stray `%` makes the uri invalid. `:` is encoded too, since a
+/// colon in the first segment would parse as a scheme. Fingerprints keep
+/// the unencoded text so existing alert identity does not move.
+fn sarif_uri_reference(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                encoded.push(char::from(byte));
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
 }
 
 fn normalize_path(path: &Path) -> String {
@@ -1994,6 +2015,27 @@ weakly_gripped = "note"
     fn physical_location_includes_region_for_located_finding() {
         let loc = physical_location("src/lib.rs", 42, None);
         assert_eq!(loc["physicalLocation"]["region"]["startLine"], 42);
+    }
+
+    #[test]
+    fn physical_location_uri_is_percent_encoded_reference() {
+        // A raw `#` splits the path into a fragment, a space and a bare `%`
+        // are not legal in a URI; each must arrive percent-encoded.
+        let loc = physical_location("src/we ird#dir/a%b,c:d.rs", 3, None);
+        assert_eq!(
+            loc["physicalLocation"]["artifactLocation"]["uri"],
+            "src/we%20ird%23dir/a%25b%2Cc%3Ad.rs"
+        );
+        let plain = physical_location("crates/ripr-x/src/lib_2.rs", 3, None);
+        assert_eq!(
+            plain["physicalLocation"]["artifactLocation"]["uri"],
+            "crates/ripr-x/src/lib_2.rs"
+        );
+        let unicode = physical_location("src/dé.rs", 3, None);
+        assert_eq!(
+            unicode["physicalLocation"]["artifactLocation"]["uri"],
+            "src/d%C3%A9.rs"
+        );
     }
 
     fn stage(state: StageState, summary: &str) -> StageEvidence {
