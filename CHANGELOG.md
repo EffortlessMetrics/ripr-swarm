@@ -20,7 +20,8 @@ are scoped or reviewed.
   CI checkout no longer stops at raw `fatal: ... no merge base`; it names
   `git fetch --unshallow` and `fetch-depth: 0`. A repository with no
   commits, or whose default branch is not `main`/`master`, is told which
-  `--base` would work.
+  `--base` would work. A branch that shares no history with HEAD is never
+  offered as that base.
 - A diff that touches conflict markers in a file no enabled adapter reads
   (for example resolving markers committed to a workflow `.yml`) no longer
   turns the whole run into `unsupported_input`.

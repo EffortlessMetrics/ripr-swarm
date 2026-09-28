@@ -330,23 +330,42 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
     })
     // The current branch cannot be its own base.
     .filter(|name| !current.contains(name))
-    .take(5)
     .collect::<Vec<_>>();
-    match (others.first(), current.first()) {
-        (Some(first), _) => format!(
+    // `base...HEAD` needs a merge base, so only a branch that shares history
+    // with HEAD is offered as a working `--base`.
+    let (related, unrelated): (Vec<String>, Vec<String>) = others.into_iter().partition(|name| {
+        crate::git::run_git_output_with_deadline(
+            root,
+            &["merge-base", name.as_str(), "HEAD"],
+            git_timeout,
+        )
+        .is_ok_and(|output| output.status.success())
+    });
+    let listed = |names: &[String]| {
+        names
+            .iter()
+            .take(5)
+            .map(|name| format!("`{name}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    match (related.first(), unrelated.is_empty(), current.first()) {
+        (Some(first), _, _) => format!(
             " Other branches here: {}; for example `--base {first}`.",
-            others
-                .iter()
-                .map(|name| format!("`{name}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
+            listed(&related)
         ),
-        (None, Some(only)) => format!(
+        (None, false, _) => format!(
+            " No other branch here shares history with HEAD ({}), so none can be a base; \
+             fetch the branch this work started from, or use `--base HEAD~1` for the last \
+             commit.",
+            listed(&unrelated)
+        ),
+        (None, true, Some(only)) => format!(
             " `{only}` is the only branch, so there is no separate base to compare; use \
              `--base HEAD~1` for the last commit or `--base HEAD --worktree` for uncommitted \
              edits."
         ),
-        (None, None) => String::new(),
+        (None, true, None) => String::new(),
     }
 }
 
@@ -1084,7 +1103,15 @@ mod tests {
     /// assertion downstream would then fail for a reason unrelated to what it
     /// tests.
     fn run_git_checked(dir: &Path, args: &[&str]) -> std::io::Result<()> {
-        let output = Command::new("git").args(args).current_dir(dir).output()?;
+        // A hook-launched test inherits `GIT_DIR`/`GIT_WORK_TREE`, which
+        // would point these fixture commands at the caller's repository.
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .output()?;
         if output.status.success() {
             return Ok(());
         }
@@ -1308,6 +1335,25 @@ mod tests {
         assert!(
             !err.contains("`feature/discount`"),
             "the current branch is never offered as its own base, got: {err}"
+        );
+
+        // An orphan branch shares no history with HEAD: `--base orphan`
+        // would fail on the missing merge base, so it is never offered.
+        run_git_checked(&dir, &["checkout", "-q", "--orphan", "orphan"])?;
+        run_git_checked(&dir, &["commit", "-q", "-m", "orphan root"])?;
+        run_git_checked(&dir, &["branch", "-q", "-D", "trunk", "feature/discount"])?;
+        let err = resolve_default_base(&dir, None).expect_err("no default candidate");
+        assert!(
+            err.contains("`orphan` is the only branch"),
+            "the lone orphan branch must say so, got: {err}"
+        );
+        run_git_checked(&dir, &["checkout", "-q", "--orphan", "island"])?;
+        run_git_checked(&dir, &["commit", "-q", "-m", "island root"])?;
+        let err = resolve_default_base(&dir, None).expect_err("no default candidate");
+        assert!(
+            err.contains("No other branch here shares history with HEAD (`orphan`)")
+                && !err.contains("--base orphan"),
+            "an unrelated branch must not be offered as a base, got: {err}"
         );
         ignore_remove_dir_all(&dir);
         Ok(())
