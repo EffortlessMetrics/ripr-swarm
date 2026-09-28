@@ -17,6 +17,14 @@ are scoped or reviewed.
   Before, they carried merge-commit line numbers. The install now pins the
   generating ripr version; an unpinned `cargo install ripr` took the newest
   crates.io release, whose CLI need not match the workflow's steps.
+- A repository's `ripr.toml` can no longer choose a program for ripr to run.
+  `[perl].executable` was spawned by `ripr check`, probed by `ripr doctor`, and
+  spawned by `ripr lsp` on file open or save, so a cloned repository could run
+  its own code (for example `executable = "sh"` plus a committed `ripr-facts`
+  script). ripr now ignores that key, says so on stderr or in the doctor
+  report, and uses the exporter on PATH unless the user sets
+  `RIPR_ALLOW_REPO_PERL_EXECUTABLE=1`. The VS Code extension already required
+  a trusted workspace to start the server.
 - Rust: a changed function that no test calls now reads `no_static_path`.
   Before, a same-file test of a sibling function made it `weakly_exposed`
   with "strong oracle found", and its unknown-shape lines said "escalate to
@@ -144,10 +152,9 @@ are scoped or reviewed.
   used.
 - Server qualification builds the Linux server archives, which the editor
   extension downloads, on Ubuntu 22.04 with `--locked`, and fails a Linux
-  binary that needs a glibc newer than 2.35. The 0.10.0 Linux archives were
-  built on Ubuntu 24.04 and failed on Ubuntu 22.04 and Debian 12 with
-  `GLIBC_2.39 not found`. The source release workflow takes the same runners
-  and check at the release sync.
+  binary that needs a glibc newer than 2.34 (RHEL 9), the floor the 0.11.0
+  release sync adds to `cargo xtask release-server-archive`. The 0.10.0 Linux archives were built on Ubuntu 24.04 and
+  failed on Ubuntu 22.04 and Debian 12 with `GLIBC_2.39 not found`.
 
 ### Added
 
