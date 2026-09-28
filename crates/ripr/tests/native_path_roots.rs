@@ -249,27 +249,42 @@ fn cache_field(report: &serde_json::Value, key: &str) -> Option<u64> {
         .and_then(serde_json::Value::as_u64)
 }
 
+/// Count the cached fact files under `dir`, whatever schema-version
+/// subdirectory the cache layer uses.
+fn cached_fact_files(dir: &Path) -> Result<u64, String> {
+    let mut count = 0;
+    for entry in fs::read_dir(dir).map_err(|err| format!("read {}: {err}", dir.display()))? {
+        let path = entry
+            .map_err(|err| format!("read entry under {}: {err}", dir.display()))?
+            .path();
+        if path.is_dir() {
+            count += cached_fact_files(&path)?;
+        } else if path
+            .extension()
+            .is_some_and(|extension| extension == "json")
+        {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
 /// Per-file facts written by `ripr check` under `<root>/target/ripr/cache` are
-/// read back by `ripr rerun`: every fact is a hit, none is a miss or a store
-/// error, and the seam is named by its root-relative path. A write or read
-/// that failed on the unusual root would surface as a miss here.
+/// read back by `ripr rerun`: one hit per cached fact file, no miss and no
+/// store error, and the seam is named by its root-relative path. A write or
+/// read that failed on the unusual root would surface as a miss or a hit
+/// count short of the cached files.
 fn assert_file_fact_cache_round_trips(root: &Path) -> Result<(), String> {
     let cache_layer = root
         .join("target")
         .join("ripr")
         .join("cache")
         .join("repo-file-facts");
-    let entries = fs::read_dir(&cache_layer)
-        .map_err(|err| {
-            format!(
-                "check left no file-fact cache at {}: {err}",
-                cache_layer.display()
-            )
-        })?
-        .count();
-    if entries == 0 {
+    let cached = cached_fact_files(&cache_layer)
+        .map_err(|err| format!("check left no file-fact cache: {err}"))?;
+    if cached == 0 {
         return Err(format!(
-            "check left an empty file-fact cache at {}",
+            "check left no cached fact file under {}",
             cache_layer.display()
         ));
     }
@@ -277,10 +292,10 @@ fn assert_file_fact_cache_round_trips(root: &Path) -> Result<(), String> {
     if report.pointer("/cache/reuse_state") != Some(&serde_json::json!("reused_file_facts"))
         || cache_field(&report, "misses") != Some(0)
         || cache_field(&report, "store_errors") != Some(0)
-        || cache_field(&report, "hits").unwrap_or(0) == 0
+        || cache_field(&report, "hits") != Some(cached)
     {
         return Err(format!(
-            "rerun must reuse every file fact check cached: {}",
+            "rerun must reuse all {cached} file facts check cached: {}",
             report["cache"]
         ));
     }
