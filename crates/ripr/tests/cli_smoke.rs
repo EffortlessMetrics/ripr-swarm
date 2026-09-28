@@ -2560,7 +2560,7 @@ fn first_pr_check_missing_packet_suggests_rooted_out_dir() -> Result<(), Box<dyn
     let output = run_ripr(&["first-pr", "--root", &root, "--check"]);
     assert_failure(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("it does not create one"));
+    assert!(stderr.contains("it does not create one"), "{stderr}");
     // The suggested recovery must reproduce the exact directory `--check`
     // validated: rooted at `--root`, never CWD-relative, with stable
     // separators on every host.
@@ -2577,6 +2577,133 @@ fn first_pr_check_missing_packet_suggests_rooted_out_dir() -> Result<(), Box<dyn
     // The missing path renders with stable separators even on Windows.
     assert!(stderr.contains(&format!("Missing:\n  {expected_out_dir}/start-here.json")));
     std::fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+/// The write command a `first-pr --check` missing-packet recovery suggests,
+/// as arguments after `ripr` (quotes stripped; the fixture paths have no
+/// spaces).
+fn suggested_first_pr_write(stderr: &str) -> Result<Vec<String>, String> {
+    let line = stderr
+        .split("Create and validate it with:\n")
+        .nth(1)
+        .and_then(|rest| rest.lines().next())
+        .ok_or_else(|| format!("no suggested write command:\n{stderr}"))?;
+    let mut args = line
+        .split_whitespace()
+        .map(|arg| arg.trim_matches('\'').to_string())
+        .collect::<Vec<_>>();
+    if args.first().map(String::as_str) != Some("ripr") {
+        return Err(format!("suggested command is not a ripr command: {line}"));
+    }
+    args.remove(0);
+    Ok(args)
+}
+
+fn run_ripr_owned(args: &[String]) -> Output {
+    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    run_ripr(&args)
+}
+
+/// #4285: `--check` never diffs, so a repository where no default base
+/// resolves (no origin, no main/master: a CI merge-ref checkout) must still
+/// answer a missing packet with the recovery, not the base failure. Its
+/// suggested write cannot resolve a base either, so it must demand `--base`
+/// rather than omit or guess it; filled in, that command writes the packet.
+/// (Windows Advisory surfaced it: the suite's temp root is under the checkout,
+/// and the lane's shallow PR checkout has no default base.)
+#[test]
+fn first_pr_check_missing_packet_recovers_without_a_resolvable_base()
+-> Result<(), Box<dyn std::error::Error>> {
+    let workspace = make_temp_workspace(None)?;
+    run_git(&workspace, &["init", "-q", "-b", "topic"])?;
+    run_git(&workspace, &["add", "Cargo.toml", "src/lib.rs"])?;
+    run_git(
+        &workspace,
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-q",
+            "-m",
+            "fixture",
+        ],
+    )?;
+    // The CI merge-ref shape: a detached HEAD and no base-named branch.
+    run_git(&workspace, &["checkout", "-q", "--detach"])?;
+    run_git(&workspace, &["branch", "-q", "-D", "topic"])?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["first-pr", "--root", &root, "--check"]);
+    assert_failure(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("it does not create one"), "{stderr}");
+    assert!(
+        stderr.contains("Replace <ref> with the branch or commit this PR is based on"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("could not resolve a default base"),
+        "the recovery must name why --base is required:\n{stderr}"
+    );
+    assert!(!stderr.contains("origin/main --head"), "{stderr}");
+
+    // The suggested write names the base it needs; with a real ref filled in
+    // it writes a packet that `--check` with the same base accepts.
+    let mut write = suggested_first_pr_write(&stderr)?;
+    let base = write
+        .iter()
+        .position(|arg| arg == "--base")
+        .ok_or_else(|| format!("the suggested write must demand --base:\n{stderr}"))?;
+    assert_eq!(
+        write.get(base + 1).map(String::as_str),
+        Some("<ref>"),
+        "{stderr}"
+    );
+    write[base + 1] = "HEAD".to_string();
+    let written = run_ripr_owned(&write);
+    assert_success(&written);
+    assert!(
+        workspace
+            .join("target/ripr/reports/start-here.json")
+            .is_file()
+    );
+    let recheck = run_ripr(&["first-pr", "--root", &root, "--base", "HEAD", "--check"]);
+    assert_success(&recheck);
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+/// #4285 positive half: where the default base resolves, the recovery's
+/// suggested write omits `--base` and, run exactly as printed, resolves the
+/// same default (#4260) and writes the packet; `--check` then resolves the
+/// omitted base too, so the packet it validates is current.
+#[test]
+fn first_pr_check_recovery_write_resolves_the_default_base() -> Result<(), String> {
+    let root = no_origin_master_repo("first-pr-check-default-base", "master")?;
+    let root_str = root.display().to_string();
+    let missing = run_ripr(&["first-pr", "--root", &root_str, "--check"]);
+    assert_failure(&missing);
+    let stderr = String::from_utf8_lossy(&missing.stderr);
+    assert!(stderr.contains("it does not create one"), "{stderr}");
+    assert!(!stderr.contains("--base"), "{stderr}");
+
+    let write = run_ripr_owned(&suggested_first_pr_write(&stderr)?);
+    assert_success(&write);
+    let base = json_string_at(
+        &root.join("target/ripr/reports/start-here.json"),
+        "/inputs/base",
+    )?;
+    assert_eq!(base, "master");
+
+    let check = run_ripr(&["first-pr", "--root", &root_str, "--check"]);
+    assert_success(&check);
+    assert!(
+        String::from_utf8_lossy(&check.stdout).contains("First PR start-here packet ok"),
+        "{check:?}"
+    );
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 
@@ -7281,8 +7408,11 @@ fn doctor_json_reports_current_schema() -> Result<(), String> {
 
     let report: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|err| format!("doctor JSON did not parse: {err}"))?;
-    assert_eq!(report["schema_version"], "0.2");
+    assert_eq!(report["schema_version"], "0.3");
     assert_eq!(report["tool"], "ripr");
+    assert_eq!(report["profile"], "analysis");
+    assert_eq!(report["ripr_version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(report["ripr_build_msrv"], env!("CARGO_PKG_RUST_VERSION"));
     assert!(
         report["runtime_probes"].is_array(),
         "doctor JSON must expose typed runtime probe results: {report}"
@@ -7523,7 +7653,7 @@ fn doctor_passes_typescript_root_without_rust_toolchain() -> Result<(), String> 
 /// a Cargo.toml still fail the Cargo.toml check.
 #[test]
 #[cfg(unix)]
-fn doctor_still_fails_rust_roots_without_cargo_or_manifest() -> Result<(), String> {
+fn doctor_discloses_missing_verification_tools_but_still_checks_manifest() -> Result<(), String> {
     let workspace = unique_temp_workspace("doctor-rust-no-toolchain");
     let path = doctor_path_without_rust_toolchain(&workspace)?;
 
@@ -7540,13 +7670,44 @@ fn doctor_still_fails_rust_roots_without_cargo_or_manifest() -> Result<(), Strin
     let output = run_doctor_with_path(&with_manifest, &path, true)?;
     let report: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("doctor JSON did not parse: {error}"))?;
-    let manifest_result = if output.status.success()
-        || report["status"] != "fail"
+    let manifest_result = if !output.status.success()
+        || report["status"] != "pass"
         || doctor_check_status(&report, "cargo_toml") != "pass"
-        || doctor_check_status(&report, "tool_cargo") != "fail"
-        || doctor_check_status(&report, "tool_rustc") != "fail"
+        || doctor_check_status(&report, "tool_cargo") != "advisory"
+        || doctor_check_status(&report, "tool_rustc") != "advisory"
     {
-        Err(format!("a Rust root without cargo must fail: {report}"))
+        Err(format!(
+            "an installed binary must keep analysis available: {report}"
+        ))
+    } else {
+        Ok(())
+    };
+
+    let source_build = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &with_manifest,
+        &[
+            "doctor",
+            "--root",
+            &with_manifest.display().to_string(),
+            "--profile",
+            "source-build",
+            "--json",
+        ],
+        &[("PATH", path.as_str())],
+    )
+    .map_err(|error| format!("run source-build doctor: {error}"))?;
+    let source_report: serde_json::Value = serde_json::from_slice(&source_build.stdout)
+        .map_err(|error| format!("source-build doctor JSON did not parse: {error}"))?;
+    let source_result = if source_build.status.success()
+        || source_report["status"] != "fail"
+        || source_report["profile"] != "source-build"
+        || doctor_check_status(&source_report, "tool_cargo") != "fail"
+        || doctor_check_status(&source_report, "tool_rustc") != "fail"
+    {
+        Err(format!(
+            "source-build must require cargo and rustc: {source_report}"
+        ))
     } else {
         Ok(())
     };
@@ -7567,7 +7728,7 @@ fn doctor_still_fails_rust_roots_without_cargo_or_manifest() -> Result<(), Strin
     };
 
     ignore_remove_dir_all(&workspace);
-    manifest_result.and(sources_result)
+    manifest_result.and(source_result).and(sources_result)
 }
 
 #[test]
@@ -16216,39 +16377,6 @@ fn history_commands_resolve_the_default_base_without_origin() -> Result<(), Stri
         Ok(())
     } else {
         Err(failures.join("\n\n"))
-    }
-}
-
-/// #4285: `first-pr --check` with no packet answers with the command that
-/// creates one even when no default base resolves (a detached shallow CI
-/// clone, a repo without `origin`). The recovery needs no base, so a base
-/// failure must not preempt it, and an omitted `--base` stays omitted rather
-/// than naming a placeholder the write run would never use.
-#[test]
-fn first_pr_check_missing_packet_recovers_without_a_resolvable_base() -> Result<(), String> {
-    let root = no_origin_master_repo("check-missing-packet-unresolvable-base", "trunk")?;
-    let output = run_command(
-        env!("CARGO_BIN_EXE_ripr"),
-        Some(&root),
-        &["first-pr", "--root", ".", "--check"],
-    )
-    .map_err(|err| format!("spawn ripr first-pr --check: {err}"))?;
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let recovered = !output.status.success()
-        && stderr.contains("it does not create one")
-        && stderr.contains(
-            "Create and validate it with:\n  ripr first-pr --root . --head HEAD --out-dir ",
-        )
-        && !stderr.contains("--base")
-        && !stderr.contains("could not resolve a default base");
-    ignore_remove_dir_all(&root);
-    if recovered {
-        Ok(())
-    } else {
-        Err(format!(
-            "first-pr --check without a packet must print its recovery, not a base error; status {:?}, stderr:\n{stderr}",
-            output.status.code()
-        ))
     }
 }
 

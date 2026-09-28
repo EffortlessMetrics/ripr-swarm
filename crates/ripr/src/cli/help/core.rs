@@ -84,7 +84,11 @@ Options:
 
 The outcome receipt is advisory. It compares static repo-exposure snapshots by
 seam_id and check-output snapshots by canonical_gap_id, then reports moved,
-unchanged, regressed, new, and removed gaps or seams. Its
+unchanged, regressed, new, and removed gaps or seams. Check output whose
+findings carry no canonical_gap_id (Rust `ripr check --json` today) is refused
+rather than compared. For Rust, use `ripr check --format repo-exposure-json`
+for both; repo exposure carries no Python or TypeScript seams, so preview
+findings without a canonical_gap_id have no comparable receipt. Its
 review receipt summarizes what changed, what RIPR flagged before, which focused
 proof signals moved, what remains weak or unknown, and what reviewers should
 inspect or avoid inferring. It does not run analysis, edit source, generate
@@ -311,11 +315,13 @@ Performance:
 "#;
 pub(super) const DOCTOR_HELP: &str = r#"Diagnose the local ripr setup (workspace, config, toolchains, paths).
 
-Usage: ripr doctor [--root PATH] [--json]
+Usage: ripr doctor [--root PATH] [--json] [--profile analysis|source-build]
 
 Options:
   --root PATH  Diagnose the selected workspace (defaults to `.`).
   --json       Emit the core checks as stable JSON and use the same exit status.
+  --profile    Check installed-binary analysis (default) or prerequisites for
+               building RIPR from source.
 
 The JSON report is machine-readable advisory setup evidence. A `fail` status or
 non-zero exit means at least one core check failed; it is not a release or gate
@@ -325,7 +331,11 @@ Checks:
   - root directory exists
   - Cargo.toml is present at the selected root (when Rust is in scope)
   - ripr.toml load status and effective defaults are visible
-  - git is available; cargo and rustc are available (when Rust is in scope)
+  - git is available; cargo and rustc availability is disclosed when Rust is
+    in scope. Missing tools or an older workspace rustc are advisory for
+    installed-binary static analysis, but fail the source-build profile.
+    Project verification uses the project's selected toolchain and its actual
+    execution result; doctor does not run verification.
 
 Rust is in scope when it is enabled and Cargo.toml or .rs files are detected,
 or when no other language is detected or enabled. Otherwise (for example a

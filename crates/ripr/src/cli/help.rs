@@ -1507,7 +1507,7 @@ mod tests {
                 ],
             ),
             ("gate", GATE_HELP, &["--pr-guidance", "--mode"]),
-            ("doctor", DOCTOR_HELP, &["--root", "--json"]),
+            ("doctor", DOCTOR_HELP, &["--root", "--json", "--profile"]),
             ("config validate", CONFIG_HELP, &["--root"]),
             (
                 "pilot",
