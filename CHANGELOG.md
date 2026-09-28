@@ -254,6 +254,15 @@ are scoped or reviewed.
   command itself is unchanged, still runs as printed, and records `not_run`
   when left as is.
 
+- The generated CI job summary's `PR review summary` and `Recommended next
+  test` blocks, their collapsed full reports included, now print copyable
+  commands at the repository root (`ripr agent verify --root . ...`,
+  `> ./target/...`) instead of the runner's absolute checkout path that
+  `ripr agent start` binds into `workflow.json` and `agent-brief.json`, like
+  the `Agent review packet` block already did. The stored artifacts keep
+  their bound root; only the summary rendering rewrites the checkout path, and
+  only where it is a whole path token.
+
 ### Added
 
 - `ripr --version` now names the commit the binary was built from, as
