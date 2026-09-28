@@ -461,7 +461,7 @@ fn run_pipeline_for_diff_text(
                     AnalysisStage::LanguageAdapter,
                     AnalysisRecovery::new(
                         AnalysisRecoveryKind::Retry,
-                        &format!(
+                        format!(
                             "Not analyzed as generated code: {listed}. ripr treats `gen/`, \
                              `generated/` and `out/` directories and `generated.rs`, `schema.rs`, \
                              `bindings.rs`, `*.gen.rs`, `*_generated.rs` and `generated_*` files, \
