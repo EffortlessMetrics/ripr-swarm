@@ -16,7 +16,24 @@ fn input_for(
 ) -> Option<Option<TypeScriptBoundaryInput>> {
     let owners = extract_owners(Path::new("src/pricing.ts"), source);
     let owner = owners.iter().find(|owner| owner.name == owner_name)?;
-    Some(ts_boundary_input_in_source(source, changed_line, owner))
+    // The adapter passes the diff's line number; the last line with this
+    // text stands in for it here. A line-shape case whose text is not in the
+    // module sits where the module's own comparison is.
+    let line_of = |wanted: &str| {
+        source
+            .lines()
+            .enumerate()
+            .filter(|(_, text)| text.trim_end() == wanted.trim_end())
+            .map(|(index, _)| index + 1)
+            .last()
+    };
+    let line = line_of(changed_line).or_else(|| line_of(CHANGED_LINE))?;
+    Some(ts_boundary_input_in_source(
+        source,
+        line,
+        changed_line,
+        owner,
+    ))
 }
 
 fn pricing_module(prelude: &str, body_extra: &str, postlude: &str) -> String {
@@ -398,11 +415,11 @@ fn unparseable_module_stays_unresolved() {
     assert!(owner.is_some(), "setup: owner must be extracted");
     let broken = pricing_module("export const DISCOUNT_THRESHOLD = 10000;", "", "const = ;");
     assert_eq!(
-        owner.and_then(|owner| ts_boundary_input_in_source(&broken, CHANGED_LINE, owner)),
+        owner.and_then(|owner| ts_boundary_input_in_source(&broken, 4, CHANGED_LINE, owner)),
         None
     );
     assert_eq!(
-        owner.and_then(|owner| ts_boundary_input_in_source(&good, CHANGED_LINE, owner)),
+        owner.and_then(|owner| ts_boundary_input_in_source(&good, 4, CHANGED_LINE, owner)),
         resolved(10000)
     );
 }

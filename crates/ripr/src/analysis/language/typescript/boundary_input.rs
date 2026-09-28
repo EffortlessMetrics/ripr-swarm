@@ -61,6 +61,7 @@ impl TypeScriptBoundaryInput {
 /// module through the workspace root. `None` whenever any rule fails.
 pub(crate) fn ts_boundary_input_for_change(
     probe_shape: &TypeScriptProbeShape,
+    line: usize,
     line_text: &str,
     owner: &TypeScriptOwner,
     workspace_root: Option<&Path>,
@@ -70,12 +71,13 @@ pub(crate) fn ts_boundary_input_for_change(
     }
     let root = workspace_root?;
     let source = std::fs::read_to_string(root.join(&owner.file)).ok()?;
-    ts_boundary_input_in_source(&source, line_text, owner)
+    ts_boundary_input_in_source(&source, line, line_text, owner)
 }
 
 /// [`ts_boundary_input_for_change`] over an already-read module source.
 pub(crate) fn ts_boundary_input_in_source(
     source: &str,
+    line: usize,
     line_text: &str,
     owner: &TypeScriptOwner,
 ) -> Option<TypeScriptBoundaryInput> {
@@ -111,7 +113,7 @@ pub(crate) fn ts_boundary_input_in_source(
         owner_start_line: owner.start_line,
         owner_end_line: owner.end_line,
         constant,
-        changed_line: line_text.to_string(),
+        changed_line: line,
     };
     let file = owner.file.clone();
     let owned_source = source.to_string();
@@ -265,7 +267,8 @@ struct ModuleRequest {
     owner_start_line: usize,
     owner_end_line: usize,
     constant: Option<String>,
-    changed_line: String,
+    /// 1-based line of the changed comparison in the owner's module.
+    changed_line: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -459,7 +462,7 @@ fn parameter_is_read_only(source: &str, tokens: &[Tok], request: &ModuleRequest)
 }
 
 /// Whether every call of the owner evaluates the changed line: the line
-/// occurs exactly once in the owner, after the signature, at the top level
+/// lies inside the owner, after the signature, at the top level
 /// of a block body, and no earlier body token can leave the function or
 /// skip the line (`return`, `throw`, `break`, `continue`, `yield`, or an
 /// enclosing `if`/loop/`switch`/`try`/callback block). An early guard such
@@ -470,17 +473,10 @@ fn changed_line_runs_on_every_call(source: &str, tokens: &[Tok], request: &Modul
     let line_starts: Vec<usize> = std::iter::once(0)
         .chain(source.match_indices('\n').map(|(at, _)| at + 1))
         .collect();
-    let line_text = |line: usize| -> Option<&str> {
-        let start = *line_starts.get(line.checked_sub(1)?)?;
-        let end = line_starts.get(line).map_or(source.len(), |next| next - 1);
-        source.get(start..end)
-    };
-    let wanted = request.changed_line.trim_end();
-    let mut matches = (request.owner_start_line..=request.owner_end_line)
-        .filter(|&line| line_text(line).is_some_and(|text| text.trim_end() == wanted));
-    let (Some(changed), None) = (matches.next(), matches.next()) else {
+    let changed = request.changed_line;
+    if changed <= request.owner_start_line || changed > request.owner_end_line {
         return false;
-    };
+    }
     let Some(&line_start) = line_starts.get(changed - 1) else {
         return false;
     };

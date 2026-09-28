@@ -2781,7 +2781,7 @@ pub(crate) fn classify_change_with_alias_state(
     // it in place of an observed input that does not reach the boundary.
     if !missing_discriminators.is_empty()
         && let Some(input) =
-            ts_boundary_input_for_change(&probe_shape, line_text, owner, workspace_root)
+            ts_boundary_input_for_change(&probe_shape, line, line_text, owner, workspace_root)
     {
         evidence.push(input.evidence_line());
     }
