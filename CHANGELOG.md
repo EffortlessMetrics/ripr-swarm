@@ -11,6 +11,19 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Cold LLM-agent walks of 0.11 no longer dead-end on four routes. Passing a
+  `ripr check` finding ID (`probe:...`) to `ripr agent repair --seam-id` now
+  says it is not a seam ID and names `ripr pilot --root .`. The
+  uncommitted-changes note says test files outside the diff are still read
+  from disk, and `ripr check` warns on stderr when a file in the committed
+  diff also has uncommitted edits, since its probes can be misplaced or
+  missing. After a repair, the after phase and `ripr agent status` say the
+  focused test was not run (`test_run.status: "not_run"`), because a failing
+  test can still show movement `improved`. The MCP server's instructions and
+  tool description say it does not analyze the diff and name the CLI route
+  that does; an unusable root and unknown tool or resource names now carry a
+  recovery.
+
 - LSP fallback diagnostics explain their static classification and point to
   hover evidence without promising an unavailable clipboard action or repair
   route. Missing-path guidance remains explicitly static (#4328).
