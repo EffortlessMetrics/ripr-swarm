@@ -156,7 +156,9 @@ problem and the two remediation paths.
   pinned end-to-end by a subprocess test. Its stdin writer, child completion
   and output drains share a 30-second deadline and the shared `OwnedProcess`
   termination/reap authority. Forced early exit and stalled-child controls
-  exercise write-error and deadline cleanup without unbounded thread joins.
+  exercise bounded write-error and timeout returns without unbounded thread
+  joins. Those controls alone do not independently witness fixture startup
+  or OS-level reaping; explicit owning cleanup is separately source-reviewed.
 
 ### Non-claims
 
@@ -233,8 +235,8 @@ problem and the two remediation paths.
 - `crates/ripr/src/cli/commands/context.rs::tests::context_rejects_base_and_diff_together_at_parse_time`
 - `crates/ripr/src/cli/commands/context.rs::tests::context_keeps_base_and_diff_as_from_artifact_assertions`
 - `crates/ripr/tests/cli_smoke.rs::check_diff_stdin_from_a_pipe_stays_silent_about_terminal_disclosure`
-- `crates/ripr/tests/cli_smoke.rs::stdin_probe_deadline_terminates_the_owned_child`
-- `crates/ripr/tests/cli_smoke.rs::stdin_probe_write_failure_reaps_the_owned_child`
+- `crates/ripr/tests/cli_smoke.rs::stdin_probe_stalled_child_returns_bounded_timeout`
+- `crates/ripr/tests/cli_smoke.rs::stdin_probe_early_exit_returns_write_error`
 
 ## Implementation Mapping
 

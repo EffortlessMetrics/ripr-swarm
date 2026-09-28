@@ -108,7 +108,7 @@ fn probe_command(program: &str) -> Command {
 }
 
 #[test]
-fn stdin_probe_child_process_fixture() {
+fn stdin_probe_fixture_entry() {
     if std::env::var("RIPR_STDIN_PROBE_CHILD").as_deref() == Ok("hang") {
         std::thread::sleep(std::time::Duration::from_mins(1));
     }
@@ -121,7 +121,7 @@ fn stdin_probe_fixture(mode: &str) -> Result<Command, std::io::Error> {
         .ok_or_else(|| std::io::Error::other("test executable path is not UTF-8"))?;
     let mut command = probe_command(executable);
     command
-        .args(["--exact", "stdin_probe_child_process_fixture"])
+        .args(["--exact", "stdin_probe_fixture_entry"])
         .env("RIPR_STDIN_PROBE_CHILD", mode)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -130,7 +130,7 @@ fn stdin_probe_fixture(mode: &str) -> Result<Command, std::io::Error> {
 }
 
 #[test]
-fn stdin_probe_deadline_terminates_the_owned_child() -> Result<(), std::io::Error> {
+fn stdin_probe_stalled_child_returns_bounded_timeout() -> Result<(), std::io::Error> {
     let started = std::time::Instant::now();
     let result = run_owned_stdin_probe(
         stdin_probe_fixture("hang")?,
@@ -146,7 +146,7 @@ fn stdin_probe_deadline_terminates_the_owned_child() -> Result<(), std::io::Erro
 }
 
 #[test]
-fn stdin_probe_write_failure_reaps_the_owned_child() -> Result<(), std::io::Error> {
+fn stdin_probe_early_exit_returns_write_error() -> Result<(), std::io::Error> {
     let result = run_owned_stdin_probe(
         stdin_probe_fixture("exit")?,
         &vec![b'x'; 2 * 1024 * 1024],
