@@ -12080,8 +12080,8 @@ Field contract:
   canonical `ripr receipt write` command (RIPR-SPEC-0079) under the configured
   receipts directory; `receipt_command_source` is then
   `first_pr.default_receipt_write_command`. `selected.receipt_path` is the
-  file that `receipt_command` writes: a path the ledger record names, else the
-  command's `--out` value, else the default path the synthesized command is
+  file that `receipt_command` writes: the command's `--out` value, else a path
+  the ledger record names, else the default path the synthesized command is
   built with, so the printed path and the printed command never disagree.
   A missing
   receipt is not failure, merge approval, mutation proof, or runtime adequacy.

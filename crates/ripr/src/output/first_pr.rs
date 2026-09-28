@@ -1750,20 +1750,11 @@ fn top_gap_from_record(record: &Value, root: &Path, options: &FirstPrOptions) ->
             ledger_receipt_or_path_command
                 .map(|command| (command, "gap_ledger.receipt_command_or_path"))
         });
-    // One source of truth for where the receipt lands: a recorded path, else
-    // the `--out` the printed receipt command writes, else the first-pr
-    // default that the synthesized command below then writes. A path derived
-    // independently of a ledger command named a file that command never
-    // writes (Python preview: `gap-pr-...targeted-test-outcome.json` beside a
-    // `--out gap-python-....json`).
-    let receipt_path = string_path(record, &["receipt_path"])
-        .or_else(|| string_path(record, &["receipt", "path"]))
-        .or_else(|| {
-            ledger_command
-                .as_ref()
-                .and_then(|(command, _)| receipt_command_out_path(command))
-        })
-        .unwrap_or_else(|| first_pr_receipt_path(&options.receipts_dir, &gap_id));
+    let receipt_path = selected_receipt_path(
+        record,
+        ledger_command.as_ref().map(|(command, _)| command.as_str()),
+    )
+    .unwrap_or_else(|| first_pr_receipt_path(&options.receipts_dir, &gap_id));
     let canonical_gap_id_for_receipt =
         string_path(record, &["canonical_gap_id"]).unwrap_or_else(|| gap_id.clone());
     let (receipt_command, receipt_command_source) = match ledger_command {
@@ -2048,6 +2039,20 @@ fn receipt_command_out_path(command: &str) -> Option<String> {
         }
     }
     out.filter(|path| !path.trim().is_empty())
+}
+
+/// One source of truth for where the receipt lands: the `--out` the printed
+/// ledger receipt command writes, else a recorded path, else `None` so the
+/// caller uses the first-pr default that its synthesized command then
+/// writes. A path chosen independently of the printed command named a file
+/// that command never writes (Python preview: `gap-pr-...targeted-test-outcome.json`
+/// beside a `--out gap-python-....json`), so the command's own `--out` wins
+/// even over a recorded path that disagrees with it.
+fn selected_receipt_path(record: &Value, ledger_command: Option<&str>) -> Option<String> {
+    ledger_command
+        .and_then(receipt_command_out_path)
+        .or_else(|| string_path(record, &["receipt_path"]))
+        .or_else(|| string_path(record, &["receipt", "path"]))
 }
 
 fn first_pr_receipt_path(receipts_dir: &str, gap_id: &str) -> String {
@@ -5093,6 +5098,28 @@ mod tests {
         ] {
             assert_eq!(receipt_command_out_path(command), None, "{command}");
         }
+    }
+
+    #[test]
+    fn printed_receipt_command_out_wins_over_a_recorded_receipt_path() {
+        let record = json!({"receipt_path": "target/ripr/receipts/recorded.json"});
+        let command = "ripr receipt write --gap g --verify-command x --status not_run --out target/ripr/receipts/written.json";
+        assert_eq!(
+            selected_receipt_path(&record, Some(command)).as_deref(),
+            Some("target/ripr/receipts/written.json"),
+            "the path shown must be the file the shown command writes"
+        );
+        assert_eq!(
+            selected_receipt_path(&record, Some("ripr receipt write --gap g")).as_deref(),
+            Some("target/ripr/receipts/recorded.json"),
+            "a command without --out falls back to the recorded path"
+        );
+        let nested = json!({"receipt": {"path": "target/ripr/receipts/nested.json"}});
+        assert_eq!(
+            selected_receipt_path(&nested, None).as_deref(),
+            Some("target/ripr/receipts/nested.json")
+        );
+        assert_eq!(selected_receipt_path(&json!({}), None), None);
     }
 
     fn ledger_with_python_repairable_gap() -> Value {
