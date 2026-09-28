@@ -246,12 +246,10 @@ fn resolve_module_constant(
         match found {
             // A top-level binding of the name that is not a single
             // immutable integer `const`.
+            // A second declaration of the same name is ambiguous.
+            Some(Some(_)) if declaration.is_some() => return None,
             Some(None) => return None,
-            Some(Some(found)) => {
-                if declaration.replace(found).is_some() {
-                    return None;
-                }
-            }
+            Some(Some(found)) => declaration = Some(found),
             None => {}
         }
     }
