@@ -5798,6 +5798,25 @@ fn agent_repair_admits_a_focused_test_committed_between_the_phases()
         )),
         "{stderr}"
     );
+    // Exit 3 carries exactly one typed refusal document on stdout.
+    let document: serde_json::Value = serde_json::from_slice(&after.stdout)?;
+    assert_eq!(document["kind"], "repair_after_refusal", "{document:#}");
+    assert_eq!(document["schema_version"], "0.1", "{document:#}");
+    assert_eq!(document["attempt_id"], attempt_id.as_str(), "{document:#}");
+    assert!(
+        document["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("does not descend from")),
+        "{document:#}"
+    );
+    assert!(
+        json_strings(&document["narration"])
+            .iter()
+            .any(|line| line.contains(&format!(
+                "`git reset --soft {before_head}` restores the prepared head"
+            ))),
+        "the refusal document carries the recovery: {document:#}"
+    );
     let (_, manifest) = sole_repair_attempt(&root)?;
     assert_eq!(manifest["state"], "awaiting_edit", "{manifest}");
     // The printed recovery finishes the same attempt.
@@ -6077,6 +6096,15 @@ fn agent_verify_rejects_incomparable_analysis_inputs() -> Result<(), Box<dyn std
     ]);
     assert_failure(&output);
     assert!(String::from_utf8_lossy(&output.stderr).contains("analysis input identities differ"));
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "drifted analysis inputs are a typed refusal on the standalone verify path too"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "a refused verify renders nothing to its stdout (the verify artifact)"
+    );
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -6571,6 +6599,15 @@ fn agent_verify_rejects_same_revision_pair_without_movement()
         String::from_utf8_lossy(&output.stderr).contains("no repository movement"),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "a no-movement verify refusal is a typed refusal on the standalone verify path too"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "a refused verify renders nothing to its stdout (the verify artifact)"
     );
     std::fs::remove_dir_all(root)?;
     Ok(())
@@ -15206,6 +15243,17 @@ fn agent_status_names_a_refused_after_phase_before_repeating_it()
         refused_stderr.contains("no repository movement"),
         "{refused_stderr}"
     );
+    let refused_document: serde_json::Value = serde_json::from_slice(&refused.stdout)?;
+    assert_eq!(
+        refused_document["kind"], "repair_after_refusal",
+        "{refused_document:#}"
+    );
+    assert!(
+        refused_document["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("no repository movement")),
+        "{refused_document:#}"
+    );
     // Precondition: the attempt record holds the refusal and is still
     // awaiting the edit at the current HEAD.
     let manifest = repair_route_manifest(&root, &attempt_id)?;
@@ -15900,6 +15948,14 @@ fn agent_status_reports_the_after_phase_recovery_for_rewritten_history()
     );
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(stderr.contains(&reset_sentence), "{stderr}");
+    let document: serde_json::Value = serde_json::from_slice(&refused.stdout)?;
+    assert_eq!(document["kind"], "repair_after_refusal", "{document:#}");
+    assert!(
+        json_strings(&document["narration"])
+            .iter()
+            .any(|line| line.contains(&reset_sentence)),
+        "{document:#}"
+    );
     assert_eq!(
         repair_route_manifest(&root, &attempt_id)?["state"],
         "awaiting_edit"
@@ -15949,6 +16005,14 @@ fn agent_status_repeats_the_named_cause_of_a_refused_after_phase()
     assert!(
         stderr.contains("ripr: analysis inputs changed after the before phase: Cargo.toml."),
         "precondition: the after phase names the changed input:\n{stderr}"
+    );
+    let document: serde_json::Value = serde_json::from_slice(&refused.stdout)?;
+    assert_eq!(document["kind"], "repair_after_refusal", "{document:#}");
+    assert!(
+        json_strings(&document["narration"])
+            .iter()
+            .any(|line| line.contains("analysis inputs changed after the before phase: Cargo.toml")),
+        "{document:#}"
     );
 
     let manifest = repair_route_manifest(&root, &attempt_id)?;
