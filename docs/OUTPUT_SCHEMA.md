@@ -7448,7 +7448,9 @@ Field contract:
   `target/ripr/workflow/agent-verify.json` under the selected root. Their
   optional `llm_guidance.analysis_outcome_command` writes
   `target/ripr/workflow/analysis-outcome.json` beside it before the card's
-  receipt command runs. These are Bash-style redirects, anchored at `--root`;
+  receipt command runs, carrying the producing review's selected `--base`.
+  It does not rely on default branch discovery. These are Bash-style redirects,
+  anchored at `--root`;
   before and after snapshots must already have been taken around the edit.
   Markdown carries the same outcome, verify and receipt chain. The outcome
   describes static completeness, not executed project tests. Limitation cards

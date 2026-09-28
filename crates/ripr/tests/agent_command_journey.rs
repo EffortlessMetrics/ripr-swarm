@@ -460,7 +460,21 @@ fn execute_funnel_with_receipt_file(
     report: &Value,
     receipt_file: Option<&Path>,
 ) -> Result<Value, String> {
-    for field in ["after_snapshot", "analysis_outcome", "verify"] {
+    execute_receipt_steps(
+        journey,
+        report,
+        receipt_file,
+        &["after_snapshot", "analysis_outcome", "verify"],
+    )
+}
+
+fn execute_receipt_steps(
+    journey: &Journey,
+    report: &Value,
+    receipt_file: Option<&Path>,
+    steps: &[&str],
+) -> Result<Value, String> {
+    for field in steps {
         let command = printed_command(report, field)?;
         let output = run_in_shell(journey, &command)?;
         assert_success(
@@ -697,6 +711,10 @@ fn review_card_and_gate_commands_persist_fresh_receipt_inputs() -> Result<(), St
     commit_fixture(&journey.root, "change the boundary predicate")?;
     let snapshot = run_in_shell(&journey, &printed_command(&setup, "after_snapshot")?)?;
     assert_success(&snapshot, "prepare current after snapshot")?;
+    // The card selects HEAD~1 explicitly. Remove the fixture's default-name
+    // branch only after preparing its prerequisite snapshots: card/gate steps
+    // must keep that selection rather than rediscover main or master.
+    fixture_git_ok(&journey.root, &["branch", "-M", "trunk"]).map_err(|error| error.to_string())?;
 
     let comments_path = journey.root.join("target/ripr/review/comments.json");
     let comments_output = run_ripr(
@@ -801,7 +819,6 @@ fn review_card_and_gate_commands_persist_fresh_receipt_inputs() -> Result<(), St
         std::fs::write(&receipt_path, "{\"decoy\":true}").map_err(|error| error.to_string())?;
         let receipt_decoy_digest = sha256_file(&receipt_path)?;
         let funnel = serde_json::json!({"commands": {
-            "after_snapshot": printed_command(&setup, "after_snapshot")?,
             "analysis_outcome": guidance.get("analysis_outcome_command"),
             "verify": guidance.get("verify_command"),
             "receipt": receipt,
@@ -827,8 +844,12 @@ fn review_card_and_gate_commands_persist_fresh_receipt_inputs() -> Result<(), St
             "{\"decoy\":true}",
         )
         .map_err(|error| error.to_string())?;
-        let refused =
-            execute_funnel_with_receipt_file(&journey, &wrong_sibling, Some(&receipt_path))?;
+        let refused = execute_receipt_steps(
+            &journey,
+            &wrong_sibling,
+            Some(&receipt_path),
+            &["analysis_outcome", "verify"],
+        )?;
         let wrong_outcome = read_json(&workflow_artifact(
             &journey.root,
             "wrong-analysis-outcome.json",
@@ -862,8 +883,13 @@ fn review_card_and_gate_commands_persist_fresh_receipt_inputs() -> Result<(), St
         }
         std::fs::write(&verify_path, "{\"decoy\":true}").map_err(|error| error.to_string())?;
         std::fs::write(&receipt_path, "{\"decoy\":true}").map_err(|error| error.to_string())?;
-        let receipt = execute_funnel_with_receipt_file(&journey, &funnel, Some(&receipt_path))
-            .map_err(|error| format!("{label}: {error}"))?;
+        let receipt = execute_receipt_steps(
+            &journey,
+            &funnel,
+            Some(&receipt_path),
+            &["analysis_outcome", "verify"],
+        )
+        .map_err(|error| format!("{label}: {error}"))?;
         assert_funnel_writes_bind_fresh_artifacts(&journey, &receipt)?;
         if sha256_file(&verify_path)? == decoy_digest {
             return Err(format!("{label} did not replace the decoy verify"));

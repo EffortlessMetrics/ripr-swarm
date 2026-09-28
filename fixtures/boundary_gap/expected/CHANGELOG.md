@@ -3,7 +3,7 @@
 ## Pending — boundary_gap (5)
 
 Reason:
-RIPR-SPEC-0068, #4307: actionable review cards persist the verify and analysis-outcome files read by their receipt command. Gate routes and downstream first-action/front-panel output carry the same commands. Classification, placement, actionability and gate decisions are unchanged.
+RIPR-SPEC-0068, #4307: actionable review cards persist the verify and analysis-outcome files read by their receipt command. The outcome command preserves the producing review's selected base, including repositories without main/master defaults. Gate routes and downstream first-action/front-panel output carry the same commands. Classification, placement, actionability and gate decisions are unchanged.
 
 Command:
 `RIPR_UPDATE_FIXTURES=1 cargo test -p ripr --lib output::review_comments::tests::review_comments_pr_guidance_fixtures_pin_required_cases -- --exact --nocapture` and the corresponding exact `output::gate::tests::calibrated_gate_fixture_matrix_matches_checked_outputs` test generated their checked outputs. The just-built CLI generated repair-start JSON with `first-action --root . --pr-guidance fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json` and front-panel JSON/Markdown with `pr-review front-panel --root fixtures/boundary_gap/input --pr-guidance fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json --first-action fixtures/boundary_gap/expected/first-useful-action/repair-start/first-useful-action.json`; only `generated_at` was pinned to the existing fixture timestamp. The exact first-action fixture test generated its Markdown with the same explicit opt-in. Affected module tests then checked these outputs without opt-in.

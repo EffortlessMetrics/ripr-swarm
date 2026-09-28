@@ -39,7 +39,7 @@
         "threshold": "high_confidence_new_gap"
       },
       "repair_route": {
-        "analysis_outcome_command": "ripr check --root . --mode draft --format json > <cwd>/target/ripr/workflow/analysis-outcome.json",
+        "analysis_outcome_command": "ripr check --root . --base main --mode draft --format json > <cwd>/target/ripr/workflow/analysis-outcome.json",
         "authority_boundary": "static_ripr_evidence_only",
         "canonical_gap_id": "gap:dedf923a13a00573",
         "changed_behavior": "amount >= discount_threshold",

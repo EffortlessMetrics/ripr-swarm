@@ -17,7 +17,9 @@ are scoped or reviewed.
 
 - Actionable working-set review cards write the verify and analysis-outcome
   artifacts consumed by their receipt command. Gate and onboarding projections
-  carry the complete optional command chain; older cards and deferred
+  carry the complete optional command chain, preserving the selected base in
+  the analysis-outcome command even without a conventional default branch;
+  older cards and deferred
   GapRecord routes remain compatible (#4307).
 
 - LSP fallback diagnostics explain their static classification and point to

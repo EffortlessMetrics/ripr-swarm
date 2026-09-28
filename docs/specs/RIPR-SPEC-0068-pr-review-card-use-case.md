@@ -137,7 +137,9 @@ Every rendered review card must include:
 - a receipt command when the card is actionable.
 - `llm_guidance.analysis_outcome_command` on current actionable working-set
   cards: the static-completeness producer writes the analysis outcome beside
-  the verify artifact before receipt. Before/after snapshots are prerequisites.
+  the verify artifact before receipt, using the producing review's selected
+  base rather than default branch discovery. Before/after snapshots are
+  prerequisites.
   Gate, first-action, first-PR and PR-evidence-ledger projections carry this
   optional command unchanged and omit it for older cards that lack it. It is
   not a new repair-eligibility or gate-completeness rule. Non-actionable cards

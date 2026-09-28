@@ -3,7 +3,7 @@ use crate::agent::loop_commands::{
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_BRIEF_ARTIFACT,
     WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
     WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_brief_command, agent_verify_command,
-    check_analysis_outcome_command, display_path,
+    check_analysis_outcome_command_with_base, display_path,
 };
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::canonical_gap::canonical_gap_identity;
@@ -121,6 +121,7 @@ pub(crate) fn render_review_comments_json_with_scope(
     for selected in actionable.iter().take(DEFAULT_REVIEW_MAX_SUMMARY_ITEMS) {
         let recommendation = review_recommendation_json(
             context.root,
+            context.base,
             context.mode,
             context.config,
             selected,
@@ -782,6 +783,7 @@ fn repair_prompt(route: &GapRepairRoute, verify_command: &str) -> String {
 
 fn review_recommendation_json(
     root: &Path,
+    base: &str,
     _mode: &Mode,
     config: &RiprConfig,
     selected: &AgentBriefSelectedSeam<'_>,
@@ -868,8 +870,9 @@ fn review_recommendation_json(
         json!({
             "prompt": llm_prompt(&recommended.file, nearest.map(|test| test.test_name.as_str()), missing_value.as_deref()),
             "command": agent_brief_command(&root_display, seam_id, WORKFLOW_AGENT_BRIEF_ARTIFACT),
-            "analysis_outcome_command": check_analysis_outcome_command(
+            "analysis_outcome_command": check_analysis_outcome_command_with_base(
                 &root_display,
+                Some(base),
                 "draft",
                 WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
             ),
@@ -2181,6 +2184,11 @@ mod tests {
                 "analysis outcome is not written beside verification: {outcome}"
             ));
         }
+        if !outcome.contains("--base main ") {
+            return Err(format!(
+                "outcome command lost the producing review's selected base: {outcome}"
+            ));
+        }
         let markdown = render_markdown(&working_set, &seams);
         if ![outcome, verify, receipt]
             .iter()
@@ -2884,6 +2892,7 @@ mod tests {
         let selected = selection(&seams);
         let item = review_recommendation_json(
             Path::new("."),
+            "main",
             &Mode::Draft,
             &RiprConfig::default(),
             &selected.top_seams[0],
