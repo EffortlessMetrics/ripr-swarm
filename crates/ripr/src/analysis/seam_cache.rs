@@ -2056,8 +2056,23 @@ std::thread_local! {
 /// Unkeyed checksum integrity does not authenticate a writer who can recompute the digest.
 fn semantic_body_digest<T: serde::Serialize>(domain: &str, body: &T) -> Result<String, String> {
     use sha2::{Digest, Sha256};
-    let bytes =
-        serde_json::to_vec(body).map_err(|err| format!("encode integrity body failed: {err}"))?;
+    // The serializer feeds SHA-256 directly: warm admission never buffers a second body.
+    struct ChecksumWriter(Sha256);
+    impl std::io::Write for ChecksumWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.update(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut writer = ChecksumWriter(Sha256::new());
+    writer.0.update(domain.as_bytes());
+    writer.0.update([0]);
+    serde_json::to_writer(&mut writer, body)
+        .map_err(|err| format!("encode integrity body failed: {err}"))?;
     #[cfg(test)]
     INTEGRITY_WORK.with(|work| {
         let (hashes, bodies, envelopes) = work.get();
@@ -2067,11 +2082,7 @@ fn semantic_body_digest<T: serde::Serialize>(domain: &str, body: &T) -> Result<S
             envelopes,
         ));
     });
-    let mut digest = Sha256::new();
-    digest.update(domain.as_bytes());
-    digest.update([0]);
-    digest.update(&bytes);
-    Ok(format!("sha256:{:x}", digest.finalize()))
+    Ok(format!("sha256:{:x}", writer.0.finalize()))
 }
 fn encode_integrity_body<T: serde::Serialize>(
     body: &T,
@@ -3870,6 +3881,51 @@ mod tests {
             cold_elapsed.as_micros(),
             warm_elapsed.as_micros()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn integrity_large_full_and_compact_envelopes_preserve_complete_warm_evidence()
+    -> Result<(), String> {
+        for (compact, count) in [
+            (false, CLASSIFIED_SEAM_CACHE_STORE_LIMIT),
+            (true, COMPACT_CLASSIFIED_SEAM_CACHE_STORE_LIMIT),
+        ] {
+            let scratch = integrity_scratch(if compact { "large-compact" } else { "large-full" })?;
+            let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+            let mut key = empty_state().cache_key();
+            if compact {
+                key.schema_version = COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION.to_owned();
+            }
+            let mut seams = vec![sample_classified(); count];
+            for (index, seam) in seams.iter_mut().enumerate() {
+                seam.evidence.reach.summary = format!("large envelope evidence {index}");
+            }
+            let fallback = vec![PathBuf::from("src/foo.rs")];
+            cache.store_classified_seams_with_limit_and_fallback(
+                &key,
+                &seams,
+                None,
+                &fallback,
+                count,
+            )?;
+            match cache.load_classified_seams_with_fallback(&key) {
+                CacheLoad::Hit((loaded, None, actual_fallback))
+                    if loaded.len() == count && actual_fallback == fallback =>
+                {
+                    // Compare every record while keeping the comparison buffer to one record.
+                    for (actual, expected) in loaded.iter().zip(&seams) {
+                        if serde_json::to_vec(actual).map_err(|err| err.to_string())?
+                            != serde_json::to_vec(expected).map_err(|err| err.to_string())?
+                        {
+                            return Err("large warm envelope lost or changed semantic evidence".to_owned());
+                        }
+                    }
+                    eprintln!("large integrity envelope: compact={compact} seams={} complete warm hit (no numeric peak-memory claim)", loaded.len());
+                }
+                other => return Err(format!("large warm envelope must hit completely: {other:?}")),
+            }
+        }
         Ok(())
     }
 
