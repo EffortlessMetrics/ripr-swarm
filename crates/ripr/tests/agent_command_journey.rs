@@ -39,7 +39,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[path = "common/mod.rs"]
 mod common;
 
-use common::fixture_git::fixture_git_ok;
+use common::fixture_git::{fixture_git_ok, fixture_git_output};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -829,9 +829,15 @@ fn observe_selected_boundary(selected: &Path) -> Result<(), String> {
     let mut source = std::fs::read_to_string(&test_path)
         .map_err(|error| format!("read test for focused edit: {error}"))?;
     source.push_str("\n#[test]\nfn selected_boundary_is_observed() { assert_eq!(discounted_total(100, 100), 90); }\n");
-    std::fs::write(&test_path, source)
+    std::fs::write(&test_path, &source)
         .map_err(|error| format!("write focused test edit: {error}"))?;
-    commit_fixture(selected, "observe the selected boundary")
+    fixture_git_ok(selected, &["add", "tests/pricing.rs"])?;
+    commit_fixture(selected, "observe the selected boundary")?;
+    let committed = fixture_git_output(selected, &["show", "HEAD:tests/pricing.rs"])?;
+    if committed != source {
+        return Err("focused test edit was not committed in HEAD:tests/pricing.rs".to_owned());
+    }
+    Ok(())
 }
 
 /// Execute commands obtained from the actual review-card and inherited gate
