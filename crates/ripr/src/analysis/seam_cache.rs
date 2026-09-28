@@ -3891,7 +3891,11 @@ mod tests {
             (false, CLASSIFIED_SEAM_CACHE_STORE_LIMIT),
             (true, COMPACT_CLASSIFIED_SEAM_CACHE_STORE_LIMIT),
         ] {
-            let scratch = integrity_scratch(if compact { "large-compact" } else { "large-full" })?;
+            let scratch = integrity_scratch(if compact {
+                "large-compact"
+            } else {
+                "large-full"
+            })?;
             let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
             let mut key = empty_state().cache_key();
             if compact {
@@ -3903,11 +3907,7 @@ mod tests {
             }
             let fallback = vec![PathBuf::from("src/foo.rs")];
             cache.store_classified_seams_with_limit_and_fallback(
-                &key,
-                &seams,
-                None,
-                &fallback,
-                count,
+                &key, &seams, None, &fallback, count,
             )?;
             match cache.load_classified_seams_with_fallback(&key) {
                 CacheLoad::Hit((loaded, None, actual_fallback))
@@ -3918,12 +3918,29 @@ mod tests {
                         if serde_json::to_vec(actual).map_err(|err| err.to_string())?
                             != serde_json::to_vec(expected).map_err(|err| err.to_string())?
                         {
-                            return Err("large warm envelope lost or changed semantic evidence".to_owned());
+                            return Err(
+                                "large warm envelope lost or changed semantic evidence".to_owned()
+                            );
                         }
                     }
-                    eprintln!("large integrity envelope: compact={compact} seams={} complete warm hit (no numeric peak-memory claim)", loaded.len());
+                    eprintln!(
+                        "large integrity envelope: compact={compact} seams={} complete warm hit (no numeric peak-memory claim)",
+                        loaded.len()
+                    );
                 }
-                other => return Err(format!("large warm envelope must hit completely: {other:?}")),
+                CacheLoad::Hit((loaded, limit, actual_fallback)) => {
+                    return Err(format!(
+                        "large warm envelope mismatch: compact={compact} expected_count={count} actual_count={} limit={limit:?} expected_fallback_count={} actual_fallback_count={}",
+                        loaded.len(),
+                        fallback.len(),
+                        actual_fallback.len()
+                    ));
+                }
+                CacheLoad::Miss => return Err("large warm envelope unexpectedly missed".to_owned()),
+                CacheLoad::CorruptIgnored { reason } => {
+                    let bounded_reason: String = reason.chars().take(512).collect();
+                    return Err(format!("large warm envelope was corrupt: {bounded_reason}"));
+                }
             }
         }
         Ok(())

@@ -3884,7 +3884,9 @@ marker = "libtest_mimic::Trial"
             try_no_impact_fast_path(&root, &config, &changed, &[])?,
             NoImpactOutcome::Fast(_)
         ) {
-            return Err("actual-writer mapping must yield a warm canonical hit before tamper".to_owned());
+            return Err(
+                "actual-writer mapping must yield a warm canonical hit before tamper".to_owned(),
+            );
         }
         let entries = no_impact_fingerprint_entries(&root)?;
         if entries.len() != 1 {
@@ -3936,11 +3938,15 @@ marker = "libtest_mimic::Trial"
                 NoImpactOutcome::Fast(_)
             )
         {
-            return Err("actual producer must repair the mapping for a subsequent warm hit".to_owned());
+            return Err(
+                "actual producer must repair the mapping for a subsequent warm hit".to_owned(),
+            );
         }
         eprintln!(
             "fingerprint consumer stimulus: rust_files={} production_files={} mappings={}",
-            cold.total_rust_files, cold.total_production_files, entries.len()
+            cold.total_rust_files,
+            cold.total_production_files,
+            entries.len()
         );
         Ok(())
     }
