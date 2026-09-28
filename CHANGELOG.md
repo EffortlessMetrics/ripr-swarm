@@ -150,6 +150,10 @@ are scoped or reviewed.
   built on Ubuntu 24.04 and failed on Ubuntu 22.04 and Debian 12 with
   `GLIBC_2.39 not found`. The source release workflow takes the same runners
   and check at the release sync.
+- `RIPR_GIT_TIMEOUT` with a non-numeric or out-of-range value now fails
+  closed (exit 2) naming the variable and the value, like `--git-timeout` and
+  every other `RIPR_*` override. It used to keep the default deadline silently
+  (#4374).
 
 ### Added
 
