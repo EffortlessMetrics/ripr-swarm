@@ -11,6 +11,11 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Rust cache entries now reject same-key semantic payload edits before serving
+  facts or classified evidence. File-fact, full/compact classified, shard and
+  corpus-fingerprint generations cold-recompute once; checksums do not
+  authenticate writers able to recompute them (#4382).
+
 - A repository's `ripr.toml` can no longer choose a program for ripr to run.
   `[perl].executable` was spawned by `ripr check`, probed by `ripr doctor`, and
   spawned by `ripr lsp` on file open or save, so a cloned repository could run
@@ -690,6 +695,11 @@ are scoped or reviewed.
   ([#3827](https://github.com/EffortlessMetrics/ripr-swarm/pull/3827)).
 
 ### Fixed
+
+- Rust cache entries now reject same-key semantic payload edits before serving
+  facts or classified evidence. File-fact, full/compact classified, shard and
+  corpus-fingerprint generations cold-recompute once; checksums do not
+  authenticate writers able to recompute them (#4382).
 
 - Advisory report outputs refuse planted destination links and nonregular files
   before truncation while preserving fresh writes and regular-file updates.
@@ -1673,6 +1683,11 @@ publishing, signing, marketplace, badge, and distribution authority.
   advisory/static-limit information without promotion to stable gate authority.
 
 ### Fixed
+
+- Rust cache entries now reject same-key semantic payload edits before serving
+  facts or classified evidence. File-fact, full/compact classified, shard and
+  corpus-fingerprint generations cold-recompute once; checksums do not
+  authenticate writers able to recompute them (#4382).
 
 - Fixed cases where incomplete or stale packet artifacts could lose field-level
   blocker information.
@@ -3827,6 +3842,11 @@ tell the same conservative static-exposure story.
   responsibilities without changing the one-package public surface.
 
 ### Fixed
+
+- Rust cache entries now reject same-key semantic payload edits before serving
+  facts or classified evidence. File-fact, full/compact classified, shard and
+  corpus-fingerprint generations cold-recompute once; checksums do not
+  authenticate writers able to recompute them (#4382).
 
 - Hardened unified diff parsing against multi-hunk, multi-file, malformed, and
   fuzz-like inputs.
