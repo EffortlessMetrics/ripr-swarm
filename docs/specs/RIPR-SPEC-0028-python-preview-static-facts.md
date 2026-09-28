@@ -535,7 +535,11 @@ Follow-up fixtures and tests cover the owner, test, assertion, related
 test, probe, and static-limit cases listed under Required Evidence, plus
 generated CI behavior and LSP smoke coverage. The CLI first-use path also
 checks that `ripr pilot` can surface a top Python repair card from diff-scoped
-preview evidence without requiring a Cargo workspace, and that `ripr first-pr`
+preview evidence without requiring a Cargo workspace, that pilot's next
+commands then follow that card's route instead of the diff-first
+`ripr check` route (`ripr first-pr` before the edit to name the receipt
+command, unless the card carries one; then the test edit, the card's verify
+command, and the receipt command), and that `ripr first-pr`
 can route an existing Python preview GapRecord into a preview-limited
 start-here packet for a Python project root. The first-PR mapping also covers
 the direct `--check-output <check.json>` bridge that materializes the

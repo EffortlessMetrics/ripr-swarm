@@ -56,6 +56,11 @@ are scoped or reviewed.
   Rebindable (`let`/`var`), computed, imported, or shadowed constants and
   written parameters still fail closed.
 
+- `ripr pilot` on a Python-only change with a repair card now ends with the
+  card's route (`ripr first-pr` before the edit to name the receipt command,
+  the test edit, its verify command, then that receipt command) instead of
+  `ripr check --root .`, which only led back to pilot.
+
 - `ripr check`'s Start here prefers a Python preview finding that has a
   repair card over one that has none, so it no longer reports "no repair card"
   while `ripr pilot` and `ripr first-pr` route a card for the same diff.

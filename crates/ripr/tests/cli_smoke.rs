@@ -10659,10 +10659,17 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
         )),
         "{stdout}"
     );
+    // The Python repair card is the top recommendation, so the closing block
+    // follows the card's route rather than sending the user to `ripr check`,
+    // which only leads back to pilot (rc rehearsal py-pricing).
     assert!(
-        stdout.contains(&format!(
-            "Next, analyze the changed code in these languages:\n  {command}\n"
-        )),
+        stdout.contains("Next, in order:\n  1. ripr first-pr --root ")
+            && stdout.contains("\n  3. pytest ")
+            && stdout.contains("\n  4. run the receipt command step 1 printed\n"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("Next, analyze the changed code in these languages:"),
         "{stdout}"
     );
     assert!(
