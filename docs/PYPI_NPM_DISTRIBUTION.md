@@ -42,12 +42,20 @@ credentials, tags or support-tier promotion.
 | Human account/scope/publisher setup | [ripr #1780](https://github.com/EffortlessMetrics/ripr/issues/1780) | Account preparation can start now |
 | Source-owned publishing and recovery | [ripr #1781](https://github.com/EffortlessMetrics/ripr/issues/1781) | Qualified channel inputs and operator setup |
 | First functional PyPI prerelease | [ripr #1782](https://github.com/EffortlessMetrics/ripr/issues/1782) | Selected Python proof and explicit publication authority |
+| First functional npm prerelease | [ripr #1784](https://github.com/EffortlessMetrics/ripr/issues/1784) | Selected npm proof and explicit publication authority |
 
 The wheel and npm adapters may proceed in parallel after the identity contract.
 A bounded PyPI prerelease need not wait for npm or every target. It still needs
 real functionality, correct compatibility claims, source-owned artifacts and
 independent public-install verification. Unadvertised targets and the broader
 parent acceptance remain open.
+
+A bounded npm prerelease need not wait for PyPI. It must publish genuine native
+payload packages before the launcher that references them, use one exact version
+throughout the selected package family, keep prereleases off `latest`, and
+independently install the public bytes. A selected target subset is acceptable
+only when package metadata and public documentation cannot imply absent targets
+are supported.
 
 ## Repository surfaces
 
@@ -59,7 +67,7 @@ release framework. At the inspected swarm commit
 `.github/workflows/server-archive-qualification.yml` supplies exact-candidate
 archive qualification. See [binary packaging](RELEASE_BINARIES.md).
 
-Proposed new authoring surfaces, not files implemented by this plan:
+Proposed new authoring surfaces:
 
 ```text
 packaging/python/pyproject.toml
@@ -71,6 +79,14 @@ packaging/npm/README.md
 .github/workflows/publish-pypi.yml                       (source only)
 .github/workflows/publish-npm.yml                        (source only)
 ```
+
+The package authoring and qualification paths above remain implementation work.
+Source PRs
+[`ripr#1783`](https://github.com/EffortlessMetrics/ripr/pull/1783) and
+[`ripr#1785`](https://github.com/EffortlessMetrics/ripr/pull/1785) establish the
+exact proposed workflow filenames and environments as deliberately non-publishing
+contracts. They do not build, retrieve, stage or upload packages and do not grant
+registry-write authority.
 
 Use the existing Rust-first `xtask` release/validation owners for target metadata,
 package generation, receipts and tests. Extend version-bump/readiness checks so
@@ -180,10 +196,20 @@ A publisher job must not quietly rebuild approved packages. No registry secrets
 or OIDC publication permissions belong in swarm.
 
 PyPI publication checks the complete selected wheel set, handles partial uploads
-by exact filename/hash readback and then verifies a fresh public install. npm
-publishes or approves all required native packages before the matching launcher.
+by exact filename/hash readback and then verifies a fresh public install. The
+[first PyPI publication issue](https://github.com/EffortlessMetrics/ripr/issues/1782)
+owns that separately authorized registry transaction.
+
+npm publishes and verifies all exact native packages before the matching
+launcher. The
+[first npm publication issue](https://github.com/EffortlessMetrics/ripr/issues/1784)
+owns the genuine package bootstrap, payload-first/launcher-last ordering,
+independent public installs and post-bootstrap per-package publisher setup.
+
 The [source publication issue](https://github.com/EffortlessMetrics/ripr/issues/1781)
-owns bootstrap, stage/approval state, provenance and fix-forward behavior.
+owns reusable workflow admission, authorization, staging, provenance and
+partial-failure/fix-forward controls. One channel's readiness or authority does
+not imply the other's.
 
 Current [npm staged publishing](https://docs.npmjs.com/staged-publishing/) needs
 an existing package. The proposed steady-state path is OIDC staging followed by
