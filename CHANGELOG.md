@@ -16,8 +16,8 @@ are scoped or reviewed.
   (`import humanize`, `humanize.naturaldelta(...)`) and more-itertools
   (`import more_itertools as mi`, `mi.one(...)` via `from .more import *`)
   every changed line read `no_static_path` although mutating those lines
-  fails the projects' own tests. Renamed re-exports, `_private` names under a star import, and names
-  a declared `__all__` omits are not followed.
+  fails the projects' own tests. Renamed re-exports, `_private` names under a
+  star import, and names a declared `__all__` omits are not followed.
 - A repository's `ripr.toml` can no longer choose a program for ripr to run.
   `[perl].executable` was spawned by `ripr check`, probed by `ripr doctor`, and
   spawned by `ripr lsp` on file open or save, so a cloned repository could run
