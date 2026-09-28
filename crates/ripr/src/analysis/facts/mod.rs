@@ -76,5 +76,6 @@ pub use model::{
 };
 // Hot evidence loops hash each indexed file once and validate by digest.
 pub(crate) use model::source_digest;
+pub(crate) use model::WorkspaceRootAuthority;
 #[cfg(test)]
-pub(crate) use model::{WorkspaceFileAuthority, WorkspaceRootAuthority};
+pub(crate) use model::WorkspaceFileAuthority;
