@@ -33,6 +33,9 @@ client version ignores workspace results for buffers using document pull and
 does not refresh those buffers in response to `workspace/diagnostic/refresh`.
 [Neovim's upstream fix](https://github.com/neovim/neovim/commit/653f2092ce5545da3a10743e95aae435d0e0c182)
 addresses this behavior; it was absent from the tested release runtime.
+The rehearsal supplied `baseRef = "main"`, `checkMode = "draft"` and
+`seamDiagnostics = true` through standard `workspace/configuration`; it did not
+qualify the configuration defaults below.
 
 [The retained failed run](https://github.com/EffortlessMetrics/ripr-swarm/issues/1630#issuecomment-5877217051)
 and [standard document-pull discriminator](https://github.com/EffortlessMetrics/ripr-swarm/issues/1630#issuecomment-5877452052)
