@@ -3007,7 +3007,7 @@ suite('Extension Smoke', () => {
         'Missing configured ripr server path for this test.',
         'Server: not resolved',
         'Server started: no; server unavailable',
-        'Next safe action: Set ripr.server.path'
+        'Next safe action: Enable ripr.server.autoDownload, install with cargo install ripr, or set ripr.server.path. Then run ripr: Restart Server.'
       ]);
       assert.strictEqual(context.client.startCalls, 0);
     });
@@ -3449,7 +3449,7 @@ suite('Extension Smoke', () => {
       assert.ok(String(context.status.tooltip).includes('Server: not resolved'));
       assert.ok(String(context.status.tooltip).includes('Server started: no; server unavailable'));
       assert.ok(String(context.status.tooltip).includes('Config: ripr.toml'));
-      assert.ok(String(context.status.tooltip).includes('Next safe action: Set ripr.server.path'));
+      assert.ok(String(context.status.tooltip).includes('Next safe action: Enable ripr.server.autoDownload, install with cargo install ripr, or set ripr.server.path. Then run ripr: Restart Server.'));
       assert.strictEqual(context.errorMessages.length, 1);
       assert.strictEqual(context.client.startCalls, 0);
     } finally {
