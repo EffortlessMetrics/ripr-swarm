@@ -392,6 +392,13 @@ env:
   #           pull-requests: write, which this workflow grants)
   RIPR_COMMENT_MODE: ${{ vars.RIPR_COMMENT_MODE || 'off' }}
 
+# Every run step is bash (arrays, mktemp, [ -f ]). Pin the shell so the
+# steps still parse if a job is moved to windows-latest, whose default run
+# shell is PowerShell.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   ripr:
     name: RIPR advisory reports
@@ -2743,6 +2750,25 @@ mod tests {
     /// The workflow carries the shared proof-path labels (#3906) inside
     /// single-quoted shell strings, so none may hold a single quote, and
     /// every placeholder must be substituted.
+    /// #4391: the steps use bash-only syntax, so the job pins `shell: bash`
+    /// instead of inheriting a runner default (PowerShell on Windows).
+    #[test]
+    fn generated_workflow_pins_bash_for_every_run_step() {
+        let workflow = generated_github_actions_workflow();
+        let defaults_at = workflow
+            .find("\ndefaults:\n  run:\n    shell: bash\n")
+            .unwrap_or(usize::MAX);
+        let jobs_at = workflow.find("\njobs:\n").unwrap_or(usize::MAX);
+        assert!(
+            defaults_at < jobs_at && jobs_at != usize::MAX,
+            "the workflow must pin bash for every job:\n{workflow}"
+        );
+        assert!(
+            workflow.contains("gate_args=("),
+            "bash-only syntax the pin protects"
+        );
+    }
+
     #[test]
     fn generated_workflow_substitutes_shared_labels_into_single_quoted_strings() {
         for text in [

@@ -11,6 +11,10 @@ are scoped or reviewed.
 
 ### Fixed
 
+- CI: the `ripr init --ci github` workflow pins `shell: bash` for every job,
+  so its bash-only steps still parse on a Windows runner, and the README
+  names `ripr init --ci github` as the CI entry point (#4391).
+
 - Rust: a changed function that no test calls now reads `no_static_path`.
   Before, a same-file test of a sibling function made it `weakly_exposed`
   with "strong oracle found", and its unknown-shape lines said "escalate to
