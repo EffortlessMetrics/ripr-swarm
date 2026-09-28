@@ -409,9 +409,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       # Cache the cargo registry, git checkouts, and dependency builds
-      # (#2008): an uncached `cargo install ripr --locked` recompiles for
-      # minutes on every PR. The install itself still runs (no stale-binary
-      # risk); the warm caches cut most of the compile.
+      # (#2008): an uncached `cargo install ripr` recompiles for minutes on
+      # every PR. The install itself still runs (no stale-binary risk); the
+      # warm caches cut most of the compile.
       # Pinned to a commit SHA (#2190 review): the generated workflow
       # grants pull-requests: write and security-events: write, so a
       # mutable third-party tag is a supply-chain risk in consumer repos.
@@ -420,8 +420,11 @@ jobs:
         with:
           shared-key: ripr-install
 
+      # Pinned to the ripr version that generated this workflow, so a later
+      # release cannot change what CI runs without a reviewed diff. Rerun
+      # `ripr init --ci github --force` with a newer ripr to upgrade.
       - name: Install ripr
-        run: cargo install ripr --locked
+        run: cargo install ripr --version @RIPR_VERSION@ --locked
 
       - name: Generate RIPR pilot packet
         continue-on-error: true
@@ -2622,6 +2625,7 @@ jobs:
           sarif_file: target/ripr/reports/ripr-seams.sarif
           category: ripr-seams
 "#
+    .replace("@RIPR_VERSION@", env!("CARGO_PKG_VERSION"))
     .replace(
         "@RIPR_REPAIR_AFTER_PHASE@",
         &format!("{REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}"),
@@ -2760,6 +2764,25 @@ mod tests {
         assert!(!workflow.contains("@RIPR_"), "unsubstituted placeholder");
         assert!(workflow.contains(&format!("='{MANUAL_VERIFY_LABEL}'")));
         assert!(workflow.contains(&format!("echo '- Receipt: {NO_RECEIPT_BEFORE_REPAIR}'")));
+    }
+
+    /// W5: an unpinned `cargo install ripr` installs whatever release is
+    /// latest, so CI could run an older ripr that lacks the commands this
+    /// workflow calls, or change behavior silently on a later release. The
+    /// install pins the generating binary's own version and keeps `--locked`.
+    #[test]
+    fn generated_workflow_pins_the_generating_ripr_version() {
+        let workflow = generated_github_actions_workflow();
+        let pinned = format!(
+            "run: cargo install ripr --version {} --locked",
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(workflow.contains(&pinned), "missing {pinned}");
+        let installs: Vec<&str> = workflow
+            .lines()
+            .filter(|line| line.contains("run: cargo install"))
+            .collect();
+        assert_eq!(installs.len(), 1, "{installs:?}");
     }
 
     /// The `cli_smoke` tests drive `ripr init` as a subprocess, so they prove

@@ -8733,7 +8733,11 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     assert!(workspace.join("ripr.toml").exists());
     assert!(workflow.contains("pull_request:"));
     assert!(workflow.contains("workflow_dispatch:"));
-    assert!(workflow.contains("cargo install ripr --locked"));
+    // W5: the install pins the generating binary's version, keeping --locked.
+    assert!(workflow.contains(&format!(
+        "cargo install ripr --version {} --locked",
+        env!("CARGO_PKG_VERSION")
+    )));
     assert!(workflow.contains("ripr pilot"));
     assert!(workflow.contains("--format sarif"));
     assert!(workflow.contains("--format repo-sarif"));

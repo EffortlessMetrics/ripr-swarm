@@ -56,6 +56,12 @@ are scoped or reviewed.
   Rebindable (`let`/`var`), computed, imported, or shadowed constants and
   written parameters still fail closed.
 
+- `ripr init --ci github` pins the workflow's install to the ripr version
+  that generated it (`cargo install ripr --version <version> --locked`), so CI
+  no longer installs an older release that lacks the commands the workflow
+  calls, or changes behavior silently on a later release. Rerun
+  `ripr init --ci github --force` with a newer ripr to upgrade.
+
 - LSP fallback diagnostics explain their static classification and point to
   hover evidence without promising an unavailable clipboard action or repair
   route. Missing-path guidance remains explicitly static (#4328).
