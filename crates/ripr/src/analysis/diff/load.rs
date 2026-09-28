@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -397,6 +398,28 @@ pub fn working_tree_has_tracked_changes(root: &Path) -> bool {
             false
         }
     }
+}
+
+/// Files that are both in the committed `<base>...HEAD` diff and edited in the
+/// working tree (staged or unstaged). A committed-history check reads each
+/// changed file from disk but places probes at the committed diff's line
+/// numbers, so edits to such a file (an inline `#[cfg(test)]` test is the
+/// common case) misplace or drop that file's probes. Paths are relative to
+/// `root`. Fail-closed on disclosure: any git failure returns no paths.
+pub fn committed_diff_files_with_uncommitted_edits(root: &Path, base: &str) -> Vec<String> {
+    let names = |args: &[&str]| -> Option<BTreeSet<String>> {
+        crate::git::run_git(root, args)
+            .ok()
+            .map(|out| out.lines().map(str::to_string).collect())
+    };
+    let range = format!("{base}...HEAD");
+    let (Some(changed), Some(edited)) = (
+        names(&["diff", "--name-only", "--relative", &range, "--", "."]),
+        names(&["diff", "--name-only", "--relative", "HEAD", "--", "."]),
+    ) else {
+        return Vec::new();
+    };
+    changed.intersection(&edited).cloned().collect()
 }
 
 /// The stderr warning for a failed working-tree probe (#2074). Pure so the

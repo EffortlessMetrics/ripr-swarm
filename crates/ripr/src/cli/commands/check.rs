@@ -589,6 +589,15 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         && !format.is_repo_scope();
     if committed_history_diff && analysis::working_tree_has_tracked_changes(&input_root) {
         output.unanalyzed_working_tree = true;
+        // The committed diff's line numbers are applied to the on-disk file,
+        // so an edited diff file gets misplaced or missing probes. Name those
+        // files on stderr so every format (JSON included) carries the warning.
+        if let Some(base) = output.base.as_deref() {
+            let files = analysis::committed_diff_files_with_uncommitted_edits(&input_root, base);
+            if !files.is_empty() {
+                eprintln!("{}", edited_diff_files_warning(base, &files));
+            }
+        }
     }
     let navigation = if worktree_explicitly_provided && write_artifact.is_none() {
         None
@@ -615,6 +624,28 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
 /// underlying write small enough to avoid that limit. Write errors are
 /// returned as `Err` rather than panicking, so a failed write surfaces as
 /// a normal CLI error instead of aborting the process.
+/// Stderr warning for diff files that also carry uncommitted edits: their
+/// findings are unreliable until the edits are committed or `--worktree`
+/// diffs the edited content itself.
+fn edited_diff_files_warning(base: &str, files: &[String]) -> String {
+    let (verb, pronoun) = if files.len() == 1 {
+        ("has", "its")
+    } else {
+        ("have", "their")
+    };
+    format!(
+        "ripr: warning: {} {verb} uncommitted edits and {} also in the analyzed `{base}...HEAD` diff; \
+         {pronoun} findings apply committed line numbers to the edited file and can be misplaced or missing. \
+         Commit the edits, or rerun with `--worktree`.",
+        files
+            .iter()
+            .map(|file| format!("`{file}`"))
+            .collect::<Vec<_>>()
+            .join(", "),
+        if files.len() == 1 { "is" } else { "are" },
+    )
+}
+
 fn write_stdout_chunked(text: &str) -> Result<(), String> {
     use std::io::Write;
     const CHUNK: usize = 16 * 1024;

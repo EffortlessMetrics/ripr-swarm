@@ -164,8 +164,9 @@ fn write_agent_start(options: AgentStartOptions) -> Result<AgentStartWritten, St
     );
     if selection.top_seams.is_empty() {
         return Err(format!(
-            "agent start seam_id {} was not found or is hidden by config",
-            options.seam_id
+            "agent start seam_id {} was not found or is hidden by config. {}",
+            options.seam_id,
+            unknown_seam_id_hint(&options.seam_id)
         ));
     }
 
@@ -239,6 +240,17 @@ fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
     Ok(())
 }
 
+/// Recovery for an unknown `--seam-id`. Cold agents most often pass the
+/// `probe:...` finding ID that `ripr check` prints; the error must name where
+/// seam IDs come from instead of leaving "not found" as a dead end.
+fn unknown_seam_id_hint(seam_id: &str) -> &'static str {
+    if seam_id.starts_with("probe:") {
+        "`probe:...` is a `ripr check` finding ID, not a seam ID; run `ripr pilot --root .` to list seam IDs with their exact `ripr agent repair` commands."
+    } else {
+        "Run `ripr pilot --root .` to list current seam IDs with their exact `ripr agent repair` commands."
+    }
+}
+
 fn render_agent_packet(options: &AgentPacketOptions) -> Result<String, String> {
     if let (Some(gap_ledger), Some(gap_id)) = (&options.gap_ledger, &options.gap_id) {
         return render_agent_packet_from_gap_ledger(&options.root, gap_ledger, gap_id);
@@ -253,7 +265,12 @@ fn render_agent_packet(options: &AgentPacketOptions) -> Result<String, String> {
     let entry = classified
         .iter()
         .find(|entry| entry.seam.id().as_str() == seam_id)
-        .ok_or_else(|| format!("agent packet seam_id {seam_id} was not found"))?;
+        .ok_or_else(|| {
+            format!(
+                "agent packet seam_id {seam_id} was not found. {}",
+                unknown_seam_id_hint(seam_id)
+            )
+        })?;
 
     let policy = AgentBriefPolicy::from_config(&config);
     if let Some(reason) = policy.omission_reason_for_class(entry.class) {

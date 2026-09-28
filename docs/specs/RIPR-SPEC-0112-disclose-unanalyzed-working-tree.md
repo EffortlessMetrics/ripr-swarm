@@ -130,17 +130,23 @@ When `unanalyzed_working_tree` is true, the following note is appended:
 In the empty-findings branch (after "No diff-derived static exposure probes found."):
 
 ```
-Note: uncommitted changes to tracked source were not analyzed. `ripr check`
-compares committed history only; add `--worktree` to include staged and
-unstaged tracked edits (for example `ripr check --worktree`).
+Note: uncommitted edits to tracked source are not in the analyzed diff;
+`ripr check` diffs committed history. Test files outside the diff are still
+read as they are on disk, so uncommitted tests there already count as
+evidence; add `--worktree` to
+include staged and unstaged tracked edits in the diff (for example
+`ripr check --worktree`).
 ```
 
 In the non-empty-findings branch (after the all-no-path-disclosure):
 
 ```
-Note: uncommitted changes to tracked source were not analyzed. `ripr check`
-compares committed history only; add `--worktree` to include staged and
-unstaged tracked edits (for example `ripr check --worktree`).
+Note: uncommitted edits to tracked source are not in the analyzed diff;
+`ripr check` diffs committed history. Test files outside the diff are still
+read as they are on disk, so uncommitted tests there already count as
+evidence; add `--worktree` to
+include staged and unstaged tracked edits in the diff (for example
+`ripr check --worktree`).
 ```
 
 The note does not change the exit code or pass/fail status.
