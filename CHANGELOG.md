@@ -26,6 +26,13 @@ are scoped or reviewed.
   hover evidence without promising an unavailable clipboard action or repair
   route. Missing-path guidance remains explicitly static (#4328).
 
+- TypeScript/JavaScript and Python preview adapters no longer probe the
+  declaration line of a new function whose body adds its own lines. The line
+  had no behavior of its own, so it either stayed `weakly_exposed` after a
+  correct test was added or, in Python, claimed unearned `exposed` credit
+  beside a weakly exposed body predicate. Changed signatures, default values,
+  and one-line bodies keep their probe.
+
 ### Added
 
 - `ripr --version` now names the commit the binary was built from, as

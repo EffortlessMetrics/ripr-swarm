@@ -71,3 +71,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_same_stem_sibling_owner_not_related (7)
+
+Reason:
+RIPR-SPEC-0028: the unpaired def header of the new loyalty_price owner (line 10) is no longer a probe because its body lines carry their own added probes; body findings unchanged
+
+Command:
+`cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

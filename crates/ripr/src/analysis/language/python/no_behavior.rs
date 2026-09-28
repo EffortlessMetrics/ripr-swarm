@@ -163,6 +163,16 @@ pub(super) fn is_annotation_only_def_change(old_line: &str, new_line: &str) -> b
     }
 }
 
+/// Whether `line` is a complete one-line `def` header with no default values:
+/// a header alone, carrying no behavior of its own. Fails closed on a one-line
+/// `def f(x): return x` (the synthesized body does not parse), a multi-line
+/// header, and any parameter default (a default value is runtime behavior).
+pub(super) fn is_new_def_header_without_defaults(line: &str) -> bool {
+    def_signature_skeleton(line).is_some_and(|(_, _, _, _, params, _, _)| {
+        params.iter().all(|(_, default)| default.is_none())
+    })
+}
+
 /// The runtime-significant skeleton of a bare variable annotation line
 /// (`x: int = 5` or `x: int`), used to decide whether a change touches ONLY the
 /// annotation (#1289). Includes the target name and the optional value source
