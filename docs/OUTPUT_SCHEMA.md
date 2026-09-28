@@ -13954,9 +13954,11 @@ Field contract:
   workflow. GapRecord and editor routes are unchanged. Static receipt
   completeness does not establish project-test execution.
   The standalone manual recipe assumes a fresh workflow without retained
-  durable repair attempts. If a durable workflow already exists, use its
-  published exact `--attempt` continuation; the receipt validator retains its
-  existing attempt binding and can refuse an incompatible manual recipe.
+  durable repair attempts. Resume a matching awaiting attempt through its
+  published exact `--attempt` selector. If none is awaiting for the selected
+  seam, begin a fresh durable Before route and preserve the retained attempts.
+  The receipt validator retains its existing attempt binding and can refuse an
+  incompatible manual recipe.
   Per-packet canonical/evidence receipt commands and portable bulk output are
   outside this `packet.next` root-binding claim (#4000 remains open).
   A packet emitted by `agent repair --phase before` instead sets the manual

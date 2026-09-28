@@ -285,7 +285,9 @@ the existing edit cage and authorization checks remain authoritative. The
 published exact attempt selector is preferred, and seam-based continuation
 refuses ambiguous awaiting attempts. Portable bulk packets retain their local
 compatibility recipe. The standalone manual recipe assumes no retained durable
-workflow; existing attempts keep their exact continuation and receipt binding.
+workflow. Resume a matching awaiting attempt by its published exact selector;
+otherwise begin a fresh durable Before route for the selected seam, preserving
+retained attempts and receipt binding.
 Per-packet canonical/evidence commands remain outside this bounded claim.
 See `docs/OUTPUT_SCHEMA.md` for the additive fields and
 static evidence boundaries (#4000).
