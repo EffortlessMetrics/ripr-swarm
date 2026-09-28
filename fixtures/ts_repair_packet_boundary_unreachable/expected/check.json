@@ -33,8 +33,8 @@
       "evidence_path": ["reach yes: 1 related test(s) found for owner `login`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `relational_check` (rank 3)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `user.length == 3`.", "related test tests/auth.test.ts:3 login returns a long session token uses weak relational check oracle: expect(...).toBeGreaterThan(...)", "missing discriminator user.length == 3: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
-      "evidence": ["owner: login", "missing_discriminator: user.length == 3", "typescript_oracle_observed: login('alice')", "typescript_oracle_expected: 4", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/auth.test.ts:4", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/auth.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_auth.ts:typescript_preview:23e9836b;owner=login", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: jest", "typescript_test_runner: jest", "typescript_runner_hint: npm", "typescript_package_confidence: high", "typescript_verify_command: jest tests/auth.test.ts"],
-      "missing": ["Related test reaches `login` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference).", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "evidence": ["owner: login", "missing_discriminator: user.length == 3", "typescript_oracle_observed: login('alice')", "typescript_oracle_expected: 4", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/auth.test.ts:4", "gap_state: actionable", "actionability_category: complete_repair_packet", "why_actionable: complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)", "repair_action: add a focused assertion for the missing discriminator `user.length == 3` in the related test, shaped like `expect(login(/* boundary input for user.length == 3 */)).toBe(expected)`", "raw_evidence_ref: file=src/auth.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_auth.ts:typescript_preview:23e9836b;owner=login", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: jest", "typescript_test_runner: jest", "typescript_runner_hint: npm", "typescript_package_confidence: high", "typescript_verify_command: jest tests/auth.test.ts"],
+      "missing": ["Related test reaches `login` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference)."],
       "assertion_texts": {
       },
       "activation": {
@@ -93,31 +93,53 @@
           "line": 3,
           "name": "login returns a long session token"
         },
-        "repair_packet_ready": false,
-        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "repair_packet_ready": true,
+        "repair_route": "add a focused assertion for the missing discriminator `user.length == 3` in the related test, shaped like `expect(login(/* boundary input for user.length == 3 */)).toBe(expected)`",
         "source": "check_typescript_preview",
         "static_limits": [],
         "suggested_assertion_shape": "Add an exact boundary assertion for `user.length == 3`.",
         "verify": {
           "command": "jest tests/auth.test.ts"
         },
-        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract; validator: is not agent-packet eligible: observed call input `login('alice')` does not reach the missing discriminator `user.length == 3`; derive an input that hits the boundary before the packet is delegatable"
+        "why_not_actionable": "complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)"
+      },
+      "typescript_repair_packet": {
+        "allowed_edit_surface": [
+          "tests/auth.test.ts"
+        ],
+        "assertion_shape": "expect(login(/* boundary input for user.length == 3 */)).toBe(expected)",
+        "authority_boundary": "preview_advisory_only",
+        "canonical_gap_id": "gap:typescript:typescript_preview:23e9836b",
+        "file": "src/auth.ts",
+        "forbidden_files": [
+          "src/auth.ts"
+        ],
+        "gap_id": "probe:src_auth.ts:typescript_preview:23e9836b",
+        "language": "typescript",
+        "language_status": "preview",
+        "line": 2,
+        "missing_discriminator": "user.length == 3",
+        "must_not_change": [
+          "Do not edit production code unless the focused proof exposes a real product defect.",
+          "Do not broaden the change beyond this GapRecord and its repair route.",
+          "Do not treat static evidence as runtime mutation, coverage, or correctness proof.",
+          "Do not generate tests or call external providers from this packet.",
+          "Do not treat preview-language evidence as gate authority."
+        ],
+        "owner": "login",
+        "receipt_command": "ripr receipt write --gap gap:typescript:typescript_preview:23e9836b --verify-command 'jest tests/auth.test.ts' --status not_run --out target/ripr/receipts/gap-typescript-typescript_preview-23e9836b.json",
+        "repair_kind": "AddBoundaryAssertion",
+        "schema_version": "0.4",
+        "source": "typescript_preview_projection",
+        "target_test": "tests/auth.test.ts::login returns a long session token",
+        "verify_command": "jest tests/auth.test.ts"
       },
       "preview_actionability": {
-        "actionability_category": "incomplete_repair_packet",
+        "actionability_category": "complete_repair_packet",
         "authority_boundary": "preview_advisory_only",
-        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
-        "gap_state": "advisory",
-        "missing_actionability_fields": [
-          "canonical_gap_id",
-          "repair_kind",
-          "target_test_shape",
-          "related_test_or_observer",
-          "receipt_command",
-          "must_not_change",
-          "allowed_edit_surface",
-          "raw_evidence_refs"
-        ],
+        "evidence_needed_to_promote": "",
+        "gap_state": "actionable",
+        "missing_actionability_fields": [],
         "missing_graph_legs": [],
         "raw_evidence_refs": [
           {
@@ -131,16 +153,16 @@
             "source_id": "probe:src_auth.ts:typescript_preview:23e9836b"
           }
         ],
-        "repair_packet_ready": false,
-        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "repair_packet_ready": true,
+        "repair_route": "add a focused assertion for the missing discriminator `user.length == 3` in the related test, shaped like `expect(login(/* boundary input for user.length == 3 */)).toBe(expected)`",
         "unlock_condition": null,
-        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract; validator: is not agent-packet eligible: observed call input `login('alice')` does not reach the missing discriminator `user.length == 3`; derive an input that hits the boundary before the packet is delegatable"
+        "why_not_actionable": "complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)"
       },
       "stop_reasons": [],
       "oracle_kind": "relational_check",
       "oracle_strength": "weak",
-      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `user.length == 3`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
-      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `user.length == 3`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `user.length == 3`; the repair packet is complete and delegatable (advisory).",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `user.length == 3`; the repair packet is complete and delegatable (advisory).",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",

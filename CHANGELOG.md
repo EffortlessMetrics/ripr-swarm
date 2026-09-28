@@ -11,6 +11,17 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Rust: a changed function that no test calls now reads `no_static_path`.
+  Before, a same-file test of a sibling function made it `weakly_exposed`
+  with "strong oracle found", and its unknown-shape lines said "escalate to
+  real mutation testing". A function with a production caller, or a nearby
+  test that invokes a non-assertion macro, keeps weak reach because a test may
+  reach it unseen.
+- TypeScript: a literal boundary whose only test input misses it (`amount >
+  5000` to `>=`, tested with `shipping(1000)`) now gets a repair packet naming
+  the boundary input, instead of a refusal. The packet still forbids reusing
+  the observed input; an unresolved named-constant boundary still fails
+  closed.
 - LSP fallback diagnostics explain their static classification and point to
   hover evidence without promising an unavailable clipboard action or repair
   route. Missing-path guidance remains explicitly static (#4328).

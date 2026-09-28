@@ -4513,7 +4513,7 @@ mod tests {
     /// the shared validator failed closed (#4105 unreachable boundary input).
     fn typescript_fail_closed_packet_check_output() -> String {
         include_str!(
-            "../../../../fixtures/ts_repair_packet_boundary_unreachable/expected/check.json"
+            "../../../../fixtures/ts_repair_packet_boundary_constant_unresolved/expected/check.json"
         )
         .to_string()
     }
@@ -4564,17 +4564,17 @@ mod tests {
             finding["preview_actionability"]["why_not_actionable"].as_str()
         );
         assert!(record.static_limit_detail.as_deref().is_some_and(|detail| detail
-            .contains("validator: is not agent-packet eligible: observed call input `login('alice')` does not reach the missing discriminator `user.length == 3`")));
+            .contains("validator: is not agent-packet eligible: boundary constant `DISCOUNT_THRESHOLD` in the missing discriminator `amount == DISCOUNT_THRESHOLD` is not resolved to a concrete value")));
         assert!(record.static_limits.iter().any(|limit| {
             limit["kind"] == "not_delegatable_target_shape"
-                && limit["detail"] == "Add an exact boundary assertion for `user.length == 3`."
+                && limit["detail"] == "Exact-value evidence is present; verify it targets the changed discriminator."
         }));
         assert_eq!(
             record
                 .anchor
                 .as_ref()
                 .and_then(|anchor| anchor.file.as_deref()),
-            Some("src/auth.ts")
+            Some("src/pricing.ts")
         );
         assert_eq!(report.summary.static_limitation_total, 1);
         Ok(())

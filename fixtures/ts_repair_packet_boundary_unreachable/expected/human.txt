@@ -11,7 +11,7 @@ Analysis outcome: complete_with_findings (analysis complete).
 
 Start here:
   State: preview_limited
-  Safe next action: this TypeScript preview finding's repair packet is not ready (observed call input `login('alice')` does not reach the missing discriminator `user.length == 3`; derive an input that hits the boundary before the packet is delegatable); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`.
+  Safe next action: preview-language evidence is advisory; the repair packet is complete but remains advisory, so verify independently before acting.
   File: src/auth.ts:2
   Language: typescript
   Language status: preview
@@ -20,7 +20,7 @@ Start here:
   Changed behavior: if (user.length >= 3) {
   Missing discriminator: Related test reaches `login` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThr…
   Related test: tests/auth.test.ts:3 login returns a long session token
-  Next step: TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `user.length == 3`; no actionable repair packet is emitted until verify, receipt, and e…
+  Next step: TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `user.length == 3`; the repair packet is complete and delegatable (advisory).
   Evidence:
     - reach yes: 1 related test(s) found for owner `login`
     - infection unknown: TypeScript preview adapter does not yet model infection.
