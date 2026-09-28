@@ -77,7 +77,7 @@ before any test edit.
 
 By default, `check` takes the changed lines from committed history; it reads
 test files as they are on disk. In this development build, include staged and
-unstaged source edits in the diff with:
+unstaged edits to tracked files in the diff with:
 
 ```bash
 ripr check --worktree
@@ -171,10 +171,10 @@ The before phase prepares the packet and prints an `--attempt` continuation
 command. Read the allowed test files, proposed assertion, verification command,
 and stop conditions. Make the focused test edit yourself or delegate that packet
 to an external coding agent, and change only test files. Run the test yourself:
-ripr does not run it. The attempt counts any new file in the checkout that Git
-does not ignore as an edit, so keep `target/` in `.gitignore` before running
-`cargo test`, and redirect ripr output under `target/ripr/` or outside the
-repository.
+ripr does not run it. The attempt refuses any new file outside the allowed test
+files, whether Git ignores it or not, except build output under a gitignored
+`target/`. Keep `target/` in `.gitignore` before running `cargo test`, and
+redirect ripr output under `target/ripr/` or outside the repository.
 
 Then run the exact `--attempt ... --phase after` command printed before the edit.
 It records the after snapshot and a receipt of static evidence movement.
@@ -192,8 +192,8 @@ ripr agent status --root .
 
 Use the reported continuation or recovery step. The full phase and identity
 reference is [Repair attempt identity](REPAIR_ATTEMPT.md).
-Python repair adds a third `verify` phase that runs the packet's verification
-command under its own authorization flags; follow [the Python sequence](REPAIR_ATTEMPT.md#governed-python-sequence),
+A trust-bound Python repair adds a third `verify` phase, run with its own
+authorization flags; follow [the Python sequence](REPAIR_ATTEMPT.md#governed-python-sequence),
 not the Rust sequence above.
 
 For lower-level control, see [Agent workflows](AGENT_WORKFLOWS.md) and

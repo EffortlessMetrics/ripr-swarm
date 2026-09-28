@@ -72,8 +72,8 @@ ripr check
 Read the changed behavior, the related tests, and the recommended next test.
 No configuration file is required. `ripr check` is advisory: it exits 0 whether
 or not it finds a gap, and exit 2 means the analysis could not complete. On the
-base branch itself there is no diff, and ripr says so. A result with no findings
-or limited evidence is not a clean bill of health.
+base branch itself there are no changed files, and ripr says so. A result with
+no findings or limited evidence is not a clean bill of health.
 
 Cargo installation requires Rust 1.95 or newer; the diff workflow needs Git.
 See the [CLI quickstart](docs/QUICKSTART.md#cli-first-hour) for choosing a base,
@@ -109,20 +109,24 @@ complete paths, including read-only [MCP status](docs/interop/mcp.md).
 ## Using ripr from a coding agent
 
 ```bash
-ripr check --format json
+ripr check
 ripr pilot --root .
 ```
 
-`check` reports gaps in the current change; `pilot` names one supported repair
-or explains why none is ready. Run the follow-up commands ripr prints
+`check` reports gaps in the current change and prints the `ripr explain` and
+`ripr context` commands for the top finding; add `--format json` for
+machine-readable results, which omit those commands. `pilot` names one supported
+repair or explains why none is ready. Run the follow-up commands ripr prints
 (`ripr explain`, `ripr context`, `ripr agent repair ...`) exactly as printed:
 their IDs belong to that run and cannot be copied from documentation.
 
-The repair step treats any new file in the checkout that Git does not ignore as
-an edit. Keep Cargo's `target/` in `.gitignore` before running tests, and
-redirect ripr output under `target/ripr/` or outside the repository. Exit `0`
-means the command completed, `2` means it could not, and `3` means a gate or
-typed refusal answered; see [exit codes](docs/EXIT_CODES.md). The
+Between the repair phases, the attempt refuses any new file outside the allowed
+test files, whether Git ignores it or not. Build output under a gitignored
+`target/` is the exception, so keep `target/` in `.gitignore` before running
+tests, and redirect ripr output under `target/ripr/` or outside the repository.
+Exit `0` means the command completed and `2` means it could not, which includes
+a refused repair attempt; `3` means a gate blocked or a typed refusal answered.
+See [exit codes](docs/EXIT_CODES.md). The
 [LLM operator guide](docs/LLM_OPERATOR_GUIDE.md) covers the full repair loop.
 
 <a id="how-ripr-works-reference"></a>
