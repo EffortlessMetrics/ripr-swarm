@@ -625,7 +625,18 @@ fn run_git_diff(
 ) -> Result<String, String> {
     // Analysis loaders consume source-coordinate patches: zero context
     // lines stay the assembly default.
-    run_git_diff_with_unified(root, range, extra_args, "0", git_timeout)
+    //
+    // `--relative` scopes the diff to `root` and reports paths relative to
+    // it (git runs with `current_dir(root)`). Without it, `--root` at a
+    // workspace member received repository-relative paths
+    // (`tokio-util/src/x.rs` under `tokio-util/`), so every changed file
+    // resolved to a path that does not exist, related tests went unfound,
+    // and files outside the member entered scope. At the repository top
+    // level the flag changes nothing.
+    let mut args = Vec::with_capacity(extra_args.len() + 1);
+    args.push("--relative");
+    args.extend_from_slice(extra_args);
+    run_git_diff_with_unified(root, range, &args, "0", git_timeout)
 }
 
 fn run_git_diff_with_unified(
@@ -1373,6 +1384,52 @@ mod tests {
         );
         ignore_remove_dir_all(&shallow);
         ignore_remove_dir_all(&origin);
+        Ok(())
+    }
+
+    #[test]
+    fn member_root_diff_is_scoped_and_relative_to_the_member() -> std::io::Result<()> {
+        // `ripr check --root crates/core` inside a workspace: paths must be
+        // relative to the member so they resolve under `--root`, and
+        // changes outside the member are not in its scope.
+        let dir = unique_fixture_root("member-root-relative")?;
+        init_git_repo(&dir, "main")?;
+        fs::create_dir_all(dir.join("crates/core/src"))?;
+        fs::write(
+            dir.join("crates/core/src/lib.rs"),
+            "pub fn f() -> bool { 1 > 0 }\n",
+        )?;
+        fs::write(dir.join("other.rs"), "pub fn g() -> bool { 1 > 0 }\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "base"])?;
+        fs::write(
+            dir.join("crates/core/src/lib.rs"),
+            "pub fn f() -> bool { 1 >= 0 }\n",
+        )?;
+        fs::write(dir.join("other.rs"), "pub fn g() -> bool { 1 >= 0 }\n")?;
+        run_git_checked(&dir, &["commit", "-am", "change"])?;
+
+        let member = dir.join("crates/core");
+        for text in [
+            load_diff(&member, Some("HEAD~1"), None, None).map_err(std::io::Error::other)?,
+            load_worktree_diff(&member, Some("HEAD~1"), None).map_err(std::io::Error::other)?,
+            load_diff_range(&member, "HEAD~1", "HEAD").map_err(std::io::Error::other)?,
+        ] {
+            assert!(
+                text.contains("+++ b/src/lib.rs"),
+                "member paths must be relative to the member root: {text}"
+            );
+            assert!(
+                !text.contains("crates/core/") && !text.contains("other.rs"),
+                "nothing outside the member root may enter its diff: {text}"
+            );
+        }
+        let top = load_diff(&dir, Some("HEAD~1"), None, None).map_err(std::io::Error::other)?;
+        assert!(
+            top.contains("+++ b/crates/core/src/lib.rs") && top.contains("+++ b/other.rs"),
+            "the repository top level keeps every path: {top}"
+        );
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
