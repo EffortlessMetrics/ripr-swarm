@@ -889,7 +889,12 @@ fn sarif_uri_reference(path: &str) -> String {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
                 encoded.push(char::from(byte));
             }
-            _ => encoded.push_str(&format!("%{byte:02X}")),
+            _ => {
+                const HEX: &[u8; 16] = b"0123456789ABCDEF";
+                encoded.push('%');
+                encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+                encoded.push(char::from(HEX[usize::from(byte & 0x0F)]));
+            }
         }
     }
     encoded
@@ -2021,10 +2026,10 @@ weakly_gripped = "note"
     fn physical_location_uri_is_percent_encoded_reference() {
         // A raw `#` splits the path into a fragment, a space and a bare `%`
         // are not legal in a URI; each must arrive percent-encoded.
-        let loc = physical_location("src/we ird#dir/a%b,c:d.rs", 3, None);
+        let loc = physical_location("src/we ird#dir/a%b,c:d?e.rs", 3, None);
         assert_eq!(
             loc["physicalLocation"]["artifactLocation"]["uri"],
-            "src/we%20ird%23dir/a%25b%2Cc%3Ad.rs"
+            "src/we%20ird%23dir/a%25b%2Cc%3Ad%3Fe.rs"
         );
         let plain = physical_location("crates/ripr-x/src/lib_2.rs", 3, None);
         assert_eq!(
@@ -2035,6 +2040,36 @@ weakly_gripped = "note"
         assert_eq!(
             unicode["physicalLocation"]["artifactLocation"]["uri"],
             "src/d%C3%A9.rs"
+        );
+    }
+
+    #[test]
+    fn finding_fingerprint_hashes_unencoded_path_while_uri_is_encoded() {
+        // Encoding the uri must not move alert identity: fingerprints keep
+        // the raw repository path so alerts dedupe across the change.
+        let mut finding = sample_finding();
+        finding.probe.location.file = std::path::PathBuf::from("src/we ird#dir/a.rs");
+        let mut output = sample_output();
+        output.findings = vec![finding];
+        let sarif = render_findings_sarif(&output, &crate::config::RiprConfig::default(), &[]);
+        let parsed: serde_json::Value = serde_json::from_str(&sarif)
+            .map_err(|error| error.to_string())
+            .unwrap_or_default();
+        let result = &parsed["runs"][0]["results"][0];
+        assert_eq!(
+            result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+            "src/we%20ird%23dir/a.rs"
+        );
+        let fingerprint = result["fingerprints"]["riprFingerprintV1"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            fingerprint.contains("|src/we ird#dir/a.rs|"),
+            "fingerprint must hash the unencoded path: {fingerprint}"
+        );
+        assert_eq!(
+            result["partialFingerprints"]["riprFingerprintV1"],
+            result["fingerprints"]["riprFingerprintV1"]
         );
     }
 
