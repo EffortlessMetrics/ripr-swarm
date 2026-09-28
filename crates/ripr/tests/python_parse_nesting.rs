@@ -122,3 +122,53 @@ fn depth_at_budget_does_not_disclose_a_nesting_limit() -> Result<(), String> {
     }
     Ok(())
 }
+
+fn assert_tree_budget_disclosed(label: &str, deep: &str) -> Result<(), String> {
+    let root = write_workspace(deep)?;
+    let output = check(&root)?;
+    let _ = fs::remove_dir_all(&root);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.code().is_none() {
+        return Err(format!(
+            "{label}: ripr aborted instead of reporting a tree-depth limit\nstderr: {stderr}"
+        ));
+    }
+    if !stdout.contains("parse_budget: syntax tree depth estimate exceeded 256") {
+        return Err(format!(
+            "{label}: expected the tree-depth budget in JSON\nstatus: {:?}\nstderr: {stderr}\nstdout: {stdout}",
+            output.status.code()
+        ));
+    }
+    if !stdout.contains("language_scope_unsupported") || !stdout.contains("src/deep.py") {
+        return Err(format!(
+            "{label}: limitation must be language_scope_unsupported naming src/deep.py, got {stdout}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn unchanged_deep_operator_chain_is_a_named_limit_not_an_abort() -> Result<(), String> {
+    assert_tree_budget_disclosed(
+        "binary",
+        &format!("def f(x):\n    return x{}\n", " + 1".repeat(60_000)),
+    )
+}
+
+#[test]
+fn unchanged_deep_unary_chain_is_a_named_limit_not_an_abort() -> Result<(), String> {
+    assert_tree_budget_disclosed(
+        "unary",
+        &format!("def f(x):\n    return {}x\n", "not ".repeat(50_000)),
+    )
+}
+
+#[test]
+fn unchanged_deep_elif_chain_is_a_named_limit_not_an_abort() -> Result<(), String> {
+    let mut source = String::from("def f(x):\n    if x == 0:\n        return 0\n");
+    for arm in 1..12_000 {
+        source.push_str(&format!("    elif x == {arm}:\n        return {arm}\n"));
+    }
+    assert_tree_budget_disclosed("elif", &source)
+}
