@@ -497,6 +497,10 @@ fn import_alias_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
             && import.alias != owner.name
             && contains_call_name(&test.body_text, &import.alias))
             || (imported_module_matches_owner(import, owner)
+                // A parameter, fixture or assignment named like the module
+                // alias (`def test_one(pkg): pkg.one(...)`) calls a local
+                // value, not the imported module.
+                && !test_binds_local(test, &import.alias)
                 && contains_attribute_call(&test.body_text, &import.alias, &owner.name))
     })
 }
@@ -887,6 +891,7 @@ fn test_references_module_symbol(test: &PythonTest, owner: &PythonOwner, symbol:
                 && contains_name_reference(body, &import.alias);
         }
         imported_module_matches_owner(import, owner)
+            && !test_binds_local(test, &import.alias)
             && contains_member_reference(body, &import.alias, symbol)
     })
 }
