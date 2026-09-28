@@ -71,3 +71,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — benches_harness_evidence (6)
+
+Reason:
+RIPR-SPEC-0001: the one-line signature of a new function whose body is added too carries no behavior of its own and is no longer probed (parity with the TypeScript and Python adapters)
+
+Command:
+`cargo xtask goldens bless benches_harness_evidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
