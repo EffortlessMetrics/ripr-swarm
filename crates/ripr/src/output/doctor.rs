@@ -13,6 +13,7 @@
 
 use crate::config::{CONFIG_FILE_NAME, RiprConfig, load_for_root};
 use crate::domain::LanguageId;
+use crate::output::path::human_path;
 use serde::Serialize;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -166,6 +167,11 @@ enum RustcVersionVerdict {
     Unreadable(String),
 }
 
+/// The below-minimum rustc note already states what that means for the
+/// running binary's analysis; the analysis-profile advisory must not say it a
+/// second time (clean-install walk, 0.11).
+const RUSTC_ANALYSIS_SCOPE: &str = "The already-running ripr binary's built-in static analysis does not directly run rustc; configured external producers have their own prerequisites.";
+
 fn validate_rustc_version(output: &str) -> RustcVersionVerdict {
     let Some(minimum) = minimum_rustc_version() else {
         return RustcVersionVerdict::Unreadable(format!(
@@ -180,7 +186,7 @@ fn validate_rustc_version(output: &str) -> RustcVersionVerdict {
     };
     if version < minimum {
         return RustcVersionVerdict::BelowBuildMinimum(format!(
-            "{}; below ripr's build minimum {minimum}. That minimum is what building or installing ripr from source requires. The already-running ripr binary's built-in static analysis does not directly run rustc; configured external producers have their own prerequisites. Run `rustup update stable` before building ripr from source.",
+            "{}; below ripr's build minimum {minimum}. That minimum is what building or installing ripr from source requires. {RUSTC_ANALYSIS_SCOPE} Run `rustup update stable` before building ripr from source.",
             output.trim()
         ));
     }
@@ -590,7 +596,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
         report.add_check(
             "root_directory",
             DoctorStatus::Pass,
-            Some(format!("root directory exists at {}", root.display())),
+            Some(format!("root directory exists at {}", human_path(root))),
         );
     } else {
         report.add_check(
@@ -598,7 +604,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
             DoctorStatus::Fail,
             Some(format!(
                 "root directory does not exist at {}",
-                root.display()
+                human_path(root)
             )),
         );
     }
@@ -610,21 +616,21 @@ fn evaluate_doctor_core_with_probe_for_profile(
             DoctorStatus::Pass,
             Some(format!(
                 "Cargo.toml found at {}",
-                root.join("Cargo.toml").display()
+                human_path(&root.join("Cargo.toml"))
             )),
         );
     } else {
         report.add_check(
             "cargo_toml",
             DoctorStatus::Fail,
-            Some(format!("no Cargo.toml found at {}", root.display())),
+            Some(format!("no Cargo.toml found at {}", human_path(root))),
         );
     }
     match is_inside_work_tree(root) {
         Some(true) => report.add_check(
             "git_repository",
             DoctorStatus::Pass,
-            Some(format!("inside a Git work tree at {}", root.display())),
+            Some(format!("inside a Git work tree at {}", human_path(root))),
         ),
         Some(false) => report.add_check(
             "git_repository",
@@ -633,7 +639,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
                 "not inside a Git work tree at {}; the diff-scoped commands read committed \
                  history and cannot run here. For a repository-free scan, run `ripr check --root \
                  {} --format repo-exposure-md`",
-                root.display(),
+                human_path(root),
                 root.display()
             )),
         ),
@@ -643,7 +649,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
             Some(format!(
                 "could not determine whether {} is inside a Git work tree; the git tool check \
                  below carries the reason",
-                root.display()
+                human_path(root)
             )),
         ),
     }
@@ -652,7 +658,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
             "config",
             DoctorStatus::Pass,
             Some(match config.source_path() {
-                Some(path) => format!("loaded {} at {}", CONFIG_FILE_NAME, path.display()),
+                Some(path) => format!("loaded {} at {}", CONFIG_FILE_NAME, human_path(path)),
                 None => format!("{CONFIG_FILE_NAME} not found; using built-in defaults"),
             }),
         ),
@@ -714,7 +720,62 @@ pub(crate) fn doctor_tool_check_isolated(tool: &str) -> (DoctorStatus, String) {
 }
 
 fn doctor_tool_command(tool: &str) -> std::process::Command {
-    std::process::Command::new(tool)
+    // Windows: std's program lookup for a bare `pnpm` only resolves
+    // `pnpm.exe` on PATH, so a tool installed as a batch shim (npm/corepack
+    // install `pnpm.cmd` and `yarn.cmd`) would be misreported as not
+    // installed. When no `.exe` exists, run the resolved shim by full path;
+    // std launches `.cmd`/`.bat` through cmd.exe with its batch-argument
+    // escaping. Other platforms keep the plain tool name unchanged.
+    let mut program = std::ffi::OsString::from(tool);
+    if cfg!(windows) {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let pathext = std::env::var("PATHEXT").ok();
+        let dirs: Vec<std::path::PathBuf> = std::env::split_paths(&path).collect();
+        if let Some(shim) =
+            resolve_windows_batch_shim(tool, &dirs, pathext.as_deref(), &|p| p.is_file())
+        {
+            // A relative PATH entry was checked against this process's
+            // directory; pin that before a probe moves the child's cwd.
+            program = std::path::absolute(&shim).unwrap_or(shim).into_os_string();
+        }
+    }
+    std::process::Command::new(program)
+}
+
+/// Resolve a Windows batch shim (`<tool>.cmd`/`<tool>.bat`) on PATH for a bare
+/// tool name that has no `<tool>.exe` anywhere on PATH. Returns `None` when the
+/// native lookup should be used: the name already carries a path or
+/// extension, a `.exe` exists (it wins, matching `Command`'s own lookup), or no
+/// shim exists. Pure over its inputs so the policy is testable on any host.
+fn resolve_windows_batch_shim(
+    tool: &str,
+    path_dirs: &[std::path::PathBuf],
+    pathext: Option<&str>,
+    is_file: &dyn Fn(&Path) -> bool,
+) -> Option<std::path::PathBuf> {
+    if tool.is_empty() || tool.contains(['/', '\\', '.']) {
+        return None;
+    }
+    if path_dirs
+        .iter()
+        .any(|dir| is_file(&dir.join(format!("{tool}.exe"))))
+    {
+        return None;
+    }
+    // Only batch extensions, in PATHEXT order; PATHEXT's other entries
+    // (`.com`, `.vbs`, `.js`, ...) are not run by the doctor.
+    let batch_exts: Vec<String> = pathext
+        .unwrap_or(".COM;.EXE;.BAT;.CMD")
+        .split(';')
+        .map(str::to_ascii_lowercase)
+        .filter(|ext| ext == ".cmd" || ext == ".bat")
+        .collect();
+    path_dirs.iter().find_map(|dir| {
+        batch_exts
+            .iter()
+            .map(|ext| dir.join(format!("{tool}{ext}")))
+            .find(|candidate| is_file(candidate))
+    })
 }
 
 pub(crate) fn doctor_tool_check(tool: &str) -> (DoctorStatus, String) {
@@ -746,6 +807,9 @@ fn doctor_tool_probe_dir<'a>(tool: &str, root: &'a Path) -> Option<&'a Path> {
 /// harness verdict fails closed as `manifest_unavailable`). Doctor names that
 /// degradation instead of implying analysis is unaffected.
 fn analysis_advisory_toolchain_evidence(tool: &str, evidence: &str) -> String {
+    if evidence.contains(RUSTC_ANALYSIS_SCOPE) {
+        return evidence.to_string();
+    }
     let analysis_effect = if tool == "cargo" {
         "static analysis continues, but evidence that reads `cargo metadata` in the selected root (custom test-harness target inventory) is withheld"
     } else {
@@ -1053,6 +1117,76 @@ mod tests {
         }
     }
 
+    fn shim_dirs() -> Vec<std::path::PathBuf> {
+        vec![
+            std::path::PathBuf::from("first-bin"),
+            std::path::PathBuf::from("npm-global"),
+        ]
+    }
+
+    #[test]
+    fn windows_shim_resolves_cmd_when_no_exe_exists() {
+        let dirs = shim_dirs();
+        let shim = dirs[1].join("pnpm.cmd");
+        let resolved =
+            resolve_windows_batch_shim("pnpm", &dirs, Some(".COM;.EXE;.BAT;.CMD"), &|p| {
+                p == shim.as_path()
+            });
+        assert_eq!(resolved, Some(shim.clone()));
+        // PATHEXT absent falls back to the Windows default list.
+        assert_eq!(
+            resolve_windows_batch_shim("pnpm", &dirs, None, &|p| p == shim.as_path()),
+            Some(shim)
+        );
+    }
+
+    #[test]
+    fn windows_shim_defers_to_exe_anywhere_on_path() {
+        let dirs = shim_dirs();
+        let cmd = dirs[0].join("yarn.cmd");
+        let exe = dirs[1].join("yarn.exe");
+        let resolved = resolve_windows_batch_shim("yarn", &dirs, Some(".EXE;.CMD"), &|p| {
+            p == cmd.as_path() || p == exe.as_path()
+        });
+        assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn windows_shim_absent_stays_unresolved() {
+        let dirs = shim_dirs();
+        assert_eq!(
+            resolve_windows_batch_shim("pnpm", &dirs, Some(".EXE;.CMD"), &|_| false),
+            None
+        );
+        // A non-batch PATHEXT match is not run as a shim.
+        let js = dirs[0].join("pnpm.js");
+        assert_eq!(
+            resolve_windows_batch_shim("pnpm", &dirs, Some(".JS;.EXE"), &|p| p == js.as_path()),
+            None
+        );
+        // Names that already carry a path or extension use native lookup.
+        assert_eq!(
+            resolve_windows_batch_shim(r"npm-global\pnpm", &dirs, None, &|_| true),
+            None
+        );
+    }
+
+    #[test]
+    fn windows_shim_honours_pathext_order_within_a_directory() {
+        let dirs = shim_dirs();
+        let bat = dirs[0].join("yarn.bat");
+        let cmd = dirs[0].join("yarn.cmd");
+        let exists = |p: &Path| p == bat.as_path() || p == cmd.as_path();
+        assert_eq!(
+            resolve_windows_batch_shim("yarn", &dirs, Some(".EXE;.CMD;.BAT"), &exists),
+            Some(cmd.clone())
+        );
+        assert_eq!(
+            resolve_windows_batch_shim("yarn", &dirs, Some(".EXE;.BAT;.CMD"), &exists),
+            Some(bat)
+        );
+    }
+
     #[test]
     fn empty_report_is_pass() {
         let report = DoctorReport::new("/workspace");
@@ -1195,6 +1329,25 @@ mod tests {
                     result.evidence
                 ));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn analysis_advisory_states_the_rustc_analysis_scope_once() -> Result<(), String> {
+        let below = below_minimum_rustc_output()?;
+        let rustc = doctor_tool_check_success("rustc", below.as_bytes());
+        let advisory = analysis_advisory_toolchain_evidence("rustc", &rustc.evidence);
+        if advisory.matches("run rustc").count() != 1 {
+            return Err(format!(
+                "the rustc analysis scope must appear once: {advisory:?}"
+            ));
+        }
+        let missing = analysis_advisory_toolchain_evidence("rustc", "rustc not found on PATH");
+        if !missing.contains("the installed binary's static analysis does not run rustc") {
+            return Err(format!(
+                "a missing rustc still needs the analysis scope: {missing:?}"
+            ));
         }
         Ok(())
     }
