@@ -127,8 +127,9 @@ are scoped or reviewed.
   still fail closed. So does a comparison that some calls may skip: the
   changed line must be a top-level statement of the owner's own body that
   opens with the comparison (`if (`, `return`, or `const|let|var NAME =`),
-  with no earlier `return`/`throw`/`break`/`continue`/`yield`, and the owner
-  may not be a generator or a curried or returned function.
+  with no earlier `return`/`throw`/`break`/`continue`/`yield`, loop or
+  `await`, and the owner may not be a generator or a curried or returned
+  function.
 
 - `ripr pilot` on a Python-only change with a repair card now ends with the
   card's route (`ripr first-pr` before the edit to name the receipt command,

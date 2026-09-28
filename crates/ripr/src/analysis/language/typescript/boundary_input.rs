@@ -19,13 +19,13 @@
 //! - the changed line runs on every call: the module's line at the changed
 //!   line number equals the diff's changed line (the tree at `--root` is
 //!   read as the diff's post-image), and it sits at the top level of a
-//!   block-bodied owner, after no `return`/`throw`/`break`/`continue`/`yield`
-//!   and inside no nested block; it starts a fresh statement, and that
-//!   statement opens with the comparison (`if (`, `return`, or
-//!   `const|let|var NAME =` directly before its first side). A helper call
-//!   before the line that throws only for the boundary value is a static
-//!   limit this does not see, as is any earlier statement that throws for
-//!   the boundary value.
+//!   block-bodied owner, after no `return`/`throw`/`break`/`continue`/`yield`,
+//!   loop, or `await`, and inside no nested block; it starts a fresh
+//!   statement, and that statement opens with the comparison (`if (`,
+//!   `return`, or `const|let|var NAME =` directly before its first side). A
+//!   helper call before the line that throws or never returns for the
+//!   boundary value is a static limit this does not see, as is any earlier
+//!   statement that throws for the boundary value.
 //!
 //! The module rules run on the oxc token stream, so comments, strings,
 //! templates, and regular expressions never pass for code there; the changed
@@ -486,8 +486,9 @@ fn parameter_is_read_only(source: &str, tokens: &[Tok], request: &ModuleRequest)
 /// Whether every call of the owner evaluates the changed line: the line
 /// lies inside the owner, after the signature, at the top level
 /// of a block body, and no earlier body token can leave the function or
-/// skip the line (`return`, `throw`, `break`, `continue`, `yield`, or an
-/// enclosing `if`/loop/`switch`/`try`/callback block). An early guard such
+/// skip the line (`return`, `throw`, `break`, `continue`, `yield`, a loop
+/// or `await` that may not finish, or an enclosing
+/// `if`/loop/`switch`/`try`/callback block). An early guard such
 /// as `if (amount === 5000) return 0;` would stop the derived input before
 /// the changed comparison, so it fails closed. Expression-bodied and curried
 /// arrows, returned functions, and generators are not admitted.
@@ -588,7 +589,17 @@ fn changed_line_runs_on_every_call(source: &str, tokens: &[Tok], request: &Modul
     let mut open_groups: Vec<Kind> = Vec::new();
     for token in &body[..before_line] {
         match token.kind {
-            Kind::Return | Kind::Throw | Kind::Break | Kind::Continue | Kind::Yield => {
+            // An earlier exit, or a loop or `await` that may not finish for
+            // the boundary input, can keep the changed line from running.
+            Kind::Return
+            | Kind::Throw
+            | Kind::Break
+            | Kind::Continue
+            | Kind::Yield
+            | Kind::While
+            | Kind::Do
+            | Kind::For
+            | Kind::Await => {
                 return false;
             }
             Kind::LParen | Kind::LBrack | Kind::LCurly | Kind::TemplateHead => {

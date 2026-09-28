@@ -573,6 +573,18 @@ fn changed_line_behind_an_early_exit_or_nested_block_stays_unresolved() {
             ),
         ),
         (
+            "earlier loop that may not finish for the input",
+            shipping("  while (amount === 5000) {}\n", ("", "")),
+        ),
+        (
+            "earlier do-while loop",
+            shipping("  do {} while (amount === 5000);\n", ("", "")),
+        ),
+        (
+            "earlier for loop",
+            shipping("  for (let i = 0; i < amount; i++) {}\n", ("", "")),
+        ),
+        (
             "enclosing if",
             shipping("", ("  if (amount < 100) {\n", "  }\n")),
         ),
@@ -737,4 +749,26 @@ fn nested_function_bodies_and_generators_stay_unresolved() {
             "control: {source}"
         );
     }
+}
+
+#[test]
+fn changed_line_after_an_await_stays_unresolved() {
+    let changed = "  if (amount > 5000) {";
+    let owner = |before: &str| {
+        format!(
+            "export async function shipping(amount: number): Promise<number> {{\n{before}{changed}\n    return 1;\n  }}\n  return 2;\n}}\n"
+        )
+    };
+    assert!(
+        matches!(
+            input_for(&owner("  const fee = 1;\n"), "shipping", changed),
+            Some(Some(_))
+        ),
+        "control: an async owner without an earlier await still derives"
+    );
+    assert_eq!(
+        input_for(&owner("  await settle(amount);\n"), "shipping", changed),
+        Some(None),
+        "a rejected or never-settling await can stop the boundary input first"
+    );
 }
