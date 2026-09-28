@@ -45,6 +45,9 @@ mod actionability;
 mod annotation_only;
 #[cfg(test)]
 mod annotation_only_tests;
+mod boundary_input;
+#[cfg(test)]
+mod boundary_input_tests;
 mod bounded_read;
 mod bun_bridge;
 mod classifier;
@@ -73,6 +76,7 @@ mod types;
 // uses `use super::*;` can access all items.
 pub(crate) use actionability::*;
 pub(crate) use annotation_only::*;
+pub(crate) use boundary_input::*;
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use classifier::*;

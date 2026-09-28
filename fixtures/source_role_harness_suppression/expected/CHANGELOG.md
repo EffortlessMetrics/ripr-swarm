@@ -83,3 +83,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — source_role_harness_suppression (4)
+
+Reason:
+RIPR-SPEC-0122: discriminator evidence line no longer says yes on findings that are not exposed
+
+Command:
+`cargo xtask goldens bless source_role_harness_suppression --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

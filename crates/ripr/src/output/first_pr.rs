@@ -1072,7 +1072,17 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
         );
     }
     if let Some(record) = records.iter().copied().find(is_first_run_repairable_gap) {
-        return Selection::TopGap(Box::new(top_gap_from_record(record, root, options)));
+        let top_gap = top_gap_from_record(record, root, options);
+        if let Some(edited) = check_output_evidence_predates_edit(root, options, &top_gap) {
+            return Selection::blocked(
+                "stale_artifact",
+                format!(
+                    "The gap decision ledger predates the last edit to `{edited}`, so its repair instruction may already be done; refresh the evidence, then rerun first-pr to see whether the gap is still open."
+                ),
+                Some(regenerate_gap_ledger_command(root, options)),
+            );
+        }
+        return Selection::TopGap(Box::new(top_gap));
     }
     match review_card_repair_start(root, options) {
         Ok(top_gap) => Selection::TopGap(Box::new(top_gap)),
@@ -1535,6 +1545,40 @@ fn repo_exposure_latency_report_command(root: &str) -> String {
         "cargo run --manifest-path {} -p xtask -- repo-exposure-latency-report",
         shell_arg(&manifest_path)
     )
+}
+
+/// A check-output ledger (Python or TypeScript root) records no head or
+/// file identity, so after the operator edits the named test, first-pr would
+/// repeat the same repair from the old ledger on every run (onboarding
+/// Python walk, #4227). The selection is stale when the test file or changed
+/// source it names was modified after the evidence was written: the
+/// `--check-output` report when one is given (first-pr re-materializes the
+/// ledger from it on every run), otherwise the ledger itself. A missing file
+/// or unreadable timestamp is not treated as an edit.
+fn check_output_evidence_predates_edit(
+    root: &Path,
+    options: &FirstPrOptions,
+    top_gap: &TopGapSelection,
+) -> Option<String> {
+    if !uses_check_output_gap_ledger(root) {
+        return None;
+    }
+    let evidence = options
+        .check_output
+        .as_deref()
+        .unwrap_or(&options.gap_ledger);
+    let evidence_written = fs::metadata(resolve_path(root, evidence))
+        .and_then(|metadata| metadata.modified())
+        .ok()?;
+    [&top_gap.target_file, &top_gap.anchor_file]
+        .into_iter()
+        .flatten()
+        .find(|file| {
+            fs::metadata(resolve_path(root, file))
+                .and_then(|metadata| metadata.modified())
+                .is_ok_and(|edited| edited > evidence_written)
+        })
+        .cloned()
 }
 
 fn ledger_reports_timeout(value: &Value) -> bool {
@@ -3694,7 +3738,7 @@ mod tests {
             source_kind: GapDecisionLedgerSourceKind::CheckOutput,
             records_path: "check.json".to_string(),
             records_json: Ok(include_str!(
-                "../../../../fixtures/python_same_stem_sibling_owner_not_related/expected/check.json"
+                "../../../../fixtures/python_rebound_constant_boundary_limit/expected/check.json"
             )
             .to_string()),
         });
@@ -3713,7 +3757,7 @@ mod tests {
         let reason = packet["selected"]["reason"].as_str().unwrap_or_default();
         assert!(
             reason.contains(
-                "Static limitation `python_repair_card_unavailable` at `pricing.py:5`: this Python preview finding has no repair card (static evidence names no concrete missing discriminator)"
+                "Static limitation `python_repair_card_unavailable` at `src/pricing.py:10`: this Python preview finding has no repair card (static evidence names no concrete missing discriminator)"
             ),
             "{reason}"
         );
@@ -4251,6 +4295,76 @@ mod tests {
         assert!(summary.contains(
             "Verify after the test edit: `pytest tests/test_pricing.py::test_calculate_discount_smoke`"
         ));
+        check_first_pr(&repo, &options)?;
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn python_ledger_older_than_the_named_test_edit_is_stale() -> Result<(), String> {
+        let repo = temp_python_repo("first-pr-python-stale-ledger")?;
+        fs::create_dir_all(repo.join("app")).map_err(|err| format!("mkdir app: {err}"))?;
+        fs::create_dir_all(repo.join("tests")).map_err(|err| format!("mkdir tests: {err}"))?;
+        fs::write(
+            repo.join("app/pricing.py"),
+            "def calculate_discount(amount, threshold):\n    return amount >= threshold\n",
+        )
+        .map_err(|err| format!("write app/pricing.py: {err}"))?;
+        let test_file = repo.join("tests/test_pricing.py");
+        fs::write(
+            &test_file,
+            "def test_calculate_discount_smoke():\n    pass\n",
+        )
+        .map_err(|err| format!("write tests/test_pricing.py: {err}"))?;
+        run_git_setup(&repo, &["add", "app/pricing.py", "tests/test_pricing.py"])?;
+        run_git_setup(&repo, &["commit", "-m", "change pricing"])?;
+        let ledger_path = repo.join(DEFAULT_GAP_LEDGER);
+        write_json(&ledger_path, ledger_with_python_repairable_gap())?;
+        let ledger_written = fs::metadata(&ledger_path)
+            .and_then(|metadata| metadata.modified())
+            .map_err(|err| format!("ledger mtime: {err}"))?;
+        let set_mtime = |path: &Path, at: std::time::SystemTime| -> Result<(), String> {
+            fs::File::options()
+                .write(true)
+                .open(path)
+                .and_then(|file| file.set_modified(at))
+                .map_err(|err| format!("set mtime {}: {err}", path.display()))
+        };
+        let options = FirstPrOptions::default();
+
+        // The named test predates the ledger: the repair is still selected.
+        set_mtime(
+            &test_file,
+            ledger_written - std::time::Duration::from_mins(1),
+        )?;
+        set_mtime(
+            &repo.join("app/pricing.py"),
+            ledger_written - std::time::Duration::from_mins(1),
+        )?;
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["selected"]["state"], "top_gap");
+
+        // The operator edits the named test after the ledger: first-pr stops
+        // repeating the old repair and routes to the refresh command.
+        set_mtime(
+            &test_file,
+            ledger_written + std::time::Duration::from_mins(1),
+        )?;
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "stale_artifact");
+        let message = packet["selected"]["message"].as_str().unwrap_or("");
+        assert!(
+            message.contains("predates the last edit to `tests/test_pricing.py`"),
+            "stale message must name the edited test: {message}"
+        );
+        let next = packet["selected"]["next_command"].as_str().unwrap_or("");
+        assert!(
+            next.starts_with("ripr check --root ") && next.contains("ripr reports gap-ledger"),
+            "stale selection must route to the check-output refresh: {next}"
+        );
+        assert!(packet["selected"].get("verify_command").is_none());
         check_first_pr(&repo, &options)?;
         cleanup(&repo)
     }

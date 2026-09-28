@@ -47,3 +47,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_uncalled_owner_same_file_tests (5)
+
+Reason:
+RIPR-SPEC-0122: discriminator evidence line no longer says yes on findings that are not exposed
+
+Command:
+`cargo xtask goldens bless rust_uncalled_owner_same_file_tests --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

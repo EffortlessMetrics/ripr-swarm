@@ -45,6 +45,17 @@ are scoped or reviewed.
   command that keeps base, head, and root arguments literal when copied, including
   refs with shell syntax and roots with spaces (#4367).
 
+- TypeScript preview boundary findings get a delegatable repair packet when
+  the boundary input is statically derivable: a changed `amount >= 5000` or
+  `amount >= DISCOUNT_THRESHOLD` (single immutable integer module `const`)
+  with tests only off the boundary now targets `expect(shipping(5000))` /
+  `expect(discountedTotal(10000))` instead of failing closed, `ripr check`'s
+  Start-here line names the packet's action, test file, and verify command,
+  and an exposed TypeScript finding no longer leaves the gap ledger empty
+  (first-pr no longer loops on "blocked" after the boundary test lands).
+  Rebindable (`let`/`var`), computed, imported, or shadowed constants and
+  written parameters still fail closed.
+
 - LSP fallback diagnostics explain their static classification and point to
   hover evidence without promising an unavailable clipboard action or repair
   route. Missing-path guidance remains explicitly static (#4328).
@@ -349,6 +360,23 @@ are scoped or reviewed.
   ([#3565](https://github.com/EffortlessMetrics/ripr-swarm/issues/3565)).
 
 ### Changed
+
+- The Python preview adapter now resolves a module-level named constant used
+  as a comparison threshold (`if amount >= DISCOUNT_THRESHOLD:` with
+  `DISCOUNT_THRESHOLD = 10_000`), matching the Rust and TypeScript adapters.
+  The boundary gets a repair card for `amount == DISCOUNT_THRESHOLD`, the
+  missing-discriminator reason names the constant's value, and a test that calls the owner with `10_000` or with
+  the imported constant now counts as observing the boundary. A name that can
+  be rebound (a second binding, `global`, walrus, star import, `exec`/`globals`/
+  `sys.modules`, a nested scope in the owner, a test-file attribute
+  assignment) or a non-literal value stays unresolved and gets no repair card
+  ([#4227](https://github.com/EffortlessMetrics/ripr-swarm/issues/4227)).
+  Two guided-route loops on that card are closed: `ripr agent status` after a
+  pilot run that produced only a Python repair card now names the
+  `ripr first-pr` route instead of sending the user back to `ripr pilot`, and
+  `ripr first-pr` on a Python or TypeScript root reports `stale_artifact` with
+  the refresh command when the named test or changed source was edited after
+  the gap ledger was written, instead of repeating the finished repair.
 
 - `ripr doctor` now separates installed-binary analysis readiness from the
   prerequisites for building RIPR from source. The default `analysis` profile

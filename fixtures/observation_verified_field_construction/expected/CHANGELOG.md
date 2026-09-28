@@ -227,3 +227,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — observation_verified_field_construction (20)
+
+Reason:
+RIPR-SPEC-0122: exposed findings default to info severity
+
+Command:
+`cargo xtask goldens bless observation_verified_field_construction --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — observation_verified_field_construction (21)
+
+Reason:
+RIPR-SPEC-0122: discriminator evidence line no longer says yes on findings that are not exposed
+
+Command:
+`cargo xtask goldens bless observation_verified_field_construction --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

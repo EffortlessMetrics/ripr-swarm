@@ -1360,9 +1360,15 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains("State: preview_limited"));
-        assert!(rendered.contains(
-            "  Safe next action: preview-language evidence is advisory; the repair packet is complete but remains advisory, so verify independently before acting.\n"
-        ));
+        // The complete packet names its own action, test file, and verify
+        // command instead of a bare "verify independently" with no route.
+        assert!(
+            rendered.contains(
+                "  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/discount.test.ts`, add a focused assertion for the missing discriminator `amount == threshold`, shaped like `expect(result).toBe(expected)`; run `jest tests/discount.test.ts`, then rerun `ripr check`.\n"
+            ),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("verify independently before acting"));
         assert!(!rendered.contains("complete the missing repair-packet fields before acting"));
     }
 
@@ -2396,6 +2402,30 @@ mod tests {
         finding.recommended_next_step = Some("Add a focused Perl assertion.".to_string());
         finding.language = Some(LanguageId::Perl);
         finding.language_status = Some(LanguageStatus::Preview);
+    }
+
+    #[test]
+    fn discriminator_line_never_says_yes_for_a_non_exposed_finding() {
+        // CLI parity with the editor hover (#4419): a strong related oracle
+        // on a weakly_exposed finding must not read as "discriminator yes".
+        use crate::output::discriminator_line::discriminator_evidence_line;
+        let mut finding = sample_finding();
+        finding.ripr.reveal.discriminate =
+            stage(StageState::Yes, Confidence::High, "Strong oracle found");
+        assert_eq!(
+            discriminator_evidence_line(&finding),
+            "discriminator missing: `enabled == false`; related oracle: Strong oracle found"
+        );
+        finding.activation.missing_discriminators.clear();
+        assert_eq!(
+            discriminator_evidence_line(&finding),
+            "discriminator not established (weakly_exposed); related oracle: Strong oracle found"
+        );
+        finding.class = ExposureClass::Exposed;
+        assert_eq!(
+            discriminator_evidence_line(&finding),
+            "discriminator yes: Strong oracle found"
+        );
     }
 
     fn sample_finding() -> Finding {
