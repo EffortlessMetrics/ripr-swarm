@@ -123,8 +123,9 @@ fn init_producer_fixture_repo(root: &Path) -> Result<(), String> {
 }
 
 fn commit_fixture(root: &Path, message: &str) -> Result<(), String> {
-    let commit = Command::new("git")
-        .args([
+    fixture_git_ok(
+        root,
+        &[
             "-c",
             "user.name=RIPR test",
             "-c",
@@ -133,18 +134,9 @@ fn commit_fixture(root: &Path, message: &str) -> Result<(), String> {
             "--allow-empty",
             "-m",
             message,
-        ])
-        .current_dir(root)
-        .output()
-        .map_err(|error| format!("spawn git commit in {}: {error}", root.display()))?;
-    if !commit.status.success() {
-        return Err(format!(
-            "fixture commit failed in {}: {}",
-            root.display(),
-            String::from_utf8_lossy(&commit.stderr)
-        ));
-    }
-    Ok(())
+        ],
+    )
+    .map_err(|error| format!("fixture commit in {}: {error}", root.display()))
 }
 
 /// Repository movement for `agent verify` (#2922 PR A refuses a same-head
@@ -282,7 +274,10 @@ fn discover_posix_shell() -> Option<PathBuf> {
     let probe_dir = unique_temp_workspace("journey-shell-probe");
     std::fs::create_dir_all(&probe_dir).ok()?;
     let probe_script = probe_dir.join("probe.sh");
-    std::fs::write(&probe_script, b"printf 'ok\\n'\n").ok()?;
+    if std::fs::write(&probe_script, b"printf 'ok\\n'\n").is_err() {
+        cleanup(&probe_dir);
+        return None;
+    }
     let found = candidates.into_iter().find(|candidate| {
         std::process::Command::new(candidate)
             .arg(shell_display_path(&probe_script))
@@ -369,33 +364,40 @@ fn workflow_artifact(root: &Path, relative: &str) -> PathBuf {
 /// launch directory, returning the journey plus the printed funnel commands.
 fn start_journey(label: &str, bash: &Path) -> Result<(Journey, Value), String> {
     let root = unique_temp_workspace(label);
-    std::fs::create_dir_all(&root)
-        .map_err(|error| format!("create {}: {error}", root.display()))?;
-    init_producer_fixture_repo(&root)?;
+    let result = start_journey_at_root(&root, bash);
+    if result.is_err() {
+        cleanup(&root);
+    }
+    result
+}
+
+fn start_journey_at_root(root: &Path, bash: &Path) -> Result<(Journey, Value), String> {
+    std::fs::create_dir_all(root).map_err(|error| format!("create {}: {error}", root.display()))?;
+    init_producer_fixture_repo(root)?;
 
     // The before snapshot is older workflow evidence (produced on the base
     // commit, the way the loop's snapshot step leaves it); the movement commit
     // gives the after snapshot a real head to move to.
     produce_repo_exposure_snapshot(
-        &root,
-        &root_arg_of(&root),
-        &workflow_artifact(&root, "before.repo-exposure.json"),
+        root,
+        &root_arg_of(root),
+        &workflow_artifact(root, "before.repo-exposure.json"),
     )?;
-    advance_fixture_head(&root, "movement for the after snapshot")?;
+    advance_fixture_head(root, "movement for the after snapshot")?;
 
-    let seam_id = first_snapshot_seam_id(&workflow_artifact(&root, "before.repo-exposure.json"))?;
+    let seam_id = first_snapshot_seam_id(&workflow_artifact(root, "before.repo-exposure.json"))?;
     std::fs::create_dir_all(root.join("target/ripr/reports"))
         .map_err(|error| format!("create reports dir: {error}"))?;
     let proof_path = root.join("target/ripr/reports/test-oracle-assistant-proof.json");
     write_assistant_proof(&proof_path, &seam_id)?;
 
     let journey = Journey {
-        root_arg: root_arg_of(&root),
-        launch_dir: foreign_launch_dir(&root)?,
+        root_arg: root_arg_of(root),
+        launch_dir: foreign_launch_dir(root)?,
         path_env: shell_path_env()?,
         bash: bash.to_path_buf(),
         seam_id,
-        root,
+        root: root.to_path_buf(),
     };
 
     // The producer surface itself: first-action writes its JSON report; the
@@ -726,7 +728,9 @@ fn funnel_overwrites_a_planted_decoy_verify_and_binds_the_fresh_bytes() -> Resul
         let fresh_text = std::fs::read_to_string(&verify_path)
             .map_err(|error| format!("read fresh verify: {error}"))?;
         if fresh_text.contains("seam-a-decoy") {
-            return Err("the planted decoy verify survived the funnel verify redirect".to_string());
+            return Err(
+                "the planted decoy verify remained after the funnel verify redirect".to_string(),
+            );
         }
         let fresh = read_json(&verify_path)?;
         if fresh
@@ -811,9 +815,18 @@ fn agent_status_warns_receipt_stale_after_the_funnel_refreshes_verify() -> Resul
         if !receipt_path.is_file() {
             return Err("the older run did not persist its receipt".to_string());
         }
-        // Distinct filesystem timestamps: the stale rule compares modification
-        // times, and coarse-granularity filesystems need a real gap.
-        std::thread::sleep(std::time::Duration::from_millis(150));
+        // Establish timestamp ordering explicitly rather than assuming the
+        // filesystem can distinguish writes separated by a short sleep.
+        let old_time = std::fs::metadata(&receipt_path)
+            .and_then(|metadata| metadata.modified())
+            .map_err(|error| format!("read receipt timestamp: {error}"))?
+            .checked_sub(std::time::Duration::from_secs(10))
+            .ok_or_else(|| "receipt timestamp cannot be moved earlier".to_string())?;
+        std::fs::File::options()
+            .write(true)
+            .open(&receipt_path)
+            .and_then(|file| file.set_times(std::fs::FileTimes::new().set_modified(old_time)))
+            .map_err(|error| format!("set older receipt timestamp: {error}"))?;
 
         // The funnel refreshes the verify file; the persisted receipt file is
         // not one of its writes, so it now lags the verify artifact.
@@ -897,10 +910,12 @@ fn hostile_root_with_spaces_unicode_and_apostrophe_runs_the_full_funnel() -> Res
     let base = unique_temp_workspace("journey-hostile-base");
     std::fs::create_dir_all(&base).map_err(|error| format!("create base: {error}"))?;
     let root = base.join(hostile);
-    std::fs::create_dir_all(&root).map_err(|error| format!("create hostile root: {error}"))?;
     // start_journey owns everything except the root name, so route through it
     // by building the same fixture under the hostile path.
-    let result = run_funnel_in_hostile_root(&base, &root, &bash);
+    let result = (|| {
+        std::fs::create_dir_all(&root).map_err(|error| format!("create hostile root: {error}"))?;
+        run_funnel_in_hostile_root(&base, &root, &bash)
+    })();
     cleanup(&base);
     result
 }
