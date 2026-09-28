@@ -41,6 +41,10 @@ are scoped or reviewed.
   inside an open code span; and a closed stdout pipe (`ripr doctor | head`)
   ends quietly with exit `2` instead of an internal-error report.
 
+- `cargo xtask ripr-pr` timeout packets now give one host-shell-labeled retry
+  command that keeps base, head, and root arguments literal when copied, including
+  refs with shell syntax and roots with spaces (#4367).
+
 - LSP fallback diagnostics explain their static classification and point to
   hover evidence without promising an unavailable clipboard action or repair
   route. Missing-path guidance remains explicitly static (#4328).
@@ -1254,6 +1258,13 @@ are scoped or reviewed.
   [#4287](https://github.com/EffortlessMetrics/ripr-swarm/pull/4287)).
 
 ### Docs
+
+- The README and quickstart first run now define "discriminator" where it
+  first appears and state `ripr check`'s exit codes. They add a one-line
+  `cargo install --locked --git` development install and a short section on
+  running ripr from a coding agent, including keeping `target/` gitignored
+  between repair phases. A stale `ripr doctor` troubleshooting claim was removed
+  ([#4413](https://github.com/EffortlessMetrics/ripr-swarm/pull/4413)).
 
 - `docs/REPAIR_ATTEMPT.md` and `docs/COMMAND_HIERARCHY.md` now document
   the three-phase governed Python repair sequence: trust-selection flags
