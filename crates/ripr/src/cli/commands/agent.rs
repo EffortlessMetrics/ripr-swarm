@@ -1470,6 +1470,14 @@ fn repair_receipt_summary_lines(receipt: &str) -> Vec<String> {
             "result for seam `{seam_id}`: {before} -> {after} ({movement}).{summary}"
         ));
     }
+    // Static movement is not a test result: a failing focused test still
+    // reads `improved`. Say so before the next step, not only inside it.
+    if text("/verification/status") == Some("verification_not_run") {
+        lines.push(
+            "test run: not run. This result is static evidence only; a failing test can still show `improved`."
+                .to_string(),
+        );
+    }
     // The receipt producer owns which next step fits its status: only an
     // `advisory` receipt recommends including it in review, and any other
     // status states that it is not review evidence and how to recover. A

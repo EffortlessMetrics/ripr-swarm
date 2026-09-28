@@ -15033,6 +15033,61 @@ fn agent_repair_after_phase_stdout_is_one_json_document() -> Result<(), Box<dyn 
     Ok(())
 }
 
+/// RC rehearsal: a focused test with a wrong expected value still moves the
+/// static grip to `improved`, because ripr never runs it. Every surface a cold
+/// agent reads (after-phase stderr, the stdout envelope's status report, and
+/// `agent status` in both forms) must say the test was not run.
+#[test]
+fn agent_repair_after_a_failing_test_says_the_test_was_not_run()
+-> Result<(), Box<dyn std::error::Error>> {
+    const FAILING_BOUNDARY_TEST: &str = "\n#[test]\nfn at_threshold_discounts() {\n    assert_eq!(discounted_total(100, 100), 1);\n}\n";
+    let root = repair_route_workspace("after failing test not run")?;
+    let attempt_id = repair_route_attempt_id(&repair_route_before(&root)?)?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{REPAIR_ROUTE_WEAK_TEST}{FAILING_BOUNDARY_TEST}"),
+    )?;
+    let after = repair_route_after(&root, &attempt_id);
+    assert_success(&after);
+
+    let stderr = String::from_utf8_lossy(&after.stderr);
+    assert!(
+        stderr.contains("(improved)"),
+        "precondition: static movement improved:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("ripr: test run: not run. This result is static evidence only"),
+        "{stderr}"
+    );
+    let document: serde_json::Value = serde_json::from_slice(&after.stdout)?;
+    let test_run = &document["agent_status"]["test_run"];
+    assert_eq!(test_run["status"], "not_run", "{document:#}");
+    assert_eq!(test_run["test_file"], "tests/pricing.rs", "{document:#}");
+    assert!(
+        test_run["next_step"]
+            .as_str()
+            .is_some_and(|step| step.contains("keep it only if it passes")),
+        "{test_run}"
+    );
+    let attempt = &document["agent_status"]["repair_attempts"][0];
+    assert_eq!(
+        attempt["receipt"]["verification_status"],
+        "verification_not_run"
+    );
+
+    let root_arg = root.to_string_lossy().into_owned();
+    let status = run_ripr(&["agent", "status", "--root", &root_arg]);
+    assert_success(&status);
+    let human = String::from_utf8_lossy(&status.stdout);
+    assert!(
+        human.contains("Test run: not run. ripr compared static evidence only and did not run the focused test in `tests/pricing.rs`"),
+        "{human}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
 /// F15-4: an after phase whose receipt shows the grip did not move finishes
 /// the edit cage but not the gap. Status is not `complete`: it names the
 /// receipt's status and movement and restarts the seam with the receipt's own

@@ -12197,6 +12197,7 @@ JSON shape:
     "reason": "agent packet artifact is missing",
     "command": "ripr agent packet --root . --seam-id 67fc764ba37d77bd --json > target/ripr/workflow/agent-packet.json"
   },
+  "test_run": null,
   "warnings": []
 }
 ```
@@ -12262,8 +12263,9 @@ Field contract:
     when that is another attempt: the workflow keeps one receipt, so a later
     attempt's after phase replaced this attempt's receipt; otherwise `null`),
     and, when it is issued for this attempt, the receipt's `status`,
-    `movement`, `receipt_state`, `recommended_action`, and
-    `analysis_outcome_error`, plus `shows_gap_closed` (`true` only for an
+    `movement`, `receipt_state`, `recommended_action`,
+    `analysis_outcome_error`, and `verification_status` (the receipt's
+    `verification.status`), plus `shows_gap_closed` (`true` only for an
     `advisory` receipt with movement `improved`; it records improved static
     grip, not a runtime or mutation result). Unbound receipts leave these
     `null` and `shows_gap_closed` `false`.
@@ -12272,6 +12274,15 @@ Field contract:
     attempt manifest's `last_after_refusal`: the final error followed by the
     cause and recovery the after phase printed, such as the changed analysis
     inputs, bounded to 4096 bytes).
+- `test_run` - `null`, or `{status, test_file, next_step}` when a receipt
+  issued for a repair attempt records `verification.status`
+  `verification_not_run` (every ordinary, unbound repair). `status` is
+  `"not_run"`; `test_file` is the receipt's `test_changed` or `null`;
+  `next_step` says to run the focused test with the project's test command and
+  keep it only if it passes. `status: "complete"` never means the test passed:
+  static movement `improved` survives a failing test, so a consumer that needs
+  a test result runs the test itself. The Markdown form prints the same as a
+  `Test run: not run.` line under `Seam:`.
 - `next_command` - selected in the order RIPR-SPEC-0011 documents (#3906): the
   one current awaiting repair attempt's recorded after command
   (`repair_attempt_after`; when that attempt recorded a refused after phase,

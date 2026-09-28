@@ -42,6 +42,11 @@ pub(crate) struct AgentReceiptReading {
     pub(crate) receipt_state: String,
     pub(crate) recommended_action: Option<String>,
     pub(crate) analysis_outcome_error: Option<String>,
+    /// `verification.status`: whether any test ran for this receipt. The
+    /// ordinary repair path always records `verification_not_run`.
+    pub(crate) verification_status: Option<String>,
+    /// The test file the edit cage measured changing, when one was named.
+    pub(crate) test_changed: Option<String>,
 }
 
 impl AgentReceiptReading {
@@ -60,7 +65,15 @@ impl AgentReceiptReading {
             receipt_state: receipt_lifecycle_state_from_receipt_value(receipt),
             recommended_action: text("/summary/next_action/recommended_action"),
             analysis_outcome_error: text("/analysis_outcome_error"),
+            verification_status: text("/verification/status"),
+            test_changed: text("/test_changed"),
         }
+    }
+
+    /// No test ran for this receipt: its movement is static evidence only, and
+    /// a failing test can still show `improved`.
+    pub(crate) fn test_not_run(&self) -> bool {
+        self.verification_status.as_deref() == Some("verification_not_run")
     }
 
     /// The receipt was issued over a complete, valid producer analysis outcome.

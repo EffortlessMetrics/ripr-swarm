@@ -243,6 +243,20 @@ impl AgentStatusCommand {
 }
 
 impl AgentStatusReport {
+    /// The first issued receipt that records no test run. A cold agent reads
+    /// `status: complete` plus movement `improved` as a pass, even when the
+    /// focused test fails; this names the missing test run explicitly.
+    pub(crate) fn unrun_test_receipt(&self) -> Option<&AgentReceiptReading> {
+        self.repair_attempts
+            .iter()
+            .find_map(|attempt| match &attempt.receipt {
+                AgentStatusAttemptReceipt::Issued(reading) if reading.test_not_run() => {
+                    Some(reading)
+                }
+                _ => None,
+            })
+    }
+
     pub(crate) fn status(&self) -> &'static str {
         if self.next_command.is_some() || self.artifacts.iter().any(|artifact| !artifact.present) {
             "incomplete"
@@ -1192,6 +1206,7 @@ pub(crate) fn render_agent_status_json(report: &AgentStatusReport) -> Result<Str
         "repair_attempts": report.repair_attempts.iter().map(agent_status_repair_attempt_json).collect::<Vec<_>>(),
         "missing_commands": report.missing_commands.iter().map(agent_status_command_json).collect::<Vec<_>>(),
         "next_command": next_command,
+        "test_run": report.unrun_test_receipt().map(test_not_run_json),
         "warnings": report.warnings.iter().map(agent_status_warning_json).collect::<Vec<_>>()
     });
     serde_json::to_string_pretty(&value)
@@ -1210,6 +1225,12 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
     match &report.seam {
         Some(seam) => rendered.push_str(&format!("Seam: {} ({})\n", seam.seam_id, seam.source)),
         None => rendered.push_str("Seam: unknown\n"),
+    }
+    if let Some(reading) = report.unrun_test_receipt() {
+        rendered.push_str(&format!(
+            "Test run: not run. {}\n",
+            test_not_run_next_step(reading)
+        ));
     }
 
     rendered.push_str("\n## Artifacts\n\n");
@@ -1352,7 +1373,29 @@ fn attempt_receipt_json(receipt: &AgentStatusAttemptReceipt) -> Value {
         "receipt_state": reading.map(|reading| reading.receipt_state.as_str()),
         "shows_gap_closed": reading.is_some_and(AgentReceiptReading::shows_gap_closed),
         "recommended_action": reading.and_then(|reading| reading.recommended_action.as_deref()),
+        "verification_status": reading.and_then(|reading| reading.verification_status.as_deref()),
         "analysis_outcome_error": reading.and_then(|reading| reading.analysis_outcome_error.as_deref())
+    })
+}
+
+/// One sentence for a receipt whose test never ran: what ripr did not do and
+/// the step that still decides whether the test is kept.
+fn test_not_run_next_step(reading: &AgentReceiptReading) -> String {
+    let target = reading
+        .test_changed
+        .as_deref()
+        .map(|file| format!("the focused test in `{file}`"))
+        .unwrap_or_else(|| "the focused test".to_string());
+    format!(
+        "ripr compared static evidence only and did not run {target}; run it with the project's test command and keep it only if it passes. A failing test can still show movement `improved`."
+    )
+}
+
+fn test_not_run_json(reading: &AgentReceiptReading) -> Value {
+    serde_json::json!({
+        "status": "not_run",
+        "test_file": reading.test_changed,
+        "next_step": test_not_run_next_step(reading)
     })
 }
 
