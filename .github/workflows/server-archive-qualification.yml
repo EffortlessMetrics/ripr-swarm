@@ -263,7 +263,14 @@ jobs:
           # including needs recorded only for weak symbols.
           readelf --version-info --wide "extracted/${EXECUTABLE}" \
             | sed -n '/^Version needs section/,/^Version .* section/p' \
-            | grep -o 'Name: GLIBC_[0-9][0-9.]*' | sed 's/^Name: GLIBC_//' | sort -uV > glibc-needs.txt
+            | grep -o 'Name: GLIBC_[A-Za-z0-9_.]*' | sed 's/^Name: GLIBC_//' | sort -uV > glibc-need-names.txt
+          # Named needs such as GLIBC_ABI_DT_RELR (glibc 2.36) have no numeric
+          # version to compare, so any name other than GLIBC_PRIVATE fails.
+          if grep -v -x -E '[0-9][0-9.]*|PRIVATE' glibc-need-names.txt; then
+            echo "::error::extracted/${EXECUTABLE} needs a named glibc ABI version above the ${GLIBC_FLOOR} floor"
+            exit 1
+          fi
+          grep -x -E '[0-9][0-9.]*' glibc-need-names.txt > glibc-needs.txt
           test -s glibc-needs.txt
           required="$(tail -n 1 glibc-needs.txt)"
           highest="$(printf '%s\n%s\n' "${required}" "${GLIBC_FLOOR}" | sort -V | tail -n 1)"

@@ -158,11 +158,12 @@ x86_64-unknown-linux-gnu
 aarch64-unknown-linux-gnu
 ```
 
-The Linux archives link against glibc and are built on Ubuntu 22.04 runners,
-so they load on glibc 2.35 or newer (Ubuntu 22.04, Debian 12, and later).
-Server qualification fails a Linux archive whose binary needs a newer glibc.
-The published 0.10.0 Linux archives were built on Ubuntu 24.04 and need glibc
-2.39.
+The Linux archives link against glibc. Server qualification builds them on
+Ubuntu 22.04 runners and fails a Linux archive whose binary needs a glibc newer
+than 2.35 (Ubuntu 22.04, Debian 12, and later), including a named ABI need such
+as `GLIBC_ABI_DT_RELR`. The published 0.10.0 Linux archives were built on
+Ubuntu 24.04 and need glibc 2.39. When GitHub retires the 22.04 images, raising
+the floor is a support decision, not a runner update.
 
 Alpine and musl targets are intentionally separate. If no compatible prebuilt
 server exists, users can set `ripr.server.path` or install `ripr` manually.

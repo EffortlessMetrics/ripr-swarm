@@ -11,11 +11,12 @@ are scoped or reviewed.
 
 ### Fixed
 
-- Linux server archives, which the editor extension downloads, are built on
-  Ubuntu 22.04 and load on glibc 2.35 or newer. The 0.10.0 Linux archives were
+- Server qualification builds the Linux server archives, which the editor
+  extension downloads, on Ubuntu 22.04 with `--locked`, and fails a Linux
+  binary that needs a glibc newer than 2.35. The 0.10.0 Linux archives were
   built on Ubuntu 24.04 and failed on Ubuntu 22.04 and Debian 12 with
-  `GLIBC_2.39 not found`. Server qualification now builds with `--locked` and
-  fails a Linux binary that needs a glibc newer than 2.35.
+  `GLIBC_2.39 not found`. The source release workflow takes the same runners
+  and check at the release sync.
 
 - `cargo xtask ripr-pr` timeout packets now give one host-shell-labeled retry
   command that keeps base, head, and root arguments literal when copied, including
