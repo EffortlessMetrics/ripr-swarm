@@ -347,6 +347,13 @@ mod tests {
         }
     }
 
+    #[cfg(any(
+        windows,
+        all(
+            any(target_os = "linux", target_os = "macos"),
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
     #[test]
     fn no_follow_open_rejects_symlink_and_accepts_regular_file() -> Result<(), String> {
         let dir = TempDir::new("no-follow-open");
@@ -360,10 +367,10 @@ mod tests {
         );
         // A symlink must not be followed even when the pre-open path check
         // raced (issue #4356: nonblocking, no-follow open flags).
-        let link_target = dir.0.join("real.ts");
-        let link = dir.0.join("linked.ts");
         #[cfg(unix)]
         {
+            let link_target = dir.0.join("real.ts");
+            let link = dir.0.join("linked.ts");
             let created = std::os::unix::fs::symlink(&link_target, &link);
             assert!(created.is_ok(), "create symlink: {:?}", created.err());
             let outcome = open_source_read_no_follow(&link);
@@ -376,8 +383,111 @@ mod tests {
                 err.reason()
             );
         }
-        let _ = link_target;
         Ok(())
+    }
+
+    // Exercise the same open authority used after the pre-open path inspection.
+    // A separate process makes removal of O_NONBLOCK a bounded test failure,
+    // rather than leaving the test runner blocked on a FIFO without a writer.
+    #[cfg(all(
+        any(target_os = "linux", target_os = "macos"),
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    #[test]
+    fn no_follow_open_rejects_fifo_without_waiting_for_writer() -> Result<(), String> {
+        use std::os::unix::fs::FileTypeExt as _;
+
+        let dir = TempDir::new("fifo-open");
+        let fifo = dir.0.join("replacement.ts");
+        let mut create = std::process::Command::new("mkfifo");
+        create.arg(&fifo);
+        wait_fifo_test_process(create, "create FIFO")?;
+        assert!(
+            fs::symlink_metadata(&fifo)
+                .map_err(|err| format!("inspect FIFO fixture: {err}"))?
+                .file_type()
+                .is_fifo(),
+            "fixture must be a FIFO"
+        );
+        let executable =
+            std::env::current_exe().map_err(|err| format!("locate test executable: {err}"))?;
+        let module = module_path!()
+            .split_once("::")
+            .map(|(_, module)| module)
+            .ok_or_else(|| "test module has no crate prefix".to_string())?;
+        let mut child = std::process::Command::new(executable);
+        let acknowledgement = dir.0.join("fifo-rejected.txt");
+        child
+            .args([
+                "--exact",
+                &format!("{module}::fifo_open_child"),
+                "--nocapture",
+            ])
+            .env("RIPR_TS_FIFO_OPEN_CHILD", &fifo)
+            .env("RIPR_TS_FIFO_OPEN_ACK", &acknowledgement);
+        wait_fifo_test_process(child, "FIFO open without writer")?;
+        assert_eq!(
+            fs::read_to_string(&acknowledgement)
+                .map_err(|err| format!("read child execution acknowledgement: {err}"))?,
+            "FIFO refused by opened-handle inspection",
+            "a zero-subject child run must not satisfy the nonblocking proof"
+        );
+        Ok(())
+    }
+
+    #[cfg(all(
+        any(target_os = "linux", target_os = "macos"),
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    fn wait_fifo_test_process(command: std::process::Command, label: &str) -> Result<(), String> {
+        let mut child = crate::process_owner::OwnedProcess::spawn(command)
+            .map_err(|err| format!("spawn {label}: {err}"))?;
+        let started = std::time::Instant::now();
+        loop {
+            if let Some(status) = child
+                .try_wait()
+                .map_err(|err| format!("observe {label}: {err}"))?
+            {
+                return if status.success() {
+                    Ok(())
+                } else {
+                    Err(format!("{label} failed: {status}"))
+                };
+            }
+            if started.elapsed() >= std::time::Duration::from_secs(5) {
+                child
+                    .terminate_tree()
+                    .map_err(|err| format!("terminate {label}: {err}"))?;
+                return Err(format!("{label} exceeded five seconds"));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[cfg(all(
+        any(target_os = "linux", target_os = "macos"),
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    #[test]
+    fn fifo_open_child() -> Result<(), String> {
+        let Some(path) = std::env::var_os("RIPR_TS_FIFO_OPEN_CHILD") else {
+            return Ok(());
+        };
+        let acknowledgement = std::env::var_os("RIPR_TS_FIFO_OPEN_ACK").ok_or_else(|| {
+            "FIFO child is missing its execution acknowledgement path".to_string()
+        })?;
+        let outcome = open_source_read_no_follow(Path::new(&path));
+        match outcome {
+            Err(CappedReadError::Io(message))
+                if message.contains("not a regular file after open") =>
+            {
+                fs::write(acknowledgement, "FIFO refused by opened-handle inspection")
+                    .map_err(|err| format!("write child execution acknowledgement: {err}"))
+            }
+            other => Err(format!(
+                "FIFO must be refused after handle inspection: {other:?}"
+            )),
+        }
     }
 
     #[test]
