@@ -57,6 +57,16 @@ are scoped or reviewed.
   command that keeps base, head, and root arguments literal when copied, including
   refs with shell syntax and roots with spaces (#4367).
 
+- LSP `ripr.collectContext`, `ripr.collectEvidenceContext` and
+  `ripr.collectRepairPacket` no longer answer `null`. An unreadable argument
+  or an id missing from the current snapshot is a `-32602` InvalidParams
+  error naming the accepted shapes, and a repair packet with no source says
+  which artifacts are missing and names the CLI route. `ripr help lsp` lists
+  every server-executed command's arguments. `ripr/listActionableItems` adds
+  `selected` and `omitted` item lists, so its self-named continuation route
+  returns items rather than only counts, and a `hidden_gaps` list naming the
+  gaps the actionable profile never publishes because they have no repair
+  route, such as a new function no test calls.
 - LSP fallback diagnostics explain their static classification and point to
   hover evidence without promising an unavailable clipboard action or repair
   route. Missing-path guidance remains explicitly static (#4328).

@@ -7173,6 +7173,22 @@ Success payload (200-level result object, no `protocol_version`,
   contract lands. `null` when the snapshot carries no generation identity.
 - `selected_count` / `omitted_count` / `total_count` — diagnostic-budget
   counts from the committed delivery selection.
+- `selected` — `[{canonical_id, document}]` for every delivered diagnostic
+  (already bounded by the workspace item budget). `canonical_id` is the
+  diagnostic's budget identity (its `diagnostic_id`, gap, finding or seam id);
+  the diagnostic's own `data` carries the ids `ripr.collectContext` takes.
+- `omitted` — `[{canonical_id, reason}]` for withheld diagnostics, at most
+  200 entries. `reason` is `profile_filtered`, `document_item_limit`,
+  `workspace_item_limit`, or `serialized_byte_limit`.
+- `omitted_truncated` — `true` when `omitted_count` exceeds the listed
+  `omitted` entries.
+- `hidden_gaps` — `[{finding_id, file, line, class}]`, at most 50: candidate
+  findings that are not `exposed` and that the `actionable` profile does not
+  publish as diagnostics because they have no bounded repair route
+  (RIPR-SPEC-0069). A new function no test calls is the common case. `file` is
+  root-relative; `finding_id` is a valid `ripr.collectContext` argument.
+  Always empty under the `full` profile, which publishes these findings.
+- `hidden_gap_count` — the full number of such findings.
 - `budget_identity` — the snapshot profile budget identity string.
 - `complete_evidence_identity` — the complete-evidence identity string.
 - `continuation_or_inspect_route` — the route string for continuing or
