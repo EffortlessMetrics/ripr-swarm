@@ -436,25 +436,7 @@ fn run_pipeline_for_diff_text(
                 })
                 .map(|path| path.to_string_lossy().replace('\\', "/"))
                 .collect::<Vec<_>>();
-            let shown = skipped
-                .iter()
-                .take(3)
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(", ");
-            let more = skipped.len().saturating_sub(3);
-            let listed = if more > 0 {
-                format!("{shown} and {more} more")
-            } else {
-                shown
-            };
-            // The recovery and detail texts are bounded; a long path must
-            // shorten the listing, never fail the analysis.
-            let listed = if listed.chars().count() > 160 {
-                format!("{}…", listed.chars().take(159).collect::<String>())
-            } else {
-                listed
-            };
+            let listed = bounded_path_listing(&skipped);
             limitations.push(
                 AnalysisLimitation::new(
                     AnalysisLimitationKind::LanguageScopeUnsupported,
@@ -587,6 +569,40 @@ fn run_pipeline_for_diff_text(
                 ))?,
             );
         }
+    }
+
+    // An enabled preview adapter skips generated and excluded-path files
+    // before counting (#3743, #3672), so the advisory above no longer counts
+    // them as analyzed (#4372). They are still changed files in scope: record
+    // a typed skipped-scope limitation, as the Rust adapter does for generated
+    // Rust files, so an excluded-only diff is never a silently complete result
+    // (RIPR-SPEC-0082).
+    for (language, skipped) in
+        detect_preview_skipped_paths(languages, analysis_changed_files.iter())
+    {
+        let listed = bounded_path_listing(&skipped);
+        let name = language.display_name();
+        limitations.push(
+            AnalysisLimitation::new(
+                AnalysisLimitationKind::LanguageScopeUnsupported,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::Retry,
+                    format!(
+                        "Not analyzed by the {name} preview adapter: {listed}. It skips \
+                         generated files and vendored, dependency, build-output and cache \
+                         directories; if one of these is hand-written, its changes stay \
+                         outside this analysis."
+                    ),
+                )?,
+            )
+            .with_affected_items(skipped.len() as u64)?
+            .with_detail(format!(
+                "{} changed {name} file(s) were skipped by the preview adapter's generated \
+                 or excluded-path rules: {listed}",
+                skipped.len()
+            ))?,
+        );
     }
 
     // Disclose when the diff contains only non-source files (docs/config-only
@@ -1064,6 +1080,59 @@ where
         }
     }
     advisories
+}
+
+/// Changed files of each enabled, available preview language that the
+/// adapter refuses before counting, in stable language order.
+fn detect_preview_skipped_paths<'a, I>(
+    enabled: &[LanguageId],
+    paths: I,
+) -> Vec<(LanguageId, Vec<String>)>
+where
+    I: Iterator<Item = &'a diff::ChangedFile>,
+{
+    let mut skipped: Vec<(LanguageId, Vec<String>)> = Vec::new();
+    for changed in paths {
+        let Some(language) = super::language::route(&changed.path) else {
+            continue;
+        };
+        if !is_preview_language(language)
+            || !language.is_available()
+            || !enabled.contains(&language)
+            || !is_excluded_from_preview_analysis(language, &changed.path)
+        {
+            continue;
+        }
+        let normalized = changed.path.to_string_lossy().replace('\\', "/");
+        match skipped.iter_mut().find(|(lang, _)| *lang == language) {
+            Some((_, paths)) => paths.push(normalized),
+            None => skipped.push((language, vec![normalized])),
+        }
+    }
+    skipped.sort_by_key(|(language, _)| {
+        PREVIEW_LANGUAGE_ORDER
+            .iter()
+            .position(|ordered| ordered == language)
+    });
+    skipped
+}
+
+/// Up to three paths, then "and N more", capped at 160 characters. Recovery
+/// and detail texts are bounded; a long path must shorten the listing, never
+/// fail the analysis.
+fn bounded_path_listing(paths: &[String]) -> String {
+    let shown = paths.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+    let more = paths.len().saturating_sub(3);
+    let listed = if more > 0 {
+        format!("{shown} and {more} more")
+    } else {
+        shown
+    };
+    if listed.chars().count() > 160 {
+        format!("{}…", listed.chars().take(159).collect::<String>())
+    } else {
+        listed
+    }
 }
 
 /// Whether a changed preview-language path is refused by its adapter's own
@@ -2672,6 +2741,19 @@ index 0000000..1111111 100644
             .ok_or_else(|| "expected a not-enabled TypeScript advisory".to_string())?;
         assert!(!advisory.enabled);
         assert_eq!(advisory.file_count, 2);
+        // The skip limitation belongs to enabled adapters only; the
+        // not-enabled advisory already discloses every routed file.
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "expected an analysis outcome".to_string())?;
+        assert!(
+            !outcome
+                .limitations
+                .iter()
+                .any(|limitation| limitation.kind
+                    == AnalysisLimitationKind::LanguageScopeUnsupported),
+            "a not-enabled adapter must not emit a preview skip limitation"
+        );
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
