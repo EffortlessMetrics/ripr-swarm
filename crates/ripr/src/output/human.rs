@@ -211,9 +211,18 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput) {
         ));
         return;
     }
-    out.push_str(
-        "  Zero findings is not a clean result because the analyzed scope is incomplete.\n",
-    );
+    // The "zero findings" hedge only makes sense when there are zero findings;
+    // a partial run with findings gets the scope caveat instead.
+    if output.findings.is_empty() {
+        out.push_str(
+            "  Zero findings is not a clean result because the analyzed scope is incomplete.\n",
+        );
+    } else {
+        out.push_str(&format!(
+            "  The {} finding(s) below cover only the analyzed scope; behavior outside it has no finding.\n",
+            output.findings.len()
+        ));
+    }
     for limitation in &outcome.limitations {
         out.push_str(&format!(
             "  Limitation: {} at {}",
@@ -653,6 +662,68 @@ mod tests {
         ));
         assert!(rendered.contains("No diff-derived static exposure probes found."));
         assert!(!rendered.contains("Next:"));
+    }
+
+    fn partial_outcome_output(findings: Vec<Finding>) -> Result<CheckOutput, String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+            AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
+        };
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::CombinedHunkUnsupported,
+            AnalysisStage::DiffParse,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::UseTwoWayDiff,
+                "Re-run against a two-way diff of the merge result.",
+            )?,
+        );
+        let outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::PartialWithLimitations,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 2,
+                finding_count: u64::try_from(findings.len()).unwrap_or(u64::MAX),
+                ..AnalysisOutcomeCounts::default()
+            },
+            vec![limitation],
+        )?;
+        Ok(CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary::default(),
+            findings,
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+            analysis_outcome: Some(outcome),
+            partial_scope: None,
+        })
+    }
+
+    #[test]
+    fn partial_outcome_with_findings_does_not_claim_zero_findings() -> Result<(), String> {
+        let rendered = render(&partial_outcome_output(vec![sample_finding()])?);
+        assert!(rendered.contains("analysis incomplete"));
+        assert!(
+            !rendered.contains("Zero findings is not a clean result"),
+            "{rendered}"
+        );
+        assert!(rendered.contains(
+            "  The 1 finding(s) below cover only the analyzed scope; behavior outside it has no finding.\n"
+        ));
+
+        let empty = render(&partial_outcome_output(Vec::new())?);
+        assert!(empty.contains("Zero findings is not a clean result"));
+        assert!(!empty.contains("finding(s) below cover only"));
+        Ok(())
     }
 
     #[test]
