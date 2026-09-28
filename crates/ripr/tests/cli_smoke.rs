@@ -8942,9 +8942,8 @@ fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result
     // can tell which file each block would be written to. The config header
     // previously showed the bare file name while the workflow header showed a
     // full path.
-    // #4378 renders these headers with one separator: on Windows every `\`
-    // prints as `/`, so the expectation follows the same rule instead of
-    // the native `Path::display` form.
+    assert!(stdout.contains("ripr init plan (dry run — nothing was written)"));
+    // #4378: on Windows the headers use one separator (forward slashes).
     let shown = |path: PathBuf| {
         let text = path.display().to_string();
         if cfg!(windows) {
@@ -8953,7 +8952,6 @@ fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result
             text
         }
     };
-    assert!(stdout.contains("ripr init plan (dry run — nothing was written)"));
     assert!(stdout.contains(&format!("# {}", shown(workspace.join("ripr.toml")))));
     assert!(stdout.contains(&format!(
         "# {}",
