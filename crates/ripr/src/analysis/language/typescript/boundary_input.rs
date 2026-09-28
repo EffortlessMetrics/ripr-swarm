@@ -189,7 +189,8 @@ fn line_tokens(line: &str) -> Vec<&str> {
 /// member access, or a chained comparison on either side
 /// (`OFFSET + amount >= LIMIT`, `amount >= LIMIT + 1`, `amount >= -5`,
 /// `2 * amount > LIMIT`) moves the real boundary away from the operand's
-/// value, so the derivation fails closed.
+/// value, so the derivation fails closed. So does a side at the start or end
+/// of the line, since the expression may continue across a line break.
 pub(super) fn comparison_has_whole_sides(line: &str, parameter: &str, operand: &str) -> bool {
     const COMPARISONS: &[&str] = &["===", "!==", "==", "!=", ">=", "<=", ">", "<"];
     const BEFORE: &[&str] = &[
@@ -210,8 +211,11 @@ pub(super) fn comparison_has_whole_sides(line: &str, parameter: &str, operand: &
         if !pair {
             continue;
         }
-        let before_ok = at < 2 || BEFORE.contains(&tokens[at - 2]);
-        let after_ok = tokens.get(at + 2).is_none_or(|next| AFTER.contains(next));
+        // Both edges must be visible on the changed line: a side that starts
+        // or ends the line may continue on a neighbouring line
+        // (`if (amount >= LIMIT` / `+ 1) {`), which this line cannot show.
+        let before_ok = at >= 2 && BEFORE.contains(&tokens[at - 2]);
+        let after_ok = tokens.get(at + 2).is_some_and(|next| AFTER.contains(next));
         if !(before_ok && after_ok) {
             return false;
         }

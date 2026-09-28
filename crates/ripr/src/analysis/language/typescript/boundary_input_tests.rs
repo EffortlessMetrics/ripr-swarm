@@ -433,6 +433,8 @@ fn comparisons_with_arithmetic_or_signed_sides_stay_unresolved() {
         "  if (DISCOUNT_THRESHOLD <= amount < OFFSET) {",
         "  if (amount >= -5) {",
         "  if (order.amount >= DISCOUNT_THRESHOLD) {",
+        "  if (amount >= DISCOUNT_THRESHOLD",
+        "  amount >= DISCOUNT_THRESHOLD ? 1 : 0;",
     ] {
         assert_eq!(
             input_for(&source, "discountedTotal", changed),
@@ -453,6 +455,10 @@ fn whole_side_comparisons_accept_common_line_shapes() {
         ("  if (x + amount >= LIMIT) {", false),
         ("  if (amount >= -LIMIT) {", false),
         ("  if (amount >= LIMIT || amount >= LIMIT) {", false),
+        // The expression may continue on a neighbouring line.
+        ("  if (amount >= LIMIT", false),
+        ("  amount >= LIMIT ? 1 : 0;", false),
+        ("  return amount >= LIMIT", false),
     ] {
         let operand = if line.contains("5_000") {
             "5_000"
