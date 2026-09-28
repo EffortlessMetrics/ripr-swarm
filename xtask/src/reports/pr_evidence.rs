@@ -399,10 +399,11 @@ fn run_ripr_check_binary(
         "ripr check for PR evidence",
     )?;
     if output.timed_out {
+        let (shell, label) = native_retry_shell();
         return Err(format!(
-            "ripr check for PR evidence timed out after {} seconds; retry command: {}",
+            "ripr check for PR evidence timed out after {} seconds; retry command ({label}): {}",
             timeout.as_secs(),
-            pr_evidence_retry_command(options)
+            pr_evidence_retry_command(options, shell)
         ));
     }
     if output.status.is_some_and(|status| status.success()) {
@@ -435,11 +436,56 @@ fn parse_positive_timeout_secs(name: &str, value: &str) -> Result<u64, String> {
     }
 }
 
-fn pr_evidence_retry_command(options: &PrEvidenceOptions) -> String {
+#[derive(Clone, Copy)]
+enum RetryShell {
+    Bash,
+    PowerShell,
+}
+
+fn native_retry_shell() -> (RetryShell, &'static str) {
+    if cfg!(windows) {
+        (RetryShell::PowerShell, "PowerShell")
+    } else {
+        (RetryShell::Bash, "Bash")
+    }
+}
+
+fn pr_evidence_retry_command(options: &PrEvidenceOptions, shell: RetryShell) -> String {
+    let quote = |value: &str| match shell {
+        RetryShell::Bash => bash_retry_arg(value),
+        RetryShell::PowerShell => powershell_retry_arg(value),
+    };
     format!(
         "cargo xtask ripr-pr --base {} --head {} --root {}",
-        options.base, options.head, options.root
+        quote(&options.base),
+        quote(&options.head),
+        quote(&options.root)
     )
+}
+
+// Match the product command renderer's safe bare set; Bash otherwise needs
+// close-escape-reopen, while PowerShell doubles quotes inside a literal.
+fn retry_arg_is_plain(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '/' | '_' | '-' | ':'))
+}
+
+fn bash_retry_arg(value: &str) -> String {
+    if retry_arg_is_plain(value) {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', r"'\''"))
+    }
+}
+
+fn powershell_retry_arg(value: &str) -> String {
+    if retry_arg_is_plain(value) {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "''"))
+    }
 }
 
 fn ripr_exe_name() -> &'static str {
@@ -1085,6 +1131,156 @@ mod tests {
     }
 
     #[test]
+    fn retry_keeps_default_arguments_and_regeneration_semantics() -> Result<(), String> {
+        let defaults = options();
+        let expected = "cargo xtask ripr-pr --base origin/main --head HEAD --root .";
+        for shell in [RetryShell::Bash, RetryShell::PowerShell] {
+            let actual = pr_evidence_retry_command(&defaults, shell);
+            if actual != expected {
+                return Err(format!("default retry changed: {actual:?}"));
+            }
+        }
+        let check_mode = PrEvidenceOptions {
+            check: true,
+            ..defaults
+        };
+        let actual = pr_evidence_retry_command(&check_mode, RetryShell::Bash);
+        if actual != expected {
+            return Err(format!("check-mode recovery must regenerate: {actual:?}"));
+        }
+        Ok(())
+    }
+
+    fn hostile_retry_options() -> PrEvidenceOptions {
+        PrEvidenceOptions {
+            base: "topic$(touch-marker)".to_string(),
+            head: "topic'name".to_string(),
+            root: "root with spaces".to_string(),
+            check: false,
+        }
+    }
+
+    fn expected_retry_args(options: &PrEvidenceOptions) -> Vec<String> {
+        vec![
+            "xtask".to_string(),
+            "ripr-pr".to_string(),
+            "--base".to_string(),
+            options.base.clone(),
+            "--head".to_string(),
+            options.head.clone(),
+            "--root".to_string(),
+            options.root.clone(),
+        ]
+    }
+
+    #[cfg(not(windows))]
+    fn execute_retry_command(command: &str) -> Result<Vec<String>, String> {
+        let script = format!(
+            "touch-marker() {{ printf INJECTED; }}; cargo() {{ printf '%s\\0' \"$@\"; }}; {command}"
+        );
+        let output = std::process::Command::new("bash")
+            .args(["-c", &script])
+            .output()
+            .map_err(|err| format!("execute Bash retry fixture: {err}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "Bash retry failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        if output
+            .stdout
+            .windows(b"INJECTED".len())
+            .any(|part| part == b"INJECTED")
+        {
+            return Err("Bash retry ran command substitution".to_string());
+        }
+        output
+            .stdout
+            .split(|byte| *byte == 0)
+            .filter(|arg| !arg.is_empty())
+            .map(|arg| String::from_utf8(arg.to_vec()).map_err(|err| err.to_string()))
+            .collect::<Result<_, _>>()
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn bash_retry_executes_with_literal_arguments() -> Result<(), String> {
+        let options = hostile_retry_options();
+        for revision in [&options.base, &options.head] {
+            let status = std::process::Command::new("git")
+                .args(["check-ref-format", "--branch", revision])
+                .status()
+                .map_err(|err| format!("validate hostile ref: {err}"))?;
+            if !status.success() {
+                return Err(format!("hostile fixture ref is not valid: {revision:?}"));
+            }
+        }
+        let command = pr_evidence_retry_command(&options, RetryShell::Bash);
+        let actual = execute_retry_command(&command)?;
+        let expected = expected_retry_args(&options);
+        if actual != expected {
+            return Err(format!("Bash retry argv changed: {actual:?}"));
+        }
+        let raw = format!(
+            "cargo xtask ripr-pr --base {} --head {} --root {}",
+            options.base, options.head, options.root
+        );
+        if execute_retry_command(&raw).is_ok_and(|args| args == expected) {
+            return Err("raw Bash interpolation unexpectedly preserved argv".to_string());
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    fn execute_retry_command(command: &str) -> Result<Vec<String>, String> {
+        let script = format!(
+            "function touch-marker {{ $global:marker = $true }}; function cargo {{ $global:seen = @($args) }}; {command}; if ($global:marker) {{ exit 71 }}; ConvertTo-Json -InputObject $global:seen -Compress"
+        );
+        let output = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()
+            .map_err(|err| format!("execute PowerShell retry fixture: {err}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "PowerShell retry failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        serde_json::from_slice(&output.stdout)
+            .map_err(|err| format!("parse PowerShell argv: {err}"))
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_retry_executes_with_literal_arguments() -> Result<(), String> {
+        let options = hostile_retry_options();
+        for revision in [&options.base, &options.head] {
+            let status = std::process::Command::new("git")
+                .args(["check-ref-format", "--branch", revision])
+                .status()
+                .map_err(|err| format!("validate hostile ref: {err}"))?;
+            if !status.success() {
+                return Err(format!("hostile fixture ref is not valid: {revision:?}"));
+            }
+        }
+        let command = pr_evidence_retry_command(&options, RetryShell::PowerShell);
+        let actual = execute_retry_command(&command)?;
+        let expected = expected_retry_args(&options);
+        if actual != expected {
+            return Err(format!("PowerShell retry argv changed: {actual:?}"));
+        }
+        let raw = format!(
+            "cargo xtask ripr-pr --base {} --head {} --root {}",
+            options.base, options.head, options.root
+        );
+        if execute_retry_command(&raw).is_ok_and(|args| args == expected) {
+            return Err("raw PowerShell interpolation unexpectedly preserved argv".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn packet_maps_check_summary_to_routing_fields() {
         let check = json!({
             "summary": {
@@ -1351,19 +1547,32 @@ mod tests {
         write_repo_file(&repo, "src/lib.rs", "pub fn value() -> u8 { 1 }\n")?;
         run_git(&repo, &["add", "."])?;
         run_git(&repo, &["commit", "--no-gpg-sign", "-m", "add rust"])?;
-
-        let options = PrEvidenceOptions {
-            base: "HEAD~1".to_string(),
-            head: "HEAD".to_string(),
-            ..options()
-        };
+        let options = hostile_retry_options();
+        run_git(&repo, &["branch", &options.base, "HEAD~1"])?;
+        run_git(&repo, &["branch", &options.head, "HEAD"])?;
         write_parented_file(
             &repo.join(PR_CHECK_JSON),
             PR_CHECK_JSON,
             "{\"stale\":true}\n",
         )?;
-        let producer_result = write_pr_evidence_with_runner(&repo, &options, |_repo, _options| {
-            Err("ripr check for PR evidence timed out after 120 seconds; retry command: cargo xtask ripr-pr --base HEAD~1 --head HEAD --root .".to_string())
+        #[cfg(windows)]
+        let (binary, args) = (
+            "powershell".to_string(),
+            vec![
+                "-NoProfile".to_string(),
+                "-NonInteractive".to_string(),
+                "-Command".to_string(),
+                "Start-Sleep -Seconds 30".to_string(),
+            ],
+        );
+        #[cfg(not(windows))]
+        let (binary, args) = {
+            let fake =
+                fake_ripr_invocation(&repo, "fake-ripr-packet-timeout", "", "", 0, Some(30))?;
+            (fake.binary, fake.args)
+        };
+        let producer_result = write_pr_evidence_with_runner(&repo, &options, |_repo, options| {
+            run_ripr_check_binary(&binary, args, options, Duration::from_secs(1))
         });
         let producer_error = producer_result
             .err()
@@ -1376,6 +1585,35 @@ mod tests {
             serde_json::from_str(&packet_text).map_err(|err| format!("parse packet: {err}"))?;
         assert_eq!(packet["status"], "error");
         assert_eq!(packet["warnings"][0]["kind"], "tool_error");
+        let warning = packet["warnings"][0]["message"]
+            .as_str()
+            .ok_or_else(|| "missing timeout warning".to_string())?;
+        let (shell, label) = native_retry_shell();
+        let marker = format!("retry command ({label}): ");
+        let warning_command = warning
+            .split_once(&marker)
+            .map(|(_, command)| command)
+            .ok_or_else(|| format!("error packet lost retry guidance: {warning}"))?;
+        let expected_command = pr_evidence_retry_command(&options, shell);
+        if warning_command != expected_command {
+            return Err(format!("error packet retry changed: {warning_command:?}"));
+        }
+        let markdown = fs::read_to_string(repo.join(PR_EVIDENCE_MD))
+            .map_err(|err| format!("read Markdown packet: {err}"))?;
+        let markdown_command = markdown
+            .split_once(&marker)
+            .and_then(|(_, tail)| tail.lines().next())
+            .ok_or_else(|| "Markdown packet lost retry guidance".to_string())?;
+        if markdown_command != expected_command {
+            return Err(format!("Markdown retry changed: {markdown_command:?}"));
+        }
+        let expected_args = expected_retry_args(&options);
+        for command in [warning_command, markdown_command] {
+            let actual_args = execute_retry_command(command)?;
+            if actual_args != expected_args {
+                return Err(format!("packet retry argv changed: {actual_args:?}"));
+            }
+        }
         assert!(repo.join(PR_DIFF).exists());
         assert!(repo.join(PR_EVIDENCE_MD).exists());
         assert!(!repo.join(PR_CHECK_JSON).exists());
@@ -1444,7 +1682,10 @@ mod tests {
             Err(err) => err,
         };
         assert!(err.contains("timed out after 1 seconds"));
-        assert!(err.contains("retry command: cargo xtask ripr-pr"));
+        let (_, label) = native_retry_shell();
+        if !err.contains(&format!("retry command ({label}): cargo xtask ripr-pr")) {
+            return Err(format!("timeout retry guidance missing: {err}"));
+        }
         #[cfg(not(windows))]
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
         Ok(())
