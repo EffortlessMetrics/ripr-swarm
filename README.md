@@ -119,6 +119,8 @@ machine-readable results, which omit those commands. `pilot` names one supported
 repair or explains why none is ready. Run the follow-up commands ripr prints
 (`ripr explain`, `ripr context`, `ripr agent repair ...`) exactly as printed:
 their IDs belong to that run and cannot be copied from documentation.
+`agent repair --seam-id` takes the seam ID that `pilot` prints; the `probe:...`
+IDs from `check` are rejected there.
 
 Between the repair phases, the attempt refuses any new file outside the allowed
 test files, whether Git ignores it or not. Build output under a gitignored
