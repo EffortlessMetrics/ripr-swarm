@@ -589,14 +589,16 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         && !format.is_repo_scope();
     if committed_history_diff && analysis::working_tree_has_tracked_changes(&input_root) {
         output.unanalyzed_working_tree = true;
-        // The committed diff's line numbers are applied to the on-disk file,
-        // so an edited diff file gets misplaced or missing probes. Name those
-        // files on stderr so every format (JSON included) carries the warning.
-        if let Some(base) = output.base.as_deref() {
-            let files = analysis::committed_diff_files_with_uncommitted_edits(&input_root, base);
-            if !files.is_empty() {
-                eprintln!("{}", edited_diff_files_warning(base, &files));
-            }
+    }
+    // The committed diff's line numbers are applied to the on-disk file, so an
+    // edited diff file gets misplaced or missing probes. Name those files on
+    // stderr so every format (JSON included) carries the warning. This is not
+    // gated on the probe above: that probe sees only `--root`, while the
+    // analyzed diff covers the whole repository.
+    if committed_history_diff && let Some(base) = output.base.as_deref() {
+        let files = analysis::committed_diff_files_with_uncommitted_edits(&input_root, base);
+        if !files.is_empty() {
+            eprintln!("{}", edited_diff_files_warning(base, &files));
         }
     }
     let navigation = if worktree_explicitly_provided && write_artifact.is_none() {

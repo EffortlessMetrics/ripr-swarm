@@ -15048,7 +15048,8 @@ fn agent_repair_after_a_failing_test_says_the_test_was_not_run()
         "precondition: static movement improved:\n{stderr}"
     );
     assert!(
-        stderr.contains("ripr: test run: not run. This result is static evidence only"),
+        stderr
+            .contains("ripr: test run: none recorded. This receipt compares static evidence only"),
         "{stderr}"
     );
     let document: serde_json::Value = serde_json::from_slice(&after.stdout)?;

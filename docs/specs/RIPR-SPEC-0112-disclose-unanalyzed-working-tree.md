@@ -165,9 +165,12 @@ edited content and can be misplaced or missing. Commit the edits, or rerun
 with `--worktree`.
 ```
 
-Only files a language adapter routes are named, since other files carry no
-probes. Paths are repository-relative and unquoted. Any git failure names no
-files. The warning does not change the exit code or the JSON output.
+Only files whose extension routes to a language adapter are named, since
+other files carry no probes; a file in a language the configuration turns off
+can still be named. Paths are repository-relative and unquoted, matching the
+analyzed diff, which covers the whole repository even under `--root <subdir>`.
+Any git failure names no files. The warning does not change the exit code or
+the JSON output.
 
 ### JSON output (`--json`)
 

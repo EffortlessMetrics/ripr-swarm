@@ -245,8 +245,10 @@ fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
 /// seam IDs come from instead of leaving "not found" as a dead end. The
 /// pilot command names the same root the failing call used.
 fn unknown_seam_id_hint(root: &Path, seam_id: &str) -> String {
+    // `bound_root` over the raw path, like the LSP routes: `display_path`
+    // would turn a literal backslash in a Unix path into a separator (#4287).
     let root = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
-        &crate::agent::loop_commands::display_path(root),
+        &root.to_string_lossy(),
     ));
     let pilot = format!(
         "`ripr pilot --root {root}` to list current seam IDs with their exact `ripr agent repair` commands."
@@ -1481,7 +1483,7 @@ fn repair_receipt_summary_lines(receipt: &str) -> Vec<String> {
     // reads `improved`. Say so before the next step, not only inside it.
     if text("/verification/status") == Some(crate::output::agent_receipt::VERIFICATION_NOT_RUN) {
         lines.push(
-            "test run: not run. This result is static evidence only; a failing test can still show `improved`."
+            "test run: none recorded. This receipt compares static evidence only; a failing test can still show `improved`."
                 .to_string(),
         );
     }
