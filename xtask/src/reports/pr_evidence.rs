@@ -1102,9 +1102,36 @@ fn md_escape(value: &str) -> String {
 }
 
 fn md_warning(value: &str) -> String {
-    // Warnings are list prose, not table cells. Escaping `|` here changes a
-    // quoted retry argument when the displayed command is copied.
-    value.replace('\r', " ").replace('\n', " ")
+    // Warnings are list prose, not table cells. A retry must be code: Markdown
+    // consumes backslashes before punctuation and interprets entities, tags,
+    // and emphasis in ordinary prose, changing copied shell arguments.
+    let flattened = value.replace('\r', " ").replace('\n', " ");
+    if flattened.starts_with("ripr check for PR evidence timed out after ")
+        && let Some((context, tail)) = flattened.split_once("; retry command (")
+        && let Some((shell, command)) = tail.split_once("): ")
+        && matches!(shell, "Bash" | "PowerShell")
+    {
+        return format!(
+            "{context}; retry command ({shell}): {}",
+            md_code_span(command)
+        );
+    }
+    flattened
+}
+
+fn md_code_span(command: &str) -> String {
+    let mut run = 0usize;
+    let mut longest = 0usize;
+    for ch in command.chars() {
+        if ch == '`' {
+            run += 1;
+            longest = longest.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    let delimiter = "`".repeat(longest + 1);
+    format!("{delimiter}{command}{delimiter}")
 }
 
 fn repo_root() -> Result<PathBuf, String> {
@@ -1175,11 +1202,11 @@ mod tests {
     fn hostile_retry_options() -> PrEvidenceOptions {
         PrEvidenceOptions {
             base: "topic$(touch-marker)".to_string(),
-            head: "topic'|name".to_string(),
+            head: "topic'|`name".to_string(),
             root: if cfg!(windows) {
-                "root with spaces".to_string()
+                "root\\[dir]`a&b with spaces".to_string()
             } else {
-                "root\\'$(touch-marker)\nwith spaces".to_string()
+                "root\\'$(touch-marker)<tag>*\nwith spaces".to_string()
             },
             check: false,
         }
@@ -1640,10 +1667,27 @@ mod tests {
         }
         let markdown = fs::read_to_string(repo.join(PR_EVIDENCE_MD))
             .map_err(|err| format!("read Markdown packet: {err}"))?;
-        let markdown_command = markdown
+        let markdown_span = markdown
             .split_once(&marker)
             .and_then(|(_, tail)| tail.lines().next())
             .ok_or_else(|| "Markdown packet lost retry guidance".to_string())?;
+        let delimiter_len = markdown_span
+            .bytes()
+            .take_while(|byte| *byte == b'`')
+            .count();
+        if delimiter_len == 0 || markdown_span.len() <= delimiter_len * 2 {
+            return Err(format!(
+                "Markdown retry is not a code span: {markdown_span:?}"
+            ));
+        }
+        let delimiter = "`".repeat(delimiter_len);
+        let markdown_command = markdown_span
+            .strip_suffix(&delimiter)
+            .and_then(|span| span.get(delimiter_len..))
+            .ok_or_else(|| format!("Markdown retry span is malformed: {markdown_span:?}"))?;
+        if markdown_command.contains(&delimiter) {
+            return Err("Markdown retry delimiter collides with command data".to_string());
+        }
         if markdown_command != expected_command {
             return Err(format!("Markdown retry changed: {markdown_command:?}"));
         }
