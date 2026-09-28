@@ -617,6 +617,27 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Stderr warning for diff files that also carry uncommitted edits: their
+/// findings are unreliable until the edits are committed or `--worktree`
+/// diffs the edited content itself.
+fn edited_diff_files_warning(base: &str, files: &[String]) -> String {
+    let (verb, be) = if files.len() == 1 {
+        ("has", "is")
+    } else {
+        ("have", "are")
+    };
+    format!(
+        "ripr: warning: {} {verb} uncommitted edits and {be} also in the analyzed `{base}...HEAD` diff; \
+         findings there apply committed line numbers to edited content and can be misplaced or missing. \
+         Commit the edits, or rerun with `--worktree`.",
+        files
+            .iter()
+            .map(|file| format!("`{file}`"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+}
+
 /// Write `text` to stdout in bounded chunks.
 ///
 /// A single large write to a Windows console or pipe can fail with
@@ -624,28 +645,6 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
 /// underlying write small enough to avoid that limit. Write errors are
 /// returned as `Err` rather than panicking, so a failed write surfaces as
 /// a normal CLI error instead of aborting the process.
-/// Stderr warning for diff files that also carry uncommitted edits: their
-/// findings are unreliable until the edits are committed or `--worktree`
-/// diffs the edited content itself.
-fn edited_diff_files_warning(base: &str, files: &[String]) -> String {
-    let (verb, pronoun) = if files.len() == 1 {
-        ("has", "its")
-    } else {
-        ("have", "their")
-    };
-    format!(
-        "ripr: warning: {} {verb} uncommitted edits and {} also in the analyzed `{base}...HEAD` diff; \
-         {pronoun} findings apply committed line numbers to the edited file and can be misplaced or missing. \
-         Commit the edits, or rerun with `--worktree`.",
-        files
-            .iter()
-            .map(|file| format!("`{file}`"))
-            .collect::<Vec<_>>()
-            .join(", "),
-        if files.len() == 1 { "is" } else { "are" },
-    )
-}
-
 fn write_stdout_chunked(text: &str) -> Result<(), String> {
     use std::io::Write;
     const CHUNK: usize = 16 * 1024;
@@ -880,6 +879,16 @@ mod tests {
         unique_repo_relative_test_dir,
     };
     use super::*;
+
+    #[test]
+    fn edited_diff_files_warning_agrees_in_number_and_names_the_recovery() {
+        let one = edited_diff_files_warning("origin/main", &["src/lib.rs".to_string()]);
+        assert!(one.contains("`src/lib.rs` has uncommitted edits and is also in the analyzed `origin/main...HEAD` diff"));
+        assert!(one.ends_with("Commit the edits, or rerun with `--worktree`."));
+        let two =
+            edited_diff_files_warning("origin/main", &["a.rs".to_string(), "b.rs".to_string()]);
+        assert!(two.contains("`a.rs`, `b.rs` have uncommitted edits and are also in"));
+    }
 
     #[test]
     fn repo_scope_format_with_base_emits_scope_warning() -> Result<(), String> {

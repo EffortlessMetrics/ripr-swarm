@@ -13827,65 +13827,42 @@ fn check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosur
 /// that file's findings can be misplaced or missing, so stderr names it. An
 /// edit only to a file outside the diff keeps the generic note alone.
 #[test]
-fn check_base_names_diff_files_with_uncommitted_edits() {
+fn check_base_names_diff_files_with_uncommitted_edits() -> Result<(), Box<dyn std::error::Error>> {
     let root =
         std::env::temp_dir().join(format!("ripr-0112-edited-diff-file-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(root.join("src")).unwrap();
-    std::fs::create_dir_all(root.join("tests")).unwrap();
-    let run_git = |root: &std::path::Path, args: &[&str]| -> Result<(), String> {
-        let status = std::process::Command::new("git")
-            .args(args)
-            .current_dir(root)
-            .status()
-            .map_err(|e| e.to_string())?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(format!("git {args:?} failed"))
-        }
-    };
-    run_git(&root, &["init", "-q"]).unwrap();
-    run_git(&root, &["config", "user.email", "test@test.com"]).unwrap();
-    run_git(&root, &["config", "user.name", "Test"]).unwrap();
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::create_dir_all(root.join("tests"))?;
+    run_git(&root, &["init", "-q"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
     std::fs::write(
         root.join("Cargo.toml"),
         "[package]\nname = \"edited-diff-file\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
-    )
-    .unwrap();
+    )?;
     std::fs::write(
         root.join("src/lib.rs"),
         "pub fn ok(n: u32) -> bool { n > 10 }\n",
-    )
-    .unwrap();
+    )?;
     std::fs::write(
         root.join("tests/ok.rs"),
         "#[test]\nfn t() { assert!(edited_diff_file::ok(20)); }\n",
-    )
-    .unwrap();
-    run_git(&root, &["add", "."]).unwrap();
-    run_git(&root, &["commit", "-q", "-m", "base"]).unwrap();
+    )?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-q", "-m", "base"])?;
     std::fs::write(
         root.join("src/lib.rs"),
         "pub fn ok(n: u32) -> bool { n >= 10 }\n",
-    )
-    .unwrap();
-    run_git(&root, &["commit", "-q", "-am", "change"]).unwrap();
-    let bin = env!("CARGO_BIN_EXE_ripr");
+    )?;
+    run_git(&root, &["commit", "-q", "-am", "change"])?;
     let root_str = root.to_string_lossy().into_owned();
-    let check = || {
-        std::process::Command::new(bin)
-            .args(["check", "--root", &root_str, "--base", "HEAD~1", "--json"])
-            .output()
-            .unwrap()
-    };
+    let check = || run_ripr(&["check", "--root", &root_str, "--base", "HEAD~1", "--json"]);
 
     // Edit outside the diff only: generic disclosure, no per-file warning.
     std::fs::write(
         root.join("tests/ok.rs"),
         "#[test]\nfn t() { assert!(edited_diff_file::ok(10)); }\n",
-    )
-    .unwrap();
+    )?;
     let outside = check();
     let stderr = String::from_utf8_lossy(&outside.stderr);
     assert!(String::from_utf8_lossy(&outside.stdout).contains("\"unanalyzed_working_tree\": true"));
@@ -13895,8 +13872,7 @@ fn check_base_names_diff_files_with_uncommitted_edits() {
     std::fs::write(
         root.join("src/lib.rs"),
         "// moved\npub fn ok(n: u32) -> bool { n >= 10 }\n",
-    )
-    .unwrap();
+    )?;
     let inside = check();
     let stderr = String::from_utf8_lossy(&inside.stderr);
     assert!(
@@ -13908,6 +13884,7 @@ fn check_base_names_diff_files_with_uncommitted_edits() {
     assert!(stderr.contains("rerun with `--worktree`"), "{stderr}");
     assert!(!stderr.contains("tests/ok.rs"), "{stderr}");
     ignore_remove_dir_all(&root);
+    Ok(())
 }
 
 /// RIPR-SPEC-0112 (default base): bare `ripr check` resolves the default base
