@@ -239,6 +239,13 @@ are scoped or reviewed.
   on every platform. Repair-card, LSP skeleton, and dogfood consumers accept
   both the new form and the bare form earlier artifacts carry.
 
+- `ripr first-pr` now prints the receipt path its receipt command writes. For a
+  Python or TypeScript preview gap, `Receipt path:` named a
+  `gap-pr-...targeted-test-outcome.json` file while the printed
+  `ripr receipt write` command wrote `--out gap-python-....json`; the path now
+  comes from the command's `--out` (or the ledger's recorded path) and falls
+  back to the first-pr default only when first-pr builds the command itself.
+
 ### Added
 
 - `ripr --version` now names the commit the binary was built from, as

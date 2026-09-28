@@ -1724,26 +1724,40 @@ fn top_gap_from_record(record: &Value, root: &Path, options: &FirstPrOptions) ->
     ]);
     let verify_command = first_string_array_item(record, &["verification_commands"])
         .unwrap_or_else(|| regenerate_gap_ledger_command(root, options));
-    let receipt_path = string_path(record, &["receipt_path"])
-        .or_else(|| string_path(record, &["receipt", "path"]))
-        .unwrap_or_else(|| first_pr_receipt_path(&options.receipts_dir, &gap_id));
     let ledger_receipt_command = string_path(record, &["receipt_command"]);
     let ledger_receipt_or_path_command = command_like_path(record, &["receipt_command_or_path"]);
+    let ledger_command = ledger_receipt_command
+        .map(|command| (command, "gap_ledger.receipt_command"))
+        .or_else(|| {
+            ledger_receipt_or_path_command
+                .map(|command| (command, "gap_ledger.receipt_command_or_path"))
+        });
+    // One source of truth for where the receipt lands: a recorded path, else
+    // the `--out` the printed receipt command writes, else the first-pr
+    // default that the synthesized command below then writes. A path derived
+    // independently of a ledger command named a file that command never
+    // writes (Python preview: `gap-pr-...targeted-test-outcome.json` beside a
+    // `--out gap-python-....json`).
+    let receipt_path = string_path(record, &["receipt_path"])
+        .or_else(|| string_path(record, &["receipt", "path"]))
+        .or_else(|| {
+            ledger_command
+                .as_ref()
+                .and_then(|(command, _)| receipt_command_out_path(command))
+        })
+        .unwrap_or_else(|| first_pr_receipt_path(&options.receipts_dir, &gap_id));
     let canonical_gap_id_for_receipt =
         string_path(record, &["canonical_gap_id"]).unwrap_or_else(|| gap_id.clone());
-    let (receipt_command, receipt_command_source) = if let Some(command) = ledger_receipt_command {
-        (command, "gap_ledger.receipt_command".to_string())
-    } else if let Some(command) = ledger_receipt_or_path_command {
-        (command, "gap_ledger.receipt_command_or_path".to_string())
-    } else {
-        (
+    let (receipt_command, receipt_command_source) = match ledger_command {
+        Some((command, source)) => (command, source.to_string()),
+        None => (
             receipt_write_command(
                 &canonical_gap_id_for_receipt,
                 &verify_command,
                 Some(&receipt_path),
             ),
             "first_pr.default_receipt_write_command".to_string(),
-        )
+        ),
     };
     let repair_route_kind = string_from_sources(&[(repair_route, &["route_kind"])])
         .unwrap_or_else(|| "RepairRouteUnavailable".to_string());
@@ -1956,6 +1970,66 @@ fn why_for_gap(kind: &str, language: Option<&str>) -> String {
             )
         }
     }
+}
+
+/// The `--out` path a printed `ripr ...` receipt command writes, read with
+/// POSIX quoting (the `shell_arg` form every receipt command is rendered in).
+/// `None` for a command with no `--out`, an empty value, a shell operator
+/// before it, or unbalanced quoting, so the caller falls back rather than
+/// naming a guessed path.
+fn receipt_command_out_path(command: &str) -> Option<String> {
+    let mut words: Vec<(String, bool)> = Vec::new();
+    let mut current = String::new();
+    let mut quoted_word = false;
+    let mut in_word = false;
+    let mut quote: Option<char> = None;
+    let mut chars = command.chars();
+    while let Some(character) = chars.next() {
+        match (quote, character) {
+            (Some(active), value) if value == active => quote = None,
+            (Some('"'), '\\') => current.push(chars.next()?),
+            (Some(_), value) => current.push(value),
+            (None, '\'' | '"') => {
+                quote = Some(character);
+                quoted_word = true;
+                in_word = true;
+            }
+            (None, '\\') => {
+                current.push(chars.next()?);
+                in_word = true;
+            }
+            (None, value) if value.is_whitespace() => {
+                if in_word {
+                    words.push((std::mem::take(&mut current), quoted_word));
+                }
+                quoted_word = false;
+                in_word = false;
+            }
+            (None, value) => {
+                current.push(value);
+                in_word = true;
+            }
+        }
+    }
+    if quote.is_some() {
+        return None;
+    }
+    if in_word {
+        words.push((current, quoted_word));
+    }
+    if words.first().map(|(word, _)| word.as_str()) != Some("ripr") {
+        return None;
+    }
+    let mut out = None;
+    for (index, (word, quoted)) in words.iter().enumerate() {
+        if !quoted && matches!(word.as_str(), ">" | ">>" | "|" | "&&" | "||" | ";") {
+            return None;
+        }
+        if !quoted && word == "--out" {
+            out = words.get(index + 1).map(|(value, _)| value.clone());
+        }
+    }
+    out.filter(|path| !path.trim().is_empty())
 }
 
 fn first_pr_receipt_path(receipts_dir: &str, gap_id: &str) -> String {
@@ -4342,6 +4416,11 @@ mod tests {
             packet["selected"]["receipt_command_source"],
             "gap_ledger.receipt_command"
         );
+        // The receipt path is the file the printed receipt command writes.
+        assert_eq!(
+            packet["selected"]["receipt_path"],
+            ".ripr/receipts/python-threshold.json"
+        );
         let python_project = preflight_check(&packet, "python_project")?;
         assert_eq!(python_project["status"], "ok");
         let summary = start_here_cli_summary(
@@ -4918,6 +4997,41 @@ mod tests {
                 }
             ]
         })
+    }
+
+    #[test]
+    fn receipt_path_is_the_out_path_the_printed_receipt_command_writes() {
+        // The shape the gap ledger prints for a Python preview gap: the gap
+        // id is single-quoted because it carries `>=` and `/`.
+        let command = "ripr receipt write --gap 'gap:python:pricing/__init__.py:discounted_total:predicate_boundary:predicate:amount>=discount_threshold' --verify-command 'python -m pytest tests/test_pricing.py::test_discount_far_above_threshold' --status not_run --out target/ripr/receipts/gap-python-pricing-__init__.py-discounted_total-predicate_boundary-predicate-amount-discount_threshold.json";
+        assert_eq!(
+            receipt_command_out_path(command).as_deref(),
+            Some(
+                "target/ripr/receipts/gap-python-pricing-__init__.py-discounted_total-predicate_boundary-predicate-amount-discount_threshold.json"
+            )
+        );
+        assert_eq!(
+            receipt_command_out_path(
+                "ripr receipt write --gap g --out 'target/my receipts/o'\\''k.json'"
+            )
+            .as_deref(),
+            Some("target/my receipts/o'k.json")
+        );
+        // A quoted `--out` is a value, not the flag.
+        assert_eq!(
+            receipt_command_out_path("ripr receipt write --gap '--out' --verify-command x"),
+            None
+        );
+        for command in [
+            "ripr receipt write --gap g --verify-command x --status not_run",
+            "ripr receipt write --gap g --out",
+            "ripr receipt write --gap g --out ''",
+            "ripr outcome --json > target/o.json --out other.json",
+            "ripr receipt write --gap 'unterminated --out x.json",
+            "cargo test --out x.json",
+        ] {
+            assert_eq!(receipt_command_out_path(command), None, "{command}");
+        }
     }
 
     fn ledger_with_python_repairable_gap() -> Value {
