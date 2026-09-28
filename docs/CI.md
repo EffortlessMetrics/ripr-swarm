@@ -1179,6 +1179,12 @@ pass absolute artifact/output paths to those commands alongside `--root`.
 These commands compose existing artifacts rather than establishing new
 analysis or release qualification.
 
+On Windows, `pr-summary` accepts ordinary relative paths and fully qualified
+absolute paths for `--root` and `--baseline`, including UNC and verbatim paths.
+It rejects partially qualified paths such as `C:repo` or `\repo`, whose Windows
+join semantics can replace the selected root. This restriction applies only
+on Windows; colon-containing relative filenames remain valid on other systems.
+
 Generated CI also projects the first useful action when at least one explicit
 input artifact is already present. It runs `ripr first-action --root .` with
 existing PR guidance, assistant proof, PR evidence ledger, baseline delta,

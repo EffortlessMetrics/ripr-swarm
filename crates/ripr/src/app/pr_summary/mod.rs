@@ -137,6 +137,22 @@ fn parse_options(args: &[String]) -> Result<SummaryOptions, String> {
                 if path.trim().is_empty() || path.starts_with('-') {
                     return Err(format!("pr-summary {arg} requires a non-empty path value"));
                 }
+                #[cfg(windows)]
+                {
+                    let parsed = Path::new(path);
+                    if !parsed.is_absolute()
+                        && (parsed.has_root()
+                            || matches!(
+                                parsed.components().next(),
+                                Some(std::path::Component::Prefix(_))
+                            ))
+                    {
+                        return Err(format!(
+                            "pr-summary {arg} requires a fully qualified or ordinary relative path; \
+                             Windows partially qualified paths are not supported"
+                        ));
+                    }
+                }
                 if arg == "--root" {
                     root = PathBuf::from(path);
                 } else {
@@ -169,6 +185,7 @@ Options:
   --baseline <path>    Before-snapshot JSON for gap delta counts, relative to the selected root.
 
 Relative artifact inputs and all outputs are anchored under --root.
+On Windows, drive-relative and root-relative paths (C:repo or \\repo) are rejected.
 
 Outputs:
   target/ripr/pr/summary.md  — legacy PR evidence summary (Markdown)
@@ -290,5 +307,50 @@ mod tests {
                 "expected scoped pr-summary suggestion, got {other:?}"
             )),
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn parse_rejects_windows_partially_qualified_paths() -> Result<(), String> {
+        // These relative paths replace rather than extend the selected root.
+        let selected = Path::new(r"C:\selected");
+        if selected.join("C:repo") != Path::new("C:repo")
+            || selected.join(r"\before.json") != Path::new(r"C:\before.json")
+            || Path::new("C:repo").is_absolute()
+            || Path::new(r"\before.json").is_absolute()
+        {
+            return Err("Windows path replacement premise changed".to_string());
+        }
+        for flag in ["--root", "--baseline"] {
+            for path in ["C:repo", "C:", r"\repo", "/repo"] {
+                let args = [flag.to_string(), path.to_string()];
+                match parse_options(&args) {
+                    Err(error) if error.contains(flag) => {}
+                    other => {
+                        return Err(format!("partially qualified {args:?} accepted: {other:?}"));
+                    }
+                }
+            }
+            for path in [
+                r"C:\repo",
+                r"\\server\share\repo",
+                r"\\?\C:\repo",
+                r"\\?\UNC\server\share\repo",
+                "repo",
+                "../repo",
+            ] {
+                parse_options(&[flag.to_string(), path.to_string()])?;
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn parse_accepts_colons_in_relative_paths() -> Result<(), String> {
+        for flag in ["--root", "--baseline"] {
+            parse_options(&[flag.to_string(), "C:repo".to_string()])?;
+        }
+        Ok(())
     }
 }

@@ -15644,6 +15644,7 @@ impl Drop for PrSummaryScratch {
 #[test]
 fn pr_summary_root_from_foreign_cwd_anchors_artifacts_and_baseline() -> Result<(), String> {
     let scratch = unique_temp_workspace("pr-summary-root");
+    std::fs::create_dir(&scratch).map_err(|error| error.to_string())?;
     let _cleanup = PrSummaryScratch(scratch.clone());
     let selected = scratch.join("selected répo");
     let foreign = scratch.join("foreign");
@@ -15739,8 +15740,8 @@ fn pr_summary_root_from_foreign_cwd_anchors_artifacts_and_baseline() -> Result<(
 #[test]
 fn pr_summary_rejects_malformed_path_flags_without_outputs() -> Result<(), String> {
     let scratch = unique_temp_workspace("pr-summary-malformed-root");
+    std::fs::create_dir(&scratch).map_err(|error| error.to_string())?;
     let _cleanup = PrSummaryScratch(scratch.clone());
-    std::fs::create_dir_all(&scratch).map_err(|error| error.to_string())?;
     for flag in ["--root", "--baseline"] {
         for value in [None, Some(""), Some("   "), Some("--check")] {
             let mut args = vec!["pr-summary", flag];
@@ -15760,6 +15761,46 @@ fn pr_summary_rejects_malformed_path_flags_without_outputs() -> Result<(), Strin
     }
     if scratch.join("target").exists() || scratch.join("--check").exists() {
         return Err("malformed summary invocation wrote outputs".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn pr_summary_rejects_windows_partially_qualified_paths_before_io() -> Result<(), String> {
+    let scratch = unique_temp_workspace("pr-summary-partially-qualified");
+    std::fs::create_dir(&scratch).map_err(|error| error.to_string())?;
+    let _cleanup = PrSummaryScratch(scratch.clone());
+    let selected = scratch.join("selected");
+    std::fs::create_dir_all(&selected).map_err(|error| error.to_string())?;
+    let selected_text = selected.to_string_lossy();
+    for (flag, sentinel) in [("--root", "--baseline"), ("--baseline", "--root")] {
+        for value in ["C:repo", "C:", r"\repo", "/repo"] {
+            // A missing value on the sibling flag makes a wrong parser fail
+            // before IO too, without touching an unowned per-drive directory.
+            let args = [
+                "pr-summary",
+                "--root",
+                &selected_text,
+                flag,
+                value,
+                sentinel,
+            ];
+            let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&scratch), &args)
+                .map_err(|error| error.to_string())?;
+            let error = String::from_utf8_lossy(&output.stderr);
+            if output.status.code() != Some(2)
+                || !error.contains(flag)
+                || !error.contains("partially qualified")
+            {
+                return Err(format!(
+                    "partially qualified {args:?} lacked early scoped failure: {output:?}"
+                ));
+            }
+        }
+    }
+    if scratch.join("target").exists() || selected.join("target").exists() {
+        return Err("partially qualified summary invocation wrote outputs".to_string());
     }
     Ok(())
 }
@@ -15791,6 +15832,7 @@ fn pr_summary_rendered_help_describes_selected_root() -> Result<(), String> {
         || !help.contains("--root <path>")
         || !help.contains("default: current directory")
         || !help.contains("relative to the selected root")
+        || !help.contains("drive-relative and root-relative paths")
     {
         return Err(format!("summary root help contract missing: {help}"));
     }
