@@ -1084,7 +1084,9 @@ mod classification_hint_tests {
         let hint = classification_hint(&ExposureClass::WeaklyExposed, &evidence);
         assert_eq!(
             hint.as_deref(),
-            Some("a related test reaches this change, but its assertions observe the result only loosely")
+            Some(
+                "a related test reaches this change, but its assertions observe the result only loosely"
+            )
         );
     }
 }
