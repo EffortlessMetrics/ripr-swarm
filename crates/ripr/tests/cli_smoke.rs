@@ -8423,6 +8423,48 @@ fn init_dry_run_prints_config_without_writing() -> Result<(), String> {
     Ok(())
 }
 
+/// #4378: on Windows the init preview mixed a forward-slash argv prefix with the
+/// joined `\ripr.toml` suffix, and doctor mixed `.\`-relative lines with a
+/// verbatim `\\?\` executable. Both surfaces render one slash convention.
+#[cfg(windows)]
+#[test]
+fn windows_init_preview_and_doctor_use_one_separator_convention() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let root = workspace
+        .canonicalize()
+        .map_err(|e| format!("canonicalize workspace: {e}"))?
+        .display()
+        .to_string();
+    // Canonical Windows paths carry the verbatim prefix; spell the root the
+    // way a user types it, with forward slashes.
+    let root = root.trim_start_matches(r"\\?\").replace('\\', "/");
+    let dry = run_ripr(&["init", "--root", &root, "--dry-run"]);
+    assert_success(&dry);
+    let dry_stdout = String::from_utf8_lossy(&dry.stdout);
+    let expected = format!("{root}/ripr.toml");
+    assert!(
+        dry_stdout.contains(&format!("# {expected}")),
+        "{dry_stdout}"
+    );
+    assert!(!dry_stdout.contains('\\'), "{dry_stdout}");
+
+    let doctor = run_ripr(&["doctor", "--root", &root]);
+    let doctor_stdout = String::from_utf8_lossy(&doctor.stdout);
+    for line in doctor_stdout.lines().filter(|line| {
+        line.starts_with("- root:")
+            || line.starts_with("- ripr binary:")
+            || line.starts_with("- Cache location:")
+            || line.contains("Cargo.toml found at")
+            || line.contains("root directory exists at")
+    }) {
+        assert!(!line.contains(r"\\?\"), "verbatim prefix in `{line}`");
+        assert!(!line.contains('\\'), "backslash separator in `{line}`");
+    }
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
 /// #2572: `--dry-run` must predict the run it previews. An existing
 /// `ripr.toml` without `--force` makes the real run fail, so the dry run
 /// fails the same way instead of printing a config it could not write.
@@ -13882,6 +13924,13 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
             "empty default-base run must keep the no-scope disclosure (base-naming form per #4012); got:\n{stdout}"
         ));
     }
+    // Clean-install walk (0.11): Start-here must name the flag that analyzes
+    // uncommitted edits, not only "make a change".
+    if !stdout.contains("add `--worktree` to include uncommitted edits") {
+        return Err(format!(
+            "empty-range Start-here must name `--worktree`; got:\n{stdout}"
+        ));
+    }
     if !stdout.contains("compared base was `main`") || stdout.contains("--base origin/main") {
         return Err(format!(
             "no-origin repo must name its resolved local main rather than suggest a nonexistent remote ref; got:\n{stdout}"
@@ -15634,6 +15683,178 @@ fn agent_status_selects_nothing_past_an_unreadable_attempt()
 
 // ── ripr pr-summary (Campaign 31 item 8: binary-first downstream CI) ──
 
+struct PrSummaryScratch(PathBuf);
+
+impl Drop for PrSummaryScratch {
+    fn drop(&mut self) {
+        ignore_remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn pr_summary_root_from_foreign_cwd_anchors_artifacts_and_baseline() -> Result<(), String> {
+    let scratch = unique_temp_workspace("pr-summary-root");
+    std::fs::create_dir(&scratch).map_err(|error| error.to_string())?;
+    let _cleanup = PrSummaryScratch(scratch.clone());
+    let selected = scratch.join("selected répo");
+    let foreign = scratch.join("foreign");
+    for root in [&selected, &foreign] {
+        std::fs::create_dir_all(root.join("target/ripr/reports")).map_err(|err| err.to_string())?;
+    }
+    for (root, actionable, before) in [(&selected, 3, 7), (&foreign, 11, 1)] {
+        std::fs::write(
+            root.join("target/ripr/reports/gap-decision-ledger.json"),
+            serde_json::json!({"summary": {"repairable_total": actionable}}).to_string(),
+        )
+        .map_err(|err| err.to_string())?;
+        std::fs::write(
+            root.join("before.json"),
+            serde_json::json!({"gaps": {"total_actionable": before}}).to_string(),
+        )
+        .map_err(|err| err.to_string())?;
+    }
+    let selected_arg = selected
+        .to_str()
+        .ok_or_else(|| "selected root is not UTF-8".to_string())?;
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&foreign),
+        &[
+            "pr-summary",
+            "--root",
+            selected_arg,
+            "--baseline",
+            "before.json",
+        ],
+    )
+    .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "foreign-CWD pr-summary failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    for relative in [
+        "target/ripr/pr/summary.md",
+        "target/ripr/reports/pr-evidence-summary.json",
+        "target/ripr/reports/pr-evidence-summary.md",
+    ] {
+        if !selected.join(relative).is_file() || foreign.join(relative).exists() {
+            return Err(format!("summary output escaped selected root: {relative}"));
+        }
+    }
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(selected.join("target/ripr/reports/pr-evidence-summary.json"))
+            .map_err(|err| err.to_string())?,
+    )
+    .map_err(|err| err.to_string())?;
+    if summary
+        .pointer("/gaps/total_actionable")
+        .and_then(serde_json::Value::as_u64)
+        != Some(3)
+        || summary
+            .pointer("/gaps/resolved")
+            .and_then(serde_json::Value::as_u64)
+            != Some(4)
+    {
+        return Err(format!(
+            "summary read foreign artifacts or baseline: {summary}"
+        ));
+    }
+    let relative_root = Path::new("..").join("selected répo");
+    let relative_root_arg = relative_root
+        .to_str()
+        .ok_or_else(|| "relative root is not UTF-8".to_string())?;
+    let check = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&foreign),
+        &[
+            "pr-summary",
+            "--root",
+            relative_root_arg,
+            "--check",
+            "--baseline",
+            "before.json",
+        ],
+    )
+    .map_err(|err| err.to_string())?;
+    if !check.status.success() {
+        return Err(format!(
+            "rooted summary check failed: {}",
+            String::from_utf8_lossy(&check.stderr)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_summary_rejects_malformed_path_flags_without_outputs() -> Result<(), String> {
+    let scratch = unique_temp_workspace("pr-summary-malformed-root");
+    std::fs::create_dir(&scratch).map_err(|error| error.to_string())?;
+    let _cleanup = PrSummaryScratch(scratch.clone());
+    for flag in ["--root", "--baseline"] {
+        for value in [None, Some(""), Some("   "), Some("--check")] {
+            let mut args = vec!["pr-summary", flag];
+            if let Some(value) = value {
+                args.push(value);
+            }
+            let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&scratch), &args)
+                .map_err(|error| error.to_string())?;
+            if output.status.code() != Some(2)
+                || !String::from_utf8_lossy(&output.stderr).contains(flag)
+            {
+                return Err(format!(
+                    "malformed {args:?} lacked scoped usage failure: {output:?}"
+                ));
+            }
+        }
+    }
+    if scratch.join("target").exists() || scratch.join("--check").exists() {
+        return Err("malformed summary invocation wrote outputs".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn pr_summary_rejects_windows_partially_qualified_paths_before_io() -> Result<(), String> {
+    let scratch = unique_temp_workspace("pr-summary-partially-qualified");
+    std::fs::create_dir(&scratch).map_err(|error| error.to_string())?;
+    let _cleanup = PrSummaryScratch(scratch.clone());
+    let selected = scratch.join("selected");
+    std::fs::create_dir_all(&selected).map_err(|error| error.to_string())?;
+    let selected_text = selected.to_string_lossy();
+    for (flag, sentinel) in [("--root", "--baseline"), ("--baseline", "--root")] {
+        for value in ["C:repo", "C:", r"\repo", "/repo"] {
+            // A missing value on the sibling flag makes a wrong parser fail
+            // before IO too, without touching an unowned per-drive directory.
+            let args = [
+                "pr-summary",
+                "--root",
+                &selected_text,
+                flag,
+                value,
+                sentinel,
+            ];
+            let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&scratch), &args)
+                .map_err(|error| error.to_string())?;
+            let error = String::from_utf8_lossy(&output.stderr);
+            if output.status.code() != Some(2)
+                || !error.contains(flag)
+                || !error.contains("partially qualified")
+            {
+                return Err(format!(
+                    "partially qualified {args:?} lacked early scoped failure: {output:?}"
+                ));
+            }
+        }
+    }
+    if scratch.join("target").exists() || selected.join("target").exists() {
+        return Err("partially qualified summary invocation wrote outputs".to_string());
+    }
+    Ok(())
+}
+
 #[test]
 fn pr_summary_help_exits_cleanly() {
     let output = run_ripr(&["pr-summary", "--help"]);
@@ -15651,6 +15872,21 @@ fn pr_summary_help_exits_cleanly() {
         stdout.contains("--baseline"),
         "help must mention --baseline:\n{stdout}"
     );
+}
+
+#[test]
+fn pr_summary_rendered_help_describes_selected_root() -> Result<(), String> {
+    let output = run_ripr(&["pr-summary", "--help"]);
+    let help = String::from_utf8_lossy(&output.stdout);
+    if !output.status.success()
+        || !help.contains("--root <path>")
+        || !help.contains("default: current directory")
+        || !help.contains("relative to the selected root")
+        || !help.contains("drive-relative and root-relative paths")
+    {
+        return Err(format!("summary root help contract missing: {help}"));
+    }
+    Ok(())
 }
 
 #[test]
