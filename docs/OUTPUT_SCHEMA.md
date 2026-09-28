@@ -13945,7 +13945,7 @@ Field contract:
   consistent with the structured workflow's `command_shell: "bash"`; they do
   not establish PowerShell recipe compatibility. Read the structured workflow
   for its shell contract before executing commands.
-  Explicit standalone per-seam CLI `agent packet` binds these commands,
+  Explicit standalone per-seam CLI `agent packet` binds these `next` commands,
   including directory creation, to the selected repository root.
   Its optional `next.analysis_outcome_command` writes the static outcome
   consumed by the receipt, between the after snapshot and verify steps.
@@ -13953,6 +13953,12 @@ Field contract:
   their repository-local recipe; they are not a complete foreign-CWD receipt
   workflow. GapRecord and editor routes are unchanged. Static receipt
   completeness does not establish project-test execution.
+  The standalone manual recipe assumes a fresh workflow without retained
+  durable repair attempts. If a durable workflow already exists, use its
+  published exact `--attempt` continuation; the receipt validator retains its
+  existing attempt binding and can refuse an incompatible manual recipe.
+  Per-packet canonical/evidence receipt commands and portable bulk output are
+  outside this `packet.next` root-binding claim (#4000 remains open).
   A packet emitted by `agent repair --phase before` instead sets the manual
   snapshot, outcome, verify, and receipt fields to `null` and advertises
   `next.repair_after_command`. This selected-root command resumes the existing
