@@ -25,7 +25,7 @@ The config starts one client per resolved root. Run it only on a Neovim build th
 
 ## Measured compatibility limit
 
-An isolated Windows rehearsal with unmodified Neovim **v0.12.5** and the installed
+An isolated headless Windows rehearsal with unmodified Neovim **v0.12.5** and the installed
 rolling RIPR commit `4cdad1ace9c79c0a7c4c136081db560e3172969d` initialized successfully,
 but an explicit refresh did not display a diagnostic in the open document within
 60 seconds. The server returned a finding through workspace diagnostics. That
@@ -40,7 +40,7 @@ qualify the configuration defaults below.
 [The retained failed run](https://github.com/EffortlessMetrics/ripr-swarm/issues/1630#issuecomment-5877217051)
 and [standard document-pull discriminator](https://github.com/EffortlessMetrics/ripr-swarm/issues/1630#issuecomment-5877452052)
 are separate evidence. Bounded manual document pulls through the built-in handler
-displayed one diagnostic, related test information, hover and an advertised
+made one buffer diagnostic, related test information, hover and an advertised
 refresh action. This does not qualify automatic refresh, save/root-change or
 encoding parity, or a real-repository journey. The server bytes are a historical
 rolling rehearsal, not a final release candidate. This recipe remains a proof
