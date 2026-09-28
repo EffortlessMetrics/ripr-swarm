@@ -29,7 +29,8 @@ are scoped or reviewed.
   its paths relative to it. Repository-relative paths used to miss the
   member's files, so a tested change read as `no_static_path`.
 - In diff analysis, the generated-code skip limitation names up to three
-  skipped files and the conventions that matched them.
+  skipped files and lists the generated-code conventions and the
+  `[languages.rust] generated_file_patterns` setting.
 - An empty `ripr check --diff` result now leads with its true cause. A config
   whose `[languages].enabled` leaves out `rust` records a typed
   `language_adapter_unavailable` limitation for the Rust files it skipped
