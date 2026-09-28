@@ -507,6 +507,11 @@ pub(super) fn imported_module_matches_owner(import: &PythonImport, owner: &Pytho
         .file_stem()
         .and_then(|stem| stem.to_str())
         .is_some_and(|stem| import.imported.rsplit('.').next() == Some(stem))
+        // `import humanize` / `import more_itertools as mi` binds a package
+        // whose `__init__.py` re-exports the owner (`reexports.rs`). The full
+        // dotted package path must match; the caller still requires the
+        // owner's name through the alias (`mi.one(`).
+        || (import.source_module.is_empty() && owner.reexport_modules.contains(&import.imported))
 }
 
 /// The dotted module paths under which the owner file can be imported.
@@ -526,7 +531,7 @@ pub(super) fn imported_module_matches_owner(import: &PythonImport, owner: &Pytho
 /// projects that really write `from src.pricing.discounts import ...` still
 /// match. Each form is a complete module path compared by exact equality; no
 /// stem or suffix matching is introduced.
-fn owner_module_paths(file: &Path) -> Vec<String> {
+pub(super) fn owner_module_paths(file: &Path) -> Vec<String> {
     let normalized = normalized_path(file);
     let mut parts = normalized
         .split('/')
@@ -571,6 +576,9 @@ pub(super) fn import_source_module_matches_owner(
         return false;
     }
     owner_module_paths(&owner.file).contains(&import.source_module)
+        // `from humanize import naturaldelta`: the package re-exports the
+        // owner under its own name, so the package path identifies it too.
+        || (import.imported == owner.name && owner.reexport_modules.contains(&import.source_module))
 }
 
 /// Free-function module-identity evidence: a strong observing test imports the
