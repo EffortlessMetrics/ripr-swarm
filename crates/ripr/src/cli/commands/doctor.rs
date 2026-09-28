@@ -858,6 +858,16 @@ fn report_perl_preview(root: &Path) {
     // the managed `ripr-facts` subcommand. A binary that only answers
     // `--version` (for example the published perllsp LSP server) is reported
     // as found-but-incompatible, never as a working exporter.
+    if let Some(refused) = crate::config::load_for_root(root)
+        .ok()
+        .and_then(|config| config.perl().refused_executable().map(Path::to_path_buf))
+    {
+        println!(
+            "  executable: ignoring [perl].executable `{}` from ripr.toml (not run); set {}=1 to trust it",
+            refused.display(),
+            crate::config::PERL_EXECUTABLE_OPT_IN_ENV
+        );
+    }
     let exporter = probe_perl_exporter(root);
     for line in perl_exporter_lines(&exporter) {
         println!("  {line}");
@@ -955,6 +965,9 @@ fn probe_perl_exporter(root: &Path) -> PerlExporterProbe {
     let config = crate::config::load_for_root(root).ok();
     let timeout =
         std::time::Duration::from_millis(config.as_ref().map_or(30_000, |c| c.perl().timeout_ms()));
+    // `[perl].executable` from ripr.toml is only probed when the user opts
+    // in (see `PerlConfig::executable`); doctor is usually the first command
+    // run in a fresh clone and must not execute a repository-chosen program.
     let explicit = config
         .as_ref()
         .and_then(|c| c.perl().executable().map(|p| p.display().to_string()));
