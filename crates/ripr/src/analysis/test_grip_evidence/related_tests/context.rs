@@ -349,7 +349,10 @@ impl<'a> CompactGripContext<'a> {
             let mut by_line: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
             for (position, function) in facts.functions.iter().enumerate() {
                 if function.source_role.is_evidence_role() {
-                    by_line.entry(function.start_line).or_default().push(position);
+                    by_line
+                        .entry(function.start_line)
+                        .or_default()
+                        .push(position);
                 }
             }
             by_line

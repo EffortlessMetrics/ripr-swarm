@@ -1585,7 +1585,9 @@ mod tests {
             Some(MAX_OBSERVED_VALUES_PER_FINDING)
         );
         assert_eq!(
-            rendered_finding["assertion_texts"].as_object().map(|map| map.len()),
+            rendered_finding["assertion_texts"]
+                .as_object()
+                .map(|map| map.len()),
             Some(MAX_OBSERVED_VALUES_PER_FINDING)
         );
         assert_eq!(rendered_finding["observed_values_total"], 5_000);

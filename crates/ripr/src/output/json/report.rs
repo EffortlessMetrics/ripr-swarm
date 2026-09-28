@@ -598,11 +598,9 @@ fn finding_json_with_config_and_counts(
         &shared_text,
     );
     out.push_str(",\n");
-    if let Some(total) =
-        crate::output::observed_values::elided_observed_values_total(
-            &finding.activation.observed_values,
-        )
-    {
+    if let Some(total) = crate::output::observed_values::elided_observed_values_total(
+        &finding.activation.observed_values,
+    ) {
         number_field(out, indent + 1, "observed_values_total", total, true);
     }
     missing_discriminators_array_json(
