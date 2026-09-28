@@ -728,7 +728,9 @@ fn doctor_tool_command(tool: &str) -> std::process::Command {
         if let Some(shim) =
             resolve_windows_batch_shim(tool, &dirs, pathext.as_deref(), &|p| p.is_file())
         {
-            program = shim.into_os_string();
+            // A relative PATH entry was checked against this process's
+            // directory; pin that before a probe moves the child's cwd.
+            program = std::path::absolute(&shim).unwrap_or(shim).into_os_string();
         }
     }
     std::process::Command::new(program)

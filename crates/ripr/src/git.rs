@@ -117,6 +117,9 @@ pub(crate) fn run_git_output_with_deadline(
 /// separator `SetCurrentDirectoryW` appends).
 const WINDOWS_MAX_WORKING_DIRECTORY_UNITS: usize = 258;
 
+/// `ERROR_FILE_NOT_FOUND`: `CreateProcessW` could not find the program.
+const WINDOWS_ERROR_FILE_NOT_FOUND: i32 = 2;
+
 /// What a spawn failure message needs from a [`Command`] that the spawn
 /// consumes.
 struct SpawnSite {
@@ -128,7 +131,11 @@ impl SpawnSite {
     fn of(command: &Command) -> Self {
         Self {
             program: command.get_program().to_string_lossy().into_owned(),
-            working_directory: command.get_current_dir().map(Path::to_path_buf),
+            // Windows resolves a relative working directory against this
+            // process's directory, so the limit applies to the joined path.
+            working_directory: command
+                .get_current_dir()
+                .map(|dir| std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf())),
         }
     }
 
@@ -146,9 +153,13 @@ impl SpawnSite {
     }
 
     fn failure_message_on(&self, is_windows: bool, describe: &str, err: &std::io::Error) -> String {
+        // A missing program (ERROR_FILE_NOT_FOUND) is not a path-limit
+        // failure: moving the checkout would not install git.
+        let program_missing = err.raw_os_error() == Some(WINDOWS_ERROR_FILE_NOT_FOUND);
         match self
             .working_directory
             .as_deref()
+            .filter(|_| !program_missing)
             .and_then(|dir| windows_overlong_working_directory(is_windows, dir))
         {
             Some(units) => format!(
@@ -715,6 +726,20 @@ mod tests {
     }
 
     #[test]
+    fn spawn_site_measures_a_relative_root_joined_to_the_process_directory() -> Result<(), String> {
+        let mut command = Command::new("git");
+        command.current_dir("relative-root");
+        let site = SpawnSite::of(&command);
+        let cwd = std::env::current_dir().map_err(|err| err.to_string())?;
+        assert_eq!(
+            site.working_directory,
+            Some(cwd.join("relative-root")),
+            "a short relative spelling can still name a directory past MAX_PATH"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn spawn_failure_names_the_windows_path_limit_and_remedy_for_overlong_roots() {
         let root = windows_dir_of_units(387);
         let site = SpawnSite {
@@ -742,6 +767,12 @@ mod tests {
             site.failure_message_on(false, &describe, &err),
             format!("failed to run {describe}: {err}"),
             "other platforms keep the established spawn-failure text"
+        );
+        let missing_git = std::io::Error::from_raw_os_error(2);
+        assert_eq!(
+            site.failure_message_on(true, &describe, &missing_git),
+            format!("failed to run {describe}: {missing_git}"),
+            "a missing git is not a path-limit failure, however long the root"
         );
         let short = SpawnSite {
             program: "git".to_string(),
