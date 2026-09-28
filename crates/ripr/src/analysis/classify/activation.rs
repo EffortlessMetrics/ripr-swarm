@@ -970,8 +970,6 @@ fn constructed_field_name(expression: &str) -> Option<&str> {
     (starts_ident && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')).then_some(name)
 }
 
-/// Whether `text` contains the field read `read` (`.retries`) not followed by
-/// more identifier characters (`.retries_left` is a different field).
 /// Whether `assertion` reads `read` (`.field`) on a value the test got from
 /// calling `owner`: a direct `owner(..).field` chain, or a receiver the test
 /// body binds with `let [mut] recv = ..owner(..)..;`.
@@ -988,13 +986,45 @@ fn reads_owner_result_field(body: &str, assertion: &str, read: &str, owner: &str
         }
         let before = &assertion[..start];
         if before.ends_with(')') {
-            return assertion.contains(&owner_call);
+            return call_before_is_owner(before, owner);
         }
         let receiver_start = before
             .rfind(|ch: char| !is_ident(ch))
             .map_or(0, |index| index + 1);
         let receiver = &before[receiver_start..];
         !receiver.is_empty() && binds_from_owner_call(body, receiver, &owner_call)
+    })
+}
+
+/// Whether the call whose `)` ends `before` is a call of `owner`: the
+/// matching `(` is preceded by `owner` as a whole identifier
+/// (`default_config()`, `Config::default_config(..)`), not merely an owner
+/// call somewhere else in the assertion (`other().retries` beside
+/// `default_config()`).
+fn call_before_is_owner(before: &str, owner: &str) -> bool {
+    let mut depth = 0usize;
+    let mut open = None;
+    for (index, ch) in before.char_indices().rev() {
+        match ch {
+            ')' => depth += 1,
+            '(' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    open = Some(index);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(callee) = open.map(|index| &before[..index]) else {
+        return false;
+    };
+    callee.strip_suffix(owner).is_some_and(|prefix| {
+        !prefix
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
     })
 }
 
@@ -1803,6 +1833,16 @@ mod tests {
         assert!(!reads("assert_eq!(fallback.retries, 3);"));
         assert!(!reads("assert_eq!(cfg.retries_left, 3);"));
         assert!(!reads("assert_eq!(Config::fallback().retries, 3);"));
+        // #4428 review: the read must sit on the owner call itself, not on
+        // another call in the same assertion.
+        assert!(!reads(
+            "assert_eq!(other().retries, default_config().timeout_secs);"
+        ));
+        assert!(!reads("assert_eq!(my_default_config().retries, 3);"));
+        assert!(reads(
+            "assert_eq!(Config::default_config(\"x\").retries, 3);"
+        ));
+        assert!(reads("assert_eq!(default_config(load(1)).retries, 3);"));
         assert!(!reads_owner_result_field(
             "let e = make();",
             "assert!(e.downcast_ref::<Box<dyn E>>().is_some());",

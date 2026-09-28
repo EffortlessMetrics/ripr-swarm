@@ -147,6 +147,8 @@ fn new_def_header_shapes() {
         "def f(a, b):",
         "def loyalty_price(amount: int, years: int) -> int:",
         "    async def f(self, *args, **kwargs):",
+        "def f(a: list[int] | None, *rest: str, **kw: typing.Any) -> dict[str, int]:",
+        "def f(a: \"Forward\") -> tuple[int, ...]:",
     ] {
         assert!(
             is_new_def_header_without_defaults(header),
@@ -159,6 +161,10 @@ fn new_def_header_shapes() {
         "def f(*, key=None):",
         "def f(",
         "if x >= 5:",
+        // Annotations run at definition time without postponed evaluation.
+        "def f(x: record_event()):",
+        "def f(x) -> make_type():",
+        "def f(*args: (lambda: int)()):",
     ] {
         assert!(
             !is_new_def_header_without_defaults(behavior),
