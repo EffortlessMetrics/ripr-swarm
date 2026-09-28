@@ -638,7 +638,12 @@ fn targeted_test_outcome_movement(
         related_test_delta,
     };
     let evidence_delta = targeted_outcome_evidence_delta(before, after, &delta_inputs);
-    let no_movement_reason = no_movement_reason(direction, &evidence_delta, &evidence_source);
+    let no_movement_reason = no_movement_reason(
+        direction,
+        &evidence_delta,
+        &evidence_source,
+        values_comparable,
+    );
     TargetedTestOutcomeMovement {
         seam_id: before.seam_id.clone(),
         seam_kind: before.seam_kind.clone(),
@@ -1104,9 +1109,20 @@ fn no_movement_reason(
     direction: &str,
     evidence_delta: &[String],
     evidence_source: &str,
+    values_comparable: bool,
 ) -> Option<String> {
-    (direction == "unchanged" && evidence_delta.is_empty())
-        .then(|| format!("grip class and {evidence_source} evidence were unchanged"))
+    if direction != "unchanged" || !evidence_delta.is_empty() {
+        return None;
+    }
+    // A capped value list hides value-level movement, so it cannot vouch
+    // that the evidence was unchanged.
+    Some(if values_comparable {
+        format!("grip class and {evidence_source} evidence were unchanged")
+    } else {
+        format!(
+            "grip class and {evidence_source} evidence were unchanged; observed-value movement is unknown because a value list was capped"
+        )
+    })
 }
 
 /// One human line for a stage whose evidence changed. A stage can change
@@ -1781,6 +1797,24 @@ mod tests {
         assert_eq!(
             report.moved[0].observed_values_removed,
             vec!["b".to_string()]
+        );
+
+        // Unchanged class with a capped list must not claim unchanged evidence.
+        let capped = check_json_with_values("weakly_exposed", &["a", "b"], Some(40));
+        let report = targeted_test_outcome_report_from_json(
+            &capped,
+            &capped,
+            "before-check.json".to_string(),
+            "after-check.json".to_string(),
+        )?;
+        assert_eq!(report.unchanged.len(), 1);
+        assert!(
+            report.unchanged[0]
+                .no_movement_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("observed-value movement is unknown")),
+            "{:?}",
+            report.unchanged[0].no_movement_reason
         );
         Ok(())
     }
