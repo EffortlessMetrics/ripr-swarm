@@ -2975,10 +2975,11 @@ mod tests {
         let source = fixture.root.join("tests/pricing.rs");
         let link = fixture.root.join("tests/pricing-link.rs");
         fs::hard_link(&source, &link).map_err(|err| format!("create writable hard link: {err}"))?;
-        if writable_regular_file_authority(&source).is_ok() {
-            return Err("winsafe authority accepted a multiply linked file".to_string());
+        match writable_regular_file_authority(&source) {
+            Err(error) if error.contains("has 2 hard links") => Ok(()),
+            Err(error) => Err(format!("unexpected winsafe authority error: {error}")),
+            Ok(_) => Err("winsafe authority accepted a multiply linked file".to_string()),
         }
-        Ok(())
     }
 
     #[cfg(windows)]
