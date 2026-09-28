@@ -15,6 +15,7 @@ use crate::domain::{
     StageEvidence, ValueFact,
 };
 use crate::output::next_step::reconcile_next_step;
+use crate::output::observed_values::{bounded_observed_values, elided_observed_values_total};
 use crate::output::path::display_path_text;
 use crate::output::perl_preview_card::perl_preview_card_json;
 use crate::output::preview_actionability::{
@@ -437,6 +438,9 @@ fn finding_properties(finding: &Finding, severity: ConfigSeverity) -> Value {
         "observed_values".to_string(),
         value_facts(&finding.activation.observed_values),
     );
+    if let Some(total) = elided_observed_values_total(&finding.activation.observed_values) {
+        properties.insert("observed_values_total".to_string(), json!(total));
+    }
     properties.insert(
         "missing_discriminators".to_string(),
         missing_discriminators(&finding.activation.missing_discriminators),
@@ -625,7 +629,7 @@ fn non_empty(value: &str) -> Option<&str> {
 fn seam_properties(entry: &ClassifiedSeam, severity: ConfigSeverity) -> Value {
     let seam = &entry.seam;
     let evidence = &entry.evidence;
-    json!({
+    let mut properties = json!({
         "tool": "ripr",
         "kind": "seam",
         "seam_id": seam.id().as_str(),
@@ -662,7 +666,14 @@ fn seam_properties(entry: &ClassifiedSeam, severity: ConfigSeverity) -> Value {
             .collect::<Vec<_>>(),
         "observed_values": value_facts(&evidence.observed_values),
         "missing_discriminators": missing_discriminators(&evidence.missing_discriminators)
-    })
+    });
+    if let (Some(total), Some(object)) = (
+        elided_observed_values_total(&evidence.observed_values),
+        properties.as_object_mut(),
+    ) {
+        object.insert("observed_values_total".to_string(), json!(total));
+    }
+    properties
 }
 
 fn finding_ripr_properties(finding: &Finding) -> Value {
@@ -694,10 +705,12 @@ fn related_test_properties(test: &RelatedTest) -> Value {
     })
 }
 
+/// The bounded observed-value projection (`output::observed_values`); the
+/// call site discloses `observed_values_total` when the cap drops values.
 fn value_facts(values: &[ValueFact]) -> Value {
     json!(
-        values
-            .iter()
+        bounded_observed_values(values)
+            .into_iter()
             .map(|value| {
                 json!({
                     "line": value.line,
