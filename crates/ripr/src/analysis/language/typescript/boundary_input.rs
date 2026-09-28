@@ -23,7 +23,8 @@
 //!   statement opens with the comparison (`if (`, `return`, or
 //!   `const|let|var NAME =` directly before its first side). A helper call
 //!   before the line that throws only for the boundary value is a static
-//!   limit this does not see.
+//!   limit this does not see, as is any earlier statement that throws for
+//!   the boundary value.
 //!
 //! The module rules run on the oxc token stream, so comments, strings,
 //! templates, and regular expressions never pass for code there; the changed
@@ -486,8 +487,8 @@ fn parameter_is_read_only(source: &str, tokens: &[Tok], request: &ModuleRequest)
 /// skip the line (`return`, `throw`, `break`, `continue`, `yield`, or an
 /// enclosing `if`/loop/`switch`/`try`/callback block). An early guard such
 /// as `if (amount === 5000) return 0;` would stop the derived input before
-/// the changed comparison, so it fails closed. Expression-bodied arrows are
-/// not admitted.
+/// the changed comparison, so it fails closed. Expression-bodied and curried
+/// arrows, returned functions, and generators are not admitted.
 fn changed_line_runs_on_every_call(source: &str, tokens: &[Tok], request: &ModuleRequest) -> bool {
     let line_starts: Vec<usize> = std::iter::once(0)
         .chain(source.match_indices('\n').map(|(at, _)| at + 1))
@@ -523,6 +524,38 @@ fn changed_line_runs_on_every_call(source: &str, tokens: &[Tok], request: &Modul
     // block comment, or a workspace that does not match the diff, fails.
     let source_line = source.get(line_start..line_end).unwrap_or("");
     if !comparison_has_whole_sides(source_line, &request.parameter, &request.operand) {
+        return false;
+    }
+    // Generators run no body code until iterated.
+    if tokens[..open]
+        .iter()
+        .any(|token| token.start >= span_start && token.kind == Kind::Star)
+    {
+        return false;
+    }
+    // Between the parameter list and the body `{` only a plain return type
+    // and the owner's own `=>` may appear; a curried arrow (`=> () => {`) or
+    // a returned `function` body is not the owner's body.
+    let Some(body_open) = (close + 1..tokens.len()).find(|&at| tokens[at].kind == Kind::LCurly)
+    else {
+        return false;
+    };
+    let head = &tokens[close + 1..body_open];
+    let plain_head = head.iter().enumerate().all(|(at, token)| match token.kind {
+        Kind::Arrow => at + 1 == head.len(),
+        Kind::Colon
+        | Kind::Dot
+        | Kind::LAngle
+        | Kind::RAngle
+        | Kind::LBrack
+        | Kind::RBrack
+        | Kind::Pipe
+        | Kind::Amp
+        | Kind::Comma
+        | Kind::Question => true,
+        kind => kind.is_identifier_name() && kind != Kind::Function && kind != Kind::Async,
+    });
+    if !plain_head {
         return false;
     }
     let body = &tokens[close + 1..];

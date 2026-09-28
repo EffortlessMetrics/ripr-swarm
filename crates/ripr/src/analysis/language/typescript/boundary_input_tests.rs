@@ -667,3 +667,60 @@ fn changed_line_inside_a_block_comment_stays_unresolved() {
         Some(9000)
     );
 }
+
+/// Third review on #4429: the stacked `{` must be the owner's own body. A
+/// curried arrow or a returned function runs its body only when the result
+/// is called, and a generator only when iterated.
+#[test]
+fn nested_function_bodies_and_generators_stay_unresolved() {
+    let changed = "  if (amount > 5000) {";
+    let tail = "\n    return 0;\n  }\n  return 500;\n";
+    for (label, head, close) in [
+        (
+            "curried arrow",
+            "export const shipping = (amount: number) => (): number => {",
+            "};",
+        ),
+        (
+            "returned function",
+            "export const shipping = (amount: number) => function () {",
+            "};",
+        ),
+        (
+            "returned async arrow",
+            "export const shipping = (amount: number) => async () => {",
+            "};",
+        ),
+        (
+            "generator",
+            "export function* shipping(amount: number) {",
+            "}",
+        ),
+    ] {
+        let source = format!("{head}\n{changed}{tail}{close}\n");
+        let owners = extract_owners(Path::new("src/shipping.ts"), &source);
+        let owner = owners.iter().find(|owner| owner.name == "shipping");
+        assert!(owner.is_some(), "setup: {label} owner must be extracted");
+        assert_eq!(
+            owner.and_then(|owner| ts_boundary_input_in_source(&source, 2, changed, owner)),
+            None,
+            "{label}: {source}"
+        );
+    }
+    // Controls: a block-bodied arrow owner and a plain return type derive.
+    for head in [
+        "export const shipping = (amount: number): number => {",
+        "export function shipping(amount: number): Promise<number> | number {",
+    ] {
+        let source = format!("{head}\n{changed}{tail}}}\n");
+        let owners = extract_owners(Path::new("src/shipping.ts"), &source);
+        let owner = owners.iter().find(|owner| owner.name == "shipping");
+        assert_eq!(
+            owner
+                .and_then(|owner| ts_boundary_input_in_source(&source, 2, changed, owner))
+                .map(|input| input.value),
+            Some(5000),
+            "control: {source}"
+        );
+    }
+}
