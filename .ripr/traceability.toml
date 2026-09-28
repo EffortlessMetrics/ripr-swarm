@@ -425,7 +425,12 @@ tests = [
   "editors/vscode/test/suite/extension.test.ts::status bar reports disabled configuration without starting server",
   "editors/vscode/test/suite/extension.test.ts::status bar reports missing workspace without starting server",
   "editors/vscode/test/suite/extension.test.ts::status bar reports unavailable server without hanging on modal UI",
-  "editors/vscode/test/suite/extension.test.ts::status bar reports stale saved-workspace analysis after Rust edits"
+  "editors/vscode/test/suite/extension.test.ts::status bar reports stale saved-workspace analysis after Rust edits",
+  "editors/vscode/test/suite/extension.test.ts::typed succeeded status discloses limited run statuses instead of completed",
+  "editors/vscode/test/suite/extension.test.ts::typed succeeded status discloses deferred seam evidence instead of completed",
+  "editors/vscode/test/suite/extension.test.ts::limited run statuses do not gate repair packet copies as stale",
+  "editors/vscode/test/suite/extension.test.ts::typed succeeded status keeps healthy presentation for full and unknown run statuses",
+  "editors/vscode/test/suite/extension.test.ts::dirty routed files compose ahead of the deferred seam disclosure"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -982,7 +987,12 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::init_ci_github_writes_non_blocking_report_workflow",
   "crates/ripr/tests/cli_smoke.rs::agent_receipt_writes_one_seam_handoff_json",
   "crates/ripr/tests/cli_smoke.rs::agent_start_writes_source_edit_free_workflow_packet",
-  "crates/ripr/src/lsp/tests.rs::agent_loop_command_payloads_stay_workspace_relative_for_platform_roots",
+  "crates/ripr/src/lsp/tests.rs::agent_loop_command_payloads_stay_root_anchored_for_platform_roots",
+  "crates/ripr/src/agent/loop_commands.rs::tests::anchored_redirect_target_roots_relative_outputs_at_root",
+  "crates/ripr/src/agent/loop_commands.rs::tests::bound_roots_render_absolute_and_relative_roots_stay_portable",
+  "crates/ripr/src/agent/loop_commands.rs::tests::bound_root_keeps_a_unix_backslash_directory_name",
+  "crates/ripr/src/app/agent_status.rs::tests::pilot_select_command_binds_raw_and_bound_roots_once",
+  "crates/ripr/tests/generated_review_workflow.rs::generated_status_command_runs_from_a_foreign_working_directory",
   "xtask/src/reports/operator.rs::tests::operator_cockpit_matches_editor_agent_loop_fixture"
 ]
 fixtures = [
@@ -2193,7 +2203,6 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/ambient_declaration_tests.rs::declaration_file_change_produces_no_probe_but_is_counted",
   "crates/ripr/src/analysis/language/typescript/ambient_declaration_tests.rs::declare_line_in_source_file_is_ignored_but_runtime_line_is_probed",
   "crates/ripr/src/analysis/language/typescript/ambient_declaration_tests.rs::only_parsed_ambient_declarations_are_skipped",
-  "crates/ripr/src/analysis/language/typescript/related_tests.rs::module_extension_tests",
   "crates/ripr/src/analysis/language/typescript/related_tests.rs::module_extension_tests::strip_typescript_module_extension_covers_every_routed_suffix",
   "crates/ripr/src/analysis/repair_route.rs::tests::modern_ts_related_tests_keep_the_repair_packet_fail_closed",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::navigation_only_external_target_labels_modern_ts_js_extensions",
@@ -3688,6 +3697,9 @@ tests = [
   "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::persisted_legacy_ledger_parse_enriches_diagnostic_payload_specs",
   "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::regeneration_specs_payload_surfaces_serialization_failures",
   "crates/ripr/src/agent/command_specs.rs::tests::first_pr_report_routes_recover_exact_shapes_and_reject_deviations",
+  "crates/ripr/src/agent/command_specs.rs::tests::anchored_gap_ledger_displays_recover_root_relative_argv",
+  "crates/ripr/src/output/gap_decision_ledger.rs::tests::parse_keeps_a_display_bound_to_a_foreign_root_legacy_string_only",
+  "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::load_gap_ledger_records_binds_typed_routes_to_the_workspace_root",
   "crates/ripr/src/lsp/backend.rs::gap_record_context_tests::collect_context_packet_for_gap_id_reads_explicit_ledger",
   "crates/ripr/src/lsp/backend.rs::gap_record_context_tests::collect_context_packet_for_gap_id_matches_canonical_gap_id",
   "crates/ripr/src/cli/commands.rs::tests::first_action_cli_writes_gap_record_report",
@@ -3996,6 +4008,7 @@ tests = [
   "crates/ripr/src/cli/help.rs",
   "crates/ripr/tests/cli_smoke.rs::first_pr_cli_writes_start_here_packet",
   "crates/ripr/src/output/first_pr.rs::tests::python_preview_gap_ledger_is_selected_for_start_here",
+  "crates/ripr/tests/generated_review_workflow.rs::generated_first_pr_artifact_commands_run_from_a_foreign_working_directory",
   "xtask/src/reports/first_pr.rs",
   "xtask/src/reports/release.rs",
   "xtask/src/main.rs",
@@ -7142,6 +7155,9 @@ tests = [
   "crates/ripr/src/domain/command_spec.rs::tests::invalid_paths_and_program_values_fail_closed",
   "crates/ripr/src/domain/command_spec.rs::tests::shell_and_manual_modes_remain_explicit",
   "crates/ripr/src/domain/command_spec.rs::tests::mismatched_authority_is_rejected",
+  "crates/ripr/src/domain/command_spec.rs::tests::same_route_ignores_only_the_display",
+  "crates/ripr/src/agent/command_specs.rs::tests::anchored_gap_ledger_displays_recover_root_relative_argv",
+  "crates/ripr/src/agent/command_specs.rs::tests::backslash_root_display_recovers_its_typed_route",
   "crates/ripr/tests/verification_result.rs::verification_result_round_trips_and_validates_against_exact_context",
   "crates/ripr/src/domain/verification_result.rs::tests::wrong_root_and_command_digest_fail_closed",
   "crates/ripr/src/domain/verification_result.rs::tests::malformed_commitments_and_heads_fail_closed",

@@ -563,6 +563,33 @@ are scoped or reviewed.
   CLI adapter and piped, redirected, or captured stdin — including library
   calls into the analysis API — stay silent and byte-identical
   ([#4319](https://github.com/EffortlessMetrics/ripr-swarm/issues/4319)).
+- Every flag `ripr` parses is now documented on a surface a reader scans,
+  and mistyped flags can be suggested from anywhere the command's help
+  documents them. An audit against the parsers found parsed-but-undocumented
+  flags (check's `--perl-facts`, context's `--finding`, agent status's
+  `--out`) that were invisible to `ripr <command> --help` and could never be
+  proposed by a typo suggestion; those help entries now exist. Unknown-flag
+  suggestions mine the same surfaces the flag/help parity gate checks — the
+  Options list plus the command's own `Usage:` line — so a flag documented
+  only in usage syntax (explain's `--base`, context's `--at`) is suggestible
+  too: `ripr explain --bas x` now suggests `--base`. The #2342 parity gate is
+  revived as a two-directional test: for every command that ships a help
+  body, each parsed flag must be documented and each documented flag must be
+  parsed, with `--help` and named hidden aliases as the only exceptions
+  ([#4317](https://github.com/EffortlessMetrics/ripr-swarm/issues/4317)).
+
+- The VS Code download test no longer commits a localhost TLS private key.
+  The suite generates a one-day `127.0.0.1` certificate when it starts.
+  The removed pair was self-signed for that name only
+  ([#4143](https://github.com/EffortlessMetrics/ripr-swarm/issues/4143)).
+
+- Python pytest and unittest verify commands single-quote a test path that
+  is not a plain relative path, matching the TypeScript command quoter.
+  A name containing a shell metacharacter stays inside quotes in the command
+  text. The stored test path and node id stay unquoted, and a path made only
+  of letters, digits, `.`, `_`, `/`, and `-` is unchanged
+  ([#4211](https://github.com/EffortlessMetrics/ripr-swarm/issues/4211)).
+
 - `ripr outcome` no longer reports zero movement for check-output snapshots
   whose findings carry no canonical gap id, such as Rust `ripr check --json`.
   It refuses the pair, points Rust users to `ripr check --format
@@ -1129,6 +1156,17 @@ are scoped or reviewed.
   `--base`
   ([#4285](https://github.com/EffortlessMetrics/ripr-swarm/issues/4285),
   [#4290](https://github.com/EffortlessMetrics/ripr-swarm/pull/4290)).
+- Generated `first-pr`, first-useful-action, PR-review front-panel and
+  agent workflow commands now carry the absolute selected root in `--root`
+  (and anchor their `--repo-exposure` and redirect paths to it), so a
+  copied command analyzes the same repository from any working directory
+  instead of re-resolving a relative root such as `.` against wherever it
+  is pasted. A user-authored `--root .` keeps its ordinary meaning, and
+  typed `command_specs` keep the portable `--root .` with `cwd` at the
+  repository root
+  ([#3999](https://github.com/EffortlessMetrics/ripr-swarm/issues/3999),
+  [#4000](https://github.com/EffortlessMetrics/ripr-swarm/issues/4000),
+  [#4287](https://github.com/EffortlessMetrics/ripr-swarm/pull/4287)).
 
 ### Docs
 
