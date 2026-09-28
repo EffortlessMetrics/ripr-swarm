@@ -15,7 +15,7 @@ use crate::domain::{
     StageEvidence, ValueFact,
 };
 use crate::output::next_step::reconcile_next_step;
-use crate::output::path::display_path_text;
+use crate::output::path::{display_path_text, repository_display_path};
 use crate::output::perl_preview_card::perl_preview_card_json;
 use crate::output::preview_actionability::{
     preview_actionability_for, preview_actionability_json_value,
@@ -52,7 +52,7 @@ pub(crate) fn render_findings_sarif(
         // evidence and unresolved subjects stay visible on the check JSON
         // and human surfaces instead of becoming annotation obligations.
         .filter(|finding| finding.is_candidate_actionable())
-        .filter_map(|finding| finding_result(finding, config, suppressions, &today))
+        .filter_map(|finding| finding_result(&output.root, finding, config, suppressions, &today))
         .collect::<Vec<_>>();
     sarif_document("finding", rules, results, output.analysis_outcome.as_ref())
 }
@@ -188,6 +188,7 @@ fn json_pretty(value: Value) -> String {
 }
 
 fn finding_result(
+    root: &Path,
     finding: &Finding,
     config: &RiprConfig,
     suppressions: &[SuppressionEntry],
@@ -196,7 +197,10 @@ fn finding_result(
     let severity = config.severity().for_exposure(&finding.class);
     let level = sarif_level(severity)?;
     let rule_id = finding_rule_id(&finding.class);
-    let file = normalize_path(&finding.probe.location.file);
+    // The location and fingerprints must not move with `--root` spelling:
+    // an absolute root would otherwise leak the checkout path into the uri
+    // and change every fingerprint between a local and a CI run.
+    let file = repository_display_path(root, &finding.probe.location.file);
     let line = finding.probe.location.line;
     let mut result = Map::new();
     result.insert("ruleId".to_string(), json!(rule_id));
@@ -906,6 +910,34 @@ mod tests {
             result["partialFingerprints"]["riprFingerprintV1"],
             "ripr.finding.weakly_exposed|finding:discount|probe:src/pricing.rs:88:predicate|src/pricing.rs|88"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn sarif_location_and_fingerprints_ignore_root_spelling() -> Result<(), String> {
+        // Determinism: a finding rendered under `--root .` and under the same
+        // checkout's absolute path must carry identical uri and fingerprints.
+        let absolute_root = std::env::current_dir()
+            .map_err(|error| error.to_string())?
+            .join("repo");
+        let mut rendered = Vec::new();
+        for (root, file) in [
+            (PathBuf::from("."), PathBuf::from("./src/pricing.rs")),
+            (absolute_root.clone(), absolute_root.join("src/pricing.rs")),
+        ] {
+            let mut output = sample_output();
+            output.root = root;
+            output.findings[0].probe.location.file = file;
+            let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+            let result = first_result(&sarif)?.clone();
+            rendered.push((
+                result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"].clone(),
+                result["partialFingerprints"].clone(),
+                result["fingerprints"].clone(),
+            ));
+        }
+        assert_eq!(rendered[0], rendered[1]);
+        assert_eq!(rendered[0].0, "src/pricing.rs");
         Ok(())
     }
 
