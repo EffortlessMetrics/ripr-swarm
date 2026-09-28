@@ -864,7 +864,14 @@ ripr init --ci github
 
 Copy the generated file, not a workflow from this page. Run
 `ripr init --ci github --dry-run` to print it without writing anything. It
-uploads the pilot, report, and agent artifact directories. The official GitHub
+uploads the pilot, report, and agent artifact directories.
+
+The generated workflow installs the exact `ripr` version that generated it,
+because its steps use that version's commands and flags. To upgrade, install
+the newer `ripr` and compare its `ripr init --ci github --dry-run` output with
+the committed file. On pull requests the workflow checks out the PR head
+commit, not GitHub's `refs/pull/N/merge` commit, so annotation and review
+comment lines match the lines in the PR diff after the base branch moves. The official GitHub
 SARIF upload documentation uses `github/codeql-action/upload-sarif@v4`; keep
 the RIPR job, artifact upload, and optional SARIF steps advisory until the
 repository has chosen a baseline policy.
