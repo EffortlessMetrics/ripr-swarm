@@ -11,10 +11,10 @@ are scoped or reviewed.
 
 ### Fixed
 
-- `ripr check` is about a third faster. The same-name-import gate re-masked
-  every related test file's source for every probe; one scan per file now
-  serves the whole run. On a ripr commit, a warm check went from 13.5 s to
-  8.8 s and a cold one from 15.3 s to 11.0 s, with byte-identical JSON.
+- `ripr check` spends less time rescanning test files. The same-name-import
+  gate re-masked every related test file's source for every probe; one scan
+  per file now serves the whole run. On a ripr commit, a warm check went from
+  8.6 s to 6.6 s with byte-identical JSON.
 - LSP: opening a second repository in the same Helix session no longer stops
   ripr for the first. Helix adds the new repository as a workspace folder to
   the running server, which made the folder set ambiguous and stopped
