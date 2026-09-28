@@ -11,6 +11,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Linux server archives, which the editor extension downloads, are built on
+  Ubuntu 22.04 and load on glibc 2.35 or newer. The 0.10.0 Linux archives were
+  built on Ubuntu 24.04 and failed on Ubuntu 22.04 and Debian 12 with
+  `GLIBC_2.39 not found`. Server qualification now builds with `--locked` and
+  fails a Linux binary that needs a glibc newer than 2.35.
+
 - LSP fallback diagnostics explain their static classification and point to
   hover evidence without promising an unavailable clipboard action or repair
   route. Missing-path guidance remains explicitly static (#4328).

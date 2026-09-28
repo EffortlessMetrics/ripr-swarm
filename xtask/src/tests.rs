@@ -9618,6 +9618,12 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             "ruleset_id",
             "--arg repository \"${REPOSITORY}\"",
             "release_assets_created: false",
+            "cargo build --locked -p ripr --release",
+            "os: ubuntu-22.04\n",
+            "os: ubuntu-22.04-arm\n",
+            "GLIBC_FLOOR: \"2.35\"",
+            "sed -n '/^Version needs section/,/^Version .* section/p'",
+            "if [ \"${highest}\" != \"${GLIBC_FLOOR}\" ]; then",
         ] {
             if !candidate.contains(marker) {
                 return Err(format!(
@@ -9697,6 +9703,22 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         (
             "authenticated API",
             workflow.replacen("curl --silent --show-error", "gh api", 1),
+        ),
+        (
+            "unlocked server build",
+            workflow.replacen("cargo build --locked -p ripr", "cargo build -p ripr", 1),
+        ),
+        (
+            "newer glibc runner",
+            workflow.replacen("os: ubuntu-22.04\n", "os: ubuntu-latest\n", 1),
+        ),
+        (
+            "newer arm glibc runner",
+            workflow.replacen("os: ubuntu-22.04-arm\n", "os: ubuntu-24.04-arm\n", 1),
+        ),
+        (
+            "raised glibc floor",
+            workflow.replacen("GLIBC_FLOOR: \"2.35\"", "GLIBC_FLOOR: \"2.39\"", 1),
         ),
         (
             "token credential",
