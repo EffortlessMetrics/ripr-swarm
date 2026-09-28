@@ -152,8 +152,8 @@ are scoped or reviewed.
   and check at the release sync.
 - `RIPR_GIT_TIMEOUT` with a non-numeric or out-of-range value now fails
   closed (exit 2) naming the variable and the value, like `--git-timeout` and
-  every other `RIPR_*` override. It used to keep the default deadline silently
-  (#4374).
+  the `RIPR_PARTIAL_*_BUDGET` overrides. It used to keep the default deadline
+  silently (#4374).
 
 ### Added
 
