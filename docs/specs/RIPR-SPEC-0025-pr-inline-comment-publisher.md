@@ -169,6 +169,7 @@ Skip reasons:
 - `summary_only`
 - `suppressed`
 - `cap_reached`
+- `comment_body_too_large`
 - `unchanged_tests`
 - `not_publishable`
 - `already_current`
