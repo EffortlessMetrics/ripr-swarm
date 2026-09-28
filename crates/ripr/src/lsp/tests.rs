@@ -27,8 +27,8 @@ use super::refresh_scheduler::{
     RefreshAttemptOutcome, RefreshDecision, RefreshReason, RefreshRequest, RefreshScope,
 };
 use super::state::{
-    AnalysisAttemptState, AnalysisFailureKind, AnalysisSnapshot, DocumentStore,
-    HarnessFactsOnSnapshot, RefreshMetadata, content_digest, format_duration,
+    AnalysisAttemptState, AnalysisFailureKind, AnalysisSnapshot, DocumentStalenessReason,
+    DocumentStore, HarnessFactsOnSnapshot, RefreshMetadata, content_digest, format_duration,
 };
 use super::uri::{encode_uri_path, file_uri_for_path, file_uris_match, path_from_file_uri};
 use super::{
@@ -9704,6 +9704,15 @@ fn workspace_folder_transitions_generic_client_keeps_selected_root_when_a_folder
                     serde_json::json!([workspace_folder_json(&root_b_uri)]),
                 )
                 .await?;
+            // Losing the kept root blocks analysis after startup; a generic
+            // client hears it on the standard channel.
+            let shown = read_lsp_request(&mut client.reader, "window/showMessage").await?;
+            let text = shown["params"]["message"].as_str().unwrap_or_default();
+            if !text.contains("analysis is stopped (root_changed)") {
+                return Err(format!(
+                    "a root block after startup must reach a generic client: {shown}"
+                ));
+            }
             let status = client
                 .poll_workspace_status_until("the remaining folder", |status| {
                     status["effective_root"].as_str() == Some(root_b_path.as_str())
@@ -16675,6 +16684,58 @@ async fn hover_without_evidence_names_an_unsaved_buffer() -> Result<(), String> 
     if clean.contains("paused") {
         return Err(format!(
             "clean document hover must not report a pause: {clean}"
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn hover_without_evidence_routes_an_unanalyzed_file_to_refresh() -> Result<(), String> {
+    // A document with no analyzed saved content (here a new file that is
+    // not on disk yet, so no refresh can record a baseline for it) is
+    // quarantined as `no_analyzed_saved_content`. Its hover must not reuse
+    // the divergent-buffer text: saving an unchanged file changes nothing.
+    let fixture = quarantine_fixture("unanalyzed-hover")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .initialize(initialize_params(
+            None,
+            Some(
+                file_uri_for_path(&fixture.root)
+                    .map_err(|err| format!("root URI failed: {err}"))?,
+            ),
+        ))
+        .await
+        .map_err(|err| format!("initialize failed: {err}"))?;
+    let new_file = file_uri_for_path(&fixture.root.join("src").join("new_file.rs"))
+        .map_err(|err| format!("new file URI failed: {err}"))?;
+    backend
+        .did_open(quarantine_open_params(&new_file, QUARANTINE_TEXT_A))
+        .await;
+    match backend.document_quarantine(&new_file) {
+        Some((_, DocumentStalenessReason::NoAnalyzedSavedContent)) => {}
+        other => {
+            return Err(format!(
+                "fixture must quarantine without an analyzed baseline, got {other:?}"
+            ));
+        }
+    }
+    let hover = backend
+        .hover(hover_params(new_file.clone(), 0, 4))
+        .await
+        .map_err(|err| format!("hover failed: {err}"))?;
+    let text = match hover.map(|hover| hover.contents) {
+        Some(HoverContents::Markup(markup)) => markup.value,
+        other => return Err(format!("expected a markdown hover, got {other:?}")),
+    };
+    if !text.contains("has not analyzed this file's saved content")
+        || !text.contains("ripr.refresh")
+        || text.contains("save the file to refresh")
+    {
+        return Err(format!(
+            "unanalyzed file hover must route to refresh, not the divergent-buffer text: {text}"
         ));
     }
     Ok(())

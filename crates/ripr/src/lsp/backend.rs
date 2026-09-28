@@ -1503,14 +1503,33 @@ impl Backend {
         self.client.show_message(MessageType::INFO, message).await;
     }
 
-    /// Warn once at startup when the workspace root blocks analysis. The
-    /// warning always goes to the log; clients without the `riprEditor`
+    /// Warn when a workspace-folder change moves the root into a blocked
+    /// state the client has not been told about. Startup is covered by
+    /// [`Self::disclose_blocked_startup_root`]; an unchanged blocked state is
+    /// not repeated.
+    async fn disclose_blocked_root_transition(&self, previous: &WorkspaceRootAuthority) {
+        let current = self.workspace_root_authority();
+        if current.state == previous.state
+            && current.candidate_roots == previous.candidate_roots
+            && current.detail == previous.detail
+        {
+            return;
+        }
+        self.disclose_blocked_root(&current).await;
+    }
+
+    /// Warn once at startup when the workspace root blocks analysis.
+    async fn disclose_blocked_startup_root(&self) {
+        let root = self.workspace_root_authority();
+        self.disclose_blocked_root(&root).await;
+    }
+
+    /// The warning always goes to the log; clients without the `riprEditor`
     /// integration also get `window/showMessage`, because `ripr/analysisStatus`
     /// is the only other place the blocked state appears and generic editors
     /// do not render it. The VS Code extension renders its own root state.
-    async fn disclose_blocked_startup_root(&self) {
-        let root = self.workspace_root_authority();
-        let Some(message) = blocked_root_message(&root) else {
+    async fn disclose_blocked_root(&self, root: &WorkspaceRootAuthority) {
+        let Some(message) = blocked_root_message(root) else {
             return;
         };
         let message = format!("ripr {message}");
@@ -2437,8 +2456,18 @@ impl Backend {
             ));
         }
         if let Some((_, reason)) = self.document_quarantine(uri) {
+            // Only a divergent buffer is fixed by saving; a file with no
+            // analyzed saved content needs an analysis run.
+            let route = match reason {
+                DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent => {
+                    "ripr analyzes saved files; save the file to refresh its evidence."
+                }
+                DocumentStalenessReason::NoAnalyzedSavedContent => {
+                    "ripr has not analyzed this file's saved content yet; its evidence appears after the next refresh (`ripr.refresh`) completes. A new file must be saved first."
+                }
+            };
             return markdown_hover(format!(
-                "**ripr** evidence for this file is paused: {}. ripr analyzes saved files; save the file to refresh its evidence.",
+                "**ripr** evidence for this file is paused: {}. {route}",
                 reason.description()
             ));
         }
@@ -2448,7 +2477,10 @@ impl Backend {
     /// The quarantine state of an open document, as `(path, reason)`.
     /// `None` means the document is unknown or clean: its buffer matches the
     /// saved content the committed snapshot analyzed.
-    fn document_quarantine(&self, uri: &Uri) -> Option<(PathBuf, DocumentStalenessReason)> {
+    pub(super) fn document_quarantine(
+        &self,
+        uri: &Uri,
+    ) -> Option<(PathBuf, DocumentStalenessReason)> {
         let documents = self.documents.lock().ok()?;
         let state = documents.state_for_uri(uri)?;
         let quarantine = state.quarantine.as_ref()?;
@@ -4173,7 +4205,9 @@ impl LanguageServer for Backend {
         let folder_set_epoch = match action {
             None => return,
             Some(Err(rejection)) => {
+                let previous = self.workspace_root_authority();
                 self.reject_workspace_folder_update(rejection).await;
+                self.disclose_blocked_root_transition(&previous).await;
                 return;
             }
             Some(Ok(folder_set_epoch)) => folder_set_epoch,
@@ -4230,8 +4264,10 @@ impl LanguageServer for Backend {
             None => WorkspaceRootAuthority::removed(self.effective_root()),
             Some(resolution) => Self::workspace_root_authority_for_resolution(resolution),
         };
+        let previous = self.workspace_root_authority();
         self.apply_workspace_folder_set_authority(authority, folder_set_epoch)
             .await;
+        self.disclose_blocked_root_transition(&previous).await;
         if let Some((root, others)) = kept_root {
             self.disclose_kept_root(&root, &others).await;
         }

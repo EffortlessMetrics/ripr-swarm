@@ -115,6 +115,12 @@ leaves the remaining single folder, which follows the direct-switch rule
 at `initialize`, is still `workspace_ambiguous`, and the VS Code integration
 (`riprEditor` advertised) keeps the ambiguous transition described above.
 
+Any accepted or rejected folder event that moves the authority into a new
+blocked state (`workspace_ambiguous`, `root_unavailable`, `root_removed`,
+`root_changed`) sends a `window/logMessage` warning naming the state; clients
+without `riprEditor` also get the same text as `window/showMessage`. An
+unchanged blocked state is not repeated.
+
 ### Epoch-bound reconciliation
 
 If the client answers `workspace/workspaceFolders`, the handler treats the
