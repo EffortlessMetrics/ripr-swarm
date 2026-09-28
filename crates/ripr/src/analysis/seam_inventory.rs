@@ -4063,8 +4063,14 @@ marker = "libtest_mimic::Trial"
         no_impact_layout(&root)?;
         let config = RiprConfig::default();
         let changed = vec![PathBuf::from("docs/notes.md")];
-        let cold =
-            inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], false)?;
+        let cold = inventory_diff_scoped_classified_seams_inner(
+            &root,
+            &config,
+            &changed,
+            &[],
+            false,
+            None,
+        )?;
         if cold.total_rust_files == 0 || cold.total_production_files == 0 {
             return Err(
                 "fingerprint consumer fixture must contain production Rust source".to_owned(),
@@ -4114,8 +4120,14 @@ marker = "libtest_mimic::Trial"
                 "valid-JSON mapping corruption must decline canonical fast path".to_owned(),
             );
         }
-        let recovered =
-            inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], true)?;
+        let recovered = inventory_diff_scoped_classified_seams_inner(
+            &root,
+            &config,
+            &changed,
+            &[],
+            true,
+            None,
+        )?;
         if recovered.workspace_cache_key != cold.workspace_cache_key
             || recovered.total_rust_files != cold.total_rust_files
             || recovered.total_production_files != cold.total_production_files
