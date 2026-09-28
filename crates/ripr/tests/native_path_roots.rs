@@ -81,19 +81,24 @@ fn long_relative_root() -> PathBuf {
 /// Build the fixture repository at `base/relative`: a base commit with a
 /// passing test that calls `gate_state`, then a committed production change.
 ///
-/// Git runs from the short base with `-C relative`, so a long root cannot fail
-/// fixture setup through the child's working directory; only ripr's own spawns
-/// see the long root as a working directory. `core.longpaths` is written into
-/// the fixture's config so ripr's git children inherit it, as a user with a
-/// long checkout on Windows must configure.
+/// Git commits the fixture at a short staging path before it moves to the
+/// requested root. Only ripr's own spawns see the long root as a working
+/// directory. `core.longpaths` is written into the fixture's config so ripr's
+/// git children inherit it, as a user with a long checkout on Windows must
+/// configure.
 fn build_fixture(base: &Path, relative: &Path) -> Result<PathBuf, String> {
     let root = base.join(relative);
-    fs::create_dir_all(root.join("src"))
-        .map_err(|err| format!("fixture setup: create src under {}: {err}", root.display()))?;
-    fs::create_dir_all(root.join("tests"))
+    let staging = base.join("fixture-staging");
+    fs::create_dir_all(staging.join("src")).map_err(|err| {
+        format!(
+            "fixture setup: create src under {}: {err}",
+            staging.display()
+        )
+    })?;
+    fs::create_dir_all(staging.join("tests"))
         .map_err(|err| format!("fixture setup: create tests: {err}"))?;
     let write = |relative_file: &str, text: &str| {
-        fs::write(root.join(relative_file), text)
+        fs::write(staging.join(relative_file), text)
             .map_err(|err| format!("fixture setup: write {relative_file}: {err}"))
     };
     write(
@@ -108,11 +113,8 @@ fn build_fixture(base: &Path, relative: &Path) -> Result<PathBuf, String> {
         "tests/end_to_end.rs",
         "#[test]\nfn gate_state_passes_the_flag() {\n    assert!(native_root::gate_state(true));\n}\n",
     )?;
-    let relative = relative
-        .to_str()
-        .ok_or_else(|| format!("fixture setup: root is not UTF-8: {}", relative.display()))?;
     let git = |args: &[&str]| -> Result<(), String> {
-        let mut full = vec!["-c", "core.longpaths=true", "-C", relative];
+        let mut full = vec!["-c", "core.longpaths=true", "-C", "fixture-staging"];
         full.extend_from_slice(args);
         fixture_git_ok(base, &full).map_err(|err| format!("fixture setup: {err}"))
     };
@@ -129,6 +131,18 @@ fn build_fixture(base: &Path, relative: &Path) -> Result<PathBuf, String> {
     )?;
     git(&["add", "src/lib.rs"])?;
     git(&["commit", "-q", "-m", "change production"])?;
+    let parent = root
+        .parent()
+        .ok_or_else(|| format!("fixture setup: root has no parent: {}", root.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|err| format!("fixture setup: create {}: {err}", parent.display()))?;
+    fs::rename(&staging, &root).map_err(|err| {
+        format!(
+            "fixture setup: move {} to {}: {err}",
+            staging.display(),
+            root.display()
+        )
+    })?;
     Ok(root)
 }
 

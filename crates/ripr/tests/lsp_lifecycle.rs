@@ -1582,13 +1582,14 @@ fn assert_lsp_refresh_publishes_under_root(root: &Path) -> Result<(), String> {
 }
 
 /// Build the compatibility fixture at `base/relative` with a committed base
-/// and a committed production change. Git runs from the short `base` with
-/// `-C`, so a long root cannot fail setup through the child working directory.
+/// and a committed production change. Git commits at a short staging path;
+/// the completed repository then moves under the requested root.
 fn build_native_root_fixture(base: &Path, relative: &str) -> Result<PathBuf, String> {
     let root = base.join(relative);
-    write_compat_fixture(&root)?;
+    let staging = base.join("fixture-staging");
+    write_compat_fixture(&staging)?;
     let git = |args: &[&str]| {
-        let mut full = vec!["-c", "core.longpaths=true", "-C", relative];
+        let mut full = vec!["-c", "core.longpaths=true", "-C", "fixture-staging"];
         full.extend_from_slice(args);
         run_compat_git(base, &full)
     };
@@ -1599,12 +1600,24 @@ fn build_native_root_fixture(base: &Path, relative: &str) -> Result<PathBuf, Str
     git(&["add", "Cargo.toml", "src/lib.rs", "tests/end_to_end.rs"])?;
     git(&["commit", "-q", "-m", "base"])?;
     fs::write(
-        root.join("src/lib.rs"),
+        staging.join("src/lib.rs"),
         "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
     )
     .map_err(|err| format!("write changed production fixture failed: {err}"))?;
     git(&["add", "src/lib.rs"])?;
     git(&["commit", "-q", "-m", "change production"])?;
+    let parent = root
+        .parent()
+        .ok_or_else(|| format!("fixture setup: root has no parent: {}", root.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|err| format!("fixture setup: create {}: {err}", parent.display()))?;
+    fs::rename(&staging, &root).map_err(|err| {
+        format!(
+            "fixture setup: move {} to {}: {err}",
+            staging.display(),
+            root.display()
+        )
+    })?;
     Ok(root)
 }
 
