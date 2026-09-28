@@ -11,3 +11,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — oracle_confirmation_mixed (2)
+
+Reason:
+RIPR-SPEC-0122: human-full drill-in commands (#4411) now appear on the #4421 fixture
+
+Command:
+`cargo xtask goldens bless oracle_confirmation_mixed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
