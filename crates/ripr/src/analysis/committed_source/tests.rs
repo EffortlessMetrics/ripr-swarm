@@ -424,13 +424,17 @@ fn workspace_authority_confirms_committed_bytes_of_a_dirty_file() -> Result<(), 
 #[test]
 fn ignored_sources_read_absent_unless_tracked() -> Result<(), String> {
     let repo = fixture_root("ignored")?;
-    write(&repo.0, ".gitignore", "tests/local.rs\nscratch/\n")?;
+    write(&repo.0, ".gitignore", "tests/local.rs\nscratch/\nbuild/\n")?;
     write(&repo.0, "src/lib.rs", "pub fn one() -> u8 { 1 }\n")?;
+    write(&repo.0, "build2/lib.rs", "pub fn two() -> u8 { 2 }\n")?;
     write(&repo.0, "scratch/kept.rs", "pub fn kept() {}\n")?;
     git(&repo.0, &["add", "-f", "scratch/kept.rs"])?;
     commit_all(&repo.0, "base")?;
     write(&repo.0, "tests/local.rs", "#[test]\nfn local() {}\n")?;
     write(&repo.0, "scratch/probe.rs", "#[test]\nfn probe() {}\n")?;
+    // `build/` holds no tracked file, so status reports it as one `build/`
+    // record and the directory-prefix branch decides its files.
+    write(&repo.0, "build/gen/out.rs", "#[test]\nfn generated() {}\n")?;
     let overlay = probe(&repo.0, None)?.ok_or("ignored sources need an overlay")?;
     assert_eq!(
         overlay.lookup(&repo.0, Path::new("tests/local.rs")),
@@ -442,6 +446,15 @@ fn ignored_sources_read_absent_unless_tracked() -> Result<(), String> {
     );
     assert_eq!(
         overlay.lookup(&repo.0, Path::new("scratch/kept.rs")),
+        CommittedSourceRead::Worktree
+    );
+    assert_eq!(
+        overlay.lookup(&repo.0, Path::new("build/gen/out.rs")),
+        CommittedSourceRead::AbsentAtHead
+    );
+    // A sibling that only shares the directory's prefix is not inside it.
+    assert_eq!(
+        overlay.lookup(&repo.0, Path::new("build2/lib.rs")),
         CommittedSourceRead::Worktree
     );
     assert_eq!(

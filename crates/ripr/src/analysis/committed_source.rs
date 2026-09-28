@@ -55,7 +55,9 @@ struct IgnoredPaths {
     files: BTreeSet<String>,
     directories: Vec<String>,
     /// Tracked files inside an ignored directory (force-added); these keep
-    /// their working-tree reads.
+    /// their working-tree reads. Git reports a directory as one ignored
+    /// record only when it holds no tracked file, so this set is normally
+    /// empty; it guards that assumption rather than a case seen in practice.
     tracked_within: BTreeSet<String>,
 }
 
