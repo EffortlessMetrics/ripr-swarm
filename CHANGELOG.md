@@ -538,6 +538,21 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Every flag `ripr` parses is now documented on a surface a reader scans,
+  and mistyped flags can be suggested from anywhere the command's help
+  documents them. An audit against the parsers found parsed-but-undocumented
+  flags (check's `--perl-facts`, context's `--finding`, agent status's
+  `--out`) that were invisible to `ripr <command> --help` and could never be
+  proposed by a typo suggestion; those help entries now exist. Unknown-flag
+  suggestions mine the same surfaces the flag/help parity gate checks — the
+  Options list plus the command's own `Usage:` line — so a flag documented
+  only in usage syntax (explain's `--base`, context's `--at`) is suggestible
+  too: `ripr explain --bas x` now suggests `--base`. The #2342 parity gate is
+  revived as a two-directional test: for every command that ships a help
+  body, each parsed flag must be documented and each documented flag must be
+  parsed, with `--help` and named hidden aliases as the only exceptions
+  ([#4317](https://github.com/EffortlessMetrics/ripr-swarm/issues/4317)).
+
 - `ripr gate evaluate --gap-ledger` no longer reports an already-observed
   (closed) gap under "Suppressed" as configured-hidden. The ledger's
   `not_policy_targeted` state also covers no-action records, so the gate now
