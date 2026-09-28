@@ -381,6 +381,30 @@ enum IsolatedObservation {
     EvidenceFailure(String),
 }
 
+fn exact_isolated_result(result: &str, passed: bool) -> bool {
+    let prefix = if passed {
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; "
+    } else {
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; "
+    };
+    let Some(rest) = result.strip_prefix(prefix) else {
+        return false;
+    };
+    let Some((filtered, duration)) = rest.split_once(" filtered out; finished in ") else {
+        return false;
+    };
+    if filtered.is_empty() || !filtered.bytes().all(|byte| byte.is_ascii_digit()) {
+        return false;
+    }
+    let Some(seconds) = duration.strip_suffix('s') else {
+        return false;
+    };
+    filtered.parse::<u64>().is_ok()
+        && seconds
+            .parse::<f64>()
+            .is_ok_and(|value| value.is_finite() && value >= 0.0)
+}
+
 fn classify_isolated(log: Option<&str>, raw_status: Option<&str>) -> IsolatedObservation {
     let Some(log) = log else {
         return IsolatedObservation::EvidenceFailure("log missing or unreadable".to_string());
@@ -422,12 +446,9 @@ fn classify_isolated(log: Option<&str>, raw_status: Option<&str>) -> IsolatedObs
     let Some(result) = outcome.results.first().cloned() else {
         return IsolatedObservation::EvidenceFailure("result total missing".to_string());
     };
-    if status == 0 && !*row_failed && result.starts_with("test result: ok. 1 passed; 0 failed;") {
+    if status == 0 && !*row_failed && exact_isolated_result(&result, true) {
         IsolatedObservation::Pass { status, result }
-    } else if status != 0
-        && *row_failed
-        && result.starts_with("test result: FAILED. 0 passed; 1 failed;")
-    {
+    } else if status != 0 && *row_failed && exact_isolated_result(&result, false) {
         IsolatedObservation::TestFailure { status, result }
     } else {
         IsolatedObservation::EvidenceFailure(format!(
@@ -968,11 +989,11 @@ mod tests {
     -> Result<(), String> {
         let pass = isolated_log(
             "ok",
-            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6032 filtered out",
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6032 filtered out; finished in 0.01s",
         );
         let expected_pass = IsolatedObservation::Pass {
             status: 0,
-            result: "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6032 filtered out"
+            result: "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6032 filtered out; finished in 0.01s"
                 .to_string(),
         };
         let actual_pass = classify_isolated(Some(&pass), Some("0\n"));
@@ -983,7 +1004,7 @@ mod tests {
         }
         let fail = isolated_log(
             "FAILED",
-            "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 6032 filtered out",
+            "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 6032 filtered out; finished in 0.01s",
         );
         let actual_fail = classify_isolated(Some(&fail), Some("101\n"));
         if !matches!(
@@ -1005,7 +1026,7 @@ mod tests {
     fn isolated_summary_refuses_missing_or_fake_observations() -> Result<(), String> {
         let pass = isolated_log(
             "ok",
-            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6032 filtered out",
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6032 filtered out; finished in 0.01s",
         );
         for (label, log, status) in [
             ("missing log", None, Some("0")),
@@ -1021,10 +1042,10 @@ mod tests {
         }
         let wrong_total = isolated_log(
             "ok",
-            "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 6032 filtered out",
+            "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 6032 filtered out; finished in 0.01s",
         );
         let duplicate_result = format!(
-            "{pass}test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6032 filtered out\n"
+            "{pass}test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6032 filtered out; finished in 0.01s\n"
         );
         let duplicate_row = pass.replace(
             "test result:",
@@ -1036,12 +1057,34 @@ mod tests {
             "",
             1,
         );
+        let truncated_total = isolated_log("ok", "test result: ok. 1 passed; 0 failed;");
+        let missing_counts = isolated_log(
+            "ok",
+            "test result: ok. 1 passed; 0 failed; 6032 filtered out; finished in 0.01s",
+        );
+        let nonnumeric_filtered = isolated_log(
+            "ok",
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; many filtered out; finished in 0.01s",
+        );
+        let missing_duration = isolated_log(
+            "ok",
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6032 filtered out",
+        );
+        let nonnumeric_duration = isolated_log(
+            "ok",
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6032 filtered out; finished in later",
+        );
         for (label, log) in [
             ("wrong total", wrong_total),
             ("duplicate result", duplicate_result),
             ("duplicate named row", duplicate_row),
             ("extra test", extra_test),
             ("missing target", no_target),
+            ("truncated total", truncated_total),
+            ("missing counts", missing_counts),
+            ("nonnumeric filtered", nonnumeric_filtered),
+            ("missing duration", missing_duration),
+            ("nonnumeric duration", nonnumeric_duration),
         ] {
             expect_isolated_evidence_failure(classify_isolated(Some(&log), Some("0")), label)?;
         }

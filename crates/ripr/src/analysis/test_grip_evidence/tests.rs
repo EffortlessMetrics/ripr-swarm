@@ -167,11 +167,11 @@ fn simultaneous_same_stamp_indexes_keep_distinct_live_target_authority() -> Resu
         let second_barrier = Arc::clone(&barrier);
         let files_ref = &files;
         let first_thread = scope.spawn(move || {
-            first_barrier.wait();
+            let _ = first_barrier.wait();
             index_from_files_at_stamp(files_ref, 4377)
         });
         let second_thread = scope.spawn(move || {
-            second_barrier.wait();
+            let _ = second_barrier.wait();
             index_from_files_at_stamp(files_ref, 4377)
         });
         let first = first_thread
