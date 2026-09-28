@@ -195,17 +195,6 @@ impl RelatedTestCandidateIndex {
                 &self.by_test_name_trigram,
                 lowered.as_bytes(),
             );
-            // Whole-word name matching compares the snake spelling
-            // (`IoError` -> `io_error`); the unsplit `ioerror` query starts
-            // with a different trigram and misses `io_error_is_reported`.
-            let words = snake_words(token);
-            if words != lowered && words.len() > 2 {
-                let _ = extend_substring_bucket(
-                    &mut selected,
-                    &self.by_test_name_trigram,
-                    words.as_bytes(),
-                );
-            }
         }
 
         if let Some(chain) = helper_chain {
@@ -1393,8 +1382,9 @@ fn normalize_path(path: &Path) -> String {
         .to_string()
 }
 
-/// Whether a lowercased test name spells a probe token as whole
-/// `_`-separated words (`StageEvidence` in `stage_evidence_keeps_weak`).
+/// Whether a lowercased test name contains a probe token, lowercased, as
+/// whole `_`-separated words (`vat` in `vat_boundary_is_checked`,
+/// `loyalty_price` in `loyalty_price_rounds`).
 ///
 /// A raw substring test let short tokens and generic Rust names link
 /// thousands of unrelated tests (`new` in `renews_`, `Weak` in `weakly_`,
@@ -1404,7 +1394,14 @@ fn normalize_path(path: &Path) -> String {
 /// A single-word token that many test names use (`changed`, `owner`, `line`
 /// in this repository's own suite) names no particular code either, so it is
 /// skipped when it is one of `common_words`; a multi-word token such as
-/// `stage_evidence` is specific enough by itself.
+/// `changed_arm` is specific enough by itself.
+///
+/// The match only narrows the old substring test: it never splits a
+/// CamelCase token into words. Splitting `MalformedSource` related
+/// `malformed_source_variant_is_distinct`, a test that never calls the
+/// changed code, and its strong assertion then read as the discriminator
+/// once another test supplied reach, so a mutation no test catches read
+/// `exposed`.
 fn test_name_names_probe_token(
     test_name: &str,
     token: &str,
@@ -1413,11 +1410,11 @@ fn test_name_names_probe_token(
     if token.len() < 3 || GENERIC_PROBE_TOKENS.contains(&token) {
         return false;
     }
-    let words = snake_words(token);
-    if words.is_empty() || common_words.contains(&words) {
+    let lowered = token.to_ascii_lowercase();
+    if common_words.contains(&lowered) {
         return false;
     }
-    format!("_{test_name}_").contains(&format!("_{words}_"))
+    format!("_{test_name}_").contains(&format!("_{lowered}_"))
 }
 
 /// Tokens so widespread across a package's tests that sharing one ties no
@@ -1562,21 +1559,6 @@ const GENERIC_PROBE_TOKENS: &[&str] = &[
     "test",
     "tests",
 ];
-
-/// `StageEvidence` -> `stage_evidence`, `loyalty_price` -> `loyalty_price`,
-/// `HTTPServer` -> `httpserver` (an acronym run stays one word).
-fn snake_words(token: &str) -> String {
-    let mut out = String::with_capacity(token.len() + 4);
-    let mut previous_lower_or_digit = false;
-    for ch in token.chars() {
-        if ch.is_ascii_uppercase() && previous_lower_or_digit {
-            out.push('_');
-        }
-        previous_lower_or_digit = ch.is_ascii_lowercase() || ch.is_ascii_digit();
-        out.push(ch.to_ascii_lowercase());
-    }
-    out.trim_matches('_').to_string()
-}
 
 /// Whether a test file is named for the probe's source stem: the stem is a
 /// whole `_` word of the test file's own stem (`tests/pricing.rs`,
@@ -1850,7 +1832,7 @@ mod tests {
     }
 
     #[test]
-    fn indexed_and_full_scan_match_for_camel_case_token_named_by_test() {
+    fn camel_case_token_relates_no_snake_named_test_on_either_path() {
         let index = RustIndex {
             tests: vec![test(
                 "tests/other_area.rs",
@@ -1880,18 +1862,11 @@ mod tests {
             RelatedTestCandidates::FullScan,
         );
 
-        assert_eq!(full_scan.len(), 1, "full scan relates the named test");
-        assert_eq!(full_scan[0].0.name, "io_error_is_reported");
-        assert_eq!(
-            indexed
-                .iter()
-                .map(|(test, reason)| (&test.name, *reason))
-                .collect::<Vec<_>>(),
-            full_scan
-                .iter()
-                .map(|(test, reason)| (&test.name, *reason))
-                .collect::<Vec<_>>(),
-        );
+        // `io_error_is_reported` never calls the changed code; splitting
+        // `IoError` into words would relate it on the full scan while the
+        // index, queried with `ioerror`, would not.
+        assert!(full_scan.is_empty(), "full scan must not split IoError");
+        assert!(indexed.is_empty(), "index must not split IoError");
     }
 
     #[test]
@@ -3466,7 +3441,14 @@ fn crate_c_score_test() {
         let names = |test_name: &str, token: &str| {
             super::test_name_names_probe_token(test_name, token, &none)
         };
-        assert!(names("stage_evidence_keeps_weak_reach", "StageEvidence"));
+        // A CamelCase token is not split into words: that would relate
+        // tests the old substring match never did.
+        assert!(!names("stage_evidence_keeps_weak_reach", "StageEvidence"));
+        assert!(!names(
+            "malformed_source_variant_is_distinct",
+            "MalformedSource"
+        ));
+        assert!(names("stageevidence_keeps_weak", "StageEvidence"));
         assert!(names("vat_boundary_is_checked", "vat"));
         // Substrings inside other words carry no identity.
         assert!(!names("renews_the_lease", "new"));

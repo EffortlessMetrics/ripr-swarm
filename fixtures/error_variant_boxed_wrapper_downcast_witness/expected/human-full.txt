@@ -22,22 +22,12 @@ Static exposure
   exposed (warning, confidence 1.00)
 
 Evidence
-  - reach yes: Related tests appear to reach try_parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source
+  - reach yes: Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - discriminator yes: Strong oracle found: exact error variant assertion
   - local flow reaches error variant: Result::Err(ParseSummaryError::MalformedSource) (line 45)
-  - related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: if !matches!(
-error.downcast_ref::<ParseSummaryError>(),
-Some(ParseSummaryError::MalformedSource)
-) {
-return Err("boxed variant must preserve ParseSummaryError::MalformedSource".into());
-}
-  - related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: matches!(
-        error.downcast_ref::<ParseSummaryError>(),
-        Some(ParseSummaryError::MalformedSource)
-    )
   - related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
 return Err("malformed source should produce ParseSummaryError::MalformedSource".into());
 }
@@ -45,8 +35,6 @@ return Err("malformed source should produce ParseSummaryError::MalformedSource".
   - observed function argument value raw = "@bad;" at line 10
   - observed enum variant value ParseSummaryError::MalformedSource at line 11
   - observed enum variant value ParseSummaryError::MalformedSource at line 11
-  - observed enum variant value ParseSummaryError::MalformedSource at line 23
-  - observed enum variant value ParseSummaryError::MalformedSource at line 23
 Drill in:
   ripr explain --root fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast probe:src_lib.rs:error_path:5c979117
   ripr context --root fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast --at probe:src_lib.rs:error_path:5c979117
@@ -66,22 +54,12 @@ Static exposure
   exposed (warning, confidence 1.00)
 
 Evidence
-  - reach yes: Related tests appear to reach try_parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source
+  - reach yes: Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - discriminator yes: Strong oracle found: exact error variant assertion
   - local flow reaches error variant: Result::Err(ParseSummaryError::MalformedSource) (line 45)
-  - related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: if !matches!(
-error.downcast_ref::<ParseSummaryError>(),
-Some(ParseSummaryError::MalformedSource)
-) {
-return Err("boxed variant must preserve ParseSummaryError::MalformedSource".into());
-}
-  - related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: matches!(
-        error.downcast_ref::<ParseSummaryError>(),
-        Some(ParseSummaryError::MalformedSource)
-    )
   - related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
 return Err("malformed source should produce ParseSummaryError::MalformedSource".into());
 }
@@ -89,8 +67,6 @@ return Err("malformed source should produce ParseSummaryError::MalformedSource".
   - observed function argument value raw = "@bad;" at line 10
   - observed enum variant value ParseSummaryError::MalformedSource at line 11
   - observed enum variant value ParseSummaryError::MalformedSource at line 11
-  - observed enum variant value ParseSummaryError::MalformedSource at line 23
-  - observed enum variant value ParseSummaryError::MalformedSource at line 23
 Drill in:
   ripr explain --root fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast probe:src_lib.rs:return_value:f573bd5d
   ripr context --root fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast --at probe:src_lib.rs:return_value:f573bd5d
@@ -110,22 +86,12 @@ Static exposure
   exposed (warning, confidence 1.00)
 
 Evidence
-  - reach yes: Related tests appear to reach try_parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source
+  - reach yes: Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - discriminator yes: Strong oracle found: exact error variant assertion
   - local flow reaches error variant: Result::Err(ParseSummaryError::MalformedSource) (line 48)
-  - related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: if !matches!(
-error.downcast_ref::<ParseSummaryError>(),
-Some(ParseSummaryError::MalformedSource)
-) {
-return Err("boxed variant must preserve ParseSummaryError::MalformedSource".into());
-}
-  - related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: matches!(
-        error.downcast_ref::<ParseSummaryError>(),
-        Some(ParseSummaryError::MalformedSource)
-    )
   - related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
 return Err("malformed source should produce ParseSummaryError::MalformedSource".into());
 }
@@ -133,8 +99,6 @@ return Err("malformed source should produce ParseSummaryError::MalformedSource".
   - observed function argument value raw = "@bad;" at line 10
   - observed enum variant value ParseSummaryError::MalformedSource at line 11
   - observed enum variant value ParseSummaryError::MalformedSource at line 11
-  - observed enum variant value ParseSummaryError::MalformedSource at line 23
-  - observed enum variant value ParseSummaryError::MalformedSource at line 23
 Drill in:
   ripr explain --root fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast probe:src_lib.rs:error_path:5c979117.2
   ripr context --root fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast --at probe:src_lib.rs:error_path:5c979117.2
@@ -154,22 +118,12 @@ Static exposure
   exposed (warning, confidence 1.00)
 
 Evidence
-  - reach yes: Related tests appear to reach try_parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source
+  - reach yes: Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - discriminator yes: Strong oracle found: exact error variant assertion
   - local flow reaches error variant: Result::Err(ParseSummaryError::MalformedSource) (line 48)
-  - related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: if !matches!(
-error.downcast_ref::<ParseSummaryError>(),
-Some(ParseSummaryError::MalformedSource)
-) {
-return Err("boxed variant must preserve ParseSummaryError::MalformedSource".into());
-}
-  - related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: matches!(
-        error.downcast_ref::<ParseSummaryError>(),
-        Some(ParseSummaryError::MalformedSource)
-    )
   - related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
 return Err("malformed source should produce ParseSummaryError::MalformedSource".into());
 }
@@ -177,8 +131,6 @@ return Err("malformed source should produce ParseSummaryError::MalformedSource".
   - observed function argument value raw = "@bad;" at line 10
   - observed enum variant value ParseSummaryError::MalformedSource at line 11
   - observed enum variant value ParseSummaryError::MalformedSource at line 11
-  - observed enum variant value ParseSummaryError::MalformedSource at line 23
-  - observed enum variant value ParseSummaryError::MalformedSource at line 23
 Drill in:
   ripr explain --root fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast probe:src_lib.rs:return_value:f573bd5d.2
   ripr context --root fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast --at probe:src_lib.rs:return_value:f573bd5d.2

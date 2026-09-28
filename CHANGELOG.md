@@ -34,7 +34,7 @@ are scoped or reviewed.
   a trusted workspace to start the server.
 - Rust related tests are the ones that name or reach the changed code, not
   every test that shares a word with it. A test name now relates only when it
-  spells a probe token as whole words (`new` no longer matches `renews_`), a
+  contains a probe token as a whole word (`new` no longer matches `renews_`), a
   test file only when its own stem spells the source stem as a word or it is a
   test file inside a directory named for that stem, and neither a test-name
   word nor an assertion-observed token counts when more than 16 tests and more
@@ -43,9 +43,9 @@ are scoped or reviewed.
   finding keeps weak reach instead of reading `no_static_path`. On a 14-file
   diff of ripr itself (246 findings), the longest related-test list on one
   finding fell from 13,007 rows to 1,750, and the rows across all findings
-  from 246,958 to 50,863. No finding gained exposure. Six lost `exposed`
-  (three to `weakly_exposed`, three to `infection_unknown`) and eight others
-  moved to `infection_unknown`. For example, a predicate in `reach.rs` read
+  from 246,958 to 50,751. No finding on that diff gained exposure. Six lost
+  `exposed` (three to `weakly_exposed`, three to `infection_unknown`) and
+  eight others moved to `infection_unknown`. For example, a predicate in `reach.rs` read
   `exposed` from 1,608 related tests; it now relates 129 and reads
   `infection_unknown`, because none of those supplies an input at its
   boundary. The seam evidence behind `review-comments`, `agent` and repo
@@ -55,7 +55,7 @@ are scoped or reviewed.
   nothing; and when several target tokens together pass the limit, the tests
   asserting the most of them are kept. One `init.rs` seam had related 3,990
   tests. On `review-comments` for one ripr commit, the run fell from 50 s to
-  18 s with identical comments.
+  17 s with identical comments.
 - Rust: a changed function that no test calls now reads `no_static_path`.
   Before, a same-file test of a sibling function made it `weakly_exposed`
   with "strong oracle found", and its unknown-shape lines said "escalate to

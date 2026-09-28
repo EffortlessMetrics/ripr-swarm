@@ -23,22 +23,21 @@
         "expression": "return Err(ParseSummaryError::MalformedSource)"
        },
       "ripr": {
-        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach try_parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source"},
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact error variant assertion"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach try_parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches error variant: Result::Err(ParseSummaryError::MalformedSource) (line 45)", "related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"boxed variant must preserve ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: matches!(result, Err(ParseSummaryError::MalformedSource))", "observed function argument value raw = \"@bad;\" at line 10", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed enum variant value ParseSummaryError::MalformedSource at line 23", "observed enum variant value ParseSummaryError::MalformedSource at line 23"],
+      "evidence_path": ["reach yes: Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact error variant assertion", "local flow reaches error variant: Result::Err(ParseSummaryError::MalformedSource) (line 45)", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: matches!(result, Err(ParseSummaryError::MalformedSource))", "observed function argument value raw = \"@bad;\" at line 10", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed enum variant value ParseSummaryError::MalformedSource at line 11"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(ParseSummaryError::MalformedSource)","line":45}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach try_parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source", "Strong oracle found: exact value or pattern assertion"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source", "Strong oracle found: exact error variant assertion"],
       "missing": [],
       "assertion_texts": {
         "10": "let result = try_parse_summary(\"@bad;\");",
-        "11": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}",
-        "23": "if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"boxed variant must preserve ParseSummaryError::MalformedSource\".into());\n}"
+        "11": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}"
       },
       "activation": {
         "observed_values": [
@@ -57,17 +56,6 @@
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant",
             "provenance": "matches!(result, Err(ParseSummaryError::MalformedSource))"
-          },
-          {
-            "line": 23,
-            "value": "ParseSummaryError::MalformedSource",
-            "context": "enum_variant"
-          },
-          {
-            "line": 23,
-            "value": "ParseSummaryError::MalformedSource",
-            "context": "enum_variant",
-            "provenance": "matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )"
           }
         ],
         "missing_discriminators": [
@@ -89,43 +77,12 @@
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant",
           "provenance": "matches!(result, Err(ParseSummaryError::MalformedSource))"
-        },
-        {
-          "line": 23,
-          "value": "ParseSummaryError::MalformedSource",
-          "context": "enum_variant"
-        },
-        {
-          "line": 23,
-          "value": "ParseSummaryError::MalformedSource",
-          "context": "enum_variant",
-          "provenance": "matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )"
         }
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 4,
+      "related_tests_total": 2,
       "related_tests": [
-        {
-          "name": "parse_summary_boxed_variant_propagates_malformed_source",
-          "file": "tests/errors.rs",
-          "line": 18,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"boxed variant must preserve ParseSummaryError::MalformedSource\".into());\n}",
-          "relation_reason": "weak_token_substring",
-          "relation_confidence": "low"
-        },
-        {
-          "name": "parse_summary_boxed_variant_propagates_malformed_source",
-          "file": "tests/errors.rs",
-          "line": 18,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )",
-          "relation_reason": "weak_token_substring",
-          "relation_confidence": "low"
-        },
         {
           "name": "parse_summary_fails_closed_on_malformed_source",
           "file": "tests/errors.rs",
@@ -169,22 +126,21 @@
         "expression": "return Err(ParseSummaryError::MalformedSource)"
        },
       "ripr": {
-        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach try_parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source"},
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact error variant assertion"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach try_parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches error variant: Result::Err(ParseSummaryError::MalformedSource) (line 45)", "related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"boxed variant must preserve ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: matches!(result, Err(ParseSummaryError::MalformedSource))", "observed function argument value raw = \"@bad;\" at line 10", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed enum variant value ParseSummaryError::MalformedSource at line 23", "observed enum variant value ParseSummaryError::MalformedSource at line 23"],
+      "evidence_path": ["reach yes: Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact error variant assertion", "local flow reaches error variant: Result::Err(ParseSummaryError::MalformedSource) (line 45)", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: matches!(result, Err(ParseSummaryError::MalformedSource))", "observed function argument value raw = \"@bad;\" at line 10", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed enum variant value ParseSummaryError::MalformedSource at line 11"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(ParseSummaryError::MalformedSource)","line":45}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach try_parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source", "Strong oracle found: exact value or pattern assertion"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source", "Strong oracle found: exact error variant assertion"],
       "missing": [],
       "assertion_texts": {
         "10": "let result = try_parse_summary(\"@bad;\");",
-        "11": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}",
-        "23": "if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"boxed variant must preserve ParseSummaryError::MalformedSource\".into());\n}"
+        "11": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}"
       },
       "activation": {
         "observed_values": [
@@ -203,17 +159,6 @@
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant",
             "provenance": "matches!(result, Err(ParseSummaryError::MalformedSource))"
-          },
-          {
-            "line": 23,
-            "value": "ParseSummaryError::MalformedSource",
-            "context": "enum_variant"
-          },
-          {
-            "line": 23,
-            "value": "ParseSummaryError::MalformedSource",
-            "context": "enum_variant",
-            "provenance": "matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )"
           }
         ],
         "missing_discriminators": [
@@ -235,43 +180,12 @@
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant",
           "provenance": "matches!(result, Err(ParseSummaryError::MalformedSource))"
-        },
-        {
-          "line": 23,
-          "value": "ParseSummaryError::MalformedSource",
-          "context": "enum_variant"
-        },
-        {
-          "line": 23,
-          "value": "ParseSummaryError::MalformedSource",
-          "context": "enum_variant",
-          "provenance": "matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )"
         }
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 4,
+      "related_tests_total": 2,
       "related_tests": [
-        {
-          "name": "parse_summary_boxed_variant_propagates_malformed_source",
-          "file": "tests/errors.rs",
-          "line": 18,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"boxed variant must preserve ParseSummaryError::MalformedSource\".into());\n}",
-          "relation_reason": "weak_token_substring",
-          "relation_confidence": "low"
-        },
-        {
-          "name": "parse_summary_boxed_variant_propagates_malformed_source",
-          "file": "tests/errors.rs",
-          "line": 18,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )",
-          "relation_reason": "weak_token_substring",
-          "relation_confidence": "low"
-        },
         {
           "name": "parse_summary_fails_closed_on_malformed_source",
           "file": "tests/errors.rs",
@@ -315,22 +229,21 @@
         "expression": "return Err(ParseSummaryError::MalformedSource)"
        },
       "ripr": {
-        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach try_parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source"},
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact error variant assertion"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach try_parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches error variant: Result::Err(ParseSummaryError::MalformedSource) (line 48)", "related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"boxed variant must preserve ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: matches!(result, Err(ParseSummaryError::MalformedSource))", "observed function argument value raw = \"@bad;\" at line 10", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed enum variant value ParseSummaryError::MalformedSource at line 23", "observed enum variant value ParseSummaryError::MalformedSource at line 23"],
+      "evidence_path": ["reach yes: Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact error variant assertion", "local flow reaches error variant: Result::Err(ParseSummaryError::MalformedSource) (line 48)", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: matches!(result, Err(ParseSummaryError::MalformedSource))", "observed function argument value raw = \"@bad;\" at line 10", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed enum variant value ParseSummaryError::MalformedSource at line 11"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(ParseSummaryError::MalformedSource)","line":48}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach try_parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source", "Strong oracle found: exact value or pattern assertion"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source", "Strong oracle found: exact error variant assertion"],
       "missing": [],
       "assertion_texts": {
         "10": "let result = try_parse_summary(\"@bad;\");",
-        "11": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}",
-        "23": "if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"boxed variant must preserve ParseSummaryError::MalformedSource\".into());\n}"
+        "11": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}"
       },
       "activation": {
         "observed_values": [
@@ -349,17 +262,6 @@
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant",
             "provenance": "matches!(result, Err(ParseSummaryError::MalformedSource))"
-          },
-          {
-            "line": 23,
-            "value": "ParseSummaryError::MalformedSource",
-            "context": "enum_variant"
-          },
-          {
-            "line": 23,
-            "value": "ParseSummaryError::MalformedSource",
-            "context": "enum_variant",
-            "provenance": "matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )"
           }
         ],
         "missing_discriminators": [
@@ -381,43 +283,12 @@
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant",
           "provenance": "matches!(result, Err(ParseSummaryError::MalformedSource))"
-        },
-        {
-          "line": 23,
-          "value": "ParseSummaryError::MalformedSource",
-          "context": "enum_variant"
-        },
-        {
-          "line": 23,
-          "value": "ParseSummaryError::MalformedSource",
-          "context": "enum_variant",
-          "provenance": "matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )"
         }
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 4,
+      "related_tests_total": 2,
       "related_tests": [
-        {
-          "name": "parse_summary_boxed_variant_propagates_malformed_source",
-          "file": "tests/errors.rs",
-          "line": 18,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"boxed variant must preserve ParseSummaryError::MalformedSource\".into());\n}",
-          "relation_reason": "weak_token_substring",
-          "relation_confidence": "low"
-        },
-        {
-          "name": "parse_summary_boxed_variant_propagates_malformed_source",
-          "file": "tests/errors.rs",
-          "line": 18,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )",
-          "relation_reason": "weak_token_substring",
-          "relation_confidence": "low"
-        },
         {
           "name": "parse_summary_fails_closed_on_malformed_source",
           "file": "tests/errors.rs",
@@ -461,22 +332,21 @@
         "expression": "return Err(ParseSummaryError::MalformedSource)"
        },
       "ripr": {
-        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach try_parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source"},
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact error variant assertion"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach try_parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches error variant: Result::Err(ParseSummaryError::MalformedSource) (line 48)", "related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"boxed variant must preserve ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: matches!(result, Err(ParseSummaryError::MalformedSource))", "observed function argument value raw = \"@bad;\" at line 10", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed enum variant value ParseSummaryError::MalformedSource at line 23", "observed enum variant value ParseSummaryError::MalformedSource at line 23"],
+      "evidence_path": ["reach yes: Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact error variant assertion", "local flow reaches error variant: Result::Err(ParseSummaryError::MalformedSource) (line 48)", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}", "related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: matches!(result, Err(ParseSummaryError::MalformedSource))", "observed function argument value raw = \"@bad;\" at line 10", "observed enum variant value ParseSummaryError::MalformedSource at line 11", "observed enum variant value ParseSummaryError::MalformedSource at line 11"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(ParseSummaryError::MalformedSource)","line":48}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach try_parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source", "Strong oracle found: exact value or pattern assertion"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseSummaryError::MalformedSource)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source", "Strong oracle found: exact error variant assertion"],
       "missing": [],
       "assertion_texts": {
         "10": "let result = try_parse_summary(\"@bad;\");",
-        "11": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}",
-        "23": "if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"boxed variant must preserve ParseSummaryError::MalformedSource\".into());\n}"
+        "11": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"malformed source should produce ParseSummaryError::MalformedSource\".into());\n}"
       },
       "activation": {
         "observed_values": [
@@ -495,17 +365,6 @@
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant",
             "provenance": "matches!(result, Err(ParseSummaryError::MalformedSource))"
-          },
-          {
-            "line": 23,
-            "value": "ParseSummaryError::MalformedSource",
-            "context": "enum_variant"
-          },
-          {
-            "line": 23,
-            "value": "ParseSummaryError::MalformedSource",
-            "context": "enum_variant",
-            "provenance": "matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )"
           }
         ],
         "missing_discriminators": [
@@ -527,43 +386,12 @@
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant",
           "provenance": "matches!(result, Err(ParseSummaryError::MalformedSource))"
-        },
-        {
-          "line": 23,
-          "value": "ParseSummaryError::MalformedSource",
-          "context": "enum_variant"
-        },
-        {
-          "line": 23,
-          "value": "ParseSummaryError::MalformedSource",
-          "context": "enum_variant",
-          "provenance": "matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )"
         }
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 4,
+      "related_tests_total": 2,
       "related_tests": [
-        {
-          "name": "parse_summary_boxed_variant_propagates_malformed_source",
-          "file": "tests/errors.rs",
-          "line": 18,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"boxed variant must preserve ParseSummaryError::MalformedSource\".into());\n}",
-          "relation_reason": "weak_token_substring",
-          "relation_confidence": "low"
-        },
-        {
-          "name": "parse_summary_boxed_variant_propagates_malformed_source",
-          "file": "tests/errors.rs",
-          "line": 18,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )",
-          "relation_reason": "weak_token_substring",
-          "relation_confidence": "low"
-        },
         {
           "name": "parse_summary_fails_closed_on_malformed_source",
           "file": "tests/errors.rs",
