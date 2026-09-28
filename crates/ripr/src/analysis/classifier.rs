@@ -1994,6 +1994,31 @@ mod tests {
         assert_eq!(finding.class, ExposureClass::NoStaticPath);
     }
 
+    // #4428 review (devin): with no related test at all, an owner that a
+    // production function names may still be reached through a caller chain
+    // the resolver cannot follow, so its unknown shape stays unknown.
+    #[test]
+    fn given_static_unknown_probe_with_named_caller_and_no_related_test_then_static_unknown() {
+        let index = RustIndex {
+            functions: vec![function("src/lib.rs", "fragile_fee")],
+            files: BTreeMap::from([(
+                PathBuf::from("src/lib.rs"),
+                FileFacts {
+                    path: PathBuf::from("src/lib.rs"),
+                    source: "pub fn fragile_fee(w: u32) -> u32 { w }\npub fn calculate() -> u32 { fragile_fee(1) }\n".to_string(),
+                    ..FileFacts::default()
+                },
+            )]),
+            ..RustIndex::default()
+        };
+        let probe = fragile_fee_probe(ProbeFamily::StaticUnknown, "fragile_fee");
+
+        let finding = classify_probe(&probe, &index, true, None);
+
+        assert!(finding.related_tests.is_empty(), "premise: no related test");
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    }
+
     #[test]
     fn given_static_unknown_probe_without_resolved_owner_when_classified_then_static_unknown() {
         let index = RustIndex {

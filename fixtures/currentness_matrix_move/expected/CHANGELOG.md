@@ -71,3 +71,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_move (5)
+
+Reason:
+RIPR-SPEC-0094: the static_unknown probe returns to static_unknown; its owner is named elsewhere in the workspace, so an unfollowed caller chain may reach it and no_static_path is not claimed (#4428 review)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_move --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

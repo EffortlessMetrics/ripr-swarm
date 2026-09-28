@@ -22,9 +22,11 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     pub(in crate::analysis) propagate: StageEvidence,
     pub(in crate::analysis) observe: StageEvidence,
     pub(in crate::analysis) discriminate: StageEvidence,
-    /// The changed line resolved to an owner function, so `reach == No`
-    /// speaks about that function rather than about an unlocated change.
-    pub(in crate::analysis) owner_resolved: bool,
+    /// Reach is `No` for a resolved owner that nothing in the workspace
+    /// names (see `owner_may_be_reached_unseen`), so no test can run the
+    /// change. An owner with an unresolved caller chain keeps its
+    /// shape-based class even when no related test was found.
+    pub(in crate::analysis) reach_ruled_out: bool,
 }
 
 impl ClassifiedProbeEvidence {
@@ -128,8 +130,12 @@ impl ClassifiedProbeEvidence {
         };
         // Tests kept only as suggested locations never run the owner, so
         // they neither activate the change nor observe it.
+        let reach_ruled_out = reach.state == StageState::No
+            && context
+                .owner_fn
+                .is_some_and(|owner| !owner_may_be_reached_unseen(owner, context.index));
         let unreached = |stage: StageEvidence, verb: &str| {
-            if reach.state == StageState::No && stage.state == StageState::Yes {
+            if reach_ruled_out && stage.state == StageState::Yes {
                 unreached_stage(verb)
             } else {
                 stage
@@ -162,7 +168,7 @@ impl ClassifiedProbeEvidence {
             propagate,
             observe,
             discriminate,
-            owner_resolved: context.owner_fn.is_some(),
+            reach_ruled_out,
         }
     }
 
@@ -170,7 +176,7 @@ impl ClassifiedProbeEvidence {
         // A changed line inside a function no test reaches has no static path
         // whatever its shape: "cannot classify, escalate" would send the
         // reader after mutation testing when the plain gap is a missing test.
-        if self.owner_resolved && self.reach.state == StageState::No {
+        if self.reach_ruled_out {
             return ExposureClass::NoStaticPath;
         }
         classify(
