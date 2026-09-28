@@ -5867,6 +5867,25 @@ fn agent_repair_admits_a_focused_test_committed_between_the_phases()
         )),
         "{stderr}"
     );
+    // Exit 3 carries exactly one typed refusal document on stdout.
+    let document: serde_json::Value = serde_json::from_slice(&after.stdout)?;
+    assert_eq!(document["kind"], "repair_after_refusal", "{document:#}");
+    assert_eq!(document["schema_version"], "0.2", "{document:#}");
+    assert_eq!(document["attempt_id"], attempt_id.as_str(), "{document:#}");
+    assert!(
+        document["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("does not descend from")),
+        "{document:#}"
+    );
+    assert!(
+        json_strings(&document["narration"])
+            .iter()
+            .any(|line| line.contains(&format!(
+                "`git reset --soft {before_head}` restores the prepared head"
+            ))),
+        "the refusal document carries the recovery: {document:#}"
+    );
     let (_, manifest) = sole_repair_attempt(&root)?;
     assert_eq!(manifest["state"], "awaiting_edit", "{manifest}");
     // The printed recovery finishes the same attempt.
@@ -6146,6 +6165,49 @@ fn agent_verify_rejects_incomparable_analysis_inputs() -> Result<(), Box<dyn std
     ]);
     assert_failure(&output);
     assert!(String::from_utf8_lossy(&output.stderr).contains("analysis input identities differ"));
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "drifted analysis inputs are a typed refusal on the standalone verify path too"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "a refused verify renders nothing to its stdout (the verify artifact)"
+    );
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// #4331 review: an operational error that echoes a user path containing a
+/// refusal phrase stays an operational failure (exit 2), not a refusal.
+#[test]
+fn agent_verify_missing_snapshot_named_like_a_refusal_is_operational()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("agent-verify-refusal-named-path");
+    std::fs::create_dir_all(&root)?;
+    init_git_fixture_repo(&root)?;
+    for missing in [
+        "analysis input identities differ",
+        "no repository movement between before and after artifacts",
+    ] {
+        let output = run_ripr(&[
+            "agent",
+            "verify",
+            "--root",
+            &root.display().to_string(),
+            "--before",
+            missing,
+            "--after",
+            missing,
+            "--json",
+        ]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{missing}: {stderr}");
+        assert!(
+            stderr.contains(missing),
+            "the error names the path: {stderr}"
+        );
+    }
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -6640,6 +6702,15 @@ fn agent_verify_rejects_same_revision_pair_without_movement()
         String::from_utf8_lossy(&output.stderr).contains("no repository movement"),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "a no-movement verify refusal is a typed refusal on the standalone verify path too"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "a refused verify renders nothing to its stdout (the verify artifact)"
     );
     std::fs::remove_dir_all(root)?;
     Ok(())
@@ -9103,6 +9174,14 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
         env!("CARGO_PKG_VERSION")
     )));
     assert!(!workflow.contains("cargo install ripr --locked"));
+    // A newer push cancels the older run of the same PR, so two runs never
+    // publish the same inline cards (#4448).
+    assert!(workflow.contains(
+        "\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n"
+    ));
+    // Every third-party action is pinned to a commit SHA (#4452).
+    assert!(workflow.contains("dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87"));
+    assert!(!workflow.contains("dtolnay/rust-toolchain@stable"));
     assert!(workflow.contains("ripr pilot"));
     assert!(workflow.contains("--format sarif"));
     assert!(workflow.contains("--format repo-sarif"));
@@ -10749,7 +10828,9 @@ fn python_check_safe_action(
 fn check_python_finding_without_repair_card_names_the_terminal_manual_step() -> Result<(), String> {
     let line = python_check_safe_action(
         "check-py-no-card",
-        "DISCOUNT_THRESHOLD = 10_000\n\n\ndef discounted_total(amount: int) -> int:\n    if amount > DISCOUNT_THRESHOLD:\n        return amount - amount // 10\n    return amount\n",
+        // A `global`-rebound constant stays unresolved (#4227), so no
+        // concrete boundary value and no repair card exist for it.
+        "DISCOUNT_THRESHOLD = 10_000\n\n\ndef configure(threshold):\n    global DISCOUNT_THRESHOLD\n    DISCOUNT_THRESHOLD = threshold\n\n\ndef discounted_total(amount: int) -> int:\n    if amount > DISCOUNT_THRESHOLD:\n        return amount - amount // 10\n    return amount\n",
         "amount > DISCOUNT_THRESHOLD",
         "amount >= DISCOUNT_THRESHOLD",
         "from pricing import discounted_total\n\n\ndef test_no_discount_below_threshold():\n    assert discounted_total(5_000) == 5_000\n\n\ndef test_discount_far_above_threshold():\n    assert discounted_total(20_000) == 18_000\n",
@@ -11022,10 +11103,17 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
         )),
         "{stdout}"
     );
+    // The Python repair card is the top recommendation, so the closing block
+    // follows the card's route rather than sending the user to `ripr check`,
+    // which only leads back to pilot (rc rehearsal py-pricing).
     assert!(
-        stdout.contains(&format!(
-            "Next, analyze the changed code in these languages:\n  {command}\n"
-        )),
+        stdout.contains("Next, in order:\n  1. ripr first-pr --root ")
+            && stdout.contains("\n  3. pytest ")
+            && stdout.contains("\n  4. run the receipt command step 1 printed\n"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("Next, analyze the changed code in these languages:"),
         "{stdout}"
     );
     assert!(
@@ -15258,6 +15346,17 @@ fn agent_status_names_a_refused_after_phase_before_repeating_it()
         refused_stderr.contains("no repository movement"),
         "{refused_stderr}"
     );
+    let refused_document: serde_json::Value = serde_json::from_slice(&refused.stdout)?;
+    assert_eq!(
+        refused_document["kind"], "repair_after_refusal",
+        "{refused_document:#}"
+    );
+    assert!(
+        refused_document["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("no repository movement")),
+        "{refused_document:#}"
+    );
     // Precondition: the attempt record holds the refusal and is still
     // awaiting the edit at the current HEAD.
     let manifest = repair_route_manifest(&root, &attempt_id)?;
@@ -15952,6 +16051,14 @@ fn agent_status_reports_the_after_phase_recovery_for_rewritten_history()
     );
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(stderr.contains(&reset_sentence), "{stderr}");
+    let document: serde_json::Value = serde_json::from_slice(&refused.stdout)?;
+    assert_eq!(document["kind"], "repair_after_refusal", "{document:#}");
+    assert!(
+        json_strings(&document["narration"])
+            .iter()
+            .any(|line| line.contains(&reset_sentence)),
+        "{document:#}"
+    );
     assert_eq!(
         repair_route_manifest(&root, &attempt_id)?["state"],
         "awaiting_edit"
@@ -16001,6 +16108,14 @@ fn agent_status_repeats_the_named_cause_of_a_refused_after_phase()
     assert!(
         stderr.contains("ripr: analysis inputs changed after the before phase: Cargo.toml."),
         "precondition: the after phase names the changed input:\n{stderr}"
+    );
+    let document: serde_json::Value = serde_json::from_slice(&refused.stdout)?;
+    assert_eq!(document["kind"], "repair_after_refusal", "{document:#}");
+    assert!(
+        json_strings(&document["narration"])
+            .iter()
+            .any(|line| line.contains("analysis inputs changed after the before phase: Cargo.toml")),
+        "{document:#}"
     );
 
     let manifest = repair_route_manifest(&root, &attempt_id)?;

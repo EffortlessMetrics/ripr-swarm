@@ -1135,6 +1135,7 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        module_constants: Vec::new(),
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -1397,6 +1398,7 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        module_constants: Vec::new(),
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -1434,8 +1436,10 @@ fn same_stem_related_handles_missing_stems() {
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        module_constants: Vec::new(),
     };
     let test = PythonTest {
+        constant_rebinding: Default::default(),
         name: "test_x".to_string(),
         qualified_name: "test_x".to_string(),
         file: PathBuf::from("tests/test_pricing.py"),
@@ -2419,6 +2423,7 @@ def test_apply_discount(amount):
 #[test]
 fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     let mocked = PythonTest {
+        constant_rebinding: Default::default(),
         name: "test_x".to_string(),
         qualified_name: "test_x".to_string(),
         file: PathBuf::from("tests/test_x.py"),
@@ -2435,6 +2440,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     };
     assert!(test_has_mocked_module(&mocked));
     let bare = PythonTest {
+        constant_rebinding: Default::default(),
         name: "test_y".to_string(),
         qualified_name: "test_y".to_string(),
         file: PathBuf::from("tests/test_y.py"),
@@ -2449,6 +2455,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     };
     assert!(test_has_mocked_module(&bare));
     let clean = PythonTest {
+        constant_rebinding: Default::default(),
         name: "test_z".to_string(),
         qualified_name: "test_z".to_string(),
         file: PathBuf::from("tests/test_z.py"),
@@ -2855,6 +2862,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        module_constants: Vec::new(),
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
     let strong = |oracle: &str| RelatedTest {
@@ -2919,6 +2927,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        module_constants: Vec::new(),
     };
     let line = "return amount + 2";
     let related = [RelatedTest {
@@ -2936,6 +2945,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
 
     // With `apply_tax as taxed`, the oracle's `taxed(...)` observes the owner.
     let alias_test = PythonTest {
+        constant_rebinding: Default::default(),
         name: "test_alias".to_string(),
         qualified_name: "test_alias".to_string(),
         file: PathBuf::from("t.py"),
@@ -2976,6 +2986,7 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        module_constants: Vec::new(),
     }
 }
 
@@ -2998,6 +3009,7 @@ fn align_strong(oracle: &str) -> RelatedTest {
 /// module is usually `"owner"`.
 fn align_importing_test(imported: &str, module: &str) -> PythonTest {
     PythonTest {
+        constant_rebinding: Default::default(),
         name: "t".to_string(),
         qualified_name: "t".to_string(),
         file: PathBuf::from("t.py"),
@@ -3038,6 +3050,7 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
     let line = "return amount + 2";
     let related = [align_strong("assert taxed(10) == 12")];
     let alias_test = PythonTest {
+        constant_rebinding: Default::default(),
         name: "test_alias".to_string(),
         qualified_name: "test_alias".to_string(),
         file: PathBuf::from("t.py"),

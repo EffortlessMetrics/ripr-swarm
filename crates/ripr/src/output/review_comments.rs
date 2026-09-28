@@ -24,7 +24,7 @@ use crate::output::evidence_record::{
     cross_language_test_target_unresolved, gap_state_for, static_limitations_for,
 };
 use crate::output::gap_decision_ledger::{GapRecord, GapRepairRoute};
-use crate::output::markdown::code_span;
+use crate::output::markdown::{code_span, inline_prose};
 #[cfg(test)]
 use crate::testing::cwd_placeholder::project_cwd_text;
 use serde_json::{Value, json};
@@ -1121,7 +1121,7 @@ fn unresolved_source_location_json() -> Value {
 }
 
 fn analysis_scope_json(scope: &ReviewCommentsAnalysisScope) -> Value {
-    json!({
+    let mut value = json!({
         "scope": scope.scope,
         "run_status": scope.run_status,
         "basis": scope.basis,
@@ -1138,7 +1138,13 @@ fn analysis_scope_json(scope: &ReviewCommentsAnalysisScope) -> Value {
         "downstream_consumable": scope.downstream_consumable,
         "limitation": scope.limitation,
         "repair_route": scope.repair_route,
-    })
+    });
+    // Present only when the staged scope skipped seams, so a consumer
+    // can tell `classified_seams_considered` is not the whole scope.
+    if scope.unevaluated_seams > 0 {
+        value["unevaluated_seams"] = json!(scope.unevaluated_seams);
+    }
+    value
 }
 
 fn display_paths(paths: &[std::path::PathBuf]) -> Vec<String> {
@@ -1268,8 +1274,10 @@ fn limitation_prompt(
 fn limitation_prompt_for(limitation: Option<&EvidenceRecordStaticLimitation>) -> String {
     match limitation {
         Some(limitation) => format!(
-            "Do not write a repair test or infer an edit surface from this finding. Inspect static limitation `{}`: {}. Route investigation through `{}`.",
-            limitation.category, limitation.reason, limitation.repair_route
+            "Do not write a repair test or infer an edit surface from this finding. Inspect static limitation {}: {}. Route investigation through {}.",
+            code_span(&limitation.category),
+            limitation.reason,
+            code_span(&limitation.repair_route)
         ),
         None => "Do not write a repair test or infer an edit surface from this finding. The producer-owned repair route is incomplete; inspect the evidence before taking action.".to_string(),
     }
@@ -1345,9 +1353,10 @@ fn push_markdown_items(lines: &mut Vec<String>, heading: &str, value: Option<&Va
             .and_then(|guidance| string_field(guidance, "command"))
             .unwrap_or("ripr agent brief --root . --seam-id <id> --json");
         lines.push(format!(
-            "- {} @ {}: {reason}",
+            "- {} @ {}: {}",
             code_span(seam_id),
-            code_span(&source_location)
+            code_span(&source_location),
+            inline_prose(reason)
         ));
         let canonical_gap_id = string_field(item, "canonical_gap_id")
             .filter(|value| !value.trim().is_empty())
@@ -1444,6 +1453,11 @@ fn push_analysis_scope_summary(lines: &mut Vec<String>, value: Option<&Value>) {
         "- scoped production files: {considered}/{total_production}"
     ));
     lines.push(format!("- classified seams considered: {classified}"));
+    if let Some(unevaluated) = scope.get("unevaluated_seams").and_then(Value::as_u64) {
+        lines.push(format!(
+            "- scoped seams not evaluated: {unevaluated} (changed-line seams filled every review slot)"
+        ));
+    }
     if let (Some(limitation), Some(route)) = (
         scope.get("limitation").and_then(Value::as_str),
         scope.get("repair_route").and_then(Value::as_str),
@@ -1504,7 +1518,11 @@ fn push_suppressed_items(lines: &mut Vec<String>, value: Option<&Value>) {
     for item in items {
         let seam_id = string_field(item, "seam_id").unwrap_or("unknown");
         let reason = string_field(item, "reason").unwrap_or("unknown");
-        lines.push(format!("- {}: {reason}", code_span(seam_id)));
+        lines.push(format!(
+            "- {}: {}",
+            code_span(seam_id),
+            inline_prose(reason)
+        ));
     }
 }
 
@@ -1522,7 +1540,7 @@ mod tests {
     fn comments_markdown_keeps_backtick_text_inside_code_spans() {
         let items = json!([{
             "seam_id": "s` @octocat",
-            "reason": "reason",
+            "reason": "reason for @octocat <img>",
             "source_location": {"file": "src/`x <img src=x onerror=alert(1)>.rs", "line": 3},
             "gap_state": "open",
             "navigation_only_target": {
@@ -1537,7 +1555,7 @@ mod tests {
         let rendered = lines.join("\n");
         assert!(
             rendered.contains(
-                "- ``s` @octocat`` @ ``src/`x <img src=x onerror=alert(1)>.rs:3``: reason"
+                "- ``s` @octocat`` @ ``src/`x <img src=x onerror=alert(1)>.rs:3``: reason for @\u{2060}octocat &lt;img>"
             ),
             "{rendered}"
         );

@@ -1305,6 +1305,24 @@ JSON fields:
   `target shape (not delegatable)` together with a stop condition forbidding
   reuse of the observed call input. A complete packet must not instruct a
   duplicate of a non-discriminating assertion.
+  Derived boundary input (#4215 follow-up): when the finding carries
+  `typescript_boundary_input: parameter=<p>;index=<i>;operand=<o>;value=<v>`
+  evidence, the analysis side has pinned the call input that hits the
+  boundary: the owner reads positional parameter `<p>` (a plain binding, never
+  written, redeclared, or shadowed after its signature) and `<o>` is a plain
+  decimal integer literal or an UPPER_CASE name bound exactly once, at the top
+  level of the owner's module, by an immutable `const <o> = <integer literal>`
+  whose every other occurrence is a plain read. For an equality discriminator
+  over exactly that parameter and operand, an observed input that does not
+  hit the boundary (or whose constant was unresolved on the text alone) is
+  replaced by the observed call with argument `<i>` set to `<v>`, for example
+  `expect(shipping(5000)).toBe(expected)` from the observed `shipping(1000)`;
+  the observed call stays as context in a stop condition, and the packet goes
+  through the shared validator as usual. Without that evidence the fail-closed
+  behavior above is unchanged: a `let`/`var` or reassigned binding, a
+  non-integer or computed initializer, an imported name, a shadowing binding
+  anywhere in the module, a written parameter, a `.length` receiver, or a
+  destructured/rest signature derives nothing.
 - `perl_preview_card` is an additive optional object for Perl preview findings
   that already have strict fact-packet evidence, canonical gap identity,
   related-test evidence, missing discriminator evidence, verify-command
@@ -6827,6 +6845,29 @@ Field contract:
   parseable document. A consumer dispatching on `schema_version` therefore
   sees `0.1` only for the two-child envelope and `0.3` only for the pure
   verify document, whichever path produced it.
+- Typed refusals before the verify render (a diverged HEAD, drifted analysis
+  inputs, a no-movement verify refusal; exit code `3`) print the
+  `repair_after_refusal` document (`schema_version` `0.2`) instead, so every
+  exit-`3` path of the phase carries one parseable document and each
+  after-phase shape keeps its own `schema_version` (`0.1` envelope, `0.2`
+  refusal, `0.3` bare verify):
+
+  ```json
+  {
+    "schema_version": "0.2",
+    "kind": "repair_after_refusal",
+    "attempt_id": "<repair-attempt-id>",
+    "error": "repair attempt `<id>` cannot finish: HEAD <sha> does not descend from its before-phase head <sha>",
+    "narration": ["<named cause>", "<recovery>"]
+  }
+  ```
+
+  `error` is the terse final error; `narration` is the ordered cause and
+  recovery lines stderr carries (without the `ripr: ` prefix), the same lines
+  the attempt joins into `last_after_refusal.reason`. Operational failures after
+  attempt selection exit `2`; stdout is empty when the failure precedes the
+  verify render, and is the bare verify 0.3 document when it follows it (for
+  example a failed receipt publication).
 
 ## Agent Verify Execute
 
@@ -7408,7 +7449,11 @@ Field contract:
   "limited_diff_scope"`, changed files, changed owner count, changed production
   files, immediate caller files, total production-file counts, the classified
   seam count considered, and the `review_comments_diff_scope_only` limitation
-  route. This makes the report useful on large repos without representing the
+  route. When seams on changed lines and in changed owners fill every review
+  slot, the rest of the scope is skipped: `classified_seams_considered` counts
+  only the evaluated seams, the optional `unevaluated_seams` (present only
+  then) counts the skipped ones, a warning says the same, and the brief-cap
+  warning reads "at least N" because it counts evaluated seams only. This makes the report useful on large repos without representing the
   scoped review as full-repo evidence. Gap-ledger rendering emits `scope =
   "gap_ledger_artifact"` and `run_status = "artifact_scope"` with `basis =
   "supplied_gap_decision_ledger"`, ledger anchor files, the supplied GapRecord
@@ -7710,8 +7755,17 @@ Field contract:
 - `skipped[]` records capped, summary-only, suppressed, disabled, and
   already-current items.
 - `skip_reason` is `mode_off`, `summary_only`, `suppressed`,
-  `inline_comment_cap_reached`, `unchanged_tests`, `not_publishable`, or
-  `already_current`.
+  `inline_comment_cap_reached`, `comment_body_too_large`, `unchanged_tests`,
+  `not_publishable`, or `already_current`.
+- Each untrusted field of `operations[].body` is bounded before rendering:
+  1,000 characters for a code-span field (changed behavior, verify or repair
+  start command), 2,000 for prose (why this matters, repair, reason), and 200
+  for a title, each cut on a character boundary with a
+  ` ... [ripr elided N chars]` marker. A comment whose projected published
+  body (twice the plan body, plus the dedupe key and wrapper text) exceeds
+  60,000 UTF-8 bytes is recorded in `skipped[]` as `comment_body_too_large`
+  instead of an operation: GitHub rejects bodies over 65,536 characters and
+  the workflow posts all created comments in one review request.
 - `blocked[]` records hard safety blockers such as missing permissions,
   untrusted forks, missing PR context, unsafe events, missing dedupe keys, or
   malformed inputs.

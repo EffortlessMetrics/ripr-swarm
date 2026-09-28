@@ -18,6 +18,7 @@ use crate::analysis::canonical_gap::{CanonicalGapIdentity, canonical_gap_identit
 use crate::analysis::seams::SeamGripClass;
 use crate::output::evidence_record::{evidence_record_for, evidence_record_json_value};
 use crate::output::json::escape as json_escape;
+use crate::output::markdown::{code_span, inline_prose, inline_prose_literal, table_cell_text};
 use crate::output::path::display_path;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -250,10 +251,10 @@ fn write_repo_exposure_json_document<W: io::Write>(
         if let Some(info) = limit_info {
             let repair_route = match info.source {
                 SeamLimitSource::Default => {
-                    "Set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or use `ripr check --diff` to scope the run."
+                    "Set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
                 }
                 SeamLimitSource::Configured => {
-                    "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or use `ripr check --diff`."
+                    "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
                 }
             };
             writeln!(out, "    {{")?;
@@ -736,6 +737,13 @@ fn push_classified_json(
     out.push_str("    }");
 }
 
+/// Next step printed when the repo inventory found nothing to analyze and no
+/// language guidance applies.
+const REPO_EXPOSURE_EMPTY_NEXT_STEP: &str = "\nNothing was found to analyze under this root. \
+Next: point `--root` at the directory holding `Cargo.toml` (or at TypeScript or Python \
+sources with that language enabled in `ripr.toml`), then run `ripr doctor --root <DIR>` \
+to see what the root can analyze.\n";
+
 /// Render the repo exposure Markdown report. The output uses the
 /// static seam evidence vocabulary only — no runtime-mutation outcome
 /// words per RIPR-SPEC-0005 § Static-Language Boundaries.
@@ -777,10 +785,10 @@ pub(crate) fn render_repo_exposure_md(
         if let Some(info) = limit_info {
             let control = match info.source {
                 SeamLimitSource::Default => {
-                    "set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or use `ripr check --diff` to scope the run"
+                    "set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
                 }
                 SeamLimitSource::Configured => {
-                    "remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or use `ripr check --diff`"
+                    "remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
                 }
             };
             out.push_str(&format!(
@@ -820,6 +828,12 @@ pub(crate) fn render_repo_exposure_md(
             "\nNo classified seams. The repo seam inventory is empty or no \
              production seams were detected.\n",
         );
+        // An empty report must still name a next step (an empty directory
+        // used to end here with nothing to do). Language guidance above
+        // already names its own next step.
+        if ts_guidance.is_none() && python_guidance.is_none() {
+            out.push_str(REPO_EXPOSURE_EMPTY_NEXT_STEP);
+        }
         return out;
     }
 
@@ -869,12 +883,12 @@ fn push_top_gap_md(out: &mut String, entry: &ClassifiedSeam) {
     let evidence = &entry.evidence;
     out.push_str(&format!(
         "### {}:{} {}\n\n",
-        md_escape(&display_path(seam.file())),
+        inline_prose(&display_path(seam.file())),
         seam.display_line(),
         seam.kind().as_str()
     ));
-    out.push_str(&format!("- seam: `{}`\n", md_escape(seam.expression())));
-    out.push_str(&format!("- owner: `{}`\n", md_escape(seam.owner())));
+    out.push_str(&format!("- seam: {}\n", code_span(seam.expression())));
+    out.push_str(&format!("- owner: {}\n", code_span(seam.owner())));
     out.push_str(&format!("- grip: {}\n", entry.class.as_str()));
     out.push_str("- evidence:\n");
     out.push_str(&format!("  - reach: {}\n", evidence.reach.state.as_str()));
@@ -899,8 +913,8 @@ fn push_top_gap_md(out: &mut String, entry: &ClassifiedSeam) {
         out.push_str("- related tests:\n");
         for grip in evidence.related_tests.iter().take(5) {
             out.push_str(&format!(
-                "  - `{}` ({}, {}) · {} / {}\n",
-                md_escape(grip.test_name.as_str()),
+                "  - {} ({}, {}) · {} / {}\n",
+                code_span(grip.test_name.as_str()),
                 grip.oracle_kind.as_str(),
                 grip.oracle_strength.as_str(),
                 grip.relation_reason.as_str(),
@@ -911,16 +925,16 @@ fn push_top_gap_md(out: &mut String, entry: &ClassifiedSeam) {
     if !evidence.observed_values.is_empty() {
         out.push_str("- observed values:\n");
         for value in evidence.observed_values.iter().take(5) {
-            out.push_str(&format!("  - `{}`\n", md_escape(value.value.as_str())));
+            out.push_str(&format!("  - {}\n", code_span(value.value.as_str())));
         }
     }
     if !evidence.missing_discriminators.is_empty() {
         out.push_str("- missing discriminators:\n");
         for missing in &evidence.missing_discriminators {
             out.push_str(&format!(
-                "  - `{}` — {}\n",
-                md_escape(missing.value.as_str()),
-                md_escape_paragraph(missing.reason.as_str())
+                "  - {} — {}\n",
+                code_span(missing.value.as_str()),
+                inline_prose_literal(missing.reason.as_str())
             ));
         }
     }
@@ -941,11 +955,11 @@ fn push_typescript_readiness_md(out: &mut String, readiness: &TypeScriptRepoRead
     ));
     out.push_str(&format!(
         "| package confidence | {} |\n",
-        md_escape_table_cell(&readiness.package_confidence)
+        table_cell_text(&readiness.package_confidence)
     ));
     out.push_str(&format!(
         "| runner status | {} |\n",
-        md_escape_table_cell(&readiness.runner_status)
+        table_cell_text(&readiness.runner_status)
     ));
     out.push_str(&format!(
         "| verify commands | {} |\n",
@@ -956,7 +970,7 @@ fn push_typescript_readiness_md(out: &mut String, readiness: &TypeScriptRepoRead
         readiness
             .top_blocker
             .as_deref()
-            .map(md_escape_table_cell)
+            .map(table_cell_text)
             .unwrap_or_else(|| "none".to_string())
     ));
     out.push_str(
@@ -964,35 +978,6 @@ fn push_typescript_readiness_md(out: &mut String, readiness: &TypeScriptRepoRead
          It does not emit full-repo TypeScript seams, run TypeScript tests, or \
          create gate or badge authority.\n",
     );
-}
-
-fn md_escape_table_cell(text: &str) -> String {
-    text.replace('|', "\\|").replace('\n', " ")
-}
-
-/// Escape values that get wrapped in inline-code spans. Inside
-/// backticks every character is literal except the closing backtick
-/// and the table-cell pipe, so we only swap those plus newlines.
-/// Backslash-escaping `*`/`_`/`[`/`]` here would render as literal
-/// `\*` in the inline-code span — see `md_escape_paragraph` for the
-/// non-code variant.
-fn md_escape(value: &str) -> String {
-    value
-        .replace('`', "\u{2018}")
-        .replace('|', "\\|")
-        .replace('\n', " ")
-}
-
-/// Escape values that appear in paragraph text (no surrounding
-/// backticks). Adds backslash escapes for emphasis and link tokens so
-/// a future analyzer-emitted reason string containing snake_case or
-/// `*` does not silently trigger italic/bold/link rendering.
-fn md_escape_paragraph(value: &str) -> String {
-    md_escape(value)
-        .replace('*', "\\*")
-        .replace('_', "\\_")
-        .replace('[', "\\[")
-        .replace(']', "\\]")
 }
 
 /// Per-class metric bucket for the repo exposure report.
@@ -1627,6 +1612,45 @@ mod tests {
             md.contains("analyzed 3 of 500 seams"),
             "seam counts missing in:\n{md}"
         );
+    }
+
+    #[test]
+    fn empty_markdown_report_names_a_next_step() {
+        let md = render_repo_exposure_md(&[], None, None, None);
+        assert!(md.contains("No classified seams."), "{md}");
+        assert!(
+            md.ends_with(REPO_EXPOSURE_EMPTY_NEXT_STEP),
+            "empty report must end with a next step: {md}"
+        );
+        assert!(md.contains("ripr doctor --root <DIR>"), "{md}");
+        // A non-empty report does not carry the empty-report next step.
+        let populated = render_repo_exposure_md(&[weakly_gripped_classified()], None, None, None);
+        assert!(!populated.contains("Nothing was found to analyze"));
+    }
+
+    #[test]
+    fn seam_limit_hint_names_a_runnable_check_command() {
+        use crate::analysis::{SeamLimitInfo, SeamLimitSource};
+        for source in [SeamLimitSource::Default, SeamLimitSource::Configured] {
+            let info = SeamLimitInfo {
+                analyzed: 3,
+                total: 500,
+                source,
+            };
+            for rendered in [
+                render_repo_exposure_md(&[], Some(&info), None, None),
+                render_repo_exposure_json(&[], Some(&info), None, None),
+            ] {
+                assert!(
+                    rendered.contains("`ripr check --base <REV>` (or `ripr check --diff <PATH>`)"),
+                    "hint must be runnable: {rendered}"
+                );
+                assert!(
+                    !rendered.contains("`ripr check --diff`"),
+                    "--diff without PATH is not runnable: {rendered}"
+                );
+            }
+        }
     }
 
     #[test]
