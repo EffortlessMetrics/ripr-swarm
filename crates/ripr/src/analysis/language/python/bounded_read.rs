@@ -465,8 +465,7 @@ mod tests {
                 return Err(format!("symlink open must fail, got {outcome:?}"));
             };
             assert!(
-                err.reason().contains("not a regular file")
-                    || err.reason().contains("open"),
+                err.reason().contains("not a regular file") || err.reason().contains("open"),
                 "symlink refusal must name the cause: {}",
                 err.reason()
             );
