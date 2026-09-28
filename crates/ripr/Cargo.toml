@@ -65,7 +65,7 @@ tower-lsp-server = "0.23.0"
 # `--locked`, which resolves fresh, so the pin lives in the manifest (#3787).
 # Remove when a unicode-properties release matches unicode-ident's Unicode
 # version, or when the selected ra_ap_syntax drops the assert.
-unicode-ident = { version = "=1.0.24", optional = true }
+unicode-ident = { version = "=1.0.26", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 winsafe = { version = "0.0.29", default-features = false, features = ["kernel"] }
