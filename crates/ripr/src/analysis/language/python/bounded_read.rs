@@ -455,11 +455,7 @@ mod tests {
         #[cfg(unix)]
         {
             let created = std::os::unix::fs::symlink(&link_target, &link);
-            assert!(
-                created.is_ok(),
-                "create symlink: {:?}",
-                created.err()
-            );
+            assert!(created.is_ok(), "create symlink: {:?}", created.err());
             let outcome = open_source_read_no_follow(&link);
             let Err(err) = &outcome else {
                 return Err(format!("symlink open must fail, got {outcome:?}"));
