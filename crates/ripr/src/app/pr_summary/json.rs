@@ -3,6 +3,7 @@ use super::model::{
     ReceiptStatusCounts, TopLimitation, TopRepair, U64OrNotAvailable,
 };
 use super::util::value_path;
+use crate::agent::loop_commands::shell_arg;
 use serde_json::{Value, json};
 
 /// Build the in-memory summary struct from parsed artifact values.
@@ -433,14 +434,17 @@ fn derive_local_reproduction_commands(
     let base_arg = value_path(diff_report_value, &["base"])
         .or_else(|| value_path(start_here_value, &["inputs", "base"]))
         .and_then(Value::as_str)
-        .map(|base| format!(" --base {base}"))
+        .map(|base| format!(" --base {}", shell_arg(base)))
         .unwrap_or_default();
     let head = value_path(diff_report_value, &["head"])
         .and_then(Value::as_str)
         .unwrap_or("HEAD");
 
     commands.push(format!("ripr check{base_arg}"));
-    commands.push(format!("ripr first-pr --root .{base_arg} --head {head}"));
+    commands.push(format!(
+        "ripr first-pr --root .{base_arg} --head {}",
+        shell_arg(head)
+    ));
 
     // Add the verify_command from the top repair when it is a real command.
     let verify = value_path(start_here_value, &["selected", "verify_command"])
@@ -605,6 +609,145 @@ pub fn render_pr_evidence_summary_json(s: &PrEvidenceSummaryJson) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The public pr-summary commands must pass artifact-derived Git refs as
+    /// literal argv. These values are valid branch names, including Bash syntax.
+    #[cfg(unix)]
+    #[test]
+    fn generated_reproduction_commands_preserve_hostile_refs_in_bash() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture =
+            std::env::temp_dir().join(format!("ripr-pr-summary-bash-{}", std::process::id()));
+        std::fs::create_dir(&fixture)
+            .map_err(|err| format!("create Bash fixture {}: {err}", fixture.display()))?;
+        let result = (|| {
+            let ripr = fixture.join("ripr");
+            let log = fixture.join("argv.bin");
+            let script = fixture.join("reproduce.sh");
+            std::fs::write(
+                &ripr,
+                b"#!/usr/bin/env bash\nprintf '__CALL__\\0' >> \"$RIPR_ARGV_LOG\"\nprintf '%s\\0' \"$@\" >> \"$RIPR_ARGV_LOG\"\nprintf '__END__\\0' >> \"$RIPR_ARGV_LOG\"\n",
+            )
+            .map_err(|err| format!("write argv recorder: {err}"))?;
+            std::fs::set_permissions(&ripr, std::fs::Permissions::from_mode(0o755))
+                .map_err(|err| format!("make argv recorder executable: {err}"))?;
+
+            let path = format!(
+                "{}:{}",
+                fixture.display(),
+                std::env::var("PATH").map_err(|err| format!("read PATH: {err}"))?
+            );
+            for (base, head) in [
+                ("topic/a$(printf${IFS}x)", "topic/a;true"),
+                ("topic/it's", "topic/it's"),
+            ] {
+                let start_here = serde_json::json!({
+                    "selected": {
+                        "state": "top_gap",
+                        "repair_command": "ripr agent repair --phase before",
+                        "verify_command": "cargo test boundary && cargo test nearby"
+                    }
+                });
+                let diff = serde_json::json!({"base": base, "head": head});
+                let summary = build_pr_evidence_summary(
+                    Some(&start_here),
+                    None,
+                    None,
+                    Some(&diff),
+                    None,
+                    None,
+                );
+                let commands = &summary.local_reproduction_commands;
+                assert_eq!(commands.len(), 4, "unexpected command denominator");
+                assert_eq!(commands[0], "ripr agent repair --phase before");
+                assert_eq!(commands[3], "cargo test boundary && cargo test nearby");
+
+                std::fs::write(&log, b"").map_err(|err| format!("reset argv log: {err}"))?;
+                std::fs::write(
+                    &script,
+                    format!("set -e\n{}\n{}\n", commands[1], commands[2]),
+                )
+                .map_err(|err| format!("write generated Bash script: {err}"))?;
+                let output = std::process::Command::new("bash")
+                    .arg(&script)
+                    .env("PATH", &path)
+                    .env("RIPR_ARGV_LOG", &log)
+                    .output()
+                    .map_err(|err| format!("execute generated Bash commands: {err}"))?;
+                if !output.status.success() {
+                    return Err(format!(
+                        "generated Bash commands failed for {base:?}/{head:?}: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    ));
+                }
+                let bytes = std::fs::read(&log)
+                    .map_err(|err| format!("read Bash argv transcript: {err}"))?;
+                let actual = bytes
+                    .split(|byte| *byte == 0)
+                    .filter(|part| !part.is_empty())
+                    .map(|part| String::from_utf8_lossy(part).into_owned())
+                    .collect::<Vec<_>>();
+                let expected = [
+                    "__CALL__", "check", "--base", base, "__END__", "__CALL__", "first-pr",
+                    "--root", ".", "--base", base, "--head", head, "__END__",
+                ]
+                .into_iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+                assert_eq!(actual, expected, "Bash changed generated argv");
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&fixture)
+            .map_err(|err| format!("remove Bash fixture {}: {err}", fixture.display()))?;
+        result
+    }
+
+    #[test]
+    fn generated_reproduction_commands_keep_base_authority_and_carried_commands() {
+        let start_here = serde_json::json!({
+            "inputs": {"base": "fallback/branch"},
+            "selected": {
+                "state": "top_gap",
+                "repair_command": "ripr agent repair --phase before",
+                "verify_command": "cargo test boundary && cargo test nearby"
+            }
+        });
+        let diff = serde_json::json!({"base": "origin/main", "head": "HEAD"});
+        let selected =
+            build_pr_evidence_summary(Some(&start_here), None, None, Some(&diff), None, None);
+        assert_eq!(
+            selected.local_reproduction_commands,
+            [
+                "ripr agent repair --phase before",
+                "ripr check --base origin/main",
+                "ripr first-pr --root . --base origin/main --head HEAD",
+                "cargo test boundary && cargo test nearby",
+            ]
+            .map(ToString::to_string)
+            .to_vec()
+        );
+
+        let fallback = build_pr_evidence_summary(Some(&start_here), None, None, None, None, None);
+        assert_eq!(
+            fallback.local_reproduction_commands[1..3].to_vec(),
+            [
+                "ripr check --base fallback/branch",
+                "ripr first-pr --root . --base fallback/branch --head HEAD",
+            ]
+            .map(ToString::to_string)
+            .to_vec()
+        );
+
+        let absent = build_pr_evidence_summary(None, None, None, None, None, None);
+        assert_eq!(
+            absent.local_reproduction_commands,
+            ["ripr check", "ripr first-pr --root . --head HEAD"]
+                .map(ToString::to_string)
+                .to_vec()
+        );
+    }
 
     fn missing_all() -> PrEvidenceSummaryJson {
         build_pr_evidence_summary(None, None, None, None, None, None)
