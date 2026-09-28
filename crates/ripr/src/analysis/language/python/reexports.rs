@@ -43,11 +43,29 @@ struct PackageExporter<'a> {
     file: &'a Path,
     module_paths: Vec<String>,
     imports: &'a [PythonImport],
+    /// The initializer's parsed statements; `None` when its source is
+    /// unreadable or unparsable, which fails every re-export closed.
+    body: Option<Vec<Stmt>>,
+}
+
+impl PackageExporter<'_> {
+    /// Whether the initializer binds `name` other than through a top-level
+    /// import (an assignment, `del`, loop or `with` target, or any binding in
+    /// a conditional block). Python keeps the last binding and this reader
+    /// does not order them, so any such binding fails closed.
+    fn rebinds(&self, name: &str) -> bool {
+        self.body
+            .as_ref()
+            .is_none_or(|body| body.iter().any(|stmt| stmt_binds(stmt, name, false)))
+    }
 }
 
 /// Collects the package exporters (`__init__.py` module owners) from the
 /// workspace owners.
-fn package_exporters(owners: &[PythonOwner]) -> Vec<PackageExporter<'_>> {
+fn package_exporters<'o, 's>(
+    owners: &'o [PythonOwner],
+    source_of: &impl Fn(&Path) -> Option<&'s str>,
+) -> Vec<PackageExporter<'o>> {
     owners
         .iter()
         .filter(|owner| owner.is_module_owner() && is_package_init(&owner.file))
@@ -55,6 +73,12 @@ fn package_exporters(owners: &[PythonOwner]) -> Vec<PackageExporter<'_>> {
             file: &owner.file,
             module_paths: owner_module_paths(&owner.file),
             imports: &owner.imports,
+            body: source_of(&owner.file).and_then(|source| {
+                match parse_module_result(&owner.file, source) {
+                    Ok(Mod::Module(module)) => Some(module.body),
+                    _ => None,
+                }
+            }),
         })
         .collect()
 }
@@ -95,7 +119,7 @@ fn apply_with<'s>(
     definitions: &TopLevelDefinitions,
     source_of: impl Fn(&Path) -> Option<&'s str>,
 ) {
-    let exporters = package_exporters(init_owners);
+    let exporters = package_exporters(init_owners, &source_of);
     let mut star_exports = StarExports {
         source_of,
         declared: HashMap::new(),
@@ -189,9 +213,10 @@ fn package_reexport_modules<'s, F: Fn(&Path) -> Option<&'s str>>(
 /// Whether the initializer may bind `name` to something other than the
 /// frontier's definition: an import of another object under that name
 /// (`from .b import f` next to `from .a import f`, `from .b import g as f`,
-/// `import f`), a star import from another module that defines `name`, or its
-/// own top-level definition. Python keeps only the last binding; this reader
-/// does not order bindings, so any second binding fails closed.
+/// `import f`), a star import from another module that defines `name`, its
+/// own top-level definition, or any other binding such as `f = ...`. Python
+/// keeps only the last binding; this reader does not order bindings, so any
+/// second binding fails closed.
 fn binds_name_elsewhere(
     exporter: &PackageExporter<'_>,
     name: &str,
@@ -211,6 +236,7 @@ fn binds_name_elsewhere(
         import.alias == name && (import.imported != name || !in_frontier(&import.source_module))
     });
     conflicting_import
+        || exporter.rebinds(name)
         || exporter
             .module_paths
             .iter()
@@ -288,6 +314,9 @@ fn all_declaration(file: &Path, source: &str) -> AllDeclaration {
                 (Some(assign.value.as_ref()), true)
             }
             Stmt::Expr(expr) if mutates_all(&expr.value) => return AllDeclaration::Unresolved,
+            // An import, `del`, loop target or conditional binding replaces
+            // or removes the literal list in a way this reader does not track.
+            other if stmt_binds(other, "__all__", true) => return AllDeclaration::Unresolved,
             _ => continue,
         };
         let Some(names) = value.and_then(literal_string_names) else {
@@ -303,6 +332,92 @@ fn all_declaration(file: &Path, source: &str) -> AllDeclaration {
         };
     }
     declaration
+}
+
+/// Whether `stmt` binds `name`. Compound statements are searched, since a
+/// branch or loop body at module level still binds a module name; function
+/// and class bodies are not. Top-level imports count only when `imports` is
+/// set (the initializer reader already weighs its own top-level imports);
+/// imports inside a block always count.
+fn stmt_binds(stmt: &Stmt, name: &str, imports: bool) -> bool {
+    let target = |expr: &Expr| target_binds(expr, name);
+    let block = |body: &[Stmt]| body.iter().any(|stmt| stmt_binds(stmt, name, true));
+    match stmt {
+        Stmt::Assign(s) => s.targets.iter().any(target),
+        Stmt::AnnAssign(s) => target(&s.target),
+        Stmt::AugAssign(s) => target(&s.target),
+        Stmt::Delete(s) => s.targets.iter().any(target),
+        Stmt::FunctionDef(s) => s.name.as_str() == name,
+        Stmt::AsyncFunctionDef(s) => s.name.as_str() == name,
+        Stmt::ClassDef(s) => s.name.as_str() == name,
+        Stmt::Import(s) => imports && s.names.iter().any(|alias| import_binding(alias) == name),
+        Stmt::ImportFrom(s) => {
+            imports
+                && s.names.iter().any(|alias| {
+                    alias.name.as_str() != "*"
+                        && alias.asname.as_ref().unwrap_or(&alias.name).as_str() == name
+                })
+        }
+        Stmt::For(s) => target(&s.target) || block(&s.body) || block(&s.orelse),
+        Stmt::AsyncFor(s) => target(&s.target) || block(&s.body) || block(&s.orelse),
+        Stmt::While(s) => block(&s.body) || block(&s.orelse),
+        Stmt::If(s) => block(&s.body) || block(&s.orelse),
+        Stmt::With(s) => {
+            s.items
+                .iter()
+                .any(|item| item.optional_vars.as_deref().is_some_and(target))
+                || block(&s.body)
+        }
+        Stmt::AsyncWith(s) => {
+            s.items
+                .iter()
+                .any(|item| item.optional_vars.as_deref().is_some_and(target))
+                || block(&s.body)
+        }
+        Stmt::Try(s) => {
+            block(&s.body)
+                || handlers_bind(&s.handlers, name)
+                || block(&s.orelse)
+                || block(&s.finalbody)
+        }
+        Stmt::TryStar(s) => {
+            block(&s.body)
+                || handlers_bind(&s.handlers, name)
+                || block(&s.orelse)
+                || block(&s.finalbody)
+        }
+        Stmt::Match(s) => s.cases.iter().any(|case| block(&case.body)),
+        _ => false,
+    }
+}
+
+fn handlers_bind(handlers: &[ast::ExceptHandler], name: &str) -> bool {
+    handlers.iter().any(|handler| {
+        let ast::ExceptHandler::ExceptHandler(handler) = handler;
+        handler
+            .name
+            .as_ref()
+            .is_some_and(|bound| bound.as_str() == name)
+            || handler.body.iter().any(|stmt| stmt_binds(stmt, name, true))
+    })
+}
+
+/// The name `import a.b` or `import a.b as c` binds (`a` or `c`).
+fn import_binding(alias: &ast::Alias) -> &str {
+    match &alias.asname {
+        Some(asname) => asname.as_str(),
+        None => alias.name.as_str().split('.').next().unwrap_or_default(),
+    }
+}
+
+fn target_binds(expr: &Expr, name: &str) -> bool {
+    match expr {
+        Expr::Name(bound) => bound.id.as_str() == name,
+        Expr::Tuple(tuple) => tuple.elts.iter().any(|elt| target_binds(elt, name)),
+        Expr::List(list) => list.elts.iter().any(|elt| target_binds(elt, name)),
+        Expr::Starred(starred) => target_binds(&starred.value, name),
+        _ => false,
+    }
 }
 
 fn is_all_name(expr: &Expr) -> bool {

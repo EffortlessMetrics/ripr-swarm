@@ -437,3 +437,94 @@ fn a_later_initializer_binding_of_the_same_name_is_not_credited() -> Result<(), 
     }
     Ok(())
 }
+
+#[test]
+fn an_initializer_assignment_that_replaces_the_name_is_not_credited() -> Result<(), String> {
+    for (label, init) in [
+        ("assign-rebind", "from .a import f\n\nf = lambda: 2\n"),
+        (
+            "conditional-rebind",
+            "from .a import f\n\ntry:\n    import fast\nexcept ImportError:\n    pass\nelse:\n    f = fast.f\n",
+        ),
+        ("del-rebind", "from .a import f\n\ndel f\n"),
+    ] {
+        let finding = analyze_one_line(
+            label,
+            &[
+                ("pkg/a.py", "def f():\n    value = 1\n    return value\n"),
+                ("pkg/__init__.py", init),
+                (
+                    "tests/test_pkg.py",
+                    "import pkg\n\n\ndef test_f():\n    assert pkg.f() == 2\n",
+                ),
+            ],
+            "pkg/a.py",
+            2,
+        )?;
+        if finding.class != ExposureClass::NoStaticPath || !finding.related_tests.is_empty() {
+            return Err(format!(
+                "{label}: the initializer rebinds `f`, so `a.f` must not gain package identity, got {:?} with {:?}",
+                finding.class,
+                related_names(&finding)
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn an_initializer_binding_of_another_name_keeps_the_reexport() -> Result<(), String> {
+    let finding = analyze_one_line(
+        "other-binding",
+        &[
+            ("pkg/a.py", "def f():\n    value = 1\n    return value\n"),
+            (
+                "pkg/__init__.py",
+                "from .a import f\n\n__version__ = \"1.0\"\ng = f\n",
+            ),
+            (
+                "tests/test_pkg.py",
+                "import pkg\n\n\ndef test_f():\n    assert pkg.f() == 1\n",
+            ),
+        ],
+        "pkg/a.py",
+        2,
+    )?;
+    if related_names(&finding) != ["test_f"] {
+        return Err(format!(
+            "bindings of other names must not block the re-export of `f`, got {:?} with {:?}",
+            finding.class,
+            related_names(&finding)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn an_imported_replacement_of_all_fails_closed() -> Result<(), String> {
+    let finding = analyze_one_line(
+        "all-imported",
+        &[
+            (
+                "pkg/more.py",
+                "__all__ = ['one']\nfrom pkg.names import __all__\n\n\ndef one(items):\n    if len(items) != 1:\n        raise ValueError('expected one')\n    return items[0]\n",
+            ),
+            ("pkg/names.py", "__all__ = ['two']\n"),
+            ("pkg/__init__.py", "from .more import *\n"),
+            (
+                "tests/test_more.py",
+                "import pkg\n\n\ndef test_one():\n    assert pkg.one([7]) == 7\n",
+            ),
+        ],
+        "pkg/more.py",
+        6,
+    )?;
+    if finding.class != ExposureClass::NoStaticPath {
+        return Err(format!(
+            "`__all__` is replaced by an import, so the star re-export must not relate `pkg.one(`; got {:?} with {:?}",
+            finding.class,
+            related_names(&finding)
+        ));
+    }
+    Ok(())
+}
