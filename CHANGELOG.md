@@ -11,6 +11,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `review-comments` observes its cooperative analysis budget during canonical
+  inventory and rejects cancelled evidence before classification. Git diff
+  discovery consumes the remaining budget; deadline cancellation records a
+  typed timeout while ordinary source failures retain their failure status.
+  Individual operations can still overrun a checkpoint interval (#1778).
+
 - Cold LLM-agent walks of 0.11 no longer dead-end on four routes. Passing a
   `ripr check` finding ID (`probe:...`) to `ripr agent repair --seam-id` now
   says it is not a seam ID and names `ripr pilot --root .`. The
@@ -32,10 +38,17 @@ are scoped or reviewed.
   CI checkout no longer stops at raw `fatal: ... no merge base`; it names
   `git fetch --unshallow` and `fetch-depth: 0`. A repository with no
   commits, or whose default branch is not `main`/`master`, is told which
-  `--base` would work.
+  `--base` would work. A branch that shares no history with HEAD is never
+  offered as that base.
 - A diff that touches conflict markers in a file no enabled adapter reads
   (for example resolving markers committed to a workflow `.yml`) no longer
   turns the whole run into `unsupported_input`.
+- `--root` at a workspace member scopes the diff to that member and reads
+  its paths relative to it. Repository-relative paths used to miss the
+  member's files, so a tested change read as `no_static_path`.
+- In diff analysis, the generated-code skip limitation names up to three
+  skipped files and lists the generated-code conventions and the
+  `[languages.rust] generated_file_patterns` setting.
 - An empty `ripr check --diff` result now leads with its true cause. A config
   whose `[languages].enabled` leaves out `rust` records a typed
   `language_adapter_unavailable` limitation for the Rust files it skipped
@@ -69,6 +82,13 @@ are scoped or reviewed.
 - `cargo xtask ripr-pr` timeout packets now give one host-shell-labeled retry
   command that keeps base, head, and root arguments literal when copied, including
   refs with shell syntax and roots with spaces (#4367).
+
+- Actionable working-set review cards write the verify and analysis-outcome
+  artifacts consumed by their receipt command. Gate and onboarding projections
+  carry the complete optional command chain, preserving the selected base in
+  the analysis-outcome command even without a conventional default branch;
+  older cards and deferred
+  GapRecord routes remain compatible (#4307).
 
 - LSP `ripr.collectContext`, `ripr.collectEvidenceContext` and
   `ripr.collectRepairPacket` no longer answer `null`. An unreadable argument

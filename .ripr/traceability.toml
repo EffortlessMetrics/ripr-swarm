@@ -1069,6 +1069,13 @@ id = "RIPR-SPEC-0012"
 name = "PR test guidance annotations"
 spec = "docs/specs/RIPR-SPEC-0012-pr-test-guidance.md"
 tests = [
+  "crates/ripr/src/cli/commands.rs::review_comments_canonical_deadline_cancellation_records_timeout",
+  "crates/ripr/src/cli/commands.rs::review_comments_source_error_wins_over_later_clock_expiry",
+  "crates/ripr/src/analysis/seam_inventory.rs::scoped_evidence_rejects_deadline_after_the_final_seam",
+  "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs::owned_deadline_stops_context_test_loops_without_completing_context",
+  "crates/ripr/src/analysis/cancellation.rs::owned_budget_expires_and_default_token_has_no_deadline",
+  "crates/ripr/src/analysis/cancellation.rs::expired_clock_preserves_first_reason_and_pure_error_query",
+  "crates/ripr/src/cli/help.rs::review_comments_help_discloses_cooperative_budget_boundary",
   "crates/ripr/src/output/review_comments.rs::review_comments_places_exact_changed_seam_line",
   "crates/ripr/src/output/review_comments.rs::review_comments_places_owner_function_changed_line",
   "crates/ripr/src/output/review_comments.rs::review_comments_places_nearest_same_file_changed_line",
@@ -1106,6 +1113,9 @@ code = [
   "crates/ripr/src/cli/command.rs",
   "crates/ripr/src/cli/help.rs",
   "crates/ripr/src/analysis/seam_inventory.rs",
+  "crates/ripr/src/analysis/cancellation.rs",
+  "crates/ripr/src/analysis/test_grip_evidence.rs",
+  "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
   "crates/ripr/src/output/review_comments.rs"
 ]
 outputs = [
@@ -5182,6 +5192,14 @@ tests = [
   "crates/ripr/src/output/review_comments.rs::tests::spec0068_reject_seam_id_without_source_location",
   "crates/ripr/src/output/review_comments.rs::tests::spec0068_reject_seam_id_without_source_location_summary_only",
   "crates/ripr/src/output/review_comments.rs::tests::spec0068_actionable_card_carries_verify_and_receipt_commands",
+  "crates/ripr/src/output/review_comments.rs::tests::actionable_review_card_writes_every_receipt_input",
+  "crates/ripr/src/agent/loop_commands.rs::tests::analysis_outcome_preserves_selected_base_and_default_compatibility",
+  "xtask/src/tests.rs::dogfood_blocking_gate_report_is_self_contained",
+  "crates/ripr/tests/agent_command_journey.rs::review_card_and_gate_commands_persist_fresh_receipt_inputs",
+  "crates/ripr/src/output/gate/repair_route.rs::tests::review_card_outcome_step_is_carried_without_changing_completeness",
+  "crates/ripr/src/output/first_useful_action/tests.rs::repair_start_carries_optional_outcome_without_inventing_it",
+  "crates/ripr/src/output/first_pr.rs::tests::review_card_selection_carries_optional_outcome_without_inventing_it",
+  "crates/ripr/src/output/pr_evidence_ledger.rs::tests::card_and_gate_routes_carry_the_optional_complete_receipt_chain",
   "crates/ripr/src/output/review_comments.rs::tests::spec0068_every_card_carries_gap_state",
   "crates/ripr/src/output/review_comments.rs::tests::spec0068_summary_reason_is_closed_vocabulary",
   "crates/ripr/src/output/review_comments.rs::tests::spec0068_card_carries_structured_related_test",
@@ -5199,6 +5217,7 @@ tests = [
 fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/pr-guidance",
+  "fixtures/boundary_gap/expected/gate-adoption",
   "fixtures/boundary_gap/expected/pr-inline-comment-publisher"
 ]
 code = [
