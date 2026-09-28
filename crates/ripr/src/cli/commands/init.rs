@@ -402,16 +402,24 @@ jobs:
     # blocking behaviour. See docs/CALIBRATED_GATE_POLICY.md.
     continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}
     steps:
+      # Analyze the PR head, not the default `refs/pull/N/merge` commit.
+      # Review comments and `::warning` annotations are placed on the PR
+      # head's lines; when the base branch has moved lines in a changed
+      # file, merge-commit line numbers point at the wrong line, and GitHub
+      # rejects the whole review when a line falls outside the PR diff.
+      # upload-sarif detects the head checkout and reports it as
+      # refs/pull/N/head. A manual run keeps the dispatched commit.
       - uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
 
-      # Cache the cargo registry, git checkouts, and dependency builds
+      # Cache the cargo registry, git checkouts, and installed binaries
       # (#2008): an uncached `cargo install ripr` recompiles for minutes on
-      # every PR. The install itself still runs (no stale-binary risk); the
-      # warm caches cut most of the compile.
+      # every PR. The install below names an exact version, so a cached
+      # binary of that version is reused and any other version is rebuilt.
       # Pinned to a commit SHA (#2190 review): the generated workflow
       # grants pull-requests: write and security-events: write, so a
       # mutable third-party tag is a supply-chain risk in consumer repos.
@@ -420,9 +428,11 @@ jobs:
         with:
           shared-key: ripr-install
 
-      # Pinned to the ripr version that generated this workflow, so a later
-      # release cannot change what CI runs without a reviewed diff. Rerun
-      # `ripr init --ci github --force` with a newer ripr to upgrade.
+      # Pinned to the ripr that generated this workflow. The steps below use
+      # that version's commands and flags; an unpinned install takes the
+      # newest crates.io release, whose CLI may not match. To upgrade,
+      # install the newer ripr and compare
+      # `ripr init --ci github --force --dry-run` with this file.
       - name: Install ripr
         run: cargo install ripr --version @RIPR_VERSION@ --locked
 
@@ -562,7 +572,7 @@ jobs:
               | (.body // "") as $body
               | {
                   comment_id: .id,
-                  dedupe_key: ($body | capture("<!-- ripr:dedupe=(?<key>[^ ]+)").key),
+                  dedupe_key: ($body | capture("<!-- ripr:dedupe=(?<key>.*?)(?: presentation=[^ ]+)? -->").key),
                   path: .path,
                   line: (.line // .original_line),
                   side: (.side // "RIGHT"),
@@ -972,11 +982,13 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p target/ripr/reports
+          # Record the analyzed commit. On a PR, GITHUB_SHA names the merge
+          # commit, which this workflow does not check out.
           history_args=(
             policy history
             --root .
             --current target/ripr/reports/policy-operations.json
-            --commit "$GITHUB_SHA"
+            --commit "$(git rev-parse HEAD)"
             --out target/ripr/reports/policy-history.json
             --out-md target/ripr/reports/policy-history.md
           )

@@ -32,6 +32,46 @@ Use --format json for diff-scoped findings, or --format repo-exposure-summary-js
     ))
 }
 
+/// A repo-scoped format does not read the diff, but `--base` is still
+/// recorded as snapshot provenance (`base_revision`) and `--diff` still
+/// names an input. Both must exist, exactly as on the diff-scoped path,
+/// so a typo exits 2 instead of producing an artifact that records a ref
+/// or file that is not there (#4445).
+fn validate_repo_scope_diff_inputs(
+    input: &CheckInput,
+    base_explicitly_provided: bool,
+) -> Result<(), String> {
+    if let Some(diff) = input.diff_file.as_deref() {
+        if diff != Path::new("-") && !diff.is_file() {
+            return Err(format!(
+                "check: --diff {} is not a readable file",
+                diff.display()
+            ));
+        }
+        return Ok(());
+    }
+    if !base_explicitly_provided {
+        return Ok(());
+    }
+    let Some(base) = input.base.as_deref() else {
+        return Ok(());
+    };
+    let commit = format!("{base}^{{commit}}");
+    let output = crate::git::run_git_output_with_deadline(
+        &input.root,
+        &["rev-parse", "--verify", "--quiet", commit.as_str()],
+        input.git_timeout,
+    )?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "check: base revision {base:?} does not resolve to a commit in {}",
+            input.root.display()
+        ))
+    }
+}
+
 pub(super) fn resolve_workspace_root(start: &Path) -> Result<Option<PathBuf>, String> {
     let start = std::fs::canonicalize(start).map_err(|error| {
         format!(
@@ -74,17 +114,23 @@ fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<(), String>
 }
 
 fn parse_git_timeout(value: &str) -> Result<Option<std::time::Duration>, String> {
-    let secs: u64 = value.parse().map_err(|_parse_err| {
-        format!("--git-timeout requires a non-negative integer (seconds); got {value:?}")
-    })?;
-    validate_git_timeout_secs(secs)
+    parse_git_timeout_from("--git-timeout", value)
 }
 
-fn validate_git_timeout_secs(secs: u64) -> Result<Option<std::time::Duration>, String> {
+/// Parse a git timeout in seconds from `source` (the flag or the env var),
+/// naming that source in every refusal so a typo never runs with a silently
+/// different deadline (#4374).
+fn parse_git_timeout_from(
+    source: &str,
+    value: &str,
+) -> Result<Option<std::time::Duration>, String> {
+    let secs: u64 = value.parse().map_err(|_parse_err| {
+        format!("{source} requires a non-negative integer (seconds); got {value:?}")
+    })?;
     let timeout = std::time::Duration::from_secs(secs);
     if std::time::Instant::now().checked_add(timeout).is_none() {
         return Err(format!(
-            "--git-timeout is too large for the platform deadline; got {secs} seconds"
+            "{source} is too large for the platform deadline; got {secs} seconds"
         ));
     }
     Ok((secs > 0).then_some(timeout))
@@ -92,18 +138,19 @@ fn validate_git_timeout_secs(secs: u64) -> Result<Option<std::time::Duration>, S
 
 fn git_timeout_from_env(
     explicit: bool,
-    env_value: Option<&str>,
+    env_value: Result<String, std::env::VarError>,
 ) -> Result<Option<Option<std::time::Duration>>, String> {
     if explicit {
         return Ok(None);
     }
-    let Some(value) = env_value else {
-        return Ok(None);
-    };
-    let Ok(secs) = value.parse::<u64>() else {
-        return Ok(None);
-    };
-    validate_git_timeout_secs(secs).map(Some)
+    match env_value {
+        Ok(value) => parse_git_timeout_from("RIPR_GIT_TIMEOUT", &value).map(Some),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        // Present but unreadable is still a misconfiguration (#4374).
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err("RIPR_GIT_TIMEOUT must be valid UTF-8".to_string())
+        }
+    }
 }
 
 pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
@@ -252,7 +299,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // not passed on the command line. Seconds; 0 disables the deadline.
     if let Some(timeout) = git_timeout_from_env(
         git_timeout_explicitly_provided,
-        std::env::var("RIPR_GIT_TIMEOUT").ok().as_deref(),
+        std::env::var("RIPR_GIT_TIMEOUT"),
     )? {
         input.git_timeout = timeout;
     }
@@ -443,6 +490,9 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     {
         eprintln!("{warning}");
     }
+    if format.is_repo_scope() {
+        validate_repo_scope_diff_inputs(&input, base_explicitly_provided)?;
+    }
     if let Some(gap_ledger) = gap_ledger.as_ref() {
         write_stdout_chunked(&render_check_gap_ledger_badge(
             gap_ledger, &format, &config,
@@ -475,9 +525,8 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         )?;
         return Ok(());
     }
-    // Capture root and diff_file before input is moved into the analysis call.
-    // These are needed for the RIPR-SPEC-0112 disclosure check after the analysis.
-    let input_root = input.root.clone();
+    // Capture diff_file before input is moved into the analysis call; the
+    // RIPR-SPEC-0112 disclosure gate after the analysis needs it.
     let input_diff_file_is_some = input.diff_file.is_some();
     let limited_check_input = input.clone();
     // #4319: `--diff -` reads the diff from stdin. On an attached terminal
@@ -575,33 +624,19 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             suppression.warnings.len()
         );
     }
-    // RIPR-SPEC-0112: disclose when the analyzed diff was committed history (an
-    // explicit --base or the resolved default base; both run `git diff
-    // <base>...HEAD`) AND the working tree has uncommitted changes to tracked
-    // source files. Those changes were NOT analyzed. A zero-finding result in this
-    // state must NOT be read as a clean pass — the user's uncommitted edits were
-    // excluded from the diff. Fires independent of findings.is_empty() (honest
-    // whether or not committed diff had findings), but the false-clean risk is
-    // highest when findings are empty. Does NOT fire for --diff (file-based
-    // diff), --worktree (edits included), --candidate-tree (exact trees, no live
-    // worktree), or repo-scope formats (they read the live files).
+    // RIPR-SPEC-0112: the analysis sets `unanalyzed_working_tree` when a
+    // committed-history diff (an explicit --base or the resolved default base;
+    // both run `git diff <base>...HEAD`) read the HEAD content of tracked
+    // source or test files that have uncommitted edits. Those edits were NOT
+    // analyzed, so a zero-finding result must not read as a clean pass. It
+    // stays off for --diff, --worktree, --candidate-tree and repo-scope
+    // formats, none of which is a committed-history diff of the live tree.
     let committed_history_diff = !worktree_explicitly_provided
         && !input_diff_file_is_some
         && candidate_tree.is_none()
         && !format.is_repo_scope();
-    if committed_history_diff && analysis::working_tree_has_tracked_changes(&input_root) {
-        output.unanalyzed_working_tree = true;
-    }
-    // The committed diff's line numbers are applied to the on-disk file, so an
-    // edited diff file gets misplaced or missing probes. Name those files on
-    // stderr so every format (JSON included) carries the warning. This is not
-    // gated on the probe above: that probe sees only `--root`, while the
-    // analyzed diff covers the whole repository.
-    if committed_history_diff && let Some(base) = output.base.as_deref() {
-        let files = analysis::committed_diff_files_with_uncommitted_edits(&input_root, base);
-        if !files.is_empty() {
-            eprintln!("{}", edited_diff_files_warning(base, &files));
-        }
+    if !committed_history_diff {
+        output.unanalyzed_working_tree = false;
     }
     let navigation = if worktree_explicitly_provided && write_artifact.is_none() {
         None
@@ -619,27 +654,6 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         navigation.as_ref(),
     )?)?;
     Ok(())
-}
-
-/// Stderr warning for diff files that also carry uncommitted edits: their
-/// findings are unreliable until the edits are committed or `--worktree`
-/// diffs the edited content itself.
-fn edited_diff_files_warning(base: &str, files: &[String]) -> String {
-    let (verb, be) = if files.len() == 1 {
-        ("has", "is")
-    } else {
-        ("have", "are")
-    };
-    format!(
-        "ripr: warning: {} {verb} uncommitted edits and {be} also in the analyzed `{base}...HEAD` diff; \
-         findings there apply committed line numbers to edited content and can be misplaced or missing. \
-         Commit the edits, or rerun with `--worktree`.",
-        files
-            .iter()
-            .map(|file| format!("`{file}`"))
-            .collect::<Vec<_>>()
-            .join(", "),
-    )
 }
 
 /// The stderr hedge for an explicit `--diff` run that produced zero findings
@@ -1057,16 +1071,6 @@ mod tests {
     }
 
     #[test]
-    fn edited_diff_files_warning_agrees_in_number_and_names_the_recovery() {
-        let one = edited_diff_files_warning("origin/main", &["src/lib.rs".to_string()]);
-        assert!(one.contains("`src/lib.rs` has uncommitted edits and is also in the analyzed `origin/main...HEAD` diff"));
-        assert!(one.ends_with("Commit the edits, or rerun with `--worktree`."));
-        let two =
-            edited_diff_files_warning("origin/main", &["a.rs".to_string(), "b.rs".to_string()]);
-        assert!(two.contains("`a.rs`, `b.rs` have uncommitted edits and are also in"));
-    }
-
-    #[test]
     fn repo_scope_format_with_base_emits_scope_warning() -> Result<(), String> {
         let warning = repo_scope_diff_bound_warning(OutputFormat::RepoExposureJson, true, None)
             .ok_or_else(|| "repo-scoped format plus --base should warn".to_string())?;
@@ -1167,17 +1171,49 @@ mod tests {
     #[test]
     fn git_timeout_environment_is_a_fallback_and_zero_disables() -> Result<(), String> {
         assert_eq!(
-            git_timeout_from_env(false, Some("12")),
+            git_timeout_from_env(false, Ok("12".to_string())),
             Ok(Some(Some(std::time::Duration::from_secs(12))))
         );
-        assert_eq!(git_timeout_from_env(false, Some("0")), Ok(Some(None)));
-        assert_eq!(git_timeout_from_env(false, Some("invalid")), Ok(None));
-        assert_eq!(git_timeout_from_env(false, None), Ok(None));
-        assert_eq!(git_timeout_from_env(true, Some("12")), Ok(None));
-        let error = git_timeout_from_env(false, Some("18446744073709551615"))
+        assert_eq!(
+            git_timeout_from_env(false, Ok("0".to_string())),
+            Ok(Some(None))
+        );
+        assert_eq!(
+            git_timeout_from_env(false, Err(std::env::VarError::NotPresent)),
+            Ok(None)
+        );
+        assert_eq!(git_timeout_from_env(true, Ok("12".to_string())), Ok(None));
+        // An explicit --git-timeout wins, so a bad env value is not read.
+        assert_eq!(
+            git_timeout_from_env(true, Ok("invalid".to_string())),
+            Ok(None)
+        );
+        let error = git_timeout_from_env(false, Ok("18446744073709551615".to_string()))
             .err()
             .ok_or("an overflowing timeout should fail closed")?;
-        assert!(error.contains("too large"));
+        assert!(error.contains("RIPR_GIT_TIMEOUT is too large"), "{error}");
+        // #4374: non-numeric and beyond-u64 values fail closed naming the
+        // variable instead of silently keeping the default deadline.
+        for value in ["invalid", "99999999999999999999", "-1", ""] {
+            let error = git_timeout_from_env(false, Ok(value.to_string()))
+                .err()
+                .ok_or(format!("RIPR_GIT_TIMEOUT={value:?} should fail closed"))?;
+            assert_eq!(
+                error,
+                format!(
+                    "RIPR_GIT_TIMEOUT requires a non-negative integer (seconds); got {value:?}"
+                )
+            );
+        }
+        assert_eq!(
+            git_timeout_from_env(
+                false,
+                Err(std::env::VarError::NotUnicode(std::ffi::OsString::from(
+                    "x"
+                )))
+            ),
+            Err("RIPR_GIT_TIMEOUT must be valid UTF-8".to_string())
+        );
         Ok(())
     }
 
