@@ -424,6 +424,81 @@ mod candidate_index_tests {
     use super::*;
 
     #[test]
+    fn owned_deadline_stops_context_test_loops_without_completing_context() -> Result<(), String> {
+        use crate::analysis::cancellation::{AnalysisCancellationToken, with_token};
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::{Duration, Instant};
+
+        let started = Instant::now();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let owned_calls = Arc::clone(&calls);
+        let token = AnalysisCancellationToken::with_budget(
+            started,
+            Duration::from_secs(1),
+            Arc::new(move || {
+                owned_calls.fetch_add(1, Ordering::SeqCst);
+                started
+            }),
+        );
+        let empty = RustIndex::default();
+        with_token(&token, || CompactGripContext::try_new(&empty))?;
+        let helper_stage_observations = calls.load(Ordering::SeqCst);
+        if helper_stage_observations < 2 {
+            return Err("context fixture did not observe helper-map stages".to_string());
+        }
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(
+            &path,
+            r#"
+fn value() -> i32 { 1 }
+#[test] fn first() { assert_eq!(value(), 1); }
+#[test] fn second() { assert_eq!(value(), 1); }
+"#,
+        )?;
+        let mut index = RustIndex::default();
+        index.tests = facts.tests.clone();
+        index.functions = facts.functions.clone();
+        index.files.insert(path, facts);
+        if index.tests.len() != 2 {
+            return Err("context fixture must admit exactly two parsed tests".to_string());
+        }
+        let ordinary = CompactGripContext::new(&index);
+        let complete = with_token(&token, || CompactGripContext::try_new(&index))?;
+        if complete.tests.len() != 2
+            || complete.tests_by_call_name != ordinary.tests_by_call_name
+            || complete.tests_by_assertion_token != ordinary.tests_by_assertion_token
+        {
+            return Err("unexpired context changed its complete indexes".to_string());
+        }
+        let observations = Arc::new(AtomicUsize::new(0));
+        let owned_observations = Arc::clone(&observations);
+        let deadline = AnalysisCancellationToken::with_budget(
+            started,
+            Duration::from_secs(1),
+            Arc::new(move || {
+                if owned_observations.fetch_add(1, Ordering::SeqCst) >= helper_stage_observations {
+                    started + Duration::from_secs(1)
+                } else {
+                    started
+                }
+            }),
+        );
+        let result = with_token(&deadline, || CompactGripContext::try_new(&index));
+        if !result.is_err_and(|error| error.contains("DeadlineExceeded"))
+            || deadline.abort_kind()
+                != Some(crate::analysis::cancellation::AnalysisAbortKind::DeadlineExceeded)
+            || observations.load(Ordering::SeqCst) != helper_stage_observations + 1
+        {
+            return Err(
+                "context test loops completed instead of observing their first expired budget"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn name_and_module_candidates_match_independent_full_scans() {
         let fixtures = [
             ("owner_start", Some("a/b/nested")),
