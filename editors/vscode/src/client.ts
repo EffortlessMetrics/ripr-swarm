@@ -473,7 +473,7 @@ export class RiprClientController {
         kind: 'workspaceAmbiguous',
         summary: 'Select one workspace folder before using ripr repair actions.',
         detail: workspaceRootStateDetail(this.workspaceRootState),
-        nextStep: 'Run ripr: Select Workspace Root, or open a Rust or enabled preview-language file from one workspace folder, then run ripr: Restart Server.'
+        nextStep: 'Run ripr: Select Workspace Root, or open a file from one workspace folder.'
       });
       this.output.appendLine('ripr multi-root workspace is ambiguous; select a workspace folder before starting the server.');
       // Fire and forget (#2180 review): awaiting the warning would block
@@ -542,8 +542,16 @@ export class RiprClientController {
       }
     };
 
+    const workspaceRoot = this.workspaceRoot;
     const clientOptions: LanguageClientOptions = {
-      documentSelector: riprDocumentSelectorsForWorkspace(this.workspaceRoot),
+      documentSelector: riprDocumentSelectorsForWorkspace(workspaceRoot),
+      // Bind the session to the one folder this controller selected. Without
+      // it the client reports every workspace folder in initialize, and the
+      // server resolves a multi-root window as ambiguous even after
+      // ripr: Select Workspace Root picked a folder.
+      workspaceFolder: this.runtime.workspaceFolders().find((folder) =>
+        sameWorkspaceRoot(folder.uri.fsPath, workspaceRoot)
+      ),
       initializationOptions: {
         baseRef: config.baseRef,
         checkMode: config.checkMode,
@@ -753,6 +761,27 @@ export class RiprClientController {
     const config = this.runtime.getConfig();
     this.client.setTrace(traceFromConfig(config.traceServer));
     this.output.appendLine(`ripr server trace set to '${config.traceServer}' without a restart.`);
+  }
+
+  /**
+   * Whether the controller stopped only because a multi-root window had no
+   * selected folder. Opening a file from one folder resolves that, so the
+   * extension starts again instead of waiting for ripr: Restart Server.
+   */
+  awaitingWorkspaceRoot(): boolean {
+    return this.client === undefined && this.status.kind === 'workspaceAmbiguous';
+  }
+
+  /**
+   * Whether a workspace-folder change removed the folder the running session
+   * is bound to. The session is locked to one folder, so the server never
+   * sees the removal; the extension restarts to re-resolve the root.
+   */
+  sessionRootRemoved(removed: readonly vscode.WorkspaceFolder[]): boolean {
+    const root = this.workspaceRoot;
+    return this.client !== undefined
+      && root !== undefined
+      && removed.some((folder) => sameWorkspaceRoot(folder.uri.fsPath, root));
   }
 
   /**
