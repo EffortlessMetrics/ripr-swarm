@@ -103,7 +103,8 @@ pub(in crate::analysis) fn reach_evidence(
 /// and generic dispatch that never spell its name (`Money(5).to_string()`
 /// calls `Display::fmt`). Any other function is reachable only through
 /// something that names it: a caller, a function pointer (`.map(owner)`), a
-/// `use .. as` alias, a doctest, or a macro block such as `proptest!`. So
+/// `use .. as` alias, a doctest (including a README pulled in with
+/// `#![doc = include_str!(..)]`), or a macro block such as `proptest!`. So
 /// when no workspace source names the owner outside its own `fn` line,
 /// nothing can reach it; when anything does, reach stays undecided.
 pub(in crate::analysis) fn owner_may_be_reached_unseen(
@@ -111,10 +112,19 @@ pub(in crate::analysis) fn owner_may_be_reached_unseen(
     index: &RustIndex,
 ) -> bool {
     is_trait_impl_method(owner)
-        || index
-            .files
-            .values()
-            .any(|file| names_identifier_outside_fn_definition(&file.source, &owner.name))
+        || index.files.values().any(|file| {
+            names_identifier_outside_fn_definition(&file.source, &owner.name)
+                || includes_external_docs(&file.source)
+        })
+}
+
+/// `#![doc = include_str!("../README.md")]` turns an unindexed file into
+/// doctests that may call anything, so the name scan cannot rule them out.
+fn includes_external_docs(source: &str) -> bool {
+    source.lines().any(|line| {
+        let line = line.trim_start();
+        (line.starts_with("#![doc") || line.starts_with("#[doc")) && line.contains("include_str!")
+    })
 }
 
 /// Parser-backed owner ids carry their impl segment
@@ -339,6 +349,17 @@ mod tests {
         assert!(names_identifier_outside_fn_definition(
             "let cfn fragile_fee",
             "fragile_fee"
+        ));
+    }
+
+    #[test]
+    fn included_doc_files_count_as_unseen_callers() {
+        assert!(includes_external_docs(
+            "#![doc = include_str!(\"../README.md\")]\npub fn a() {}"
+        ));
+        assert!(includes_external_docs("  #[doc = include_str!(\"x.md\")]"));
+        assert!(!includes_external_docs(
+            "const T: &str = include_str!(\"t.txt\");\n#[doc = \"x\"]"
         ));
     }
 
