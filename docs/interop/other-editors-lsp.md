@@ -62,8 +62,9 @@ all of them. Clipboard and navigation actions (`ripr.copy*`,
 `experimental.riprEditor` capability, which only the VS Code extension does.
 
 **Custom notification.** The server sends `ripr/analysisStatus` after startup
-and each refresh. A client without a handler can ignore it. `ripr.collectWorkspaceStatus` returns the same
-payload on request.
+and each refresh. A client without a handler can ignore it. `ripr.collectWorkspaceStatus` returns a
+`workspace_status` object on request, with the latest status payload under
+`analysis_status`.
 
 ## Helix
 
