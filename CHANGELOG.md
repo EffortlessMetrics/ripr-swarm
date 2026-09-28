@@ -29,6 +29,13 @@ are scoped or reviewed.
   blocked root, a file outside the analyzed root, an edited buffer whose
   evidence is paused until the file is saved, or a file no refresh has
   analyzed yet.
+- `ripr review-comments` no longer times out on a large diff. It evaluates
+  seams on changed lines and in changed owner functions first, and skips the
+  rest of the scope when those already fill the ten review slots; a warning
+  gives the skipped count. On one 11-file ripr change it went from 398 s, past
+  the 120 s default bound, to 18.5 s with the same comments. Agent brief and
+  review warnings now name the first ten hidden matching seams and count the
+  rest, so that report shrank from 1.7 MB to 34 KB.
 - Generated GitHub workflow (`ripr init --ci github`): it now checks out the
   PR head instead of GitHub's `refs/pull/N/merge` commit, so review comments
   and annotations land on the PR diff's lines after the base branch moves.
