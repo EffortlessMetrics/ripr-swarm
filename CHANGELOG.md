@@ -534,7 +534,7 @@ are scoped or reviewed.
   extended-length/device paths are refused when producing a local file URI,
   instead of emitting a URI the server cannot read back. Workspaces on those
   paths remain unsupported by this local-only URI path
-  ([#4090](https://github.com/EffortlessMetrics/ripr-swarm/pull/4090)).
+  ([#4060](https://github.com/EffortlessMetrics/ripr-swarm/issues/4060)).
 - TypeScript predicate-boundary evidence no longer credits assertions whose
   boundary value is in an unread argument or nested expression, whose owner
   name is shadowed, or whose expected value cannot discriminate the change.
