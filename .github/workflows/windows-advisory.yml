@@ -205,6 +205,28 @@ jobs:
         run: |
           cargo xtask windows-advisory-isolated-summary --dir target | tee target/nested-alias-isolated-verdict.md | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # A copied bad status must fail the real xtask command while preserving all
+      # three printed rows through `tee`, including the trailing failure row.
+      - name: Prove isolated verdict refusal survives tee (#4377)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.repeat_nested_alias == true }}
+        shell: bash
+        run: |
+          mkdir -p target/nested-alias-negative
+          for run in 1 2 3; do
+            cp "target/nested-alias-isolated-$run.log" "target/nested-alias-negative/nested-alias-isolated-$run.log"
+            cp "target/nested-alias-isolated-$run.status" "target/nested-alias-negative/nested-alias-isolated-$run.status"
+          done
+          printf '101\n' > target/nested-alias-negative/nested-alias-isolated-2.status
+          set +e
+          cargo xtask windows-advisory-isolated-summary --dir target/nested-alias-negative | tee target/nested-alias-negative-verdict.md
+          statuses=("${PIPESTATUS[@]}")
+          set -e
+          printf '%s\n' "${statuses[0]}" > target/nested-alias-negative.status
+          test "${statuses[0]}" -ne 0
+          test "${statuses[1]}" -eq 0
+          test "$(grep -c '^- run ' target/nested-alias-negative-verdict.md)" -eq 3
+          grep -q '^- run 2: EVIDENCE_FAILURE' target/nested-alias-negative-verdict.md
+
       - name: Upload advisory logs
         if: always()
         uses: actions/upload-artifact@v7
@@ -227,4 +249,6 @@ jobs:
             target/nested-alias-isolated-*.status
             target/nested-alias-isolated-env.log
             target/nested-alias-isolated-verdict.md
+            target/nested-alias-negative-verdict.md
+            target/nested-alias-negative.status
           if-no-files-found: ignore

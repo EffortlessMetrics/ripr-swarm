@@ -38,6 +38,7 @@
 //! read as covered by a green lane that never executed its only native proof.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
 use std::path::Path;
 
 /// One named native-Windows control for a release seam (#3922).
@@ -479,6 +480,9 @@ pub(crate) fn run_isolated(args: &[String]) -> Result<(), String> {
             }
         }
     }
+    std::io::stdout()
+        .flush()
+        .map_err(|error| format!("flush isolated Windows verdict: {error}"))?;
     if failed {
         Err(
             "nested-alias isolated repetitions did not all pass; see the verdict and raw logs"
