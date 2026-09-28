@@ -1418,6 +1418,35 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('refresh failures suggest editor recovery without restarting the server', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      context.client.emitNotification('window/logMessage', {
+        message: 'ripr analysis refresh failed: the base `origin/main` does not resolve to a commit'
+      });
+      assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        failure: { kind: 'analysis_error', message: 'temporary timeout' }
+      });
+      assert.ok(String(context.status.tooltip).includes('Run ripr: Refresh Diagnostics to retry'));
+      assert.ok(!String(context.status.tooltip).includes('Restart Server'));
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        retry_command: 'ripr.refresh',
+        failure: { kind: 'analysis_error', message: 'the base `origin/main` does not resolve to a commit. Fetch the ref or pass --base <ref>.' }
+      });
+      assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
+      assert.ok(String(context.status.tooltip).includes('ripr: Refresh Diagnostics'));
+
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('typed analysis status surfaces server-owned ambiguous root state', async () => {
     const context = createControllerTestContext({});
     try {
