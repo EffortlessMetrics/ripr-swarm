@@ -22,13 +22,10 @@
 //! pipeline thread.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-
-/// Default per-invocation deadline when the caller supplies none.
-const DEFAULT_GIT_DEADLINE: Duration = Duration::from_mins(1);
 
 /// Upper bound on the bytes kept from one probe or blob invocation. A larger
 /// output fails closed with a named limit instead of an unbounded allocation.
@@ -47,6 +44,30 @@ pub(crate) struct CommittedSourceOverlay {
     /// Root-relative, `/`-separated path → `HEAD` bytes, or `None` when the
     /// path is not a regular file at `HEAD` (absent, symlink, or gitlink).
     entries: BTreeMap<String, Option<Vec<u8>>>,
+    /// Git-ignored paths an adapter routes, and git-ignored directories.
+    /// Neither exists at `HEAD`, but discovery walks the disk without
+    /// `.gitignore`, so both read as absent unless tracked.
+    ignored: IgnoredPaths,
+}
+
+#[derive(Debug, Default)]
+struct IgnoredPaths {
+    files: BTreeSet<String>,
+    directories: Vec<String>,
+    /// Tracked files inside an ignored directory (force-added); these keep
+    /// their working-tree reads.
+    tracked_within: BTreeSet<String>,
+}
+
+impl IgnoredPaths {
+    fn contains(&self, key: &str) -> bool {
+        self.files.contains(key)
+            || (!self.tracked_within.contains(key)
+                && self.directories.iter().any(|directory| {
+                    key.strip_prefix(directory.as_str())
+                        .is_some_and(|rest| rest.starts_with('/'))
+                }))
+    }
 }
 
 /// What a source read at one path should observe.
@@ -99,6 +120,7 @@ impl CommittedSourceOverlay {
         Self {
             root: root.to_path_buf(),
             canonical_root: root.canonicalize().ok(),
+            ignored: IgnoredPaths::default(),
             entries: entries
                 .into_iter()
                 .map(|(path, bytes)| (path.to_string(), bytes.map(<[u8]>::to_vec)))
@@ -114,6 +136,7 @@ impl CommittedSourceOverlay {
             return CommittedSourceRead::Worktree;
         };
         match self.entries.get(&key) {
+            None if self.ignored.contains(&key) => CommittedSourceRead::AbsentAtHead,
             None => CommittedSourceRead::Worktree,
             Some(Some(bytes)) => CommittedSourceRead::Committed(bytes.clone()),
             Some(None) => CommittedSourceRead::AbsentAtHead,
@@ -196,7 +219,9 @@ pub(crate) fn probe(
     root: &Path,
     git_timeout: Option<Duration>,
 ) -> Result<Option<CommittedSourceOverlay>, String> {
-    let deadline = git_timeout.unwrap_or(DEFAULT_GIT_DEADLINE);
+    // `None` is the caller's "no deadline" (`--git-timeout 0`), as for the
+    // diff loader; output stays bounded either way.
+    let deadline = git_timeout;
     let status = git_bytes(
         root,
         &[
@@ -204,13 +229,19 @@ pub(crate) fn probe(
             "--porcelain",
             "-z",
             "--untracked-files=all",
+            // Ignored files are listed too (an ignored directory as one
+            // `dir/` record): discovery does not apply `.gitignore`.
+            "--ignored=matching",
             "--",
             ".",
         ],
         deadline,
     )?;
-    let repo_relative = parse_porcelain_z(&status)?;
-    if repo_relative.is_empty() {
+    let records = parse_porcelain_z(&status)?;
+    if records.dirty.is_empty()
+        && records.ignored_files.is_empty()
+        && records.ignored_directories.is_empty()
+    {
         return Ok(None);
     }
     let prefix = String::from_utf8(git_bytes(root, &["rev-parse", "--show-prefix"], deadline)?)
@@ -219,13 +250,37 @@ pub(crate) fn probe(
                 .to_string()
         })?;
     let prefix = prefix.trim_end_matches(['\n', '\r']);
-    let dirty = repo_relative
-        .into_iter()
-        .filter_map(|path| path.strip_prefix(prefix).map(str::to_string))
-        .filter(|path| !path.is_empty())
-        .collect::<std::collections::BTreeSet<_>>();
-    if dirty.is_empty() {
+    let below_root = |paths: Vec<String>| {
+        paths
+            .into_iter()
+            .filter_map(|path| path.strip_prefix(prefix).map(str::to_string))
+            .filter(|path| !path.is_empty())
+            .collect::<BTreeSet<_>>()
+    };
+    let dirty = below_root(records.dirty);
+    let mut ignored = IgnoredPaths {
+        files: below_root(records.ignored_files),
+        directories: below_root(records.ignored_directories)
+            .into_iter()
+            .collect(),
+        tracked_within: BTreeSet::new(),
+    };
+    if dirty.is_empty() && ignored.files.is_empty() && ignored.directories.is_empty() {
         return Ok(None);
+    }
+    let directories = ignored
+        .directories
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    for chunk in directories.chunks(LS_TREE_CHUNK) {
+        let mut args = vec!["--literal-pathspecs", "ls-files", "-z", "--"];
+        args.extend(chunk.iter().copied());
+        for record in git_bytes(root, &args, deadline)?.split(|byte| *byte == 0) {
+            if let Ok(path) = utf8_path(record) {
+                ignored.tracked_within.insert(path);
+            }
+        }
     }
     let mut head_blobs = BTreeMap::new();
     let dirty_list = dirty.iter().map(String::as_str).collect::<Vec<_>>();
@@ -253,6 +308,7 @@ pub(crate) fn probe(
         root: root.to_path_buf(),
         canonical_root: root.canonicalize().ok(),
         entries,
+        ignored,
     }))
 }
 
@@ -260,9 +316,9 @@ fn is_regular_file_mode(mode: &str) -> bool {
     mode == "100644" || mode == "100755"
 }
 
-fn git_bytes(root: &Path, args: &[&str], deadline: Duration) -> Result<Vec<u8>, String> {
+fn git_bytes(root: &Path, args: &[&str], deadline: Option<Duration>) -> Result<Vec<u8>, String> {
     let describe = args.iter().take(2).copied().collect::<Vec<_>>().join(" ");
-    let output = crate::git::run_git_output_with_deadline_and_limit(
+    let output = crate::git::run_git_output_with_optional_deadline_and_limit(
         root,
         args,
         deadline,
@@ -280,10 +336,27 @@ fn git_bytes(root: &Path, args: &[&str], deadline: Duration) -> Result<Vec<u8>, 
     Ok(output.stdout)
 }
 
-/// Parse `git status --porcelain -z` output into repo-relative paths. Rename
-/// and copy records carry a second (original) path; both sides are dirty.
-fn parse_porcelain_z(bytes: &[u8]) -> Result<Vec<String>, String> {
-    let mut paths = Vec::new();
+/// Repo-relative paths from `git status --porcelain -z`, limited to files a
+/// language adapter routes: nothing else is read through the overlay, so an
+/// unrelated binary, README or non-UTF-8 name never costs a blob load or
+/// fails the probe.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct StatusRecords {
+    /// Tracked paths that differ from `HEAD`, and untracked routed files.
+    /// Rename and copy records carry a second (original) path; both sides
+    /// are dirty.
+    dirty: Vec<String>,
+    ignored_files: Vec<String>,
+    /// Ignored directories, without the trailing `/`.
+    ignored_directories: Vec<String>,
+}
+
+fn routed(path: &[u8]) -> bool {
+    super::language::route(Path::new(String::from_utf8_lossy(path).as_ref())).is_some()
+}
+
+fn parse_porcelain_z(bytes: &[u8]) -> Result<StatusRecords, String> {
+    let mut out = StatusRecords::default();
     let mut records = bytes.split(|byte| *byte == 0);
     while let Some(record) = records.next() {
         if record.is_empty() {
@@ -296,24 +369,28 @@ fn parse_porcelain_z(bytes: &[u8]) -> Result<Vec<String>, String> {
             ));
         };
         let worktree_status = record.get(1).copied().unwrap_or(b' ');
-        // An untracked file has no `HEAD` content, so the committed view
-        // leaves it out; only files an adapter would read need an entry. The
-        // route check runs before the UTF-8 check so an unrelated untracked
-        // file with a non-UTF-8 name cannot fail the probe.
-        if *index_status == b'?'
-            && super::language::route(Path::new(String::from_utf8_lossy(path).as_ref())).is_none()
-        {
-            continue;
-        }
-        let path = utf8_path(path)?;
-        paths.push(path);
         let has_original =
             matches!(index_status, b'R' | b'C') || matches!(worktree_status, b'R' | b'C');
-        if has_original && let Some(original) = records.next() {
-            paths.push(utf8_path(original)?);
+        let original = if has_original { records.next() } else { None };
+        if *index_status == b'!' {
+            if let Some(directory) = path.strip_suffix(b"/") {
+                // A non-UTF-8 directory name keys no overlay lookup anyway.
+                if let Ok(directory) = utf8_path(directory) {
+                    out.ignored_directories.push(directory);
+                }
+            } else if routed(path) {
+                out.ignored_files.push(utf8_path(path)?);
+            }
+            continue;
+        }
+        if routed(path) {
+            out.dirty.push(utf8_path(path)?);
+        }
+        if let Some(original) = original.filter(|original| routed(original)) {
+            out.dirty.push(utf8_path(original)?);
         }
     }
-    Ok(paths)
+    Ok(out)
 }
 
 #[derive(Debug)]

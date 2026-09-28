@@ -64,7 +64,8 @@ are scoped or reviewed.
   `[languages.rust] generated_file_patterns` setting.
 - `ripr check` on committed history (the default, or `--base <rev>`) now reads
   the committed version of every tracked file you have edited but not
-  committed, tests included, and leaves out new files that are not committed.
+  committed, tests included, and leaves out new files that are not committed,
+  git-ignored ones included.
   Before, an uncommitted edit that shifted lines in a changed file could
   attach findings to the wrong function or expression, and an uncommitted test
   edit already moved the counts while the note said uncommitted changes were

@@ -85,8 +85,8 @@ fn untracked_source_reads_absent_and_only_source_paths_raise_the_note() -> Resul
     };
     assert_eq!(
         overlay.dirty_paths().collect::<Vec<_>>(),
-        vec!["README.md", "tests/new.rs"],
-        "tracked edits plus adapter-routed untracked files; notes.txt is not routed"
+        vec!["tests/new.rs"],
+        "only adapter-routed paths: the README edit and notes.txt are not read through the overlay"
     );
     assert_eq!(
         overlay.dirty_source_paths(),
@@ -211,7 +211,16 @@ fn nested_root_keys_are_relative_to_the_analyzed_root() -> Result<(), String> {
 #[test]
 fn porcelain_parser_pairs_rename_sources_and_rejects_malformed_records() -> Result<(), String> {
     let parsed = parse_porcelain_z(b" M a.rs\0R  new.rs\0old.rs\0A  added.rs\0")?;
-    assert_eq!(parsed, vec!["a.rs", "new.rs", "old.rs", "added.rs"]);
+    assert_eq!(parsed.dirty, vec!["a.rs", "new.rs", "old.rs", "added.rs"]);
+    // Review of #4442: only routed paths are kept, so an unrelated edited
+    // binary, README or non-UTF-8 name costs no blob load and cannot fail
+    // the probe; ignored routed files and ignored directories are kept.
+    let parsed = parse_porcelain_z(
+        b" M \xffdata.bin\0 M README.md\0R  src/lib.rs\0notes.txt\0!! build/\0!! tests/local.rs\0!! local.log\0",
+    )?;
+    assert_eq!(parsed.dirty, vec!["src/lib.rs"]);
+    assert_eq!(parsed.ignored_files, vec!["tests/local.rs"]);
+    assert_eq!(parsed.ignored_directories, vec!["build"]);
     assert!(
         parse_porcelain_z(b"M\0").is_err(),
         "a truncated record fails closed"
@@ -230,6 +239,7 @@ fn missing_on_disk_disclosure_names_bounded_paths() {
     let overlay = CommittedSourceOverlay {
         root: std::env::temp_dir().join("ripr-committed-source-missing-none"),
         canonical_root: None,
+        ignored: IgnoredPaths::default(),
         entries: BTreeMap::from([
             ("gone.rs".to_string(), Some(b"x".to_vec())),
             ("never.rs".to_string(), None),
@@ -402,5 +412,42 @@ fn workspace_authority_confirms_committed_bytes_of_a_dirty_file() -> Result<(), 
         with_overlay(Some(Arc::new(overlay)), validates),
         "the authority must confirm committed bytes through the overlay"
     );
+    Ok(())
+}
+
+/// Review of #4442: Git status omits ignored files by default, but discovery
+/// walks the disk without `.gitignore`, so an ignored local test was read as
+/// committed evidence. Ignored routed files and files under an ignored
+/// directory read absent; a force-added tracked file there keeps its
+/// working-tree read; and none of them raises the uncommitted-edits note.
+/// Also runs the probe with no deadline (`--git-timeout 0`).
+#[test]
+fn ignored_sources_read_absent_unless_tracked() -> Result<(), String> {
+    let repo = fixture_root("ignored")?;
+    write(&repo.0, ".gitignore", "tests/local.rs\nscratch/\n")?;
+    write(&repo.0, "src/lib.rs", "pub fn one() -> u8 { 1 }\n")?;
+    write(&repo.0, "scratch/kept.rs", "pub fn kept() {}\n")?;
+    git(&repo.0, &["add", "-f", "scratch/kept.rs"])?;
+    commit_all(&repo.0, "base")?;
+    write(&repo.0, "tests/local.rs", "#[test]\nfn local() {}\n")?;
+    write(&repo.0, "scratch/probe.rs", "#[test]\nfn probe() {}\n")?;
+    let overlay = probe(&repo.0, None)?.ok_or("ignored sources need an overlay")?;
+    assert_eq!(
+        overlay.lookup(&repo.0, Path::new("tests/local.rs")),
+        CommittedSourceRead::AbsentAtHead
+    );
+    assert_eq!(
+        overlay.lookup(&repo.0, Path::new("scratch/probe.rs")),
+        CommittedSourceRead::AbsentAtHead
+    );
+    assert_eq!(
+        overlay.lookup(&repo.0, Path::new("scratch/kept.rs")),
+        CommittedSourceRead::Worktree
+    );
+    assert_eq!(
+        overlay.lookup(&repo.0, Path::new("src/lib.rs")),
+        CommittedSourceRead::Worktree
+    );
+    assert!(overlay.dirty_source_paths().is_empty());
     Ok(())
 }
