@@ -73,14 +73,26 @@ pub(super) fn apply_package_reexports<'s>(
         .filter(|owner| owner.is_module_owner() && is_package_init(&owner.file))
         .cloned()
         .collect();
-    apply_package_reexports_from(owners, &init_owners, source_of);
+    let definitions = TopLevelDefinitions::from_owners(owners.iter());
+    apply_with(owners, &init_owners, &definitions, source_of);
 }
 
 /// Sets `reexport_modules` on `owners` from separately loaded package
-/// `__init__.py` module owners (repo mode loads one production file at a time).
+/// `__init__.py` module owners (repo mode loads one production file at a time,
+/// so top-level definitions are known only for `owners` and the initializers).
 pub(super) fn apply_package_reexports_from<'s>(
     owners: &mut [PythonOwner],
     init_owners: &[PythonOwner],
+    source_of: impl Fn(&Path) -> Option<&'s str>,
+) {
+    let definitions = TopLevelDefinitions::from_owners(owners.iter().chain(init_owners));
+    apply_with(owners, init_owners, &definitions, source_of);
+}
+
+fn apply_with<'s>(
+    owners: &mut [PythonOwner],
+    init_owners: &[PythonOwner],
+    definitions: &TopLevelDefinitions,
     source_of: impl Fn(&Path) -> Option<&'s str>,
 ) {
     let exporters = package_exporters(init_owners);
@@ -89,7 +101,36 @@ pub(super) fn apply_package_reexports_from<'s>(
         declared: HashMap::new(),
     };
     for owner in owners.iter_mut() {
-        owner.reexport_modules = package_reexport_modules(owner, &exporters, &mut star_exports);
+        owner.reexport_modules =
+            package_reexport_modules(owner, &exporters, definitions, &mut star_exports);
+    }
+}
+
+/// Module paths of every file defining a top-level function or class, by name.
+struct TopLevelDefinitions {
+    by_name: HashMap<String, Vec<Vec<String>>>,
+}
+
+impl TopLevelDefinitions {
+    fn from_owners<'a>(owners: impl Iterator<Item = &'a PythonOwner>) -> Self {
+        let mut by_name: HashMap<String, Vec<Vec<String>>> = HashMap::new();
+        for owner in owners {
+            if owner.is_module_owner() || owner.qualified_name != owner.name {
+                continue;
+            }
+            by_name
+                .entry(owner.name.clone())
+                .or_default()
+                .push(owner_module_paths(&owner.file));
+        }
+        Self { by_name }
+    }
+
+    /// Whether a module named by any of `module` defines `name` at top level.
+    fn defines(&self, module: &str, name: &str) -> bool {
+        self.by_name
+            .get(name)
+            .is_some_and(|files| files.iter().any(|paths| paths.iter().any(|p| p == module)))
     }
 }
 
@@ -97,6 +138,7 @@ pub(super) fn apply_package_reexports_from<'s>(
 fn package_reexport_modules<'s, F: Fn(&Path) -> Option<&'s str>>(
     owner: &PythonOwner,
     exporters: &[PackageExporter<'_>],
+    definitions: &TopLevelDefinitions,
     star_exports: &mut StarExports<'s, F>,
 ) -> Vec<String> {
     if owner.is_module_owner()
@@ -126,7 +168,7 @@ fn package_reexport_modules<'s, F: Fn(&Path) -> Option<&'s str>>(
                         && imports_name(import, name, source_file, star_exports)
                 })
             });
-            if reexports {
+            if reexports && !binds_name_elsewhere(exporter, name, &frontier, definitions) {
                 visited.push(exporter.file);
                 for path in &exporter.module_paths {
                     if !out.contains(path) {
@@ -142,6 +184,37 @@ fn package_reexport_modules<'s, F: Fn(&Path) -> Option<&'s str>>(
         frontier = next;
     }
     out
+}
+
+/// Whether the initializer may bind `name` to something other than the
+/// frontier's definition: an import of another object under that name
+/// (`from .b import f` next to `from .a import f`, `from .b import g as f`,
+/// `import f`), a star import from another module that defines `name`, or its
+/// own top-level definition. Python keeps only the last binding; this reader
+/// does not order bindings, so any second binding fails closed.
+fn binds_name_elsewhere(
+    exporter: &PackageExporter<'_>,
+    name: &str,
+    frontier: &[(Vec<String>, PathBuf)],
+    definitions: &TopLevelDefinitions,
+) -> bool {
+    let in_frontier = |module: &str| {
+        frontier
+            .iter()
+            .any(|(paths, _)| paths.iter().any(|p| p == module))
+    };
+    let conflicting_import = exporter.imports.iter().any(|import| {
+        if import.imported == "*" {
+            return !in_frontier(&import.source_module)
+                && definitions.defines(&import.source_module, name);
+        }
+        import.alias == name && (import.imported != name || !in_frontier(&import.source_module))
+    });
+    conflicting_import
+        || exporter
+            .module_paths
+            .iter()
+            .any(|module| definitions.defines(module, name))
 }
 
 fn imports_name<'s, F: Fn(&Path) -> Option<&'s str>>(

@@ -411,3 +411,29 @@ fn quoted_name_outside_all_does_not_satisfy_all() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn a_later_initializer_binding_of_the_same_name_is_not_credited() -> Result<(), String> {
+    let finding = analyze_one_line(
+        "rebound-name",
+        &[
+            ("pkg/a.py", "def f():\n    value = 1\n    return value\n"),
+            ("pkg/b.py", "def f():\n    return 2\n"),
+            ("pkg/__init__.py", "from .a import f\nfrom .b import f\n"),
+            (
+                "tests/test_pkg.py",
+                "import pkg\n\n\ndef test_f():\n    assert pkg.f() == 2\n",
+            ),
+        ],
+        "pkg/a.py",
+        2,
+    )?;
+    if finding.class != ExposureClass::NoStaticPath || !finding.related_tests.is_empty() {
+        return Err(format!(
+            "`pkg.f` is bound to `b.f`; `a.f` must not gain package identity, got {:?} with {:?}",
+            finding.class,
+            related_names(&finding)
+        ));
+    }
+    Ok(())
+}
