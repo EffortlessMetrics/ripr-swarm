@@ -5946,6 +5946,7 @@ fixtures = [
   "fixtures/ts_repair_packet_boundary_constant_first",
   "fixtures/ts_repair_packet_boundary_literal_derived",
   "fixtures/ts_repair_packet_boundary_constant_unresolved",
+  "fixtures/ts_repair_packet_boundary_literal_guarded",
   # Non-actionable fixtures (each pins a named failure family)
   "fixtures/ts_dynamic_oracle",
   "fixtures/ts_heuristic_relation",

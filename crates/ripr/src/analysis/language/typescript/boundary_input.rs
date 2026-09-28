@@ -16,6 +16,11 @@
 //!   name in the module is a plain read (no parameter, local, catch, import,
 //!   function, class, enum, or destructuring binding of the same name).
 //!
+//! - the changed line runs on every call: it sits at the top level of a
+//!   block-bodied owner, after no `return`/`throw`/`break`/`continue`/`yield`
+//!   and inside no nested block, and nothing before the comparison on the
+//!   line can skip it (`&&`, `||`, `??`, `?:`, `?.`, a callback).
+//!
 //! The module rules run on the oxc token stream, so comments, strings,
 //! templates, and regular expressions never pass for code there; the changed
 //! line itself must compare the parameter and the operand as whole sides and
@@ -106,6 +111,7 @@ pub(crate) fn ts_boundary_input_in_source(
         owner_start_line: owner.start_line,
         owner_end_line: owner.end_line,
         constant,
+        changed_line: line_text.to_string(),
     };
     let file = owner.file.clone();
     let owned_source = source.to_string();
@@ -135,7 +141,9 @@ pub(crate) fn ts_boundary_input_in_source(
             )?),
             None => None,
         };
-        parameter_is_read_only(source, &tokens, &request).then_some(constant)
+        (parameter_is_read_only(source, &tokens, &request)
+            && changed_line_runs_on_every_call(source, &tokens, &request))
+        .then_some(constant)
     })
     .ok()??;
     let value = match resolved {
@@ -199,6 +207,7 @@ pub(super) fn comparison_has_whole_sides(line: &str, parameter: &str, operand: &
         "(", "&&", "||", "?", ":", ",", "=", "=>", "return", "{", ";",
     ];
     const AFTER: &[&str] = &[")", "&&", "||", "?", ":", ";", ",", "}"];
+    const CONDITIONAL: &[&str] = &["&&", "||", "??", "?", "?.", ":", "=>", "function"];
     // The line tokenizer does not know literal or comment spans, so a string,
     // template, regular expression, or comment could carry a look-alike
     // comparison (`"over: amount >= LIMIT"`). Refuse any line that has one.
@@ -237,6 +246,15 @@ pub(super) fn comparison_has_whole_sides(line: &str, parameter: &str, operand: &
         if !(before_ok && after_ok) {
             return false;
         }
+        // Anything before the comparison that can skip evaluating it
+        // (`ok || amount >= LIMIT`, `c ? x : amount >= LIMIT`, `a?.f(...)`,
+        // a callback body) means the boundary input may never reach it.
+        if tokens[..at - 1]
+            .iter()
+            .any(|token| CONDITIONAL.contains(token))
+        {
+            return false;
+        }
         found += 1;
     }
     found == 1
@@ -247,6 +265,7 @@ struct ModuleRequest {
     owner_start_line: usize,
     owner_end_line: usize,
     constant: Option<String>,
+    changed_line: String,
 }
 
 #[derive(Clone, Copy)]
@@ -437,6 +456,69 @@ fn parameter_is_read_only(source: &str, tokens: &[Tok], request: &ModuleRequest)
         }
     }
     in_signature == 1
+}
+
+/// Whether every call of the owner evaluates the changed line: the line
+/// occurs exactly once in the owner, after the signature, at the top level
+/// of a block body, and no earlier body token can leave the function or
+/// skip the line (`return`, `throw`, `break`, `continue`, `yield`, or an
+/// enclosing `if`/loop/`switch`/`try`/callback block). An early guard such
+/// as `if (amount === 5000) return 0;` would stop the derived input before
+/// the changed comparison, so it fails closed. Expression-bodied arrows are
+/// not admitted.
+fn changed_line_runs_on_every_call(source: &str, tokens: &[Tok], request: &ModuleRequest) -> bool {
+    let line_starts: Vec<usize> = std::iter::once(0)
+        .chain(source.match_indices('\n').map(|(at, _)| at + 1))
+        .collect();
+    let line_text = |line: usize| -> Option<&str> {
+        let start = *line_starts.get(line.checked_sub(1)?)?;
+        let end = line_starts.get(line).map_or(source.len(), |next| next - 1);
+        source.get(start..end)
+    };
+    let wanted = request.changed_line.trim_end();
+    let mut matches = (request.owner_start_line..=request.owner_end_line)
+        .filter(|&line| line_text(line).is_some_and(|text| text.trim_end() == wanted));
+    let (Some(changed), None) = (matches.next(), matches.next()) else {
+        return false;
+    };
+    let Some(&line_start) = line_starts.get(changed - 1) else {
+        return false;
+    };
+    let Some(&span_start) = line_starts.get(request.owner_start_line.saturating_sub(1)) else {
+        return false;
+    };
+    let Some(open) = (0..tokens.len())
+        .find(|&at| tokens[at].start >= span_start && tokens[at].kind == Kind::LParen)
+    else {
+        return false;
+    };
+    let Some(close) = matching_close(tokens, open) else {
+        return false;
+    };
+    if tokens[close].end > line_start {
+        return false;
+    }
+    let mut open_groups: Vec<Kind> = Vec::new();
+    for token in tokens[close + 1..]
+        .iter()
+        .take_while(|token| token.start < line_start)
+    {
+        match token.kind {
+            Kind::Return | Kind::Throw | Kind::Break | Kind::Continue | Kind::Yield => {
+                return false;
+            }
+            Kind::LParen | Kind::LBrack | Kind::LCurly | Kind::TemplateHead => {
+                open_groups.push(token.kind);
+            }
+            Kind::RParen | Kind::RBrack | Kind::RCurly | Kind::TemplateTail => {
+                if open_groups.pop().is_none() {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    open_groups == [Kind::LCurly]
 }
 
 /// Index of the token closing the group opened at `open`.

@@ -93,7 +93,9 @@ are scoped or reviewed.
   Rebindable (`let`/`var`), computed, imported, or shadowed constants,
   written parameters, and comparisons with arithmetic, a sign, or a member
   read on either side (`OFFSET + amount >= LIMIT`, `amount >= LIMIT + 1`)
-  still fail closed.
+  still fail closed, as does a comparison that some calls may skip: one
+  after an earlier `return`/`throw` guard, inside a nested block or callback,
+  or behind `&&`, `||`, `??`, `?:` or `?.` on its line.
 
 - `ripr pilot` on a Python-only change with a repair card now ends with the
   card's route (`ripr first-pr` before the edit to name the receipt command,

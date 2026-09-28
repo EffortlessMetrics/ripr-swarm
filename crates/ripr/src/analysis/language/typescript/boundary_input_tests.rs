@@ -451,7 +451,11 @@ fn whole_side_comparisons_accept_common_line_shapes() {
         ("  if (amount >= LIMIT) {", true),
         ("  return amount >= LIMIT ? 1 : 0;", true),
         ("  const big = LIMIT <= amount && flag;", true),
-        ("if (ok || amount === 5_000) {", true),
+        // Something before the comparison can skip evaluating it.
+        ("if (ok || amount === 5_000) {", false),
+        ("  return ready ? amount >= LIMIT : false;", false),
+        ("  if (flag && amount >= LIMIT) {", false),
+        ("  items.forEach((x) => amount >= LIMIT);", false),
         ("  if (amount >= LIMIT + 1) {", false),
         ("  if (x + amount >= LIMIT) {", false),
         ("  if (amount >= -LIMIT) {", false),
@@ -505,4 +509,64 @@ fn comparison_on_a_value_derived_from_the_parameter_stays_unresolved() {
         Some(vec!["amount".to_string()])
     );
     assert_eq!(input_for(source, "fee", "  if (scaled > 30) {"), Some(None));
+}
+
+/// Source challenge on #4429: an earlier guard returns before the changed
+/// comparison, so the derived input (`shipping(5000)`) never executes it.
+/// Operand equality alone must not become a boundary input.
+#[test]
+fn changed_line_behind_an_early_exit_or_nested_block_stays_unresolved() {
+    let changed = "  if (amount > 5000) {";
+    let shipping = |before: &str, wrap: (&str, &str)| {
+        format!(
+            "export function shipping(amount: number): number {{\n{before}{}{changed}\n    return 1;\n  }}\n{}  return 2;\n}}\n",
+            wrap.0, wrap.1
+        )
+    };
+    let positive = shipping("  const fee = 1;\n", ("", ""));
+    assert_eq!(
+        input_for(&positive, "shipping", changed),
+        Some(Some(TypeScriptBoundaryInput {
+            parameter: "amount".to_string(),
+            index: 0,
+            operand: "5000".to_string(),
+            value: 5000,
+        })),
+        "control: an unguarded top-level comparison still derives"
+    );
+    for (label, source) in [
+        (
+            "early return guard",
+            shipping("  if (amount === 5000) return 0;\n", ("", "")),
+        ),
+        (
+            "early throw",
+            shipping(
+                "  if (amount < 0) {\n    throw new Error(\"neg\");\n  }\n",
+                ("", ""),
+            ),
+        ),
+        (
+            "enclosing if",
+            shipping("", ("  if (amount < 100) {\n", "  }\n")),
+        ),
+        (
+            "enclosing loop",
+            shipping("", ("  for (const x of [1]) {\n", "  }\n")),
+        ),
+        (
+            "enclosing callback",
+            shipping("", ("  [1].forEach(() => {\n", "  });\n")),
+        ),
+        (
+            "changed line appears twice",
+            shipping(&format!("{changed}\n    return 3;\n  }}\n"), ("", "")),
+        ),
+    ] {
+        assert_eq!(
+            input_for(&source, "shipping", changed),
+            Some(None),
+            "{label}: {source}"
+        );
+    }
 }
