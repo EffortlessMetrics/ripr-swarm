@@ -7505,7 +7505,8 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
 
     // The owner name is absent from the body: only the import identity and
     // alias call can satisfy the reference branch after the package filter.
-    let limitations = named_limitations_for_unresolved_ownership(&owner, &[test.clone()], &root);
+    let limitations =
+        named_limitations_for_unresolved_ownership(&owner, std::slice::from_ref(&test), &root);
     assert_eq!(limitations.len(), 1);
     assert_eq!(limitations[0].name, "typescript_target_unresolved");
     assert_eq!(
