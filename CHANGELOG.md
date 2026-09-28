@@ -53,8 +53,10 @@ are scoped or reviewed.
   Start-here line names the packet's action, test file, and verify command,
   and an exposed TypeScript finding no longer leaves the gap ledger empty
   (first-pr no longer loops on "blocked" after the boundary test lands).
-  Rebindable (`let`/`var`), computed, imported, or shadowed constants and
-  written parameters still fail closed.
+  Rebindable (`let`/`var`), computed, imported, or shadowed constants,
+  written parameters, and comparisons with arithmetic, a sign, or a member
+  read on either side (`OFFSET + amount >= LIMIT`, `amount >= LIMIT + 1`)
+  still fail closed.
 
 - `ripr pilot` on a Python-only change with a repair card now ends with the
   card's route (`ripr first-pr` before the edit to name the receipt command,

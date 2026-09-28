@@ -406,3 +406,63 @@ fn unparseable_module_stays_unresolved() {
         resolved(10000)
     );
 }
+
+/// Review finding on #4429: operand extraction keeps only the token nearest
+/// the comparison, so arithmetic, a sign, or a member read around either side
+/// used to derive the operand's value as the boundary input. Each shape moves
+/// the real boundary, so no input is derived.
+#[test]
+fn comparisons_with_arithmetic_or_signed_sides_stay_unresolved() {
+    let source = pricing_module(
+        "export const DISCOUNT_THRESHOLD = 10000;\nexport const OFFSET = 5;",
+        "",
+        "",
+    );
+    // Control: the plain comparison still resolves, so the negatives below
+    // fail on the changed line, not on the module.
+    assert_eq!(
+        input_for(&source, "discountedTotal", CHANGED_LINE),
+        Some(resolved(10000))
+    );
+    for changed in [
+        "  if (OFFSET + amount >= DISCOUNT_THRESHOLD) {",
+        "  if (amount >= DISCOUNT_THRESHOLD + 1) {",
+        "  if (amount * 2 > DISCOUNT_THRESHOLD) {",
+        "  if (2 * amount >= DISCOUNT_THRESHOLD) {",
+        "  if (amount - OFFSET >= DISCOUNT_THRESHOLD) {",
+        "  if (DISCOUNT_THRESHOLD <= amount < OFFSET) {",
+        "  if (amount >= -5) {",
+        "  if (order.amount >= DISCOUNT_THRESHOLD) {",
+    ] {
+        assert_eq!(
+            input_for(&source, "discountedTotal", changed),
+            Some(None),
+            "{changed}"
+        );
+    }
+}
+
+#[test]
+fn whole_side_comparisons_accept_common_line_shapes() {
+    for (line, expected) in [
+        ("  if (amount >= LIMIT) {", true),
+        ("  return amount >= LIMIT ? 1 : 0;", true),
+        ("  const big = LIMIT <= amount && flag;", true),
+        ("if (ok || amount === 5_000) {", true),
+        ("  if (amount >= LIMIT + 1) {", false),
+        ("  if (x + amount >= LIMIT) {", false),
+        ("  if (amount >= -LIMIT) {", false),
+        ("  if (amount >= LIMIT || amount >= LIMIT) {", false),
+    ] {
+        let operand = if line.contains("5_000") {
+            "5_000"
+        } else {
+            "LIMIT"
+        };
+        assert_eq!(
+            super::boundary_input::comparison_has_whole_sides(line, "amount", operand),
+            expected,
+            "{line}"
+        );
+    }
+}

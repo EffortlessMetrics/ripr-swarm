@@ -129,6 +129,14 @@ fn rebindable_or_non_literal_names_stay_unresolved() {
             "DISCOUNT_THRESHOLD = 10_000\nvars()['DISCOUNT_THRESHOLD'] = 5\n",
         ),
         (
+            "mock.patch",
+            "from unittest import mock\nDISCOUNT_THRESHOLD = 10_000\nmock.patch(f'{__name__}.DISCOUNT_THRESHOLD', 5).start()\n",
+        ),
+        (
+            "patch.object",
+            "import sys\nfrom unittest.mock import patch\nDISCOUNT_THRESHOLD = 10_000\npatch.object(sys.modules[__name__], 'DISCOUNT_THRESHOLD', 5)\n",
+        ),
+        (
             "match",
             "DISCOUNT_THRESHOLD = 10_000\nmatch MODE:\n    case DISCOUNT_THRESHOLD:\n        pass\n",
         ),
@@ -281,4 +289,20 @@ fn test_file_attribute_assignment_unresolves_the_constant() -> Result<(), String
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     assert!(discriminators(&finding).is_empty());
     Ok(())
+}
+
+/// #4429 review: a related test file that patches the constant through
+/// `unittest.mock` rewrites it without an attribute assignment, so the file
+/// counts as a dynamic writer of every attribute.
+#[test]
+fn mock_patching_in_a_test_file_counts_as_a_dynamic_writer() {
+    for source in [
+        "from unittest import mock\n\n@mock.patch('pricing.DISCOUNT_THRESHOLD', 5)\ndef test_x():\n    pass\n",
+        "from unittest.mock import patch\nimport pricing\n\ndef test_x():\n    with patch.object(pricing, 'DISCOUNT_THRESHOLD', 5):\n        pass\n",
+    ] {
+        assert!(super::writes_namespace_dynamically(source), "{source}");
+    }
+    assert!(!super::writes_namespace_dynamically(
+        "import pricing\n\ndef test_x():\n    assert pricing.shipping(5_000) == 0\n"
+    ));
 }

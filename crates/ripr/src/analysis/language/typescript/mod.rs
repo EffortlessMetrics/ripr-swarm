@@ -494,8 +494,9 @@ impl LanguageAdapter for TypeScriptAdapter {
                 .with_detail(format!("read failed: {}", failure.error))?,
             );
         }
-        // Partial test extraction: one typed limitation per affected test
-        // file, carrying the taxonomy name so JSON consumers can key on it.
+        // Partial test extraction: one typed limitation summarizing the
+        // affected test files (a single file keeps its path), carrying the
+        // taxonomy name so JSON consumers can key on it.
         // The index is workspace-wide, so a diff that classified nothing
         // against it (Rust-only, or TS test edits only) is not made partial by
         // test shapes it never consulted (#4261).

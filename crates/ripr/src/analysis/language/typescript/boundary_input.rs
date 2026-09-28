@@ -87,6 +87,9 @@ pub(crate) fn ts_boundary_input_in_source(
         (None, Some(index)) => (right, index, left),
         _ => return None,
     };
+    if !comparison_has_whole_sides(line_text, parameter, operand) {
+        return None;
+    }
     let literal = integer_literal(operand);
     let constant = if literal.is_none() {
         is_constant_shaped_operand(operand).then(|| operand.to_string())
@@ -143,6 +146,78 @@ pub(crate) fn ts_boundary_input_in_source(
         operand: operand.to_string(),
         value,
     })
+}
+
+/// Line-level punctuators, longest first, for [`comparison_has_whole_sides`].
+const LINE_PUNCTUATORS: &[&str] = &[
+    ">>>=", "===", "!==", ">>>", "**=", "<<=", ">>=", "&&=", "||=", "??=", "&&", "||", "??", "?.",
+    "=>", ">=", "<=", "==", "!=", ">>", "<<", "++", "--", "**", "+=", "-=", "*=", "/=", "%=", "&=",
+    "|=", "^=",
+];
+
+/// Split a changed line into identifier/number words and punctuators.
+/// Whitespace is dropped; `.` stays its own punctuator so a member read
+/// (`order.amount`) never passes for the bare parameter.
+fn line_tokens(line: &str) -> Vec<&str> {
+    let mut tokens = Vec::new();
+    let mut rest = line;
+    while let Some(ch) = rest.chars().next() {
+        if ch.is_whitespace() {
+            rest = &rest[ch.len_utf8()..];
+            continue;
+        }
+        let word_len = rest
+            .char_indices()
+            .find(|(_, ch)| !(ch.is_alphanumeric() || *ch == '_' || *ch == '$'))
+            .map_or(rest.len(), |(at, _)| at);
+        let len = if word_len > 0 {
+            word_len
+        } else {
+            LINE_PUNCTUATORS
+                .iter()
+                .find(|punct| rest.starts_with(**punct))
+                .map_or(ch.len_utf8(), |punct| punct.len())
+        };
+        tokens.push(&rest[..len]);
+        rest = &rest[len..];
+    }
+    tokens
+}
+
+/// Whether the changed line compares `parameter` and `operand` as the whole
+/// operands of one relational or equality operator. Arithmetic, a sign, a
+/// member access, or a chained comparison on either side
+/// (`OFFSET + amount >= LIMIT`, `amount >= LIMIT + 1`, `amount >= -5`,
+/// `2 * amount > LIMIT`) moves the real boundary away from the operand's
+/// value, so the derivation fails closed.
+pub(super) fn comparison_has_whole_sides(line: &str, parameter: &str, operand: &str) -> bool {
+    const COMPARISONS: &[&str] = &["===", "!==", "==", "!=", ">=", "<=", ">", "<"];
+    const BEFORE: &[&str] = &[
+        "(", "&&", "||", "?", ":", ",", "=", "=>", "return", "{", ";",
+    ];
+    const AFTER: &[&str] = &[")", "&&", "||", "?", ":", ";", ",", "}"];
+    let tokens = line_tokens(line);
+    let mut found = 0usize;
+    for (at, token) in tokens.iter().enumerate() {
+        if !COMPARISONS.contains(token) || at == 0 {
+            continue;
+        }
+        let (Some(left), Some(right)) = (tokens.get(at - 1), tokens.get(at + 1)) else {
+            continue;
+        };
+        let pair =
+            (*left == parameter && *right == operand) || (*left == operand && *right == parameter);
+        if !pair {
+            continue;
+        }
+        let before_ok = at < 2 || BEFORE.contains(&tokens[at - 2]);
+        let after_ok = tokens.get(at + 2).is_none_or(|next| AFTER.contains(next));
+        if !(before_ok && after_ok) {
+            return false;
+        }
+        found += 1;
+    }
+    found == 1
 }
 
 struct ModuleRequest {
