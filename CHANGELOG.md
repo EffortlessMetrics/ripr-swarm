@@ -11,6 +11,27 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr review-comments` no longer times out on a large diff. It evaluates
+  seams on changed lines and in changed owner functions first, and skips the
+  rest of the scope when those already fill the ten review slots; a warning
+  gives the skipped count. On one 11-file ripr change it went from 398 s, past
+  the 120 s default bound, to 18.5 s with the same comments. Agent brief and
+  review warnings now name the first ten hidden matching seams and count the
+  rest, so that report shrank from 1.7 MB to 34 KB.
+- Generated GitHub workflow (`ripr init --ci github`): it now checks out the
+  PR head instead of GitHub's `refs/pull/N/merge` commit, so review comments
+  and annotations land on the PR diff's lines after the base branch moves.
+  Before, they carried merge-commit line numbers. The install now pins the
+  generating ripr version; an unpinned `cargo install ripr` took the newest
+  crates.io release, whose CLI need not match the workflow's steps.
+- A repository's `ripr.toml` can no longer choose a program for ripr to run.
+  `[perl].executable` was spawned by `ripr check`, probed by `ripr doctor`, and
+  spawned by `ripr lsp` on file open or save, so a cloned repository could run
+  its own code (for example `executable = "sh"` plus a committed `ripr-facts`
+  script). ripr now ignores that key, says so on stderr or in the doctor
+  report, and uses the exporter on PATH unless the user sets
+  `RIPR_ALLOW_REPO_PERL_EXECUTABLE=1`. The VS Code extension already required
+  a trusted workspace to start the server.
 - Rust: a changed function that no test calls now reads `no_static_path`.
   Before, a same-file test of a sibling function made it `weakly_exposed`
   with "strong oracle found", and its unknown-shape lines said "escalate to
@@ -35,13 +56,10 @@ are scoped or reviewed.
   Individual operations can still overrun a checkpoint interval (#1778).
 - Cold LLM-agent walks of 0.11 no longer dead-end on four routes. Passing a
   `ripr check` finding ID (`probe:...`) to `ripr agent repair --seam-id` now
-  says it is not a seam ID and names `ripr pilot --root .`. The
-  uncommitted-changes note says test files outside the diff are still read
-  from disk, and `ripr check` warns on stderr when a file in the committed
-  diff also has uncommitted edits, since its probes can be misplaced or
-  missing. After a repair, the after phase and `ripr agent status` say the
-  repair receipt records no test run (`test_run.status: "not_recorded"`),
-  because a failing test can still show movement `improved`. The MCP
+  says it is not a seam ID and names `ripr pilot --root .`. After a repair,
+  the after phase and `ripr agent status` say the repair receipt records no
+  test run (`test_run.status: "not_recorded"`), because a failing test can
+  still show movement `improved`. The MCP
   server's instructions and tool description say it does not analyze the diff
   and name the CLI route that does; an unusable root and unknown tool or
   resource names now carry a recovery.
@@ -65,6 +83,16 @@ are scoped or reviewed.
 - In diff analysis, the generated-code skip limitation names up to three
   skipped files and lists the generated-code conventions and the
   `[languages.rust] generated_file_patterns` setting.
+- `ripr check` on committed history (the default, or `--base <rev>`) now reads
+  the committed version of every tracked file you have edited but not
+  committed, tests included, and leaves out new files that are not committed,
+  git-ignored ones included.
+  Before, an uncommitted edit that shifted lines in a changed file could
+  attach findings to the wrong function or expression, and an uncommitted test
+  edit already moved the counts while the note said uncommitted changes were
+  not analyzed. The note naming `--worktree` now appears only when a source or
+  test file has uncommitted changes, not for an edited README or workflow.
+  Tracked files deleted from the working tree are named on stderr.
 - An empty `ripr check --diff` result now leads with its true cause. A config
   whose `[languages].enabled` leaves out `rust` records a typed
   `language_adapter_unavailable` limitation for the Rust files it skipped
@@ -138,10 +166,13 @@ are scoped or reviewed.
   used.
 - Server qualification builds the Linux server archives, which the editor
   extension downloads, on Ubuntu 22.04 with `--locked`, and fails a Linux
-  binary that needs a glibc newer than 2.35. The 0.10.0 Linux archives were
-  built on Ubuntu 24.04 and failed on Ubuntu 22.04 and Debian 12 with
-  `GLIBC_2.39 not found`. The source release workflow takes the same runners
-  and check at the release sync.
+  binary that needs a glibc newer than 2.34 (RHEL 9), the floor the 0.11.0
+  release sync adds to `cargo xtask release-server-archive`. The 0.10.0 Linux archives were built on Ubuntu 24.04 and
+  failed on Ubuntu 22.04 and Debian 12 with `GLIBC_2.39 not found`.
+- `RIPR_GIT_TIMEOUT` with a non-numeric or out-of-range value now fails
+  closed (exit 2) naming the variable and the value, like `--git-timeout` and
+  the `RIPR_PARTIAL_*_BUDGET` overrides. It used to keep the default deadline
+  silently (#4374).
 
 ### Added
 
