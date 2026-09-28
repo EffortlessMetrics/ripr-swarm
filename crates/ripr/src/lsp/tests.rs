@@ -18368,3 +18368,276 @@ fn registered_harness_projection_reaches_the_lsp_snapshot() -> Result<(), Box<dy
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Cold-agent LSP walk (2026-09-28): surface agreement for one finding.
+// ---------------------------------------------------------------------------
+
+/// A Rust finding the actionable profile publishes: a producer-owned missing
+/// discriminator plus a related test (the fix site). Rust producers do not set
+/// `canonical_gap`, so the diagnostic carries no `canonical_gap_id`.
+fn fix_route_rust_finding() -> Finding {
+    let mut finding = sample_finding();
+    finding.ripr.infect = StageEvidence::new(
+        StageState::Weak,
+        Confidence::Medium,
+        "Related tests contain input values, but the equality-boundary discriminator is missing",
+    );
+    finding.ripr.reveal.discriminate = StageEvidence::new(
+        StageState::Yes,
+        Confidence::Medium,
+        "Strong oracle found: exact value or pattern assertion",
+    );
+    finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+        value: "amount == threshold".to_string(),
+        reason: "No related test call uses amount equal to threshold".to_string(),
+        flow_sink: None,
+    }];
+    finding.related_tests.push(RelatedTest {
+        name: "small_order_pays_full".to_string(),
+        file: PathBuf::from("tests/pricing.rs"),
+        line: 4,
+        oracle: Some("assert_eq!(price(50, 100), 50);".to_string()),
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        relation_reason: None,
+        relation_confidence: None,
+    });
+    finding
+}
+
+/// Commit an actionable-profile snapshot whose published diagnostics come
+/// from the production profile projection, then read top limitation and
+/// workspace status through `workspace/executeCommand`.
+fn actionable_profile_status(
+    findings: Vec<Finding>,
+) -> Result<(serde_json::Value, serde_json::Value, usize), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = PathBuf::from("/workspace");
+        let (service, _socket) = LspService::new(|client| Backend::new(client, root.clone()));
+        let backend = service.inner();
+        backend.initialize_test_workspace_root();
+        let uri = test_uri("file:///workspace/src/pricing.rs")?;
+        let grouped = super::diagnostics::finding_diagnostics_by_uri_with_profile(
+            &root,
+            &findings,
+            &crate::config::SeverityConfig::default(),
+            true,
+            crate::config::LspDiagnosticProfile::Actionable,
+            None,
+            &PositionEncodingKind::UTF16,
+        )?;
+        let published = grouped.get(&uri).cloned().unwrap_or_default();
+        let published_count = published.len();
+        let mut diagnostics = sample_workspace_diagnostics(root, uri, published, findings);
+        diagnostics.snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
+        let Some(_) = backend.refresh_plan(diagnostics) else {
+            return Err("expected refresh plan".to_string());
+        };
+        let command = |name: &str| ExecuteCommandParams {
+            command: name.to_string(),
+            arguments: vec![],
+            work_done_progress_params: Default::default(),
+        };
+        let limitation = backend
+            .execute_command(command(COLLECT_TOP_LIMITATION_COMMAND))
+            .await
+            .map_err(|err| format!("collectTopLimitation failed: {err}"))?
+            .ok_or_else(|| "expected top limitation".to_string())?;
+        let status = backend
+            .execute_command(command(COLLECT_WORKSPACE_STATUS_COMMAND))
+            .await
+            .map_err(|err| format!("collectWorkspaceStatus failed: {err}"))?
+            .ok_or_else(|| "expected workspace status".to_string())?;
+        Ok((limitation, status, published_count))
+    })
+}
+
+#[test]
+fn top_limitation_does_not_deny_a_published_fix_route_diagnostic() -> Result<(), String> {
+    let (limitation, status, published) =
+        actionable_profile_status(vec![fix_route_rust_finding()])?;
+    if published != 1 {
+        return Err(format!(
+            "fixture must publish one diagnostic, got {published}"
+        ));
+    }
+    if limitation["status"] == "no_actionable_item" {
+        return Err(format!(
+            "top limitation denied the live fix-site-ready diagnostic: {limitation}"
+        ));
+    }
+    assert_eq!(
+        limitation["status"], "no_active_limitation_in_current_scope",
+        "{limitation}"
+    );
+    assert_eq!(
+        status["diagnostics"]["actionable_diagnostics"].as_u64(),
+        Some(1),
+        "workspace status must count the published fix route: {status}"
+    );
+    Ok(())
+}
+
+#[test]
+fn top_limitation_still_reports_route_less_findings_as_not_actionable() -> Result<(), String> {
+    // Negative control: a weakly_exposed finding without a producer-owned
+    // missing discriminator or fix site is filtered by the actionable
+    // profile, so "no actionable item" remains the honest answer.
+    let (limitation, status, published) = actionable_profile_status(vec![sample_finding()])?;
+    assert_eq!(published, 0, "route-less finding must not be published");
+    assert_eq!(limitation["status"], "no_actionable_item", "{limitation}");
+    assert_eq!(
+        status["diagnostics"]["actionable_diagnostics"].as_u64(),
+        Some(0),
+        "{status}"
+    );
+    Ok(())
+}
+
+fn finding_hover_markdown_for(finding: &Finding) -> Result<String, String> {
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), finding);
+    match super::hover::finding_hover_response(finding, &diagnostic).contents {
+        HoverContents::Markup(markup) => Ok(markup.value),
+        _ => Err("expected markup hover".to_string()),
+    }
+}
+
+#[test]
+fn hover_discriminator_row_agrees_with_weakly_exposed_lens() -> Result<(), String> {
+    let finding = fix_route_rust_finding();
+    let markdown = finding_hover_markdown_for(&finding)?;
+    let lens = super::lens::related_test_lens_title(&finding, None);
+    assert!(
+        lens.contains("no static discriminator (weakly_exposed)"),
+        "{lens}"
+    );
+    if markdown.contains("* discriminator yes") {
+        return Err(format!(
+            "hover claims a discriminator while the lens says none:\n{markdown}"
+        ));
+    }
+    assert!(
+        markdown.contains(
+            "* discriminator missing: `amount == threshold`; related oracle: Strong oracle found: exact value or pattern assertion"
+        ),
+        "{markdown}"
+    );
+    Ok(())
+}
+
+#[test]
+fn hover_discriminator_row_keeps_yes_for_exposed_findings() -> Result<(), String> {
+    // Negative control: an exposed finding keeps the producer's stage line.
+    let mut finding = fix_route_rust_finding();
+    finding.class = ExposureClass::Exposed;
+    finding.activation.missing_discriminators.clear();
+    let markdown = finding_hover_markdown_for(&finding)?;
+    assert!(
+        markdown
+            .contains("* discriminator yes: Strong oracle found: exact value or pattern assertion"),
+        "{markdown}"
+    );
+    Ok(())
+}
+
+#[test]
+fn hover_describes_unpublished_snapshot_findings_on_the_line() -> Result<(), String> {
+    // A new function no test calls: no related test, no missing discriminator, so
+    // the actionable profile publishes no diagnostic, yet the code lens shows
+    // the finding. The hover must describe it instead of pointing at the CLI.
+    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+    let backend = service.inner();
+    let mut finding = sample_finding();
+    finding.id = "probe:pricing:14:predicate".to_string();
+    finding.probe.location.line = 14;
+    finding.probe.expression = "weight_grams > 2_000".to_string();
+    finding.class = ExposureClass::NoStaticPath;
+    finding.ripr.reach = StageEvidence::new(
+        StageState::No,
+        Confidence::Medium,
+        "No static test path found for the changed owner",
+    );
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let mut diagnostics = sample_workspace_diagnostics(
+        PathBuf::from("/workspace"),
+        uri.clone(),
+        vec![],
+        vec![finding],
+    );
+    diagnostics.snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
+    let Some(_) = backend.refresh_plan(diagnostics) else {
+        return Err("expected refresh plan".to_string());
+    };
+
+    let Some(hover) = backend.hover_for_position(&hover_params(uri.clone(), 13, 8)) else {
+        return Err("expected a hover for the finding's line".to_string());
+    };
+    let HoverContents::Markup(markup) = hover.contents else {
+        return Err("expected markup hover".to_string());
+    };
+    if markup.value.contains("ripr check --format json") {
+        return Err(format!(
+            "hover sent the editor user to the CLI:\n{}",
+            markup.value
+        ));
+    }
+    for expected in [
+        "`no_static_path` predicate `weight_grams > 2_000`",
+        "* reach no: No static test path found for the changed owner",
+        "`probe:pricing:14:predicate`",
+        "ripr.collectContext",
+    ] {
+        assert!(
+            markup.value.contains(expected),
+            "missing {expected:?}:\n{}",
+            markup.value
+        );
+    }
+    assert!(
+        lens_title_is_static_language_clean(&markup.value),
+        "{}",
+        markup.value
+    );
+
+    // Negative control: a line without any snapshot finding keeps the
+    // generic hover (no fabricated finding text).
+    let generic = backend.hover_for_position(&hover_params(uri, 30, 0));
+    assert!(generic.is_none(), "unexpected hover: {generic:?}");
+    Ok(())
+}
+
+#[test]
+fn line_hover_does_not_relist_a_finding_with_a_published_diagnostic() -> Result<(), String> {
+    // Negative control: the only finding on the line is published; a cursor
+    // outside its diagnostic range must not render it as "not published".
+    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+    let backend = service.inner();
+    let finding = sample_finding();
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let diagnostics = sample_workspace_diagnostics(
+        PathBuf::from("/workspace"),
+        uri.clone(),
+        vec![diagnostic],
+        vec![finding],
+    );
+    let Some(_) = backend.refresh_plan(diagnostics) else {
+        return Err("expected refresh plan".to_string());
+    };
+    let hover = backend.hover_for_position(&hover_params(uri, 87, 500));
+    if let Some(hover) = hover
+        && let HoverContents::Markup(markup) = &hover.contents
+        && markup.value.contains("no published diagnostic")
+    {
+        return Err(format!(
+            "published finding relisted as unpublished:\n{}",
+            markup.value
+        ));
+    }
+    Ok(())
+}
