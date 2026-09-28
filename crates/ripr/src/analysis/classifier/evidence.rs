@@ -361,7 +361,7 @@ mod tests {
 
         let memo = super::FileDefeatMemo::default();
         let calls = Cell::new(0);
-        let mut lookup = |file: &str, callee: &str, answer: bool| {
+        let lookup = |file: &str, callee: &str, answer: bool| {
             super::memoized_file_defeat(&memo, Path::new(file), callee, || {
                 calls.set(calls.get() + 1);
                 answer
