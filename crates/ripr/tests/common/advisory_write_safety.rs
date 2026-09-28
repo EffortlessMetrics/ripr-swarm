@@ -19,12 +19,20 @@ impl Drop for Case {
 fn case(surface: &str) -> Result<Case, Box<dyn std::error::Error>> {
     let directory = unique_temp_workspace(&format!("advisory-write-{surface}"));
     let root = directory.join("checkout");
-    std::fs::create_dir_all(&root)?;
     let out = if surface == "index" {
         root.join("target/ripr/reports/index.json")
     } else {
         root.join("report.json")
     };
+    let mut fixture = Case {
+        directory,
+        root,
+        out,
+        arguments: Vec::new(),
+    };
+    let root = &fixture.root;
+    let out = &fixture.out;
+    std::fs::create_dir_all(root)?;
     let arguments = match surface {
         "index" => vec!["reports".into(), "index".into()],
         "outcome" => {
@@ -82,12 +90,8 @@ fn case(surface: &str) -> Result<Case, Box<dyn std::error::Error>> {
         }
         other => return Err(format!("unknown advisory fixture surface: {other}").into()),
     };
-    Ok(Case {
-        directory,
-        root,
-        out,
-        arguments,
-    })
+    fixture.arguments = arguments;
+    Ok(fixture)
 }
 
 /// Keep a missing nonblocking flag from hanging the whole suite. Redirecting
@@ -176,6 +180,23 @@ fn planted_symlink(surface: &str) -> Result<(), Box<dyn std::error::Error>> {
         "refusal must identify output acquisition, not an unrelated input error: {:?}",
         output
     );
+    Ok(())
+}
+
+#[test]
+fn advisory_write_refuses_directory_outputs() -> Result<(), Box<dyn std::error::Error>> {
+    for surface in ["index", "outcome", "receipt", "calibrate"] {
+        let case = case(surface)?;
+        successful_render(&case)?;
+        std::fs::remove_file(&case.out)?;
+        std::fs::create_dir(&case.out)?;
+        let protected = case.out.join("protected.txt");
+        std::fs::write(&protected, b"directory sentinel")?;
+        let output = run_bounded(&case)?;
+        assert_failure(&output);
+        assert!(String::from_utf8_lossy(&output.stderr).contains("output"));
+        assert_eq!(std::fs::read(protected)?, b"directory sentinel");
+    }
     Ok(())
 }
 
