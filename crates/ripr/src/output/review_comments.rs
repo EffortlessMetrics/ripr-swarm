@@ -1108,7 +1108,7 @@ fn unresolved_source_location_json() -> Value {
 }
 
 fn analysis_scope_json(scope: &ReviewCommentsAnalysisScope) -> Value {
-    let mut value = json!({
+    json!({
         "scope": scope.scope,
         "run_status": scope.run_status,
         "basis": scope.basis,
@@ -1125,18 +1125,7 @@ fn analysis_scope_json(scope: &ReviewCommentsAnalysisScope) -> Value {
         "downstream_consumable": scope.downstream_consumable,
         "limitation": scope.limitation,
         "repair_route": scope.repair_route,
-    });
-    // Additive and present only when the caller expansion skipped a name, so
-    // an unaffected scope renders exactly as before.
-    if !scope.caller_expansion_skipped_owner_names.is_empty()
-        && let Some(object) = value.as_object_mut()
-    {
-        object.insert(
-            "caller_expansion_skipped_owner_names".to_string(),
-            json!(scope.caller_expansion_skipped_owner_names),
-        );
-    }
-    value
+    })
 }
 
 fn display_paths(paths: &[std::path::PathBuf]) -> Vec<String> {
@@ -1487,23 +1476,6 @@ fn string_field<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn analysis_scope_lists_skipped_caller_names_only_when_present() {
-        let working_set = AgentBriefResolvedWorkingSet::base("main", Vec::new());
-        let mut scope = ReviewCommentsAnalysisScope::from_working_set(&working_set, 0);
-        assert!(
-            analysis_scope_json(&scope)
-                .get("caller_expansion_skipped_owner_names")
-                .is_none()
-        );
-
-        scope.caller_expansion_skipped_owner_names = vec!["write".to_string()];
-        assert_eq!(
-            analysis_scope_json(&scope)["caller_expansion_skipped_owner_names"],
-            json!(["write"])
-        );
-    }
     use crate::analysis::ClassifiedSeam;
     use crate::analysis::canonical_gap::canonical_gap_identity;
     use crate::analysis::seams::{

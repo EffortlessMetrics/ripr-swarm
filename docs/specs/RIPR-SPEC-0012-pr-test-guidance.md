@@ -263,11 +263,7 @@ The JSON report uses schema version `0.1`:
   counts when known, and the `review_comments_diff_scope_only` limitation
   route so reviewers do not mistake a large-repo fast path for full-repo
   evidence. Gap-ledger rendering may omit this field because the supplied
-  ledger artifact is the authority. Callers are matched by the changed
-  owner's bare name, so a name called from more than 16 production files
-  (such as `write` or `open`) adds no callers. The optional
-  `caller_expansion_skipped_owner_names` lists each name skipped this way and
-  is absent when none were.
+  ledger artifact is the authority.
 - `limits.max_inline_comments` - default cap for changed-line annotations.
 - `limits.max_summary_items` - default cap for total recommendations.
 - `summary.comments` - count of line-placeable comments.

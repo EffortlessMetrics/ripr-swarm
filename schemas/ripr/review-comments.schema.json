@@ -622,12 +622,6 @@
             "type": "string"
           }
         },
-        "caller_expansion_skipped_owner_names": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
         "scoped_production_files": {
           "type": "array",
           "items": {

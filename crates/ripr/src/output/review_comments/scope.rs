@@ -21,7 +21,6 @@ pub(crate) struct ReviewCommentsAnalysisScope {
     pub(crate) changed_owner_functions: usize,
     pub(crate) changed_production_files: Vec<String>,
     pub(crate) immediate_caller_files: Vec<String>,
-    pub(crate) caller_expansion_skipped_owner_names: Vec<String>,
     pub(crate) scoped_production_files: Vec<String>,
     pub(crate) total_rust_files: Option<usize>,
     pub(crate) total_production_files: Option<usize>,
@@ -46,9 +45,6 @@ impl ReviewCommentsAnalysisScope {
             changed_owner_functions: working_set.changed_owners.len(),
             changed_production_files: display_paths(&inventory.changed_production_files),
             immediate_caller_files: display_paths(&inventory.immediate_caller_files),
-            caller_expansion_skipped_owner_names: inventory
-                .caller_expansion_skipped_owner_names
-                .clone(),
             scoped_production_files: display_paths(&inventory.scoped_production_files),
             total_rust_files: Some(inventory.total_rust_files),
             total_production_files: Some(inventory.total_production_files),
@@ -74,7 +70,6 @@ impl ReviewCommentsAnalysisScope {
             changed_owner_functions: working_set.changed_owners.len(),
             changed_production_files: Vec::new(),
             immediate_caller_files: Vec::new(),
-            caller_expansion_skipped_owner_names: Vec::new(),
             scoped_production_files: display_paths(&working_set.files),
             total_rust_files: None,
             total_production_files: None,
@@ -119,7 +114,6 @@ impl ReviewCommentsAnalysisScope {
             changed_owner_functions: 0,
             changed_production_files: anchor_files.clone(),
             immediate_caller_files: Vec::new(),
-            caller_expansion_skipped_owner_names: Vec::new(),
             scoped_production_files: anchor_files.clone(),
             total_rust_files: None,
             total_production_files: None,
