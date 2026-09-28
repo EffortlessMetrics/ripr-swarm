@@ -53,7 +53,7 @@ use super::super::classify::{PythonNoBehaviorContext, classify_change_with_conte
 use super::super::probe_shape::{canonical_python_gap_for, classify_probe_shape};
 use super::super::reexports::apply_package_reexports_from;
 use super::super::related_tests::{
-    PythonRelatedCandidate, find_related_tests, related_test_candidates,
+    PythonRelatedCandidate, find_related_tests, owner_module_paths, related_test_candidates,
 };
 use super::super::sink_alignment::classify_sink_alignment_with_old;
 use super::super::source_facts::{
@@ -353,19 +353,44 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         .iter()
         .map(|(owner, _)| owner.clone())
         .collect();
+    // The modules those initializers star-import, loaded for their top-level
+    // definitions, so a name that two star sources both define fails closed
+    // here as it does in diff mode (which reads the whole workspace).
+    let star_sources: Vec<&str> = init_owners
+        .iter()
+        .flat_map(|owner| owner.imports.iter())
+        .filter(|import| import.imported == "*")
+        .map(|import| import.source_module.as_str())
+        .collect();
+    let star_source_owners: Vec<PythonOwner> = input
+        .production_files
+        .iter()
+        .filter(|relative| {
+            owner_module_paths(relative)
+                .iter()
+                .any(|path| star_sources.contains(&path.as_str()))
+        })
+        .filter_map(|relative| load_facts_with_source(root, relative).ok())
+        .flat_map(|(facts, _)| facts.owners)
+        .collect();
 
     for relative in &input.production_files {
         match load_facts_with_source(root, relative) {
             Ok((mut facts, source)) => {
-                apply_package_reexports_from(&mut facts.owners, &init_owners, |file| {
-                    if file == relative.as_path() {
-                        return Some(source.as_str());
-                    }
-                    package_inits
-                        .iter()
-                        .find(|(owner, _)| owner.file == file)
-                        .map(|(_, init_source)| init_source.as_str())
-                });
+                apply_package_reexports_from(
+                    &mut facts.owners,
+                    &init_owners,
+                    &star_source_owners,
+                    |file| {
+                        if file == relative.as_path() {
+                            return Some(source.as_str());
+                        }
+                        package_inits
+                            .iter()
+                            .find(|(owner, _)| owner.file == file)
+                            .map(|(_, init_source)| init_source.as_str())
+                    },
+                );
                 analyzed += 1;
                 let owner_evidence = build_production_file_evidence(
                     relative,

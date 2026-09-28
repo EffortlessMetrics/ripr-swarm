@@ -528,3 +528,51 @@ fn an_imported_replacement_of_all_fails_closed() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Repo mode analyzes one production file at a time; the star sources of each
+/// initializer are loaded up front so `b.f` is known while `a.py` is analyzed.
+#[test]
+fn repo_mode_competing_star_exports_are_not_credited() -> Result<(), String> {
+    let root = unique_tempdir("repo-star-conflict")?;
+    let written = [
+        ("pkg/a.py", "def f():\n    value = 1\n    return value\n"),
+        ("pkg/b.py", "def f():\n    return 2\n"),
+        ("pkg/__init__.py", "from .a import *\nfrom .b import *\n"),
+        (
+            "tests/test_pkg.py",
+            "import pkg\n\n\ndef test_f():\n    assert pkg.f() == 2\n",
+        ),
+    ]
+    .iter()
+    .try_for_each(|(path, contents)| write_file(&root.join(path), contents));
+    let result = written.and_then(|()| {
+        PythonAdapter::analyze_repo_with_limit(
+            &root,
+            repo::RepoWorkingSetLimit {
+                limit: 800,
+                source: repo::RepoWorkingSetCapSource::Default,
+            },
+        )
+    });
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+    let a_findings: Vec<&Finding> = result
+        .findings
+        .iter()
+        .filter(|finding| finding.probe.location.file.ends_with("a.py"))
+        .collect();
+    if a_findings.is_empty() {
+        return Err("expected repo-mode findings for `pkg/a.py`".to_string());
+    }
+    for finding in a_findings {
+        if !finding.related_tests.is_empty() {
+            return Err(format!(
+                "`pkg.f` is bound by the later star import from `b`; `a.f` must not gain package identity, got {:?} with {:?}",
+                finding.class,
+                related_names(finding)
+            ));
+        }
+    }
+    Ok(())
+}

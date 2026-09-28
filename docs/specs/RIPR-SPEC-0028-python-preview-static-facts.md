@@ -154,7 +154,7 @@ naturaldelta` in `src/humanize/__init__.py` lets `import humanize` +
 `more_itertools/more.py::one`. The re-export is followed only from
 `__init__.py` module imports whose source module is the owner's module (or an
 earlier re-exporting package), for at most three packages. A renamed
-re-export (`import naturaldelta as delta`) is not followed. A star re-export
+re-export (`from .time import naturaldelta as delta`) is not followed. A star re-export
 never carries a `_private` name, and when the source module binds `__all__`
 at top level the name must be listed in it; any other binding of `__all__`
 (an import, `del`, a loop target, a binding inside a conditional block, or a

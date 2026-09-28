@@ -103,13 +103,17 @@ pub(super) fn apply_package_reexports<'s>(
 
 /// Sets `reexport_modules` on `owners` from separately loaded package
 /// `__init__.py` module owners (repo mode loads one production file at a time,
-/// so top-level definitions are known only for `owners` and the initializers).
+/// so top-level definitions come from `owners`, the initializers, and
+/// `definition_owners`: the owners of the modules the initializers
+/// star-import).
 pub(super) fn apply_package_reexports_from<'s>(
     owners: &mut [PythonOwner],
     init_owners: &[PythonOwner],
+    definition_owners: &[PythonOwner],
     source_of: impl Fn(&Path) -> Option<&'s str>,
 ) {
-    let definitions = TopLevelDefinitions::from_owners(owners.iter().chain(init_owners));
+    let definitions =
+        TopLevelDefinitions::from_owners(owners.iter().chain(init_owners).chain(definition_owners));
     apply_with(owners, init_owners, &definitions, source_of);
 }
 
