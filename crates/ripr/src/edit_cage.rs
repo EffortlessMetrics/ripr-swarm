@@ -461,6 +461,40 @@ const IGNORED_LISTING: [&str; 5] = [
     "-z",
 ];
 
+/// Before promising a Rust repair transaction, require Git to ignore the
+/// declared build directory itself. Checking an effective rule works before
+/// any build exists and respects repository, local, and global excludes.
+/// Merely finding some ignored files would accept a partial `target/debug/`
+/// rule while Cargo's root-level output still becomes a terminal cage edit.
+/// This admission check does not change the inventory or verdict authority.
+pub(crate) fn validate_build_output_precondition(
+    root: &Path,
+    policy: &EditCagePolicy,
+) -> Result<(), String> {
+    let Some(build_output) = &policy.ignored_build_output else {
+        return Ok(());
+    };
+    let directory = format!("{}/", build_output.path());
+    let args = ["check-ignore", "--no-index", "--quiet", "--", &directory];
+    let output = crate::git::run_git_output_with_deadline_and_limit(
+        root,
+        &args,
+        Duration::from_secs(10),
+        64 * 1024,
+    )?;
+    match output.status.code() {
+        Some(0) => Ok(()),
+        Some(1) => Err(format!(
+            "Rust repair requires Cargo's build directory `{directory}` to be Git-ignored before the test edit. Add `/{directory}` to the repository's .gitignore (or an equivalent Git exclude rule), then rerun --phase before. A rule for only a child directory is insufficient: Cargo also writes files at the build-directory root."
+        )),
+        _ => Err(format!(
+            "check build-output ignore precondition failed in {}: git {args:?}: {}",
+            root.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )),
+    }
+}
+
 /// Lists the git-ignored paths the cage observes.
 ///
 /// Without a declared `ignored_build_output` this is every ignored path, the
@@ -1213,7 +1247,7 @@ impl CagePathRule {
         &self.path
     }
 
-    fn matches(&self, candidate: &str) -> bool {
+    pub(crate) fn matches(&self, candidate: &str) -> bool {
         match self.scope {
             CagePathScope::Exact => candidate == self.path,
             CagePathScope::Subtree => {

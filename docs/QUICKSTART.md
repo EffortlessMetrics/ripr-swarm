@@ -166,6 +166,13 @@ When pilot recommends a repair, run the exact `ripr agent repair ... --phase bef
 command it prints. Pilot supplies the repository-scoped seam ID; the probe IDs
 printed by `ripr check` are different and cannot be substituted.
 
+Before starting a Rust repair, ensure Git ignores Cargo's entire `target/`
+directory, for example with `/target/` in `.gitignore`. Effective local or global
+Git exclude rules also work. The before phase checks this even before a build
+exists and stops with recovery guidance if it is missing; ignoring only
+`target/debug/` does not cover Cargo's root-level build files. Set the rule before
+the attempt so running the focused test cannot turn build output into an edit.
+
 The before phase prepares the packet and prints an `--attempt` continuation
 command. Read the allowed test files, proposed assertion, verification command,
 and stop conditions. Make the focused test edit yourself or delegate that packet
