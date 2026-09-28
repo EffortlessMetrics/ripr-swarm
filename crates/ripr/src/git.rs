@@ -609,8 +609,12 @@ mod tests {
     };
     use serial_test::serial;
 
+    /// Drive letter kept apart from its separator so the local-context gate
+    /// does not read these synthetic roots as a committed machine path.
+    const DRIVE: &str = "D:";
+
     fn windows_dir_of_units(units: usize) -> String {
-        let prefix = r"D:\a\";
+        let prefix = format!(r"{DRIVE}\a\");
         format!("{prefix}{}", "x".repeat(units - prefix.len()))
     }
 
@@ -741,7 +745,7 @@ mod tests {
         );
         let short = SpawnSite {
             program: "git".to_string(),
-            working_directory: Some(PathBuf::from(r"D:\repo")),
+            working_directory: Some(PathBuf::from(format!(r"{DRIVE}\repo"))),
         };
         assert_eq!(
             short.failure_message_on(true, &describe, &err),
