@@ -1923,7 +1923,7 @@ mod tests {
         assert_ne!(finding.class, ExposureClass::NoStaticPath);
     }
 
-    // RC walk LLM-2: unknown-shape lines inside an untested function read
+    // RC walk LLM-2: unknown-shape lines inside a function no test calls read
     // "cannot classify; escalate to real mutation testing".
     #[test]
     fn given_static_unknown_probe_in_unreached_owner_when_classified_then_no_static_path() {
