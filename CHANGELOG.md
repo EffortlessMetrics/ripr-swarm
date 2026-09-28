@@ -29,16 +29,23 @@ are scoped or reviewed.
   the boundary input, instead of a refusal. The packet still forbids reusing
   the observed input; an unresolved named-constant boundary still fails
   closed.
+- `cargo xtask ripr-pr` timeout packets now give one host-shell-labeled retry
+  command that keeps base, head, and root arguments literal when copied, including
+  refs with shell syntax and roots with spaces (#4367).
 - LSP fallback diagnostics explain their static classification and point to
   hover evidence without promising an unavailable clipboard action or repair
   route. Missing-path guidance remains explicitly static (#4328).
-
 - TypeScript/JavaScript and Python preview adapters no longer probe the
   declaration line of a new function whose body adds its own lines. The line
   had no behavior of its own, so it either stayed `weakly_exposed` after a
   correct test was added or, in Python, claimed unearned `exposed` credit
   beside a weakly exposed body predicate. Changed signatures, default values,
   and one-line bodies keep their probe.
+- Static discrimination keeps oracle strength and confirmation on the same
+  assertion. An unrelated exact assertion can no longer borrow a weaker
+  assertion's token match to promote a finding to `exposed`; equally strong
+  confirmed assertions retain their classification regardless of order
+  ([#4404](https://github.com/EffortlessMetrics/ripr-swarm/issues/4404)).
 
 ### Added
 
@@ -1249,6 +1256,13 @@ are scoped or reviewed.
   [#4287](https://github.com/EffortlessMetrics/ripr-swarm/pull/4287)).
 
 ### Docs
+
+- The README and quickstart first run now define "discriminator" where it
+  first appears and state `ripr check`'s exit codes. They add a one-line
+  `cargo install --locked --git` development install and a short section on
+  running ripr from a coding agent, including keeping `target/` gitignored
+  between repair phases. A stale `ripr doctor` troubleshooting claim was removed
+  ([#4413](https://github.com/EffortlessMetrics/ripr-swarm/pull/4413)).
 
 - `docs/REPAIR_ATTEMPT.md` and `docs/COMMAND_HIERARCHY.md` now document
   the three-phase governed Python repair sequence: trust-selection flags
