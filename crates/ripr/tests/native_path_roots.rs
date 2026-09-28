@@ -11,7 +11,9 @@
 //!
 //! The tests run on every platform. Only the Windows Advisory lane gives them
 //! their native meaning, which is why they are listed as release-seam controls
-//! in `xtask/src/windows_advisory.rs`.
+//! in `xtask/src/windows_advisory.rs`. On Windows the long root is a 0.11
+//! non-claim (#4350): its control asserts ripr's actionable MAX_PATH message
+//! instead of a completed journey.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -334,8 +336,60 @@ fn unicode_root_check_and_file_fact_cache_round_trip() -> Result<(), String> {
     assert_root_journeys("unicode", &unicode_relative_root())
 }
 
+/// The text a Windows `ripr check` must lead with under a root past
+/// `MAX_PATH` (#4350): the limit and the remedy, not `os error 267`.
+#[cfg(windows)]
+const WINDOWS_LONG_ROOT_LIMITATION: [&str; 2] = [
+    "failed to run git diff: failed to run git: the workspace root is ",
+    " characters long, and Windows cannot start git in a directory longer than 258 \
+     characters (MAX_PATH). Clone or move the repository to a shorter path and rerun ripr",
+];
+
+/// Windows cannot start git under a root past `MAX_PATH`, and 0.11 does not
+/// claim it can (#4350, accepted as a 0.11 non-claim in #2766). There the
+/// control pins the actionable limitation; everywhere else the root must
+/// work like any other.
+#[cfg(windows)]
+fn assert_long_root_outcome(root: &Path) -> Result<(), String> {
+    let output = run_ripr(&[
+        "check".as_ref(),
+        "--root".as_ref(),
+        root.as_os_str(),
+        "--base".as_ref(),
+        "HEAD~1".as_ref(),
+        "--json".as_ref(),
+    ])?;
+    if output.status.success() {
+        return Err(format!(
+            "ripr check succeeded under a {}-byte root; #4350's MAX_PATH non-claim no longer \
+             holds, so this control must assert the full journey again\n{}",
+            root.as_os_str().len(),
+            describe(&output)
+        ));
+    }
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let [lead, limit] = WINDOWS_LONG_ROOT_LIMITATION;
+    if !(text.contains(lead) && text.contains(limit)) {
+        return Err(format!(
+            "ripr check must name the MAX_PATH limit and remedy\n{}",
+            describe(&output)
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn assert_long_root_outcome(root: &Path) -> Result<(), String> {
+    assert_check_reports_the_changed_file(root)?;
+    assert_file_fact_cache_round_trips(root)
+}
+
 #[test]
-fn long_root_check_and_file_fact_cache_round_trip() -> Result<(), String> {
+fn long_root_check_round_trips_or_names_the_windows_path_limit() -> Result<(), String> {
     let base = FixtureBase::new("long")?;
     let root = build_fixture(&base.path, &long_relative_root())?;
     let length = root.as_os_str().len();
@@ -345,8 +399,7 @@ fn long_root_check_and_file_fact_cache_round_trip() -> Result<(), String> {
             root.display()
         ));
     }
-    assert_check_reports_the_changed_file(&root)?;
-    assert_file_fact_cache_round_trips(&root)
+    assert_long_root_outcome(&root)
 }
 
 /// Quote `value` as one PowerShell single-quoted string literal.

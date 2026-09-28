@@ -1628,8 +1628,13 @@ fn refresh_publishes_diagnostics_under_a_spaced_unicode_root() -> Result<(), Str
     assert_lsp_refresh_publishes_under_root(&root)
 }
 
+/// Refresh under a root past `MAX_PATH`. Windows cannot start git there and
+/// 0.11 does not claim it can (#4350, a 0.11 non-claim in #2766), so on
+/// Windows the control pins the actionable limitation the server reports;
+/// everywhere else the root must publish like any other.
 #[test]
-fn refresh_publishes_diagnostics_under_a_root_beyond_max_path() -> Result<(), String> {
+fn refresh_under_a_root_beyond_max_path_publishes_or_names_the_windows_path_limit()
+-> Result<(), String> {
     let base = unique_compat_fixture_root("native-long")?;
     let segment = "long-path-segment-0123456789-abcdefghijklmnopqrstuvwxyz";
     let relative = format!("{segment}-0/{segment}-1/{segment}-2/{segment}-3/{segment}-4/repo");
@@ -1640,5 +1645,89 @@ fn refresh_publishes_diagnostics_under_a_root_beyond_max_path() -> Result<(), St
             "fixture setup: long root is only {length} bytes, not beyond MAX_PATH"
         ));
     }
-    assert_lsp_refresh_publishes_under_root(&root)
+    if cfg!(windows) {
+        assert_lsp_refresh_names_the_windows_path_limit(&root)
+    } else {
+        assert_lsp_refresh_publishes_under_root(&root)
+    }
+}
+
+/// Refresh under an overlong Windows root commits no snapshot, publishes no
+/// diagnostic for the changed file, and reports the MAX_PATH limit and remedy
+/// as the analysis failure the editor shows.
+fn assert_lsp_refresh_names_the_windows_path_limit(root: &Path) -> Result<(), String> {
+    let root_uri = editor_file_uri(root)?;
+    let mut session = LspSession::spawn()?;
+    let initialize = session.request(
+        "initialize",
+        serde_json::json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "initializationOptions": {
+                "baseRef": "HEAD~1",
+                "checkMode": "instant",
+                "diagnosticProfile": "full"
+            },
+            "capabilities": {},
+        }),
+    )?;
+    expect_result(&initialize, "initialize")?;
+    session.notify("initialized", Some(serde_json::json!({})))?;
+
+    let refresh_id = fire(
+        &mut session,
+        "workspace/executeCommand",
+        serde_json::json!({"command": "ripr.refresh", "arguments": []}),
+    )?;
+    let deadline = Instant::now() + ANALYSIS_TIMEOUT;
+    let mut nonempty_publications = Vec::new();
+    loop {
+        let message = session.await_message(deadline, "ripr.refresh response")?;
+        if message.get("method").and_then(serde_json::Value::as_str)
+            == Some("textDocument/publishDiagnostics")
+        {
+            if message
+                .pointer("/params/diagnostics")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|diagnostics| !diagnostics.is_empty())
+            {
+                nonempty_publications.push(message);
+            }
+            continue;
+        }
+        if message.get("id").and_then(serde_json::Value::as_u64) == Some(refresh_id) {
+            break;
+        }
+    }
+    if !nonempty_publications.is_empty() {
+        return Err(format!(
+            "refresh under an overlong Windows root must publish no diagnostics: \
+             {nonempty_publications:?}"
+        ));
+    }
+
+    let status = execute_compat_command(&mut session, "ripr.collectWorkspaceStatus")?;
+    check_workspace_status_envelope(&status, "overlong Windows root")?;
+    if status.get("run_status").and_then(serde_json::Value::as_str) != Some("no_snapshot") {
+        return Err(format!(
+            "refresh under a {}-byte root committed a snapshot; #4350's MAX_PATH non-claim no \
+             longer holds, so this control must assert publication again: {status}",
+            root.as_os_str().len()
+        ));
+    }
+    let message = status
+        .pointer("/analysis_status/failure/message")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("refresh failure must carry a message: {status}"))?;
+    let named = message.contains("failed to run git: the workspace root is ")
+        && message.contains(
+            "Windows cannot start git in a directory longer than 258 characters (MAX_PATH). \
+             Clone or move the repository to a shorter path and rerun ripr",
+        );
+    if !named {
+        return Err(format!(
+            "refresh failure must name the MAX_PATH limit and remedy: {message}"
+        ));
+    }
+    exit_and_wait(&mut session)
 }

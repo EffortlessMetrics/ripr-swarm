@@ -128,7 +128,7 @@ pub(crate) const RELEASE_SEAM_CONTROLS: &[SeamControl] = &[
     SeamControl {
         seam: "paths",
         issue: "#3922",
-        test: "long_root_check_and_file_fact_cache_round_trip",
+        test: "long_root_check_round_trips_or_names_the_windows_path_limit",
         source: "crates/ripr/tests/native_path_roots.rs",
     },
     SeamControl {
@@ -146,7 +146,7 @@ pub(crate) const RELEASE_SEAM_CONTROLS: &[SeamControl] = &[
     SeamControl {
         seam: "paths",
         issue: "#3922",
-        test: "refresh_publishes_diagnostics_under_a_root_beyond_max_path",
+        test: "refresh_under_a_root_beyond_max_path_publishes_or_names_the_windows_path_limit",
         source: "crates/ripr/tests/lsp_lifecycle.rs",
     },
 ];
