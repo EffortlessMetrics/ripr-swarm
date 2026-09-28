@@ -36,7 +36,7 @@ fn case(surface: &str) -> Result<Case, Box<dyn std::error::Error>> {
     let arguments = match surface {
         "index" => vec!["reports".into(), "index".into()],
         "outcome" => {
-            write_outcome_snapshots(&root)?;
+            write_outcome_snapshots(root)?;
             vec![
                 "outcome".into(),
                 "--before".into(),
@@ -50,9 +50,9 @@ fn case(surface: &str) -> Result<Case, Box<dyn std::error::Error>> {
             ]
         }
         "receipt" => {
-            init_git_fixture_repo(&root)?;
+            init_git_fixture_repo(root)?;
             let (_, _, verify, _) = write_moving_pair_and_verify(
-                &root,
+                root,
                 r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
                 r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
             )?;
