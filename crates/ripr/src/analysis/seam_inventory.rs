@@ -753,6 +753,24 @@ pub(crate) struct ScopedClassifiedSeamInventory {
     pub(crate) scoped_production_files: Vec<PathBuf>,
     pub(crate) changed_production_files: Vec<PathBuf>,
     pub(crate) immediate_caller_files: Vec<PathBuf>,
+    /// Scoped seams left without evidence because the first
+    /// [`DiffScopeEvidenceStages`] stage was sufficient; zero when
+    /// every scoped seam was classified.
+    pub(crate) unevaluated_seams: usize,
+}
+
+/// Two-stage evidence for the diff-scoped inventory.
+///
+/// Test-grip evidence costs tens of milliseconds per seam, and a diff
+/// touching a large file plus its callers can scope thousands of seams
+/// (#4292). A consumer whose result depends only on a known subset
+/// names that subset as `first`; when `sufficient` accepts the
+/// classified subset, the remaining seams are never evaluated. When it
+/// declines, every scoped seam is classified exactly as without stages.
+/// The analysis layer stays ignorant of why a subset is enough.
+pub(crate) struct DiffScopeEvidenceStages<'a> {
+    pub(crate) first: &'a dyn Fn(&RepoSeam) -> bool,
+    pub(crate) sufficient: &'a dyn Fn(&[ClassifiedSeam]) -> bool,
 }
 
 /// Cache-backed inventory for one edited test file.
@@ -1017,6 +1035,7 @@ fn try_no_impact_fast_path(
             scoped_production_files: Vec::new(),
             changed_production_files: Vec::new(),
             immediate_caller_files: Vec::new(),
+            unevaluated_seams: 0,
         },
     )))
 }
@@ -1156,6 +1175,26 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
         changed_files,
         changed_owner_names,
         !no_impact_fast_path_disabled(),
+        None,
+    )
+}
+
+/// [`inventory_diff_scoped_classified_seams_at_with_config`] with staged
+/// evidence; see [`DiffScopeEvidenceStages`].
+pub(crate) fn inventory_diff_scoped_classified_seams_staged_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    changed_files: &[PathBuf],
+    changed_owner_names: &[String],
+    stages: &DiffScopeEvidenceStages<'_>,
+) -> Result<ScopedClassifiedSeamInventory, String> {
+    inventory_diff_scoped_classified_seams_inner(
+        root,
+        config,
+        changed_files,
+        changed_owner_names,
+        !no_impact_fast_path_disabled(),
+        Some(stages),
     )
 }
 
@@ -1169,6 +1208,7 @@ fn inventory_diff_scoped_classified_seams_inner(
     changed_files: &[PathBuf],
     changed_owner_names: &[String],
     fast_path_enabled: bool,
+    stages: Option<&DiffScopeEvidenceStages<'_>>,
 ) -> Result<ScopedClassifiedSeamInventory, String> {
     if fast_path_enabled {
         match try_no_impact_fast_path(root, config, changed_files, changed_owner_names) {
@@ -1258,19 +1298,7 @@ fn inventory_diff_scoped_classified_seams_inner(
         "review_scope_ok",
         seams_started.elapsed(),
     );
-    let evidence_started = Instant::now();
-    trace_latency_phase(
-        "evidence_for_seams",
-        &format!("review_scope_start_seams_{}", seams.len()),
-        Duration::ZERO,
-    );
-    let evidence = test_grip_evidence::evidence_for_seams(&seams, &cached.index);
-    trace_latency_phase(
-        "evidence_for_seams",
-        "review_scope_ok",
-        evidence_started.elapsed(),
-    );
-    let classified = seam_classification::classify_seams_owned(seams, evidence);
+    let (classified, unevaluated_seams) = classify_scoped_seams(seams, &cached.index, stages);
 
     Ok(ScopedClassifiedSeamInventory {
         classified,
@@ -1281,7 +1309,71 @@ fn inventory_diff_scoped_classified_seams_inner(
         scoped_production_files,
         changed_production_files,
         immediate_caller_files,
+        unevaluated_seams,
     })
+}
+
+/// Classify the scoped seams, first stage only when `stages` accepts it.
+/// Returns the classified seams and how many scoped seams were skipped.
+fn classify_scoped_seams(
+    seams: Vec<RepoSeam>,
+    index: &RustIndex,
+    stages: Option<&DiffScopeEvidenceStages<'_>>,
+) -> (Vec<ClassifiedSeam>, usize) {
+    let evidence_started = Instant::now();
+    let mut evidence = Vec::new();
+    let mut evaluated = vec![false; seams.len()];
+    if let Some(stages) = stages {
+        let first = seams
+            .iter()
+            .enumerate()
+            .filter(|(_, seam)| (stages.first)(seam))
+            .map(|(position, seam)| {
+                evaluated[position] = true;
+                seam.clone()
+            })
+            .collect::<Vec<_>>();
+        trace_latency_phase(
+            "evidence_for_seams",
+            &format!(
+                "review_scope_first_stage_seams_{}_of_{}",
+                first.len(),
+                seams.len()
+            ),
+            Duration::ZERO,
+        );
+        evidence = test_grip_evidence::evidence_for_seams(&first, index);
+        let classified_first = seam_classification::classify_seams(&first, &evidence);
+        if (stages.sufficient)(&classified_first) {
+            trace_latency_phase(
+                "evidence_for_seams",
+                "review_scope_first_stage_sufficient",
+                evidence_started.elapsed(),
+            );
+            return (classified_first, seams.len() - first.len());
+        }
+    }
+    let rest = seams
+        .iter()
+        .zip(&evaluated)
+        .filter(|(_, evaluated)| !**evaluated)
+        .map(|(seam, _)| seam.clone())
+        .collect::<Vec<_>>();
+    trace_latency_phase(
+        "evidence_for_seams",
+        &format!("review_scope_start_seams_{}", rest.len()),
+        Duration::ZERO,
+    );
+    // Evidence is per seam and pairs by id, so first-stage evidence
+    // joins the rest without changing any seam's classification or the
+    // original seam order.
+    evidence.extend(test_grip_evidence::evidence_for_seams(&rest, index));
+    trace_latency_phase(
+        "evidence_for_seams",
+        "review_scope_ok",
+        evidence_started.elapsed(),
+    );
+    (seam_classification::classify_seams_owned(seams, evidence), 0)
 }
 
 fn immediate_caller_file_set(
@@ -1970,6 +2062,86 @@ marker = "libtest_mimic::Trial"
                 .extend(index.files[path].functions.iter().cloned());
         }
         Ok(index)
+    }
+
+    fn class_by_id(classified: &[ClassifiedSeam]) -> Vec<(String, &'static str)> {
+        classified
+            .iter()
+            .map(|entry| (entry.seam.id().as_str().to_string(), entry.class.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn staged_scope_evidence_skips_the_rest_only_when_the_first_stage_is_sufficient()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pricing.rs");
+        let prod_source = r#"
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold { amount - 10 } else { amount }
+}
+
+pub fn taxed_total(amount: i32) -> i32 {
+    if amount > 100 { amount + 5 } else { amount }
+}
+"#;
+        let test_path = PathBuf::from("tests/pricing.rs");
+        let test_source = r#"
+#[test]
+fn discounted_total_applies_at_threshold() {
+    assert_eq!(discounted_total(100, 100), 90);
+}
+
+#[test]
+fn taxed_total_runs() {
+    let _ = taxed_total(200);
+}
+"#;
+        let index = index_from_files(&[(prod.clone(), prod_source), (test_path, test_source)])?;
+        let seams = inventory_seams_from_index(&[prod], &index);
+        let (unstaged, unstaged_skipped) = classify_scoped_seams(seams.clone(), &index, None);
+        let first = |seam: &RepoSeam| seam.owner().ends_with("discounted_total");
+        let first_ids = unstaged
+            .iter()
+            .filter(|entry| first(&entry.seam))
+            .map(|entry| (entry.seam.id().as_str().to_string(), entry.class.as_str()))
+            .collect::<Vec<_>>();
+        if unstaged_skipped != 0 || first_ids.is_empty() || first_ids.len() == unstaged.len() {
+            return Err(format!(
+                "fixture must split into both stages: {} of {} seams first, {unstaged_skipped} skipped",
+                first_ids.len(),
+                unstaged.len()
+            ));
+        }
+
+        let offered = std::cell::Cell::new(0);
+        let accept = |classified: &[ClassifiedSeam]| {
+            offered.set(classified.len());
+            true
+        };
+        let (staged, skipped) = classify_scoped_seams(
+            seams.clone(),
+            &index,
+            Some(&DiffScopeEvidenceStages {
+                first: &first,
+                sufficient: &accept,
+            }),
+        );
+        assert_eq!(offered.get(), first_ids.len());
+        assert_eq!(class_by_id(&staged), first_ids);
+        assert_eq!(skipped, unstaged.len() - first_ids.len());
+
+        let decline = |_: &[ClassifiedSeam]| false;
+        let (declined, declined_skipped) = classify_scoped_seams(
+            seams,
+            &index,
+            Some(&DiffScopeEvidenceStages {
+                first: &first,
+                sufficient: &decline,
+            }),
+        );
+        assert_eq!(declined_skipped, 0);
+        assert_eq!(class_by_id(&declined), class_by_id(&unstaged));
+        Ok(())
     }
 
     #[test]
@@ -3537,7 +3709,7 @@ marker = "libtest_mimic::Trial"
         // the fast path stays purely opportunistic).
         workspace_cache_key_at_with_config(&root, &config)?;
         let full =
-            inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], false)?;
+            inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], false, None)?;
         if !full.classified.is_empty() {
             return Err("docs-only diff must classify no seams on the full path".to_owned());
         }
@@ -3754,9 +3926,9 @@ marker = "libtest_mimic::Trial"
         // route); the scoped route never stores.
         workspace_cache_key_at_with_config(&root, &config)?;
         let fast =
-            inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], true)?;
+            inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], true, None)?;
         let full =
-            inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], false)?;
+            inventory_diff_scoped_classified_seams_inner(&root, &config, &changed, &[], false, None)?;
         // ClassifiedSeam carries evidence payloads without structural
         // equality; compare canonical seam identities instead.
         let seam_ids = |inventory: &ScopedClassifiedSeamInventory| {
