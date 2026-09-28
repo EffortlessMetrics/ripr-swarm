@@ -476,6 +476,36 @@ fn value_facts_share_one_file_scan_per_file() -> Result<(), String> {
     Ok(())
 }
 
+/// #4292: the authority verdict is checked once per (test file, seam file)
+/// per evidence pass. A file made stale after its first check in a pass keeps
+/// that pass's verdict, and the next pass (a fresh context) rejects it.
+#[test]
+fn target_authority_is_checked_once_per_evidence_pass() -> Result<(), String> {
+    let root = authority_fixture_root("pass-granularity")?;
+    let (index, seam, source) = authority_fixture_target(&root)?;
+    let file = PathBuf::from("src/lib.rs");
+    let test = index
+        .files
+        .get(&file)
+        .and_then(|facts| facts.tests.first())
+        .cloned()
+        .ok_or_else(|| "missing fixture test".to_string())?;
+    let pass = CompactGripContext::new(&index);
+    if test_target_evidence(&pass, &seam, &test, RelationReason::DirectOwnerCall).is_none() {
+        return Err("baseline authority target unexpectedly missing".to_string());
+    }
+
+    fs::write(root.join(&file), format!("{source}// stale\n"))
+        .map_err(|error| error.to_string())?;
+    if test_target_evidence(&pass, &seam, &test, RelationReason::DirectOwnerCall).is_none() {
+        return Err("the pass re-checked freshness instead of reusing its verdict".to_string());
+    }
+    if target_for_index(&index, &seam, &test, RelationReason::DirectOwnerCall).is_some() {
+        return Err("a new pass accepted the stale source".to_string());
+    }
+    Ok(())
+}
+
 #[test]
 fn production_target_evidence_rejects_authority_failures() -> Result<(), String> {
     let root = authority_fixture_root("negative")?;

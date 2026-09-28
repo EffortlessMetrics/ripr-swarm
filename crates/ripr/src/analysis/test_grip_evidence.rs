@@ -2384,7 +2384,12 @@ fn test_target_evidence(
     let function = context.unique_evidence_function(&test.file, &test.name, test.start_line)?;
     let authority = index.workspace_authority.as_ref()?;
     let test_source_digest = context.indexed_source_digest(&test.file)?;
-    if !authority.validates_target_digest(&test.file, seam.file(), &test_source_digest) {
+    if !context.validates_target_once_per_pass(
+        authority,
+        &test.file,
+        seam.file(),
+        &test_source_digest,
+    ) {
         return None;
     }
     Some(TestTargetEvidence::from_index(
