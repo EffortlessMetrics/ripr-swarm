@@ -36,15 +36,19 @@ carry a repair route. A diff with other findings shows no diagnostics, and
 hover on the line explains why. Set `diagnosticProfile` to `full` to see every
 finding.
 
-**Settings, in the order ripr prefers them:**
+**Settings.** ripr reads three layers; a later layer overrides an earlier one
+key by key:
 
 1. `ripr.toml` at the repository root, `[lsp]` table: `diagnostic_profile`,
-   `seam_diagnostics` ([Configuration](../CONFIGURATION.md)). Editor-neutral.
-2. `workspace/configuration`: ripr asks for section `ripr` with keys
-   `baseRef`, `checkMode`, `includeUnchangedTests`, `seamDiagnostics`,
-   `diagnosticProfile`, `gitTimeoutMs`, `refreshDeadlineMs`. Used when the
-   client advertises `workspace.configuration`.
-3. `initializationOptions` with the same keys at the top level.
+   `seam_diagnostics` ([Configuration](../CONFIGURATION.md)). Editor-neutral
+   defaults.
+2. `initializationOptions` with the keys `baseRef`, `checkMode`,
+   `includeUnchangedTests`, `seamDiagnostics`, `diagnosticProfile`,
+   `gitTimeoutMs`, `refreshDeadlineMs` at the top level.
+3. `workspace/configuration`: when the client advertises
+   `workspace.configuration`, ripr asks for section `ripr` with the same keys.
+   A key the editor returns wins over the other two layers, so an editor
+   setting overrides `ripr.toml`.
 
 **Diagnostics transport.** Push (`textDocument/publishDiagnostics`) unless the
 client advertises pull diagnostics (`textDocument.diagnostic`).
@@ -114,6 +118,12 @@ vim.lsp.enable("ripr")
 any root, which would stop with `root_unavailable`. Refresh with the
 `exec_cmd` call in the recipe's step 4.
 
+Neovim v0.12.5 does not redraw refreshed pull diagnostics in an open buffer on
+its own; the recipe's
+[measured compatibility limit](neovim-lsp.md#measured-compatibility-limit)
+records the run and the upstream fix. On that release, re-open the buffer or
+request document diagnostics after a refresh.
+
 ## Zed
 
 Not available yet. Zed launches only language servers that Zed or an
@@ -126,7 +136,7 @@ extension (#4460). Read from Zed's documentation on 2026-09-28.
 A minimal session:
 
 ```text
-→ initialize        { rootUri or one workspaceFolder, capabilities }
+→ initialize        { rootUri or one entry in workspaceFolders, capabilities }
 ← result            { capabilities, serverInfo: { name: "ripr" } }
 → initialized
 ← ripr/analysisStatus, and a showMessage warning if the root blocks analysis
