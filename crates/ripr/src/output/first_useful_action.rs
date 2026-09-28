@@ -1403,10 +1403,15 @@ fn selected_from_guidance_item(
             gap_id: None,
             canonical_gap_id: None,
             repair_route: None,
-            changed_behavior: string_from_sources(&[
-                (item, &["seam", "expression"]),
-                (item, &["changed_behavior"]),
-            ]),
+            // A blank seam expression names nothing; fall back to the card's
+            // own changed_behavior instead of stopping on the empty value.
+            changed_behavior: [
+                item.and_then(|item| string_path(item, &["seam", "expression"])),
+                item.and_then(|item| string_path(item, &["changed_behavior"])),
+            ]
+            .into_iter()
+            .flatten()
+            .find(|expression| !expression.trim().is_empty()),
         }
         .with_inferred_current_evidence_strength(),
     )

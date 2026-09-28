@@ -32,6 +32,21 @@ pub(crate) fn inline_code_or_text(value: &str) -> String {
     }
 }
 
+/// Render a bare value as one code span, whatever backticks it contains: the
+/// fence is one backtick longer than the value's longest backtick run, and a
+/// value that starts or ends with a backtick is padded with one space, per
+/// CommonMark code spans.
+pub(crate) fn code_span(value: &str) -> String {
+    let longest_run = value.split(|ch| ch != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest_run + 1);
+    let pad = if value.starts_with('`') || value.ends_with('`') {
+        " "
+    } else {
+        ""
+    };
+    format!("{fence}{pad}{value}{pad}{fence}")
+}
+
 pub(crate) fn markdown_text(value: &str) -> String {
     value.replace('\\', "\\\\")
 }
@@ -355,6 +370,13 @@ mod tests {
         let mut out = String::new();
         render_string_section(&mut out, "Example", &["a\\b".to_string()]);
         assert_eq!(out, "\n## Example\n\n- a\\\\b\n");
+    }
+
+    #[test]
+    fn code_span_fences_past_the_longest_backtick_run() {
+        assert_eq!(code_span("a >= b"), "`a >= b`");
+        assert_eq!(code_span("c == '`'"), "``c == '`'``");
+        assert_eq!(code_span("`x` + ``y``"), "``` `x` + ``y`` ```");
     }
 
     #[test]

@@ -151,7 +151,7 @@ fn render_one_screen_recommendation_markdown(report: &FirstUsefulActionReport, o
         .map(str::trim)
         .filter(|expression| !expression.is_empty())
     {
-        Some(expression) => crate::output::markdown::inline_code_or_text(expression),
+        Some(expression) => crate::output::markdown::code_span(expression),
         None => "not named by the selected evidence".to_string(),
     };
     let evidence_strength = report

@@ -2271,6 +2271,33 @@ fn one_screen_changed_behavior_names_the_expression_not_the_why() -> Result<(), 
     Ok(())
 }
 
+/// A blank `seam.expression` names nothing, so the one-screen line falls back
+/// to the card's own `changed_behavior` instead of reporting no expression.
+#[test]
+fn one_screen_changed_behavior_skips_a_blank_seam_expression() -> Result<(), String> {
+    let mut comments = exact_line_comments()?;
+    let card = comments
+        .pointer_mut("/comments/0")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("fixture must carry a first review card")?;
+    card.insert(
+        "changed_behavior".to_string(),
+        serde_json::json!("amount > discount_threshold"),
+    );
+    let seam = card
+        .get_mut("seam")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("fixture card must carry a seam")?;
+    seam.insert("expression".to_string(), serde_json::json!("  "));
+    let report = build_first_useful_action_report(guidance_only_input(&comments)?);
+    let markdown = render_first_useful_action_markdown(&report);
+    assert!(
+        markdown.contains("- Changed behavior: `amount > discount_threshold`\n"),
+        "{markdown}"
+    );
+    Ok(())
+}
+
 #[test]
 fn first_useful_action_matches_repair_start_fixture() -> Result<(), String> {
     let repo_root = repo_root()?;
