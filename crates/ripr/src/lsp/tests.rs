@@ -4053,7 +4053,9 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
         Vec::new(),
     );
     snapshot.classified_seams = vec![seam.clone()];
-    let workspace = snapshot.root.to_string_lossy().into_owned();
+    // Production binds the snapshot root (#4287); `/workspace` has no drive
+    // on Windows, so the bound form gains the working directory's drive there.
+    let workspace = crate::agent::loop_commands::bound_root(&snapshot.root.to_string_lossy());
     let actions = code_action_response(
         &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
         Some(&snapshot),
@@ -4107,7 +4109,8 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
     assert_eq!(
         commands[2].2[0]["command"],
         format!(
-            "ripr agent repair --root /workspace --seam-id {} --phase before",
+            "ripr agent repair --root {} --seam-id {} --phase before",
+            crate::agent::loop_commands::shell_arg(&workspace),
             seam.seam.id().as_str()
         )
     );
@@ -4178,9 +4181,7 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
         commands[7].2[0]["command"],
         format!(
             "ripr agent receipt --root {} --verify-json target/ripr/agent/agent-verify.json --seam-id {} --json --out target/ripr/agent/agent-receipt.json",
-            crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
-                &workspace
-            )),
+            crate::agent::loop_commands::shell_arg(&workspace),
             seam.seam.id().as_str()
         )
     );
@@ -4241,8 +4242,13 @@ fn repair_start_is_offered_only_for_a_seam_past_the_repair_packet_flip() -> Resu
         &recommended_test_for(&inline_target).file
     ));
 
+    // `/workspace` has no drive on Windows, so the bound root (#4287) gains
+    // the working directory's drive there; bind it the way production does.
     let expected = format!(
-        "ripr agent repair --root /workspace --seam-id {} --phase before",
+        "ripr agent repair --root {} --seam-id {} --phase before",
+        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+            "/workspace"
+        )),
         eligible.seam.id().as_str()
     );
 
@@ -12670,9 +12676,8 @@ fn execute_command_collect_evidence_context_returns_editor_packet_for_known_seam
             Vec::new(),
         );
         diagnostics.snapshot.classified_seams = vec![seam];
-        let workspace_root = crate::agent::loop_commands::shell_arg(
-            &crate::agent::loop_commands::bound_root("/workspace"),
-        );
+        let bound_workspace = crate::agent::loop_commands::bound_root("/workspace");
+        let workspace_root = crate::agent::loop_commands::shell_arg(&bound_workspace);
         let Some(_) = backend.refresh_plan(diagnostics) else {
             return Err("expected refresh plan".to_string());
         };
@@ -12734,7 +12739,7 @@ fn execute_command_collect_evidence_context_returns_editor_packet_for_known_seam
         assert_eq!(
             packet["after_snapshot_command"],
             crate::agent::loop_commands::check_repo_exposure_command_with_base(
-                "/workspace",
+                &bound_workspace,
                 Some("origin/main"),
                 "draft",
                 "target/ripr/pilot/after.repo-exposure.json",
@@ -12744,7 +12749,7 @@ fn execute_command_collect_evidence_context_returns_editor_packet_for_known_seam
         assert_eq!(
             packet["verify_command"],
             crate::agent::loop_commands::agent_verify_command(
-                "/workspace",
+                &bound_workspace,
                 "target/ripr/pilot/repo-exposure.json",
                 "target/ripr/pilot/after.repo-exposure.json",
                 Some("target/ripr/agent/agent-verify.json"),
