@@ -83,3 +83,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_predicate_scope_controls (4)
+
+Reason:
+RIPR-SPEC-0122: unreached static_unknown next step hedges macro and integration reach
+
+Command:
+`cargo xtask goldens bless binding_predicate_scope_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

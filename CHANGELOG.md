@@ -37,7 +37,9 @@ are scoped or reviewed.
   digest's "Why weakly_exposed" line names the incomplete stage; unclassifiable
   lines in a function no test reaches ask for a test first instead of real
   mutation testing; zero-count languages and the empty-result caveat on
-  non-empty preview runs are dropped; and digest lines no longer end mid-word.
+  non-empty preview runs are dropped; digest lines no longer end mid-word or
+  inside an open code span; and a closed stdout pipe (`ripr doctor | head`)
+  ends quietly with exit `2` instead of an internal-error report.
 
 - LSP fallback diagnostics explain their static classification and point to
   hover evidence without promising an unavailable clipboard action or repair

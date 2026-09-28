@@ -42,6 +42,9 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
 - **User error**: unknown command, missing required argument, or invalid
   config.
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
+- **Closed output pipe**: the reader of stdout went away early (for example
+  `ripr doctor | head`). ripr stops quietly with `2`, not `0`, because its
+  output was cut short; it never turns a would-be `3` into a pass.
 
 ## When you see exit code 3
 

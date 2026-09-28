@@ -6,7 +6,7 @@ use crate::analysis::classify::{
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
 
-const STATIC_UNKNOWN_UNREACHED_NEXT_STEP: &str = "No static test path reaches this change, so first add a test that exercises it and asserts the result; deep mode or real mutation testing cannot help until a test reaches it.";
+const STATIC_UNKNOWN_UNREACHED_NEXT_STEP: &str = "No static test path reaches this change (a test may still reach it through macros, dynamic dispatch, or integration tests that static evidence does not follow). Add or point to a test that exercises it and asserts the result first; deep mode and real mutation testing need a reaching test to say more.";
 
 pub(in crate::analysis) fn build_finding(
     context: &ProbeContext<'_>,

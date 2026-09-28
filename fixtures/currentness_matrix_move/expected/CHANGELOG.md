@@ -71,3 +71,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_move (5)
+
+Reason:
+RIPR-SPEC-0122: unreached static_unknown next step hedges macro and integration reach
+
+Command:
+`cargo xtask goldens bless currentness_matrix_move --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

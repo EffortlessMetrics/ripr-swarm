@@ -37,7 +37,7 @@ Stop reasons:
   - no_changed_rust_line
 
 Next step
-  No static test path reaches this change, so first add a test that exercises it and asserts the result; deep mode or real mutation testing cannot help until a test reaches it.
+  No static test path reaches this change (a test may still reach it through macros, dynamic dispatch, or integration tests that static evidence does not follow). Add or point to a test that exercises it and asserts the result first; deep mode and real mutation testing need a reaching test to say more.
 Drill in:
   ripr explain --root fixtures/constant_declaration_probe_reconciliation/input --diff fixtures/constant_declaration_probe_reconciliation/diff.patch --mode fast probe:src_lib.rs:static_unknown:c48715e6
   ripr context --root fixtures/constant_declaration_probe_reconciliation/input --diff fixtures/constant_declaration_probe_reconciliation/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:c48715e6

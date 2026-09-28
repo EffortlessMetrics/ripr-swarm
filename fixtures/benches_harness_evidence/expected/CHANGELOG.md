@@ -83,3 +83,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — benches_harness_evidence (7)
+
+Reason:
+RIPR-SPEC-0122: unreached static_unknown next step hedges macro and integration reach
+
+Command:
+`cargo xtask goldens bless benches_harness_evidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

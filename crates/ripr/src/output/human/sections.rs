@@ -153,12 +153,19 @@ pub(super) fn one_line(value: &str) -> String {
             truncated.truncate(space);
         }
         // Never leave a code span open: "input `discountedTotal(…" reads as
-        // a broken command. Cut before the unmatched backtick instead.
+        // a broken command. Cut before the unmatched backtick when that loses
+        // little; when the span is long, keep its start and close it
+        // ("`xxxx…`") instead of wiping the line down to "see…".
         if truncated.matches('`').count() % 2 == 1
             && let Some(open) = truncated.rfind('`')
         {
-            truncated.truncate(open);
-            truncated.truncate(truncated.trim_end().len());
+            if truncated[open..].chars().count() <= CODE_SPAN_SLACK {
+                truncated.truncate(open);
+                truncated.truncate(truncated.trim_end().len());
+            } else {
+                truncated.push_str("…`");
+                return truncated;
+            }
         }
         truncated.push('…');
         truncated
@@ -170,6 +177,9 @@ const LINE_BUDGET: usize = 180;
 
 /// How far back from [`LINE_BUDGET`] `one_line` looks for a word boundary.
 const WORD_BOUNDARY_SLACK: usize = 30;
+
+/// Longest open code span `one_line` drops whole rather than closing.
+const CODE_SPAN_SLACK: usize = 60;
 
 /// Render a changed-source fragment for the exhaustive surface: **complete**,
 /// but hard-wrapped so no display line runs past the budget.
@@ -922,12 +932,22 @@ struct RepairPlacement<'a> {
 /// nothing they could act on from the digest.
 fn partial_path_hint(ripr: &RiprEvidence) -> &'static str {
     let incomplete = |stage: &crate::domain::StageEvidence| stage.state != StageState::Yes;
+    // An Unknown stage is not established, so its hint says so rather than
+    // stating the gap as fact (#4411 review).
     if incomplete(&ripr.infect) {
-        "a related test reaches this change, but no test input tells the old and new behavior apart"
+        if ripr.infect.state == StageState::Unknown {
+            "a related test reaches this change, but static evidence cannot tell whether any test input tells the old and new behavior apart"
+        } else {
+            "a related test reaches this change, but no test input tells the old and new behavior apart"
+        }
     } else if incomplete(&ripr.propagate) {
         "a related test reaches this change, but the path from it to what the test checks is only partly traced"
     } else if incomplete(&ripr.reveal.observe) {
-        "a related test reaches this change, but its assertions observe the result only loosely"
+        if ripr.reveal.observe.state == StageState::Unknown {
+            "a related test reaches this change, but whether its assertions observe the result is not established"
+        } else {
+            "a related test reaches this change, but its assertions observe the result only loosely"
+        }
     } else {
         "a related test reaches this change, but the static evidence path is partially complete — see full form for details"
     }
@@ -1096,12 +1116,43 @@ mod classification_hint_tests {
                 "a related test reaches this change, but its assertions observe the result only loosely"
             )
         );
+
+        // Unknown is not established evidence, so the hint must not state
+        // the gap as fact.
+        evidence.reveal.observe = StageEvidence::new(StageState::Unknown, Confidence::Low, "x");
+        let hint = classification_hint(&ExposureClass::WeaklyExposed, &evidence);
+        assert_eq!(
+            hint.as_deref(),
+            Some(
+                "a related test reaches this change, but whether its assertions observe the result is not established"
+            )
+        );
+        evidence.reveal.observe = StageEvidence::new(StageState::Yes, Confidence::High, "x");
+        evidence.infect = StageEvidence::new(StageState::Unknown, Confidence::Low, "x");
+        let hint = classification_hint(&ExposureClass::WeaklyExposed, &evidence);
+        assert_eq!(
+            hint.as_deref(),
+            Some(
+                "a related test reaches this change, but static evidence cannot tell whether any test input tells the old and new behavior apart"
+            )
+        );
     }
 }
 
 #[cfg(test)]
 mod one_line_tests {
     use super::{LINE_BUDGET, one_line};
+
+    #[test]
+    fn one_line_closes_a_long_open_code_span_instead_of_dropping_it() {
+        // #4411 review: cutting before a long span's backtick reduced
+        // "see `xxxx…` then" to "see…".
+        let text = format!("see `{}` then", "x".repeat(200));
+        let rendered = one_line(&text);
+        assert!(rendered.starts_with("see `xxxx"), "{rendered}");
+        assert!(rendered.ends_with("…`"), "{rendered}");
+        assert_eq!(rendered.matches('`').count() % 2, 0, "{rendered}");
+    }
 
     #[test]
     fn one_line_truncates_at_a_word_boundary() {

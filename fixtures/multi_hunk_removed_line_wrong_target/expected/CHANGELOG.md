@@ -263,3 +263,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — multi_hunk_removed_line_wrong_target (6)
+
+Reason:
+RIPR-SPEC-0122: unreached static_unknown next step hedges macro and integration reach
+
+Command:
+`cargo xtask goldens bless multi_hunk_removed_line_wrong_target --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

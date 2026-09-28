@@ -35,3 +35,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — enum_variant_declaration_not_call (4)
+
+Reason:
+RIPR-SPEC-0122: unreached static_unknown next step hedges macro and integration reach
+
+Command:
+`cargo xtask goldens bless enum_variant_declaration_not_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
