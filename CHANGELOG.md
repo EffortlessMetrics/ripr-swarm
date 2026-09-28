@@ -59,6 +59,10 @@ are scoped or reviewed.
   On `tokio-rs/bytes` the "Related tests appear to reach" line quoted
   `bytes_mut_unsplit_empty_self` ahead of the test that pins `try_get_int`'s
   return value.
+- A changed Rust line whose only `=>` sits inside a macro call's arguments
+  (`buf_try_get_impl!(be => self, i64, 8);` in `tokio-rs/bytes`) or inside a
+  string no longer gets a `match_arm` probe. Arm lines and lines that open a
+  `match` keep it.
 - Security: ripr's git calls pass `-c core.fsmonitor=false`, so a
   repository's own `core.fsmonitor` program (reachable from an extracted
   archive or a planted nested repository) does not run on `git status`

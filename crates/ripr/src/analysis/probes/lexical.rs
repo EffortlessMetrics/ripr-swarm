@@ -29,7 +29,7 @@ pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
     if has_field_shape(text) {
         out.push(ProbeFamily::FieldConstruction);
     }
-    if text.starts_with("match ") || text.contains("=>") {
+    if text.starts_with("match ") || has_match_arm_arrow(&masked) {
         out.push(ProbeFamily::MatchArm);
     }
     if out.is_empty() {
@@ -100,6 +100,35 @@ fn initializer_span(masked: &str) -> &str {
         index += 1;
     }
     masked
+}
+
+/// Whether a masked line carries a match-arm `=>`. An arrow inside a macro
+/// call's own delimiters (`buf_try_get_impl!(be => self, ..)`, `hash_map!{k =>
+/// v}`) is macro syntax, not a match arm, so only an arrow at the line's top
+/// delimiter depth counts, unless the line itself opens a `match` whose arms
+/// sit inside braces (`.map(|x| match x { A => 1 })`). Strings and comments
+/// are already masked.
+fn has_match_arm_arrow(masked: &str) -> bool {
+    if !masked.contains("=>") {
+        return false;
+    }
+    if masked
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .any(|word| word == "match")
+    {
+        return true;
+    }
+    let bytes = masked.as_bytes();
+    let mut depth = 0usize;
+    for (index, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b'=' if depth == 0 && bytes.get(index + 1) == Some(&b'>') => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn has_predicate_shape(text: &str) -> bool {
@@ -836,6 +865,38 @@ mod tests {
             assert!(
                 families.contains(&ProbeFamily::SideEffect),
                 "{text} did not classify as side_effect"
+            );
+        }
+    }
+
+    /// R3 (OSS replay, tokio-rs/bytes 7930d93): an arrow inside a macro
+    /// call's arguments is macro syntax, not a match arm.
+    #[test]
+    fn macro_argument_arrows_are_not_match_arms() {
+        for text in [
+            "buf_try_get_impl!(be => self, i64, 8);",
+            "let map = hash_map!{ \"a\" => 1 };",
+            "vec![a => b]",
+            "log(\"a => b\");",
+        ] {
+            let families = classify_changed_line(text);
+            assert!(
+                !families.contains(&ProbeFamily::MatchArm),
+                "{text} must not classify as match_arm, got {families:?}"
+            );
+        }
+        for text in [
+            "Some(value) => value + 1,",
+            "(Ok(a), Ok(b)) => a == b,",
+            "Point { x, y } => x + y,",
+            "}) => break,",
+            ".map(|x| match x { A => 1, B => 2 })",
+            "let n = match state { State::On => 1, _ => 0 };",
+        ] {
+            let families = classify_changed_line(text);
+            assert!(
+                families.contains(&ProbeFamily::MatchArm),
+                "{text} must classify as match_arm, got {families:?}"
             );
         }
     }
