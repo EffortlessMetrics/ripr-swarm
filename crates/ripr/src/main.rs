@@ -33,6 +33,12 @@ fn install_panic_hook() {
             .copied()
             .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
             .unwrap_or("(no panic message)");
+        // `ripr check | head` closes stdout early. That is the reader being
+        // done, not a ripr bug, so end quietly instead of reporting an
+        // internal error.
+        if is_closed_stdout_panic(message) {
+            std::process::exit(0);
+        }
         eprintln!(
             "{}",
             format_panic_report(message, info.location().map(|loc| (loc.file(), loc.line())),)
@@ -49,6 +55,12 @@ fn install_panic_hook() {
             );
         }
     }));
+}
+
+/// `println!` panics with this message when the reading end of a pipe has
+/// closed (`EPIPE`).
+fn is_closed_stdout_panic(message: &str) -> bool {
+    message.starts_with("failed printing to stdout") && message.contains("Broken pipe")
 }
 
 fn format_panic_report(message: &str, location: Option<(&str, u32)>) -> String {
@@ -116,6 +128,12 @@ mod tests {
         if report != "ripr: internal error (this is a bug): panic hook regression at src/main.rs:42"
         {
             return Err(format!("unexpected formatted report: {report}"));
+        }
+        if !super::is_closed_stdout_panic("failed printing to stdout: Broken pipe (os error 32)")
+            || super::is_closed_stdout_panic("failed printing to stdout: Permission denied")
+            || super::is_closed_stdout_panic("Broken pipe")
+        {
+            return Err("closed-stdout detection must match only EPIPE on stdout".to_owned());
         }
         if super::exit_code() != 2 {
             return Err(format!("unexpected exit code: {}", super::exit_code()));
