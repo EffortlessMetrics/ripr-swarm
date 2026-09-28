@@ -2078,7 +2078,7 @@ fn encode_integrity_body<T: serde::Serialize>(
     payload_digest: String,
 ) -> Result<Vec<u8>, String> {
     #[derive(serde::Serialize)]
-    struct SignedBody<'a, T> {
+    struct ChecksummedBody<'a, T> {
         #[serde(flatten)]
         body: &'a T,
         payload_digest: String,
@@ -2088,52 +2088,17 @@ fn encode_integrity_body<T: serde::Serialize>(
         let (hashes, bodies, envelopes) = work.get();
         work.set((hashes, bodies, envelopes.saturating_add(1)));
     });
-    serde_json::to_vec_pretty(&SignedBody {
+    serde_json::to_vec_pretty(&ChecksummedBody {
         body,
         payload_digest,
     })
-    .map_err(|err| format!("encode signed cache body failed: {err}"))
+    .map_err(|err| format!("encode checksummed cache body failed: {err}"))
 }
 impl CacheEnvelope {
     /// Unsigned typed body binds identity and all serialized served fields in fixed order.
     /// Nested serde-skipped derived state is excluded by the existing serialization contract.
     fn expected_digest(&self) -> Result<String, String> {
-        #[derive(serde::Serialize)]
-        struct UnsignedBody<'a> {
-            schema_version: &'a String,
-            analyzer_version: &'a String,
-            workspace_root_hash: &'a String,
-            files_content_hash: &'a String,
-            cfg_features_hash: &'a String,
-            config_hash: &'a String,
-            test_intent_hash: &'a String,
-            suppressions_hash: &'a String,
-            workspace_manifests_hash: &'a String,
-            lockfile_hash: &'a String,
-            toolchain_hash: &'a String,
-            classified_seams: &'a Vec<ClassifiedSeam>,
-            seam_limit_info: &'a Option<CachedSeamLimitInfo>,
-            lexical_fallback_files: &'a Vec<PathBuf>,
-        }
-        semantic_body_digest(
-            "ripr-cache:CacheEnvelope:v1",
-            &UnsignedBody {
-                schema_version: &self.schema_version,
-                analyzer_version: &self.analyzer_version,
-                workspace_root_hash: &self.workspace_root_hash,
-                files_content_hash: &self.files_content_hash,
-                cfg_features_hash: &self.cfg_features_hash,
-                config_hash: &self.config_hash,
-                test_intent_hash: &self.test_intent_hash,
-                suppressions_hash: &self.suppressions_hash,
-                workspace_manifests_hash: &self.workspace_manifests_hash,
-                lockfile_hash: &self.lockfile_hash,
-                toolchain_hash: &self.toolchain_hash,
-                classified_seams: &self.classified_seams,
-                seam_limit_info: &self.seam_limit_info,
-                lexical_fallback_files: &self.lexical_fallback_files,
-            },
-        )
+        semantic_body_digest("ripr-cache:CacheEnvelope:v1", self)
     }
     fn validate_integrity(&self) -> Result<(), String> {
         let expected = self.expected_digest()?;
@@ -2149,24 +2114,7 @@ impl FileFactCacheEnvelope {
     /// Unsigned typed body binds identity and all serialized served fields in fixed order.
     /// Nested serde-skipped derived state is excluded by the existing serialization contract.
     fn expected_digest(&self) -> Result<String, String> {
-        #[derive(serde::Serialize)]
-        struct UnsignedBody<'a> {
-            file_fact_cache_schema_version: &'a String,
-            analyzer_version: &'a String,
-            file_path: &'a PathBuf,
-            content_hash: &'a String,
-            file_facts: &'a FileFacts,
-        }
-        semantic_body_digest(
-            "ripr-cache:FileFactCacheEnvelope:v1",
-            &UnsignedBody {
-                file_fact_cache_schema_version: &self.file_fact_cache_schema_version,
-                analyzer_version: &self.analyzer_version,
-                file_path: &self.file_path,
-                content_hash: &self.content_hash,
-                file_facts: &self.file_facts,
-            },
-        )
+        semantic_body_digest("ripr-cache:FileFactCacheEnvelope:v1", self)
     }
     fn validate_integrity(&self) -> Result<(), String> {
         let expected = self.expected_digest()?;
@@ -2182,48 +2130,7 @@ impl ShardedCacheManifest {
     /// Unsigned typed body binds identity and all serialized served fields in fixed order.
     /// Nested serde-skipped derived state is excluded by the existing serialization contract.
     fn expected_digest(&self) -> Result<String, String> {
-        #[derive(serde::Serialize)]
-        struct UnsignedBody<'a> {
-            sharded_cache_schema_version: &'a String,
-            schema_version: &'a String,
-            analyzer_version: &'a String,
-            workspace_root_hash: &'a String,
-            files_content_hash: &'a String,
-            cfg_features_hash: &'a String,
-            config_hash: &'a String,
-            test_intent_hash: &'a String,
-            suppressions_hash: &'a String,
-            workspace_manifests_hash: &'a String,
-            lockfile_hash: &'a String,
-            toolchain_hash: &'a String,
-            total_seams: &'a usize,
-            shard_count: &'a usize,
-            shards: &'a Vec<ShardedCacheShardRef>,
-            seam_limit_info: &'a Option<CachedSeamLimitInfo>,
-            lexical_fallback_files: &'a Vec<PathBuf>,
-        }
-        semantic_body_digest(
-            "ripr-cache:ShardedCacheManifest:v1",
-            &UnsignedBody {
-                sharded_cache_schema_version: &self.sharded_cache_schema_version,
-                schema_version: &self.schema_version,
-                analyzer_version: &self.analyzer_version,
-                workspace_root_hash: &self.workspace_root_hash,
-                files_content_hash: &self.files_content_hash,
-                cfg_features_hash: &self.cfg_features_hash,
-                config_hash: &self.config_hash,
-                test_intent_hash: &self.test_intent_hash,
-                suppressions_hash: &self.suppressions_hash,
-                workspace_manifests_hash: &self.workspace_manifests_hash,
-                lockfile_hash: &self.lockfile_hash,
-                toolchain_hash: &self.toolchain_hash,
-                total_seams: &self.total_seams,
-                shard_count: &self.shard_count,
-                shards: &self.shards,
-                seam_limit_info: &self.seam_limit_info,
-                lexical_fallback_files: &self.lexical_fallback_files,
-            },
-        )
+        semantic_body_digest("ripr-cache:ShardedCacheManifest:v1", self)
     }
     fn validate_integrity(&self) -> Result<(), String> {
         let expected = self.expected_digest()?;
@@ -2239,44 +2146,7 @@ impl ShardedCacheEnvelope {
     /// Unsigned typed body binds identity and all serialized served fields in fixed order.
     /// Nested serde-skipped derived state is excluded by the existing serialization contract.
     fn expected_digest(&self) -> Result<String, String> {
-        #[derive(serde::Serialize)]
-        struct UnsignedBody<'a> {
-            sharded_cache_schema_version: &'a String,
-            schema_version: &'a String,
-            analyzer_version: &'a String,
-            workspace_root_hash: &'a String,
-            files_content_hash: &'a String,
-            cfg_features_hash: &'a String,
-            config_hash: &'a String,
-            test_intent_hash: &'a String,
-            suppressions_hash: &'a String,
-            workspace_manifests_hash: &'a String,
-            lockfile_hash: &'a String,
-            toolchain_hash: &'a String,
-            shard_index: &'a usize,
-            shard_count: &'a usize,
-            classified_seams: &'a Vec<ClassifiedSeam>,
-        }
-        semantic_body_digest(
-            "ripr-cache:ShardedCacheEnvelope:v1",
-            &UnsignedBody {
-                sharded_cache_schema_version: &self.sharded_cache_schema_version,
-                schema_version: &self.schema_version,
-                analyzer_version: &self.analyzer_version,
-                workspace_root_hash: &self.workspace_root_hash,
-                files_content_hash: &self.files_content_hash,
-                cfg_features_hash: &self.cfg_features_hash,
-                config_hash: &self.config_hash,
-                test_intent_hash: &self.test_intent_hash,
-                suppressions_hash: &self.suppressions_hash,
-                workspace_manifests_hash: &self.workspace_manifests_hash,
-                lockfile_hash: &self.lockfile_hash,
-                toolchain_hash: &self.toolchain_hash,
-                shard_index: &self.shard_index,
-                shard_count: &self.shard_count,
-                classified_seams: &self.classified_seams,
-            },
-        )
+        semantic_body_digest("ripr-cache:ShardedCacheEnvelope:v1", self)
     }
     fn validate_integrity(&self) -> Result<(), String> {
         let expected = self.expected_digest()?;
@@ -2292,22 +2162,7 @@ impl CorpusFingerprintEnvelope {
     /// Unsigned typed body binds identity and all serialized served fields in fixed order.
     /// Nested serde-skipped derived state is excluded by the existing serialization contract.
     fn expected_digest(&self) -> Result<String, String> {
-        #[derive(serde::Serialize)]
-        struct UnsignedBody<'a> {
-            fingerprint_cache_schema_version: &'a String,
-            workspace_root_hash: &'a String,
-            fingerprint: &'a String,
-            files_content_hash: &'a String,
-        }
-        semantic_body_digest(
-            "ripr-cache:CorpusFingerprintEnvelope:v1",
-            &UnsignedBody {
-                fingerprint_cache_schema_version: &self.fingerprint_cache_schema_version,
-                workspace_root_hash: &self.workspace_root_hash,
-                fingerprint: &self.fingerprint,
-                files_content_hash: &self.files_content_hash,
-            },
-        )
+        semantic_body_digest("ripr-cache:CorpusFingerprintEnvelope:v1", self)
     }
     fn validate_integrity(&self) -> Result<(), String> {
         let expected = self.expected_digest()?;

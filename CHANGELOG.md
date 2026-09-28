@@ -696,11 +696,6 @@ are scoped or reviewed.
 
 ### Fixed
 
-- Rust cache entries now reject same-key semantic payload edits before serving
-  facts or classified evidence. File-fact, full/compact classified, shard and
-  corpus-fingerprint generations cold-recompute once; checksums do not
-  authenticate writers able to recompute them (#4382).
-
 - Advisory report outputs refuse planted destination links and nonregular files
   before truncation while preserving fresh writes and regular-file updates.
   The shared index, outcome, calibration, and agent-receipt write path uses
@@ -1683,11 +1678,6 @@ publishing, signing, marketplace, badge, and distribution authority.
   advisory/static-limit information without promotion to stable gate authority.
 
 ### Fixed
-
-- Rust cache entries now reject same-key semantic payload edits before serving
-  facts or classified evidence. File-fact, full/compact classified, shard and
-  corpus-fingerprint generations cold-recompute once; checksums do not
-  authenticate writers able to recompute them (#4382).
 
 - Fixed cases where incomplete or stale packet artifacts could lose field-level
   blocker information.
@@ -3842,11 +3832,6 @@ tell the same conservative static-exposure story.
   responsibilities without changing the one-package public surface.
 
 ### Fixed
-
-- Rust cache entries now reject same-key semantic payload edits before serving
-  facts or classified evidence. File-fact, full/compact classified, shard and
-  corpus-fingerprint generations cold-recompute once; checksums do not
-  authenticate writers able to recompute them (#4382).
 
 - Hardened unified diff parsing against multi-hunk, multi-file, malformed, and
   fuzz-like inputs.
