@@ -32,14 +32,14 @@ pub(crate) fn inline_code_or_text(value: &str) -> String {
     if !value.contains('`') {
         return code_span(value);
     }
-    if value.contains("``") || value.matches('`').count() % 2 != 0 {
+    if value.contains("``") || !value.matches('`').count().is_multiple_of(2) {
         return code_span(value);
     }
     value
         .split('`')
         .enumerate()
         .map(|(index, segment)| {
-            if index % 2 == 0 {
+            if index.is_multiple_of(2) {
                 escape_inline_markup(segment)
             } else {
                 segment.to_string()
