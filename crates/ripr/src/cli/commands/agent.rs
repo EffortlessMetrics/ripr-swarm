@@ -1285,8 +1285,8 @@ fn untracked_output_hints(
             .map(|violation| format!("`{}`", violation.path))
             .collect::<Vec<_>>();
         hints.push(format!(
-            "{} are refused untracked paths under Cargo's declared build directory `{}/`. Check the effective Git ignore rules: generated build output must be ignored before starting a new repair attempt (for example `/{}/` in .gitignore). Tracked and untracked-but-not-ignored files remain subject to the edit cage; these paths are not attributed to redirected ripr output.",
-            paths.join(", "), rule.path(), rule.path()
+            "Refused untracked paths under Cargo's declared build directory `{}/`: {}. Check the effective Git ignore rules: generated build output must be ignored before starting a new repair attempt (for example `/{}/` in .gitignore). Tracked and untracked-but-not-ignored files remain subject to the edit cage; these paths are not attributed to redirected ripr output.",
+            rule.path(), paths.join(", "), rule.path()
         ));
     }
     let untracked = other_paths
