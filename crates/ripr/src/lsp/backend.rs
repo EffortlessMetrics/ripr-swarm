@@ -3498,15 +3498,19 @@ fn blocked_root_message(root: &WorkspaceRootAuthority) -> Option<String> {
             .join(", ");
         format!(" Folders: {listed}.")
     };
-    // The ambiguous and removed details already name the recovery; an
-    // unavailable root only says what the client sent.
-    let recovery = if root.state == WorkspaceRootState::RootUnavailable {
-        " Open the repository folder as the editor's workspace root, then restart the language server."
-    } else {
-        ""
+    // The stored details already name the recovery for ambiguous, removed
+    // and changed roots; an unavailable root only says what the client sent.
+    let guidance = match root.state {
+        WorkspaceRootState::WorkspaceAmbiguous => " ripr analyzes one workspace root per server.",
+        WorkspaceRootState::RootUnavailable => {
+            " Open the repository folder as the editor's workspace root, then restart the language server."
+        }
+        WorkspaceRootState::SelectedSingleRoot
+        | WorkspaceRootState::RootRemoved
+        | WorkspaceRootState::RootChanged => "",
     };
     Some(format!(
-        "analysis is stopped ({}): {detail}.{folders} ripr analyzes one workspace root per server.{recovery}",
+        "analysis is stopped ({}): {detail}.{folders}{guidance}",
         root.state.as_str()
     ))
 }
