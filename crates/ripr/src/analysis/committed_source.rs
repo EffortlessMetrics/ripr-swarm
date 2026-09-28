@@ -41,6 +41,9 @@ const LS_TREE_CHUNK: usize = 256;
 #[derive(Debug, Default)]
 pub(crate) struct CommittedSourceOverlay {
     root: PathBuf,
+    /// `root` canonicalized, so a caller holding the canonical workspace root
+    /// (the workspace authority) resolves the same entries.
+    canonical_root: Option<PathBuf>,
     /// Root-relative, `/`-separated path → `HEAD` bytes, or `None` when the
     /// path is not a regular file at `HEAD` (absent, symlink, or gitlink).
     entries: BTreeMap<String, Option<Vec<u8>>>,
@@ -95,6 +98,7 @@ impl CommittedSourceOverlay {
     ) -> Self {
         Self {
             root: root.to_path_buf(),
+            canonical_root: root.canonicalize().ok(),
             entries: entries
                 .into_iter()
                 .map(|(path, bytes)| (path.to_string(), bytes.map(<[u8]>::to_vec)))
@@ -103,7 +107,7 @@ impl CommittedSourceOverlay {
     }
 
     fn lookup(&self, root: &Path, relative: &Path) -> CommittedSourceRead {
-        if root != self.root {
+        if root != self.root && self.canonical_root.as_deref() != Some(root) {
             return CommittedSourceRead::Worktree;
         }
         let Some(key) = normalized_key(relative) else {
@@ -226,7 +230,8 @@ pub(crate) fn probe(
     let mut head_blobs = BTreeMap::new();
     let dirty_list = dirty.iter().map(String::as_str).collect::<Vec<_>>();
     for chunk in dirty_list.chunks(LS_TREE_CHUNK) {
-        let mut args = vec!["ls-tree", "-r", "-z", "HEAD", "--"];
+        // Literal pathspecs: a file named `:x` or `*.rs` is a path, not magic.
+        let mut args = vec!["--literal-pathspecs", "ls-tree", "-r", "-z", "HEAD", "--"];
         args.extend(chunk.iter().copied());
         let listing = git_bytes(root, &args, deadline)?;
         for (path, entry) in parse_ls_tree_z(&listing)? {
@@ -246,6 +251,7 @@ pub(crate) fn probe(
     }
     Ok(Some(CommittedSourceOverlay {
         root: root.to_path_buf(),
+        canonical_root: root.canonicalize().ok(),
         entries,
     }))
 }
@@ -290,12 +296,16 @@ fn parse_porcelain_z(bytes: &[u8]) -> Result<Vec<String>, String> {
             ));
         };
         let worktree_status = record.get(1).copied().unwrap_or(b' ');
-        let path = utf8_path(path)?;
         // An untracked file has no `HEAD` content, so the committed view
-        // leaves it out; only files an adapter would read need an entry.
-        if *index_status == b'?' && super::language::route(Path::new(&path)).is_none() {
+        // leaves it out; only files an adapter would read need an entry. The
+        // route check runs before the UTF-8 check so an unrelated untracked
+        // file with a non-UTF-8 name cannot fail the probe.
+        if *index_status == b'?'
+            && super::language::route(Path::new(String::from_utf8_lossy(path).as_ref())).is_none()
+        {
             continue;
         }
+        let path = utf8_path(path)?;
         paths.push(path);
         let has_original =
             matches!(index_status, b'R' | b'C') || matches!(worktree_status, b'R' | b'C');

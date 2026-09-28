@@ -229,6 +229,7 @@ fn missing_on_disk_disclosure_names_bounded_paths() {
     // here: only committed (Some) entries missing on disk are named.
     let overlay = CommittedSourceOverlay {
         root: std::env::temp_dir().join("ripr-committed-source-missing-none"),
+        canonical_root: None,
         entries: BTreeMap::from([
             ("gone.rs".to_string(), Some(b"x".to_vec())),
             ("never.rs".to_string(), None),
@@ -335,6 +336,71 @@ fn committed_range_analysis_binds_to_committed_content_of_a_dirty_file() -> Resu
                     .is_none_or(|owner| !format!("{owner:?}").contains("dirty"))
         }),
         "no finding may bind to uncommitted bytes: {observed:?}"
+    );
+    Ok(())
+}
+
+/// Review of #4442: the workspace authority re-reads a file to confirm the
+/// indexed facts are current. In committed-history mode the index holds `HEAD`
+/// bytes for a dirty path, so that re-read must go through the overlay, and
+/// must resolve it from the authority's canonical root; a direct working-tree
+/// read rejects every dirty file's test-target evidence.
+#[test]
+fn workspace_authority_confirms_committed_bytes_of_a_dirty_file() -> Result<(), String> {
+    use crate::analysis::facts::{FileFacts, WorkspaceRootAuthority};
+    let repo = fixture_root("authority")?;
+    let committed_lib = "pub fn gate(v: i32) -> bool { v >= 10 }\n";
+    let committed_test = "#[test]\nfn gate_boundary() { assert!(crate::gate(10)); }\n";
+    write(
+        &repo.0,
+        "Cargo.toml",
+        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    write(
+        &repo.0,
+        "src/lib.rs",
+        "pub fn gate(v: i32) -> bool { v > 99 }\n",
+    )?;
+    write(&repo.0, "tests/gate.rs", "#[test]\nfn edited() {}\n")?;
+    let files = [
+        ("src/lib.rs", committed_lib),
+        ("tests/gate.rs", committed_test),
+    ]
+    .into_iter()
+    .map(|(path, source)| {
+        (
+            PathBuf::from(path),
+            FileFacts {
+                path: PathBuf::from(path),
+                source: source.to_string(),
+                ..FileFacts::default()
+            },
+        )
+    })
+    .collect();
+    let validates = || {
+        WorkspaceRootAuthority::from_index(&repo.0, &files).validates_target(
+            Path::new("tests/gate.rs"),
+            Path::new("src/lib.rs"),
+            committed_test,
+        )
+    };
+    assert!(
+        !validates(),
+        "fixture: without an overlay the edited working tree must not match"
+    );
+    // A non-canonical spelling of the root, as the CLI may pass it.
+    let spelled_root = repo.0.join("src").join("..");
+    let overlay = CommittedSourceOverlay::from_entries(
+        &spelled_root,
+        [
+            ("src/lib.rs", Some(committed_lib.as_bytes())),
+            ("tests/gate.rs", Some(committed_test.as_bytes())),
+        ],
+    );
+    assert!(
+        with_overlay(Some(Arc::new(overlay)), validates),
+        "the authority must confirm committed bytes through the overlay"
     );
     Ok(())
 }
