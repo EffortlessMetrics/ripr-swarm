@@ -860,10 +860,16 @@ fn doctor_tool_run_result(
         Err(DoctorToolRunError::TimedOut) => {
             DoctorToolCheckResult::failure(doctor_timeout_evidence(tool, timeout))
         }
-        Err(DoctorToolRunError::CleanupFailed(cleanup)) => DoctorToolCheckResult::failure(format!(
-            "{}; ripr could not confirm the probe's processes stopped and some may still be running: {cleanup}",
-            doctor_timeout_evidence(tool, timeout)
-        )),
+        Err(DoctorToolRunError::CleanupFailed(end, cleanup)) => {
+            let event = match end {
+                DoctorProbeEnd::Exited => format!("{tool} exited"),
+                DoctorProbeEnd::TimedOut => doctor_timeout_evidence(tool, timeout),
+                DoctorProbeEnd::WaitFailed => format!("{tool} could not be waited on"),
+            };
+            DoctorToolCheckResult::failure(format!(
+                "{event}; ripr could not confirm the probe's processes stopped and some may still be running: {cleanup}"
+            ))
+        }
         Err(DoctorToolRunError::Spawn(kind)) => doctor_spawn_failure(tool, kind),
         _ => DoctorToolCheckResult::failure(format!("{tool} not available")),
     }
@@ -950,9 +956,18 @@ enum DoctorToolRunError {
     Spawn(std::io::ErrorKind),
     Wait,
     TimedOut,
-    /// The deadline passed and the owner could not confirm the probe tree
-    /// was stopped; part of it may still be running.
-    CleanupFailed(String),
+    /// The owner could not confirm the probe tree was stopped after the
+    /// named event; part of it may still be running.
+    CleanupFailed(DoctorProbeEnd, String),
+}
+
+/// What ended a probe before its tree cleanup, so a cleanup failure names
+/// the real event instead of always reading as a timeout.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DoctorProbeEnd {
+    Exited,
+    TimedOut,
+    WaitFailed,
 }
 
 /// Run one doctor probe under the shared owned-subprocess authority
@@ -980,9 +995,17 @@ fn run_doctor_tool(
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                // Ending ownership before the joins takes down any
+                // Ending the tree before the joins takes down any
                 // descendant still holding a pipe on Windows, so the readers
-                // reach EOF instead of waiting on it.
+                // reach EOF instead of waiting on it. A failed termination
+                // returns here: joining behind a live descendant could block
+                // doctor indefinitely.
+                if let Err(cleanup) = child.terminate_tree() {
+                    return Err(DoctorToolRunError::CleanupFailed(
+                        DoctorProbeEnd::Exited,
+                        cleanup,
+                    ));
+                }
                 drop(child);
                 return Ok(std::process::Output {
                     status,
@@ -995,14 +1018,18 @@ fn run_doctor_tool(
                 // write end, so they finish on their own.
                 return Err(match child.terminate_tree() {
                     Ok(()) => DoctorToolRunError::TimedOut,
-                    Err(cleanup) => DoctorToolRunError::CleanupFailed(cleanup),
+                    Err(cleanup) => {
+                        DoctorToolRunError::CleanupFailed(DoctorProbeEnd::TimedOut, cleanup)
+                    }
                 });
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(10)),
             Err(_) => {
                 return Err(match child.terminate_tree() {
                     Ok(()) => DoctorToolRunError::Wait,
-                    Err(cleanup) => DoctorToolRunError::CleanupFailed(cleanup),
+                    Err(cleanup) => {
+                        DoctorToolRunError::CleanupFailed(DoctorProbeEnd::WaitFailed, cleanup)
+                    }
                 });
             }
         }
@@ -2423,6 +2450,7 @@ mod tests {
             "pnpm",
             Duration::from_secs(5),
             Err(DoctorToolRunError::CleanupFailed(
+                DoctorProbeEnd::TimedOut,
                 "job termination failed".to_string(),
             )),
         );
@@ -2437,6 +2465,33 @@ mod tests {
             Err(DoctorToolRunError::TimedOut),
         );
         assert_eq!(plain.evidence, "pnpm timed out after 5s");
+        // A probe that exited or could not be waited on must not read as a
+        // timeout when its cleanup fails.
+        let exited = doctor_tool_run_result(
+            "pnpm",
+            Duration::from_secs(5),
+            Err(DoctorToolRunError::CleanupFailed(
+                DoctorProbeEnd::Exited,
+                "job termination failed".to_string(),
+            )),
+        );
+        assert_eq!(exited.status, DoctorStatus::Fail);
+        assert_eq!(
+            exited.evidence,
+            "pnpm exited; ripr could not confirm the probe's processes stopped and some may still be running: job termination failed"
+        );
+        let wait_failed = doctor_tool_run_result(
+            "pnpm",
+            Duration::from_secs(5),
+            Err(DoctorToolRunError::CleanupFailed(
+                DoctorProbeEnd::WaitFailed,
+                "job termination failed".to_string(),
+            )),
+        );
+        assert_eq!(
+            wait_failed.evidence,
+            "pnpm could not be waited on; ripr could not confirm the probe's processes stopped and some may still be running: job termination failed"
+        );
     }
 
     /// A doctor probe that times out takes its descendants with it. A
