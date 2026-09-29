@@ -130,9 +130,11 @@ are scoped or reviewed.
   relates to the TypeScript source (`lib/string-utils.ts`) through the root
   `tsconfig.json`'s own `compilerOptions.outDir` and `rootDir`. The import
   named the excluded, unindexed build tree, so a change to the source reported
-  `no_static_path`. The mapping applies only when nothing exists at the
-  imported path and exactly one source file exists at the mapped path; it
-  does not follow `extends` and does not need `resolve_tsconfig_paths`.
+  `no_static_path`. The mapping needs the root `tsconfig.json` to set both
+  `outDir` and `rootDir` itself; it applies only when nothing exists at the
+  imported path (a built tree keeps the import on the build file) and
+  exactly one source file exists at the mapped path. It does not follow
+  `extends` and does not need `resolve_tsconfig_paths`.
   (#4551)
 - TypeScript/JavaScript preview: mocha, `node:test` and Vitest suites written
   with `context`, `suite` or `specify`, with an options object before the

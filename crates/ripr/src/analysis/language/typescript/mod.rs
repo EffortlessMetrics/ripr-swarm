@@ -139,8 +139,9 @@ impl LanguageAdapter for TypeScriptAdapter {
         _oracle_policy: &OraclePolicy,
         changed_files: &[ChangedFile],
     ) -> Result<LanguageDiffResult, String> {
-        // Directory-module resolution (#4546) is memoized for this run only
-        // (#4638 review); the scope drops the cache when the run returns.
+        // Directory-module resolution (#4546) and the tsconfig outDir
+        // mapping (#4551) are memoized for this run only (#4638 and #4800
+        // reviews); the scope drops the cache when the run returns.
         let _directory_modules = DirectoryModuleCacheScope::open();
         // Phase 1: discover and index every accepted file in the workspace
         // so we can find related tests for any owner regardless of whether
@@ -247,10 +248,6 @@ impl LanguageAdapter for TypeScriptAdapter {
                 (None, None, None)
             };
         let alias_map_ref: Option<&TsAliasMap> = alias_map.as_ref();
-        // Load the root tsconfig.json outDir mapping once for this run
-        // (#4551); the relative resolver reads it back per import. It does
-        // not depend on `resolve_tsconfig_paths`, which governs aliases.
-        tsconfig::refresh_out_dir_map(&options.root);
 
         // Build the bounded re-export index from all non-test workspace files
         // (RIPR-SPEC-0095). The index enables crediting tests that reach the owner

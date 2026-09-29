@@ -24,7 +24,6 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use serde::Deserialize;
 
@@ -529,8 +528,10 @@ fn parse_alias_map(root: &Path, text: &str) -> Result<TsAliasMap, TsAliasMapBloc
 /// `extends` is not followed, but the root file's own `outDir`/`rootDir`
 /// are still read when it is present: `tsc` lets the extending file's own
 /// `compilerOptions` override the extended ones, so the root file's values
-/// are the effective ones. A root file without its own `outDir` yields no
-/// mapping (an inherited `outDir` is a miss, never a guess).
+/// are the effective ones. A root file without its own `outDir` and
+/// `rootDir` yields no mapping: an inherited value is a miss, never a guess,
+/// and an unset `rootDir` is inferred by `tsc` from its inputs, which this
+/// reader does not model.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TsOutDirMap {
     /// Workspace-relative `outDir`, `/`-separated, never empty.
@@ -595,7 +596,8 @@ impl TsOutDirMap {
 
 /// Load the root `tsconfig.json` outDir mapping. `None` (no mapping) when
 /// the file is absent, unreadable, not JSONC, lacks its own
-/// `compilerOptions.outDir`, or names an absolute, root-escaping or
+/// `compilerOptions.outDir` or `compilerOptions.rootDir`, or names an
+/// absolute, root-escaping or
 /// root-identical `outDir`, or an absolute or root-escaping `rootDir`.
 pub(crate) fn load_out_dir_map(root: &Path) -> Option<TsOutDirMap> {
     let text = read_config_capped(&root.join("tsconfig.json")).ok()?;
@@ -610,10 +612,11 @@ fn parse_out_dir_map(text: &str) -> Option<TsOutDirMap> {
     if out_dir.is_empty() {
         return None;
     }
-    let root_dir = match options.get("rootDir") {
-        None => String::new(),
-        Some(raw) => normalize_config_dir(raw.as_str()?)?,
-    };
+    // `rootDir` must be the root file's own: without it `tsc` infers the
+    // common directory of the included inputs (or inherits one through
+    // `extends`), and guessing the workspace root would map `dist/index.js`
+    // onto a root-level `index.ts` that never produced it (#4800 review).
+    let root_dir = normalize_config_dir(options.get("rootDir")?.as_str()?)?;
     Some(TsOutDirMap { out_dir, root_dir })
 }
 
@@ -633,41 +636,6 @@ fn normalize_config_dir(raw: &str) -> Option<String> {
         return None;
     }
     Some(parts.join("/"))
-}
-
-/// Per-root outDir mappings, refreshed once per analysis run by
-/// [`refresh_out_dir_map`] so the relative resolver (called from many
-/// relation helpers and the re-export index workers) never re-reads the
-/// config per import.
-static OUT_DIR_MAPS: OnceLock<Mutex<HashMap<PathBuf, Option<TsOutDirMap>>>> = OnceLock::new();
-
-/// Bound on cached roots; the cache is cleared rather than grown past it.
-const MAX_CACHED_OUT_DIR_ROOTS: usize = 64;
-
-fn out_dir_cache() -> Option<MutexGuard<'static, HashMap<PathBuf, Option<TsOutDirMap>>>> {
-    // A poisoned lock means no mapping (fail closed), never a panic.
-    OUT_DIR_MAPS.get_or_init(Mutex::default).lock().ok()
-}
-
-/// Re-read the root's outDir mapping for this analysis run.
-pub(crate) fn refresh_out_dir_map(root: &Path) -> Option<TsOutDirMap> {
-    let map = load_out_dir_map(root);
-    if let Some(mut cache) = out_dir_cache() {
-        if cache.len() >= MAX_CACHED_OUT_DIR_ROOTS {
-            cache.clear();
-        }
-        cache.insert(root.to_path_buf(), map.clone());
-    }
-    map
-}
-
-/// The outDir mapping for `root`: the one loaded for the current run, or
-/// loaded now when no run has refreshed it (direct resolver callers).
-pub(crate) fn out_dir_map_for(root: &Path) -> Option<TsOutDirMap> {
-    match out_dir_cache().and_then(|cache| cache.get(root).cloned()) {
-        Some(cached) => cached,
-        None => refresh_out_dir_map(root),
-    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

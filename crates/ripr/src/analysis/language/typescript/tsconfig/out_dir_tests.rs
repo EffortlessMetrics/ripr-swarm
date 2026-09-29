@@ -3,7 +3,9 @@
 //! tsconfig.json's own `outDir`/`rootDir`, and only onto an existing file.
 
 use super::*;
-use crate::analysis::language::typescript::normalized_relative_import_module;
+use crate::analysis::language::typescript::{
+    DirectoryModuleCacheScope, normalized_relative_import_module,
+};
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -69,7 +71,7 @@ fn build_mjs_and_cjs_imports_map_to_mts_and_cts_sources() -> Result<(), String> 
     let files = [
         (
             "tsconfig.json",
-            r#"{ "compilerOptions": { "outDir": "./build/" } }"#,
+            r#"{ "compilerOptions": { "outDir": "./build/", "rootDir": "." } }"#,
         ),
         ("lib/esm.mts", ""),
         ("lib/cjs.cts", ""),
@@ -181,6 +183,9 @@ fn escaping_or_absolute_config_dirs_yield_no_mapping() {
         r#"{ "compilerOptions": { "outDir": "build", "rootDir": "/src" } }"#,
         r#"{ "compilerOptions": { "outDir": "build", "rootDir": 3 } }"#,
         r#"{ "compilerOptions": { "outDir": 3 } }"#,
+        // No own `rootDir`: `tsc` infers it from the inputs (#4800 review).
+        r#"{ "compilerOptions": { "outDir": "build" } }"#,
+        r#"{ "include": ["src"], "compilerOptions": { "outDir": "dist" } }"#,
     ] {
         assert_eq!(parse_out_dir_map(config), None, "config {config}");
     }
@@ -203,5 +208,113 @@ fn root_escaping_import_is_not_mapped() -> Result<(), String> {
         "../build/lib/x.js",
     )?;
     assert_ne!(resolved.as_deref(), Some("lib/x"));
+    Ok(())
+}
+
+/// Negative (#4800 review): with no own `rootDir`, `tsc` infers `src` from
+/// `include: ["src"]` (or inherits it through `extends`), so `dist/index.js`
+/// came from `src/index.ts`. Mapping it onto a root-level `index.ts` shim
+/// relates the test to code it never runs; no mapping is made.
+#[test]
+fn inferred_or_inherited_root_dir_is_not_guessed() -> Result<(), String> {
+    for (label, files) in [
+        (
+            "inferred",
+            vec![(
+                "tsconfig.json",
+                r#"{ "include": ["src"], "compilerOptions": { "outDir": "dist" } }"#,
+            )],
+        ),
+        (
+            "inherited",
+            vec![
+                (
+                    "tsconfig.json",
+                    r#"{ "extends": "./base.json", "compilerOptions": { "outDir": "dist" } }"#,
+                ),
+                (
+                    "base.json",
+                    r#"{ "compilerOptions": { "rootDir": "src" } }"#,
+                ),
+            ],
+        ),
+    ] {
+        let mut files = files;
+        files.extend([("src/index.ts", ""), ("index.ts", "")]);
+        let resolved = resolve_in(label, &files, "test/parse.test.ts", "../dist/index.js")?;
+        assert_ne!(resolved.as_deref(), Some("index"), "{label}");
+        assert_ne!(resolved.as_deref(), Some("src/index"), "{label}");
+    }
+    Ok(())
+}
+
+/// Negative (#4800 review): a symlink at the imported build path is what
+/// the test loads, so it wins over the mapping like a real emitted file.
+#[cfg(unix)]
+#[test]
+fn symlink_at_build_path_keeps_the_lexical_module() -> Result<(), String> {
+    let root = tree(
+        "symlink",
+        &[
+            (
+                "tsconfig.json",
+                r#"{ "compilerOptions": { "outDir": "dist", "rootDir": "src" } }"#,
+            ),
+            ("src/index.ts", ""),
+            ("other.js", ""),
+        ],
+    )?;
+    fs::create_dir_all(root.join("dist")).map_err(|err| format!("create dist: {err}"))?;
+    std::os::unix::fs::symlink(root.join("other.js"), root.join("dist/index.js"))
+        .map_err(|err| format!("symlink: {err}"))?;
+    let resolved = normalized_relative_import_module(
+        Path::new("test/a.test.js"),
+        "../dist/index.js",
+        None,
+        Some(&root),
+    );
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(resolved.as_deref(), Some("dist/index"));
+    Ok(())
+}
+
+/// The mapping is memoized only inside a run scope: a config edited between
+/// runs is read afresh by the next run (#4800 review; no process-global
+/// cache).
+#[test]
+fn out_dir_map_is_reloaded_by_the_next_run() -> Result<(), String> {
+    let root = tree(
+        "rerun",
+        &[
+            (
+                "tsconfig.json",
+                r#"{ "compilerOptions": { "outDir": "build", "rootDir": "." } }"#,
+            ),
+            ("lib/x.ts", ""),
+        ],
+    )?;
+    let resolve = || {
+        normalized_relative_import_module(
+            Path::new("test/x.test.js"),
+            "../build/lib/x.js",
+            None,
+            Some(&root),
+        )
+    };
+    let first = {
+        let _run = DirectoryModuleCacheScope::open();
+        let first = resolve();
+        // Same run: an edit is not observed (the run's answer is stable).
+        fs::write(root.join("tsconfig.json"), "{}").map_err(|err| format!("rewrite: {err}"))?;
+        assert_eq!(resolve(), first);
+        first
+    };
+    let second = {
+        let _run = DirectoryModuleCacheScope::open();
+        resolve()
+    };
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(first.as_deref(), Some("lib/x"));
+    assert_eq!(second.as_deref(), Some("build/lib/x"));
     Ok(())
 }
