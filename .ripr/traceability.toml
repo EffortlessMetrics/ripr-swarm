@@ -9825,7 +9825,7 @@ tests = [
   "crates/ripr/tests/portable_consumer_packet.rs::native_packet_pilot_consumes_the_summary_artifact",
 ]
 fixtures = [
-  "fixtures/python_boundary_gap/input",
+  "fixtures/boundary_gap/input",
 ]
 code = [
   "tools/python/portable-ripr-consumer/run.py",
