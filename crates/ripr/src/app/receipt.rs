@@ -399,16 +399,21 @@ pub(crate) fn validate_current_head(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Cooperative deadline for the receipt HEAD probe (#2303, #4363).
+const RECEIPT_HEAD_GIT_DEADLINE: std::time::Duration = std::time::Duration::from_mins(1);
+
 /// Resolve the actual git HEAD SHA at `root` via `git rev-parse HEAD`.
-/// Returns `None` when git is unavailable or the root is not a git repo,
-/// so callers can fail open (format-check only) rather than hard-erroring.
+/// Returns `None` when git is unavailable, the root is not a git repo, or
+/// the probe exceeds its deadline, so callers can fail open (format-check
+/// only) rather than hard-erroring. The spawn goes through the shared
+/// `crate::git` deadline and process-owner authority (#4363).
 fn resolve_git_head(root: &Path) -> Option<String> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .ok()?;
+    let output = crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "HEAD"],
+        Some(RECEIPT_HEAD_GIT_DEADLINE),
+    )
+    .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -1348,6 +1353,31 @@ mod tests {
         let head = resolve_git_head(&dir)
             .ok_or_else(|| "resolve_git_head returned None for a fresh repo".to_string())?;
         Ok((dir, head))
+    }
+
+    #[test]
+    fn resolve_git_head_fails_open_for_a_missing_root() -> Result<(), String> {
+        // #4363: the shared git authority spawns with `current_dir(root)`,
+        // so a missing root now fails the spawn rather than exiting non-zero.
+        // Both must land in the same fail-open `None`.
+        let missing = std::env::temp_dir().join(format!(
+            "ripr-receipt-missing-root-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        if missing.exists() {
+            return Err(format!(
+                "fixture root unexpectedly exists: {}",
+                missing.display()
+            ));
+        }
+        match resolve_git_head(&missing) {
+            None => Ok(()),
+            Some(head) => Err(format!("missing root resolved a HEAD: {head}")),
+        }
     }
 
     #[test]

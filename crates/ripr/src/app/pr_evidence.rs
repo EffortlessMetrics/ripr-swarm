@@ -17,7 +17,7 @@ use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::time::Duration;
 
 const DEFAULT_ROOT: &str = ".";
 const DEFAULT_BASE: &str = "origin/main";
@@ -410,16 +410,21 @@ fn run_git_output(repo: &Path, args: &[&str]) -> Result<String, String> {
         .map_err(|err| format!("git {args:?} produced non-UTF-8 output: {err}"))
 }
 
-/// Capture raw git stdout bytes through this file's single spawn site
+/// Cooperative deadline for every git probe in this file (#2303, #4363).
+/// PR evidence answers bounded revision and path-inventory questions; a hung
+/// git must not pin the command. One minute matches the other bounded git
+/// consumers.
+const PR_EVIDENCE_GIT_DEADLINE: Duration = Duration::from_mins(1);
+
+/// Capture raw git stdout bytes through this file's single git call site
 /// (#4006). Path inventories decode through the shared NUL authority at
-/// the call site; other callers keep the strict UTF-8 wrapper above.
+/// the call site; other callers keep the strict UTF-8 wrapper above. The
+/// spawn goes through the shared `crate::git` deadline and process-owner
+/// authority (#4363).
 fn run_git_output_bytes(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .output()
-        .map_err(|err| format!("failed to run git {args:?}: {err}"))?;
+    let output =
+        crate::git::run_git_output_with_deadline(repo, args, Some(PR_EVIDENCE_GIT_DEADLINE))
+            .map_err(|err| format!("failed to run git {args:?}: {err}"))?;
     if output.status.success() {
         Ok(output.stdout)
     } else {
