@@ -369,14 +369,12 @@ fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
     ));
     // RIPR-PROP-0019 decision 6: raising the explicit overrides is the only
     // continuation route; the budget has no off switch (zero is rejected).
-    // Both budgets are named: the next file can hit both, and the selector
-    // then reports only the file budget.
-    let (other_env, other_budget) = scope.other_budget();
+    // The widen wording is shared with JSON, LSP and the analysis outcome.
     out.push_str(&format!(
-        "  To widen the analyzed partition, raise {budget_env} above {budget} and re-run; the \
-         next file may also need {other_env} above {other_budget}. Overrides above the \
-         analysis-cost limit are clamped, the budget cannot be switched off, and named \
-         partition continuation is not available.\n  partition_identity: {}\n\n",
+        "  To widen the analyzed partition, {}. Overrides above the analysis-cost limit are \
+         clamped, the budget cannot be switched off, and named partition continuation is not \
+         available.\n  partition_identity: {}\n\n",
+        scope.widen_instruction(),
         scope.partition_identity,
     ));
 }
@@ -457,9 +455,28 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
             all_no_path_count, related_tests_total
         )
     };
+    // Language bindings are tested from the other language, so when every
+    // finding names the cross-language limitation the same-language repair
+    // advice would contradict each finding's own next step. ripr has no
+    // evidence that such tests exist yet, so the advice covers adding them.
+    let cross_language_count = output
+        .findings
+        .iter()
+        .filter(|finding| {
+            finding.static_limit_kind
+                == Some(crate::domain::StaticLimitKind::CrossLanguageOracleVisibilityUnresolved)
+        })
+        .count();
+    let repair = if cross_language_count == output.findings.len() {
+        "add or check tests in the bindings' other language that observe the changed behavior"
+    } else if cross_language_count > 0 {
+        "add co-located tests that observe the changed behavior, or, for a language binding, tests in the binding's other language"
+    } else {
+        "add co-located tests that observe the changed behavior"
+    };
     let note = format!(
-        "Note: ripr found no static test path for any of the {} changed expression(s) in this diff. {} This is not a coverage assessment. A test may already exercise these changes through macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if none does, add co-located tests that observe the changed behavior.",
-        all_no_path_count, scope_summary
+        "Note: ripr found no static test path for any of the {} changed expression(s) in this diff. {} This is not a coverage assessment. A test may already exercise these changes through macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if none does, {}.",
+        all_no_path_count, scope_summary, repair
     );
     out.push('\n');
     out.push_str(&wrap_human_prose(&note, "", "  "));
@@ -2093,6 +2110,7 @@ mod tests {
                 uninspected_files_lower_bound: 3,
                 uninspected_changed_lines_lower_bound: 180,
                 stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
+                next_file_changed_lines: Some(60),
                 partition_identity: "c".repeat(64),
             }),
         };
@@ -2145,10 +2163,10 @@ mod tests {
         // 30-line file; a line-budget stop (file budget 7) selected 35 lines
         // and the next file would overshoot; a first-file stop selected one
         // 60-line file alone.
-        let (file_budget, selected_changed_lines) = match stop_reason {
-            PartialDiffStopReason::FileBudget => (1, 30),
-            PartialDiffStopReason::LineBudget => (7, 35),
-            PartialDiffStopReason::LineBudgetExceededOnFirstFile => (7, 60),
+        let (file_budget, selected_changed_lines, next_file_changed_lines) = match stop_reason {
+            PartialDiffStopReason::FileBudget => (1, 30, Some(30)),
+            PartialDiffStopReason::LineBudget => (7, 35, Some(30)),
+            PartialDiffStopReason::LineBudgetExceededOnFirstFile => (7, 60, None),
         };
         CheckOutput {
             harness_projections: Vec::new(),
@@ -2176,6 +2194,7 @@ mod tests {
                 uninspected_files_lower_bound: uninspected_files,
                 uninspected_changed_lines_lower_bound: uninspected_lines,
                 stop_reason,
+                next_file_changed_lines,
                 partition_identity: "c".repeat(64),
             }),
         }
@@ -2195,8 +2214,8 @@ mod tests {
                     "Found 1 finding(s) before stopping.",
                     "NOT inspected: at least 3 changed file(s) and at least 90 changed line(s); \
                      more findings may exist beyond the budget.",
-                    "raise RIPR_PARTIAL_DIFF_FILE_BUDGET above 1 and re-run",
-                    "may also need RIPR_PARTIAL_DIFF_LINE_BUDGET above 40",
+                    "raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2 and \
+                     RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 60, then re-run.",
                 ],
             ),
             (
@@ -2208,8 +2227,7 @@ mod tests {
                      (RIPR_PARTIAL_DIFF_LINE_BUDGET=40)",
                     "Found 1 finding(s) before stopping.",
                     "more findings may exist beyond the budget.",
-                    "raise RIPR_PARTIAL_DIFF_LINE_BUDGET above 40 and re-run",
-                    "may also need RIPR_PARTIAL_DIFF_FILE_BUDGET above 7",
+                    "raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 65, then re-run.",
                 ],
             ),
             (
@@ -2223,8 +2241,7 @@ mod tests {
                     "Found 1 finding(s) before stopping.",
                     "Every changed file ripr's language adapters read was selected",
                     "this result stays partial and is not a complete-scope claim",
-                    "raise RIPR_PARTIAL_DIFF_LINE_BUDGET above 40 and re-run",
-                    "may also need RIPR_PARTIAL_DIFF_FILE_BUDGET above 7",
+                    "raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 60, then re-run.",
                 ],
             ),
         ];
@@ -2282,6 +2299,7 @@ mod tests {
                 uninspected_files_lower_bound: 1,
                 uninspected_changed_lines_lower_bound: 1,
                 stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
+                next_file_changed_lines: Some(60),
                 partition_identity: "c".repeat(64),
             }),
         };
@@ -2724,6 +2742,87 @@ mod tests {
 
         assert!(output.contains("Stop reasons:"));
         assert!(output.contains("  - static_probe_unknown"));
+    }
+
+    /// #4323: a stop reason renders its gloss beside the token, the way the
+    /// `Static limitation` section already does, so the reader learns why.
+    #[test]
+    fn human_output_glosses_stop_reasons() {
+        let output = render_finding(&unknown_finding());
+
+        assert!(
+            output.contains(
+                "  - static_probe_unknown \u{2014} ripr could not model this change well enough to classify it\n"
+            ),
+            "{output}"
+        );
+    }
+
+    /// #4323 review: guidance just under the budget must count the label, so
+    /// the rendered line never runs past 180 characters.
+    #[test]
+    fn digest_next_step_line_counts_its_label_against_the_budget() {
+        let mut finding = sample_finding();
+        let guidance = format!("{} remedy.", "word ".repeat(34));
+        assert!(
+            (170..=180).contains(&guidance.chars().count()),
+            "{guidance}"
+        );
+        finding.recommended_next_step = Some(guidance);
+
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+        );
+
+        assert!(
+            digest.lines().all(|line| line.chars().count() <= 180),
+            "no digest line exceeds the budget; got:\n{digest}"
+        );
+        assert!(digest.contains("remedy."), "{digest}");
+    }
+
+    /// #4323: the default no-path guidance is ~330 characters and ends with
+    /// the remedy. The digest used to cut it at 180 characters, so the
+    /// imperative ("add a co-located test ...") never rendered.
+    #[test]
+    fn digest_next_step_keeps_the_remedy_clause() {
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.recommended_next_step = Some(crate::domain::NO_STATIC_PATH_NEXT_STEP.to_string());
+
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+        );
+        // The field is its first line plus the four-space continuation lines.
+        let mut lines = digest
+            .lines()
+            .skip_while(|line| !line.starts_with("  Next step: "));
+        let mut next_step = lines
+            .next()
+            .map(|line| line.trim_start_matches("  Next step: ").to_string())
+            .unwrap_or_default();
+        for line in lines.take_while(|line| line.starts_with("    ")) {
+            next_step.push(' ');
+            next_step.push_str(line.trim());
+        }
+        let flattened = next_step.split_whitespace().collect::<Vec<_>>().join(" ");
+
+        assert!(
+            flattened.ends_with(
+                "add a co-located test that reaches and observes the changed behavior so a discriminator exists."
+            ),
+            "digest must keep the remedy; got:\n{digest}"
+        );
+        assert!(
+            !next_step.contains('\u{2026}'),
+            "digest must not truncate; got:\n{digest}"
+        );
+        assert!(
+            digest.lines().all(|line| line.chars().count() <= 180),
+            "wrapped lines stay within the display budget; got:\n{digest}"
+        );
     }
 
     // RIPR-SPEC-0115: a transitive-reach witness line in `evidence` (recognized
@@ -3590,6 +3689,73 @@ mod tests {
                 "analyzed: 1 changed Rust file(s), 2 changed expression(s), and 0 statically linked related"
             ),
             "expected scope-count disclosure; got:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn all_no_path_disclosure_for_bindings_does_not_presume_external_tests_exist() {
+        let cross_language = || {
+            let mut finding = unknown_finding();
+            finding.static_limit_kind =
+                Some(crate::domain::StaticLimitKind::CrossLanguageOracleVisibilityUnresolved);
+            finding
+        };
+        let output_with = |findings: Vec<Finding>| CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.2".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                changed_rust_files: 1,
+                probes: 2,
+                findings: 2,
+                no_static_path: 2,
+                ..Summary::default()
+            },
+            findings,
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+        let flat = |output: &CheckOutput| {
+            render(output)
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+
+        let bindings = flat(&output_with(vec![cross_language(), cross_language()]));
+        assert!(
+            bindings.contains(
+                "if none does, add or check tests in the bindings' other language that observe the changed behavior."
+            ),
+            "got:\n{bindings}"
+        );
+        assert!(
+            !bindings.contains("add co-located tests"),
+            "got:\n{bindings}"
+        );
+
+        // A mixed diff names both repairs, so neither finding's own next
+        // step is contradicted.
+        let mixed = flat(&output_with(vec![cross_language(), unknown_finding()]));
+        assert!(
+            mixed.contains(
+                "if none does, add co-located tests that observe the changed behavior, or, for a language binding, tests in the binding's other language."
+            ),
+            "got:\n{mixed}"
+        );
+
+        let plain = flat(&output_with(vec![unknown_finding(), unknown_finding()]));
+        assert!(
+            plain.contains("if none does, add co-located tests that observe the changed behavior."),
+            "got:\n{plain}"
         );
     }
 

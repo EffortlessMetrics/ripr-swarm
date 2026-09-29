@@ -77,6 +77,7 @@ mod tests_extract;
 mod tests_extract_tests;
 pub(crate) mod tsconfig;
 mod types;
+mod workspace_packages;
 
 // Re-export all submodule items unconditionally so that every sibling
 // submodule's `use super::*;` resolves, and so that `tests.rs` which
@@ -139,8 +140,9 @@ impl LanguageAdapter for TypeScriptAdapter {
         _oracle_policy: &OraclePolicy,
         changed_files: &[ChangedFile],
     ) -> Result<LanguageDiffResult, String> {
-        // Directory-module resolution (#4546) is memoized for this run only
-        // (#4638 review); the scope drops the cache when the run returns.
+        // Directory-module resolution (#4546) and the tsconfig outDir
+        // mapping (#4551) are memoized for this run only (#4638 and #4800
+        // reviews); the scope drops the cache when the run returns.
         let _directory_modules = DirectoryModuleCacheScope::open();
         // Phase 1: discover and index every accepted file in the workspace
         // so we can find related tests for any owner regardless of whether
@@ -246,6 +248,20 @@ impl LanguageAdapter for TypeScriptAdapter {
                 // honest "enable the flag" advice for this path (#4106-B).
                 (None, None, None)
             };
+        // In-workspace package names resolve whether or not the tsconfig
+        // flag is on (#4554): `import ... from '@scope/pkg/sub'` in a sibling
+        // package's test names that package's source when its manifest says
+        // so unambiguously. The load gap is kept, so alias advice is as before.
+        let workspace_packages =
+            workspace_packages::WorkspacePackages::discover(&options.root, &workspace_files);
+        let alias_map = if workspace_packages.is_empty() {
+            alias_map
+        } else {
+            Some(match alias_map {
+                Some(map) => map.with_workspace_packages(workspace_packages),
+                None => TsAliasMap::workspace_packages_only(&options.root, workspace_packages),
+            })
+        };
         let alias_map_ref: Option<&TsAliasMap> = alias_map.as_ref();
 
         // Build the bounded re-export index from all non-test workspace files

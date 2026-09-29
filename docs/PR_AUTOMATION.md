@@ -81,6 +81,7 @@ cargo xtask check-local-context
 cargo xtask check-network-policy
 cargo xtask check-no-panic-family [--propose]
 cargo xtask check-output-contracts
+cargo xtask check-identity-registry
 cargo xtask check-positioning-language
 cargo xtask check-pr
 cargo xtask check-process-policy
@@ -125,6 +126,7 @@ cargo xtask install-hooks
 cargo xtask issue-intake --issue <number>
 cargo xtask lane1-evidence-audit
 cargo xtask lsp-cockpit-report
+cargo xtask lsp-performance-report
 cargo xtask markdown-links
 cargo xtask metrics
 cargo xtask module-health [--threshold <n>]
@@ -368,6 +370,15 @@ e2e smoke test file and writes `target/ripr/reports/lsp-cockpit.md` and
 editor diagnostics, which code actions are exposed, which context/action fields
 are present, and which VS Code commands are covered by e2e tests.
 
+`lsp-performance-report` runs the saved-edit sequence harness from
+`crates/ripr/src/lsp/saved_edit_sequence.rs`, overlays source/binary identity,
+and writes `target/ripr/reports/lsp-performance.md` and
+`target/ripr/reports/lsp-performance.json`. It records scheduler, delivery, and
+cache-load work counts for cold start through explicit full refresh. Historical
+2s/10s/30s envelopes remain proposals. Existing rust tests absorb the
+deterministic sequence; the command is not a CI gate and does not add a
+full-workspace job.
+
 `repo-exposure-latency-report` builds the local debug `ripr` binary, runs
 repo-exposure formats under a bounded timeout, captures opt-in analyzer phase
 trace lines, and writes `target/ripr/reports/repo-exposure-latency.md` and
@@ -565,6 +576,7 @@ cargo xtask check-workspace-shape
 cargo xtask check-architecture
 cargo xtask check-public-api
 cargo xtask check-output-contracts
+cargo xtask check-identity-registry
 cargo xtask check-doc-index
 cargo xtask check-readme-state
 cargo xtask markdown-links
@@ -605,6 +617,7 @@ cargo xtask check-workspace-shape
 cargo xtask check-architecture
 cargo xtask check-public-api
 cargo xtask check-output-contracts
+cargo xtask check-identity-registry
 cargo xtask check-doc-index
 cargo xtask check-readme-state
 cargo xtask markdown-links
@@ -755,6 +768,7 @@ cargo xtask check-workspace-shape
 cargo xtask check-architecture
 cargo xtask check-public-api
 cargo xtask check-output-contracts
+cargo xtask check-identity-registry
 cargo xtask check-doc-artifacts
 cargo xtask check-doc-index
 cargo xtask check-readme-state
