@@ -115,9 +115,10 @@ on PATH is a legitimate development setup.
 `schema_version`, `cache_dir` (the inspected directory), `status`,
 `entry_count` (regular files under the cache, symlinks skipped), and
 `total_size_bytes`. `status` is `ok`, `not_found` (no cache directory yet;
-both counts are `0`), `partial` (some entries could not be read, so the counts
-are lower bounds), or `unavailable` (the path is not a readable directory, or
-is a symlink; both counts are `0`).
+both counts are `0`), `partial` (some directories or entries, including the
+cache directory itself, could not be read, so the counts are lower bounds), or
+`unavailable` (the path is not a directory, is a symlink, or its metadata
+could not be read; both counts are `0`).
 
 ## JSON object key ordering
 
