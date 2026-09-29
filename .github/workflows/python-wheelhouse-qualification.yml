@@ -69,18 +69,19 @@ jobs:
       - name: Isolated pip and uv wheelhouse installs
         run: |
           set -euo pipefail
+          cd "${CONSUMER_ROOT}"
           export PIP_NO_INDEX=1 UV_OFFLINE=1
-          if python3 -m pip install --no-index cowsay; then network=false; else network=true; fi
+          if python3 -c "import urllib.request; urllib.request.urlopen('https://pypi.org', timeout=5)"; then network=false; else network=true; fi
           export PATH="${CONSUMER_ROOT}/venv/bin:${CONSUMER_ROOT}/uv/bin:${DECOY_ROOT}:/usr/bin:/bin"
           cargo_ok=false; ambient=false; planted=false; source_ok=false
           if command -v cargo >/dev/null || command -v rustc >/dev/null; then cargo_ok=true; fi
           if [ -x /usr/bin/ripr ] || [ -x /bin/ripr ]; then ambient=true; fi
           if [ "$(command -v ripr 2>/dev/null || true)" = "${DECOY_ROOT}/ripr" ] && [ "$(ripr)" = "planted-wrong-path" ]; then planted=true; fi
-          case ":$PATH:" in *:"${GITHUB_WORKSPACE}":*) source_ok=true;; esac
+          if test -r "${GITHUB_WORKSPACE}/Cargo.toml"; then source_ok=true; fi
           shopt -s nullglob
           wheels=("${WHEELHOUSE}"/*.whl)
-          if [ ${#wheels[@]} -eq 0 ]; then
-            echo "no staged wheels; required pip/uv rows stay missing pending #4490" >&2
+          if [ ${#wheels[@]} -ne 1 ]; then
+            echo "need exactly one staged wheel; required pip/uv rows stay missing pending #4490" >&2
             exit 0
           fi
           python3 -m venv "${CONSUMER_ROOT}/venv"
@@ -92,9 +93,9 @@ jobs:
           test -x "${pip_bin}" && test "${pip_bin}" != "${DECOY_ROOT}/ripr"
           test -x "${uv_bin}" && test "${uv_bin}" != "${DECOY_ROOT}/ripr"
           test "$(command -v ripr)" != "${DECOY_ROOT}/ripr"
-          python3 - "$pip_bin" "$uv_bin" "$cargo_ok" "$source_ok" "$ambient" "$planted" "$network" <<'PY'
+          python3 - "$pip_bin" "$uv_bin" "$cargo_ok" "$source_ok" "$ambient" "$planted" "$network" "${wheels[0]}" <<'PY'
           import hashlib, json, os, pathlib, sys
-          wheel = next(pathlib.Path(os.environ["WHEELHOUSE"]).glob("*.whl"))
+          wheel = pathlib.Path(sys.argv[8])
           sha = hashlib.sha256(wheel.read_bytes()).hexdigest()
           root = pathlib.Path(os.environ["QUAL_ROOT"]) / "rows"
           root.mkdir(parents=True, exist_ok=True)

@@ -476,6 +476,7 @@ fn mismatched_identity_reasons(
     required: &BTreeSet<String>,
 ) -> Vec<String> {
     let mut reasons = Vec::new();
+    let mut wheel_names = BTreeSet::new();
     let mut wheel_hashes = BTreeSet::new();
     let mut payload_hashes = BTreeSet::new();
     for row in &receipt.rows {
@@ -483,12 +484,21 @@ fn mismatched_identity_reasons(
         if !required.contains(&id) || row.status != WheelhouseRowStatus::Passed {
             continue;
         }
+        if !row.wheel_filename.trim().is_empty() {
+            wheel_names.insert(row.wheel_filename.as_str());
+        }
         if is_content_digest(&row.wheel_sha256) {
             wheel_hashes.insert(row.wheel_sha256.as_str());
         }
         if is_content_digest(&row.payload_sha256) {
             payload_hashes.insert(row.payload_sha256.as_str());
         }
+    }
+    if wheel_names.len() > 1 {
+        reasons.push(
+            "required passed rows record mismatched wheel filenames for the same wheelhouse"
+                .to_string(),
+        );
     }
     if wheel_hashes.len() > 1 {
         reasons.push(
@@ -730,6 +740,37 @@ mod tests {
         receipt.rows[1].wheel_sha256 =
             "3333333333333333333333333333333333333333333333333333333333333333".to_string();
         must_reject(receipt, "mismatched wheel digests")
+    }
+
+    #[test]
+    fn mixed_wheel_filenames_cannot_pass() -> Result<(), String> {
+        let mut receipt = valid_receipt();
+        receipt.rows[1].wheel_filename = "other-client.whl".to_string();
+        must_reject(receipt, "mismatched wheel filenames")
+    }
+
+    #[test]
+    fn mixed_filenames_on_failed_rows_do_not_trip_the_identity_gate() -> Result<(), String> {
+        let mut receipt = valid_receipt();
+        receipt.rows[1].status = WheelhouseRowStatus::Failed;
+        receipt.rows[1].wheel_filename = "other-client.whl".to_string();
+        let reasons = reasons(receipt)?;
+        if reasons
+            .iter()
+            .any(|reason| reason.contains("mismatched wheel filenames"))
+        {
+            return Err(
+                "failed-row filename mismatch must not be treated as identity drift".to_string(),
+            );
+        }
+        if reasons
+            .iter()
+            .any(|reason| reason.contains("required row `uv:linux:x86_64`"))
+        {
+            Ok(())
+        } else {
+            Err(format!("expected a required-row failure, got {reasons:#?}"))
+        }
     }
 
     #[test]
@@ -1037,7 +1078,14 @@ mod tests {
         assert!(text.contains(r#"= "${DECOY_ROOT}/ripr""#));
         assert!(text.contains("/usr/bin/ripr"));
         assert!(text.contains("cargo xtask qualify-python-wheelhouse --receipts"));
-        assert!(text.contains("python3 -m pip install --no-index cowsay"));
+        assert!(text.contains("urllib.request.urlopen('https://pypi.org'"));
+        assert!(text.contains(r#"cd "${CONSUMER_ROOT}""#));
+        assert!(text.contains(r#"test -r "${GITHUB_WORKSPACE}/Cargo.toml""#));
+        assert!(text.contains("${#wheels[@]} -ne 1"));
+        assert!(text.contains(r#""${wheels[0]}""#));
+        assert!(text.contains("pathlib.Path(sys.argv[8])"));
+        assert!(!text.contains("cowsay"));
+        assert!(!text.contains(".glob(\"*.whl\")"));
         assert!(text.contains(r#""status": "failed""#));
         assert!(text.contains(r#""subject_count": 0"#));
         assert!(text.contains("flag(3)"));
