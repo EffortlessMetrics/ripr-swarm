@@ -114,8 +114,8 @@ on PATH is a legitimate development setup.
 
 `ripr cache status --json` (schema `0.1`) prints one object with
 `schema_version`, `cache_dir` (the inspected directory), `status`,
-`total_size_bytes`, and `entry_count` (regular files under the cache;
-symlinks skipped). That `schema_version` versions this status report, not
+`entry_count` (regular files under the cache, symlinks skipped), and
+`total_size_bytes`. That `schema_version` versions this status report, not
 the on-disk cache layers (those carry their own versions in their directory
 names). `status` is `ok`, `not_found` (no cache directory yet; both counts
 are `0`), `partial` (some directories or entries, including the cache
@@ -7098,8 +7098,7 @@ JSON shape:
     "next_action": {
       "kind": "improved",
       "summary": "Static grip improved.",
-      "recommended_action": "Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review.",
-      "safe_to_merge": false
+      "recommended_action": "Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review."
     }
   }
 }
@@ -7170,7 +7169,7 @@ Field contract:
 - `seam.grip_class` - one-sided grip class for `new` or `resolved` gaps, or
   `null` for matched seams.
 - `test_changed` - optional focused test the edit changed. `ripr agent receipt`
-  takes it from `--test-changed`. The after phase of `ripr agent repair` sets it
+  takes it from `--test NAME`. The after phase of `ripr agent repair` sets it
   to the attempt's selected test file when the edit cage is compliant and
   recorded that file changing, and leaves it null otherwise.
 - `verification.status` - always `verification_not_run` (RIPR-SPEC-0135): no
@@ -7195,8 +7194,9 @@ Field contract:
 - `summary.next_action` - structured static guidance for agents and reviewers.
   `kind` is `improved`, `changed`, `regressed`, `unchanged`, `new_gap`,
   `resolved`, or `unknown`; `summary` is a short static movement statement;
-  `recommended_action` is the bounded next step; and `safe_to_merge` is always
-  `false` because the static receipt is review evidence, not a merge policy.
+  `recommended_action` is the bounded next step. Schema `0.5` omits the
+  invariant-false `safe_to_merge` field that earlier versions carried: the
+  static receipt is review evidence, not a merge policy.
   Only an `advisory` receipt is review evidence: for an `incomplete` or
   `invalid` receipt, `recommended_action` carries the same not-review-evidence
   statement as `next_recommendation` and never recommends including the
@@ -12302,6 +12302,7 @@ paths under the supplied workspace root:
 ```text
 target/ripr/workflow/before.repo-exposure.json
 target/ripr/workflow/after.repo-exposure.json
+target/ripr/workflow/analysis-outcome.json
 target/ripr/workflow/agent-brief.json
 target/ripr/workflow/agent-packet.json
 target/ripr/workflow/agent-verify.json
@@ -12367,9 +12368,12 @@ Field contract:
 - `seam` - recovered seam identity when available. The current recovery order
   is receipt, verify, packet, then brief. It is `null` when no existing
   artifact names a seam.
-- `artifacts[]` - one entry for each required fixed artifact. `bytes` and
-  `modified_unix_ms` are `null` when the artifact is missing or the filesystem
-  does not expose the timestamp.
+- `artifacts[]` - one entry for each of the seven fixed artifacts above.
+  `required` is `true` in the artifact loop. While a repair attempt exists
+  under `target/ripr/repair-attempts/`, all seven report `required: false`:
+  the attempt directory holds the enforced identity and the global files are
+  compatibility projections. `bytes` and `modified_unix_ms` are `null` when
+  the artifact is missing or the filesystem does not expose the timestamp.
 - Volatile fields: `artifacts[].modified_unix_ms` is wall-clock state read
   from the filesystem at report time, not analysis output. Two consecutive
   `agent status --json` runs over an unchanged artifact tree can produce
@@ -12380,7 +12384,8 @@ Field contract:
   to the `agent_status` document embedded by `ripr agent repair --phase after`
   (#4052), which is the same schema.
 - `missing_commands[]` - one command for each missing artifact in workflow
-  order: before snapshot, packet, brief, after snapshot, verify, receipt. If no
+  order: before snapshot, packet, brief, after snapshot, analysis outcome,
+  verify, receipt. If no
   seam can be recovered, packet, brief, and receipt commands use `<seam-id>`.
 - `repair_attempts[]` - every repair attempt under
   `target/ripr/repair-attempts/`, validated by the attempt authority and
@@ -12532,7 +12537,7 @@ The JSON schema is version `0.1`:
     "state": "improved",
     "before_class": "weakly_gripped",
     "after_class": "strongly_gripped",
-    "grip_class": "strongly_gripped",
+    "grip_class": null,
     "evidence_artifact": "target/ripr/reports/agent-receipt.json",
     "verify_artifact": "target/ripr/workflow/agent-verify.json",
     "summary": "Static movement is improved (weakly_gripped -> strongly_gripped).",
@@ -12562,7 +12567,7 @@ The JSON schema is version `0.1`:
       "state": "computed",
       "status": "complete",
       "required": true,
-      "summary": "6 of 6 required artifacts present, 0 missing, 0 warnings."
+      "summary": "7 of 7 required artifacts present, 0 missing, 0 warnings."
     }
   ],
   "ci_artifacts": [
@@ -14166,16 +14171,16 @@ The JSON shape uses schema `0.1`:
         "seam_id": "f3c9e4d21a0b7c88"
       },
       "verification": {
-        "before_snapshot_command": "mkdir -p target/ripr/workflow target/ripr/reports && ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json",
-        "after_snapshot_command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/after.repo-exposure.json",
-        "verify_command": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json",
+        "before_snapshot_command": "mkdir -p /work/repo/target/ripr/workflow && ripr check --root /work/repo --mode draft --format repo-exposure-json > /work/repo/target/ripr/workflow/before.repo-exposure.json",
+        "after_snapshot_command": "ripr check --root /work/repo --mode draft --format repo-exposure-json > /work/repo/target/ripr/workflow/after.repo-exposure.json",
+        "verify_command": "ripr agent verify --root /work/repo --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json",
         "suggested_test_command": "cargo test discounted_total_boundary_discriminator"
       }
     }
   ],
   "next": {
-    "inspect_packet": "ripr check --root . --mode draft --format agent-seam-packets-json > target/ripr/workflow/agent-seam-packets.json",
-    "verify_after_edit": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
+    "inspect_packet": "ripr check --root /work/repo --mode draft --format agent-seam-packets-json > /work/repo/target/ripr/workflow/agent-seam-packets.json",
+    "verify_after_edit": "ripr agent verify --root /work/repo --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
   },
   "warnings": []
 }
@@ -14195,7 +14200,11 @@ Field contract:
   `same_file_seam`, `explicit_seam_id`, or `repo_actionable_fallback`.
 - `top_seams[].packet_ref` — pointer to the full agent seam packet.
 - `top_seams[].verification` — before/after static evidence commands and an
-  optional focused test command.
+  optional focused test command. The snapshot and verify commands are anchored
+  at the analyzed root, so they run from any directory; `before_snapshot_command`
+  first creates `target/ripr/workflow` under that root, because the before
+  snapshot is the loop's first write. `suggested_test_command` is a bare
+  `cargo test <name>` and runs from the analyzed root.
 
 Static examples use abbreviated JSON fragments to show routing behavior.
 
@@ -16570,8 +16579,14 @@ whenever cache identity changes, so a consumer dispatches on the top-level
 For a changed-test selector, `selector.kind` is `changed_test`. `changed_test`
 names the repository-relative parsed test file and may append
 `::<test_node>` to select one test function within that file. An unknown or
-ambiguous node is a named limitation. Without a node, all parsed tests in the
-file participate. The report returns only seams owned by uniquely resolved
+ambiguous node is a named limitation: `state: "limited"`, an empty `seams`
+array, exit 0, and `limitation.kind` `changed_test_unresolved` (no parsed test
+matches the file or node), `changed_test_owner_unresolved` (the selected tests
+call no production owner ripr resolves), or `changed_test_owner_ambiguous`
+(two production functions share a called name). The index is built before the
+selector resolves, so `cache` still reports the file-fact work that ran and
+the `input_fingerprint`. Without a node, all parsed
+tests in the file participate. The report returns only seams owned by uniquely resolved
 functions directly called from the selected test scope.
 
 For a gap selector, `selector.kind` is `canonical_gap`, with
