@@ -1771,6 +1771,7 @@ mod tests {
                     reason: "producer identified the equality boundary as missing".to_string(),
                     flow_sink: None,
                 }],
+                new_test_target: None,
             },
         }
     }
@@ -1852,6 +1853,7 @@ mod tests {
                 discriminate: stage(StageState::Weak),
                 observed_values: Vec::new(),
                 missing_discriminators: Vec::new(),
+                new_test_target: None,
             },
         }
     }
@@ -1894,6 +1896,7 @@ mod tests {
                 discriminate: stage(StageState::Weak),
                 observed_values: Vec::new(),
                 missing_discriminators: Vec::new(),
+                new_test_target: None,
             },
         }
     }
