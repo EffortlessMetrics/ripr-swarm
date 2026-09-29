@@ -11,6 +11,9 @@ use super::diagnostics::{
 };
 use super::position::expression_span_range_on_saved_line;
 use super::tests::{run_lsp_scope_git, unique_lsp_test_root};
+use crate::analysis::diagnostic_origin::{
+    EncodedOrigin, EncodedSpan, OriginKind, RustDiagnosticOrigins,
+};
 use crate::app::{CheckInput, Mode, check_workspace_repo_with_origins};
 use crate::config::LspDiagnosticProfile;
 use crate::domain::SourceCurrentness;
@@ -550,6 +553,174 @@ fn cold_and_warm_file_facts_preserve_origin_geometry() -> Result<(), String> {
     }
     if !saw_decoy_line {
         return Err("cached origin fell back to the first-substring decoy".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn retained_origins_do_not_reread_disk_after_source_changes() -> Result<(), String> {
+    let root = unique_lsp_test_root("origin-retained-disk")?;
+    write_origin_lib(root.path(), "")?;
+    let source_a = fs::read_to_string(root.path().join("src/lib.rs"))
+        .map_err(|err| format!("read A: {err}"))?;
+    let input = CheckInput {
+        root: root.path().to_path_buf(),
+        mode: Mode::Instant,
+        ..CheckInput::default()
+    };
+    let (output, origins) =
+        check_workspace_repo_with_origins(input, &crate::config::RiprConfig::default())?;
+    if output.findings.is_empty() {
+        return Err("repo producer emitted no findings".to_string());
+    }
+    if origins.is_empty() {
+        return Err("repo producer stored no diagnostic origins".to_string());
+    }
+    let encoding = PositionEncodingKind::UTF16;
+    let projected_a = finding_diagnostics_by_uri_with_profile(
+        root.path(),
+        &output.findings,
+        &crate::config::SeverityConfig::default(),
+        true,
+        FindingDiagnosticProjection::new(LspDiagnosticProfile::Full, &encoding, &origins),
+    )?;
+    let ranges_a: Vec<_> = projected_a
+        .values()
+        .flatten()
+        .map(|diagnostic| diagnostic.range)
+        .collect();
+    if ranges_a.is_empty() {
+        return Err("producer-A projection was empty".to_string());
+    }
+    let selected_a: Vec<_> = projected_a.values().flatten().cloned().collect();
+    let predicates_a = predicate_diagnostics(&selected_a, &source_a)?;
+    let mut saw_decoy_line = false;
+    for diagnostic in predicates_a {
+        let reject_first_match = diagnostic.range.start.line == 1;
+        if reject_first_match {
+            saw_decoy_line = true;
+        }
+        assert_covers_producer_predicate(&source_a, diagnostic, &encoding, reject_first_match)?;
+    }
+    if !saw_decoy_line {
+        return Err("producer-A did not project the decoy-line predicate".to_string());
+    }
+
+    let source_b = "pub fn price(montant_é: i32, discount_threshold: i32) -> bool {\n    if montant_é > discount_threshold { true } else { false }\n}\n";
+    fs::write(root.path().join("src/lib.rs"), source_b).map_err(|err| format!("write B: {err}"))?;
+    let projected_b = finding_diagnostics_by_uri_with_profile(
+        root.path(),
+        &output.findings,
+        &crate::config::SeverityConfig::default(),
+        true,
+        FindingDiagnosticProjection::new(LspDiagnosticProfile::Full, &encoding, &origins),
+    )?;
+    let ranges_b: Vec<_> = projected_b
+        .values()
+        .flatten()
+        .map(|diagnostic| diagnostic.range)
+        .collect();
+    if ranges_a != ranges_b {
+        return Err(format!(
+            "retained origins reread disk B: {ranges_a:?} vs {ranges_b:?}"
+        ));
+    }
+
+    let heuristic_b = finding_diagnostics_by_uri_with_profile(
+        root.path(),
+        &output.findings,
+        &crate::config::SeverityConfig::default(),
+        true,
+        FindingDiagnosticProjection::new(
+            LspDiagnosticProfile::Full,
+            &encoding,
+            &RustDiagnosticOrigins::default(),
+        ),
+    )?;
+    let heuristic_ranges: Vec<_> = heuristic_b
+        .values()
+        .flatten()
+        .map(|diagnostic| diagnostic.range)
+        .collect();
+    if heuristic_ranges == ranges_a {
+        return Err(
+            "empty-origin heuristic on disk B matched retained A ranges; fixture is not a discriminator"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn stored_coarse_origin_is_not_replaced_by_saved_line_search() -> Result<(), String> {
+    let root = unique_lsp_test_root("origin-coarse-record")?;
+    write_origin_lib(root.path(), "")?;
+    let source =
+        fs::read_to_string(root.path().join("src/lib.rs")).map_err(|err| format!("read: {err}"))?;
+    let input = CheckInput {
+        root: root.path().to_path_buf(),
+        mode: Mode::Instant,
+        ..CheckInput::default()
+    };
+    let (output, _) =
+        check_workspace_repo_with_origins(input, &crate::config::RiprConfig::default())?;
+    let Some(finding) = output.findings.iter().find(|finding| {
+        finding.probe.expression.contains(PREDICATE) && finding.probe.location.line == 2
+    }) else {
+        return Err(format!(
+            "no decoy-line predicate finding in {:?}",
+            output
+                .findings
+                .iter()
+                .map(|finding| (
+                    finding.probe.location.line,
+                    finding.probe.expression.clone()
+                ))
+                .collect::<Vec<_>>()
+        ));
+    };
+    let mut coarse = RustDiagnosticOrigins::default();
+    let line = finding.probe.location.line.saturating_sub(1) as u32;
+    coarse.insert(
+        finding.id.clone(),
+        EncodedOrigin {
+            line,
+            utf8: EncodedSpan { start: 0, end: 0 },
+            utf16: EncodedSpan { start: 0, end: 0 },
+            utf32: EncodedSpan { start: 0, end: 0 },
+            kind: OriginKind::CoarseZeroWidth,
+        },
+    );
+    let encoding = PositionEncodingKind::UTF16;
+    let grouped = finding_diagnostics_by_uri_with_profile(
+        root.path(),
+        std::slice::from_ref(finding),
+        &crate::config::SeverityConfig::default(),
+        true,
+        FindingDiagnosticProjection::new(LspDiagnosticProfile::Full, &encoding, &coarse),
+    )?;
+    let diagnostics: Vec<Diagnostic> = grouped.into_values().flatten().collect();
+    let diagnostic = diagnostics
+        .first()
+        .ok_or_else(|| "coarse origin did not project".to_string())?;
+    if diagnostic.range.start.line != line
+        || diagnostic.range.start.character != 0
+        || diagnostic.range.end.character != 0
+    {
+        return Err(format!(
+            "coarse origin was replaced by a saved-line search on {source:?}: {:?}",
+            diagnostic.range
+        ));
+    }
+    let heuristic = expression_span_range_on_saved_line(
+        line,
+        1,
+        PREDICATE,
+        &encoding,
+        source.lines().nth(line as usize),
+    );
+    if heuristic.start.character == 0 && heuristic.end.character == 0 {
+        return Err("heuristic fixture is already zero-width; not a discriminator".to_string());
     }
     Ok(())
 }

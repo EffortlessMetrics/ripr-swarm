@@ -6,9 +6,11 @@
 //! span all agree. Projection later selects these numbers; it does not search
 //! source text or reread the filesystem.
 //!
-//! Findings without a parser span keep the existing saved-line heuristic.
-//! Non-current and refused Rust records carry a bounded zero-width range so a
-//! deleted expression cannot paint a current line.
+//! Every current Rust finding in this map receives a record. Missing parser
+//! span, mismatched facts, lexical fallback, and other refusals stay coarse
+//! zero-width. Absent or default-empty maps, and other languages, keep the
+//! saved-line heuristic. Non-current records stay bounded so a deleted
+//! expression cannot paint a current line.
 
 use super::facts::rust_source_text;
 use super::rust_index::RustIndex;
@@ -109,31 +111,54 @@ pub(crate) struct OriginBuildContext<'a> {
     pub parser_spans: &'a BTreeMap<String, ParserByteSpan>,
 }
 
+struct CapturedFile {
+    source: String,
+    has_standalone_cr: bool,
+    lines: Vec<LineSpan>,
+    facts_match: bool,
+    used_lexical_fallback: bool,
+}
+
 pub(crate) fn origins_for_rust_findings(
     findings: &[Finding],
     context: &OriginBuildContext<'_>,
 ) -> RustDiagnosticOrigins {
-    let mut captured = BTreeMap::<PathBuf, String>::new();
-    for (path, bytes) in context.loaded_files {
-        captured.insert(path.clone(), rust_source_text(bytes).text.into_owned());
-    }
-
+    let captured = captured_file_index(context.loaded_files, context.index);
     let mut origins = RustDiagnosticOrigins::default();
     for finding in findings {
-        let Some(relative) = relative_finding_path(context.root, finding) else {
-            if should_record_without_path(finding, context.parser_spans) {
-                origins.insert(finding.id.clone(), missing_input_origin());
-            }
-            continue;
+        let origin = match relative_finding_path(context.root, finding) {
+            Some(relative) => origin_for_finding(
+                finding,
+                parser_span_for_finding(finding, context.parser_spans),
+                captured.get(&relative),
+            ),
+            None => missing_input_origin(),
         };
-        let captured_source = captured.get(&relative).map(String::as_str);
-        let facts = context.index.files.get(&relative);
-        let span = parser_span_for_finding(finding, context.parser_spans);
-        if let Some(origin) = origin_for_finding(finding, span, captured_source, facts) {
-            origins.insert(finding.id.clone(), origin);
-        }
+        origins.insert(finding.id.clone(), origin);
     }
     origins
+}
+
+fn captured_file_index(
+    loaded_files: &[(PathBuf, Vec<u8>)],
+    index: &RustIndex,
+) -> BTreeMap<PathBuf, CapturedFile> {
+    let mut captured = BTreeMap::new();
+    for (path, bytes) in loaded_files {
+        let source = rust_source_text(bytes).text.into_owned();
+        let facts = index.files.get(path);
+        captured.insert(
+            path.clone(),
+            CapturedFile {
+                has_standalone_cr: has_standalone_cr(&source),
+                lines: lsp_lines(&source),
+                facts_match: facts.is_some_and(|facts| facts.source == source),
+                used_lexical_fallback: facts.is_some_and(|facts| facts.used_lexical_fallback),
+                source,
+            },
+        );
+    }
+    captured
 }
 
 fn parser_span_for_finding(
@@ -144,14 +169,6 @@ fn parser_span_for_finding(
         .get(finding.id.as_str())
         .copied()
         .or_else(|| parser_spans.get(finding.probe.id.0.as_str()).copied())
-}
-
-fn should_record_without_path(
-    finding: &Finding,
-    parser_spans: &BTreeMap<String, ParserByteSpan>,
-) -> bool {
-    !finding.source_currentness.permits_candidate_action()
-        || parser_span_for_finding(finding, parser_spans).is_some()
 }
 
 fn relative_finding_path(root: &Path, finding: &Finding) -> Option<PathBuf> {
@@ -168,33 +185,25 @@ fn relative_finding_path(root: &Path, finding: &Finding) -> Option<PathBuf> {
 fn origin_for_finding(
     finding: &Finding,
     span: Option<ParserByteSpan>,
-    captured_source: Option<&str>,
-    facts: Option<&super::rust_index::FileFacts>,
-) -> Option<EncodedOrigin> {
-    let Some(captured) = captured_source else {
-        return if span.is_some() || !finding.source_currentness.permits_candidate_action() {
-            Some(missing_input_origin())
-        } else {
-            None
-        };
+    captured: Option<&CapturedFile>,
+) -> EncodedOrigin {
+    let Some(captured) = captured else {
+        return missing_input_origin();
     };
     if !finding.source_currentness.permits_candidate_action() {
-        return Some(coarse_on_line(captured, finding.probe.location.line));
+        return coarse_on_line(&captured.lines, finding.probe.location.line);
     }
-    let span = span?;
-    if has_standalone_cr(captured) {
-        return Some(missing_input_origin());
+    let Some(span) = span else {
+        return coarse_on_line(&captured.lines, finding.probe.location.line);
+    };
+    if captured.has_standalone_cr {
+        return missing_input_origin();
     }
-    if facts.is_some_and(|facts| facts.used_lexical_fallback) {
-        return Some(coarse_on_line(captured, finding.probe.location.line));
+    if captured.used_lexical_fallback || !captured.facts_match {
+        return coarse_on_line(&captured.lines, finding.probe.location.line);
     }
-    if facts.is_none_or(|facts| facts.source != captured) {
-        return Some(coarse_on_line(captured, finding.probe.location.line));
-    }
-    Some(
-        exact_origin(captured, span, finding)
-            .unwrap_or_else(|| coarse_on_line(captured, finding.probe.location.line)),
-    )
+    exact_origin(&captured.source, &captured.lines, span, finding)
+        .unwrap_or_else(|| coarse_on_line(&captured.lines, finding.probe.location.line))
 }
 
 fn missing_input_origin() -> EncodedOrigin {
@@ -207,8 +216,7 @@ fn missing_input_origin() -> EncodedOrigin {
     }
 }
 
-fn coarse_on_line(source: &str, one_based_line: usize) -> EncodedOrigin {
-    let lines = lsp_lines(source);
+fn coarse_on_line(lines: &[LineSpan], one_based_line: usize) -> EncodedOrigin {
     let line = one_based_line.saturating_sub(1);
     if line < lines.len() {
         EncodedOrigin {
@@ -223,7 +231,12 @@ fn coarse_on_line(source: &str, one_based_line: usize) -> EncodedOrigin {
     }
 }
 
-fn exact_origin(source: &str, span: ParserByteSpan, finding: &Finding) -> Option<EncodedOrigin> {
+fn exact_origin(
+    source: &str,
+    lines: &[LineSpan],
+    span: ParserByteSpan,
+    finding: &Finding,
+) -> Option<EncodedOrigin> {
     if finding.probe.expression.is_empty() {
         return None;
     }
@@ -235,8 +248,7 @@ fn exact_origin(source: &str, span: ParserByteSpan, finding: &Finding) -> Option
     if source.get(start..end) != Some(finding.probe.expression.as_str()) {
         return None;
     }
-    let lines = lsp_lines(source);
-    let (line_index, line_span) = line_containing(start, &lines)?;
+    let (line_index, line_span) = line_containing(start, lines)?;
     if end > line_span.end {
         return None;
     }
@@ -595,10 +607,22 @@ mod tests {
     #[test]
     fn cached_facts_from_another_source_cannot_authorize_captured_input() -> Result<(), String> {
         let captured = "fn a() {\n    if montant_é > discount_threshold { true }\n}\n";
-        let cached = "fn b() {\n    if montant_é > discount_threshold { true }\n    if montant_é > discount_threshold { false }\n}\n";
-        let start = cached
-            .rfind(PREDICATE)
-            .ok_or_else(|| "cached predicate missing".to_string())?;
+        let cached = "fn b() {\n    if montant_é > discount_threshold { true }\n}\n";
+        if captured.len() != cached.len() {
+            return Err(
+                "fixture lengths must match so the parser offset is valid in both".to_string(),
+            );
+        }
+        let start = require_find(captured, PREDICATE, "captured predicate")?;
+        let cached_start = require_find(cached, PREDICATE, "cached predicate")?;
+        if start != cached_start {
+            return Err(format!(
+                "predicate offsets must coincide: captured {start} vs cached {cached_start}"
+            ));
+        }
+        if captured == cached {
+            return Err("fixtures must differ as whole files".to_string());
+        }
         let finding = current_finding("probe:a", 2, PREDICATE);
         let origins = origins_for(
             &finding,
@@ -616,12 +640,34 @@ mod tests {
     }
 
     #[test]
-    fn candidate_current_without_parser_span_keeps_heuristic() {
+    fn candidate_current_without_parser_span_stays_coarse() -> Result<(), String> {
         let source = "fn price() {\n    if montant_é > discount_threshold { true }\n}\n";
         let finding = current_finding("probe:line", 2, PREDICATE);
         let origins = origins_for(&finding, source, None, None);
-        assert!(origins.get("probe:line").is_none());
-        assert!(origins.is_empty());
+        let origin = require_origin(&origins, "probe:line")?;
+        assert_eq!(origin.kind, OriginKind::CoarseZeroWidth);
+        assert_eq!(origin.line, 1);
+        assert_eq!(origin.utf8.start, 0);
+        assert_eq!(origin.utf8.end, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn current_without_span_and_without_loaded_source_records_missing_input() -> Result<(), String>
+    {
+        let finding = current_finding("probe:missing", 2, PREDICATE);
+        let origins = origins_for_rust_findings(
+            std::slice::from_ref(&finding),
+            &OriginBuildContext {
+                root: Path::new("/workspace"),
+                loaded_files: &[],
+                index: &RustIndex::default(),
+                parser_spans: &BTreeMap::new(),
+            },
+        );
+        let origin = require_origin(&origins, "probe:missing")?;
+        assert_eq!(origin, &missing_input_origin());
+        Ok(())
     }
 
     #[test]

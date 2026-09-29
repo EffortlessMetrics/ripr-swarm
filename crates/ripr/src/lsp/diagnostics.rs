@@ -2330,6 +2330,8 @@ fn diagnostic_range_for_finding(
     origins: &crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
 ) -> Range {
     if let Some(origin) = origins.for_finding(finding) {
+        // Numeric-only: a stored record, including coarse refusals, is not
+        // replaced by a saved-line search. Absent maps keep the heuristic.
         return crate::lsp::position::range_from_encoded_origin(origin, position_encoding);
     }
     let line = finding.probe.location.line.saturating_sub(1) as u32;
