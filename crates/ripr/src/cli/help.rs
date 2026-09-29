@@ -611,6 +611,8 @@ mod tests {
         assert!(PR_LEDGER_HELP.contains("Usage: ripr pr-ledger record"));
         assert!(PR_LEDGER_HELP.contains("pr-evidence-ledger.json"));
         assert!(PR_LEDGER_HELP.contains("read-only advisory history"));
+        assert!(PR_LEDGER_HELP.contains("--out-jsonl"));
+        assert!(POLICY_HELP.contains("--out-jsonl"));
         assert!(PR_COMMENTS_HELP.starts_with("Plan or publish bounded inline PR comments"));
         assert!(PR_COMMENTS_HELP.contains("Usage: ripr pr-comments plan"));
         assert!(PR_COMMENTS_HELP.contains("comment-publish-plan.json"));
@@ -768,6 +770,36 @@ mod tests {
         }
     }
 
+    /// The Usage synopsis names every Record option, so a flag the parser
+    /// accepts is never documented only below the fold (#4391).
+    #[test]
+    fn pr_ledger_usage_names_every_record_option() {
+        let usage = PR_LEDGER_HELP
+            .lines()
+            .find(|line| line.starts_with("Usage: ripr pr-ledger record"))
+            .unwrap_or_default();
+        let options: Vec<&str> = PR_LEDGER_HELP
+            .split("Record options:")
+            .nth(1)
+            .unwrap_or_default()
+            .lines()
+            .skip(1)
+            .take_while(|line| !line.trim().is_empty())
+            .filter_map(|line| line.split_whitespace().next())
+            .filter(|flag| flag.starts_with("--"))
+            .collect();
+        assert!(
+            !options.is_empty(),
+            "Record options section must list flags"
+        );
+        for flag in options {
+            assert!(
+                usage.contains(&format!("{flag} ")) || usage.ends_with(flag),
+                "Usage line omits {flag}: {usage}"
+            );
+        }
+    }
+
     #[test]
     fn every_help_printer_executes_without_panic() {
         // Each wrapper is a `println!("{CONST}")` over the help-text
@@ -823,6 +855,7 @@ mod tests {
     const AGENT_PARSER_RS: &str = include_str!("agent.rs");
     const CLI_COMMANDS_RS: &str = include_str!("commands.rs");
     const CHECK_PARSER_RS: &str = include_str!("commands/check.rs");
+    const REVIEW_COMMENTS_PARSER_RS: &str = include_str!("commands/review_comments.rs");
     const CONTEXT_PARSER_RS: &str = include_str!("commands/context.rs");
     const CONFIG_PARSER_RS: &str = include_str!("commands/config.rs");
     const DOCTOR_PARSER_RS: &str = include_str!("commands/doctor.rs");
@@ -1085,7 +1118,7 @@ mod tests {
         ("rerun", RERUN_PARSER_RS, &["parse_options"]),
         (
             "review-comments",
-            CLI_COMMANDS_RS,
+            REVIEW_COMMENTS_PARSER_RS,
             &["parse_review_comments_options"],
         ),
         ("swarm ingest", SWARM_INGEST_PARSER_RS, &["parse_options"]),
@@ -1358,7 +1391,8 @@ mod tests {
     /// `*_requires_values_for_value_flags`, `*_rejects_unknown_argument`, and
     /// `*_suggests_the_nearest_flag_for_a_typo` in `commands/context.rs`,
     /// `commands/check.rs`, `commands/doctor.rs`, `commands/pilot.rs`,
-    /// `commands/config.rs`, `commands/receipt.rs`, `commands.rs`, and
+    /// `commands/config.rs`, `commands/receipt.rs`, `commands/review_comments.rs`,
+    /// `commands.rs`, and
     /// `agent.rs`. The suggestion scoping tests in `suggest.rs` pin which of
     /// those flags belong to which sibling of a shared help body. Tightening
     /// this scanner to scrutinee position without a real Rust parser would

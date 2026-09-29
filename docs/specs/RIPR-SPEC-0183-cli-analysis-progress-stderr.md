@@ -1,4 +1,4 @@
-# RIPR-SPEC-0181: CLI analysis progress on stderr
+# RIPR-SPEC-0183: CLI analysis progress on stderr
 
 Status: proposed
 

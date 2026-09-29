@@ -3,6 +3,40 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-09-29: Missing git and a missing cwd share `NotFound` (#4735)
+
+Spawning `git` with `current_dir` yields `ErrorKind::NotFound` both when the
+binary is absent from PATH and when the working directory does not exist.
+Remapping every `NotFound` to "git was not found on PATH" would misdiagnose an
+invalid `--root` as a missing binary (the #3880 argv-leak class). The shared
+git spawn authority therefore names the PATH repair only when the program is
+git and the cwd exists (or is unset). Doctor's `tool_git` probe already
+classifies tool spawn `NotFound` separately from a missing repository, so it
+can consume the same PATH message without that cwd check.
+
+`ripr check` and `--worktree` both need git. When `tool_git` did not pass,
+doctor must not recommend either, even on a dirty tree; the reachable route is
+`--diff PATH` / `--diff -`.
+
+Default-base probes treat any git spawn failure as "ref absent". A gitless
+`ripr check` with no `--base` therefore used to say `Pass --base`. The
+git-root probe on that failure path must name PATH/`--diff` ahead of the
+default-base text. An explicit `--base` still falls through to `run_git_diff`,
+which already passes the named missing-git error through.
+
+## 2026-09-29: Default output-dir create failures must name the relocate flag (#4774)
+
+`ripr pilot` and `ripr first-pr` create `target/ripr/pilot` and
+`target/ripr/reports` before they do useful work. On a read-only checkout the
+raw `Read-only file system (os error 30)` names neither command's output flag.
+`check`, `doctor`, and `cache status` already tolerate that layout.
+
+Keep the OS error, keep exit 2, and append `; write elsewhere with --out PATH`
+or `--out-dir PATH` only for `PermissionDenied` / `ReadOnlyFilesystem`. A path
+that is already a file is a different failure and must not grow that hint.
+Both commands share `output::file_write::create_output_dir`; do not special-case
+one command's prefix or flag in the other.
+
 ## 2026-09-16: Parallel-build test flakes are shared-state mechanisms (#3742)
 
 A rotating family of suite failures under parallel cargo builds (observed
