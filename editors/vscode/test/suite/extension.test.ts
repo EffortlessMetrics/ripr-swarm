@@ -5226,21 +5226,36 @@ async function writeEditorGapSmokeFiles(): Promise<void> {
   );
 }
 
-// Every file the ledger record names, stamped with its current digest the way
-// a real producer stamps the files its analysis read.
-const EDITOR_GAP_SMOKE_SUBJECT_FILES = ['src/pricing.ts', 'tests/pricing.test.ts'];
-
+// Stamp every file the ledger records name (anchor, repair target, related
+// test) with its current digest, the way a real producer stamps the files its
+// analysis read. Deriving the set from the records keeps the stamp complete
+// when the fixture ledger changes.
 async function writeEditorGapSmokeLedger(): Promise<void> {
+  const ledger = editorGapSmokeLedger();
   const files = await Promise.all(
-    EDITOR_GAP_SMOKE_SUBJECT_FILES.map(async (relativePath) => ({
+    gapLedgerSubjectPaths(ledger).map(async (relativePath) => ({
       path: relativePath,
       digest: `sha256:${createHash('sha256').update(await fs.readFile(workspaceFilePath(relativePath))).digest('hex')}`
     }))
   );
   await writeWorkspaceFile(
     'target/ripr/reports/gap-decision-ledger.json',
-    JSON.stringify({ ...editorGapSmokeLedger(), source_subject: { digest_algorithm: 'sha256', files } }, null, 2)
+    JSON.stringify({ ...ledger, source_subject: { digest_algorithm: 'sha256', files } }, null, 2)
   );
+}
+
+function gapLedgerSubjectPaths(ledger: Record<string, unknown>): string[] {
+  type SubjectRecord = {
+    anchor?: { file?: string };
+    repair_route?: { target_file?: string; related_test?: string };
+  };
+  const records = (ledger.records ?? []) as SubjectRecord[];
+  const paths = records.flatMap((record) => [
+    record.anchor?.file,
+    record.repair_route?.target_file,
+    record.repair_route?.related_test?.split('::')[0]
+  ]);
+  return [...new Set(paths.filter((path): path is string => Boolean(path)))].sort();
 }
 
 function editorGapSmokeLedger(): Record<string, unknown> {
