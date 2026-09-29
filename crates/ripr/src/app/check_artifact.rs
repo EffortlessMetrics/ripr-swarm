@@ -20,8 +20,8 @@ use super::CheckInput;
 use super::check::options_builder::analysis_options_from_input_and_config;
 use crate::analysis::AnalysisOptions;
 use crate::config::{
-    CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION, RiprConfig, check_artifact_config_identity_hash,
-    config_fingerprint,
+    CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION, RiprConfig, bytes_fingerprint,
+    check_artifact_config_identity_hash, config_fingerprint,
 };
 use crate::domain::{Finding, LanguageId};
 use serde::{Deserialize, Serialize};
@@ -40,7 +40,8 @@ pub(crate) const CHECK_ARTIFACT_SCHEMA_VERSION: &str = "ripr-check-artifact-v1";
 pub(crate) struct CheckArtifactV1 {
     pub(crate) schema_version: String,
     pub(crate) tool: String,
-    /// `env!("CARGO_PKG_VERSION")` of the writing binary; part of the gate.
+    /// Build identity of the writing binary (version plus commit or source
+    /// digest; see `build_identity::cache_identity`); part of the gate.
     pub(crate) analyzer_version: String,
     pub(crate) identity: CheckArtifactIdentityV1,
     /// The complete finding set: uncapped related-tests lists and probe
@@ -140,7 +141,7 @@ pub(crate) fn write_check_artifact(
     let artifact = CheckArtifactV1 {
         schema_version: CHECK_ARTIFACT_SCHEMA_VERSION.to_string(),
         tool: "ripr".to_string(),
-        analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+        analyzer_version: crate::build_identity::cache_identity().to_string(),
         identity,
         findings: rewrite_non_utf8_finding_paths(findings),
     };
@@ -213,12 +214,12 @@ fn build_identity_at_write(
     worktree: bool,
 ) -> Result<CheckArtifactIdentityV1, String> {
     let diff_source = diff_source_at_write(input, worktree)?;
-    let diff_text = resolve_diff_text(&diff_source, &input.root, input.git_timeout)?;
+    let diff_bytes = resolve_diff_bytes(&diff_source, &input.root, input.git_timeout)?;
     let options = analysis_options_from_input_and_config(input, config);
     let (include_unchanged_tests, perl_facts_path) = closed_analysis_options_view(&options);
     let perl_facts_path = canonical_optional_path(perl_facts_path)?;
     Ok(CheckArtifactIdentityV1 {
-        diff_bytes_hash: config_fingerprint(&diff_text),
+        diff_bytes_hash: bytes_fingerprint(&diff_bytes),
         diff_source,
         root: canonical_root(&input.root)?,
         mode: input.mode.as_str().to_string(),
@@ -241,7 +242,7 @@ fn build_identity_at_load(
     recorded: &CheckArtifactIdentityV1,
     artifact_path: &Path,
 ) -> Result<CheckArtifactIdentityV1, String> {
-    let diff_text = resolve_diff_text(&recorded.diff_source, &input.root, input.git_timeout)
+    let diff_bytes = resolve_diff_bytes(&recorded.diff_source, &input.root, input.git_timeout)
         .map_err(|err| {
             format!(
                 "check artifact at {} cannot be reused: {err}",
@@ -254,7 +255,7 @@ fn build_identity_at_load(
         .as_deref()
         .map(PathBuf::from);
     Ok(CheckArtifactIdentityV1 {
-        diff_bytes_hash: config_fingerprint(&diff_text),
+        diff_bytes_hash: bytes_fingerprint(&diff_bytes),
         diff_source: recorded.diff_source.clone(),
         root: canonical_root(&input.root)?,
         mode: input.mode.as_str().to_string(),
@@ -314,7 +315,7 @@ fn verify_identity(
     if recorded.config_identity_hash != current.config_identity_hash {
         mismatched.push("config_identity_hash");
     }
-    if artifact.analyzer_version != env!("CARGO_PKG_VERSION") {
+    if artifact.analyzer_version != crate::build_identity::cache_identity() {
         mismatched.push("analyzer_version");
     }
     if mismatched.is_empty() {
@@ -402,24 +403,26 @@ fn diff_source_at_write(input: &CheckInput, worktree: bool) -> Result<DiffSource
 }
 
 /// Re-resolve a recorded diff source to its exact bytes: a recorded `--diff`
-/// path is re-read; a recorded base/head pair or worktree diff is
-/// re-resolved through git. Missing or unresolvable sources fail closed.
-fn resolve_diff_text(
+/// path is re-read raw, so two files differing only in non-UTF-8 bytes never
+/// share a hash; a recorded base/head pair or worktree diff is re-resolved
+/// through git. Missing or unresolvable sources fail closed.
+fn resolve_diff_bytes(
     source: &DiffSourceIdentity,
     root: &Path,
     git_timeout: Option<std::time::Duration>,
-) -> Result<String, String> {
+) -> Result<Vec<u8>, String> {
     match source {
-        DiffSourceIdentity::DiffFile { path } => crate::bounded_input::read_to_string(path)
-            .map_err(|err| {
-                format!("recorded diff file {path} no longer exists or is unreadable: {err}")
-            }),
+        DiffSourceIdentity::DiffFile { path } => crate::bounded_input::read(path).map_err(|err| {
+            format!("recorded diff file {path} no longer exists or is unreadable: {err}")
+        }),
         DiffSourceIdentity::BaseHead { base, .. } => {
             crate::analysis::load_diff(root, base.as_deref(), None, git_timeout)
+                .map(String::into_bytes)
                 .map_err(|err| format!("recorded base/head diff could not be re-resolved: {err}"))
         }
         DiffSourceIdentity::Worktree { base } => {
             crate::analysis::load_worktree_diff(root, base.as_deref(), git_timeout)
+                .map(String::into_bytes)
                 .map_err(|err| format!("recorded worktree diff could not be re-resolved: {err}"))
         }
     }
