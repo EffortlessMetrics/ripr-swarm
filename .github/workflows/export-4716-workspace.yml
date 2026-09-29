@@ -1,6 +1,6 @@
 name: Export PR 4716 workspace
 
-on:
+"on":
   push:
     branches:
       - feat/4710-npm-launcher-core
@@ -27,7 +27,7 @@ jobs:
           tar --exclude=.git -czf "${RUNNER_TEMP}/ripr-swarm-4716.tgz" .
 
       - name: Upload workspace
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: ripr-swarm-4716-${{ github.sha }}
           path: ${{ runner.temp }}/ripr-swarm-4716.tgz
