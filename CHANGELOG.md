@@ -21,6 +21,15 @@ are scoped or reviewed.
   derived tuple slice, and computes each related test's value facts once
   per owner instead of once per probe; a ripr commit went
   from 11.1 s to 8.1 s.
+- LSP: a request whose method starts with `$/` and that ripr does not handle
+  now gets a `-32601` method-not-found error, as the LSP spec requires. It got
+  no response at all, so a client that sent one waited on it forever.
+  Unhandled `$/` notifications are still ignored.
+- MCP: a client that opens with `server/discover` (protocol `2026-07-28`)
+  now receives the same instructions as an `initialize` client, including the
+  CLI route that analyzes the diff. Before, only `initialize` carried them.
+  Workspace status no longer says a `ripr.toml` is detected when the root has
+  none; that limitation now appears only when one was found.
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from
@@ -279,6 +288,21 @@ are scoped or reviewed.
   every changed line read `no_static_path` although mutating those lines
   fails the projects' own tests. Renamed re-exports, `_private` names under a
   star import, and names a declared `__all__` omits are not followed.
+- TypeScript preview: a test that imports a changed function through a barrel
+  now reaches it. On unjs/ufo, `import { withoutBase } from "../src"` names
+  the directory whose `src/index.ts` does `export * from "./utils"`; ripr
+  resolved `../src` to a module that matched no barrel, so every changed line
+  of `withBase`/`withoutBase` read `no_static_path` with 0 related tests. A
+  directory specifier now resolves to its `index` module when no file module
+  of that name exists, and `export *` / `export { N } from` chains are
+  followed for up to 4 hops inside the repository. A star hop forwards a name
+  only when the target module exports it; a name two star sources export, a
+  cycle, a longer chain, a test-local or `describe`-scoped redeclaration of
+  the imported name, or a mock of any module on the chain gives no credit,
+  and a test that imports only another name from the same barrel stays
+  unrelated. (ufo's own `withBase` tests are still missed: they
+  register from a `for` loop with computed titles, which test extraction does
+  not index and discloses as partial.)
 
 - Python pytest verify commands now run as `python -m pytest path::node`
   instead of bare `pytest path::node`. `-m` puts the repository root on
@@ -313,6 +337,15 @@ are scoped or reviewed.
   the `Agent review packet` block already did. The stored artifacts keep
   their bound root; only the summary rendering rewrites the checkout path, and
   only where it is a whole path token.
+
+- LSP: `ripr.collectRepairPacket` and `ripr.collectContext` now reject a
+  `gap_id` that is present but not a string (such as `42` or `true`) with an
+  error naming `gap_id`. The repair command used to return the top gap's
+  packet instead of the one asked for, and the context command blamed another
+  field. An absent, `null`, empty or blank `gap_id` still means "not given"
+  (the top packet), as RIPR-SPEC-0077 specifies. A `gap_id` that
+  `actionable-gaps.json` does not hold no longer gets that report's first
+  packet: the gap ledger is tried, then a status packet naming the gap.
 
 ### Added
 
@@ -1546,6 +1579,15 @@ are scoped or reviewed.
   [#4287](https://github.com/EffortlessMetrics/ripr-swarm/pull/4287)).
 
 ### Docs
+
+- Documented the proposed `ripr-rs` PyPI distribution and
+  `@effortlessmetrics/ripr` npm launcher/native package family, including
+  the development-in-swarm/source-owned-publication boundary, maintainer
+  registry setup, package bootstrap ordering, and explicit non-claims. This is
+  planning and review guidance; it does not claim that either package family is
+  built, published, reserved, or installable
+  ([#4487](https://github.com/EffortlessMetrics/ripr-swarm/issues/4487),
+  [#4496](https://github.com/EffortlessMetrics/ripr-swarm/pull/4496)).
 
 - The README and quickstart first run now define "discriminator" where it
   first appears and state `ripr check`'s exit codes. They add a one-line
