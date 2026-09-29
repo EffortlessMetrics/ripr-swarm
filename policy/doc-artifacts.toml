@@ -915,3 +915,11 @@ path = "docs/specs/RIPR-SPEC-0180-lsp-saved-edit-sequence.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Issue #1578 records the saved-edit sequence harness: a repeatable cold-start through explicit-full refresh sequence reuses landed cache, scheduler, and delivery metrics; a stale cached answer cannot satisfy a speed target; a fast run cannot hide redundant full rescans or duplicate diagnostics; and historical 2s/10s/30s figures remain proposals rather than gates."
+
+[[artifact]]
+id = "RIPR-SPEC-0181"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0181-same-test-boundary-oracle-pairing.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Honesty fix: a predicate probe does not read exposed unless one test both feeds a boundary input to the owner and holds a discriminating oracle on that call's result; a split names same_test_pairing_missing and stays at most weakly_exposed; the same-call control stays exposed; no schema bump; fixture-backed by split_test_boundary_oracle (#4828)."
