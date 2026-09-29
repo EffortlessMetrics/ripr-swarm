@@ -1,4 +1,4 @@
-use super::{DistributionOutcome, ARCHIVE_WORKFLOW_PATH, DISTRIBUTION_MANIFEST_PATH};
+use super::{ARCHIVE_WORKFLOW_PATH, DISTRIBUTION_MANIFEST_PATH, DistributionOutcome};
 
 pub(super) fn distribution_json(outcome: &DistributionOutcome) -> Result<String, String> {
     let targets = outcome
@@ -114,7 +114,9 @@ pub(super) fn distribution_markdown(outcome: &DistributionOutcome) -> String {
     }
 
     if outcome.violations.is_empty() {
-        output.push_str("No distribution identity, version, crate, target, or workflow drift found.\n");
+        output.push_str(
+            "No distribution identity, version, crate, target, or workflow drift found.\n",
+        );
     } else {
         output.push_str("## Violations\n\n");
         for violation in &outcome.violations {
