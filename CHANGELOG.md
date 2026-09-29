@@ -11,6 +11,10 @@ are scoped or reviewed.
 
 ### Added
 
+- CI: a dispatch-only local-wheelhouse qualification lane records pip and uv
+  isolation facts and evaluates a fail-closed aggregate. Missing, skipped,
+  zero-subject, or mismatched rows cannot pass. No PyPI credentials or
+  publication (#4631).
 - LSP: `cargo xtask lsp-performance-report` writes an identity-bound saved-edit
   sequence receipt (`ripr-lsp-saved-edit-sequence-v1`) covering cold start,
   unchanged save/refresh, production/related/unrelated edits, rename, config
@@ -21,6 +25,21 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Changes in languages ripr does not analyze (Go, Java, C, C++, shell and
+  others) are no longer called non-source files. A Go-only diff reported
+  `no_behavioral_candidates (analysis complete)` and said the empty result was
+  correct; a Rust + Go diff reported only the Rust half, as a complete
+  analysis. Both now report `partial_with_limitations` with a
+  `language_scope_unsupported` limitation naming the language and paths
+  (#4720). `--format github` no longer prints "No static exposure findings
+  found" for an incomplete analysis; it leads with a warning naming the
+  outcome and each limitation (#4721). In a repository written only in such
+  languages, `ripr pilot` names them instead of an empty "none ranked"
+  result with a test-then-compare loop (its JSON `next` commands are
+  `null`), and `ripr doctor` lists them, in mixed workspaces too (#4750).
+  `ripr first-pr` reports no gap to assign there instead of a wrong-root
+  loop through `--root` and `ripr doctor`, and `ripr init` warns that the
+  configuration will report those changes as not analyzed.
 - `ripr check` is faster on large repositories, with byte-identical JSON on
   12 real commits of tokio, vite, Django and ripr. TypeScript test selection
   walked the directory tree for `package.json` twice per owner and test;
@@ -1191,6 +1210,25 @@ are scoped or reviewed.
   longer emit commands that silently analyze a different scope, and dynamic
   arguments are shell-safe (#2659, follow-up to #2598).
 
+- LSP: after `git checkout`, an edit, or a commit, `ripr lsp` no longer shows
+  gap diagnostics from `gap-decision-ledger.json` or `actionable-gaps.json`
+  that were computed for other file contents. Before, it placed the old
+  branch's gaps at their old lines on the new files and presented them as
+  current. Both reports now carry a `source_subject` stamp with a SHA-256
+  digest of each file their gaps name, taken from the analysis that produced
+  them: `ripr check` JSON and `repo-exposure-json` stamp the files they name in
+  the analysis run, and the ledger and `actionable-gaps.json` writers copy those
+  digests instead of reading the files again, so a file edited between the
+  analysis and the report write is not stamped as analyzed. A report built
+  from an unstamped input carries `source_subject_unavailable` instead. The
+  server recomputes the digests and withholds a report whose files changed
+  (`stale_subject`) or that has no usable stamp (`unverifiable_subject`,
+  which includes reports written by earlier builds). Every file a packet
+  names counts, including `target_test`, `target_file`, and each shape of
+  `related_test_or_observer`, and absolute paths under a relative `--root`
+  resolve. The status surfaces and the repair-packet command name the change
+  and the regeneration command (`ripr reports gap-ledger`, or
+  `cargo xtask lane1-evidence-audit` for `actionable-gaps.json`).
 - Windows LSP refreshes now isolate shared Git subprocesses from the JSON-RPC
   server stdin and terminate timed-out process trees with bounded pipe draining.
   Explicit refreshes therefore return trustworthy results within the ordinary
@@ -1383,6 +1421,19 @@ are scoped or reviewed.
   heading in a code span, as the owner line already did. A file name holding
   Markdown link brackets or `*` rendered as a link or emphasis in that heading
   (#4605).
+- Rust diff analysis follows the module tree (#4435). A changed file under
+  `src/`, or beside a declared `[lib]` root outside `src/`, no longer seeds
+  findings when no `mod`, `#[path]` or `include!` from any Cargo target names
+  it, since rustc never compiles it; the run reports a limitation naming the
+  file instead. The out-of-line modules of an external root (`[lib] path =
+  "../shared/lib.rs"`) now seed, and the tests of every package declaring
+  that root stay in the Draft scope. A declared `[lib] path` replaces
+  `src/lib.rs` as the library root. The orphan rule applies only when every
+  Rust file in the workspace resolves statically; a macro call other than
+  std's (at item level or inside a function), a `cfg_if!`-wrapped
+  declaration, a dynamic `#[path]` or a parse error anywhere keeps the
+  previous layout rule, since such a file could reach the orphan. The editor
+  partition uses the same evidence.
 - Each repair attempt keeps its own result. The after phase copies the
   receipt and the verify document into the attempt's artifacts directory and
   records them in `attempt.json` as `terminal_artifacts`, bound by path,
@@ -1402,6 +1453,9 @@ are scoped or reviewed.
   become misses and are recomputed. A `ripr check` artifact from another
   build of the same version is refused for reuse, and the `analyzer_version`
   in a targeted-rerun input fingerprint carries the same build identity.
+- `ripr help pr-ledger` now shows `[--label LABEL]...` in the
+  `pr-ledger record` usage line. The option was accepted and listed under
+  Record options but missing from the synopsis (#4391).
 - Editors: the language server no longer drops the first-useful-action
   report that the generated CI workflow and `ripr reports first-action`
   write. Its verify command now saves its output where the receipt reads it
@@ -1410,19 +1464,31 @@ are scoped or reviewed.
   `run ripr check` recovery that could not help. One trailing redirect into
   the workspace's `target/ripr/` is accepted; every other redirect is still
   refused.
-- Rust diff analysis follows the module tree (#4435). A changed file under
-  `src/`, or beside a declared `[lib]` root outside `src/`, no longer seeds
-  findings when no `mod`, `#[path]` or `include!` from any Cargo target names
-  it, since rustc never compiles it; the run reports a limitation naming the
-  file instead. The out-of-line modules of an external root (`[lib] path =
-  "../shared/lib.rs"`) now seed, and the tests of every package declaring
-  that root stay in the Draft scope. A declared `[lib] path` replaces
-  `src/lib.rs` as the library root. The orphan rule applies only when every
-  Rust file in the workspace resolves statically; a macro call other than
-  std's (at item level or inside a function), a `cfg_if!`-wrapped
-  declaration, a dynamic `#[path]` or a parse error anywhere keeps the
-  previous layout rule, since such a file could reach the orphan. The editor
-  partition uses the same evidence.
+- Upgrading from 0.10: a `.ripr/suppressions.toml` `finding_id` written
+  under 0.10 no longer matches, because Rust finding ids now hash the parsed
+  expression (`amount >= threshold`) instead of the whole changed line
+  (`if amount >= threshold {`). The stale entry still does not suppress, but
+  its warning now names the current id to write instead
+  ([#4736](https://github.com/EffortlessMetrics/ripr-swarm/issues/4736)).
+- Upgrading from 0.10: `ripr receipt check --gap` finds a receipt 0.10 wrote
+  under the raw gap id file name, and a receipt without `current_head` is
+  rejected with the reason (it predates HEAD binding) and the
+  `ripr receipt write` command that replaces it
+  ([#4737](https://github.com/EffortlessMetrics/ripr-swarm/issues/4737)).
+- Upgrading from 0.10: `ripr doctor` flags a `.github/workflows/ripr.yml`
+  that installs ripr unpinned or pins another version. The 0.10 template's
+  unpinned install runs the newest release against 0.10's steps, whose
+  agent-loop step now fails on every run; regenerate it with
+  `ripr init --ci github --force`, which now replaces only the workflow and
+  leaves an existing `ripr.toml` unchanged (before, it also reset the config
+  to the generated defaults). `ripr doctor --json` reports the same finding
+  as an advisory `generated_workflow` check
+  ([#4738](https://github.com/EffortlessMetrics/ripr-swarm/issues/4738)).
+- VS Code: `ripr.seamDiagnostics` and `ripr.diagnosticProfile` are forwarded
+  to the server only when a settings layer sets them, so `ripr.toml`
+  `[lsp] seam_diagnostics = false`, honored by the 0.10 extension, applies
+  again instead of being overridden by the extension's default
+  ([#4717](https://github.com/EffortlessMetrics/ripr-swarm/issues/4717)).
 
 ### Added
 
