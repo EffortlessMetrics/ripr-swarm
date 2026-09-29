@@ -5404,12 +5404,28 @@ fn classify_probe_shape_reads_a_returned_ternary_as_its_condition_boundary() {
     let arm = "    return ready ? amount >= LIMIT : false;";
     assert_eq!(classify_probe_shape(arm).0, ProbeFamily::Predicate);
     assert_eq!(typescript_boundary_discriminator(arm), None);
+    // A quoted ` ? ` in the condition and a quoted ` : ` in an arm do not
+    // move the split.
+    let quoted = "    return kind === 'a ? b' ? 1 : 0;";
+    assert_eq!(classify_probe_shape(quoted).0, ProbeFamily::Predicate);
+    // The split must hand the same condition to the boundary reader as the
+    // `if` form does.
+    assert_eq!(
+        typescript_boundary_discriminator(quoted),
+        typescript_boundary_discriminator("    if (kind === 'a ? b') {")
+    );
+    let quoted_arm = "    return total > 100 ? 'x : y' : 'z';";
+    assert_eq!(
+        typescript_boundary_discriminator(quoted_arm).as_deref(),
+        Some("total == 100")
+    );
     // `??`, `?.`, and a `?` inside a string are not conditionals.
     for line in [
         "    return total ?? 0;",
         "    return order?.total;",
         "    return \"a ? b : c\";",
         "    return ok ? value",
+        "    return ok ? 'x : y'",
     ] {
         assert_eq!(
             classify_probe_shape(line),
