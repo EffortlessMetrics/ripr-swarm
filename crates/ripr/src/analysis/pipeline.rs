@@ -555,9 +555,12 @@ fn rename_disclosure_message(
 /// workflow `.yml`, a `.md`, or a preview language left disabled) removes
 /// nothing from the analysis, so it must not turn the whole run into
 /// `unsupported_input`. A diff that resolves conflict markers committed to
-/// `.github/workflows/*.yml` did exactly that. Limitations without a path
-/// (a malformed diff) always count.
+/// `.github/workflows/*.yml` did exactly that. Malformed diff input always
+/// counts, even when its affected file has no enabled language adapter.
 fn diff_limitation_in_scope(limitation: &AnalysisLimitation, languages: &[LanguageId]) -> bool {
+    if limitation.kind == AnalysisLimitationKind::MalformedDiff {
+        return true;
+    }
     let Some(path) = limitation.path.as_deref() else {
         return true;
     };
@@ -592,6 +595,8 @@ fn run_pipeline_for_diff_text(
         .collect::<Vec<_>>();
 
     let mut findings: Vec<Finding> = Vec::new();
+    let mut rust_diagnostic_origins =
+        crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default();
     // `changed_rust_files` counts Rust adapter files only (#2103); every
     // adapter that ran records its own count in `changed_files_by_language`.
     let mut rust_changed_files: usize = 0;
@@ -662,6 +667,7 @@ fn run_pipeline_for_diff_text(
         limitations.extend(result.limitations);
         partial_scope = result.partial_scope.clone();
         harness_projections.extend(result.harness_projections);
+        rust_diagnostic_origins = result.rust_diagnostic_origins;
         findings.extend(result.findings);
         rust_changed_files += result.changed_files;
         candidate_line_count += result.candidate_line_count;
@@ -968,6 +974,7 @@ fn run_pipeline_for_diff_text(
         // effective base (#3940); every other path involves no base.
         effective_base: None,
         uncommitted_source_paths: Vec::new(),
+        rust_diagnostic_origins,
     })
 }
 
@@ -1061,6 +1068,8 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
     generated_file_patterns: &[String],
 ) -> Result<AnalysisResult, String> {
     let mut findings: Vec<Finding> = Vec::new();
+    let mut rust_diagnostic_origins =
+        crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default();
     // Same accounting as the diff loop (#2103): `changed_rust_files` carries
     // the Rust adapter's count only; every adapter records its own count.
     let mut rust_production_files: usize = 0;
@@ -1092,6 +1101,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
                 });
             }
             rust_harness_projections = result.harness_projections;
+            rust_diagnostic_origins = result.rust_diagnostic_origins;
             findings.extend(result.findings);
             rust_production_files += result.production_files;
             files_by_language.push((LanguageId::Rust, result.production_files));
@@ -1156,9 +1166,9 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
         // Repo-scope analysis indexes the whole workspace; the partial
         // diff-selection budget (RIPR-PROP-0019) does not apply here.
         partial_scope: None,
-        // Repo-scope analysis has no diff denominator and no base (#3940).
         effective_base: None,
         uncommitted_source_paths: Vec::new(),
+        rust_diagnostic_origins,
     })
 }
 
@@ -2181,6 +2191,33 @@ mod tests {
             limitation.kind == AnalysisLimitationKind::MalformedDiff
                 && limitation.producer_stage == AnalysisStage::DiffParse
         }));
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_declared_spans_survive_unsupported_language_filtering() -> Result<(), String> {
+        for path in ["README.md", ".github/workflows/test.yml", "src/disabled.py"] {
+            let input = format!("--- a/{path}\n+++ b/{path}\n@@ -0,0 +1,2 @@\n+retained\n");
+            let parsed = diff::parse_unified_diff_bounded_with_metadata(&input)?;
+            if parsed.changed_files.len() != 1 {
+                return Err("scope control did not parse exactly one changed file".into());
+            }
+            let limitation = parsed
+                .limitations
+                .iter()
+                .find(|item| {
+                    item.kind == AnalysisLimitationKind::MalformedDiff
+                        && item.producer_stage == AnalysisStage::DiffParse
+                })
+                .ok_or_else(|| {
+                    "scope control did not reach real declared-span parsing".to_string()
+                })?;
+            if !diff_limitation_in_scope(limitation, &[LanguageId::Rust]) {
+                return Err(format!(
+                    "malformed input vanished behind language filtering for {path}"
+                ));
+            }
+        }
         Ok(())
     }
 
