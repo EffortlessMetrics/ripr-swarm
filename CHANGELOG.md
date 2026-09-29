@@ -32,6 +32,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr lsp` now refreshes diagnostics when the root gap decision ledger
+  (`target/ripr/reports/gap-decision-ledger.json`) is rewritten or the root
+  `.git/HEAD` moves. Before, a `ripr check` run from a terminal or a
+  `git checkout` that touched no open buffer left the old diagnostics in place
+  until the next save. The server watches exactly those two root paths, anchored
+  at the workspace root for clients that support relative patterns (VS Code
+  does), and nested copies are ignored (#4896).
 - Direct collection StateWrite (`items.push(...)` on a passed identifier)
   now binds the affected collection through the existing propagation
   witness. Asserting a different collection, the return value, a callee-name

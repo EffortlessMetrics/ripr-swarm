@@ -111,6 +111,9 @@ pub(super) struct ClientFeatureProfile {
     /// The client supports dynamic registration for
     /// `workspace/didChangeWatchedFiles`.
     pub(super) watched_files_dynamic_registration: bool,
+    /// The client resolves `RelativePattern` watcher globs against a base
+    /// URI (LSP 3.17 `relativePatternSupport`).
+    pub(super) watched_files_relative_pattern_support: bool,
     /// The negotiated session-configuration transport (RIPR-SPEC-0136).
     pub(super) configuration_mode: ConfigurationMode,
     /// The RIPR editor extension block from `capabilities.experimental`.
@@ -204,6 +207,7 @@ impl ClientFeatureProfile {
             workspace_folders: false,
             code_lens_refresh: false,
             watched_files_dynamic_registration: false,
+            watched_files_relative_pattern_support: false,
             configuration_mode: ConfigurationMode::InitializationOnly,
             ripr_editor: None,
             ripr_agent: None,
@@ -325,6 +329,10 @@ impl ClientFeatureProfile {
             watched_files_dynamic_registration: workspace
                 .and_then(|value| value.did_change_watched_files.as_ref())
                 .and_then(|value| value.dynamic_registration)
+                .unwrap_or(false),
+            watched_files_relative_pattern_support: workspace
+                .and_then(|value| value.did_change_watched_files.as_ref())
+                .and_then(|value| value.relative_pattern_support)
                 .unwrap_or(false),
             configuration_mode: configuration_mode_for(workspace),
             ripr_editor: experimental
@@ -768,6 +776,31 @@ mod tests {
         if profile.publish_tags || profile.diagnostic_refresh || profile.code_lens_refresh {
             return Err("unadvertised optional features must stay unsupported".to_string());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn watched_files_relative_pattern_support_is_parsed_and_fails_closed() -> Result<(), String> {
+        // #4896: root-anchored watchers are only sent as RelativePattern when
+        // the client says it resolves them.
+        let advertised = params_from_json(serde_json::json!({
+            "capabilities": {"workspace": {"didChangeWatchedFiles": {
+                "dynamicRegistration": true,
+                "relativePatternSupport": true
+            }}}
+        }))?;
+        let profile = ClientFeatureProfile::from_initialize_params(&advertised);
+        assert!(profile.watched_files_dynamic_registration);
+        assert!(profile.watched_files_relative_pattern_support);
+
+        let dynamic_only = params_from_json(serde_json::json!({
+            "capabilities": {"workspace": {"didChangeWatchedFiles": {
+                "dynamicRegistration": true
+            }}}
+        }))?;
+        let profile = ClientFeatureProfile::from_initialize_params(&dynamic_only);
+        assert!(profile.watched_files_dynamic_registration);
+        assert!(!profile.watched_files_relative_pattern_support);
         Ok(())
     }
 

@@ -158,6 +158,7 @@ pub(super) struct Backend {
     /// the visible lens view changed. `None` until the first commit.
     last_lens_view_identity: Mutex<Option<LensViewIdentity>>,
     dynamic_file_watch_registration: Mutex<bool>,
+    watched_files_relative_pattern_support: AtomicBool,
     /// The degradation signature covered by the last `window/logMessage`
     /// component warning (#1997, RIPR-SPEC-0141). Compared per committed
     /// snapshot: a byte-identical repeated degradation warns once, a new
@@ -241,6 +242,7 @@ impl Backend {
             code_lens_refresh_support: Mutex::new(false),
             last_lens_view_identity: Mutex::new(None),
             dynamic_file_watch_registration: Mutex::new(false),
+            watched_files_relative_pattern_support: AtomicBool::new(false),
             last_component_degradation: Mutex::new(None),
             initialize_failure_disclosure_omitted: AtomicBool::new(false),
             refresh_scheduler: RefreshScheduler::default(),
@@ -2367,19 +2369,22 @@ impl Backend {
         workspace_input_kind(&root, &path)
     }
 
-    pub(super) fn watched_file_change_kinds(&self, changes: &[FileEvent]) -> (bool, bool) {
-        let mut config_changed = changes
-            .iter()
-            .any(|event| self.file_event_is_repository_config(event));
-        let mut workspace_graph_changed = false;
+    pub(super) fn watched_file_change_kinds(&self, changes: &[FileEvent]) -> WatchedFileChanges {
+        let mut kinds = WatchedFileChanges {
+            config_changed: changes
+                .iter()
+                .any(|event| self.file_event_is_repository_config(event)),
+            ..WatchedFileChanges::default()
+        };
         for event in changes {
             let Some(kind) = self.file_event_workspace_input_kind(event) else {
                 continue;
             };
-            config_changed |= kind.reloads_repository_config();
-            workspace_graph_changed |= kind.invalidates_workspace_graph();
+            kinds.config_changed |= kind.reloads_repository_config();
+            kinds.workspace_graph_changed |= kind.invalidates_workspace_graph();
+            kinds.diagnostics_input_changed |= kind == WorkspaceInputKind::DiagnosticsInput;
         }
-        (config_changed, workspace_graph_changed)
+        kinds
     }
 
     fn set_analysis_config(&self, config: LspAnalysisConfig) {
@@ -2787,6 +2792,27 @@ impl Backend {
     }
 }
 
+/// Which invalidation paths one `workspace/didChangeWatchedFiles` batch
+/// drives.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct WatchedFileChanges {
+    pub(super) config_changed: bool,
+    pub(super) workspace_graph_changed: bool,
+    /// A non-buffer diagnostics input changed without changing configuration
+    /// or the Cargo graph: only a diagnostics refresh is needed (#4896).
+    pub(super) diagnostics_input_changed: bool,
+}
+
+/// Root `.git/HEAD`: a branch checkout moves it without touching any open
+/// buffer, and the current checkout is a diagnostics input.
+const GIT_HEAD_WATCH_PATH: &str = ".git/HEAD";
+
+/// Root-relative non-buffer inputs that change published diagnostics
+/// without reloading configuration or invalidating the workspace graph
+/// (#4896). Only these exact root paths qualify: a nested ledger or
+/// `.git/HEAD` belongs to another checkout, not this workspace's inputs.
+const DIAGNOSTICS_INPUT_PATHS: [&str; 2] = [DEFAULT_GAP_DECISION_LEDGER_OUT, GIT_HEAD_WATCH_PATH];
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum WorkspaceInputKind {
     CargoGraph,
@@ -2798,6 +2824,10 @@ enum WorkspaceInputKind {
     /// detectable-file events because watched-file globs cannot express
     /// directory presence.
     PythonSourcePresence,
+    /// Root gap decision ledger or root `.git/HEAD` (#4896): diagnostics
+    /// read both on every refresh, but neither is a configuration or
+    /// workspace-graph input.
+    DiagnosticsInput,
 }
 
 impl WorkspaceInputKind {
@@ -2810,8 +2840,16 @@ impl WorkspaceInputKind {
     }
 }
 
-fn path_matches_root_file(root: &Path, path: &Path, file_name: &str) -> bool {
-    let Ok(expected) = file_uri_for_path(&root.join(file_name)) else {
+/// Whether `path` is the root file at `relative`, a `/`-separated
+/// root-relative path. Components are joined one at a time so multi-segment
+/// paths use the platform separator.
+fn path_matches_root_file(root: &Path, path: &Path, relative: &str) -> bool {
+    let expected = relative
+        .split('/')
+        .fold(root.to_path_buf(), |expected, component| {
+            expected.join(component)
+        });
+    let Ok(expected) = file_uri_for_path(&expected) else {
         return false;
     };
     let Ok(actual) = file_uri_for_path(path) else {
@@ -2823,6 +2861,12 @@ fn path_matches_root_file(root: &Path, path: &Path, file_name: &str) -> bool {
 fn workspace_input_kind(root: &Path, path: &Path) -> Option<WorkspaceInputKind> {
     if !path_is_within_root(root, path) {
         return None;
+    }
+    if DIAGNOSTICS_INPUT_PATHS
+        .iter()
+        .any(|relative| path_matches_root_file(root, path, relative))
+    {
+        return Some(WorkspaceInputKind::DiagnosticsInput);
     }
     let name = path.file_name().and_then(|name| name.to_str())?;
     if matches!(name, "Cargo.toml" | "Cargo.lock") {
@@ -2919,7 +2963,8 @@ fn root_relative_components(root: &Path, path: &Path) -> Option<Vec<String>> {
 }
 
 /// Return whether a watched path can change the effective analysis input.
-/// Cargo inputs remain recursive for workspace members. The Python inputs
+/// Cargo inputs remain recursive for workspace members. The diagnostics
+/// inputs (root gap ledger, root `.git/HEAD`) and the Python inputs
 /// are root-scoped — root marker presence and detectable `.py` source below
 /// root `src`/`tests` are what this reload path tracks; Python outside those
 /// roots is not a detection input and stays unwatched.
@@ -2927,7 +2972,12 @@ pub(super) fn workspace_input_path_is_relevant(root: &Path, path: &Path) -> bool
     workspace_input_kind(root, path).is_some()
 }
 
-fn workspace_input_watchers() -> Vec<LSPAny> {
+/// Dynamic watcher registrations for every workspace input. With
+/// `diagnostics_input_base` (the root URI, when the client supports
+/// `RelativePattern`), the diagnostics inputs register as relative patterns
+/// anchored at the root: VS Code matches a plain string glob against the
+/// absolute path, so a bare `.git/HEAD` string never fires there.
+fn workspace_input_watchers(diagnostics_input_base: Option<&Uri>) -> Vec<LSPAny> {
     std::iter::once(CONFIG_FILE_NAME)
         .chain(["Cargo.toml", "Cargo.lock"])
         .chain(PYTHON_PROJECT_MARKERS.iter().copied())
@@ -2940,6 +2990,16 @@ fn workspace_input_watchers() -> Vec<LSPAny> {
             // detectable-file events are the transport hint, and the reload
             // path's config comparison stays the semantic authority.
             serde_json::json!({"globPattern": format!("{dir}/**/*.py")})
+        }))
+        .chain(DIAGNOSTICS_INPUT_PATHS.iter().map(|relative| {
+            // Root-scoped glob with no `**`: exactly the root ledger and
+            // root `.git/HEAD`, never nested copies.
+            match diagnostics_input_base {
+                Some(base) => serde_json::json!({
+                    "globPattern": {"baseUri": base.as_str(), "pattern": *relative}
+                }),
+                None => serde_json::json!({"globPattern": *relative}),
+            }
         }))
         .collect()
 }
@@ -3126,7 +3186,7 @@ mod workspace_input_tests {
 
     #[test]
     fn dynamic_watchers_cover_the_canonical_python_input_set() {
-        let actual = workspace_input_watchers()
+        let actual = workspace_input_watchers(None)
             .into_iter()
             .filter_map(|watcher| {
                 watcher
@@ -3144,9 +3204,111 @@ mod workspace_input_tests {
                     .iter()
                     .map(|dir| format!("{dir}/**/*.py")),
             )
+            .chain([
+                "target/ripr/reports/gap-decision-ledger.json".to_string(),
+                ".git/HEAD".to_string(),
+            ])
             .collect::<BTreeSet<_>>();
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn dynamic_watchers_scope_diagnostics_inputs_to_the_root() -> Result<(), String> {
+        let expected = ["target/ripr/reports/gap-decision-ledger.json", ".git/HEAD"];
+        let is_diagnostics_input = |pattern: &str| {
+            pattern.ends_with("gap-decision-ledger.json") || pattern.ends_with("HEAD")
+        };
+
+        // Without RelativePattern support: bare root-relative strings.
+        let plain = workspace_input_watchers(None)
+            .into_iter()
+            .filter_map(|watcher| watcher.get("globPattern").cloned())
+            .collect::<Vec<_>>();
+        for relative in expected {
+            assert!(
+                plain.iter().any(|glob| glob.as_str() == Some(relative)),
+                "missing root-scoped watcher {relative}: {plain:?}"
+            );
+        }
+        for glob in plain.iter().filter_map(|glob| glob.as_str()) {
+            if is_diagnostics_input(glob) {
+                assert!(!glob.contains("**"), "{glob} must not be workspace-wide");
+            }
+        }
+
+        // With RelativePattern support: anchored at the root URI, because
+        // VS Code matches a bare string glob against the absolute path.
+        let root = std::env::temp_dir().join("ripr-workspace-input-root");
+        let base = file_uri_for_path(&root).map_err(|err| format!("root URI failed: {err}"))?;
+        let anchored = workspace_input_watchers(Some(&base))
+            .into_iter()
+            .filter_map(|watcher| watcher.get("globPattern").cloned())
+            .filter(|glob| glob.is_object())
+            .collect::<Vec<_>>();
+        let expected_anchored = expected
+            .iter()
+            .map(|relative| serde_json::json!({"baseUri": base.as_str(), "pattern": relative}))
+            .collect::<Vec<_>>();
+        assert_eq!(anchored, expected_anchored);
+        Ok(())
+    }
+
+    #[test]
+    fn root_gap_ledger_and_git_head_are_diagnostics_inputs_only() {
+        let root = std::env::temp_dir().join("ripr-workspace-input-root");
+        let ledger = root
+            .join("target")
+            .join("ripr")
+            .join("reports")
+            .join("gap-decision-ledger.json");
+        let head = root.join(".git").join("HEAD");
+        for path in [&ledger, &head] {
+            assert_eq!(
+                workspace_input_kind(&root, path),
+                Some(WorkspaceInputKind::DiagnosticsInput),
+                "{} must refresh diagnostics",
+                path.display()
+            );
+            assert!(workspace_input_path_is_relevant(&root, path));
+        }
+        assert!(!WorkspaceInputKind::DiagnosticsInput.reloads_repository_config());
+        assert!(!WorkspaceInputKind::DiagnosticsInput.invalidates_workspace_graph());
+    }
+
+    #[test]
+    fn nested_or_sibling_ledger_and_head_paths_are_not_diagnostics_inputs() {
+        let root = std::env::temp_dir().join("ripr-workspace-input-root");
+        let outside = std::env::temp_dir().join("ripr-workspace-input-outside");
+        let reports = root.join("target").join("ripr").join("reports");
+        for path in [
+            root.join("sub")
+                .join("target")
+                .join("ripr")
+                .join("reports")
+                .join("gap-decision-ledger.json"),
+            root.join("sub").join(".git").join("HEAD"),
+            reports.join("repo-exposure.json"),
+            reports.join("swarm-attempt-ledger.json"),
+            reports.join("actionable-gaps.json"),
+            root.join(".git").join("ORIG_HEAD"),
+            root.join(".git").join("refs").join("heads").join("main"),
+            root.join("HEAD"),
+            root.join("gap-decision-ledger.json"),
+            outside
+                .join("target")
+                .join("ripr")
+                .join("reports")
+                .join("gap-decision-ledger.json"),
+            outside.join(".git").join("HEAD"),
+        ] {
+            assert_eq!(
+                workspace_input_kind(&root, &path),
+                None,
+                "{} must not refresh diagnostics",
+                path.display()
+            );
+        }
     }
 }
 
@@ -3935,11 +4097,17 @@ impl LanguageServer for Backend {
             .map(|value| *value)
             .unwrap_or(false);
         if supports_dynamic_registration {
+            let diagnostics_input_base = self
+                .watched_files_relative_pattern_support
+                .load(Ordering::SeqCst)
+                .then(|| self.effective_root())
+                .flatten()
+                .and_then(|root| file_uri_for_path(&root).ok());
             let registration = Registration {
                 id: "ripr-config-file-watch".to_string(),
                 method: "workspace/didChangeWatchedFiles".to_string(),
                 register_options: Some(serde_json::json!({
-                    "watchers": workspace_input_watchers()
+                    "watchers": workspace_input_watchers(diagnostics_input_base.as_ref())
                 })),
             };
             if let Err(error) = self.client.register_capability(vec![registration]).await {
@@ -4019,6 +4187,10 @@ impl LanguageServer for Backend {
         if let Ok(mut supported) = self.dynamic_file_watch_registration.lock() {
             *supported = supports_dynamic_registration;
         }
+        self.watched_files_relative_pattern_support.store(
+            profile.watched_files_relative_pattern_support,
+            Ordering::SeqCst,
+        );
         let resolution = root_from_initialize_params(&params);
         // Retain the canonical workspace-folder set (#2036, RIPR-SPEC-0139)
         // so `didChangeWorkspaceFolders` deltas apply to stored state
@@ -4115,18 +4287,23 @@ impl LanguageServer for Backend {
             self.verbose_params_bytes(&params),
         )
         .await;
-        let (config_changed, workspace_graph_changed) =
-            self.watched_file_change_kinds(&params.changes);
-        if config_changed {
+        let changes = self.watched_file_change_kinds(&params.changes);
+        if changes.config_changed {
             self.reload_repository_config().await;
         }
-        if workspace_graph_changed {
+        if changes.workspace_graph_changed {
             self.invalidate_analysis_input_and_end_queued_progress(
                 "workspace_manifest_or_lockfile_changed",
             )
             .await;
             self.publish_analysis_status().await;
             self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::ConfigReload)
+                .await;
+        } else if changes.diagnostics_input_changed {
+            // A rewritten gap ledger or a branch checkout changes published
+            // diagnostics without touching an open buffer. The graph refresh
+            // above already re-reads both; otherwise schedule one refresh.
+            self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::WatchedInput)
                 .await;
         }
     }

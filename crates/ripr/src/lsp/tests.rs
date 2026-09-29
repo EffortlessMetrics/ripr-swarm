@@ -1,7 +1,7 @@
 use super::actions::{SERVER_EXECUTED_COMMANDS, code_action_response, resolve_action};
 use super::backend::{
-    Backend, RefreshLogSummary, refresh_completed_log_message, refresh_failed_log_message,
-    workspace_input_path_is_relevant,
+    Backend, RefreshLogSummary, WatchedFileChanges, refresh_completed_log_message,
+    refresh_failed_log_message, workspace_input_path_is_relevant,
 };
 use super::capabilities::{
     ADVERTISED_CODE_ACTION_KINDS, WorkspaceRootResolution, initialize_result,
@@ -209,7 +209,14 @@ fn watched_file_batch_preserves_config_and_workspace_graph_signals() -> Result<(
         },
     ];
 
-    assert_eq!(backend.watched_file_change_kinds(&changes), (true, true));
+    assert_eq!(
+        backend.watched_file_change_kinds(&changes),
+        WatchedFileChanges {
+            config_changed: true,
+            workspace_graph_changed: true,
+            diagnostics_input_changed: false,
+        }
+    );
     Ok(())
 }
 
@@ -233,7 +240,10 @@ fn watched_python_source_batch_routes_to_config_reload_only() -> Result<(), Stri
     }];
     assert_eq!(
         backend.watched_file_change_kinds(&changes),
-        (true, false),
+        WatchedFileChanges {
+            config_changed: true,
+            ..WatchedFileChanges::default()
+        },
         "src/app.py events must classify as configuration reload inputs"
     );
 
@@ -246,7 +256,7 @@ fn watched_python_source_batch_routes_to_config_reload_only() -> Result<(), Stri
     }];
     assert_eq!(
         backend.watched_file_change_kinds(&changes),
-        (false, false),
+        WatchedFileChanges::default(),
         "Python outside root src/tests must not trigger any invalidation"
     );
 
@@ -259,10 +269,244 @@ fn watched_python_source_batch_routes_to_config_reload_only() -> Result<(), Stri
     }];
     assert_eq!(
         backend.watched_file_change_kinds(&changes),
-        (false, false),
+        WatchedFileChanges::default(),
         "generated Python sources are excluded from detection inputs"
     );
     Ok(())
+}
+
+#[test]
+fn watched_gap_ledger_and_git_head_route_to_diagnostics_refresh_only() -> Result<(), String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let backend_root = root.clone();
+    let (service, _socket) =
+        LspService::new(move |client| Backend::new(client, backend_root.clone()));
+    let backend = service.inner();
+    backend.initialize_test_workspace_root();
+
+    // #4896: the root gap ledger and root `.git/HEAD` change published
+    // diagnostics, but neither reloads configuration nor invalidates the
+    // Cargo workspace graph.
+    for relative in [
+        ["target", "ripr", "reports", "gap-decision-ledger.json"].as_slice(),
+        [".git", "HEAD"].as_slice(),
+    ] {
+        let path = relative
+            .iter()
+            .fold(root.clone(), |path, component| path.join(component));
+        let uri = file_uri_for_path(&path).map_err(|err| format!("URI failed: {err}"))?;
+        let changes = vec![FileEvent {
+            uri,
+            typ: FileChangeType::CHANGED,
+        }];
+        assert_eq!(
+            backend.watched_file_change_kinds(&changes),
+            WatchedFileChanges {
+                diagnostics_input_changed: true,
+                ..WatchedFileChanges::default()
+            },
+            "{} must route to a diagnostics refresh only",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+/// Read until one accepted refresh has ended on the wire, answering its
+/// `window/workDoneProgress/create` request. Returns the refresh's begin
+/// message and every `window/workDoneProgress/create` seen.
+async fn read_one_wire_refresh<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+) -> Result<(String, usize), String>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut creates = 0_usize;
+    let mut begin = None;
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let message = read_lsp_message(reader).await?;
+            match message.get("method").and_then(serde_json::Value::as_str) {
+                Some("window/workDoneProgress/create") => {
+                    creates += 1;
+                    let id = message
+                        .get("id")
+                        .cloned()
+                        .ok_or_else(|| "create request carried no id".to_string())?;
+                    write_lsp_message(
+                        writer,
+                        serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null}),
+                    )
+                    .await?;
+                }
+                Some("$/progress") => {
+                    let value = &message["params"]["value"];
+                    match value["kind"].as_str() {
+                        Some("begin") => begin = value["message"].as_str().map(str::to_string),
+                        Some("end") => return Ok::<(), String>(()),
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .map_err(|_elapsed| "watched-input refresh timed out".to_string())??;
+    let begin = begin.ok_or_else(|| "refresh ended without a begin message".to_string())?;
+    Ok((begin, creates))
+}
+
+#[test]
+fn watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire()
+-> Result<(), String> {
+    work_done_progress_runtime()?.block_on(async {
+        let root = unique_lsp_test_root("watched-diagnostics-input")?;
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let backend_root = root.path().to_path_buf();
+        let (service, socket) =
+            LspService::new(move |client| Backend::new(client, backend_root.clone()));
+        let server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(root.path())?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    // An unresolvable base makes the real analysis fail
+                    // fast instead of scanning the enclosing repository.
+                    "initializationOptions": {"baseRef": "ripr-lsp-watch-missing-base"},
+                    "capabilities": {
+                        "window": {"workDoneProgress": true},
+                        "workspace": {"didChangeWatchedFiles": {
+                            "dynamicRegistration": true,
+                            "relativePatternSupport": true
+                        }}
+                    }
+                }
+            }),
+        )
+        .await?;
+        read_lsp_response(&mut client_read, 1).await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        // #4896: the registration anchors the two diagnostics inputs at the
+        // workspace root, because VS Code matches bare string globs against
+        // absolute paths.
+        let registration = tokio::time::timeout(
+            Duration::from_secs(10),
+            read_lsp_request(&mut client_read, "client/registerCapability"),
+        )
+        .await
+        .map_err(|_elapsed| "no watcher registration arrived".to_string())??;
+        let watchers = registration["params"]["registrations"][0]["registerOptions"]["watchers"]
+            .as_array()
+            .cloned()
+            .ok_or_else(|| format!("registration carried no watchers: {registration}"))?;
+        for relative in ["target/ripr/reports/gap-decision-ledger.json", ".git/HEAD"] {
+            let expected = serde_json::json!({
+                "globPattern": {"baseUri": root_uri.as_str(), "pattern": relative}
+            });
+            if !watchers.contains(&expected) {
+                return Err(format!("missing root-anchored {relative}: {watchers:?}"));
+            }
+        }
+        let registration_id = registration
+            .get("id")
+            .cloned()
+            .ok_or_else(|| "registration request carried no id".to_string())?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "id": registration_id, "result": null}),
+        )
+        .await?;
+
+        let watched_event = |path: PathBuf| -> Result<serde_json::Value, String> {
+            let uri = file_uri_for_path(&path)?;
+            Ok(serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "workspace/didChangeWatchedFiles",
+                "params": {"changes": [{"uri": uri.as_str(), "type": 2}]}
+            }))
+        };
+
+        // Unrelated files, other reports, and nested copies of the watched
+        // paths never schedule a refresh.
+        let reports = root.path().join("target").join("ripr").join("reports");
+        for unrelated in [
+            root.path().join("README.md"),
+            reports.join("repo-exposure.json"),
+            root.path()
+                .join("sub")
+                .join("target")
+                .join("ripr")
+                .join("reports")
+                .join("gap-decision-ledger.json"),
+            root.path().join("sub").join(".git").join("HEAD"),
+        ] {
+            write_lsp_message(&mut client_write, watched_event(unrelated)?).await?;
+        }
+        let quiet = read_lsp_messages_for(&mut client_read, Duration::from_millis(500)).await?;
+        if quiet.iter().any(|message| {
+            message.get("method").and_then(serde_json::Value::as_str)
+                == Some("window/workDoneProgress/create")
+        }) {
+            return Err(format!(
+                "unrelated watched files started a refresh: {quiet:?}"
+            ));
+        }
+
+        // The root ledger rewrite and a branch checkout each run one
+        // refresh, although the refresh input identity is unchanged.
+        for input in [
+            reports.join("gap-decision-ledger.json"),
+            root.path().join(".git").join("HEAD"),
+        ] {
+            write_lsp_message(&mut client_write, watched_event(input.clone())?).await?;
+            let (begin, creates) =
+                read_one_wire_refresh(&mut client_read, &mut client_write).await?;
+            if creates != 1 || !begin.contains("watched_input") {
+                return Err(format!(
+                    "{} must run one watched_input refresh; creates={creates} begin={begin}",
+                    input.display()
+                ));
+            }
+        }
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": null}),
+        )
+        .await?;
+        read_lsp_response(&mut client_read, 3).await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "exit", "params": null}),
+        )
+        .await?;
+        tokio::time::timeout(Duration::from_secs(10), server_task)
+            .await
+            .map_err(|_elapsed| "server did not stop after exit".to_string())?
+            .map_err(|err| format!("server task failed: {err}"))?;
+        Ok(())
+    })
 }
 
 #[test]
