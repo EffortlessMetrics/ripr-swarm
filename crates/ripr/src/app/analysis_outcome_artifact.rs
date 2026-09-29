@@ -279,6 +279,7 @@ mod tests {
             AnalysisIdentity::default(),
             AnalysisOutcomeCounts {
                 changed_file_count: 1,
+                parsed_changed_file_count: 1,
                 changed_line_count: 1,
                 candidate_line_count: 1,
                 probe_count: 1,
@@ -303,6 +304,7 @@ mod tests {
             AnalysisIdentity::default(),
             AnalysisOutcomeCounts {
                 changed_file_count: 1,
+                parsed_changed_file_count: 1,
                 changed_line_count: 1,
                 candidate_line_count: 1,
                 probe_count: 0,

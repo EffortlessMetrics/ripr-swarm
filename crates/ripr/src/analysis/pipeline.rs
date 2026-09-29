@@ -667,7 +667,10 @@ fn run_pipeline_for_diff_text(
     // (#3743/#3672) never reach an adapter counting loop and can produce no
     // probe, so the outcome's changed-file denominator must not count them as
     // analyzed subjects either. Both numbers use the same authority wrapper,
-    // so the note count and the outcome count cannot drift apart.
+    // so the note count and the outcome count cannot drift apart. Pure
+    // renames keep their parsed-diff denominator (#2727): they are excluded
+    // from `analysis_changed_files` and therefore never enter the subtraction
+    // below — the same treatment they had before #4372.
     let excluded_preview_changed_files = analysis_changed_files
         .iter()
         .filter(|file| {
@@ -858,6 +861,12 @@ fn run_pipeline_for_diff_text(
                 .len()
                 .saturating_sub(excluded_preview_changed_files)
                 as u64,
+            // Scope consumers (the #4012 no-scope disclosure and the #2425
+            // zero-findings diff hedge) must see what the diff parser
+            // accepted, not the post-exclusion analyzed denominator above
+            // (#4372 review): a valid diff whose only changes are refused
+            // files is neither missing scope nor an invalid diff.
+            parsed_changed_file_count: changed_files.len() as u64,
             changed_line_count: changed_line_count as u64,
             candidate_line_count: candidate_line_count as u64,
             probe_count: findings.len() as u64,
@@ -3005,6 +3014,69 @@ index 0000000..1111111 100644
             per_language,
             vec![("typescript", 1)],
             "the adapter's own post-exclusion count is the agreement target"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #4372 review: a valid diff whose ONLY change is an excluded preview
+    /// file parsed a real subject. The post-exclusion
+    /// `changed_file_count` is zero, but the raw scope discriminator the
+    /// CLI gates consume (#4012 no-scope disclosure, #2425 diff hedge)
+    /// must stay positive — an excluded-only diff is neither missing scope
+    /// nor an invalid diff.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn excluded_only_diff_keeps_raw_parsed_scope_count() -> Result<(), String> {
+        let root = temp_root("excluded-only-parsed-count")?;
+        let diff_file = root.join("vendor-only.diff");
+        write(
+            &diff_file,
+            r#"diff --git a/vendor/lib.ts b/vendor/lib.ts
+index 0000000..1111111 100644
+--- a/vendor/lib.ts
++++ b/vendor/lib.ts
+@@ -1,0 +1,2 @@
++export function vendorPrice(price: number): boolean {
++  return price > 0;
++}
+"#,
+        )?;
+
+        let result = run_diff_pipeline_with_oracle_policy(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: Some(diff_file),
+                mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::TypeScript],
+        )?;
+
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "diff must carry an analysis outcome".to_string())?;
+        assert_eq!(
+            outcome.counts.changed_file_count, 0,
+            "the refused file is not an analyzed subject (#4372)"
+        );
+        assert_eq!(
+            outcome.counts.parsed_changed_file_count, 1,
+            "scope consumers must see the parsed, policy-refused subject"
+        );
+        assert!(
+            result.preview_language_advisories.is_empty(),
+            "the refused file must not enter any advisory either"
         );
 
         let _ = std::fs::remove_dir_all(&root);

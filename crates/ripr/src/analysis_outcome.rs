@@ -193,6 +193,18 @@ impl AnalysisIdentity {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub(crate) struct AnalysisOutcomeCounts {
     pub(crate) changed_file_count: u64,
+    /// Raw parsed-diff scope discriminator (#4372 review): changed files the
+    /// diff parser accepted, before the preview excluded-path authority
+    /// refuses any of them. `changed_file_count` counts post-exclusion
+    /// analyzed subjects (#4372), so a valid diff whose only changes are
+    /// refused files reads zero there; the scope-detection consumers (the
+    /// #4012 no-scope gate and the #2425 zero-findings diff hedge) must
+    /// discriminate on this raw count instead, or they present a parsed,
+    /// policy-refused diff as "no scope" / a possibly-invalid diff. Not
+    /// serialized: the outcome JSON keeps presenting analyzed denominators
+    /// only, and no deserialized outcome re-runs those CLI gates.
+    #[serde(skip)]
+    pub(crate) parsed_changed_file_count: u64,
     pub(crate) changed_line_count: u64,
     pub(crate) candidate_line_count: u64,
     pub(crate) probe_count: u64,
@@ -573,6 +585,7 @@ mod tests {
             outcome(
                 AnalysisOutcomeKind::CompleteNoFindings,
                 AnalysisOutcomeCounts {
+                    parsed_changed_file_count: 1,
                     changed_file_count: 1,
                     changed_line_count: 1,
                     candidate_line_count: 1,
@@ -584,6 +597,7 @@ mod tests {
             outcome(
                 AnalysisOutcomeKind::CompleteWithFindings,
                 AnalysisOutcomeCounts {
+                    parsed_changed_file_count: 1,
                     changed_file_count: 1,
                     changed_line_count: 1,
                     candidate_line_count: 1,
@@ -712,6 +726,7 @@ mod tests {
             outcome(
                 AnalysisOutcomeKind::CompleteNoFindings,
                 AnalysisOutcomeCounts {
+                    parsed_changed_file_count: 1,
                     changed_file_count: 1,
                     changed_line_count: 1,
                     candidate_line_count: 1,

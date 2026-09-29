@@ -522,6 +522,7 @@ fn test_complete_analysis_outcome() -> Result<AnalysisOutcome, String> {
         crate::analysis_outcome::AnalysisIdentity::default(),
         crate::analysis_outcome::AnalysisOutcomeCounts {
             changed_file_count: 1,
+            parsed_changed_file_count: 1,
             changed_line_count: 1,
             candidate_line_count: 1,
             probe_count: 1,
@@ -547,6 +548,7 @@ mod tests {
             crate::analysis_outcome::AnalysisIdentity::default(),
             AnalysisOutcomeCounts {
                 changed_file_count: 1,
+                parsed_changed_file_count: 1,
                 changed_line_count: 1,
                 candidate_line_count: 1,
                 probe_count: 0,

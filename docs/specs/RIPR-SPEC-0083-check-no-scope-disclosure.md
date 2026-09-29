@@ -77,7 +77,12 @@ The disclosure fires when ALL of the following are true:
    files (`analysis_outcome.counts.changed_file_count == 0`). A resolved
    default base that analyzed changed files is a real analyzed-empty result
    and does NOT trigger the disclosure, even though no scope flags were
-   typed (#4012).
+   typed (#4012). The gate discriminates on the raw parsed count
+   (`counts.parsed_changed_file_count`, #4372 review), not the
+   post-exclusion `changed_file_count`: a default-base diff whose only
+   parsed changes are excluded preview files (#3743/#3672) resolved a real
+   scope, and the "contains no changed files" note would be false — the
+   exclusion is RIPR-SPEC-0082's disclosure domain, not a missing scope.
 
 The guidance does NOT fire when:
 
@@ -102,6 +107,9 @@ still `false`, the result is empty, the format is not repo-scope, AND the
 producer outcome reports zero analyzed changed files, `output.no_scope_provided`
 is set to `true`. The renderers read this field. The analyzed-file discriminator
 (#4012) is authoritative: what was actually analyzed outranks what was typed.
+The gate reads the raw parsed count (`counts.parsed_changed_file_count`,
+#4372 review); the post-exclusion `changed_file_count` is an analyzed
+denominator and must not stand in for scope here.
 
 ### Human output
 

@@ -87,6 +87,16 @@ file the product deliberately refuses to inspect into the report denominator.
 The diff-mode outcome count `changed_file_count` applies the same authority, so
 the note count and the JSON count cannot disagree about the denominator.
 
+`changed_file_count` is an analyzed-subject denominator, not a scope fact.
+Scope-detection consumers — the #4012 no-scope disclosure and the #2425
+zero-findings diff hedge — discriminate on the raw parsed count the producer
+also carries (`counts.parsed_changed_file_count`, in-process only, not part
+of the serialized outcome contract): a valid diff whose only parsed changes
+are refused files resolved a real scope and parsed fine, so presenting it as
+"no scope" or a possibly-invalid diff would be a wrong actionable repair
+signal (#4372 review). Pure renames keep their parsed-diff denominator
+(#2727); they never enter the exclusion subtraction.
+
 A `PreviewLanguageAdvisory` is produced for each preview language. TypeScript,
 JavaScript, and Python are disclosed only when their adapters are compiled in
 (`LanguageId::is_available`). Perl is disclosed by extension even when its
@@ -281,6 +291,8 @@ enabled adapter with a matching non-success `language_runs` entry carries
 - `crates/ripr/src/analysis/pipeline.rs::tests::python_preview_advisories_count_post_exclusion_files_only`
 - `crates/ripr/src/analysis/pipeline.rs::tests::excluded_preview_path_wrapper_routes_each_language_authority`
 - `crates/ripr/src/analysis/pipeline.rs::tests::diff_pipeline_advisory_and_changed_file_count_agree_post_exclusion`
+- `crates/ripr/src/analysis/pipeline.rs::tests::excluded_only_diff_keeps_raw_parsed_scope_count`
+- `crates/ripr/src/cli/commands/check.rs::tests::zero_findings_hedge_is_silent_when_only_excluded_files_parsed`
 - `crates/ripr/src/analysis/pipeline.rs::tests::non_source_disclosure_message_names_count_and_extensions`
 - `crates/ripr/src/analysis/pipeline.rs::tests::non_source_disclosure_message_silent_for_source_or_empty_diffs`
 

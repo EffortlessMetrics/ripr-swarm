@@ -585,10 +585,14 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // missing scope — so the producer outcome's changed_file_count is the
     // discriminator. Repo-scope formats analyze the whole repo by
     // definition, so the diff-scope disclosure never applies to them.
+    // #4372 review: the discriminator is the RAW parsed count, not the
+    // post-exclusion `changed_file_count` — a valid default-base diff whose
+    // only changes are excluded preview files resolved a real scope, and the
+    // "contains no changed files" note would be false.
     let analyzed_changed_files = output
         .analysis_outcome
         .as_ref()
-        .is_some_and(|outcome| outcome.counts.changed_file_count > 0);
+        .is_some_and(|outcome| outcome.counts.parsed_changed_file_count > 0);
     if !scope_explicitly_provided
         && output.findings.is_empty()
         && !analyzed_changed_files
@@ -664,7 +668,9 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
 ///   by config or unavailable in this binary, name that typed cause;
 /// - when the diff parsed to at least one changed file, the diff was valid
 ///   and the analysis outcome on stdout already explains the empty result,
-///   so no diff-validity guess is printed;
+///   so no diff-validity guess is printed (the raw parsed count is the
+///   discriminator, not the post-exclusion `changed_file_count`: a valid
+///   diff of only excluded preview files parsed fine — #4372 review);
 /// - only when nothing parsed (or no outcome exists) print the generic
 ///   "may not be a valid unified diff" hint.
 fn zero_findings_diff_hedge(
@@ -693,7 +699,7 @@ fn zero_findings_diff_hedge(
             causes.join("; ")
         ));
     }
-    if outcome.counts.changed_file_count > 0 {
+    if outcome.counts.parsed_changed_file_count > 0 {
         return None;
     }
     Some(generic.to_string())
@@ -1067,6 +1073,32 @@ mod tests {
                 .ok_or_else(|| "an unparsed diff must keep the generic hint".to_string())?;
             assert!(hedge.contains("not a valid unified diff"), "{hedge}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn zero_findings_hedge_is_silent_when_only_excluded_files_parsed() -> Result<(), String> {
+        // #4372 review: a valid diff whose only parsed change is an
+        // excluded preview file (raw parsed count 1, post-exclusion count
+        // 0) parsed fine — the hedge must not guess at diff validity.
+        use crate::analysis_outcome::{
+            AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+        };
+        let excluded_only = AnalysisOutcome::new(
+            AnalysisOutcomeKind::NoBehavioralCandidates,
+            crate::analysis_outcome::AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                parsed_changed_file_count: 1,
+                changed_line_count: 2,
+                ..AnalysisOutcomeCounts::default()
+            },
+            Vec::new(),
+        )?;
+        assert_eq!(excluded_only.counts.changed_file_count, 0);
+        assert!(
+            zero_findings_diff_hedge(Some(&excluded_only)).is_none(),
+            "an excluded-only parsed diff must not be blamed for diff validity"
+        );
         Ok(())
     }
 
