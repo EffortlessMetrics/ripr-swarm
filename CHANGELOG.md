@@ -32,6 +32,9 @@ are scoped or reviewed.
   actual collection retains discrimination. Return, error, and field
   direct-sink behavior is unchanged
   ([#4575](https://github.com/EffortlessMetrics/ripr-swarm/issues/4575)).
+- `ripr doctor` and `ripr first-pr --check` treat a start-here packet written
+  by another ripr version, or with no `ripr_version`, as stale evidence and
+  print the refresh command instead of trusting it after an upgrade (#4757).
 - Changes in languages ripr does not analyze (Go, Java, C, C++, shell and
   others) are no longer called non-source files. A Go-only diff reported
   `no_behavioral_candidates (analysis complete)` and said the empty result was
@@ -2054,6 +2057,11 @@ are scoped or reviewed.
   `cargo xtask check-agent-skills`, which routed Rust CI already
   requires, and name the formatter check as `cargo fmt --check`
   ([#3826](https://github.com/EffortlessMetrics/ripr-swarm/pull/3826)).
+
+- The local VSIX steps in `docs/EDITOR_EXTENSION.md` now run `npm ci` and
+  `npm run compile` before `npm run package`. Run alone in a fresh checkout,
+  `npm run package` stops with `Extension entrypoint(s) missing`
+  ([#4865](https://github.com/EffortlessMetrics/ripr-swarm/pull/4865)).
 
 ## 0.10.0 - Honest-by-construction evidence and downstream gate adoption
 
