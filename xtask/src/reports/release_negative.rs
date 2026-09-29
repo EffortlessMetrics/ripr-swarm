@@ -3309,6 +3309,112 @@ mod tests {
         Ok(())
     }
 
+    struct OwnedReportFixture(PathBuf);
+    impl Drop for OwnedReportFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn qualified_failure_report_preserves_admission_and_write_errors() -> Result<(), String> {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| format!("report fixture clock: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-qualified-report-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).map_err(|error| format!("exclusive report fixture: {error}"))?;
+        let owned = OwnedReportFixture(root.clone());
+        let source = root.join("source");
+        fs::create_dir(&source).map_err(|error| format!("report fixture source: {error}"))?;
+        let missing = root.join("missing-controller");
+        let invoke = |controller: &Path| {
+            release_negative_corpus(&[
+                "--version".to_string(),
+                "0.11.0".to_string(),
+                "--controller-root".to_string(),
+                controller.to_string_lossy().into_owned(),
+                "--candidate-source-root".to_string(),
+                source.to_string_lossy().into_owned(),
+                "--candidate-artifact".to_string(),
+                "docs/missing.json".to_string(),
+            ])
+        };
+        let missing_error = invoke(&missing)
+            .err()
+            .ok_or_else(|| "missing controller unexpectedly accepted".to_string())?;
+        for expected in ["resolve controller root", "report controller root"] {
+            if !missing_error.contains(expected) {
+                return Err(format!(
+                    "missing refusal/write cause {expected}: {missing_error}"
+                ));
+            }
+        }
+        let controller = root.join("controller");
+        fs::create_dir(&controller).map_err(|error| format!("report controller: {error}"))?;
+        let reports = controller.join("target/ripr/reports");
+        let refusal = invoke(&controller)
+            .err()
+            .ok_or_else(|| "invalid writable controller unexpectedly accepted".to_string())?;
+        if !refusal.contains("release negative corpus failed") {
+            return Err(format!(
+                "writable failure reports were not retained: {refusal}"
+            ));
+        }
+        let writable_json: Value = serde_json::from_slice(
+            &fs::read(reports.join("release-negative-corpus.json"))
+                .map_err(|error| format!("writable failure JSON: {error}"))?,
+        )
+        .map_err(|error| format!("writable failure JSON parse: {error}"))?;
+        let writable_phase = writable_json
+            .get("phase_error")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "writable refusal lost original phase_error".to_string())?;
+        let writable_markdown = fs::read_to_string(reports.join("release-negative-corpus.md"))
+            .map_err(|error| format!("writable failure Markdown: {error}"))?;
+        if writable_json.get("status").and_then(Value::as_str) != Some("fail")
+            || !writable_markdown.contains("Status: fail")
+            || !writable_markdown.contains(writable_phase)
+            || !writable_phase.contains("read controller release policy")
+        {
+            return Err(format!(
+                "writable JSON/Markdown refusal disagrees: {writable_json}"
+            ));
+        }
+        if controller.join(NEGATIVE_WORK_DIR).exists() {
+            return Err("writable refused authority created producer/baseline".to_string());
+        }
+        fs::remove_file(reports.join("release-negative-corpus.md"))
+            .map_err(|error| format!("prepare owned Markdown collision: {error}"))?;
+        fs::create_dir_all(reports.join("release-negative-corpus.md"))
+            .map_err(|error| format!("block Markdown file with directory: {error}"))?;
+        let write_error = invoke(&controller)
+            .err()
+            .ok_or_else(|| "invalid registry unexpectedly accepted".to_string())?;
+        let json: Value = serde_json::from_slice(
+            &fs::read(reports.join("release-negative-corpus.json"))
+                .map_err(|error| format!("retained actual failure JSON: {error}"))?,
+        )
+        .map_err(|error| format!("failure JSON: {error}"))?;
+        let phase_error = json
+            .get("phase_error")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "actual failure report lost admission cause".to_string())?;
+        if !write_error.contains(phase_error) || !write_error.contains("write controller report") {
+            return Err(format!(
+                "Markdown write lost actual admission/write cause: {write_error}"
+            ));
+        }
+        if controller.join(NEGATIVE_WORK_DIR).exists() {
+            return Err("refused authority unexpectedly created producer/baseline".to_string());
+        }
+        fs::remove_dir_all(&owned.0).map_err(|error| format!("report fixture cleanup: {error}"))?;
+        Ok(())
+    }
+
     #[test]
     fn report_markdown_renders_case_matrix_and_dispositions() -> Result<(), String> {
         let spec = CaseSpec {
@@ -3329,7 +3435,7 @@ mod tests {
             artifacts: Vec::new(),
         };
         let receipt = CaseReceipt::new(&spec, &candidate, &baseline);
-        let report = NegativeCorpusReport {
+        let mut report = NegativeCorpusReport {
             version: "0.10.0".to_string(),
             status: "fail".to_string(),
             run_status: "complete".to_string(),
@@ -3367,11 +3473,53 @@ mod tests {
         let json = negative_corpus_json(&report)?;
         let value: Value = serde_json::from_str(&json)
             .map_err(|err| format!("report JSON is malformed: {err}"))?;
-        if value["summary"]["total_cases"] != json!(1) {
+        if value.pointer("/summary/total_cases") != Some(&json!(1)) {
             return Err("report summary lost the case count".to_string());
         }
-        if value["summary"]["not_applicable"] != json!(2) {
+        if value.pointer("/summary/not_applicable") != Some(&json!(2)) {
             return Err("report summary lost the disposition count".to_string());
+        }
+        let normalize_retention = |mut value: Value| -> Result<Value, String> {
+            for pointer in ["/evidence_root", "/baseline/retained_under"] {
+                let field = value
+                    .pointer_mut(pointer)
+                    .ok_or_else(|| format!("report field missing: {pointer}"))?;
+                *field = Value::Null;
+            }
+            Ok(value)
+        };
+        let unchanged_fields = normalize_retention(value.clone())?;
+        for root in [
+            NEGATIVE_WORK_DIR,
+            "controller/target/ripr/corpus/qualification-42",
+        ] {
+            report.evidence_root = root.to_string();
+            let expected = format!("{root}/baseline");
+            let rendered: Value = serde_json::from_str(&negative_corpus_json(&report)?)
+                .map_err(|error| format!("retention JSON: {error}"))?;
+            if rendered
+                .pointer("/baseline/retained_under")
+                .and_then(Value::as_str)
+                != Some(expected.as_str())
+            {
+                return Err(format!(
+                    "retention path does not follow actual evidence root: {rendered}"
+                ));
+            }
+            if normalize_retention(rendered.clone())? != unchanged_fields {
+                return Err("retention projection changed unrelated JSON fields".to_string());
+            }
+            let markdown = negative_corpus_markdown(&report);
+            if !markdown.contains(&format!("- retained artifacts ({expected}):")) {
+                return Err(format!("Markdown retention path disagrees: {markdown}"));
+            }
+            if root != NEGATIVE_WORK_DIR
+                && markdown.contains(
+                    "- retained artifacts (target/ripr/release-negative-corpus/baseline):",
+                )
+            {
+                return Err("qualified report still advertises stale legacy retention".to_string());
+            }
         }
         Ok(())
     }
