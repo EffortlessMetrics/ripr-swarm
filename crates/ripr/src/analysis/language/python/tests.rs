@@ -5594,3 +5594,44 @@ fn nested_class_dunder_relates_through_its_outer_class() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn private_descriptor_dunder_reached_through_its_package_is_a_limit() -> Result<(), String> {
+    // cachetools 57d2e48: `_DescriptorBase.__get__` runs whenever a test
+    // reads a `@cachedmethod` attribute. No test names the private base, but
+    // the suite imports `cachedmethod` from the package, and it killed the
+    // mutant of the changed line while ripr said `no_static_path`.
+    let owner_file = Path::new("src/cachetools/_cachedmethod.py");
+    let owner_source = "class _DescriptorBase:\n    def __get__(self, obj, objtype=None):\n        if obj is None:\n            return self\n        return self.bind(obj)\n";
+    let owners = extract_owners(owner_file, owner_source);
+    let get = flat_owner(&owners, "_DescriptorBase.__get__")?;
+    let classify = |tests: &[PythonTest]| {
+        classify_change(owner_file, 3, "        if obj is None:", &owners, tests)
+            .ok_or("the changed line must produce a finding")
+    };
+    let package_tests = extract_tests(
+        Path::new("tests/test_cachedmethod.py"),
+        "from cachetools import cachedmethod\n\n\nclass Cached:\n    @cachedmethod(lambda self: {})\n    def get(self, value):\n        return value\n\n\ndef test_get():\n    assert Cached().get(1) == 1\n",
+    );
+    assert_eq!(package_tests.len(), 1);
+    assert!(candidate_relations(get, &package_tests).is_empty());
+    let finding = classify(&package_tests)?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("dynamic_dispatch") && line.contains("its package")),
+        "{:?}",
+        finding.missing
+    );
+
+    // A sibling package that only shares a trailing name is not the owner's.
+    let other_package = extract_tests(
+        Path::new("tests/test_other.py"),
+        "from othertools.cachetools import cachedmethod\n\n\ndef test_get():\n    assert cachedmethod is not None\n",
+    );
+    assert_eq!(other_package.len(), 1);
+    assert_eq!(classify(&other_package)?.class, ExposureClass::NoStaticPath);
+    Ok(())
+}

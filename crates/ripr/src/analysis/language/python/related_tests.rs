@@ -478,9 +478,12 @@ fn module_contains_owner(module: &str, owner: &PythonOwner) -> bool {
 /// Whether a test may reach the dunder owner's class in a shape this adapter
 /// cannot bind: its module imports the class or the owner module
 /// (`self.Cache(...)` through a unittest mixin attribute, or a test-local
-/// subclass), or its body names the class through an import this adapter
-/// does not read (`try: from pkg.cache import Cache`). Such a test makes the
-/// owner a dynamic-dispatch limit rather than `no_static_path`.
+/// subclass), imports anything from the owner module or a package above it
+/// (`from cachetools import cachedmethod` builds a subclass of the private
+/// `_DescriptorBase`, whose `__get__` runs on attribute access), or its body
+/// names the class through an import this adapter does not read
+/// (`try: from pkg.cache import Cache`). Such a test makes the owner a
+/// dynamic-dispatch limit rather than `no_static_path`.
 pub(super) fn test_may_reach_owner_class(
     test: &PythonTest,
     owner: &PythonOwner,
@@ -489,7 +492,9 @@ pub(super) fn test_may_reach_owner_class(
     let top = class.split_once('.').map_or(class, |(top, _)| top);
     contains_name_reference(&test.body_text, class)
         || test.imports.iter().any(|import| {
-            imports_owner_module(import, owner) || imports_owner_class(import, owner, top)
+            imports_owner_module(import, owner)
+                || imports_owner_class(import, owner, top)
+                || module_contains_owner(&import.source_module, owner)
         })
 }
 
