@@ -11,9 +11,54 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Security: Rust source discovery skips symlinked `.rs` entries, as the
+  Python and TypeScript readers already did. A cloned repository or pull
+  request that committed `src/zero.rs -> /dev/zero` made `ripr check` read
+  until it ran out of memory (#4751).
+- Security: ripr's git calls pass `-c core.fsmonitor=false`, so a
+  repository's own `core.fsmonitor` program (reachable from an extracted
+  archive or a planted nested repository) does not run on `git status`
+  (#4744).
+- Security: `[perl].cache_dir` must be a repository-relative path without
+  `..`. An absolute or escaping value is now a config error instead of a
+  directory ripr creates and writes outside the checkout. The cache directory
+  now resolves under the analyzed root rather than the working directory, so
+  `--root <checkout>` cannot place it elsewhere either (#4745).
+- Security: `ripr doctor` probes every language runtime (`node`, `bun`,
+  `pnpm`, `python3`, `pytest`) outside the checkout, as it already did for
+  `yarn`. Run inside it, pnpm fetched and ran the release a project's
+  `packageManager` named, and version managers read project files (#4742).
+- Security: ripr no longer runs `cargo` or `rustc` in a repository whose
+  nearest `rust-toolchain.toml` selects a toolchain by `path`. rustup would
+  execute that path, and `/proc/self/cwd/...` points it into the checkout, so
+  `ripr doctor` in a cloned repository ran the repository's own program.
+  Doctor now reports the check as not run and names the file, and the
+  test-harness `cargo metadata` probe fails closed. Setting
+  `RUSTUP_TOOLCHAIN` restores the probes (#4740).
+- Security: the workflow `ripr init --ci github` writes no longer consumes
+  gate inputs a pull request can commit under `target/ripr` or `target/ci`
+  (#4731), only treats ripr comments posted by `github-actions[bot]` as its
+  own (#4732), and no longer leaves the job token in `.git/config`, prints
+  unfolded repository paths to the log, or interpolates composite-action
+  inputs into shell (#4733). Regenerate the workflow with
+  `ripr init --ci github --force` to pick this up.
+- Security: `ripr lsp` no longer reads a whole client-named file to digest
+  an opened document. It digests only a regular file no larger than one LSP
+  message, so `didOpen` for `/dev/zero`, a FIFO or a multi-GB file can no
+  longer exhaust memory or hang the server (#4729).
+- Security: a base ref starting with `-` is refused before `git diff` runs,
+  including from LSP `baseRef` settings, so it can never be parsed as a diff
+  option such as `--output` (#4730).
+- Security: `ripr pilot` and other commands that write to default paths
+  inside the analyzed repository no longer write through a symlink committed
+  there. A cloned repository could commit
+  `target/ripr/pilot/pilot-summary.md` as a link to any file the user can
+  write, and `ripr pilot` replaced that file. Those writes, and ripr's
+  temporary files, now refuse a symlink, FIFO or directory at the output
+  path (#4719).
 - Nested `rerun --json` cache-identity versions in `docs/OUTPUT_SCHEMA.md`
-  now track live `FILE_FACT_CACHE_SCHEMA_VERSION` (`1.10`) and
-  `CACHE_SCHEMA_VERSION` (`1.16`). Producer-backed docs tests fail when those
+  now track live `FILE_FACT_CACHE_SCHEMA_VERSION` (`1.11`) and
+  `CACHE_SCHEMA_VERSION` (`1.17`). Producer-backed docs tests fail when those
   nested values, the command-to-version table, swarm-queue envelope, or
   cache-status field contract drift from producers (#4618).
 - Default human `Hidden:` output names the language and preview status of
@@ -29,6 +74,14 @@ are scoped or reviewed.
   relation follows at most three same-module calls, respects parameter and
   local shadowing, and reports such reach as `weakly_exposed`, naming the
   exported callers, never `exposed` on its own.
+- Rust files saved with a UTF-8 byte-order mark now analyze like the same
+  file without one. The mark made the parser fail, so the file silently fell
+  back to lexical facts and a change to an item on line 1 got false
+  `no_static_path` warnings (#4583). A Rust file that is not UTF-8, such as a
+  Latin-1 test fixture, no longer stops `ripr check` for the whole workspace
+  with exit 2; it is indexed on lexical fallback and named with
+  `rust_source_not_utf8` (#4582). `--diff FILE` and `--diff -` now accept a
+  diff containing non-UTF-8 bytes, as `--base` already did (#4584).
 - Commands ripr prints now run. For a missing agent receipt, `ripr reports
   index` suggests `ripr agent status`, which names the repair attempt's
   next step, instead of an `agent receipt` call missing its required
@@ -50,6 +103,57 @@ are scoped or reviewed.
   CLI route that analyzes the diff. Before, only `initialize` carried them.
   Workspace status no longer says a `ripr.toml` is detected when the root has
   none; that limitation now appears only when one was found.
+- TypeScript: when a test imports the changed function through an alias
+  ripr could not resolve, such as `@/lib/math` with
+  `[typescript] resolve_tsconfig_paths` unset, `ripr check` no longer says
+  no test references the function and asks for a new test. The missing
+  discriminator and next step now name the test, the import path and why it
+  was not resolved, with the same fix the limitation evidence gives. The
+  finding stays `no_static_path`. (#4550)
+- TypeScript: `[typescript] resolve_tsconfig_paths` now reads
+  `tsconfig.json` and `jsconfig.json` the way `tsc` does, with `//` and
+  `/* */` comments, trailing commas and a leading byte-order mark. Before, any comment (and
+  `tsc --init` output is mostly comments) made alias resolution give up, and
+  the finding told users to rewrite the file as strict JSON. Malformed
+  files, including an unclosed block comment, still resolve no aliases and
+  say the file could not be parsed. (#4549)
+- TypeScript/JavaScript preview: a test that loads its subject by directory,
+  such as `var mimeTypes = require('..')`, now relates to the owner. `.` and
+  `..` were not treated as relative specifiers, and a directory specifier did
+  not resolve to the module it loads, so ripr reported `no_static_path` for
+  code the test calls. A directory now resolves through its `package.json`
+  `main`, else its `index` file; a sibling file module still wins, and a
+  root-escaping or unresolvable `main` keeps the specifier unresolved.
+  (#4546)
+- TypeScript/JavaScript preview: a change inside a CommonJS export such as
+  `exports.thrice = function thrice(x) { ... }` now maps to an owner. These
+  assignments produced no owner, so the changed line yielded zero candidates
+  and `no_behavioral_candidates`. `exports.NAME` / `module.exports.NAME`
+  functions and arrows, `module.exports = function ...`, and function
+  properties of `module.exports = { ... }` are now owners that `require()`
+  tests relate to; non-function values and computed keys still produce none,
+  and an export name assigned twice in one file produces no owner. (#4545)
+- TypeScript/JavaScript preview: mocha, `node:test` and Vitest suites written
+  with `context`, `suite` or `specify`, with an options object before the
+  callback (`it(name, { timeout }, fn)`), or with a `describe` title that is
+  not a string literal (`describe(Div.name, fn)`) were skipped, so their tests
+  were never related to the code they cover. These forms are now walked like
+  `describe` / `it`; `.skip`, `xit` and `xcontext` stay uncredited, as does
+  a registration whose options object skips it (`{ skip: true }`,
+  `{ todo: true }`, Vitest `{ fails: true }`), and `test(name, fn, timeout)`
+  is unchanged (#4548).
+- TypeScript/JavaScript preview: tests that assert with `node:assert` or
+  chai now count as oracles. `assert.strictEqual(charset('text/html'),
+  'UTF-8')` in a mocha suite was read as an `unknown` oracle, and ripr
+  suggested adding `toBe`. Assertions made through an imported `assert`,
+  `node:assert`, `assert/strict` or chai binding now map to exact-value,
+  relational, smoke or broad-error evidence, including bare named imports
+  (`strictEqual(a, b)`) and chai `expect(x).to.equal(y)` chains. Loose
+  `==` equality (legacy `node:assert` `equal` / `deepEqual`, chai
+  `assert.equal`) counts as relational, not exact-value. A local helper
+  named `assert`, or an imported binding re-declared in the test or its
+  suite, is still not credited, and Jest/Vitest `expect` is unchanged
+  (#4547).
 - `ripr rerun --changed-test` with an unknown test node, an unparsed test
   file, or an ambiguous owner now returns the documented `limited` report
   (`changed_test_unresolved`, `changed_test_owner_unresolved`,
@@ -94,6 +198,9 @@ are scoped or reviewed.
   blocked root, a file outside the analyzed root, an edited buffer whose
   evidence is paused until the file is saved, or a file no refresh has
   analyzed yet.
+- CI: the `ripr init --ci github` workflow pins `shell: bash` for every job,
+  so its bash-only steps still parse on a Windows runner, and the README
+  names `ripr init --ci github` as the CI entry point (#4391).
 - `ripr review-comments` no longer times out on a large diff. It evaluates
   seams on changed lines and in changed owner functions first, and skips the
   rest of the scope when those already fill the ten review slots; a warning
@@ -1124,6 +1231,26 @@ are scoped or reviewed.
   focused test with the missing discriminator next to the nearest related
   test", matching the new test `pilot` names, where it used to say "extend
   the nearest related test".
+- A deeply nested Rust file anywhere in the workspace no longer aborts
+  `ripr check`, `ripr pilot`, or the LSP with a stack overflow. A lexical scan
+  now refuses a source file before parsing when its estimated nesting depth
+  passes 256, an `else if` chain passes 2,048 links, or an operator chain
+  passes 4,096. That file gets lexical-fallback facts, and the
+  fallback disclosure names the `rust_nesting_budget` reason on cold and warm
+  runs. Cache generations bumped, so a warm cache cannot serve facts from
+  before the budget (#4475).
+- `ripr check --format repo-exposure-md` puts the file path in each Top gaps
+  heading in a code span, as the owner line already did. A file name holding
+  Markdown link brackets or `*` rendered as a link or emphasis in that heading
+  (#4605).
+- Each repair attempt keeps its own result. The after phase copies the
+  receipt and the verify document into the attempt's artifacts directory and
+  records them in `attempt.json` as `terminal_artifacts`, bound by path,
+  size, and SHA-256. Finishing a second attempt used to overwrite
+  `target/ripr/reports/agent-receipt.json`, the only copy of the first
+  attempt's result; that file is now a compatibility copy of the latest
+  finish, and `ripr agent status` reads the attempt's own receipt first
+  (#4636).
 
 ### Added
 
@@ -1423,6 +1550,13 @@ are scoped or reviewed.
   `valid` / `incomplete` / `not_run` — a structural currentness-readiness
   verdict, never a robustness or adequacy claim
   ([#3565](https://github.com/EffortlessMetrics/ripr-swarm/issues/3565)).
+- `ripr feedback record` writes a local usefulness receipt bound to one
+  analysis snapshot (`--snapshot`, required) with a reason from a closed list,
+  such as `useful_actionable` or `false_actionable`, under
+  `target/ripr/feedback/`. `ripr feedback export` joins those receipts onto an
+  existing `route-quality.json`, listing receipts that match no row instead of
+  inventing movement. Recording changes no diagnostic, classification,
+  baseline, suppression, gate, or gap closure (#4684).
 
 ### Changed
 
