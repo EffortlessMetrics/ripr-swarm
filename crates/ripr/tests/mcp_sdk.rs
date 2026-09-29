@@ -142,6 +142,32 @@ async fn sdk_session(
             if &resource_status != status {
                 return Err("SDK tool and resource projected different status documents".into());
             }
+            for (request, code) in [
+                (
+                    CallToolRequestParams::new("ripr_everything"),
+                    rmcp::model::ErrorCode::METHOD_NOT_FOUND,
+                ),
+                (
+                    CallToolRequestParams::new("ripr_workspace_status").with_arguments(
+                        serde_json::Map::from_iter([("verbose".to_string(), Value::Bool(true))]),
+                    ),
+                    rmcp::model::ErrorCode::INVALID_PARAMS,
+                ),
+            ] {
+                match client.call_tool(request).await {
+                    Err(rmcp::service::ServiceError::McpError(error)) if error.code == code => {}
+                    _ => {
+                        return Err("SDK accepted unknown tool or nonempty status arguments".into());
+                    }
+                }
+            }
+            if client
+                .read_resource(ReadResourceRequestParams::new("ripr://workspace/missing"))
+                .await
+                .is_ok()
+            {
+                return Err("SDK accepted an unknown status resource".into());
+            }
             Ok(())
         }
         .await;
@@ -219,6 +245,19 @@ async fn initialize_with_discovery_only_version_negotiates_a_handshake_version()
 -> Result<(), String> {
     sdk_session(
         ProtocolVersion::V_2026_07_28,
+        ClientLifecycleMode::Initialize,
+        ProtocolVersion::LATEST_WITH_INITIALIZE,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn initialize_with_unknown_version_negotiates_a_supported_handshake_version()
+-> Result<(), String> {
+    let unknown = serde_json::from_value::<ProtocolVersion>(serde_json::json!("2099-01-01"))
+        .map_err(|error| format!("decode unknown protocol version: {error}"))?;
+    sdk_session(
+        unknown,
         ClientLifecycleMode::Initialize,
         ProtocolVersion::LATEST_WITH_INITIALIZE,
     )

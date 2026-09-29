@@ -30,13 +30,7 @@ fn run_mcp(root: &Path, chunks: &[&[u8]]) -> Result<Output, String> {
     // stdout while the harness waits for exit would deadlock the test
     // (#3587 review).
     let stdin_chunks: Vec<Vec<u8>> = chunks.iter().map(|chunk| chunk.to_vec()).collect();
-    let writer = std::thread::spawn(move || {
-        for chunk in &stdin_chunks {
-            if stdin.write_all(chunk).is_err() || stdin.flush().is_err() {
-                return;
-            }
-        }
-    });
+    let (response_sender, response_receiver) = std::sync::mpsc::channel();
     let mut stdout_pipe = child
         .stdout
         .take()
@@ -46,9 +40,61 @@ fn run_mcp(root: &Path, chunks: &[&[u8]]) -> Result<Output, String> {
         .take()
         .ok_or_else(|| "spawned MCP process did not expose stderr".to_string())?;
     let stdout_reader = std::thread::spawn(move || {
+        use std::io::BufRead;
+        let mut reader = std::io::BufReader::new(&mut stdout_pipe);
         let mut buffer = Vec::new();
-        let _ = std::io::Read::read_to_end(&mut stdout_pipe, &mut buffer);
+        loop {
+            let mut frame = Vec::new();
+            match reader.read_until(b'\n', &mut frame) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    if let Ok(value) = serde_json::from_slice::<Value>(&frame) {
+                        let _ = response_sender.send(value.get("id").cloned());
+                    }
+                    buffer.extend_from_slice(&frame);
+                }
+            }
+        }
         buffer
+    });
+    // SDK EOF terminates service work. Keep stdin alive until each actual
+    // response arrives; closing a prewritten script is not a reply oracle.
+    let writer = std::thread::spawn(move || {
+        let mut pending = Vec::new();
+        let mut sent = 0_usize;
+        for chunk in &stdin_chunks {
+            for byte in chunk {
+                pending.push(*byte);
+                if *byte != b'\n' {
+                    continue;
+                }
+                if stdin
+                    .write_all(pending.get(sent..).unwrap_or_default())
+                    .is_err()
+                    || stdin.flush().is_err()
+                {
+                    return;
+                }
+                if let Ok(request) = serde_json::from_slice::<Value>(&pending)
+                    && let Some(id) = request.get("id")
+                {
+                    match response_receiver.recv_timeout(Duration::from_secs(10)) {
+                        Ok(Some(response_id)) if &response_id == id => {}
+                        _ => return,
+                    }
+                }
+                pending.clear();
+                sent = 0;
+            }
+            if stdin
+                .write_all(pending.get(sent..).unwrap_or_default())
+                .is_err()
+                || stdin.flush().is_err()
+            {
+                return;
+            }
+            sent = pending.len();
+        }
     });
     let stderr_reader = std::thread::spawn(move || {
         let mut buffer = Vec::new();
@@ -386,7 +432,7 @@ fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
         return Err(format!("expected 4 MCP responses, got {}", responses.len()));
     }
     let expected: [(&str, i64); 3] = [
-        ("unknown-tool", -32602),
+        ("unknown-tool", -32601),
         ("with-arguments", -32602),
         ("unknown-resource", -32602),
     ];
@@ -394,7 +440,7 @@ fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
         let response = &responses[index + 1];
         if response.pointer("/error/code").and_then(Value::as_i64) != Some(*code) {
             return Err(format!(
-                "rejection for {id} must be invalid-params: {response}"
+                "rejection for {id} must retain error code {code}: {response}"
             ));
         }
         if response.pointer("/id").and_then(Value::as_str) != Some(id) {
@@ -526,6 +572,62 @@ fn current_discovery_requires_metadata_and_rejects_legacy_ping() -> Result<(), S
     }
     if responses[4].pointer("/error/code").and_then(Value::as_i64) != Some(-32601) {
         return Err("current lifecycle ping must be method-not-found".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn unsupported_inline_version_is_rejected_and_next_request_recovers() -> Result<(), String> {
+    let mut unsupported = current_meta();
+    unsupported
+        .as_object_mut()
+        .ok_or_else(|| "fixture metadata must be an object".to_string())?
+        .insert(
+            "io.modelcontextprotocol/protocolVersion".into(),
+            json!("2099-01-01"),
+        );
+    let requests = [
+        line(
+            json!({"jsonrpc":"2.0","id":"discover","method":"server/discover",
+            "params":{"_meta":current_meta()}}),
+        )?,
+        line(
+            json!({"jsonrpc":"2.0","id":"unsupported","method":"tools/list",
+            "params":{"_meta":unsupported}}),
+        )?,
+        line(
+            json!({"jsonrpc":"2.0","id":"recovered","method":"tools/list",
+            "params":{"_meta":current_meta()}}),
+        )?,
+    ]
+    .concat();
+    let output = run_mcp(&workspace_root()?, &[&requests])?;
+    let responses = response_lines(&output)?;
+    if responses.len() != 3 {
+        return Err("inline version control did not produce three correlated replies".into());
+    }
+    let refused = responses
+        .get(1)
+        .ok_or_else(|| "version refusal missing".to_string())?;
+    let expected = serde_json::to_value(rmcp::model::ErrorCode::UNSUPPORTED_PROTOCOL_VERSION)
+        .map_err(|error| error.to_string())?;
+    if refused.get("id") != Some(&json!("unsupported"))
+        || refused.pointer("/error/code") != Some(&expected)
+    {
+        return Err(
+            "unsupported inline version was not rejected with its correlated SDK code".into(),
+        );
+    }
+    let recovered = responses
+        .get(2)
+        .ok_or_else(|| "recovered response missing".to_string())?;
+    if recovered.get("id") != Some(&json!("recovered"))
+        || recovered
+            .pointer("/result/tools")
+            .and_then(Value::as_array)
+            .is_none_or(|tools| tools.len() != 1)
+    {
+        return Err("valid inline request did not recover the single status tool".into());
     }
     Ok(())
 }
