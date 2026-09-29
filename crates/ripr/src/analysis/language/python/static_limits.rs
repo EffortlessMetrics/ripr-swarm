@@ -338,13 +338,28 @@ pub(super) fn test_has_mocked_module(test: &PythonTest) -> bool {
         ["patch", "patch.object", "patch.multiple"]
             .iter()
             .any(|form| decorator == form || decorator.ends_with(&format!(".{form}")))
-    }) || test.body_text.contains("patch(")
-        || test.body_text.contains(".patch(")
-        || test.body_text.contains("patch.object(")
-        || test.body_text.contains("patch.multiple(")
-        || test.body_text.contains("monkeypatch.setattr(")
-        || test.body_text.contains("monkeypatch.setitem(")
-        || test.body_text.contains("monkeypatch.delattr(")
+    }) || [
+        "patch(",
+        "patch.object(",
+        "patch.multiple(",
+        "monkeypatch.setattr(",
+        "monkeypatch.setitem(",
+        "monkeypatch.delattr(",
+    ]
+    .iter()
+    .any(|call| body_calls_at_name_boundary(&test.body_text, call))
+}
+
+/// Whether `body` contains `call` where the name starts at an identifier
+/// boundary: `mock.patch(` and `patch.object(`, not `dispatch(` or
+/// `dispatch.object(`.
+fn body_calls_at_name_boundary(body: &str, call: &str) -> bool {
+    body.match_indices(call).any(|(idx, _)| {
+        !body[..idx]
+            .chars()
+            .next_back()
+            .is_some_and(is_python_identifier_char)
+    })
 }
 
 fn related_candidates_have_property_based_test_limit(

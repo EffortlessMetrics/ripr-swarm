@@ -28,8 +28,9 @@ are scoped or reviewed.
   the mutants (#4560).
 - Python: `unittest` classes that inherit `TestCase` through another class in
   the same file (`class ZoneInfoGettzTest(GettzTest)`), and test methods on a
-  mixin such a class inherits, are now collected. On dateutil a change killed
-  by `ZoneInfoGettzTest.testZoneInfoNewInstance` was `no_static_path` (#4562).
+  mixin such a class inherits, are now collected, under the subclass that
+  runs them. On dateutil a change killed by
+  `ZoneInfoGettzTest.testZoneInfoNewInstance` was `no_static_path` (#4562).
 - Python: a related test that replaces the owner with `patch.object(...)`
   (context manager or decorator) now gives the same `mocked_module`
   static limit as `patch(...)` and `monkeypatch.setattr(...)`. It was

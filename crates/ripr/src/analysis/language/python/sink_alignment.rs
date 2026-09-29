@@ -1,4 +1,6 @@
-use super::related_tests::{owner_module_callees, owner_result_locals, text_calls};
+use super::related_tests::{
+    oracle_operand_calls, oracle_operand_names, owner_module_callees, owner_result_locals,
+};
 use super::{
     PythonOwner, PythonTest, has_identifier_boundary, import_source_module_matches_owner,
     parse_attribute_assignment, python_dict_field_segment_parts, significant_change_tokens,
@@ -634,6 +636,8 @@ pub(super) fn classify_sink_alignment_with_old(
     // strong oracle calls the owner through its module (`utils.sign(0) == 0`,
     // `pkg.utils.sign(0)`, an imported name), or asserts a local the same test
     // bound once to such a call (`result = utils.sign(0)`, `assert result == 0`).
+    // The call or local must be an asserted operand: nested in another call
+    // (`always_true(utils.sign(0))`) it is not the value the oracle compares.
     let module_call_observed = !is_method_owner
         && strong_tests.iter().any(|related| {
             let Some(text) = related.oracle.as_deref() else {
@@ -644,10 +648,12 @@ pub(super) fn classify_sink_alignment_with_old(
                 .filter(|test| test.name == related.name && test.file == related.file)
                 .any(|test| {
                     let callees = owner_module_callees(test, owner);
-                    callees.iter().any(|callee| text_calls(text, callee))
+                    callees
+                        .iter()
+                        .any(|callee| oracle_operand_calls(text, callee))
                         || owner_result_locals(test, &callees)
                             .iter()
-                            .any(|local| oracle_text_observes_token(text, local))
+                            .any(|local| oracle_operand_names(text, local))
                 })
         });
     // Receiver/value identity for an attribute-assignment changed sink. The bare

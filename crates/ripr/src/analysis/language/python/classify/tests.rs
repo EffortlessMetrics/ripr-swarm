@@ -565,6 +565,11 @@ fn patch_object_on_the_owner_is_a_mocked_module_limit() -> Result<(), String> {
             "from src import subject\n\ndef test_bulk():\n    assert subject.bulk_discount(100) == 0.15\n",
             ExposureClass::Exposed,
         ),
+        // `dispatch.object(` is not `patch.object(`.
+        (
+            "from src import subject\n\ndef test_bulk():\n    dispatch.object(subject)\n    dispatch(subject)\n    assert subject.bulk_discount(100) == 0.15\n",
+            ExposureClass::Exposed,
+        ),
     ];
     for (tests, expected) in cases {
         let finding = classify_case(
@@ -594,6 +599,7 @@ fn module_qualified_and_result_local_owner_output_is_observed() -> Result<(), St
         "from src import subject\n\ndef test_bulk():\n    rate = subject.bulk_discount(100)\n    assert rate == 0.15\n",
         "def test_bulk():\n    from src.subject import bulk_discount\n    assert bulk_discount(100) == 0.15\n",
         "from src.subject import bulk_discount\n\ndef test_bulk():\n    rate = bulk_discount(\n        100,\n    )  # whole call\n    assert rate == 0.15\n",
+        "def test_bulk():\n    import src.subject as s\n    assert s.bulk_discount(100) == 0.15\n",
     ] {
         let finding = classify_case(
             DISCOUNT_SOURCE,
@@ -640,6 +646,11 @@ fn module_call_credit_keeps_boundary_and_identity_guards() -> Result<(), String>
         // also after a docstring with an odd count of one quote character.
         "from src.subject import bulk_discount\n\ndef test_bulk():\n    check(\n        rate=bulk_discount(100)\n    )\n    assert rate == 0.15\n",
         "from src.subject import bulk_discount\n\ndef test_bulk():\n    \"\"\"It's the rate.\"\"\"\n    check(\n        rate=bulk_discount(100)\n    )\n    assert rate == 0.15\n",
+        // The asserted value is a wrapper's result, not the owner's.
+        "from src import subject\n\ndef test_bulk():\n    assert always_true(subject.bulk_discount(100)) == True\n",
+        "from src import subject\n\ndef test_bulk():\n    rate = subject.bulk_discount(100)\n    assert always_true(rate) == True\n",
+        // A later local import of the same name is the one the call uses.
+        "def test_bulk():\n    from src.subject import bulk_discount\n    from src.other import bulk_discount\n    assert bulk_discount(100) == 0.15\n",
     ] {
         let finding = classify_case(
             DISCOUNT_SOURCE,

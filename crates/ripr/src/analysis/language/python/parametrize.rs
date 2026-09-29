@@ -93,8 +93,12 @@ pub(super) fn parametrize_cases(
     (any && !product.is_empty()).then_some(PythonParametrizeCases { cases: product })
 }
 
+/// pytest's own decorator only (`@pytest.mark.parametrize`, or
+/// `@mark.parametrize` after `from pytest import mark`). Another
+/// `.parametrize` (a plugin or project helper) may supply other values, so
+/// its cases stay unresolved.
 fn is_parametrize_name(name: &str) -> bool {
-    name == "parametrize" || name.ends_with(".parametrize")
+    name == "pytest.mark.parametrize" || name == "mark.parametrize"
 }
 
 /// The cases of one `parametrize(argnames, argvalues, ...)` call.
@@ -246,10 +250,24 @@ mod tests {
         for decorator in [
             "@pytest.mark.parametrize(\"a,b\", [(1, 'x'), pytest.param(-2, None, id=\"n\")])",
             "@pytest.mark.parametrize([\"a\", \"b\"], ((1, 'x'), [-2, None]))",
-            "@parametrize(argnames=(\"a\", \"b\"), argvalues=[(1, 'x'), (-2, None)], ids=str)",
+            "@mark.parametrize(argnames=(\"a\", \"b\"), argvalues=[(1, 'x'), (-2, None)], ids=str)",
         ] {
             let source = format!("{decorator}\ndef test_x(a, b):\n    pass\n");
             assert_eq!(cases(&source), expected, "{decorator}");
+        }
+    }
+
+    /// Only pytest's own decorator is expanded: a plugin or project
+    /// `.parametrize` may supply other values.
+    #[test]
+    fn non_pytest_parametrize_decorators_record_nothing() {
+        for decorator in [
+            "@cases.parametrize(\"a\", [1])",
+            "@parametrize(\"a\", [1])",
+            "@my.mark.parametrize(\"a\", [1])",
+        ] {
+            let source = format!("{decorator}\ndef test_x(a):\n    pass\n");
+            assert_eq!(cases(&source), None, "{decorator}");
         }
     }
 

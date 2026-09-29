@@ -504,10 +504,10 @@ fn import_alias_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
                 // A parameter, fixture or assignment named like the module
                 // alias (`def test_one(pkg): pkg.one(...)`) calls a local
                 // value, not the imported module.
-                && !test_binds_local(test, &import.alias)
+                && !test_rebinds_import_alias(test, &import.alias)
                 && contains_attribute_call(&test.body_text, &import.alias, &owner.name))
             || (!is_method_owner
-                && !test_binds_local(test, &import.alias)
+                && !test_rebinds_import_alias(test, &import.alias)
                 && submodule_receivers(import, owner).iter().any(|receiver| {
                     contains_attribute_call(&test.body_text, receiver, &owner.name)
                 }))
@@ -530,7 +530,7 @@ pub(super) fn owner_module_callees(test: &PythonTest, owner: &PythonOwner) -> Ve
     }
     let mut callees = Vec::new();
     for import in &test.imports {
-        if test_binds_local(test, &import.alias) {
+        if test_rebinds_import_alias(test, &import.alias) {
             continue;
         }
         if import.imported == owner.name && import_source_module_matches_owner(import, owner) {
@@ -634,10 +634,60 @@ fn bracket_depth_at(text: &str, idx: usize) -> usize {
     depth
 }
 
-/// Whether `text` calls `callee` as live code with an identifier boundary
-/// before it (`utils.sign(` but not `myutils.sign(`).
-pub(super) fn text_calls(text: &str, callee: &str) -> bool {
-    contains_call_name(text, callee)
+/// Bracket depth of an asserted operand in an assertion's text: `0` in an
+/// `assert` statement, `1` inside an assertion call's arguments
+/// (`self.assertEqual(...)`). `None` when the text is neither shape.
+fn oracle_operand_depth(text: &str) -> Option<usize> {
+    if text
+        .strip_prefix("assert")
+        .and_then(|rest| rest.chars().next())
+        .is_some_and(char::is_whitespace)
+    {
+        return Some(0);
+    }
+    let (callee, _) = text.split_once('(')?;
+    (!callee.is_empty()
+        && callee
+            .chars()
+            .all(|ch| ch == '.' || is_python_identifier_char(ch))
+        && text.trim_end().ends_with(')'))
+    .then_some(1)
+}
+
+/// Whether an assertion's text calls `callee` (with an identifier boundary:
+/// `utils.sign(`, not `myutils.sign(`) as an asserted operand, not nested
+/// inside another call (`always_true(utils.sign(0))` asserts the
+/// wrapper's result, which may ignore the owner's output).
+pub(super) fn oracle_operand_calls(text: &str, callee: &str) -> bool {
+    let Some(depth) = oracle_operand_depth(text) else {
+        return false;
+    };
+    let needle = format!("{callee}(");
+    text.match_indices(&needle).any(|(idx, _)| {
+        python_callee_start_has_boundary(text, idx)
+            && !line_prefix_looks_like_comment_or_string(text, idx)
+            && bracket_depth_at(text, idx) == depth
+    })
+}
+
+/// Whether an assertion's text names the local `name` as an asserted operand
+/// (`assert rate == 0.15`), not as an argument of another call or an
+/// attribute of something else.
+pub(super) fn oracle_operand_names(text: &str, name: &str) -> bool {
+    let Some(depth) = oracle_operand_depth(text) else {
+        return false;
+    };
+    !name.is_empty()
+        && text.match_indices(name).any(|(idx, _)| {
+            let end = idx + name.len();
+            !text[..idx]
+                .chars()
+                .next_back()
+                .is_some_and(|prev| prev == '.' || is_python_identifier_char(prev))
+                && !next_char_is_identifier(text, end)
+                && !python_text_hides_code(text, idx)
+                && bracket_depth_at(text, idx) == depth
+        })
 }
 
 /// Receivers that reach the owner's module through an import, by its full
@@ -1093,17 +1143,35 @@ pub(super) fn test_body_binds_local(test: &PythonTest, name: &str) -> bool {
 /// Every binding form of [`test_body_binds_local`] except a plain `name =`
 /// assignment, plus an augmented assignment (`name += 1`).
 fn binds_other_than_assignment(test: &PythonTest, name: &str) -> bool {
-    augmented_assignment(&test.body_text, name)
-        || walrus_binds(&test.body_text, name)
+    keyword_or_operator_binds(test, name, true)
+}
+
+/// [`test_binds_local`] for an imported alias: the test body's own
+/// `import pkg.mod as alias` statement is the import being checked (#4567
+/// records it among the test's imports), not a rebinding of it.
+fn test_rebinds_import_alias(test: &PythonTest, alias: &str) -> bool {
+    test.fixtures.iter().any(|fixture| fixture == alias)
+        || assignment_count(&test.body_text, alias) > 0
+        || keyword_or_operator_binds(test, alias, false)
+}
+
+fn keyword_or_operator_binds(test: &PythonTest, name: &str, import_as_binds: bool) -> bool {
+    let body = test.body_text.as_str();
+    augmented_assignment(body, name)
+        || walrus_binds(body, name)
         || ["def ", "class ", "for ", "as "]
             .into_iter()
             .any(|keyword| {
                 let needle = format!("{keyword}{name}");
-                test.body_text.match_indices(&needle).any(|(idx, _)| {
+                body.match_indices(&needle).any(|(idx, _)| {
                     let end = idx + needle.len();
-                    python_callee_start_has_boundary(&test.body_text, idx)
-                        && !next_char_is_identifier(&test.body_text, end)
-                        && !python_text_hides_code(&test.body_text, idx)
+                    let line_start = body[..idx].rfind('\n').map_or(0, |offset| offset + 1);
+                    let line = body[line_start..].trim_start();
+                    let import_line = line.starts_with("import ") || line.starts_with("from ");
+                    python_callee_start_has_boundary(body, idx)
+                        && !next_char_is_identifier(body, end)
+                        && !python_text_hides_code(body, idx)
+                        && (import_as_binds || keyword != "as " || !import_line)
                 })
             })
 }
@@ -1318,4 +1386,32 @@ pub(super) fn similarity_key_contains(haystack: &str, needle: &str) -> bool {
             .strip_suffix(needle)
             .is_some_and(|head| head.ends_with('_'))
         || haystack.contains(&format!("_{needle}_"))
+}
+
+#[cfg(test)]
+mod oracle_operand_tests {
+    use super::{oracle_operand_calls, oracle_operand_names};
+
+    #[test]
+    fn owner_call_or_local_must_be_an_asserted_operand() {
+        for (text, expected) in [
+            ("assert utils.sign(0) == 0", true),
+            ("assert utils.sign(0)[\"k\"] == 0", true),
+            ("self.assertEqual(utils.sign(0), 0)", true),
+            ("assert always_true(utils.sign(0)) == True", false),
+            ("self.assertTrue(always_true(utils.sign(0)))", false),
+            ("assert myutils.sign(0) == 0", false),
+        ] {
+            assert_eq!(oracle_operand_calls(text, "utils.sign"), expected, "{text}");
+        }
+        for (text, expected) in [
+            ("assert rate == 0.15", true),
+            ("self.assertEqual(rate, 0.15)", true),
+            ("assert always_true(rate)", false),
+            ("assert self.rate == 0.15", false),
+            ("assert rated == 0.15", false),
+        ] {
+            assert_eq!(oracle_operand_names(text, "rate"), expected, "{text}");
+        }
+    }
 }

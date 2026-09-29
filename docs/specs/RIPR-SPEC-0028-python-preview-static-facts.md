@@ -99,7 +99,10 @@ Test discovery:
   own definition (a method or a `test_x = None` assignment) or an earlier
   class in that order wins, and an imported base, a base defined after the
   subclass or a redefined class name is unknown, so a member behind it is
-  not collected. Only the last definition of a class name is collected.
+  not collected. A collected mixin member is recorded under the subclass
+  that runs it (`TestConsumer.test_shared`), the node id the runner accepts,
+  once per such subclass. Only the last definition of a class name is
+  collected.
   An uninherited mixin is not collected, nor a `Test*` class that pytest
   skips because it or a same-file ancestor defines `__init__` or `__new__`
   or is a dataclass
@@ -356,14 +359,16 @@ namespace writer (`exec`, `globals`, `vars`, `locals`, `setattr`,
 `sys.modules`, `__dict__`), a non-literal value, a parameter or local binding
 of the same name in the owner, a nested `def`/`class`/`lambda` in the owner,
 or a related test file that assigns the attribute (`pricing.DISCOUNT_THRESHOLD
-= 5`). A call inside a `@pytest.mark.parametrize` test whose argument is a
+= 5`). A call inside a `@pytest.mark.parametrize` (or `@mark.parametrize`)
+test whose argument is a
 parametrize argname (`bulk_discount(quantity)`) expands into one call per
 generated case, binding each case's literal argvalue (#4559). Cases are
 recorded only when statically certain: string or list/tuple argnames, a
 list/tuple argvalues literal with rows of the right arity (`pytest.param(...)`
 unwrapped), stacked decorators as a product of at most 256 cases. A
 single-name list/tuple argnames takes tuple rows, as pytest unpacks them.
-Argvalues named by a variable, `indirect=`, starred rows, a `pytest.param`
+Another decorator named `parametrize` (a plugin or project helper) records
+no cases. Argvalues named by a variable, `indirect=`, starred rows, a `pytest.param`
 with any keyword but `id=` (a `marks=` skip or xfail case may never run), a
 unittest method (pytest does not parametrize it), and an argname the test
 body may rebind leave the call unresolved. A rebinding is read from the
@@ -430,7 +435,11 @@ read-out: the boolean the classifier uses is derived from the surfaced
   function whose strong oracle calls it through a module-identified spelling
   (`utils.sign(0) == 0`, `pkg.utils.sign(...)`, a function-local import) or
   asserts a local the same test bound once to such a call as its whole value
-  (`result = utils.sign(0)`, not `result = utils.sign(0) or 1`; #4567). Those calls also bind boundary activation, so the
+  (`result = utils.sign(0)`, not `result = utils.sign(0) or 1`; #4567). The
+  call or local must be an asserted operand: nested in another call
+  (`always_true(utils.sign(0))`) it is not the compared value. A later import
+  of the same name inside the test replaces the earlier binding, and the
+  test's own `import pkg.mod as alias` is not a rebinding of `alias`. Those calls also bind boundary activation, so the
   relational-boundary gate still applies to them.
 
 These fields are advisory preview evidence; they do not change the

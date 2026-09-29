@@ -261,7 +261,9 @@ class Policy:
 
 /// #4562, the dateutil `test_tz.py` shape: a `TestCase` subclass reached
 /// through a same-file base, and a mixin whose test methods run through a
-/// `TestCase` subclass, are collected; an uninherited mixin is not.
+/// `TestCase` subclass, are collected; an uninherited mixin is not. Mixin
+/// members are recorded under each subclass that runs them, the node id the
+/// runner accepts, not under the uncollected mixin.
 #[test]
 fn extract_tests_follows_same_file_unittest_bases_and_mixins() {
     let tests = extract_tests(
@@ -357,16 +359,17 @@ class TestInherits(SharedMixin):
     assert_eq!(
         collected,
         vec![
-            ("TzFoldMixin.testFoldPositiveUTCOffset", "unittest"),
             ("GettzTest.testGettz", "unittest"),
+            ("GettzTest.testFoldPositiveUTCOffset", "unittest"),
             ("ZoneInfoGettzTest.testZoneInfoNewInstance", "unittest"),
-            ("CheckMixin.test_shared", "pytest"),
+            ("ZoneInfoGettzTest.testFoldPositiveUTCOffset", "unittest"),
             ("TestFirst.test_overridden", "pytest"),
+            ("TestFirst.test_shared", "pytest"),
             ("UnitCase.test_unit_overridden", "unittest"),
-            ("FirstMixin.test_shadow", "pytest"),
-            ("SecondMixin.test_second_only", "pytest"),
-            ("SharedMixin.test_kept_by_one", "pytest"),
+            ("TestShadowed.test_shadow", "pytest"),
+            ("TestShadowed.test_second_only", "pytest"),
             ("TestOverrides.test_kept_by_one", "pytest"),
+            ("TestInherits.test_kept_by_one", "pytest"),
         ]
     );
 }
@@ -426,7 +429,10 @@ class TestTwice:
         .iter()
         .map(|test| test.qualified_name.as_str())
         .collect();
-    assert_eq!(collected, vec!["Right.test_limit", "TestTwice.test_last"]);
+    assert_eq!(
+        collected,
+        vec!["TestDiamond.test_limit", "TestTwice.test_last"]
+    );
 }
 
 #[test]

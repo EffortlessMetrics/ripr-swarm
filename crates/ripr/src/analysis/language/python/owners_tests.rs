@@ -314,15 +314,11 @@ pub(super) fn collect_tests_from_statements(
                 });
             }
             Stmt::ClassDef(class) if local_classes.is_last_definition(class) => {
+                let class_name = class.name.as_str();
                 let class_is_unittest =
-                    in_unittest_class || local_classes.unittest.contains(class.name.as_str());
-                if class_is_unittest
-                    || local_classes.pytest.contains(class.name.as_str())
-                    || local_classes.mixins.contains(class.name.as_str())
-                {
-                    let class_name = class.name.to_string();
-                    let nested_class_context = qualified_test_name(class_context, &class_name);
-                    let first = out.len();
+                    in_unittest_class || local_classes.unittest.contains(class_name);
+                if class_is_unittest || local_classes.pytest.contains(class_name) {
+                    let nested_class_context = qualified_test_name(class_context, class_name);
                     collect_tests_from_statements(
                         file,
                         source,
@@ -332,23 +328,30 @@ pub(super) fn collect_tests_from_statements(
                         imports,
                         out,
                     );
-                    // A mixin method that every collected subclass overrides
-                    // never runs.
-                    if let Some(hidden) = local_classes.hidden.get(class.name.as_str()) {
-                        let mut index = first;
-                        while index < out.len() {
-                            if out[index].qualified_name
-                                == qualified_test_name(
-                                    Some(&nested_class_context),
-                                    &out[index].name,
-                                )
-                                && hidden.contains(out[index].name.as_str())
-                            {
-                                out.remove(index);
-                            } else {
-                                index += 1;
-                            }
-                        }
+                    // Mixin members this class resolves to run as this
+                    // class's tests, under its selector
+                    // (`test_x.py::TestConsumer::test_shared`).
+                    for (mixin, members) in local_classes
+                        .inherited
+                        .get(class_name)
+                        .into_iter()
+                        .flatten()
+                    {
+                        let mut from_mixin = Vec::new();
+                        collect_tests_from_statements(
+                            file,
+                            source,
+                            &mixin.body,
+                            Some(&nested_class_context),
+                            class_is_unittest,
+                            imports,
+                            &mut from_mixin,
+                        );
+                        out.extend(from_mixin.into_iter().filter(|test| {
+                            members.contains(test.name.as_str())
+                                && test.qualified_name
+                                    == qualified_test_name(Some(&nested_class_context), &test.name)
+                        }));
                     }
                 }
             }
@@ -359,10 +362,15 @@ pub(super) fn collect_tests_from_statements(
 
 /// Module imports plus the imports at the top level of the test body
 /// (`def test_x(): from pkg.utils import sign`), which bind the same way for
-/// the rest of the test (#4567).
+/// the rest of the test (#4567). A later import of the same name replaces the
+/// earlier one, as Python binds it: `from owner import sign` followed by
+/// `from other import sign` leaves only `other.sign`.
 fn test_imports(file: &Path, module_imports: &[PythonImport], body: &[Stmt]) -> Vec<PythonImport> {
     let mut imports = module_imports.to_vec();
-    imports.extend(collect_imports_from_statements(file, body));
+    for import in collect_imports_from_statements(file, body) {
+        imports.retain(|earlier| earlier.alias != import.alias);
+        imports.push(import);
+    }
     imports
 }
 
@@ -493,22 +501,22 @@ fn is_unittest_class(class: &ast::StmtClassDef) -> bool {
 /// through same-scope bases, or when pytest collects it: a `Test*` name, and
 /// neither it nor a same-scope ancestor defines `__init__`/`__new__` or is a
 /// dataclass. A same-scope ancestor of a collected class that is not itself
-/// collected is a mixin; each of its `test*` members runs only if some
-/// collected subclass resolves that member to the mixin along its C3 method
-/// resolution order. An imported base, a base defined after the subclass, or
+/// collected is a mixin; each of its `test*` members runs as a test of every
+/// collected subclass that resolves that member to the mixin along its C3
+/// method resolution order, and is recorded under that subclass
+/// (`TestConsumer.test_shared`), the selector the runner accepts. An imported base, a base defined after the subclass, or
 /// a redefined name is external: reaching it first makes the resolution
 /// unknown, so the member is not collected. Only the last definition of a
 /// class name is collected, as the loaders see the module attribute.
 #[derive(Default)]
 struct LocalTestClasses<'a> {
-    /// Classes collected under unittest, including mixins a unittest class
-    /// inherits.
+    /// Classes unittest collects.
     unittest: BTreeSet<&'a str>,
     /// `Test*` classes pytest collects.
     pytest: BTreeSet<&'a str>,
-    mixins: BTreeSet<&'a str>,
-    /// Per mixin, the `test*` members no collected subclass runs.
-    hidden: BTreeMap<&'a str, BTreeSet<&'a str>>,
+    /// Per collected class, in its method resolution order, each mixin and
+    /// the `test*` members the class resolves to that mixin.
+    inherited: BTreeMap<&'a str, Vec<(&'a ast::StmtClassDef, BTreeSet<&'a str>)>>,
     last_definitions: BTreeSet<*const ast::StmtClassDef>,
 }
 
@@ -555,37 +563,33 @@ impl<'a> LocalTestClasses<'a> {
         }
         let collected: BTreeSet<&'a str> = own_unittest.union(&found.pytest).copied().collect();
         for name in &collected {
-            for ancestor in scope.ancestors_or_self(name) {
-                if !collected.contains(ancestor) {
-                    found.mixins.insert(ancestor);
-                    if own_unittest.contains(name) {
-                        found.unittest.insert(ancestor);
-                    }
-                }
-            }
-        }
-        found.unittest.extend(own_unittest.iter().copied());
-        let mros: BTreeMap<&'a str, Option<Vec<MroEntry<'a>>>> = collected
-            .iter()
-            .map(|name| (*name, scope.mro(name, &mut Vec::new())))
-            .collect();
-        for mixin in &found.mixins {
-            let Some((_, class)) = scope.defs.get(mixin) else {
+            let Some(mro) = scope.mro(name, &mut Vec::new()) else {
                 continue;
             };
-            let hidden: BTreeSet<&'a str> = test_member_names(class)
-                .into_iter()
-                .filter(|member| {
-                    !mros.values().any(|mro| {
-                        mro.as_ref()
-                            .is_some_and(|mro| scope.resolve_member(mro, member) == Some(*mixin))
-                    })
-                })
-                .collect();
-            if !hidden.is_empty() {
-                found.hidden.insert(mixin, hidden);
+            let mut inherited = Vec::new();
+            for entry in &mro {
+                let MroEntry::Local(mixin) = entry else {
+                    continue;
+                };
+                if collected.contains(mixin) {
+                    continue;
+                }
+                let Some((_, class)) = scope.defs.get(mixin) else {
+                    continue;
+                };
+                let members: BTreeSet<&'a str> = test_member_names(class)
+                    .into_iter()
+                    .filter(|member| scope.resolve_member(&mro, member) == Some(*mixin))
+                    .collect();
+                if !members.is_empty() {
+                    inherited.push((*class, members));
+                }
+            }
+            if !inherited.is_empty() {
+                found.inherited.insert(name, inherited);
             }
         }
+        found.unittest = own_unittest;
         found
     }
 
