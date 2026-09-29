@@ -4,31 +4,41 @@
 //! when activation is already known and a unique parser-backed test binds
 //! a plain local to a *direct* captured owner call, then weakly observes
 //! that same binding's constructed field. Presence of a nearby test or
-//! field name never manufactures activation.
+//! field name never manufactures activation. A grouped nested-`super`
+//! import counts as that owner only when the resolved module uniquely
+//! matches this seam's owner; `super::` itself is not a whitelist.
 
 use super::record_field_name;
 use super::related_tests::call_text_contains_named_call;
 use super::related_tests::context::{CompactGripContext, CompactTest};
+use super::related_tests::module_path_for_index;
+use crate::analysis::rust_index::{FunctionSummary, RustIndex};
 use crate::analysis::seams::{RepoSeam, RequiredDiscriminator, SeamKind};
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::syntax::ra::LineIndex;
 use crate::domain::{MissingDiscriminatorFact, OracleKind, OracleStrength, StageState};
 use ra_ap_syntax::ast::{self, HasName};
 use ra_ap_syntax::{AstNode, SourceFile, SyntaxNode};
+use std::path::Path;
 
 pub(super) fn missing_field_value_facts(
     seam: &RepoSeam,
     related: &[&CompactTest<'_>],
     context: &CompactGripContext<'_>,
-    owner_name: &str,
+    owner_fn: Option<&FunctionSummary>,
     activation: &StageState,
 ) -> Vec<MissingDiscriminatorFact> {
     if *activation != StageState::Yes || seam.kind() != SeamKind::FieldConstruction {
         return Vec::new();
     }
+    let Some(owner_fn) = owner_fn else {
+        return Vec::new();
+    };
+    let owner_name = owner_fn.name.as_str();
     if owner_name.is_empty() {
         return Vec::new();
     }
+    let owner_module = module_path_for_index(context.index, &owner_fn.file);
     let RequiredDiscriminator::FieldValue { field } = seam.required_discriminator() else {
         return Vec::new();
     };
@@ -39,7 +49,13 @@ pub(super) fn missing_field_value_facts(
     let mut saw_strong = false;
     let mut saw_weak = false;
     for indexed in related {
-        match owner_result_field_observation(indexed, context, owner_name, field_name) {
+        match owner_result_field_observation(
+            indexed,
+            context,
+            owner_name,
+            owner_module.as_deref(),
+            field_name,
+        ) {
             Some(OwnerResultObservation::Strong) => saw_strong = true,
             Some(OwnerResultObservation::Weak) => saw_weak = true,
             None => {}
@@ -70,6 +86,7 @@ fn owner_result_field_observation(
     indexed: &CompactTest<'_>,
     context: &CompactGripContext<'_>,
     owner_name: &str,
+    owner_module: Option<&str>,
     field_name: &str,
 ) -> Option<OwnerResultObservation> {
     if !indexed.test.calls.iter().any(|call| {
@@ -94,7 +111,13 @@ fn owner_result_field_observation(
         indexed.test.start_line,
         &lines,
     )?;
-    if owner_callee_is_ambiguous(&function, owner_name) {
+    if owner_callee_is_ambiguous(
+        &function,
+        owner_name,
+        &indexed.test.file,
+        owner_module,
+        context.index,
+    ) {
         return None;
     }
     let bindings = direct_owner_result_bindings(&function, owner_name, &lines);
@@ -153,10 +176,16 @@ fn unique_test_fn(
     matches.next().is_none().then_some(function)
 }
 
-fn owner_callee_is_ambiguous(function: &ast::Fn, owner_name: &str) -> bool {
+fn owner_callee_is_ambiguous(
+    function: &ast::Fn,
+    owner_name: &str,
+    test_file: &Path,
+    owner_module: Option<&str>,
+    index: &RustIndex,
+) -> bool {
     nested_owner_fn(function, owner_name)
         || sibling_owner_fn(function, owner_name)
-        || foreign_owner_import(function, owner_name)
+        || foreign_owner_import(function, owner_name, test_file, owner_module, index)
         || local_owner_binding(function, owner_name)
 }
 
@@ -211,7 +240,26 @@ fn sibling_owner_fn(function: &ast::Fn, owner_name: &str) -> bool {
         })
 }
 
-fn foreign_owner_import(function: &ast::Fn, owner_name: &str) -> bool {
+fn foreign_owner_import(
+    function: &ast::Fn,
+    owner_name: &str,
+    test_file: &Path,
+    owner_module: Option<&str>,
+    index: &RustIndex,
+) -> bool {
+    let resolved = owner_module.and_then(|owner_module| {
+        module_path_for_index(index, test_file).map(|file_module| (owner_module, file_module))
+    });
+    owner_scope_uses(function).any(|item| match &resolved {
+        Some((owner_module, file_module)) => {
+            let current_module = use_current_module(&item, file_module);
+            use_binds_foreign_owner(&item, owner_name, &current_module, owner_module, index)
+        }
+        None => use_tree_binds_owner_name(item.use_tree().as_ref(), owner_name),
+    })
+}
+
+fn owner_scope_uses(function: &ast::Fn) -> impl Iterator<Item = ast::Use> {
     let container_uses = enclosing_item_container(function)
         .into_iter()
         .flat_map(|container| {
@@ -220,9 +268,45 @@ fn foreign_owner_import(function: &ast::Fn, owner_name: &str) -> bool {
                 .filter_map(ast::Use::cast)
         });
     let nested_uses = function.syntax().descendants().filter_map(ast::Use::cast);
-    container_uses
-        .chain(nested_uses)
-        .any(|item| use_binds_foreign_owner(&item, owner_name))
+    container_uses.chain(nested_uses)
+}
+
+fn use_tree_binds_owner_name(tree: Option<&ast::UseTree>, owner_name: &str) -> bool {
+    let Some(tree) = tree else {
+        return false;
+    };
+    if tree.star_token().is_some() {
+        return false;
+    }
+    if let Some(list) = tree.use_tree_list() {
+        return list
+            .use_trees()
+            .any(|nested| use_tree_binds_owner_name(Some(&nested), owner_name));
+    }
+    use_tree_local_name(tree).as_deref() == Some(owner_name)
+}
+
+fn use_tree_path_text(tree: &ast::UseTree) -> Option<String> {
+    tree.path().map(|path| {
+        path.syntax()
+            .text()
+            .to_string()
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect()
+    })
+}
+
+fn use_tree_local_name(tree: &ast::UseTree) -> Option<String> {
+    tree.rename()
+        .and_then(|rename| rename.name())
+        .map(|name| name.text().to_string())
+        .or_else(|| {
+            use_tree_path_text(tree)
+                .as_ref()
+                .and_then(|path| path.rsplit("::").next())
+                .map(ToString::to_string)
+        })
 }
 
 fn enclosing_item_container(function: &ast::Fn) -> Option<SyntaxNode> {
@@ -239,44 +323,66 @@ fn item_children(container: &SyntaxNode) -> Vec<SyntaxNode> {
         .unwrap_or_else(|| container.children().collect())
 }
 
-fn use_binds_foreign_owner(item: &ast::Use, owner_name: &str) -> bool {
-    item.use_tree()
-        .is_some_and(|tree| use_tree_binds_foreign_owner(&tree, "", owner_name))
+fn use_binds_foreign_owner(
+    item: &ast::Use,
+    owner_name: &str,
+    current_module: &str,
+    owner_module: &str,
+    index: &RustIndex,
+) -> bool {
+    item.use_tree().is_some_and(|tree| {
+        use_tree_binds_foreign_owner(&tree, "", owner_name, current_module, owner_module, index)
+    })
 }
 
-fn use_tree_binds_foreign_owner(tree: &ast::UseTree, prefix: &str, owner_name: &str) -> bool {
+fn use_current_module(item: &ast::Use, file_module: &str) -> String {
+    let nested: Vec<String> = item
+        .syntax()
+        .ancestors()
+        .filter_map(ast::Module::cast)
+        .filter_map(|module| module.name().map(|name| name.text().to_string()))
+        .collect();
+    let mut segments: Vec<String> = file_module
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(ToString::to_string)
+        .collect();
+    for name in nested.into_iter().rev() {
+        segments.push(name);
+    }
+    segments.join("/")
+}
+
+fn use_tree_binds_foreign_owner(
+    tree: &ast::UseTree,
+    prefix: &str,
+    owner_name: &str,
+    current_module: &str,
+    owner_module: &str,
+    index: &RustIndex,
+) -> bool {
     if tree.star_token().is_some() {
         return false;
     }
-    let path_text = tree.path().map(|path| {
-        path.syntax()
-            .text()
-            .to_string()
-            .chars()
-            .filter(|character| !character.is_whitespace())
-            .collect::<String>()
-    });
+    let path_text = use_tree_path_text(tree);
     if let Some(list) = tree.use_tree_list() {
         let child_prefix = match (&path_text, prefix.is_empty()) {
             (Some(path), false) => format!("{prefix}::{path}"),
             (Some(path), true) => path.clone(),
             (None, _) => prefix.to_string(),
         };
-        return list
-            .use_trees()
-            .any(|nested| use_tree_binds_foreign_owner(&nested, &child_prefix, owner_name));
-    }
-    let local_name = tree
-        .rename()
-        .and_then(|rename| rename.name())
-        .map(|name| name.text().to_string())
-        .or_else(|| {
-            path_text
-                .as_ref()
-                .and_then(|path| path.rsplit("::").next())
-                .map(ToString::to_string)
+        return list.use_trees().any(|nested| {
+            use_tree_binds_foreign_owner(
+                &nested,
+                &child_prefix,
+                owner_name,
+                current_module,
+                owner_module,
+                index,
+            )
         });
-    if local_name.as_deref() != Some(owner_name) {
+    }
+    if use_tree_local_name(tree).as_deref() != Some(owner_name) {
         return false;
     }
     let full = match (&path_text, prefix.is_empty()) {
@@ -285,11 +391,77 @@ fn use_tree_binds_foreign_owner(tree: &ast::UseTree, prefix: &str, owner_name: &
         (None, false) => prefix.to_string(),
         (None, true) => owner_name.to_string(),
     };
-    !super_owner_path(&full, owner_name)
+    !import_resolves_to_unique_owner(&full, current_module, owner_module, owner_name, index)
 }
 
-fn super_owner_path(path: &str, owner_name: &str) -> bool {
-    path == owner_name || path == format!("super::{owner_name}")
+fn import_resolves_to_unique_owner(
+    item_path: &str,
+    current_module: &str,
+    owner_module: &str,
+    owner_name: &str,
+    index: &RustIndex,
+) -> bool {
+    let Some(resolved_module) = resolve_use_module_path(item_path, current_module) else {
+        return false;
+    };
+    if normalize_module_key(&resolved_module) != normalize_module_key(owner_module) {
+        return false;
+    }
+    owner_name_is_unique_in_module(index, owner_module, owner_name)
+}
+
+fn resolve_use_module_path(item_path: &str, current_module: &str) -> Option<String> {
+    let mut segments: Vec<String> = current_module
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(ToString::to_string)
+        .collect();
+    let parts: Vec<&str> = item_path
+        .split("::")
+        .filter(|part| !part.is_empty())
+        .collect();
+    if parts.is_empty() {
+        return None;
+    }
+    for part in &parts[..parts.len() - 1] {
+        match *part {
+            "super" => {
+                segments.pop()?;
+            }
+            "self" => {}
+            "crate" => segments.clear(),
+            other => segments.push(other.to_string()),
+        }
+    }
+    Some(segments.join("/"))
+}
+
+fn owner_name_is_unique_in_module(index: &RustIndex, module_path: &str, owner_name: &str) -> bool {
+    let normalized = normalize_module_key(module_path);
+    let mut seen = false;
+    for function in &index.functions {
+        if function.source_role.is_evidence_role() {
+            continue;
+        }
+        if function.name != owner_name {
+            continue;
+        }
+        let Some(path) = module_path_for_index(index, &function.file) else {
+            continue;
+        };
+        if normalize_module_key(&path) != normalized {
+            continue;
+        }
+        if seen {
+            return false;
+        }
+        seen = true;
+    }
+    seen
+}
+
+fn normalize_module_key(path: &str) -> String {
+    path.replace('/', "::")
 }
 
 fn direct_owner_result_bindings(

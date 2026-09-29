@@ -208,7 +208,11 @@ compared operands, not only in a message or format argument, and not on an
 assertion-local shadow of the binding. A same-name function defined or
 imported in the test's module is not the production owner, and neither is a
 local binding of that name unless that binding is itself the parser-backed
-direct owner-result. Exact owner-result
+direct owner-result. A grouped nested-`super` import (`use super::diagnostics::{owner}`)
+is the production owner only when the resolved module path uniquely matches
+this seam's owner file; the same local name from a different module, an
+unresolved import, or two cfg-ambiguous same-name owners stay non-ready. Do
+not treat every `super::` prefix as local. Exact owner-result
 field equality stays
 already-gripped and must not grow a missing fact. A name-related or
 proximity-related test with unknown owner activation must not receive a missing
@@ -287,7 +291,9 @@ against fixture repos.
   already-gripped; wrapper, helper-transfer, shadow, reassignment, sibling
   field, token coincidence, unknown activation, failed target authority,
   mutable field borrow, assertion-message-only field credit, assertion-local
-  shadow, and same-name local or imported callees stay non-ready. A
+  shadow, and same-name local or imported callees stay non-ready. A grouped
+  nested-`super` import of the unique owner completes the route; a foreign
+  module or cfg-ambiguous same-name pair does not. A
   refused DirectOwnerCall related test does not fall through to a Proposed
   target; an advisory related observer does not block an independently
   admitted proposal.

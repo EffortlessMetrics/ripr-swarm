@@ -598,7 +598,7 @@ fn activate_evidence(
         seam,
         related,
         context,
-        owner_name,
+        owner_fn,
         &stage.state,
     ));
     (stage, observed, missing)

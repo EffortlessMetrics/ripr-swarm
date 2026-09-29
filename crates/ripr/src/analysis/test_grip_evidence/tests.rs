@@ -14003,6 +14003,40 @@ fn refresh_plan_split_case(test_source: &str) -> Result<ConstructorFieldCase, St
     )
 }
 
+/// #1580 sibling-file shape: production owner in `src/lsp/diagnostics.rs`,
+/// tests in `src/lsp/tests.rs` with a grouped nested-`super` import.
+fn refresh_plan_sibling_tests_case(test_source: &str) -> Result<ConstructorFieldCase, String> {
+    refresh_plan_sibling_tests_case_at(REFRESH_PLAN_PRODUCTION, &[], test_source)
+}
+
+fn refresh_plan_sibling_tests_case_at(
+    production: &str,
+    extra: &[(&str, &str)],
+    test_source: &str,
+) -> Result<ConstructorFieldCase, String> {
+    let production_path = PathBuf::from("src/lsp/diagnostics.rs");
+    let mut files: Vec<(PathBuf, &str)> = vec![
+        (production_path.clone(), production),
+        (PathBuf::from("src/lsp/tests.rs"), test_source),
+    ];
+    files.extend(
+        extra
+            .iter()
+            .map(|(path, source)| (PathBuf::from(*path), *source)),
+    );
+    classified_from_files(&files, &production_path, "suppressed_payload_bytes")
+}
+
+const GROUPED_NESTED_SUPER_OWNER_IMPORT: &str = r#"
+use super::diagnostics::{diagnostic_refresh_plan};
+
+#[test]
+fn diagnostic_refresh_plan_suppresses_unchanged_uri() {
+    let unchanged = diagnostic_refresh_plan(8, 0);
+    assert!(unchanged.suppressed_payload_bytes > 0);
+}
+"#;
+
 const WEAK_TWO_BINDING_REFRESH_TEST: &str = r#"
 #[cfg(test)]
 mod tests {
@@ -15882,6 +15916,79 @@ mod tests {
 "#,
     )?;
     route_must_stay_unready(&case, "same-name callee imported from another module")
+}
+
+#[test]
+fn grouped_nested_super_owner_import_completes_canonical_route() -> Result<(), String> {
+    let case = refresh_plan_sibling_tests_case(GROUPED_NESTED_SUPER_OWNER_IMPORT)?;
+    route_must_be_ready(&case)
+}
+
+#[test]
+fn grouped_nested_super_import_from_foreign_module_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_sibling_tests_case_at(
+        REFRESH_PLAN_PRODUCTION,
+        &[(
+            "src/lsp/other.rs",
+            r#"
+pub struct DiagnosticRefreshPlan {
+    pub suppressed_payload_bytes: usize,
+    pub published_payload_bytes: usize,
+}
+
+pub fn diagnostic_refresh_plan(suppressed: usize, published: usize) -> DiagnosticRefreshPlan {
+    DiagnosticRefreshPlan {
+        suppressed_payload_bytes: suppressed,
+        published_payload_bytes: published,
+    }
+}
+"#,
+        )],
+        r#"
+use super::other::{diagnostic_refresh_plan};
+
+#[test]
+fn diagnostic_refresh_plan_imported_from_other() {
+    let unchanged = diagnostic_refresh_plan(8, 0);
+    assert!(unchanged.suppressed_payload_bytes > 0);
+}
+"#,
+    )?;
+    route_must_stay_unready(
+        &case,
+        "grouped nested-super import of a same-name callee from another module",
+    )
+}
+
+#[test]
+fn cfg_ambiguous_same_name_owners_stay_non_ready() -> Result<(), String> {
+    let case = refresh_plan_sibling_tests_case_at(
+        r#"
+pub struct DiagnosticRefreshPlan {
+    pub suppressed_payload_bytes: usize,
+    pub published_payload_bytes: usize,
+}
+
+#[cfg(unix)]
+pub fn diagnostic_refresh_plan(suppressed: usize, published: usize) -> DiagnosticRefreshPlan {
+    DiagnosticRefreshPlan {
+        suppressed_payload_bytes: suppressed,
+        published_payload_bytes: published,
+    }
+}
+
+#[cfg(windows)]
+pub fn diagnostic_refresh_plan(suppressed: usize, published: usize) -> DiagnosticRefreshPlan {
+    DiagnosticRefreshPlan {
+        suppressed_payload_bytes: suppressed,
+        published_payload_bytes: published,
+    }
+}
+"#,
+        &[],
+        GROUPED_NESTED_SUPER_OWNER_IMPORT,
+    )?;
+    route_must_stay_unready(&case, "cfg-ambiguous same-name production owners")
 }
 
 #[test]

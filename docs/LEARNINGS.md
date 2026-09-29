@@ -17,7 +17,11 @@ an assertion-message-only field mention, and an assertion-local shadow of the
 owner-result binding are also not owner-result observations: credit only a
 parser-backed discriminating condition or compared operands, and fail closed
 when the bare callee identity is ambiguous, including a local binding of the
-owner name that is not itself the parser-backed direct owner-result. A
+owner name that is not itself the parser-backed direct owner-result. A grouped
+nested-`super` import is the production owner only when the resolved module
+path uniquely matches this seam's owner; do not whitelist every `super::`
+prefix. The same spelling from another module, an unresolved import, or two
+cfg-ambiguous same-name owners stay non-ready. A
 DirectOwnerCall related test that failed target admission stays `Missing`;
 ranking must not fall through to a Proposed InlineUnit or Integration target
 just because the `field_value` fact is now present. Advisory related observers
