@@ -202,6 +202,7 @@ pub(super) fn validate_python_adapter(
 }
 
 fn validate_package_readme(path: &str, text: &str, violations: &mut Vec<String>) {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
     for required in [
         "# ripr",
         "PyPI distribution name is `ripr-rs`",
@@ -211,18 +212,17 @@ fn validate_package_readme(path: &str, text: &str, violations: &mut Vec<String>)
         "wheel-only",
         "does not mean that a public PyPI release exists",
     ] {
-        if !text.contains(required) {
+        if !normalized.contains(required) {
             violations.push(format!(
                 "{path}: package README must contain `{required}`"
             ));
         }
     }
 
-    for forbidden in ["pip install ripr\n", "uvx ripr\n"] {
-        if text.contains(forbidden) {
+    for forbidden in ["pip install ripr", "uvx ripr"] {
+        if text.lines().any(|line| line.trim() == forbidden) {
             violations.push(format!(
-                "{path}: package README must not advertise the unrelated `{}` invocation",
-                forbidden.trim()
+                "{path}: package README must not advertise the unrelated `{forbidden}` invocation"
             ));
         }
     }
