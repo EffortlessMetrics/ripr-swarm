@@ -340,7 +340,9 @@ fn activation_marks_boundary_call(activation: &ActivationEvidence, call: &CallFa
 mod tests {
     use super::*;
     use crate::analysis::facts::FunctionSourceRole;
-    use crate::analysis::rust_index::{CallFact, LiteralFact, OracleFact, extract_identifier_tokens};
+    use crate::analysis::rust_index::{
+        CallFact, LiteralFact, OracleFact, extract_identifier_tokens,
+    };
     use std::path::PathBuf;
 
     #[test]
