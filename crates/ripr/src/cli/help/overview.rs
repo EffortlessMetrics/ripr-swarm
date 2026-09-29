@@ -151,7 +151,7 @@ Reports:
   ripr receipt check [--path PATH] [--gap <canonical_gap_id>]
 
 What it does:
-  Reads changed code (Rust; Python and TypeScript in preview), creates
+  Reads changed Rust code (Python and TypeScript in preview), creates
   mutation-like probes, and estimates whether tests appear to reach, infect,
   propagate, and reveal the changed behavior through meaningful oracles. It
   does not run mutants.

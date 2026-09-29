@@ -218,6 +218,29 @@ families, largest shard sets, and orphan or incomplete shard sets. The
 `cargo xtask cache gc --dry-run` command still sees sharded entries because
 every shard lives under the cache base directory.
 
+File-fact, full/compact classified, classified-shard and corpus-fingerprint
+entries carry a domain-separated SHA-256 digest of their typed semantic body.
+This binds stored identity and every served field, including source text,
+completeness limits, lexical-fallback provenance and shard descriptors. JSON
+whitespace/object-key ordering does not affect integrity. Derived
+`FileFacts.role_provenance` is skipped by serialization and recomputed.
+
+The integrity generations are file facts `1.10`, full classified `1.16`, compact
+classified `0.23`, shards `0.22` and corpus fingerprints `0.3`. The integrity
+transition follows the unsigned nesting-budget generations from #4475. Older unsigned
+generations cold-recompute; no source migration is needed. Decoded key/schema
+mismatches invalidate before digest checking. Matching current entries with
+missing, invalid or mismatching digests are corruption; invalid file facts do
+not contribute known-file inventory. Undecodable JSON, including a digest with
+the wrong JSON type, remains decode corruption before identity comparison.
+Corrupt monolithic entries cannot fall back to shards; absent entries may use
+a complete valid matching shard set. One invalid shard rejects the whole set.
+
+These unkeyed checksums do not authenticate a writer able to replace the body
+and recompute its digest. This contract does not cover every cache family or
+provide provenance signatures. Reuse performs one semantic-body serialization
+and SHA-256 operation per envelope; no cache-speed improvement is claimed.
+
 To relocate the cache to a different directory (e.g., for a read-only
 source checkout):
 
@@ -296,8 +319,9 @@ ripr doctor [--root PATH] [--json] [--profile analysis|source-build]
 ```
 
 Reports local tooling and workspace shape. Takes no analysis-shaping flags.
-`--profile` defaults to `analysis`; `source-build` checks what building ripr
-from source needs.
+`--profile analysis` (the default) keeps a missing or old toolchain advisory;
+`--profile source-build` makes it a failure. See
+[Exit codes](EXIT_CODES.md#ripr-doctor-exit-codes).
 
 Use `--json` for the same core checks as the human report when onboarding an
 agent, editor, or CI wrapper:
@@ -801,8 +825,8 @@ The `badge-plus-*` and `repo-badge-plus-*` formats read
 neutral "needs test-efficiency" badge and warns on stderr. See
 [Badge adoption](BADGE_ADOPTION.md).
 
-The `context` command always returns JSON-shaped output regardless of
-`--format`.
+The `context` command does not accept `--format`; its output is always
+JSON-shaped, and `--json` is accepted for parity with `check`.
 
 ## `ripr.toml`
 
