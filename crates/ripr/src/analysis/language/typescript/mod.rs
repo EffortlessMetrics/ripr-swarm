@@ -247,6 +247,10 @@ impl LanguageAdapter for TypeScriptAdapter {
                 (None, None, None)
             };
         let alias_map_ref: Option<&TsAliasMap> = alias_map.as_ref();
+        // Load the root tsconfig.json outDir mapping once for this run
+        // (#4551); the relative resolver reads it back per import. It does
+        // not depend on `resolve_tsconfig_paths`, which governs aliases.
+        tsconfig::refresh_out_dir_map(&options.root);
 
         // Build the bounded re-export index from all non-test workspace files
         // (RIPR-SPEC-0095). The index enables crediting tests that reach the owner

@@ -1,6 +1,6 @@
 //! Related test candidate discovery for the TypeScript preview adapter.
 
-use super::tsconfig::TsAliasMap;
+use super::tsconfig::{TsAliasMap, out_dir_map_for};
 use super::*;
 use std::collections::{HashMap, HashSet};
 
@@ -2117,6 +2117,20 @@ pub(crate) fn normalized_relative_import_module(
             && let Some(resolved) = resolve_directory_module(root, &module)
         {
             return Some(resolved);
+        }
+        // A relative import of `tsc` build output whose target does not
+        // exist maps back to its TypeScript source through the root
+        // tsconfig.json `outDir`/`rootDir` (#4551); a real file under the
+        // build tree wins and keeps the lexical module.
+        if let Some(root) = workspace_root
+            && !escaped_root
+            && let Some(out_dir_map) = out_dir_map_for(root)
+            && out_dir_map.contains(&joined)
+            && !is_real_file(&root.join(&joined))
+            && !file_module_exists(root, &module)
+            && let Some(source_module) = out_dir_map.source_module_for(root, &joined)
+        {
+            return Some(source_module);
         }
         return Some(module);
     }
