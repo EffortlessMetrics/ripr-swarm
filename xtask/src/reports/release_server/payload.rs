@@ -5,8 +5,8 @@ use std::path::{Component, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::capture_process_output;
 use crate::policy::distribution::{DistributionContract, TargetContract, load_distribution_contract};
+use crate::run::capture_process_output;
 
 use super::{hex_lower, release_server_readme, sha256_file};
 
@@ -202,10 +202,7 @@ pub(crate) fn verify_final_native_payload(
         return Err("staged final native payload identity does not match the selected build inputs".to_string());
     }
 
-    let actual_files = payload_file_identities(
-        &payload_dir,
-        &identity.executable_relative_path,
-    )?;
+    let actual_files = payload_file_identities(&payload_dir, &identity.executable_relative_path)?;
     if actual_files != identity.files {
         return Err(format!(
             "final native payload file inventory or digest mismatch under {}",
@@ -279,8 +276,8 @@ fn payload_context(
         cargo_lock_sha256: sha256_file(Path::new("Cargo.lock"))?,
         cargo_features,
         toolchain: PayloadToolchainIdentity {
-            rustc_verbose_version: command_output("rustc", &["-vV"] )?,
-            cargo_verbose_version: command_output("cargo", &["-vV"] )?,
+            rustc_verbose_version: command_output("rustc", &["-vV"])?,
+            cargo_verbose_version: command_output("cargo", &["-vV"])?,
         },
         build_environment: PayloadBuildEnvironmentIdentity {
             runner_os: env_value("RUNNER_OS", env::consts::OS),
@@ -316,12 +313,7 @@ fn workspace_version(path: &Path) -> Result<String, String> {
         .and_then(|package| package.get("version"))
         .and_then(toml::Value::as_str)
         .map(str::to_string)
-        .ok_or_else(|| {
-            format!(
-                "{}: missing [workspace.package].version",
-                path.display()
-            )
-        })
+        .ok_or_else(|| format!("{}: missing [workspace.package].version", path.display()))
 }
 
 fn command_output(program: &str, args: &[&str]) -> Result<String, String> {
@@ -390,10 +382,9 @@ fn identity_for_payload(
     context: &PayloadIdentityContext,
 ) -> Result<FinalNativePayloadIdentity, String> {
     let files = payload_file_identities(payload_dir, &context.executable_relative_path)?;
-    if !files
-        .iter()
-        .any(|file| file.relative_path == context.executable_relative_path && file.role == "executable")
-    {
+    if !files.iter().any(|file| {
+        file.relative_path == context.executable_relative_path && file.role == "executable"
+    }) {
         return Err(format!(
             "final native payload does not contain executable `{}`",
             context.executable_relative_path
