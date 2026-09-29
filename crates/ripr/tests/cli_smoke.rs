@@ -18273,6 +18273,7 @@ fn doctor_probes_language_runtimes_outside_the_checkout() -> Result<(), String> 
     ignore_remove_dir_all(&workspace);
     result
 }
+
 /// #4735: without git on PATH (slim or distroless images), `check` names
 /// the missing program and the `--diff` route instead of dumping the git
 /// argv, `doctor` names the fix and recommends that route, and the route
