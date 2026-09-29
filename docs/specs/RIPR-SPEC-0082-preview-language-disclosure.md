@@ -176,7 +176,8 @@ wire name, so its advisory also carries `javascript_file_count`: how many of
 `file_count` are `.js`/`.jsx`/`.mjs`/`.cjs` sources, by the router's exact
 extension lists (#4555). Human prose uses it: a JavaScript-only advisory
 counts `JavaScript file(s)`, a mixed one `TypeScript/JavaScript files`, and
-either names the `TypeScript/JavaScript adapter`. The not-enabled note keeps
+the not-enabled, not-compiled and none-routed notes name the
+`TypeScript/JavaScript adapter`. The not-enabled note keeps
 the `"typescript"` config value and adds `("typescript" enables the adapter
 for JavaScript files too.)`. A TypeScript-only advisory is unchanged. The JSON
 advisory does not carry the new count; its `language` stays the wire name.

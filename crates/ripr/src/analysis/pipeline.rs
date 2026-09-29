@@ -2851,6 +2851,28 @@ index 0000000..1111111 100644
         Ok(())
     }
 
+    /// #4555 (repo scope): the workspace-walk advisory counts JavaScript
+    /// files after the #4372 exclusion filter, so an excluded `dist/` bundle
+    /// is in neither count when enabled and in both when not enabled.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn repo_typescript_advisory_counts_javascript_after_exclusion() -> Result<(), String> {
+        let root = temp_root("issue-4555-ts-repo-javascript-count")?;
+        for path in ["src/a.js", "src/b.mts", "dist/x.js"] {
+            write(&root.join(path), "export const limit = 1;\n")?;
+        }
+        let counts = |enabled: &[LanguageId]| -> Vec<(usize, usize)> {
+            detect_repo_preview_advisories(&root, enabled)
+                .into_iter()
+                .map(|advisory| (advisory.file_count, advisory.javascript_file_count))
+                .collect()
+        };
+        assert_eq!(counts(&[LanguageId::TypeScript]), vec![(2, 1)]);
+        assert_eq!(counts(&[LanguageId::Rust]), vec![(3, 2)]);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     /// #4372 negative control: with TypeScript NOT enabled, the not-enabled
     /// disclosure still reports every routed TypeScript file, excluded or
     /// not — it discloses presence, not analysis.
@@ -2911,6 +2933,7 @@ index 0000000..1111111 100644
                 "src/d.jsx",
                 "src/e.mts",
                 "src/f.ts",
+                "src/g.d.ts",
             ]),
         )?;
 
@@ -2925,7 +2948,7 @@ index 0000000..1111111 100644
             .iter()
             .find(|advisory| advisory.language == "typescript")
             .ok_or_else(|| "expected a TypeScript advisory".to_string())?;
-        assert_eq!(advisory.file_count, 6);
+        assert_eq!(advisory.file_count, 7);
         assert_eq!(advisory.javascript_file_count, 4);
         let _ = std::fs::remove_dir_all(&root);
         Ok(())

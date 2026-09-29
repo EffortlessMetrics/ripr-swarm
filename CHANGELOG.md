@@ -34,9 +34,12 @@ are scoped or reviewed.
   CommonJS package such as mime-types, `Changed file(s) by language:
   javascript: 1` was followed by `this diff contains 1 TypeScript file`. A
   JavaScript-only diff now says `JavaScript file(s)`, a mixed one
-  `TypeScript/JavaScript files`, and both name the `TypeScript/JavaScript
-  adapter`; the `enabled = ["rust", "typescript"]` hint stays, with a line
-  saying it covers JavaScript too (#4555).
+  `TypeScript/JavaScript files`, and the not-enabled and not-compiled notes
+  name the `TypeScript/JavaScript adapter`; the
+  `enabled = ["rust", "typescript"]` hint stays, with a line saying it covers
+  JavaScript too. `PreviewLanguageAdvisory` gains the public field
+  `javascript_file_count`; code that builds the struct with a literal must
+  set it (#4555).
 
 - Security: Rust source discovery skips symlinked `.rs` entries, as the
   Python and TypeScript readers already did. A cloned repository or pull
