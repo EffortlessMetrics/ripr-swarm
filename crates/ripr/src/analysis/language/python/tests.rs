@@ -304,6 +304,50 @@ class TestWithInit(CheckMixin):
         pass
     def test_never_collected(self):
         helper()
+
+class TestInheritsInit(TestWithInit):
+    def test_not_collected_either(self):
+        helper()
+
+@dataclass
+class TestData:
+    def test_dataclass_not_collected(self):
+        helper()
+
+class UnitMixin:
+    def test_unit_overridden(self):
+        helper()
+    def test_unit_assigned_away(self):
+        helper()
+
+class UnitCase(unittest.TestCase, UnitMixin):
+    def test_unit_overridden(self):
+        pass
+    test_unit_assigned_away = None
+
+class FirstMixin:
+    def test_shadow(self):
+        helper()
+
+class SecondMixin:
+    def test_shadow(self):
+        helper()
+    def test_second_only(self):
+        helper()
+
+class TestShadowed(FirstMixin, SecondMixin):
+    pass
+
+class SharedMixin:
+    def test_kept_by_one(self):
+        helper()
+
+class TestOverrides(SharedMixin):
+    def test_kept_by_one(self):
+        pass
+
+class TestInherits(SharedMixin):
+    pass
 "#,
     );
     let collected: Vec<(&str, &str)> = tests
@@ -318,6 +362,11 @@ class TestWithInit(CheckMixin):
             ("ZoneInfoGettzTest.testZoneInfoNewInstance", "unittest"),
             ("CheckMixin.test_shared", "pytest"),
             ("TestFirst.test_overridden", "pytest"),
+            ("UnitCase.test_unit_overridden", "unittest"),
+            ("FirstMixin.test_shadow", "pytest"),
+            ("SecondMixin.test_second_only", "pytest"),
+            ("SharedMixin.test_kept_by_one", "pytest"),
+            ("TestOverrides.test_kept_by_one", "pytest"),
         ]
     );
 }

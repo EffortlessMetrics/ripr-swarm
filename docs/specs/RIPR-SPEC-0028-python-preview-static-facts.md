@@ -93,9 +93,14 @@ Test discovery:
 - `unittest.TestCase` subclasses and their default `test`-prefixed methods,
   including classes that reach `TestCase` through a base defined in the same
   file, and the `test`-prefixed methods of a same-file mixin that a collected
-  test class inherits (#4562); an uninherited mixin is not collected, nor a
-  mixin method that every collected subclass overrides, nor a `Test*` class
-  that defines `__init__` (pytest does not collect it)
+  test class inherits (#4562), directly or through another same-file mixin.
+  A mixin member is collected only when some collected subclass resolves it
+  to that mixin: the subclass's own definition (a method or a
+  `test_x = None` assignment) or an earlier base wins, and an imported base
+  in between makes the resolution unknown, so the member is not collected.
+  An uninherited mixin is not collected, nor a `Test*` class that pytest
+  skips because it or a same-file ancestor defines `__init__` or `__new__`
+  or is a dataclass
 - parametrized tests via `@pytest.mark.parametrize` (recognised
   syntactically)
 - pytest fixture and parameter names captured from test function signatures
@@ -359,10 +364,12 @@ single-name list/tuple argnames takes tuple rows, as pytest unpacks them.
 Argvalues named by a variable, `indirect=`, starred rows, a `pytest.param`
 with any keyword but `id=` (a `marks=` skip or xfail case may never run), a
 unittest method (pytest does not parametrize it), and an argname the test
-body may rebind leave the call unresolved. Any nested `lambda`/`def`/`class`
-in the test, a tuple or loop target naming the argname, and an
-`import`/`global`/`nonlocal`/`del`/`case` line naming it count as a possible
-rebinding. When no strong related call binds a literal
+body may rebind leave the call unresolved. A rebinding is read from the
+parsed test body: any assignment, tuple, loop, `with` or `except` target, an
+import or `del` of the argname drops it from the cases, and a nested `def` or
+`class`, a `match` or a star import drops all cases. Any `lambda` in the test,
+or a comprehension whose `for` target names the argname, also leaves the call
+unresolved. When no strong related call binds a literal
 argument (test locals, `*args`, a construct-call passing a dict), static
 evidence cannot see the activating input either way: the oracle verdict stands
 and an `exposed` finding carries a `boundary_activation_unresolved` evidence

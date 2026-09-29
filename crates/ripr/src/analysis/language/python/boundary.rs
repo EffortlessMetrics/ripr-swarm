@@ -807,11 +807,11 @@ fn canonical_decimal(text: &str) -> Option<String> {
 }
 
 /// Whether a parametrize argname may name something other than the case
-/// value where the owner call reads it (#4612 review). Beyond the ordinary
-/// rebinding forms, any nested scope (`lambda`, `def`, `class`) may shadow it
-/// with a parameter, and a tuple or loop target (`a, x = ...`, `for i, x in`),
-/// an `import`, `global`, `nonlocal`, `del` or `case` line may rebind it.
-/// Fails closed: an unreadable header or any such shape counts as rebound.
+/// value where the owner call reads it, beyond the statement bindings the
+/// recorded cases already exclude (`parametrize.rs`, #4612 review): a
+/// `lambda` may shadow it with a parameter, and a comprehension's `for`
+/// target may name it. Textual and fail-closed: any live `lambda`, or any
+/// live `for ... in` whose target (across lines) mentions the name, counts.
 fn case_name_may_be_rebound(test_text: &str, name: &str) -> bool {
     let Some(body) = test_body_after_header(test_text) else {
         return true;
@@ -833,64 +833,19 @@ fn case_name_may_be_rebound(test_text: &str, name: &str) -> bool {
             })
             .collect()
     };
-    if ["lambda", "def", "class"]
-        .iter()
-        .any(|keyword| !live_words(keyword).is_empty())
-    {
+    if !live_words("lambda").is_empty() {
         return true;
     }
     let mentions = live_words(name);
-    if mentions.is_empty() {
-        return false;
-    }
-    let line_of = |idx: usize| {
-        let start = body[..idx].rfind('\n').map_or(0, |offset| offset + 1);
-        let end = body[idx..]
-            .find('\n')
-            .map_or(body.len(), |offset| idx + offset);
-        (start, end)
-    };
-    // A loop or comprehension target: the name between `for` and `in`.
-    let in_loop_target = live_words("for").into_iter().any(|for_idx| {
-        let (_, line_end) = line_of(for_idx);
-        let target = &body[for_idx + 3..line_end];
-        let target = target.find(" in ").map_or(target, |end| &target[..end]);
+    live_words("for").into_iter().any(|for_idx| {
+        let target_start = for_idx + "for".len();
+        let target_end = body[target_start..]
+            .find(" in ")
+            .map_or(body.len(), |offset| target_start + offset);
         mentions
             .iter()
-            .any(|&idx| idx > for_idx && idx < for_idx + 3 + target.len())
-    });
-    in_loop_target
-        || mentions.iter().any(|&idx| {
-            let (line_start, line_end) = line_of(idx);
-            let line = body[line_start..line_end].trim_start();
-            ["import ", "from ", "global ", "nonlocal ", "del ", "case "]
-                .iter()
-                .any(|keyword| line.starts_with(keyword))
-                || assignment_target_before(&body[line_start..line_end], idx - line_start)
-        })
-}
-
-/// Whether a top-level `=` (not `==`, `<=`, `>=`, `!=`, and not a keyword
-/// argument inside brackets) follows the byte offset `at` on this line.
-fn assignment_target_before(line: &str, at: usize) -> bool {
-    let bytes = line.as_bytes();
-    let mut depth = 0usize;
-    for (idx, &byte) in bytes.iter().enumerate() {
-        match byte {
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
-            b'=' if depth == 0 && idx > at => {
-                let prev = idx.checked_sub(1).map(|prev| bytes[prev]);
-                let next = bytes.get(idx + 1).copied();
-                if next != Some(b'=') && !prev.is_some_and(|prev| b"=<>!".contains(&prev)) {
-                    return true;
-                }
-            }
-            b'#' => return false,
-            _ => {}
-        }
-    }
-    false
+            .any(|&idx| idx > target_start && idx < target_end)
+    })
 }
 
 /// The test function's text after its `def ...(...):` header.

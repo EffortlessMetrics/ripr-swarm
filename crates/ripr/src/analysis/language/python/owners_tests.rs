@@ -271,7 +271,8 @@ pub(super) fn collect_tests_from_statements(
                     // pytest does not parametrize unittest methods.
                     parametrize: (framework == "pytest")
                         .then(|| parametrize_cases(source, &function.decorator_list))
-                        .flatten(),
+                        .flatten()
+                        .and_then(|cases| cases.excluding_body_bindings(&function.body)),
                     framework,
                     assertions: collect_assertions_from_statements(&function.body, source),
                     constant_rebinding: python_test_rebinding(
@@ -301,7 +302,8 @@ pub(super) fn collect_tests_from_statements(
                     // pytest does not parametrize unittest methods.
                     parametrize: (framework == "pytest")
                         .then(|| parametrize_cases(source, &function.decorator_list))
-                        .flatten(),
+                        .flatten()
+                        .and_then(|cases| cases.excluding_body_bindings(&function.body)),
                     framework,
                     assertions: collect_assertions_from_statements(&function.body, source),
                     constant_rebinding: python_test_rebinding(
@@ -315,7 +317,7 @@ pub(super) fn collect_tests_from_statements(
                 let class_is_unittest =
                     in_unittest_class || local_classes.unittest.contains(class.name.as_str());
                 if class_is_unittest
-                    || is_pytest_class(class)
+                    || local_classes.pytest.contains(class.name.as_str())
                     || local_classes.mixins.contains(class.name.as_str())
                 {
                     let class_name = class.name.to_string();
@@ -485,144 +487,218 @@ fn is_unittest_class(class: &ast::StmtClassDef) -> bool {
     })
 }
 
-/// Test classes resolved through same-scope inheritance (#4562).
+/// Which same-scope classes pytest or unittest collects (#4562).
 ///
-/// - `unittest`: classes that reach `TestCase` directly or through bases
-///   defined in the same scope (`class ZoneInfoGettzTest(GettzTest)` with
-///   `class GettzTest(unittest.TestCase, TzFoldMixin)`), whatever their name.
-/// - `mixins`: same-scope classes that a collected test class lists as a base
-///   (`TzFoldMixin`). Their `test*` methods run through that subclass. They
-///   run as unittest tests when a unittest class inherits them. A mixin that
-///   no collected class inherits never runs and is not collected.
-///
-/// Bases defined in another module are not followed.
+/// A class is collected on its own when it reaches `unittest.TestCase`
+/// through same-scope bases, or when pytest collects it: a `Test*` name, and
+/// neither it nor a same-scope ancestor defines `__init__`/`__new__` or is a
+/// dataclass. A same-scope ancestor of a collected class that is not itself
+/// collected is a mixin; each of its `test*` members runs only if some
+/// collected subclass resolves that member to the mixin (the subclass's own
+/// definition or an earlier base wins, and an imported base in between makes
+/// the resolution unknown, so the member is not collected).
 #[derive(Default)]
 struct LocalTestClasses<'a> {
+    /// Classes collected under unittest, including mixins a unittest class
+    /// inherits.
     unittest: BTreeSet<&'a str>,
+    /// `Test*` classes pytest collects.
+    pytest: BTreeSet<&'a str>,
     mixins: BTreeSet<&'a str>,
-    /// Per mixin that is not itself collected, the test methods every
-    /// collected subclass overrides.
+    /// Per mixin, the `test*` members no collected subclass runs.
     hidden: BTreeMap<&'a str, BTreeSet<&'a str>>,
 }
 
 impl<'a> LocalTestClasses<'a> {
     fn of(statements: &'a [Stmt]) -> Self {
-        let class_defs: Vec<&'a ast::StmtClassDef> = statements
-            .iter()
-            .filter_map(|stmt| match stmt {
-                Stmt::ClassDef(class) => Some(class),
-                _ => None,
-            })
-            .collect();
-        let classes: Vec<(&'a str, Vec<String>, bool)> = class_defs
-            .iter()
-            .map(|class| {
-                (
-                    class.name.as_str(),
-                    class.bases.iter().filter_map(expr_full_name).collect(),
-                    is_unittest_class(class),
-                )
-            })
-            .collect();
+        // Python keeps the last definition of a name.
+        let mut classes: BTreeMap<&'a str, &'a ast::StmtClassDef> = BTreeMap::new();
+        for stmt in statements {
+            if let Stmt::ClassDef(class) = stmt {
+                classes.insert(class.name.as_str(), class);
+            }
+        }
+        let bases = |class: &ast::StmtClassDef| -> Vec<String> {
+            class.bases.iter().filter_map(expr_full_name).collect()
+        };
         let mut found = Self::default();
+        let mut own_unittest: BTreeSet<&'a str> = BTreeSet::new();
         let mut changed = true;
         while changed {
             changed = false;
-            for (name, bases, direct) in &classes {
-                if !found.unittest.contains(name)
-                    && (*direct
-                        || bases
+            for (name, class) in &classes {
+                if !own_unittest.contains(name)
+                    && (is_unittest_class(class)
+                        || bases(class)
                             .iter()
-                            .any(|base| found.unittest.contains(base.as_str())))
+                            .any(|base| own_unittest.contains(base.as_str())))
                 {
-                    found.unittest.insert(name);
+                    own_unittest.insert(name);
                     changed = true;
                 }
             }
         }
-        let is_pytest_collected = |name: &str| {
-            class_defs
-                .iter()
-                .any(|class| class.name.as_str() == name && is_pytest_class(class))
-        };
-        for (name, bases, _) in &classes {
-            if found.unittest.contains(name) || is_pytest_collected(name) {
-                for base in bases {
-                    if let Some((mixin, _, _)) = classes
-                        .iter()
-                        .find(|(candidate, _, _)| *candidate == base.as_str())
-                        && !found.unittest.contains(mixin)
-                    {
-                        found.mixins.insert(mixin);
+        for name in classes.keys() {
+            if name.starts_with("Test")
+                && !own_unittest.contains(name)
+                && !ancestors_or_self(name, &classes).iter().any(|ancestor| {
+                    classes
+                        .get(ancestor)
+                        .is_some_and(|c| blocks_pytest_collection(c))
+                })
+            {
+                found.pytest.insert(name);
+            }
+        }
+        let collected: BTreeSet<&'a str> = own_unittest.union(&found.pytest).copied().collect();
+        for name in &collected {
+            for ancestor in ancestors_or_self(name, &classes) {
+                if !collected.contains(ancestor) {
+                    found.mixins.insert(ancestor);
+                    if own_unittest.contains(name) {
+                        found.unittest.insert(ancestor);
                     }
                 }
             }
         }
-        // A mixin inherited by a unittest class runs under unittest.
-        let unittest_mixins: Vec<&'a str> = found
-            .mixins
-            .iter()
-            .copied()
-            .filter(|mixin| {
-                classes.iter().any(|(name, bases, _)| {
-                    found.unittest.contains(name) && bases.iter().any(|base| base == mixin)
+        found.unittest.extend(own_unittest.iter().copied());
+        for mixin in &found.mixins {
+            let Some(class) = classes.get(mixin) else {
+                continue;
+            };
+            let hidden: BTreeSet<&'a str> = test_member_names(class)
+                .into_iter()
+                .filter(|member| {
+                    !collected.iter().any(|name| {
+                        resolve_member(name, member, &classes, &mut BTreeSet::new())
+                            == Resolution::Class(mixin)
+                    })
                 })
-            })
-            .collect();
-        found.unittest.extend(unittest_mixins);
-        let collected = |name: &str| found.unittest.contains(name) || is_pytest_collected(name);
-        let mut hidden = BTreeMap::new();
-        for mixin in found
-            .mixins
-            .iter()
-            .copied()
-            .filter(|mixin| !collected(mixin))
-        {
-            let mut overridden: Option<BTreeSet<&'a str>> = None;
-            for class in class_defs.iter().filter(|class| {
-                collected(class.name.as_str())
-                    && class
-                        .bases
-                        .iter()
-                        .filter_map(expr_full_name)
-                        .any(|base| base == mixin)
-            }) {
-                let own = test_method_names(class);
-                overridden = Some(match overridden {
-                    Some(seen) => seen.intersection(&own).copied().collect(),
-                    None => own,
-                });
-            }
-            if let Some(overridden) = overridden.filter(|set| !set.is_empty()) {
-                hidden.insert(mixin, overridden);
+                .collect();
+            if !hidden.is_empty() {
+                found.hidden.insert(mixin, hidden);
             }
         }
-        found.hidden = hidden;
         found
     }
 }
 
-/// pytest collects `Test*` classes, except one defining `__init__`.
-fn is_pytest_class(class: &ast::StmtClassDef) -> bool {
-    class.name.as_str().starts_with("Test")
-        && method_names_with(class, |name| name == "__init__").is_empty()
+/// `name` and its same-scope ancestors, each once.
+fn ancestors_or_self<'a>(
+    name: &'a str,
+    classes: &BTreeMap<&'a str, &'a ast::StmtClassDef>,
+) -> Vec<&'a str> {
+    let mut seen: Vec<&'a str> = Vec::new();
+    let mut stack = vec![name];
+    while let Some(current) = stack.pop() {
+        if seen.contains(&current) {
+            continue;
+        }
+        seen.push(current);
+        if let Some(class) = classes.get(current) {
+            for base in class.bases.iter().filter_map(expr_full_name) {
+                if let Some((&key, _)) = classes.get_key_value(base.as_str()) {
+                    stack.push(key);
+                }
+            }
+        }
+    }
+    seen
 }
 
-fn test_method_names(class: &ast::StmtClassDef) -> BTreeSet<&str> {
-    method_names_with(class, |name| name.starts_with("test"))
+#[derive(Debug, PartialEq, Eq)]
+enum Resolution<'a> {
+    Class(&'a str),
+    Missing,
+    Unknown,
 }
 
-fn method_names_with(class: &ast::StmtClassDef, keep: impl Fn(&str) -> bool) -> BTreeSet<&str> {
-    class
-        .body
-        .iter()
-        .filter_map(|stmt| match stmt {
-            Stmt::FunctionDef(function) => Some(function.name.as_str()),
-            Stmt::AsyncFunctionDef(function) => Some(function.name.as_str()),
-            _ => None,
+/// Where `member` resolves on class `name`: its own definition, else its
+/// bases left to right, depth first. An imported base (other than `object`
+/// and `TestCase`, which define no `test*` member) makes it unknown.
+fn resolve_member<'a>(
+    name: &'a str,
+    member: &str,
+    classes: &BTreeMap<&'a str, &'a ast::StmtClassDef>,
+    visiting: &mut BTreeSet<&'a str>,
+) -> Resolution<'a> {
+    let Some(class) = classes.get(name) else {
+        return Resolution::Unknown;
+    };
+    if !visiting.insert(name) {
+        return Resolution::Unknown;
+    }
+    if test_member_names(class).contains(member) {
+        return Resolution::Class(name);
+    }
+    for base in class.bases.iter().filter_map(expr_full_name) {
+        let resolution = match classes.get_key_value(base.as_str()) {
+            Some((&key, _)) => resolve_member(key, member, classes, visiting),
+            None if matches!(base.as_str(), "object" | "TestCase" | "unittest.TestCase") => {
+                Resolution::Missing
+            }
+            None => Resolution::Unknown,
+        };
+        if resolution != Resolution::Missing {
+            return resolution;
+        }
+    }
+    Resolution::Missing
+}
+
+/// A class pytest will not collect as a test class: it defines `__init__` or
+/// `__new__`, or a dataclass decorator generates `__init__`.
+fn blocks_pytest_collection(class: &ast::StmtClassDef) -> bool {
+    class.body.iter().any(|stmt| {
+        matches!(
+            stmt,
+            Stmt::FunctionDef(function) if matches!(function.name.as_str(), "__init__" | "__new__")
+        ) || matches!(
+            stmt,
+            Stmt::AsyncFunctionDef(function) if matches!(function.name.as_str(), "__init__" | "__new__")
+        )
+    }) || class.decorator_list.iter().any(|decorator| {
+        let callee = match decorator {
+            Expr::Call(call) => call.func.as_ref(),
+            other => other,
+        };
+        expr_full_name(callee).is_some_and(|name| {
+            name == "dataclass"
+                || name.ends_with(".dataclass")
+                || matches!(name.as_str(), "attr.s" | "attr.attrs" | "attrs.define" | "attrs.frozen" | "define" | "frozen")
         })
-        .filter(|name| keep(name))
-        .collect()
+    })
+}
+
+/// The `test*` names a class body binds: methods, and class-level
+/// assignments that override an inherited test (`test_x = None`).
+fn test_member_names(class: &ast::StmtClassDef) -> BTreeSet<&str> {
+    let mut names = BTreeSet::new();
+    for stmt in &class.body {
+        match stmt {
+            Stmt::FunctionDef(function) => {
+                names.insert(function.name.as_str());
+            }
+            Stmt::AsyncFunctionDef(function) => {
+                names.insert(function.name.as_str());
+            }
+            Stmt::Assign(assign) => {
+                for target in &assign.targets {
+                    if let Expr::Name(name) = target {
+                        names.insert(name.id.as_str());
+                    }
+                }
+            }
+            Stmt::AnnAssign(assign) => {
+                if let Expr::Name(name) = assign.target.as_ref() {
+                    names.insert(name.id.as_str());
+                }
+            }
+            _ => {}
+        }
+    }
+    names.retain(|name| name.starts_with("test"));
+    names
 }
 
 pub(super) fn decorator_names(decorators: &[Expr]) -> Vec<String> {

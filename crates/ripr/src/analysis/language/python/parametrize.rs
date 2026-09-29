@@ -20,6 +20,7 @@
 //! text; the caller decides whether it is a literal.
 
 use super::expr_full_name;
+use super::module_constants::body_bound_names;
 use super::source_utils::text_for_range;
 use rustpython_parser::ast::{self, Expr, Ranged};
 use std::collections::BTreeMap;
@@ -35,6 +36,18 @@ pub(super) struct PythonParametrizeCases {
 }
 
 impl PythonParametrizeCases {
+    /// The cases without the argnames the test body rebinds (an assignment,
+    /// a tuple, loop, `with` or `except` target, an import, `del`), so a
+    /// rebound name never pairs with its case value; None when the body's
+    /// bindings cannot be enumerated or it defines a nested scope.
+    pub(super) fn excluding_body_bindings(mut self, body: &[ast::Stmt]) -> Option<Self> {
+        let bound = body_bound_names(body)?;
+        for case in &mut self.cases {
+            case.retain(|name, _| !bound.contains(name));
+        }
+        Some(self)
+    }
+
     /// Whether `name` is an argname of every recorded case.
     pub(super) fn binds(&self, name: &str) -> bool {
         !self.cases.is_empty() && self.cases.iter().all(|case| case.contains_key(name))

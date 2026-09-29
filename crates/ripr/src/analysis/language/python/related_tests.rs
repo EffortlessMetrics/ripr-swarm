@@ -583,6 +583,7 @@ pub(super) fn owner_result_locals(test: &PythonTest, callees: &[String]) -> Vec<
             && !value.starts_with('=')
             && is_whole_call
             && !python_text_hides_code(body, start + (line.len() - line.trim_start().len()))
+            && bracket_depth_at(body, start) == 0
             && assignment_count(body, target) == 1
             && !binds_other_than_assignment(test, target)
             && !test.fixtures.iter().any(|fixture| fixture == target)
@@ -593,6 +594,38 @@ pub(super) fn owner_result_locals(test: &PythonTest, callees: &[String]) -> Vec<
     locals.sort();
     locals.dedup();
     locals
+}
+
+/// Open-bracket depth at byte `idx` of `text`, skipping quoted strings, so a
+/// `name=value` line inside a multi-line call reads as a keyword argument,
+/// not an assignment.
+fn bracket_depth_at(text: &str, idx: usize) -> usize {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut comment = false;
+    for ch in text[..idx].chars() {
+        if comment {
+            comment = ch != '\n';
+        } else if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if let Some(open) = quote {
+            if ch == open {
+                quote = None;
+            }
+        } else {
+            match ch {
+                '\'' | '"' => quote = Some(ch),
+                '#' => comment = true,
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+    }
+    depth
 }
 
 /// Whether `text` calls `callee` as live code with an identifier boundary

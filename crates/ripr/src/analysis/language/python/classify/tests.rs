@@ -506,6 +506,10 @@ fn shadowed_or_unrun_parametrize_cases_are_not_observed() -> Result<(), String> 
         "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [100])\ndef test_bulk_discount(quantity):\n    check = lambda quantity: bulk_discount(quantity) == 0.0\n    assert check(50)\n",
         "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [100])\ndef test_bulk_discount(quantity):\n    for _, quantity in [(0, 50)]:\n        assert bulk_discount(quantity) == 0.0\n",
         "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [100])\ndef test_bulk_discount(quantity):\n    _, quantity = (0, 50)\n    assert bulk_discount(quantity) == 0.0\n",
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [100])\ndef test_bulk_discount(quantity):\n    tags[\"#\"], quantity = \"x\", 50\n    assert bulk_discount(quantity) == 0.0\n",
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [100])\ndef test_bulk_discount(quantity):\n    with ctx() as (_, quantity):\n        assert bulk_discount(quantity) == 0.0\n",
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [100])\ndef test_bulk_discount(quantity):\n    for (\n        _, quantity\n    ) in [(0, 50)]:\n        assert bulk_discount(quantity) == 0.0\n",
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [100])\ndef test_bulk_discount(quantity):\n    assert all(bulk_discount(quantity) == 0.0 for quantity in [50])\n",
         "import pytest\nimport unittest\nfrom src.subject import bulk_discount\n\nclass TestBulk(unittest.TestCase):\n    @pytest.mark.parametrize(\"quantity\", [100])\n    def test_bulk_discount(self, quantity):\n        self.assertEqual(bulk_discount(quantity), 0.0)\n",
     ] {
         let finding = classify_case(
@@ -520,16 +524,25 @@ fn shadowed_or_unrun_parametrize_cases_are_not_observed() -> Result<(), String> 
             "{tests}: {finding:?}"
         );
     }
-    // Positive control: a keyword argument passing the case name is not a
-    // rebinding, so the on-boundary case is still observed.
-    let finding = classify_case(
-        DISCOUNT_SOURCE,
+    // Positive controls: a keyword argument passing the case name, and an
+    // `=` inside the assertion message, are not rebindings, so the
+    // on-boundary case is still observed.
+    for tests in [
         "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [100])\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity=quantity) == 0.0\n",
-        2,
-        "    if quantity > 100:",
-        "    if quantity >= 100:",
-    )?;
-    assert!(observed(&finding, "quantity == 100"), "{finding:?}");
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [100])\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0, \"rate=0\"\n",
+    ] {
+        let finding = classify_case(
+            DISCOUNT_SOURCE,
+            tests,
+            2,
+            "    if quantity > 100:",
+            "    if quantity >= 100:",
+        )?;
+        assert!(
+            observed(&finding, "quantity == 100"),
+            "{tests}: {finding:?}"
+        );
+    }
     Ok(())
 }
 
@@ -623,6 +636,8 @@ fn module_call_credit_keeps_boundary_and_identity_guards() -> Result<(), String>
         // The local holds the owner's result only on some paths.
         "from src.subject import bulk_discount\n\ndef test_bulk():\n    rate = bulk_discount(100) or 0.15\n    assert rate == 0.15\n",
         "from src.subject import bulk_discount\n\ndef test_bulk():\n    rate = bulk_discount(100) if FLAG else 0.15\n    assert rate == 0.15\n",
+        // A keyword argument inside a multi-line call is not an assignment.
+        "from src.subject import bulk_discount\n\ndef test_bulk():\n    check(\n        rate=bulk_discount(100)\n    )\n    assert rate == 0.15\n",
     ] {
         let finding = classify_case(
             DISCOUNT_SOURCE,
