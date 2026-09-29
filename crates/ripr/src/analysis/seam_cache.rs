@@ -3822,8 +3822,8 @@ mod tests {
                     // #4475 shipped unsigned nesting-budget generations. Even
                     // when copied into the new entry path, their decoded
                     // generation must miss before digest admission.
-                    let invalid_bytes = std::fs::read(&manifest_or_single)
-                        .map_err(|err| err.to_string())?;
+                    let invalid_bytes =
+                        std::fs::read(&manifest_or_single).map_err(|err| err.to_string())?;
                     let previous_outer = if compact { "0.22" } else { "1.15" };
                     let previous_generations = if sharded {
                         vec![
@@ -3834,9 +3834,8 @@ mod tests {
                         vec![("schema_version", previous_outer)]
                     };
                     for (field, previous) in previous_generations {
-                        let mut value: serde_json::Value =
-                            serde_json::from_slice(&invalid_bytes)
-                                .map_err(|err| err.to_string())?;
+                        let mut value: serde_json::Value = serde_json::from_slice(&invalid_bytes)
+                            .map_err(|err| err.to_string())?;
                         value
                             .as_object_mut()
                             .ok_or("envelope must be object")?
