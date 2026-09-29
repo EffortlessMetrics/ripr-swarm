@@ -191,9 +191,9 @@ jobs:
           git -C "${GITHUB_WORKSPACE}" -c credential.helper= -c http.extraheader= fetch --no-tags --depth=1 origin "${CANDIDATE_SHA}"
           git -C "${GITHUB_WORKSPACE}" checkout --detach FETCH_HEAD
 
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # v1
         with:
-          toolchain: stable
+          toolchain: 1.95.0
           targets: ${{ matrix.target }}
 
       - name: Verify requested version matches candidate package
@@ -408,9 +408,9 @@ jobs:
           git -C "${GITHUB_WORKSPACE}" -c credential.helper= -c http.extraheader= fetch --no-tags --depth=1 origin "${CANDIDATE_SHA}"
           git -C "${GITHUB_WORKSPACE}" checkout --detach FETCH_HEAD
 
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # v1
         with:
-          toolchain: stable
+          toolchain: 1.95.0
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -477,11 +477,14 @@ jobs:
           : > producer-builds.ndjson
           for directory in payload-identities/ripr-final-native-payload-*; do
             test -d "${directory}"
-            identity="${directory}/payload-identity.json"
-            producer="${directory}/producer-build.json"
-            test -f "${identity}"
-            test -f "${directory}/payload-identity.md"
-            test -f "${producer}"
+            mapfile -t identities < <(find "${directory}" -type f -name payload-identity.json -print)
+            mapfile -t markdowns < <(find "${directory}" -type f -name payload-identity.md -print)
+            mapfile -t producers < <(find "${directory}" -type f -name producer-build.json -print)
+            test "${#identities[@]}" -eq 1
+            test "${#markdowns[@]}" -eq 1
+            test "${#producers[@]}" -eq 1
+            identity="${identities[0]}"
+            producer="${producers[0]}"
             jq --arg identity_sha256 "$(sha256sum "${identity}" | awk '{print $1}')" '. + {identity_sha256: $identity_sha256}' "${identity}" >> payload-identities.ndjson
             jq --arg producer_build_sha256 "$(sha256sum "${producer}" | awk '{print $1}')" '. + {producer_build_sha256: $producer_build_sha256}' "${producer}" >> producer-builds.ndjson
           done
@@ -562,7 +565,7 @@ jobs:
             --slurpfile payload_identities payload-identities.json \
             --slurpfile producer_builds producer-builds.json \
             --argjson targets '["x86_64-pc-windows-msvc","x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-apple-darwin","aarch64-apple-darwin"]' \
-            '{schema_version: 3, status: "qualified_payload_and_archive_shape", candidate_sha: $candidate_sha, candidate_tag: $candidate_tag, version: $version, targets: $targets, execution: {selected: 5, executed: 5, failed: 0, not_run: 0}, build_identities: $build_identities[0], payload_identities: $payload_identities[0], producer_builds: $producer_builds[0], manifest_sha256: $manifest_sha256, sha256sums_sha256: $checksums_sha256, ruleset: {mode: $ruleset_mode, source_url: $ruleset_source_url, response_sha256: $ruleset_response_sha256, repository: $repository, id: $ruleset_id}, actions_artifacts_only: true, release_assets_created: false, repository_contents_written: false, secrets_required: false, limitations: ["Actions artifact retention is not a public release", "Manifest URLs are prospective and were not fetched", "Native runtime compatibility remains unqualified under issue #4489"]}' \
+            '{schema_version: 3, status: "qualified_payload_and_archive_shape", candidate_sha: $candidate_sha, candidate_tag: $candidate_tag, version: $version, targets: $targets, execution: {selected: 5, executed: 5, failed: 0, not_run: 0}, build_identities: $build_identities[0], payload_identities: $payload_identities[0], producer_builds: $producer_builds[0], manifest_sha256: $manifest_sha256, sha256sums_sha256: $checksums_sha256, ruleset: {mode: $ruleset_mode, source_url: $ruleset_source_url, response_sha256: $ruleset_response_sha256, repository: $repository, id: $ruleset_id}, actions_artifacts_only: true, release_assets_created: false, repository_contents_written: false, secrets_required: false, limitations: ["Actions artifact retention is not a public release", "Manifest URLs are prospective and were not fetched", "Native runtime compatibility remains unqualified under EffortlessMetrics/ripr-swarm#4489"]}' \
             > dist/server-archive-qualification-receipt.json
           cp payload-identities.json dist/final-native-payload-identities.json
           cp producer-builds.json dist/final-native-producer-builds.json
@@ -617,9 +620,9 @@ jobs:
           git -C "${GITHUB_WORKSPACE}" -c credential.helper= -c http.extraheader= fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
           git -C "${GITHUB_WORKSPACE}" checkout --detach FETCH_HEAD
 
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # v1
         with:
-          toolchain: stable
+          toolchain: 1.95.0
 
       - name: Read target outcomes from the public workflow-run API
         shell: bash
