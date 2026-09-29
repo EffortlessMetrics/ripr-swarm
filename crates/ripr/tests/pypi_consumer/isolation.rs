@@ -155,7 +155,7 @@ mod tests {
         std::env::join_paths(paths)
             .map_err(|error| format!("join fixture PATH: {error}"))?
             .into_string()
-            .map_err(|_| "fixture PATH is not UTF-8".to_string())
+            .map_err(|_non_utf8_path| "fixture PATH is not UTF-8".to_string())
     }
 
     fn remove_fixture(root: &Path) -> Result<(), String> {
