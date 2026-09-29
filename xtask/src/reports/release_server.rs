@@ -56,6 +56,11 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
     let target = required_release_arg(args, "target", "TARGET")?;
     let executable = required_release_arg(args, "executable", "EXECUTABLE")?;
     let archive = required_release_arg(args, "archive", "ARCHIVE")?;
+    if !matches!(archive.as_str(), "zip" | "tar.gz") {
+        return Err(format!(
+            "unsupported release server archive format `{archive}`"
+        ));
+    }
     let version = normalize_release_version(&version);
     let asset_name = format!("ripr-server-v{version}-{target}.{archive}");
     let dist_dir = Path::new("dist");

@@ -7691,20 +7691,9 @@ fn release_server_helpers_match_workflow_arguments() -> Result<(), String> {
 }
 
 #[test]
-fn release_server_archive_prepares_package_before_format_validation() -> Result<(), String> {
-    with_temp_cwd("release-server-archive", |root| {
+fn release_server_archive_rejects_format_before_repository_bound_staging() -> Result<(), String> {
+    with_temp_cwd("release-server-archive-invalid-format", |_root| {
         let executable = if cfg!(windows) { "ripr.exe" } else { "ripr" };
-        write(
-            &root
-                .join("target")
-                .join("x86_64-unknown-linux-gnu")
-                .join("release")
-                .join(executable),
-            "binary",
-        );
-        write(&root.join("LICENSE-MIT"), "mit");
-        write(&root.join("LICENSE-APACHE"), "apache");
-
         let args = vec![
             "--version".to_string(),
             "v1.2.3".to_string(),
@@ -7720,17 +7709,6 @@ fn release_server_archive_prepares_package_before_format_validation() -> Result<
             return Err("unsupported archive format should fail".to_string());
         };
         assert!(err.contains("unsupported release server archive format"));
-        assert_eq!(
-            fs::read_to_string(root.join("package").join(executable))
-                .map_err(|err| format!("read packaged executable: {err}"))?,
-            "binary"
-        );
-        assert_eq!(
-            fs::read_to_string(root.join("package").join("README-server.txt"))
-                .map_err(|err| format!("read packaged README: {err}"))?,
-            super::release_server_readme("1.2.3")
-        );
-        assert!(root.join("dist").is_dir());
         Ok(())
     })
 }
