@@ -11,22 +11,11 @@ are scoped or reviewed.
 
 ### Fixed
 
-- Rust: a test that asserts through a helper in its own file no longer reads
-  as "no assertion". With `fn check(x, want) { assert_eq!(gate(x), want) }`
-  in a `#[cfg(test)]` module and a test that only calls `check(10, false)`,
-  a changed `gate` was `reachable_unrevealed`. The test now carries the
-  helper's owner call and assertion, one hop, only for a uniquely named
-  same-file helper called directly and not shadowed. (#4574)
-- Rust: rstest `#[case(..)]` rows now count as inputs to the owner. The
-  parameter parser read `#[case] x: u32` as a malformed name and bound no
-  case values, so a test passing the boundary value through a case row was
-  reported as never reaching the boundary. Case columns map to the
-  `#[case]` parameters only; a `mut` or `let`-rebound parameter binds
-  nothing. (#4601)
-- Rust: a changed line with no resolved owner, such as a line inside a
-  `macro_rules!` template, is no longer `no_static_path` just because the
-  only related tests are same-file neighbours. With no owner name, nothing
-  can rule reach out, so it stays weak. (#4613)
+- Nested `rerun --json` cache-identity versions in `docs/OUTPUT_SCHEMA.md`
+  now track live `FILE_FACT_CACHE_SCHEMA_VERSION` (`1.10`) and
+  `CACHE_SCHEMA_VERSION` (`1.16`). Producer-backed docs tests fail when those
+  nested values, the command-to-version table, swarm-queue envelope, or
+  cache-status field contract drift from producers (#4618).
 - Default human `Hidden:` output names the language and preview status of
   omitted findings (`Python preview: 1`) so a mixed-repo remainder is not a
   bare count. Rust-only remainder stays the count line. (#4395)
@@ -1124,7 +1113,33 @@ are scoped or reviewed.
   ([#3999](https://github.com/EffortlessMetrics/ripr-swarm/issues/3999),
   [#4000](https://github.com/EffortlessMetrics/ripr-swarm/issues/4000),
   [#4287](https://github.com/EffortlessMetrics/ripr-swarm/pull/4287)).
-
+- `ripr check`, `ripr pilot` and `ripr agent repair` now name one gap with the
+  same word. The changed line `check` reports as `weakly_exposed` and the
+  seam `pilot` reports as `weakly_gripped` both read `weak` first, for
+  example `Static exposure: weak (weakly_exposed, warning, ...)`,
+  `(weak, weakly_gripped)` and `weak -> exposed (weakly_gripped ->
+  strongly_gripped, improved)`. The words are the ones the `check` summary
+  line already uses (weak, unrevealed, no path, unknown). The schema values
+  are unchanged. The repair packet's actionability reason now says "add a
+  focused test with the missing discriminator next to the nearest related
+  test", matching the new test `pilot` names, where it used to say "extend
+  the nearest related test".
+- Rust: a test that asserts through a helper in its own file no longer reads
+  as "no assertion". With `fn check(x, want) { assert_eq!(gate(x), want) }`
+  in a `#[cfg(test)]` module and a test that only calls `check(10, false)`,
+  a changed `gate` was `reachable_unrevealed`. The test now carries the
+  helper's owner call and assertion, one hop, only for a uniquely named
+  same-file helper called directly and not shadowed. (#4574)
+- Rust: rstest `#[case(..)]` rows now count as inputs to the owner. The
+  parameter parser read `#[case] x: u32` as a malformed name and bound no
+  case values, so a test passing the boundary value through a case row was
+  reported as never reaching the boundary. Case columns map to the
+  `#[case]` parameters only; a `mut` or `let`-rebound parameter binds
+  nothing. (#4601)
+- Rust: a changed line with no resolved owner, such as a line inside a
+  `macro_rules!` template, is no longer `no_static_path` just because the
+  only related tests are same-file neighbours. With no owner name, nothing
+  can rule reach out, so it stays weak. (#4613)
 
 ### Added
 
