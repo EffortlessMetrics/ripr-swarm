@@ -188,57 +188,55 @@ mod tests {
         );
     }
 
-    fn output_schema_doc() -> String {
-        let path = crate::output::test_support::repo_root()
-            .expect("repo root")
-            .join("docs/OUTPUT_SCHEMA.md");
-        crate::output::test_support::read_file(&path).expect("read OUTPUT_SCHEMA.md")
+    fn output_schema_doc() -> Result<String, String> {
+        let path = crate::output::test_support::repo_root()?.join("docs/OUTPUT_SCHEMA.md");
+        crate::output::test_support::read_file(&path)
     }
 
-    fn command_to_version_table(doc: &str) -> &str {
+    fn command_to_version_table(doc: &str) -> Result<&str, String> {
         const HEADER: &str = "| Output | Field | Current value |";
-        let start = doc.find(HEADER).unwrap_or_else(|| {
-            panic!("docs/OUTPUT_SCHEMA.md is missing the command-to-version table")
-        });
+        let start = doc.find(HEADER).ok_or_else(|| {
+            "docs/OUTPUT_SCHEMA.md is missing the command-to-version table".to_string()
+        })?;
         let table = &doc[start..];
         let end = table.find("\n\n").unwrap_or(table.len());
-        &table[..end]
+        Ok(&table[..end])
     }
 
-    fn fenced_json_after(doc: &str, marker: &str) -> serde_json::Value {
+    fn fenced_json_after(doc: &str, marker: &str) -> Result<serde_json::Value, String> {
         let after = doc
             .split_once(marker)
-            .unwrap_or_else(|| panic!("docs/OUTPUT_SCHEMA.md is missing marker {marker:?}"))
+            .ok_or_else(|| format!("docs/OUTPUT_SCHEMA.md is missing marker {marker:?}"))?
             .1;
         let json = after
             .split_once("```json")
-            .unwrap_or_else(|| panic!("no json fence after {marker:?}"))
+            .ok_or_else(|| format!("no json fence after {marker:?}"))?
             .1
             .split_once("```")
-            .unwrap_or_else(|| panic!("unclosed json fence after {marker:?}"))
+            .ok_or_else(|| format!("unclosed json fence after {marker:?}"))?
             .0;
         serde_json::from_str(json)
-            .unwrap_or_else(|err| panic!("example after {marker:?} is not JSON: {err}\n{json}"))
+            .map_err(|err| format!("example after {marker:?} is not JSON: {err}\n{json}"))
     }
 
-    fn prose_after_json_example<'a>(doc: &'a str, marker: &str) -> &'a str {
+    fn prose_after_json_example<'a>(doc: &'a str, marker: &str) -> Result<&'a str, String> {
         let after = doc
             .split_once(marker)
-            .unwrap_or_else(|| panic!("docs/OUTPUT_SCHEMA.md is missing marker {marker:?}"))
+            .ok_or_else(|| format!("docs/OUTPUT_SCHEMA.md is missing marker {marker:?}"))?
             .1;
         let after_fence = after
             .split_once("```json")
             .and_then(|(_, rest)| rest.split_once("```"))
             .map(|(_, rest)| rest)
-            .unwrap_or_else(|| panic!("no closed json fence after {marker:?}"));
+            .ok_or_else(|| format!("no closed json fence after {marker:?}"))?;
         let end = after_fence.find("\n## ").unwrap_or(after_fence.len());
-        &after_fence[..end]
+        Ok(&after_fence[..end])
     }
 
     #[test]
-    fn command_version_table_names_live_public_outputs() {
-        let doc = output_schema_doc();
-        let table = command_to_version_table(&doc);
+    fn command_version_table_names_live_public_outputs() -> Result<(), String> {
+        let doc = output_schema_doc()?;
+        let table = command_to_version_table(&doc)?;
         let required_rows = [
             (
                 "`ripr diff --json`",
@@ -277,33 +275,38 @@ mod tests {
             ),
         ];
         for (command, version, owner) in required_rows {
-            let row = table.lines().find(|line| line.contains(command));
-            let row =
-                row.unwrap_or_else(|| panic!("command-to-version table omits {command} ({owner})"));
-            assert!(
-                row.contains(&format!("`{version}`")),
-                "{command} row must document producer version {version} from {owner}; got {row}"
-            );
+            let row = table
+                .lines()
+                .find(|line| line.contains(command))
+                .ok_or_else(|| format!("command-to-version table omits {command} ({owner})"))?;
+            if !row.contains(&format!("`{version}`")) {
+                return Err(format!(
+                    "{command} row must document producer version {version} from {owner}; got {row}"
+                ));
+            }
         }
+        Ok(())
     }
 
     #[test]
-    fn swarm_queue_example_matches_live_envelope_contract() {
-        let doc = output_schema_doc();
-        let example = fenced_json_after(&doc, "The queue envelope is:");
-        assert_eq!(
-            example
-                .get("schema_version")
-                .and_then(serde_json::Value::as_str),
-            Some("0.2"),
-            "swarm queue example must use the live envelope version from gap_record_queue_envelope_value"
-        );
-        assert_eq!(
-            example.get("report").and_then(serde_json::Value::as_str),
-            Some("swarm-queue")
-        );
+    fn swarm_queue_example_matches_live_envelope_contract() -> Result<(), String> {
+        let doc = output_schema_doc()?;
+        let example = fenced_json_after(&doc, "The queue envelope is:")?;
+        if example
+            .get("schema_version")
+            .and_then(serde_json::Value::as_str)
+            != Some("0.2")
+        {
+            return Err(format!(
+                "swarm queue example must use live envelope version 0.2, got {:?}",
+                example.get("schema_version")
+            ));
+        }
+        if example.get("report").and_then(serde_json::Value::as_str) != Some("swarm-queue") {
+            return Err("swarm queue example is missing report swarm-queue".to_string());
+        }
 
-        let follow_on = prose_after_json_example(&doc, "The queue envelope is:");
+        let follow_on = prose_after_json_example(&doc, "The queue envelope is:")?;
         for field in [
             "`analysis_outcome`",
             "`analysis_outcome_error`",
@@ -312,90 +315,112 @@ mod tests {
             "`must_not_infer`",
             "`source_currentness`",
         ] {
-            assert!(
-                follow_on.contains(field),
-                "queue example follow-on must name omitted live field {field}"
-            );
+            if !follow_on.contains(field) {
+                return Err(format!(
+                    "queue example follow-on must name omitted live field {field}"
+                ));
+            }
         }
-        assert!(
-            follow_on.contains("defaults to `python`") || follow_on.contains("defaults to python"),
-            "queue docs must say --language defaults to python: {follow_on}"
-        );
-        assert!(
-            follow_on.contains("language_records_total") && follow_on.contains("--language rust"),
-            "queue docs must say a Rust-only ledger is empty under the python default: {follow_on}"
-        );
+        if !(follow_on.contains("defaults to `python`") || follow_on.contains("defaults to python"))
+        {
+            return Err(format!(
+                "queue docs must say --language defaults to python: {follow_on}"
+            ));
+        }
+        if !(follow_on.contains("language_records_total") && follow_on.contains("--language rust"))
+        {
+            return Err(format!(
+                "queue docs must say a Rust-only ledger is empty under the python default: {follow_on}"
+            ));
+        }
+        Ok(())
     }
 
     #[test]
-    fn rerun_example_nested_versions_match_live_cache_identity() {
-        let doc = output_schema_doc();
-        let example = fenced_json_after(&doc, "targeted-rerun receipt shape:");
-        assert_eq!(
-            example
-                .get("schema_version")
-                .and_then(serde_json::Value::as_str),
-            Some("ripr-targeted-rerun-v1")
-        );
+    fn rerun_example_nested_versions_match_live_cache_identity() -> Result<(), String> {
+        let doc = output_schema_doc()?;
+        let example = fenced_json_after(&doc, "targeted-rerun receipt shape:")?;
+        if example
+            .get("schema_version")
+            .and_then(serde_json::Value::as_str)
+            != Some("ripr-targeted-rerun-v1")
+        {
+            return Err("rerun example must keep top-level schema ripr-targeted-rerun-v1".into());
+        }
         let cache = example
             .get("cache")
-            .unwrap_or_else(|| panic!("rerun example missing cache"));
-        assert_eq!(
-            cache
-                .get("schema_version")
-                .and_then(serde_json::Value::as_str),
-            Some(crate::analysis::seam_cache::FILE_FACT_CACHE_SCHEMA_VERSION),
-            "cache.schema_version must track FILE_FACT_CACHE_SCHEMA_VERSION"
-        );
+            .ok_or_else(|| "rerun example missing cache".to_string())?;
+        if cache
+            .get("schema_version")
+            .and_then(serde_json::Value::as_str)
+            != Some(crate::analysis::seam_cache::FILE_FACT_CACHE_SCHEMA_VERSION)
+        {
+            return Err(format!(
+                "cache.schema_version must track FILE_FACT_CACHE_SCHEMA_VERSION, got {:?}",
+                cache.get("schema_version")
+            ));
+        }
         let fingerprint = cache
             .get("input_fingerprint")
-            .unwrap_or_else(|| panic!("rerun example missing cache.input_fingerprint"));
-        assert_eq!(
-            fingerprint
-                .get("schema_version")
-                .and_then(serde_json::Value::as_str),
-            Some(crate::analysis::seam_cache::CACHE_SCHEMA_VERSION),
-            "input_fingerprint.schema_version must track CACHE_SCHEMA_VERSION"
-        );
-        assert_eq!(
-            fingerprint
-                .get("analyzer_version")
-                .and_then(serde_json::Value::as_str),
-            Some(env!("CARGO_PKG_VERSION")),
-            "input_fingerprint.analyzer_version must track CARGO_PKG_VERSION"
-        );
+            .ok_or_else(|| "rerun example missing cache.input_fingerprint".to_string())?;
+        if fingerprint
+            .get("schema_version")
+            .and_then(serde_json::Value::as_str)
+            != Some(crate::analysis::seam_cache::CACHE_SCHEMA_VERSION)
+        {
+            return Err(format!(
+                "input_fingerprint.schema_version must track CACHE_SCHEMA_VERSION, got {:?}",
+                fingerprint.get("schema_version")
+            ));
+        }
+        if fingerprint
+            .get("analyzer_version")
+            .and_then(serde_json::Value::as_str)
+            != Some(env!("CARGO_PKG_VERSION"))
+        {
+            return Err(format!(
+                "input_fingerprint.analyzer_version must track CARGO_PKG_VERSION, got {:?}",
+                fingerprint.get("analyzer_version")
+            ));
+        }
 
-        let follow_on = prose_after_json_example(&doc, "targeted-rerun receipt shape:");
-        assert!(
-            follow_on.contains("cache.schema_version")
-                && follow_on.contains("input_fingerprint.schema_version")
-                && follow_on.contains("opaque")
-                && follow_on.contains("top-level"),
-            "rerun docs must say nested cache identity versions move and are opaque to report dispatch: {follow_on}"
-        );
+        let follow_on = prose_after_json_example(&doc, "targeted-rerun receipt shape:")?;
+        if !(follow_on.contains("cache.schema_version")
+            && follow_on.contains("input_fingerprint.schema_version")
+            && follow_on.contains("opaque")
+            && follow_on.contains("top-level"))
+        {
+            return Err(format!(
+                "rerun docs must say nested cache identity versions move and are opaque to report dispatch: {follow_on}"
+            ));
+        }
+        Ok(())
     }
 
     #[test]
-    fn cache_status_docs_name_live_status_field_contract() {
-        let doc = output_schema_doc();
+    fn cache_status_docs_name_live_status_field_contract() -> Result<(), String> {
+        let doc = output_schema_doc()?;
         let start = doc
             .find("`ripr cache status --json` (schema")
-            .expect("cache-status field contract must appear beside the version table");
+            .ok_or_else(|| {
+                "cache-status field contract must appear beside the version table".to_string()
+            })?;
         let window = doc
             .get(start..)
             .and_then(|rest| rest.get(..2000))
             .unwrap_or(&doc[start..]);
         for status in ["ok", "not_found", "partial", "unavailable"] {
-            assert!(
-                window.contains(&format!("`{status}`")),
-                "cache-status field contract must document status {status} from inspect_cache_dir: {window}"
-            );
+            if !window.contains(&format!("`{status}`")) {
+                return Err(format!(
+                    "cache-status field contract must document status {status} from inspect_cache_dir: {window}"
+                ));
+            }
         }
         for field in ["`cache_dir`", "`entry_count`", "`total_size_bytes`"] {
-            assert!(
-                window.contains(field),
-                "cache-status field contract must document {field}"
-            );
+            if !window.contains(field) {
+                return Err(format!("cache-status field contract must document {field}"));
+            }
         }
+        Ok(())
     }
 }
