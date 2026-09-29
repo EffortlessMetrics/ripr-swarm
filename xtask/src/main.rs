@@ -36,6 +36,8 @@ mod fixture_contracts;
 mod no_panic;
 mod output_enum_contracts;
 mod policy;
+#[cfg(test)]
+mod portable_consumer;
 mod product_gate_plan;
 mod public_api_surface;
 mod python_judged_panel;
@@ -5141,6 +5143,18 @@ fn non_rust_source_conversion_candidate(path: &str) -> Option<RustConversionCand
             current_surface: "VS Code extension TypeScript".to_string(),
             recommendation: "Keep this code in the editor adapter; only move server behavior into ripr Rust modules or xtask.".to_string(),
             reason: "The VS Code Extension Host API is TypeScript-native, so this is an approved adapter boundary rather than core automation.".to_string(),
+        });
+    }
+
+    if path.starts_with("tools/python/portable-ripr-consumer/") && path.ends_with(".py") {
+        return Some(RustConversionCandidate {
+            path: path.to_string(),
+            line: None,
+            kind: "retained_external_runtime".to_string(),
+            priority: "retained".to_string(),
+            current_surface: "portable native-ripr consumer packet".to_string(),
+            recommendation: "Keep packet-local transport in stdlib Python; keep packet staging, policy, and oracles in Rust/xtask.".to_string(),
+            reason: "The consumer has to run in Python-capable agent environments that cannot compile or search PATH for ripr (#4713).".to_string(),
         });
     }
 
@@ -21495,6 +21509,12 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
         );
     }
 
+    if path.starts_with("tools/python/portable-ripr-consumer/") && path.ends_with(".py") {
+        return Some(
+            "Portable packet consumer must run as stdlib Python 3.11+ in agent environments that have no Cargo/rustc.",
+        );
+    }
+
     if path.starts_with("fixtures/")
         && (path.ends_with(".ts")
             || path.ends_with(".tsx")
@@ -21555,7 +21575,9 @@ fn is_dependency_surface_candidate(path: &str) -> bool {
 }
 
 fn is_process_policy_candidate(path: &str) -> bool {
-    path.ends_with(".rs") || path.ends_with(".ts")
+    path.ends_with(".rs")
+        || path.ends_with(".ts")
+        || (path.starts_with("tools/python/") && path.ends_with(".py"))
 }
 
 fn is_network_policy_candidate(path: &str) -> bool {
@@ -21579,6 +21601,9 @@ fn process_policy_patterns() -> Vec<String> {
         concat!("cp.", "spawn"),
         concat!("cp.", "exec("),
         concat!("cp.", "execFile"),
+        concat!("subprocess.", "Popen"),
+        concat!("subprocess.", "run"),
+        concat!("os.", "system"),
     ]
     .iter()
     .map(|value| value.to_string())
