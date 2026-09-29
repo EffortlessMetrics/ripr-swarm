@@ -444,7 +444,7 @@ fn is_root_contained_new_test_file(root: &Path, relative: &Path) -> bool {
         return false;
     }
     let normalized = relative.to_string_lossy().replace('\\', "/");
-    if !normalized.contains("/tests/") && !normalized.starts_with("tests/") {
+    if !rust_index::is_test_file(relative) {
         return false;
     }
     if !normalized.ends_with(".rs") {
