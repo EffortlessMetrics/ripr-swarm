@@ -53,19 +53,33 @@ Counting rules:
 - Unique selected opportunities are `(opportunity identity, cohort)`. Explicit
   `route.opportunity_id` wins; otherwise identity is repository + analyzed head
   + `canonical_candidate_id`. Missing `cohort_id` is the historical cohort.
+  Eligible cases never mint an `attempt:` opportunity key. Unlinked cases bind
+  to repository + analyzed head + `canonical_gap_id` in the historical cohort.
+- A `repair_attempt_id` binds a case only when repository and analyzed head
+  match. Cross-identity links are validation errors and cannot complete the
+  naming observation.
 - CLI and editor rows that share opportunity and cohort are channel evidence,
-  not two opportunities.
+  not two opportunities. Focused-test execution is counted once per selected
+  opportunity; conflicting channel results fail closed to `failed`.
 - Distinct `cohort_id` values for the same opportunity remain separate
   experiments; later success does not rewrite the earlier result.
 - A complete route requires `complete_route_admitted: true` and
   `canonical_eligibility` other than `rejected`. Packet-ready does not override
   a rejected eligibility.
 - Eligible attempts remain counted cases. Observations are not attempts.
+- Explicit downstream-true/upstream-false stage flags are rejected and do not
+  enter trusted counts. Missing upstream facts stay unobserved rather than
+  being manufactured. Ladder `static improved/closed` requires a finished
+  attempt.
 - Repair success uses improved-or-closed eligible attempts. When that
   denominator is zero the status is `not_measurable`, never `0%` or `100%`.
 - Route yield uses complete routes over selected opportunities. Zero
   opportunities is `not_measurable`; zero complete routes over N observations
   is measured `0/N`.
+- Completion without hidden help uses only complete routes with observed
+  `artifact_archaeology`. Omitted archaeology is unknown, not help-free; the
+  rate is `not_measurable` until at least one complete route records the
+  field.
 - Historical rows without `route` keep unknown finer stops as `not_observed`.
   The only exact legacy mapping is `analysis_timeout`.
   `static_limitation_no_repair_packet` is not relabelled as a missing
@@ -131,6 +145,13 @@ Counting rules:
 - `xtask/src/reports/rust_repair_trust.rs::tests::packet_ready_rejected_by_canonical_eligibility_is_not_a_complete_route`
 - `xtask/src/reports/rust_repair_trust.rs::tests::duplicate_ids_and_hand_edited_totals_cannot_enter_trusted_success_counts`
 - `xtask/src/reports/rust_repair_trust.rs::tests::timeout_reason_normalizes_exactly_and_does_not_require_a_gap`
+- `xtask/src/reports/rust_repair_trust.rs::tests::unlinked_repeat_attempts_do_not_mint_attempt_id_opportunities`
+- `xtask/src/reports/rust_repair_trust.rs::tests::cross_repository_attempt_link_cannot_complete_the_wrong_opportunity`
+- `xtask/src/reports/rust_repair_trust.rs::tests::finished_attempt_without_a_start_cannot_enter_the_trusted_ladder`
+- `xtask/src/reports/rust_repair_trust.rs::tests::improved_static_movement_without_a_finished_attempt_is_not_ladder_success`
+- `xtask/src/reports/rust_repair_trust.rs::tests::omitted_archaeology_cannot_count_as_help_free_completion`
+- `xtask/src/reports/rust_repair_trust.rs::tests::observed_absent_archaeology_is_help_free_completion`
+- `xtask/src/reports/rust_repair_trust.rs::tests::conflicting_channel_focused_tests_fail_closed_to_failed`
 
 ## Implementation Mapping
 

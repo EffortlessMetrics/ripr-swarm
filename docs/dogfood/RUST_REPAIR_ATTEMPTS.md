@@ -77,10 +77,13 @@ duplicate observations, timeout observations, eligible attempts, and the
 route-yield ladder as separate counts.
 
 Route yield is complete routes over unique selected opportunities
-`(opportunity identity, cohort)`. Repair success is improved-or-closed
-eligible attempts. Three observations with no complete route report `0/3`
-route yield and `not_measurable` repair success. Zero eligible attempts never
-become `0%` or `100%`. Observations are not attempts. Historical rows without
-finer stage facts keep those stages `not_observed`;
-`static_limitation_no_repair_packet` is not relabelled as a missing
-discriminator or unsafe target.
+`(opportunity identity, cohort)`. Cases do not mint attempt-id opportunities.
+A `repair_attempt_id` binds only when repository and analyzed head match.
+Repair success is improved-or-closed eligible attempts. Three observations
+with no complete route report `0/3` route yield and `not_measurable` repair
+success. Zero eligible attempts never become `0%` or `100%`. Observations are
+not attempts. Completion without hidden help stays `not_measurable` until a
+complete route records `artifact_archaeology`. Focused-test counts use the
+selected-opportunity unit. Historical rows without finer stage facts keep
+those stages `not_observed`; `static_limitation_no_repair_packet` is not
+relabelled as a missing discriminator or unsafe target.
