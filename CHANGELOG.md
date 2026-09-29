@@ -22,6 +22,11 @@ are scoped or reviewed.
   become misses and are recomputed. A `ripr check` artifact from another
   build of the same version is refused for reuse, and the `analyzer_version`
   in a targeted-rerun input fingerprint carries the same build identity.
+- MCP: a client that opens with `server/discover` (protocol `2026-07-28`)
+  now receives the same instructions as an `initialize` client, including the
+  CLI route that analyzes the diff. Before, only `initialize` carried them.
+  Workspace status no longer says a `ripr.toml` is detected when the root has
+  none; that limitation now appears only when one was found.
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from
@@ -280,9 +285,64 @@ are scoped or reviewed.
   every changed line read `no_static_path` although mutating those lines
   fails the projects' own tests. Renamed re-exports, `_private` names under a
   star import, and names a declared `__all__` omits are not followed.
+- TypeScript preview: a test that imports a changed function through a barrel
+  now reaches it. On unjs/ufo, `import { withoutBase } from "../src"` names
+  the directory whose `src/index.ts` does `export * from "./utils"`; ripr
+  resolved `../src` to a module that matched no barrel, so every changed line
+  of `withBase`/`withoutBase` read `no_static_path` with 0 related tests. A
+  directory specifier now resolves to its `index` module when no file module
+  of that name exists, and `export *` / `export { N } from` chains are
+  followed for up to 4 hops inside the repository. A star hop forwards a name
+  only when the target module exports it; a name two star sources export, a
+  cycle, a longer chain, a test-local or `describe`-scoped redeclaration of
+  the imported name, or a mock of any module on the chain gives no credit,
+  and a test that imports only another name from the same barrel stays
+  unrelated. (ufo's own `withBase` tests are still missed: they
+  register from a `for` loop with computed titles, which test extraction does
+  not index and discloses as partial.)
+
+- Python pytest verify commands now run as `python -m pytest path::node`
+  instead of bare `pytest path::node`. `-m` puts the repository root on
+  `sys.path`, so a flat-layout package such as `pricing/__init__.py` imports
+  during collection; bare `pytest` stopped there with `ModuleNotFoundError`
+  (exit 4). The interpreter is spelled `python`, like the unittest route's
+  `python -m unittest`, because it names the virtual environment's interpreter
+  on every platform. Repair-card, LSP skeleton, and dogfood consumers accept
+  both the new form and the bare form earlier artifacts carry.
+
+- `ripr first-pr` now prints the receipt path its receipt command writes. For a
+  Python or TypeScript preview gap, `Receipt path:` named a
+  `gap-pr-...targeted-test-outcome.json` file while the printed
+  `ripr receipt write` command wrote `--out gap-python-....json`; the path now
+  is the file the printed command writes (its `--out`, or the receipt
+  writer's default for its `--gap`), else the ledger's recorded path, and the
+  first-pr default only when first-pr builds the command itself.
+
+- `ripr first-pr` no longer leaves `--status not_run` unexplained in the
+  receipt it presents as the step after verify. A `Receipt status` line now
+  follows a `ripr receipt write ... --status not_run` command in the CLI
+  summary and `start-here.md`, telling the reader to pass `--status passed`
+  when the verify command exited 0 and `--status failed` when it did not. The
+  command itself is unchanged, still runs as printed, and records `not_run`
+  when left as is.
+
+- The generated CI job summary's `PR review summary` and `Recommended next
+  test` blocks, their collapsed full reports included, now print copyable
+  commands at the repository root (`ripr agent verify --root . ...`,
+  `> ./target/...`) instead of the runner's absolute checkout path that
+  `ripr agent start` binds into `workflow.json` and `agent-brief.json`, like
+  the `Agent review packet` block already did. The stored artifacts keep
+  their bound root; only the summary rendering rewrites the checkout path, and
+  only where it is a whole path token.
 
 ### Added
 
+- Zed: a Zed extension in `editors/zed` starts `ripr lsp --stdio` from your
+  `PATH` for Rust, Python, TypeScript, TSX, and JavaScript files. Zed runs
+  only language servers an extension registers, so ripr could not run in Zed
+  before. Install it with `zed: install dev extension`; it is not in the Zed
+  extension registry. Settings under `lsp.ripr.settings` answer ripr's
+  `ripr` configuration section (#4460).
 - `ripr --version` now names the commit the binary was built from, as
   `ripr <version> (<commit>)`, with `-dirty` when the sources that build it differed
   from that commit. Packaged crates (crates.io, `cargo install ripr`) read the
@@ -1507,6 +1567,15 @@ are scoped or reviewed.
   [#4287](https://github.com/EffortlessMetrics/ripr-swarm/pull/4287)).
 
 ### Docs
+
+- Documented the proposed `ripr-rs` PyPI distribution and
+  `@effortlessmetrics/ripr` npm launcher/native package family, including
+  the development-in-swarm/source-owned-publication boundary, maintainer
+  registry setup, package bootstrap ordering, and explicit non-claims. This is
+  planning and review guidance; it does not claim that either package family is
+  built, published, reserved, or installable
+  ([#4487](https://github.com/EffortlessMetrics/ripr-swarm/issues/4487),
+  [#4496](https://github.com/EffortlessMetrics/ripr-swarm/pull/4496)).
 
 - The README and quickstart first run now define "discriminator" where it
   first appears and state `ripr check`'s exit codes. They add a one-line
