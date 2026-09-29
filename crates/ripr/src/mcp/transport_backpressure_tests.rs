@@ -127,6 +127,7 @@ async fn actual_sdk_held_stdout_preserves_serial_request_admission() -> Result<(
                 gate: gate.clone(),
             }))),
             failure: Arc::new(TransportFailure::default()),
+            admission: Arc::new(Admission::default()),
             pending_protocol_error: None,
             writer_needs_drain: false,
         },
@@ -215,6 +216,7 @@ fn direct_transport<W: AsyncWrite + Unpin>(writer: W) -> BoundedTransport<&'stat
         reader: FrameReader::new(TWO_REQUESTS),
         writer: Arc::new(Mutex::new(FrameWriter::new(writer))),
         failure: Arc::new(TransportFailure::default()),
+        admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
     }
@@ -260,6 +262,19 @@ fn reply(id: i64) -> ServerJsonRpcMessage {
 async fn cancelled_receive_and_wrong_reply_id_cannot_release_admission() -> Result<(), String> {
     let mut transport = direct_transport(Vec::<u8>::new());
     require_request(&mut transport, 1).await?;
+    require_pending(&mut transport).await?;
+    let notification: ServerJsonRpcMessage = serde_json::from_value(serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/tools/list_changed"
+    }))
+    .map_err(|error| error.to_string())?;
+    if !matches!(notification, ServerJsonRpcMessage::Notification(_)) {
+        return Err("notification admission control did not construct a typed notification".into());
+    }
+    transport
+        .send(notification)
+        .await
+        .map_err(|error| error.to_string())?;
     require_pending(&mut transport).await?;
     transport
         .send(reply(99))

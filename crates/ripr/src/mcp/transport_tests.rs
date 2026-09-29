@@ -27,6 +27,7 @@ async fn fatal_output_limit_wakes_receive_while_input_remains_open() -> Result<(
         reader: FrameReader::new(reader),
         writer: Arc::new(Mutex::new(FrameWriter::new(Vec::<u8>::new()))),
         failure: Arc::new(TransportFailure::default()),
+        admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
     };
@@ -68,6 +69,7 @@ async fn sdk_syntax_ignore_and_typed_shape_error_recover_next_request() -> Resul
         reader: FrameReader::new(input.as_slice()),
         writer: writer.clone(),
         failure: Arc::new(TransportFailure::default()),
+        admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
     };
@@ -127,6 +129,7 @@ async fn consumed_protocol_error_survives_receive_cancellation_behind_busy_write
         reader: FrameReader::new(input.as_slice()),
         writer: writer.clone(),
         failure: Arc::new(TransportFailure::default()),
+        admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
     };

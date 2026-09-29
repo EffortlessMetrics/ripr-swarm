@@ -6,7 +6,7 @@ use super::{
 use crate::workspace_status::WorkspaceStatus;
 use rmcp::{
     RoleServer, ServiceExt,
-    model::{ClientJsonRpcMessage, ErrorData, ServerJsonRpcMessage},
+    model::{ClientJsonRpcMessage, ErrorData, RequestId, ServerJsonRpcMessage},
     transport::{
         Transport,
         async_rw::{JsonRpcMessageCodec, JsonRpcMessageCodecError},
@@ -29,6 +29,42 @@ struct TransportFailure {
     wake: Notify,
 }
 type Failure = Arc<TransportFailure>;
+/// One typed request remains admitted until its actual reply frame is flushed.
+#[derive(Default)]
+struct Admission {
+    pending: StdMutex<Option<RequestId>>,
+    wake: Notify,
+}
+impl Admission {
+    fn is_pending(&self) -> Result<bool, Error> {
+        self.pending
+            .lock()
+            .map(|id| id.is_some())
+            .map_err(|_| Error::other("MCP admission unavailable"))
+    }
+    fn admit(&self, id: RequestId) -> Result<(), Error> {
+        let mut pending = self
+            .pending
+            .lock()
+            .map_err(|_| Error::other("MCP admission unavailable"))?;
+        if pending.is_some() {
+            return Err(Error::other("MCP admission already pending"));
+        }
+        *pending = Some(id);
+        Ok(())
+    }
+    fn complete(&self, id: Option<RequestId>) -> Result<(), Error> {
+        let mut pending = self
+            .pending
+            .lock()
+            .map_err(|_| Error::other("MCP admission unavailable"))?;
+        if id.is_some() && *pending == id {
+            *pending = None;
+            self.wake.notify_one();
+        }
+        Ok(())
+    }
+}
 fn record_failure(failure: &Failure, reason: &'static str) {
     if let Ok(mut stored) = failure.reason.lock() {
         if stored.is_none() {
@@ -43,6 +79,7 @@ struct BoundedTransport<R, W> {
     reader: FrameReader<R>,
     writer: Arc<Mutex<FrameWriter<W>>>,
     failure: Failure,
+    admission: Arc<Admission>,
     pending_protocol_error: Option<ServerJsonRpcMessage>,
     writer_needs_drain: bool,
 }
@@ -56,8 +93,17 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
     ) -> impl Future<Output = Result<(), Error>> + Send + 'static {
         let writer = self.writer.clone();
         let failure = self.failure.clone();
+        let admission = self.admission.clone();
         async move {
-            let result = writer.lock().await.send(&item).await;
+            let result = async {
+                let mut writer = writer.lock().await;
+                admission.complete(writer.finish_pending().await?)?;
+                writer.queue(&item)?;
+                // Retained notification and frame identity survive a dropped send.
+                admission.wake.notify_one();
+                admission.complete(writer.finish_pending().await?)
+            }
+            .await;
             if let Err(error) = &result {
                 record_failure(&failure, super::writer::failure_reason(error));
             }
@@ -74,9 +120,51 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
             {
                 return None;
             }
+            match self.admission.is_pending() {
+                Err(_) => {
+                    record_failure(&self.failure, "MCP admission unavailable");
+                    return None;
+                }
+                Ok(true) => {
+                    // Never hold the admission mutex while acquiring the writer.
+                    let mut writer = tokio::select! {
+                        _ = self.failure.wake.notified() => return None,
+                        writer = self.writer.lock() => writer,
+                    };
+                    if writer.has_pending() {
+                        let flushed = tokio::select! {
+                            _ = self.failure.wake.notified() => return None,
+                            flushed = writer.finish_pending() => flushed,
+                        };
+                        match flushed.and_then(|id| self.admission.complete(id)) {
+                            Ok(()) => continue,
+                            Err(error) => {
+                                record_failure(
+                                    &self.failure,
+                                    super::writer::failure_reason(&error),
+                                );
+                                return None;
+                            }
+                        }
+                    }
+                    drop(writer);
+                    if self.admission.is_pending().ok() != Some(true) {
+                        continue;
+                    }
+                    tokio::select! {
+                        _ = self.failure.wake.notified() => return None,
+                        _ = self.admission.wake.notified() => continue,
+                    }
+                }
+                Ok(false) => {}
+            }
             if self.pending_protocol_error.is_some() || self.writer_needs_drain {
                 let mut writer = self.writer.lock().await;
-                if let Err(error) = writer.finish_pending().await {
+                if let Err(error) = writer
+                    .finish_pending()
+                    .await
+                    .and_then(|id| self.admission.complete(id))
+                {
                     record_failure(&self.failure, super::writer::failure_reason(&error));
                     return None;
                 }
@@ -88,7 +176,11 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
                     }
                     self.pending_protocol_error = None;
                     self.writer_needs_drain = true;
-                    if let Err(error) = writer.finish_pending().await {
+                    if let Err(error) = writer
+                        .finish_pending()
+                        .await
+                        .and_then(|id| self.admission.complete(id))
+                    {
                         record_failure(&self.failure, super::writer::failure_reason(&error));
                         return None;
                     }
@@ -123,7 +215,15 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
             // already enforced the product input bound, including at EOF.
             let mut bytes = BytesMut::from(frame.as_slice());
             match JsonRpcMessageCodec::<ClientJsonRpcMessage>::default().decode_eof(&mut bytes) {
-                Ok(Some(message)) => return Some(message),
+                Ok(Some(message)) => {
+                    if let ClientJsonRpcMessage::Request(request) = &message {
+                        if self.admission.admit(request.id.clone()).is_err() {
+                            record_failure(&self.failure, "MCP admission unavailable");
+                            return None;
+                        }
+                    }
+                    return Some(message);
+                }
                 Ok(None) => continue,
                 Err(JsonRpcMessageCodecError::Serde(error))
                     if matches!(
@@ -169,6 +269,7 @@ where
         reader: FrameReader::new(reader),
         writer: Arc::new(Mutex::new(FrameWriter::new(writer))),
         failure: failure.clone(),
+        admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
     };

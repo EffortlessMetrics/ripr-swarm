@@ -1,4 +1,4 @@
-use rmcp::model::{ErrorData, ServerJsonRpcMessage};
+use rmcp::model::{ErrorData, RequestId, ServerJsonRpcMessage};
 use serde::Serialize;
 use std::io::{Error, ErrorKind, Write};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
@@ -97,6 +97,7 @@ pub(super) struct FrameWriter<W> {
     writer: W,
     pending: Vec<u8>,
     cursor: usize,
+    queued_reply_id: Option<RequestId>,
 }
 impl<W: AsyncWrite + Unpin> FrameWriter<W> {
     pub(super) fn new(writer: W) -> Self {
@@ -104,9 +105,13 @@ impl<W: AsyncWrite + Unpin> FrameWriter<W> {
             writer,
             pending: Vec::new(),
             cursor: 0,
+            queued_reply_id: None,
         }
     }
-    pub(super) async fn finish_pending(&mut self) -> std::io::Result<()> {
+    pub(super) fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+    pub(super) async fn finish_pending(&mut self) -> std::io::Result<Option<RequestId>> {
         while let Some(bytes) = self
             .pending
             .get(self.cursor..)
@@ -121,18 +126,24 @@ impl<W: AsyncWrite + Unpin> FrameWriter<W> {
         self.writer.flush().await?;
         self.pending.clear();
         self.cursor = 0;
-        Ok(())
+        Ok(self.queued_reply_id.take())
     }
+    #[cfg(test)]
     pub(super) async fn send(&mut self, item: &ServerJsonRpcMessage) -> std::io::Result<()> {
         self.finish_pending().await?;
         self.queue(item)?;
-        self.finish_pending().await
+        self.finish_pending().await.map(|_| ())
     }
     pub(super) fn queue(&mut self, item: &ServerJsonRpcMessage) -> std::io::Result<()> {
         if !self.pending.is_empty() {
             return Err(Error::new(ErrorKind::WouldBlock, "MCP output pending"));
         }
         self.pending = encode_message(item)?;
+        self.queued_reply_id = match item {
+            ServerJsonRpcMessage::Response(response) => Some(response.id.clone()),
+            ServerJsonRpcMessage::Error(error) => error.id.clone(),
+            _ => None,
+        };
         Ok(())
     }
     pub(super) async fn close(&mut self) -> std::io::Result<()> {
