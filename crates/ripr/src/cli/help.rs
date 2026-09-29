@@ -553,6 +553,31 @@ mod tests {
         assert!(RERUN_HELP.contains("current_state_only"));
         assert!(DIFF_HELP.starts_with("Analyze the changed surface first"));
         assert!(DIFF_HELP.contains("--head REV"));
+        assert!(DIFF_HELP.contains(
+            "Usage: ripr diff [--root PATH] [--base REV] [--head REV] [--mode MODE] [--format human|text|md|markdown|json] [--json]"
+        ));
+        assert!(!DIFF_HELP.contains("[--format human|json]"));
+        assert!(RERUN_HELP.contains("Required unless --gap is used."));
+        assert!(!RERUN_HELP.contains("parsed test node. Required.\n"));
+        assert!(REPORTS_HELP.contains(
+            "ripr reports gap-ledger --repo-exposure PATH [--root PATH] [--out PATH] [--out-md PATH]"
+        ));
+        assert!(DOCTOR_HELP.contains("recommended first command: `ripr check`"));
+        assert!(!DOCTOR_HELP.contains("recommended first command: `ripr first-pr`"));
+        assert!(HELP_ALL.contains("Reads changed Rust code (Python and TypeScript in preview)"));
+        assert!(!HELP_ALL.contains("Reads changed Rust code, creates mutation-like probes"));
+        assert!(PLUS_HELP.starts_with("Compose the repo-wide RIPR+ receipt"));
+        assert!(PLUS_HELP.contains("Usage: ripr plus"));
+        assert!(PR_SUMMARY_HELP.starts_with("Write the PR evidence summary"));
+        assert!(PR_SUMMARY_HELP.contains("Usage: ripr pr-summary"));
+        assert!(PR_EVIDENCE_HELP.starts_with("Write the diff-scoped PR evidence packet"));
+        assert!(PR_EVIDENCE_HELP.contains("Usage: ripr pr-evidence"));
+        assert!(IMPACTED_EVIDENCE_HELP.starts_with("Route mutation mode from PR evidence"));
+        assert!(IMPACTED_EVIDENCE_HELP.contains("Usage: ripr impacted-evidence"));
+        assert!(ANNOTATIONS_HELP.starts_with("Render review comments as GitHub Actions"));
+        assert!(ANNOTATIONS_HELP.contains("Usage: ripr annotations"));
+        assert!(FIRST_PR_HELP.starts_with("Create the start-here packet"));
+        assert!(FIRST_PR_HELP.contains("Usage: ripr first-pr"));
         assert!(
             EVIDENCE_HEALTH_HELP.starts_with("Summarize how strong the current static evidence")
         );

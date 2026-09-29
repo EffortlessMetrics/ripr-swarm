@@ -518,3 +518,169 @@ fn doctor_exit_code_guide_distinguishes_analysis_and_source_build() -> Result<()
     }
     Ok(())
 }
+
+/// Findings 4–11 of #4573: rendered help must describe parser/runtime
+/// behavior and must not keep the stale overclaims. These needles are the
+/// prior wording; a regression restoring them fails here even if source
+/// comments still mention the old text.
+#[test]
+fn rendered_help_matches_parser_for_first_pr_rerun_diff_and_overview() -> Result<(), String> {
+    let first_pr = rendered_help(&["first-pr", "--help"])?;
+    let start_here = rendered_help(&["start-here", "--help"])?;
+    for (surface, help) in [
+        ("ripr first-pr --help", &first_pr),
+        ("ripr start-here --help", &start_here),
+    ] {
+        let collapsed = normalized(help);
+        assert_contains(surface, &collapsed, "Usage: ripr first-pr|start-here")?;
+        assert_contains(
+            surface,
+            &collapsed,
+            "Existing `ripr check --json` output to derive the gap ledger from.",
+        )?;
+        assert_contains(surface, &collapsed, "first-pr never runs analysis itself")?;
+        if collapsed.contains("instead of running analysis") {
+            return Err(format!(
+                "{surface} still says --check-output replaces an analysis first-pr never runs"
+            ));
+        }
+        if help.contains("usage: ripr first-pr") {
+            return Err(format!("{surface} still uses lowercase `usage:`"));
+        }
+    }
+
+    let rerun = normalized(&rendered_help(&["rerun", "--help"])?);
+    assert_contains(
+        "ripr rerun --help",
+        &rerun,
+        "Required unless --gap is used.",
+    )?;
+    if rerun.contains("parsed test node. Required. --gap") {
+        return Err("rerun --help still marks --changed-test as universally Required".to_string());
+    }
+
+    let diff = rendered_help(&["diff", "--help"])?;
+    assert_contains(
+        "ripr diff --help",
+        &diff,
+        "--format human|text|md|markdown|json",
+    )?;
+    if diff.contains("[--format human|json]") {
+        return Err("ripr diff --help still omits accepted format aliases".to_string());
+    }
+
+    let reports = rendered_help(&["reports", "gap-ledger", "--help"])?;
+    assert_contains(
+        "ripr reports gap-ledger --help",
+        &reports,
+        "ripr reports gap-ledger --repo-exposure PATH [--root PATH] [--out PATH] [--out-md PATH]",
+    )?;
+
+    let all = rendered_help(&["help", "--all"])?;
+    let all_norm = normalized(&all);
+    assert_contains(
+        "ripr help --all",
+        &all_norm,
+        "Reads changed Rust code (Python and TypeScript in preview)",
+    )?;
+    if all_norm.contains("Reads changed Rust code, creates mutation-like probes") {
+        return Err("ripr help --all still claims it only reads changed Rust code".to_string());
+    }
+
+    let mut in_quick = false;
+    let mut comment_cols = Vec::new();
+    for line in all.lines() {
+        if line.starts_with("Quick start") {
+            in_quick = true;
+            continue;
+        }
+        if !in_quick {
+            continue;
+        }
+        if line.trim().is_empty() || line.starts_with("Start-here") {
+            break;
+        }
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(col) = line.find('#') {
+            comment_cols.push((line.to_string(), col));
+        }
+    }
+    if comment_cols.len() < 5 {
+        return Err(format!(
+            "ripr help --all Quick start lost command comments: {comment_cols:?}"
+        ));
+    }
+    let expected_col = comment_cols[0].1;
+    for (line, col) in &comment_cols {
+        if *col != expected_col {
+            return Err(format!(
+                "ripr help --all Quick start comments are misaligned at column {col} (expected {expected_col}): {line}"
+            ));
+        }
+    }
+
+    let doctor = normalized(&rendered_help(&["doctor", "--help"])?);
+    assert_contains(
+        "ripr doctor --help",
+        &doctor,
+        "run the recommended first command: `ripr check`.",
+    )?;
+    if doctor.contains("recommended first command: `ripr first-pr`") {
+        return Err(
+            "ripr doctor --help still names first-pr as the recommended first command".to_string(),
+        );
+    }
+
+    for (args, summary, usage) in [
+        (
+            ["plus", "--help"].as_slice(),
+            "Compose the repo-wide RIPR+ receipt from an existing report artifact.",
+            "Usage: ripr plus",
+        ),
+        (
+            ["pr-summary", "--help"].as_slice(),
+            "Write the PR evidence summary from existing RIPR artifacts.",
+            "Usage: ripr pr-summary",
+        ),
+        (
+            ["pr-evidence", "--help"].as_slice(),
+            "Write the diff-scoped PR evidence packet for one base and head.",
+            "Usage: ripr pr-evidence",
+        ),
+        (
+            ["impacted-evidence", "--help"].as_slice(),
+            "Route mutation mode from PR evidence and PR labels.",
+            "Usage: ripr impacted-evidence",
+        ),
+        (
+            ["annotations", "--help"].as_slice(),
+            "Render review comments as GitHub Actions warning annotations.",
+            "Usage: ripr annotations",
+        ),
+        (
+            ["first-pr", "--help"].as_slice(),
+            "Create the start-here packet for one PR from existing RIPR artifacts.",
+            "Usage: ripr first-pr",
+        ),
+    ] {
+        let help = rendered_help(args)?;
+        let surface = format!("ripr {} --help", args[..args.len() - 1].join(" "));
+        let first = help.lines().next().unwrap_or("");
+        if first != summary {
+            return Err(format!(
+                "{surface} opener is {first:?}, expected {summary:?}"
+            ));
+        }
+        if !help.contains(usage) {
+            return Err(format!("{surface} lost `{usage}`"));
+        }
+        let lower = usage.replacen("Usage:", "usage:", 1);
+        if help.lines().any(|line| line.starts_with(&lower)) {
+            return Err(format!("{surface} still uses lowercase `{lower}`"));
+        }
+    }
+    Ok(())
+}

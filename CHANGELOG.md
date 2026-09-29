@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Help screens for first-pr, rerun, diff, reports gap-ledger, doctor, plus,
+  pr-summary, pr-evidence, impacted-evidence, annotations, and `help --all`
+  now match the parser and runtime: first-pr no longer describes an analysis
+  it never runs, `--changed-test` is required only without `--gap`, diff lists
+  every accepted format alias, gap-ledger documents `--repo-exposure`, doctor
+  names `ripr check` as the first command, and those commands use a one-line
+  summary plus `Usage:` (#4615, findings 4–11 of #4573).
 - LSP: a request whose method starts with `$/` and that ripr does not handle
   now gets a `-32601` method-not-found error, as the LSP spec requires. It got
   no response at all, so a client that sent one waited on it forever.
