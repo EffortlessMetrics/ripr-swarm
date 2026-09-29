@@ -1165,7 +1165,13 @@ fn selected_from_gap_record(
             gap_id: string_path(record, &["gap_id"]),
             canonical_gap_id: string_path(record, &["canonical_gap_id"]),
             repair_route: string_path(repair_route?, &["route_kind"]),
-            changed_behavior: None,
+            changed_behavior: [
+                repair_route.and_then(|route| string_path(route, &["changed_behavior"])),
+                string_path(record, &["changed_behavior"]),
+            ]
+            .into_iter()
+            .flatten()
+            .find(|expression| !expression.trim().is_empty()),
         }
         .with_inferred_current_evidence_strength(),
     )

@@ -79,9 +79,10 @@ pub(super) struct ActionSelected {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) repair_route: Option<String>,
     /// The changed expression the selected evidence names, when it names one
-    /// (F60-12). Markdown-only: `why` explains the selection and is not the
-    /// changed behavior, so the one-screen line reads this instead.
-    #[serde(skip)]
+    /// (F60-12). `why` explains the selection and is not the changed
+    /// behavior, so the one-screen line and the generated CI summary
+    /// (`.selected.changed_behavior // .why`) read this instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) changed_behavior: Option<String>,
 }
 
