@@ -11,6 +11,17 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Commands ripr prints now run. `ripr reports index` suggests the repair
+  after phase for a missing agent receipt, not an `agent receipt` call
+  missing its required flags. It no longer suggests the repository-internal
+  `cargo xtask check-pr` and `cargo xtask pr-summary`. Invalid-receipt
+  guidance names `--seam-id`, and Perl receipt commands use the canonical
+  `ripr receipt write` form instead of a `--verify-cmd` flag `outcome` never
+  had. Help screens and guides that contradicted the CLI were corrected,
+  including the `first-pr` cost disclosure, which described an analysis the
+  command never runs, and `docs/CONFIGURATION.md`'s claim that `context`
+  accepts `--format`. A test now fails when a public guide passes a flag
+  that its command's help does not list (#4573).
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from
