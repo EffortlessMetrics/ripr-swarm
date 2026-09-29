@@ -100,6 +100,12 @@ the 128-KiB output cap terminates with a bounded operational error. The raw
 client harness waits for correlated replies before EOF, rather than assuming
 prewritten requests remain active after SDK shutdown.
 
+The SDK maps resource-miss codes by negotiated version and preserves the
+adapter's message and data. Both lifecycles now use the bounded message
+`unknown resource; available: ripr://workspace/status` and the available URI
+data. This replaces the original adapter's legacy-only `Resource not found`
+message without maintaining an application version gate or dispatcher.
+
 The pre-migration 21 local controls have explicit dispositions below. This
 mapping specifies successor proof; it does not claim that it has run.
 

@@ -172,7 +172,22 @@ async fn sdk_session(
             {
                 Err(rmcp::service::ServiceError::McpError(error))
                     if serde_json::to_value(&error.code).map_err(|error| error.to_string())?
-                        == serde_json::json!(expected_resource_code) => {}
+                        == serde_json::json!(expected_resource_code) =>
+                {
+                    if error.message != "unknown resource; available: ripr://workspace/status"
+                        || error
+                            .data
+                            .as_ref()
+                            .and_then(|data| data.pointer("/available/0"))
+                            .and_then(Value::as_str)
+                            != Some("ripr://workspace/status")
+                    {
+                        return Err(
+                            "SDK resource miss changed bounded message or available URI data"
+                                .into(),
+                        );
+                    }
+                }
                 _ => {
                     return Err(
                         "SDK resource miss did not retain its version-specific protocol code"

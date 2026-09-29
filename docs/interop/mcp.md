@@ -81,6 +81,11 @@ An invalid root does not stop the server. Status reports
 adds a second text content item that names the cause and the recovery
 (restart with `--root <repository>`). An unknown tool or resource name is
 rejected with the one valid name in the message and in `error.data.available`.
+A client that negotiated an older protocol version gets resource-not-found
+(`-32002`) for an unknown resource; current clients get Invalid Params
+(`-32602`). The SDK maps the code, while the adapter's bounded message
+`unknown resource; available: ripr://workspace/status` and
+`error.data.available` name the same valid URI in both lifecycles.
 The instructions (returned by both `initialize` and `server/discover`) and the
 tool description say that this server
 does not analyze the diff and name the CLI route that does
