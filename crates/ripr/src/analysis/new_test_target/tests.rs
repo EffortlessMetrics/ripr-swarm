@@ -1,6 +1,6 @@
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::repair_route::{
-    NewTestKind, NewTestProposalProvenance, RepairTargetSelection, repair_route_readiness,
+    NewTestKind, NewTestProposalProvenance, RepairTargetSelection, repair_packet_eligibility,
 };
 use crate::analysis::seam_inventory::inventory_classified_seams_at;
 use crate::analysis::seams::SeamKind;
@@ -130,7 +130,7 @@ fn public_library_with_established_tests_layout_earns_integration_proposal() -> 
 
     let classified = inventory_classified_seams_at(&root.0)?;
     let entry = boundary_entry(&classified)?;
-    let readiness = repair_route_readiness(entry);
+    let readiness = repair_packet_eligibility(entry).readiness;
 
     let RepairTargetSelection::Proposed(proposal) = &readiness.target_selection else {
         return Err(format!(
@@ -187,7 +187,7 @@ fn disabled_autotests_without_explicit_target_stays_missing() -> Result<(), Stri
 
     let classified = inventory_classified_seams_at(&root.0)?;
     let entry = boundary_entry(&classified)?;
-    let readiness = repair_route_readiness(entry);
+    let readiness = repair_packet_eligibility(entry).readiness;
 
     if matches!(
         readiness.target_selection,
@@ -227,7 +227,7 @@ fn private_owner_stays_missing_without_an_inline_unit_proposal() -> Result<(), S
 
     let classified = inventory_classified_seams_at(&root.0)?;
     let entry = boundary_entry(&classified)?;
-    let readiness = repair_route_readiness(entry);
+    let readiness = repair_packet_eligibility(entry).readiness;
 
     if let RepairTargetSelection::Proposed(proposal) = &readiness.target_selection {
         return Err(format!(
@@ -268,7 +268,7 @@ fn premium_customer_gets_discount() {
 
     let classified = inventory_classified_seams_at(&root.0)?;
     let entry = boundary_entry(&classified)?;
-    let readiness = repair_route_readiness(entry);
+    let readiness = repair_packet_eligibility(entry).readiness;
 
     match &readiness.target_selection {
         RepairTargetSelection::Existing(target) => {
@@ -322,7 +322,7 @@ fn multi_package_workspace_selects_the_owner_package() -> Result<(), String> {
                 && entry.seam.owner().contains("discounted_total")
         })
         .ok_or_else(|| "expected alpha discounted_total seam".to_string())?;
-    let readiness = repair_route_readiness(alpha);
+    let readiness = repair_packet_eligibility(alpha).readiness;
     let file = proposed_file_display(&readiness.target_selection)?;
     if !file.starts_with("alpha/tests/") {
         return Err(format!("alpha owner proposed a non-alpha file: {file}"));
@@ -342,7 +342,7 @@ fn external_new_file_binds_to_the_original_proposal() -> Result<(), String> {
 
     let before = inventory_classified_seams_at(&root.0)?;
     let before_entry = boundary_entry(&before)?;
-    let before_readiness = repair_route_readiness(before_entry);
+    let before_readiness = repair_packet_eligibility(before_entry).readiness;
     let proposed = match &before_readiness.target_selection {
         RepairTargetSelection::Proposed(proposal) => proposal.file.clone(),
         other => {
@@ -367,7 +367,7 @@ fn discounted_total_at_threshold() {
 
     let after = inventory_classified_seams_at(&root.0)?;
     let after_entry = boundary_entry(&after)?;
-    let after_readiness = repair_route_readiness(after_entry);
+    let after_readiness = repair_packet_eligibility(after_entry).readiness;
     match &after_readiness.target_selection {
         RepairTargetSelection::Existing(target) => {
             let file = target.file().to_string_lossy().replace('\\', "/");
@@ -395,7 +395,7 @@ fn proposal_edit_surface_is_test_only_and_cage_rejects_production() -> Result<()
     write_ordinary_package(&root.0, "pricing", None)?;
     let classified = inventory_classified_seams_at(&root.0)?;
     let entry = boundary_entry(&classified)?;
-    let readiness = repair_route_readiness(entry);
+    let readiness = repair_packet_eligibility(entry).readiness;
     let file = proposed_file_display(&readiness.target_selection)?;
 
     let accepted = serde_json::json!({
@@ -424,9 +424,10 @@ fn proposal_edit_surface_is_test_only_and_cage_rejects_production() -> Result<()
 fn existing_and_proposed_route_yields_stay_distinct() -> Result<(), String> {
     let proposed_root = claim_root("yield-proposed")?;
     write_ordinary_package(&proposed_root.0, "pricing", None)?;
-    let proposed = repair_route_readiness(boundary_entry(&inventory_classified_seams_at(
+    let proposed = repair_packet_eligibility(boundary_entry(&inventory_classified_seams_at(
         &proposed_root.0,
-    )?)?);
+    )?)?)
+    .readiness;
 
     let existing_root = claim_root("yield-existing")?;
     write_ordinary_package(&existing_root.0, "pricing", None)?;
@@ -440,9 +441,10 @@ fn premium_customer_gets_discount() {
 }
 "#,
     )?;
-    let existing = repair_route_readiness(boundary_entry(&inventory_classified_seams_at(
+    let existing = repair_packet_eligibility(boundary_entry(&inventory_classified_seams_at(
         &existing_root.0,
-    )?)?);
+    )?)?)
+    .readiness;
 
     assert!(
         matches!(
