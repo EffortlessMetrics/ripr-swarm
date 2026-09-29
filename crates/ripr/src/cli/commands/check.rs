@@ -95,9 +95,91 @@ pub(super) fn resolve_workspace_root(start: &Path) -> Result<Option<PathBuf>, St
     Ok(None)
 }
 
+/// The non-Cargo workspace declaration that selected an implicit root.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WorkspaceMarker {
+    PnpmWorkspace,
+    PackageJsonWorkspaces,
+    UvWorkspace,
+}
+
+impl WorkspaceMarker {
+    fn reason(self) -> &'static str {
+        match self {
+            Self::PnpmWorkspace => "pnpm-workspace.yaml",
+            Self::PackageJsonWorkspaces => "package.json declares workspaces",
+            Self::UvWorkspace => "pyproject.toml contains [tool.uv.workspace]",
+        }
+    }
+}
+
+/// #4553: the nearest ancestor of `start` that declares a JavaScript or
+/// Python workspace, bounded by the git work tree that contains `start`.
+///
+/// Used only when no Cargo workspace is found, so a package directory of a
+/// pnpm/npm/yarn/bun or uv monorepo roots the analysis where sibling-package
+/// tests are visible. A marker above the work tree's top level is ignored,
+/// and a start outside any work tree resolves nothing.
+fn resolve_non_cargo_workspace_root(
+    start: &Path,
+) -> Result<Option<(PathBuf, WorkspaceMarker)>, String> {
+    let start = std::fs::canonicalize(start).map_err(|error| {
+        format!(
+            "resolve implicit workspace root from {} failed: {error}",
+            start.display()
+        )
+    })?;
+    let Some(top_level) = start
+        .ancestors()
+        .find(|ancestor| ancestor.join(".git").exists())
+    else {
+        return Ok(None);
+    };
+    for ancestor in start.ancestors() {
+        if let Some(marker) = workspace_marker(ancestor) {
+            return Ok(Some((ancestor.to_path_buf(), marker)));
+        }
+        if ancestor == top_level {
+            break;
+        }
+    }
+    Ok(None)
+}
+
+fn workspace_marker(dir: &Path) -> Option<WorkspaceMarker> {
+    if dir.join("pnpm-workspace.yaml").is_file() {
+        return Some(WorkspaceMarker::PnpmWorkspace);
+    }
+    if std::fs::read_to_string(dir.join("package.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .is_some_and(|manifest| manifest.get("workspaces").is_some())
+    {
+        return Some(WorkspaceMarker::PackageJsonWorkspaces);
+    }
+    if std::fs::read_to_string(dir.join("pyproject.toml"))
+        .ok()
+        .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+        .is_some_and(|document| {
+            document
+                .get("tool")
+                .and_then(|tool| tool.get("uv"))
+                .and_then(|uv| uv.get("workspace"))
+                .is_some_and(toml::Value::is_table)
+        })
+    {
+        return Some(WorkspaceMarker::UvWorkspace);
+    }
+    None
+}
+
 fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<(), String> {
-    let Some(root) = resolve_workspace_root(Path::new("."))? else {
-        return Ok(());
+    let (root, reason) = match resolve_workspace_root(Path::new("."))? {
+        Some(root) => (root, "Cargo.toml contains [workspace]"),
+        None => match resolve_non_cargo_workspace_root(Path::new("."))? {
+            Some((root, marker)) => (root, marker.reason()),
+            None => return Ok(()),
+        },
     };
     let current = std::fs::canonicalize(".")
         .map_err(|error| format!("resolve current directory failed: {error}"))?;
@@ -106,7 +188,7 @@ fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<(), String>
     }
 
     eprintln!(
-        "ripr: resolved workspace root to {} (Cargo.toml contains [workspace])",
+        "ripr: resolved workspace root to {} ({reason})",
         root.display()
     );
     input.root = root;
@@ -1153,6 +1235,99 @@ mod tests {
         if found_workspace {
             return Err("package-only manifest must not be treated as a workspace".to_string());
         }
+        Ok(())
+    }
+
+    /// A fixture outside the ripr-swarm checkout, so its own Cargo
+    /// workspace can never answer first.
+    fn outside_repo_fixture(label: &str) -> Result<PathBuf, String> {
+        let workspace = std::fs::canonicalize(repo_root()).map_err(|error| error.to_string())?;
+        let candidate = unique_command_test_dir(label);
+        let parent = workspace
+            .parent()
+            .ok_or_else(|| "workspace root has no parent".to_string())?;
+        let name = candidate
+            .file_name()
+            .ok_or_else(|| "temporary fixture has no file name".to_string())?;
+        Ok(parent.join(name))
+    }
+
+    #[test]
+    fn non_cargo_workspace_root_walks_up_to_each_marker() -> Result<(), String> {
+        let cases: [(&str, &str, &str, WorkspaceMarker); 3] = [
+            (
+                "pnpm-workspace.yaml",
+                "packages:\n  - 'packages/*'\n",
+                "packages/utils/src",
+                WorkspaceMarker::PnpmWorkspace,
+            ),
+            (
+                "package.json",
+                r#"{"name":"root","private":true,"workspaces":["packages/*"]}"#,
+                "packages/utils/src",
+                WorkspaceMarker::PackageJsonWorkspaces,
+            ),
+            (
+                "pyproject.toml",
+                "[tool.uv.workspace]\nmembers = [\"packages/*\"]\n",
+                "packages/core/src/core",
+                WorkspaceMarker::UvWorkspace,
+            ),
+        ];
+        for (index, (manifest, contents, nested, marker)) in cases.into_iter().enumerate() {
+            let root = outside_repo_fixture(&format!("non-cargo-walk-{index}"))?;
+            let repo = root.join("repo");
+            let nested = repo.join(nested);
+            std::fs::create_dir_all(&nested).map_err(|error| error.to_string())?;
+            std::fs::create_dir_all(repo.join(".git")).map_err(|error| error.to_string())?;
+            std::fs::write(repo.join(manifest), contents).map_err(|error| error.to_string())?;
+            // A package-level manifest between the start and the workspace
+            // root must not stop the walk.
+            let package = nested
+                .ancestors()
+                .find(|dir| {
+                    dir.parent()
+                        .is_some_and(|parent| parent.ends_with("packages"))
+                })
+                .map(Path::to_path_buf)
+                .ok_or_else(|| "fixture has no package directory".to_string())?;
+            std::fs::write(package.join("package.json"), r#"{"name":"member"}"#)
+                .map_err(|error| error.to_string())?;
+            std::fs::write(
+                package.join("pyproject.toml"),
+                "[project]\nname = \"member\"\n",
+            )
+            .map_err(|error| error.to_string())?;
+
+            let resolved = resolve_non_cargo_workspace_root(&nested);
+            let expected = std::fs::canonicalize(&repo).map_err(|error| error.to_string());
+            std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+            assert_eq!(resolved?, Some((expected?, marker)), "{manifest}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn non_cargo_workspace_root_stays_inside_the_git_work_tree() -> Result<(), String> {
+        let root = outside_repo_fixture("non-cargo-walk-bounded")?;
+        let repo = root.join("repo");
+        let nested = repo.join("packages/utils");
+        std::fs::create_dir_all(&nested).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(repo.join(".git")).map_err(|error| error.to_string())?;
+        // A workspace marker above the work tree belongs to something else.
+        std::fs::write(root.join("pnpm-workspace.yaml"), "packages: []\n")
+            .map_err(|error| error.to_string())?;
+        // A package.json without a workspaces field is not a marker.
+        std::fs::write(repo.join("package.json"), r#"{"name":"root"}"#)
+            .map_err(|error| error.to_string())?;
+
+        let bounded = resolve_non_cargo_workspace_root(&nested);
+        std::fs::remove_dir_all(repo.join(".git")).map_err(|error| error.to_string())?;
+        // Outside any work tree nothing resolves, even with a marker above.
+        let outside = resolve_non_cargo_workspace_root(&nested);
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        assert_eq!(bounded?, None);
+        assert_eq!(outside?, None);
         Ok(())
     }
 

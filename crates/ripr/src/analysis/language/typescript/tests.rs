@@ -7274,6 +7274,65 @@ fn package_local_filter_rejects_cross_package_test() {
     );
 }
 
+/// #4552: a test in a DIFFERENT package that imports the owner's own file
+/// relates through that import; the package boundary guards only name/path
+/// proximity, not file identity.
+#[test]
+fn package_local_filter_admits_cross_package_test_importing_owner_file() -> Result<(), String> {
+    let root = ts_unique_tempdir("pkg-cross-import")?;
+    ts_write_file(
+        &root.join("packages/utils/package.json"),
+        r#"{"name":"utils"}"#,
+    )?;
+    ts_write_file(&root.join("test/unit/package.json"), r#"{"name":"unit"}"#)?;
+
+    let owner = test_owner("toArray", "packages/utils/src/helpers.ts");
+    let test = TypeScriptTest {
+        name: "probe".into(),
+        local_name: "probe".into(),
+        describe_names: Vec::new(),
+        file: "test/unit/test/utils.spec.ts".into(),
+        line: 4,
+        body_text: "expect(toArray(1)).toEqual([1])".into(),
+        assertions: Vec::new(),
+        mocks_in_file: Vec::new(),
+        scope_bindings: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../../../packages/utils/src/helpers".into(),
+            imported: Some("toArray".into()),
+            local: "toArray".into(),
+            namespace: false,
+        }],
+    };
+
+    let candidates = related_test_candidates(
+        &owner,
+        std::slice::from_ref(&test),
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+    );
+    assert_eq!(candidates.len(), 1, "got {candidates:?}");
+    assert_eq!(
+        candidates[0].relation,
+        TypeScriptRelationKind::DirectOwnerCall
+    );
+
+    // The import must resolve to the owner's file: the same call through an
+    // import of a different module in the owner's package stays rejected.
+    let mut other_module = test;
+    other_module.imports_in_file[0].source = "../../../packages/utils/src/other".into();
+    let candidates = related_test_candidates(
+        &owner,
+        std::slice::from_ref(&other_module),
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+    );
+    assert!(candidates.is_empty(), "got {candidates:?}");
+    Ok(())
+}
+
 /// CommonJS require() destructuring: `const { fn } = require('./path')` should
 /// be extracted as an import with `imported = Some("fn")`, `local = "fn"`,
 /// `namespace = false`.
@@ -7477,6 +7536,10 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
 
 /// Exercise the import branch after the package filter with the production
 /// workspace-relative file spelling and an absolute workspace root.
+///
+/// #4552: a sibling-package test whose import resolves to the owner's file is
+/// admitted by the relation layer, so the limitation stays silent for it; a
+/// sibling-package test with no anchoring import still produces it.
 #[test]
 fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String> {
     let root = ts_unique_tempdir("cross-package-import-identity")?;
@@ -7503,10 +7566,38 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
         imports_in_file: vec![import],
     };
 
-    // The owner name is absent from the body: only the import identity and
-    // alias call can satisfy the reference branch after the package filter.
+    let admitted = related_test_candidates(
+        &owner,
+        std::slice::from_ref(&test),
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+    );
+    assert_eq!(
+        admitted.len(),
+        1,
+        "import-anchored cross-package test must relate"
+    );
+    assert_eq!(
+        admitted[0].relation,
+        TypeScriptRelationKind::ImportAliasOwnerCall
+    );
+    assert!(
+        named_limitations_for_unresolved_ownership(
+            &owner,
+            std::slice::from_ref(&test),
+            &root,
+            &admitted
+        )
+        .is_empty(),
+        "an admitted cross-package test is resolved ownership"
+    );
+
+    // Without the relation layer's admission (the pre-#4552 view), the same
+    // reference is what the limitation reports: the producer still reads the
+    // import branch with workspace-relative spellings.
     let limitations =
-        named_limitations_for_unresolved_ownership(&owner, std::slice::from_ref(&test), &root);
+        named_limitations_for_unresolved_ownership(&owner, std::slice::from_ref(&test), &root, &[]);
     assert_eq!(limitations.len(), 1);
     assert_eq!(limitations[0].name, "typescript_target_unresolved");
     assert_eq!(
@@ -7514,16 +7605,43 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
         "packages/b/tests/cart.test.ts:3"
     );
 
+    let mut bare_call = test.clone();
+    bare_call.imports_in_file.clear();
+    bare_call.body_text = "cart();".into();
+    let bare_admitted = related_test_candidates(
+        &owner,
+        std::slice::from_ref(&bare_call),
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+    );
+    assert!(
+        bare_admitted.is_empty(),
+        "a bare cross-package name call has no anchor and must not relate"
+    );
+    let bare_limitations = named_limitations_for_unresolved_ownership(
+        &owner,
+        std::slice::from_ref(&bare_call),
+        &root,
+        &bare_admitted,
+    );
+    assert_eq!(bare_limitations.len(), 1);
+    assert_eq!(bare_limitations[0].name, "typescript_target_unresolved");
+
     let mut wrong_import = test.clone();
     wrong_import.imports_in_file[0].source = "../../a/src/other.js".into();
-    assert!(named_limitations_for_unresolved_ownership(&owner, &[wrong_import], &root).is_empty());
+    assert!(
+        named_limitations_for_unresolved_ownership(&owner, &[wrong_import], &root, &[]).is_empty()
+    );
     let mut no_call = test.clone();
     no_call.body_text = "const value = 1;".into();
-    assert!(named_limitations_for_unresolved_ownership(&owner, &[no_call], &root).is_empty());
+    assert!(named_limitations_for_unresolved_ownership(&owner, &[no_call], &root, &[]).is_empty());
     let mut same_package = test;
     same_package.file = "packages/a/tests/cart.test.ts".into();
     same_package.imports_in_file[0].source = "../src/cart.js".into();
-    assert!(named_limitations_for_unresolved_ownership(&owner, &[same_package], &root).is_empty());
+    assert!(
+        named_limitations_for_unresolved_ownership(&owner, &[same_package], &root, &[]).is_empty()
+    );
     Ok(())
 }
 

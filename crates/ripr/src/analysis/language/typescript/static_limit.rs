@@ -297,10 +297,9 @@ fn relative_import_resolves_to_workspace_file(
 /// Real producers:
 ///
 /// 1. **Cross-package exclusion**: a test in a *different* package references
-///    the owner by call name (`contains_call_name`) or via an import.  The
-///    test would have produced an `ImportedOwnerCall` or `DirectOwnerCall`
-///    relation, but the package-local filter discarded it.  We detect this by
-///    comparing candidates with vs. without the package-local filter.
+///    the owner by call name (`contains_call_name`) or via an import, and the
+///    relation layer did not admit it (`related`). A cross-package test whose
+///    import resolves to the owner's file is admitted (#4552) and skipped.
 ///
 /// 2. **Direct-call with no resolvable import**: `contains_call_name` is true
 ///    in a test outside the owner's file, but no import in that test resolves
@@ -313,6 +312,7 @@ pub(crate) fn named_limitations_for_unresolved_ownership(
     owner: &TypeScriptOwner,
     all_tests: &[TypeScriptTest],
     workspace_root: &Path,
+    related: &[TypeScriptRelatedCandidate<'_>],
 ) -> Vec<TypeScriptNamedLimitation> {
     let mut limitations: Vec<TypeScriptNamedLimitation> = Vec::new();
     let mut saw_target_unresolved = false;
@@ -320,6 +320,14 @@ pub(crate) fn named_limitations_for_unresolved_ownership(
     for test in all_tests {
         if saw_target_unresolved {
             break;
+        }
+        // A cross-package test the relation layer already admitted through an
+        // import anchored to the owner's file (#4552) is resolved ownership.
+        if related
+            .iter()
+            .any(|candidate| std::ptr::eq(candidate.test, test))
+        {
+            continue;
         }
         // Only consider tests that are NOT in the same package — cross-package
         // ones are the real producer.  Within-package tests are handled by the

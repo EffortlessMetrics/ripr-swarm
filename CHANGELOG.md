@@ -11,6 +11,21 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Monorepos: `ripr check` run from a package directory of a pnpm, npm, yarn
+  or bun workspace, or of a uv workspace, now roots at the workspace, as it
+  already did for a Cargo workspace. It rooted at the package, so tests in
+  sibling packages were outside the analysis and a change they cover read
+  `no_static_path` with the analysis reported complete. The walk stays
+  inside the git work tree and stderr names the manifest that chose the root.
+- TypeScript: a test in another workspace package that imports the changed
+  file (by relative path or tsconfig alias) now relates to it. The
+  package-boundary filter, meant for name-only matches, also dropped these
+  import-anchored calls, so the change read `no_static_path`.
+- Python: when two packages ship a module with the same importable name
+  (`a/src/shared/calc.py` and `b/src/shared/calc.py` are both
+  `shared.calc`), a test importing that name is credited only to the package
+  it lives in. Before, a test in `b` exercising `b`'s function could make a
+  change to `a`'s function read `exposed`.
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from

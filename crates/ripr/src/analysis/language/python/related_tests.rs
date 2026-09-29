@@ -5,7 +5,8 @@ use super::{
     python_string_literal_value,
 };
 use crate::domain::{ExposureClass, OracleKind, OracleStrength, OwnerKind, RelatedTest};
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PythonRelationKind {
@@ -564,6 +565,110 @@ pub(super) fn owner_module_paths(file: &Path) -> Vec<String> {
     paths
 }
 
+/// A src-layout short module name of an owner file that another workspace
+/// source file also produces (#4566): `a/src/shared/calc.py` and
+/// `b/src/shared/calc.py` are both importable as `shared.calc`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct AmbiguousSrcModule {
+    /// The shared dotted name.
+    module: String,
+    /// The directory holding the owner's `src/` that yields `module`.
+    owner_root: PathBuf,
+    /// The same directory for every other file yielding `module`.
+    rival_roots: Vec<PathBuf>,
+}
+
+/// The src-layout short names of `file`, each with its project root (the
+/// directory holding that `src` segment). Mirrors the short forms of
+/// [`owner_module_paths`]; the full dotted path is never ambiguous.
+fn src_layout_module_names(file: &Path) -> Vec<(String, PathBuf)> {
+    let paths = owner_module_paths(file);
+    let normalized = normalized_path(file);
+    let segments = normalized
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    // The dotted name below a `src` segment is the full dotted path with the
+    // segments up to and including that `src` removed.
+    let Some(full) = paths.first() else {
+        return Vec::new();
+    };
+    let directory_count = segments.len().saturating_sub(1);
+    segments
+        .iter()
+        .enumerate()
+        .take(directory_count)
+        .filter(|(_, part)| **part == "src")
+        .filter_map(|(idx, _)| {
+            let module = full.split('.').skip(idx + 1).collect::<Vec<_>>().join(".");
+            (!module.is_empty() && paths.iter().skip(1).any(|path| *path == module))
+                .then(|| (module, segments.iter().take(idx).collect::<PathBuf>()))
+        })
+        .collect()
+}
+
+/// Records on each owner the src-layout short names that another workspace
+/// source file also produces, so module identity through such a name can be
+/// decided by where the importing test lives.
+pub(super) fn apply_src_module_ambiguity<'a>(
+    owners: &mut [PythonOwner],
+    source_files: impl Iterator<Item = &'a PathBuf>,
+) {
+    let mut roots_by_module: BTreeMap<String, Vec<(PathBuf, PathBuf)>> = BTreeMap::new();
+    for file in source_files {
+        for (module, root) in src_layout_module_names(file) {
+            roots_by_module
+                .entry(module)
+                .or_default()
+                .push((file.clone(), root));
+        }
+    }
+    for owner in owners.iter_mut() {
+        owner.ambiguous_src_modules = src_layout_module_names(&owner.file)
+            .into_iter()
+            .filter_map(|(module, owner_root)| {
+                let rival_roots: Vec<PathBuf> = roots_by_module
+                    .get(&module)?
+                    .iter()
+                    .filter(|(file, _)| normalized_path(file) != normalized_path(&owner.file))
+                    .map(|(_, root)| root.clone())
+                    .collect();
+                (!rival_roots.is_empty()).then_some(AmbiguousSrcModule {
+                    module,
+                    owner_root,
+                    rival_roots,
+                })
+            })
+            .collect();
+    }
+}
+
+/// Whether `test_file` may take `module` as the owner's module. An
+/// unambiguous name always may. A name another workspace file also produces
+/// identifies the owner only for a test under the owner's project root that
+/// is not inside a rival's (deeper) project root; anywhere else the import is
+/// as likely to be the rival's module, so it fails closed.
+fn module_name_identifies_owner_for(owner: &PythonOwner, module: &str, test_file: &Path) -> bool {
+    let Some(ambiguous) = owner
+        .ambiguous_src_modules
+        .iter()
+        .find(|ambiguous| ambiguous.module == module)
+    else {
+        return true;
+    };
+    let test = normalized_path(test_file);
+    let under = |root: &Path| {
+        let root = normalized_path(root);
+        root.is_empty() || test.starts_with(&format!("{root}/"))
+    };
+    let owner_depth = ambiguous.owner_root.components().count();
+    under(&ambiguous.owner_root)
+        && !ambiguous
+            .rival_roots
+            .iter()
+            .any(|rival| rival.components().count() > owner_depth && under(rival))
+}
+
 /// Whether a `from M import Y` statement's source module `M` is the owner's
 /// module. `M` must equal one of the owner's full dotted module paths (see
 /// [`owner_module_paths`]): `from src.handler import validate`, a resolved
@@ -575,11 +680,13 @@ pub(super) fn owner_module_paths(file: &Path) -> Vec<String> {
 pub(super) fn import_source_module_matches_owner(
     import: &PythonImport,
     owner: &PythonOwner,
+    test_file: &Path,
 ) -> bool {
     if import.source_module.is_empty() {
         return false;
     }
-    owner_module_paths(&owner.file).contains(&import.source_module)
+    (owner_module_paths(&owner.file).contains(&import.source_module)
+        && module_name_identifies_owner_for(owner, &import.source_module, test_file))
         // `from humanize import naturaldelta`: the package re-exports the
         // owner under its own name, so the package path identifies it too.
         || (import.imported == owner.name && owner.reexport_modules.contains(&import.source_module))
@@ -601,7 +708,7 @@ pub(super) fn strong_test_imports_owner_from_module(
                 && test.file == related_test.file
                 && test.imports.iter().any(|import| {
                     import.imported == owner.name
-                        && import_source_module_matches_owner(import, owner)
+                        && import_source_module_matches_owner(import, owner, &test.file)
                 })
         })
     })
@@ -885,7 +992,7 @@ fn test_references_module_symbol(test: &PythonTest, owner: &PythonOwner, symbol:
     test.imports.iter().any(|import| {
         if import.imported == symbol
             && import.alias != symbol
-            && import_source_module_matches_owner(import, owner)
+            && import_source_module_matches_owner(import, owner, &test.file)
         {
             return !test_binds_local(test, &import.alias)
                 && contains_name_reference(body, &import.alias);
@@ -900,7 +1007,7 @@ fn test_references_module_symbol(test: &PythonTest, owner: &PythonOwner, symbol:
 /// import X` or by an import of the owner module itself.
 fn test_references_owner_module(test: &PythonTest, owner: &PythonOwner) -> bool {
     test.imports.iter().any(|import| {
-        (import_source_module_matches_owner(import, owner)
+        (import_source_module_matches_owner(import, owner, &test.file)
             || imported_module_matches_owner(import, owner))
             && !test_binds_local(test, &import.alias)
             && contains_name_reference(&test.body_text, &import.alias)

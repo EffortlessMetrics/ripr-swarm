@@ -526,7 +526,7 @@ pub(super) fn classify_sink_alignment_with_old(
                 // Free-function alias: require module identity, else a same-named
                 // function aliased from an unrelated module credits a false-`exposed`.
                 (import.imported == owner_simple || import.imported == owner.name)
-                    && import_source_module_matches_owner(import, owner)
+                    && import_source_module_matches_owner(import, owner, &test.file)
             };
             if imported_matches && !import.alias.is_empty() {
                 alias_tokens.push(import.alias.clone());

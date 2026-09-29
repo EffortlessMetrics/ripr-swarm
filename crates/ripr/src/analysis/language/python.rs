@@ -181,6 +181,10 @@ struct PythonOwner {
     /// Dotted package paths whose `__init__.py` re-exports this owner under
     /// its own name (`reexports.rs`). Empty until the workspace pass fills it.
     reexport_modules: Vec<String>,
+    /// Src-layout short module names of this owner's file that another
+    /// workspace source file also produces (`related_tests.rs`, #4566).
+    /// Empty until the workspace pass fills it.
+    ambiguous_src_modules: Vec<related_tests::AmbiguousSrcModule>,
     /// Module-scope literal constants visible in a function/method owner
     /// (not shadowed locally). Empty for class and module owners. Used only
     /// to resolve named predicate boundary operands (`boundary.rs`, #4227).
@@ -531,6 +535,10 @@ impl PythonAdapter {
         reexports::apply_package_reexports(&mut all_owners, |file| {
             workspace_read.sources.get(file).map(String::as_str)
         });
+        related_tests::apply_src_module_ambiguity(
+            &mut all_owners,
+            workspace_files.iter().filter(|file| !is_test_file(file)),
+        );
 
         // Walk-count cap disclosure: one named limitation carrying the
         // refused count, mirroring the TypeScript adapter's
