@@ -139,7 +139,9 @@ fn normalize_python_gap_discriminator(probe_family: &ProbeFamily, line_text: &st
     let mut text = line_text.trim().trim_end_matches(';').trim().to_string();
     match probe_family {
         ProbeFamily::Predicate => {
-            for prefix in ["if ", "elif ", "while ", "for ", "match ", "case ", "return "] {
+            for prefix in [
+                "if ", "elif ", "while ", "for ", "match ", "case ", "return ",
+            ] {
                 if let Some(stripped) = text.strip_prefix(prefix) {
                     text = stripped.to_string();
                     break;

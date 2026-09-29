@@ -309,8 +309,8 @@ pub(super) fn python_return_comparison(line_text: &str) -> Option<&str> {
         return None;
     };
     let (left, right) = simple_comparison_operands(expression, start, len)?;
-    let whole_sides = expression.get(..start)?.trim() == left
-        && expression.get(start + len..)?.trim() == right;
+    let whole_sides =
+        expression.get(..start)?.trim() == left && expression.get(start + len..)?.trim() == right;
     whole_sides.then_some(expression)
 }
 
