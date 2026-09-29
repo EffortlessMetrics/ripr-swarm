@@ -1336,12 +1336,20 @@ fn review_comments_with_diff_loader_at(
         output::outcome::display_path(&markdown_path),
     ];
     let started = now();
+    // #4363 review: the receipt's revision probes must respect this run's
+    // remaining `--timeout-ms` budget, not a fixed one-minute ceiling per
+    // probe — the run's own deadline is only enforced after construction.
+    let revision_budget = Some(
+        Duration::from_millis(options.timeout_ms)
+            .saturating_sub(now().saturating_duration_since(started)),
+    );
     let mut receipt = output::review_comments_receipt::ReviewCommentsRunReceipt::new(
         &input.root,
         &options.base,
         &options.head,
         options.timeout_ms,
         &artifacts,
+        revision_budget,
     );
     receipt.write_atomic(&receipt_path)?;
     receipt.phase("input_validation", "configuration");
