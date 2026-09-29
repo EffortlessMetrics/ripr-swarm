@@ -1,0 +1,131 @@
+name: Arm PR 4699 review repair once
+
+on:
+  push:
+    branches:
+      - ops/arm-4699-review-repair
+
+permissions:
+  contents: write
+
+jobs:
+  arm:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out candidate branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: feat/4521-final-native-payload
+          fetch-depth: 0
+
+      - name: Add missing invariant repairs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path(".github/workflows/zz-repair-4699-review.yml")
+          text = path.read_text(encoding="utf-8")
+          anchor = '          tests = Path("xtask/src/tests.rs")\n'
+          if text.count(anchor) != 1:
+              raise SystemExit("repair-helper test anchor was not found once")
+
+          lines = [
+              '          allowlist = Path("policy/workflow_allowlist.txt")',
+              '          replace_once(',
+              '              allowlist,',
+              '              ".github/workflows/server-archive-qualification.yml|89|Exact measured largest run block retains ruleset diagnostics plus five-target producer, payload-identity, archive-readback, and receipt-v3 aggregation; credential-free qualification delegates payload and archive construction to Rust xtask commands.",',
+              '              ".github/workflows/server-archive-qualification.yml|90|Exact measured largest run block retains ruleset diagnostics plus five-target producer, explicit archive-readback evidence, and receipt-v3 aggregation; credential-free qualification delegates payload and archive construction to Rust xtask commands.",',
+              '          )',
+              '',
+              '          tests = Path("xtask/src/tests.rs")',
+              '          def replace_near_in_file(',
+              '              path: Path, marker: str, old: str, new: str, span: int = 320',
+              '          ) -> None:',
+              '              source = path.read_text(encoding="utf-8")',
+              '              start = source.find(marker)',
+              '              if start < 0:',
+              '                  raise SystemExit(f"{path}: missing marker {marker!r}")',
+              '              segment = source[start : start + span]',
+              '              count = segment.count(old)',
+              '              if count != 1:',
+              '                  raise SystemExit(',
+              '                      f"{path}: expected one nearby replacement for {marker!r}, found {count}: {old!r}"',
+              '                  )',
+              '              path.write_text(',
+              '                  source[:start]',
+              '                  + segment.replace(old, new, 1)',
+              '                  + source[start + span :],',
+              '                  encoding="utf-8",',
+              '              )',
+              '',
+              '          replace_near_in_file(tests, \'.matches("git init \', "!= 3", "!= 4")',
+              '          replace_near_in_file(',
+              '              tests,',
+              '              \'.matches("-c credential.helper= -c http.extraheader= fetch")\',',
+              '              "!= 3",',
+              '              "!= 4",',
+              '          )',
+              '          replace_near_in_file(',
+              '              tests,',
+              '              \'.matches("https://github.com/EffortlessMetrics/ripr-swarm.git")\',',
+              '              "!= 4",',
+              '              "!= 5",',
+              '          )',
+              '          replace_once(',
+              '              tests,',
+              '              "candidate source must use three isolated unauthenticated git fetches",',
+              '              "candidate source must use four isolated unauthenticated git fetches",',
+              '          )',
+              '          replace_near_in_file(',
+              '              tests,',
+              '              \'.matches("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")\',',
+              '              "!= 3",',
+              '              "!= 5",',
+              '          )',
+              '          replace_near_in_file(',
+              '              tests,',
+              '              \'.matches("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c")\',',
+              '              "!= 2",',
+              '              "!= 3",',
+              '          )',
+              '          replace_once(',
+              '              tests,',
+              '              \'            "cargo build --locked -p ripr --release",\',',
+              '              \'            "cargo xtask release-server-archive",\',',
+              '          )',
+              '          replace_once(',
+              '              tests,',
+              '              joined(',
+              '                  "        (",',
+              '                  \'            "unlocked server build",\',',
+              '                  \'            workflow.replacen("cargo build --locked -p ripr", "cargo build -p ripr", 1),\',',
+              '                  "        ),",',
+              '              ),',
+              '              joined(',
+              '                  "        (",',
+              '                  \'            "bypassed delegated server builder",\',',
+              '                  "            workflow.replacen(",',
+              '                  \'                "cargo xtask release-server-archive",\',',
+              '                  \'                "cargo xtask release-server-payload",\',',
+              '                  "                1,",',
+              '                  "            ),",',
+              '                  "        ),",',
+              '              ),',
+              '          )',
+              '',
+          ]
+          replacement = "\n".join(lines)
+          path.write_text(text.replace(anchor, replacement, 1), encoding="utf-8")
+          PY
+
+      - name: Commit armed repair helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/zz-repair-4699-review.yml
+          git commit -m "ci(distribution): arm final review repair"
+          git push origin HEAD:feat/4521-final-native-payload
