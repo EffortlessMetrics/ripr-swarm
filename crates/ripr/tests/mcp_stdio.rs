@@ -155,14 +155,14 @@ fn run_mcp_with_input_custody(
     let stderr = stderr_reader
         .join()
         .map_err(|_join_error| "stderr reader panicked")?;
-    let status = status.ok_or("ripr mcp status was not collected")?;
     if timed_out {
         return Err(format!(
-            "ripr mcp did not exit after stdin EOF\nstdout:\n{}\nstderr:\n{}",
+            "ripr mcp exceeded its owned process deadline\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&stdout),
             String::from_utf8_lossy(&stderr)
         ));
     }
+    let status = status.ok_or("ripr mcp status was not collected")?;
     Ok(Output {
         status,
         stdout,
