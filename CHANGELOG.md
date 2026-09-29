@@ -11,6 +11,10 @@ are scoped or reviewed.
 
 ### Added
 
+- CLI: `ripr pr-ledger record --out-jsonl` and `ripr policy history --out-jsonl`
+  append one compact JSONL record so adopting consumers can populate history
+  trend fields. Generated CI still only reads those files when present and
+  never passes `--out-jsonl` (#4392).
 - CI: a dispatch-only local-wheelhouse qualification lane records pip and uv
   isolation facts and evaluates a fail-closed aggregate. Missing, skipped,
   zero-subject, or mismatched rows cannot pass. No PyPI credentials or
@@ -22,9 +26,22 @@ are scoped or reviewed.
   cached answer cannot satisfy a speed target, and a fast elapsed time cannot
   hide a redundant full rescan or duplicate diagnostic publication. The
   historical 2s/10s/30s figures remain proposals, not gates.
+- Identity: `cargo xtask check-identity-registry` enforces one governed
+  identifier catalog and generated `docs/identity` table. Vocabulary and
+  compatibility map only; it does not migrate consumers (#4804).
 
 ### Fixed
 
+- Direct collection StateWrite (`items.push(...)` on a passed identifier)
+  now binds the affected collection through the existing propagation
+  witness. Asserting a different collection, the return value, a callee-name
+  string, or an unrelated mock no longer confirms that effect; asserting the
+  actual collection retains discrimination. Return, error, and field
+  direct-sink behavior is unchanged
+  ([#4575](https://github.com/EffortlessMetrics/ripr-swarm/issues/4575)).
+- `ripr doctor` and `ripr first-pr --check` treat a start-here packet written
+  by another ripr version, or with no `ripr_version`, as stale evidence and
+  print the refresh command instead of trusting it after an upgrade (#4757).
 - Changes in languages ripr does not analyze (Go, Java, C, C++, shell and
   others) are no longer called non-source files. A Go-only diff reported
   `no_behavioral_candidates (analysis complete)` and said the empty result was
@@ -40,6 +57,18 @@ are scoped or reviewed.
   `ripr first-pr` reports no gap to assign there instead of a wrong-root
   loop through `--root` and `ripr doctor`, and `ripr init` warns that the
   configuration will report those changes as not analyzed.
+- A partial (`limited_partial_scope`) run now tells JSON, LSP and VS Code
+  users which budget stopped it. The JSON `analysis_scope.continuation`
+  string, the LSP top limitation and the `diff_scope_oversized` recovery
+  said "raise RIPR_PARTIAL_DIFF_FILE_BUDGET and/or
+  RIPR_PARTIAL_DIFF_LINE_BUDGET". Every partial surface, human output
+  included, now names the smallest values that admit the next file, stopping
+  budget first (for example "raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least
+  65, then re-run"). The human output said "raise ... above 40", and a value
+  just above the old budget could select the same partition again. The LSP
+  message and the recovery detail no longer say "at least 0 changed line(s)"
+  when every changed file ripr's language adapters read was selected, and
+  the VS Code next step no longer points only at the file budget.
 - `ripr check` is faster on large repositories, with byte-identical JSON on
   12 real commits of tokio, vite, Django and ripr. TypeScript test selection
   walked the directory tree for `package.json` twice per owner and test;
@@ -90,6 +119,13 @@ are scoped or reviewed.
   On `tokio-rs/bytes` the "Related tests appear to reach" line quoted
   `bytes_mut_unsplit_empty_self` ahead of the test that pins `try_get_int`'s
   return value.
+- A changed Rust line whose only `=>` sits inside a macro call's arguments
+  opened on that same line (`buf_try_get_impl!(be => self, i64, 8);` in
+  `tokio-rs/bytes`, or a `const`/`static` initializer such as
+  `phf_map! { "a" => 1 }`) or inside a string no longer gets a `match_arm`
+  probe. Arm lines, inline `match` blocks and `macro_rules!` rule arms keep
+  it. An arrow on a continuation line of a multi-line macro call still reads
+  as an arm, since the line carries no enclosing context.
 - Security: ripr's git calls pass `-c core.fsmonitor=false`, so a
   repository's own `core.fsmonitor` program (reachable from an extracted
   archive or a planted nested repository) does not run on `git status`
@@ -169,6 +205,12 @@ are scoped or reviewed.
   with exit 2; it is indexed on lexical fallback and named with
   `rust_source_not_utf8` (#4582). `--diff FILE` and `--diff -` now accept a
   diff containing non-UTF-8 bytes, as `--base` already did (#4584).
+- `ripr outcome`: a TypeScript gap that a new test closes now reads as moved
+  and closed, as it does for Python, instead of being listed under removed
+  (#4690). The finding carried its gap id only inside the repair packet,
+  which is dropped once the finding is `exposed`. Outcome now derives the
+  same id from the finding itself, which also lets two TypeScript snapshots
+  without repair packets be compared instead of refused.
 - Commands ripr prints now run. For a missing agent receipt, `ripr reports
   index` suggests `ripr agent status`, which names the repair attempt's
   next step, instead of an `agent receipt` call missing its required
@@ -306,6 +348,21 @@ are scoped or reviewed.
   save notifications, so a strictly conforming editor could save without ripr
   re-analyzing. The capability is now the options form with `save: true`,
   which the VS Code extension's compatibility check already accepts.
+- Rust: a changed PyO3 binding with no Rust test now reads `no_static_path`
+  with the `cross_language_oracle_visibility_unresolved` limitation, and its
+  next step says to add or check tests in the binding's other language
+  instead of adding a co-located Rust test. Before, `#[pyfunction]`, `#[pymethods]`, `#[pyclass]`
+  and `#[pymodule]` were not recognized as bindings because they do not
+  contain the string `pyo3`, and a method was never checked for a binding
+  attribute on its `impl` block, so the finding read as a plain missing Rust
+  test. The limitation was also never attached to `no_static_path`, so every
+  binding owner (`#[no_mangle]`, `#[wasm_bindgen]`, `#[napi]`, `uniffi`,
+  `cxx`) with no Rust test now carries it too, unless the finding already
+  names a Rust reach limitation. Methods under `#[wasm_bindgen]` and `#[napi]`
+  `impl` blocks are recognized the same way. Bindings are matched on the
+  attribute's path (including `#[unsafe(no_mangle)]` and `#[cfg_attr(..,
+  pyfunction)]`), so a doc comment or unrelated attribute that mentions a
+  binding name does not count.
 - LSP: opening a second repository in the same Helix session no longer stops
   ripr for the first. Helix adds the new repository as a workspace folder to
   the running server, which made the folder set ambiguous and stopped
@@ -1488,6 +1545,10 @@ are scoped or reviewed.
   `[lsp] seam_diagnostics = false`, honored by the 0.10 extension, applies
   again instead of being overridden by the extension's default
   ([#4717](https://github.com/EffortlessMetrics/ripr-swarm/issues/4717)).
+- `ripr doctor --root DIR` run from another directory now recommends
+  `ripr check --root DIR ...`. It printed `ripr check`, which analyzes the
+  current directory rather than the one doctor diagnosed
+  ([#4890](https://github.com/EffortlessMetrics/ripr-swarm/issues/4890)).
 
 ### Added
 
