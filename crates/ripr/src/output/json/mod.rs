@@ -373,12 +373,14 @@ mod tests {
             scope["budget_disclosures"].as_array().map(Vec::len),
             Some(1)
         );
-        assert!(
-            scope["continuation"]
-                .as_str()
-                .unwrap_or("")
-                .contains("RIPR_PARTIAL_DIFF_FILE_BUDGET"),
-            "continuation must name the budget-override route: {scope}"
+        assert_eq!(
+            scope["continuation"].as_str(),
+            Some(
+                "partial result: raise RIPR_PARTIAL_DIFF_LINE_BUDGET above 100 and re-run; the \
+                 next file may also need RIPR_PARTIAL_DIFF_FILE_BUDGET above 2; named partition \
+                 continuation is not available"
+            ),
+            "continuation must lead with the budget that stopped selection: {scope}"
         );
         Ok(())
     }

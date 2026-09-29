@@ -262,12 +262,31 @@ impl PartialDiffScope {
     /// Gate eligibility marker for every partial result (decision 5): a
     /// downstream consumer must fail closed on this state.
     pub const GATE_ELIGIBILITY: &'static str = "ineligible";
+    /// The widen instruction every partial-result surface shares: raise the
+    /// budget that stopped selection above its effective size, and name the
+    /// other budget too, because the next file can hit both and the selector
+    /// then reports only the file budget (#4686).
+    pub(crate) fn widen_instruction(&self) -> String {
+        let (other_env, other_budget) = self.other_budget();
+        format!(
+            "raise {} above {} and re-run; the next file may also need {} above {}",
+            self.stop_reason.budget_env(),
+            self.stopping_budget(),
+            other_env,
+            other_budget,
+        )
+    }
+
     /// Disclosure naming the only continuation route (decision 6): raise the
-    /// explicit budget overrides. Named partition continuation is not
-    /// available in this contract revision.
-    pub const CONTINUATION_DISCLOSURE: &'static str = "partial result: raise RIPR_PARTIAL_DIFF_FILE_BUDGET and/or \
-         RIPR_PARTIAL_DIFF_LINE_BUDGET to widen the analyzed partition; named \
-         partition continuation is not available";
+    /// explicit budget overrides, starting with the one that stopped
+    /// selection. Named partition continuation is not available in this
+    /// contract revision.
+    pub(crate) fn continuation_disclosure(&self) -> String {
+        format!(
+            "partial result: {}; named partition continuation is not available",
+            self.widen_instruction()
+        )
+    }
 
     /// The effective (post-clamp) size of the budget that stopped selection:
     /// the file budget for [`PartialDiffStopReason::FileBudget`], otherwise
@@ -3330,6 +3349,25 @@ fn absent_delimiter_boundary_returns_head() {
             PARTIAL_DIFF_LINE_BUDGET_ENV
         );
         assert_eq!(line_stop.other_budget(), (PARTIAL_DIFF_FILE_BUDGET_ENV, 7));
+        // Every non-human surface (JSON continuation, LSP, limitation
+        // recovery) shares this wording, so it must lead with the budget that
+        // actually stopped selection rather than a generic "and/or".
+        assert_eq!(
+            file_stop.widen_instruction(),
+            "raise RIPR_PARTIAL_DIFF_FILE_BUDGET above 1 and re-run; the next file may also \
+             need RIPR_PARTIAL_DIFF_LINE_BUDGET above 40"
+        );
+        assert_eq!(
+            line_stop.widen_instruction(),
+            "raise RIPR_PARTIAL_DIFF_LINE_BUDGET above 40 and re-run; the next file may also \
+             need RIPR_PARTIAL_DIFF_FILE_BUDGET above 7"
+        );
+        assert_eq!(
+            line_stop.continuation_disclosure(),
+            "partial result: raise RIPR_PARTIAL_DIFF_LINE_BUDGET above 40 and re-run; the next \
+             file may also need RIPR_PARTIAL_DIFF_FILE_BUDGET above 7; named partition \
+             continuation is not available"
+        );
 
         let first_file_stop = require_partial(
             select_partial_diff_partition(

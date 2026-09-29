@@ -21,6 +21,16 @@ are scoped or reviewed.
 
 ### Fixed
 
+- A partial (`limited_partial_scope`) run now tells JSON, LSP and VS Code
+  users which budget stopped it. The JSON `analysis_scope.continuation`
+  string, the LSP top limitation and the `diff_scope_oversized` recovery
+  said "raise RIPR_PARTIAL_DIFF_FILE_BUDGET and/or
+  RIPR_PARTIAL_DIFF_LINE_BUDGET"; they now name the stopping budget and its
+  size first, then the other budget the next file may also need, matching
+  the human output. The LSP message and the recovery detail no longer say
+  "at least 0 changed line(s)" when every changed file was selected, and the
+  VS Code next step no longer points only at the file budget.
+
 - `ripr check` is faster on large repositories, with byte-identical JSON on
   12 real commits of tokio, vite, Django and ripr. TypeScript test selection
   walked the directory tree for `package.json` twice per owner and test;
