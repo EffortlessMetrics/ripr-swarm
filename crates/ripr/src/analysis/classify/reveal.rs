@@ -4857,6 +4857,26 @@ return Err(\"typed pin\".into());
     #[test]
     fn sibling_effect_whole_object_without_collection_identity_still_confirms() {
         // Preserve delivered CallDeletion whole-object observer behavior.
+        let cache = probe(
+            ProbeFamily::CallDeletion,
+            "cache.insert(\"result_key\", result)",
+        );
+        let cache_test = test_with_assertions(
+            "store_result_inserts_result_key_with_value",
+            vec![oracle(
+                "assert_eq!(cache.inserted, vec![\"result_key=42\".to_string()]);",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_observe, discriminate, _related) =
+            reveal_evidence(&cache, &[(&cache_test, RelationReason::DirectOwnerCall)]);
+        assert!(
+            !discriminate.summary.contains("observation_unverified"),
+            "delivered cache.insert confirmation must stay on Part C: got `{}`",
+            discriminate.summary
+        );
+
         let probe = probe(ProbeFamily::CallDeletion, "persist_audit(record)");
         let test = test_with_assertions(
             "store_matches_expected",

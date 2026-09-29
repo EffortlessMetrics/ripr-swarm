@@ -1669,6 +1669,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn cache_insert_call_deletion_keeps_legacy_syntax_propagation() {
+        // observation_verified_call_deletion: `cache.insert` shares a method
+        // name with Vec::insert and must not enter the #4575 push family.
+        let probe = probe(
+            ProbeFamily::CallDeletion,
+            "cache.insert(\"result_key\", result)",
+            2,
+        );
+        let sinks = vec![FlowSinkFact {
+            kind: FlowSinkKind::StateWrite,
+            text: "cache.insert(\"result_key\", result)".to_string(),
+            line: 3,
+            owner: probe.owner.clone(),
+        }];
+        let evidence = propagation_evidence_with_witness(&probe, &sinks, None);
+        assert_eq!(evidence.state, StageState::Yes);
+        assert!(
+            evidence
+                .summary
+                .contains("Changed behavior appears to influence")
+        );
+        assert!(
+            !evidence.summary.contains("Complete propagation witness"),
+            "admitting cache.insert would drift delivered CallDeletion goldens"
+        );
+    }
+
     fn probe(family: ProbeFamily, expression: &str, line: usize) -> Probe {
         Probe {
             id: ProbeId("probe:test".to_string()),

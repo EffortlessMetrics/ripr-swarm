@@ -225,14 +225,17 @@ subject** to be that same receiver:
 - A return-value assertion, a string containing the callee name, or an
   unrelated mock does not confirm the collection sink.
 
-`self.field.push`, helper/dynamic receivers, and other effect families keep
-the existing Part C path. This does not absorb oracle-pooling (#4404) or
-rewrite the shared witness type (#3160).
+`self.field.push`, `cache.insert`, `items.insert`, helper/dynamic receivers,
+and other effect families keep the existing Part C path. This does not absorb
+oracle-pooling (#4404) or rewrite the shared witness type (#3160). The first
+admitted method is `push` only; `insert` is a later sibling because it collides
+with delivered CallDeletion goldens.
 
 Proof: `mutating_collection_a_while_asserting_b_stays_unverified`,
 `asserting_affected_collection_retains_confirmation_in_either_order`,
 `direct_collection_push_completes_effect_target_and_rejects_wrong_observer`,
-`direct_collection_state_write_requires_complete_witness`, and
+`direct_collection_state_write_requires_complete_witness`,
+`cache_insert_call_deletion_keeps_legacy_syntax_propagation`, and
 `direct_collection_mutation_discriminates_actual_observer_not_sibling_collection`.
 
 ## Test Mapping

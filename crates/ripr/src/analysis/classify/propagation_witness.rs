@@ -349,22 +349,7 @@ pub(in crate::analysis) fn direct_collection_mutation_receiver(expression: &str)
     let after = trimmed.get(dot + 1..)?;
     let method_end = after.find('(')?;
     let method = after[..method_end].trim();
-    is_collection_mutation_method(method).then_some(receiver)
-}
-
-fn is_collection_mutation_method(method: &str) -> bool {
-    matches!(
-        method,
-        "push"
-            | "insert"
-            | "extend"
-            | "clear"
-            | "remove"
-            | "replace"
-            | "write"
-            | "delete"
-            | "increment"
-    )
+    (method == "push").then_some(receiver)
 }
 
 fn is_bare_ident(text: &str) -> bool {
@@ -1281,6 +1266,37 @@ mod tests {
             direct_collection_mutation_receiver("events.publish(score)"),
             None
         );
+        assert_eq!(
+            direct_collection_mutation_receiver("cache.insert(\"result_key\", result)"),
+            None,
+            "CallDeletion cache.insert is a delivered fixture family, not this admission"
+        );
+        assert_eq!(
+            direct_collection_mutation_receiver("items.insert(0, 5)"),
+            None,
+            "Vec::insert is a later sibling, not the push family"
+        );
+        let cache_insert = current_path_witness(
+            &probe(
+                ProbeFamily::CallDeletion,
+                "cache.insert(\"result_key\", result)",
+            ),
+            &[sink(
+                FlowSinkKind::StateWrite,
+                "cache.insert(\"result_key\", result)",
+                15,
+            )],
+        );
+        assert!(cache_insert.is_some_and(|witness| {
+            witness.completeness == PathCompleteness::Partial
+                && !complete_direct_witness(
+                    &probe(
+                        ProbeFamily::CallDeletion,
+                        "cache.insert(\"result_key\", result)",
+                    ),
+                    Some(&witness),
+                )
+        }));
         let event = current_path_witness(
             &probe(ProbeFamily::SideEffect, "self.handle(value)"),
             &[sink(FlowSinkKind::CallEffect, "self.handle(value)", 14)],

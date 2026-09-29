@@ -13,7 +13,9 @@ coincidence on the expected side is not identity with the mutated receiver.
 Pin this as a should-stay-`weakly_exposed` control for the sibling collection.
 Do not generalize that rule to every effect family: mock/snapshot/whole-object
 observers for `persist_audit(record)` and `notifier.send(...)` remain on the
-existing Part C path. Reuse `PropagationWitnessV1`; do not mint a second
+existing Part C path. `cache.insert` is a delivered CallDeletion fixture, not
+this family's `push` admission; sharing the `insert` method name must not
+rewrite that golden. Reuse `PropagationWitnessV1`; do not mint a second
 witness DTO.
 
 ## 2026-09-16: Parallel-build test flakes are shared-state mechanisms (#3742)
