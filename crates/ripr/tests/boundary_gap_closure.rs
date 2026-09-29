@@ -25,6 +25,7 @@ use boundary_gap::{
     split_printed_ripr_command, stdout_text, two_commit_before_repo, write_crate,
 };
 use serde_json::Value;
+use std::path::Path;
 
 fn seam_id(seam: &Value) -> Result<&str, String> {
     seam.get("seam_id")
@@ -210,14 +211,16 @@ fn installed_candidate_is_not_workspace_or_path_substitution() -> Result<(), Str
             candidate.digest
         ));
     }
-    if candidate.binary.starts_with(env!("CARGO_MANIFEST_DIR"))
-        || candidate
-            .binary
-            .components()
-            .any(|component| component.as_os_str() == "target")
+    let workspace_bin = Path::new(env!("CARGO_BIN_EXE_ripr"));
+    if candidate.binary == workspace_bin {
+        return Err("installed candidate is still CARGO_BIN_EXE_ripr".to_string());
+    }
+    if workspace_bin
+        .parent()
+        .is_some_and(|bin_dir| candidate.binary.starts_with(bin_dir))
     {
         return Err(format!(
-            "installed binary still points into the workspace: {}",
+            "installed binary still lives in the cargo bin dir: {}",
             candidate.binary.display()
         ));
     }

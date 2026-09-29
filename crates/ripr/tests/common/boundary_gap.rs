@@ -157,6 +157,10 @@ pub(crate) fn write_crate(root: &Path, lib: &str, tests: &str) -> Result<(), Str
         "[package]\nname = \"boundary-gap-closure\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
     )
     .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
+    // Repair --phase before refuses unless Cargo's build directory is ignored
+    // at the repository root before the test edit (edit-cage precondition).
+    std::fs::write(root.join(".gitignore"), "/target/\n")
+        .map_err(|error| format!("write .gitignore failed: {error}"))?;
     std::fs::write(root.join("src/lib.rs"), lib)
         .map_err(|error| format!("write src/lib.rs failed: {error}"))?;
     std::fs::write(root.join("tests/pricing.rs"), tests)
@@ -429,17 +433,23 @@ pub(crate) fn boundary_seam(value: &Value) -> Result<&Value, String> {
 }
 
 pub(crate) fn boundary_finding(value: &Value) -> Result<&Value, String> {
-    value
+    let findings = value
         .get("findings")
         .and_then(Value::as_array)
-        .and_then(|findings| {
-            findings.iter().find(|finding| {
-                finding
-                    .pointer("/probe/expression")
-                    .and_then(Value::as_str)
-                    .is_some_and(|expression| expression.contains("amount >= discount_threshold"))
-            })
+        .ok_or_else(|| "diff check is missing findings".to_string())?;
+    let matches_boundary = |finding: &&Value| {
+        finding
+            .pointer("/probe/expression")
+            .and_then(Value::as_str)
+            .is_some_and(|expression| expression.contains("amount >= discount_threshold"))
+    };
+    findings
+        .iter()
+        .find(|finding| {
+            matches_boundary(finding)
+                && finding.pointer("/probe/family").and_then(Value::as_str) == Some("predicate")
         })
+        .or_else(|| findings.iter().find(matches_boundary))
         .ok_or_else(|| "diff check did not contain the boundary predicate finding".to_string())
 }
 
@@ -449,11 +459,19 @@ pub(crate) fn missing_equality(container: &Value) -> Result<bool, String> {
         .or_else(|| container.pointer("/activation/missing_discriminators"))
         .and_then(Value::as_array)
         .ok_or_else(|| "missing_discriminators array is absent".to_string())?;
-    Ok(facts.iter().any(|fact| {
-        fact.get("value")
-            .and_then(Value::as_str)
-            .is_some_and(|value| value.contains(EQUALITY_DISCRIMINATOR))
-    }))
+    Ok(facts.iter().any(fact_names_equality))
+}
+
+fn fact_names_equality(fact: &Value) -> bool {
+    let text = match fact {
+        Value::String(text) => text.as_str(),
+        Value::Object(_) => fact.get("value").and_then(Value::as_str).unwrap_or(""),
+        _ => return false,
+    };
+    // Repo exposure names `discount_threshold (equality boundary)`; diff check
+    // names `amount == discount_threshold`. Those are comparable projections
+    // of the same unobserved equality case (#3160 bounded port, not a rewrite).
+    text.contains(EQUALITY_DISCRIMINATOR) || text.contains("amount == discount_threshold")
 }
 
 pub(crate) fn related_equality_test(container: &Value) -> bool {
@@ -823,6 +841,68 @@ mod tests {
             ]
         {
             return Err(format!("unexpected tokens: {tokens:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn missing_equality_reads_object_and_string_facts() -> Result<(), String> {
+        let objects = serde_json::json!({
+            "missing_discriminators": [
+                {"value": "discount_threshold (equality boundary)", "reason": "absent"}
+            ]
+        });
+        let strings = serde_json::json!({
+            "missing_discriminators": ["discount_threshold (equality boundary)"]
+        });
+        let diff_projection = serde_json::json!({
+            "missing_discriminators": [{"value": "amount == discount_threshold"}]
+        });
+        let unrelated = serde_json::json!({
+            "missing_discriminators": [{"value": "unrelated token"}]
+        });
+        if !missing_equality(&objects)?
+            || !missing_equality(&strings)?
+            || !missing_equality(&diff_projection)?
+            || missing_equality(&unrelated)?
+        {
+            return Err("object/string/diff equality facts were not discriminated".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn boundary_finding_prefers_predicate_family() -> Result<(), String> {
+        let report = serde_json::json!({
+            "findings": [
+                {
+                    "classification": "weakly_exposed",
+                    "probe": {
+                        "family": "call_deletion",
+                        "expression": "amount >= discount_threshold",
+                        "file": "src/lib.rs"
+                    },
+                    "missing_discriminators": []
+                },
+                {
+                    "classification": "weakly_exposed",
+                    "probe": {
+                        "family": "predicate",
+                        "expression": "amount >= discount_threshold",
+                        "file": "src/lib.rs"
+                    },
+                    "missing_discriminators": [
+                        {"value": "discount_threshold (equality boundary)"}
+                    ]
+                }
+            ]
+        });
+        let finding = boundary_finding(&report)?;
+        if finding.pointer("/probe/family").and_then(Value::as_str) != Some("predicate") {
+            return Err(format!("did not prefer the predicate finding: {finding}"));
+        }
+        if !missing_equality(finding)? {
+            return Err("predicate finding lost the equality discriminator".to_string());
         }
         Ok(())
     }
