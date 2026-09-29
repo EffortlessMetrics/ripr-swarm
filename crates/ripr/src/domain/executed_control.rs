@@ -358,6 +358,17 @@ pub(crate) enum ExecutedControlValidationError {
         actual: String,
     },
     SubstituteRequiresDeclaredEvidence(String),
+    SourceIdentityMismatch {
+        obligation_id: String,
+        expected: String,
+        actual: String,
+    },
+    EvidenceFormNotAccepted {
+        obligation_id: String,
+        state: ResultState,
+    },
+    UnexecutedSubstituteCannotSatisfy(String),
+    ConflictingSameSubjectResults(String),
 }
 
 impl fmt::Display for ExecutedControlValidationError {
@@ -469,6 +480,29 @@ impl fmt::Display for ExecutedControlValidationError {
             Self::SubstituteRequiresDeclaredEvidence(id) => write!(
                 formatter,
                 "substituted result for {id:?} must offer declared_substitute evidence"
+            ),
+            Self::SourceIdentityMismatch {
+                obligation_id,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "result for {obligation_id:?} binds source identity {actual:?}, expected {expected:?}"
+            ),
+            Self::EvidenceFormNotAccepted {
+                obligation_id,
+                state,
+            } => write!(
+                formatter,
+                "{state:?} result for {obligation_id:?} is not an acceptable evidence form"
+            ),
+            Self::UnexecutedSubstituteCannotSatisfy(id) => write!(
+                formatter,
+                "unexecuted substitute cannot satisfy executed-control obligation {id:?}"
+            ),
+            Self::ConflictingSameSubjectResults(id) => write!(
+                formatter,
+                "obligation {id:?} has conflicting passed and failed results for the same head and command"
             ),
         }
     }
@@ -665,14 +699,24 @@ impl ExecutedControlPacketV1 {
                     result.obligation_id.clone(),
                 ));
             };
-            bind_result(obligation, result)?;
+            bind_result(&self.source_identity, obligation, result)?;
         }
 
         let mut satisfying: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut subject_states: BTreeMap<(String, String, String), Vec<ResultState>> =
+            BTreeMap::new();
         for result in &self.results {
             if result.state.claims_satisfaction() {
                 *satisfying.entry(result.obligation_id.as_str()).or_insert(0) += 1;
             }
+            subject_states
+                .entry((
+                    result.obligation_id.clone(),
+                    result.head.to_ascii_lowercase(),
+                    result.command_or_instrument_id.clone(),
+                ))
+                .or_default()
+                .push(result.state);
         }
         for (obligation_id, count) in satisfying {
             if count > 1 {
@@ -680,6 +724,15 @@ impl ExecutedControlPacketV1 {
                     ExecutedControlValidationError::ConflictingSatisfyingResults(
                         obligation_id.to_string(),
                     ),
+                );
+            }
+        }
+        for ((obligation_id, _, _), states) in subject_states {
+            let has_pass = states.iter().any(|state| *state == ResultState::Passed);
+            let has_fail = states.iter().any(|state| *state == ResultState::Failed);
+            if has_pass && has_fail {
+                return Err(
+                    ExecutedControlValidationError::ConflictingSameSubjectResults(obligation_id),
                 );
             }
         }
@@ -713,23 +766,64 @@ impl ExecutedControlPacketV1 {
     pub(crate) fn canonicalize(&mut self) {
         self.obligations
             .sort_by(|left, right| left.obligation_id.cmp(&right.obligation_id));
-        self.results.sort_by(|left, right| {
-            left.obligation_id
-                .cmp(&right.obligation_id)
-                .then(left.head.cmp(&right.head))
-                .then(left.state.as_str().cmp(right.state.as_str()))
-                .then(
-                    left.command_or_instrument_id
-                        .cmp(&right.command_or_instrument_id),
-                )
-        });
+        self.results
+            .sort_by(|left, right| result_canonical_key(left).cmp(&result_canonical_key(right)));
     }
 }
 
+fn result_canonical_key(result: &ExecutedControlResultV1) -> ResultCanonicalKey<'_> {
+    ResultCanonicalKey {
+        obligation_id: result.obligation_id.as_str(),
+        head: result.head.to_ascii_lowercase(),
+        state: result.state.as_str(),
+        command: result.command_or_instrument_id.as_str(),
+        evidence: result.offered_evidence_kind.as_str(),
+        observed: result.observed_outcome.as_str(),
+        source: result.source_identity.as_str(),
+        candidate_id: result.candidate_id.as_deref(),
+        substitute_id: result.substitute_id.as_deref(),
+        obligation_digest: result.obligation_digest.as_deref(),
+        limitation: result.limitation.as_deref(),
+        artifact_id: result
+            .artifact
+            .as_ref()
+            .map(|artifact| artifact.logical_id.as_str()),
+        artifact_digest: result
+            .artifact
+            .as_ref()
+            .map(|artifact| artifact.digest.as_str()),
+    }
+}
+
+#[derive(Eq, Ord, PartialEq, PartialOrd)]
+struct ResultCanonicalKey<'a> {
+    obligation_id: &'a str,
+    head: String,
+    state: &'a str,
+    command: &'a str,
+    evidence: &'a str,
+    observed: &'a str,
+    source: &'a str,
+    candidate_id: Option<&'a str>,
+    substitute_id: Option<&'a str>,
+    obligation_digest: Option<&'a str>,
+    limitation: Option<&'a str>,
+    artifact_id: Option<&'a str>,
+    artifact_digest: Option<&'a str>,
+}
+
 fn bind_result(
+    packet_source: &str,
     obligation: &ExecutedControlObligationV1,
     result: &ExecutedControlResultV1,
 ) -> Result<(), ExecutedControlValidationError> {
+    if result.source_identity != packet_source {
+        return Err(ExecutedControlValidationError::SourceIdentityMismatch {
+            obligation_id: result.obligation_id.clone(),
+            expected: packet_source.to_string(),
+            actual: result.source_identity.clone(),
+        });
+    }
     match result.offered_evidence_kind {
         OfferedEvidenceKind::OrdinaryPositiveTest if result.state.claims_satisfaction() => {
             return Err(
@@ -782,6 +876,39 @@ fn bind_result(
                 result.obligation_id.clone(),
             ),
         );
+    }
+
+    if result.state == ResultState::Passed
+        && !obligation.acceptable_evidence_forms.iter().any(|form| {
+            matches!(
+                form,
+                EvidenceForm::RetainedArtifact | EvidenceForm::BoundedLogCommitment
+            )
+        })
+    {
+        return Err(ExecutedControlValidationError::EvidenceFormNotAccepted {
+            obligation_id: result.obligation_id.clone(),
+            state: result.state,
+        });
+    }
+
+    if result.state == ResultState::Substituted {
+        if !obligation
+            .acceptable_evidence_forms
+            .contains(&EvidenceForm::DeclaredSubstitute)
+        {
+            return Err(ExecutedControlValidationError::EvidenceFormNotAccepted {
+                obligation_id: result.obligation_id.clone(),
+                state: result.state,
+            });
+        }
+        if substitute_outcome_is_unexecuted(result.observed_outcome) {
+            return Err(
+                ExecutedControlValidationError::UnexecutedSubstituteCannotSatisfy(
+                    result.obligation_id.clone(),
+                ),
+            );
+        }
     }
 
     let requires_artifact = result.state.claims_satisfaction()
@@ -886,6 +1013,17 @@ fn bind_result(
         }
     }
     Ok(())
+}
+
+fn substitute_outcome_is_unexecuted(outcome: ObservedOutcome) -> bool {
+    matches!(
+        outcome,
+        ObservedOutcome::NotExecuted
+            | ObservedOutcome::OrdinaryPositiveTestsPassed
+            | ObservedOutcome::ReviewArgumentOnly
+            | ObservedOutcome::StructuralDiscriminationOnly
+            | ObservedOutcome::CommandSucceededWithoutExercisingSubject
+    )
 }
 
 fn validate_non_empty(
@@ -1322,5 +1460,101 @@ pub(crate) mod tests {
             ExecutedControlValidationError::StructuralClaimCannotSatisfy(_)
         ));
         Ok(())
+    }
+
+    #[test]
+    fn foreign_source_identity_cannot_satisfy() -> Result<(), String> {
+        let obligation = sample_obligation();
+        let mut result = passing_result(&obligation);
+        result.source_identity = "other/repo".to_string();
+        let error = require_invalid(packet(vec![obligation], vec![result]))?;
+        assert!(matches!(
+            error,
+            ExecutedControlValidationError::SourceIdentityMismatch { .. }
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn unexecuted_substitute_cannot_satisfy() -> Result<(), String> {
+        let mut obligation = sample_obligation();
+        obligation
+            .acceptable_evidence_forms
+            .push(EvidenceForm::DeclaredSubstitute);
+        obligation.permitted_substitute = Some(PermittedSubstitute {
+            substitute_id: "hosted-eager-variant".to_string(),
+            instrument_id: "hosted-mutation-runner".to_string(),
+            evidence_form: EvidenceForm::DeclaredSubstitute,
+        });
+        let result = ExecutedControlResultV1 {
+            command_or_instrument_id: "hosted-mutation-runner".to_string(),
+            offered_evidence_kind: OfferedEvidenceKind::DeclaredSubstitute,
+            observed_outcome: ObservedOutcome::NotExecuted,
+            state: ResultState::Substituted,
+            substitute_id: Some("hosted-eager-variant".to_string()),
+            obligation_digest: Some(obligation.semantic_digest()),
+            ..passing_result(&obligation)
+        };
+        let error = require_invalid(packet(vec![obligation], vec![result]))?;
+        assert!(matches!(
+            error,
+            ExecutedControlValidationError::UnexecutedSubstituteCannotSatisfy(_)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn passed_result_requires_an_artifact_backed_acceptable_form() -> Result<(), String> {
+        let mut obligation = sample_obligation();
+        obligation.acceptable_evidence_forms = vec![EvidenceForm::DeclaredSubstitute];
+        obligation.permitted_substitute = Some(PermittedSubstitute {
+            substitute_id: "hosted-eager-variant".to_string(),
+            instrument_id: "hosted-mutation-runner".to_string(),
+            evidence_form: EvidenceForm::DeclaredSubstitute,
+        });
+        let result = passing_result(&obligation);
+        let error = require_invalid(packet(vec![obligation], vec![result]))?;
+        assert!(matches!(
+            error,
+            ExecutedControlValidationError::EvidenceFormNotAccepted { .. }
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn same_head_pass_and_fail_are_rejected() -> Result<(), String> {
+        let obligation = sample_obligation();
+        let mut failed = passing_result(&obligation);
+        failed.state = ResultState::Failed;
+        failed.observed_outcome = ObservedOutcome::RejectedWrongImplementation;
+        failed.obligation_digest = None;
+        let error = require_invalid(packet(
+            vec![obligation.clone()],
+            vec![failed, passing_result(&obligation)],
+        ))?;
+        assert!(matches!(
+            error,
+            ExecutedControlValidationError::ConflictingSameSubjectResults(_)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn canonicalize_orders_equal_key_results_by_payload() {
+        let obligation = sample_obligation();
+        let mut left = passing_result(&obligation);
+        left.state = ResultState::NotProven;
+        left.offered_evidence_kind = OfferedEvidenceKind::ReviewProse;
+        left.observed_outcome = ObservedOutcome::NotExecuted;
+        left.artifact = None;
+        left.obligation_digest = None;
+        left.limitation = Some("runner A unavailable".to_string());
+        let mut right = left.clone();
+        right.limitation = Some("runner B unavailable".to_string());
+        let mut reversed = packet(vec![obligation.clone()], vec![right.clone(), left.clone()]);
+        let mut ordered = packet(vec![obligation], vec![left, right]);
+        reversed.canonicalize();
+        ordered.canonicalize();
+        assert_eq!(reversed, ordered);
     }
 }

@@ -11,10 +11,12 @@ use crate::domain::{
 use crate::output::json;
 
 /// Canonical JSON for one packet. Obligation and result order is sorted first
-/// so input/map order cannot change semantic identity.
+/// so input/map order cannot change semantic identity. Invalid packets are
+/// rejected; this projection does not emit an unvalidated pass claim.
 pub(crate) fn render_packet_json(packet: &ExecutedControlPacketV1) -> Result<String, String> {
     let mut canonical = packet.clone();
     canonical.canonicalize();
+    canonical.validate().map_err(|error| error.to_string())?;
     json::render_pretty_with_newline(&canonical, "executed-control packet")
 }
 
@@ -222,6 +224,33 @@ mod tests {
         let mut unknown = passing_result(&obligation);
         unknown.obligation_id = "claim:unknown".to_string();
 
+        let mut foreign_source = passing_result(&obligation);
+        foreign_source.source_identity = "other/repo".to_string();
+
+        let mut only_substitute = obligation.clone();
+        only_substitute.acceptable_evidence_forms = vec![EvidenceForm::DeclaredSubstitute];
+        only_substitute.permitted_substitute = Some(PermittedSubstitute {
+            substitute_id: "hosted-eager-variant".to_string(),
+            instrument_id: "hosted-mutation-runner".to_string(),
+            evidence_form: EvidenceForm::DeclaredSubstitute,
+        });
+        let disallowed_form = passing_result(&only_substitute);
+
+        let unexecuted_substitute = ExecutedControlResultV1 {
+            command_or_instrument_id: "hosted-mutation-runner".to_string(),
+            offered_evidence_kind: OfferedEvidenceKind::DeclaredSubstitute,
+            observed_outcome: ObservedOutcome::NotExecuted,
+            state: ResultState::Substituted,
+            substitute_id: Some("hosted-eager-variant".to_string()),
+            obligation_digest: Some(with_substitute.semantic_digest()),
+            ..passing_result(&with_substitute)
+        };
+
+        let mut same_head_fail = passing_result(&obligation);
+        same_head_fail.state = ResultState::Failed;
+        same_head_fail.observed_outcome = ObservedOutcome::RejectedWrongImplementation;
+        same_head_fail.obligation_digest = None;
+
         let mut other_obligation = obligation.clone();
         other_obligation.obligation_id = "claim:example:other".to_string();
 
@@ -269,7 +298,7 @@ mod tests {
                 description: "Unavailable instrument with an explicitly accepted substitute.",
                 invalid: false,
                 expected_failure: None,
-                packet: packet(vec![with_substitute], vec![substitute_result]),
+                packet: packet(vec![with_substitute.clone()], vec![substitute_result]),
             },
             CorpusCase {
                 id: "instrument_failure_without_substitute",
@@ -294,6 +323,37 @@ mod tests {
                 invalid: true,
                 expected_failure: Some("unknown obligation_id"),
                 packet: packet(vec![obligation.clone()], vec![unknown]),
+            },
+            CorpusCase {
+                id: "foreign_source",
+                description: "Result whose source_identity is not the packet source.",
+                invalid: true,
+                expected_failure: Some("source identity"),
+                packet: packet(vec![obligation.clone()], vec![foreign_source]),
+            },
+            CorpusCase {
+                id: "unexecuted_substitute",
+                description: "Named substitute recorded as not_executed.",
+                invalid: true,
+                expected_failure: Some("unexecuted substitute"),
+                packet: packet(vec![with_substitute.clone()], vec![unexecuted_substitute]),
+            },
+            CorpusCase {
+                id: "disallowed_evidence_form",
+                description: "Passed retained-artifact result against an obligation that accepts only declared_substitute.",
+                invalid: true,
+                expected_failure: Some("acceptable evidence form"),
+                packet: packet(vec![only_substitute], vec![disallowed_form]),
+            },
+            CorpusCase {
+                id: "same_head_pass_and_fail",
+                description: "Passed and failed results for the same head and command.",
+                invalid: true,
+                expected_failure: Some("conflicting passed and failed"),
+                packet: packet(
+                    vec![obligation.clone()],
+                    vec![same_head_fail, passing_result(&obligation)],
+                ),
             },
             CorpusCase {
                 id: "input_order_independent",
@@ -395,6 +455,26 @@ mod tests {
         assert!(!human_left.contains("killed")); // ripr-allow: static-language: test guard verifying projection does not emit forbidden mutation-testing term
         assert!(!human_left.contains("survived")); // ripr-allow: static-language: test guard verifying projection does not emit forbidden mutation-testing term
         assert!(!human_left.contains("adequate")); // ripr-allow: static-language: test guard verifying projection does not emit forbidden mutation-testing term
+        Ok(())
+    }
+
+    #[test]
+    fn json_and_markdown_projections_reject_the_same_invalid_packet() -> Result<(), String> {
+        let obligation = sample_obligation();
+        let mut ordinary = passing_result(&obligation);
+        ordinary.offered_evidence_kind = OfferedEvidenceKind::OrdinaryPositiveTest;
+        ordinary.observed_outcome = ObservedOutcome::OrdinaryPositiveTestsPassed;
+        let invalid = packet(vec![obligation], vec![ordinary]);
+        let json_error = match render_packet_json(&invalid) {
+            Err(error) => error,
+            Ok(_) => return Err("json should reject the invalid packet".to_string()),
+        };
+        let markdown_error = match render_packet_markdown(&invalid) {
+            Err(error) => error,
+            Ok(_) => return Err("markdown should reject the invalid packet".to_string()),
+        };
+        assert!(json_error.contains("ordinary positive test"));
+        assert!(markdown_error.contains("ordinary positive test"));
         Ok(())
     }
 

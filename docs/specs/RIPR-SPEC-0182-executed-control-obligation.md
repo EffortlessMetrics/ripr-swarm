@@ -88,7 +88,11 @@ Laws:
   explicit. Only a substitute declared on the obligation can satisfy in place
   of a pass.
 - Evidence binds exact source/head, command or instrument, and retained
-  artifact identity. A stale digest or other-head result cannot pass.
+  artifact identity. A stale digest, other-head result, or foreign
+  `source_identity` cannot pass. `passed` requires an artifact-backed form
+  listed on the obligation; a named substitute cannot satisfy with
+  `not_executed` / ordinary-test / review / structural outcomes. Conflicting
+  passed and failed results for the same head and command are rejected.
 - Volatile timestamps, machine paths, and log ordering are not semantic
   identity. Serialization canonicalizes obligation and result order.
 - #3858 / #4063 is retained as a documentation fixture whose execution state
@@ -144,7 +148,7 @@ It does not render `passed`.
 - Unit: `crates/ripr/src/domain/executed_control.rs::tests`
 - Projection: `crates/ripr/src/output/executed_control.rs::tests`
 - Golden/output contract: `fixtures/executed-control-contract/expected/`
-- Proof command: `cargo test -p ripr --lib domain::executed_control output::executed_control`
+- Proof command: `cargo test -p ripr --lib executed_control`
 
 ## Implementation Mapping
 

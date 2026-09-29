@@ -124,8 +124,10 @@ Fields:
   cannot satisfy a moved implementation
 
 `passed` requires `offered_evidence_kind` `executed_discriminating_control`
-plus retained artifact identity. #3858 / #4063 is documented as `not_proven`
-and must not be rewritten as `passed`. Closeout enforcement is a later slice.
+plus retained artifact identity, matching packet `source_identity`, and an
+artifact-backed form listed on the obligation. JSON and Markdown both reject
+invalid packets. #3858 / #4063 is documented as `not_proven` and must not be
+rewritten as `passed`. Closeout enforcement is a later slice.
 
 
 `ripr doctor --json` top-level `status` and `runtime_probes[].status` are

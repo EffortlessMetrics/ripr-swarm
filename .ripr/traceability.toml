@@ -9705,7 +9705,12 @@ tests = [
   "crates/ripr/src/domain/executed_control.rs::tests::duplicated_obligation_ids_are_rejected",
   "crates/ripr/src/domain/executed_control.rs::tests::result_for_unknown_obligation_is_rejected",
   "crates/ripr/src/domain/executed_control.rs::tests::issue_3858_documentation_fixture_stays_not_proven",
+  "crates/ripr/src/domain/executed_control.rs::tests::foreign_source_identity_cannot_satisfy",
+  "crates/ripr/src/domain/executed_control.rs::tests::unexecuted_substitute_cannot_satisfy",
+  "crates/ripr/src/domain/executed_control.rs::tests::passed_result_requires_an_artifact_backed_acceptable_form",
+  "crates/ripr/src/domain/executed_control.rs::tests::same_head_pass_and_fail_are_rejected",
   "crates/ripr/src/output/executed_control.rs::tests::json_and_human_projections_agree_on_satisfaction_and_are_deterministic",
+  "crates/ripr/src/output/executed_control.rs::tests::json_and_markdown_projections_reject_the_same_invalid_packet",
   "crates/ripr/src/output/executed_control.rs::tests::human_projection_keeps_issue_3858_not_proven",
   "crates/ripr/src/output/executed_control.rs::tests::corpus_covers_required_negative_and_documentation_cases",
 ]
