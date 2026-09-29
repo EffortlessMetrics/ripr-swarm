@@ -11,6 +11,18 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Commands ripr prints now run. For a missing agent receipt, `ripr reports
+  index` suggests `ripr agent status`, which names the repair attempt's
+  next step, instead of an `agent receipt` call missing its required
+  flags. It no longer suggests the repository-internal `cargo xtask
+  check-pr` and `cargo xtask pr-summary`. Invalid-receipt
+  guidance names `--seam-id`, and Perl receipt commands use the canonical
+  `ripr receipt write` form instead of a `--verify-cmd` flag `outcome` never
+  had. Help screens and guides that contradicted the CLI were corrected,
+  including the `first-pr` cost disclosure, which described an analysis the
+  command never runs, and `docs/CONFIGURATION.md`'s claim that `context`
+  accepts `--format`. A test now fails when a public guide passes a flag
+  that its command's help does not list (#4573).
 - LSP: a request whose method starts with `$/` and that ripr does not handle
   now gets a `-32601` method-not-found error, as the LSP spec requires. It got
   no response at all, so a client that sent one waited on it forever.
@@ -24,6 +36,13 @@ are scoped or reviewed.
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from
   8.6 s to 6.6 s with byte-identical JSON.
+- `ripr review-comments --gap-ledger` now renders repair cards for gaps from
+  `ripr reports gap-ledger --check-output`, such as Python repair gaps. Those
+  ledger rows carry no seam ID, and every one was suppressed as
+  `missing_seam_identity` even though the ledger marked it eligible for a PR
+  comment, so the documented route produced no cards. A gap-ledger card is
+  keyed by its gap record and now omits `seam_id` when the row has none; the
+  schema requires `seam_id` only on diff-scoped cards (#4524).
 - LSP: the server now asks clients for `textDocument/didSave`. It advertised
   only the numeric full-sync kind, which under the LSP spec does not request
   save notifications, so a strictly conforming editor could save without ripr
@@ -293,6 +312,16 @@ are scoped or reviewed.
   unrelated. (ufo's own `withBase` tests are still missed: they
   register from a `for` loop with computed titles, which test extraction does
   not index and discloses as partial.)
+- TypeScript: tests declared inside a `for`, `for...of` or `for...in` loop
+  or a `.forEach` callback are now extracted, including tests with a
+  template-literal or other computed title. Before, a suite written like
+  unjs/ufo (``for (const t of tests) { test(`${t.input}`, ...) }``) left the
+  owners it calls reading `no_static_path`. A computed title is named
+  `<computed title, line N>` under its `describe`; the test relates to an
+  owner only when its own body calls it. A loop is walked only when it is
+  known to run at least once (a non-empty literal, or a `const` bound to
+  one), and a loop variable or `describe` parameter that reuses an imported
+  owner's name shadows it.
 
 - Python pytest verify commands now run as `python -m pytest path::node`
   instead of bare `pytest path::node`. `-m` puts the repository root on
@@ -327,6 +356,18 @@ are scoped or reviewed.
   the `Agent review packet` block already did. The stored artifacts keep
   their bound root; only the summary rendering rewrites the checkout path, and
   only where it is a whole path token.
+- `ripr review-comments` now reads its diff the way `ripr check` does. It ran
+  its own `git diff`, so `color.diff=always` in the repository's git config
+  produced zero guidance with exit 0, and `diff.submodule=diff` put guidance
+  on files inside a submodule. A base or head that does not resolve, and a
+  shallow clone with no merge base, now get the same named cause and repair
+  as `check` instead of git's `ambiguous argument` advice. `ripr first-pr`
+  names the shallow clone behind a missing merge base and offers
+  `git fetch --unshallow` as its next command (#4538).
+- A symlink in the diff no longer counts as changed source. Git shows a
+  symlink as a one-line file holding its target path, so `ripr check` built a
+  probe from that path and `ripr review-comments` annotated unchanged lines of
+  the file the link points at, under the link's name (#4577).
 
 - LSP: `ripr.collectRepairPacket` and `ripr.collectContext` now reject a
   `gap_id` that is present but not a string (such as `42` or `true`) with an
@@ -346,6 +387,10 @@ are scoped or reviewed.
   selected (a single oversized first file), it no longer prints "at least 0
   changed file(s) ... may contain additional findings"; it says the result
   stays partial instead.
+- Rust cache entries now reject same-key semantic payload edits before serving
+  facts or classified evidence. File-fact, full/compact classified, shard and
+  corpus-fingerprint generations cold-recompute once; checksums do not
+  authenticate writers able to recompute them (#4382).
 
 ### Added
 
