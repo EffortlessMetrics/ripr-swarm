@@ -15786,7 +15786,9 @@ Python or TypeScript row derived by `reports gap-ledger --check-output`, still
 renders a card with `seam_id` omitted when the ledger marks it PR-comment
 eligible. When a seamless row and a row with
 seam identity share a dedupe key, the row with seam identity renders and the
-seamless row is suppressed as `duplicate_dedupe_fingerprint`.
+seamless row is suppressed as `duplicate_dedupe_fingerprint`; the winning
+card takes the earlier row's ledger position before the inline and summary
+caps apply, so the shared key keeps one card.
 
 Typed command specifications (additive `command_specs`): records may carry
 `command_specs.verify`, `command_specs.receipt`, and

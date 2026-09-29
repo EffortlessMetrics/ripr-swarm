@@ -29,7 +29,7 @@ use crate::output::markdown::{code_span, inline_prose};
 use crate::testing::cwd_placeholder::project_cwd_text;
 use serde_json::{Value, json};
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 mod scope;
@@ -266,8 +266,14 @@ pub(crate) fn render_gap_record_review_comments_json(
     let analysis_scope = ReviewCommentsAnalysisScope::gap_ledger_artifact(records);
     let seam_claimed_dedupe = seam_claimed_dedupe_keys(root, gap_ledger_path, records);
 
-    for record in records {
-        let comment = match gap_record_comment_json(
+    // A seam-carrying card that wins a shared dedupe key takes the ledger
+    // slot of the first seamless record that yielded the key to it, so the
+    // caps below cannot drop the key's only card (#4524).
+    let mut yielded_slot = BTreeMap::new();
+    let mut rendered = Vec::new();
+    let mut ordered_suppressed = Vec::new();
+    for (index, record) in records.iter().enumerate() {
+        match gap_record_comment_json(
             root,
             gap_ledger_path,
             record,
@@ -275,12 +281,28 @@ pub(crate) fn render_gap_record_review_comments_json(
             &seam_claimed_dedupe,
             causal_projection.as_ref(),
         ) {
-            Ok(comment) => comment,
-            Err(suppressed_item) => {
-                suppressed.push(suppressed_item);
-                continue;
+            Ok(comment) => {
+                let slot = comment
+                    .get("dedupe_key")
+                    .and_then(Value::as_str)
+                    .and_then(|key| yielded_slot.get(key))
+                    .copied()
+                    .unwrap_or(index);
+                rendered.push((slot, record, comment));
             }
-        };
+            Err(suppressed_item) => {
+                if suppressed_item["reason"] == "duplicate_dedupe_fingerprint"
+                    && let Some(key) = gap_record_dedupe_key(record)
+                    && seam_claimed_dedupe.contains(key)
+                {
+                    yielded_slot.entry(key.to_string()).or_insert(index);
+                }
+                ordered_suppressed.push((index, suppressed_item));
+            }
+        }
+    }
+    rendered.sort_by_key(|(slot, _, _)| *slot);
+    for (slot, record, comment) in rendered {
         if comments.len() < DEFAULT_REVIEW_MAX_INLINE_COMMENTS {
             comments.push(comment);
         } else if summary_only.len() < DEFAULT_REVIEW_MAX_SUMMARY_ITEMS {
@@ -288,9 +310,11 @@ pub(crate) fn render_gap_record_review_comments_json(
             item["summary_reason"] = json!(SUMMARY_REASON_INLINE_CAP_REACHED);
             summary_only.push(item);
         } else {
-            suppressed.push(gap_record_cap_suppressed_json(record));
+            ordered_suppressed.push((slot, gap_record_cap_suppressed_json(record)));
         }
     }
+    ordered_suppressed.sort_by_key(|(slot, _)| *slot);
+    suppressed.extend(ordered_suppressed.into_iter().map(|(_, item)| item));
 
     let value = json!({
         "schema_version": REVIEW_COMMENTS_SCHEMA_VERSION,
@@ -578,12 +602,7 @@ fn gap_record_comment_json(
             "PR comments require an anchor line.",
         ));
     };
-    let Some(dedupe) = anchor
-        .dedupe_fingerprint
-        .as_deref()
-        .map(str::trim)
-        .filter(|dedupe| !dedupe.is_empty())
-    else {
+    let Some(dedupe) = gap_record_dedupe_key(record) else {
         return Err(gap_record_suppressed_json(
             record,
             "missing_dedupe_fingerprint",
@@ -752,6 +771,16 @@ fn gap_record_cap_suppressed_json(record: &GapRecord) -> Value {
         "reason": "summary_cap",
         "message": "The PR guidance summary item cap was reached.",
     })
+}
+
+fn gap_record_dedupe_key(record: &GapRecord) -> Option<&str> {
+    record
+        .anchor
+        .as_ref()?
+        .dedupe_fingerprint
+        .as_deref()
+        .map(str::trim)
+        .filter(|dedupe| !dedupe.is_empty())
 }
 
 fn gap_record_id(record: &GapRecord) -> String {
@@ -3511,6 +3540,67 @@ mod tests {
                 assert_eq!(value["comments"][0]["gap_id"], "gap:valid");
                 assert_eq!(value["suppressed"][0]["reason"], reason);
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_seam_winner_keeps_its_key_past_the_caps() -> Result<(), String> {
+        let mut seamless = eligible_gap_record_json("gap:seamless", "dedupe:shared");
+        seamless
+            .as_object_mut()
+            .ok_or("seamless fixture should be an object")?
+            .remove("seam_id");
+        let with_seam = eligible_gap_record_json("gap:with-seam", "dedupe:shared");
+        let filler = (0..DEFAULT_REVIEW_MAX_INLINE_COMMENTS + DEFAULT_REVIEW_MAX_SUMMARY_ITEMS)
+            .map(|index| {
+                eligible_gap_record_json(&format!("gap:filler:{index}"), &format!("dedupe:{index}"))
+            })
+            .collect::<Vec<_>>();
+        // The seam-carrying record sits past both caps in one order and first
+        // in the other; either way the shared key keeps exactly one card.
+        let mut late_seam = vec![seamless.clone()];
+        late_seam.extend(filler.iter().cloned());
+        late_seam.push(with_seam.clone());
+        let mut early_seam = vec![with_seam, seamless];
+        early_seam.extend(filler);
+        for records in [late_seam, early_seam] {
+            let records_json = serde_json::json!({ "records": records }).to_string();
+            let records =
+                crate::output::gap_decision_ledger::parse_gap_records_json(&records_json)?;
+            let rendered = render_gap_record_review_comments_json(
+                Path::new("."),
+                "main",
+                "HEAD",
+                &Mode::Draft,
+                "target/ripr/reports/gap-decision-ledger.json",
+                &records,
+            )?;
+            let value: Value = serde_json::from_str(&rendered)
+                .map_err(|err| format!("parse capped shared-key JSON: {err}"))?;
+            let shared_cards = ["comments", "summary_only"]
+                .iter()
+                .filter_map(|lane| value[*lane].as_array())
+                .flatten()
+                .filter(|card| card["dedupe_key"] == "dedupe:shared")
+                .collect::<Vec<_>>();
+            assert_eq!(shared_cards.len(), 1);
+            assert_eq!(shared_cards[0]["gap_id"], "gap:with-seam");
+            assert_eq!(value["comments"][0]["gap_id"], "gap:with-seam");
+            let suppressed = value["suppressed"]
+                .as_array()
+                .ok_or("suppressed should be an array")?;
+            let reasons = suppressed
+                .iter()
+                .map(|item| (item["gap_id"].as_str(), item["reason"].as_str()))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                reasons,
+                [
+                    (Some("gap:seamless"), Some("duplicate_dedupe_fingerprint")),
+                    (Some("gap:filler:12"), Some("summary_cap")),
+                ]
+            );
         }
         Ok(())
     }
