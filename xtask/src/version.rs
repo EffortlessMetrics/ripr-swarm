@@ -5,6 +5,7 @@ use std::process::Command;
 const WORKSPACE_MANIFEST: &str = "Cargo.toml";
 const EXTENSION_MANIFEST: &str = "editors/vscode/package.json";
 const EXTENSION_LOCKFILE: &str = "editors/vscode/package-lock.json";
+const NPM_LAUNCHER_MANIFEST: &str = "packaging/npm/launcher/package.json";
 
 pub(crate) fn bump_version(args: &[String]) -> Result<(), String> {
     let [version] = args else {
@@ -15,15 +16,25 @@ pub(crate) fn bump_version(args: &[String]) -> Result<(), String> {
     let workspace = read_file(WORKSPACE_MANIFEST)?;
     let extension = read_file(EXTENSION_MANIFEST)?;
     let lockfile = read_file(EXTENSION_LOCKFILE)?;
-    let update = prepare_update(&workspace, &extension, &lockfile, version)?;
+    let launcher = read_file(NPM_LAUNCHER_MANIFEST)?;
+    let contract = crate::policy::distribution::load_distribution_contract()?;
+    let update = prepare_release_update(
+        &workspace, &extension, &lockfile, &launcher, version, &contract,
+    )?;
 
     let paths = [
         Path::new(WORKSPACE_MANIFEST),
         Path::new(EXTENSION_MANIFEST),
         Path::new(EXTENSION_LOCKFILE),
+        Path::new(NPM_LAUNCHER_MANIFEST),
     ];
-    let originals = [&workspace, &extension, &lockfile];
-    let updated = [&update.workspace, &update.extension, &update.lockfile];
+    let originals = [&workspace, &extension, &lockfile, &launcher];
+    let updated = [
+        &update.base.workspace,
+        &update.base.extension,
+        &update.base.lockfile,
+        &update.launcher,
+    ];
 
     for (index, path) in paths.iter().enumerate() {
         if let Err(error) = fs::write(path, updated[index]) {
@@ -32,16 +43,16 @@ pub(crate) fn bump_version(args: &[String]) -> Result<(), String> {
         }
     }
 
-    if let Err(error) = cargo_metadata_validation() {
+    if let Err(error) = validate_release_tree(version, &contract) {
         let rollback = restore_files(&paths, &originals);
         return Err(format!(
-            "version bump was rolled back because Cargo validation failed: {error}{rollback}"
+            "version bump was rolled back because release validation failed: {error}{rollback}"
         ));
     }
 
     println!(
-        "updated release version {} -> {} in {WORKSPACE_MANIFEST}, {EXTENSION_MANIFEST}, and {EXTENSION_LOCKFILE}",
-        update.old_version, version
+        "updated release version {} -> {} in {WORKSPACE_MANIFEST}, {EXTENSION_MANIFEST}, {EXTENSION_LOCKFILE}, and {NPM_LAUNCHER_MANIFEST}",
+        update.base.old_version, version
     );
     Ok(())
 }
@@ -52,6 +63,42 @@ struct VersionUpdate {
     workspace: String,
     extension: String,
     lockfile: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ReleaseVersionUpdate {
+    base: VersionUpdate,
+    launcher: String,
+}
+
+fn prepare_release_update(
+    workspace: &str,
+    extension: &str,
+    lockfile: &str,
+    launcher: &str,
+    new_version: &str,
+    contract: &crate::policy::distribution::DistributionContract,
+) -> Result<ReleaseVersionUpdate, String> {
+    let current_workspace = section_version(workspace, "workspace.package")?;
+    crate::policy::distribution::validate_npm_launcher_manifest(
+        NPM_LAUNCHER_MANIFEST,
+        launcher,
+        &current_workspace,
+        contract,
+    )?;
+    let base = prepare_update(workspace, extension, lockfile, new_version)?;
+    let updated_launcher =
+        replace_npm_launcher_versions(launcher, &base.old_version, new_version, contract)?;
+    crate::policy::distribution::validate_npm_launcher_manifest(
+        NPM_LAUNCHER_MANIFEST,
+        &updated_launcher,
+        new_version,
+        contract,
+    )?;
+    Ok(ReleaseVersionUpdate {
+        base,
+        launcher: updated_launcher,
+    })
 }
 
 fn prepare_update(
@@ -255,6 +302,71 @@ fn replace_json_version_lines(
     Ok(output)
 }
 
+fn replace_npm_launcher_versions(
+    text: &str,
+    old_version: &str,
+    new_version: &str,
+    contract: &crate::policy::distribution::DistributionContract,
+) -> Result<String, String> {
+    let mut updated = replace_json_version_lines(text, old_version, new_version, 1)?;
+    for target in &contract.target {
+        updated = replace_named_json_string(
+            &updated,
+            NPM_LAUNCHER_MANIFEST,
+            &target.npm_package,
+            old_version,
+            new_version,
+        )?;
+    }
+    Ok(updated)
+}
+
+fn replace_named_json_string(
+    text: &str,
+    path: &str,
+    field: &str,
+    old_value: &str,
+    new_value: &str,
+) -> Result<String, String> {
+    let quoted_field = format!("\"{field}\"");
+    let mut output = String::with_capacity(text.len() + new_value.len());
+    let mut replaced = 0;
+    for line in text.split_inclusive('\n') {
+        let Some(colon) = line.find(':') else {
+            output.push_str(line);
+            continue;
+        };
+        if line[..colon].trim() != quoted_field {
+            output.push_str(line);
+            continue;
+        }
+        let value_start = line[colon + 1..]
+            .find('\"')
+            .map(|offset| colon + 1 + offset + 1)
+            .ok_or_else(|| format!("{path}: {field} has no quoted value"))?;
+        let value_end = line[value_start..]
+            .find('\"')
+            .map(|offset| value_start + offset)
+            .ok_or_else(|| format!("{path}: {field} has no closing quote"))?;
+        if &line[value_start..value_end] != old_value {
+            return Err(format!(
+                "{path}: expected {field} version {old_value:?}, found {:?}",
+                &line[value_start..value_end]
+            ));
+        }
+        output.push_str(&line[..value_start]);
+        output.push_str(new_value);
+        output.push_str(&line[value_end..]);
+        replaced += 1;
+    }
+    if replaced != 1 {
+        return Err(format!(
+            "{path}: expected one {field} string field, replaced {replaced}"
+        ));
+    }
+    Ok(output)
+}
+
 fn verify_updated_json(
     text: &str,
     path: &str,
@@ -295,6 +407,31 @@ fn cargo_metadata_validation() -> Result<(), String> {
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
     Err(stderr.trim().to_string())
+}
+
+fn validate_release_tree(
+    expected: &str,
+    contract: &crate::policy::distribution::DistributionContract,
+) -> Result<(), String> {
+    cargo_metadata_validation()?;
+    let workspace = read_file(WORKSPACE_MANIFEST)?;
+    let extension = read_file(EXTENSION_MANIFEST)?;
+    let lockfile = read_file(EXTENSION_LOCKFILE)?;
+    let launcher = read_file(NPM_LAUNCHER_MANIFEST)?;
+    let workspace_version = section_version(&workspace, "workspace.package")?;
+    if workspace_version != expected {
+        return Err(format!(
+            "{WORKSPACE_MANIFEST} did not update to {expected}; got {workspace_version}"
+        ));
+    }
+    verify_updated_json(&extension, EXTENSION_MANIFEST, expected, 1)?;
+    verify_updated_lockfile(&lockfile, expected)?;
+    crate::policy::distribution::validate_npm_launcher_manifest(
+        NPM_LAUNCHER_MANIFEST,
+        &launcher,
+        expected,
+        contract,
+    )
 }
 
 fn read_file(path: &str) -> Result<String, String> {
@@ -417,6 +554,18 @@ mod tests {
             )
             .map_err(|error| error.to_string())?;
             fs::create_dir_all(root.join("editors/vscode")).map_err(|error| error.to_string())?;
+            fs::create_dir_all(root.join("packaging/npm/launcher"))
+                .map_err(|error| error.to_string())?;
+            fs::create_dir_all(root.join("policy")).map_err(|error| error.to_string())?;
+            fs::write(
+                root.join("policy/distribution.toml"),
+                include_str!("../../policy/distribution.toml"),
+            )
+            .map_err(|error| error.to_string())?;
+            let launcher = include_str!("../../packaging/npm/launcher/package.json")
+                .replace("\"0.11.0\"", "\"0.10.0\"");
+            fs::write(root.join(super::NPM_LAUNCHER_MANIFEST), launcher)
+                .map_err(|error| error.to_string())?;
             fs::write(
                 root.join(EXTENSION_MANIFEST),
                 "{\n  \"name\": \"ripr\",\n  \"version\": \"0.10.0\"\n}\n",
@@ -657,5 +806,69 @@ mod tests {
             }
             Ok(())
         })
+    }
+}
+
+#[cfg(test)]
+mod npm_launcher_version_tests {
+    use super::{NPM_LAUNCHER_MANIFEST, prepare_release_update, replace_npm_launcher_versions};
+
+    const CONTRACT: &str = include_str!("../../policy/distribution.toml");
+    const LAUNCHER: &str = include_str!("../../packaging/npm/launcher/package.json");
+
+    fn contract() -> Result<crate::policy::distribution::DistributionContract, String> {
+        crate::policy::distribution::parse_distribution_contract(
+            "policy/distribution.toml",
+            CONTRACT,
+        )
+    }
+
+    fn launcher(version: &str) -> String {
+        LAUNCHER.replace("\"0.11.0\"", &format!("\"{version}\""))
+    }
+
+    #[test]
+    fn updates_launcher_root_and_all_exact_payload_versions() -> Result<(), String> {
+        let contract = contract()?;
+        let original = launcher("0.10.0");
+        let updated = replace_npm_launcher_versions(&original, "0.10.0", "0.11.0", &contract)?;
+        if updated.matches("\"0.11.0\"").count() != 6
+            || updated.contains("\"0.10.0\"")
+            || !updated.contains("\"access\": \"public\"")
+            || !updated.contains("\"node\": \">=20\"")
+        {
+            return Err("launcher version update changed an unrelated field".to_string());
+        }
+        crate::policy::distribution::validate_npm_launcher_manifest(
+            NPM_LAUNCHER_MANIFEST,
+            &updated,
+            "0.11.0",
+            &contract,
+        )
+    }
+
+    #[test]
+    fn rejects_launcher_version_range_before_writing() -> Result<(), String> {
+        let contract = contract()?;
+        let launcher = launcher("0.10.0").replacen(
+            "\"@effortlessmetrics/ripr-darwin-arm64\": \"0.10.0\"",
+            "\"@effortlessmetrics/ripr-darwin-arm64\": \"^0.10.0\"",
+            1,
+        );
+        let error = prepare_release_update(
+            "[workspace.package]\nversion = \"0.10.0\"\n",
+            "{\"version\":\"0.10.0\"}",
+            "{\"version\":\"0.10.0\",\"packages\":{\"\":{\"version\":\"0.10.0\"}}}",
+            &launcher,
+            "0.11.0",
+            &contract,
+        )
+        .err()
+        .ok_or_else(|| "launcher dependency range was accepted".to_string())?;
+        if !error.contains("optionalDependencies must equal the five exact-version native packages")
+        {
+            return Err(format!("unexpected launcher drift error: {error}"));
+        }
+        Ok(())
     }
 }

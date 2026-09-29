@@ -34,6 +34,21 @@ pub(crate) fn parse_distribution_contract(
     contract::parse_distribution_contract(path, text)
 }
 
+pub(crate) fn validate_npm_launcher_manifest(
+    path: &str,
+    text: &str,
+    workspace_version: &str,
+    contract: &DistributionContract,
+) -> Result<(), String> {
+    let mut violations = Vec::new();
+    npm_launcher::validate_launcher(path, text, workspace_version, contract, &mut violations);
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(violations.join("\n"))
+    }
+}
+
 pub(crate) fn check_distribution_contract() -> Result<(), String> {
     let report_spec = PolicyReportSpec {
         report_file: "distribution-contract.md",
