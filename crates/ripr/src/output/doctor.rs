@@ -68,16 +68,33 @@ impl DoctorFirstCommand {
     /// `command_line` for the diagnosed `root`. `ripr check` defaults to
     /// `.`, so a doctor run with `--root` from another directory must name
     /// the root, or the recommended command analyzes the caller's directory.
+    /// Any other root is bound once against this process's directory
+    /// (`bound_root`), so the line still names it after a `cd`.
     pub(crate) fn command_line_for_root(self, root: &Path) -> String {
+        use crate::agent::loop_commands::{bound_root_path, root_path_display, shell_arg};
         let line = self.command_line();
         if root == Path::new(".") {
             return line.to_string();
         }
         let flags = line.strip_prefix("ripr check").unwrap_or_default();
-        format!(
-            "ripr check --root {}{flags}",
-            crate::agent::loop_commands::shell_arg(&root.display().to_string())
-        )
+        let bound = root_path_display(&bound_root_path(root));
+        format!("ripr check --root {}{flags}", shell_arg(&bound))
+    }
+
+    /// The printed recommendation for `root`: the Bash line, then a labeled
+    /// PowerShell form only when the shared translator rewrites it (a root
+    /// with an apostrophe, which Bash and PowerShell escape differently).
+    pub(crate) fn recommendation_lines(self, root: &Path) -> Vec<String> {
+        let line = self.command_line_for_root(root);
+        let mut lines = vec![format!("- Recommended first command: {line}")];
+        if let crate::output::markdown::PowershellForm::Translated(powershell) =
+            crate::output::markdown::powershell_form(&line)
+        {
+            lines.push(format!(
+                "- Recommended first command (PowerShell): {powershell}"
+            ));
+        }
+        lines
     }
 }
 
@@ -2534,17 +2551,41 @@ mod tests {
             DoctorFirstCommand::DefaultCheck.command_line_for_root(Path::new(".")),
             "ripr check"
         );
-        assert_eq!(
-            DoctorFirstCommand::SavedDiff.command_line_for_root(Path::new("/work/app")),
-            "ripr check --root /work/app --diff PATH"
+        // `/work/...` is absolute only on Unix; Windows needs a drive.
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                DoctorFirstCommand::SavedDiff.command_line_for_root(Path::new("/work/app")),
+                "ripr check --root /work/app --diff PATH"
+            );
+            assert_eq!(
+                DoctorFirstCommand::Worktree.command_line_for_root(Path::new("/work/my app")),
+                "ripr check --root '/work/my app' --base HEAD --worktree"
+            );
+            assert_eq!(
+                DoctorFirstCommand::DefaultCheck.recommendation_lines(Path::new("/work/my app")),
+                ["- Recommended first command: ripr check --root '/work/my app'"],
+                "a form PowerShell reads unchanged prints once"
+            );
+            assert_eq!(
+                DoctorFirstCommand::SavedDiff.recommendation_lines(Path::new("/work/it's app")),
+                [
+                    r"- Recommended first command: ripr check --root '/work/it'\''s app' --diff PATH",
+                    "- Recommended first command (PowerShell): ripr check --root '/work/it''s app' --diff PATH",
+                ],
+                "an apostrophe escapes differently in PowerShell"
+            );
+        }
+        // A relative root is bound to this process's directory, so the
+        // printed command survives a `cd` before it is pasted.
+        let relative = DoctorFirstCommand::DefaultCheck.command_line_for_root(Path::new("../app"));
+        assert!(
+            !relative.contains(".."),
+            "a relative root must be bound, not printed verbatim: {relative}"
         );
-        assert_eq!(
-            DoctorFirstCommand::Worktree.command_line_for_root(Path::new("/work/my app")),
-            "ripr check --root '/work/my app' --base HEAD --worktree"
-        );
-        assert_eq!(
-            DoctorFirstCommand::DefaultCheck.command_line_for_root(Path::new("../app")),
-            "ripr check --root ../app"
+        assert!(
+            relative.ends_with("/app") || relative.ends_with("/app'"),
+            "the bound root still names the diagnosed directory: {relative}"
         );
 
         let mut missing_git = DoctorReport::new(".");

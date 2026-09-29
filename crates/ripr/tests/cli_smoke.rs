@@ -8868,6 +8868,28 @@ fn doctor_recommends_worktree_check_on_dirty_worktree() -> Result<(), String> {
         Some(first_command_at(&root_str, "").as_str()),
         "clean worktree must recommend the diff-first command directly:\n{clean_out}"
     );
+    // A relative `--root` is bound to doctor's directory (#4890), so the
+    // printed command still names this repository after a `cd`.
+    let parent = root
+        .parent()
+        .ok_or_else(|| format!("{} has no parent", root.display()))?;
+    let name = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("{} has no UTF-8 name", root.display()))?;
+    let relative = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(parent),
+        &["doctor", "--root", name],
+    )
+    .map_err(|err| err.to_string())?;
+    assert_success(&relative);
+    let relative_out = String::from_utf8_lossy(&relative.stdout);
+    assert_eq!(
+        recommended_first_command_line(&relative_out),
+        Some(first_command_at(&root_str, "").as_str()),
+        "a relative --root must print the bound root:\n{relative_out}"
+    );
     // The base is resolved, not asserted: `origin/main` does not exist in a
     // repository whose default branch is not `main`, and this fixture has no
     // remote at all.
@@ -8919,8 +8941,14 @@ fn recommended_first_command_line(stdout: &str) -> Option<&str> {
 
 /// Doctor's recommended command after `doctor --root <root>` run from another
 /// directory: `ripr check` defaults to `.`, so the root is named, quoted the
-/// way `agent::loop_commands::shell_arg` quotes it.
+/// way `agent::loop_commands::shell_arg` quotes it. `root` is absolute; on
+/// Windows command paths render with `/` separators.
 fn first_command_at(root: &str, flags: &str) -> String {
+    let root = if cfg!(windows) {
+        root.replace('\\', "/")
+    } else {
+        root.to_string()
+    };
     let quoted = if !root.is_empty()
         && root
             .chars()
