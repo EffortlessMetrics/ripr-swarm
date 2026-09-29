@@ -1,8 +1,15 @@
 //! Advisory output leaf acquisition. This is not ancestor or hard-link confinement.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
+
+#[derive(Clone, Copy)]
+enum OpenKind {
+    Create,
+    Exclusive,
+    Append,
+}
 
 pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(parent) = path
@@ -15,17 +22,50 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     file.write_all(bytes)
 }
 
+/// Append one JSONL record. `line` must not contain raw CR or LF; a trailing
+/// newline is always written. If the existing file lacks a terminating newline,
+/// one is inserted first so prior records stay intact.
+pub(crate) fn append_line(path: &Path, line: &str) -> io::Result<()> {
+    if line.contains('\n') || line.contains('\r') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "jsonl record must be a single line",
+        ));
+    }
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let mut file = open(path, OpenKind::Append)?;
+    if file.metadata()?.len() > 0 {
+        let len = file.metadata()?.len();
+        file.seek(SeekFrom::Start(len - 1))?;
+        let mut last = [0u8; 1];
+        file.read_exact(&mut last)?;
+        // POSIX requires an intervening seek when switching from read to write.
+        file.seek(SeekFrom::End(0))?;
+        if last[0] != b'\n' {
+            file.write_all(b"\n")?;
+        }
+    }
+    file.write_all(line.as_bytes())?;
+    file.write_all(b"\n")?;
+    Ok(())
+}
+
 /// Open `path` for a fresh write without following a leaf symlink. Parent
 /// directories must already exist.
 pub(crate) fn create(path: &Path) -> io::Result<File> {
     // Never truncate during acquisition: validate the opened object first.
-    let file = open(path, false)?;
+    let file = open(path, OpenKind::Create)?;
     file.set_len(0)?;
     Ok(file)
 }
 
 pub(crate) fn create_exclusive(path: &Path) -> io::Result<File> {
-    open(path, true)
+    open(path, OpenKind::Exclusive)
 }
 
 /// Rename does not follow the destination leaf, but refuse existing nonregular
@@ -43,13 +83,19 @@ pub(crate) fn validate_destination(path: &Path) -> io::Result<()> {
     }
 }
 
-fn open(path: &Path, exclusive: bool) -> io::Result<File> {
+fn open(path: &Path, kind: OpenKind) -> io::Result<File> {
     let mut options = OpenOptions::new();
-    options.write(true);
-    if exclusive {
-        options.create_new(true);
-    } else {
-        options.create(true);
+    match kind {
+        OpenKind::Exclusive => {
+            options.write(true).create_new(true);
+        }
+        OpenKind::Create => {
+            options.write(true).create(true);
+        }
+        OpenKind::Append => {
+            // Inspect the last byte before appending a separator, then write.
+            options.read(true).write(true).append(true).create(true);
+        }
     }
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
@@ -230,5 +276,37 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn append_line_creates_parent_and_preserves_prior_records() -> Result<(), String> {
+        let env = OutputDirFixture::writable("jsonl-ok", "history")?;
+        let path = env.target.join("nested").join("ledger.jsonl");
+        append_line(&path, r#"{"n":1}"#).map_err(|err| err.to_string())?;
+        append_line(&path, r#"{"n":2}"#).map_err(|err| err.to_string())?;
+        let text = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+        assert_eq!(text, "{\"n\":1}\n{\"n\":2}\n");
+        Ok(())
+    }
+
+    #[test]
+    fn append_line_inserts_separator_when_file_lacks_trailing_newline() -> Result<(), String> {
+        let env = OutputDirFixture::writable("jsonl-sep", "history")?;
+        fs::create_dir_all(&env.target).map_err(|err| err.to_string())?;
+        let path = env.target.join("ledger.jsonl");
+        fs::write(&path, r#"{"n":1}"#).map_err(|err| err.to_string())?;
+        append_line(&path, r#"{"n":2}"#).map_err(|err| err.to_string())?;
+        let text = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+        assert_eq!(text, "{\"n\":1}\n{\"n\":2}\n");
+        Ok(())
+    }
+
+    #[test]
+    fn append_line_rejects_embedded_newlines() -> Result<(), String> {
+        match append_line(Path::new("ledger.jsonl"), "{\"n\":1}\n{\"n\":2}") {
+            Err(err) if err.kind() == io::ErrorKind::InvalidInput => Ok(()),
+            Err(err) => Err(format!("expected InvalidInput, got {err}")),
+            Ok(()) => Err("multiline jsonl record must fail".to_string()),
+        }
     }
 }

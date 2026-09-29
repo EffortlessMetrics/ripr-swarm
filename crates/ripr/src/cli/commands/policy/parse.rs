@@ -262,6 +262,7 @@ pub(crate) fn parse_policy_history_options(
     let mut pr_number = None;
     let mut out = PathBuf::from(output::policy_history::DEFAULT_POLICY_HISTORY_OUT);
     let mut out_md = PathBuf::from(output::policy_history::DEFAULT_POLICY_HISTORY_MD_OUT);
+    let mut out_jsonl = None;
 
     let mut i = 0usize;
     while i < args.len() {
@@ -299,9 +300,26 @@ pub(crate) fn parse_policy_history_options(
                 i += 1;
                 out_md = non_empty_path_arg(args, i, "--out-md", "policy history")?;
             }
+            "--out-jsonl" => {
+                i += 1;
+                out_jsonl = Some(non_empty_path_arg(
+                    args,
+                    i,
+                    "--out-jsonl",
+                    "policy history",
+                )?);
+            }
             other => return Err(unknown_argument("policy history", other)),
         }
         i += 1;
+    }
+
+    if let Some(jsonl) = out_jsonl.as_ref()
+        && (jsonl == &out || jsonl == &out_md)
+    {
+        return Err(
+            "policy history --out-jsonl must not be the same path as --out or --out-md".to_string(),
+        );
     }
 
     Ok(PolicyHistoryOptions {
@@ -312,6 +330,7 @@ pub(crate) fn parse_policy_history_options(
         pr_number,
         out,
         out_md,
+        out_jsonl,
     })
 }
 
