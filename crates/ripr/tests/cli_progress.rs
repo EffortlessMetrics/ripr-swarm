@@ -38,6 +38,19 @@ fn stderr_text(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
+fn stdout_has_progress_record(stdout: &str) -> bool {
+    stdout
+        .lines()
+        .any(|line| line.trim_start().starts_with("ripr progress:"))
+}
+
+fn sample_crate_root() -> String {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples/sample")
+        .display()
+        .to_string()
+}
+
 #[test]
 fn check_json_stdout_parses_while_progress_stays_on_stderr() -> Result<(), String> {
     let output = run_check(&["--format", "json"])?;
@@ -196,7 +209,10 @@ fn machine_format_stdout_is_unchanged(format: &str) -> Result<(), String> {
 
 #[test]
 fn check_worktree_projects_worktree_scope_on_stderr() -> Result<(), String> {
-    let root = sample_root();
+    // Analyze the sample crate rather than this repository. A worktree scan of
+    // ripr itself is slow, and its JSON findings can mention `ripr progress:`
+    // as source text.
+    let root = sample_crate_root();
     let output = ripr()
         .args([
             "check",
@@ -210,7 +226,10 @@ fn check_worktree_projects_worktree_scope_on_stderr() -> Result<(), String> {
         .map_err(|error| format!("run worktree check: {error}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = stderr_text(&output);
-    assert!(!stdout.contains("ripr progress:"));
+    assert!(
+        !stdout_has_progress_record(&stdout),
+        "progress leaked onto stdout: {stdout}"
+    );
     assert!(
         stderr.contains("ripr progress: loading_input [worktree]"),
         "missing worktree scope on stderr: {stderr}"
@@ -219,10 +238,24 @@ fn check_worktree_projects_worktree_scope_on_stderr() -> Result<(), String> {
         !stderr.contains("[diff]"),
         "worktree run must not project the diff scope: {stderr}"
     );
-    assert!(
-        !stderr.contains("ripr progress: completed [diff]"),
-        "worktree failure must not leak a diff completed token: {stderr}"
-    );
+    if output.status.success() {
+        assert!(
+            stderr.contains("ripr progress: completed [worktree]"),
+            "successful worktree check must commit completed: {stderr}"
+        );
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("stdout is not JSON: {error}"))?;
+        assert_eq!(parsed["schema_version"], "0.2");
+    } else {
+        assert!(
+            stderr.contains("ripr progress: failed [worktree]"),
+            "failed worktree check must project failed: {stderr}"
+        );
+        assert!(
+            !stderr.contains("ripr progress: completed"),
+            "worktree failure must not project completed: {stderr}"
+        );
+    }
     Ok(())
 }
 
