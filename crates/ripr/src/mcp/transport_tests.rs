@@ -17,13 +17,55 @@ async fn empty_or_syntax_invalid_eof_before_initialize_is_normal() -> Result<(),
 }
 
 #[tokio::test]
+async fn fatal_output_limit_wakes_receive_while_input_remains_open() -> Result<(), String> {
+    use std::{
+        future::{Future, poll_fn},
+        task::Poll,
+    };
+    let (held_input, reader) = tokio::io::duplex(64);
+    let mut transport = BoundedTransport {
+        reader: FrameReader::new(reader),
+        writer: Arc::new(Mutex::new(FrameWriter::new(Vec::<u8>::new()))),
+        failure: Arc::new(TransportFailure::default()),
+        pending_protocol_error: None,
+        writer_needs_drain: false,
+    };
+    let sending = transport.send(ServerJsonRpcMessage::error(
+        ErrorData::internal_error("bounded refusal", None),
+        Some("\n".repeat(70 * 1024).into()),
+    ));
+    let mut receiving = Box::pin(transport.receive());
+    poll_fn(|context| match receiving.as_mut().poll(context) {
+        Poll::Pending => Poll::Ready(Ok(())),
+        Poll::Ready(_) => Poll::Ready(Err("open input did not suspend receive".to_string())),
+    })
+    .await?;
+    let failure = sending
+        .await
+        .err()
+        .ok_or_else(|| "giant correlated response unexpectedly fit".to_string())?;
+    if super::super::writer::failure_reason(&failure) != "MCP output limit" {
+        return Err("actual output refusal lost its fixed failure classification".into());
+    }
+    if tokio::time::timeout(std::time::Duration::from_secs(5), receiving)
+        .await
+        .map_err(|_| "fatal send did not wake open-input receive".to_string())?
+        .is_some()
+    {
+        return Err("fatal send did not terminate receive".into());
+    }
+    drop(held_input);
+    Ok(())
+}
+
+#[tokio::test]
 async fn sdk_syntax_ignore_and_typed_shape_error_recover_next_request() -> Result<(), String> {
     let input = b"{not json}\ntrue\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"control\",\"version\":\"1\"}}}\n";
     let writer = Arc::new(Mutex::new(FrameWriter::new(Vec::<u8>::new())));
     let mut transport = BoundedTransport {
         reader: FrameReader::new(input.as_slice()),
         writer: writer.clone(),
-        failure: Arc::new(StdMutex::new(None)),
+        failure: Arc::new(TransportFailure::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
     };
@@ -82,7 +124,7 @@ async fn consumed_protocol_error_survives_receive_cancellation_behind_busy_write
     let mut transport = BoundedTransport {
         reader: FrameReader::new(input.as_slice()),
         writer: writer.clone(),
-        failure: Arc::new(StdMutex::new(None)),
+        failure: Arc::new(TransportFailure::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
     };

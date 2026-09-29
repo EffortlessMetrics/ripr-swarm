@@ -19,17 +19,25 @@ use std::{
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync::Mutex,
+    sync::{Mutex, Notify},
 };
 use tokio_util::{bytes::BytesMut, codec::Decoder};
 
-type Failure = Arc<StdMutex<Option<&'static str>>>;
+#[derive(Default)]
+struct TransportFailure {
+    reason: StdMutex<Option<&'static str>>,
+    wake: Notify,
+}
+type Failure = Arc<TransportFailure>;
 fn record_failure(failure: &Failure, reason: &'static str) {
-    if let Ok(mut stored) = failure.lock() {
+    if let Ok(mut stored) = failure.reason.lock() {
         if stored.is_none() {
             *stored = Some(reason);
         }
     }
+    // A response send task can fail while the SDK is awaiting receive.
+    // Notify retains a permit even if that future is between polls.
+    failure.wake.notify_one();
 }
 struct BoundedTransport<R, W> {
     reader: FrameReader<R>,
@@ -58,6 +66,14 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
     }
     async fn receive(&mut self) -> Option<ClientJsonRpcMessage> {
         loop {
+            if self
+                .failure
+                .reason
+                .lock()
+                .map_or(true, |reason| reason.is_some())
+            {
+                return None;
+            }
             if self.pending_protocol_error.is_some() || self.writer_needs_drain {
                 let mut writer = self.writer.lock().await;
                 if let Err(error) = writer.finish_pending().await {
@@ -79,7 +95,11 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
                     self.writer_needs_drain = false;
                 }
             }
-            let frame = match self.reader.read_frame().await {
+            let read = tokio::select! {
+                _ = self.failure.wake.notified() => return None,
+                read = self.reader.read_frame() => read,
+            };
+            let frame = match read {
                 Ok(FrameRead::Eof) => return None,
                 Ok(FrameRead::Empty) => continue,
                 Ok(FrameRead::Oversized) => {
@@ -144,7 +164,7 @@ where
     R: AsyncRead + Unpin + Send + 'static,
     W: AsyncWrite + Unpin + Send + 'static,
 {
-    let failure: Failure = Arc::new(StdMutex::new(None));
+    let failure: Failure = Arc::new(TransportFailure::default());
     let transport = BoundedTransport {
         reader: FrameReader::new(reader),
         writer: Arc::new(Mutex::new(FrameWriter::new(writer))),
@@ -157,6 +177,7 @@ where
         Ok(service) => service,
         Err(error) => {
             let reason = failure
+                .reason
                 .lock()
                 .map_err(|_| "MCP transport status unavailable".to_string())?
                 .take();
@@ -178,6 +199,7 @@ where
         .await
         .map_err(|_| "MCP SDK service failed".to_string())?;
     let error = failure
+        .reason
         .lock()
         .map_err(|_| "MCP transport status unavailable".to_string())?
         .take();

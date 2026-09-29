@@ -161,12 +161,24 @@ async fn sdk_session(
                     }
                 }
             }
-            if client
+            let expected_resource_code = if expected_version == ProtocolVersion::V_2026_07_28 {
+                -32602
+            } else {
+                -32002
+            };
+            match client
                 .read_resource(ReadResourceRequestParams::new("ripr://workspace/missing"))
                 .await
-                .is_ok()
             {
-                return Err("SDK accepted an unknown status resource".into());
+                Err(rmcp::service::ServiceError::McpError(error))
+                    if serde_json::to_value(&error.code).map_err(|error| error.to_string())?
+                        == serde_json::json!(expected_resource_code) => {}
+                _ => {
+                    return Err(
+                        "SDK resource miss did not retain its version-specific protocol code"
+                            .into(),
+                    );
+                }
             }
             Ok(())
         }

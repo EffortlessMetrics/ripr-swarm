@@ -13,6 +13,14 @@ fn workspace_root() -> Result<PathBuf, String> {
 }
 
 fn run_mcp(root: &Path, chunks: &[&[u8]]) -> Result<Output, String> {
+    run_mcp_with_input_custody(root, chunks, false)
+}
+
+fn run_mcp_with_input_custody(
+    root: &Path,
+    chunks: &[&[u8]],
+    hold_input_until_exit: bool,
+) -> Result<Output, String> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_ripr"))
         .args(["mcp", "--stdio", "--root"])
         .arg(root)
@@ -31,6 +39,7 @@ fn run_mcp(root: &Path, chunks: &[&[u8]]) -> Result<Output, String> {
     // (#3587 review).
     let stdin_chunks: Vec<Vec<u8>> = chunks.iter().map(|chunk| chunk.to_vec()).collect();
     let (response_sender, response_receiver) = std::sync::mpsc::channel();
+    let (input_release, input_retention) = std::sync::mpsc::channel();
     let mut stdout_pipe = child
         .stdout
         .take()
@@ -60,13 +69,32 @@ fn run_mcp(root: &Path, chunks: &[&[u8]]) -> Result<Output, String> {
     // SDK EOF terminates service work. Keep stdin alive until each actual
     // response arrives; closing a prewritten script is not a reply oracle.
     let writer = std::thread::spawn(move || {
-        let mut pending = Vec::new();
-        let mut sent = 0_usize;
-        for chunk in &stdin_chunks {
-            for byte in chunk {
-                pending.push(*byte);
-                if *byte != b'\n' {
-                    continue;
+        let mut write_script = || {
+            let mut pending = Vec::new();
+            let mut sent = 0_usize;
+            for chunk in &stdin_chunks {
+                for byte in chunk {
+                    pending.push(*byte);
+                    if *byte != b'\n' {
+                        continue;
+                    }
+                    if stdin
+                        .write_all(pending.get(sent..).unwrap_or_default())
+                        .is_err()
+                        || stdin.flush().is_err()
+                    {
+                        return;
+                    }
+                    if let Ok(request) = serde_json::from_slice::<Value>(&pending)
+                        && let Some(id) = request.get("id")
+                    {
+                        match response_receiver.recv_timeout(Duration::from_secs(10)) {
+                            Ok(Some(response_id)) if &response_id == id => {}
+                            _ => return,
+                        }
+                    }
+                    pending.clear();
+                    sent = 0;
                 }
                 if stdin
                     .write_all(pending.get(sent..).unwrap_or_default())
@@ -75,26 +103,16 @@ fn run_mcp(root: &Path, chunks: &[&[u8]]) -> Result<Output, String> {
                 {
                     return;
                 }
-                if let Ok(request) = serde_json::from_slice::<Value>(&pending)
-                    && let Some(id) = request.get("id")
-                {
-                    match response_receiver.recv_timeout(Duration::from_secs(10)) {
-                        Ok(Some(response_id)) if &response_id == id => {}
-                        _ => return,
-                    }
-                }
-                pending.clear();
-                sent = 0;
+                sent = pending.len();
             }
-            if stdin
-                .write_all(pending.get(sent..).unwrap_or_default())
-                .is_err()
-                || stdin.flush().is_err()
-            {
-                return;
-            }
-            sent = pending.len();
+        };
+        write_script();
+        if hold_input_until_exit {
+            // Only the parent's observed child exit or owned timeout cleanup
+            // releases this pipe. Reply timeout cannot supply a helpful EOF.
+            let _ = input_retention.recv();
         }
+        drop(stdin);
     });
     let stderr_reader = std::thread::spawn(move || {
         let mut buffer = Vec::new();
@@ -129,6 +147,7 @@ fn run_mcp(root: &Path, chunks: &[&[u8]]) -> Result<Output, String> {
             }
         }
     }
+    let _ = input_release.send(());
     let _ = writer.join();
     let stdout = stdout_reader
         .join()
@@ -218,7 +237,16 @@ fn readable_request_id_larger_than_output_cap_terminates_without_oversized_reply
     if request.len() > INPUT_CAP {
         return Err("giant-ID fixture exceeds the input cap before execution".into());
     }
-    let output = run_mcp(&root, &[&discover, &request])?;
+    let output = run_mcp_with_input_custody(&root, &[&discover, &request], true)?;
+    if output
+        .stdout
+        .split(|byte| *byte == b'\n')
+        .filter(|frame| !frame.is_empty())
+        .count()
+        != 1
+    {
+        return Err("giant readable ID emitted an uncorrelated substitute response".into());
+    }
     let first = output
         .stdout
         .split(|byte| *byte == b'\n')

@@ -21,6 +21,10 @@ slice.
 
 ## Decision
 
+This section records the original pre-SDK slice. Its local dispatch/lifecycle
+and dependency decisions are superseded by the SDK migration section below;
+the static shared-status and authority boundaries remain current.
+
 `ripr mcp --stdio` is a newline-delimited JSON-RPC adapter over a shared,
 transport-neutral workspace-status producer. Binary startup selects this
 protocol lane before the general human-oriented CLI dispatcher so no generic
@@ -49,6 +53,9 @@ the same shared status producer, and demonstrate that no product semantics
 moved into the transport.
 
 ## Consequences
+
+The local-wire discussion below describes that original slice. The successor
+uses SDK-owned dispatch/lifecycle and RIPR-owned bounded framing and IO.
 
 MCP clients gain a standards-shaped discovery and status surface without
 getting repair, analysis refresh, source editing, command execution, mutation
