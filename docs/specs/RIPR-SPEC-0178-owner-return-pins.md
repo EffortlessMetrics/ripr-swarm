@@ -183,8 +183,8 @@ the assertion keeps today's token rule.
   defeats; `file_imports_own_item`; `::`-rooted `use` paths.
 - `crates/ripr/src/analysis/classifier/evidence.rs`: establishes the pin
   once per probe.
-- `crates/ripr/src/analysis/seam_cache.rs`: file-fact `1.9`, classified
-  `1.15`, sharded `0.21`, compact `0.22`.
+- `crates/ripr/src/analysis/seam_cache.rs`: file-fact `1.10`, classified
+  `1.16`, sharded `0.22`, compact `0.23`.
 
 ## Metrics
 
