@@ -1,32 +1,72 @@
-# 4916 relational oracle tests-first plan
+# 4916: weak relational credit for scalar predicates
 
-Tests-first basis: immutable6dad9381357afe6f2f12fa54cd10020bbff10260; six owner blobs verified identical to prepared5f. Runner common53 is current context, not a permanent product requirement. Current 4771 OPEN990ba5f6ba1349b71c150df5c82c880d33605fc2 updated2026-09-29T04:22:15Z still owns downstream error/effect/probe scope. Fresh all-state4916 and relational-observer PR searches returned[] (bounded snapshot, not permanent exclusivity). Preserve4771/4917 external owners; 4307 remains primary. Separate owned branch codex/4916-relational-oracle; no production change or native execution.
+Owner: [#4916](https://github.com/EffortlessMetrics/ripr-swarm/issues/4916). This
+is one private Rust oracle-classification correction. #4771 owns downstream
+error/effect/probe work; the merged #4833 owner-result route and the governed
+real-consumer trial remain separate.
 
-Minimal proposed production delta: arguments.rs expose one narrow assert!-first-argument helper using existing balanced macro_invocation_arguments; add a syntactic predicate parser in a nearby private oracle module (or arguments.rs if small). Accept only a complete first condition with optional enclosing parentheses, one ordered comparator >/< />=/<=, one syntactic integer literal operand and one simple path/field operand. Reject calls/method calls/indexing/blocks/closures/logical compounds/trailing unconsumed tokens/message syntax. Support a documented conservative subset (real ASCII path/field names and decimal integer literals, optional known integer suffix); no type inference. Prefer this bounded lexical grammar using existing balanced argument seams rather than adding dependencies or importing optional ra_ap_syntax unconditionally. If builder selects RA syntax instead, honor lang-rust optionalfeature and explicitly test feature-disabled behavior before claiming route parity; do not silently widen recognition.
+## Behavior and boundary
 
-classify.rs insert this complete-condition predicate check immediately before generic is_mock_expectation_line || is_side_effect_observer_assertion branch61, after unchanged exact/error/equality/snapshot/smoke precedence. Return only RelationalCheck/Weak. Avoid blanket relational-before-mock ordering: `mock_service.expect_publish().times(1)` and call-bearing `assert!(mock.expect_publish().times(1) > 0)` must not be admitted by the new scalar matcher. `assert!(plan.expect_published_count > 0)` must be, since no real mock call exists; the current expect_+any-parenthesis sniff is the false-credit seam. scan.rs recognition predicates remain byte-unchanged. ensure! already isolates condition in classify_fallible_assertion95; preserve its existing parity without expanding unsupportedsyntax.
+The retained #1580 consumer has `suppressed_payload_bytes > 0` classified as
+`RelationalCheck/Weak` but `published_payload_bytes > 0` as
+`MockExpectation/Medium`. The latter was attributed by observer-like spelling,
+not by a real mock call. A complete outer `assert!` whose first condition is
+one simple ASCII path/field versus a decimal integer under `<`, `<=`, `>` or
+`>=` now receives `RelationalCheck/Weak` before the generic observer/mock name
+fallback. Complete enclosing parentheses are accepted. This is syntactic
+evidence, not integer type inference. Exact/error/equality/snapshot/smoke
+priority is unchanged; real mock calls and boolean observer assertions retain
+their existing classification.
 
-Proposed exact new lib selectors (tests-first, fallible setup/assertions):
-- analysis::extract::oracles::relational_tests::relational_scalar_fields_do_not_inherit_observer_or_mock_names
-- analysis::extract::oracles::relational_tests::line_scanned_relational_predicate_preserves_recognition_boundary
-- analysis::extract::oracles::relational_tests::relational_messages_and_call_chains_do_not_steal_oracle_kind
-- analysis::facts::build::incremental_edit_tests::observer_predicate_facts_recompute_after_build_miss_and_match_warm
-These are proposed names, not existing executedtests. Tests invoke actualextract_assertions plus actualextract_line_scanned_oracles, require nonempty BEFORE inspecting facts; no empty .all() proof. Parsed actual twins3096/3109 assert exactlines/text/tokens/Weak; scalar mock-ish/observer fields with parentheses and message-only published cover parser boundary. Actualfallbackpublished+realmockcontrol both nonempty, Weak/Medium; suppressed ordinaryassert remains absent intentionally. Realmockchain/directmock.verify/booleanpublished retained; nestedcall/closure/block conditions excluded from new grammar. Exacterror/equality/snapshot/smoke existingcases retained. No newStrong credit.
+The parsed route still recognizes ordinary assertions. The line-scanned route
+still recognizes its limited helper/observer/mock forms; `scan.rs` is unchanged
+and this PR does not make every ordinary `assert!` visible there. The accepted
+comparison grammar excludes calls, indexing, blocks, closures, compound
+conditions, raw/commented/nested assertion spellings, and extra trailing
+tokens. No new Strong credit, consumer admission, cache schema, public DTO, or
+complete canonical route is claimed.
 
-Existing selectors to retain: analysis::extract::oracles::tests::extract_line_scanned_oracles_captures_helpers_without_general_asserts; analysis::extract::oracles::tests::line_scanned_oracles_include_mock_expectations_without_macro_asserts; analysis::seam_cache::tests::file_facts_written_by_another_build_of_this_version_are_a_miss. Cheapest initial proof cargo test -p ripr --lib analysis::extract::oracles --locked, followed new cachecontrol and existingmisscontrol under explicitnativelease/currentCargoJSON bindings and exactnonemptydenominators. Native compile0 and actualexecutedtestfailure required before intendedRED; no native now.
+## Discriminating proof
 
-Cache new control must seed actualold-build key FileFacts containing published MockExpectation/Medium for samecontent/path/schema; verify seed sanity oldkeyHIT then currentkeyMISS, actualproducer recomputes Weak, storescurrentkey, newwarmHIT exactly matches cold facts/path/line/text/token/kind/strength. Existing7282 test seeds emptydefaultfacts and provesMISS only: it is insufficient alone for recomputation/warmkind preservation. Reuse current RepoFileFactCache/producer fixture APIs rather than fabricate acceptedconstructors or derive fact from expectedvalue. Ensure cache counters prove realproducer parse onmiss and no parse onwarmhit. Existing key/envelope binds schema1.13/analyzer/path/content, build_identity cache_identity includescleancommit or dirtydigest; DTO unchanged means no manualschemabump. Retain priorcached1.12/e3ed...MockMedium witness as historical, not newbuildhit.
+At tests-first `4c5a8b2a8bbf6dbf5d762836a03382b3376d7eb1`, the library
+compiled and all four new exact controls executed as intended RED (each
+0 passed / 1 failed / 0 ignored with the classification marker). This is
+separate from the earlier test-setup compile failure and the intermediate
+production `1a3d0198` E0597 compile failure. The latter was repaired in
+`eabee2648ac5a13c8a4c011089442cd55de72b16` without changing the
+classifier decision.
 
-Wrongimplementation challenge: restore oldobserver/mock-before-scalar branch only in ownedisolatedcopy afterGREEN; exactnewparsed+recognizedfallbackcases must fail while realmocknegative retainsMedium. No real1580actionability/completecanonicalroute/firstgate/releaseclaim; realconsumerreplay remains distinct. Rollback scopedprivatehelper/classifier/tests only, no consumer/cacheidentityauthority changes.
+At exact `eabee2648`/tree `5564e58814f643055da01a607afda686c449e81a`,
+the admitted CargoJSON library test executable compiled, and the bounded
+focused runner executed the oracle groups 12 + 1 + 3 and two cache controls
+1 + 1: all 18 passed, none failed or ignored. The raw receipt and executable
+custody are under `ripr-4382-proof/4916-eabee-green-native-v3/`. One earlier
+retry stopped at a wrong 16-test list assumption (the broad oracle namespace
+actually lists 97), and a subsequent attempt stopped before Cargo on a bounded
+Git read timeout. Neither is product RED/GREEN evidence. These artifacts stay
+retained; the successful runner uses the observed exact 12/1/3 namespaces.
 
-## Macro-entry counterexamples before implementation
+The tests require nonempty parsed actual published/suppressed facts, preserve
+source lines/tokens, and distinguish real mock calls and message-only names.
+The cache control seeds historical Mock/Medium facts under a prior analyzer
+identity, proves a current-key MISS, then proves an actual cold parser
+recomputation to Weak and whole-facts-identical warm hit without reparsing. The
+test-only cache-key helper changes only analyzer identity; path/content/schema
+and production cache authority remain unchanged.
 
-Existing macro_invocation_arguments searches matching macro occurrences anywhere; the new scalar matcher must not treat a quoted/commented/raw-string assertion spelling as the actual outer assertion. Require full outer macro invocation consumption (apart from allowed whitespace/semicolon) before isolating its first argument, and reject tokenized comments/string literals containing assert!, nested assertion macros, extra prefix/suffix tokens, and malformed/truncated delimiters. These controls stay within the new matcher: no general extraction recognition/parser campaign. Actual strings/messages may contain published or assert! without stealing the real first condition. Existing recognition remains unchanged; invalid/unmatched text cannot manufacture the new scalar credit.
+## Remaining delivery proof
 
-Implement on a separate owned4916 branch only after current4307 handback and fresh owner checks, not in4307. Tests-first source authorized; no production repair before meaningful actual RED.
+On the final committed head, verify the impacted `ripr` all-targets compile,
+`check-fast` selector/report, `precommit` full change set and commands, then
+`goldens check` and `dogfood` for output blast radius. The frozen local
+`origin/main` at `53b7059` makes the current fast/precommit comparison much
+broader than this PR's seven owned paths; compare the actual selector to Git
+before using a pass as evidence, and recompute if that ref changes. Hosted
+required checks and substantive exact-published-head review still gate merge.
+The real #1580 canonical consumer replay remains separate and must report its
+first refusing route independently; this classifier proof alone does not show
+actionability or complete LLM opportunity.
 
-Inherited native baseline (alltargets/checkfast/doctor) NOT_RUN pending lease. Tests can be prepared for source/oracle review; production remains unchanged until baseline and meaningful actual RED.
-
-Actual tests-first source now contains the three relational_tests selectors and one real cached-builder test in facts/build/incremental_edit_tests, reusing its CountingSyntaxAdapter. Cold parse count1 and warm unchanged count1 bind actual RA producer, not cache-hit telemetry alone. Prior-build fixture explicitly models historical Mock/Medium while preserving all real parsed FileFacts; actual new-keyMISS then real builder recomputation must produce Weak and wholewarmfacts equality. The intended RED is still NOT_ESTABLISHED; no Cargo run.
-
-Source counter-review caught private RepoFileFactCacheKey field access before compilation. A cfg(test)-only key clone method in seam_cache now varies analyzer identity while retaining private path/content/schema; the builder test supplies explicit prior identity from build_identity::cache_identity(). No production API or cache-authority change. No compile/test execution yet.
+Rollback: revert the private classifier/argument change and its nearby tests
+normally; retain the RED/GREEN and cache receipts for review. No migration is
+required.
