@@ -62,14 +62,17 @@ jobs:
           )
           text, count = pattern.subn(r'\1\n              220,\2', text, count=1)
           if count != 1:
-              marker = 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c'
-              offset = text.find(marker)
-              print(text[max(0, offset - 400): offset + 600])
               raise SystemExit('download invariant replacement call not found once')
+          old_marker = "required_marker = '            \"release_assets_created: false\",\\\\n'"
+          new_marker = "required_marker = '            \"release_assets_created: false\",\\n'"
+          if text.count(old_marker) != 1:
+              raise SystemExit('escaped release-assets marker was not found once')
+          text = text.replace(old_marker, new_marker, 1)
           path.write_text(text, encoding='utf-8')
           PY
           grep -F 'span: int = 120' /tmp/repair.sh
           grep -n -A7 -B2 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c' /tmp/repair.sh
+          grep -n 'required_marker' /tmp/repair.sh
 
       - name: Apply and validate repair
         shell: bash
