@@ -179,6 +179,13 @@ mod tests {
         }
     }
 
+    fn expect_check_err(result: Result<CheckOutput, String>) -> Result<(), String> {
+        match result {
+            Ok(_) => Err("expected the check to fail".to_string()),
+            Err(_) => Ok(()),
+        }
+    }
+
     fn sample_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/sample")
     }
@@ -281,20 +288,17 @@ mod tests {
     }
 
     #[test]
-    fn missing_diff_fails_after_loading_input_without_false_completion() {
+    fn missing_diff_fails_after_loading_input_without_false_completion() -> Result<(), String> {
         let recorder = ProgressRecorder::new();
         let mut input = sample_diff_input();
         let secret = input.root.display().to_string();
         input.diff_file = Some(input.root.join("absent-progress-input.diff"));
-        assert!(
-            check_with_progress(
-                input,
-                &RiprConfig::default(),
-                AnalysisProgressScope::Diff,
-                Some(&recorder),
-            )
-            .is_err()
-        );
+        expect_check_err(check_with_progress(
+            input,
+            &RiprConfig::default(),
+            AnalysisProgressScope::Diff,
+            Some(&recorder),
+        ))?;
         let events = recorder.events();
         assert_eq!(events[0].stage, AnalysisProgressStage::LoadingInput);
         assert_eq!(
@@ -304,22 +308,20 @@ mod tests {
         assert!(!stages(&events).contains(&AnalysisProgressStage::Completed));
         assert!(!stages(&events).contains(&AnalysisProgressStage::BuildingOutput));
         assert_honest_events(&events, AnalysisProgressScope::Diff, &secret);
+        Ok(())
     }
 
     #[test]
-    fn suppression_policy_failure_after_analysis_is_failed_not_completed() {
+    fn suppression_policy_failure_after_analysis_is_failed_not_completed() -> Result<(), String> {
         let recorder = ProgressRecorder::new();
         let mut input = sample_diff_input();
         input.suppression_policy = Some(input.root.join("absent-progress-suppression.toml"));
-        assert!(
-            check_with_progress(
-                input,
-                &RiprConfig::default(),
-                AnalysisProgressScope::Diff,
-                Some(&recorder),
-            )
-            .is_err()
-        );
+        expect_check_err(check_with_progress(
+            input,
+            &RiprConfig::default(),
+            AnalysisProgressScope::Diff,
+            Some(&recorder),
+        ))?;
         let events = recorder.events();
         assert_eq!(
             stages(&events),
@@ -331,6 +333,7 @@ mod tests {
             ]
         );
         assert_eq!(terminal_count(&events), 1);
+        Ok(())
     }
 
     #[test]
@@ -352,15 +355,12 @@ mod tests {
         input.diff_file = None;
         input.base = None;
         input.git_candidate = Some(subject);
-        assert!(
-            check_with_progress(
-                input,
-                &RiprConfig::default(),
-                AnalysisProgressScope::Diff,
-                Some(&recorder),
-            )
-            .is_err()
-        );
+        expect_check_err(check_with_progress(
+            input,
+            &RiprConfig::default(),
+            AnalysisProgressScope::Diff,
+            Some(&recorder),
+        ))?;
         let events = recorder.events();
         assert_eq!(events[0].stage, AnalysisProgressStage::LoadingInput);
         assert!(stages(&events).contains(&AnalysisProgressStage::Analyzing));
@@ -375,20 +375,17 @@ mod tests {
     }
 
     #[test]
-    fn worktree_scope_survives_an_early_failure() {
+    fn worktree_scope_survives_an_early_failure() -> Result<(), String> {
         let recorder = ProgressRecorder::new();
         let mut input = sample_diff_input();
         input.diff_file = None;
         input.root = std::env::temp_dir().join("ripr-2608-progress-worktree-missing");
-        assert!(
-            check_with_progress(
-                input,
-                &RiprConfig::default(),
-                AnalysisProgressScope::Worktree,
-                Some(&recorder),
-            )
-            .is_err()
-        );
+        expect_check_err(check_with_progress(
+            input,
+            &RiprConfig::default(),
+            AnalysisProgressScope::Worktree,
+            Some(&recorder),
+        ))?;
         let events = recorder.events();
         assert!(
             events
@@ -400,6 +397,7 @@ mod tests {
             Some(AnalysisProgressStage::Failed)
         );
         assert!(!stages(&events).contains(&AnalysisProgressStage::Completed));
+        Ok(())
     }
 
     #[test]
@@ -440,19 +438,20 @@ mod tests {
     }
 
     #[test]
-    fn cancelled_token_through_check_emits_cancelled_not_completed() {
+    fn cancelled_token_through_check_emits_cancelled_not_completed() -> Result<(), String> {
         let recorder = ProgressRecorder::new();
         let token = AnalysisCancellationToken::new();
-        assert!(token.cancel(AnalysisAbortKind::Cancelled));
-        let result = cancellation::with_token(&token, || {
+        if !token.cancel(AnalysisAbortKind::Cancelled) {
+            return Err("token cancel did not stick".to_string());
+        }
+        expect_check_err(cancellation::with_token(&token, || {
             check_with_progress(
                 sample_diff_input(),
                 &RiprConfig::default(),
                 AnalysisProgressScope::Diff,
                 Some(&recorder),
             )
-        });
-        assert!(result.is_err());
+        }))?;
         let events = recorder.events();
         assert_eq!(
             events.last().map(|event| event.stage),
@@ -460,28 +459,31 @@ mod tests {
         );
         assert!(!stages(&events).contains(&AnalysisProgressStage::Completed));
         assert_eq!(terminal_count(&events), 1);
+        Ok(())
     }
 
     #[test]
-    fn deadline_abort_is_cancelled_not_completed() {
+    fn deadline_abort_is_cancelled_not_completed() -> Result<(), String> {
         let recorder = ProgressRecorder::new();
         let token = AnalysisCancellationToken::new();
-        assert!(token.cancel(AnalysisAbortKind::DeadlineExceeded));
-        let result = cancellation::with_token(&token, || {
+        if !token.cancel(AnalysisAbortKind::DeadlineExceeded) {
+            return Err("deadline abort did not stick".to_string());
+        }
+        expect_check_err(cancellation::with_token(&token, || {
             check_with_progress(
                 sample_diff_input(),
                 &RiprConfig::default(),
                 AnalysisProgressScope::Diff,
                 Some(&recorder),
             )
-        });
-        assert!(result.is_err());
+        }))?;
         let events = recorder.events();
         assert_eq!(
             events.last().map(|event| event.stage),
             Some(AnalysisProgressStage::Cancelled)
         );
         assert!(!stages(&events).contains(&AnalysisProgressStage::Completed));
+        Ok(())
     }
 
     #[test]
