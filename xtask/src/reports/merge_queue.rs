@@ -252,7 +252,7 @@ fn parse_endpoint_record(key: &str, record: &Value) -> Result<EndpointRecord, St
         .and_then(Value::as_u64)
         .ok_or_else(|| format!("endpoint `{key}` is missing numeric `http_status`"))?;
     let http_status = u16::try_from(http_status)
-        .map_err(|_| format!("endpoint `{key}` http_status is out of range"))?;
+        .map_err(|err| format!("endpoint `{key}` http_status is out of range: {err}"))?;
     let mut body = record.get("body").cloned().unwrap_or(Value::Null);
     redact_secrets(&mut body);
     Ok(EndpointRecord {
@@ -889,12 +889,12 @@ fn ruleset_observations(
     list_record: Option<&EndpointRecord>,
 ) -> (Vec<Value>, bool) {
     let mut listed = Vec::new();
-    if let Some(record) = list_record.filter(|record| record.http_status == 200) {
-        if let Some(items) = record.body.as_array() {
-            for item in items {
-                if let Some(id) = item.get("id").and_then(Value::as_i64) {
-                    listed.push((id, item.clone()));
-                }
+    if let Some(record) = list_record.filter(|record| record.http_status == 200)
+        && let Some(items) = record.body.as_array()
+    {
+        for item in items {
+            if let Some(id) = item.get("id").and_then(Value::as_i64) {
+                listed.push((id, item.clone()));
             }
         }
     }
@@ -922,9 +922,9 @@ fn ruleset_observations(
             .to_string();
         let applicable = ruleset_targets_default_branch(&payload, default_branch);
         let active_union = enforcement == "active" && applicable;
-        let detail_missing = !detail
+        let detail_missing = detail
             .as_ref()
-            .is_some_and(|record| record.http_status == 200);
+            .is_none_or(|record| record.http_status != 200);
         if active_union && detail_missing {
             omitted_active = true;
         }
@@ -1001,7 +1001,7 @@ fn ruleset_targets_default_branch(payload: &Value, default_branch: &str) -> bool
         item.as_str().is_some_and(|name| {
             name == "~DEFAULT_BRANCH"
                 || name == default_branch
-                || name == &format!("refs/heads/{default_branch}")
+                || name == format!("refs/heads/{default_branch}")
         })
     })
 }
@@ -1119,7 +1119,7 @@ fn ruleset_required_contexts(payload: &Value) -> Vec<String> {
 }
 
 fn merge_queue_visibility(all: &[Value], list_record: Option<&EndpointRecord>) -> Value {
-    if !list_record.is_some_and(|record| record.http_status == 200) {
+    if list_record.is_none_or(|record| record.http_status != 200) {
         return json!({
             "visibility": EXIT_NOT_PROVEN,
             "reason": "ruleset collection was unreadable; merge-queue capability is not inferred from ruleset existence",
@@ -1232,7 +1232,7 @@ fn observation_limitations(
             "reason": "missing classic-protection permission cannot produce a complete observation",
         }));
     }
-    if !list_record.is_some_and(|record| record.http_status == 200) {
+    if list_record.is_none_or(|record| record.http_status != 200) {
         limitations.push(json!({
             "surface": "rulesets",
             "state": EXIT_NOT_PROVEN,
@@ -1616,8 +1616,7 @@ fn normalize_value(value: &Value) -> Value {
         Value::Array(items) => {
             let mut normalized: Vec<Value> = items.iter().map(normalize_value).collect();
             if normalized.iter().all(Value::is_object) {
-                normalized
-                    .sort_by(|left, right| object_sort_key(left).cmp(&object_sort_key(right)));
+                normalized.sort_by_key(object_sort_key);
             } else if normalized.iter().all(Value::is_string) {
                 normalized.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
             }
@@ -2212,10 +2211,9 @@ branches:
                 ))
             })
             .and_then(Value::as_object_mut)
+            && let Some(items) = record.get_mut("body").and_then(Value::as_array_mut)
         {
-            if let Some(items) = record.get_mut("body").and_then(Value::as_array_mut) {
-                items.reverse();
-            }
+            items.reverse();
         }
         let left = build_packet(&snapshot_from_parts(DEFAULT_REPO, first, Vec::new(), None)?)?;
         let right = build_packet(&snapshot_from_parts(
@@ -2319,13 +2317,12 @@ branches:
                 "workflow_files": []
             }
         });
-        if let Some(endpoints) = raw.get_mut("endpoints").and_then(Value::as_object_mut) {
-            if let Some(record) = endpoints.get_mut(&format!("GET /repos/{DEFAULT_REPO}")) {
-                if let Some(body) = record.get_mut("body").and_then(Value::as_object_mut) {
-                    body.insert("token".to_string(), json!("ghp_should_not_leak"));
-                    body.insert("email".to_string(), json!("secret@example.com"));
-                }
-            }
+        if let Some(endpoints) = raw.get_mut("endpoints").and_then(Value::as_object_mut)
+            && let Some(record) = endpoints.get_mut(&format!("GET /repos/{DEFAULT_REPO}"))
+            && let Some(body) = record.get_mut("body").and_then(Value::as_object_mut)
+        {
+            body.insert("token".to_string(), json!("ghp_should_not_leak"));
+            body.insert("email".to_string(), json!("secret@example.com"));
         }
         fs::write(
             &input,
