@@ -18,6 +18,12 @@ can consume the same PATH message without that cwd check.
 doctor must not recommend either, even on a dirty tree; the reachable route is
 `--diff PATH` / `--diff -`.
 
+Default-base probes treat any git spawn failure as "ref absent". A gitless
+`ripr check` with no `--base` therefore used to say `Pass --base`. The
+git-root probe on that failure path must name PATH/`--diff` ahead of the
+default-base text. An explicit `--base` still falls through to `run_git_diff`,
+which already passes the named missing-git error through.
+
 ## 2026-09-29: Default output-dir create failures must name the relocate flag (#4774)
 
 `ripr pilot` and `ripr first-pr` create `target/ripr/pilot` and

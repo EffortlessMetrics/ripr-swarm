@@ -92,10 +92,12 @@ and names the boundary that untracked files remain out of scope until staged or
 provided via `--diff`.
 
 When git is not on PATH, both `ripr check` and `--worktree` fail the same way.
-Doctor's `!` line names the same repair as `ripr check` in that environment
-(install git, or pass a saved diff with `--diff PATH` / `--diff -`), and the
-recommended first command is `ripr check --diff PATH`. A dirty worktree does
-not override that: `--worktree` cannot run without git.
+That includes the zero-config path (`ripr check` with no `--base`): default-base
+search must not diagnose missing git as an unresolvable ref. Doctor's `!` line
+names the same repair as `ripr check` in that environment (install git, or pass
+a saved diff with `--diff PATH` / `--diff -`), and the recommended first
+command is `ripr check --diff PATH`. A dirty worktree does not override that:
+`--worktree` cannot run without git.
 
 ### LSP saved-workspace contract
 
@@ -177,6 +179,14 @@ that untracked source was analyzed.
 - `crates/ripr/tests/cli_smoke.rs::check_without_git_names_path_and_diff_routes_without_dumping_argv`
   - `check` names PATH and `--diff` instead of dumping git argv; `--diff` still
     runs without git.
+- `crates/ripr/tests/cli_smoke.rs::check_without_git_omitted_base_names_path_not_unresolvable_base`
+  - a gitless `check` with no `--base` names PATH, not `Pass --base`.
+- `crates/ripr/src/analysis/diff/load.rs::tests::git_root_probe_prefers_missing_git_over_unresolved_base`
+  - the git-root probe maps a missing-git spawn to PATH, not default-base text.
+- `crates/ripr/src/analysis/diff/load.rs::tests::git_root_probe_names_a_non_repo_after_git_ran`
+  - a git that ran outside a work tree keeps the non-repo diagnosis.
+- `crates/ripr/src/analysis/diff/load.rs::tests::git_root_probe_does_not_invent_a_cause_when_git_ran_inside_a_work_tree`
+- `crates/ripr/src/analysis/diff/load.rs::tests::git_root_probe_does_not_invent_a_cause_on_timeout`
 - `crates/ripr/src/cli/commands.rs::tests::check_rejects_diff_file_plus_worktree_mode`
   - `--diff` and `--worktree` remain mutually exclusive.
 - `crates/ripr/src/analysis/diff/load.rs::tests::tracked_change_detector_ignores_untracked_only_files`
@@ -226,6 +236,7 @@ that untracked source was analyzed.
 - `cargo test -p ripr --test cli_smoke doctor_recommends_worktree_check_on_dirty_worktree`
 - `cargo test -p ripr --test cli_smoke doctor_without_git`
 - `cargo test -p ripr --test cli_smoke check_without_git_names_path_and_diff_routes_without_dumping_argv`
+- `cargo test -p ripr --test cli_smoke check_without_git_omitted_base_names_path_not_unresolvable_base`
 - `cargo test -p ripr --lib check_rejects_diff_file_plus_worktree_mode`
 - `cargo test -p ripr --lib tracked_change_detector`
 - `cargo test -p ripr --lib lsp::tests::lsp_saved_worktree_refresh_analyzes_uncommitted_tracked_edit -- --exact`

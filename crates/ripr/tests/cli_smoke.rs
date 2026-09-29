@@ -8939,6 +8939,44 @@ fn check_without_git_names_path_and_diff_routes_without_dumping_argv() -> Result
 }
 
 #[test]
+fn check_without_git_omitted_base_names_path_not_unresolvable_base() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let root = workspace.display().to_string();
+    let output = run_ripr_without_git(&["check", "--root", &root]);
+    assert_failure(&output);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "missing git stays a Failure (exit 2); stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("git was not found on PATH"),
+        "zero-config check must name the missing binary:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("`--diff PATH`") && stderr.contains("`--diff -`"),
+        "zero-config check must name both saved-diff routes:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("could not resolve a default base"),
+        "missing git must not be diagnosed as an unresolved default base:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("Pass `--base"),
+        "missing git must not send the user to `--base`:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("core.quotePath") && !stderr.contains("[\"-c\""),
+        "git argv must not leak into stderr:\n{stderr}"
+    );
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
 fn doctor_without_git_names_the_fix_and_recommends_the_diff_route() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
     let root = workspace.display().to_string();
