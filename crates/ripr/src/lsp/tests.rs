@@ -78,6 +78,8 @@ use tower_lsp_server::ls_types::{
 };
 use tower_lsp_server::{LspService, Server};
 
+mod consumed_source_tests;
+
 /// Render a fixture path the way the LSP surface renders paths.
 ///
 /// The server normalizes every emitted path to forward slashes on all

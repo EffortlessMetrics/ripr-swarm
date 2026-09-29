@@ -172,7 +172,15 @@ pub(super) struct Backend {
     refresh_scheduler: RefreshScheduler,
     workspace_revision: Mutex<u64>,
     refresh_idle: Notify,
+    #[cfg(test)]
+    consumed_source_barrier: Mutex<Option<ConsumedSourceBarrier>>,
     pub(super) progress: Arc<AnalysisProgressTracker>,
+}
+
+#[cfg(test)]
+struct ConsumedSourceBarrier {
+    reached: tokio::sync::oneshot::Sender<(u64, AnalysisSnapshot)>,
+    release: tokio::sync::oneshot::Receiver<()>,
 }
 
 #[derive(Default)]
@@ -246,6 +254,8 @@ impl Backend {
             refresh_scheduler: RefreshScheduler::default(),
             workspace_revision: Mutex::new(0),
             refresh_idle: Notify::new(),
+            #[cfg(test)]
+            consumed_source_barrier: Mutex::new(None),
             progress: Arc::new(AnalysisProgressTracker::new(client.clone())),
             client,
         }
@@ -515,6 +525,9 @@ impl Backend {
             .await;
             return RefreshAttemptOutcome::Failed;
         }
+        #[cfg(test)]
+        self.wait_consumed_source_barrier(generation, &diagnostics.snapshot)
+            .await;
         let summary = RefreshLogSummary::from_snapshot(generation, &diagnostics.snapshot)
             .with_enabled_languages(&enabled_languages);
         let Some(transaction) = self.prepare_refresh_transaction(diagnostics) else {
@@ -829,6 +842,47 @@ impl Backend {
             .map(|root| root.clone())
             .unwrap_or_else(|_| PathBuf::from("."));
         self.set_workspace_root_authority(WorkspaceRootAuthority::selected(root));
+    }
+
+    #[cfg(test)]
+    pub(super) fn install_consumed_source_barrier_for_test(
+        &self,
+        config: LspAnalysisConfig,
+    ) -> Result<
+        (
+            tokio::sync::oneshot::Receiver<(u64, AnalysisSnapshot)>,
+            tokio::sync::oneshot::Sender<()>,
+        ),
+        String,
+    > {
+        self.set_analysis_config(config);
+        let (reached, witness) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let mut slot = self
+            .consumed_source_barrier
+            .lock()
+            .map_err(|_| "consumed-source barrier lock poisoned".to_string())?;
+        if slot.is_some() {
+            return Err("consumed-source barrier already installed".to_string());
+        }
+        *slot = Some(ConsumedSourceBarrier {
+            reached,
+            release: released,
+        });
+        Ok((witness, release))
+    }
+
+    #[cfg(test)]
+    async fn wait_consumed_source_barrier(&self, generation: u64, snapshot: &AnalysisSnapshot) {
+        let barrier = self
+            .consumed_source_barrier
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        if let Some(barrier) = barrier {
+            let _ = barrier.reached.send((generation, snapshot.clone()));
+            let _ = barrier.release.await;
+        }
     }
 
     pub(super) fn prepare_refresh_transaction(
