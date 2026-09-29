@@ -25,8 +25,8 @@ are scoped or reviewed.
 
 ### Fixed
 
-- Changes in languages ripr does not analyze (Go, Java, C, C++, shell and
-  others) are no longer called non-source files. A Go-only diff reported
+- Changes in languages ripr does not analyze (Go, Java, C, C++ and others)
+  are no longer called non-source files. A Go-only diff reported
   `no_behavioral_candidates (analysis complete)` and said the empty result was
   correct; a Rust + Go diff reported only the Rust half, as a complete
   analysis. Both now report `partial_with_limitations` with a
@@ -39,7 +39,10 @@ are scoped or reviewed.
   `null`), and `ripr doctor` lists them, in mixed workspaces too (#4750).
   `ripr first-pr` reports no gap to assign there instead of a wrong-root
   loop through `--root` and `ripr doctor`, and `ripr init` warns that the
-  configuration will report those changes as not analyzed.
+  configuration will report those changes as not analyzed. Shell and
+  PowerShell scripts are named on stderr as not analyzed but do not make an
+  otherwise complete analysis partial, so a Rust PR that touches a CI script
+  keeps its complete outcome.
 - `ripr check` is faster on large repositories, with byte-identical JSON on
   12 real commits of tokio, vite, Django and ripr. TypeScript test selection
   walked the directory tree for `package.json` twice per owner and test;
