@@ -426,7 +426,6 @@ fn render_markdown(value: &Value) -> String {
             }
         }
     }
-    out.push('\n');
     out
 }
 

@@ -582,6 +582,11 @@ fn json_and_markdown_agree_on_every_count_and_row() -> Result<(), String> {
         report.value["candidates"]["false_exposed"]["rate"].as_str(),
         Some("0/3")
     );
+    assert!(report.markdown.ends_with('\n'));
+    assert!(
+        !report.markdown.ends_with("\n\n"),
+        "markdown must not add a trailing blank line"
+    );
     Ok(())
 }
 
