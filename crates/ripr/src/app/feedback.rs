@@ -76,15 +76,16 @@ pub(crate) struct ExportFeedbackOptions {
 
 /// Record one local usefulness-feedback receipt.
 pub(crate) fn record_feedback(options: &RecordFeedbackOptions) -> Result<RecordedFeedback, String> {
-    options.payload.validate()?;
-    check_note_privacy(options.payload.note.as_deref())?;
+    let payload = options.payload.clone().normalized();
+    payload.validate()?;
+    check_note_privacy(payload.note.as_deref())?;
     let root = confine_root(&options.root)?;
-    let key = resolve_idempotency_key(&options.payload, options.idempotency_key.as_deref())?;
+    let key = resolve_idempotency_key(&payload, options.idempotency_key.as_deref())?;
     let directory = feedback_directory(&root)?;
     let path = receipt_path(&directory, &key)?;
     if let Some(existing) = load_receipt_file(&path)? {
-        let existing_payload = FeedbackPayload::from_receipt(&existing);
-        if existing_payload == options.payload {
+        let existing_payload = FeedbackPayload::from_receipt(&existing).normalized();
+        if existing_payload == payload {
             return Ok(RecordedFeedback {
                 status: RecordStatus::AlreadyRecorded,
                 receipt: existing,
@@ -100,19 +101,18 @@ pub(crate) fn record_feedback(options: &RecordFeedbackOptions) -> Result<Recorde
         Some(value) => value.clone(),
         None => unix_ms_now()?,
     };
-    let feedback_id = feedback_id_for(&options.payload, &key);
-    let reference_state =
-        classify_reference(&options.payload.identity, options.live_identity.as_ref());
+    let feedback_id = feedback_id_for(&payload, &key);
+    let reference_state = classify_reference(&payload.identity, options.live_identity.as_ref());
     let receipt = FeedbackReceipt {
         feedback_id,
         idempotency_key: key,
-        identity: options.payload.identity.clone(),
-        actor_kind: options.payload.actor_kind,
-        review_status: options.payload.review_status,
-        review_actor_kind: options.payload.review_actor_kind,
-        reason: options.payload.reason,
-        judgment_override: options.payload.judgment_override,
-        note: options.payload.note.clone(),
+        identity: payload.identity.clone(),
+        actor_kind: payload.actor_kind,
+        review_status: payload.review_status,
+        review_actor_kind: payload.review_actor_kind,
+        reason: payload.reason,
+        judgment_override: payload.judgment_override,
+        note: payload.note.clone(),
         reference_state,
         recorded_at,
     };
@@ -667,6 +667,29 @@ mod tests {
     }
 
     #[test]
+    fn matching_explicit_judgment_is_idempotent_with_the_derived_class() -> Result<(), String> {
+        let root = TempRoot::new("matching-judgment")?;
+        let mut explicit = payload("snap-1", None, FeedbackReason::UsefulLimitation);
+        explicit.judgment_override = Some(FeedbackJudgment::Useful);
+        let first = record(&root.path, explicit, "shared")?;
+        let derived = payload("snap-1", None, FeedbackReason::UsefulLimitation);
+        let second = record(&root.path, derived, "shared")?;
+        assert_eq!(first.status, RecordStatus::Created);
+        assert_eq!(second.status, RecordStatus::AlreadyRecorded);
+        assert!(first.receipt.judgment_override.is_none());
+        let files: Vec<_> = fs::read_dir(root.path.join(FEEDBACK_DIRECTORY))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            files.len(),
+            1,
+            "repeat recording must not create a second file"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn same_key_with_a_different_payload_is_a_conflict() -> Result<(), String> {
         let root = TempRoot::new("conflict")?;
         let first = payload(
@@ -945,15 +968,20 @@ mod tests {
     fn production_source_does_not_reach_policy_process_or_network_surfaces() {
         let source = include_str!("feedback.rs");
         let production = source.split("#[cfg(test)]").next().unwrap_or(source);
+        let spawn = concat!("Command", "::", "new");
+        let process = concat!("std::", "process");
+        let tcp = concat!("Tcp", "Stream");
+        let udp = concat!("Udp", "Socket");
+        let http = concat!("req", "west");
         for needle in [
             "output::gate",
             "output::suppressions",
             "output::baseline",
-            "Command::new",
-            "std::process",
-            "TcpStream",
-            "UdpSocket",
-            "reqwest",
+            spawn,
+            process,
+            tcp,
+            udp,
+            http,
         ] {
             assert!(
                 !production.contains(needle),

@@ -359,6 +359,17 @@ impl FeedbackPayload {
             .unwrap_or_else(|| self.reason.judgment())
     }
 
+    /// Collapse a matching `--judgment` onto the derived class so reload and
+    /// repeat recording compare the same payload.
+    pub(crate) fn normalized(mut self) -> Self {
+        if self.reason != FeedbackReason::Other
+            && self.judgment_override == Some(self.reason.judgment())
+        {
+            self.judgment_override = None;
+        }
+        self
+    }
+
     pub(crate) fn validate(&self) -> Result<(), String> {
         self.identity.validate()?;
         if self.reason.requires_note()

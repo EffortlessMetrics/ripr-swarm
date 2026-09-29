@@ -28,7 +28,7 @@ Linked issues:
 
 Linked PRs:
 
-- None yet
+- #4684 — local result-bound usefulness receipts
 
 Support-tier impact:
 
@@ -160,6 +160,7 @@ no human-reviewed receipts exist.
 - `crates/ripr/src/domain/feedback.rs::tests::a_later_attempt_keeps_the_historical_reference`
 - `crates/ripr/src/domain/feedback.rs::tests::absent_live_identity_is_current_not_staleness`
 - `crates/ripr/src/app/feedback.rs::tests::recording_the_same_key_and_payload_is_idempotent`
+- `crates/ripr/src/app/feedback.rs::tests::matching_explicit_judgment_is_idempotent_with_the_derived_class`
 - `crates/ripr/src/app/feedback.rs::tests::same_key_with_a_different_payload_is_a_conflict`
 - `crates/ripr/src/app/feedback.rs::tests::useful_limitation_does_not_require_an_attempt_or_item`
 - `crates/ripr/src/app/feedback.rs::tests::recording_does_not_mutate_policy_or_gate_artifacts`
