@@ -18,7 +18,10 @@
 //!
 //! Unknown never proves absence. A walk that meets an edge the scan cannot
 //! resolve (dynamic `#[path]`, `cfg_if!`-wrapped declarations, a parse error,
-//! the file bound) is incomplete, and the package keeps the layout rule.
+//! the file bound) is incomplete, and the package keeps the layout rule. An
+//! orphan verdict additionally needs every Rust file in the workspace to scan
+//! completely, since another package can reach into this one through
+//! `#[path]`, `include!` or a macro that expands to either.
 //! Roots are over-collected on purpose (every autodiscovered and declared
 //! target, whatever `autobins`/`autotests` say): an extra root can only
 //! reach more files, which keeps a verdict of "unreached" conservative.
@@ -52,9 +55,14 @@ enum ChildAnchor {
     Directory,
     /// Ordinary module files: children live under `<dir>/<stem>/`.
     Stem,
-    /// Files loaded through `#[path]` or `include!`: try both anchors, so
-    /// the walk over-reaches rather than miss a child.
+    /// Files loaded through `#[path]`: try both anchors, so the walk
+    /// over-reaches rather than miss a child.
     Both,
+    /// Files pasted in by `include!`: their `mod name;` declarations resolve
+    /// against the including module, which this walk does not model, so any
+    /// such declaration makes the walk incomplete. Their `#[path]` and
+    /// `include!` edges are still followed.
+    Included,
 }
 
 /// Where a search found a file.
@@ -212,9 +220,19 @@ where
     external_packages
 }
 
-/// Directories the escaping scan never enters: VCS metadata and build
-/// output hold no Cargo-compiled sources.
-const ESCAPING_SCAN_SKIPPED_DIRS: [&str; 3] = [".git", "target", "node_modules"];
+/// Whether the escaping scan skips `dir`: VCS metadata, and Cargo's build
+/// output (`target` beside a manifest). Anything else is scanned, so a
+/// source module that happens to be named `node_modules` or sits in a
+/// `target` directory no manifest owns is still seen.
+fn escaping_scan_skips(dir: &Path) -> bool {
+    match dir.file_name().and_then(|name| name.to_str()) {
+        Some(".git") => true,
+        Some("target") => dir
+            .parent()
+            .is_some_and(|parent| parent.join("Cargo.toml").is_file()),
+        _ => false,
+    }
+}
 
 /// Directory entries the escaping scan may visit before it gives up.
 const MAX_ESCAPING_SCAN_ENTRIES: usize = 200_000;
@@ -239,8 +257,11 @@ struct EscapingReach {
 }
 
 impl EscapingReach {
-    /// Scans the workspace, or `None` when some file that could spell an
-    /// escaping edge cannot be scanned completely, or the scan is cut short.
+    /// Scans the workspace, or `None` when any Rust file in it cannot be
+    /// scanned completely, or the scan is cut short. Files a symlinked
+    /// directory reaches are not listed; the symlink alias covers them.
+    /// Directory listing reads the working tree, so a file that exists only
+    /// at `HEAD` is not scanned here.
     fn scan(workspace_root: &Path) -> Option<Self> {
         let mut files = Vec::new();
         let mut symlink_targets = Vec::new();
@@ -262,11 +283,7 @@ impl EscapingReach {
                         symlink_targets.push(target);
                     }
                 } else if file_type.is_dir() {
-                    let name = entry.file_name();
-                    if !ESCAPING_SCAN_SKIPPED_DIRS
-                        .iter()
-                        .any(|skipped| name == std::ffi::OsStr::new(skipped))
-                    {
+                    if !escaping_scan_skips(&path) {
                         pending.push(path);
                     }
                 } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
@@ -281,28 +298,28 @@ impl EscapingReach {
                 SourceRead::Absent => continue,
                 SourceRead::Unreadable => return None,
             };
-            if !source.contains("path") && !source.contains("include") {
+            // Without a macro call, a `path` or an `include`, a file can
+            // neither declare an escaping edge nor hide one.
+            if !source.contains('!') && !source.contains("path") && !source.contains("include") {
                 continue;
             }
             let scan = rust_module_tree_scan(&source);
-            let directory = file.parent().map(Path::to_path_buf).unwrap_or_default();
-            for edge in &scan.edges {
-                if let RustModuleTreeEdge::Path(target) | RustModuleTreeEdge::Include(target) = edge
-                {
-                    roots.push(lexical(&directory.join(target)));
-                }
-            }
-            // An incomplete scan that could hide such an edge leaves every
-            // verdict unknown: any `path =` (plain or inside `cfg_attr`,
-            // with any spacing) or `include!`. Default-only declarations
-            // cannot leave their own package, so they never matter here.
+            // Any unresolved construct (a dependency's item macro can expand
+            // to `#[path = "../../b/src/x.rs"] mod x;` without spelling it)
+            // leaves every verdict unknown.
             if !scan.complete {
-                let compact = source
-                    .chars()
-                    .filter(|character| !character.is_whitespace())
-                    .collect::<String>();
-                if compact.contains("path=") || compact.contains("include!") {
-                    return None;
+                return None;
+            }
+            let directory = file.parent().map(Path::to_path_buf).unwrap_or_default();
+            for edge in scan.edges {
+                match edge {
+                    RustModuleTreeEdge::Path(target) => {
+                        roots.push((lexical(&directory.join(target)), ChildAnchor::Both));
+                    }
+                    RustModuleTreeEdge::Include(target) => {
+                        roots.push((lexical(&directory.join(target)), ChildAnchor::Included));
+                    }
+                    RustModuleTreeEdge::Default { .. } => {}
                 }
             }
         }
@@ -338,17 +355,18 @@ fn package_prefix(workspace_root: &Path, package_dir: &Path) -> Option<String> {
     })
 }
 
-/// Every package in the workspace whose `[lib]` or `[[bin]]` path leaves
-/// its own directory.
+/// Every package in the workspace with a target path (library, binary,
+/// test, bench, example or build script) outside its own directory.
 fn external_root_declarers(workspace_root: &Path) -> BTreeSet<PathBuf> {
     let mut declarers = BTreeSet::new();
     for prefix in crate::analysis::seam_cache::workspace_manifest_dir_prefixes(workspace_root) {
         let package_dir = lexical(&normalize(&workspace_root.join(&prefix)));
-        let Some((_, manifest)) = read_manifest(workspace_root, &package_dir) else {
+        let Some((manifest_text, manifest)) = read_manifest(workspace_root, &package_dir) else {
             continue;
         };
         if production_roots(&manifest, &package_dir)
             .iter()
+            .chain(&evidence_roots(&manifest, &manifest_text, &package_dir))
             .any(|root| !root.starts_with(&package_dir))
         {
             declarers.insert(package_dir);
@@ -457,12 +475,9 @@ impl PackageWalk {
 
     /// A walk from files loaded through `#[path]` or `include!`, outside any
     /// one package's target roots.
-    fn from_loaded_files(files: Vec<PathBuf>) -> Self {
+    fn from_loaded_files(files: Vec<(PathBuf, ChildAnchor)>) -> Self {
         Self {
-            queue: files
-                .into_iter()
-                .map(|file| (file, ChildAnchor::Both))
-                .collect(),
+            queue: files,
             evidence_roots: None,
             phase: Origin::Production,
             visited: BTreeSet::new(),
@@ -550,6 +565,13 @@ impl PackageWalk {
         };
         let edges = scan.edges.clone();
         self.complete &= scan.complete;
+        if anchor == ChildAnchor::Included
+            && edges
+                .iter()
+                .any(|edge| matches!(edge, RustModuleTreeEdge::Default { .. }))
+        {
+            self.complete = false;
+        }
         if self.phase == Origin::Production && self.production_roots.contains(&file) {
             self.production_root_read = true;
         }
@@ -571,9 +593,13 @@ impl PackageWalk {
                             .push((base.join(&name).join("mod.rs"), ChildAnchor::Directory));
                     }
                 }
-                RustModuleTreeEdge::Path(target) | RustModuleTreeEdge::Include(target) => {
+                RustModuleTreeEdge::Path(target) => {
                     self.queue
                         .push((lexical(&directory.join(target)), ChildAnchor::Both));
+                }
+                RustModuleTreeEdge::Include(target) => {
+                    self.queue
+                        .push((lexical(&directory.join(target)), ChildAnchor::Included));
                 }
             }
         }
@@ -600,7 +626,7 @@ fn child_bases(file: &Path, directory: &Path, anchor: ChildAnchor) -> Vec<PathBu
         ChildAnchor::Directory => vec![directory.to_path_buf()],
         ChildAnchor::Stem if is_mod_rs => vec![directory.to_path_buf()],
         ChildAnchor::Stem => vec![stem_dir],
-        ChildAnchor::Both => vec![directory.to_path_buf(), stem_dir],
+        ChildAnchor::Both | ChildAnchor::Included => vec![directory.to_path_buf(), stem_dir],
     }
 }
 
@@ -758,6 +784,18 @@ mod tests {
             &root,
             &["b/src/proto.rs", "b/src/stray.rs", "c/src/generated.rs"],
         );
+        // `c`'s macro could equally expand to a `#[path]` into `b`, so it
+        // leaves every verdict in the workspace unknown.
+        assert!(
+            context.module_graph_orphans.is_empty(),
+            "{:?}",
+            context.module_graph_orphans
+        );
+        std::fs::remove_file(root.join("c/src/lib.rs")).map_err(|error| error.to_string())?;
+        let context = evidence_for(
+            &root,
+            &["b/src/proto.rs", "b/src/stray.rs", "c/src/generated.rs"],
+        );
         assert_eq!(
             context.module_graph_orphans,
             BTreeSet::from([PathBuf::from("b/src/stray.rs")])
@@ -865,6 +903,55 @@ mod tests {
         assert_eq!(
             context.module_graph_orphans,
             BTreeSet::from([PathBuf::from("tests/harness/stray.rs")])
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn escaping_edges_from_target_dirs_test_targets_and_includes_block_verdicts()
+    -> Result<(), String> {
+        // Re-review on #4556. Each case compiles a file its owning package
+        // never declares; a true orphan beside it stays an orphan.
+        let root = fixture(
+            "escape-shapes",
+            &[
+                ("Cargo.toml", "[workspace]\nmembers=['a','b','c']\n"),
+                ("a/Cargo.toml", MANIFEST),
+                // A source module named `target` (no manifest beside it).
+                ("a/src/lib.rs", "mod target;\n"),
+                (
+                    "a/src/target/mod.rs",
+                    "#[path = \"../../../b/src/x.rs\"]\nmod x;\n",
+                ),
+                (
+                    "c/Cargo.toml",
+                    "[package]\nname='c'\nversion='0.1.0'\nedition='2021'\n[[test]]\nname='helper'\npath='../b/src/helper.rs'\n",
+                ),
+                ("c/src/lib.rs", ""),
+                ("b/Cargo.toml", MANIFEST),
+                ("b/src/lib.rs", ""),
+                ("b/src/x.rs", ""),
+                ("b/src/helper.rs", ""),
+                ("b/src/stray.rs", ""),
+            ],
+        )?;
+        let context = evidence_for(&root, &["b/src/x.rs", "b/src/helper.rs", "b/src/stray.rs"]);
+        assert_eq!(
+            context.module_graph_orphans,
+            BTreeSet::from([PathBuf::from("b/src/stray.rs")])
+        );
+        // `include!` pastes text into the including module, so a `mod`
+        // declared by the included file resolves against the includer.
+        std::fs::write(root.join("b/src/lib.rs"), "include!(\"../gen/frag.rs\");\n")
+            .map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(root.join("b/gen")).map_err(|error| error.to_string())?;
+        std::fs::write(root.join("b/gen/frag.rs"), "mod stray;\n")
+            .map_err(|error| error.to_string())?;
+        let context = evidence_for(&root, &["b/src/stray.rs"]);
+        assert!(
+            context.module_graph_orphans.is_empty(),
+            "{:?}",
+            context.module_graph_orphans
         );
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
     }

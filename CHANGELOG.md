@@ -17,9 +17,11 @@ are scoped or reviewed.
   it, since rustc never compiles it; the run reports a limitation naming the
   file instead. The out-of-line modules of an external root (`[lib] path =
   "../shared/lib.rs"`) now seed, and the declaring package's tests stay in
-  the Draft scope. A module tree ripr cannot fully resolve (`cfg_if!`-wrapped
-  declarations, a dynamic `#[path]`, a parse error) keeps the previous
-  layout rule. The editor partition uses the same evidence.
+  the Draft scope. The orphan rule applies only when every Rust file in the
+  workspace resolves statically; an item-position macro call (other than
+  `thread_local!`), a `cfg_if!`-wrapped declaration, a dynamic `#[path]` or a
+  parse error anywhere keeps the previous layout rule, since such a file
+  could reach the orphan. The editor partition uses the same evidence.
 - Commands ripr prints now run. For a missing agent receipt, `ripr reports
   index` suggests `ripr agent status`, which names the repair attempt's
   next step, instead of an `agent receipt` call missing its required
