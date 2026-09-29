@@ -19,6 +19,13 @@ const DEFAULT_PILOT_TIMEOUT_MS: u64 = 30_000;
 /// enough to cover a cold cache on the ripr-swarm repo itself.
 const PILOT_RETRY_TIMEOUT_MS: u64 = 240_000;
 
+/// Publish one pilot artifact atomically: a reader, including `ripr lsp`
+/// and a later `ripr agent verify`, sees the previous complete file or the
+/// new one, never a truncated file from an interrupted run (#4542).
+fn write_artifact(path: &Path, text: impl AsRef<[u8]>) -> std::io::Result<()> {
+    output::file_write::write(path, text.as_ref())
+}
+
 /// Write pilot's `repo-exposure.json`.
 ///
 /// When pilot saw the same seam population `ripr check --format
@@ -42,7 +49,7 @@ fn write_pilot_repo_exposure_json(
         output::render::detect_python_repo_exposure_guidance_pub(&input.root, classified);
     let write_failed = |err: String| format!("write {} failed: {err}", path.display());
     if pilot_budget_truncated {
-        return std::fs::write(
+        return write_artifact(
             path,
             output::repo_exposure::render_repo_exposure_json(
                 classified,
@@ -63,18 +70,23 @@ fn write_pilot_repo_exposure_json(
         None,
         config,
     )?;
-    let file = std::fs::File::create(path).map_err(|err| write_failed(err.to_string()))?;
-    let mut writer = std::io::BufWriter::new(file);
-    output::repo_exposure::write_repo_exposure_json_with_context(
-        classified,
-        limit_info,
-        ts_guidance.as_ref(),
-        python_guidance.as_ref(),
-        &context,
-        &mut writer,
-    )
-    .map_err(write_failed)?;
-    std::io::Write::flush(&mut writer).map_err(|err| write_failed(err.to_string()))
+    let mut render_error = None;
+    output::file_write::write_with(path, |file| {
+        let mut writer = std::io::BufWriter::new(file);
+        if let Err(err) = output::repo_exposure::write_repo_exposure_json_with_context(
+            classified,
+            limit_info,
+            ts_guidance.as_ref(),
+            python_guidance.as_ref(),
+            &context,
+            &mut writer,
+        ) {
+            render_error = Some(err);
+            return Err(std::io::Error::other("repo exposure rendering failed"));
+        }
+        std::io::Write::flush(&mut writer)
+    })
+    .map_err(|err| write_failed(render_error.take().unwrap_or_else(|| err.to_string())))
 }
 
 pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
@@ -144,7 +156,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             python_first_use: None,
             language_routes: None,
         };
-        std::fs::write(
+        write_artifact(
             &artifacts.pilot_summary_json,
             output::pilot::render_pilot_timeout_summary_json(context),
         )
@@ -154,7 +166,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 artifacts.pilot_summary_json.display()
             )
         })?;
-        std::fs::write(
+        write_artifact(
             &artifacts.pilot_summary_md,
             output::pilot::render_pilot_timeout_summary_md(context),
         )
@@ -213,7 +225,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         limit_info.as_ref(),
         pilot_budget_truncated,
     )?;
-    std::fs::write(
+    write_artifact(
         &artifacts.repo_exposure_md,
         output::repo_exposure::render_repo_exposure_md(
             &classified,
@@ -228,7 +240,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             artifacts.repo_exposure_md.display()
         )
     })?;
-    std::fs::write(
+    write_artifact(
         &artifacts.agent_seam_packets_json,
         output::agent_seam_packets::render_agent_seam_packets_json_with_causal(
             &classified,
@@ -243,7 +255,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         )
     })?;
 
-    std::fs::write(
+    write_artifact(
         &artifacts.pilot_summary_json,
         output::pilot::render_pilot_summary_json(&classified, context),
     )
@@ -253,7 +265,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             artifacts.pilot_summary_json.display()
         )
     })?;
-    std::fs::write(
+    write_artifact(
         &artifacts.pilot_summary_md,
         output::pilot::render_pilot_summary_md(&classified, context),
     )
