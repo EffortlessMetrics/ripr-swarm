@@ -29,7 +29,7 @@ jobs:
 
           path = Path("xtask/src/main.rs")
           text = path.read_text(encoding="utf-8")
-          marker = '    if path.starts_with("packaging/python/") {\n'
+          marker = "pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {\n"
           insertion = '''    if matches!(
               path,
               "packaging/npm/launcher/bin/ripr.cjs"
@@ -40,11 +40,13 @@ jobs:
               return Some("npm launcher runtime and focused launcher contract tests");
           }
           '''
-          if insertion in text:
-              raise SystemExit("npm launcher retention reason is already present")
-          if text.count(marker) != 1:
-              raise SystemExit(f"expected one Python packaging marker, found {text.count(marker)}")
-          path.write_text(text.replace(marker, insertion + marker, 1), encoding="utf-8")
+          if insertion not in text:
+              if text.count(marker) != 1:
+                  raise SystemExit(
+                      f"expected one non-Rust retention function marker, found {text.count(marker)}"
+                  )
+              text = text.replace(marker, marker + insertion, 1)
+              path.write_text(text, encoding="utf-8")
           PY
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
