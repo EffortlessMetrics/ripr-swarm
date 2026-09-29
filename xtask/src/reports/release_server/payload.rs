@@ -269,9 +269,7 @@ fn current_payload_context(
     executable: &str,
 ) -> Result<PayloadBuildContext, String> {
     Ok(PayloadBuildContext {
-        repository: current_payload_repository_context(
-            contract, target, version, executable,
-        )?,
+        repository: current_payload_repository_context(contract, target, version, executable)?,
         toolchain: PayloadToolchainIdentity {
             rustc_verbose_version: checked_output("rustc", &["-vV"], "rustc identity")?,
             cargo_verbose_version: checked_output("cargo", &["-vV"], "cargo identity")?,
@@ -1021,8 +1019,7 @@ mod tests {
             "stale source identity",
         )?;
         let mut stale = identity;
-        stale.native_runtime_evidence.source =
-            "EffortlessMetrics/ripr-swarm#9999".to_string();
+        stale.native_runtime_evidence.source = "EffortlessMetrics/ripr-swarm#9999".to_string();
         let _ = require_error(
             validate_identity_repository_context(&stale, &context.repository),
             "stale runtime-evidence owner",
