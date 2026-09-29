@@ -1413,6 +1413,7 @@ mod tests {
             None,
             Some(&skip),
             None,
+            None,
             &mut bytes,
         )
         .map_err(|error| format!("write json: {error}"))?;
