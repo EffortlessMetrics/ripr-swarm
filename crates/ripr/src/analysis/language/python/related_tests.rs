@@ -502,7 +502,33 @@ fn import_alias_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
                 // value, not the imported module.
                 && !test_binds_local(test, &import.alias)
                 && contains_attribute_call(&test.body_text, &import.alias, &owner.name))
+            || (!is_method_owner
+                && !test_binds_local(test, &import.alias)
+                && submodule_receivers(import, owner).iter().any(|receiver| {
+                    contains_attribute_call(&test.body_text, receiver, &owner.name)
+                }))
     })
+}
+
+/// Receivers that reach the owner's module through a package import (#4560):
+/// `import click` binds `click`, and the owner module `click.utils` is then
+/// `click.utils`, so `click.utils._expand_args(` calls the owner. The import
+/// binds module path `P` (`import P [as A]`, or `from S import m [as A]` with
+/// `P = S.m`); for every owner module path `P.<rest>` the receiver is
+/// `A.<rest>`. Only exact dotted-path prefixes match, never a file stem.
+pub(super) fn submodule_receivers(import: &PythonImport, owner: &PythonOwner) -> Vec<String> {
+    let bound = if import.source_module.is_empty() {
+        import.imported.clone()
+    } else {
+        format!("{}.{}", import.source_module, import.imported)
+    };
+    let prefix = format!("{bound}.");
+    owner_module_paths(&owner.file)
+        .iter()
+        .filter_map(|path| path.strip_prefix(&prefix))
+        .filter(|rest| !rest.is_empty())
+        .map(|rest| format!("{}.{rest}", import.alias))
+        .collect()
 }
 
 pub(super) fn imported_module_matches_owner(import: &PythonImport, owner: &PythonOwner) -> bool {
@@ -890,9 +916,12 @@ fn test_references_module_symbol(test: &PythonTest, owner: &PythonOwner, symbol:
             return !test_binds_local(test, &import.alias)
                 && contains_name_reference(body, &import.alias);
         }
-        imported_module_matches_owner(import, owner)
-            && !test_binds_local(test, &import.alias)
-            && contains_member_reference(body, &import.alias, symbol)
+        !test_binds_local(test, &import.alias)
+            && ((imported_module_matches_owner(import, owner)
+                && contains_member_reference(body, &import.alias, symbol))
+                || submodule_receivers(import, owner)
+                    .iter()
+                    .any(|receiver| contains_member_reference(body, receiver, symbol)))
     })
 }
 

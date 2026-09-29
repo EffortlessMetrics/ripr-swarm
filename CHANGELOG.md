@@ -18,6 +18,10 @@ are scoped or reviewed.
   mutant survives both cases. Each statically certain parametrize case now
   binds its literal argvalue, so the finding is `weakly_exposed` and names
   `x == 0` as the missing boundary (#4559).
+- Python: a test that imports a package and calls the owner through its
+  submodule attribute (`import click` then `click.utils._expand_args(...)`)
+  is now related to the owner. On pallets/click such changes were
+  `no_static_path` although the calling tests kill the mutants (#4560).
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from

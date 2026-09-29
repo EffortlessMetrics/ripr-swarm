@@ -171,6 +171,13 @@ the package, so a test that only calls a sibling name from the same package
 stays unrelated, and a test that binds a local named like the package alias
 (a parameter, fixture or assignment) calls that local, not the package. Diff
 mode and repo mode apply the same rule.
+A package import also reaches a free-function owner through the remaining
+submodule path (#4560): `import click` binds `click`, so
+`click.utils._expand_args(...)` calls `src/click/utils.py::_expand_args`, and
+`from click import _internal` reaches `_internal.utils.f(...)`. The receiver
+must spell the owner's full dotted module path below the imported module; a
+different submodule (`click.other.f(`) or a local shadowing the alias does not
+match.
 Test-name and fixture-name proximity may provide a suggested repair location,
 but these links must be marked uncertain, must keep weak reachability, and must
 not promote unrelated assertions to strong revealability.
