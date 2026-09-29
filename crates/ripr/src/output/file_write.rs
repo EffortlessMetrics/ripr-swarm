@@ -56,14 +56,18 @@ pub(crate) fn validate_destination(path: &Path) -> io::Result<()> {
 fn open_new(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
-    #[cfg(all(
-        target_os = "linux",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    ))]
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
         // O_NOFOLLOW | O_NONBLOCK: reject links; do not wait for a FIFO reader.
         options.custom_flags(0x0002_0000 | 0x0000_0800);
+    }
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        // aarch64 uses the asm-generic values: O_NOFOLLOW is 0o100000 there,
+        // and x86_64's 0x20000 would be O_LARGEFILE, which follows links.
+        options.custom_flags(0x0000_8000 | 0x0000_0800);
     }
     #[cfg(all(
         target_os = "macos",

@@ -19,13 +19,6 @@ const DEFAULT_PILOT_TIMEOUT_MS: u64 = 30_000;
 /// enough to cover a cold cache on the ripr-swarm repo itself.
 const PILOT_RETRY_TIMEOUT_MS: u64 = 240_000;
 
-/// Publish one pilot artifact atomically: a reader, including `ripr lsp`
-/// and a later `ripr agent verify`, sees the previous complete file or the
-/// new one, never a truncated file from an interrupted run (#4542).
-fn write_artifact(path: &Path, text: impl AsRef<[u8]>) -> std::io::Result<()> {
-    output::file_write::write(path, text.as_ref())
-}
-
 /// Write pilot's `repo-exposure.json`.
 ///
 /// When pilot saw the same seam population `ripr check --format
@@ -49,7 +42,7 @@ fn write_pilot_repo_exposure_json(
         output::render::detect_python_repo_exposure_guidance_pub(&input.root, classified);
     let write_failed = |err: String| format!("write {} failed: {err}", path.display());
     if pilot_budget_truncated {
-        return write_artifact(
+        return write_pilot_file(
             path,
             output::repo_exposure::render_repo_exposure_json(
                 classified,
@@ -57,8 +50,7 @@ fn write_pilot_repo_exposure_json(
                 ts_guidance.as_ref(),
                 python_guidance.as_ref(),
             ),
-        )
-        .map_err(|err| write_failed(err.to_string()));
+        );
     }
     // Base `None`: pilot's printed after-snapshot command passes no `--base`
     // or `--diff`, so both snapshots intentionally carry no base under
@@ -156,26 +148,14 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             python_first_use: None,
             language_routes: None,
         };
-        write_artifact(
+        write_pilot_file(
             &artifacts.pilot_summary_json,
             output::pilot::render_pilot_timeout_summary_json(context),
-        )
-        .map_err(|err| {
-            format!(
-                "write {} failed: {err}",
-                artifacts.pilot_summary_json.display()
-            )
-        })?;
-        write_artifact(
+        )?;
+        write_pilot_file(
             &artifacts.pilot_summary_md,
             output::pilot::render_pilot_timeout_summary_md(context),
-        )
-        .map_err(|err| {
-            format!(
-                "write {} failed: {err}",
-                artifacts.pilot_summary_md.display()
-            )
-        })?;
+        )?;
         print!("{}", output::pilot::render_pilot_timeout_terminal(context));
         return Ok(());
     };
@@ -225,7 +205,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         limit_info.as_ref(),
         pilot_budget_truncated,
     )?;
-    write_artifact(
+    write_pilot_file(
         &artifacts.repo_exposure_md,
         output::repo_exposure::render_repo_exposure_md(
             &classified,
@@ -233,48 +213,24 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
         ),
-    )
-    .map_err(|err| {
-        format!(
-            "write {} failed: {err}",
-            artifacts.repo_exposure_md.display()
-        )
-    })?;
-    write_artifact(
+    )?;
+    write_pilot_file(
         &artifacts.agent_seam_packets_json,
         output::agent_seam_packets::render_agent_seam_packets_json_with_causal(
             &classified,
             limit_info.as_ref(),
             causal_projection.as_ref(),
         ),
-    )
-    .map_err(|err| {
-        format!(
-            "write {} failed: {err}",
-            artifacts.agent_seam_packets_json.display()
-        )
-    })?;
+    )?;
 
-    write_artifact(
+    write_pilot_file(
         &artifacts.pilot_summary_json,
         output::pilot::render_pilot_summary_json(&classified, context),
-    )
-    .map_err(|err| {
-        format!(
-            "write {} failed: {err}",
-            artifacts.pilot_summary_json.display()
-        )
-    })?;
-    write_artifact(
+    )?;
+    write_pilot_file(
         &artifacts.pilot_summary_md,
         output::pilot::render_pilot_summary_md(&classified, context),
-    )
-    .map_err(|err| {
-        format!(
-            "write {} failed: {err}",
-            artifacts.pilot_summary_md.display()
-        )
-    })?;
+    )?;
 
     print!(
         "{}",
@@ -400,6 +356,13 @@ fn pilot_artifacts(out_dir: &Path) -> output::pilot::PilotArtifacts {
         pilot_summary_json: out_dir.join("pilot-summary.json"),
         pilot_summary_md: out_dir.join("pilot-summary.md"),
     }
+}
+
+/// Pilot artifacts default under the analyzed repository, which may commit a
+/// symlink at an artifact path; never write through it.
+fn write_pilot_file(path: &Path, contents: impl AsRef<[u8]>) -> Result<(), String> {
+    output::file_write::write(path, contents.as_ref())
+        .map_err(|err| format!("write output {} failed: {err}", path.display()))
 }
 
 #[cfg(test)]
