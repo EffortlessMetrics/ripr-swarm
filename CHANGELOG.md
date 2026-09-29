@@ -20,8 +20,11 @@ are scoped or reviewed.
   `x == 0` as the missing boundary (#4559).
 - Python: a test that imports a package and calls the owner through its
   submodule attribute (`import click` then `click.utils._expand_args(...)`)
-  is now related to the owner. On pallets/click such changes were
-  `no_static_path` although the calling tests kill the mutants (#4560).
+  is now related to the owner, and so is an owner in a package
+  `__init__.py` called through its module import (`from dateutil import
+  zoneinfo` then `zoneinfo.get_zonefile_instance(...)`). On pallets/click and
+  dateutil such changes were `no_static_path` although the calling tests kill
+  the mutants (#4560).
 - Python: `unittest` classes that inherit `TestCase` through another class in
   the same file (`class ZoneInfoGettzTest(GettzTest)`), and test methods on a
   mixin such a class inherits, are now collected. On dateutil a change killed

@@ -649,6 +649,38 @@ fn package_import_reaches_owner_through_submodule_attribute_path() -> Result<(),
     Ok(())
 }
 
+/// #4560, the dateutil shape: the owner lives in a package initializer
+/// (`src/dateutil/zoneinfo/__init__.py`) and the test calls it through
+/// `from dateutil import zoneinfo`. The file stem is `__init__`, so only the
+/// dotted module path identifies it.
+#[test]
+fn package_initializer_owner_is_reached_through_its_module_import() -> Result<(), String> {
+    let finding = analyze_one_line(
+        "init-owner",
+        &[
+            (
+                "src/dateutil/zoneinfo/__init__.py",
+                "def get_zonefile_instance(new_instance=False):\n    if new_instance:\n        return 1\n    return 0\n",
+            ),
+            ("src/dateutil/__init__.py", ""),
+            (
+                "tests/test_tz.py",
+                "from dateutil import zoneinfo\n\n\ndef test_new_instance():\n    assert zoneinfo.get_zonefile_instance(new_instance=True) == 1\n",
+            ),
+        ],
+        "src/dateutil/zoneinfo/__init__.py",
+        2,
+    )?;
+    if related_names(&finding) != ["test_new_instance"] {
+        return Err(format!(
+            "the package initializer owner must relate its module-import caller, got {:?} ({:?})",
+            related_names(&finding),
+            finding.class
+        ));
+    }
+    Ok(())
+}
+
 /// Discriminating negative for #4560: the dotted path must equal the owner's
 /// module path. `click.other._expand(` names a different module, and a local
 /// that shadows the package alias is not the import.

@@ -180,7 +180,9 @@ submodule path (#4560): `import click` binds `click`, so
 `from click import _internal` reaches `_internal.utils.f(...)`. The receiver
 must spell the owner's full dotted module path below the imported module; a
 different submodule (`click.other.f(`) or a local shadowing the alias does not
-match.
+match. An import of the owner's own module path reaches it the same way, which
+covers an owner in a package `__init__.py` (`from dateutil import zoneinfo`
+then `zoneinfo.get_zonefile_instance(...)`), whose file stem never matches.
 Test-name and fixture-name proximity may provide a suggested repair location,
 but these links must be marked uncertain, must keep weak reachability, and must
 not promote unrelated assertions to strong revealability.

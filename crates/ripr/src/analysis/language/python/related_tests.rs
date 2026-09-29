@@ -510,12 +510,15 @@ fn import_alias_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
     })
 }
 
-/// Receivers that reach the owner's module through a package import (#4560):
-/// `import click` binds `click`, and the owner module `click.utils` is then
-/// `click.utils`, so `click.utils._expand_args(` calls the owner. The import
-/// binds module path `P` (`import P [as A]`, or `from S import m [as A]` with
-/// `P = S.m`); for every owner module path `P.<rest>` the receiver is
-/// `A.<rest>`. Only exact dotted-path prefixes match, never a file stem.
+/// Receivers that reach the owner's module through an import, by its full
+/// dotted module path (#4560). The import binds module path `P`
+/// (`import P [as A]`, or `from S import m [as A]` with `P = S.m`). When `P`
+/// is the owner's module the receiver is `A`; this covers a package
+/// `__init__.py` owner (`from dateutil import zoneinfo` for
+/// `src/dateutil/zoneinfo/__init__.py`), whose file stem `__init__` never
+/// matches. When the owner's module is `P.<rest>` the receiver is `A.<rest>`:
+/// `import click` reaches `click.utils._expand_args(`. Only exact dotted
+/// paths match, never a file stem.
 pub(super) fn submodule_receivers(import: &PythonImport, owner: &PythonOwner) -> Vec<String> {
     let bound = if import.source_module.is_empty() {
         import.imported.clone()
@@ -525,9 +528,15 @@ pub(super) fn submodule_receivers(import: &PythonImport, owner: &PythonOwner) ->
     let prefix = format!("{bound}.");
     owner_module_paths(&owner.file)
         .iter()
-        .filter_map(|path| path.strip_prefix(&prefix))
-        .filter(|rest| !rest.is_empty())
-        .map(|rest| format!("{}.{rest}", import.alias))
+        .filter_map(|path| {
+            if *path == bound {
+                Some(import.alias.clone())
+            } else {
+                path.strip_prefix(&prefix)
+                    .filter(|rest| !rest.is_empty())
+                    .map(|rest| format!("{}.{rest}", import.alias))
+            }
+        })
         .collect()
 }
 
