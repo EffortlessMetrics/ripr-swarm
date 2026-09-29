@@ -1340,12 +1340,16 @@ fn review_comments_with_diff_loader_at(
     let now: analysis::cancellation::AnalysisClock = std::sync::Arc::new(now);
     let started = now();
     // #4363 review: the receipt's revision probes must respect this run's
-    // remaining `--timeout-ms` budget, not a fixed one-minute ceiling per
-    // probe — the run's own deadline is only enforced after construction.
-    let revision_budget = Some(
-        Duration::from_millis(options.timeout_ms)
-            .saturating_sub(now().saturating_duration_since(started)),
-    );
+    // `--timeout-ms` budget, not a fixed one-minute ceiling per probe — the
+    // run's own deadline is only enforced after construction. The constructor
+    // runs both probes itself and re-derives the remaining budget between
+    // them on its own clock, so no pre-construction subtraction is needed
+    // here: a fresh observation would break the run's single clock-observation
+    // contract in the source-failure flow
+    // (`review_comments_source_error_wins_over_later_clock_expiry`), and
+    // `started` is observed immediately before admission, making the run's
+    // full budget the remaining budget at this point.
+    let revision_budget = Some(Duration::from_millis(options.timeout_ms));
     let cancellation = analysis::cancellation::AnalysisCancellationToken::with_budget(
         started,
         Duration::from_millis(options.timeout_ms),
