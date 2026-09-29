@@ -28,6 +28,14 @@ are scoped or reviewed.
   actual collection retains discrimination. Return, error, and field
   direct-sink behavior is unchanged
   ([#4575](https://github.com/EffortlessMetrics/ripr-swarm/issues/4575)).
+- `ripr check` is faster on large repositories, with byte-identical JSON on
+  12 real commits of tokio, vite, Django and ripr. TypeScript test selection
+  walked the directory tree for `package.json` twice per owner and test;
+  a vite commit went from 6.7 s to 3.2 s. Rust classification no longer
+  reparses the owner's file per probe unless the file could admit the
+  derived tuple slice, and computes each related test's value facts once
+  per owner instead of once per probe; a ripr commit went
+  from 11.1 s to 8.1 s.
 - Security: Rust source discovery skips symlinked `.rs` entries, as the
   Python and TypeScript readers already did. A cloned repository or pull
   request that committed `src/zero.rs -> /dev/zero` made `ripr check` read
@@ -1289,6 +1297,17 @@ are scoped or reviewed.
   attempt's result; that file is now a compatibility copy of the latest
   finish, and `ripr agent status` reads the attempt's own receipt first
   (#4636).
+- Cached analysis is no longer shared between different builds of the same
+  version. The file-fact and classified-seam caches under
+  `target/ripr/cache` keyed on the package version alone, so a `0.11.0`
+  binary built from one commit served facts and classifications that a
+  `0.11.0` binary from another commit had written, including across an
+  upgrade from a release candidate to the final release. The key now names
+  the build commit; a build with uncommitted changes or no commit record also
+  names a digest of its crate sources and lockfile. Entries from other builds
+  become misses and are recomputed. A `ripr check` artifact from another
+  build of the same version is refused for reuse, and the `analyzer_version`
+  in a targeted-rerun input fingerprint carries the same build identity.
 
 ### Added
 
