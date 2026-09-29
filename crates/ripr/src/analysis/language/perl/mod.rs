@@ -190,7 +190,7 @@ impl LanguageAdapter for PerlAdapter {
             return Err(missing_fact_packet_reason());
         };
 
-        let packet_text = std::fs::read_to_string(facts_path).map_err(|err| {
+        let packet_text = crate::bounded_input::read_to_string(facts_path).map_err(|err| {
             format!(
                 "failed to read Perl fact packet `{}`: {err}",
                 facts_path.display()
@@ -247,7 +247,7 @@ impl LanguageAdapter for PerlAdapter {
             return Err(missing_fact_packet_reason());
         };
 
-        let packet_text = std::fs::read_to_string(facts_path).map_err(|err| {
+        let packet_text = crate::bounded_input::read_to_string(facts_path).map_err(|err| {
             format!(
                 "failed to read Perl fact packet `{}`: {err}",
                 facts_path.display()

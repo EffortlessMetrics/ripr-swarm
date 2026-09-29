@@ -551,7 +551,7 @@ fn rerun_gap(
         selected_test_count: 0,
         direct_call_names: Vec::new(),
     };
-    let contents = match std::fs::read_to_string(&gap_ledger) {
+    let contents = match crate::bounded_input::read_to_string(&gap_ledger) {
         Ok(contents) => contents,
         Err(err) => {
             return Ok(limited_report(
@@ -1456,7 +1456,7 @@ fn apply_before(report: &mut TargetedRerunReport, before: &Path) {
     if report.state == "limited" {
         return;
     }
-    let before_text = match std::fs::read_to_string(before) {
+    let before_text = match crate::bounded_input::read_to_string(before) {
         Ok(text) => text,
         Err(err) => {
             set_before_limitation(
