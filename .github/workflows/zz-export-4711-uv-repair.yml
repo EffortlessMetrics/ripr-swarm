@@ -65,4 +65,5 @@ jobs:
           name: python-wheel-uv-repair
           path: repair
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 1
