@@ -113,8 +113,13 @@ independently of that root. An explicit store does not fall back to the
 default if it is missing. Before, after, verify, and `ripr agent status`
 consume the same resolver. An attempt ID from one store cannot resolve
 through another. Equivalent supported spellings of the default locator stay
-one identity; traversal, symlink/junction escape, UNC, and drive-relative
-paths fail closed.
+one identity; traversal, symlink/junction escape, a missing child under an
+escaping or in-tree alias parent, UNC, and drive-relative paths fail closed.
+Nested `store.schema_version` must be `0.1`. Recovery and status follow-up
+commands for an explicit store repeat `--store` so the attempt ID cannot
+resolve through the default directory. An explicit store outside
+`target/ripr` is an expected operational write; stores already under
+`target/ripr` stay covered by that subtree.
 
 The exact filenames follow the command-owned source artifacts. `attempt.json` identifies them by semantic role and binds each retained file by path, byte count, and SHA-256 digest. After-phase `agent_receipt` / `agent_verify` files are recorded in `terminal_artifacts` and are excluded from the before commitment.
 

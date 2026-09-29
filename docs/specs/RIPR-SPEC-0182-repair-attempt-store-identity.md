@@ -82,6 +82,17 @@ Resolution law:
   ambiguity, and unsupported UNC spelling fail closed.
 - A missing explicit store does not fall back to the default. A missing default
   store may be created on prepare, or reported missing on open.
+- Prepare canonicalizes the deepest existing ancestor before creating a missing
+  store, so a child under an escaping or in-tree alias parent is refused
+  without external mutation.
+- Nested `store.schema_version` must be `0.1`; a different generation is not
+  another store identity.
+- Recovery and status follow-up commands for an explicit store repeat `--store`
+  / the portable locator. Status projections do not hardcode the default
+  directory for an explicit-store attempt.
+- An explicit store outside `target/ripr` is included in the edit cage's
+  expected operational writes before baseline capture. Stores already under
+  `target/ripr` stay covered by that subtree.
 - Equivalent supported spellings of the default locator collapse to one
   default identity. Equivalent supported spellings of one explicit locator
   collapse to that explicit identity.
@@ -151,8 +162,15 @@ Python-specific or editor-specific attempt store.
 - `crates/ripr/src/app/repair_attempt/store.rs::tests::the_repository_root_is_not_a_store`
 - `crates/ripr/src/app/repair_attempt/store.rs::tests::case_fold_spelling_does_not_silently_share_identity`
 - `crates/ripr/src/app/repair_attempt/store.rs::tests::in_tree_symlink_alias_rejects`
+- `crates/ripr/src/app/repair_attempt/store.rs::tests::missing_child_under_escaping_symlink_parent_is_refused_without_external_mutation`
+- `crates/ripr/src/app/repair_attempt/store.rs::tests::missing_child_under_in_tree_symlink_parent_is_refused`
+- `crates/ripr/src/app/repair_attempt/store.rs::tests::nested_store_schema_version_mismatch_is_refused`
 - `crates/ripr/src/app/repair_attempt/mod.rs::tests::explicit_store_before_and_after_share_identity_and_stay_isolated`
+- `crates/ripr/src/app/repair_attempt/mod.rs::tests::cage_policy_includes_explicit_store_outside_target_ripr`
+- `crates/ripr/src/app/repair_attempt/mod.rs::tests::diverged_head_recovery_repeats_explicit_store_on_follow_up_commands`
+- `crates/ripr/src/app/repair_attempt/mod.rs::tests::after_phase_not_awaiting_error_names_explicit_store`
 - `crates/ripr/src/app/agent_status.rs::tests::agent_status_reads_only_the_selected_store`
+- `crates/ripr/src/cli/commands/agent.rs::tests::repair_after_cage_recovery_repeats_explicit_store`
 - `crates/ripr/src/cli/agent.rs::tests::agent_repair_parses_explicit_store_and_rejects_empty`
 - `crates/ripr/src/cli/agent.rs::tests::agent_status_parses_explicit_store_and_rejects_empty`
 

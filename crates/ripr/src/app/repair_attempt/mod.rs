@@ -45,7 +45,7 @@ const CARGO_WORKSPACE_LOCKFILE: &str = "Cargo.lock";
 
 pub(crate) use store::{
     RepairAttemptStoreAccess, RepairAttemptStoreCurrentness, RepairAttemptStoreIdentity,
-    RepairAttemptStoreRef, resolve_store,
+    RepairAttemptStoreRef, quoted_store_flag, quoted_store_flag_from_identity, resolve_store,
 };
 
 static ATTEMPT_NONCE: AtomicU64 = AtomicU64::new(0);
@@ -194,10 +194,15 @@ pub(crate) fn receipt_binding_from(
         )
     })?;
     let packet_sha256 = sha256_bytes(&packet);
-    let policy = edit_cage_policy_from_packet(
+    let mut policy = edit_cage_policy_from_packet(
         std::str::from_utf8(&packet)
             .map_err(|error| format!("repair packet is not UTF-8: {error}"))?,
         seam_id,
+    )?;
+    include_explicit_store_operational_write(
+        &mut policy,
+        store.canonical_root(),
+        Some(Path::new(store.locator())),
     )?;
     let (manifest_path, manifest) = if let Some(attempt_id) = attempt_id {
         let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
@@ -503,10 +508,7 @@ fn complete_repair_attempt(
     let canonical_root = store.canonical_root();
     let result = stage_before_artifacts(canonical_root, attempt_directory, publication.sources)
         .and_then(|artifacts| {
-            let store_flag = match store.manifest_identity() {
-                Some(identity) => format!(" --store {}", shell_arg(&identity.locator)),
-                None => String::new(),
-            };
+            let store_flag = store.quoted_store_flag();
             let next_command = format!(
                 "ripr agent repair --root {}{store_flag} --attempt {} --phase after{}",
                 shell_arg(&bound_root(&display_path(publication.root_argument))),
@@ -1349,6 +1351,44 @@ pub(crate) fn edit_cage_policy_from_packet(
     })
 }
 
+/// Adds an explicit store outside `target/ripr` to the cage's operational
+/// writes so before-phase baseline capture does not treat attempt publication
+/// as an authored edit. Stores already under `target/ripr` stay covered by
+/// that subtree and are not duplicated.
+pub(crate) fn include_explicit_store_operational_write(
+    policy: &mut EditCagePolicy,
+    root: &Path,
+    store: Option<&Path>,
+) -> Result<(), String> {
+    let Some(store) = store else {
+        return Ok(());
+    };
+    let relative = if store.is_absolute() {
+        store
+            .strip_prefix(root)
+            .map_err(|_prefix| {
+                format!(
+                    "repair attempt store {} is not contained in repository root {}",
+                    display_path(store),
+                    display_path(root)
+                )
+            })?
+            .to_path_buf()
+    } else {
+        store.to_path_buf()
+    };
+    let locator = crate::edit_cage::CagePathRule::subtree(&relative)?;
+    if policy
+        .expected_operational_writes
+        .iter()
+        .any(|rule| rule.matches(locator.path()))
+    {
+        return Ok(());
+    }
+    policy.expected_operational_writes.push(locator);
+    Ok(())
+}
+
 /// Captures the edit-cage baseline and writes it to a workflow compatibility
 /// path. Unlike the immutable attempt destinations, this copy is refreshed on
 /// every before phase (the durable authority is the baseline staged inside
@@ -1808,6 +1848,7 @@ pub(crate) fn diverged_head_recovery(
     seam_id: &str,
     prepared_head: &str,
     current_head: &str,
+    store_flag: &str,
 ) -> DivergedHeadRecovery {
     let root_arg = shell_arg(root_display);
     let attempt_arg = shell_arg(attempt_id);
@@ -1819,10 +1860,10 @@ pub(crate) fn diverged_head_recovery(
             short_head(prepared_head),
         ),
         reset: format!(
-            "to recover when only your own test commit was rewritten: `git reset --soft {prepared_head}` restores the prepared head and keeps your edit staged; then rerun `ripr agent repair --root {root_arg} --attempt {attempt_arg} --phase after`."
+            "to recover when only your own test commit was rewritten: `git reset --soft {prepared_head}` restores the prepared head and keeps your edit staged; then rerun `ripr agent repair --root {root_arg}{store_flag} --attempt {attempt_arg} --phase after`."
         ),
         restart: format!(
-            "otherwise, prepare a new attempt at the current HEAD: set your test edit aside, run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before` while the gap still exists, restore the edit, then run the new --attempt command it prints."
+            "otherwise, prepare a new attempt at the current HEAD: set your test edit aside, run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` while the gap still exists, restore the edit, then run the new --attempt command it prints."
         ),
     }
 }
@@ -1839,9 +1880,10 @@ fn after_phase_not_awaiting_error(root_display: &str, manifest: &RepairAttemptMa
     let root_arg = shell_arg(root_display);
     let attempt_id = manifest.repair_attempt_id.as_str();
     let seam_id = &manifest.seam_id;
-    let status = format!("ripr agent status --root {root_arg}");
+    let store_flag = quoted_store_flag_from_identity(manifest.store.as_ref());
+    let status = format!("ripr agent status --root {root_arg}{store_flag}");
     let restart = format!(
-        "ripr agent repair --root {root_arg} --seam-id {} --phase before",
+        "ripr agent repair --root {root_arg}{store_flag} --seam-id {} --phase before",
         shell_arg(seam_id)
     );
     let after_head = manifest
@@ -2163,6 +2205,18 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
             .any(|non_claim| non_claim.is_empty())
     {
         return Err("repair attempt manifest is incomplete or malformed".to_string());
+    }
+    if let Some(store) = &manifest.store {
+        if store.schema_version != store::REPAIR_ATTEMPT_STORE_SCHEMA_VERSION {
+            return Err(format!(
+                "repair attempt store schema must be {}, got {}",
+                store::REPAIR_ATTEMPT_STORE_SCHEMA_VERSION,
+                store.schema_version
+            ));
+        }
+        if store.locator.trim().is_empty() {
+            return Err("repair attempt store locator is empty".to_string());
+        }
     }
     let has_after = manifest.after.is_some();
     let state_requires_after = matches!(
@@ -2662,6 +2716,122 @@ mod tests {
     }
 
     #[test]
+    fn cage_policy_includes_explicit_store_outside_target_ripr() -> Result<(), String> {
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "allowed_edit_surface": ["tests/target.rs"],
+            "forbidden_files": []
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        let mut covered = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
+        include_explicit_store_operational_write(
+            &mut covered,
+            Path::new("/repo"),
+            Some(Path::new("target/ripr/alt-attempts")),
+        )?;
+        if covered.expected_operational_writes.len() != 1
+            || covered.expected_operational_writes[0].path() != "target/ripr"
+        {
+            return Err(format!(
+                "store under target/ripr must stay covered by the existing subtree: {:?}",
+                covered
+                    .expected_operational_writes
+                    .iter()
+                    .map(crate::edit_cage::CagePathRule::path)
+                    .collect::<Vec<_>>()
+            ));
+        }
+
+        let mut outside = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
+        include_explicit_store_operational_write(
+            &mut outside,
+            Path::new("/repo"),
+            Some(Path::new(".ripr/attempts")),
+        )?;
+        let paths = outside
+            .expected_operational_writes
+            .iter()
+            .map(crate::edit_cage::CagePathRule::path)
+            .collect::<Vec<_>>();
+        if !paths.contains(&"target/ripr") || !paths.contains(&".ripr/attempts") {
+            return Err(format!(
+                "explicit store outside target/ripr must be an operational write: {paths:?}"
+            ));
+        }
+        if !outside.allows_path(".ripr/attempts/id/attempt.json") {
+            return Err("explicit store path was not admitted as an operational write".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diverged_head_recovery_repeats_explicit_store_on_follow_up_commands() -> Result<(), String> {
+        let recovery = diverged_head_recovery(
+            ".",
+            "repair-attempt-0123456789abcdef01234567",
+            "seam:sample",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            " --store .ripr/attempts",
+        );
+        for line in recovery.lines() {
+            if line.contains("ripr agent repair") && !line.contains("--store .ripr/attempts") {
+                return Err(format!("recovery command lost --store: {line}"));
+            }
+        }
+        if !recovery.reset.contains("--phase after")
+            || !recovery.restart.contains("--phase before")
+            || !recovery.reset.contains("--store .ripr/attempts")
+            || !recovery.restart.contains("--store .ripr/attempts")
+        {
+            return Err(format!(
+                "diverged recovery lost store identity: reset={} restart={}",
+                recovery.reset, recovery.restart
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn after_phase_not_awaiting_error_names_explicit_store() -> Result<(), String> {
+        let root = test_root("after-store")?;
+        let mut manifest = sample_manifest(&root)?;
+        manifest.state = RepairAttemptState::ReadyToFinish;
+        manifest.after = Some(RepairAttemptAfter {
+            attempt_id: manifest.repair_attempt_id.clone(),
+            repository_head: manifest.repository_head.clone(),
+            delta_sha256: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .to_string(),
+            packet_sha256:
+                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    .to_string(),
+            current: true,
+            verdict: crate::edit_cage::EditCageVerdict {
+                status: crate::edit_cage::EditCageVerdictStatus::Compliant,
+                changed_paths: Vec::new(),
+                violations: Vec::new(),
+            },
+        });
+        manifest.store = Some(RepairAttemptStoreIdentity {
+            schema_version: store::REPAIR_ATTEMPT_STORE_SCHEMA_VERSION.to_string(),
+            location_class: store::RepairAttemptStoreLocationClass::ExplicitRepository,
+            locator: ".ripr/attempts".to_string(),
+        });
+        let error = after_phase_not_awaiting_error(".", &manifest);
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        if !error.contains("--store") || !error.contains(".ripr/attempts") {
+            return Err(format!("finished-attempt recovery lost --store: {error}"));
+        }
+        if !error.contains("ripr agent status") || !error.contains("--phase before") {
+            return Err(format!(
+                "finished-attempt recovery lost follow-up commands: {error}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn repair_attempt_schema_carries_terminal_after_contract() -> Result<(), String> {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../schemas/ripr/repair-attempt.schema.json");
@@ -2874,6 +3044,13 @@ mod tests {
             }),
             ("non_claims entry is empty", |manifest| {
                 manifest.non_claims = vec![String::new()];
+            }),
+            ("nested store schema_version is not 0.1", |manifest| {
+                manifest.store = Some(RepairAttemptStoreIdentity {
+                    schema_version: "9.9".to_string(),
+                    location_class: store::RepairAttemptStoreLocationClass::ExplicitRepository,
+                    locator: "target/ripr/alt-attempts".to_string(),
+                });
             }),
         ];
         for (name, mutate) in cases {

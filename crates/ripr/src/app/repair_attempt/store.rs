@@ -174,6 +174,12 @@ impl RepairAttemptStoreRef {
         let expected = declared
             .cloned()
             .unwrap_or_else(RepairAttemptStoreIdentity::default_repository);
+        if expected.schema_version != REPAIR_ATTEMPT_STORE_SCHEMA_VERSION {
+            return Err(format!(
+                "repair attempt store schema must be {REPAIR_ATTEMPT_STORE_SCHEMA_VERSION}, got {}",
+                expected.schema_version
+            ));
+        }
         let actual = self.identity();
         if expected.location_class != actual.location_class || expected.locator != actual.locator {
             return Err(format!(
@@ -182,6 +188,39 @@ impl RepairAttemptStoreRef {
             ));
         }
         Ok(())
+    }
+
+    pub(crate) fn quoted_store_flag(&self) -> String {
+        if self.is_default() {
+            String::new()
+        } else {
+            quoted_store_flag(Some(Path::new(&self.locator)))
+        }
+    }
+}
+
+/// CLI `--store PATH` fragment for recovery and status follow-up commands.
+/// Default invocations omit the flag so ordinary bytes stay compatible.
+pub(crate) fn quoted_store_flag(store: Option<&Path>) -> String {
+    match store {
+        Some(path) if !path.as_os_str().is_empty() => format!(
+            " --store {}",
+            crate::agent::loop_commands::shell_arg(&path.to_string_lossy())
+        ),
+        _ => String::new(),
+    }
+}
+
+pub(crate) fn quoted_store_flag_from_identity(
+    identity: Option<&RepairAttemptStoreIdentity>,
+) -> String {
+    match identity {
+        Some(identity)
+            if identity.location_class != RepairAttemptStoreLocationClass::DefaultRepository =>
+        {
+            quoted_store_flag(Some(Path::new(&identity.locator)))
+        }
+        _ => String::new(),
     }
 }
 
@@ -297,6 +336,7 @@ pub(crate) fn resolve_repair_attempt_store(
             RepairAttemptStoreCurrentness::Missing,
         )),
         (_, RepairAttemptStoreAccess::Prepare) => {
+            validate_prepare_ancestors(&canonical_root, &cleaned)?;
             std::fs::create_dir_all(&cleaned).map_err(|error| {
                 format!(
                     "create repair attempt store {} failed: {error}",
@@ -313,6 +353,16 @@ pub(crate) fn resolve_repair_attempt_store(
                 ));
             }
             let canonical_relative = relative_locator(&canonical_root, &canonical_store)?;
+            if canonical_relative != relative
+                && !equivalent_windows_drive_spelling(&relative, &canonical_relative)
+            {
+                let _ = std::fs::remove_dir_all(&cleaned);
+                return Err(format!(
+                    "repair attempt store {} is a symlink, junction, or case-fold alias of `{}`; store identity uses the concrete contained locator, and aliases are rejected",
+                    display_path(&requested),
+                    canonical_relative
+                ));
+            }
             Ok(store_ref(
                 canonical_root,
                 canonical_relative,
@@ -461,6 +511,59 @@ fn canonicalize_no_escape(path: &Path) -> Result<PathBuf, String> {
             display_path(path)
         )
     })
+}
+
+/// Canonicalize the deepest existing ancestor before `create_dir_all` so a
+/// missing child under an escaping or aliasing parent is refused without
+/// creating directories outside the selected root.
+fn validate_prepare_ancestors(canonical_root: &Path, cleaned: &Path) -> Result<(), String> {
+    let mut current = cleaned.parent().ok_or_else(|| {
+        format!(
+            "repair attempt store {} is missing a parent directory",
+            display_path(cleaned)
+        )
+    })?;
+    loop {
+        match current.symlink_metadata() {
+            Ok(_) => {
+                let canonical = current.canonicalize().map_err(|error| {
+                    format!(
+                        "repair attempt store parent {} is a dangling symlink, junction, or unreadable alias: {error}",
+                        display_path(current)
+                    )
+                })?;
+                if path_escapes_root(canonical_root, &canonical) {
+                    return Err(format!(
+                        "repair attempt store {} escapes repository root {} through a symlink or junction",
+                        display_path(cleaned),
+                        display_path(canonical_root)
+                    ));
+                }
+                let lexical = lexically_clean(current);
+                let lexical_rel = relative_locator(canonical_root, &lexical).unwrap_or_default();
+                let canonical_rel =
+                    relative_locator(canonical_root, &canonical).unwrap_or_default();
+                if lexical_rel != canonical_rel
+                    && !equivalent_windows_drive_spelling(&lexical_rel, &canonical_rel)
+                {
+                    return Err(format!(
+                        "repair attempt store {} is a symlink, junction, or case-fold alias of `{canonical_rel}`; store identity uses the concrete contained locator, and aliases are rejected",
+                        display_path(cleaned)
+                    ));
+                }
+                return Ok(());
+            }
+            Err(_) => {
+                current = current.parent().ok_or_else(|| {
+                    format!(
+                        "repair attempt store {} has no existing ancestor under {}",
+                        display_path(cleaned),
+                        display_path(canonical_root)
+                    )
+                })?;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1060,6 +1163,112 @@ mod tests {
             {
                 return Err(format!("in-tree alias error was opaque: {error}"));
             }
+            Ok(())
+        })();
+        cleanup(&root);
+        result
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn missing_child_under_escaping_symlink_parent_is_refused_without_external_mutation()
+    -> Result<(), String> {
+        let root = test_root("escape-parent")?;
+        let outside = test_root("escape-parent-outside")?;
+        let result = (|| {
+            let link = root.join("escape-link");
+            std::os::unix::fs::symlink(&outside, &link)
+                .map_err(|error| format!("create escaping parent symlink failed: {error}"))?;
+            let outside_child = outside.join("child-store");
+            let error = match resolve_repair_attempt_store(
+                &root,
+                RepairAttemptStoreLocator::Explicit(Path::new("escape-link/child-store")),
+                RepairAttemptStoreAccess::Prepare,
+            ) {
+                Ok(store) => {
+                    return Err(format!(
+                        "escaping parent symlink prepared as {}",
+                        store.locator()
+                    ));
+                }
+                Err(error) => error,
+            };
+            if !error.contains("symlink")
+                && !error.contains("escape")
+                && !error.contains("junction")
+            {
+                return Err(format!("escaping parent error was opaque: {error}"));
+            }
+            if outside_child.exists() {
+                return Err("prepare mutated the escaped parent before refusing".to_string());
+            }
+            Ok(())
+        })();
+        cleanup(&root);
+        cleanup(&outside);
+        result
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn missing_child_under_in_tree_symlink_parent_is_refused() -> Result<(), String> {
+        let root = test_root("alias-parent")?;
+        let result = (|| {
+            let real = resolve_repair_attempt_store(
+                &root,
+                RepairAttemptStoreLocator::Explicit(Path::new("target/ripr/real-store")),
+                RepairAttemptStoreAccess::Prepare,
+            )?;
+            let link = root.join("target/ripr/alias-parent");
+            std::os::unix::fs::symlink(real.resolved_path(), &link)
+                .map_err(|error| format!("create in-tree parent symlink failed: {error}"))?;
+            let error = match resolve_repair_attempt_store(
+                &root,
+                RepairAttemptStoreLocator::Explicit(Path::new(
+                    "target/ripr/alias-parent/child-store",
+                )),
+                RepairAttemptStoreAccess::Prepare,
+            ) {
+                Ok(store) => {
+                    return Err(format!(
+                        "in-tree parent alias prepared as {}",
+                        store.locator()
+                    ));
+                }
+                Err(error) => error,
+            };
+            if !error.contains("symlink") && !error.contains("alias") && !error.contains("junction")
+            {
+                return Err(format!("in-tree parent alias error was opaque: {error}"));
+            }
+            if real.resolved_path().join("child-store").exists() {
+                return Err("prepare created a child through an in-tree alias".to_string());
+            }
+            Ok(())
+        })();
+        cleanup(&root);
+        result
+    }
+
+    #[test]
+    fn nested_store_schema_version_mismatch_is_refused() -> Result<(), String> {
+        let root = test_root("store-schema")?;
+        let result = (|| {
+            let store = resolve_repair_attempt_store(
+                &root,
+                RepairAttemptStoreLocator::Explicit(Path::new("target/ripr/alt-attempts")),
+                RepairAttemptStoreAccess::Prepare,
+            )?;
+            let mut declared = store.identity();
+            declared.schema_version = "9.9".to_string();
+            let error = match store.matches_manifest(Some(&declared)) {
+                Ok(()) => return Err("nested store schema 9.9 was accepted".to_string()),
+                Err(error) => error,
+            };
+            if !error.contains("0.1") || !error.contains("9.9") {
+                return Err(format!("store schema error was opaque: {error}"));
+            }
+            store.matches_manifest(Some(&store.identity()))?;
             Ok(())
         })();
         cleanup(&root);

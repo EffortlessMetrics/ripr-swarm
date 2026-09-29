@@ -771,9 +771,14 @@ fn run_agent_repair_phase(
                 gap_id: None,
                 json: true,
             })?;
-            let policy =
+            let mut policy =
                 crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
                     .map_err(|error| before_phase_refusal(&seam_id, &error))?;
+            crate::app::repair_attempt::include_explicit_store_operational_write(
+                &mut policy,
+                &root,
+                store_ref,
+            )?;
             crate::edit_cage::validate_build_output_precondition(&root, &policy).map_err(
                 |error| {
                     format!("{error} No workflow was prepared and no repair attempt was started.")
@@ -860,9 +865,14 @@ fn run_agent_repair_phase(
             })?;
             let packet_text = String::from_utf8(packet_bytes.clone())
                 .map_err(|error| format!("retained repair packet is not UTF-8: {error}"))?;
-            let cage_policy = crate::app::repair_attempt::edit_cage_policy_from_packet(
+            let mut cage_policy = crate::app::repair_attempt::edit_cage_policy_from_packet(
                 &packet_text,
                 &attempt.seam_id,
+            )?;
+            crate::app::repair_attempt::include_explicit_store_operational_write(
+                &mut cage_policy,
+                &root,
+                store_ref,
             )?;
 
             // The trust binding, when the attempt carries one, is re-verified
@@ -920,6 +930,7 @@ fn run_agent_repair_phase(
                             &attempt.seam_id,
                             &attempt.repository_head,
                             &current_head,
+                            &crate::app::repair_attempt::quoted_store_flag(store_ref),
                         )
                         .lines()
                         {
@@ -1394,6 +1405,7 @@ fn repair_after_cage_recovery_lines(
     }
     let root_arg = shell_arg(&display_path(root));
     let seam_arg = shell_arg(seam_id);
+    let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
     lines.push(format!(
         "attempt `{attempt_id}` is terminal and cannot produce a receipt; re-running it or `ripr agent receipt` will refuse."
     ));
@@ -1405,7 +1417,7 @@ fn repair_after_cage_recovery_lines(
         "if you committed the test edit or a refused change, uncommit it first (for example `git reset --soft HEAD~1` when it is the last commit; the changes stay in the worktree), "
     };
     lines.push(format!(
-        "to recover: {uncommit}undo the refused changes, set your test edit aside (for example `git stash`), run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
+        "to recover: {uncommit}undo the refused changes, set your test edit aside (for example `git stash`), run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
     ));
     lines
 }
@@ -1479,6 +1491,7 @@ fn repair_after_input_drift_lines(
     let root_arg = shell_arg(&display_path(root));
     let attempt_arg = shell_arg(attempt.attempt_id.as_str());
     let seam_arg = shell_arg(&attempt.seam_id);
+    let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
     let mut lines = Vec::new();
     match crate::app::repair_attempt::analysis_input_changes_from(root, store, &attempt.attempt_id)
     {
@@ -1515,7 +1528,7 @@ fn repair_after_input_drift_lines(
                 })
                 .unwrap_or_default();
             lines.push(format!(
-                "to recover: {uncommit}restore those files to their before-phase state (for example `git checkout {} -- <path>`{untrack}), then rerun `ripr agent repair --root {root_arg} --attempt {attempt_arg} --phase after`. To keep the change, set your test edit aside, run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before`, restore the edit, then run the new --attempt command it prints.",
+                "to recover: {uncommit}restore those files to their before-phase state (for example `git checkout {} -- <path>`{untrack}), then rerun `ripr agent repair --root {root_arg}{store_flag} --attempt {attempt_arg} --phase after`. To keep the change, set your test edit aside, run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before`, restore the edit, then run the new --attempt command it prints.",
                 attempt.repository_head
             ));
         }
@@ -1525,7 +1538,7 @@ fn repair_after_input_drift_lines(
                     .to_string(),
             );
             lines.push(format!(
-                "to recover: set your test edit aside, run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before` with the ripr you will use for the after phase, restore the edit, then run the new --attempt command it prints."
+                "to recover: set your test edit aside, run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` with the ripr you will use for the after phase, restore the edit, then run the new --attempt command it prints."
             ));
         }
         Err(error) => lines.push(format!(
@@ -2160,6 +2173,41 @@ mod tests {
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         std::fs::remove_dir_all(&outside).map_err(|err| format!("remove outside: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn repair_after_cage_recovery_repeats_explicit_store() -> Result<(), String> {
+        let after = crate::app::repair_attempt::RepairAttemptAfter {
+            attempt_id: crate::app::repair_attempt::RepairAttemptId::parse(
+                "repair-attempt-0123456789abcdef01234567",
+            )?,
+            repository_head: "b".repeat(40),
+            delta_sha256: format!("sha256:{}", "0".repeat(64)),
+            packet_sha256: format!("sha256:{}", "1".repeat(64)),
+            current: false,
+            verdict: crate::edit_cage::EditCageVerdict {
+                status: crate::edit_cage::EditCageVerdictStatus::Violated,
+                changed_paths: Vec::new(),
+                violations: Vec::new(),
+            },
+        };
+        let lines = repair_after_cage_recovery_lines(
+            Path::new("."),
+            Some(Path::new(".ripr/attempts")),
+            "seam:sample",
+            &"a".repeat(40),
+            &after,
+        );
+        let joined = lines.join("\n");
+        if !joined.contains("--store") || !joined.contains(".ripr/attempts") {
+            return Err(format!("cage recovery lost --store: {joined}"));
+        }
+        if !joined.contains("--phase before") {
+            return Err(format!(
+                "cage recovery lost the before-phase restart: {joined}"
+            ));
+        }
         Ok(())
     }
 }
