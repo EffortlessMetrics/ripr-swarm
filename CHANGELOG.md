@@ -25,6 +25,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr init --force` no longer deletes the existing `ripr.toml` before
+  writing the new one. A full disk or a file-size limit mid-write used to leave
+  a truncated fragment in its place (a rerun then refused to replace it, and
+  the fragment could still parse), after printing `Overwrote existing`. The
+  config is now replaced atomically and the message prints only after it
+  succeeds; a plain `ripr init` removes a file it could not finish writing
+  (#4883).
 - Changes in languages ripr does not analyze (Go, Java, C, C++, shell and
   others) are no longer called non-source files. A Go-only diff reported
   `no_behavioral_candidates (analysis complete)` and said the empty result was

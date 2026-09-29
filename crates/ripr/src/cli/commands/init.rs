@@ -238,11 +238,11 @@ fn apply_init_plan(plan: &[InitTarget]) -> Result<(), String> {
                 wrote_any = true;
             }
             InitAction::Overwrite => {
+                write_init_target(target)?;
                 println!(
                     "Overwrote existing {}",
                     output::path::human_path(&target.path)
                 );
-                write_init_target(target)?;
                 wrote_any = true;
             }
         }
@@ -266,20 +266,12 @@ fn write_init_target(target: &InitTarget) -> Result<(), String> {
             .map_err(|err| format!("create {} failed: {err}", parent.display()))?;
     }
     if target.action == InitAction::Overwrite {
-        // --force must not follow a pre-placed symlink either (#2101):
-        // remove_file unlinks the entry itself (it never follows a
-        // symlink to its target), and the create_new write below then
-        // fails closed if anything reappears at the path.
-        match std::fs::remove_file(&target.path) {
-            Ok(()) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => {
-                return Err(format!(
-                    "remove existing {} for --force failed: {err}",
-                    target.path.display()
-                ));
-            }
-        }
+        // --force replaces the config atomically (#4883): the old file stays
+        // until a complete, fsynced temporary file is renamed over it, so a
+        // failed write (a full disk, a size limit) never leaves the user
+        // without their config. The rename replaces the directory entry
+        // itself, so a pre-placed symlink is not followed (#2101).
+        return crate::atomic_file::write(&target.path, target.body.as_bytes(), "ripr init");
     }
     // Use create_new to prevent a symlink-following write race where a
     // symlink is placed at the path between the exists() check in
@@ -295,8 +287,14 @@ fn write_init_target(target: &InitTarget) -> Result<(), String> {
         .open(&target.path)
         .map_err(|err| format!("write {} failed: {err}", target.path.display()))?;
     use std::io::Write;
-    file.write_all(target.body.as_bytes())
-        .map_err(|err| format!("write {} failed: {err}", target.path.display()))?;
+    if let Err(err) = file.write_all(target.body.as_bytes()) {
+        // This run created the file, so a cut-short write removes it rather
+        // than leave a truncated config that a rerun refuses to replace and
+        // that may still parse (#4883).
+        drop(file);
+        let _ = std::fs::remove_file(&target.path);
+        return Err(format!("write {} failed: {err}", target.path.display()));
+    }
     println!("Wrote {}", output::path::human_path(&target.path));
     Ok(())
 }
