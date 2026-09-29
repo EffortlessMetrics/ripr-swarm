@@ -20,7 +20,7 @@ Start here:
   Evidence:
     - reach weak: No test is seen calling size_hint; tests share only its file or a name token: combinations_inexact_size_hints
     - infection yes: Reachable tests can plausibly activate this changed behavior
-    - 8 more evidence line(s) hidden
+    - 12 more evidence line(s) hidden
 
 Next: drill into the top finding:
   ripr explain --root fixtures/rust_adversarial_same_method_other_type/input --diff fixtures/rust_adversarial_same_method_other_type/diff.patch --mode fast probe:src_lib.rs:return_value:c861ec7a

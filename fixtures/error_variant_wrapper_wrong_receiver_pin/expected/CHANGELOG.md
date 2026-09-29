@@ -84,3 +84,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — error_variant_wrapper_wrong_receiver_pin (8)
+
+Reason:
+RIPR-SPEC-0108: #4760 other-type parse_summary is not direct_owner_call; owner-type witness leads
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_wrong_receiver_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

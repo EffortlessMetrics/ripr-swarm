@@ -23,10 +23,10 @@ Unresolved receivers (`let it = (0..3).combinations(2); it.size_hint()`) stay
 `weak_token_substring`. Unique impl methods are unchanged. Full `CallFact`
 receiver fields remain #3727.
 
-A second effect: one test with five matching assertions occupied five of the
-eight `related_tests` rows. Dedup by `(name, file, line)` and keep the
-strongest oracle that observes this probe. A same-rank length check must not
-hide the changed-arm pin.
+A second effect: one Combinations test can occupy several of the eight
+`related_tests` render slots (one row per matching assertion). Collapse only
+when the list exceeds that cap, putting unique tests first. Under the cap,
+keep per-assertion rows.
 
 Pin both sides: `rust_adversarial_same_method_other_type` must stay below
 `exposed`; `rust_same_method_owner_type_positive` must keep `exposed`. Do not

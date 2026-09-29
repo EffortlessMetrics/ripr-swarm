@@ -359,8 +359,6 @@ fn analyze_related_assertions(
         let cross_package_defeats_owner = match_context
             .owner_callee
             .is_some_and(|callee| cross_package_name_defeats(test, callee));
-        let mut best_row: Option<RelatedTest> = None;
-        let mut best_row_confirmed = false;
         for assertion in &test.assertions {
             let (matched, has_token_match) = assertion_matches_probe_detail_with_literals(
                 &match_context,
@@ -369,16 +367,21 @@ fn analyze_related_assertions(
                 import_defeats_owner,
                 cross_package_defeats_owner,
             );
-            if !matched {
-                continue;
-            }
-            let observation_confirmed = !confirm_required
-                || has_token_match
-                || (is_effect_family(&probe.family) && effect_observer_confirms(assertion));
-            let relative_strength = probe_relative_oracle_strength(&probe.family, assertion);
-            let listing_observes =
-                assertion_names_probe_expression(analysis_expression, &assertion.text);
-            if credits_oracle {
+            if matched && !credits_oracle {
+                related.push(RelatedTest {
+                    name: test.name.clone(),
+                    file: test.file.clone(),
+                    line: test.start_line,
+                    oracle: Some(assertion.text.clone()),
+                    oracle_kind: assertion.kind.clone(),
+                    oracle_strength: probe_relative_oracle_strength(&probe.family, assertion),
+                    relation_reason,
+                    relation_confidence,
+                });
+            } else if matched {
+                let observation_confirmed = !confirm_required
+                    || has_token_match
+                    || (is_effect_family(&probe.family) && effect_observer_confirms(assertion));
                 if confirm_required {
                     // Observation is confirmed when the assertion specifically
                     // references the changed sub-expression. For value families
@@ -401,6 +404,7 @@ fn analyze_related_assertions(
                     }
                 }
                 matched_any = true;
+                let relative_strength = probe_relative_oracle_strength(&probe.family, assertion);
                 // Keep strength, kind, and confirmation on one assertion.
                 // An equally strong confirmed oracle wins over an unrelated
                 // one regardless of encounter order; a weaker oracle cannot.
@@ -413,36 +417,17 @@ fn analyze_related_assertions(
                     strongest_kind = assertion.kind.clone();
                     strongest_observation_confirmed = observation_confirmed;
                 }
+                related.push(RelatedTest {
+                    name: test.name.clone(),
+                    file: test.file.clone(),
+                    line: test.start_line,
+                    oracle: Some(assertion.text.clone()),
+                    oracle_kind: assertion.kind.clone(),
+                    oracle_strength: relative_strength,
+                    relation_reason,
+                    relation_confidence,
+                });
             }
-            let row = RelatedTest {
-                name: test.name.clone(),
-                file: test.file.clone(),
-                line: test.start_line,
-                oracle: Some(assertion.text.clone()),
-                oracle_kind: assertion.kind.clone(),
-                oracle_strength: relative_strength.clone(),
-                relation_reason,
-                relation_confidence,
-            };
-            // One row per test (#4760). Prefer the stronger oracle; at equal
-            // rank keep the assertion that names this probe's expression so a
-            // same-rank length check cannot hide the changed-arm pin.
-            let keep = match &best_row {
-                None => true,
-                Some(current) => {
-                    relative_strength.rank() > current.oracle_strength.rank()
-                        || (relative_strength.rank() == current.oracle_strength.rank()
-                            && listing_observes
-                            && !best_row_confirmed)
-                }
-            };
-            if keep {
-                best_row = Some(row);
-                best_row_confirmed = listing_observes;
-            }
-        }
-        if let Some(row) = best_row {
-            related.push(row);
         }
     }
 
@@ -1744,19 +1729,6 @@ pub(in crate::analysis) fn last_top_level_map_err_dot(expression: &str) -> Optio
 /// terminal variant names from different enums cannot align. A witness that
 /// only calls the wrapper, only names a variant in message text, or pins a
 /// variant against another call establishes nothing (#3700).
-/// Whether assertion text names an identifier or string literal from the
-/// probe expression. Used to pick the listed `related_tests` row when two
-/// oracles share a strength rank: a `terminal.len()` check must not hide
-/// `request_identity_v2` (#4760 / #1728).
-fn assertion_names_probe_expression(expression: &str, assertion_text: &str) -> bool {
-    extract_identifier_tokens(expression)
-        .iter()
-        .any(|token| contains_as_whole_word(assertion_text, token))
-        || rust_string_literals(expression)
-            .iter()
-            .any(|literal| contains_as_whole_word(assertion_text, literal))
-}
-
 /// Check whether `text` contains `token` as a whole word — delimited by
 /// non-identifier characters (or string boundaries) on both sides. This
 /// replaces the old `token.len() > 3` gate, which filtered out short tokens
@@ -1791,28 +1763,50 @@ pub(in crate::analysis) fn contains_as_whole_word(text: &str, token: &str) -> bo
 }
 
 fn finalize_related_tests(mut related: Vec<RelatedTest>) -> Vec<RelatedTest> {
-    // One row per test: keep the strongest matching oracle so a test with
-    // several assertions cannot occupy every `related_tests` cap slot (#4760).
-    related.sort_by(|left, right| {
-        left.name
-            .cmp(&right.name)
-            .then(left.file.cmp(&right.file))
-            .then(left.line.cmp(&right.line))
-            .then(
-                right
-                    .oracle_strength
-                    .rank()
-                    .cmp(&left.oracle_strength.rank()),
-            )
-    });
-    related.dedup_by(|left, right| {
-        left.name == right.name && left.file == right.file && left.line == right.line
-    });
+    related.sort_by(|a, b| a.name.cmp(&b.name).then(a.line.cmp(&b.line)));
+    related.dedup_by(|a, b| a.name == b.name && a.oracle == b.oracle);
     // Renderers present the first entry as the primary related test, so the
-    // strongest relation leads. The sort is stable: name and file order holds
-    // within one confidence tier.
+    // strongest relation leads. The sort is stable: name and line order holds
+    // within one confidence tier, and the dedup above is unchanged.
     related.sort_by_key(|test| std::cmp::Reverse(related_test_rank(test)));
+    // JSON/human renderers cap at eight rows. When one test's assertions would
+    // fill that window, unique tests go first (#4760). Under the cap, keep
+    // per-assertion rows so existing goldens and #1728 witnesses stay intact.
+    if related.len() > RELATED_TESTS_RENDER_CAP {
+        related = pack_unique_tests_first(related, RELATED_TESTS_RENDER_CAP);
+    }
     related
+}
+
+const RELATED_TESTS_RENDER_CAP: usize = 8;
+
+fn pack_unique_tests_first(related: Vec<RelatedTest>, cap: usize) -> Vec<RelatedTest> {
+    let mut packed = Vec::with_capacity(cap.min(related.len()));
+    let mut seen = std::collections::BTreeSet::new();
+    for test in &related {
+        if packed.len() >= cap {
+            break;
+        }
+        let key = (test.name.as_str(), test.file.as_path(), test.line);
+        if seen.insert(key) {
+            packed.push(test.clone());
+        }
+    }
+    for test in &related {
+        if packed.len() >= cap {
+            break;
+        }
+        if packed.iter().any(|kept| {
+            kept.name == test.name
+                && kept.file == test.file
+                && kept.line == test.line
+                && kept.oracle == test.oracle
+        }) {
+            continue;
+        }
+        packed.push(test.clone());
+    }
+    packed
 }
 
 /// Sort rank of an emitted related test: higher relation confidence ranks
@@ -2447,41 +2441,22 @@ mod tests {
         assert_eq!(related[1].name, "z_error_path");
     }
 
-    /// #4760: several matching assertions on one test occupy one related-test
-    /// row, carrying the strongest oracle, so the 8-row cap cannot hide other
-    /// tests behind duplicate oracle entries.
+    /// #4760: per-assertion rows stay under the render cap. When one test has
+    /// more matching oracles than the cap, unique tests still occupy a slot.
     #[test]
-    fn related_tests_list_each_test_once_with_the_strongest_oracle() {
+    fn related_tests_cap_keeps_a_second_test_when_one_test_has_many_oracles() {
         let probe = probe(ProbeFamily::ReturnValue, "(0, self.iter.size_hint().1)");
         let multi = test_with_assertions(
             "combinations_inexact_size_hints",
-            vec![
-                oracle(
-                    "assert_eq!(it.size_hint().1, Some(3));",
-                    OracleKind::ExactValue,
-                    OracleStrength::Strong,
-                ),
-                oracle(
-                    "assert_eq!(it.size_hint().0, 0);",
-                    OracleKind::ExactValue,
-                    OracleStrength::Strong,
-                ),
-                oracle(
-                    "assert!(it.size_hint().1.is_some());",
-                    OracleKind::RelationalCheck,
-                    OracleStrength::Weak,
-                ),
-                oracle(
-                    "assert_eq!(it.size_hint(), (0, Some(3)));",
-                    OracleKind::ExactValue,
-                    OracleStrength::Strong,
-                ),
-                oracle(
-                    "assert!(it.size_hint().1 == Some(3));",
-                    OracleKind::RelationalCheck,
-                    OracleStrength::Weak,
-                ),
-            ],
+            (0..9)
+                .map(|index| {
+                    oracle(
+                        &format!("assert_eq!(it.size_hint().1, Some({index}));"),
+                        OracleKind::ExactValue,
+                        OracleStrength::Strong,
+                    )
+                })
+                .collect(),
         );
         let other = test_with_assertions(
             "while_some_is_untested",
@@ -2494,57 +2469,20 @@ mod tests {
         let (_, _, related) = reveal_evidence(
             &probe,
             &[
-                (&multi, RelationReason::WeakTokenSubstring),
+                (&multi, RelationReason::DirectOwnerCall),
                 (&other, RelationReason::SameTestFile),
             ],
         );
 
         let named: Vec<&str> = related.iter().map(|test| test.name.as_str()).collect();
         assert_eq!(
-            named
-                .iter()
-                .filter(|name| **name == "combinations_inexact_size_hints")
-                .count(),
-            1,
-            "one test must occupy one related_tests row, not one row per oracle: {named:?}"
+            related.len(),
+            RELATED_TESTS_RENDER_CAP,
+            "packed to the render cap: {named:?}"
         );
-        assert_eq!(
-            related
-                .iter()
-                .find(|test| test.name == "combinations_inexact_size_hints")
-                .map(|test| (test.oracle_strength.as_str(), test.oracle_kind.as_str())),
-            Some(("strong", "exact_value")),
-            "combinations test listed once with strongest oracle: {named:?}"
-        );
-    }
-
-    #[test]
-    fn related_tests_keep_the_confirmed_oracle_over_a_same_rank_length_check() {
-        let probe = probe(ProbeFamily::ReturnValue, "request_identity_v2");
-        let test = test_with_assertions(
-            "request_only_projection_observes_join",
-            vec![
-                oracle(
-                    "assert_eq!(terminal.len(), 1);",
-                    OracleKind::ExactValue,
-                    OracleStrength::Strong,
-                ),
-                oracle(
-                    "assert_eq!(terminal[0].1, \"request_identity_v2\");",
-                    OracleKind::ExactValue,
-                    OracleStrength::Strong,
-                ),
-            ],
-        );
-        let (_, _, related) = reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
-
-        assert_eq!(related.len(), 1, "{related:#?}");
         assert!(
-            related[0]
-                .oracle
-                .as_deref()
-                .is_some_and(|oracle| oracle.contains("request_identity_v2")),
-            "listed oracle must observe the changed arm, not a same-rank length check: {related:#?}"
+            named.iter().any(|name| *name == "while_some_is_untested"),
+            "a second test must survive the 8-row cap: {named:?}"
         );
     }
 

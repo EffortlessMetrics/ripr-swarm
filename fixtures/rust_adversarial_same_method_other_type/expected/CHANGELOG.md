@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_adversarial_same_method_other_type (3)
+
+Reason:
+RIPR-SPEC-0108: restore per-assertion related_tests under the 8-row cap for #4760
+
+Command:
+`cargo xtask goldens bless rust_adversarial_same_method_other_type --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
