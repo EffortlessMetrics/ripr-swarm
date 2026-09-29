@@ -1,3 +1,5 @@
+mod payload;
+
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -7,47 +9,36 @@ use sha2::{Digest, Sha256};
 use crate::{command_success_owned, run_owned};
 
 pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
+    if let Some(payload_dir) = optional_release_arg(args, "verify-payload-dir") {
+        let identity_path = required_release_arg(args, "payload-identity", "PAYLOAD_IDENTITY")?;
+        let identity = payload::verify_final_native_payload(
+            Path::new(&payload_dir),
+            Path::new(&identity_path),
+        )?;
+        eprintln!(
+            "verified final native payload {} {} ({})",
+            identity.version, identity.target, identity.payload_aggregate_sha256
+        );
+        return Ok(());
+    }
+
     let version = required_release_arg(args, "version", "RAW_VERSION")?;
     let target = required_release_arg(args, "target", "TARGET")?;
     let executable = required_release_arg(args, "executable", "EXECUTABLE")?;
     let archive = required_release_arg(args, "archive", "ARCHIVE")?;
     let version = normalize_release_version(&version);
     let asset_name = format!("ripr-server-v{version}-{target}.{archive}");
-    let package_dir = Path::new("package");
     let dist_dir = Path::new("dist");
-
-    if package_dir.exists() {
-        fs::remove_dir_all(package_dir)
-            .map_err(|err| format!("failed to remove {}: {err}", package_dir.display()))?;
-    }
-    fs::create_dir_all(package_dir)
-        .map_err(|err| format!("failed to create {}: {err}", package_dir.display()))?;
     fs::create_dir_all(dist_dir)
         .map_err(|err| format!("failed to create {}: {err}", dist_dir.display()))?;
 
-    let built_executable = Path::new("target")
-        .join(&target)
-        .join("release")
-        .join(&executable);
-    fs::copy(&built_executable, package_dir.join(&executable)).map_err(|err| {
-        format!(
-            "failed to copy {} into {}: {err}",
-            built_executable.display(),
-            package_dir.display()
-        )
-    })?;
-    copy_release_file("LICENSE-MIT", package_dir)?;
-    copy_release_file("LICENSE-APACHE", package_dir)?;
-    fs::write(
-        package_dir.join("README-server.txt"),
-        release_server_readme(&version),
-    )
-    .map_err(|err| {
-        format!(
-            "failed to write {}: {err}",
-            package_dir.join("README-server.txt").display()
-        )
-    })?;
+    let staged = payload::stage_final_native_payload(
+        &version,
+        &target,
+        &executable,
+        &archive,
+    )?;
+    let identity_sha256 = payload::payload_identity_sha256(&staged)?;
 
     let asset_path = dist_dir.join(&asset_name);
     if asset_path.exists() {
@@ -55,8 +46,8 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
             .map_err(|err| format!("failed to remove {}: {err}", asset_path.display()))?;
     }
     match archive.as_str() {
-        "zip" => create_zip_archive(package_dir, &asset_path)?,
-        "tar.gz" => create_tar_gz_archive(package_dir, &asset_path)?,
+        "zip" => create_zip_archive(&staged.payload_dir, &asset_path)?,
+        "tar.gz" => create_tar_gz_archive(&staged.payload_dir, &asset_path)?,
         other => {
             return Err(format!(
                 "unsupported release server archive format `{other}`"
@@ -76,6 +67,13 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
         )
     })?;
     eprintln!("wrote {}", asset_path.display());
+    eprintln!("wrote {}", staged.identity_json.display());
+    eprintln!("wrote {}", staged.identity_markdown.display());
+    eprintln!(
+        "final native payload aggregate SHA-256: {}",
+        staged.identity.payload_aggregate_sha256
+    );
+    eprintln!("final native payload identity SHA-256: {identity_sha256}");
     Ok(())
 }
 
@@ -288,38 +286,32 @@ pub(crate) fn release_server_assets(
     Ok(assets)
 }
 
+pub(crate) fn optional_release_arg(args: &[String], flag: &str) -> Option<String> {
+    let flag_name = format!("--{flag}");
+    for window in args.windows(2) {
+        if window[0] == flag_name {
+            return Some(window[1].clone());
+        }
+    }
+    let inline_prefix = format!("{flag_name}=");
+    args.iter()
+        .find_map(|arg| arg.strip_prefix(&inline_prefix).map(str::to_string))
+}
+
 pub(crate) fn required_release_arg(
     args: &[String],
     flag: &str,
     env_name: &str,
 ) -> Result<String, String> {
+    if let Some(value) = optional_release_arg(args, flag) {
+        return Ok(value);
+    }
     let flag_name = format!("--{flag}");
-    for window in args.windows(2) {
-        if window[0] == flag_name {
-            return Ok(window[1].clone());
-        }
-    }
-    let inline_prefix = format!("{flag_name}=");
-    for arg in args {
-        if let Some(value) = arg.strip_prefix(&inline_prefix) {
-            return Ok(value.to_string());
-        }
-    }
     std::env::var(env_name).map_err(|err| format!("missing {flag_name} or {env_name}: {err}"))
 }
 
 pub(crate) fn normalize_release_version(version: &str) -> String {
     version.trim().trim_start_matches('v').to_string()
-}
-
-fn copy_release_file(file_name: &str, package_dir: &Path) -> Result<(), String> {
-    fs::copy(file_name, package_dir.join(file_name)).map_err(|err| {
-        format!(
-            "failed to copy {file_name} into {}: {err}",
-            package_dir.display()
-        )
-    })?;
-    Ok(())
 }
 
 pub(crate) fn release_server_readme(version: &str) -> String {
