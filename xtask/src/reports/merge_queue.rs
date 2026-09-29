@@ -1129,9 +1129,7 @@ fn ruleset_targets_default_branch(payload: &Value, default_branch: &str) -> Opti
             return None;
         }
     }
-    let Some(includes) = ref_name.get("include").and_then(Value::as_array) else {
-        return None;
-    };
+    let includes = ref_name.get("include").and_then(Value::as_array)?;
     if includes.is_empty() {
         return Some(false);
     }
