@@ -166,8 +166,9 @@ pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
             ModulePathTarget::Literal(_) => scan.complete = false,
             ModulePathTarget::Unknown => {
                 scan.complete = false;
+                let (spelled, always_applies) = spelled_path_literals(&module);
                 let candidates = if inline.is_empty() {
-                    spelled_path_literals(&module)
+                    spelled
                 } else {
                     Vec::new()
                 };
@@ -178,12 +179,15 @@ pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
                 let line = text
                     .get(..offset)
                     .map_or(1, |prefix| prefix.matches('\n').count() + 1);
-                // A plain `#[path]` always applies, so default resolution
-                // is a route only when every path is inside `cfg_attr`.
-                let default_applies = !module.attrs().any(|attr| {
-                    attr.path()
-                        .is_some_and(|path| path.syntax().text() == "path")
-                });
+                // A plain `#[path]`, or `cfg_attr` paths under `p` and
+                // `not(p)`, always apply; otherwise a `cfg_attr` path may not,
+                // leaving default resolution. A non-literal `#[path]` spells
+                // nothing but still always applies.
+                let default_applies = !always_applies
+                    && !module.attrs().any(|attr| {
+                        attr.path()
+                            .is_some_and(|path| path.syntax().text() == "path")
+                    });
                 scan.edges.push(RustModuleTreeEdge::UnresolvedPath {
                     inline,
                     name: name.text().trim_start_matches("r#").to_string(),
@@ -283,32 +287,127 @@ fn nests_unknown_macro_call(tokens: &ast::TokenTree) -> bool {
     })
 }
 
-/// Every `path = "<literal>"` a declaration's attributes spell, at any
-/// nesting (`#[path = ..]`, `cfg_attr(pred, path = ..)`, nested `cfg_attr`).
-/// A cfg predicate's own `key = "value"` pairs never use the `path` key.
-fn spelled_path_literals(module: &ast::Module) -> Vec<PathBuf> {
+/// Every `path = "<literal>"` a declaration's attributes introduce: a plain
+/// `#[path = ..]`, and the attributes a `cfg_attr` introduces after its
+/// predicate, nested `cfg_attr` included. A predicate's own `key = "value"`
+/// pairs are skipped, even one whose key is `path`.
+///
+/// The second value is true when some introduced path always applies: a
+/// plain `#[path]`, or two top-level `cfg_attr` paths whose predicates are
+/// `p` and `not(p)`. Default resolution is then never the module's file.
+fn spelled_path_literals(module: &ast::Module) -> (Vec<PathBuf>, bool) {
     let mut candidates = Vec::new();
+    let mut plain_path = false;
+    let mut predicates = Vec::new();
     for attr in module.attrs() {
         let tokens = attr
             .syntax()
             .descendants_with_tokens()
             .filter_map(|element| element.into_token())
             .filter(|token| !token.kind().is_trivia())
+            .map(|token| (token.kind(), token.text().to_string()))
             .collect::<Vec<_>>();
-        for window in tokens.windows(3) {
-            if let [key, eq, value] = window
-                && key.kind() == SyntaxKind::IDENT
-                && key.text() == "path"
-                && eq.kind() == SyntaxKind::EQ
-                && value.kind() == SyntaxKind::STRING
-                && let Some(literal) = parse_rust_string_literal(value.text())
-                && !candidates.contains(&PathBuf::from(&literal))
-            {
-                candidates.push(PathBuf::from(literal));
+        // `#[ .. ]` or `#![ .. ]`: the attribute body sits inside the brackets.
+        let Some(open) = tokens
+            .iter()
+            .position(|(kind, _)| *kind == SyntaxKind::L_BRACK)
+        else {
+            continue;
+        };
+        let body = tokens
+            .get(open + 1..tokens.len().saturating_sub(1))
+            .unwrap_or_default();
+        if !introduced_path_literals(body, &mut candidates) {
+            continue;
+        }
+        match cfg_attr_arguments(body) {
+            None => plain_path = true,
+            // Only a predicate that alone gates a path directly can pair
+            // with its negation; a nested `cfg_attr` adds a condition.
+            Some(arguments) => {
+                let direct = arguments.iter().skip(1).any(|argument| {
+                    cfg_attr_arguments(argument).is_none()
+                        && introduced_path_literals(argument, &mut Vec::new())
+                });
+                if let Some(predicate) = arguments.first().filter(|_| direct) {
+                    predicates.push(
+                        predicate
+                            .iter()
+                            .map(|(_, text)| text.as_str())
+                            .collect::<String>(),
+                    );
+                }
             }
         }
     }
-    candidates
+    let complementary = predicates
+        .iter()
+        .any(|predicate| predicates.contains(&format!("not({predicate})")));
+    (candidates, plain_path || complementary)
+}
+
+/// The top-level comma-separated arguments of `cfg_attr(..)`, predicate
+/// first, or `None` when `body` is not a `cfg_attr`.
+fn cfg_attr_arguments(body: &[(SyntaxKind, String)]) -> Option<Vec<&[(SyntaxKind, String)]>> {
+    // The parser tokenizes `cfg_attr` as a contextual keyword.
+    let [
+        (name_kind, name),
+        (SyntaxKind::L_PAREN, _),
+        inner @ ..,
+        (SyntaxKind::R_PAREN, _),
+    ] = body
+    else {
+        return None;
+    };
+    if name != "cfg_attr" || !matches!(name_kind, SyntaxKind::IDENT | SyntaxKind::CFG_ATTR_KW) {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut segment_start = 0usize;
+    let mut arguments = Vec::new();
+    for (position, (kind, _)) in inner.iter().enumerate() {
+        match kind {
+            SyntaxKind::L_PAREN | SyntaxKind::L_BRACK | SyntaxKind::L_CURLY => depth += 1,
+            SyntaxKind::R_PAREN | SyntaxKind::R_BRACK | SyntaxKind::R_CURLY => {
+                depth = depth.saturating_sub(1);
+            }
+            SyntaxKind::COMMA if depth == 0 => {
+                arguments.push(inner.get(segment_start..position).unwrap_or_default());
+                segment_start = position + 1;
+            }
+            _ => {}
+        }
+    }
+    arguments.push(inner.get(segment_start..).unwrap_or_default());
+    Some(arguments)
+}
+
+/// Collects the `path` literal of one attribute body (`path = ".."`, or
+/// what `cfg_attr(<predicate>, <attr>, ..)` introduces, recursively), and
+/// says whether it introduced any.
+fn introduced_path_literals(body: &[(SyntaxKind, String)], candidates: &mut Vec<PathBuf>) -> bool {
+    if let [
+        (SyntaxKind::IDENT, key),
+        (SyntaxKind::EQ, _),
+        (SyntaxKind::STRING, value),
+    ] = body
+        && key == "path"
+        && let Some(literal) = parse_rust_string_literal(value)
+    {
+        if !candidates.contains(&PathBuf::from(&literal)) {
+            candidates.push(PathBuf::from(literal));
+        }
+        return true;
+    }
+    let Some(arguments) = cfg_attr_arguments(body) else {
+        return false;
+    };
+    // The predicate introduces nothing; every argument after it is visited.
+    let mut introduced = false;
+    for argument in arguments.into_iter().skip(1) {
+        introduced |= introduced_path_literals(argument, candidates);
+    }
+    introduced
 }
 
 /// The inline modules enclosing an out-of-line declaration, outermost first,
@@ -425,7 +524,10 @@ mod tests {
              mod sys;\n\
              #[path = \"a.rs\"]\n#[path = \"b.rs\"]\nmod twice;\n\
              #[path = concat!(\"dyn\", \".rs\")]\nmod r#dynamic;\n\
-             mod outer { #[cfg_attr(unix, path = \"nested.rs\")] mod inner; }\n",
+             mod outer { #[cfg_attr(unix, path = \"nested.rs\")] mod inner; }\n\
+             #[cfg_attr(path = \"predicate.rs\", path = \"chosen.rs\")] mod keyed;\n\
+             #[cfg_attr(unix, path = \"u.rs\")]\n#[cfg_attr(not(unix), path = \"w.rs\")]\nmod either;\n\
+             #[cfg_attr(unix, cfg_attr(x, path = \"n.rs\"))]\n#[cfg_attr(not(unix), path = \"m.rs\")]\nmod nested_pair;\n",
         );
         assert!(!scan.complete, "{scan:?}");
         assert_eq!(
@@ -445,6 +547,12 @@ mod tests {
                     candidates: Vec::new(),
                     default_applies: true,
                 },
+                // A custom cfg whose key is `path` is predicate, not target.
+                unresolved(10, "keyed", &["chosen.rs"], true),
+                // `unix` and `not(unix)` cover every target: no default.
+                unresolved(13, "either", &["u.rs", "w.rs"], false),
+                // Under `unix` without `x` neither path applies.
+                unresolved(16, "nested_pair", &["n.rs", "m.rs"], true),
             ]
         );
     }
