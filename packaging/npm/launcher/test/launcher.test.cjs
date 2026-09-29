@@ -212,6 +212,43 @@ test("maps child signals to a nonzero conventional exit code", () => {
   assert.equal(launcher.signalExitCode("RIPR_UNKNOWN_SIGNAL"), 1);
 });
 
+test("launch sets a nonzero exit code before forwarding a child signal", async () => {
+  const fixture = nativeFixture();
+  const child = new EventEmitter();
+  child.killed = false;
+  child.kill = () => true;
+  const spawnImpl = () => {
+    queueMicrotask(() => child.emit("exit", null, "SIGTERM"));
+    return child;
+  };
+  const resolver = createRequire(path.join(fixture.launcherRoot, "package.json"));
+  const originalKill = process.kill;
+  const originalExitCode = process.exitCode;
+  const forwarded = [];
+  process.kill = (pid, signal) => {
+    forwarded.push({ pid, signal, exitCode: process.exitCode });
+    return true;
+  };
+  process.exitCode = undefined;
+  try {
+    await launcher.launch({
+      launcherRoot: fixture.launcherRoot,
+      selectedPlatform: fixture.selected,
+      resolver,
+      spawnImpl,
+      forwardSignals: false,
+    });
+    assert.equal(process.exitCode, 128 + os.constants.signals.SIGTERM);
+    assert.deepEqual(forwarded, [
+      { pid: process.pid, signal: "SIGTERM", exitCode: 128 + os.constants.signals.SIGTERM },
+    ]);
+  } finally {
+    process.kill = originalKill;
+    process.exitCode = originalExitCode;
+    cleanup(fixture.root);
+  }
+});
+
 test("runs a real synthetic executable and preserves argv, cwd, env, stdout, stderr, and exit status", () => {
   const fixture = nativeFixture();
   const script = path.join(fixture.root, "probe.cjs");
