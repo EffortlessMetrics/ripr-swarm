@@ -30,6 +30,13 @@ are scoped or reviewed.
   the finding told users to rewrite the file as strict JSON. Malformed
   files, including an unclosed block comment, still resolve no aliases and
   say the file could not be parsed. (#4549)
+- TypeScript/JavaScript preview: a change inside a CommonJS export such as
+  `exports.thrice = function thrice(x) { ... }` now maps to an owner. These
+  assignments produced no owner, so the changed line yielded zero candidates
+  and `no_behavioral_candidates`. `exports.NAME` / `module.exports.NAME`
+  functions and arrows, `module.exports = function ...`, and function
+  properties of `module.exports = { ... }` are now owners that `require()`
+  tests relate to; non-function values and computed keys still produce none.
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from

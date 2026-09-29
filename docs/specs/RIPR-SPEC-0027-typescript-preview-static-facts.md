@@ -95,6 +95,13 @@ Owners the adapter must recognise:
 - arrow functions assigned to a `const`/`let` (`const name = (...) => { ... }`)
 - class declarations and class methods
 - exported and default-exported variants of the above
+- top-level CommonJS assignment exports whose value is a function or arrow
+  (#4545): `exports.NAME = ...` and `module.exports.NAME = ...` (owner
+  `NAME`), `module.exports = function NAME(...)` or an arrow (the module's
+  default-export owner, `NAME` or `default`), and static-identifier function
+  properties of `module.exports = { ... }`; non-function values, computed or
+  string-literal keys, compound or chained assignments, and nested
+  assignments yield no owner
 - React-ish component functions when obvious (named PascalCase function
   declarations or PascalCase arrow consts returning JSX)
 - module-scope `const` initializers that participate in changed behavior
