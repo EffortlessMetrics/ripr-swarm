@@ -330,6 +330,7 @@ mod tests {
             attrs: attrs.into_iter().map(|s| s.to_string()).collect(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         }
     }
 

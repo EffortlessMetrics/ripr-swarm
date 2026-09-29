@@ -2876,6 +2876,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         };
         let mut index = RustIndex::default();
         index.functions.push(owner.clone());
@@ -2925,6 +2926,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             attrs: vec!["#[test]".to_string()],
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         };
         let mut index = RustIndex::default();
         index.functions.push(test_owner.clone());

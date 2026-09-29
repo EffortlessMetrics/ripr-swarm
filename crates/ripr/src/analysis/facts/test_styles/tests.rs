@@ -358,6 +358,7 @@ fn cfg_function_fact(name: &str, start_line: usize) -> FunctionFact {
         attrs: Vec::new(),
         nested_fn_names: Vec::new(),
         let_bindings: Vec::new(),
+        impl_context: Default::default(),
     }
 }
 

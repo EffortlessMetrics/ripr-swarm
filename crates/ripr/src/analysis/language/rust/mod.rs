@@ -4587,6 +4587,7 @@ fn absent_delimiter_boundary_returns_head() {
             attrs: vec![],
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         };
         let rust_index = RustIndex {
             functions: vec![rust_owner.clone()],

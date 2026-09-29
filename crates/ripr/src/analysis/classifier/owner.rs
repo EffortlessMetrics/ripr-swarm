@@ -51,6 +51,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         };
         let index = RustIndex {
             functions: vec![owner],

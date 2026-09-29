@@ -871,6 +871,7 @@ mod tests {
                         attrs: vec![],
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
+                        impl_context: Default::default(),
                     }],
                     probe_shapes: vec![ProbeShapeFact {
                         start_line: 3,
@@ -955,6 +956,7 @@ mod tests {
                         attrs: vec![],
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
+                        impl_context: Default::default(),
                     }],
                     probe_shapes: vec![ProbeShapeFact {
                         start_line: 10,
@@ -1098,6 +1100,7 @@ mod tests {
                         attrs: vec![],
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
+                        impl_context: Default::default(),
                     }],
                     ..FileFacts::default()
                 },
@@ -1510,6 +1513,7 @@ mod tests {
                         attrs: vec![],
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
+                        impl_context: Default::default(),
                     }],
                     ..FileFacts::default()
                 },
@@ -1783,6 +1787,7 @@ mod tests {
                         attrs: vec![],
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
+                        impl_context: Default::default(),
                     }],
                     ..FileFacts::default()
                 },
@@ -1854,6 +1859,7 @@ mod tests {
                         attrs: vec![],
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
+                        impl_context: Default::default(),
                     }],
                     ..FileFacts::default()
                 },
@@ -1915,6 +1921,7 @@ mod tests {
                         attrs: vec![],
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
+                        impl_context: Default::default(),
                     }],
                     ..FileFacts::default()
                 },

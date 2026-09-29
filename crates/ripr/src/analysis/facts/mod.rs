@@ -69,7 +69,7 @@ pub(crate) use harness_registry::validated_file_wide_harness_targets;
 // Keep compilation-unit rebasing available at the facts facade for index consumers.
 pub(crate) use includes::compilation_unit_path_from_parents;
 pub use model::{
-    CallFact, FileFacts, FunctionFact, FunctionSourceRole, FunctionSummary, HarnessLimitationFact,
+    CallFact, FileFacts, FunctionFact, FunctionImplContext, FunctionSourceRole, FunctionSummary, HarnessLimitationFact,
     HarnessSelectorCapability, HarnessSubjectClaim, HarnessSubjectFact, LetBindingFact,
     LiteralFact, ModuleDeclarationFact, ModulePathTarget, OracleFact, ProbeShapeFact,
     ResolvedIncludeParent, ReturnFact, RustIncludeLimitation, RustIndex, SourceRoleProvenance,
