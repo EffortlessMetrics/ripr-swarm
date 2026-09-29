@@ -8,8 +8,7 @@
 use crate::atomic_file;
 use crate::domain::{
     ActorKind, FEEDBACK_NOTE_MAX_BYTES, FEEDBACK_SCHEMA_VERSION, FeedbackJudgment, FeedbackPayload,
-    FeedbackReason, FeedbackReceipt, ReferenceState, ResultIdentity, ReviewStatus,
-    classify_reference,
+    FeedbackReceipt, ReferenceState, ResultIdentity, classify_reference,
 };
 use crate::output::feedback::{
     render_join_document, render_receipt_document, rendered_receipt_from_value,
@@ -543,6 +542,7 @@ pub(crate) fn record_result_json(recorded: &RecordedFeedback) -> Result<String, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::{FeedbackReason, ReviewStatus};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
