@@ -7243,6 +7243,68 @@ fn oracle_confidence_low_for_weak_and_smoke() {
 // PR6: Ownership hardening — package-local, import forms, typescript_target_unresolved
 // ──────────────────────────────────────────────────────────────────────────────
 
+/// The per-owner package scope answers every (owner, test) pair exactly as
+/// `same_package_root` does, on first (walking) and repeated (cached)
+/// queries: nested packages, a directory outside any package, absolute and
+/// relative test paths, and an owner with no package root.
+#[test]
+fn owner_package_scope_matches_same_package_root_for_every_pair() -> Result<(), String> {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let temp = std::env::temp_dir().join(format!("ripr-pkg-scope-{stamp}"));
+    let root = temp.join("repo");
+    for dir in [
+        "packages/a/src",
+        "packages/a/tests/deep",
+        "packages/a/nested/src",
+        "packages/b/test",
+        "scripts",
+    ] {
+        fs::create_dir_all(root.join(dir)).map_err(|error| error.to_string())?;
+    }
+    for manifest in [
+        "packages/a/package.json",
+        "packages/a/nested/package.json",
+        "packages/b/package.json",
+    ] {
+        fs::write(root.join(manifest), "{}").map_err(|error| error.to_string())?;
+    }
+    let files: Vec<PathBuf> = [
+        "packages/a/src/cart.ts",
+        "packages/a/tests/cart.test.ts",
+        "packages/a/tests/deep/cart.test.ts",
+        "packages/a/nested/src/inner.test.ts",
+        "packages/b/test/cart.test.ts",
+        "scripts/cart.test.ts",
+        "top.test.ts",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .chain([root.join("packages/b/test/abs.test.ts")])
+    .collect();
+    let mut compared = 0;
+    for owner in &files {
+        let scope = OwnerPackageScope::new(owner, &root);
+        for round in 0..2 {
+            for test in &files {
+                assert_eq!(
+                    scope.contains(test),
+                    same_package_root(owner, test, &root),
+                    "round {round}: owner {owner:?} / test {test:?}"
+                );
+                compared += 1;
+            }
+        }
+    }
+    let _ = fs::remove_dir_all(&temp);
+    assert_eq!(compared, files.len() * files.len() * 2);
+    Ok(())
+}
+
 /// Package-local filter: a test in the SAME package as the owner IS selected.
 #[test]
 fn package_local_filter_selects_same_package_test() {
@@ -13729,6 +13791,87 @@ fn owner_extraction_gap_discloses_static_block() -> Result<(), String> {
         (5, "    Registry.defaults.set(\"standard\", 8);"),
         "class static block",
     )
+}
+
+#[test]
+fn owner_extraction_gap_discloses_member_assigned_function() -> Result<(), String> {
+    // express `lib/response.js` shape (#4754).
+    assert_owner_extraction_gap_disclosed(
+        "owner-gap-member-fn",
+        "lib/response.js",
+        "var res = Object.create(null);\nmodule.exports = res;\n\nres.send = function send(body) {\n  if (body >= 1) {\n    return 1;\n  }\n  return 0;\n};\n",
+        (5, "  if (body >= 1) {"),
+        "member-assigned function",
+    )?;
+    assert_owner_extraction_gap_disclosed(
+        "owner-gap-prototype-fn",
+        "lib/ledger.js",
+        "function Ledger() {}\nLedger.prototype.adjust = (amount) => {\n  return amount - 5;\n};\n",
+        (3, "  return amount - 5;"),
+        "member-assigned function",
+    )
+}
+
+#[test]
+fn owner_extraction_gap_discloses_function_inside_top_level_call() -> Result<(), String> {
+    // lodash `;(function() { ... }.call(this))` shape (#4754).
+    assert_owner_extraction_gap_disclosed(
+        "owner-gap-iife-call",
+        "lodash.js",
+        ";(function() {\n  function clamp(n) {\n    return n > 9 ? 9 : n;\n  }\n  this.clamp = clamp;\n}.call(this));\n",
+        (3, "    return n > 9 ? 9 : n;"),
+        "function inside a top-level call",
+    )?;
+    assert_owner_extraction_gap_disclosed(
+        "owner-gap-umd-define",
+        "src/umd.js",
+        "define([\"dep\"], function (dep) {\n  return dep.rate * 2;\n});\n",
+        (2, "  return dep.rate * 2;"),
+        "function inside a top-level call",
+    )
+}
+
+#[test]
+fn no_owner_extraction_gap_for_commonjs_exports_or_plain_expression_statements()
+-> Result<(), String> {
+    // CommonJS export targets are export shapes (#4545), and statements that
+    // hold no changed function body are not owner gaps.
+    for (label, src, added) in [
+        (
+            "owner-gap-neg-exports",
+            "exports.rate = function (amount) {\n  return amount * 2;\n};\n",
+            (2, "  return amount * 2;"),
+        ),
+        (
+            "owner-gap-neg-module-exports",
+            "module.exports = function rate(amount) {\n  return amount * 2;\n};\n",
+            (2, "  return amount * 2;"),
+        ),
+        (
+            "owner-gap-neg-plain",
+            "var config = {};\nconfig.rate = 3;\ninit(config);\n",
+            (2, "config.rate = 3;"),
+        ),
+    ] {
+        let root = ts_unique_tempdir(label)?;
+        ts_write_file(&root.join("lib/rate.js"), src)?;
+        let result = TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root.clone()),
+            &OraclePolicy::default(),
+            &[changed_with_lines("lib/rate.js", &[added])],
+        )?;
+        assert!(
+            !result.limitations.iter().any(|limitation| {
+                limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("typescript_owner_extraction_partial"))
+            }),
+            "{label}: unexpected typescript_owner_extraction_partial, got {:?}",
+            result.limitations
+        );
+    }
+    Ok(())
 }
 
 #[test]
