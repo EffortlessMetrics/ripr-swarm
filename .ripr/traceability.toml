@@ -1522,9 +1522,15 @@ tests = [
   "crates/ripr/src/output/pr_evidence_ledger.rs::tests::pr_evidence_ledger_routes_repairable_gap_records",
   "crates/ripr/src/output/pr_evidence_ledger.rs::tests::pr_evidence_ledger_reports_incomplete_without_evidence",
   "crates/ripr/src/output/pr_evidence_ledger.rs::tests::pr_evidence_ledger_matches_fixture_contract",
+  "crates/ripr/src/output/pr_evidence_ledger.rs::tests::pr_evidence_ledger_jsonl_record_is_compact_full_object",
+  "crates/ripr/src/output/file_write.rs::tests::append_line_creates_parent_and_preserves_prior_records",
+  "crates/ripr/src/output/file_write.rs::tests::append_line_inserts_separator_when_file_lacks_trailing_newline",
+  "crates/ripr/src/output/file_write.rs::tests::append_line_rejects_embedded_newlines",
   "crates/ripr/src/cli/commands.rs::tests::pr_evidence_ledger_parses_option_surface",
   "crates/ripr/src/cli/commands.rs::tests::pr_evidence_ledger_requires_identity_and_evidence",
   "crates/ripr/src/cli/commands.rs::tests::pr_evidence_ledger_writes_json_and_markdown_reports",
+  "crates/ripr/src/cli/commands.rs::tests::pr_evidence_ledger_out_jsonl_is_opt_in_and_feeds_non_null_history",
+  "crates/ripr/src/cli/help.rs::tests::command_specific_help_usage_lines_are_stable",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
   "crates/ripr/src/output/coverage_grip_frontier.rs::tests::coverage_grip_frontier_reports_flat_coverage_with_improved_grip",
   "crates/ripr/src/output/coverage_grip_frontier.rs::tests::coverage_grip_frontier_keeps_missing_coverage_advisory",
@@ -1547,9 +1553,11 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/output/pr_evidence_ledger.rs",
+  "crates/ripr/src/output/file_write.rs",
   "crates/ripr/src/output/coverage_grip_frontier.rs",
   "crates/ripr/src/output/mod.rs",
   "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands_options.rs",
   "crates/ripr/src/cli/command.rs",
   "crates/ripr/src/cli/execute.rs",
   "crates/ripr/src/cli/help.rs",
@@ -1560,6 +1568,7 @@ outputs = [
   "docs/specs/README.md",
   "docs/OUTPUT_SCHEMA.md",
   "docs/CI.md",
+  "docs/PR_EVIDENCE_LEDGER_WORKFLOW.md",
   "docs/CAPABILITY_MATRIX.md",
   "metrics/capabilities.toml",
   "docs/IMPLEMENTATION_CAMPAIGNS.md",
@@ -3435,8 +3444,15 @@ tests = [
   "crates/ripr/src/output/policy_history.rs::tests::policy_history_keeps_usable_history_with_malformed_line_warning",
   "crates/ripr/src/output/policy_history.rs::tests::policy_history_malformed_current_is_config_error_snapshot",
   "crates/ripr/src/output/policy_history.rs::tests::policy_history_json_and_markdown_are_structured",
+  "crates/ripr/src/output/policy_history.rs::tests::policy_history_jsonl_record_is_one_line_snapshot",
+  "crates/ripr/src/output/file_write.rs::tests::append_line_creates_parent_and_preserves_prior_records",
+  "crates/ripr/src/output/file_write.rs::tests::append_line_inserts_separator_when_file_lacks_trailing_newline",
+  "crates/ripr/src/output/file_write.rs::tests::append_line_rejects_embedded_newlines",
   "crates/ripr/src/cli/commands.rs::tests::policy_history_parses_option_surface",
   "crates/ripr/src/cli/commands.rs::tests::policy_history_command_writes_reports",
+  "crates/ripr/src/cli/commands.rs::tests::policy_history_out_jsonl_is_opt_in_and_feeds_non_null_trend",
+  "crates/ripr/src/cli/commands.rs::tests::policy_history_out_jsonl_refuses_unavailable_current",
+  "crates/ripr/src/cli/help.rs::tests::command_specific_help_usage_lines_are_stable",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
 ]
 fixtures = [
@@ -3444,8 +3460,12 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/output/policy_history.rs",
+  "crates/ripr/src/output/file_write.rs",
   "crates/ripr/src/output/mod.rs",
   "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/policy/parse.rs",
+  "crates/ripr/src/cli/commands/policy/reports.rs",
+  "crates/ripr/src/cli/commands_options.rs",
   "crates/ripr/src/cli/help.rs",
   "crates/ripr/src/cli/execute.rs",
 ]
@@ -3455,6 +3475,7 @@ outputs = [
   "docs/OUTPUT_SCHEMA.md",
   "docs/CI.md",
   "docs/policy/POLICY_OPERATIONS.md",
+  "docs/POLICY_OPERATIONS_WORKFLOW.md",
   "docs/handoffs/2026-05-13-policy-operations-closeout.md",
   "docs/IMPLEMENTATION_CAMPAIGNS.md",
   "docs/IMPLEMENTATION_PLAN.md",
@@ -4085,6 +4106,9 @@ tests = [
   "crates/ripr/src/cli/mod.rs",
   "crates/ripr/src/cli/help.rs",
   "crates/ripr/tests/cli_smoke.rs::first_pr_cli_writes_start_here_packet",
+  "crates/ripr/src/output/first_pr.rs::tests::write_first_pr_records_producing_ripr_version",
+  "crates/ripr/src/output/first_pr.rs::tests::check_first_pr_rejects_missing_ripr_version",
+  "crates/ripr/src/output/first_pr.rs::tests::check_first_pr_rejects_other_ripr_version",
   "crates/ripr/src/output/first_pr.rs::tests::python_preview_gap_ledger_is_selected_for_start_here",
   "crates/ripr/tests/generated_review_workflow.rs::generated_first_pr_artifact_commands_run_from_a_foreign_working_directory",
   "xtask/src/reports/first_pr.rs",
@@ -4102,6 +4126,8 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/output/first_pr.rs",
+  "crates/ripr/src/output/first_pr/freshness.rs",
+  "crates/ripr/src/cli/commands/doctor.rs",
   "crates/ripr/src/output/outcome/mod.rs",
   "crates/ripr/src/output/mod.rs",
   "crates/ripr/src/cli/command.rs",
@@ -4218,6 +4244,10 @@ tests = [
   "crates/ripr/src/output/pr_evidence_ledger.rs",
   "crates/ripr/src/output/first_pr.rs::tests::first_pr_help_pins_start_here_language",
   "crates/ripr/src/output/first_pr.rs::tests::first_successful_pr_fixture_corpus_matches_expected_outputs",
+  "crates/ripr/src/output/first_pr/freshness.rs::tests::missing_version_is_stale_evidence",
+  "crates/ripr/src/output/first_pr/freshness.rs::tests::other_version_is_stale_evidence",
+  "crates/ripr/tests/cli_smoke.rs::doctor_reports_version_mismatched_start_here_packet_as_stale",
+  "crates/ripr/tests/cli_smoke.rs::doctor_reports_start_here_packet_missing_version_as_stale",
   "crates/ripr/src/output/pr_review_front_panel.rs",
   "crates/ripr/src/output/first_pr.rs",
   "crates/ripr/src/cli/help.rs",
@@ -4254,6 +4284,8 @@ code = [
   "crates/ripr/src/cli/help.rs",
   "crates/ripr/src/cli/help/reports.rs",
   "crates/ripr/src/output/first_pr.rs",
+  "crates/ripr/src/output/first_pr/freshness.rs",
+  "crates/ripr/src/cli/commands/doctor.rs",
   "crates/ripr/src/output/pr_evidence_ledger.rs",
   "crates/ripr/src/output/pr_review_front_panel.rs",
   "crates/ripr/src/cli/help/core.rs",
@@ -9692,8 +9724,55 @@ metrics = [
 
 [[behavior]]
 id = "RIPR-SPEC-0182"
+name = "Governed identity registry and compatibility map"
+spec = "docs/specs/RIPR-SPEC-0182-governed-identity-registry.md"
+tests = [
+  "crates/ripr/src/domain/identity/tests.rs::production_registry_covers_required_taxonomy_and_is_internally_consistent",
+  "crates/ripr/src/domain/identity/tests.rs::missing_taxonomy_identity_fails_the_registry_check",
+  "crates/ripr/src/domain/identity/tests.rs::contradictory_duplicate_owners_fail_the_registry_check",
+  "crates/ripr/src/domain/identity/tests.rs::same_surface_field_cannot_have_two_canonical_owners",
+  "crates/ripr/src/domain/identity/tests.rs::same_field_name_on_different_surfaces_can_keep_distinct_meanings",
+  "crates/ripr/src/domain/identity/tests.rs::repair_attempt_id_cannot_be_registered_as_a_snapshot_or_analysis_attempt_alias",
+  "crates/ripr/src/domain/identity/tests.rs::completed_snapshot_cannot_own_agent_snapshot_id",
+  "crates/ripr/src/domain/identity/tests.rs::production_catalog_keeps_agent_snapshot_id_as_analysis_attempt_not_completed_snapshot",
+  "crates/ripr/src/domain/identity/tests.rs::continuation_wire_names_are_one_authority_with_an_alias",
+  "crates/ripr/src/domain/identity/tests.rs::portable_identities_reject_scheduler_timestamp_pid_client_and_display_inputs",
+  "crates/ripr/src/domain/identity/tests.rs::equivalent_checkout_roots_preserve_portable_identities_and_keep_containment_separate",
+  "crates/ripr/src/domain/identity/tests.rs::alias_without_removal_generation_fails",
+  "crates/ripr/src/domain/identity/tests.rs::unknown_governed_field_has_no_disposition",
+  "crates/ripr/src/domain/identity/tests.rs::reordered_registry_entries_render_byte_stable_json_and_markdown",
+  "crates/ripr/src/domain/identity/tests.rs::one_sided_parent_child_edge_fails_the_registry_check",
+  "crates/ripr/src/domain/identity/tests.rs::adjacent_field_cannot_also_be_canonical_on_the_same_surface",
+  "crates/ripr/src/domain/identity/tests.rs::serialization_on_an_ungoverned_surface_fails_closed",
+  "crates/ripr/src/domain/identity/tests.rs::truncated_surface_suffix_does_not_inherit_a_disposition",
+  "crates/ripr/src/domain/identity/tests.rs::checkout_prefixed_surface_still_matches_the_registered_path",
+  "crates/ripr/src/domain/identity/tests.rs::same_surface_field_cannot_be_canonical_and_component",
+  "crates/ripr/src/domain/identity/tests.rs::missing_serialized_sibling_fails_the_registry_check",
+  "xtask/src/identity_registry.rs::tests::unknown_field_has_no_disposition",
+  "xtask/src/identity_registry.rs::tests::same_attempt_id_name_keeps_repair_and_feedback_dispositions_apart",
+  "xtask/src/identity_registry.rs::tests::scanner_reports_unknown_and_zero_field_surfaces",
+]
+fixtures = [
+]
+code = [
+  "crates/ripr/src/domain/identity/mod.rs",
+  "crates/ripr/src/domain/identity/catalog.rs",
+  "crates/ripr/src/domain/identity/fields.rs",
+  "crates/ripr/src/domain/identity/invariants.rs",
+  "xtask/src/identity_registry.rs",
+]
+outputs = [
+  "docs/identity/REGISTRY.md",
+  "docs/identity/registry.v1.json",
+]
+metrics = [
+  "identity_registry_kinds",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0183"
 name = "Same-test pairing for boundary-class probes"
-spec = "docs/specs/RIPR-SPEC-0182-same-test-boundary-oracle-pairing.md"
+spec = "docs/specs/RIPR-SPEC-0183-same-test-boundary-oracle-pairing.md"
 tests = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::split_tests_do_not_pair",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::same_call_assert_eq_pairs",
@@ -9719,10 +9798,10 @@ code = [
   "crates/ripr/src/analysis/classify/decision.rs"
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0182-same-test-boundary-oracle-pairing.md",
+  "docs/specs/RIPR-SPEC-0183-same-test-boundary-oracle-pairing.md",
   "fixtures/split_test_boundary_oracle/expected/check.json",
   "fixtures/split_test_boundary_oracle/expected/human.txt"
 ]
 metrics = [
-  "same_test_boundary_oracle_pairing"
+  "same_test_boundary_oracle_pairing",
 ]

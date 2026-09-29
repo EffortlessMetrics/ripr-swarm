@@ -11,6 +11,10 @@ are scoped or reviewed.
 
 ### Added
 
+- CLI: `ripr pr-ledger record --out-jsonl` and `ripr policy history --out-jsonl`
+  append one compact JSONL record so adopting consumers can populate history
+  trend fields. Generated CI still only reads those files when present and
+  never passes `--out-jsonl` (#4392).
 - CI: a dispatch-only local-wheelhouse qualification lane records pip and uv
   isolation facts and evaluates a fail-closed aggregate. Missing, skipped,
   zero-subject, or mismatched rows cannot pass. No PyPI credentials or
@@ -22,6 +26,9 @@ are scoped or reviewed.
   cached answer cannot satisfy a speed target, and a fast elapsed time cannot
   hide a redundant full rescan or duplicate diagnostic publication. The
   historical 2s/10s/30s figures remain proposals, not gates.
+- Identity: `cargo xtask check-identity-registry` enforces one governed
+  identifier catalog and generated `docs/identity` table. Vocabulary and
+  compatibility map only; it does not migrate consumers (#4804).
 
 ### Fixed
 
@@ -32,6 +39,9 @@ are scoped or reviewed.
   call's result. Otherwise the finding stays at most `weakly_exposed` and
   names `same_test_pairing_missing`. `assert_eq!(gate(10), true)` stays
   `exposed` (#4828).
+- `ripr doctor` and `ripr first-pr --check` treat a start-here packet written
+  by another ripr version, or with no `ripr_version`, as stale evidence and
+  print the refresh command instead of trusting it after an upgrade (#4757).
 - Changes in languages ripr does not analyze (Go, Java, C, C++, shell and
   others) are no longer called non-source files. A Go-only diff reported
   `no_behavioral_candidates (analysis complete)` and said the empty result was
@@ -85,6 +95,13 @@ are scoped or reviewed.
   On `tokio-rs/bytes` the "Related tests appear to reach" line quoted
   `bytes_mut_unsplit_empty_self` ahead of the test that pins `try_get_int`'s
   return value.
+- A changed Rust line whose only `=>` sits inside a macro call's arguments
+  opened on that same line (`buf_try_get_impl!(be => self, i64, 8);` in
+  `tokio-rs/bytes`, or a `const`/`static` initializer such as
+  `phf_map! { "a" => 1 }`) or inside a string no longer gets a `match_arm`
+  probe. Arm lines, inline `match` blocks and `macro_rules!` rule arms keep
+  it. An arrow on a continuation line of a multi-line macro call still reads
+  as an arm, since the line carries no enclosing context.
 - Security: ripr's git calls pass `-c core.fsmonitor=false`, so a
   repository's own `core.fsmonitor` program (reachable from an extracted
   archive or a planted nested repository) does not run on `git status`
@@ -2054,6 +2071,11 @@ are scoped or reviewed.
   `cargo xtask check-agent-skills`, which routed Rust CI already
   requires, and name the formatter check as `cargo fmt --check`
   ([#3826](https://github.com/EffortlessMetrics/ripr-swarm/pull/3826)).
+
+- The local VSIX steps in `docs/EDITOR_EXTENSION.md` now run `npm ci` and
+  `npm run compile` before `npm run package`. Run alone in a fresh checkout,
+  `npm run package` stops with `Extension entrypoint(s) missing`
+  ([#4865](https://github.com/EffortlessMetrics/ripr-swarm/pull/4865)).
 
 ## 0.10.0 - Honest-by-construction evidence and downstream gate adoption
 
