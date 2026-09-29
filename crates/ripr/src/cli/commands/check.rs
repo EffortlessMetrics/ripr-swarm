@@ -81,81 +81,101 @@ pub(super) fn resolve_workspace_root(start: &Path) -> Result<Option<PathBuf>, St
     })?;
 
     for ancestor in start.ancestors() {
-        let manifest = ancestor.join("Cargo.toml");
-        let Ok(contents) = std::fs::read_to_string(&manifest) else {
-            continue;
-        };
-        let Ok(document) = toml::from_str::<toml::Value>(&contents) else {
-            continue;
-        };
-        if document.get("workspace").is_some_and(toml::Value::is_table) {
+        if manifest_declares_workspace(&ancestor.join("Cargo.toml")) {
             return Ok(Some(ancestor.to_path_buf()));
         }
-    }
-    Ok(None)
-}
-
-/// The non-Cargo workspace declaration that selected an implicit root.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum WorkspaceMarker {
-    PnpmWorkspace,
-    PackageJsonWorkspaces,
-    UvWorkspace,
-}
-
-impl WorkspaceMarker {
-    fn reason(self) -> &'static str {
-        match self {
-            Self::PnpmWorkspace => "pnpm-workspace.yaml",
-            Self::PackageJsonWorkspaces => "package.json declares workspaces",
-            Self::UvWorkspace => "pyproject.toml contains [tool.uv.workspace]",
-        }
-    }
-}
-
-/// #4553: the nearest ancestor of `start` that declares a JavaScript or
-/// Python workspace, bounded by the git work tree that contains `start`.
-///
-/// Used only when no Cargo workspace is found, so a package directory of a
-/// pnpm/npm/yarn/bun or uv monorepo roots the analysis where sibling-package
-/// tests are visible. A marker above the work tree's top level is ignored,
-/// and a start outside any work tree resolves nothing.
-fn resolve_non_cargo_workspace_root(
-    start: &Path,
-) -> Result<Option<(PathBuf, WorkspaceMarker)>, String> {
-    let start = std::fs::canonicalize(start).map_err(|error| {
-        format!(
-            "resolve implicit workspace root from {} failed: {error}",
-            start.display()
-        )
-    })?;
-    let Some(top_level) = start
-        .ancestors()
-        .find(|ancestor| ancestor.join(".git").exists())
-    else {
-        return Ok(None);
-    };
-    for ancestor in start.ancestors() {
-        if let Some(marker) = workspace_marker(ancestor) {
-            return Ok(Some((ancestor.to_path_buf(), marker)));
-        }
-        if ancestor == top_level {
+        // A git top level bounds the walk: a workspace in an enclosing
+        // repository never claims a nested, independent repository.
+        if ancestor.join(".git").exists() {
             break;
         }
     }
     Ok(None)
 }
 
-fn workspace_marker(dir: &Path) -> Option<WorkspaceMarker> {
+fn manifest_declares_workspace(manifest: &Path) -> bool {
+    std::fs::read_to_string(manifest)
+        .ok()
+        .and_then(|contents| toml::from_str::<toml::Value>(&contents).ok())
+        .is_some_and(|document| document.get("workspace").is_some_and(toml::Value::is_table))
+}
+
+/// Why an implicit run moved away from the current directory.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ImplicitRootReason {
+    Workspace,
+    Package,
+    /// #4553: JavaScript and Python workspace declarations.
+    PnpmWorkspace,
+    PackageJsonWorkspaces,
+    UvWorkspace,
+    GitTopLevel,
+}
+
+impl ImplicitRootReason {
+    fn disclosure(self) -> &'static str {
+        match self {
+            Self::Workspace => "Cargo.toml contains [workspace]",
+            Self::Package => "nearest Cargo.toml",
+            Self::PnpmWorkspace => "pnpm-workspace.yaml",
+            Self::PackageJsonWorkspaces => "package.json declares workspaces",
+            Self::UvWorkspace => "pyproject.toml contains [tool.uv.workspace]",
+            Self::GitTopLevel => "git top level; no Cargo.toml found",
+        }
+    }
+}
+
+/// Resolve the root an implicit run analyzes from `start`.
+///
+/// A `[workspace]` manifest anywhere above wins. Otherwise the nearest
+/// ancestor holding a `Cargo.toml`, a JavaScript or Python workspace
+/// declaration (`pnpm-workspace.yaml`, a `package.json` with `workspaces`,
+/// a `pyproject.toml` with `[tool.uv.workspace]`), or a `.git` entry is the
+/// root. So a run from `repo/src` of a single-crate repo analyzes the crate
+/// instead of silently scoping the diff to `src/` and reporting a clean,
+/// complete result (#4610), and a run from one package of a pnpm/npm/yarn/bun
+/// or uv monorepo analyzes the workspace, where sibling-package tests are
+/// visible (#4553). The walk stops at the git top level so a stray manifest
+/// outside the repository is never adopted.
+pub(super) fn resolve_project_root(
+    start: &Path,
+) -> Result<Option<(PathBuf, ImplicitRootReason)>, String> {
+    if let Some(root) = resolve_workspace_root(start)? {
+        return Ok(Some((root, ImplicitRootReason::Workspace)));
+    }
+    let start = std::fs::canonicalize(start).map_err(|error| {
+        format!(
+            "resolve implicit project root from {} failed: {error}",
+            start.display()
+        )
+    })?;
+    for ancestor in start.ancestors() {
+        if ancestor.join("Cargo.toml").is_file() {
+            return Ok(Some((ancestor.to_path_buf(), ImplicitRootReason::Package)));
+        }
+        if let Some(reason) = non_cargo_workspace_marker(ancestor) {
+            return Ok(Some((ancestor.to_path_buf(), reason)));
+        }
+        if ancestor.join(".git").exists() {
+            return Ok(Some((
+                ancestor.to_path_buf(),
+                ImplicitRootReason::GitTopLevel,
+            )));
+        }
+    }
+    Ok(None)
+}
+
+fn non_cargo_workspace_marker(dir: &Path) -> Option<ImplicitRootReason> {
     if dir.join("pnpm-workspace.yaml").is_file() {
-        return Some(WorkspaceMarker::PnpmWorkspace);
+        return Some(ImplicitRootReason::PnpmWorkspace);
     }
     if std::fs::read_to_string(dir.join("package.json"))
         .ok()
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
         .is_some_and(|manifest| manifest.get("workspaces").is_some())
     {
-        return Some(WorkspaceMarker::PackageJsonWorkspaces);
+        return Some(ImplicitRootReason::PackageJsonWorkspaces);
     }
     if std::fs::read_to_string(dir.join("pyproject.toml"))
         .ok()
@@ -168,18 +188,14 @@ fn workspace_marker(dir: &Path) -> Option<WorkspaceMarker> {
                 .is_some_and(toml::Value::is_table)
         })
     {
-        return Some(WorkspaceMarker::UvWorkspace);
+        return Some(ImplicitRootReason::UvWorkspace);
     }
     None
 }
 
 fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<(), String> {
-    let (root, reason) = match resolve_workspace_root(Path::new("."))? {
-        Some(root) => (root, "Cargo.toml contains [workspace]"),
-        None => match resolve_non_cargo_workspace_root(Path::new("."))? {
-            Some((root, marker)) => (root, marker.reason()),
-            None => return Ok(()),
-        },
+    let Some((root, reason)) = resolve_project_root(Path::new("."))? else {
+        return Ok(());
     };
     let current = std::fs::canonicalize(".")
         .map_err(|error| format!("resolve current directory failed: {error}"))?;
@@ -188,8 +204,9 @@ fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<(), String>
     }
 
     eprintln!(
-        "ripr: resolved workspace root to {} ({reason})",
-        root.display()
+        "ripr: resolved workspace root to {} ({})",
+        root.display(),
+        reason.disclosure()
     );
     input.root = root;
     Ok(())
@@ -820,7 +837,7 @@ fn render_check_gap_ledger_badge(
             );
         }
     };
-    let text = std::fs::read_to_string(gap_ledger)
+    let text = crate::bounded_input::read_to_string(gap_ledger)
         .map_err(|err| format!("failed to read gap ledger {}: {err}", gap_ledger.display()))?;
     let policy = output::badge::BadgePolicy {
         suppressions_path: config.suppressions().display_path(),
@@ -1238,9 +1255,7 @@ mod tests {
         Ok(())
     }
 
-    /// A fixture outside the ripr-swarm checkout, so its own Cargo
-    /// workspace can never answer first.
-    fn outside_repo_fixture(label: &str) -> Result<PathBuf, String> {
+    fn outside_workspace_fixture(label: &str) -> Result<PathBuf, String> {
         let workspace = std::fs::canonicalize(repo_root()).map_err(|error| error.to_string())?;
         let candidate = unique_command_test_dir(label);
         let parent = workspace
@@ -1253,29 +1268,29 @@ mod tests {
     }
 
     #[test]
-    fn non_cargo_workspace_root_walks_up_to_each_marker() -> Result<(), String> {
-        let cases: [(&str, &str, &str, WorkspaceMarker); 3] = [
+    fn project_root_walk_reaches_a_js_or_python_workspace_from_a_package() -> Result<(), String> {
+        let cases: [(&str, &str, &str, ImplicitRootReason); 3] = [
             (
                 "pnpm-workspace.yaml",
                 "packages:\n  - 'packages/*'\n",
                 "packages/utils/src",
-                WorkspaceMarker::PnpmWorkspace,
+                ImplicitRootReason::PnpmWorkspace,
             ),
             (
                 "package.json",
                 r#"{"name":"root","private":true,"workspaces":["packages/*"]}"#,
                 "packages/utils/src",
-                WorkspaceMarker::PackageJsonWorkspaces,
+                ImplicitRootReason::PackageJsonWorkspaces,
             ),
             (
                 "pyproject.toml",
                 "[tool.uv.workspace]\nmembers = [\"packages/*\"]\n",
                 "packages/core/src/core",
-                WorkspaceMarker::UvWorkspace,
+                ImplicitRootReason::UvWorkspace,
             ),
         ];
         for (index, (manifest, contents, nested, marker)) in cases.into_iter().enumerate() {
-            let root = outside_repo_fixture(&format!("non-cargo-walk-{index}"))?;
+            let root = outside_workspace_fixture(&format!("non-cargo-walk-{index}"))?;
             let repo = root.join("repo");
             let nested = repo.join(nested);
             std::fs::create_dir_all(&nested).map_err(|error| error.to_string())?;
@@ -1299,7 +1314,7 @@ mod tests {
             )
             .map_err(|error| error.to_string())?;
 
-            let resolved = resolve_non_cargo_workspace_root(&nested);
+            let resolved = resolve_project_root(&nested);
             let expected = std::fs::canonicalize(&repo).map_err(|error| error.to_string());
             std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
             assert_eq!(resolved?, Some((expected?, marker)), "{manifest}");
@@ -1308,8 +1323,31 @@ mod tests {
     }
 
     #[test]
-    fn non_cargo_workspace_root_stays_inside_the_git_work_tree() -> Result<(), String> {
-        let root = outside_repo_fixture("non-cargo-walk-bounded")?;
+    fn project_root_walk_reaches_a_package_manifest_from_its_source_dir() -> Result<(), String> {
+        let root = outside_workspace_fixture("project-root-package")?;
+        let nested = root.join("src/inner");
+        std::fs::create_dir_all(&nested).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(root.join(".git")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"package-only\"\nversion = \"0.1.0\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+
+        let resolved = resolve_project_root(&nested);
+        let expected = std::fs::canonicalize(&root).map_err(|error| error.to_string());
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        assert_eq!(
+            resolved?,
+            Some((expected?, ImplicitRootReason::Package)),
+            "a package-only crate run from src/ must analyze the crate root"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn project_root_walk_ignores_markers_above_the_git_top_level() -> Result<(), String> {
+        let root = outside_workspace_fixture("non-cargo-walk-bounded")?;
         let repo = root.join("repo");
         let nested = repo.join("packages/utils");
         std::fs::create_dir_all(&nested).map_err(|error| error.to_string())?;
@@ -1321,13 +1359,64 @@ mod tests {
         std::fs::write(repo.join("package.json"), r#"{"name":"root"}"#)
             .map_err(|error| error.to_string())?;
 
-        let bounded = resolve_non_cargo_workspace_root(&nested);
-        std::fs::remove_dir_all(repo.join(".git")).map_err(|error| error.to_string())?;
-        // Outside any work tree nothing resolves, even with a marker above.
-        let outside = resolve_non_cargo_workspace_root(&nested);
+        let resolved = resolve_project_root(&nested);
+        let expected = std::fs::canonicalize(&repo).map_err(|error| error.to_string());
         std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
-        assert_eq!(bounded?, None);
-        assert_eq!(outside?, None);
+        assert_eq!(
+            resolved?,
+            Some((expected?, ImplicitRootReason::GitTopLevel))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn project_root_walk_stops_at_the_git_top_level() -> Result<(), String> {
+        let outer = outside_workspace_fixture("project-root-git-stop")?;
+        let repo = outer.join("repo");
+        let nested = repo.join("web/src");
+        std::fs::create_dir_all(&nested).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(repo.join(".git")).map_err(|error| error.to_string())?;
+        // A manifest outside the repository must never be adopted.
+        std::fs::write(
+            outer.join("Cargo.toml"),
+            "[package]\nname = \"outside\"\nversion = \"0.1.0\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+
+        let resolved = resolve_project_root(&nested);
+        let expected = std::fs::canonicalize(&repo).map_err(|error| error.to_string());
+        std::fs::remove_dir_all(&outer).map_err(|error| error.to_string())?;
+        assert_eq!(
+            resolved?,
+            Some((expected?, ImplicitRootReason::GitTopLevel)),
+            "the walk must stop at the git top level"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn enclosing_workspace_does_not_claim_a_nested_repository() -> Result<(), String> {
+        let outer = outside_workspace_fixture("project-root-nested-repo")?;
+        let inner = outer.join("vendor/tool");
+        let nested = inner.join("src");
+        std::fs::create_dir_all(&nested).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(inner.join(".git")).map_err(|error| error.to_string())?;
+        std::fs::write(outer.join("Cargo.toml"), "[workspace]\nmembers = []\n")
+            .map_err(|error| error.to_string())?;
+        std::fs::write(
+            inner.join("Cargo.toml"),
+            "[package]\nname = \"tool\"\nversion = \"0.1.0\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+
+        let resolved = resolve_project_root(&nested);
+        let expected = std::fs::canonicalize(&inner).map_err(|error| error.to_string());
+        std::fs::remove_dir_all(&outer).map_err(|error| error.to_string())?;
+        assert_eq!(
+            resolved?,
+            Some((expected?, ImplicitRootReason::Package)),
+            "an enclosing workspace must not cross the nested repository's git boundary"
+        );
         Ok(())
     }
 
