@@ -24,6 +24,8 @@ use crate::domain::{
 use std::collections::BTreeSet;
 use std::path::Path;
 
+mod lexical_test_grip;
+
 /// Default ceiling on the number of Rust files a diff-scoped analysis will
 /// load into the index. A large multi-crate diff expands the index far beyond
 /// the changed files (`select_rust_files_for_mode` pulls in whole touched
@@ -1802,6 +1804,14 @@ impl RustAdapter {
             }
         }
 
+        let limitations = lexical_test_grip::limitation_for_consulted_unchanged_lexical_tests(
+            &index,
+            &findings,
+            &changed_rust_paths,
+        )?
+        .into_iter()
+        .collect();
+
         Ok(LanguageDiffResult {
             findings,
             harness_projections: super::super::harness_projection::projections_from_index(
@@ -1819,7 +1829,7 @@ impl RustAdapter {
                     is_generated_rust_file_with_patterns(&file.path, generated_file_patterns)
                 })
                 .count(),
-            limitations: Vec::new(),
+            limitations,
         })
     }
 }

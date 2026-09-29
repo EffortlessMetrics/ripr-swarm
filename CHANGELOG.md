@@ -11,6 +11,14 @@ are scoped or reviewed.
 
 ### Fixed
 
+- An unchanged Rust test file that the reference parser refuses is no longer
+  a silent related-test hole. If a classified owner consults that
+  lexical-fallback file (the file contributed a related test, or it calls the
+  owner but lexical extraction dropped the test), `ripr check` records
+  `rust_lexical_test_index_partial` and the outcome is
+  `partial_with_limitations`. An unused nightly-syntax test file in the same
+  crate does not make the run partial (#4775).
+
 - Security: Rust source discovery skips symlinked `.rs` entries, as the
   Python and TypeScript readers already did. A cloned repository or pull
   request that committed `src/zero.rs -> /dev/zero` made `ripr check` read
