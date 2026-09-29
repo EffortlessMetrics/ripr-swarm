@@ -29,7 +29,13 @@ pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
         let imports = extract_imports_from_statements(&ret.program.body);
         let mocks = extract_mocks_from_statements(&ret.program.body, &imports);
         let mut tests = Vec::new();
-        let mut scope = TestScope::default();
+        let mut scope = TestScope {
+            assertion_bindings: TypeScriptAssertionBindings::from_program(
+                &ret.program.body,
+                &imports,
+            ),
+            ..TestScope::default()
+        };
         collect_tests_from_statements(
             &ret.program.body,
             file,
@@ -632,7 +638,13 @@ pub(crate) fn collect_tests_from_statements(
             scope.levels.pop();
             continue;
         }
-        if let Some(mut test) = test_from_statement(stmt, file, source, &scope.describe_names) {
+        if let Some(mut test) = test_from_statement(
+            stmt,
+            file,
+            source,
+            &scope.describe_names,
+            &scope.assertion_bindings,
+        ) {
             test.mocks_in_file = mocks.to_vec();
             test.imports_in_file = imports.to_vec();
             // Test callback parameters (`it.each` rows, Vitest fixtures)
@@ -663,6 +675,9 @@ pub(crate) struct TestScope {
     /// Spans of string literals passed first to a call statement: describe
     /// and test names, `vi.mock('../src/cart')` paths.
     names: Vec<std::ops::Range<usize>>,
+    /// The file's imported assertion-library bindings (`node:assert`, chai;
+    /// #4547), credited in every test body.
+    assertion_bindings: TypeScriptAssertionBindings,
 }
 
 /// One binding a scope-level statement makes, and when it runs.
@@ -1328,6 +1343,7 @@ pub(crate) fn test_from_statement(
     file: &Path,
     source: &str,
     describe_stack: &[String],
+    bindings: &TypeScriptAssertionBindings,
 ) -> Option<TypeScriptTest> {
     let Statement::ExpressionStatement(expr_stmt) = stmt else {
         return None;
@@ -1335,7 +1351,7 @@ pub(crate) fn test_from_statement(
     let Expression::CallExpression(call) = &expr_stmt.expression else {
         return None;
     };
-    let (name, assertions) = test_name_and_assertions_from_call(call, source)?;
+    let (name, assertions) = test_name_and_assertions_from_call(call, source, bindings)?;
     Some(TypeScriptTest {
         name: qualified_test_name(describe_stack, &name),
         local_name: name,
@@ -1355,6 +1371,7 @@ pub(crate) fn test_from_statement(
 pub(crate) fn test_name_and_assertions_from_call(
     call: &oxc_ast::ast::CallExpression<'_>,
     source: &str,
+    bindings: &TypeScriptAssertionBindings,
 ) -> Option<(String, Vec<TypeScriptAssertion>)> {
     if !call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
         && !call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
@@ -1367,7 +1384,12 @@ pub(crate) fn test_name_and_assertions_from_call(
     let receiver = test_callback_receiver_name(callback);
     let assertions = function_body_statements_from_argument(callback)
         .map(|statements| {
-            collect_expect_assertions_in_statements(statements, source, receiver.as_deref())
+            collect_assertions_in_statements_with_bindings(
+                statements,
+                source,
+                receiver.as_deref(),
+                bindings,
+            )
         })
         .unwrap_or_default();
     Some((name, assertions))

@@ -144,6 +144,23 @@ Assertions / oracles the adapter must recognise:
   snapshot oracle (weak / static-limited)
 - bare `expect(actual).toBeTruthy()` / `toBeFalsy()` /
   `toBeDefined()` → smoke oracle
+- assertion libraries reached through a binding the test file imports from
+  `assert`, `node:assert`, `assert/strict`, `node:assert/strict`, or `chai`
+  (ESM import, top-level `require(...)`, or `require('chai').expect`; #4547):
+  `assert.strictEqual` / `deepStrictEqual` / `equal` / `deepEqual` →
+  exact-value oracle; `notStrictEqual` / `notDeepStrictEqual` / `notEqual` /
+  `notDeepEqual` / `match` / `doesNotMatch` → relational; `ok`, chai `isTrue`
+  / `isFalse` / `isOk` / `isNotOk`, and the bare callable `assert(value)` →
+  smoke; `throws` / `rejects` / `doesNotThrow` / `doesNotReject` → broad
+  error-path oracle. A named method import (`strictEqual(a, b)`) maps the
+  same way. chai `expect(x).to.equal(y)` / `.to.eql(y)` /
+  `.to.deep.equal(y)` → exact-value (relational under `.not`);
+  `.to.be.true` / `.false` / `.ok` / `.null` / `.undefined` → smoke;
+  `.to.throw(...)` → broad error; `.include` / `.contain` / `.match` /
+  `.above` / `.below` / `.lengthOf` → relational. The observed expression is
+  the first (actual) argument. A same-named local helper and a Jest/Vitest
+  `expect` are never read as these libraries, and unrecognised methods or
+  chain words are not credited
 
 The 0.8.1 Bun UB advisory lane also permits internal, evidence-only
 TypeScript facts for the configured Bun bridge calibration routes: syntactic

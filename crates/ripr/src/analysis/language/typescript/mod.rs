@@ -45,6 +45,8 @@ mod actionability;
 mod annotation_only;
 #[cfg(test)]
 mod annotation_only_tests;
+#[cfg(test)]
+mod assertion_library_tests;
 mod boundary_input;
 #[cfg(test)]
 mod boundary_input_tests;

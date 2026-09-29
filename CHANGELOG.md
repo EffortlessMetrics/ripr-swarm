@@ -44,6 +44,15 @@ are scoped or reviewed.
   functions and arrows, `module.exports = function ...`, and function
   properties of `module.exports = { ... }` are now owners that `require()`
   tests relate to; non-function values and computed keys still produce none.
+- TypeScript/JavaScript preview: tests that assert with `node:assert` or
+  chai now count as oracles. `assert.strictEqual(charset('text/html'),
+  'UTF-8')` in a mocha suite was read as an `unknown` oracle, and ripr
+  suggested adding `toBe`. Assertions made through an imported `assert`,
+  `node:assert`, `assert/strict` or chai binding now map to exact-value,
+  relational, smoke or broad-error evidence, including bare named imports
+  (`strictEqual(a, b)`) and chai `expect(x).to.equal(y)` chains. A local
+  helper named `assert` is still not credited, and Jest/Vitest `expect` is
+  unchanged (#4547).
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from
