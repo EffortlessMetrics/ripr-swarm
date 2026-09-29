@@ -1,6 +1,6 @@
 # #4510 prerequisite — verified shared extension plan
 
-Source-only; native NOT_RUN. Fresh all-state4510 body search returned[]. Reuse existing release.rs package/install authority, candidate_registry and OwnedProcess, not a new candidate selector/controller.
+Implementation NOT_RUN. The owning baseline below passed; it does not admit an installed candidate. Fresh all-state4510 body search returned[]. Reuse existing release.rs package/install authority, candidate_registry and OwnedProcess, not a new candidate selector/controller.
 
 ## Existing seams and actual gaps
 
@@ -20,7 +20,7 @@ Rows: exact argv/cwd/envpolicy/input/output/artifactdigests; generic states from
 
 ## Proof-first matrix
 
-Accept unchanged registry-authorized subject+package+absoluteinstalledbinary, nonzero rows, bounded child and successfulcleanup. Reject independentwrongSHA/tree/movedref/manifest/package/binary(sameversion),PATHdecoy, workspacebinary, foreignCWDdecoywrites, staleartifactinput, zero subjects/execution, alteredinventory/output, invalidfutureDTO. Timeout/cancel and cleanupfailure remain nongreen and preserve resources. Equivalentportable roots same semanticidentity; changedcandidate/inputdifferent. JSON/Markdown parity. Tests invoke owner API/validatedregistry rather than preconstruct admittedhandles. Existing install tests/extractionnegative controls characterize owner before refactor. Nativeproof planned doctor/checkfast/xtaskalltargetsbaseline then focused candidate_harness/install/registry/run controls and requiredguards; all NOT_RUN.
+Accept unchanged registry-authorized subject+package+absoluteinstalledbinary, nonzero rows, bounded child and successfulcleanup. Reject independentwrongSHA/tree/movedref/manifest/package/binary(sameversion),PATHdecoy, workspacebinary, foreignCWDdecoywrites, staleartifactinput, zero subjects/execution, alteredinventory/output, invalidfutureDTO. Timeout/cancel and cleanupfailure remain nongreen and preserve resources. Equivalentportable roots same semanticidentity; changedcandidate/inputdifferent. JSON/Markdown parity. Tests invoke owner API/validatedregistry rather than preconstruct admittedhandles. Existing install tests/extractionnegative controls characterize owner before refactor. Native proof uses the recorded baseline below, then focused candidate_harness/install/registry/run controls and required guards; new implementation proof remains NOT_RUN.
 
 ## #4603 reviewer authority and meaningful independent subclaim
 
@@ -29,7 +29,11 @@ Existing rust_judged_panel/release_judgments.rs binds a CLOSED fixed metrics/rus
 A meaningful4603preliminary subclaim is closed public-input/event/intervention decoding, digest/order/visibility/privacy validation and deterministic invalid/not_run/honestlimitation projections. It may never emit passed_blind_journey until shared4510 admission AND independently accepted exactprompt/answerkey judgment exist. This is partial4603 acceptance, notfullcompletion. Separate future reviewedprompt verdict should be repository-carried retained exactbytes artifact, with reviewed change provenance; validator validates bindings/closedstatus and does not claim cryptographic reviewer authenticity. Rootmustchoose acceptance gate/location beforepositive production path. No forgeableapprovedBoolean or testonlytrust context inproduction.
 
 ## Owning baseline
-Immutable basis: 3911480a34c6ce2224932f8494576636c73e1732, tree34485dd11f02b27ac91b8ff0a85a463f5d6e4108. Native admission is NOT_RUN. This plan-only edit precedes tests-first implementation; no accepted subject/installed handle exists yet.
+Immutable source basis: 3911480a34c6ce2224932f8494576636c73e1732, tree 34485dd11f02b27ac91b8ff0a85a463f5d6e4108. The plan-only baseline executed at d1d22bd6ed7448b910bbebcf28ce51f288da65f7, tree cec1a3d1ada9dcb28f75aeabc4763da80fb9d51a, against retained selector base 53b7059f0cb2608d5a85a52fd26302b751fece24.
+
+Pass: owning xtask all-target checking and test compilation; all six characterization controls, each with 1 passed, 0 failed and 0 ignored; all 14 check-fast gates with the complete 670-file selector and no skips. Doctor exited 0 with a warning to preserve or clean retained report artifacts at closeout. Precommit was NOT_RUN by this baseline driver. The timeout and pipe-inheriting descendant controls execute actual owned children; package/version and registry fixtures retain the narrower meanings described below. No package installation, source admission, current release pin, or installed qualification was established.
+
+Retained receipt: target/ripr/reports/4510-d1d-baseline-native-v2/native-results.json, SHA256 AF38E6E94A6465342AB5A9157F94F29E15B4BF727D898E9A486AD1498C85AF37. Raw phase logs, exact command/commit contexts and bounded process receipts are alongside it. At 2026-09-29T09:24:47Z, all ten owned phase PIDs and the scoped shared-target executable observations were empty. Source remained clean. This evidence belongs to the baseline object, not a future implementation head.
 
 ## Baseline versus implementation oracles
 
@@ -43,5 +47,5 @@ Before implementation acceptance, add controls through the real admission and ro
 - Observe bounded stdout/stderr, timeout, cancellation and cleanup failure through the existing process owner. Retained resources and missing termination/reap evidence remain non-green.
 - Require nonzero selected/executed required subjects, explicit skipped/failed counts and deterministic JSON/Markdown parity. A packet with altered output identities or strengthened human wording must reject.
 
-Tests must call validated constructors and the actual retained producer/consumer path. They must not create trusted handles from supplied digest strings, pre-mark rows passed, or use test-only acceptance as production authority. Observe intended behavioral rejection only after test compilation succeeds; compile or instrument failure is NOT_ESTABLISHED. Native baseline and new controls remain NOT_RUN until the shared lease is granted.
+Tests must call validated constructors and the actual retained producer/consumer path. They must not create trusted handles from supplied digest strings, pre-mark rows passed, or use test-only acceptance as production authority. Observe intended behavioral rejection only after test compilation succeeds; compile or instrument failure is NOT_ESTABLISHED. The characterization baseline is recorded above; new admission controls remain NOT_RUN.
 
