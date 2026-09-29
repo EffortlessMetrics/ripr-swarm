@@ -45,22 +45,31 @@ jobs:
           ' .github/workflows/zz-repair-4699-review.yml
           python - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path('/tmp/repair.sh')
           text = path.read_text(encoding='utf-8').replace(
               'span: int = 320', 'span: int = 120', 1
           )
-          marker = '.matches("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c")'
-          start = text.index(marker)
-          end = text.index('          )', start)
-          segment = text[start:end]
-          needle = '              "!= 3",\n'
-          if segment.count(needle) != 1:
+          pattern = re.compile(
+              r'''(block\s*=\s*replace_near\(\s*'''
+              r'''block,\s*'''
+              r'''['"]\.matches\("actions/download-artifact@'''
+              r'''3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"\)['"],\s*'''
+              r'''['"]!= 2['"],\s*'''
+              r'''['"]!= 3['"],)(\s*\))''',
+              re.S,
+          )
+          text, count = pattern.subn(r'\1\n              220,\2', text, count=1)
+          if count != 1:
+              marker = 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c'
+              offset = text.find(marker)
+              print(text[max(0, offset - 400): offset + 600])
               raise SystemExit('download invariant replacement call not found once')
-          segment = segment.replace(needle, needle + '              220,\n', 1)
-          path.write_text(text[:start] + segment + text[end:], encoding='utf-8')
+          path.write_text(text, encoding='utf-8')
           PY
           grep -F 'span: int = 120' /tmp/repair.sh
+          grep -n -A7 -B2 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c' /tmp/repair.sh
 
       - name: Apply and validate repair
         shell: bash
