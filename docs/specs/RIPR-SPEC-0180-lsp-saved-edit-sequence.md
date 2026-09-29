@@ -65,7 +65,9 @@ story without matching complete-scope semantic output.
    explicit full refresh is labelled `full` and must not reuse
    `seams_deferred`.
 5. Report. `cargo xtask lsp-performance-report` runs the sequence harness,
-   overlays source SHA and binary identity, and writes
+   overlays source SHA, keeps `binary_digest` as `not_measured` because the
+   sequence is a `ripr --lib` harness rather than an executed
+   `target/debug/ripr`, and writes
    `target/ripr/reports/lsp-performance.{json,md}` with schema
    `ripr-lsp-saved-edit-sequence-v1`. The first delivery records an explicit
    `no_change` optimization verdict; #3796 semantic reuse and #1702 trial
@@ -73,7 +75,7 @@ story without matching complete-scope semantic output.
 
 ## Required Evidence
 
-- Cheat oracles reject: a stale+fast cache hit, a fast redundant full rescan,
+- Cheat oracles reject: a stale+fast cache hit, a slow stale miss, a fast redundant full rescan,
   duplicate diagnostic publication on an unchanged identity, a related-test
   edit that does not invalidate evidence, an unrelated-test edit that
   manufactures an actionable finding or claims no work was needed, a

@@ -7,11 +7,9 @@
 //! absorb the harness; this command is not a CI gate and does not add a
 //! full-workspace job.
 
-use crate::reports::release_server::sha256_file;
 use crate::run::{capture_output_with_timeout, run_output};
 use serde_json::{Value, json};
 use std::fs;
-use std::path::Path;
 use std::time::Duration;
 
 const SCHEMA_VERSION: &str = "ripr-lsp-saved-edit-sequence-v1";
@@ -102,16 +100,13 @@ pub(crate) fn overlay_identity(receipt: &mut Value) -> Result<(), String> {
         return Err("lsp-performance-report: receipt is missing identity".to_string());
     };
     identity.insert("source_sha".to_string(), json!(git_revision()));
-    let binary = crate::ripr_debug_binary();
-    let binary_path = portable_path(&binary);
-    identity.insert("binary_path".to_string(), json!(binary_path));
+    // The sequence is a `ripr --lib` test harness, not a `target/debug/ripr`
+    // process. Do not overlay an unexercised CLI binary or a null digest.
     identity.insert(
-        "binary_digest".to_string(),
-        match sha256_file(&binary) {
-            Ok(digest) => json!(format!("sha256:{digest}")),
-            Err(_) => Value::Null,
-        },
+        "binary_path".to_string(),
+        json!("ripr --lib saved_edit_sequence"),
     );
+    identity.insert("binary_digest".to_string(), json!("not_measured"));
     identity.insert("host_class".to_string(), json!(host_class()));
     Ok(())
 }
@@ -224,13 +219,6 @@ fn host_class() -> String {
     format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
 }
 
-fn portable_path(path: &Path) -> String {
-    path.to_string_lossy()
-        .replace('\\', "/")
-        .trim_start_matches("//?/")
-        .to_string()
-}
-
 fn truncated_output(stderr: &str, stdout: &str) -> String {
     let combined = if stderr.trim().is_empty() {
         stdout
@@ -302,8 +290,45 @@ mod tests {
             .get("binary_path")
             .and_then(Value::as_str)
             .unwrap_or("");
-        if binary.trim().is_empty() {
-            return Err("binary_path must name the exact debug binary".to_string());
+        if binary != "ripr --lib saved_edit_sequence" {
+            return Err(format!(
+                "binary_path must name the lib harness, got {binary:?}"
+            ));
+        }
+        let digest = identity.get("binary_digest");
+        if digest != Some(&json!("not_measured")) {
+            return Err(format!(
+                "lib harness digest must stay not_measured, got {digest:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn overlay_does_not_claim_an_unexercised_debug_binary() -> Result<(), String> {
+        let mut receipt = sample_receipt();
+        overlay_identity(&mut receipt)?;
+        let identity = receipt
+            .get("identity")
+            .ok_or_else(|| "missing identity".to_string())?;
+        let binary = identity
+            .get("binary_path")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if binary.contains("target/debug/ripr") {
+            return Err(format!(
+                "must not overlay unexercised debug binary {binary}"
+            ));
+        }
+        if identity.get("binary_digest") == Some(&Value::Null) {
+            return Err("must not publish a null digest".to_string());
+        }
+        if identity
+            .get("binary_digest")
+            .and_then(Value::as_str)
+            .is_some_and(|digest| digest.starts_with("sha256:"))
+        {
+            return Err("must not hash an unexercised CLI binary".to_string());
         }
         Ok(())
     }

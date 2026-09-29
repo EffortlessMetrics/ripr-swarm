@@ -299,13 +299,21 @@ fn evaluate_step(step: &StepReceipt, violations: &mut Vec<SequenceViolation>) {
         .elapsed_ms
         .is_some_and(|ms| ms <= PROPOSED_WARM_SAVE_P95_MS);
 
-    if step.stale_semantic_output && (fast || step.cache_load_status == CacheLoadStatus::Hit) {
+    if step.stale_semantic_output {
         violations.push(SequenceViolation {
-            code: "stale_cache_satisfied_speed_target",
+            code: "stale_semantic_output",
             detail: format!(
-                "step `{name}` used a stale cached answer to look fast; complete-scope parity must fail independently of elapsed time"
+                "step `{name}` presented stale complete-scope output; parity fails independently of elapsed time"
             ),
         });
+        if fast || step.cache_load_status == CacheLoadStatus::Hit {
+            violations.push(SequenceViolation {
+                code: "stale_cache_satisfied_speed_target",
+                detail: format!(
+                    "step `{name}` used a stale cached answer to look fast; complete-scope parity must fail independently of elapsed time"
+                ),
+            });
+        }
     }
 
     if step.input_identity_unchanged && step.full_rescan {
@@ -856,6 +864,26 @@ fn observe_diagnostics(
     ))
 }
 
+fn request_interactive_save(
+    scheduler: &RefreshScheduler,
+    root: &Path,
+    config: &LspAnalysisConfig,
+    workspace_revision: u64,
+) -> RefreshDecision {
+    scheduler.request(
+        root.to_path_buf(),
+        config.clone(),
+        workspace_revision,
+        0,
+        RefreshScope::Interactive,
+        RefreshReason::DidSave,
+    )
+}
+
+fn analyses_started(scheduler: &RefreshScheduler) -> u64 {
+    scheduler.telemetry().analyses_started
+}
+
 /// Drive the saved-edit sequence against production analysis, scheduler, and
 /// cache-load owners. Used by the CI harness and the report writer.
 #[cfg(test)]
@@ -867,14 +895,27 @@ pub(super) fn drive_saved_edit_sequence(
     init_git_fixture(root)?;
     let config = interactive_config();
     let mut steps = Vec::new();
+    let scheduler = RefreshScheduler::default();
+    const WORKSPACE_REVISION: u64 = 1;
 
+    let started_before_cold = analyses_started(&scheduler);
+    let RefreshDecision::Start(cold_request) =
+        request_interactive_save(&scheduler, root, &config, WORKSPACE_REVISION)
+    else {
+        return Err("cold start must start analysis".to_string());
+    };
+    let cold_request = *cold_request;
     let cold = observe_diagnostics(root, &config, true)?;
+    scheduler.record_attempt_outcome(RefreshAttemptOutcome::Published, Duration::from_millis(1));
+    if scheduler.finish(&cold_request, true).is_some() {
+        return Err("cold start must not leave a queued refresh".to_string());
+    }
     if !cold.3 {
         return Err("cold interactive analysis must defer seam inventory".to_string());
     }
     steps.push(StepReceipt {
         step: SequenceStep::ColdStart,
-        analyses_started_delta: 1,
+        analyses_started_delta: analyses_started(&scheduler).saturating_sub(started_before_cold),
         requests_coalesced_delta: 0,
         completed_but_superseded_delta: 0,
         published_payload_bytes: 8,
@@ -897,13 +938,23 @@ pub(super) fn drive_saved_edit_sequence(
         timeout_last_completed_phase: None,
     });
 
+    let started_before_unchanged = analyses_started(&scheduler);
+    match request_interactive_save(&scheduler, root, &config, WORKSPACE_REVISION) {
+        RefreshDecision::Deduplicated => {}
+        other => {
+            return Err(format!(
+                "unchanged save must consult RefreshScheduler and dedup, got {other:?}"
+            ));
+        }
+    }
     let unchanged = observe_diagnostics(root, &config, true)?;
     if unchanged.0 != cold.0 {
         return Err("unchanged save must preserve complete-scope semantic output".to_string());
     }
     steps.push(StepReceipt {
         step: SequenceStep::UnchangedSave,
-        analyses_started_delta: 0,
+        analyses_started_delta: analyses_started(&scheduler)
+            .saturating_sub(started_before_unchanged),
         requests_coalesced_delta: 0,
         completed_but_superseded_delta: 0,
         published_payload_bytes: 0,
@@ -926,10 +977,19 @@ pub(super) fn drive_saved_edit_sequence(
         timeout_last_completed_phase: None,
     });
 
+    let started_before_refresh = analyses_started(&scheduler);
+    match request_interactive_save(&scheduler, root, &config, WORKSPACE_REVISION) {
+        RefreshDecision::Deduplicated => {}
+        other => {
+            return Err(format!(
+                "unchanged refresh must consult RefreshScheduler and dedup, got {other:?}"
+            ));
+        }
+    }
     let unchanged_refresh = observe_diagnostics(root, &config, true)?;
     steps.push(StepReceipt {
         step: SequenceStep::UnchangedRefresh,
-        analyses_started_delta: 0,
+        analyses_started_delta: analyses_started(&scheduler).saturating_sub(started_before_refresh),
         requests_coalesced_delta: 0,
         completed_but_superseded_delta: 0,
         published_payload_bytes: 0,
@@ -1337,7 +1397,29 @@ mod tests {
             step.cache_load_status = CacheLoadStatus::Hit;
         })?;
         let violations = expect_violations(&receipt, "stale+fast must fail")?;
-        require_code(&violations, "stale_cache_satisfied_speed_target")
+        require_code(&violations, "stale_cache_satisfied_speed_target")?;
+        require_code(&violations, "stale_semantic_output")
+    }
+
+    #[test]
+    fn stale_semantic_output_fails_independently_of_elapsed_time() -> Result<(), String> {
+        let mut receipt = honest_receipt();
+        mutate_step(&mut receipt, SequenceStep::ProductionEdit, |step| {
+            step.stale_semantic_output = true;
+            step.elapsed_ms = Some(PROPOSED_WARM_SAVE_P95_MS.saturating_add(500));
+            step.cache_load_status = CacheLoadStatus::Miss;
+        })?;
+        let violations = expect_violations(&receipt, "slow stale miss must fail")?;
+        require_code(&violations, "stale_semantic_output")?;
+        if violations
+            .iter()
+            .any(|violation| violation.code == "stale_cache_satisfied_speed_target")
+        {
+            return Err(
+                "slow stale miss must not be classified as a speed-target story".to_string(),
+            );
+        }
+        Ok(())
     }
 
     #[test]

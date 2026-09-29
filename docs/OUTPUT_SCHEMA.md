@@ -16778,9 +16778,12 @@ target/ripr/reports/lsp-performance.md
 The JSON schema is `ripr-lsp-saved-edit-sequence-v1`. It is an identity-bound
 receipt of one saved-workspace sequence, not a latency gate and not a best-run
 benchmark. Existing rust tests absorb the deterministic discriminators; the
-xtask command overlays source SHA and binary path. Historical 2-second
+xtask command overlays source SHA. The sequence is a `ripr --lib` harness, so
+`binary_digest` stays `not_measured` rather than hashing an unexercised
+`target/debug/ripr`. Historical 2-second
 warm-save p95, 10-second cold-small-project, and 30-second warm-PR figures
-remain `proposal`. A stale cached answer cannot satisfy a speed target. A
+remain `proposal`. A stale cached answer cannot satisfy a speed target. Complete-scope
+semantic parity fails independently of elapsed time. A
 fast elapsed time cannot hide a redundant full rescan or duplicate diagnostic
 publication.
 
@@ -16791,8 +16794,8 @@ publication.
   "report": "lsp-performance",
   "identity": {
     "source_sha": "abc123",
-    "binary_path": "target/debug/ripr",
-    "binary_digest": "sha256:deadbeef",
+    "binary_path": "ripr --lib saved_edit_sequence",
+    "binary_digest": "not_measured",
     "host_class": "linux-x86_64",
     "features": ["lang-rust"],
     "cache_reset_procedure": "isolated RIPR_CACHE_DIR per sequence",
