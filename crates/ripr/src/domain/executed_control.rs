@@ -1250,7 +1250,7 @@ pub(crate) mod tests {
         };
         let evaluation = packet(vec![obligation], vec![result])
             .validate()
-            .expect("not-proven documentation fixture is valid");
+            .expect("not_proven documentation fixture is valid");
         assert!(!evaluation.satisfactions[0].satisfies);
         assert_eq!(
             evaluation.satisfactions[0].state,

@@ -46,11 +46,8 @@ pub use evidence::{
     RiprEvidence, StageEvidence, StageState,
 };
 pub(crate) use executed_control::{
-    ControlClass, DiscriminatingOutcome, EXECUTED_CONTROL_OBLIGATION_KIND,
-    EXECUTED_CONTROL_PACKET_KIND, EXECUTED_CONTROL_RESULT_KIND, EXECUTED_CONTROL_SCHEMA_VERSION,
-    EvidenceForm, ExecutedControlObligationV1, ExecutedControlPacketV1, ExecutedControlResultV1,
-    ExecutionSubject, Invalidator, ObligationSatisfaction, ObservedOutcome, OfferedEvidenceKind,
-    PermittedSubstitute, Requiredness, ResultState,
+    EXECUTED_CONTROL_PACKET_KIND, EXECUTED_CONTROL_SCHEMA_VERSION, ExecutedControlPacketV1,
+    ObligationSatisfaction, ResultState,
 };
 pub(crate) use feedback::{
     ActorKind, FEEDBACK_NOTE_MAX_BYTES, FEEDBACK_SCHEMA_VERSION, FeedbackJudgment, FeedbackPayload,

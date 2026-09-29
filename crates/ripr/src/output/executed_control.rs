@@ -125,7 +125,7 @@ mod tests {
     use crate::domain::executed_control::tests::{
         HEAD_AFTER, HEAD_BEFORE, HEAD_OTHER, passing_result as domain_passing, sample_obligation,
     };
-    use crate::domain::{
+    use crate::domain::executed_control::{
         ControlClass, DiscriminatingOutcome, EXECUTED_CONTROL_OBLIGATION_KIND,
         EXECUTED_CONTROL_RESULT_KIND, EvidenceForm, ExecutedControlObligationV1,
         ExecutedControlPacketV1, ExecutedControlResultV1, ExecutionSubject, Invalidator,
@@ -391,9 +391,9 @@ mod tests {
         assert!(human_left.contains("state=`passed`"));
         assert!(human_left.contains("state=`failed`"));
         assert!(human_left.contains("satisfies"));
-        assert!(!human_left.contains("killed"));
-        assert!(!human_left.contains("survived"));
-        assert!(!human_left.contains("adequate"));
+        assert!(!human_left.contains("killed")); // ripr-allow: static-language: test guard verifying projection does not emit forbidden mutation-testing term
+        assert!(!human_left.contains("survived")); // ripr-allow: static-language: test guard verifying projection does not emit forbidden mutation-testing term
+        assert!(!human_left.contains("adequate")); // ripr-allow: static-language: test guard verifying projection does not emit forbidden mutation-testing term
     }
 
     #[test]
@@ -506,11 +506,11 @@ mod tests {
         );
         assert_eq!(
             render_packet_json(&not_proven)?,
-            read_file(&expected_dir.join("issue-3858-not-proven.json"))?
+            read_file(&expected_dir.join("issue-3858-not_proven.json"))?
         );
         assert_eq!(
             render_packet_markdown(&not_proven)?,
-            read_file(&expected_dir.join("issue-3858-not-proven.md"))?
+            read_file(&expected_dir.join("issue-3858-not_proven.md"))?
         );
         Ok(())
     }
@@ -546,12 +546,12 @@ mod tests {
         )
         .map_err(|error| format!("write pass md: {error}"))?;
         std::fs::write(
-            expected_dir.join("issue-3858-not-proven.json"),
+            expected_dir.join("issue-3858-not_proven.json"),
             render_packet_json(&not_proven)?,
         )
         .map_err(|error| format!("write 3858 json: {error}"))?;
         std::fs::write(
-            expected_dir.join("issue-3858-not-proven.md"),
+            expected_dir.join("issue-3858-not_proven.md"),
             render_packet_markdown(&not_proven)?,
         )
         .map_err(|error| format!("write 3858 md: {error}"))?;

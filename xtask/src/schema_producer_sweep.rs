@@ -221,7 +221,7 @@ const BINDINGS: &[Binding] = &[
         corpus: Corpus::Paths(&[
             "fixtures/executed-control-contract/expected/valid-pass-after-repair.json",
         ]),
-        edge_fixtures: &["fixtures/executed-control-contract/expected/issue-3858-not-proven.json"],
+        edge_fixtures: &["fixtures/executed-control-contract/expected/issue-3858-not_proven.json"],
         excluded: &[],
     },
 ];
