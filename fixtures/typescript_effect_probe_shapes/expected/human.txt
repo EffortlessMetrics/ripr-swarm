@@ -15,8 +15,8 @@ Start here:
   File: src/profile.ts:4
   Language: typescript
   Language status: preview
-  Static exposure: weakly_exposed (warning, confidence 0.40)
-  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
+  Static exposure: weak (weakly_exposed, warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: profile.status = status;
   Missing discriminator: Only heuristic TypeScript test links were found for `updateProfile`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
   Related test: tests/profile.test.ts:1 updates and records status
@@ -31,7 +31,7 @@ Next: drill into the top finding:
   ripr context --root fixtures/typescript_effect_probe_shapes/input --diff fixtures/typescript_effect_probe_shapes/diff.patch --mode fast --at probe:src_profile.ts:typescript_preview:7c5ce045
 
 Hidden:
-  1 lower-priority finding(s) omitted from default human output.
+  1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

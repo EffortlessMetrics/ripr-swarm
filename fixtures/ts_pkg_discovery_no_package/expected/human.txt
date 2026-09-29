@@ -15,8 +15,8 @@ Start here:
   File: src/utils.ts:2
   Language: typescript
   Language status: preview
-  Static exposure: weakly_exposed (warning, confidence 0.40)
-  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
+  Static exposure: weak (weakly_exposed, warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (value <= min) {
   Missing discriminator: Related tests reach `clamp` with a strong oracle, but no strong assertion observes a `clamp(...)` call at the changed predicate boundary `value == min`; inputs on one side of the…
   Related test: tests/utils.test.ts:3 clamp below min
@@ -31,7 +31,7 @@ Next: drill into the top finding:
   ripr context --root fixtures/ts_pkg_discovery_no_package/input --diff fixtures/ts_pkg_discovery_no_package/diff.patch --mode fast --at probe:src_utils.ts:typescript_preview:a1ef3b36
 
 Hidden:
-  1 lower-priority finding(s) omitted from default human output.
+  1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
