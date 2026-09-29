@@ -70,7 +70,9 @@ Repeated audits are recorded separately in the corpus `observations` ledger.
 An observation must name the exact repository, head, source candidate, and
 reason. A repeated repository/head/candidate identity points to its existing
 exclusion and is counted as a duplicate observation, not as another exclusion
-or eligible attempt. Optional `route` facts on an observation carry channel,
+or eligible attempt. When `canonical_candidate_id` is present, a second
+exclusion for the same candidate identity is rejected and does not inflate
+unique exclusions. Optional `route` facts on an observation carry channel,
 cohort, stage, eligibility, and earliest-stop evidence for the route-yield
 ladder. The generated report exposes observed runs, unique exclusions,
 duplicate observations, timeout observations, eligible attempts, and the
