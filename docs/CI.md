@@ -863,11 +863,26 @@ ripr init --ci github
 ```
 
 Copy the generated file, not a workflow from this page. Run
-`ripr init --ci github --dry-run` to print it without writing anything. It
+`ripr init --ci github --dry-run` to print it without writing anything. The
+workflow installs the ripr version that generated it
+(`cargo install ripr --version <that version> --locked`), so a later release
+does not change CI behavior until you rerun `ripr init --ci github --force`
+with the newer ripr and review the diff. It
 uploads the pilot, report, and agent artifact directories. The official GitHub
 SARIF upload documentation uses `github/codeql-action/upload-sarif@v4`; keep
 the RIPR job, artifact upload, and optional SARIF steps advisory until the
 repository has chosen a baseline policy.
+
+The generated workflow installs the exact `ripr` version that generated it,
+because its steps use that version's commands and flags. To upgrade, install
+the newer `ripr` and compare its `ripr init --ci github --force --dry-run`
+output with the committed file (`--force` lets the dry run plan over the
+existing file; nothing is written). On pull requests the workflow checks out the PR head
+commit, not GitHub's `refs/pull/N/merge` commit, so annotation and review
+comment lines match the lines in the PR diff after the base branch moves. A
+newer push cancels the older run of the same PR. Dependabot runs get a
+read-only token, so their inline-comment plan records
+`missing_write_permission` instead of attempting a post.
 
 For a CI-first user, the useful output is the artifact packet:
 
@@ -932,8 +947,9 @@ The generated workflow runs the pure renderer on pull requests:
 ```bash
 ripr review-comments \
   --root . \
-  --base "$GITHUB_BASE_SHA" \
-  --head "$GITHUB_SHA" \
+  --base "origin/$GITHUB_BASE_REF" \
+  --head HEAD \
+  --check-output target/ripr/pr/check.json \
   --out target/ripr/review/comments.json
 ```
 
@@ -1167,6 +1183,23 @@ analysis, grade an agent, or change pass/fail authority.
 See [Assistant loop health workflow](ASSISTANT_LOOP_HEALTH_WORKFLOW.md) for how
 maintainers and coding agents read completeness, missing inputs, unchanged
 movement, repair queue entries, and advisory limits.
+
+For the artifact composition commands `ripr pr-summary`, `ripr first-action`,
+`ripr pr-review front-panel`, and `ripr reports index`, `--root <path>` names
+the selected repository; its default is the current working directory.
+`pr-summary` reads its fixed artifact locations and a relative `--baseline`
+under that root, and writes its three summary outputs there. The other three
+commands retain their explicit artifact and output path conventions: relative
+paths resolve from the process working directory. From a foreign directory,
+pass absolute artifact/output paths to those commands alongside `--root`.
+These commands compose existing artifacts rather than establishing new
+analysis or release qualification.
+
+On Windows, `pr-summary` accepts ordinary relative paths and fully qualified
+absolute paths for `--root` and `--baseline`, including UNC and verbatim paths.
+It rejects partially qualified paths such as `C:repo` or `\repo`, whose Windows
+join semantics can replace the selected root. This restriction applies only
+on Windows; colon-containing relative filenames remain valid on other systems.
 
 Generated CI also projects the first useful action when at least one explicit
 input artifact is already present. It runs `ripr first-action --root .` with

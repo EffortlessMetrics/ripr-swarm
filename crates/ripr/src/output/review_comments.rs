@@ -1,7 +1,9 @@
 use crate::agent::command_specs::command_displays_are_complete;
 use crate::agent::loop_commands::{
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_BRIEF_ARTIFACT,
-    WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_brief_command, agent_verify_command, display_path,
+    WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
+    WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_brief_command, agent_verify_command,
+    check_analysis_outcome_command_with_base, display_path,
 };
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::canonical_gap::canonical_gap_identity;
@@ -22,6 +24,7 @@ use crate::output::evidence_record::{
     cross_language_test_target_unresolved, gap_state_for, static_limitations_for,
 };
 use crate::output::gap_decision_ledger::{GapRecord, GapRepairRoute};
+use crate::output::markdown::{code_span, inline_prose};
 #[cfg(test)]
 use crate::testing::cwd_placeholder::project_cwd_text;
 use serde_json::{Value, json};
@@ -119,6 +122,7 @@ pub(crate) fn render_review_comments_json_with_scope(
     for selected in actionable.iter().take(DEFAULT_REVIEW_MAX_SUMMARY_ITEMS) {
         let recommendation = review_recommendation_json(
             context.root,
+            context.base,
             context.mode,
             context.config,
             selected,
@@ -744,7 +748,8 @@ fn repair_text(route: &GapRepairRoute) -> String {
 fn repair_why(record: &GapRecord, route: &GapRepairRoute) -> String {
     if let Some(changed) = route.changed_behavior.as_deref() {
         return format!(
-            "Changed behavior `{changed}` has a repairable {} gap.",
+            "Changed behavior {} has a repairable {} gap.",
+            code_span(changed),
             record.kind
         );
     }
@@ -774,12 +779,14 @@ fn repair_intent(route_kind: &str) -> &'static str {
 fn repair_prompt(route: &GapRepairRoute, verify_command: &str) -> String {
     let repair = repair_text(route);
     format!(
-        "{repair} Do not change production behavior unless the existing tests prove it is necessary. Verify with `{verify_command}`."
+        "{repair} Do not change production behavior unless the existing tests prove it is necessary. Verify with {}.",
+        code_span(verify_command)
     )
 }
 
 fn review_recommendation_json(
     root: &Path,
+    base: &str,
     _mode: &Mode,
     config: &RiprConfig,
     selected: &AgentBriefSelectedSeam<'_>,
@@ -866,11 +873,17 @@ fn review_recommendation_json(
         json!({
             "prompt": llm_prompt(&recommended.file, nearest.map(|test| test.test_name.as_str()), missing_value.as_deref()),
             "command": agent_brief_command(&root_display, seam_id, WORKFLOW_AGENT_BRIEF_ARTIFACT),
+            "analysis_outcome_command": check_analysis_outcome_command_with_base(
+                &root_display,
+                Some(base),
+                "draft",
+                WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
+            ),
             "verify_command": agent_verify_command(
                 &root_display,
                 WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
                 WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
-                None,
+                Some(WORKFLOW_AGENT_VERIFY_ARTIFACT),
             ),
         })
     } else if gap_state == "static_limitation" {
@@ -1108,7 +1121,7 @@ fn unresolved_source_location_json() -> Value {
 }
 
 fn analysis_scope_json(scope: &ReviewCommentsAnalysisScope) -> Value {
-    json!({
+    let mut value = json!({
         "scope": scope.scope,
         "run_status": scope.run_status,
         "basis": scope.basis,
@@ -1125,7 +1138,13 @@ fn analysis_scope_json(scope: &ReviewCommentsAnalysisScope) -> Value {
         "downstream_consumable": scope.downstream_consumable,
         "limitation": scope.limitation,
         "repair_route": scope.repair_route,
-    })
+    });
+    // Present only when the staged scope skipped seams, so a consumer
+    // can tell `classified_seams_considered` is not the whole scope.
+    if scope.unevaluated_seams > 0 {
+        value["unevaluated_seams"] = json!(scope.unevaluated_seams);
+    }
+    value
 }
 
 fn display_paths(paths: &[std::path::PathBuf]) -> Vec<String> {
@@ -1179,7 +1198,10 @@ fn nearest_line_ordering(left: usize, right: usize, target: usize) -> Ordering {
 
 fn reason_for(selected: &AgentBriefSelectedSeam<'_>, missing: Option<&str>) -> String {
     if let Some(missing) = missing {
-        return format!("Static evidence names missing discriminator `{missing}` for this seam.");
+        return format!(
+            "Static evidence names missing discriminator {} for this seam.",
+            code_span(missing)
+        );
     }
     format!(
         "Static evidence class is {}; a focused test can strengthen the named seam.",
@@ -1252,8 +1274,10 @@ fn limitation_prompt(
 fn limitation_prompt_for(limitation: Option<&EvidenceRecordStaticLimitation>) -> String {
     match limitation {
         Some(limitation) => format!(
-            "Do not write a repair test or infer an edit surface from this finding. Inspect static limitation `{}`: {}. Route investigation through `{}`.",
-            limitation.category, limitation.reason, limitation.repair_route
+            "Do not write a repair test or infer an edit surface from this finding. Inspect static limitation {}: {}. Route investigation through {}.",
+            code_span(&limitation.category),
+            limitation.reason,
+            code_span(&limitation.repair_route)
         ),
         None => "Do not write a repair test or infer an edit surface from this finding. The producer-owned repair route is incomplete; inspect the evidence before taking action.".to_string(),
     }
@@ -1266,15 +1290,16 @@ fn no_test_reaches_owner_prompt(root: &Path, entry: &ClassifiedSeam) -> String {
     let seam = &entry.seam;
     let placement = match integration_test_files_for(root, seam.file()).as_slice() {
         [only] => format!(
-            " A new test for it would usually go in `{only}`, the crate's integration test file."
+            " A new test for it would usually go in {}, the crate's integration test file.",
+            code_span(only)
         ),
         [] => String::new(),
         _ => " A new test for it would usually go in one of the crate's integration test files under `tests/`.".to_string(),
     };
     format!(
-        "No existing test reaches `{owner}`: static evidence finds no test path to this changed owner (`no_static_path`), so static evidence shows no current test checking the changed behavior `{expression}`. This is a test gap in the change, not a RIPR analysis limitation. RIPR does not propose a target for a first test, so no repair route, verify command, or receipt is offered.{placement}",
-        owner = seam.owner(),
-        expression = seam.expression(),
+        "No existing test reaches {owner}: static evidence finds no test path to this changed owner (`no_static_path`), so static evidence shows no current test checking the changed behavior {expression}. This is a test gap in the change, not a RIPR analysis limitation. RIPR does not propose a target for a first test, so no repair route, verify command, or receipt is offered.{placement}",
+        owner = code_span(seam.owner()),
+        expression = code_span(seam.expression()),
     )
 }
 
@@ -1327,20 +1352,28 @@ fn push_markdown_items(lines: &mut Vec<String>, heading: &str, value: Option<&Va
             .get("llm_guidance")
             .and_then(|guidance| string_field(guidance, "command"))
             .unwrap_or("ripr agent brief --root . --seam-id <id> --json");
-        lines.push(format!("- `{seam_id}` @ `{source_location}`: {reason}"));
+        lines.push(format!(
+            "- {} @ {}: {}",
+            code_span(seam_id),
+            code_span(&source_location),
+            inline_prose(reason)
+        ));
         let canonical_gap_id = string_field(item, "canonical_gap_id")
             .filter(|value| !value.trim().is_empty())
             .unwrap_or("null");
-        lines.push(format!("  - canonical_gap_id: `{canonical_gap_id}`"));
+        lines.push(format!(
+            "  - canonical_gap_id: {}",
+            code_span(canonical_gap_id)
+        ));
         if let Some(attribution) = string_field(item, "delta_attribution") {
-            lines.push(format!("  - delta_attribution: `{attribution}`"));
+            lines.push(format!("  - delta_attribution: {}", code_span(attribution)));
         }
-        lines.push(format!("  - state: `{state}`"));
+        lines.push(format!("  - state: {}", code_span(state)));
         if let Some(route) = repair_route_kind(item) {
-            lines.push(format!("  - repair_route: `{route}`"));
+            lines.push(format!("  - repair_route: {}", code_span(route)));
         }
         if let Some(route) = string_field(item, "limitation_route") {
-            lines.push(format!("  - limitation_route: `{route}`"));
+            lines.push(format!("  - limitation_route: {}", code_span(route)));
         }
         if let Some(target) = item.get("navigation_only_target") {
             push_navigation_only_target_markdown(lines, target);
@@ -1351,7 +1384,21 @@ fn push_markdown_items(lines: &mut Vec<String>, heading: &str, value: Option<&Va
                     .to_string(),
             );
         }
-        lines.push(format!("  - command: `{command}`"));
+        lines.push(format!("  - command: {}", code_span(command)));
+        if let Some(guidance) = item.get("llm_guidance")
+            && let Some(outcome) = string_field(guidance, "analysis_outcome_command")
+        {
+            lines.push(format!(
+                "  - analysis_outcome_command: {}",
+                code_span(outcome)
+            ));
+            if let Some(verify) = string_field(guidance, "verify_command") {
+                lines.push(format!("  - verify_command: {}", code_span(verify)));
+            }
+            if let Some(receipt) = string_field(item, "receipt_command") {
+                lines.push(format!("  - receipt_command: {}", code_span(receipt)));
+            }
+        }
     }
     lines.push(String::new());
 }
@@ -1367,10 +1414,11 @@ fn push_navigation_only_target_markdown(lines: &mut Vec<String>, target: &Value)
         .and_then(Value::as_bool)
         .unwrap_or(false);
     lines.push(format!(
-        "  - navigation_only_target: `{location}` ({language}; repair_packet_ready={ready})"
+        "  - navigation_only_target: {} ({language}; repair_packet_ready={ready})",
+        code_span(&location)
     ));
     if let Some(test_name) = string_field(target, "test_name") {
-        lines.push(format!("  - external_observer: `{test_name}`"));
+        lines.push(format!("  - external_observer: {}", code_span(test_name)));
     }
 }
 
@@ -1405,6 +1453,11 @@ fn push_analysis_scope_summary(lines: &mut Vec<String>, value: Option<&Value>) {
         "- scoped production files: {considered}/{total_production}"
     ));
     lines.push(format!("- classified seams considered: {classified}"));
+    if let Some(unevaluated) = scope.get("unevaluated_seams").and_then(Value::as_u64) {
+        lines.push(format!(
+            "- scoped seams not evaluated: {unevaluated} (changed-line seams filled every review slot)"
+        ));
+    }
     if let (Some(limitation), Some(route)) = (
         scope.get("limitation").and_then(Value::as_str),
         scope.get("repair_route").and_then(Value::as_str),
@@ -1465,7 +1518,11 @@ fn push_suppressed_items(lines: &mut Vec<String>, value: Option<&Value>) {
     for item in items {
         let seam_id = string_field(item, "seam_id").unwrap_or("unknown");
         let reason = string_field(item, "reason").unwrap_or("unknown");
-        lines.push(format!("- `{seam_id}`: {reason}"));
+        lines.push(format!(
+            "- {}: {}",
+            code_span(seam_id),
+            inline_prose(reason)
+        ));
     }
 }
 
@@ -1476,6 +1533,38 @@ fn string_field<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// comments.md: a backtick in a seam id, path, or test name must not
+    /// close the code span and let `@mention` or HTML after it render live.
+    #[test]
+    fn comments_markdown_keeps_backtick_text_inside_code_spans() {
+        let items = json!([{
+            "seam_id": "s` @octocat",
+            "reason": "reason for @octocat <img>",
+            "source_location": {"file": "src/`x <img src=x onerror=alert(1)>.rs", "line": 3},
+            "gap_state": "open",
+            "navigation_only_target": {
+                "file": "a.ts",
+                "line": 1,
+                "language": "typescript",
+                "test_name": "t` @octocat"
+            }
+        }]);
+        let mut lines = Vec::new();
+        push_markdown_items(&mut lines, "Inline", Some(&items));
+        let rendered = lines.join("\n");
+        assert!(
+            rendered.contains(
+                "- ``s` @octocat`` @ ``src/`x <img src=x onerror=alert(1)>.rs:3``: reason for @\u{2060}octocat &lt;img>"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("  - external_observer: ``t` @octocat``"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("  - state: `open`"), "{rendered}");
+    }
     use crate::analysis::ClassifiedSeam;
     use crate::analysis::canonical_gap::canonical_gap_identity;
     use crate::analysis::seams::{
@@ -2116,6 +2205,69 @@ mod tests {
     }
 
     #[test]
+    fn actionable_review_card_writes_every_receipt_input() -> Result<(), String> {
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        let seams = [classified(88)];
+        let value = render_value(&working_set, &seams)?;
+        let card = value
+            .get("comments")
+            .and_then(Value::as_array)
+            .and_then(|cards| cards.first())
+            .ok_or("producer did not emit the actionable fixture card")?;
+        if card.get("gap_state").and_then(Value::as_str) != Some("actionable") {
+            return Err(format!(
+                "fixture must exercise the actionable producer: {card}"
+            ));
+        }
+        let guidance = card.get("llm_guidance").ok_or("missing guidance")?;
+        let verify = guidance
+            .get("verify_command")
+            .and_then(Value::as_str)
+            .ok_or("missing verify command")?;
+        let receipt = card
+            .get("receipt_command")
+            .and_then(Value::as_str)
+            .ok_or("missing receipt command")?;
+        if !receipt.contains("--verify-json target/ripr/workflow/agent-verify.json") {
+            return Err(format!(
+                "fixture must consume the canonical verify artifact: {receipt}"
+            ));
+        }
+        if !verify.contains(" > ") || !verify.contains("target/ripr/workflow/agent-verify.json") {
+            return Err(format!(
+                "listed verify command does not persist the receipt input: {verify}"
+            ));
+        }
+        let outcome = guidance
+            .get("analysis_outcome_command")
+            .and_then(Value::as_str)
+            .ok_or("actionable card does not list the receipt analysis-outcome producer")?;
+        if !outcome.contains("--format json > ")
+            || !outcome.contains("target/ripr/workflow/analysis-outcome.json")
+        {
+            return Err(format!(
+                "analysis outcome is not written beside verification: {outcome}"
+            ));
+        }
+        if !outcome.contains("--base main ") {
+            return Err(format!(
+                "outcome command lost the producing review's selected base: {outcome}"
+            ));
+        }
+        let markdown = render_markdown(&working_set, &seams);
+        if ![outcome, verify, receipt]
+            .iter()
+            .all(|command| markdown.contains(*command))
+        {
+            return Err("Markdown must carry the actual persisted receipt chain".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn review_comments_places_exact_changed_seam_line() -> Result<(), String> {
         let seams = [classified(88)];
         let working_set = AgentBriefResolvedWorkingSet::base(
@@ -2137,10 +2289,17 @@ mod tests {
                 "repair_route": null,
             })
         );
-        assert_eq!(
-            value["comments"][0]["llm_guidance"]["verify_command"],
-            "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
-        );
+        let verify = value
+            .pointer("/comments/0/llm_guidance/verify_command")
+            .and_then(Value::as_str)
+            .ok_or("exact-line card omitted its verify command")?;
+        if project_cwd_text(verify)
+            != "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > <cwd>/target/ripr/workflow/agent-verify.json"
+        {
+            return Err(format!(
+                "exact-line card must persist root-anchored verification: {verify}"
+            ));
+        }
         Ok(())
     }
 
@@ -2801,6 +2960,7 @@ mod tests {
         let selected = selection(&seams);
         let item = review_recommendation_json(
             Path::new("."),
+            "main",
             &Mode::Draft,
             &RiprConfig::default(),
             &selected.top_seams[0],
@@ -2812,6 +2972,12 @@ mod tests {
         assert!(item["suggested_test"]["assertion_guidance"].is_null());
         assert!(item["receipt_command"].is_null());
         assert!(item["llm_guidance"].get("verify_command").is_none());
+        if item
+            .pointer("/llm_guidance/analysis_outcome_command")
+            .is_some()
+        {
+            return Err("static-limitation card must not gain an outcome producer".to_string());
+        }
         assert!(
             item["llm_guidance"]["prompt"]
                 .as_str()

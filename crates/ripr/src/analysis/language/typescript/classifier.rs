@@ -721,7 +721,7 @@ fn substitute_constant_arguments(
 /// `$`-prefixed segments excluded — mirrors the Rust
 /// `value_resolution::constant_operand_name` shape (leading uppercase, then
 /// uppercase / digit / underscore only, no dots, no calls).
-fn is_constant_shaped_operand(operand: &str) -> bool {
+pub(crate) fn is_constant_shaped_operand(operand: &str) -> bool {
     let operand = operand.trim();
     operand.starts_with(|ch: char| ch.is_ascii_uppercase())
         && operand
@@ -760,7 +760,11 @@ fn ts_owner_module_constant_value(
         }
     }
     let root = workspace_root?;
-    let source = std::fs::read_to_string(root.join(&owner.file)).ok()?;
+    // Committed-history diffs read the owner module's HEAD content.
+    let source = String::from_utf8(
+        crate::analysis::committed_source::read_source_bytes(root, &owner.file).ok()??,
+    )
+    .ok()?;
     match scan_owner_module_constant(&source, name) {
         OwnerModuleConstant::Resolved(value) => Some(value),
         _ => None,
@@ -2774,6 +2778,16 @@ pub(crate) fn classify_change_with_alias_state(
     }
     for discriminator in &missing_discriminators {
         evidence.push(format!("missing_discriminator: {}", discriminator.value));
+    }
+    // The call input that hits the named predicate boundary, when the owner's
+    // module pins it statically (parameter read-only, literal or single
+    // immutable integer module `const`). The repair-packet projection uses
+    // it in place of an observed input that does not reach the boundary.
+    if !missing_discriminators.is_empty()
+        && let Some(input) =
+            ts_boundary_input_for_change(&probe_shape, line, line_text, owner, workspace_root)
+    {
+        evidence.push(input.evidence_line());
     }
     if let Some(oracle) = &mock_payload_oracle {
         evidence.push(format!("mock_payload_evidence: {oracle}"));
