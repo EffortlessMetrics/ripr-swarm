@@ -1893,6 +1893,8 @@ fn check_suppression_policy_rejects_unsupported_formats() -> Result<(), String> 
 
 const SMOKE_PR_GUIDANCE_JSON: &str = r#"{
   "schema_version": "0.1",
+  "tool": "ripr",
+  "status": "advisory",
   "summary": {"unchanged_tests": true},
   "comments": [],
   "summary_only": [],
