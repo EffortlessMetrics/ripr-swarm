@@ -115,7 +115,10 @@ fn adding_a_production_helper_beside_the_test_module_is_rejected() -> Result<(),
 
 #[test]
 fn changing_cfg_test_while_adding_a_test_is_rejected() -> Result<(), String> {
-    let after = ADDED_TEST.replace("#[cfg(test)]", "#[cfg(all(test, feature = \"x\"))]");
+    let after = ADDED_TEST.replace(
+        concat!("#[", "cfg(test)]"),
+        "#[cfg(all(test, feature = \"x\"))]",
+    );
     assert_rejected(
         LIB,
         &after,

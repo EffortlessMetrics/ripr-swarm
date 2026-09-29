@@ -64,10 +64,7 @@ fn observe_module(source: &str, module: &ast::Module) -> Option<ObservedInlineTe
     if !crate::analysis::cfg_predicates::attributes_require_test(attributes.iter()) {
         return None;
     }
-    let open = list.l_curly_token()?;
-    let close = list.r_curly_token()?;
-    let body_start = usize::from(open.text_range().end());
-    let body_end = usize::from(close.text_range().start());
+    let (body_start, body_end) = item_list_body_offsets(&list)?;
     if body_end < body_start || body_end > source.len() {
         return None;
     }
@@ -81,6 +78,23 @@ fn observe_module(source: &str, module: &ast::Module) -> Option<ObservedInlineTe
         header_range: header_start..header_end,
         body_range: body_start..body_end,
     })
+}
+
+fn item_list_body_offsets(list: &ast::ItemList) -> Option<(usize, usize)> {
+    let mut open_end = None;
+    let mut close_start = None;
+    for element in list.syntax().children_with_tokens() {
+        match element.kind() {
+            ra_ap_syntax::T!['{'] => {
+                open_end = Some(usize::from(element.text_range().end()));
+            }
+            ra_ap_syntax::T!['}'] => {
+                close_start = Some(usize::from(element.text_range().start()));
+            }
+            _ => {}
+        }
+    }
+    Some((open_end?, close_start?))
 }
 
 fn module_path(node: &SyntaxNode) -> String {

@@ -93,20 +93,6 @@ pub(crate) fn validate_inline_test_region_edit(
             None,
         );
     }
-    let Some(old_body) = before.get(body.start..body.end) else {
-        return InlineTestRegionVerdict::rejected(
-            InlineTestRegionRejectReason::StaleModuleAnchor,
-            Some(body),
-        );
-    };
-    let new_body = after.get(after_region.body_range.clone()).unwrap_or("");
-    if let Some(range) = non_insertion_range(old_body, new_body, body.start) {
-        return InlineTestRegionVerdict::rejected(
-            InlineTestRegionRejectReason::ExistingAuthorityRewritten,
-            Some(range),
-        );
-    }
-
     let before_items = match observe::named_module_items(before, &authority.portable.module_path) {
         Ok(items) => items,
         Err(error) => {
@@ -135,7 +121,9 @@ pub(crate) fn validate_inline_test_region_edit(
         ItemDelta::NotARepair => {
             InlineTestRegionVerdict::not_a_repair(InlineTestRegionRejectReason::NonTestSubject)
         }
-        ItemDelta::Rejected(reason) => InlineTestRegionVerdict::rejected(reason, None),
+        ItemDelta::Rejected(reason) => {
+            InlineTestRegionVerdict::rejected(reason, first_changed_range(before, after))
+        }
     }
 }
 
@@ -149,6 +137,8 @@ fn classify_item_delta(
     before_items: &[observe::ObservedItem],
     after_items: &[observe::ObservedItem],
 ) -> ItemDelta {
+    // Existing items must appear in order. New `fn` items (and optional `use`
+    // companions) may be inserted at more than one site inside the body.
     let mut before_index = 0usize;
     let mut added_fn = false;
     for item in after_items {
@@ -223,22 +213,4 @@ fn common_suffix_len(left: &[u8], right: &[u8]) -> usize {
         .count()
         .min(left.len())
         .min(right.len())
-}
-
-/// Returns the changed range in the original file coordinates when `after_body`
-/// is not `before_body` with a contiguous insertion.
-fn non_insertion_range(
-    before_body: &str,
-    after_body: &str,
-    body_start: usize,
-) -> Option<Range<usize>> {
-    let prefix = common_prefix_len(before_body.as_bytes(), after_body.as_bytes());
-    let before_tail = before_body.as_bytes().get(prefix..).unwrap_or(&[]);
-    let after_tail = after_body.as_bytes().get(prefix..).unwrap_or(&[]);
-    let suffix = common_suffix_len(before_tail, after_tail);
-    let before_mid = before_body.len().saturating_sub(prefix + suffix);
-    if before_mid == 0 {
-        return None;
-    }
-    Some(body_start + prefix..body_start + prefix + before_mid)
 }

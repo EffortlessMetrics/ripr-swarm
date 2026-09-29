@@ -9596,4 +9596,5 @@ code = [
 outputs = [
 ]
 metrics = [
+  "unit_test_pass_rate",
 ]

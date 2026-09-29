@@ -27,7 +27,7 @@ Linked issues:
 
 Linked PRs:
 
-- None yet
+- #4837 — inline test-module region cage
 
 Support-tier impact:
 
@@ -69,9 +69,11 @@ declarations, generated paths, test-layout files, ambiguous duplicate names,
 symlink escapes, traversals, and stale source digests fail closed.
 
 An admitted edit is a pure insertion of test-role `fn` items (optional `use`
-companions) into the named body. Production bytes, module declaration/cfg
-basis, and existing items must remain unchanged. A parseable after-file with
-no new test-role function is `NotARepair`, not a completed repair.
+companions, including at more than one site) into the named body. Existing
+items remain an in-order subsequence. Production bytes, module
+declaration/cfg basis, and existing item text must remain unchanged. A
+parseable after-file with no new test-role function is `NotARepair`, not a
+completed repair.
 
 The contract is reusable by an InlineUnit proposal and RepairAttempt. This
 slice does not select a target, generate a test, apply an edit, or flip
@@ -130,5 +132,5 @@ actionability.
 
 ## Metrics
 
-No new product metric; this slice is an internal fail-closed control. Focused
-lib tests are the proof surface.
+No new product metric; this slice is an internal fail-closed control. Proof
+is `unit_test_pass_rate` on the focused lib tests.
