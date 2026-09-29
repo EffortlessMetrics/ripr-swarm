@@ -25,11 +25,8 @@ use crate::cli::commands_context::{ensure_command_root, load_root_input_and_conf
 use crate::config::load_for_root;
 use crate::output;
 use std::io::IsTerminal;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::{
-    fs::File,
-    io::{BufWriter, Write},
-};
 
 use super::agent_dispatch;
 use super::agent_gap_packet::render_agent_packet_from_gap_ledger;
@@ -419,7 +416,7 @@ fn run_agent_receipt_for_attempt(
     ensure_command_root(&options.root, "agent receipt")?;
 
     let verify_path = validate_agent_receipt_verify_path(&options.root, &options.verify_json)?;
-    let verify_json = std::fs::read_to_string(&verify_path).map_err(|err| {
+    let verify_json = crate::bounded_input::read_to_string(&verify_path).map_err(|err| {
         format!(
             "read agent receipt verify JSON {} failed: {err}",
             output::outcome::display_path(&verify_path)
@@ -807,6 +804,9 @@ fn run_agent_repair_phase(
         }
         AgentRepairPhase::After => {
             ensure_command_root(&root, "agent repair --phase after")?;
+            if let Some(id) = attempt_id.as_deref() {
+                crate::app::repair_attempt::complete_pending_terminal_retention(&root, id)?;
+            }
             let attempt = crate::app::repair_attempt::resolve_awaiting_repair_attempt(
                 &root,
                 attempt_id.as_deref(),
@@ -833,7 +833,7 @@ fn run_agent_repair_phase(
             write_agent_repo_exposure_snapshot(&root, &after)?;
 
             let packet_path = attempt.packet_path.clone();
-            let packet_bytes = std::fs::read(&packet_path).map_err(|error| {
+            let packet_bytes = crate::bounded_input::read(&packet_path).map_err(|error| {
                 format!(
                     "read retained repair packet {} failed: {error}",
                     packet_path.display()
@@ -1022,6 +1022,27 @@ fn run_agent_repair_phase(
                     Some(cage_after.attempt_id.as_str()),
                     Some(&packet_path),
                 );
+
+                // Attempt-local copy of the just-written receipt and the
+                // verify document it was built from. The compatibility
+                // projection above can be replaced by a later finish; this
+                // retain is the surviving authority for this attempt.
+                if receipt_result.is_ok() {
+                    crate::app::repair_attempt::retain_terminal_evidence(
+                        &root,
+                        &attempt.attempt_id,
+                        &[
+                            crate::app::repair_attempt::BeforeArtifactSource {
+                                role: crate::app::repair_attempt::TERMINAL_RECEIPT_ROLE,
+                                path: &root.join("target/ripr/reports/agent-receipt.json"),
+                            },
+                            crate::app::repair_attempt::BeforeArtifactSource {
+                                role: crate::app::repair_attempt::TERMINAL_VERIFY_ROLE,
+                                path: &verify_json,
+                            },
+                        ],
+                    )?;
+                }
 
                 // The status report the finished after phase embeds in its
                 // single stdout document. Built here it reads exactly what
@@ -1216,7 +1237,10 @@ fn write_agent_repo_exposure_snapshot(root: &Path, path: &Path) -> Result<(), St
     }
     let temporary_path = path.with_extension(format!("json.tmp-{}", std::process::id()));
     let write_result = (|| -> Result<(), String> {
-        let file = File::create(&temporary_path)
+        // An interrupted run can leave this pid-named file; removing a planted link
+        // removes only the link.
+        let _ = std::fs::remove_file(&temporary_path);
+        let file = output::file_write::create_exclusive(&temporary_path)
             .map_err(|err| format!("create {} failed: {err}", temporary_path.display()))?;
         let mut writer = BufWriter::new(file);
         output::repo_exposure::write_repo_exposure_json_with_context(
@@ -1564,9 +1588,19 @@ fn repair_receipt_summary_lines(receipt: &str) -> Vec<String> {
         let summary = text("/summary/next_action/summary")
             .map(|summary| format!(" {summary}"))
             .unwrap_or_default();
-        lines.push(format!(
-            "result for seam `{seam_id}`: {before} -> {after} ({movement}).{summary}"
-        ));
+        // Lead with the plain words `ripr check` uses for the same gap
+        // (`weak -> exposed`), then the grip schema values the JSON carries.
+        let plain = |value: &str| {
+            crate::analysis::seams::SeamGripClass::from_schema_value(value)
+                .map(|class| class.plain_label())
+        };
+        let words = match (plain(before), plain(after)) {
+            (Some(before_word), Some(after_word)) => {
+                format!("{before_word} -> {after_word} ({before} -> {after}, {movement})")
+            }
+            _ => format!("{before} -> {after} ({movement})"),
+        };
+        lines.push(format!("result for seam `{seam_id}`: {words}.{summary}"));
     }
     // Static movement is not a test result: a failing focused test still
     // reads `improved`. Say so before the next step, not only inside it.
@@ -2125,7 +2159,7 @@ mod repair_summary_tests {
         assert_eq!(
             repair_receipt_summary_lines(receipt),
             vec![
-                "result for seam `67fc764ba37d77bd`: weakly_gripped -> strongly_gripped (improved). Static grip improved.".to_string(),
+                "result for seam `67fc764ba37d77bd`: weak -> exposed (weakly_gripped -> strongly_gripped, improved). Static grip improved.".to_string(),
                 "next: Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review.".to_string(),
             ]
         );
@@ -2139,7 +2173,10 @@ mod repair_summary_tests {
         }"#;
         assert_eq!(
             repair_receipt_summary_lines(receipt),
-            vec!["result for seam `s`: weakly_gripped -> weakly_gripped (unchanged).".to_string()]
+            vec![
+                "result for seam `s`: weak -> weak (weakly_gripped -> weakly_gripped, unchanged)."
+                    .to_string()
+            ]
         );
     }
 
@@ -2148,7 +2185,7 @@ mod repair_summary_tests {
         let movement = r#""seam": {"seam_id": "s"},
             "provenance": {"before_class": "weakly_gripped", "after_class": "strongly_gripped", "movement": "improved"}"#;
         let result =
-            "result for seam `s`: weakly_gripped -> strongly_gripped (improved). Static grip improved."
+            "result for seam `s`: weak -> exposed (weakly_gripped -> strongly_gripped, improved). Static grip improved."
                 .to_string();
         let step = "This receipt is not review evidence because its status is `invalid` (Analysis outcome artifact base does not match its typed identity); do not include it in review.";
         let invalid = format!(

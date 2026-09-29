@@ -45,6 +45,8 @@ mod actionability;
 mod annotation_only;
 #[cfg(test)]
 mod annotation_only_tests;
+#[cfg(test)]
+mod assertion_library_tests;
 mod boundary_input;
 #[cfg(test)]
 mod boundary_input_tests;
@@ -52,6 +54,9 @@ mod bounded_read;
 mod bun_bridge;
 mod classifier;
 mod discovery;
+#[cfg(test)]
+mod line_index_tests;
+mod module_entries;
 #[cfg(test)]
 mod new_declaration_tests;
 mod oracle;
@@ -83,6 +88,7 @@ pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use classifier::*;
 pub(crate) use discovery::*;
+pub(crate) use module_entries::*;
 pub(crate) use oracle::*;
 pub(crate) use owners::*;
 pub(crate) use package::*;
@@ -133,6 +139,9 @@ impl LanguageAdapter for TypeScriptAdapter {
         _oracle_policy: &OraclePolicy,
         changed_files: &[ChangedFile],
     ) -> Result<LanguageDiffResult, String> {
+        // Directory-module resolution (#4546) is memoized for this run only
+        // (#4638 review); the scope drops the cache when the run returns.
+        let _directory_modules = DirectoryModuleCacheScope::open();
         // Phase 1: discover and index every accepted file in the workspace
         // so we can find related tests for any owner regardless of whether
         // the test file itself changed in this diff.

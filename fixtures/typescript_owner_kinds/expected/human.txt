@@ -15,8 +15,8 @@ Start here:
   File: src/owners.ts:7
   Language: typescript
   Language status: preview
-  Static exposure: weakly_exposed (warning, confidence 0.40)
-  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
+  Static exposure: weak (weakly_exposed, warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return this.items.length + 1;
   Missing discriminator: Related test reaches `total` with a smoke-only oracle; replace or augment the truthiness check with an exact-value assertion for the changed discriminator before routing a repair…
   Related test: tests/owners.test.ts:7 cart total smoke
@@ -31,7 +31,7 @@ Next: drill into the top finding:
   ripr context --root fixtures/typescript_owner_kinds/input --diff fixtures/typescript_owner_kinds/diff.patch --mode fast --at probe:src_owners.ts:typescript_preview:bd728bcd
 
 Hidden:
-  3 lower-priority finding(s) omitted from default human output.
+  3 lower-priority finding(s) omitted from default human output (TypeScript preview: 3).
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
