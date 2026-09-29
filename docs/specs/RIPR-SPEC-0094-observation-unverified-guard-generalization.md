@@ -222,8 +222,11 @@ Confirmation for that family requires the assertion's **primary observed
 subject** to be that same receiver:
 
 - `assert_eq!(items, expected)` observes `items` and retains useful evidence.
+- `assert_eq!(items.len(), 1)` observes a read of `items`.
 - `assert_eq!(other, expected)` and `assert_eq!(other, items)` observe
   `other` and stay `observation_unverified`.
+- `assert_eq!(items.clear(), ())` and `assert_eq!(items.push(1), ())` observe
+  the mutating call's return, not the collection, and stay unverified.
 - A return-value assertion, a string containing the callee name, or an
   unrelated mock does not confirm the collection sink.
 

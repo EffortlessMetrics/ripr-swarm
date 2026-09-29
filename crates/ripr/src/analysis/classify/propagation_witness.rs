@@ -449,7 +449,37 @@ fn subject_names_collection(subject: &str, receiver: &str) -> bool {
     let Some(rest) = subject.strip_prefix(receiver) else {
         return false;
     };
-    rest.starts_with('.') || rest.starts_with('[')
+    if rest.starts_with('[') {
+        return true;
+    }
+    collection_read_method(rest).is_some_and(is_collection_read_method)
+}
+
+fn collection_read_method(rest: &str) -> Option<&str> {
+    let rest = rest.strip_prefix('.')?;
+    let end = rest
+        .char_indices()
+        .find(|(_, character)| !character.is_ascii_alphanumeric() && *character != '_')
+        .map(|(index, _)| index)
+        .unwrap_or(rest.len());
+    rest.get(..end).filter(|name| !name.is_empty())
+}
+
+fn is_collection_read_method(name: &str) -> bool {
+    matches!(
+        name,
+        "len"
+            | "is_empty"
+            | "contains"
+            | "get"
+            | "first"
+            | "last"
+            | "iter"
+            | "as_slice"
+            | "as_ref"
+            | "to_vec"
+            | "capacity"
+    )
 }
 
 fn family_accepts_sink(family: &ProbeFamily, kind: &FlowSinkKind) -> bool {
@@ -1249,6 +1279,14 @@ mod tests {
             "assert!(label.contains(\"record_effect\"));",
             "items"
         ));
+        assert!(
+            !assertion_observes_direct_collection("assert_eq!(items.clear(), ());", "items"),
+            "a mutating method observes its unit return, not the collection contents"
+        );
+        assert!(
+            !assertion_observes_direct_collection("assert_eq!(items.push(1), ());", "items"),
+            "asserting a second mutation must not confirm the production push"
+        );
         Ok(())
     }
 
