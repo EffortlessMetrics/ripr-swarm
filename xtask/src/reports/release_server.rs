@@ -6,6 +6,10 @@ use sha2::{Digest, Sha256};
 
 use crate::{command_success_owned, run_owned};
 
+mod payload;
+
+use payload::{stage_final_native_payload, verify_final_native_payload};
+
 pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
     let version = required_release_arg(args, "version", "RAW_VERSION")?;
     let target = required_release_arg(args, "target", "TARGET")?;
@@ -13,41 +17,16 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
     let archive = required_release_arg(args, "archive", "ARCHIVE")?;
     let version = normalize_release_version(&version);
     let asset_name = format!("ripr-server-v{version}-{target}.{archive}");
-    let package_dir = Path::new("package");
     let dist_dir = Path::new("dist");
 
-    if package_dir.exists() {
-        fs::remove_dir_all(package_dir)
-            .map_err(|err| format!("failed to remove {}: {err}", package_dir.display()))?;
-    }
-    fs::create_dir_all(package_dir)
-        .map_err(|err| format!("failed to create {}: {err}", package_dir.display()))?;
     fs::create_dir_all(dist_dir)
         .map_err(|err| format!("failed to create {}: {err}", dist_dir.display()))?;
 
-    let built_executable = Path::new("target")
-        .join(&target)
-        .join("release")
-        .join(&executable);
-    fs::copy(&built_executable, package_dir.join(&executable)).map_err(|err| {
-        format!(
-            "failed to copy {} into {}: {err}",
-            built_executable.display(),
-            package_dir.display()
-        )
-    })?;
-    copy_release_file("LICENSE-MIT", package_dir)?;
-    copy_release_file("LICENSE-APACHE", package_dir)?;
-    fs::write(
-        package_dir.join("README-server.txt"),
-        release_server_readme(&version),
-    )
-    .map_err(|err| {
-        format!(
-            "failed to write {}: {err}",
-            package_dir.join("README-server.txt").display()
-        )
-    })?;
+    let staged = stage_final_native_payload(&version, &target, &executable, &archive)?;
+    let verified = verify_final_native_payload(&staged.root, Some(&staged.identity))?;
+    if verified.payload_sha256 != staged.identity.payload_sha256 {
+        return Err("verified final native payload digest changed before archiving".to_string());
+    }
 
     let asset_path = dist_dir.join(&asset_name);
     if asset_path.exists() {
@@ -55,8 +34,8 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
             .map_err(|err| format!("failed to remove {}: {err}", asset_path.display()))?;
     }
     match archive.as_str() {
-        "zip" => create_zip_archive(package_dir, &asset_path)?,
-        "tar.gz" => create_tar_gz_archive(package_dir, &asset_path)?,
+        "zip" => create_zip_archive(&staged.payload_dir, &asset_path)?,
+        "tar.gz" => create_tar_gz_archive(&staged.payload_dir, &asset_path)?,
         other => {
             return Err(format!(
                 "unsupported release server archive format `{other}`"
@@ -76,6 +55,8 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
         )
     })?;
     eprintln!("wrote {}", asset_path.display());
+    eprintln!("wrote {}", staged.identity_json.display());
+    eprintln!("wrote {}", staged.identity_markdown.display());
     Ok(())
 }
 
@@ -312,16 +293,6 @@ pub(crate) fn normalize_release_version(version: &str) -> String {
     version.trim().trim_start_matches('v').to_string()
 }
 
-fn copy_release_file(file_name: &str, package_dir: &Path) -> Result<(), String> {
-    fs::copy(file_name, package_dir.join(file_name)).map_err(|err| {
-        format!(
-            "failed to copy {file_name} into {}: {err}",
-            package_dir.display()
-        )
-    })?;
-    Ok(())
-}
-
 pub(crate) fn release_server_readme(version: &str) -> String {
     format!(
         "ripr server {version}\n\nThis archive contains the ripr executable used by the VS Code/Open VSX\nextension. It is distributed under MIT OR Apache-2.0."
@@ -374,13 +345,11 @@ pub(crate) fn create_zip_archive(package_dir: &Path, asset_path: &Path) -> Resul
             options.unix_permissions(0o755)
         } else if metadata.permissions().readonly() {
             options
-        } else {
+        } else if !file_name.contains('.') {
             // Best-effort executable bit for Unix-style binaries (ripr) without an extension.
-            if !file_name.contains('.') {
-                options.unix_permissions(0o755)
-            } else {
-                options
-            }
+            options.unix_permissions(0o755)
+        } else {
+            options
         };
         writer
             .start_file(&file_name, entry_options)
