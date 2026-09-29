@@ -402,6 +402,7 @@ mod tests {
         }
         AnalysisSnapshot {
             root: PathBuf::from(root),
+            rust_consumed_sources: Default::default(),
             input_identity: None,
             base: None,
             mode: Mode::Draft,

@@ -722,6 +722,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
 
     let snapshot = AnalysisSnapshot {
         root: std::path::PathBuf::from(root),
+        rust_consumed_sources: Default::default(),
         input_identity: None,
         base: None,
         mode: crate::app::Mode::Draft,
@@ -11688,6 +11689,7 @@ fn sample_analysis_snapshot(
     );
     AnalysisSnapshot {
         root,
+        rust_consumed_sources: Default::default(),
         input_identity: Some(input_identity),
         base: Some("origin/main".to_string()),
         mode: Mode::Draft,
@@ -17071,6 +17073,7 @@ fn quarantine_workspace_diagnostics(fixture: &QuarantineFixture) -> WorkspaceDia
     );
     let snapshot = AnalysisSnapshot {
         root: fixture.root.clone(),
+        rust_consumed_sources: Default::default(),
         input_identity: Some(input_identity),
         base: Some("origin/main".to_string()),
         mode: Mode::Draft,

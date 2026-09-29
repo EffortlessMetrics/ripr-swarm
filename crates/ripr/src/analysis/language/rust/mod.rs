@@ -1233,6 +1233,8 @@ impl RustAdapter {
         // cache. This avoids re-parsing unchanged files with ra_ap_syntax on
         // every ripr check / LSP save (#1912). The cache is keyed on a
         // content hash; unchanged files hit the cache and skip the parse.
+        let mut rust_consumed_sources =
+            crate::analysis::consumed_source::ConsumedRustSources::default();
         let loaded_files = index_files
             .iter()
             .map(|file| {
@@ -1244,7 +1246,10 @@ impl RustAdapter {
                 // Committed-history diffs read HEAD content for dirty
                 // tracked files; a path with no content at HEAD is skipped.
                 crate::analysis::committed_source::read_source_bytes(&options.root, file)
-                    .map(|bytes| bytes.map(|bytes| (file.clone(), bytes)))
+                    .map(|bytes| {
+                        rust_consumed_sources.record(file, bytes.as_deref());
+                        bytes.map(|bytes| (file.clone(), bytes))
+                    })
                     .map_err(|err| {
                         format!(
                             "failed to read {}: {err}",
@@ -1259,6 +1264,10 @@ impl RustAdapter {
             &loaded_files,
             &options.test_harnesses,
         )?;
+        #[cfg(test)]
+        {
+            rust_consumed_sources.file_fact_cache = cached.file_fact_cache.clone();
+        }
         let mut index = cached.index;
         if let Some(disclosure) = rust_index::include_resolution_disclosure(&index) {
             eprintln!("{disclosure}");
@@ -1470,6 +1479,7 @@ impl RustAdapter {
                 )?)
                 .collect(),
             rust_diagnostic_origins,
+            rust_consumed_sources,
         })
     }
 }
@@ -1677,12 +1687,15 @@ impl RustAdapter {
         // integration tests under `tests/` or `examples/`. Probe seeding
         // stays production-only so test bodies do not generate findings.
         // Use the content-addressed per-file fact cache (#1912).
+        let mut rust_consumed_sources =
+            crate::analysis::consumed_source::ConsumedRustSources::default();
         let loaded_rust_files = analyzable_rust_files
             .iter()
             .map(|file| {
                 let full = options.root.join(file);
                 let bytes = std::fs::read(&full)
                     .map_err(|err| format!("failed to read {}: {err}", full.display()))?;
+                rust_consumed_sources.record(file, Some(&bytes));
                 Ok((file.clone(), bytes))
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -1691,6 +1704,10 @@ impl RustAdapter {
             &loaded_rust_files,
             &options.test_harnesses,
         )?;
+        #[cfg(test)]
+        {
+            rust_consumed_sources.file_fact_cache = cached.file_fact_cache.clone();
+        }
         let mut index = cached.index;
         if let Some(disclosure) = rust_index::lexical_fallback_disclosure(&index) {
             eprintln!("{disclosure}");
@@ -1769,6 +1786,7 @@ impl RustAdapter {
             skipped_files,
             partial_reason: None,
             rust_diagnostic_origins,
+            rust_consumed_sources,
         })
     }
 }

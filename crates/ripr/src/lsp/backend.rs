@@ -910,17 +910,14 @@ impl Backend {
             snapshot.delivery_selection = Some(compute_delivery_selection(&snapshot));
         }
         let plan = diagnostic_refresh_plan(&last_diagnostics, batches);
-        // Saved-workspace authority (#1970): compute the analyzed
-        // saved-content identity this transaction will record — from the
-        // persisted bytes the analysis read, not the didSave-tracked digest —
-        // without mutating the document store. The store only advances when
-        // the snapshot commits; publication filters against this pending
-        // identity so a just-saved document is re-served and a document whose
-        // buffer diverges from the freshly analyzed bytes is withdrawn.
+        // Rust uses the raw-byte commitments carried by the completed producer,
+        // never a reread after analysis. Other languages retain their existing
+        // saved-content identity behavior. State advances only at commit.
         let Ok(documents) = self.documents.lock() else {
             return None;
         };
-        let (pending_analyzed, pending_entered) = documents.pending_analyzed_digests();
+        let (pending_analyzed, pending_entered) =
+            documents.pending_analyzed_digests(&snapshot.root, &snapshot.rust_consumed_sources);
         drop(documents);
         debug_assert!(snapshot.is_consistent());
         Some(RefreshTransaction {
@@ -6414,6 +6411,7 @@ mod top_limitation_selection_tests {
     ) -> AnalysisSnapshot {
         AnalysisSnapshot {
             root: PathBuf::from("C:").join("repo"),
+            rust_consumed_sources: Default::default(),
             input_identity: None,
             base: Some("main".to_string()),
             mode: crate::app::Mode::Draft,
@@ -6481,6 +6479,7 @@ mod top_limitation_selection_tests {
         let snapshot = snapshot_for_outcome(incomplete_outcome(0)?, None);
         let snapshot = AnalysisSnapshot {
             root: repo_root.clone(),
+            rust_consumed_sources: Default::default(),
             ..snapshot
         };
         let health = AnalysisHealth {
@@ -8759,6 +8758,7 @@ mod delivery_selection_parity_tests {
             .collect();
         let snapshot = AnalysisSnapshot {
             root: PathBuf::from("/workspace"),
+            rust_consumed_sources: Default::default(),
             input_identity: Some(
                 crate::lsp::input_identity::LspAnalysisInputIdentity::from_refresh_inputs(
                     PathBuf::from("/workspace"),
@@ -9694,6 +9694,7 @@ mod list_actionable_items_tests {
     fn snapshot_with_selection(selection: Option<DiagnosticDeliverySelection>) -> AnalysisSnapshot {
         AnalysisSnapshot {
             root: PathBuf::from("/workspace"),
+            rust_consumed_sources: Default::default(),
             input_identity: None,
             base: Some("main".to_string()),
             mode: crate::app::Mode::Draft,

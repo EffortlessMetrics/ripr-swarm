@@ -5,6 +5,135 @@ const SOURCE_A: &str =
 const SOURCE_B: &str =
     "pub fn gate_state(flag: bool) -> bool {\n    if !flag { true } else { false }\n}\n";
 
+#[test]
+fn rust_prepare_refuses_missing_conflicting_and_unloaded_paths_but_preserves_non_rust()
+-> Result<(), String> {
+    let root = unique_lsp_test_root("consumed-source-refusal")?;
+    let rust_path = root.path().join("lib.rs");
+    let python_path = root.path().join("app.py");
+    fs::write(&rust_path, SOURCE_A).map_err(|error| format!("write Rust A: {error}"))?;
+    fs::write(&python_path, "value = 1\n").map_err(|error| format!("write Python A: {error}"))?;
+    let rust_uri = file_uri_for_path(&rust_path)?;
+    let python_uri = file_uri_for_path(&python_path)?;
+    let mut documents = DocumentStore::default();
+    documents.open(quarantine_open_params(&rust_uri, SOURCE_A));
+    documents.open(quarantine_open_params(&python_uri, "value = 1\n"));
+    fs::write(&rust_path, SOURCE_B).map_err(|error| format!("write Rust B: {error}"))?;
+    let python_b = "value = 2\n";
+    fs::write(&python_path, python_b).map_err(|error| format!("write Python B: {error}"))?;
+    let mut captured = crate::analysis::consumed_source::ConsumedRustSources::default();
+    captured.record(std::path::Path::new("lib.rs"), Some(SOURCE_A.as_bytes()));
+    let (pending, _) = documents.pending_analyzed_digests(root.path(), &captured);
+    if pending.get(&rust_uri).and_then(Option::as_ref) != Some(&content_digest(SOURCE_A.as_bytes()))
+        || pending.get(&python_uri).and_then(Option::as_ref)
+            != Some(&content_digest(python_b.as_bytes()))
+    {
+        return Err("Rust preparation reread disk B or changed non-Rust behavior".into());
+    }
+    documents.note_refresh_analyzed(None, &pending, &[]);
+    let mut missing = crate::analysis::consumed_source::ConsumedRustSources::default();
+    missing.record(std::path::Path::new("lib.rs"), None);
+    let mut conflicting = captured.clone();
+    conflicting.record(std::path::Path::new("lib.rs"), Some(SOURCE_B.as_bytes()));
+    for refused in [Default::default(), missing, conflicting] {
+        let (pending, _) = documents.pending_analyzed_digests(root.path(), &refused);
+        if !matches!(pending.get(&rust_uri), Some(None)) {
+            return Err("missing, unloaded or conflicting Rust input borrowed a digest".into());
+        }
+        documents.note_refresh_analyzed(None, &pending, &[]);
+        if !documents
+            .state_for_uri(&rust_uri)
+            .is_some_and(|state| state.is_quarantined())
+        {
+            return Err("unavailable Rust commitment did not quarantine".into());
+        }
+    }
+    let (pending, _) = documents.pending_analyzed_digests(root.path(), &captured);
+    documents.note_refresh_analyzed(None, &pending, &[]);
+    if documents
+        .state_for_uri(&rust_uri)
+        .is_none_or(|state| state.is_quarantined())
+    {
+        return Err("a later valid captured input did not recover quarantine".into());
+    }
+    Ok(())
+}
+
+#[test]
+fn actual_saved_producer_commits_raw_bytes_on_cold_and_warm_cache_paths() -> Result<(), String> {
+    let root = unique_lsp_test_root("consumed-source-cache")?;
+    write_lsp_scope_fixture(root.path())?;
+    run_lsp_scope_git(root.path(), &["init"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &["config", "user.email", "ripr@example.invalid"],
+    )?;
+    run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &["add", "Cargo.toml", "src/lib.rs", "tests/end_to_end.rs"],
+    )?;
+    run_lsp_scope_git(root.path(), &["commit", "-m", "base"])?;
+    let path = root.path().join("src/lib.rs");
+    let config = LspAnalysisConfig {
+        base_ref: Some("HEAD".to_string()),
+        mode: Mode::Instant,
+        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+        ..LspAnalysisConfig::default()
+    };
+    let crlf = SOURCE_A.replace('\n', "\r\n");
+    let mut bom = b"\xef\xbb\xbf".to_vec();
+    bom.extend_from_slice(SOURCE_A.as_bytes());
+    let mut invalid = SOURCE_A.as_bytes().to_vec();
+    invalid.extend_from_slice(b"// invalid byte: \xff\n");
+    for (label, bytes) in [
+        ("plain", SOURCE_A.as_bytes()),
+        ("BOM", bom.as_slice()),
+        ("CRLF", crlf.as_bytes()),
+        ("invalid UTF-8", invalid.as_slice()),
+    ] {
+        fs::write(&path, bytes).map_err(|error| format!("write {label}: {error}"))?;
+        let expected =
+            content_digest(&fs::read(&path).map_err(|error| format!("read {label}: {error}"))?);
+        let cold =
+            crate::lsp::diagnostics::workspace_diagnostics_with_config(root.path(), &config, true)?;
+        let cold_stats = &cold.snapshot.rust_consumed_sources.file_fact_cache;
+        if cold.snapshot.findings.is_empty() || cold_stats.misses == 0 || cold_stats.stores == 0 {
+            return Err(format!(
+                "SETUP: {label} lacks actual nonempty cold producer: {cold_stats:?}"
+            ));
+        }
+        let warm =
+            crate::lsp::diagnostics::workspace_diagnostics_with_config(root.path(), &config, true)?;
+        let warm_stats = &warm.snapshot.rust_consumed_sources.file_fact_cache;
+        if warm.snapshot.findings.is_empty() || warm_stats.hits == 0 || warm_stats.misses != 0 {
+            return Err(format!(
+                "SETUP: {label} lacks actual nonempty warm hit: {warm_stats:?}"
+            ));
+        }
+        for (stage, snapshot) in [("cold", &cold.snapshot), ("warm", &warm.snapshot)] {
+            if snapshot
+                .rust_consumed_sources
+                .digest(&snapshot.root, &path)
+                .as_ref()
+                != Some(&expected)
+            {
+                return Err(format!(
+                    "{label} {stage} commitment differs from actual raw loaded bytes"
+                ));
+            }
+        }
+    }
+    let (legacy_output, _legacy_origins) = crate::app::check_workspace_worktree_with_origins(
+        config.check_input(root.path()),
+        config.repo_config(),
+    )?;
+    if legacy_output.findings.is_empty() {
+        return Err("existing private two-tuple wrapper lost the actual producer findings".into());
+    }
+    Ok(())
+}
+
 // Probe identity/expression/location are producer evidence. Preparation may
 // legitimately annotate the surrounding Finding, so do not compare that DTO.
 fn producer_probe_signature(snapshot: &AnalysisSnapshot) -> Result<Vec<String>, String> {
@@ -215,6 +344,56 @@ async fn completed_saved_analysis_keeps_consumed_a_when_disk_and_buffer_become_b
                 "BEHAVIORAL: refused A preparation still serves stale diagnostics for B; {detail}"
             ));
         }
+    }
+    // A later real analysis of the persisted B input must recover currentness.
+    // No test-owned commitment, forced snapshot or didSave digest supplies it.
+    let actual_b = fs::read(&path).map_err(|error| format!("read recovery B: {error}"))?;
+    if content_digest(&actual_b) != digest_b {
+        return Err("SETUP: recovery disk bytes no longer equal independently witnessed B".into());
+    }
+    tokio::time::timeout(
+        Duration::from_mins(2),
+        backend.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::ExplicitRefresh),
+    )
+    .await
+    .map_err(|_| "actual B recovery refresh exceeded test deadline".to_string())?;
+    let recovered = backend
+        .latest_analysis_snapshot()
+        .ok_or_else(|| "SETUP: B recovery produced no committed snapshot".to_string())?;
+    if recovered.refresh.snapshot_id == committed.refresh.snapshot_id
+        || !recovered.findings.iter().any(|finding| {
+            finding.probe.location.file == path
+                && finding.probe.expression.contains("!flag")
+                && finding
+                    .probe
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.0.contains("gate_state"))
+        })
+    {
+        return Err("SETUP: recovery lacks a fresh nonempty actual B producer".into());
+    }
+    let recovered_document = backend
+        .document_state_for_test(&uri)
+        .ok_or_else(|| "SETUP: B recovery lost the actual document state".to_string())?;
+    if recovered
+        .rust_consumed_sources
+        .digest(&recovered.root, &path)
+        .as_ref()
+        != Some(&digest_b)
+        || recovered_document.analyzed_saved_digest.as_ref() != Some(&digest_b)
+        || recovered_document.is_quarantined()
+    {
+        return Err(format!(
+            "BEHAVIORAL: fresh B did not recover consumed-B currentness; analyzed={:?}, quarantined={}",
+            recovered_document.analyzed_saved_digest,
+            recovered_document.is_quarantined()
+        ));
+    }
+    let served = pull_document_json(backend, &uri, None).await?;
+    let expected_count = recovered.diagnostics_by_uri.get(&uri).map_or(0, Vec::len);
+    if expected_count == 0 || report_kind_and_items(&served).1 != expected_count {
+        return Err("BEHAVIORAL: recovered B pull does not serve its committed diagnostics".into());
     }
     Ok(())
 }

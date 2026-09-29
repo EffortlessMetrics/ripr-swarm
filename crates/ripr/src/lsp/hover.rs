@@ -1398,6 +1398,7 @@ mod seam_hover_tests {
     fn sample_snapshot(mode: Mode) -> AnalysisSnapshot {
         AnalysisSnapshot {
             root: PathBuf::from("/workspace"),
+            rust_consumed_sources: Default::default(),
             input_identity: None,
             base: None,
             mode,

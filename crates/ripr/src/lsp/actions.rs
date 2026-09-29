@@ -2831,6 +2831,7 @@ mod tests {
     fn python_snapshot() -> AnalysisSnapshot {
         AnalysisSnapshot {
             root: PathBuf::from("/workspace"),
+            rust_consumed_sources: Default::default(),
             input_identity: None,
             base: None,
             mode: Mode::Draft,

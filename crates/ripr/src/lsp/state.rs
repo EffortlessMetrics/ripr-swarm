@@ -620,6 +620,8 @@ pub(super) enum HarnessFactsOnSnapshot {
 #[derive(Clone, Debug)]
 pub(super) struct AnalysisSnapshot {
     pub(super) root: PathBuf,
+    /// Private per-path raw input commitments, never a complete dependency ID.
+    pub(super) rust_consumed_sources: crate::analysis::consumed_source::ConsumedRustSources,
     /// The exact input identity that produced this completed snapshot. This
     /// is producer-owned provenance, not a renderer-derived summary.
     pub(super) input_identity: Option<LspAnalysisInputIdentity>,
@@ -1155,21 +1157,30 @@ impl DocumentStore {
         state.refresh_quarantine()
     }
 
-    /// Compute the analyzed saved-content identity a refresh transaction
-    /// would record for every open document, without mutating any state
-    /// (#1970). The identity comes from the persisted bytes on disk — the
-    /// same bytes the refresh's analysis read — not from the didSave-tracked
-    /// digest, so a file changed on disk outside didSave (git checkout,
-    /// formatter, external editor) cannot be recorded as analyzed against
-    /// its stale pre-change digest. Falls back to the didSave-tracked digest
-    /// only when the persisted bytes cannot be read. Also returns the URIs
-    /// that are currently clean but would enter quarantine under the pending
-    /// identity, so publication can withdraw them before commit.
-    pub(super) fn pending_analyzed_digests(&self) -> (BTreeMap<Uri, Option<String>>, Vec<Uri>) {
+    /// Prepare identities without changing document state. `.rs` paths use only raw
+    /// bytes captured by this analysis, including cache hits. Missing or
+    /// conflicting commitments cannot fall back to disk or didSave state.
+    /// Other extensions retain their existing saved-content behavior; this
+    /// carrier does not establish their consumed-input provenance, including
+    /// non-`.rs` Rust-language buffers and uncaptured include inputs.
+    /// Also return clean URIs that would enter quarantine under that identity.
+    pub(super) fn pending_analyzed_digests(
+        &self,
+        root: &Path,
+        consumed: &crate::analysis::consumed_source::ConsumedRustSources,
+    ) -> (BTreeMap<Uri, Option<String>>, Vec<Uri>) {
         let mut digests = BTreeMap::new();
         let mut entered = Vec::new();
         for (uri, state) in &self.documents {
-            let analyzed = read_saved_digest(uri).or_else(|| state.saved_digest.clone());
+            let analyzed = if state
+                .path
+                .extension()
+                .is_some_and(|extension| extension == "rs")
+            {
+                consumed.digest(root, &state.path)
+            } else {
+                read_saved_digest(uri).or_else(|| state.saved_digest.clone())
+            };
             if !state.is_quarantined() && state.staleness_for_analyzed(analyzed.as_ref()).is_some()
             {
                 entered.push(uri.clone());
@@ -1184,7 +1195,7 @@ impl DocumentStore {
     /// commit path, so document identities advance exclusively with the
     /// committed snapshot — a superseded or failed transaction leaves them
     /// untouched. `analyzed` carries the pending identities computed at
-    /// prepare time from the persisted bytes (see
+    /// prepare time from the producer commitments for Rust (see
     /// `pending_analyzed_digests`); `pre_disclosed` lists URIs whose pending
     /// withdrawal was already disclosed during publication, so the new
     /// episode does not disclose a second time.
@@ -1696,7 +1707,7 @@ mod tests {
                     state.saved_digest
                 ));
             }
-            let (pending, _) = store.pending_analyzed_digests();
+            let (pending, _) = store.pending_analyzed_digests(&PathBuf::new(), &Default::default());
             if matches!(pending.get(&traversal_uri), Some(Some(_))) {
                 return Err(
                     "pending analyzed digest must not read through a parent segment".to_string(),
@@ -1761,7 +1772,7 @@ mod tests {
                     state.saved_digest
                 ));
             }
-            let (pending, _) = store.pending_analyzed_digests();
+            let (pending, _) = store.pending_analyzed_digests(&PathBuf::new(), &Default::default());
             if matches!(pending.get(&uri), Some(Some(_))) {
                 return Err("pending digest must not read the cwd traversal target".to_string());
             }
@@ -1843,6 +1854,7 @@ mod tests {
         diagnostics_by_uri.insert(uri, vec![gap_diagnostic()]);
         let snapshot = AnalysisSnapshot {
             root: PathBuf::from("/workspace"),
+            rust_consumed_sources: Default::default(),
             input_identity: None,
             base: None,
             mode: Mode::Draft,
@@ -1875,6 +1887,7 @@ mod tests {
         diagnostics_by_uri.insert(uri, vec![plain_diagnostic()]);
         let snapshot = AnalysisSnapshot {
             root: PathBuf::from("/workspace"),
+            rust_consumed_sources: Default::default(),
             input_identity: None,
             base: None,
             mode: Mode::Draft,
@@ -1917,6 +1930,7 @@ mod tests {
         diagnostics_by_uri.insert(uri.clone(), vec![scope_guard]);
         let snapshot = AnalysisSnapshot {
             root: PathBuf::from("/workspace"),
+            rust_consumed_sources: Default::default(),
             input_identity: None,
             base: None,
             mode: Mode::Draft,

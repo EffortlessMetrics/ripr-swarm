@@ -3,6 +3,7 @@ pub(crate) mod canonical_gap;
 mod classifier;
 mod classify;
 pub(crate) mod committed_source;
+pub(crate) mod consumed_source;
 pub(crate) mod diagnostic_origin;
 mod diff;
 mod extract;
@@ -728,6 +729,8 @@ pub struct AnalysisResult {
     pub(crate) uncommitted_source_paths: Vec<String>,
     /// Crate-private numeric diagnostic origins for Rust findings (#4464).
     pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
+    /// Raw per-path Rust producer observations, separate from decoded geometry.
+    pub(crate) rust_consumed_sources: crate::analysis::consumed_source::ConsumedRustSources,
 }
 
 /// Default language list when callers do not pass `[languages]` config.

@@ -787,6 +787,7 @@ impl PythonAdapter {
             skipped_files,
             limitations,
             rust_diagnostic_origins: Default::default(),
+            rust_consumed_sources: Default::default(),
         })
     }
 
@@ -820,6 +821,7 @@ impl PythonAdapter {
             skipped_files,
             partial_reason,
             rust_diagnostic_origins: Default::default(),
+            rust_consumed_sources: Default::default(),
         })
     }
 }
