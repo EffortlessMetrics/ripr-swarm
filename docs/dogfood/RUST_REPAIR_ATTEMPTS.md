@@ -70,6 +70,17 @@ Repeated audits are recorded separately in the corpus `observations` ledger.
 An observation must name the exact repository, head, source candidate, and
 reason. A repeated repository/head/candidate identity points to its existing
 exclusion and is counted as a duplicate observation, not as another exclusion
-or eligible attempt. The generated report exposes observed runs, unique
-exclusions, duplicate observations, timeout observations, and eligible attempts
-as separate counts.
+or eligible attempt. Optional `route` facts on an observation carry channel,
+cohort, stage, eligibility, and earliest-stop evidence for the route-yield
+ladder. The generated report exposes observed runs, unique exclusions,
+duplicate observations, timeout observations, eligible attempts, and the
+route-yield ladder as separate counts.
+
+Route yield is complete routes over unique selected opportunities
+`(opportunity identity, cohort)`. Repair success is improved-or-closed
+eligible attempts. Three observations with no complete route report `0/3`
+route yield and `not_measurable` repair success. Zero eligible attempts never
+become `0%` or `100%`. Observations are not attempts. Historical rows without
+finer stage facts keep those stages `not_observed`;
+`static_limitation_no_repair_packet` is not relabelled as a missing
+discriminator or unsafe target.
