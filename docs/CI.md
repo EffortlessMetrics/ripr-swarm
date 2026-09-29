@@ -468,9 +468,11 @@ unlabeled (including windows-ci or full-ci removal):
 Removing that label does not imply Windows proof and must not spend a required
 Rust run. `full-ci` unlabeled does not re-run the gate to turn advisories off;
 the next opened/synchronize/reopened proof observes the current labels.
-`cancel-in-progress` stays synchronize-only. An ignored labeled run is cheap
-and does not post the protected result context, so it cannot manufacture a
-green required check for untested or previously failed code.
+`cancel-in-progress` stays synchronize-only. Unrelated `labeled` events use a
+distinct `Routed Rust Small-<pr>-label-ignore` concurrency group so they cannot
+replace a pending synchronize proof. An ignored labeled run is cheap, does not
+post the protected result context, and cannot manufacture a green required
+check for untested or previously failed code.
 
 The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
 when available. It selects a self-hosted runner only when the runner is idle and

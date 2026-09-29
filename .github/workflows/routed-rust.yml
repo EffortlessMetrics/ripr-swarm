@@ -16,10 +16,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'full-ci' && '-label-ignore' || '' }}
   # Product decision: cancel only on new commits. Do not flip this globally
-  # for label events (#4380). Unrelated label events must not launch the gate
-  # instead of changing cancellation.
+  # for label events (#4380). Unrelated labeled runs use the `-label-ignore`
+  # suffix so they cannot replace a pending synchronize proof in the
+  # per-PR group. Unrelated label events must not launch the gate instead of
+  # changing cancellation.
   cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}
 
 env:

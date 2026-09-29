@@ -5894,12 +5894,58 @@ fn routed_rust_pull_request_types(workflow: &str) -> Option<Vec<String>> {
     })
 }
 
+fn routed_rust_job_if_text(workflow: &str, job: &str) -> String {
+    let job_header = format!("{job}:");
+    let mut in_block = false;
+    let mut in_if = false;
+    let mut text = String::new();
+    for line in workflow.lines() {
+        let job_level_key = line.starts_with("  ")
+            && !line.starts_with("   ")
+            && line.trim_end().ends_with(':')
+            && !line.trim_start().starts_with('-');
+        if job_level_key {
+            if in_block {
+                break;
+            }
+            in_block = line.trim() == job_header;
+            in_if = false;
+            continue;
+        }
+        if in_block && !line.is_empty() && !line.starts_with(' ') {
+            break;
+        }
+        if !in_block {
+            continue;
+        }
+        if in_if {
+            let indent = line.len() - line.trim_start().len();
+            if !line.trim().is_empty() && indent <= 4 {
+                in_if = false;
+            } else {
+                if !line.trim().is_empty() && !line.trim_start().starts_with('#') {
+                    text.push(' ');
+                    text.push_str(line.trim());
+                }
+                continue;
+            }
+        }
+        if line.starts_with("    if:") && !line.starts_with("     ") {
+            let rest = line.trim().trim_start_matches("if:").trim();
+            if rest == "|" || rest == ">" || rest == "|-" || rest == ">-" {
+                in_if = true;
+            } else {
+                text.push_str(rest);
+            }
+        }
+    }
+    text
+}
+
 fn routed_rust_job_has_proof_event_if(workflow: &str, job: &str) -> bool {
-    routed_rust_job_block_any(workflow, job, |line| {
-        line.contains(ROUTED_RUST_PROOF_ACTIONS_SNIPPET)
-    }) && routed_rust_job_block_any(workflow, job, |line| {
-        line.contains(ROUTED_RUST_FULL_CI_LABELED_SNIPPET)
-    })
+    let if_text = routed_rust_job_if_text(workflow, job);
+    if_text.contains(ROUTED_RUST_PROOF_ACTIONS_SNIPPET)
+        && if_text.contains(ROUTED_RUST_FULL_CI_LABELED_SNIPPET)
 }
 
 #[cfg(test)]
@@ -5939,8 +5985,17 @@ fn routed_rust_event_route(
 }
 
 fn routed_rust_label_event_contract_violations(workflow: &str) -> Vec<String> {
-    let Some(types) = routed_rust_pull_request_types(workflow) else {
+    let has_pull_request_trigger = workflow
+        .lines()
+        .map(str::trim)
+        .any(|line| line == "pull_request:");
+    if !has_pull_request_trigger {
         return Vec::new();
+    }
+    let Some(types) = routed_rust_pull_request_types(workflow) else {
+        return vec![
+            ".github/workflows/routed-rust.yml must declare an inline pull_request types array so opened/synchronize/reopened and full-ci labeled events still launch".to_string(),
+        ];
     };
     let mut violations = Vec::new();
     for required in ["opened", "synchronize", "reopened", "labeled"] {
@@ -5958,6 +6013,15 @@ fn routed_rust_label_event_contract_violations(workflow: &str) -> Vec<String> {
     if !workflow.contains(ROUTED_RUST_SYNCHRONIZE_CANCEL_SNIPPET) {
         violations.push(
             ".github/workflows/routed-rust.yml must keep synchronize-only cancel-in-progress; do not flip cancellation globally for label events (#4380)".to_string(),
+        );
+    }
+    if !workflow.contains("-label-ignore")
+        || !workflow.contains(
+            "github.event.action == 'labeled' && github.event.label.name != 'full-ci' && '-label-ignore'",
+        )
+    {
+        violations.push(
+            ".github/workflows/routed-rust.yml must put unrelated labeled events in a distinct `-label-ignore` concurrency group so they cannot replace a pending synchronize proof".to_string(),
         );
     }
     for job in ["route", "detect-docs-only"] {

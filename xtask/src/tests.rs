@@ -10827,6 +10827,40 @@ fn routed_rust_label_event_matrix_rejects_unrelated_full_gates() {
             .any(|violation| violation.contains("Ignored Label Event")),
         "posting the required result name on unrelated labeled events must fail"
     );
+
+    let decoy_if = workflow.replace(
+        "if: github.event_name != 'pull_request' || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')",
+        "if: always()\n    # contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action) github.event.action == 'labeled' && github.event.label.name == 'full-ci'",
+    );
+    assert!(
+        routed_rust_label_event_contract_violations(&decoy_if)
+            .iter()
+            .any(|violation| violation.contains("job `route` must launch only")),
+        "comment decoys must not satisfy the proof-event if contract: {:?}",
+        routed_rust_label_event_contract_violations(&decoy_if)
+    );
+
+    let missing_types =
+        workflow.replace("    types: [opened, synchronize, reopened, labeled]\n", "");
+    assert!(
+        routed_rust_label_event_contract_violations(&missing_types)
+            .iter()
+            .any(|violation| violation.contains("inline pull_request types array")),
+        "removing types must fail closed: {:?}",
+        routed_rust_label_event_contract_violations(&missing_types)
+    );
+
+    let shared_group = workflow.replace(
+        "${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'full-ci' && '-label-ignore' || '' }}",
+        "",
+    );
+    assert!(
+        routed_rust_label_event_contract_violations(&shared_group)
+            .iter()
+            .any(|violation| violation.contains("-label-ignore")),
+        "sharing the proof concurrency group with ignored labels must fail: {:?}",
+        routed_rust_label_event_contract_violations(&shared_group)
+    );
 }
 
 #[test]
