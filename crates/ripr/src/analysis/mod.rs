@@ -6,9 +6,10 @@ pub(crate) mod committed_source;
 mod diff;
 mod extract;
 mod facts;
+mod generated_rust_corpus;
 pub(crate) mod harness_projection;
 mod language;
-mod new_test_target;
+pub(crate) mod new_test_target;
 pub(crate) mod path_glob;
 mod pipeline;
 mod probes;
@@ -46,10 +47,12 @@ pub(crate) use diff::{
 /// consumed by the analysis route and the xtask badge route alike. Neither
 /// route may hardcode a base ref or rebuild the diff argv inline.
 pub use diff::{load_diff_range, resolve_default_base_commit};
+pub(crate) use facts::cfg_predicates;
 pub(crate) use facts::validated_file_wide_harness_targets;
 pub(crate) use language::{
     DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS,
-    TsJsSourceKind, is_diff_scope_oversized, is_ts_js_source_extension, ts_js_source_kind,
+    TsJsSourceKind, is_diff_scope_oversized, is_generated_rust_file_with_patterns,
+    is_ts_js_source_extension, ts_js_source_kind,
 };
 pub use language::{
     PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
@@ -65,17 +68,20 @@ pub(crate) use seam_classification::SeamGripClassCounts;
 #[cfg(test)]
 pub(crate) use seam_classification::classify_seam;
 pub(crate) use seam_inventory::{
-    DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, DiffScopeEvidenceStages, ScopedClassifiedSeamInventory,
-    SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError, apply_pilot_seam_budget,
-    inventory_changed_test_classified_seams_at_with_config_node,
-    inventory_classified_seams_at_with_config, inventory_compact_classified_seams_at_with_config,
+    ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, DiffScopeEvidenceStages,
+    ScopedClassifiedSeamInventory, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
+    apply_pilot_seam_budget, inventory_changed_test_classified_seams_at_with_config_node,
+    inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
+    inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_classified_seams_staged_at_with_config, inventory_seams_at_with_config,
     workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
+pub(crate) use syntax::parse_clean_source_file;
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;
+pub(crate) use workspace::apply_module_graph_evidence;
 pub(crate) use workspace::context_for_files;
 pub(crate) use workspace::is_test_surface_path;
 pub(crate) use workspace::seeds_diff_probes;
