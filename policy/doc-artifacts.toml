@@ -939,7 +939,14 @@ standalone_reason = "Issue #4641 records the executed-control obligation/result 
 [[artifact]]
 id = "RIPR-SPEC-0184"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0184-same-test-boundary-oracle-pairing.md"
+path = "docs/specs/RIPR-SPEC-0184-public-command-catalog.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #4822 records command-discovery C1: one typed public command catalog owns RIPR command paths, aliases, and public/compatibility/advanced/internal classification with parser and typo-suggestion two-way parity; rich metadata, human-help rewrite, help workflow, and help --json remain later slices."
+[[artifact]]
+id = "RIPR-SPEC-0185"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0185-same-test-boundary-oracle-pairing.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Honesty fix: a predicate probe does not read exposed unless one test both feeds a boundary input to the owner and holds a discriminating oracle on that call's result; a split names same_test_pairing_missing and stays at most weakly_exposed; the same-call control stays exposed; no schema bump; fixture-backed by split_test_boundary_oracle (#4828)."

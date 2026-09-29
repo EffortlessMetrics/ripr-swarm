@@ -622,16 +622,16 @@ fn run_pipeline_for_diff_text(
             // configure nothing, so "the configured predicate" pointed at a
             // setting that did not exist while a hand-written `schema.rs`
             // or `gen/` module went unanalyzed.
+            let generated_sources = super::language::GeneratedRustSources::for_diff(
+                &options.root,
+                generated_file_patterns,
+                &analysis_changed_files,
+            );
             let skipped = analysis_changed_files
                 .iter()
                 .map(|file| file.path.as_path())
                 .filter(|path| route(path) == Some(LanguageId::Rust))
-                .filter(|path| {
-                    super::language::is_generated_rust_file_with_patterns(
-                        path,
-                        generated_file_patterns,
-                    )
-                })
+                .filter(|path| generated_sources.contains(path))
                 .map(|path| path.to_string_lossy().replace('\\', "/"))
                 .collect::<Vec<_>>();
             let listed = bounded_path_listing(&skipped);
@@ -642,18 +642,19 @@ fn run_pipeline_for_diff_text(
                     AnalysisRecovery::new(
                         AnalysisRecoveryKind::Retry,
                         format!(
-                            "Not analyzed as generated code: {listed}. ripr treats `gen/`, \
-                             `generated/` and `out/` directories and `generated.rs`, `schema.rs`, \
-                             `bindings.rs`, `*.gen.rs`, `*_generated.rs` and `generated_*` files, \
-                             plus `[languages.rust] generated_file_patterns`, as generated; if one of these \
-                             is hand-written, its changes stay outside this analysis."
+                            "Not analyzed as generated or vendored code: {listed}. ripr skips `gen/`, \
+                             `generated/`, `out/`, `generated.rs`, `schema.rs`, `bindings.rs`, \
+                             `*.gen.rs`, `*_generated.rs`, `generated_*`, files headed \
+                             `@generated` or `DO NOT EDIT`, `cargo vendor` crates and \
+                             `generated_file_patterns`; a hand-written match stays unanalyzed."
                         ),
                     )?,
                 )
                 .with_affected_items(result.skipped_files as u64)?
                 .with_detail(format!(
-                    "{} generated Rust file(s) were intentionally skipped by the generated-file \
-                     conventions or configured patterns: {listed}",
+                    "{} generated or vendored Rust file(s) were intentionally skipped by the \
+                     generated-file conventions, generator headers, `cargo vendor` crates or \
+                     configured patterns: {listed}",
                     result.skipped_files
                 ))?,
             );
@@ -1085,7 +1086,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
                     language: LanguageId::Rust.as_str().to_string(),
                     status: LanguageRunStatus::Partial,
                     reason: Some(format!(
-                        "{} generated Rust file(s) skipped from static analysis by the configured generated-file predicate",
+                        "{} generated or vendored Rust file(s) skipped from static analysis by the generated-file conventions, generator headers, `cargo vendor` crates or configured patterns",
                         result.skipped_files
                     )),
                 });
@@ -1189,15 +1190,29 @@ fn detect_repo_preview_advisories(
             continue;
         }
         let file_count = files.len();
+        let javascript_file_count = files
+            .iter()
+            .filter(|path| is_javascript_family_path(std::path::Path::new(path)))
+            .count();
         let sample_paths: Vec<String> = files.into_iter().take(3).collect();
         advisories.push(PreviewLanguageAdvisory {
             language: language.as_str().to_string(),
             file_count,
             sample_paths,
+            javascript_file_count,
             enabled: analyzed_only,
         });
     }
     advisories
+}
+
+/// Whether a routed path is a JavaScript-family source (`.js`, `.jsx`,
+/// `.mjs`, `.cjs`), using the router's own exact extension lists.
+fn is_javascript_family_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .and_then(super::language::ts_js_source_kind)
+        == Some(super::language::TsJsSourceKind::JavaScript)
 }
 
 /// Languages that route through a compiled preview adapter, in stable order.
@@ -1231,7 +1246,8 @@ fn detect_preview_advisories<'a, I>(
 where
     I: Iterator<Item = &'a diff::ChangedFile>,
 {
-    let mut counts: Vec<(LanguageId, usize, Vec<String>)> = Vec::new();
+    // `(language, file count, JavaScript-family count, sample paths)`.
+    let mut counts: Vec<(LanguageId, usize, usize, Vec<String>)> = Vec::new();
     for changed in paths {
         let Some(language) = super::language::route(&changed.path) else {
             continue;
@@ -1252,26 +1268,29 @@ where
             continue;
         }
         let normalized = changed.path.to_string_lossy().replace('\\', "/");
-        match counts.iter_mut().find(|(lang, _, _)| *lang == language) {
-            Some((_, count, samples)) => {
+        let javascript = usize::from(is_javascript_family_path(&changed.path));
+        match counts.iter_mut().find(|(lang, _, _, _)| *lang == language) {
+            Some((_, count, javascript_count, samples)) => {
                 *count += 1;
+                *javascript_count += javascript;
                 if samples.len() < 3 {
                     samples.push(normalized);
                 }
             }
-            None => counts.push((language, 1, vec![normalized])),
+            None => counts.push((language, 1, javascript, vec![normalized])),
         }
     }
 
     let mut advisories: Vec<PreviewLanguageAdvisory> = Vec::new();
     for language in PREVIEW_LANGUAGE_ORDER {
-        if let Some((_, file_count, sample_paths)) =
-            counts.iter().find(|(lang, _, _)| lang == language)
+        if let Some((_, file_count, javascript_file_count, sample_paths)) =
+            counts.iter().find(|(lang, _, _, _)| lang == language)
         {
             advisories.push(PreviewLanguageAdvisory {
                 language: language.as_str().to_string(),
                 file_count: *file_count,
                 sample_paths: sample_paths.clone(),
+                javascript_file_count: *javascript_file_count,
                 enabled: enabled.contains(language) && language.is_available(),
             });
         }
@@ -2343,6 +2362,128 @@ mod tests {
     }
 
     #[test]
+    fn cargo_vendor_and_generator_header_changes_are_skipped_before_the_line_limit()
+    -> Result<(), String> {
+        let root = temp_root("analysis-outcome-vendored-skip")?;
+        let vendored = root.join("vendor/fakedep");
+        std::fs::create_dir_all(vendored.join("src")).map_err(|err| err.to_string())?;
+        std::fs::write(vendored.join(".cargo-checksum.json"), "{}")
+            .map_err(|err| err.to_string())?;
+        std::fs::create_dir_all(root.join("src/pb")).map_err(|err| err.to_string())?;
+        std::fs::write(
+            root.join("src/pb/shop.v1.rs"),
+            "// This file is @generated by prost-build.\npub fn big() -> bool { true }\n",
+        )
+        .map_err(|err| err.to_string())?;
+        // A `cargo vendor` bump larger than the changed-Rust-line guard.
+        let mut diff = String::from(
+            "diff --git a/vendor/fakedep/src/lib.rs b/vendor/fakedep/src/lib.rs\n\
+             --- /dev/null\n\
+             +++ b/vendor/fakedep/src/lib.rs\n\
+             @@ -0,0 +1,2500 @@\n",
+        );
+        for index in 0..2500 {
+            diff.push_str(&format!(
+                "+pub fn f{index}(x: u32) -> u32 {{ x + {index} }}\n"
+            ));
+        }
+        diff.push_str(
+            "diff --git a/src/pb/shop.v1.rs b/src/pb/shop.v1.rs\n\
+             --- /dev/null\n\
+             +++ b/src/pb/shop.v1.rs\n\
+             @@ -0,0 +1,2 @@\n\
+             +// This file is @generated by prost-build.\n\
+             +pub fn big() -> bool { true }\n",
+        );
+        let result = run_pipeline_for_diff_text(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
+                include_unchanged_tests: false,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &[],
+            &diff,
+        )?;
+        assert!(
+            result.findings.is_empty(),
+            "skipped sources yield no findings"
+        );
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "vendored skip must carry an analysis outcome".to_string())?;
+        assert_eq!(outcome.kind, AnalysisOutcomeKind::PartialWithLimitations);
+        assert!(outcome.limitations.iter().any(|limitation| {
+            limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+                && limitation
+                    .recovery
+                    .detail
+                    .contains("vendor/fakedep/src/lib.rs")
+                && limitation.recovery.detail.contains("src/pb/shop.v1.rs")
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn repo_mode_counts_cargo_vendor_crates_as_a_partial_rust_run() -> Result<(), String> {
+        let root = temp_root("repo-vendored-skip")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub fn a() -> u32 { 1 }\n")?;
+        write(&root.join("vendor/dep/.cargo-checksum.json"), "{}")?;
+        write(
+            &root.join("vendor/dep/src/lib.rs"),
+            "pub fn b() -> u32 { 2 }\n",
+        )?;
+        let result = run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
+                include_unchanged_tests: false,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &[],
+        )?;
+        let rust_run = result
+            .language_runs
+            .iter()
+            .find(|run| run.language == "rust")
+            .ok_or_else(|| "a vendored skip must record the Rust run".to_string())?;
+        assert_eq!(rust_run.status, LanguageRunStatus::Partial);
+        assert!(
+            rust_run
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.starts_with("1 generated or vendored Rust file(s)")),
+            "{:?}",
+            rust_run.reason
+        );
+        Ok(())
+    }
+
+    #[test]
     fn deletion_disclosure_names_deleted_files_and_non_claim() -> Result<(), String> {
         let message = deletion_disclosure_message(2)
             .ok_or_else(|| "deleted files must produce a disclosure".to_string())?;
@@ -3365,6 +3506,28 @@ index 0000000..1111111 100644
         Ok(())
     }
 
+    /// #4555 (repo scope): the workspace-walk advisory counts JavaScript
+    /// files after the #4372 exclusion filter, so an excluded `dist/` bundle
+    /// is in neither count when enabled and in both when not enabled.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn repo_typescript_advisory_counts_javascript_after_exclusion() -> Result<(), String> {
+        let root = temp_root("issue-4555-ts-repo-javascript-count")?;
+        for path in ["src/a.js", "src/b.mts", "dist/x.js"] {
+            write(&root.join(path), "export const limit = 1;\n")?;
+        }
+        let counts = |enabled: &[LanguageId]| -> Vec<(usize, usize)> {
+            detect_repo_preview_advisories(&root, enabled)
+                .into_iter()
+                .map(|advisory| (advisory.file_count, advisory.javascript_file_count))
+                .collect()
+        };
+        assert_eq!(counts(&[LanguageId::TypeScript]), vec![(2, 1)]);
+        assert_eq!(counts(&[LanguageId::Rust]), vec![(3, 2)]);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     /// #4372 negative control: with TypeScript NOT enabled, the not-enabled
     /// disclosure still reports every routed TypeScript file, excluded or
     /// not — it discloses presence, not analysis.
@@ -3404,6 +3567,44 @@ index 0000000..1111111 100644
                     == AnalysisLimitationKind::LanguageScopeUnsupported),
             "a not-enabled adapter must not emit a preview skip limitation"
         );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #4555: the advisory counts the JavaScript half of the TS/JS family so
+    /// prose can call a JavaScript-only diff JavaScript; `.mts` and `.d.ts`
+    /// stay TypeScript, `.mjs`/`.cjs`/`.jsx` count as JavaScript.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn typescript_advisory_counts_javascript_family_files() -> Result<(), String> {
+        let root = temp_root("issue-4555-ts-advisory-javascript-count")?;
+        let diff_file = root.join("ts.diff");
+        write(
+            &diff_file,
+            &added_file_diff(&[
+                "src/a.js",
+                "src/b.mjs",
+                "src/c.cjs",
+                "src/d.jsx",
+                "src/e.mts",
+                "src/f.ts",
+                "src/g.d.ts",
+            ]),
+        )?;
+
+        let result = run_diff_pipeline_with_oracle_policy(
+            &excluded_path_advisory_options(&root, diff_file),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+        )?;
+
+        let advisory = result
+            .preview_language_advisories
+            .iter()
+            .find(|advisory| advisory.language == "typescript")
+            .ok_or_else(|| "expected a TypeScript advisory".to_string())?;
+        assert_eq!(advisory.file_count, 7);
+        assert_eq!(advisory.javascript_file_count, 4);
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }

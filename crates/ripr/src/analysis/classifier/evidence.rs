@@ -373,6 +373,7 @@ mod tests {
             impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         }
     }
 
@@ -414,6 +415,7 @@ mod tests {
             impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         };
         let context = ProbeContext::new(
             &probe,
@@ -564,6 +566,7 @@ mod tests {
             impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         };
         let index = RustIndex::default();
         let context = ProbeContext::new(&probe, Some(&owner), Vec::new(), false, &index, true);
@@ -609,6 +612,7 @@ mod tests {
             impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         };
         let index = RustIndex::default();
         let context = ProbeContext::new(&probe, Some(&owner), Vec::new(), false, &index, true);

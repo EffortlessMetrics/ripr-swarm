@@ -463,6 +463,7 @@ mod tests {
             impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         };
         let far = test_summary(
             "far",
@@ -628,6 +629,7 @@ mod tests {
             impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         };
         let paired = test_summary(
             "equality_threshold_discounts",
@@ -697,6 +699,7 @@ mod tests {
             impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         };
         let paired = test_summary(
             "word_label_is_word",
@@ -763,6 +766,7 @@ mod tests {
             impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         }
     }
 
