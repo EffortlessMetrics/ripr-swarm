@@ -196,24 +196,24 @@ mod tests {
         let wrapped = timeout().with_context("failed to run git diff");
         let source = wrapped
             .source()
-            .and_then(|source| source.downcast_ref::<CoreError>())
-            .expect("context should expose the typed timeout as source");
-        assert!(source.is_git_invocation_timeout());
-        match source {
-            CoreError::GitInvocationTimeout {
-                operation,
-                timeout_ms,
-                spawned,
-            } => {
-                assert_eq!(operation, "git -C /workspace [\"diff\"]");
-                assert_eq!(*timeout_ms, 30000);
-                assert!(*spawned);
-                assert!(
-                    !operation.contains('\n'),
-                    "timeout source must not carry command output"
-                );
-            }
-            other => panic!("expected GitInvocationTimeout source, got {other:?}"),
+            .and_then(|source| source.downcast_ref::<CoreError>());
+        assert!(
+            source.is_some_and(CoreError::is_git_invocation_timeout),
+            "context should expose the typed timeout as source"
+        );
+        if let Some(CoreError::GitInvocationTimeout {
+            operation,
+            timeout_ms,
+            spawned,
+        }) = source
+        {
+            assert_eq!(operation, "git -C /workspace [\"diff\"]");
+            assert_eq!(*timeout_ms, 30000);
+            assert!(*spawned);
+            assert!(
+                !operation.contains('\n'),
+                "timeout source must not carry command output"
+            );
         }
     }
 
