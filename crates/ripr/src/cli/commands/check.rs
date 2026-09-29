@@ -522,7 +522,8 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             python_guidance.as_ref(),
             &artifact_context,
             &mut handle,
-        )?;
+        )
+        .map_err(|err| format!("write to stdout failed: {err}"))?;
         return Ok(());
     }
     // Capture diff_file before input is moved into the analysis call; the
