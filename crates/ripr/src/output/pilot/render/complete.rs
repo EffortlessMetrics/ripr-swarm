@@ -419,7 +419,7 @@ pub(crate) fn render_pilot_terminal(
             entry.seam.display_line(),
             entry.seam.kind().as_str(),
             entry.seam.owner(),
-            entry.class.as_str()
+            entry.class.human_label()
         ));
         out.push_str(&format!("  why it matters: {}\n", why_line(entry)));
         if outline.is_not_applicable() {

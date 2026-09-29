@@ -1099,7 +1099,7 @@ mod tests {
 
         assert!(rendered.contains("State: top_gap"));
         assert!(rendered.contains("File: src/actionable.rs:9"));
-        assert!(rendered.contains("Static exposure: reachable_unrevealed"));
+        assert!(rendered.contains("Static exposure: unrevealed (reachable_unrevealed, "));
         assert!(!rendered.contains("File: src/exposed.rs:1"));
     }
 
@@ -1221,7 +1221,7 @@ mod tests {
             &crate::config::RiprConfig::default(),
         );
         if !digest.contains(
-            "Why propagation_unknown: the path from the changed behavior to an observable sink is not statically clear",
+            "Why unknown: the path from the changed behavior to an observable sink is not statically clear",
         ) {
             return Err(format!("honest why-hint missing:
 {digest}"));
