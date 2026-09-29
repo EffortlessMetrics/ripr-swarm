@@ -607,15 +607,16 @@ const SHARED_CALC_PY: &str = "def price(amount):\n    return amount - 1\n\n\ncla
 /// same test inside `b` exercises `b`'s code and must neither make that change
 /// `exposed` nor supply the module-identity relation. One row per import shape
 /// that carries module identity: `from M import f`, `from M import Class` +
-/// method call, `import M as m` + `m.f(`, and a package re-export `from shared
-/// import f`. `import M as m` never reaches `exposed` for a free function (its
-/// identity rule wants `from M import f`), so that row checks its
+/// method call, `import M as m` + `m.f(`, `from P import m` + `m.f(` or
+/// `m.Class()`, and a package re-export `from shared import f`. A module
+/// binding never reaches `exposed` for a free function (its identity rule
+/// wants `from M import f`), so those rows check their
 /// `import_alias_call` relation instead. `syntactic_call` is a name-level
 /// relation for every row and is not identity.
 #[test]
 fn same_named_src_package_in_another_project_lends_no_exposure() -> Result<(), String> {
     let reexport_init = "from .calc import price\n";
-    let rows: [(&str, &str, usize, &str); 4] = [
+    let rows: [(&str, &str, usize, &str); 6] = [
         (
             "from-module",
             "from shared.calc import price\n\n\ndef test_price():\n    assert price(10) == 9\n",
@@ -633,6 +634,18 @@ fn same_named_src_package_in_another_project_lends_no_exposure() -> Result<(), S
             "import shared.calc as calc\n\n\ndef test_price():\n    assert calc.price(10) == 9\n",
             2,
             "import_alias_call",
+        ),
+        (
+            "package-submodule",
+            "from shared import calc\n\n\ndef test_price():\n    assert calc.price(10) == 9\n",
+            2,
+            "import_alias_call",
+        ),
+        (
+            "class-via-package-submodule",
+            "from shared import calc\n\n\ndef test_total():\n    assert calc.Calculator().total(3) == 6\n",
+            7,
+            "",
         ),
         (
             "package-reexport",
@@ -662,7 +675,7 @@ fn same_named_src_package_in_another_project_lends_no_exposure() -> Result<(), S
                     line.starts_with(&format!("related_test_relation: {identity_relation} "))
                 });
             let ok = if own_project {
-                (exposed || label == "module-alias")
+                (exposed || matches!(label, "module-alias" | "package-submodule"))
                     && (identity_relation.is_empty() || identity_related)
             } else {
                 !exposed && !identity_related

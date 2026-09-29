@@ -3,7 +3,7 @@ use super::{
     import_source_module_matches_owner, parse_attribute_assignment,
     python_dict_field_segment_parts, significant_change_tokens,
     strong_test_calls_owner_method_on_bound_receiver, strong_test_imports_owner_from_module,
-    strong_tests_bind_class_only_through_rival_module, top_level_python_segments,
+    strong_tests_import_only_rival_modules, top_level_python_segments,
 };
 use crate::domain::{OracleStrength, OwnerKind, RelatedTest};
 /// The visible read-out of the sink-alignment decision. `ripr`'s value over
@@ -632,15 +632,10 @@ pub(super) fn classify_sink_alignment_with_old(
     // identity-bearing — the false-`exposed` guard for free functions.
     let free_fn_module_identity =
         !is_method_owner && strong_test_imports_owner_from_module(&strong_tests, all_tests, owner);
-    // Method-owner identity is class and method name; a class imported only
-    // from a same-named module of another project is that project's class.
-    let method_owner_identity = is_method_owner
-        && !strong_tests_bind_class_only_through_rival_module(
-            owner,
-            owner_class_token.as_ref(),
-            &strong_tests,
-            all_tests,
-        );
+    // Method-owner identity is class and method name; a test whose imports
+    // name a same-named module of another project uses that project's class.
+    let method_owner_identity =
+        is_method_owner && !strong_tests_import_only_rival_modules(owner, &strong_tests, all_tests);
     // Receiver/value identity for an attribute-assignment changed sink. The bare
     // attribute token (`status`) is collision-prone: a same-named field on an
     // unrelated receiver (`session.status` changed, oracle `conn.status == ...`)

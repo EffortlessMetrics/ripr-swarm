@@ -526,24 +526,28 @@ pub(super) fn imported_module_matches_owner(
         // dotted package path must match; the caller still requires the
         // owner's name through the alias (`mi.one(`).
         || (import.source_module.is_empty() && owner.reexport_modules.contains(&import.imported));
-    matches && module_name_identifies_owner_for(owner, &import.imported, test_file)
+    matches && import_module_may_be_owners(import, owner, test_file)
 }
 
-/// Whether the module an import names could be the owner's: false only when
-/// that module is a name another workspace project also produces (#4566) and
+/// Whether every module an import names could be the owner's: false when
+/// one of them is a name another workspace project also produces (#4566) and
 /// the test is not inside the owner's project. A plain `import X` names `X`;
-/// `from M import Y` names `M`.
+/// `from M import Y` names `M` and, when `Y` is a submodule, `M.Y` (`from
+/// shared import calc`).
 pub(super) fn import_module_may_be_owners(
     import: &PythonImport,
     owner: &PythonOwner,
     test_file: &Path,
 ) -> bool {
-    let module = if import.source_module.is_empty() {
-        &import.imported
-    } else {
-        &import.source_module
-    };
-    module_name_identifies_owner_for(owner, module, test_file)
+    if import.source_module.is_empty() {
+        return module_name_identifies_owner_for(owner, &import.imported, test_file);
+    }
+    module_name_identifies_owner_for(owner, &import.source_module, test_file)
+        && module_name_identifies_owner_for(
+            owner,
+            &format!("{}.{}", import.source_module, import.imported),
+            test_file,
+        )
 }
 
 /// The dotted module paths under which the owner file can be imported.
@@ -981,21 +985,16 @@ pub(super) fn strong_test_calls_owner_method_on_bound_receiver(
     })
 }
 
-/// Whether every strong test binds the owner's class only through an import
-/// of a same-named module from another workspace project (#4566): `from
-/// shared.calc import Calculator` in `b/tests` names `b`'s class when `a` and
-/// `b` both ship `src/shared/calc.py`. Method-owner identity is otherwise
-/// class and method name, so this is the module check for that path. Tests
-/// that never import the class name are not counted against it.
-pub(super) fn strong_tests_bind_class_only_through_rival_module(
+/// Whether every strong test imports a same-named module of another
+/// workspace project (#4566): `from shared.calc import Calculator` or `from
+/// shared import calc` in `b/tests` names `b`'s code when `a` and `b` both
+/// ship `src/shared/calc.py`. Method-owner identity is otherwise class and
+/// method name, so this is the module check for that path.
+pub(super) fn strong_tests_import_only_rival_modules(
     owner: &PythonOwner,
-    owner_class_token: Option<&String>,
     strong_tests: &[&RelatedTest],
     all_tests: &[PythonTest],
 ) -> bool {
-    let Some(class) = owner_class_token else {
-        return false;
-    };
     if owner.ambiguous_src_modules.is_empty() || strong_tests.is_empty() {
         return false;
     }
@@ -1003,8 +1002,10 @@ pub(super) fn strong_tests_bind_class_only_through_rival_module(
         all_tests.iter().any(|test| {
             test.name == related_test.name
                 && test.file == related_test.file
-                && test.imports.iter().any(|import| import.imported == *class)
-                && owner_class_locals(test, owner, class).is_empty()
+                && test
+                    .imports
+                    .iter()
+                    .any(|import| !import_module_may_be_owners(import, owner, &test.file))
         })
     })
 }

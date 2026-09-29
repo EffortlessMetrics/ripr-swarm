@@ -137,7 +137,7 @@ impl WorkspacePackages {
     }
 
     /// The indexed source file `target` names below `dir`, if any: the path
-    /// itself, or with a source extension or `/index` appended.
+    /// itself, or the one file a source extension or `/index` suffix yields.
     fn source_file_for(&self, dir: &Path, target: &str) -> Option<String> {
         if target.ends_with(".d.ts") || target.ends_with(".d.mts") || target.ends_with(".d.cts") {
             return None;
@@ -150,14 +150,20 @@ impl WorkspacePackages {
             return None;
         }
         let base = normalize(&joined);
-        let mut probes = vec![base.clone()];
-        for ext in SOURCE_EXTENSIONS {
-            probes.push(format!("{base}{ext}"));
-            probes.push(format!("{base}/index{ext}"));
+        if self.sources.contains(&base) {
+            return Some(base);
         }
-        probes
-            .into_iter()
-            .find(|probe| self.sources.contains(probe))
+        // Extensionless: `x.ts` and `x/index.ts` (or `x.ts` and `x.tsx`) both
+        // present is a resolver-order question this does not model, so it
+        // needs exactly one probe to hit.
+        let mut hits = SOURCE_EXTENSIONS
+            .iter()
+            .flat_map(|ext| [format!("{base}{ext}"), format!("{base}/index{ext}")])
+            .filter(|probe| self.sources.contains(probe));
+        match (hits.next(), hits.next()) {
+            (Some(only), None) => Some(only),
+            _ => None,
+        }
     }
 }
 
@@ -232,6 +238,7 @@ fn normalize(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::language::typescript::tsconfig::TsAliasMap;
 
     fn packages(manifests: &[(&str, &str)], sources: &[&str]) -> Result<WorkspacePackages, String> {
         let root = super::super::tests::ts_unique_tempdir("workspace-packages")?;
@@ -272,6 +279,71 @@ mod tests {
         assert_eq!(packages.resolve("@vitest/utils/src/helpers"), None);
         // Another package's name that only shares a prefix.
         assert_eq!(packages.resolve("@vitest/utils-extra"), None);
+        Ok(())
+    }
+
+    #[test]
+    fn extensionless_target_with_two_candidate_files_fails_closed() -> Result<(), String> {
+        let packages = packages(
+            &[(
+                "packages/ui",
+                r#"{"name":"ui","exports":{"./*":"./src/*"}}"#,
+            )],
+            &[
+                "packages/ui/src/foo.tsx",
+                "packages/ui/src/foo/index.ts",
+                "packages/ui/src/bar.ts",
+            ],
+        )?;
+        assert_eq!(packages.resolve("ui/foo"), None);
+        assert_eq!(
+            packages.resolve("ui/bar"),
+            Some(PathBuf::from("packages/ui/src/bar.ts"))
+        );
+        Ok(())
+    }
+
+    /// A specifier a tsconfig `paths` key owns never falls back to the
+    /// package's own entry, even when the key's substitutions cannot be
+    /// resolved uniquely (review #4611): the compiler would use `paths`.
+    #[test]
+    fn paths_key_owning_specifier_blocks_package_fallback() -> Result<(), String> {
+        let root = super::super::tests::ts_unique_tempdir("workspace-packages-paths")?;
+        super::super::tests::ts_write_file(
+            &root.join("packages/utils/package.json"),
+            r#"{"name":"@acme/utils","exports":{".":"./src/index.ts"}}"#,
+        )?;
+        super::super::tests::ts_write_file(
+            &root.join("packages/utils/src/index.ts"),
+            "export {}\n",
+        )?;
+        super::super::tests::ts_write_file(
+            &root.join("packages/utils-v2/src/index.ts"),
+            "export {}\n",
+        )?;
+        super::super::tests::ts_write_file(
+            &root.join("tsconfig.json"),
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@acme/utils":["packages/utils-v2/src/index.ts","packages/utils/src/index.ts"]}}}"#,
+        )?;
+        let files = vec![
+            PathBuf::from("packages/utils/src/index.ts"),
+            PathBuf::from("packages/utils-v2/src/index.ts"),
+        ];
+        let packages = WorkspacePackages::discover(&root, &files);
+        assert_eq!(
+            packages.resolve("@acme/utils"),
+            Some(PathBuf::from("packages/utils/src/index.ts"))
+        );
+        let map = super::super::tsconfig::load_alias_map(&root)
+            .ok_or("tsconfig.json should load")?
+            .with_workspace_packages(packages.clone());
+        assert_eq!(map.resolve("@acme/utils"), None);
+        // Without a loaded tsconfig the package entry applies.
+        let unrelated = TsAliasMap::workspace_packages_only(&root, packages);
+        assert_eq!(
+            unrelated.resolve("@acme/utils"),
+            Some(PathBuf::from("packages/utils/src/index.ts"))
+        );
         Ok(())
     }
 

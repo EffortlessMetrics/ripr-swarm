@@ -299,12 +299,7 @@ impl TsAliasMap {
         if self.is_empty() {
             return TsAliasUnresolveCause::NoPatterns;
         }
-        if self.literal_entries.contains_key(specifier)
-            || self
-                .glob_entries
-                .iter()
-                .any(|entry| match_glob(specifier, &entry.prefix, &entry.suffix).is_some())
-        {
+        if self.paths_key_matches(specifier) {
             // A key owned this specifier; the candidate itself failed.
             return TsAliasUnresolveCause::CandidateUnresolved;
         }
@@ -322,17 +317,29 @@ impl TsAliasMap {
     ///    EXACTLY ONE existing workspace file (.ts/.tsx/.js/.jsx/.mts/.cts/
     ///    .mjs/.cjs).
     ///
-    /// A specifier `paths` does not resolve then falls back to an
-    /// in-workspace package name (`workspace_packages.rs`, #4554), as the
-    /// compiler falls back to module resolution.
+    /// A specifier no `paths` key matches falls back to an in-workspace
+    /// package name (`workspace_packages.rs`, #4554), as the compiler falls
+    /// back to module resolution. A specifier a key does match never falls
+    /// back: the compiler uses that key's substitutions, so when this map
+    /// cannot pick one (several entries, a tie, two files) the import stays
+    /// unresolved rather than crediting the package's own entry.
     pub(crate) fn resolve(&self, specifier: &str) -> Option<PathBuf> {
         if specifier.starts_with("./") || specifier.starts_with("../") {
             return None; // relative paths are handled by the normal resolver
         }
-        self.tsconfig_loaded
-            .then(|| self.resolve_paths(specifier))
-            .flatten()
-            .or_else(|| self.packages.resolve(specifier))
+        if self.tsconfig_loaded && self.paths_key_matches(specifier) {
+            return self.resolve_paths(specifier);
+        }
+        self.packages.resolve(specifier)
+    }
+
+    /// Whether a `paths` key (exact or single-`*` pattern) owns `specifier`.
+    fn paths_key_matches(&self, specifier: &str) -> bool {
+        self.literal_entries.contains_key(specifier)
+            || self
+                .glob_entries
+                .iter()
+                .any(|entry| match_glob(specifier, &entry.prefix, &entry.suffix).is_some())
     }
 
     fn resolve_paths(&self, specifier: &str) -> Option<PathBuf> {
