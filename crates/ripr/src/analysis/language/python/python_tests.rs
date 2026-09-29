@@ -1,6 +1,6 @@
 use super::owners_tests::{extract_owners, extract_tests};
 use super::source_facts::{PythonSourceFactKind, PythonSourceFacts};
-use super::source_utils::text_for_range;
+use super::source_utils::{SourceText, line_for_range_end, line_for_range_start, text_for_range};
 use super::*;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -822,7 +822,7 @@ class CheckoutTests(unittest.TestCase):
     assert_eq!(pytest_test.qualified_name, "TestCheckout.test_pytest_route");
     assert_eq!(
         verify_command_for_test(pytest_test).as_deref(),
-        Some("pytest tests/test_checkout.py::TestCheckout::test_pytest_route")
+        Some("python -m pytest tests/test_checkout.py::TestCheckout::test_pytest_route")
     );
     assert_eq!(
         unittest_test.qualified_name,
@@ -846,7 +846,7 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .ok_or_else(|| "missing hostile pytest".to_string())?;
     assert_eq!(
         verify_command_for_test(hostile_test).as_deref(),
-        Some("pytest 'tests/foo$(id).py'::test_ok")
+        Some("python -m pytest 'tests/foo$(id).py'::test_ok")
     );
     let placement = python_repair_placement(
         &ExposureClass::WeaklyExposed,
@@ -867,7 +867,7 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
     );
     assert_eq!(
         placement.verify_command,
-        "pytest 'tests/foo$(id).py'::test_ok"
+        "python -m pytest 'tests/foo$(id).py'::test_ok"
     );
 
     let spaced = extract_tests(Path::new("tests/my file.py"), pytest_source);
@@ -877,7 +877,7 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .ok_or_else(|| "missing spaced pytest".to_string())?;
     assert_eq!(
         verify_command_for_test(spaced_test).as_deref(),
-        Some("pytest 'tests/my file.py'::test_ok")
+        Some("python -m pytest 'tests/my file.py'::test_ok")
     );
 
     let quoted = extract_tests(Path::new("tests/o'brien.py"), pytest_source);
@@ -887,7 +887,7 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .ok_or_else(|| "missing quoted pytest".to_string())?;
     assert_eq!(
         verify_command_for_test(quoted_test).as_deref(),
-        Some("pytest 'tests/o'\\''brien.py'::test_ok")
+        Some("python -m pytest 'tests/o'\\''brien.py'::test_ok")
     );
 
     let plain = extract_tests(Path::new("tests/test_checkout.py"), pytest_source);
@@ -897,7 +897,7 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .ok_or_else(|| "missing plain pytest".to_string())?;
     assert_eq!(
         verify_command_for_test(plain_test).as_deref(),
-        Some("pytest tests/test_checkout.py::test_ok"),
+        Some("python -m pytest tests/test_checkout.py::test_ok"),
         "a plain relative path must stay unquoted"
     );
 
@@ -1134,6 +1134,9 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
+        reexport_modules: Vec::new(),
+        ambiguous_src_modules: Vec::new(),
+        module_constants: Vec::new(),
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -1245,19 +1248,200 @@ fn text_for_range_clamps_out_of_bounds_offsets() {
     assert_eq!(text_for_range(source, partial), "abc");
 }
 
+/// The pre-#4495 per-call scan, kept here only as the equivalence oracle
+/// for the line-start index in `SourceText`.
+fn reference_line_for_offset(source: &str, offset: usize) -> usize {
+    let mut line: usize = 1;
+    for (idx, ch) in source.char_indices() {
+        if idx >= offset {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+        }
+    }
+    line
+}
+
 #[test]
 fn line_for_offset_counts_newlines() {
-    let source = "alpha\nbeta\ngamma";
+    let source = SourceText::new("alpha\nbeta\ngamma");
     // Offset 0 is line 1.
-    assert_eq!(line_for_offset(source, 0), 1);
+    assert_eq!(source.line_for_offset(0), 1);
     // Offset exactly on the newline stops before counting that newline.
-    assert_eq!(line_for_offset(source, 5), 1);
+    assert_eq!(source.line_for_offset(5), 1);
     // Offset immediately after the newline counts the next segment as line 2.
-    assert_eq!(line_for_offset(source, 6), 2);
+    assert_eq!(source.line_for_offset(6), 2);
     // Offset on the second segment is line 2.
-    assert_eq!(line_for_offset(source, 7), 2);
+    assert_eq!(source.line_for_offset(7), 2);
     // Offset past end stops at the last counted line.
-    assert_eq!(line_for_offset(source, 999), 3);
+    assert_eq!(source.line_for_offset(999), 3);
+}
+
+#[test]
+fn line_index_matches_reference_scan_on_edge_case_sources() {
+    use rustpython_parser::text_size::{TextRange, TextSize};
+    // Deterministic pseudo-random sources over newline, CR and multibyte
+    // characters, on top of the named edge cases.
+    let alphabet = ['a', '\n', '\r', ' ', '\u{e9}', '\u{20ac}', '\u{1f600}'];
+    let mut state: u64 = 0x5eed_1234_abcd_0001;
+    let mut generated = Vec::new();
+    for len in [1_usize, 2, 7, 31, 200] {
+        let mut text = String::new();
+        for _ in 0..len {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let pick = usize::try_from(state >> 33).unwrap_or_default() % alphabet.len();
+            text.push(alphabet[pick]);
+        }
+        generated.push(text);
+    }
+    let named = [
+        "",
+        "x",
+        "\n",
+        "\n\n\n",
+        "alpha\nbeta\ngamma",
+        "no trailing newline",
+        "trailing newline\n",
+        "crlf\r\nlines\r\n",
+        "\r\n\r\n",
+        "lone\rcarriage\rreturns",
+        "\u{e9}\n\u{fc}\u{20ac}\n\u{1f600}x\r\n",
+        "\u{1f600}\u{1f600}\n\u{1f600}",
+    ];
+    let mut compared = 0_usize;
+    let mut non_boundary = 0_usize;
+    for text in named
+        .iter()
+        .copied()
+        .chain(generated.iter().map(String::as_str))
+    {
+        let source = SourceText::new(text);
+        // Every offset through the end, past the end, and far past the end.
+        let offsets = (0..=text.len() + 3).chain([usize::MAX]);
+        for offset in offsets {
+            if offset < text.len() && !text.is_char_boundary(offset) {
+                non_boundary += 1;
+            }
+            assert_eq!(
+                source.line_for_offset(offset),
+                reference_line_for_offset(text, offset),
+                "offset {offset} in {text:?}"
+            );
+            compared += 1;
+        }
+        // The offset equal to the file length is the module owner's end.
+        let end = u32::try_from(text.len()).unwrap_or(u32::MAX);
+        let whole = TextRange::new(TextSize::from(0), TextSize::from(end));
+        assert_eq!(
+            line_for_range_start(&source, whole),
+            reference_line_for_offset(text, 0)
+        );
+        assert_eq!(
+            line_for_range_end(&source, whole),
+            reference_line_for_offset(text, text.len())
+        );
+    }
+    // The corpus really exercised multibyte interiors, not only boundaries.
+    assert!(non_boundary > 20, "non-boundary offsets: {non_boundary}");
+    assert!(compared > 500, "compared offsets: {compared}");
+}
+
+/// Four lines per function; each function yields owner and statement facts.
+fn generated_large_python_module(functions: usize) -> String {
+    let mut text = String::new();
+    for index in 0..functions {
+        text.push_str(&format!(
+            "def f{index}(x):\n    if x > {index}:\n        return x + {index}\n    return x - 1\n"
+        ));
+    }
+    text
+}
+
+#[test]
+fn source_fact_extraction_stays_linear_on_a_large_module() {
+    let functions = 5_000;
+    let source = generated_large_python_module(functions);
+    assert_eq!(source.lines().count(), 20_000);
+    let started = std::time::Instant::now();
+    let facts = extract_source_facts(Path::new("src/large.py"), &source);
+    let elapsed = started.elapsed();
+    // The fixture parsed and produced per-function facts with late lines.
+    assert!(facts.limitations.is_empty(), "{:?}", facts.limitations);
+    assert_eq!(
+        facts
+            .owners
+            .iter()
+            .filter(|owner| !owner.is_module_owner())
+            .count(),
+        functions
+    );
+    let last_start = facts
+        .owners
+        .iter()
+        .find(|owner| owner.name == "f4999")
+        .map(|owner| owner.start_line);
+    assert_eq!(last_start, Some(19_997));
+    assert!(
+        facts.facts.len() > functions * 4,
+        "facts: {}",
+        facts.facts.len()
+    );
+    // Generous bound. In a debug build on this fixture the per-lookup
+    // rescan took about 249s (quadratic: 15s at 5k lines, 62s at 10k) and
+    // the indexed path about 1.3s (#4495).
+    assert!(
+        elapsed < std::time::Duration::from_secs(20),
+        "extraction took {elapsed:?}"
+    );
+}
+
+/// Per-file scans that every owner or every constant used to repeat stay
+/// linear: the Typer receiver scan (once per owner) and the walrus-binding
+/// scan (once per module constant) each ran over the whole source.
+#[test]
+fn typer_receivers_and_constant_walrus_checks_stay_linear() {
+    let functions = 5_000;
+    let mut typer = String::from("import typer\napp = typer.Typer()\n");
+    for index in 0..functions {
+        typer.push_str(&format!("def f{index}(x):\n    return x + {index}\n"));
+    }
+    let constants = 20_000;
+    let mut constant_module = String::new();
+    for index in 0..constants {
+        constant_module.push_str(&format!("C{index} = {index}\n"));
+    }
+    constant_module.push_str("def f(x):\n    return x + C19999\n");
+
+    let started = std::time::Instant::now();
+    let typer_facts = extract_source_facts(Path::new("src/cli.py"), &typer);
+    let constant_facts = extract_source_facts(Path::new("src/limits.py"), &constant_module);
+    let elapsed = started.elapsed();
+
+    let last = typer_facts
+        .owners
+        .iter()
+        .find(|owner| owner.name == "f4999")
+        .ok_or("f4999 owner");
+    assert_eq!(
+        last.map(|owner| owner.cli_receiver_names.clone()),
+        Ok(vec!["app".to_string()])
+    );
+    let owner = constant_facts
+        .owners
+        .iter()
+        .find(|owner| owner.name == "f")
+        .ok_or("f owner");
+    assert_eq!(
+        owner.map(|owner| owner.module_constants.len()),
+        Ok(constants)
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(20),
+        "extraction took {elapsed:?}"
+    );
 }
 
 #[test]
@@ -1395,6 +1579,9 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
+        reexport_modules: Vec::new(),
+        ambiguous_src_modules: Vec::new(),
+        module_constants: Vec::new(),
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -1411,9 +1598,140 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         alias: "tax".to_string(),
         source_module: String::new(),
     };
-    assert!(imported_module_matches_owner(&dotted, &owner));
-    assert!(imported_module_matches_owner(&plain, &owner));
-    assert!(!imported_module_matches_owner(&mismatched, &owner));
+    assert!(imported_module_matches_owner(
+        &dotted,
+        &owner,
+        Path::new("tests/test_x.py")
+    ));
+    assert!(imported_module_matches_owner(
+        &plain,
+        &owner,
+        Path::new("tests/test_x.py")
+    ));
+    assert!(!imported_module_matches_owner(
+        &mismatched,
+        &owner,
+        Path::new("tests/test_x.py")
+    ));
+}
+
+/// #4566: a src-layout short module name two workspace files share
+/// identifies the owner only for a test inside the owner's project root.
+#[test]
+fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Result<(), String> {
+    let owner_for = |file: &str| PythonOwner {
+        name: "price".to_string(),
+        qualified_name: "price".to_string(),
+        file: PathBuf::from(file),
+        start_line: 1,
+        end_line: 4,
+        owner_kind: Some(OwnerKind::Function),
+        decorators: Vec::new(),
+        imports: Vec::new(),
+        cli_receiver_names: Vec::new(),
+        route_paths: Vec::new(),
+        dynamic_route_decorators: Vec::new(),
+        parameters: Vec::new(),
+        reexport_modules: Vec::new(),
+        ambiguous_src_modules: Vec::new(),
+        module_constants: Vec::new(),
+    };
+    let sources = [
+        PathBuf::from("a/src/shared/calc.py"),
+        PathBuf::from("b/src/shared/calc.py"),
+        PathBuf::from("c/src/only_c/calc.py"),
+    ];
+    let mut owners = vec![
+        owner_for("a/src/shared/calc.py"),
+        owner_for("c/src/only_c/calc.py"),
+    ];
+    super::related_tests::apply_src_module_ambiguity(&mut owners, sources.iter());
+    let [shared_owner, unique_owner] = owners.as_slice() else {
+        return Err(format!("expected two owners, got {owners:?}"));
+    };
+    let from = |module: &str| PythonImport {
+        imported: "price".to_string(),
+        alias: "price".to_string(),
+        source_module: module.to_string(),
+    };
+    let shared = from("shared.calc");
+    // The owner's own package test keeps the short name.
+    assert!(import_source_module_matches_owner(
+        &shared,
+        shared_owner,
+        Path::new("a/tests/test_calc.py")
+    ));
+    // The rival package's test imports its own module: no identity.
+    assert!(!import_source_module_matches_owner(
+        &shared,
+        shared_owner,
+        Path::new("b/tests/test_calc.py")
+    ));
+    // A third package cannot tell which one it imports: fail closed.
+    assert!(!import_source_module_matches_owner(
+        &shared,
+        shared_owner,
+        Path::new("c/tests/test_calc.py")
+    ));
+    // The full repository path is never ambiguous.
+    assert!(import_source_module_matches_owner(
+        &from("a.src.shared.calc"),
+        shared_owner,
+        Path::new("b/tests/test_calc.py")
+    ));
+    // A unique short name still identifies the owner from any package, so a
+    // sibling-package test keeps its cross-package relation.
+    assert!(import_source_module_matches_owner(
+        &from("only_c.calc"),
+        unique_owner,
+        Path::new("a/tests/test_calc.py")
+    ));
+    assert!(unique_owner.ambiguous_src_modules.is_empty());
+    Ok(())
+}
+
+/// A root-level src layout and a package-level one: the deeper project owns
+/// its tests, the root owns the rest.
+#[test]
+fn nested_src_layout_rival_claims_tests_under_its_own_root() {
+    let owner = |file: &str| PythonOwner {
+        name: "price".to_string(),
+        qualified_name: "price".to_string(),
+        file: PathBuf::from(file),
+        start_line: 1,
+        end_line: 4,
+        owner_kind: Some(OwnerKind::Function),
+        decorators: Vec::new(),
+        imports: Vec::new(),
+        cli_receiver_names: Vec::new(),
+        route_paths: Vec::new(),
+        dynamic_route_decorators: Vec::new(),
+        parameters: Vec::new(),
+        reexport_modules: Vec::new(),
+        ambiguous_src_modules: Vec::new(),
+        module_constants: Vec::new(),
+    };
+    let sources = [
+        PathBuf::from("src/shared/calc.py"),
+        PathBuf::from("plugins/b/src/shared/calc.py"),
+    ];
+    let mut owners = vec![owner("src/shared/calc.py")];
+    super::related_tests::apply_src_module_ambiguity(&mut owners, sources.iter());
+    let import = PythonImport {
+        imported: "price".to_string(),
+        alias: "price".to_string(),
+        source_module: "shared.calc".to_string(),
+    };
+    assert!(import_source_module_matches_owner(
+        &import,
+        &owners[0],
+        Path::new("tests/test_calc.py")
+    ));
+    assert!(!import_source_module_matches_owner(
+        &import,
+        &owners[0],
+        Path::new("plugins/b/tests/test_calc.py")
+    ));
 }
 
 #[test]
@@ -1431,8 +1749,12 @@ fn same_stem_related_handles_missing_stems() {
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
+        reexport_modules: Vec::new(),
+        ambiguous_src_modules: Vec::new(),
+        module_constants: Vec::new(),
     };
     let test = PythonTest {
+        constant_rebinding: Default::default(),
         name: "test_x".to_string(),
         qualified_name: "test_x".to_string(),
         file: PathBuf::from("tests/test_pricing.py"),
@@ -2416,6 +2738,7 @@ def test_apply_discount(amount):
 #[test]
 fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     let mocked = PythonTest {
+        constant_rebinding: Default::default(),
         name: "test_x".to_string(),
         qualified_name: "test_x".to_string(),
         file: PathBuf::from("tests/test_x.py"),
@@ -2432,6 +2755,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     };
     assert!(test_has_mocked_module(&mocked));
     let bare = PythonTest {
+        constant_rebinding: Default::default(),
         name: "test_y".to_string(),
         qualified_name: "test_y".to_string(),
         file: PathBuf::from("tests/test_y.py"),
@@ -2446,6 +2770,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     };
     assert!(test_has_mocked_module(&bare));
     let clean = PythonTest {
+        constant_rebinding: Default::default(),
         name: "test_z".to_string(),
         qualified_name: "test_z".to_string(),
         file: PathBuf::from("tests/test_z.py"),
@@ -2851,6 +3176,9 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
+        reexport_modules: Vec::new(),
+        ambiguous_src_modules: Vec::new(),
+        module_constants: Vec::new(),
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
     let strong = |oracle: &str| RelatedTest {
@@ -2914,6 +3242,9 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
+        reexport_modules: Vec::new(),
+        ambiguous_src_modules: Vec::new(),
+        module_constants: Vec::new(),
     };
     let line = "return amount + 2";
     let related = [RelatedTest {
@@ -2931,6 +3262,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
 
     // With `apply_tax as taxed`, the oracle's `taxed(...)` observes the owner.
     let alias_test = PythonTest {
+        constant_rebinding: Default::default(),
         name: "test_alias".to_string(),
         qualified_name: "test_alias".to_string(),
         file: PathBuf::from("t.py"),
@@ -2970,6 +3302,9 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
+        reexport_modules: Vec::new(),
+        ambiguous_src_modules: Vec::new(),
+        module_constants: Vec::new(),
     }
 }
 
@@ -2992,6 +3327,7 @@ fn align_strong(oracle: &str) -> RelatedTest {
 /// module is usually `"owner"`.
 fn align_importing_test(imported: &str, module: &str) -> PythonTest {
     PythonTest {
+        constant_rebinding: Default::default(),
         name: "t".to_string(),
         qualified_name: "t".to_string(),
         file: PathBuf::from("t.py"),
@@ -3032,6 +3368,7 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
     let line = "return amount + 2";
     let related = [align_strong("assert taxed(10) == 12")];
     let alias_test = PythonTest {
+        constant_rebinding: Default::default(),
         name: "test_alias".to_string(),
         qualified_name: "test_alias".to_string(),
         file: PathBuf::from("t.py"),
@@ -3124,4 +3461,172 @@ fn sink_alignment_changed_sink_join_format() {
     assert_eq!(a.changed_sink.as_deref(), Some("price, rate"));
     // No related test -> no strong oracle -> unknown.
     assert_eq!(a.oracle_alignment, "unknown");
+}
+
+/// Runs the diff adapter over one production file with the given added and
+/// removed `(line, text)` pairs (removed lines are paired at the same new-side
+/// position) and returns the probed line numbers.
+fn probed_lines_for_python_rewrite(
+    tag: &str,
+    source: &str,
+    added: &[(usize, &str)],
+    removed: &[(usize, &str)],
+) -> Result<Vec<usize>, String> {
+    let root = unique_tempdir(tag)?;
+    let production_rel = PathBuf::from("src/pricing.py");
+    write_file(&root.join(&production_rel), source)?;
+    write_file(
+        &root.join("tests/test_pricing.py"),
+        "from src.pricing import apply_discount\n\ndef test_apply_discount():\n    assert apply_discount(100) == 90\n",
+    )?;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let line = |(line, text): &(usize, &str)| crate::analysis::diff::ChangedLine {
+        line: *line,
+        new_side_line: *line,
+        text: (*text).to_string(),
+    };
+    let changed_files = vec![ChangedFile {
+        path: production_rel,
+        added_lines: added.iter().map(line).collect(),
+        removed_lines: removed.iter().map(line).collect(),
+    }];
+    let result = PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+    let mut lines = result
+        .findings
+        .iter()
+        .map(|finding| finding.probe.location.line)
+        .collect::<Vec<_>>();
+    lines.sort_unstable();
+    Ok(lines)
+}
+
+#[test]
+fn analyze_diff_rewritten_block_probes_behavior_not_its_comment_or_bracket() -> Result<(), String> {
+    // requests 6404f345 shape: a three-line `if` is rewritten as comment +
+    // assignment + one-line `if`; git pairs the old `if` header with the comment.
+    let lines = probed_lines_for_python_rewrite(
+        "rewrite-comment",
+        "def apply_discount(amount):\n    # big orders get the discount\n    big = amount >= 100\n    if big and not isinstance(\n        amount, str\n    ):\n        return amount - 10\n    return amount\n",
+        &[
+            (2, "    # big orders get the discount"),
+            (3, "    big = amount >= 100"),
+            (4, "    if big and not isinstance("),
+            (5, "        amount, str"),
+            (6, "    ):"),
+        ],
+        &[
+            (2, "    if amount >= 100 and not isinstance("),
+            (3, "        amount, str"),
+            (4, "    ):"),
+        ],
+    )?;
+    assert_eq!(
+        lines,
+        vec![3, 4, 5],
+        "comment (2) and `):` (6) carry no probe"
+    );
+    Ok(())
+}
+
+#[test]
+fn analyze_diff_keeps_code_replaced_only_by_a_comment() -> Result<(), String> {
+    // Commenting code out removes behavior; with nothing else in the run the
+    // comment line stays the carrier of that change.
+    let lines = probed_lines_for_python_rewrite(
+        "commented-out",
+        "def apply_discount(amount):\n    # return amount - 10\n    return amount\n",
+        &[(2, "    # return amount - 10")],
+        &[(2, "    return amount - 10")],
+    )?;
+    assert_eq!(lines, vec![2]);
+    Ok(())
+}
+
+#[test]
+fn analyze_diff_skips_added_imports_but_keeps_a_repointed_import() -> Result<(), String> {
+    let source = "import typing\nfrom decimal import (\n    Decimal,\n)\n\ndef apply_discount(amount):\n    from math import floor\n    return floor(amount) - 10\n";
+    // Added imports (module level, multi-line, function-local) are not probes;
+    // the changed return is.
+    let lines = probed_lines_for_python_rewrite(
+        "added-imports",
+        source,
+        &[
+            (1, "import typing"),
+            (2, "from decimal import ("),
+            (3, "    Decimal,"),
+            (4, ")"),
+            (7, "    from math import floor"),
+            (8, "    return floor(amount) - 10"),
+        ],
+        &[(7, "    return amount - 10")],
+    )?;
+    assert_eq!(lines, vec![8], "added imports carry no probe");
+    // An import that replaces an import re-points a name and stays analyzed,
+    // alone or beside a behavioral line.
+    let lines = probed_lines_for_python_rewrite(
+        "repointed-import",
+        source,
+        &[(7, "    from math import floor")],
+        &[(7, "    from math import ceil as floor")],
+    )?;
+    assert_eq!(lines, vec![7]);
+    let lines = probed_lines_for_python_rewrite(
+        "repointed-import-in-run",
+        source,
+        &[
+            (7, "    from math import floor"),
+            (8, "    return floor(amount) - 10"),
+        ],
+        &[
+            (7, "    from math import ceil as floor"),
+            (8, "    return floor(amount) - 9"),
+        ],
+    )?;
+    assert_eq!(lines, vec![7, 8]);
+    // A name re-pointed inside a parenthesized import is a continuation line
+    // that does not start with `import`; the old-side import range keeps it.
+    let lines = probed_lines_for_python_rewrite(
+        "repointed-parenthesized-import",
+        source,
+        &[(3, "    Decimal,")],
+        &[(3, "    Fraction as Decimal,")],
+    )?;
+    assert_eq!(lines, vec![3]);
+    Ok(())
+}
+
+#[test]
+fn python_structural_lines_are_recognized() {
+    for structural in [
+        ")", "    ):", "],", "}", "else:", "  try:", "finally:", ") # done",
+    ] {
+        assert!(is_python_structural_line(structural), "{structural:?}");
+    }
+    for behavioral in [
+        "    return x",
+        "else if",
+        "elif x:",
+        "except ValueError:",
+        "pass",
+        "x,",
+        "])  + 1",
+    ] {
+        assert!(!is_python_structural_line(behavioral), "{behavioral:?}");
+    }
 }

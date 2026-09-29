@@ -39,7 +39,7 @@ Weakness
   - missing discriminator a == b: No related test call uses a equal to b; observed a values: 10; observed b values: 3
 
 Stop reasons:
-  - fixture_opaque
+  - fixture_opaque — a related test mentions a fixture, builder, or generator, so its inputs may come from values ripr does not evaluate
 
 Static limitation
   rust_macro_wrapped_assertion_unresolved — A reachable Rust test uses an assertion-like macro that ripr does not classify, so the assertion semantics are unresolved. This is a named limitation, not a coverage claim.
@@ -55,6 +55,9 @@ Limitation detail
 
 Next step
   Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.
+Drill in:
+  ripr explain --root fixtures/rust_macro_wrapped_assertion_limitation/input --diff fixtures/rust_macro_wrapped_assertion_limitation/diff.patch --mode fast probe:src_internal.rs:predicate:114f2322
+  ripr context --root fixtures/rust_macro_wrapped_assertion_limitation/input --diff fixtures/rust_macro_wrapped_assertion_limitation/diff.patch --mode fast --at probe:src_internal.rs:predicate:114f2322
 
 WARNING fixtures/rust_macro_wrapped_assertion_limitation/input/src/internal.rs:2
 
@@ -89,7 +92,7 @@ Weakness
   - missing discriminator a == b: No related test call uses a equal to b; observed a values: 10; observed b values: 3
 
 Stop reasons:
-  - fixture_opaque
+  - fixture_opaque — a related test mentions a fixture, builder, or generator, so its inputs may come from values ripr does not evaluate
 
 Static limitation
   rust_macro_wrapped_assertion_unresolved — A reachable Rust test uses an assertion-like macro that ripr does not classify, so the assertion semantics are unresolved. This is a named limitation, not a coverage claim.
@@ -105,3 +108,6 @@ Limitation detail
 
 Next step
   Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.
+Drill in:
+  ripr explain --root fixtures/rust_macro_wrapped_assertion_limitation/input --diff fixtures/rust_macro_wrapped_assertion_limitation/diff.patch --mode fast probe:src_internal.rs:predicate:10b08bc9
+  ripr context --root fixtures/rust_macro_wrapped_assertion_limitation/input --diff fixtures/rust_macro_wrapped_assertion_limitation/diff.patch --mode fast --at probe:src_internal.rs:predicate:10b08bc9

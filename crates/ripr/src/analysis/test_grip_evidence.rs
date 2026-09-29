@@ -22,6 +22,7 @@ use related_tests::{
 };
 
 use super::facts::CallFact;
+use super::new_test_target::{self, NewTestTargetAdmission};
 use super::rust_index::{
     self, FunctionSummary, OracleFact, RustIndex, TestSummary, extract_call_facts,
     extract_identifier_tokens,
@@ -52,6 +53,8 @@ pub(crate) struct TestGripEvidence {
     pub(crate) discriminate: StageEvidence,
     pub(crate) observed_values: Vec<ValueFact>,
     pub(crate) missing_discriminators: Vec<MissingDiscriminatorFact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) new_test_target: Option<NewTestTargetAdmission>,
 }
 
 const COMPACT_RELATED_TEST_LIMIT: usize = 12;
@@ -184,37 +187,59 @@ pub(crate) struct OracleSemantics {
 /// caller that runs under a cancellation context must checkpoint immediately
 /// after this function returns before using or publishing the vector.
 pub(crate) fn evidence_for_seams(seams: &[RepoSeam], index: &RustIndex) -> Vec<TestGripEvidence> {
-    let context_started = Instant::now();
-    trace_latency_phase(
-        "evidence_context",
-        &format!("start_seams_{}", seams.len()),
-        Duration::ZERO,
-    );
-    let context = CompactGripContext::new(index);
-    trace_latency_phase(
-        "evidence_context",
-        &format!("tests_{}_seams_{}", context.tests.len(), seams.len()),
-        context_started.elapsed(),
-    );
+    EvidencePass::new(index).evidence_for(seams)
+}
 
-    let evidence_started = Instant::now();
-    let mut out: Vec<TestGripEvidence> = Vec::with_capacity(seams.len());
-    for (index, seam) in seams.iter().enumerate() {
-        if cancellation::checkpoint().is_err() {
-            break;
-        }
-        out.push(evidence_for_seam_with_context(seam, &context));
-        let processed = index + 1;
-        if processed % EVIDENCE_PROGRESS_CHUNK == 0 || processed == seams.len() {
-            trace_latency_phase(
-                "evidence_for_seams_progress",
-                &format!("processed_{processed}_of_{}", seams.len()),
-                evidence_started.elapsed(),
-            );
-        }
+/// One test context shared by several [`EvidencePass::evidence_for`]
+/// calls, so a caller that evaluates seams in stages builds the test
+/// context once. Its caches are keyed memoization, so a seam's evidence
+/// does not depend on which seams the pass evaluated before it.
+pub(crate) struct EvidencePass<'index> {
+    context: Option<CompactGripContext<'index>>,
+}
+
+impl<'index> EvidencePass<'index> {
+    pub(crate) fn new(index: &'index RustIndex) -> Self {
+        let context_started = Instant::now();
+        trace_latency_phase("evidence_context", "start", Duration::ZERO);
+        let context = CompactGripContext::try_new(index).ok();
+        trace_latency_phase(
+            "evidence_context",
+            &format!(
+                "tests_{}",
+                context.as_ref().map_or(0, |context| context.tests.len())
+            ),
+            context_started.elapsed(),
+        );
+        Self { context }
     }
-    out.sort_by(|a, b| a.seam_id.as_str().cmp(b.seam_id.as_str()));
-    out
+
+    /// Evidence for `seams`, sorted by `seam_id`; empty when the context
+    /// could not be built. Carries the same cancellation contract as
+    /// [`evidence_for_seams`].
+    pub(crate) fn evidence_for(&self, seams: &[RepoSeam]) -> Vec<TestGripEvidence> {
+        let Some(context) = self.context.as_ref() else {
+            return Vec::new();
+        };
+        let evidence_started = Instant::now();
+        let mut out: Vec<TestGripEvidence> = Vec::with_capacity(seams.len());
+        for (index, seam) in seams.iter().enumerate() {
+            if cancellation::checkpoint().is_err() {
+                break;
+            }
+            out.push(evidence_for_seam_with_context(seam, context));
+            let processed = index + 1;
+            if processed % EVIDENCE_PROGRESS_CHUNK == 0 || processed == seams.len() {
+                trace_latency_phase(
+                    "evidence_for_seams_progress",
+                    &format!("processed_{processed}_of_{}", seams.len()),
+                    evidence_started.elapsed(),
+                );
+            }
+        }
+        out.sort_by(|a, b| a.seam_id.as_str().cmp(b.seam_id.as_str()));
+        out
+    }
 }
 
 /// Build evidence for a single seam.
@@ -249,6 +274,7 @@ fn evidence_for_seam_with_context(
         .iter()
         .map(|(indexed, reason)| related_test_grip(seam, indexed.test, *reason, context))
         .collect();
+    let new_test_target = new_test_target_admission(seam, context.index);
 
     TestGripEvidence {
         seam_id: seam.id().clone(),
@@ -260,6 +286,18 @@ fn evidence_for_seam_with_context(
         discriminate,
         observed_values,
         missing_discriminators,
+        new_test_target,
+    }
+}
+
+fn new_test_target_admission(seam: &RepoSeam, index: &RustIndex) -> Option<NewTestTargetAdmission> {
+    match seam.kind() {
+        SeamKind::PredicateBoundary
+        | SeamKind::ErrorVariant
+        | SeamKind::ReturnValue
+        | SeamKind::FieldConstruction
+        | SeamKind::MatchArm => Some(new_test_target::admit_new_inline_unit_test(seam, index)),
+        SeamKind::SideEffect | SeamKind::CallPresence => None,
     }
 }
 
@@ -305,6 +343,7 @@ pub(crate) fn compact_evidence_for_seam(
         discriminate,
         observed_values: Vec::new(),
         missing_discriminators,
+        new_test_target: None,
     }
 }
 
@@ -2381,25 +2420,12 @@ fn test_target_evidence(
     relation: RelationReason,
 ) -> Option<TestTargetEvidence> {
     let index = context.index;
-    let file = index.files.get(&test.file)?;
-    let matches: Vec<&FunctionSummary> = file
-        .functions
-        .iter()
-        .filter(|function| {
-            function.source_role.is_evidence_role()
-                && function.name == test.name
-                && function.start_line == test.start_line
-        })
-        .collect();
-    if matches.len() != 1 {
-        return None;
-    }
+    let function = context.unique_evidence_function(&test.file, &test.name, test.start_line)?;
     let authority = index.workspace_authority.as_ref()?;
     let test_source_digest = context.indexed_source_digest(&test.file)?;
     if !authority.validates_target_digest(&test.file, seam.file(), &test_source_digest) {
         return None;
     }
-    let function = matches[0];
     Some(TestTargetEvidence::from_index(
         function.id.clone(),
         function.file.clone(),

@@ -46,7 +46,7 @@
       "flow_sinks": [
         {"kind":"unknown","text":"if amount >= threshold:","line":2}
       ],
-      "evidence": ["owner: calculate_discount", "owner_kind: function", "missing_discriminator: amount == threshold", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_pricing.py", "suggested_test_name: test_calculate_discount_smoke", "suggested_test_node_id: tests/test_pricing.py::test_calculate_discount_smoke", "suggested_verify_command: pytest tests/test_pricing.py::test_calculate_discount_smoke", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_calculate_discount_smoke)", "test_verify_command: pytest tests/test_pricing.py::test_calculate_discount_smoke (test_calculate_discount_smoke)", "related_test_relation: syntactic_call (test_calculate_discount_smoke)", "test_oracle: smoke_only smoke (test_calculate_discount_smoke)", "test_oracle_shape: broad_smoke_assertion (test_calculate_discount_smoke)"],
+      "evidence": ["owner: calculate_discount", "owner_kind: function", "missing_discriminator: amount == threshold", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_pricing.py", "suggested_test_name: test_calculate_discount_smoke", "suggested_test_node_id: tests/test_pricing.py::test_calculate_discount_smoke", "suggested_verify_command: python -m pytest tests/test_pricing.py::test_calculate_discount_smoke", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_calculate_discount_smoke)", "test_verify_command: python -m pytest tests/test_pricing.py::test_calculate_discount_smoke (test_calculate_discount_smoke)", "related_test_relation: syntactic_call (test_calculate_discount_smoke)", "test_oracle: smoke_only smoke (test_calculate_discount_smoke)", "test_oracle_shape: broad_smoke_assertion (test_calculate_discount_smoke)"],
       "missing": ["Related Python test reaches `calculate_discount` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed boundary."],
       "assertion_texts": {
       },
@@ -85,7 +85,7 @@
         "suggested_test_file": "tests/test_pricing.py",
         "suggested_test_name": "test_calculate_discount_smoke",
         "suggested_test_node_id": "tests/test_pricing.py::test_calculate_discount_smoke",
-        "verify_command": "pytest tests/test_pricing.py::test_calculate_discount_smoke",
+        "verify_command": "python -m pytest tests/test_pricing.py::test_calculate_discount_smoke",
         "verify_command_confidence": "high"
        },
       "python_repair_card": {
@@ -108,7 +108,7 @@
           "pytest_node_id": "tests/test_pricing.py::test_calculate_discount_smoke"
          },
         "verify": {
-          "command": "pytest tests/test_pricing.py::test_calculate_discount_smoke",
+          "command": "python -m pytest tests/test_pricing.py::test_calculate_discount_smoke",
           "confidence": "high"
          },
         "receipt": {
@@ -264,5 +264,6 @@
       "category": "preview_language_advisory",
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
-  ]
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/pricing.py","digest":"sha256:b319b24f9d0b7a0174abd2009b1523dc0cc194fe660c4e9a84a8404079411a01"},{"path":"src/validation.py","digest":"sha256:76b509cb5dfa61f02c3e034fd1ed30df4b55b963d508fcdb82d58c5c869391ae"},{"path":"tests/test_pricing.py","digest":"sha256:fc85a4ab5251065d4d9b6f6c588f35c61ecffa7aa976413e617f81ef32959894"},{"path":"tests/test_validation.py","digest":"sha256:73c3e61d4713e2f50d28010e59fa712bd8868bc6b148348f181a5b71012bfa0b"}]}
 }

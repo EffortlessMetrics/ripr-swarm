@@ -4,6 +4,7 @@ use super::related_tests::{
 };
 use super::source_facts::parse_module_result;
 use super::static_limits::is_simple_python_identifier;
+use crate::analysis::diff::ChangedLine;
 use crate::domain::{OracleStrength, OwnerKind};
 use rustpython_parser::ast::{Expr, Mod, Ranged, Stmt};
 use std::path::Path;
@@ -26,6 +27,57 @@ use std::path::Path;
 pub(super) fn is_python_no_behavior_line(line: &str) -> bool {
     let trimmed = line.trim();
     trimmed.is_empty() || trimmed.starts_with('#') || is_bare_string_literal_statement(trimmed)
+}
+
+/// A line that only opens, continues, or closes a block or bracket and holds
+/// no expression of its own: `)`, `):`, `],`, `}`, `else:`, `try:`,
+/// `finally:`. Structural is not ignorable: a lone inserted `else:` or `try:`
+/// changes behavior. The diff producer skips such a line only when its
+/// contiguous added run also holds a behavioral line (Rust #4216 row 5).
+pub(super) fn is_python_structural_line(line: &str) -> bool {
+    let code = line.split('#').next().unwrap_or_default();
+    let rest = code
+        .trim_matches(|ch: char| matches!(ch, ')' | ']' | '}' | ',' | ':') || ch.is_whitespace());
+    rest.is_empty() || matches!(rest, "else" | "try" | "finally")
+}
+
+/// Whether a line begins an `import` / `from ... import` statement.
+pub(super) fn is_python_import_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("import ") || (trimmed.starts_with("from ") && trimmed.contains(" import"))
+}
+
+/// For each added line, whether it is `quiet` (no behavior, structural, or an
+/// import) AND its contiguous added run (consecutive new-side lines) holds at
+/// least one line that is not quiet. Such a line never carries a probe: the
+/// run's behavioral lines carry the change. A run made only of quiet lines is
+/// left to the classifier, so code replaced by a comment or docstring stays
+/// analyzed.
+pub(super) fn python_quiet_lines_covered_by_run(
+    lines: &[ChangedLine],
+    quiet: impl Fn(&ChangedLine) -> bool,
+) -> Vec<bool> {
+    let mut order = (0..lines.len()).collect::<Vec<_>>();
+    order.sort_by_key(|&index| lines[index].line);
+    let quiet_by_index = lines.iter().map(&quiet).collect::<Vec<_>>();
+    let mut covered = vec![false; lines.len()];
+    let mut run_start = 0;
+    while run_start < order.len() {
+        let mut run_end = run_start + 1;
+        while run_end < order.len()
+            && lines[order[run_end - 1]].line.checked_add(1) == Some(lines[order[run_end]].line)
+        {
+            run_end += 1;
+        }
+        let run = &order[run_start..run_end];
+        if run.iter().any(|&index| !quiet_by_index[index]) {
+            for &index in run {
+                covered[index] = quiet_by_index[index];
+            }
+        }
+        run_start = run_end;
+    }
+    covered
 }
 
 /// Whether `trimmed` (already whitespace-trimmed) is exactly one Python string
@@ -159,6 +211,182 @@ pub(super) fn is_annotation_only_def_change(old_line: &str, new_line: &str) -> b
         def_signature_skeleton(new_line),
     ) {
         (Some(old), Some(new)) => old == new,
+        _ => false,
+    }
+}
+
+/// Whether `line` (1-based) sits inside the multi-line `def` header that
+/// starts at or after `owner_start_line` in `source`, and its text only names
+/// parameters or opens/closes the header: `self,`, `key: int,`, `*args,`,
+/// `*,`, `def __setitem__(`, `):`, `) -> bool:`. Such a line has no runtime
+/// behavior of its own for a test to discriminate; a parameter default
+/// (`key=None,`) or any call or expression keeps its probe.
+#[cfg(test)]
+pub(super) fn is_structural_def_header_line(
+    source: &str,
+    owner_start_line: usize,
+    line: usize,
+) -> bool {
+    let Some(text) = source.lines().nth(line.wrapping_sub(1)) else {
+        return false;
+    };
+    if !is_structural_def_header_text(text) {
+        return false;
+    }
+    let Some((def_line, header_end)) = multi_line_def_header_span(source, owner_start_line) else {
+        return false;
+    };
+    (def_line..=header_end).contains(&line)
+}
+
+/// Text-only half of `is_structural_def_header_line`; also used to require
+/// that a paired old line was structural too.
+pub(super) fn is_structural_def_header_text(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || trimmed.contains('#') {
+        return false;
+    }
+    if matches!(trimmed, "*" | "*," | "/" | "/,") {
+        return true;
+    }
+    if let Some(rest) = trimmed.strip_prefix(')') {
+        let rest = rest.trim();
+        if matches!(rest, "" | ":" | ",") {
+            return true;
+        }
+        return rest
+            .strip_prefix("->")
+            .and_then(|ret| ret.trim().strip_suffix(':'))
+            .is_some_and(|ret| is_inert_annotation(ret.trim()));
+    }
+    let header = trimmed.strip_prefix("async ").unwrap_or(trimmed);
+    if let Some(name) = header
+        .strip_prefix("def ")
+        .and_then(|rest| rest.trim().strip_suffix('('))
+    {
+        return is_simple_python_identifier(name.trim());
+    }
+    let param = trimmed.strip_suffix(',').unwrap_or(trimmed).trim();
+    let param = param
+        .strip_prefix("**")
+        .or_else(|| param.strip_prefix('*'))
+        .unwrap_or(param);
+    match param.split_once(':') {
+        Some((name, annotation)) => {
+            is_simple_python_identifier(name.trim()) && is_inert_annotation(annotation.trim())
+        }
+        None => is_simple_python_identifier(param),
+    }
+}
+
+/// A plain type expression: names, attributes, subscripts, `|` unions,
+/// `None`, and string forward references. No call, default, or operator that
+/// could run code when Python evaluates the annotation.
+fn is_inert_annotation(annotation: &str) -> bool {
+    !annotation.is_empty()
+        && annotation.chars().all(|ch| {
+            ch.is_ascii_alphanumeric()
+                || matches!(ch, '_' | '.' | '[' | ']' | ',' | ' ' | '|' | '"' | '\'')
+        })
+}
+
+/// The 1-based `(def line, header end line)` of the first `def` at or after
+/// `owner_start_line` when its header spans more than one line. The header
+/// ends on the first line whose brackets balance; if that line does not end
+/// in `:` (comments aside) the shape is not understood and there is no span,
+/// so a span never reaches into the body.
+pub(super) fn multi_line_def_header_span(
+    source: &str,
+    owner_start_line: usize,
+) -> Option<(usize, usize)> {
+    let first = owner_start_line.checked_sub(1)?;
+    let mut lines = source.lines().enumerate().skip(first);
+    let (def_index, def_text) = lines.by_ref().take(64).find(|(_, text)| {
+        let trimmed = text.trim_start();
+        trimmed.starts_with("def ") || trimmed.starts_with("async def ")
+    })?;
+    let mut depth: i32 = 0;
+    for (index, text) in std::iter::once((def_index, def_text)).chain(lines.take(255)) {
+        let code = text.split_once('#').map_or(text, |(code, _)| code);
+        for ch in code.chars() {
+            match ch {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                _ => {}
+            }
+        }
+        if depth <= 0 {
+            return (index > def_index && code.trim_end().ends_with(':'))
+                .then_some((def_index + 1, index + 1));
+        }
+    }
+    None
+}
+
+/// Whether `line` is a complete one-line `def` header with no default values:
+/// a header alone, carrying no behavior of its own. Fails closed on a one-line
+/// `def f(x): return x` (the synthesized body does not parse), a multi-line
+/// header, and any parameter default (a default value is runtime behavior).
+pub(super) fn is_new_def_header_without_defaults(line: &str) -> bool {
+    def_signature_skeleton(line).is_some_and(|(_, _, _, _, params, _, _)| {
+        params.iter().all(|(_, default)| default.is_none())
+    }) && def_annotations_are_inert(line)
+}
+
+/// Whether every parameter and return annotation on a `def` header is a plain
+/// type expression (names, attributes, subscripts, literals, tuples/lists and
+/// `|` unions of those). Without postponed evaluation, Python evaluates
+/// annotations when it defines the function, so `def f(x: record_event()):`
+/// runs `record_event()` at definition time; such a header keeps its probe.
+/// Fails closed on anything unparseable.
+fn def_annotations_are_inert(line: &str) -> bool {
+    let snippet = format!("{}\n    pass\n", line.trim_start());
+    let Ok(Mod::Module(module)) =
+        parse_module_result(Path::new("annotation_only_probe.py"), &snippet)
+    else {
+        return false;
+    };
+    let Some((args, returns)) = module.body.iter().find_map(|stmt| match stmt {
+        Stmt::FunctionDef(f) => Some((&f.args, &f.returns)),
+        Stmt::AsyncFunctionDef(f) => Some((&f.args, &f.returns)),
+        _ => None,
+    }) else {
+        return false;
+    };
+    let annotations = args
+        .posonlyargs
+        .iter()
+        .chain(args.args.iter())
+        .chain(args.kwonlyargs.iter())
+        .filter_map(|arg| arg.def.annotation.as_deref())
+        .chain(
+            args.vararg
+                .iter()
+                .filter_map(|arg| arg.annotation.as_deref()),
+        )
+        .chain(
+            args.kwarg
+                .iter()
+                .filter_map(|arg| arg.annotation.as_deref()),
+        )
+        .chain(returns.as_deref());
+    annotations.into_iter().all(is_inert_type_expression)
+}
+
+fn is_inert_type_expression(expr: &Expr) -> bool {
+    match expr {
+        Expr::Name(_) | Expr::Constant(_) => true,
+        Expr::Attribute(attribute) => is_inert_type_expression(&attribute.value),
+        Expr::Subscript(subscript) => {
+            is_inert_type_expression(&subscript.value) && is_inert_type_expression(&subscript.slice)
+        }
+        Expr::Tuple(tuple) => tuple.elts.iter().all(is_inert_type_expression),
+        Expr::List(list) => list.elts.iter().all(is_inert_type_expression),
+        Expr::BinOp(binop) => {
+            matches!(binop.op, rustpython_parser::ast::Operator::BitOr)
+                && is_inert_type_expression(&binop.left)
+                && is_inert_type_expression(&binop.right)
+        }
         _ => false,
     }
 }

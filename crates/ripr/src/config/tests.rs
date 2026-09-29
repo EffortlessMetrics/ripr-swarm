@@ -1175,7 +1175,7 @@ proptest! {
         producer in any::<String>(),
         executable in any::<String>(),
         timeout_ms in any::<u64>(),
-        cache_dir in any::<String>(),
+        cache_dir in valid_repository_paths(),
     ) {
         let raw = RawConfig {
             analysis: Some(RawAnalysisConfig {
@@ -1248,6 +1248,33 @@ proptest! {
             "serialized valid config must parse: {effective:?}\n{serialized}"
         );
     }
+}
+
+#[test]
+fn perl_cache_dir_must_stay_within_the_repository() -> Result<(), String> {
+    for cache_dir in ["/etc/ripr-outside", "../outside", "target/../../x"] {
+        let text = format!("[perl]\ncache_dir = \"{cache_dir}\"\n");
+        let error = match tests_only_parse(&text) {
+            Ok(config) => {
+                return Err(format!(
+                    "perl.cache_dir `{cache_dir}` escaped the repository: {:?}",
+                    config.perl.cache_dir
+                ));
+            }
+            Err(error) => error,
+        };
+        if !error.contains("perl.cache_dir") {
+            return Err(format!("the error must name the field: {error}"));
+        }
+    }
+    let config = tests_only_parse("[perl]\ncache_dir = \"./target/ripr/perl-facts\"\n")?;
+    if config.perl.cache_dir.as_deref() != Some(std::path::Path::new("target/ripr/perl-facts")) {
+        return Err(format!(
+            "a relative cache dir must be kept: {:?}",
+            config.perl.cache_dir
+        ));
+    }
+    Ok(())
 }
 
 fn valid_oracle_strengths() -> Vec<String> {
@@ -1476,4 +1503,31 @@ fn parse_config_rejects_conflicting_harness_registrations() -> Result<(), String
         "{target_error}"
     );
     Ok(())
+}
+
+#[test]
+fn perl_executable_from_repo_config_needs_user_opt_in() -> Result<(), String> {
+    let config =
+        parse_config("[perl]\nproducer = \"perl-ripr-facts\"\nexecutable = \"./tools/x\"\n")?;
+    let perl = config.perl();
+    assert_eq!(perl.executable_for_opt_in(false), None);
+    assert_eq!(
+        perl.executable_for_opt_in(true),
+        Some(Path::new("./tools/x"))
+    );
+    Ok(())
+}
+
+#[test]
+fn bytes_fingerprint_matches_text_fingerprint_and_keeps_invalid_bytes_distinct() {
+    // Recorded check artifacts hash `--diff` input bytes; UTF-8 input keeps
+    // the hash it had as text, and two invalid bytes never share one.
+    assert_eq!(
+        bytes_fingerprint("-a\n+b\n".as_bytes()),
+        config_fingerprint("-a\n+b\n")
+    );
+    assert_ne!(
+        bytes_fingerprint(b"+caf\x80\n"),
+        bytes_fingerprint(b"+caf\x81\n")
+    );
 }

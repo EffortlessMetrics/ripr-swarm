@@ -12,6 +12,7 @@ mod parse;
 mod rerun;
 mod suggest;
 
+pub(crate) use parse::expect_value;
 pub(crate) use suggest::unknown_argument;
 
 /// Top-level error of command dispatch, carrying the process exit-code
@@ -111,7 +112,16 @@ fn lock_before_repair_attempt(root: &Path) -> Result<File, String> {
     std::fs::create_dir_all(&directory)
         .map_err(|error| format!("create {} failed: {error}", directory.display()))?;
     let lock_path = directory.join(".before.lock");
-    let lock = File::create(&lock_path)
+    // Refuse a planted symlink or other non-file, and never truncate: the
+    // no-follow writer's Windows share mode would turn a held lock into a
+    // sharing violation before `try_lock` could name it.
+    crate::output::file_write::validate_destination(&lock_path)
+        .map_err(|error| format!("create {} failed: {error}", lock_path.display()))?;
+    let lock = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
         .map_err(|error| format!("create {} failed: {error}", lock_path.display()))?;
     if let Err(error) = lock.try_lock() {
         if matches!(error, std::fs::TryLockError::WouldBlock) {
@@ -152,11 +162,15 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
     let agent_brief = root.join(WORKFLOW_AGENT_BRIEF_ARTIFACT);
     let before_snapshot = root.join(WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT);
     let agent_packet = root.join(WORKFLOW_AGENT_PACKET_ARTIFACT);
-    let packet_bytes = std::fs::read(&agent_packet)
+    let packet_bytes = crate::bounded_input::read(&agent_packet)
         .map_err(|error| format!("read {} failed: {error}", agent_packet.display()))?;
     let packet_text = String::from_utf8(packet_bytes.clone())
         .map_err(|error| format!("agent packet is not UTF-8: {error}"))?;
     let policy = crate::app::repair_attempt::edit_cage_policy_from_packet(&packet_text, seam_id)?;
+    // Recheck immediately before baseline capture so ignore-rule drift observed
+    // during preparation refuses attempt publication.
+    crate::edit_cage::validate_build_output_precondition(root, &policy)
+        .map_err(|error| format!("{error} No repair attempt was started."))?;
     let edit_cage_baseline = root.join("target/ripr/workflow/attempt-baseline.json");
     crate::app::repair_attempt::write_edit_cage_baseline(root, &edit_cage_baseline, &policy)?;
 

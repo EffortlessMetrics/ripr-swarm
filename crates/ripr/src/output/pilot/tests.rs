@@ -183,6 +183,7 @@ fn classified_with(
             discriminate: stage(StageState::Weak),
             observed_values: Vec::<ValueFact>::new(),
             missing_discriminators,
+            new_test_target: None,
         },
         seam,
         class,
@@ -346,6 +347,9 @@ fn pilot_summary_md_spells_out_first_screen_recommendation() {
         "## What Was Inspected",
         "## Top Recommendation",
         "- Inspected seam:",
+        "(weak, weakly_gripped)",
+        " weak (`weakly_gripped`) src/pricing.rs:88 ",
+        "- weak, weakly_gripped\n",
         "- Why it matters: missing discriminator: input that hits the boundary: amount >= discount_threshold",
         "- Focused test: none: this seam has no test target that `ripr agent repair` can use (for example, the only tests are in another crate, or static evidence names no exact discriminator), so it will not start a repair attempt here",
         "Target seam:",
@@ -496,7 +500,7 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
     // (`ripr agent repair --seam-id <id>`) is reachable from the screen alone.
     assert!(
         terminal.contains(&format!(
-            "inspected seam: {seam_id} src/pricing.rs:88 predicate_boundary in pricing::discounted_total (weakly_gripped)"
+            "inspected seam: {seam_id} src/pricing.rs:88 predicate_boundary in pricing::discounted_total (weak, weakly_gripped)"
         )),
         "the terminal seam line must lead with the seam id:\n{terminal}"
     );
@@ -872,6 +876,7 @@ fn why_line_uses_static_discriminator_summary_when_no_missing_discriminator() {
             ),
             observed_values: Vec::<ValueFact>::new(),
             missing_discriminators: Vec::new(),
+            new_test_target: None,
         },
         seam,
         class: SeamGripClass::WeaklyGripped,
@@ -896,6 +901,7 @@ fn why_line_falls_back_to_class_label_when_no_summary_or_missing_discriminator()
             discriminate: StageEvidence::new(StageState::Weak, Confidence::Medium, "   "),
             observed_values: Vec::<ValueFact>::new(),
             missing_discriminators: Vec::new(),
+            new_test_target: None,
         },
         seam,
         class: SeamGripClass::Ungripped,
@@ -1204,6 +1210,107 @@ fn pilot_terminal_route_label_has_one_shape_for_every_language() {
 }
 
 #[test]
+fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Result<(), String> {
+    use super::language_routes::PilotLanguageRoutesState;
+    use crate::domain::LanguageId;
+
+    // A Go repository: no Rust seams, no routed language. Pilot said
+    // "complete", "none ranked", and offered a test-then-compare loop.
+    let artifacts = pilot_artifacts();
+    let root = Path::new(".");
+    let go_only = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], &[])
+        .with_unanalyzed(vec![("Go", 2)], false);
+    assert_eq!(go_only.state, PilotLanguageRoutesState::UnanalyzedOnly);
+    let context = PilotSummaryContext {
+        language_routes: Some(&go_only),
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        !terminal.contains("none ranked by the default pilot policy"),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains("languages ripr does not analyze"),
+        "{terminal}"
+    );
+    assert!(terminal.contains("found: Go (2 files)"), "{terminal}");
+    assert!(!terminal.contains("ripr outcome --before"), "{terminal}");
+    assert!(
+        terminal.ends_with("No follow-up command applies: review changes in these languages with their own tests.\n"),
+        "{terminal}"
+    );
+    let md = render_pilot_summary_md(&[], context);
+    assert!(md.contains("Found: Go (2 files)."), "{md}");
+    assert!(!md.contains("ripr outcome --before"), "{md}");
+    let json = render_pilot_summary_json(&[], context);
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert_eq!(parsed["language_routes"]["state"], "unanalyzed_only");
+    assert_eq!(
+        parsed["language_routes"]["unanalyzed_languages"][0]["language"],
+        "Go"
+    );
+    assert_eq!(
+        parsed["language_routes"]["unanalyzed_languages"][0]["file_count"],
+        2
+    );
+    // No seam exists to snapshot or measure, so JSON offers no follow-up
+    // command either.
+    assert!(parsed["next"]["after_snapshot_command"].is_null(), "{json}");
+    assert!(parsed["next"]["outcome_command"].is_null(), "{json}");
+    assert!(parsed["next"]["repair_command"].is_null(), "{json}");
+
+    // Rust seams present: the ranking stands and the Go files stay a JSON
+    // note, so Rust users' output is unchanged.
+    let with_rust = PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], &[])
+        .with_unanalyzed(vec![("Go", 2)], true);
+    assert_eq!(with_rust.state, PilotLanguageRoutesState::NotDetected);
+    assert!(with_rust.unanalyzed_only().is_none());
+    let json = render_pilot_summary_json(
+        &[],
+        PilotSummaryContext {
+            language_routes: Some(&with_rust),
+            ..pilot_context(&artifacts)
+        },
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert_eq!(
+        parsed["language_routes"]["unanalyzed_languages"][0]["language"],
+        "Go"
+    );
+
+    // A Rust crate with no seams yet (a lone `pub const`) plus a CI script
+    // is a Rust repository, not an unanalyzed one.
+    let seamless_rust = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], &[])
+        .with_unanalyzed(vec![("Shell", 1)], true);
+    assert!(seamless_rust.unanalyzed_only().is_none());
+
+    // Nothing unanalyzed: the JSON shape is unchanged for Rust users.
+    let plain = PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], &[]);
+    let json = render_pilot_summary_json(
+        &[],
+        PilotSummaryContext {
+            language_routes: Some(&plain),
+            ..pilot_context(&artifacts)
+        },
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert_eq!(
+        parsed["language_routes"],
+        serde_json::json!({"state": "not_detected", "routes": []})
+    );
+    assert!(
+        parsed["next"]["after_snapshot_command"].is_string(),
+        "{json}"
+    );
+    assert!(parsed["next"]["outcome_command"].is_string(), "{json}");
+    Ok(())
+}
+
+#[test]
 fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), String> {
     use crate::domain::LanguageId;
 
@@ -1326,5 +1433,74 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         assert!(md.ends_with("No follow-up command applies: this ripr binary cannot analyze the languages listed above.\n"), "{md}");
         assert!(!md.contains("```bash"), "{md}");
     }
+    Ok(())
+}
+
+/// rc rehearsal (py-pricing): with no Rust seam, a Python repair card was
+/// the top recommendation but the closing block said `ripr check`, which only
+/// leads back to pilot. The closing block now names the card's route:
+/// `ripr first-pr` before the edit (it names the receipt command, and stops
+/// selecting the gap once the edit closes it), the test edit, the card's
+/// verify command, and the receipt command. A card that carries its own
+/// receipt command skips first-pr.
+#[test]
+fn pilot_terminal_next_follows_the_python_repair_card_route() -> Result<(), String> {
+    use crate::domain::LanguageId;
+
+    let artifacts = pilot_artifacts();
+    let python = python_first_use();
+    let files = discovered_files(&[(LanguageId::Python, "pricing/__init__.py")]);
+    let routes =
+        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &files);
+    let first_pr = format!(
+        "ripr first-pr --root {}",
+        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root("."))
+    );
+    for language_routes in [None, Some(&routes)] {
+        let context = PilotSummaryContext {
+            language_routes,
+            ..pilot_context_with_python(&artifacts, &python)
+        };
+        let terminal = render_pilot_terminal(&[], context);
+        let expected = format!(
+            "Next, in order:\n  1. {first_pr} (names this gap's receipt command; run any regeneration command it prints first)\n  2. strengthen test_calculate_discount_above_threshold in tests/test_pricing.py (test files only): Assert the owner result or effect at the boundary `amount == threshold`.\n  3. pytest tests/test_pricing.py::test_calculate_discount_above_threshold\n  4. run the receipt command step 1 printed\n"
+        );
+        assert!(terminal.ends_with(&expected), "{terminal}");
+        assert!(
+            !terminal.contains("Next, analyze the changed code"),
+            "{terminal}"
+        );
+        assert!(!terminal.contains("ripr outcome --before"), "{terminal}");
+        let md = render_pilot_summary_md(&[], context);
+        let next = md
+            .split("## Next Commands")
+            .nth(1)
+            .ok_or_else(|| format!("missing Next Commands: {md}"))?;
+        assert!(
+            next.contains(&format!(
+                "```bash\n{first_pr}\npytest tests/test_pricing.py::test_calculate_discount_above_threshold\n```"
+            )),
+            "{next}"
+        );
+        assert!(!next.contains("ripr check --root"), "{next}");
+    }
+
+    // A card that carries its own receipt command uses it directly.
+    let mut carded = python_first_use();
+    if let Some(card) = carded.top_repair_card.as_mut() {
+        card.receipt_command = Some("ripr receipt write --gap g --status not_run".to_string());
+    }
+    let context = pilot_context_with_python(&artifacts, &carded);
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.ends_with("  2. pytest tests/test_pricing.py::test_calculate_discount_above_threshold\n  3. ripr receipt write --gap g --status not_run\n"),
+        "{terminal}"
+    );
+    assert!(!terminal.contains("ripr first-pr --root"), "{terminal}");
+    let md = render_pilot_summary_md(&[], context);
+    assert!(
+        md.contains("```bash\npytest tests/test_pricing.py::test_calculate_discount_above_threshold\nripr receipt write --gap g --status not_run\n```"),
+        "{md}"
+    );
     Ok(())
 }

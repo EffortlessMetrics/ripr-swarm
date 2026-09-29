@@ -56,11 +56,13 @@ use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
 use classify::{classify_change, classify_change_with_old};
 mod discriminators;
+mod module_constants;
 mod no_behavior;
 mod oracles;
 mod owners_tests;
 mod parse_budget;
 mod probe_shape;
+mod reexports;
 mod related_tests;
 mod repo;
 mod sink_alignment;
@@ -83,7 +85,11 @@ use discriminators::{
 #[cfg(test)]
 use no_behavior::{
     analyze_call_args, changed_default_value_params, free_function_call_arglists,
-    is_annotation_only_def_change, is_annotation_only_var_change, is_python_no_behavior_line,
+    is_annotation_only_def_change, is_annotation_only_var_change,
+};
+use no_behavior::{
+    is_python_import_line, is_python_no_behavior_line, is_python_structural_line,
+    is_structural_def_header_text, multi_line_def_header_span, python_quiet_lines_covered_by_run,
 };
 use oracles::collect_assertions_from_statements;
 #[cfg(test)]
@@ -101,8 +107,9 @@ use related_tests::{
     verify_command_for_test,
 };
 use related_tests::{
-    first_parenthesized_string_argument, import_source_module_matches_owner,
-    strong_test_calls_owner_method_on_bound_receiver, strong_test_imports_owner_from_module,
+    first_parenthesized_string_argument, import_module_may_be_owners,
+    import_source_module_matches_owner, strong_test_calls_owner_method_on_bound_receiver,
+    strong_test_imports_owner_from_module, strong_tests_import_only_rival_modules,
 };
 #[cfg(test)]
 use sink_alignment::strong_oracle_observes_owner;
@@ -117,8 +124,6 @@ pub(crate) use source_facts::detect_python_test_framework;
 use source_facts::parse_module;
 use source_facts::{extract_source_facts, source_fact_snapshot_observation};
 mod source_utils;
-#[cfg(test)]
-use source_utils::line_for_offset;
 use source_utils::{is_test_file, normalized_path};
 mod static_limits;
 use static_limits::{
@@ -147,6 +152,17 @@ use workspace::{
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct PythonAdapter;
 
+/// Whether `text` holds `name` as a whole Python identifier.
+fn mentions_python_name(text: &str, name: &str) -> bool {
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    !name.is_empty()
+        && text.match_indices(name).any(|(start, _)| {
+            let end = start + name.len();
+            (start == 0 || !is_ident(text.as_bytes()[start - 1]))
+                && !text.as_bytes().get(end).is_some_and(|byte| is_ident(*byte))
+        })
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PythonOwner {
     name: String,
@@ -164,6 +180,17 @@ struct PythonOwner {
     /// Empty for class and module owners. Used only to bind literal test-call
     /// arguments to predicate boundary operands (`boundary.rs`).
     parameters: Vec<PythonParameter>,
+    /// Dotted package paths whose `__init__.py` re-exports this owner under
+    /// its own name (`reexports.rs`). Empty until the workspace pass fills it.
+    reexport_modules: Vec<String>,
+    /// Src-layout short module names of this owner's file that another
+    /// workspace source file also produces (`related_tests.rs`, #4566).
+    /// Empty until the workspace pass fills it.
+    ambiguous_src_modules: Vec<related_tests::AmbiguousSrcModule>,
+    /// Module-scope literal constants visible in a function/method owner
+    /// (not shadowed locally). Empty for class and module owners. Used only
+    /// to resolve named predicate boundary operands (`boundary.rs`, #4227).
+    module_constants: Vec<module_constants::PythonModuleConstant>,
 }
 
 /// One declared parameter of a Python function owner.
@@ -233,6 +260,9 @@ struct PythonTest {
     parametrized: bool,
     framework: &'static str,
     assertions: Vec<PythonAssertion>,
+    /// How the test and its module can rebind names and attributes; guards
+    /// module-constant boundary resolution (`boundary.rs`, #4227).
+    constant_rebinding: module_constants::PythonTestRebinding,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -418,7 +448,7 @@ fn parse_budget_limitation(
             AnalysisStage::LanguageAdapter,
             AnalysisRecovery::new(
                 AnalysisRecoveryKind::Retry,
-                "Split or simplify the deeply nested Python expression, then re-run the analysis.",
+                "Split or simplify the deeply nested Python expression, operator chain, or elif chain, then re-run the analysis.",
             )?,
         )
         .with_path(normalized_path(relative))?
@@ -487,6 +517,8 @@ impl PythonAdapter {
         let mut all_tests: Vec<PythonTest> = Vec::new();
         let mut docstring_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
+        let mut import_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
+            BTreeMap::new();
         let mut limitations = Vec::new();
         for relative in &workspace_files {
             let Some(source) = workspace_read.sources.get(relative) else {
@@ -498,12 +530,20 @@ impl PythonAdapter {
                 limitations.push(limitation);
             }
             docstring_ranges_by_file.insert(relative.clone(), facts.docstring_line_ranges.clone());
+            import_ranges_by_file.insert(relative.clone(), facts.import_line_ranges.clone());
             if is_test_file(relative) {
                 all_tests.extend(facts.tests);
             } else {
                 all_owners.extend(facts.owners);
             }
         }
+        reexports::apply_package_reexports(&mut all_owners, |file| {
+            workspace_read.sources.get(file).map(String::as_str)
+        });
+        related_tests::apply_src_module_ambiguity(
+            &mut all_owners,
+            workspace_files.iter().filter(|file| !is_test_file(file)),
+        );
 
         // Walk-count cap disclosure: one named limitation carrying the
         // refused count, mirroring the TypeScript adapter's
@@ -608,25 +648,105 @@ impl PythonAdapter {
             // bounds above; a capped-out file degrades to empty ranges,
             // exactly the pre-existing unreadable-file path, and the file
             // itself is already named in the limitation set.
-            let old_docstring_ranges = workspace_read
+            let (old_docstring_ranges, old_import_ranges) = workspace_read
                 .sources
                 .get(&changed.path)
                 .and_then(|source| reconstruct_old_source(source, changed))
-                .map(|source| extract_source_facts(&changed.path, &source).docstring_line_ranges)
+                .map(|source| {
+                    let old_facts = extract_source_facts(&changed.path, &source);
+                    (
+                        old_facts.docstring_line_ranges,
+                        old_facts.import_line_ranges,
+                    )
+                })
                 .unwrap_or_default();
-            for added in &changed.added_lines {
+            let import_ranges = import_ranges_by_file
+                .get(&changed.path)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            // An import line that replaces an import line re-points a name
+            // (`from a import x` -> `from b import x`, or `old as x,` inside a
+            // parenthesized import), so it is behavior of its own; any other
+            // added import line is not.
+            let is_added_import = |added: &crate::analysis::diff::ChangedLine| {
+                line_is_in_ranges(added.line, import_ranges)
+                    && changed
+                        .removed_lines
+                        .iter()
+                        .find(|removed| removed.new_side_line == added.line)
+                        .is_none_or(|removed| {
+                            !line_is_in_ranges(removed.line, &old_import_ranges)
+                                && !is_python_import_line(&removed.text)
+                        })
+            };
+            let covered = python_quiet_lines_covered_by_run(&changed.added_lines, |added| {
+                line_is_in_ranges(added.line, new_docstring_ranges)
+                    || is_added_import(added)
+                    || is_python_no_behavior_line(&added.text)
+                    || is_python_structural_line(&added.text)
+            });
+            // Header span per owner, computed once per changed file.
+            let mut header_spans: BTreeMap<usize, Option<(usize, usize)>> = BTreeMap::new();
+            for (added_index, added) in changed.added_lines.iter().enumerate() {
                 // Pair the in-place removed line (same new-side position) so the
                 // classifier can credit the changed-sink token on the DELTA only.
                 let old_line = changed
                     .removed_lines
                     .iter()
                     .find(|removed| removed.new_side_line == added.line);
+                // Git pairs a rewritten block line by line, so a comment, a
+                // lone bracket or an import that lands where old code stood is
+                // not the carrier of that code's change: the behavioral lines of
+                // the same added run are (#4216 for Rust). An added import is
+                // not a behavior probe of its own either (the Rust adapter
+                // ignores `use` lines).
+                if covered[added_index] || is_added_import(added) {
+                    continue;
+                }
                 let old_line_text = old_line.map(|removed| removed.text.as_str());
                 let no_behavior = PythonNoBehaviorContext {
                     new_line_in_docstring: line_is_in_ranges(added.line, new_docstring_ranges),
                     old_line_in_docstring: old_line.is_some_and(|removed| {
                         line_is_in_ranges(removed.line, &old_docstring_ranges)
                     }),
+                    opens_owner_with_added_body: owner_for_changed_line(
+                        &changed.path,
+                        added.line,
+                        &all_owners,
+                    )
+                    .is_some_and(|owner| {
+                        owner.start_line == added.line
+                            // An old line naming the owner means its `def`
+                            // existed before, even when git pairs the old
+                            // header with an unrelated inserted line.
+                            && !changed
+                                .removed_lines
+                                .iter()
+                                .any(|removed| mentions_python_name(&removed.text, &owner.name))
+                            && changed.added_lines.iter().any(|other| {
+                                other.line > owner.start_line
+                                    && other.line <= owner.end_line
+                                    && !line_is_in_ranges(other.line, new_docstring_ranges)
+                                    && !is_python_no_behavior_line(&other.text)
+                            })
+                    }),
+                    structural_def_header_line: is_structural_def_header_text(&added.text)
+                        && workspace_read
+                            .sources
+                            .get(&changed.path)
+                            .zip(owner_for_changed_line(
+                                &changed.path,
+                                added.line,
+                                &all_owners,
+                            ))
+                            .and_then(|(source, owner)| {
+                                *header_spans.entry(owner.start_line).or_insert_with(|| {
+                                    multi_line_def_header_span(source, owner.start_line)
+                                })
+                            })
+                            .is_some_and(|(def_line, header_end)| {
+                                (def_line..=header_end).contains(&added.line)
+                            }),
                 };
                 if let Some(finding) = classify_change_with_context(
                     &changed.path,
@@ -687,7 +807,13 @@ impl PythonAdapter {
 }
 
 #[cfg(test)]
+mod new_declaration_tests;
+
+#[cfg(test)]
 mod python_tests;
+
+#[cfg(test)]
+mod reexport_tests;
 
 #[cfg(test)]
 mod tests;

@@ -12,7 +12,7 @@
     {
       "id": "probe:src_guards.ts:typescript_preview:7098c2ff",
       "classification": "exposed",
-      "severity": "warning",
+      "severity": "info",
       "confidence": 0.60,
       "probe": {
         "id": "probe:src_guards.ts:typescript_preview:7098c2ff",
@@ -130,7 +130,7 @@
     {
       "id": "probe:src_guards.ts:typescript_preview:0d3ee5b2",
       "classification": "exposed",
-      "severity": "warning",
+      "severity": "info",
       "confidence": 0.60,
       "probe": {
         "id": "probe:src_guards.ts:typescript_preview:0d3ee5b2",
@@ -248,7 +248,7 @@
     {
       "id": "probe:src_guards.ts:typescript_preview:31d04e16",
       "classification": "exposed",
-      "severity": "warning",
+      "severity": "info",
       "confidence": 0.60,
       "probe": {
         "id": "probe:src_guards.ts:typescript_preview:31d04e16",
@@ -374,5 +374,6 @@
       "category": "preview_language_advisory",
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
-  ]
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/guards.ts","digest":"sha256:383a87e30784bd9e221969ecd1449195ff41cd0dfdc2db3851d92c16805fa1b9"}]}
 }

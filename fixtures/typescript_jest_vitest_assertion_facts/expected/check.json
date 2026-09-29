@@ -12,7 +12,7 @@
     {
       "id": "probe:src_signals.ts:typescript_preview:7878a956",
       "classification": "exposed",
-      "severity": "warning",
+      "severity": "info",
       "confidence": 0.60,
       "probe": {
         "id": "probe:src_signals.ts:typescript_preview:7878a956",
@@ -696,7 +696,7 @@
     {
       "id": "probe:src_signals.ts:typescript_preview:a68ad559",
       "classification": "exposed",
-      "severity": "warning",
+      "severity": "info",
       "confidence": 0.60,
       "probe": {
         "id": "probe:src_signals.ts:typescript_preview:a68ad559",
@@ -823,5 +823,6 @@
       "category": "preview_language_advisory",
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
-  ]
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/signals.ts","digest":"sha256:9796418d3de34358e86ef82d121e5a2b7713edf16505785664d5d5978e5ed22d"}]}
 }

@@ -15,7 +15,7 @@
 //! the refresh worker. `None` keeps the invocation unbounded (the CLI
 //! behavior — byte-identical to the pre-#2303 path).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -111,9 +111,118 @@ pub(crate) fn run_git_output_with_deadline(
     collect_output_with_deadline(command, timeout, &describe)
 }
 
+/// Longest working directory, in UTF-16 units and without the trailing
+/// separator, that `CreateProcessW` accepts (`MAX_PATH` minus the terminator
+/// and the separator `SetCurrentDirectoryW` appends). A `longPathAware`
+/// manifest does not lift it: on a host with `LongPathsEnabled=1`, a
+/// manifested Rust binary and PowerShell 7 both got error 267 for a
+/// 361-unit working directory (#4350 probe, 2026-09-29).
+const WINDOWS_MAX_WORKING_DIRECTORY_UNITS: usize = 258;
+
+/// Win32 codes `CreateProcessW` returns for a working directory it cannot
+/// use because of its length: `ERROR_DIRECTORY` (267, observed on #4350)
+/// and `ERROR_FILENAME_EXCED_RANGE` (206). Any other code, such as a
+/// missing or denied program, keeps its own message: moving the checkout
+/// would not fix it.
+const WINDOWS_PATH_LIMIT_ERRORS: [i32; 2] = [267, 206];
+
+/// What a spawn failure message needs from a [`Command`] that the spawn
+/// consumes.
+struct SpawnSite {
+    program: String,
+    working_directory: Option<PathBuf>,
+}
+
+impl SpawnSite {
+    fn of(command: &Command) -> Self {
+        Self {
+            program: command.get_program().to_string_lossy().into_owned(),
+            // Windows resolves a relative working directory against this
+            // process's directory, so the limit applies to the joined path.
+            working_directory: command
+                .get_current_dir()
+                .map(|dir| std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf())),
+        }
+    }
+
+    /// Spawn-failure text for the shared process authority.
+    ///
+    /// Keeps the `failed to run …` family every caller and contract matches
+    /// on. When Windows refuses a working directory past `MAX_PATH` (#4350)
+    /// the raw `The directory name is invalid. (os error 267)` names neither
+    /// the cause nor a way out, and no other spawn shape helps: Git for
+    /// Windows refuses the same root through `-C` (even with
+    /// `core.longpaths`), through `GIT_DIR` (`'$GIT_DIR' too big`), and
+    /// through a short junction, because it resolves the junction back to the
+    /// long root before its work-tree commands (probe table on #4350,
+    /// issuecomment-5881212067). So that one case leads with
+    /// the limit and the remedy, ahead of the long invocation text that
+    /// bounded LSP status messages would otherwise truncate it behind.
+    fn failure_message(&self, describe: &str, err: &std::io::Error) -> String {
+        self.failure_message_on(cfg!(windows), describe, err)
+    }
+
+    fn failure_message_on(&self, is_windows: bool, describe: &str, err: &std::io::Error) -> String {
+        let path_limit_error = err
+            .raw_os_error()
+            .is_some_and(|code| WINDOWS_PATH_LIMIT_ERRORS.contains(&code));
+        match self
+            .working_directory
+            .as_deref()
+            .filter(|_| path_limit_error)
+            .and_then(|dir| windows_overlong_working_directory(is_windows, dir))
+        {
+            Some(units) => windows_path_limit_message(&self.program, units, err, describe),
+            None => format!("failed to run {describe}: {err}"),
+        }
+    }
+}
+
+/// The remedy leads so it survives the LSP's 240-character client bound
+/// (`lsp::component_outcome::bounded_message`) behind the caller prefixes;
+/// the limit and the original error follow for the CLI, which prints all of
+/// it.
+pub(crate) fn windows_path_limit_message(
+    program: &str,
+    units: usize,
+    err: &std::io::Error,
+    describe: &str,
+) -> String {
+    format!(
+        "failed to run {program}: clone or move the repository to a shorter path; the \
+         workspace root is {units} characters, over the {WINDOWS_MAX_WORKING_DIRECTORY_UNITS} \
+         Windows allows for a working directory (MAX_PATH) ({err}; {describe})"
+    )
+}
+
+/// Length of `dir` in UTF-16 units when it exceeds the Windows working
+/// directory limit. Std strips a verbatim `\\?\` prefix before calling
+/// `CreateProcessW`, so the prefix does not count against the limit.
+fn windows_overlong_working_directory(is_windows: bool, dir: &Path) -> Option<usize> {
+    if !is_windows {
+        return None;
+    }
+    let text = dir.to_string_lossy();
+    let spelled = match text.strip_prefix(r"\\?\UNC\") {
+        Some(share) => format!(r"\\{share}"),
+        None => text.strip_prefix(r"\\?\").unwrap_or(&text).to_string(),
+    };
+    let units = spelled.trim_end_matches(['\\', '/']).encode_utf16().count();
+    (units > WINDOWS_MAX_WORKING_DIRECTORY_UNITS).then_some(units)
+}
+
+/// Config every ripr git invocation carries. A repository's own
+/// `core.fsmonitor` names a program git runs on index refresh (`status`,
+/// worktree `diff`); a clone cannot ship `.git/config`, but an extracted
+/// archive or a planted nested repository can.
+pub(crate) const UNTRUSTED_REPOSITORY_CONFIG: [&str; 2] = ["-c", "core.fsmonitor=false"];
+
 fn git_command(root: &Path, args: &[&str]) -> Command {
     let mut command = Command::new("git");
-    command.current_dir(root).args(args);
+    command
+        .current_dir(root)
+        .args(UNTRUSTED_REPOSITORY_CONFIG)
+        .args(args);
     command
 }
 
@@ -172,12 +281,47 @@ pub(crate) fn run_git_output_with_deadline_and_limit_isolated(
 /// The command is consumed by value: the owned subprocess authority
 /// (#3803) takes it over for the Job Object-backed spawn on Windows.
 pub(crate) fn collect_output_with_deadline_and_limit(
-    mut command: Command,
+    command: Command,
     timeout: Duration,
     max_output_bytes: usize,
     describe: &str,
 ) -> Result<Output, String> {
-    if timeout.is_zero() {
+    collect_output_with_optional_deadline_and_limit(
+        command,
+        Some(timeout),
+        max_output_bytes,
+        describe,
+    )
+}
+
+/// [`run_git_output_with_deadline_and_limit`] for a caller whose deadline is
+/// optional: `None` (for example `--git-timeout 0`) waits for Git without a
+/// deadline while still bounding captured output.
+pub(crate) fn run_git_output_with_optional_deadline_and_limit(
+    root: &Path,
+    args: &[&str],
+    timeout: Option<Duration>,
+    max_output_bytes: usize,
+) -> Result<Output, String> {
+    if max_output_bytes == 0 {
+        return Err("git output limit must be greater than zero".to_string());
+    }
+    let describe = format!("git -C {} {:?}", root.display(), args);
+    collect_output_with_optional_deadline_and_limit(
+        git_command(root, args),
+        timeout,
+        max_output_bytes,
+        &describe,
+    )
+}
+
+fn collect_output_with_optional_deadline_and_limit(
+    mut command: Command,
+    timeout: Option<Duration>,
+    max_output_bytes: usize,
+    describe: &str,
+) -> Result<Output, String> {
+    if timeout.is_some_and(|timeout| timeout.is_zero()) {
         return Err(format!(
             "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} was given a zero deadline (not spawned)"
         ));
@@ -186,8 +330,9 @@ pub(crate) fn collect_output_with_deadline_and_limit(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    let spawn_site = SpawnSite::of(&command);
     let mut child =
-        OwnedProcess::spawn(command).map_err(|err| format!("failed to run {describe}: {err}"))?;
+        OwnedProcess::spawn(command).map_err(|err| spawn_site.failure_message(describe, &err))?;
     let stdout_reader = child
         .stdout_pipe()
         .take()
@@ -197,7 +342,7 @@ pub(crate) fn collect_output_with_deadline_and_limit(
         .take()
         .map(|pipe| spawn_bounded_pipe_reader(pipe, max_output_bytes));
 
-    let wait = poll_child(&mut child, Some(timeout), describe);
+    let wait = poll_child(&mut child, timeout, describe);
     let timed_out = !matches!(&wait, ChildWait::Exited(_));
     let drain_deadline = timed_out.then(|| Instant::now() + POST_KILL_DRAIN_GRACE);
     let stdout_result =
@@ -341,8 +486,9 @@ fn collect_output_with_deadline(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    let spawn_site = SpawnSite::of(&command);
     let mut child =
-        OwnedProcess::spawn(command).map_err(|err| format!("failed to run {describe}: {err}"))?;
+        OwnedProcess::spawn(command).map_err(|err| spawn_site.failure_message(describe, &err))?;
     let stdout_reader = child.stdout_pipe().take().map(spawn_pipe_reader);
     let stderr_reader = child.stderr_pipe().take().map(spawn_pipe_reader);
 
@@ -532,11 +678,239 @@ fn drain_pipe_reader(
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::analysis::cancellation::{
         AnalysisAbortKind, AnalysisCancellationToken, is_cancellation_error, with_token,
     };
     use serial_test::serial;
+
+    /// Drive letter kept apart from its separator so the local-context gate
+    /// does not read these synthetic roots as a committed machine path.
+    const DRIVE: &str = "D:";
+
+    fn windows_dir_of_units(units: usize) -> String {
+        let prefix = format!(r"{DRIVE}\a\");
+        format!("{prefix}{}", "x".repeat(units - prefix.len()))
+    }
+
+    /// A repository's `core.fsmonitor` names a program git runs on index
+    /// refresh. ripr's git calls must not run it.
+    #[cfg(unix)]
+    #[test]
+    fn repository_fsmonitor_program_does_not_run() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0);
+        let root =
+            std::env::temp_dir().join(format!("ripr-git-fsmonitor-{}-{stamp}", std::process::id()));
+        let marker = root.join("fsmonitor-ran");
+        let result = (|| {
+            std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+            let hook = format!("touch '{}'", marker.display());
+            for args in [
+                vec!["init", "-q"],
+                vec!["config", "core.fsmonitor", hook.as_str()],
+            ] {
+                let output = Command::new("git")
+                    .args(&args)
+                    .current_dir(&root)
+                    .env_remove("GIT_DIR")
+                    .env_remove("GIT_WORK_TREE")
+                    .output()
+                    .map_err(|err| format!("git {args:?}: {err}"))?;
+                if !output.status.success() {
+                    return Err(format!("git {args:?} failed: {output:?}"));
+                }
+            }
+            std::fs::write(root.join("lib.rs"), "fn a() {}\n")
+                .map_err(|err| format!("write: {err}"))?;
+            run_git(&root, &["add", "lib.rs"])?;
+            run_git(&root, &["status", "--porcelain"])?;
+            Ok(marker.exists())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        if result? {
+            return Err("git ran the repository's core.fsmonitor program".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn overlong_working_directory_is_measured_only_on_windows_past_max_path() {
+        let limit = WINDOWS_MAX_WORKING_DIRECTORY_UNITS;
+        let at_limit = windows_dir_of_units(limit);
+        let past_limit = windows_dir_of_units(limit + 1);
+        assert_eq!(
+            windows_overlong_working_directory(true, Path::new(&at_limit)),
+            None
+        );
+        assert_eq!(
+            windows_overlong_working_directory(true, Path::new(&past_limit)),
+            Some(limit + 1)
+        );
+        assert_eq!(
+            windows_overlong_working_directory(false, Path::new(&past_limit)),
+            None,
+            "no other platform has the MAX_PATH working-directory limit"
+        );
+    }
+
+    #[test]
+    fn overlong_working_directory_ignores_verbatim_prefix_and_trailing_separator() {
+        let at_limit = windows_dir_of_units(WINDOWS_MAX_WORKING_DIRECTORY_UNITS);
+        for spelling in [
+            format!(r"\\?\{at_limit}"),
+            format!(r"{at_limit}\"),
+            format!(r"\\?\{at_limit}\"),
+        ] {
+            assert_eq!(
+                windows_overlong_working_directory(true, Path::new(&spelling)),
+                None,
+                "{spelling} is what CreateProcessW receives as {at_limit}"
+            );
+        }
+        let share = format!(r"\\?\UNC\server\{}", "s".repeat(250));
+        assert_eq!(
+            windows_overlong_working_directory(true, Path::new(&share)),
+            Some(r"\\server\".len() + 250)
+        );
+    }
+
+    #[test]
+    fn overlong_working_directory_counts_utf16_units_not_bytes() {
+        // U+1D11E is four UTF-8 bytes and two UTF-16 units; Windows limits
+        // the latter.
+        let base = windows_dir_of_units(WINDOWS_MAX_WORKING_DIRECTORY_UNITS - 2);
+        let with_clef = format!("{base}\u{1D11E}");
+        assert_eq!(
+            windows_overlong_working_directory(true, Path::new(&with_clef)),
+            None
+        );
+        let past = format!("{with_clef}x");
+        assert_eq!(
+            windows_overlong_working_directory(true, Path::new(&past)),
+            Some(WINDOWS_MAX_WORKING_DIRECTORY_UNITS + 1)
+        );
+    }
+
+    /// Native control for #4350: the shared git authority, spawning under a
+    /// real directory past `MAX_PATH`, reports the limit and the remedy
+    /// instead of `The directory name is invalid. (os error 267)`.
+    /// `CreateProcessW` refuses the working directory whatever the host's
+    /// `LongPathsEnabled` policy or the binary's manifest says; if Windows or
+    /// std ever lifts that, this fails and names the change.
+    #[cfg(windows)]
+    #[test]
+    fn native_git_spawn_under_an_overlong_root_names_the_path_limit() -> Result<(), String> {
+        // One test per process uses this name, so the pid alone is unique.
+        let short = std::env::temp_dir().join(format!("ripr-4350-{}", std::process::id()));
+        let mut long = short.clone();
+        while long.as_os_str().len() <= WINDOWS_MAX_WORKING_DIRECTORY_UNITS + 20 {
+            long.push("long-path-segment-0123456789abcdef");
+        }
+        // Std prefixes `\\?\` for filesystem calls, so creating the tree works
+        // even though spawning into it does not.
+        std::fs::create_dir_all(&long).map_err(|err| format!("create {long:?}: {err}"))?;
+        let result = run_git_output_with_deadline(&long, &["--version"], None);
+        let _ = std::fs::remove_dir_all(&short);
+        match result {
+            Err(message) => {
+                assert!(
+                    message.starts_with(
+                        "failed to run git: clone or move the repository to a shorter path; the \
+                         workspace root is "
+                    ) && message.contains("(MAX_PATH)"),
+                    "{message}"
+                );
+                Ok(())
+            }
+            Ok(output) => Err(format!(
+                "git spawned under a {}-unit root ({:?}); the MAX_PATH premise of #4350 no \
+                 longer holds on this host",
+                long.as_os_str().len(),
+                output.status
+            )),
+        }
+    }
+
+    #[test]
+    fn spawn_site_measures_a_relative_root_joined_to_the_process_directory() -> Result<(), String> {
+        let site = SpawnSite::of(&git_command(Path::new("relative-root"), &[]));
+        let cwd = std::env::current_dir().map_err(|err| err.to_string())?;
+        assert_eq!(
+            site.working_directory,
+            Some(cwd.join("relative-root")),
+            "a short relative spelling can still name a directory past MAX_PATH"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn spawn_failure_names_the_windows_path_limit_and_remedy_for_overlong_roots() {
+        let root = windows_dir_of_units(387);
+        let site = SpawnSite {
+            program: "git".to_string(),
+            working_directory: Some(PathBuf::from(&root)),
+        };
+        let err = std::io::Error::from_raw_os_error(267);
+        let describe = format!("git -C {root} [\"diff\"]");
+
+        let windows = site.failure_message_on(true, &describe, &err);
+        assert!(
+            windows.starts_with(
+                "failed to run git: clone or move the repository to a shorter path; the \
+                 workspace root is 387 characters, over the 258 Windows allows for a working \
+                 directory (MAX_PATH) ("
+            ),
+            "{windows}"
+        );
+        assert!(
+            windows.ends_with(&format!("{err}; {describe})")),
+            "{windows}"
+        );
+
+        assert_eq!(
+            site.failure_message_on(false, &describe, &err),
+            format!("failed to run {describe}: {err}"),
+            "other platforms keep the established spawn-failure text"
+        );
+        let too_long = std::io::Error::from_raw_os_error(206);
+        assert!(
+            site.failure_message_on(true, &describe, &too_long)
+                .contains("the workspace root is 387 characters"),
+            "ERROR_FILENAME_EXCED_RANGE is the other path-limit code"
+        );
+        for other in [
+            std::io::Error::from_raw_os_error(2),
+            std::io::Error::from_raw_os_error(5),
+            std::io::Error::from(std::io::ErrorKind::NotFound),
+        ] {
+            assert_eq!(
+                site.failure_message_on(true, &describe, &other),
+                format!("failed to run {describe}: {other}"),
+                "a missing or denied git is not a path-limit failure, however long the root"
+            );
+        }
+        let short = SpawnSite {
+            program: "git".to_string(),
+            working_directory: Some(PathBuf::from(format!(r"{DRIVE}\repo"))),
+        };
+        assert_eq!(
+            short.failure_message_on(true, &describe, &err),
+            format!("failed to run {describe}: {err}"),
+            "a short root keeps the established text on Windows too"
+        );
+        let unset = SpawnSite {
+            program: "git".to_string(),
+            working_directory: None,
+        };
+        assert_eq!(
+            unset.failure_message_on(true, &describe, &err),
+            format!("failed to run {describe}: {err}")
+        );
+    }
 
     /// Env flag that makes the re-executed test binary hang instead of
     /// running tests, so timeout/cancellation tests get a deterministic

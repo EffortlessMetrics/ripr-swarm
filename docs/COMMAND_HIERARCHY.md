@@ -14,6 +14,7 @@ see [installation](QUICKSTART.md#installation) for published and source builds.
 | Compose PR evidence | `ripr first-pr` with the inputs described in [First PR workflow](FIRST_PR_WORKFLOW.md) | A summary of existing artifacts, not a new analysis or repair. |
 | Add advisory CI | `ripr init --ci github` | A non-blocking GitHub workflow to review and commit. |
 | Diagnose setup | `ripr doctor` | Tooling and configuration checks with recovery guidance. Not required before every run. |
+| Record result usefulness | `ripr feedback record` | Local receipt bound to a snapshot; diagnostics, classification, baselines, suppressions, gates, and gap closure stay unchanged. |
 | Check configuration | `ripr config validate` | Validation of `ripr.toml` without analysis. |
 | Start the LSP sidecar | `ripr lsp --stdio` | Saved-workspace feedback for an LSP client. |
 | Serve MCP status | `ripr mcp --stdio` | [Read-only workspace status](interop/mcp.md), not analysis or execution. |
@@ -73,8 +74,14 @@ establish static improvement or acceptance.
 
 `agent start`, `brief`, `packet`, `verify`, `verify-execute`, `receipt`, and
 `review-summary` remain available for explicit control, compatibility, and
-debugging. Use their help and [Agent workflows](AGENT_WORKFLOWS.md) rather than
+debugging. Use their help and the [LLM operator guide](LLM_OPERATOR_GUIDE.md) rather than
 assembling them as mandatory first-run steps.
+
+`feedback record` and `feedback export` record local usefulness judgments
+against an immutable snapshot and join them onto existing route-quality rows.
+They do not change diagnostics, classification, baselines, suppressions, gates,
+or gap closure, and they do not open a network, editor, LSP, or MCP write
+surface.
 
 ## Drift rule
 

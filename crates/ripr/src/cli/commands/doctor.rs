@@ -63,7 +63,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
     let mut ok = matches!(core_report.status, output::doctor::DoctorStatus::Pass);
     let enabled_languages = enabled_languages(&core_evaluation.config);
     println!("ripr doctor");
-    println!("- root: {}", root.display());
+    println!("- root: {}", output::path::human_path(&root));
     for line in output::doctor_binary::probe_binary_identity().human_lines() {
         println!("{line}");
     }
@@ -82,6 +82,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
     ok &= report_doctor_core_check(core_report, "git_repository");
     report_config_status(&root, core_evaluation.config, &mut ok);
     report_cache_status(&root);
+    report_generated_workflow_status(&root);
     report_detected_languages(&root);
     ok &= add_language_runtime_probes(&root, &enabled_languages, &mut report, true, probe_runtime);
     suggest_preview_language_enablement(&root);
@@ -119,6 +120,9 @@ fn doctor_json(root: &Path, profile: output::doctor::DoctorProfile) -> Result<()
     let enabled_languages = enabled_languages(&evaluation.config);
     let _ =
         add_language_runtime_probes(root, &enabled_languages, &mut report, false, probe_runtime);
+    if let Some(advisory) = generated_workflow_advisory(root) {
+        report.add_advisory_check("generated_workflow", advisory);
+    }
     println!("{}", report.render_json()?);
     output::doctor::doctor_report_result(&report)
 }
@@ -323,11 +327,11 @@ fn add_language_runtime_probes<F>(
     mut probe: F,
 ) -> bool
 where
-    F: FnMut(&str, bool) -> (output::doctor::DoctorStatus, String),
+    F: FnMut(&str) -> (output::doctor::DoctorStatus, String),
 {
     let mut ok = true;
     for (language, tool, hint) in language_runtime_probes_for(root, enabled) {
-        let (status, evidence) = probe(tool, tool == "yarn");
+        let (status, evidence) = probe(tool);
         // A language runtime is an analysis capability, not a prerequisite
         // for building RIPR from source: the source-build profile keeps the
         // probe visible but never lets it decide that profile's status.
@@ -344,14 +348,12 @@ where
     ok
 }
 
-fn probe_runtime(tool: &str, isolated: bool) -> (output::doctor::DoctorStatus, String) {
-    // yarn loads project config on --version; probe it isolated so a
-    // hostile checkout cannot execute code via doctor (#2183 review).
-    if isolated {
-        output::doctor::doctor_tool_check_isolated(tool)
-    } else {
-        output::doctor::doctor_tool_check(tool)
-    }
+fn probe_runtime(tool: &str) -> (output::doctor::DoctorStatus, String) {
+    // Probe every runtime outside the checkout. yarn loads project config on
+    // --version (#2183 review), and pnpm fetches and runs the release a
+    // project `packageManager` names; version managers read project files too.
+    // A hostile checkout must not choose what doctor executes.
+    output::doctor::doctor_tool_check_isolated(tool)
 }
 
 fn runtime_probe_is_required(language: &str, tool: &str, enabled: &[LanguageId]) -> bool {
@@ -362,21 +364,41 @@ fn runtime_probe_is_required(language: &str, tool: &str, enabled: &[LanguageId])
         && enabled.iter().any(|id| id.as_str() == language)
 }
 
-const PRIMARY_RUNTIME_PROBES: &[(&str, &str, &str)] = &[
-    ("typescript", "node", "install Node.js"),
-    ("javascript", "node", "install Node.js"),
-    (
-        "python",
-        "python3",
-        "install python3 (e.g. apt install python3)",
-    ),
-];
+/// The primary runtime probe per language. Python's command name and install
+/// hint depend on the host ([`python_runtime_for_os`]).
+fn primary_runtime_probes() -> [(&'static str, &'static str, &'static str); 3] {
+    let (python_tool, python_hint) = python_runtime_for_os(std::env::consts::OS);
+    [
+        ("typescript", "node", "install Node.js"),
+        ("javascript", "node", "install Node.js"),
+        ("python", python_tool, python_hint),
+    ]
+}
+
+/// The Python command doctor probes and the install hint it prints, for a
+/// host OS name as `std::env::consts::OS` spells it (#4378). Pure so every
+/// host's answer is testable from any host.
+///
+/// The python.org and winget installers put `python` (not `python3`) on a
+/// Windows PATH, and `apt` does not exist there, so Windows probes `python`
+/// with a Windows install route. RIPR never runs the interpreter itself; the
+/// probe only tells a user whether their Python verify route can start.
+fn python_runtime_for_os(os: &str) -> (&'static str, &'static str) {
+    match os {
+        "windows" => (
+            "python",
+            "install Python and put `python` on PATH (e.g. winget install Python.Python.3.13)",
+        ),
+        "macos" => ("python3", "install python3 (e.g. brew install python)"),
+        _ => ("python3", "install python3 (e.g. apt install python3)"),
+    }
+}
 
 fn primary_runtime(language: &str) -> Option<(&'static str, &'static str)> {
-    PRIMARY_RUNTIME_PROBES
-        .iter()
+    primary_runtime_probes()
+        .into_iter()
         .find(|(candidate, _, _)| *candidate == language)
-        .map(|(_, tool, hint)| (*tool, *hint))
+        .map(|(_, tool, hint)| (tool, hint))
 }
 
 fn language_runtime_probes_for(
@@ -392,12 +414,12 @@ fn append_missing_primary_runtime_probes(
     probes: &mut Vec<(&'static str, &'static str, &'static str)>,
     enabled: &[LanguageId],
 ) {
-    for (language, tool, hint) in PRIMARY_RUNTIME_PROBES {
-        let enabled_language = enabled.iter().any(|id| id.as_str() == *language);
+    for (language, tool, hint) in primary_runtime_probes() {
+        let enabled_language = enabled.iter().any(|id| id.as_str() == language);
         if enabled_language
             && !probes
                 .iter()
-                .any(|(found, detected_tool, _)| *found == *language && *detected_tool == *tool)
+                .any(|(found, detected_tool, _)| *found == language && *detected_tool == tool)
         {
             probes.push((language, tool, hint));
         }
@@ -440,11 +462,8 @@ fn language_runtime_probes(root: &Path) -> Vec<(&'static str, &'static str, &'st
     let detected = detect_languages(root);
     let mut probes: Vec<(&str, &str, &str)> = Vec::new();
     if detected.contains(&LanguageId::Python) {
-        probes.push((
-            "python",
-            "python3",
-            "install python3 (e.g. apt install python3)",
-        ));
+        let (python_tool, python_hint) = python_runtime_for_os(std::env::consts::OS);
+        probes.push(("python", python_tool, python_hint));
         // Reuse the shared framework detector (#2183 review) — no parallel
         // marker list. Gated behind lang-python: the detector lives in the
         // Python adapter which is not compiled under --no-default-features
@@ -488,24 +507,59 @@ fn language_runtime_probes(root: &Path) -> Vec<(&'static str, &'static str, &'st
 /// false for the detected language. If no markers are found, prints
 /// `none detected` rather than claiming any language.
 fn report_detected_languages(root: &Path) {
-    let detected = detect_languages(root);
-    if detected.is_empty() {
-        println!("- Detected languages: none detected");
-        return;
+    for line in detected_languages_lines(
+        &detect_languages(root),
+        &crate::analysis::workspace_unanalyzed_source_languages(root),
+    ) {
+        println!("{line}");
     }
-    let entries: Vec<String> = detected
+}
+
+/// The detected-languages line, followed by the unanalyzed-languages line
+/// whenever such source exists: a mixed Rust and Go workspace needs the Go
+/// half named as much as a Go-only one does.
+fn detected_languages_lines(
+    detected: &[LanguageId],
+    unanalyzed: &[(&'static str, usize)],
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    if detected.is_empty() {
+        lines.push("- Detected languages: none detected".to_string());
+    } else {
+        let entries: Vec<String> = detected
+            .iter()
+            .map(|id| {
+                let tier = language_status(*id).as_str().to_string();
+                let available = id.is_available();
+                if available {
+                    format!("{} ({})", id.as_str(), tier)
+                } else {
+                    format!("{} ({}) [adapter not compiled]", id.as_str(), tier)
+                }
+            })
+            .collect();
+        lines.push(format!("- Detected languages: {}", entries.join(", ")));
+    }
+    lines.extend(unanalyzed_languages_line(unanalyzed));
+    lines
+}
+
+/// Names source ripr cannot analyze, so a Go or Java repository is told why
+/// `ripr check` will find nothing instead of being sent there as the
+/// recommended first command, and a mixed workspace learns which half is
+/// reported as not analyzed.
+fn unanalyzed_languages_line(unanalyzed: &[(&'static str, usize)]) -> Option<String> {
+    if unanalyzed.is_empty() {
+        return None;
+    }
+    let found = unanalyzed
         .iter()
-        .map(|id| {
-            let tier = language_status(*id).as_str().to_string();
-            let available = id.is_available();
-            if available {
-                format!("{} ({})", id.as_str(), tier)
-            } else {
-                format!("{} ({}) [adapter not compiled]", id.as_str(), tier)
-            }
-        })
-        .collect();
-    println!("- Detected languages: {}", entries.join(", "));
+        .map(|(language, count)| format!("{language} ({count} file(s))"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "~ Unanalyzed languages: {found}; ripr analyzes Rust, plus TypeScript/JavaScript and Python as previews, so changes to this source are reported as not analyzed, never as clean"
+    ))
 }
 
 /// When a preview language is detected in `root` but is not yet enabled in
@@ -701,6 +755,16 @@ fn is_skipped_walk_dir(path: &Path) -> bool {
     name.starts_with('.') || matches!(name, "target" | "node_modules" | "blib")
 }
 
+/// True for a real directory entry. `DirEntry::file_type` does not follow
+/// symlinks, so a `src/loop -> .` link cannot send doctor's walks into an
+/// unbounded descent (the other workspace walkers already skip links). An
+/// entry whose type cannot be read is not descended. Non-directory entries
+/// are counted only when `Path::is_file` holds, so a directory link named
+/// `x.pm` is neither descended nor counted as a Perl file.
+fn is_walkable_dir(entry: &std::fs::DirEntry) -> bool {
+    entry.file_type().is_ok_and(|kind| kind.is_dir())
+}
+
 /// True when the workspace has a CPAN build marker or any `.pm`, `.pl` or
 /// `.t` file outside skipped directories. One walk that stops at the first
 /// hit; `detect_languages` and the Perl preview share this definition.
@@ -711,13 +775,14 @@ fn perl_project_detected(root: &Path) -> bool {
         };
         entries.flatten().any(|entry| {
             let path = entry.path();
-            if path.is_dir() {
+            if is_walkable_dir(&entry) {
                 !is_skipped_walk_dir(&path) && any_perl_file(&path)
             } else {
-                matches!(
-                    path.extension().and_then(|e| e.to_str()),
-                    Some("pm" | "pl" | "t")
-                )
+                path.is_file()
+                    && matches!(
+                        path.extension().and_then(|e| e.to_str()),
+                        Some("pm" | "pl" | "t")
+                    )
             }
         })
     }
@@ -732,12 +797,12 @@ fn count_files(root: &Path, ext: &str) -> usize {
         let mut n = 0;
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
+            if is_walkable_dir(&entry) {
                 if is_skipped_walk_dir(&path) {
                     continue;
                 }
                 n += count_recursive(&path, ext);
-            } else if path.extension().and_then(|e| e.to_str()) == Some(ext) {
+            } else if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some(ext) {
                 n += 1;
             }
         }
@@ -841,6 +906,16 @@ fn report_perl_preview(root: &Path) {
     // the managed `ripr-facts` subcommand. A binary that only answers
     // `--version` (for example the published perllsp LSP server) is reported
     // as found-but-incompatible, never as a working exporter.
+    if let Some(refused) = crate::config::load_for_root(root)
+        .ok()
+        .and_then(|config| config.perl().refused_executable().map(Path::to_path_buf))
+    {
+        println!(
+            "  executable: ignoring [perl].executable `{}` from ripr.toml (not run); set {}=1 to trust it",
+            refused.display(),
+            crate::config::PERL_EXECUTABLE_OPT_IN_ENV
+        );
+    }
     let exporter = probe_perl_exporter(root);
     for line in perl_exporter_lines(&exporter) {
         println!("  {line}");
@@ -938,6 +1013,9 @@ fn probe_perl_exporter(root: &Path) -> PerlExporterProbe {
     let config = crate::config::load_for_root(root).ok();
     let timeout =
         std::time::Duration::from_millis(config.as_ref().map_or(30_000, |c| c.perl().timeout_ms()));
+    // `[perl].executable` from ripr.toml is only probed when the user opts
+    // in (see `PerlConfig::executable`); doctor is usually the first command
+    // run in a fresh clone and must not execute a repository-chosen program.
     let explicit = config
         .as_ref()
         .and_then(|c| c.perl().executable().map(|p| p.display().to_string()));
@@ -1025,8 +1103,9 @@ fn perl_exporter_lines(exporter: &PerlExporterProbe) -> Vec<String> {
             ),
         ],
         PerlExporterProbe::NotFound => vec![format!(
-            "exporter: NOT found (expected `{}` or a `perllsp` wrapper on PATH, or [perl].executable); `{}` is not yet published",
+            "exporter: NOT found (expected `{}` or a `perllsp` wrapper on PATH, or [perl].executable with {}=1); `{}` is not yet published",
             crate::domain::PERL_FACT_EXPORTER,
+            crate::config::PERL_EXECUTABLE_OPT_IN_ENV,
             crate::domain::PERL_FACT_EXPORTER
         )],
     }
@@ -1143,8 +1222,9 @@ fn perl_next_command(
     } else if managed {
         // Managed mode configured but no compatible producer.
         format!(
-            "install a compatible Perl fact exporter (`{}`, not yet published) on PATH or set [perl].executable, and add \"perl\" to [languages] enabled in ripr.toml, then: ripr check",
-            crate::domain::PERL_FACT_EXPORTER
+            "install a compatible Perl fact exporter (`{}`, not yet published) on PATH, or set [perl].executable and {}=1, and add \"perl\" to [languages] enabled in ripr.toml, then: ripr check",
+            crate::domain::PERL_FACT_EXPORTER,
+            crate::config::PERL_EXECUTABLE_OPT_IN_ENV
         )
     } else {
         // Explicit packet mode (or producer absent): supply --perl-facts.
@@ -1193,12 +1273,72 @@ fn report_cache_status(root: &Path) {
     if relocated {
         println!(
             "- Cache location: {} (RIPR_CACHE_DIR active)",
-            cache_dir.display()
+            output::path::human_path(&cache_dir)
         );
     } else {
-        println!("- Cache location: {}", cache_dir.display());
+        println!("- Cache location: {}", output::path::human_path(&cache_dir));
     }
     println!("- Cache size: {size_display} (run `ripr cache status` for details)");
+}
+
+const GENERATED_WORKFLOW_PATH: &str = ".github/workflows/ripr.yml";
+
+/// Largest generated workflow doctor reads. The template is a few KiB; a
+/// bigger file is not one `ripr init` wrote.
+const GENERATED_WORKFLOW_MAX_BYTES: u64 = 1024 * 1024;
+
+/// Flags a `ripr init --ci github` workflow generated by another ripr
+/// version (#4738). The 0.10-and-earlier template installed ripr unpinned,
+/// so after a release CI ran the new binary against the old steps; later
+/// templates pin the generating version. Advisory only: a stale template is
+/// not a failed check. It recognizes the template's own `cargo install ripr`
+/// step, not every way a hand-written workflow could install ripr.
+fn generated_workflow_advisory(root: &Path) -> Option<String> {
+    let path = root.join(GENERATED_WORKFLOW_PATH);
+    // A repository can commit this path as a symlink (to `/dev/zero`, say);
+    // `ripr init` only ever writes a regular file, so read nothing else.
+    if !std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file()) {
+        return None;
+    }
+    let workflow =
+        crate::bounded_input::read_to_string_with_limit(&path, GENERATED_WORKFLOW_MAX_BYTES)
+            .ok()?;
+    generated_workflow_line(&workflow, env!("CARGO_PKG_VERSION"))
+}
+
+fn report_generated_workflow_status(root: &Path) {
+    if let Some(advisory) = generated_workflow_advisory(root) {
+        println!("~ Generated workflow: {advisory}");
+    }
+}
+
+fn generated_workflow_line(workflow: &str, current_version: &str) -> Option<String> {
+    let install = workflow.lines().find_map(|line| {
+        let command = line.trim().trim_start_matches("run:").trim();
+        let rest = command.strip_prefix("cargo install ripr")?;
+        (rest.is_empty() || rest.starts_with(char::is_whitespace)).then_some(rest)
+    })?;
+    let words: Vec<&str> = install.split_whitespace().collect();
+    let pinned = words
+        .windows(2)
+        .find(|pair| pair[0] == "--version")
+        .map(|pair| pair[1])
+        .or_else(|| {
+            words
+                .iter()
+                .find_map(|word| word.strip_prefix("--version="))
+        });
+    let refresh =
+        "refresh it with `ripr init --ci github --force` and review the diff before committing";
+    match pinned {
+        None => Some(format!(
+            "{GENERATED_WORKFLOW_PATH} installs ripr without a version (the ripr 0.10-and-earlier template), so CI runs whatever release is newest against these steps; {refresh}"
+        )),
+        Some(version) if version.trim_start_matches('=') != current_version => Some(format!(
+            "{GENERATED_WORKFLOW_PATH} installs ripr {version}, but this is ripr {current_version}; {refresh}"
+        )),
+        Some(_) => None,
+    }
 }
 
 /// Recursively sum file sizes under `dir`. Returns 0 when the directory
@@ -1210,10 +1350,9 @@ fn dir_size_bytes(dir: &Path) -> u64 {
     };
     let mut total: u64 = 0;
     for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            total = total.saturating_add(dir_size_bytes(&path));
-        } else if let Ok(meta) = std::fs::metadata(&path) {
+        if is_walkable_dir(&entry) {
+            total = total.saturating_add(dir_size_bytes(&entry.path()));
+        } else if let Ok(meta) = entry.metadata() {
             total = total.saturating_add(meta.len());
         }
     }
@@ -1242,7 +1381,7 @@ fn report_config_status(root: &Path, config: Result<RiprConfig, String>, ok: &mu
             match config.source_path() {
                 Some(path) => {
                     println!("✓ Config: loaded {CONFIG_FILE_NAME}");
-                    println!("- Config path: {}", path.display());
+                    println!("- Config path: {}", output::path::human_path(path));
                 }
                 None => println!("✓ Config: not found; using built-in defaults"),
             }
@@ -1284,7 +1423,10 @@ fn report_config_status(root: &Path, config: Result<RiprConfig, String>, ok: &mu
         }
         Err(err) => {
             println!("! Config: invalid {CONFIG_FILE_NAME}");
-            println!("- Config path: {}", root.join(CONFIG_FILE_NAME).display());
+            println!(
+                "- Config path: {}",
+                output::path::human_path(&root.join(CONFIG_FILE_NAME))
+            );
             println!("  error: {err}");
             *ok = false;
         }
@@ -1295,6 +1437,72 @@ fn report_config_status(root: &Path, config: Result<RiprConfig, String>, ok: &mu
 mod tests {
     use super::super::tests::{args, unique_command_test_dir};
     use super::*;
+
+    #[test]
+    fn generated_workflow_line_flags_unpinned_and_other_version_installs() {
+        // The exact install step `ripr 0.10.0 init --ci github` wrote.
+        let v010 = "      - name: Install ripr\n        run: cargo install ripr --locked\n";
+        let pinned = "      - name: Install ripr\n        run: cargo install ripr --version 0.11.0 --locked\n";
+
+        let unpinned = generated_workflow_line(v010, "0.11.0");
+        assert!(
+            unpinned
+                .as_deref()
+                .is_some_and(|line| line.contains("without a version")
+                    && line.contains("ripr init --ci github --force")),
+            "{unpinned:?}"
+        );
+        let older = generated_workflow_line(pinned, "0.12.0");
+        assert!(
+            older
+                .as_deref()
+                .is_some_and(|line| line.contains("installs ripr 0.11.0, but this is ripr 0.12.0")),
+            "{older:?}"
+        );
+        assert_eq!(generated_workflow_line(pinned, "0.11.0"), None);
+        assert_eq!(generated_workflow_line("jobs: {}\n", "0.11.0"), None);
+        assert_eq!(
+            generated_workflow_line("        run: cargo install ripr-tools --locked\n", "0.11.0"),
+            None
+        );
+    }
+
+    #[test]
+    fn generated_workflow_advisory_reads_only_a_bounded_regular_file() -> Result<(), String> {
+        let root = unique_command_test_dir("workflow-advisory");
+        let workflows = root.join(".github/workflows");
+        std::fs::create_dir_all(&workflows).map_err(|err| format!("create dir: {err}"))?;
+        let path = root.join(GENERATED_WORKFLOW_PATH);
+        std::fs::write(&path, "        run: cargo install ripr --locked\n")
+            .map_err(|err| format!("write workflow: {err}"))?;
+        let unpinned = generated_workflow_advisory(&root);
+        let mut oversized = "        run: cargo install ripr --locked\n".to_string();
+        oversized.push_str(&"#".repeat(GENERATED_WORKFLOW_MAX_BYTES as usize));
+        std::fs::write(&path, oversized).map_err(|err| format!("write workflow: {err}"))?;
+        let too_big = generated_workflow_advisory(&root);
+        #[cfg(unix)]
+        let through_link = {
+            std::fs::remove_file(&path).map_err(|err| format!("remove workflow: {err}"))?;
+            // A link to a real workflow outside the checkout is still not a
+            // file `ripr init` wrote.
+            let outside = root.join("outside.yml");
+            std::fs::write(&outside, "        run: cargo install ripr --locked\n")
+                .map_err(|err| format!("write outside: {err}"))?;
+            std::os::unix::fs::symlink(&outside, &path).map_err(|err| format!("symlink: {err}"))?;
+            generated_workflow_advisory(&root)
+        };
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+        assert!(
+            unpinned.as_deref().is_some_and(|line| line
+                .starts_with(".github/workflows/ripr.yml installs ripr without a version")),
+            "{unpinned:?}"
+        );
+        assert_eq!(too_big, None);
+        #[cfg(unix)]
+        assert_eq!(through_link, None);
+        Ok(())
+    }
 
     #[test]
     #[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
@@ -1317,7 +1525,8 @@ mod tests {
             .iter()
             .map(|(_, tool, _)| *tool)
             .collect();
-        assert_eq!(tools, vec!["python3", "pytest"]);
+        let host_python = python_runtime_for_os(std::env::consts::OS).0;
+        assert_eq!(tools, vec![host_python, "pytest"]);
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
         let root = unique_command_test_dir("probe-bun");
@@ -1345,7 +1554,7 @@ mod tests {
             .iter()
             .map(|(_, tool, _)| *tool)
             .collect();
-        assert_eq!(tools, vec!["python3"]);
+        assert_eq!(tools, vec![host_python]);
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
         // A JS-only workspace is labeled javascript, not typescript (#2183
@@ -1379,6 +1588,33 @@ mod tests {
     }
 
     #[test]
+    fn unanalyzed_languages_line_names_go_as_not_analyzed() {
+        assert_eq!(unanalyzed_languages_line(&[]), None);
+        let line = unanalyzed_languages_line(&[("Go", 2), ("Shell", 1)]).unwrap_or_default();
+        assert!(
+            line.starts_with("~ Unanalyzed languages: Go (2 file(s)), Shell (1 file(s));"),
+            "{line}"
+        );
+        assert!(line.contains("never as clean"), "{line}");
+
+        // Mixed workspace: the Go half is named beside the detected Rust.
+        let lines = detected_languages_lines(&[LanguageId::Rust], &[("Go", 2)]);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(
+            lines[0].starts_with("- Detected languages: rust"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[1].starts_with("~ Unanalyzed languages: Go (2 file(s))"),
+            "{lines:?}"
+        );
+        let lines = detected_languages_lines(&[], &[("Go", 2)]);
+        assert_eq!(lines[0], "- Detected languages: none detected", "{lines:?}");
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(detected_languages_lines(&[LanguageId::Rust], &[]).len(), 1);
+    }
+
+    #[test]
     fn detect_languages_finds_a_cpan_layout_perl_project() -> Result<(), String> {
         // A module two levels under `lib/` is below the shallow scan, yet
         // the Perl preview counts it; detection must agree, or doctor prints
@@ -1407,6 +1643,41 @@ mod tests {
             assert_eq!(detect_languages(&root), expected, "{name}");
             std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         }
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn perl_walks_do_not_follow_directory_symlink_loops() -> Result<(), String> {
+        // A `src/loop -> .` link made `ripr doctor` descend forever. The Perl
+        // and cache-size walks must terminate, and a `.pm` reachable only
+        // through a link does not count, matching the Rust/Python/TypeScript
+        // walkers.
+        let root = unique_command_test_dir("perl-symlink-loop");
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).map_err(|err| format!("mkdir: {err}"))?;
+        std::os::unix::fs::symlink(".", src.join("loop"))
+            .map_err(|err| format!("symlink: {err}"))?;
+        std::os::unix::fs::symlink("../src", src.join("up"))
+            .map_err(|err| format!("symlink: {err}"))?;
+        assert!(!perl_project_detected(&root));
+        assert_eq!(count_files(&root, "pm"), 0);
+
+        // A directory link whose name ends in `.pm` is not a Perl file.
+        let other = root.join("other");
+        std::fs::create_dir_all(&other).map_err(|err| format!("mkdir: {err}"))?;
+        std::os::unix::fs::symlink("../other", src.join("linked.pm"))
+            .map_err(|err| format!("symlink: {err}"))?;
+        assert!(!perl_project_detected(&root));
+        assert_eq!(count_files(&root, "pm"), 0);
+        // The cache-size walk terminates on the same loops.
+        let size_before = dir_size_bytes(&root);
+
+        std::fs::write(src.join("Real.pm"), "1;\n").map_err(|err| format!("write: {err}"))?;
+        assert!(perl_project_detected(&root));
+        assert_eq!(count_files(&root, "pm"), 1);
+        assert_eq!(dir_size_bytes(&root), size_before + 3);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }
 
@@ -1475,6 +1746,31 @@ mod tests {
         ));
     }
 
+    /// #4378: `ripr doctor` on Windows suggested `apt install python3` and
+    /// failed a host whose installer put `python` (not `python3`) on PATH.
+    #[test]
+    fn python_runtime_probe_and_hint_follow_the_host() {
+        let (windows_tool, windows_hint) = python_runtime_for_os("windows");
+        assert_eq!(windows_tool, "python");
+        assert!(windows_hint.contains("winget install"), "{windows_hint}");
+        assert!(!windows_hint.contains("apt"), "{windows_hint}");
+
+        let (macos_tool, macos_hint) = python_runtime_for_os("macos");
+        assert_eq!(macos_tool, "python3");
+        assert!(macos_hint.contains("brew install"), "{macos_hint}");
+        assert!(!macos_hint.contains("apt"), "{macos_hint}");
+
+        assert_eq!(
+            python_runtime_for_os("linux"),
+            ("python3", "install python3 (e.g. apt install python3)")
+        );
+
+        // The configured-language probe and the detected-language probe use
+        // the same host answer, so a Windows root is never probed twice.
+        let host = python_runtime_for_os(std::env::consts::OS);
+        assert_eq!(primary_runtime("python"), Some(host));
+    }
+
     #[test]
     fn language_runtime_probe_line_names_labels_evidence_and_hint() {
         // #2183 review: the emitted contract is pinned, not just the list.
@@ -1513,7 +1809,7 @@ mod tests {
             &[LanguageId::TypeScript],
             &mut required_report,
             false,
-            |tool, _isolated| {
+            |tool| {
                 if tool == "node" {
                     (
                         output::doctor::DoctorStatus::Fail,
@@ -1546,7 +1842,7 @@ mod tests {
             &[LanguageId::Rust],
             &mut optional_report,
             false,
-            |tool, _isolated| {
+            |tool| {
                 if tool == "node" {
                     (
                         output::doctor::DoctorStatus::Fail,
@@ -1584,7 +1880,7 @@ mod tests {
             &[LanguageId::Python],
             &mut configured_only_report,
             false,
-            |tool, _isolated| {
+            |tool| {
                 (
                     output::doctor::DoctorStatus::Fail,
                     format!("{tool} not available"),
@@ -1596,7 +1892,8 @@ mod tests {
             configured_only_report
                 .runtime_probes
                 .iter()
-                .any(|probe| probe.language == "python" && probe.tool == "python3")
+                .any(|probe| probe.language == "python"
+                    && probe.tool == python_runtime_for_os(std::env::consts::OS).0)
         );
         std::fs::remove_dir_all(&configured_only_root)
             .map_err(|err| format!("remove configured-only root: {err}"))?;
@@ -1614,7 +1911,7 @@ mod tests {
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
         std::fs::write(root.join("package.json"), "{}")
             .map_err(|err| format!("write package marker: {err}"))?;
-        let missing_node = |tool: &str, _isolated: bool| {
+        let missing_node = |tool: &str| {
             if tool == "node" {
                 (
                     output::doctor::DoctorStatus::Fail,
@@ -1746,6 +2043,12 @@ mod tests {
         assert!(managed.ends_with("then: ripr check"));
         let unpublished = perl_next_command(true, Some("perllsp"), None);
         assert!(unpublished.ends_with("then: ripr check"));
+        // A repo `[perl].executable` is ignored without the user opt-in, so
+        // recommending it must name the opt-in.
+        assert!(
+            unpublished.contains("set [perl].executable and RIPR_ALLOW_REPO_PERL_EXECUTABLE=1"),
+            "{unpublished}"
+        );
         // The packet-mode branch is unchanged.
         let packet = perl_next_command(true, None, None);
         assert!(packet.contains("--perl-facts"));

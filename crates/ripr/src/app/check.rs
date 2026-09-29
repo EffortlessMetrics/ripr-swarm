@@ -93,6 +93,7 @@ pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
             partial_scope: None,
             // No analysis ran, so no loader chose a base (#3940).
             effective_base: None,
+            uncommitted_source_paths: Vec::new(),
         },
     )
 }
@@ -220,15 +221,8 @@ fn apply_suppression_policy(output: &mut CheckOutput, policy: &Path) -> Result<(
     };
     let entries = sup::load_check_suppression_policy(&resolved)?;
     let today = sup::current_iso_date();
-    let candidates: Vec<sup::CheckSuppressionCandidate> = output
-        .findings
-        .iter()
-        .map(|finding| sup::CheckSuppressionCandidate {
-            finding_id: finding.id.clone(),
-            path: sup::root_relative_finding_path(&output.root, &finding.probe.location.file),
-            class: finding.class.as_str().to_string(),
-        })
-        .collect();
+    let candidates =
+        sup::CheckSuppressionCandidate::for_findings(&output.root, &output.findings, &entries);
     let (matched, warnings) = sup::apply_check_suppressions(&candidates, &entries, &today);
 
     let mut suppressed = Vec::new();
@@ -324,6 +318,17 @@ fn perl_facts_export_argv(
 #[allow(dead_code, reason = "retained for future content-keyed cache reuse")]
 const PERL_FACTS_MAX_AGE_SECS: u64 = 86_400;
 
+/// The Perl facts cache directory under the analyzed root. Config validation
+/// keeps `[perl].cache_dir` repository-relative; joining it to the root (not
+/// the process directory) keeps `--root <checkout>` from writing elsewhere.
+fn perl_facts_cache_dir(perl_config: &crate::config::PerlConfig, root: &Path) -> PathBuf {
+    root.join(
+        perl_config
+            .cache_dir()
+            .unwrap_or_else(|| Path::new("target/ripr/perl-facts")),
+    )
+}
+
 /// Invoke a Perl facts exporter to generate a fact packet.
 ///
 /// Managed producer mode (Campaign 31 Phase D #1407; hardened in item 4).
@@ -341,15 +346,20 @@ fn invoke_perl_lsp_producer(
     perl_config: &crate::config::PerlConfig,
     input: &CheckInput,
 ) -> Result<PathBuf, String> {
+    if let Some(refused) = perl_config.refused_executable() {
+        eprintln!(
+            "warning: ignoring [perl].executable `{}` from ripr.toml: repository config cannot choose a program for ripr to run; set {}=1 to trust it. Using `{}` from PATH instead.",
+            refused.display(),
+            crate::config::PERL_EXECUTABLE_OPT_IN_ENV,
+            default_executable_for_producer(perl_config.producer()).display()
+        );
+    }
     let executable = perl_config
         .executable()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| default_executable_for_producer(perl_config.producer()));
 
-    let cache_dir = perl_config
-        .cache_dir()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("target/ripr/perl-facts"));
+    let cache_dir = perl_facts_cache_dir(perl_config, &input.root);
 
     std::fs::create_dir_all(&cache_dir)
         .map_err(|e| format!("failed to create Perl facts cache dir: {e}"))?;
@@ -545,6 +555,23 @@ fn simple_hash(s: &str) -> u64 {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn perl_facts_cache_dir_resolves_under_the_analyzed_root() {
+        let root = Path::new("checkout");
+        let configured = crate::config::PerlConfig {
+            cache_dir: Some(PathBuf::from(".ssh")),
+            ..crate::config::PerlConfig::default()
+        };
+        assert_eq!(
+            perl_facts_cache_dir(&configured, root),
+            Path::new("checkout/.ssh")
+        );
+        assert_eq!(
+            perl_facts_cache_dir(&crate::config::PerlConfig::default(), root),
+            Path::new("checkout/target/ripr/perl-facts")
+        );
+    }
     use super::*;
     use crate::app::{Mode, OutputFormat};
     use std::path::PathBuf;
@@ -705,6 +732,7 @@ mod tests {
             language_runs: Vec::new(),
             partial_scope: None,
             effective_base,
+            uncommitted_source_paths: Vec::new(),
         }
     }
 

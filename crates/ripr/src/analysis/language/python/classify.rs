@@ -2,7 +2,8 @@ use super::boundary::{BoundaryActivation, python_boundary_evidence};
 use super::discriminators::python_missing_discriminators;
 use super::no_behavior::{
     changed_default_overridden_params, format_param_name_list, is_annotation_only_def_change,
-    is_annotation_only_var_change, is_python_no_behavior_line,
+    is_annotation_only_var_change, is_new_def_header_without_defaults, is_python_no_behavior_line,
+    is_structural_def_header_text,
 };
 use super::probe_shape::{
     canonical_python_gap_for, classify_probe_shape, python_flow_sink_for,
@@ -13,7 +14,7 @@ use super::related_tests::{
     verify_command_for_test,
 };
 use super::sink_alignment::{SinkAlignment, classify_sink_alignment_with_old};
-use super::static_limits::static_limit_for_change;
+use super::static_limits::{implicit_dunder_dispatch_limit, static_limit_for_change};
 use super::{
     PythonOracleShape, PythonOwner, PythonTest, fingerprint_probe_id, normalize_expression,
     owner_for_changed_line, python_recommended_next_step, python_weak_missing_summary,
@@ -64,6 +65,12 @@ pub(super) fn classify_change_with_old(
 pub(super) struct PythonNoBehaviorContext {
     pub(super) new_line_in_docstring: bool,
     pub(super) old_line_in_docstring: bool,
+    /// The changed line is the first line of its enclosing owner, and that
+    /// owner's span carries at least one other added behavior line.
+    pub(super) opens_owner_with_added_body: bool,
+    /// The changed line only names parameters or opens/closes a multi-line
+    /// `def` header (`no_behavior::multi_line_def_header_span`).
+    pub(super) structural_def_header_line: bool,
 }
 
 /// Classify a change from producer-owned owner, relation, and oracle facts.
@@ -89,6 +96,15 @@ pub(super) fn classify_change_with_context(
     if new_is_noop && old_is_noop {
         return None;
     }
+    // Structural `def`-header guard: `self,`, `key,`, `):` inside a
+    // multi-line header carry no behavior of their own (cachetools c0fdf6a
+    // probed nine such lines of a reflowed `__setitem__` signature). A paired
+    // old line must be structural too, so `key=None,` -> `key,` keeps its probe.
+    if no_behavior.structural_def_header_line
+        && old_line_text.is_none_or(is_structural_def_header_text)
+    {
+        return None;
+    }
     // Annotation-only `def`-header guard (#1289): Python does not enforce type
     // annotations at runtime, so a `def` change that touches only parameter/return
     // annotations — leaving the callable's runtime signature (name, parameter names
@@ -98,6 +114,18 @@ pub(super) fn classify_change_with_context(
     // beyond an annotation differs (e.g. a default-value change, which IS behavioral).
     if let Some(old) = old_line_text
         && is_annotation_only_def_change(old, line_text)
+    {
+        return None;
+    }
+    // New-declaration guard: an unpaired `def` header that opens a NEW owner
+    // whose body carries its own added lines has no behavior of its own — the
+    // body lines are the probes. Crediting `exposed` here would claim a
+    // discriminator for a line with nothing to discriminate. Fails closed on a
+    // changed header (paired old line), a default value (runtime behavior), a
+    // one-line `def f(x): return x`, and a multi-line header.
+    if old_line_text.is_none()
+        && no_behavior.opens_owner_with_added_body
+        && is_new_def_header_without_defaults(line_text)
     {
         return None;
     }
@@ -122,7 +150,8 @@ pub(super) fn classify_change_with_context(
     let related = find_related_tests(owner, all_tests);
     let alignment =
         classify_sink_alignment_with_old(owner, line_text, old_line_text, &related, all_tests);
-    let static_limit = static_limit_for_change(line_text, owner, &related_candidates);
+    let static_limit = static_limit_for_change(line_text, owner, &related_candidates)
+        .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates));
     let (family, delta) = classify_probe_shape(line_text);
     let has_oracle_eligible_relation = related_candidates
         .iter()

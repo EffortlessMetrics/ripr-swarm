@@ -61,6 +61,46 @@ pub(crate) const MANUAL_VERIFY_LABEL: &str = "Manual verify without a repair att
 pub(crate) const MANUAL_RECEIPT_LABEL: &str =
     "Manual receipt without a repair attempt (after the manual verify)";
 
+/// Label for the line that follows a receipt command recording `not_run`.
+pub(crate) const RECEIPT_STATUS_LABEL: &str = "Receipt status";
+/// What to pass as `--status` once verify has run. The printed receipt
+/// command records `--status not_run` so it stays runnable and true as
+/// printed; only the reader knows the verify outcome, so the line names the
+/// values that carry it instead of the command claiming one.
+pub(crate) const RECEIPT_STATUS_STEP: &str = "the command records `--status not_run` as printed; after the verify command runs, change it to `--status passed` if verify exited 0 or `--status failed` if it did not.";
+
+/// Label for the command that re-checks the selected gap's static evidence
+/// after verify, on the check-output route that has no repair after phase.
+pub(crate) const STATIC_RECHECK_LABEL: &str = "Static re-check after verify";
+/// Label for the line that says what the receipt does not show.
+pub(crate) const RECEIPT_BOUNDARY_LABEL: &str = "Receipt boundary";
+/// A `ripr receipt write` receipt records the verify status it is given and
+/// nothing else, so nothing on that route shows whether the gap moved (MCP
+/// agent walk, 2026-09-29). The static re-check reads the uncommitted test
+/// edit and compares it with the check report the gap came from.
+pub(crate) const RECEIPT_BOUNDARY_STEP: &str = "the receipt records the verify status you pass; it does not re-check the gap. The static re-check reads the test edit even before it is committed (`--worktree`) and compares it with the check report this gap came from; find this gap's line: under `Moved` or `Removed` its static evidence changed, under `Unchanged` it did not. Static movement is not a runtime or mutation result.";
+
+/// The `Receipt status` step for a receipt command that records `not_run`,
+/// `None` for any other command (a `ripr outcome` receipt, or one that already
+/// carries an outcome).
+pub(crate) fn receipt_status_step(receipt_command: &str) -> Option<&'static str> {
+    let words = ripr_command_words(receipt_command)?;
+    (is_receipt_write(&words) && ripr_flag_value(&words, "--status") == Some("not_run"))
+        .then_some(RECEIPT_STATUS_STEP)
+}
+
+/// Whether `command` is `ripr receipt write`, whose receipt records the
+/// verify status it is given and re-checks nothing; a `ripr outcome` receipt
+/// compares snapshots itself.
+fn is_receipt_write_command(command: &str) -> bool {
+    ripr_command_words(command).is_some_and(|words| is_receipt_write(&words))
+}
+
+fn is_receipt_write(words: &[(String, bool)]) -> bool {
+    words.get(1).map(|(word, _)| word.as_str()) == Some("receipt")
+        && words.get(2).map(|(word, _)| word.as_str()) == Some("write")
+}
+
 /// The one selector for the low-level verify and receipt labels (#3906).
 ///
 /// With a carried repair start, its after phase runs verify and writes the
@@ -168,7 +208,9 @@ fn omitted_base_resolution(
 /// `parse_options` and before any filesystem write.
 fn print_side_effect_disclosure(options: &FirstPrOptions) {
     println!("ripr first-pr - side effects and cost disclosure");
-    println!("  cost class:      varies with diff and workspace size");
+    // first-pr composes existing artifacts; it runs no analysis, so it has
+    // no analysis cache or diff-sized runtime to disclose.
+    println!("  cost class:      artifact composition only; runs no analysis");
     if options.check {
         println!("  writes to:       none (--check validates an existing start-here packet)");
     } else {
@@ -177,10 +219,10 @@ fn print_side_effect_disclosure(options: &FirstPrOptions) {
             options.out_dir.trim_end_matches('/')
         );
     }
-    println!("  cache location:  target/ripr/cache/");
-    println!("  git reads:       yes (diff between base and head)");
+    println!("  cache location:  none");
+    println!("  git reads:       yes (base and head preflight)");
     println!("  network:         none");
-    println!("  runtime hint:    seconds on typical diffs; minutes on large diffs\n");
+    println!("  runtime hint:    seconds\n");
 }
 
 fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
@@ -198,8 +240,7 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
         None => render_start_here_packet(&root, options),
     };
     let out_dir = resolve_path(output_root, &options.out_dir);
-    fs::create_dir_all(&out_dir)
-        .map_err(|err| format!("failed to create {}: {err}", out_dir.display()))?;
+    crate::output::file_write::create_output_dir(&out_dir, "--out-dir")?;
     let json_path = out_dir.join(START_HERE_JSON);
     let markdown_path = out_dir.join(START_HERE_MD);
     let json_text = serde_json::to_string_pretty(&packet)
@@ -541,7 +582,7 @@ fn materialize_check_output_gap_ledger(
             check_output_path.display()
         )
     })?;
-    let report = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(
+    let mut report = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(
         crate::output::gap_decision_ledger::GapDecisionLedgerInput {
             root: options.root.clone(),
             generated_at: "first-pr-check-output".to_string(),
@@ -551,6 +592,10 @@ fn materialize_check_output_gap_ledger(
             records_json: Ok(contents),
         },
     );
+    crate::output::gap_decision_ledger::stamp_gap_decision_ledger_source_subject(
+        &mut report,
+        root,
+    )?;
     let json = crate::output::gap_decision_ledger::render_gap_decision_ledger_json(&report)?;
     let markdown = crate::output::gap_decision_ledger::render_gap_decision_ledger_markdown(&report);
     let gap_ledger_path = resolve_path(root, &options.gap_ledger);
@@ -647,6 +692,28 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
         if detect_python_project(root) || detect_typescript_project(root) {
             return None;
         }
+        // A Go or Java repository is the right root; sending it to `--root`
+        // and doctor loops. Name the languages ripr cannot analyze instead.
+        // Rust or preview source below the root (a nested crate) means the
+        // root really is wrong, so that case keeps `wrong_root`.
+        let analyzable_below = !crate::analysis::workspace_rust_files(root).is_empty()
+            || !crate::analysis::workspace_preview_language_files(root).is_empty();
+        let unanalyzed = crate::analysis::workspace_unanalyzed_source_languages(root);
+        if !analyzable_below && !unanalyzed.is_empty() {
+            let found = unanalyzed
+                .iter()
+                .map(|(language, count)| format!("{language} ({count} file(s))"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Some(Selection::no_action(
+                "no_action",
+                format!(
+                    "The first-pr root `{}` has {found} source and no Rust, Python or TypeScript project. ripr does not analyze these languages, so there is no gap to assign; review their changes with their own tests.",
+                    options.root
+                ),
+                0,
+            ));
+        }
         return Some(Selection::blocked(
             "wrong_root",
             format!(
@@ -733,6 +800,26 @@ fn git_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Selec
     }
 
     if let Err(message) = git_diff_range_valid(root, &options.base, &options.head) {
+        // #4538: a range with no merge base names its cause (shallow clone or
+        // unrelated histories) like `ripr check` does, and a shallow clone's
+        // next command is the unshallow repair, not the same failing diff.
+        if message.contains("no merge base") {
+            let (diagnosis, shallow) =
+                crate::analysis::no_merge_base_diagnosis(root, &options.base, &options.head, None);
+            let command = if shallow {
+                unshallow_command(options)
+            } else {
+                diff_range_command(options)
+            };
+            return Some(Selection::blocked(
+                "blocked_artifact",
+                format!(
+                    "The first-pr diff range `{}...{}` has no merge base: {diagnosis}",
+                    options.base, options.head
+                ),
+                Some(command),
+            ));
+        }
         return Some(Selection::blocked(
             "blocked_artifact",
             format!(
@@ -843,6 +930,9 @@ impl Selection {
                 // editor's first-pr projection fails the whole packet closed on
                 // a `commands` value outside its allowlist, and `agent repair`
                 // is not on it.
+                // The carried analysis-outcome step also stays in selected
+                // metadata and Markdown: `ripr check` is outside that editor
+                // allowlist. Do not make an otherwise usable packet unsafe.
                 commands.insert(
                     "verify".to_string(),
                     Value::String(top_gap.verify_command.clone()),
@@ -946,6 +1036,7 @@ struct TopGapSelection {
     anchor_line: Option<u64>,
     anchor_owner: Option<String>,
     dedupe_fingerprint: Option<String>,
+    analysis_outcome_command: Option<String>,
     verify_command: String,
     receipt_command: String,
     /// `None` for a review-card selection: its carried receipt command names
@@ -962,6 +1053,11 @@ struct TopGapSelection {
     /// (#3906). Ledger selections never carry one: first-pr does not build
     /// `agent repair` from a gap id, probe id, or seam id.
     repair_command: Option<String>,
+    /// The static re-check after verify on the check-output route: rerun
+    /// check over the working tree and compare it with the check report the
+    /// gap came from. `None` when that report is absent or a repair start
+    /// carries its own after phase.
+    static_recheck_command: Option<String>,
 }
 
 impl TopGapSelection {
@@ -1006,6 +1102,12 @@ impl TopGapSelection {
         // selections keep their existing shape.
         if let Some(command) = &self.repair_command {
             value["repair_command"] = Value::String(command.clone());
+        }
+        if let Some(command) = &self.analysis_outcome_command {
+            value["analysis_outcome_command"] = Value::String(command.clone());
+        }
+        if let Some(command) = &self.static_recheck_command {
+            value["static_recheck_command"] = Value::String(command.clone());
         }
         value
     }
@@ -1072,7 +1174,19 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
         );
     }
     if let Some(record) = records.iter().copied().find(is_first_run_repairable_gap) {
-        return Selection::TopGap(Box::new(top_gap_from_record(record, root, options)));
+        let top_gap = top_gap_from_record(record, gap_ledger, root, options);
+        if let Some(edited) = check_output_evidence_predates_edit(root, options, &top_gap) {
+            return Selection::blocked(
+                "stale_artifact",
+                format!(
+                    "The gap decision ledger predates the last edit to `{edited}`, so its repair instruction may already be done; refresh the evidence, then rerun first-pr to see whether the gap is still open."
+                ),
+                // The freshness check reads the check output's timestamp, so
+                // the recovery must rewrite it, not only the ledger.
+                Some(rerun_check_output_gap_ledger_command(options)),
+            );
+        }
+        return Selection::TopGap(Box::new(top_gap));
     }
     match review_card_repair_start(root, options) {
         Ok(top_gap) => Selection::TopGap(Box::new(top_gap)),
@@ -1356,6 +1470,7 @@ fn top_gap_from_review_card(card: &Value, options: &FirstPrOptions) -> Option<To
         ]),
         anchor_owner: string_path(card, &["owner"]),
         dedupe_fingerprint: string_path(card, &["dedupe_key"]),
+        analysis_outcome_command: string_path(card, &["llm_guidance", "analysis_outcome_command"]),
         verify_command,
         receipt_command,
         receipt_path: None,
@@ -1365,6 +1480,7 @@ fn top_gap_from_review_card(card: &Value, options: &FirstPrOptions) -> Option<To
         static_limit_detail: None,
         agent_packet_command: None,
         repair_command: Some(repair_command),
+        static_recheck_command: None,
     })
 }
 
@@ -1537,6 +1653,40 @@ fn repo_exposure_latency_report_command(root: &str) -> String {
     )
 }
 
+/// A check-output ledger (Python or TypeScript root) records no head or
+/// file identity, so after the operator edits the named test, first-pr would
+/// repeat the same repair from the old ledger on every run (onboarding
+/// Python walk, #4227). The selection is stale when the test file or changed
+/// source it names was modified after the evidence was written: the
+/// `--check-output` report when one is given (first-pr re-materializes the
+/// ledger from it on every run), otherwise the ledger itself. A missing file
+/// or unreadable timestamp is not treated as an edit.
+fn check_output_evidence_predates_edit(
+    root: &Path,
+    options: &FirstPrOptions,
+    top_gap: &TopGapSelection,
+) -> Option<String> {
+    if !uses_check_output_gap_ledger(root) {
+        return None;
+    }
+    let evidence = options
+        .check_output
+        .as_deref()
+        .unwrap_or(&options.gap_ledger);
+    let evidence_written = fs::metadata(resolve_path(root, evidence))
+        .and_then(|metadata| metadata.modified())
+        .ok()?;
+    [&top_gap.target_file, &top_gap.anchor_file]
+        .into_iter()
+        .flatten()
+        .find(|file| {
+            fs::metadata(resolve_path(root, file))
+                .and_then(|metadata| metadata.modified())
+                .is_ok_and(|edited| edited > evidence_written)
+        })
+        .cloned()
+}
+
 fn ledger_reports_timeout(value: &Value) -> bool {
     matches!(
         string_path(value, &["status"])
@@ -1657,7 +1807,12 @@ fn first_pr_language_is_supported(record: &Value) -> bool {
     )
 }
 
-fn top_gap_from_record(record: &Value, root: &Path, options: &FirstPrOptions) -> TopGapSelection {
+fn top_gap_from_record(
+    record: &Value,
+    gap_ledger: &Value,
+    root: &Path,
+    options: &FirstPrOptions,
+) -> TopGapSelection {
     let repair_route = record.get("repair_route");
     let anchor = record.get("anchor");
     let gap_id = string_path(record, &["gap_id"]).unwrap_or_else(|| "unknown-gap".to_string());
@@ -1670,26 +1825,36 @@ fn top_gap_from_record(record: &Value, root: &Path, options: &FirstPrOptions) ->
     ]);
     let verify_command = first_string_array_item(record, &["verification_commands"])
         .unwrap_or_else(|| regenerate_gap_ledger_command(root, options));
-    let receipt_path = string_path(record, &["receipt_path"])
-        .or_else(|| string_path(record, &["receipt", "path"]))
-        .unwrap_or_else(|| first_pr_receipt_path(&options.receipts_dir, &gap_id));
     let ledger_receipt_command = string_path(record, &["receipt_command"]);
     let ledger_receipt_or_path_command = command_like_path(record, &["receipt_command_or_path"]);
+    let ledger_command = ledger_receipt_command
+        .map(|command| (command, "gap_ledger.receipt_command"))
+        .or_else(|| {
+            ledger_receipt_or_path_command
+                .map(|command| (command, "gap_ledger.receipt_command_or_path"))
+        });
+    let receipt_path = selected_receipt_path(
+        record,
+        ledger_command.as_ref().map(|(command, _)| command.as_str()),
+    )
+    .unwrap_or_else(|| first_pr_receipt_path(&options.receipts_dir, &gap_id));
     let canonical_gap_id_for_receipt =
         string_path(record, &["canonical_gap_id"]).unwrap_or_else(|| gap_id.clone());
-    let (receipt_command, receipt_command_source) = if let Some(command) = ledger_receipt_command {
-        (command, "gap_ledger.receipt_command".to_string())
-    } else if let Some(command) = ledger_receipt_or_path_command {
-        (command, "gap_ledger.receipt_command_or_path".to_string())
-    } else {
-        (
+    let (receipt_command, receipt_command_source) = match ledger_command {
+        Some((command, source)) => (command, source.to_string()),
+        None => (
             receipt_write_command(
                 &canonical_gap_id_for_receipt,
                 &verify_command,
                 Some(&receipt_path),
             ),
             "first_pr.default_receipt_write_command".to_string(),
-        )
+        ),
+    };
+    let static_recheck_command = if is_receipt_write_command(&receipt_command) {
+        static_recheck_command(gap_ledger, root, options)
+    } else {
+        None
     };
     let repair_route_kind = string_from_sources(&[(repair_route, &["route_kind"])])
         .unwrap_or_else(|| "RepairRouteUnavailable".to_string());
@@ -1730,6 +1895,7 @@ fn top_gap_from_record(record: &Value, root: &Path, options: &FirstPrOptions) ->
         anchor_line: u64_from_sources(&[(anchor, &["line"])]),
         anchor_owner: string_from_sources(&[(anchor, &["owner"])]),
         dedupe_fingerprint: string_from_sources(&[(anchor, &["dedupe_fingerprint"])]),
+        analysis_outcome_command: None,
         verify_command,
         receipt_command,
         receipt_path: Some(receipt_path),
@@ -1740,6 +1906,7 @@ fn top_gap_from_record(record: &Value, root: &Path, options: &FirstPrOptions) ->
         static_limit_kind: string_path(record, &["static_limit_kind"]),
         static_limit_detail: string_path(record, &["static_limit_detail"]),
         repair_command: None,
+        static_recheck_command,
         agent_packet_command: Some(format!(
             "ripr agent packet --root {} --gap-ledger {} --gap-id {} --json > {}",
             shell_arg(&options.command_root()),
@@ -1901,6 +2068,109 @@ fn why_for_gap(kind: &str, language: Option<&str>) -> String {
             )
         }
     }
+}
+
+/// Shell words of a single `ripr ...` command, read with POSIX quoting (the
+/// `shell_arg` form every receipt command is rendered in), each with whether
+/// any part of it was quoted. `None` for a command this reader cannot take literally:
+/// unbalanced quotes, a trailing escape, another program, or an unquoted
+/// shell operator (a redirect or a chained command writes elsewhere).
+fn ripr_command_words(command: &str) -> Option<Vec<(String, bool)>> {
+    let mut words: Vec<(String, bool)> = Vec::new();
+    let mut current = String::new();
+    let mut quoted_word = false;
+    let mut in_word = false;
+    let mut quote: Option<char> = None;
+    let mut chars = command.chars();
+    while let Some(character) = chars.next() {
+        match (quote, character) {
+            (Some(active), value) if value == active => quote = None,
+            (Some('"'), '\\') => current.push(chars.next()?),
+            (Some(_), value) => current.push(value),
+            (None, '\'' | '"') => {
+                quote = Some(character);
+                quoted_word = true;
+                in_word = true;
+            }
+            (None, '\\') => {
+                current.push(chars.next()?);
+                in_word = true;
+            }
+            (None, value) if value.is_whitespace() => {
+                if in_word {
+                    words.push((std::mem::take(&mut current), quoted_word));
+                }
+                quoted_word = false;
+                in_word = false;
+            }
+            (None, value) => {
+                current.push(value);
+                in_word = true;
+            }
+        }
+    }
+    if quote.is_some() {
+        return None;
+    }
+    if in_word {
+        words.push((current, quoted_word));
+    }
+    if words.first().map(|(word, _)| word.as_str()) != Some("ripr") {
+        return None;
+    }
+    let operator = words.iter().any(|(word, quoted)| {
+        !quoted && matches!(word.as_str(), ">" | ">>" | "|" | "&&" | "||" | ";")
+    });
+    (!operator).then_some(words)
+}
+
+/// Value of the last unquoted `flag` in a ripr command's words.
+fn ripr_flag_value<'a>(words: &'a [(String, bool)], flag: &str) -> Option<&'a str> {
+    words
+        .iter()
+        .enumerate()
+        .rev()
+        .filter(|(_, (word, quoted))| !quoted && word == flag)
+        .find_map(|(index, _)| words.get(index + 1).map(|(value, _)| value.as_str()))
+}
+
+/// The file a printed `ripr receipt write` command writes: its `--out`, or
+/// the receipt writer's own default for its `--gap` when it names no
+/// `--out`. `None` when the command cannot be read literally.
+fn receipt_command_out_path(command: &str) -> Option<String> {
+    let words = ripr_command_words(command)?;
+    if words
+        .iter()
+        .any(|(word, quoted)| !quoted && word == "--out")
+    {
+        // A flag with no usable value fails in the CLI; name no path for it.
+        return ripr_flag_value(&words, "--out")
+            .filter(|out| !out.trim().is_empty())
+            .map(str::to_string);
+    }
+    let is_receipt_write = words.get(1).map(|(word, _)| word.as_str()) == Some("receipt")
+        && words.get(2).map(|(word, _)| word.as_str()) == Some("write");
+    let gap = ripr_flag_value(&words, "--gap").filter(|gap| !gap.trim().is_empty())?;
+    is_receipt_write.then(|| {
+        crate::app::receipt::receipt_default_path(gap)
+            .to_string_lossy()
+            .replace('\\', "/")
+    })
+}
+
+/// One source of truth for where the receipt lands: the file the printed
+/// ledger receipt command writes (its `--out`, or the receipt writer's
+/// default for its `--gap`), else a recorded path, else `None` so the
+/// caller uses the first-pr default that its synthesized command then
+/// writes. A path chosen independently of the printed command named a file
+/// that command never writes (Python preview: `gap-pr-...targeted-test-outcome.json`
+/// beside a `--out gap-python-....json`), so the command's own `--out` wins
+/// even over a recorded path that disagrees with it.
+fn selected_receipt_path(record: &Value, ledger_command: Option<&str>) -> Option<String> {
+    ledger_command
+        .and_then(receipt_command_out_path)
+        .or_else(|| string_path(record, &["receipt_path"]))
+        .or_else(|| string_path(record, &["receipt", "path"]))
 }
 
 fn first_pr_receipt_path(receipts_dir: &str, gap_id: &str) -> String {
@@ -2088,6 +2358,70 @@ fn regenerate_repo_exposure_gap_ledger_command(options: &FirstPrOptions) -> Stri
 }
 
 fn regenerate_check_output_gap_ledger_command(options: &FirstPrOptions) -> String {
+    check_output_gap_ledger_command(options, options.check_output.is_none(), false)
+}
+
+/// Rewrites the check output (the supplied `--check-output` path when there
+/// is one) before rebuilding the ledger from it. This is the stale-evidence
+/// refresh after a test or source edit, and that edit is usually still
+/// uncommitted: plain `ripr check` reads each file as committed at HEAD, so
+/// the refresh reads the working tree (`--worktree`), or it would select the
+/// gap the edit just closed again (MCP agent walk, 2026-09-29).
+fn rerun_check_output_gap_ledger_command(options: &FirstPrOptions) -> String {
+    check_output_gap_ledger_command(options, true, true)
+}
+
+/// The static re-check after verify (MCP agent walk, 2026-09-29): on the
+/// check-output route the receipt records only the verify status it is given,
+/// so this reruns check over the working tree, where the test edit usually
+/// still is, and compares it with the check report the gap came from.
+///
+/// That report is the one the ledger names as its input
+/// (`inputs.records` with `inputs.source_kind == "check_output"`), never a
+/// default path that merely exists: comparing against a report that did not
+/// produce the selected gap would show movement that is not the edit's. The
+/// command is omitted when the ledger names no check-output input, when it
+/// disagrees with a supplied `--check-output`, or when the report is absent.
+fn static_recheck_command(
+    gap_ledger: &Value,
+    root: &Path,
+    options: &FirstPrOptions,
+) -> Option<String> {
+    if !uses_check_output_gap_ledger(root) {
+        return None;
+    }
+    if string_path(gap_ledger, &["inputs", "source_kind"]).as_deref() != Some("check_output") {
+        return None;
+    }
+    let before_raw =
+        string_path(gap_ledger, &["inputs", "records"]).filter(|path| !path.trim().is_empty())?;
+    let before_path = resolve_path(root, &before_raw);
+    if let Some(supplied) = options.check_output.as_deref()
+        && resolve_path(root, supplied) != before_path
+    {
+        return None;
+    }
+    if !before_path.is_file() {
+        return None;
+    }
+    let after_raw = match before_raw.strip_suffix(".json") {
+        Some(stem) => format!("{stem}.after.json"),
+        None => format!("{before_raw}.after.json"),
+    };
+    let before = options.anchored_arg(&before_raw);
+    let after = options.anchored_arg(&after_raw);
+    Some(format!(
+        "ripr check --root {} --base {} --worktree --json > {after} && ripr outcome --before {before} --after {after}",
+        shell_arg(&options.command_root()),
+        shell_arg(&options.base),
+    ))
+}
+
+fn check_output_gap_ledger_command(
+    options: &FirstPrOptions,
+    rerun_check: bool,
+    worktree: bool,
+) -> String {
     let root = shell_arg(&options.command_root());
     let base = shell_arg(&options.base);
     let check_output_raw = options
@@ -2097,20 +2431,19 @@ fn regenerate_check_output_gap_ledger_command(options: &FirstPrOptions) -> Strin
     let check_output = options.anchored_arg(check_output_raw);
     let out = options.anchored_arg(&options.gap_ledger);
     let out_md = options.anchored_arg(&with_extension(&options.gap_ledger, "md"));
-    if options.check_output.is_some() {
-        format!(
-            "ripr reports gap-ledger --check-output {check_output} --root {root} --out {out} --out-md {out_md}"
-        )
-    } else {
-        // The shell redirect target anchors at --root (issue #3872) so the
-        // pasted compound reproduces the validated write location from any
-        // working directory. The paired --check-output read names the same
-        // anchored file: a relative read next to an absolute write would
-        // split the compound across directories when pasted elsewhere.
-        format!(
-            "ripr check --root {root} --base {base} --json > {check_output} && ripr reports gap-ledger --check-output {check_output} --root {root} --out {out} --out-md {out_md}"
-        )
+    let ledger = format!(
+        "ripr reports gap-ledger --check-output {check_output} --root {root} --out {out} --out-md {out_md}"
+    );
+    if !rerun_check {
+        return ledger;
     }
+    // The shell redirect target anchors at --root (issue #3872) so the
+    // pasted compound reproduces the validated write location from any
+    // working directory. The paired --check-output read names the same
+    // anchored file: a relative read next to an absolute write would
+    // split the compound across directories when pasted elsewhere.
+    let worktree = if worktree { " --worktree" } else { "" };
+    format!("ripr check --root {root} --base {base}{worktree} --json > {check_output} && {ledger}")
 }
 
 fn detect_typescript_project(root: &Path) -> bool {
@@ -2256,6 +2589,13 @@ fn diff_range_command(options: &FirstPrOptions) -> String {
         "git -C {} diff --name-only --no-ext-diff {}",
         shell_arg(&options.command_root()),
         shell_arg(&format!("{}...{}", options.base, options.head))
+    )
+}
+
+fn unshallow_command(options: &FirstPrOptions) -> String {
+    format!(
+        "git -C {} fetch --unshallow",
+        shell_arg(&options.command_root())
     )
 }
 
@@ -2603,6 +2943,52 @@ mod tests {
         cleanup(&repo)
     }
 
+    /// A receipt command printed as the step after verify records
+    /// `--status not_run`; the line after it says which value carries the
+    /// verify outcome, on the CLI summary and in the start-here markdown.
+    #[test]
+    fn receipt_after_verify_names_the_status_that_carries_the_verify_outcome() {
+        let command = "ripr receipt write --gap 'gap:python:p.py:f' --verify-command 'python -m pytest tests/test_p.py::test_f' --status not_run --out target/ripr/receipts/g.json";
+        let packet = json!({
+            "status": "actionable",
+            "selected": {
+                "state": "top_gap",
+                "kind": "MissingBoundaryAssertion",
+                "verify_command": "python -m pytest tests/test_p.py::test_f",
+                "receipt_command": command,
+                "receipt_path": "target/ripr/receipts/g.json",
+            },
+        });
+        let step = format!("{RECEIPT_STATUS_LABEL}: {RECEIPT_STATUS_STEP}\n");
+        let summary = start_here_cli_summary(
+            &packet,
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        assert!(
+            summary.contains(&format!("Receipt after verify: `{command}`\n{step}")),
+            "{summary}"
+        );
+        let markdown = render_start_here_markdown(&packet);
+        assert!(
+            markdown.contains(&format!("- Receipt after verify: `{command}`\n- {step}")),
+            "{markdown}"
+        );
+        assert!(RECEIPT_STATUS_STEP.contains("`--status passed`"));
+        assert!(RECEIPT_STATUS_STEP.contains("`--status failed`"));
+
+        for other in [
+            "ripr outcome --before b.json --after a.json --format json --out o.json",
+            "ripr receipt write --gap g --verify-command x --status passed",
+            "ripr receipt write --gap 'x --status not_run' --verify-command x --status failed",
+            // Quoted text is a value, not the flag (Devin review on #4485).
+            "ripr receipt write --gap 'x --status not_run ' --verify-command x --status failed",
+            "ripr receipt write --gap \"a --status not_run b\" --status passed",
+        ] {
+            assert_eq!(receipt_status_step(other), None, "{other}");
+        }
+    }
+
     /// The start-here markdown must present the receipt command for both
     /// shells: the bash form stays byte-identical, and the PowerShell form
     /// round-trips an embedded quote through PowerShell's doubled-quote idiom
@@ -2680,7 +3066,7 @@ mod tests {
             markdown.contains(bash_packet),
             "bash agent packet command drifted:\n{markdown}"
         );
-        let powershell_packet = "Agent packet command (PowerShell):\n`$ripr = ((ripr agent packet --root 'repo root' --gap-id gap:pr:pricing --json) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/workflow/agent-packet.json', $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }`";
+        let powershell_packet = "Agent packet command (PowerShell):\n`$riprEncoding = [Console]::OutputEncoding; try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; try { $ripr = ((ripr agent packet --root 'repo root' --gap-id gap:pr:pricing --json) | Out-String) } finally { try { [Console]::OutputEncoding = $riprEncoding } catch {} }; if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('target/ripr/workflow/agent-packet.json'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }`";
         assert!(
             markdown.contains(powershell_packet),
             "powershell agent packet command missing or drifted:\n{markdown}"
@@ -3235,6 +3621,52 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_language_root_is_no_action_not_wrong_root() -> Result<(), String> {
+        // A Go repository is the right root: sending it to `--root` and
+        // doctor was a loop with no exit.
+        let repo = temp_repo("first-pr-go-root")?;
+        let go_root = repo.join("go-service");
+        fs::create_dir_all(go_root.join("pkg"))
+            .map_err(|err| format!("mkdir {}: {err}", go_root.display()))?;
+        fs::write(go_root.join("go.mod"), "module example.com/svc\n")
+            .map_err(|err| format!("write go.mod: {err}"))?;
+        fs::write(go_root.join("pkg/calc.go"), "package pkg\n")
+            .map_err(|err| format!("write calc.go: {err}"))?;
+        let options = FirstPrOptions {
+            root: "go-service".to_string(),
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "no_action", "{packet}");
+        assert_eq!(
+            packet["selected"]["output_state"], "no_actionable_gap",
+            "{packet}"
+        );
+        let text = packet.to_string();
+        assert!(text.contains("Go (1 file(s))"), "{text}");
+        assert!(!text.contains("Pass the repository root"), "{text}");
+
+        // A nested Cargo crate below the Go root means `--root` should point
+        // at that crate, so the recovery stays `wrong_root`.
+        let nested = go_root.join("rust-core");
+        fs::create_dir_all(nested.join("src"))
+            .map_err(|err| format!("mkdir {}: {err}", nested.display()))?;
+        fs::write(
+            nested.join("Cargo.toml"),
+            "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|err| format!("write nested Cargo.toml: {err}"))?;
+        fs::write(nested.join("src/lib.rs"), "pub fn f() -> i32 { 1 }\n")
+            .map_err(|err| format!("write nested lib.rs: {err}"))?;
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "blocked", "{packet}");
+        assert_eq!(packet["selected"]["state"], "wrong_root", "{packet}");
+        cleanup(&repo)
+    }
+
+    #[test]
     fn non_cargo_root_writes_workspace_recovery_packet_to_invocation_root() -> Result<(), String> {
         let repo = temp_repo("first-pr-not-cargo-root")?;
         let non_workspace = repo.join("not-workspace");
@@ -3358,6 +3790,65 @@ mod tests {
     }
 
     #[test]
+    fn shallow_range_without_merge_base_points_at_unshallow() -> Result<(), String> {
+        // #4538: a PR-style shallow fetch has both tips but no merge base.
+        // The next command must be the unshallow repair, not the same
+        // failing `git diff`.
+        let origin = temp_repo("first-pr-shallow-origin")?;
+        run_git_setup(&origin, &["checkout", "-q", "-b", "feature"])?;
+        run_git_setup(&origin, &["commit", "-q", "--allow-empty", "-m", "feature"])?;
+        run_git_setup(&origin, &["checkout", "-q", "-"])?;
+        run_git_setup(
+            &origin,
+            &["commit", "-q", "--allow-empty", "-m", "main moves"],
+        )?;
+        let shallow = write_temp_root(&env::temp_dir(), "first-pr-shallow-clone")?;
+        // `file://` keeps `--depth` honored (a plain path uses the local
+        // transport); a Windows drive path needs the third slash.
+        let origin_path = origin.display().to_string().replace('\\', "/");
+        let url = if origin_path.starts_with('/') {
+            format!("file://{origin_path}")
+        } else {
+            format!("file:///{origin_path}")
+        };
+        run_git_setup(&shallow, &["init", "-q"])?;
+        run_git_setup(&shallow, &["remote", "add", "origin", &url])?;
+        run_git_setup(
+            &shallow,
+            &[
+                "fetch",
+                "-q",
+                "--depth=1",
+                "origin",
+                "+refs/heads/feature:refs/remotes/origin/feature",
+                "+HEAD:refs/remotes/origin/main",
+            ],
+        )?;
+        run_git_setup(&shallow, &["checkout", "-q", "--detach", "origin/feature"])?;
+        write_json(
+            &shallow.join(DEFAULT_GAP_LEDGER),
+            ledger_with_repairable_gap(),
+        )?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&shallow, &options)?;
+        let packet = read_packet(&shallow.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        let message = packet["selected"]["message"].as_str().unwrap_or_default();
+        assert!(
+            message.contains("no merge base")
+                && message.contains("shallow clone")
+                && message.contains("fetch-depth: 0"),
+            "unexpected message: {message}"
+        );
+        assert_eq!(
+            packet["selected"]["next_command"],
+            format!("git -C {} fetch --unshallow", bound_arg("."))
+        );
+        cleanup(&shallow)?;
+        cleanup(&origin)
+    }
+
+    #[test]
     fn missing_git_head_writes_recovery_packet() -> Result<(), String> {
         let repo = temp_repo("first-pr-missing-head")?;
         write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
@@ -3399,9 +3890,13 @@ mod tests {
         assert_eq!(packet["status"], "blocked");
         assert_eq!(packet["selected"]["state"], "blocked_artifact");
         assert!(
-            packet["selected"]["message"]
-                .as_str()
-                .is_some_and(|message| message.contains("origin/main...unrelated"))
+            packet["selected"]["message"].as_str().is_some_and(
+                |message| message.contains("origin/main...unrelated")
+                    // #4538: the cause is named, and a full clone is not
+                    // diagnosed as shallow.
+                    && message.contains("unrelated histories")
+                    && !message.contains("shallow clone")
+            )
         );
         assert_eq!(
             packet["selected"]["next_command"],
@@ -3694,7 +4189,7 @@ mod tests {
             source_kind: GapDecisionLedgerSourceKind::CheckOutput,
             records_path: "check.json".to_string(),
             records_json: Ok(include_str!(
-                "../../../../fixtures/python_same_stem_sibling_owner_not_related/expected/check.json"
+                "../../../../fixtures/python_rebound_constant_boundary_limit/expected/check.json"
             )
             .to_string()),
         });
@@ -3713,7 +4208,7 @@ mod tests {
         let reason = packet["selected"]["reason"].as_str().unwrap_or_default();
         assert!(
             reason.contains(
-                "Static limitation `python_repair_card_unavailable` at `pricing.py:5`: this Python preview finding has no repair card (static evidence names no concrete missing discriminator)"
+                "Static limitation `python_repair_card_unavailable` at `src/pricing.py:10`: this Python preview finding has no repair card (static evidence names no concrete missing discriminator)"
             ),
             "{reason}"
         );
@@ -3799,6 +4294,45 @@ mod tests {
             "summary_only": [],
             "suppressed": []
         })
+    }
+
+    #[test]
+    fn review_card_selection_carries_optional_outcome_without_inventing_it() -> Result<(), String> {
+        let options = FirstPrOptions::default();
+        let command = "ripr check --root . --mode draft --format json > target/ripr/workflow/analysis-outcome.json";
+        for supplied in [None, Some(command)] {
+            let mut card = review_card(
+                "seam-a",
+                Some("ripr agent repair --root . --seam-id seam-a --phase before"),
+            );
+            if let Some(command) = supplied {
+                card["llm_guidance"]["analysis_outcome_command"] = json!(command);
+            }
+            let top_gap = top_gap_from_review_card(&card, &options)
+                .ok_or("old and new cards must retain top-gap selection")?;
+            let selected = top_gap.to_json();
+            let commands =
+                Selection::TopGap(Box::new(top_gap)).commands_json(Path::new("."), &options);
+            let markdown = render_start_here_markdown(&json!({"selected": selected}));
+            match supplied {
+                Some(command)
+                    if selected
+                        .get("analysis_outcome_command")
+                        .and_then(Value::as_str)
+                        == Some(command)
+                        && commands.get("analysis_outcome").is_none()
+                        && markdown.contains(command) => {}
+                None if selected.get("analysis_outcome_command").is_none()
+                    && commands.get("analysis_outcome").is_none()
+                    && !markdown.contains(command) => {}
+                _ => {
+                    return Err(format!(
+                        "optional outcome was lost or invented: {selected}, {commands}"
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Preconditions shared by the review-card tests: the ledger really
@@ -4240,6 +4774,11 @@ mod tests {
             packet["selected"]["receipt_command_source"],
             "gap_ledger.receipt_command"
         );
+        // The receipt path is the file the printed receipt command writes.
+        assert_eq!(
+            packet["selected"]["receipt_path"],
+            ".ripr/receipts/python-threshold.json"
+        );
         let python_project = preflight_check(&packet, "python_project")?;
         assert_eq!(python_project["status"], "ok");
         let summary = start_here_cli_summary(
@@ -4252,6 +4791,297 @@ mod tests {
             "Verify after the test edit: `pytest tests/test_pricing.py::test_calculate_discount_smoke`"
         ));
         check_first_pr(&repo, &options)?;
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn python_ledger_older_than_the_named_test_edit_is_stale() -> Result<(), String> {
+        let repo = temp_python_repo("first-pr-python-stale-ledger")?;
+        fs::create_dir_all(repo.join("app")).map_err(|err| format!("mkdir app: {err}"))?;
+        fs::create_dir_all(repo.join("tests")).map_err(|err| format!("mkdir tests: {err}"))?;
+        fs::write(
+            repo.join("app/pricing.py"),
+            "def calculate_discount(amount, threshold):\n    return amount >= threshold\n",
+        )
+        .map_err(|err| format!("write app/pricing.py: {err}"))?;
+        let test_file = repo.join("tests/test_pricing.py");
+        fs::write(
+            &test_file,
+            "def test_calculate_discount_smoke():\n    pass\n",
+        )
+        .map_err(|err| format!("write tests/test_pricing.py: {err}"))?;
+        run_git_setup(&repo, &["add", "app/pricing.py", "tests/test_pricing.py"])?;
+        run_git_setup(&repo, &["commit", "-m", "change pricing"])?;
+        let ledger_path = repo.join(DEFAULT_GAP_LEDGER);
+        write_json(&ledger_path, ledger_with_python_repairable_gap())?;
+        let ledger_written = fs::metadata(&ledger_path)
+            .and_then(|metadata| metadata.modified())
+            .map_err(|err| format!("ledger mtime: {err}"))?;
+        let set_mtime = |path: &Path, at: std::time::SystemTime| -> Result<(), String> {
+            fs::File::options()
+                .write(true)
+                .open(path)
+                .and_then(|file| file.set_modified(at))
+                .map_err(|err| format!("set mtime {}: {err}", path.display()))
+        };
+        let options = FirstPrOptions::default();
+
+        // The named test predates the ledger: the repair is still selected.
+        set_mtime(
+            &test_file,
+            ledger_written - std::time::Duration::from_mins(1),
+        )?;
+        set_mtime(
+            &repo.join("app/pricing.py"),
+            ledger_written - std::time::Duration::from_mins(1),
+        )?;
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["selected"]["state"], "top_gap");
+
+        // The operator edits the named test after the ledger: first-pr stops
+        // repeating the old repair and routes to the refresh command.
+        set_mtime(
+            &test_file,
+            ledger_written + std::time::Duration::from_mins(1),
+        )?;
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "stale_artifact");
+        let message = packet["selected"]["message"].as_str().unwrap_or("");
+        assert!(
+            message.contains("predates the last edit to `tests/test_pricing.py`"),
+            "stale message must name the edited test: {message}"
+        );
+        let next = packet["selected"]["next_command"].as_str().unwrap_or("");
+        assert!(
+            next.starts_with("ripr check --root ") && next.contains("ripr reports gap-ledger"),
+            "stale selection must route to the check-output refresh: {next}"
+        );
+        // The edit that made the evidence stale is usually uncommitted; a
+        // refresh that reads HEAD selects the gap it just closed again.
+        assert!(
+            next.contains(" --base origin/main --worktree --json > "),
+            "stale refresh must read the working tree: {next}"
+        );
+        assert!(packet["selected"].get("verify_command").is_none());
+        check_first_pr(&repo, &options)?;
+        cleanup(&repo)
+    }
+
+    /// Devin on #4429: with a supplied `--check-output`, the stale recovery
+    /// must rewrite that file, because the freshness check reads its
+    /// timestamp; a ledger-only command would block again on the next run.
+    #[test]
+    fn stale_recovery_rewrites_a_supplied_check_output() {
+        let options = FirstPrOptions {
+            check_output: Some("saved/check.json".to_string()),
+            ..FirstPrOptions::default()
+        };
+        let ledger_only = regenerate_check_output_gap_ledger_command(&options);
+        assert!(
+            ledger_only.starts_with("ripr reports gap-ledger"),
+            "{ledger_only}"
+        );
+        let rerun = rerun_check_output_gap_ledger_command(&options);
+        let (check, ledger) = rerun.split_once(" && ").unwrap_or((rerun.as_str(), ""));
+        assert!(check.starts_with("ripr check --root "), "{rerun}");
+        assert!(check.ends_with("saved/check.json"), "{rerun}");
+        assert!(check.contains(" --worktree --json > "), "{rerun}");
+        assert_eq!(ledger, ledger_only);
+    }
+
+    /// The stale branch itself must route a supplied `--check-output` to the
+    /// rewriting command, not the ledger-only one.
+    #[test]
+    fn stale_supplied_check_output_routes_to_a_check_rerun() -> Result<(), String> {
+        let repo = temp_python_repo("first-pr-python-stale-check-output")?;
+        fs::create_dir_all(repo.join("app")).map_err(|err| format!("mkdir app: {err}"))?;
+        let source = repo.join("app/pricing.py");
+        fs::write(
+            &source,
+            "def calculate_discount(amount, threshold):\n    return amount >= threshold\n",
+        )
+        .map_err(|err| format!("write app/pricing.py: {err}"))?;
+        run_git_setup(&repo, &["add", "app/pricing.py"])?;
+        run_git_setup(&repo, &["commit", "-m", "change pricing"])?;
+        let check_output = repo.join(DEFAULT_CHECK_OUTPUT);
+        write_json(&check_output, check_output_with_python_repair_card())?;
+        let written = fs::metadata(&check_output)
+            .and_then(|metadata| metadata.modified())
+            .map_err(|err| format!("check output mtime: {err}"))?;
+        fs::File::options()
+            .write(true)
+            .open(&source)
+            .and_then(|file| file.set_modified(written + std::time::Duration::from_mins(1)))
+            .map_err(|err| format!("set mtime: {err}"))?;
+
+        let options = FirstPrOptions {
+            check_output: Some(DEFAULT_CHECK_OUTPUT.to_string()),
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["selected"]["state"], "stale_artifact");
+        let next = packet["selected"]["next_command"].as_str().unwrap_or("");
+        let (check, _) = next.split_once(" && ").unwrap_or((next, ""));
+        assert!(
+            check.starts_with("ripr check --root ") && check.ends_with(DEFAULT_CHECK_OUTPUT),
+            "stale recovery must rewrite the supplied check output: {next}"
+        );
+        cleanup(&repo)
+    }
+
+    /// MCP agent walk (2026-09-29): on the Python route the printed
+    /// receipt records only the verify status it is given, and nothing on
+    /// the route showed whether the gap moved after the test edit. With the
+    /// check report the gap came from on disk, first-pr names the static
+    /// re-check: check over the working tree, then `ripr outcome` against
+    /// that report. Without the report there is nothing to compare, so no
+    /// re-check is offered.
+    #[test]
+    fn python_top_gap_names_the_static_recheck_after_verify() -> Result<(), String> {
+        let repo = temp_python_repo("first-pr-python-static-recheck")?;
+        fs::create_dir_all(repo.join("app")).map_err(|err| format!("mkdir app: {err}"))?;
+        fs::write(
+            repo.join("app/pricing.py"),
+            "def calculate_discount(amount, threshold):\n    return amount >= threshold\n",
+        )
+        .map_err(|err| format!("write app/pricing.py: {err}"))?;
+        run_git_setup(&repo, &["add", "app/pricing.py"])?;
+        run_git_setup(&repo, &["commit", "-m", "change pricing"])?;
+        let options = FirstPrOptions::default();
+
+        let mut ledger = ledger_with_python_repairable_gap();
+        ledger["records"][0]["receipt_command"] = json!(
+            "ripr receipt write --gap g --verify-command 'pytest tests/test_pricing.py' --status not_run --out target/ripr/receipts/g.json"
+        );
+        ledger["inputs"] = json!({
+            "source_kind": "check_output",
+            "records": DEFAULT_CHECK_OUTPUT,
+        });
+
+        // No check report on disk: nothing to compare against.
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger.clone())?;
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["selected"]["state"], "top_gap");
+        assert!(
+            packet["selected"].get("static_recheck_command").is_none(),
+            "{packet}"
+        );
+
+        // A `ripr outcome` receipt compares snapshots itself: no re-check.
+        write_json(
+            &repo.join(DEFAULT_CHECK_OUTPUT),
+            check_output_with_python_repair_card(),
+        )?;
+        write_json(
+            &repo.join(DEFAULT_GAP_LEDGER),
+            ledger_with_python_repairable_gap(),
+        )?;
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["selected"]["state"], "top_gap");
+        assert!(
+            packet["selected"].get("static_recheck_command").is_none(),
+            "{packet}"
+        );
+
+        // A `receipt write` receipt with the check report on disk.
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger.clone())?;
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["selected"]["state"], "top_gap");
+        let before = options.anchored_arg(DEFAULT_CHECK_OUTPUT);
+        let after = options.anchored_arg("target/ripr/reports/check.after.json");
+        let expected = format!(
+            "ripr check --root {} --base origin/main --worktree --json > {after} && ripr outcome --before {before} --after {after}",
+            bound_arg(".")
+        );
+        assert_eq!(packet["selected"]["static_recheck_command"], expected);
+        assert!(
+            before.ends_with("target/ripr/reports/check.json"),
+            "{before}"
+        );
+        assert!(
+            after.ends_with("target/ripr/reports/check.after.json"),
+            "{after}"
+        );
+
+        let summary = start_here_cli_summary(
+            &packet,
+            Path::new("start-here.json"),
+            Path::new("start-here.md"),
+        );
+        let status_line = format!("{RECEIPT_STATUS_LABEL}: {RECEIPT_STATUS_STEP}\n");
+        let recheck_line = format!("{STATIC_RECHECK_LABEL}: `{expected}`\n");
+        let boundary_line = format!("{RECEIPT_BOUNDARY_LABEL}: {RECEIPT_BOUNDARY_STEP}\n");
+        let status_at = summary.find(&status_line).ok_or(summary.clone())?;
+        let recheck_at = summary.find(&recheck_line).ok_or(summary.clone())?;
+        let boundary_at = summary.find(&boundary_line).ok_or(summary.clone())?;
+        assert!(
+            status_at < recheck_at && recheck_at < boundary_at,
+            "{summary}"
+        );
+        assert!(
+            summary.contains(&format!("{STATIC_RECHECK_LABEL} (PowerShell 2/2): `ripr outcome --before {before} --after {after}`")),
+            "{summary}"
+        );
+        assert!(
+            RECEIPT_BOUNDARY_STEP.contains("does not re-check the gap")
+                && RECEIPT_BOUNDARY_STEP.contains("not a runtime or mutation result"),
+            "{RECEIPT_BOUNDARY_STEP}"
+        );
+        let markdown = render_start_here_markdown(&packet);
+        assert!(
+            markdown.contains(&format!("- {STATIC_RECHECK_LABEL}: `{expected}`\n"))
+                && markdown.contains(&format!(
+                    "- {RECEIPT_BOUNDARY_LABEL}: {RECEIPT_BOUNDARY_STEP}\n"
+                )),
+            "{markdown}"
+        );
+        check_first_pr(&repo, &options)?;
+
+        // Provenance: the before report is the one the ledger was built from,
+        // never the default path merely because it exists.
+        let recheck_for = |ledger: &Value, options: &FirstPrOptions| -> Result<Value, String> {
+            write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger.clone())?;
+            write_first_pr(&repo, options)?;
+            let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+            assert_eq!(packet["selected"]["state"], "top_gap", "{packet}");
+            Ok(packet["selected"]["static_recheck_command"].clone())
+        };
+        let mut unnamed = ledger.clone();
+        unnamed
+            .as_object_mut()
+            .ok_or("ledger fixture must be an object")?
+            .remove("inputs");
+        assert_eq!(recheck_for(&unnamed, &options)?, Value::Null);
+        let mut records_source = ledger.clone();
+        records_source["inputs"]["source_kind"] = json!("records");
+        assert_eq!(recheck_for(&records_source, &options)?, Value::Null);
+        let mut saved = ledger.clone();
+        saved["inputs"]["records"] = json!("saved/check.json");
+        assert_eq!(
+            recheck_for(&saved, &options)?,
+            Value::Null,
+            "an absent named report must not fall back to the default check.json"
+        );
+        write_json(
+            &repo.join("saved/check.json"),
+            check_output_with_python_repair_card(),
+        )?;
+        let saved_before = options.anchored_arg("saved/check.json");
+        let saved_after = options.anchored_arg("saved/check.after.json");
+        assert_eq!(
+            recheck_for(&saved, &options)?,
+            json!(format!(
+                "ripr check --root {} --base origin/main --worktree --json > {saved_after} && ripr outcome --before {saved_before} --after {saved_after}",
+                bound_arg(".")
+            ))
+        );
         cleanup(&repo)
     }
 
@@ -4686,6 +5516,92 @@ mod tests {
         })
     }
 
+    #[test]
+    fn receipt_path_is_the_out_path_the_printed_receipt_command_writes() {
+        // The shape the gap ledger prints for a Python preview gap: the gap
+        // id is single-quoted because it carries `>=` and `/`.
+        let command = "ripr receipt write --gap 'gap:python:pricing/__init__.py:discounted_total:predicate_boundary:predicate:amount>=discount_threshold' --verify-command 'python -m pytest tests/test_pricing.py::test_discount_far_above_threshold' --status not_run --out target/ripr/receipts/gap-python-pricing-__init__.py-discounted_total-predicate_boundary-predicate-amount-discount_threshold.json";
+        assert_eq!(
+            receipt_command_out_path(command).as_deref(),
+            Some(
+                "target/ripr/receipts/gap-python-pricing-__init__.py-discounted_total-predicate_boundary-predicate-amount-discount_threshold.json"
+            )
+        );
+        assert_eq!(
+            receipt_command_out_path(
+                "ripr receipt write --gap g --out 'target/my receipts/o'\\''k.json'"
+            )
+            .as_deref(),
+            Some("target/my receipts/o'k.json")
+        );
+        // A quoted `--out` is the gap's value, not the flag: the command
+        // writes the default for that gap id.
+        assert_eq!(
+            receipt_command_out_path("ripr receipt write --gap '--out' --verify-command x"),
+            Some(
+                crate::app::receipt::receipt_default_path("--out")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            )
+        );
+        // Without `--out`, the command writes the receipt writer's default
+        // for its gap (Devin review on #4485).
+        assert_eq!(
+            receipt_command_out_path(
+                "ripr receipt write --gap gap:test:aabbccdd --verify-command x --status not_run"
+            )
+            .as_deref(),
+            Some(
+                crate::app::receipt::receipt_default_path("gap:test:aabbccdd")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .as_str()
+            )
+        );
+        assert!(
+            receipt_command_out_path("ripr receipt write --gap gap:test:aabbccdd")
+                .is_some_and(|path| path.starts_with("target/ripr/receipts/"))
+        );
+        for command in [
+            "ripr receipt write --verify-command x --status not_run",
+            "ripr outcome --gap g --format json",
+            "ripr receipt write --gap g --out",
+            "ripr receipt write --gap g --out ''",
+            "ripr outcome --json > target/o.json --out other.json",
+            "ripr receipt write --gap 'unterminated --out x.json",
+            "cargo test --out x.json",
+        ] {
+            assert_eq!(receipt_command_out_path(command), None, "{command}");
+        }
+    }
+
+    #[test]
+    fn printed_receipt_command_out_wins_over_a_recorded_receipt_path() {
+        let record = json!({"receipt_path": "target/ripr/receipts/recorded.json"});
+        let command = "ripr receipt write --gap g --verify-command x --status not_run --out target/ripr/receipts/written.json";
+        assert_eq!(
+            selected_receipt_path(&record, Some(command)).as_deref(),
+            Some("target/ripr/receipts/written.json"),
+            "the path shown must be the file the shown command writes"
+        );
+        assert_eq!(
+            selected_receipt_path(&record, Some("ripr receipt write --gap g")),
+            receipt_command_out_path("ripr receipt write --gap g"),
+            "a command without --out writes the writer's default for its gap, not the recorded path"
+        );
+        assert_eq!(
+            selected_receipt_path(&record, Some("ripr outcome --json")).as_deref(),
+            Some("target/ripr/receipts/recorded.json"),
+            "a command that names no receipt file falls back to the recorded path"
+        );
+        let nested = json!({"receipt": {"path": "target/ripr/receipts/nested.json"}});
+        assert_eq!(
+            selected_receipt_path(&nested, None).as_deref(),
+            Some("target/ripr/receipts/nested.json")
+        );
+        assert_eq!(selected_receipt_path(&json!({}), None), None);
+    }
+
     fn ledger_with_python_repairable_gap() -> Value {
         json!({
             "schema_version": "0.1",
@@ -4837,6 +5753,15 @@ mod tests {
             gap_ledger: "inputs/reports/gap-decision-ledger.json".to_string(),
             ..FirstPrOptions::default()
         };
+        // The checked-in ledger stands for evidence generated just now. A
+        // checkout writes files in no fixed order, so without this a test file
+        // can look newer than the ledger and trip the stale-evidence guard.
+        let ledger = case.join(&options.gap_ledger);
+        fs::File::options()
+            .write(true)
+            .open(&ledger)
+            .and_then(|file| file.set_modified(std::time::SystemTime::now()))
+            .map_err(|err| format!("refresh ledger mtime {}: {err}", ledger.display()))?;
         let actual_json = render_start_here_packet(&case, &options);
         let actual_md = render_start_here_markdown(&actual_json);
         // Issue #3872: funnel redirect targets anchor at the resolved --root,
@@ -4989,5 +5914,64 @@ mod tests {
             .and_then(Path::parent)
             .map(Path::to_path_buf)
             .ok_or_else(|| "failed to resolve fixture repo root".to_string())
+    }
+
+    fn first_pr_args(root: &str, out: &str) -> Vec<String> {
+        vec![
+            "--root".to_string(),
+            root.to_string(),
+            "--base".to_string(),
+            "HEAD".to_string(),
+            "--out-dir".to_string(),
+            out.to_string(),
+        ]
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unwritable_out_dir_names_out_dir_not_out() -> Result<(), String> {
+        use crate::testing::unwritable_output::OutputDirFixture;
+
+        let env = OutputDirFixture::unwritable("first-pr-ro", "reports")?;
+        let root = OutputDirFixture::path_arg(&env.root)?;
+        let out = OutputDirFixture::path_arg(&env.target)?;
+        let error = match first_pr(&first_pr_args(root, out)) {
+            Err(error) => error,
+            Ok(()) => {
+                return Err(
+                    "unwritable --out-dir must fail while creating the output directory"
+                        .to_string(),
+                );
+            }
+        };
+        assert!(error.contains(&format!("create {out} failed:")), "{error}");
+        assert!(
+            error.contains("write elsewhere with --out-dir PATH"),
+            "first-pr must name --out-dir PATH, got {error}"
+        );
+        assert!(
+            !error.contains("write elsewhere with --out PATH"),
+            "first-pr must not name pilot's flag, got {error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn occupying_file_out_dir_does_not_name_the_relocate_flag() -> Result<(), String> {
+        use crate::testing::unwritable_output::OutputDirFixture;
+
+        let env = OutputDirFixture::occupying_file("first-pr-file", "reports")?;
+        let root = OutputDirFixture::path_arg(&env.root)?;
+        let out = OutputDirFixture::path_arg(&env.target)?;
+        let error = match first_pr(&first_pr_args(root, out)) {
+            Err(error) => error,
+            Ok(()) => return Err("file occupying --out-dir must fail".to_string()),
+        };
+        assert!(error.contains(&format!("create {out} failed:")), "{error}");
+        assert!(
+            !error.contains("write elsewhere"),
+            "a file occupying --out-dir is not a not-writable tree: {error}"
+        );
+        Ok(())
     }
 }

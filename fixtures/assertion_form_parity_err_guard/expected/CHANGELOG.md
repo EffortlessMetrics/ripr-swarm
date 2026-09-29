@@ -71,3 +71,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_form_parity_err_guard (4)
+
+Reason:
+RIPR-SPEC-0001: the one-line signature of a new function whose body is added too carries no behavior of its own and is no longer probed (parity with the TypeScript and Python adapters)
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_err_guard --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — assertion_form_parity_err_guard (5)
+
+Reason:
+RIPR-SPEC-0122: bounded human check output leads the exposure line with the plain word the summary uses (weak, no path, unknown) before the schema value
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_err_guard --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

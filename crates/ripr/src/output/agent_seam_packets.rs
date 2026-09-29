@@ -192,10 +192,10 @@ pub(crate) fn render_agent_seam_packets_json_with_causal_and_outcome(
     if let Some(info) = limit_info {
         let repair_route = match info.source {
             SeamLimitSource::Default => {
-                "Set RIPR_PILOT_SEAM_BUDGET=0 to render packets for all seams, or use `ripr check --diff` to scope the run."
+                "Set RIPR_PILOT_SEAM_BUDGET=0 to render packets for all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
             }
             SeamLimitSource::Configured => {
-                "Remove or raise RIPR_PILOT_SEAM_BUDGET to render packets for more seams, or use `ripr check --diff`."
+                "Remove or raise RIPR_PILOT_SEAM_BUDGET to render packets for more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
             }
         };
         out.push_str("  \"limitations\": [\n");
@@ -1136,7 +1136,7 @@ pub(crate) fn targeted_test_brief_for_classified_seam(entry: &ClassifiedSeam) ->
         seam.display_line()
     ));
     out.push_str(&format!("- {}\n", seam.kind().as_str()));
-    out.push_str(&format!("- {}\n", entry.class.as_str()));
+    out.push_str(&format!("- {}\n", entry.class.human_label()));
     out.push_str(&format!("- owner: {}\n", seam.owner()));
 
     out.push_str("\nWhy it matters:\n");
@@ -3265,6 +3265,7 @@ mod tests {
                 discriminate: stage(StageState::No),
                 observed_values: Vec::new(),
                 missing_discriminators: Vec::new(),
+                new_test_target: None,
             },
             class,
         }
@@ -3340,6 +3341,7 @@ mod tests {
                 reason: "observed values do not include the equality-boundary case".to_string(),
                 flow_sink: None,
             }],
+            new_test_target: None,
         };
         ClassifiedSeam {
             seam,
@@ -3360,6 +3362,7 @@ mod tests {
             discriminate: stage(StageState::No),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            new_test_target: None,
         };
         ClassifiedSeam {
             seam,
@@ -3380,6 +3383,7 @@ mod tests {
             discriminate: stage(StageState::Yes),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            new_test_target: None,
         };
         ClassifiedSeam {
             seam,
@@ -5313,7 +5317,7 @@ mod tests {
             "Target seam:",
             "- src/pricing.rs:88",
             "- predicate_boundary",
-            "- weakly_gripped",
+            "- weak, weakly_gripped",
             "- owner: pricing::discounted_total",
             "Why it matters:",
             "- Related test evidence: below_threshold_has_no_discount uses strong exact_value oracle.",
@@ -5440,6 +5444,36 @@ mod tests {
             RecommendedTestTargetKind::Unresolved
         );
         assert_eq!(unresolved.file, "not_applicable");
+    }
+
+    #[test]
+    fn producer_owned_inline_unit_proposal_projects_as_new_inline_module() {
+        use crate::analysis::repair_route::{
+            NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
+        };
+        let mut entry = classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, Vec::new());
+        entry.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "amount >= discount_threshold".to_string(),
+            reason: "no observed activation values for boundary predicate".to_string(),
+            flow_sink: None,
+        }];
+        entry.evidence.new_test_target = Some(NewTestTargetAdmission {
+            proposal: Some(NewTestTargetProposal {
+                kind: NewTestKind::InlineUnit,
+                file: PathBuf::from("src/pricing.rs"),
+                owner: "pricing::discounted_total".to_string(),
+                provenance: NewTestProposalProvenance::ProducerOwned,
+            }),
+            region: None,
+            blocker: None,
+        });
+        let recommended = recommended_test_for(&entry);
+        assert_eq!(
+            recommended.target_kind,
+            RecommendedTestTargetKind::NewInlineTestModule
+        );
+        assert_eq!(recommended.file.replace('\\', "/"), "src/pricing.rs");
+        assert!(recommended.symbol_id.is_none());
     }
 
     #[test]

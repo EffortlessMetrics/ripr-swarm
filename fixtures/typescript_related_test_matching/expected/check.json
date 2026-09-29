@@ -12,7 +12,7 @@
     {
       "id": "probe:src_pricing.ts:typescript_preview:bd772dc8",
       "classification": "exposed",
-      "severity": "warning",
+      "severity": "info",
       "confidence": 0.60,
       "probe": {
         "id": "probe:src_pricing.ts:typescript_preview:bd772dc8",
@@ -148,5 +148,6 @@
       "category": "preview_language_advisory",
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
-  ]
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/pricing.ts","digest":"sha256:1a68a984a6cfd9b70b5894aacffd819c83dbfea943682be02a061fede342189e"}]}
 }

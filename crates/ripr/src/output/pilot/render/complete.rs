@@ -10,7 +10,9 @@ use crate::output::agent_seam_packets::{
 use crate::output::json::escape as json_escape;
 use crate::output::markdown::{PowershellForm, powershell_form};
 use crate::output::path::{display_path, display_path_text};
-use crate::output::pilot::commands::{PilotCommands, repair_start_command};
+use crate::output::pilot::commands::{
+    PilotCommands, python_card_first_pr_command, repair_start_command,
+};
 use crate::output::pilot::ranking::{actionable_total, top_actionable_seams};
 use crate::output::pilot::{
     PILOT_SUMMARY_SCHEMA_VERSION, PilotLanguageRoute, PilotLanguageRoutes, PilotPythonFirstUse,
@@ -134,14 +136,21 @@ pub(crate) fn render_pilot_summary_json(
         "    \"inspect_packet\": \"{}\",\n",
         json_escape(&display_path(&context.artifacts.agent_seam_packets_json))
     ));
-    out.push_str(&format!(
-        "    \"after_snapshot_command\": \"{}\",\n",
-        json_escape(&commands.after_snapshot)
-    ));
-    out.push_str(&format!(
-        "    \"outcome_command\": \"{}\",\n",
-        json_escape(&commands.outcome)
-    ));
+    // An unanalyzed-only workspace has no seam to snapshot or measure, so
+    // offering the follow-up commands would send the reader into a loop.
+    if unanalyzed_only(context).is_some() {
+        out.push_str("    \"after_snapshot_command\": null,\n");
+        out.push_str("    \"outcome_command\": null,\n");
+    } else {
+        out.push_str(&format!(
+            "    \"after_snapshot_command\": \"{}\",\n",
+            json_escape(&commands.after_snapshot)
+        ));
+        out.push_str(&format!(
+            "    \"outcome_command\": \"{}\",\n",
+            json_escape(&commands.outcome)
+        ));
+    }
     match top
         .first()
         .and_then(|entry| repair_start_command(context.root, entry))
@@ -190,6 +199,11 @@ pub(crate) fn render_pilot_summary_md(
             out.push_str(
                 "Pilot ranks Rust seams and found none in this repository. This is not a clean result for the languages listed under Languages Outside The Rust Seam Scan.\n\n",
             );
+        } else if let Some(unanalyzed) = unanalyzed_only(context) {
+            out.push_str(&format!(
+                "None: {UNANALYZED_ONLY_VERDICT} Found: {}.\n\n",
+                unanalyzed_label(unanalyzed)
+            ));
         } else {
             out.push_str("No actionable seam was ranked by the default pilot policy.\n\n");
         }
@@ -214,9 +228,10 @@ pub(crate) fn render_pilot_summary_md(
         }
         for (idx, entry) in top.iter().enumerate() {
             out.push_str(&format!(
-                "{}. `{}` `{}` {}:{} `{}`\n",
+                "{}. `{}` {} (`{}`) {}:{} `{}`\n",
                 idx + 1,
                 entry.seam.id().as_str(),
+                entry.class.plain_label(),
                 entry.class.as_str(),
                 display_path(entry.seam.file()),
                 entry.seam.display_line(),
@@ -268,6 +283,8 @@ pub(crate) fn render_pilot_summary_md(
     // One ordinary route (#3906): when the top seam can be repaired, the
     // repair transaction replaces the manual before/after snapshot pair.
     let routes = required_routes(context);
+    let python_card = python_top_repair_card(context.python_first_use).filter(|_| top.is_empty());
+    let python_first_pr = python_card_first_pr_command(context.root);
     let next_commands: Vec<&String> = match (repair.as_ref(), routes) {
         (Some(command), _) => {
             out.push_str(
@@ -278,6 +295,37 @@ pub(crate) fn render_pilot_summary_md(
         // #3906: with no Rust seams, the repo-exposure snapshot pair would
         // only report that no seams moved. Route to the diff-first check that
         // analyzes the languages pilot did not rank.
+        // rc rehearsal (py-pricing): a Python repair card is the top
+        // recommendation, so the next commands follow its route; `ripr check`
+        // would only lead back to pilot.
+        (None, _) if python_card.is_some() => match python_card {
+            Some(card) => {
+                let edit = format!(
+                    "{} `{}` in `{}` (test files only)",
+                    capitalized(repair_action_label(&card.repair_action)),
+                    card.suggested_test_name,
+                    card.suggested_test_file
+                );
+                match card.receipt_command.as_ref() {
+                    Some(receipt) => {
+                        out.push_str(&format!(
+                            "{edit}, then run the card's verify command and its receipt command:\n\n"
+                        ));
+                        vec![&card.verify_command, receipt]
+                    }
+                    None => {
+                        out.push_str(&format!(
+                            "Run `ripr first-pr` before the test edit: it names this gap's receipt command (run any regeneration command it prints first). Then {} `{}` in `{}` (test files only), run the card's verify command, and run that receipt command:\n\n",
+                            repair_action_label(&card.repair_action),
+                            card.suggested_test_name,
+                            card.suggested_test_file
+                        ));
+                        vec![&python_first_pr, &card.verify_command]
+                    }
+                }
+            }
+            None => Vec::new(),
+        },
         (None, Some(routes)) => {
             let commands = PilotLanguageRoutes::commands(routes);
             if commands.is_empty() {
@@ -289,6 +337,11 @@ pub(crate) fn render_pilot_summary_md(
                 "Analyze the changed code in the languages outside the Rust seam scan with the diff-first check:\n\n",
             );
             commands
+        }
+        (None, None) if unanalyzed_only(context).is_some() => {
+            out.push_str(NO_ANALYZED_LANGUAGE_COMMAND);
+            out.push('\n');
+            return out;
         }
         (None, None) => {
             match top.first() {
@@ -384,7 +437,7 @@ pub(crate) fn render_pilot_terminal(
             entry.seam.display_line(),
             entry.seam.kind().as_str(),
             entry.seam.owner(),
-            entry.class.as_str()
+            entry.class.human_label()
         ));
         out.push_str(&format!("  why it matters: {}\n", why_line(entry)));
         if outline.is_not_applicable() {
@@ -423,6 +476,13 @@ pub(crate) fn render_pilot_terminal(
             "  none: pilot ranks Rust seams and found none here; see the languages below\n\n",
         );
         false
+    } else if let Some(unanalyzed) = unanalyzed_only(context) {
+        out.push_str("Top recommendation:\n");
+        out.push_str(&format!(
+            "  none: {UNANALYZED_ONLY_VERDICT}\n  found: {}\n\n",
+            unanalyzed_label(unanalyzed)
+        ));
+        false
     } else {
         out.push_str("Top recommendation:\n");
         out.push_str("  none ranked by the default pilot policy\n\n");
@@ -460,6 +520,35 @@ pub(crate) fn render_pilot_terminal(
         );
         return out;
     }
+    // rc rehearsal (py-pricing): with no Rust seam but a Python repair card,
+    // the card is the top recommendation, so the closing block names the
+    // card's route, not `ripr check`, which only leads back here.
+    if top.is_empty()
+        && let Some(card) = python_top_repair_card(context.python_first_use)
+    {
+        let edit = format!(
+            "{} {} in {} (test files only): {}",
+            repair_action_label(&card.repair_action),
+            card.suggested_test_name,
+            card.suggested_test_file,
+            card.suggested_assertion
+        );
+        out.push_str("Next, in order:\n");
+        if let Some(receipt) = card.receipt_command.as_deref() {
+            out.push_str(&format!("  1. {edit}\n"));
+            out.push_str(&format!("  2. {}\n", card.verify_command));
+            out.push_str(&format!("  3. {receipt}\n"));
+        } else {
+            out.push_str(&format!(
+                "  1. {} (names this gap's receipt command; run any regeneration command it prints first)\n",
+                python_card_first_pr_command(context.root)
+            ));
+            out.push_str(&format!("  2. {edit}\n"));
+            out.push_str(&format!("  3. {}\n", card.verify_command));
+            out.push_str("  4. run the receipt command step 1 printed\n");
+        }
+        return out;
+    }
     if let Some(routes) = routes {
         let commands = PilotLanguageRoutes::commands(routes);
         if commands.is_empty() {
@@ -471,6 +560,11 @@ pub(crate) fn render_pilot_terminal(
                 out.push_str(&format!("  {command}\n"));
             }
         }
+        return out;
+    }
+    if unanalyzed_only(context).is_some() {
+        out.push_str(NO_ANALYZED_LANGUAGE_COMMAND);
+        out.push('\n');
         return out;
     }
     if let Some(entry) = top.first().filter(|_| no_repair_target) {
@@ -490,6 +584,28 @@ pub(crate) fn render_pilot_terminal(
 /// this binary, so no runnable command exists.
 const NO_LANGUAGE_ROUTE_COMMAND: &str =
     "No follow-up command applies: this ripr binary cannot analyze the languages listed above.";
+
+/// Why an empty ranking is a non-claim when pilot found only source in
+/// languages no ripr adapter reads.
+const UNANALYZED_ONLY_VERDICT: &str = "this repository's source is in languages ripr does not analyze, so the empty ranking is not a clean result. ripr analyzes Rust, plus TypeScript/JavaScript and Python as previews.";
+
+/// Closing line for [`UNANALYZED_ONLY_VERDICT`]: no ripr command applies.
+const NO_ANALYZED_LANGUAGE_COMMAND: &str =
+    "No follow-up command applies: review changes in these languages with their own tests.";
+
+fn unanalyzed_only<'a>(context: PilotSummaryContext<'a>) -> Option<&'a [(&'static str, usize)]> {
+    context
+        .language_routes
+        .and_then(PilotLanguageRoutes::unanalyzed_only)
+}
+
+fn unanalyzed_label(unanalyzed: &[(&'static str, usize)]) -> String {
+    unanalyzed
+        .iter()
+        .map(|(language, count)| format!("{language} ({})", file_count_label(*count)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 /// Routes the human output must show: present only when pilot's Rust seam
 /// scan produced no seams, so output for Rust seams stays unchanged.
@@ -583,7 +699,21 @@ fn push_language_routes_json(out: &mut String, routes: Option<&PilotLanguageRout
     if !routes.routes.is_empty() {
         out.push_str("\n    ");
     }
-    out.push_str("]\n");
+    out.push(']');
+    // Omitted when empty, so pilot JSON for supported repositories is
+    // unchanged.
+    if !routes.unanalyzed.is_empty() {
+        out.push_str(",\n    \"unanalyzed_languages\": [");
+        for (idx, (language, count)) in routes.unanalyzed.iter().enumerate() {
+            out.push_str(if idx == 0 { "\n" } else { ",\n" });
+            out.push_str(&format!(
+                "      {{ \"language\": \"{}\", \"file_count\": {count} }}",
+                json_escape(language)
+            ));
+        }
+        out.push_str("\n    ]");
+    }
+    out.push('\n');
     out.push_str("  },\n");
 }
 
@@ -958,6 +1088,13 @@ fn push_python_repair_card_terminal(out: &mut String, card: &PythonRepairCard) {
         out.push_str(&format!("  receipt status: {}\n", card.receipt_status));
     }
     out.push_str(&format!("  receipt guidance: {}\n", card.receipt_guidance));
+}
+
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
 }
 
 fn repair_action_label(action: &str) -> &'static str {

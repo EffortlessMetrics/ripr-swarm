@@ -42,6 +42,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::PerlMigrationRefresh(args) => super::reports::perl_migration_refresh(&args),
         XtaskCommand::ModuleHealth(args) => super::reports::module_health(&args),
         XtaskCommand::WindowsAdvisorySummary(args) => super::windows_advisory::run(&args),
+        XtaskCommand::WindowsAdvisoryIsolatedSummary(args) => {
+            super::windows_advisory::run_isolated(&args)
+        }
         XtaskCommand::EvalSweep(args) => super::reports::eval_sweep(&args),
         XtaskCommand::SuggestedFixes => super::suggested_fixes(),
         XtaskCommand::Precommit => precommit_v2::run(),
@@ -72,6 +75,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::RepoExposureReport => super::reports::repo_exposure_report(),
         XtaskCommand::RepoExposureSummaryReport => super::reports::repo_exposure_summary_report(),
         XtaskCommand::RepoExposureLatencyReport => super::reports::repo_exposure_latency_report(),
+        XtaskCommand::LspPerformanceReport => super::reports::lsp_performance_report(),
         XtaskCommand::TargetedRerunBenchmark(args) => {
             super::reports::targeted_rerun_benchmark(&args)
         }
@@ -193,6 +197,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckPositioningLanguage => super::check_positioning_language(),
         XtaskCommand::CheckDocRoles => super::check_doc_roles(),
         XtaskCommand::CheckReleaseTargets => super::check_release_targets(),
+        XtaskCommand::QualifyPythonWheelhouse(args) => super::qualify_python_wheelhouse(&args),
         XtaskCommand::VscodeCompile => super::vscode_compile(),
         XtaskCommand::VscodePackage => super::vscode_package(),
         XtaskCommand::VscodeTest => super::vscode_test(),

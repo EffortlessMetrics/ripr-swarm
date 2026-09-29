@@ -119,3 +119,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_predicate_equality_boundary (3)
+
+Reason:
+RIPR-SPEC-0122: discriminator evidence line no longer says yes on findings that are not exposed
+
+Command:
+`cargo xtask goldens bless binding_predicate_equality_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_predicate_equality_boundary (4)
+
+Reason:
+RIPR-SPEC-0122: bounded human check output leads the exposure line with the plain word the summary uses (weak, no path, unknown) before the schema value
+
+Command:
+`cargo xtask goldens bless binding_predicate_equality_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
