@@ -626,15 +626,12 @@ fn build_packet(snapshot: &CaptureSnapshot) -> Result<Value, String> {
     );
     insert(&mut packet, "mutability", json!("read_only"));
     insert(&mut packet, "http_methods_used", json!(methods));
+    let report = report_payload(exit_state, snapshot, &rollback, &desired);
     insert(&mut packet, "exit_state", json!(exit_state));
     insert(&mut packet, "desired", desired);
     insert(&mut packet, "observation", observation);
     insert(&mut packet, "apply", apply);
-    insert(
-        &mut packet,
-        "report",
-        report_payload(exit_state, snapshot, &rollback, &desired),
-    );
+    insert(&mut packet, "report", report);
     insert(&mut packet, "authorities", authorities);
     insert(&mut packet, "rollback_capture", rollback);
     insert(&mut packet, "prior_receipt", prior);
