@@ -1,4 +1,4 @@
-use super::{rule, RULE_VERSION, WORKSPACE_MANIFEST_PATH};
+use super::{RULE_VERSION, WORKSPACE_MANIFEST_PATH, rule};
 
 pub(super) fn parse_workspace_version(text: &str, violations: &mut Vec<String>) -> Option<String> {
     let value: toml::Value = match toml::from_str(text) {
@@ -46,7 +46,9 @@ pub(super) fn map_pep440_version(version: &str) -> Result<String, String> {
     };
     let mut parts = prerelease.split('.');
     let Some(kind) = parts.next() else {
-        return Err(format!("workspace version `{version}` has an empty prerelease"));
+        return Err(format!(
+            "workspace version `{version}` has an empty prerelease"
+        ));
     };
     let Some(number) = parts.next() else {
         return Err(format!(
@@ -81,7 +83,11 @@ fn validate_numeric_components(value: &str, count: usize, label: &str) -> Result
         ));
     }
     for component in components {
-        if component.is_empty() || !component.chars().all(|character| character.is_ascii_digit()) {
+        if component.is_empty()
+            || !component
+                .chars()
+                .all(|character| character.is_ascii_digit())
+        {
             return Err(format!(
                 "{label} version component `{component}` is not an unsigned decimal integer"
             ));
