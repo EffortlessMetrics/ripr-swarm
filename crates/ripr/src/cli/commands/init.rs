@@ -2811,9 +2811,6 @@ mod tests {
         );
     }
 
-    /// The workflow carries the shared proof-path labels (#3906) inside
-    /// single-quoted shell strings, so none may hold a single quote, and
-    /// every placeholder must be substituted.
     /// #4391: the steps use bash-only syntax, so the job pins `shell: bash`
     /// instead of inheriting a runner default (PowerShell on Windows).
     #[test]
@@ -2833,6 +2830,9 @@ mod tests {
         );
     }
 
+    /// The workflow carries the shared proof-path labels (#3906) inside
+    /// single-quoted shell strings, so none may hold a single quote, and
+    /// every placeholder must be substituted.
     #[test]
     fn generated_workflow_substitutes_shared_labels_into_single_quoted_strings() {
         for text in [
