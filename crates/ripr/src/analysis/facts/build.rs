@@ -80,7 +80,11 @@ fn build_index_with_file_fact_cache(
     }
     let mut pending: Vec<Pending> = Vec::with_capacity(files.len());
     for (file, bytes) in files {
-        cancellation::checkpoint()?;
+        if let Err(err) = cancellation::checkpoint() {
+            // A cancelled lookup still reports the corrupt entries it found.
+            emit_corrupt_entries_warning(stats.corrupt_ignored, first_corrupt_reason.as_deref());
+            return Err(err);
+        }
         let key = RepoFileFactCacheKey::new(file, bytes);
         match cache.load_file_facts(&key) {
             CacheLoad::Hit(facts) => {
@@ -104,12 +108,7 @@ fn build_index_with_file_fact_cache(
             }
         }
     }
-    if let Some(reason) = first_corrupt_reason {
-        eprintln!(
-            "{}",
-            corrupt_entries_warning(stats.corrupt_ignored, &reason)
-        );
-    }
+    emit_corrupt_entries_warning(stats.corrupt_ignored, first_corrupt_reason.as_deref());
 
     // Phase 2 (parallel): parse cache misses on the rayon pool. Each parse
     // is independent; collecting an indexed parallel iterator preserves
@@ -180,15 +179,19 @@ fn build_index_with_file_fact_cache(
     })
 }
 
+fn emit_corrupt_entries_warning(count: usize, first_reason: Option<&str>) {
+    if let Some(reason) = first_reason {
+        eprintln!("{}", corrupt_entries_warning(count, reason));
+    }
+}
+
 /// The build's single corrupt-cache-entry warning. A lone entry keeps the
 /// message it always had; several name the count and the first reason.
 fn corrupt_entries_warning(count: usize, first_reason: &str) -> String {
     if count == 1 {
         format!("ripr: repo file fact cache entry ignored ({first_reason})")
     } else {
-        format!(
-            "ripr: {count} repo file fact cache entries ignored and re-parsed; first: ({first_reason})"
-        )
+        format!("ripr: {count} repo file fact cache entries ignored; first: ({first_reason})")
     }
 }
 
@@ -357,7 +360,7 @@ mod tests {
         let many = super::corrupt_entries_warning(723, "read failed: Not a directory");
         assert_eq!(many.lines().count(), 1);
         assert!(
-            many.starts_with("ripr: 723 repo file fact cache entries ignored and re-parsed;"),
+            many.starts_with("ripr: 723 repo file fact cache entries ignored;"),
             "{many}"
         );
         assert!(
