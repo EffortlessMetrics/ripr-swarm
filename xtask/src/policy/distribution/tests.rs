@@ -188,10 +188,14 @@ fn python_adapter_rejects_independent_version_and_compatibility_claim() -> Resul
 }
 
 #[test]
-fn python_adapter_rejects_feature_and_backend_drift() -> Result<(), String> {
+fn python_adapter_rejects_feature_backend_and_target_drift() -> Result<(), String> {
     let contract = parsed_contract(CONTRACT_TEXT)?;
     let mutated = PYTHON_MANIFEST_TEXT
         .replace("maturin==1.14.1", "maturin>=1")
+        .replace(
+            "targets = [{ name = \"ripr\", kind = \"bin\" }]",
+            "targets = [{ name = \"other\", kind = \"bin\" }]",
+        )
         .replace(
             "features = [\"lang-python\", \"lang-rust\", \"lang-typescript\"]",
             "features = [\"lang-rust\"]",
@@ -206,6 +210,7 @@ fn python_adapter_rejects_feature_and_backend_drift() -> Result<(), String> {
         ),
     );
     assert!(has_violation(&violations, "build-system.requires"));
+    assert!(has_violation(&violations, "tool.maturin.targets"));
     assert!(has_violation(&violations, "tool.maturin.features"));
     Ok(())
 }
