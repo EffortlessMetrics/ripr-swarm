@@ -29,6 +29,8 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // the same values resolve here (flag or config).
     let mut from_artifact: Option<PathBuf> = None;
     let mut base_explicitly_provided = false;
+    // `--worktree` matches `ripr check --worktree` (see `explain`).
+    let mut worktree = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -70,6 +72,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
                     "--suppression-policy",
                 )?));
             }
+            "--worktree" => worktree = true,
             "--at" => {
                 i += 1;
                 selector = Some(expect_value(args, i, "--at")?.to_string());
@@ -101,6 +104,12 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     if from_artifact.is_none() && base_explicitly_provided && input.diff_file.is_some() {
         return Err(base_with_diff_conflict_error("context"));
     }
+    super::worktree_scope_conflict(
+        "context",
+        worktree,
+        input.diff_file.is_some(),
+        from_artifact.is_some(),
+    )?;
     let selector = selector.ok_or_else(|| {
         "missing --at or --finding selector; pass a finding id (e.g. `probe:src_lib.rs:error_path:abc123`) or `file:line`. Run `ripr check --json` to list finding ids".to_string()
     })?;
@@ -129,7 +138,9 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
         )?,
         None => {
             disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
-            app::collect_context_with_config(input, &selector, max_tests, &config)?
+            app::collect_context_with_config_and_worktree(
+                input, &selector, max_tests, &config, worktree,
+            )?
         }
     };
     println!("{rendered}");

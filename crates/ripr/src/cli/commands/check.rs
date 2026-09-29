@@ -742,15 +742,14 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     if !committed_history_diff {
         output.unanalyzed_working_tree = false;
     }
-    let navigation = if worktree_explicitly_provided && write_artifact.is_none() {
-        None
-    } else {
-        Some(app::finding_navigation(
-            &limited_check_input,
-            write_artifact.as_deref(),
-            explicit.mode,
-        ))
-    };
+    // A `--worktree` run carries `--worktree` into its drill-in commands, so
+    // `explain` and `context` analyze the same uncommitted edits.
+    let navigation = Some(app::finding_navigation_with_worktree(
+        &limited_check_input,
+        write_artifact.as_deref(),
+        explicit.mode,
+        worktree_explicitly_provided,
+    ));
     write_stdout_chunked(&app::render_check_with_config_and_navigation(
         &output,
         &format,

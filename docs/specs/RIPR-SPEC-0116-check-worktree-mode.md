@@ -71,6 +71,10 @@ When `--worktree` is present:
   mutually exclusive scope sources;
 - `--worktree` counts as an explicit analysis scope, so no-scope disclosure does
   not fire.
+- the printed drill-in commands (`ripr explain`, `ripr context`) carry
+  `--worktree` after `--base`, so they read the same uncommitted scope as the
+  check that printed them; `ripr explain` and `ripr context` accept
+  `--worktree` and reject it combined with `--diff` or `--from`.
 
 When `--worktree` is absent:
 
@@ -143,13 +147,18 @@ that untracked source was analyzed.
    `unanalyzed_working_tree: true`.
 4. **File diff compatibility**: `ripr check --diff change.patch` keeps existing
    behavior; `ripr check --diff change.patch --worktree` returns an error.
-5. **Doctor**: dirty tracked-worktree guidance names
+5. **Drill-in parity**: after `ripr check --base HEAD --worktree` finds an
+   uncommitted change, its printed `ripr explain` command carries
+   `--worktree` and resolves the finding; the same explain without
+   `--worktree` finds nothing. `ripr context --worktree --json` names an
+   explain command that carries `--worktree`.
+6. **Doctor**: dirty tracked-worktree guidance names
    `ripr check --base HEAD --worktree` when git is available. When git is not
    on PATH, doctor names the `--diff` route even if the tree is dirty.
-6. **LSP saved edit**: with an empty `HEAD...HEAD` committed diff and a tracked
+7. **LSP saved edit**: with an empty `HEAD...HEAD` committed diff and a tracked
    saved source edit in `git diff HEAD`, an interactive LSP diagnostic refresh
    emits diff-scoped findings while keeping the seam inventory deferred.
-7. **LSP explicit refresh parity**: an explicit full refresh consumes the same
+8. **LSP explicit refresh parity**: an explicit full refresh consumes the same
    worktree diff and differs only by running the full seam inventory.
 
 ## Required Evidence
@@ -173,6 +182,8 @@ that untracked source was analyzed.
 ## Test Mapping
 
 - `crates/ripr/tests/cli_smoke.rs::check_worktree_base_head_analyzes_uncommitted_tracked_edit`
+- `crates/ripr/tests/cli_smoke.rs::check_worktree_drill_in_commands_reach_the_uncommitted_finding`
+- `crates/ripr/src/app/navigation.rs::tests::finding_navigation_carries_worktree_scope_after_the_base`
   - dirty tracked edit produces findings and no unanalyzed-worktree disclosure.
 - `crates/ripr/tests/cli_smoke.rs::check_worktree_base_head_clean_worktree_has_no_scope_or_unanalyzed_disclosure`
   - clean worktree produces no findings and no scope/unanalyzed-worktree

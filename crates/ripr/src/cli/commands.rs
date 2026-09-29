@@ -2937,6 +2937,9 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // the same values resolve here (flag or config).
     let mut from_artifact: Option<PathBuf> = None;
     let mut base_explicitly_provided = false;
+    // `--worktree` matches `ripr check --worktree`: the finding may come
+    // from uncommitted edits the committed-history diff never sees.
+    let mut worktree = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -2957,6 +2960,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                 i += 1;
                 from_artifact = Some(PathBuf::from(expect_value(args, i, "--from")?));
             }
+            "--worktree" => worktree = true,
             "--mode" => {
                 i += 1;
                 input.mode = parse_mode(expect_value(args, i, "--mode")?)?;
@@ -3009,6 +3013,12 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     if from_artifact.is_none() && base_explicitly_provided && input.diff_file.is_some() {
         return Err(base_with_diff_conflict_error("explain"));
     }
+    worktree_scope_conflict(
+        "explain",
+        worktree,
+        input.diff_file.is_some(),
+        from_artifact.is_some(),
+    )?;
     let selector = selector.ok_or_else(|| {
         "missing finding selector; pass a finding id (e.g. `probe:src_lib.rs:error_path:abc123`) or `file:line`. Run `ripr check --json` to list finding ids".to_string()
     })?;
@@ -3039,10 +3049,32 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                 &selector,
                 &config,
                 explicit.mode,
+                worktree,
             )?
         }
     };
     println!("{rendered}");
+    Ok(())
+}
+
+/// `--worktree` is its own diff source, like in `ripr check`: it cannot sit
+/// beside `--diff`, and an artifact from `--from` already fixes the scope.
+pub(super) fn worktree_scope_conflict(
+    command: &str,
+    worktree: bool,
+    diff_file: bool,
+    from_artifact: bool,
+) -> Result<(), String> {
+    if worktree && diff_file {
+        return Err(format!(
+            "{command} --worktree cannot be combined with --diff"
+        ));
+    }
+    if worktree && from_artifact {
+        return Err(format!(
+            "{command} --worktree cannot be combined with --from: the artifact already records the diff it was written from"
+        ));
+    }
     Ok(())
 }
 

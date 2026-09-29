@@ -15068,6 +15068,122 @@ fn check_worktree_base_head_analyzes_uncommitted_tracked_edit() -> Result<(), St
     Ok(())
 }
 
+/// `check --worktree` lists findings from uncommitted edits. Its drill-in
+/// commands must carry `--worktree`, and `explain` / `context` must accept it:
+/// without it they analyze committed history, where the finding does not
+/// exist, and the user has no route from the listing to the explanation.
+#[test]
+fn check_worktree_drill_in_commands_reach_the_uncommitted_finding() -> Result<(), String> {
+    let root = unique_temp_workspace("worktree-drill-in");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+    )
+    .map_err(|err| format!("write base lib.rs: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"worktree-drill-in-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n",
+    )
+    .map_err(|err| format!("write dirty lib.rs: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    let listing = run_ripr(&["check", "--root", &root_str, "--base", "HEAD", "--worktree"]);
+    assert_success(&listing);
+    let human = String::from_utf8_lossy(&listing.stdout).into_owned();
+    if !human
+        .lines()
+        .any(|line| line.contains("ripr explain") && line.contains("--worktree"))
+    {
+        return Err(format!(
+            "check --worktree must print an explain command that carries --worktree:\n{human}"
+        ));
+    }
+
+    // Negative control: without --worktree the finding is not in committed
+    // history, and the miss names the plain listing command.
+    let committed = run_ripr(&[
+        "explain",
+        "--root",
+        &root_str,
+        "--base",
+        "HEAD",
+        "src/lib.rs:2",
+    ]);
+    if committed.status.success() {
+        return Err("explain without --worktree must not find the uncommitted change".to_string());
+    }
+
+    let explained = run_ripr(&[
+        "explain",
+        "--root",
+        &root_str,
+        "--base",
+        "HEAD",
+        "--worktree",
+        "src/lib.rs:2",
+    ]);
+    assert_success(&explained);
+    let explanation = String::from_utf8_lossy(&explained.stdout).into_owned();
+    if !explanation.contains("src/lib.rs") || !explanation.contains("--worktree") {
+        return Err(format!(
+            "explain --worktree must render the finding and a context command that keeps --worktree:\n{explanation}"
+        ));
+    }
+
+    let context = run_ripr(&[
+        "context",
+        "--root",
+        &root_str,
+        "--base",
+        "HEAD",
+        "--worktree",
+        "--at",
+        "src/lib.rs:2",
+    ]);
+    assert_success(&context);
+    let packet: serde_json::Value = serde_json::from_slice(&context.stdout)
+        .map_err(|err| format!("parse context JSON: {err}"))?;
+    let explain_command = packet
+        .pointer("/witness/explain_command")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if !explain_command.contains("--worktree") {
+        return Err(format!(
+            "context --worktree must point back at explain with --worktree: {packet}"
+        ));
+    }
+
+    let conflict = run_ripr(&[
+        "explain",
+        "--root",
+        &root_str,
+        "--worktree",
+        "--diff",
+        "x.patch",
+        "src/lib.rs:2",
+    ]);
+    if conflict.status.success()
+        || !String::from_utf8_lossy(&conflict.stderr)
+            .contains("explain --worktree cannot be combined with --diff")
+    {
+        return Err("explain --worktree --diff must fail with the named conflict".to_string());
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// RIPR-SPEC-0112: `--diff` analyzes the supplied patch, not committed
 /// history, so an uncommitted tracked edit in the same checkout was not
 /// "excluded" from it and must not be disclosed as unanalyzed. The fixture is

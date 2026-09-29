@@ -29,7 +29,7 @@ pub fn explain_finding_with_config(
     selector: &str,
     config: &RiprConfig,
 ) -> Result<String, String> {
-    explain_finding_with_config_and_navigation_mode(input, selector, config, false)
+    explain_finding_with_config_and_navigation_mode(input, selector, config, false, false)
 }
 
 pub(crate) fn explain_finding_with_config_and_navigation_mode(
@@ -37,19 +37,34 @@ pub(crate) fn explain_finding_with_config_and_navigation_mode(
     selector: &str,
     config: &RiprConfig,
     mode_explicit: bool,
+    worktree: bool,
 ) -> Result<String, String> {
-    let navigation = super::finding_navigation(&input, None, mode_explicit);
-    let output = check_workspace_with_config(input, config)?;
+    let navigation = super::finding_navigation_with_worktree(&input, None, mode_explicit, worktree);
+    let output = if worktree {
+        super::check_workspace_worktree_with_config(input, config)?
+    } else {
+        check_workspace_with_config(input, config)?
+    };
     match select_finding(&output.findings, selector) {
         Some(finding) => Ok(output::human::render_finding_with_context_command(
             finding,
             config,
             &navigation.context_command(selector),
         )),
-        None => Err(format!(
-            "no finding matched {selector:?}; run `ripr check --json` to list available finding ids"
-        )),
+        None => Err(no_finding_matched(selector, worktree)),
     }
+}
+
+/// The miss message names the listing command for the same scope: without
+/// `--worktree`, `ripr check --json` lists committed-history findings and
+/// omits the ones only the uncommitted edits produce.
+pub(crate) fn no_finding_matched(selector: &str, worktree: bool) -> String {
+    let list = if worktree {
+        "ripr check --worktree --json"
+    } else {
+        "ripr check --json"
+    };
+    format!("no finding matched {selector:?}; run `{list}` to list available finding ids")
 }
 
 /// Like [`explain_finding_with_config`] but loads the finding set from a
