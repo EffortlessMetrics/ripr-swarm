@@ -1149,7 +1149,7 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
         );
     }
     if let Some(record) = records.iter().copied().find(is_first_run_repairable_gap) {
-        let top_gap = top_gap_from_record(record, root, options);
+        let top_gap = top_gap_from_record(record, gap_ledger, root, options);
         if let Some(edited) = check_output_evidence_predates_edit(root, options, &top_gap) {
             return Selection::blocked(
                 "stale_artifact",
@@ -1782,7 +1782,12 @@ fn first_pr_language_is_supported(record: &Value) -> bool {
     )
 }
 
-fn top_gap_from_record(record: &Value, root: &Path, options: &FirstPrOptions) -> TopGapSelection {
+fn top_gap_from_record(
+    record: &Value,
+    gap_ledger: &Value,
+    root: &Path,
+    options: &FirstPrOptions,
+) -> TopGapSelection {
     let repair_route = record.get("repair_route");
     let anchor = record.get("anchor");
     let gap_id = string_path(record, &["gap_id"]).unwrap_or_else(|| "unknown-gap".to_string());
@@ -1822,7 +1827,7 @@ fn top_gap_from_record(record: &Value, root: &Path, options: &FirstPrOptions) ->
         ),
     };
     let static_recheck_command = if is_receipt_write_command(&receipt_command) {
-        static_recheck_command(root, options)
+        static_recheck_command(gap_ledger, root, options)
     } else {
         None
     };
@@ -2344,25 +2349,41 @@ fn rerun_check_output_gap_ledger_command(options: &FirstPrOptions) -> String {
 /// The static re-check after verify (MCP agent walk, 2026-09-29): on the
 /// check-output route the receipt records only the verify status it is given,
 /// so this reruns check over the working tree, where the test edit usually
-/// still is, and compares it with the check report the gap came from. The
-/// before report is read as it stands, so the command is offered only when
-/// it exists.
-fn static_recheck_command(root: &Path, options: &FirstPrOptions) -> Option<String> {
+/// still is, and compares it with the check report the gap came from.
+///
+/// That report is the one the ledger names as its input
+/// (`inputs.records` with `inputs.source_kind == "check_output"`), never a
+/// default path that merely exists: comparing against a report that did not
+/// produce the selected gap would show movement that is not the edit's. The
+/// command is omitted when the ledger names no check-output input, when it
+/// disagrees with a supplied `--check-output`, or when the report is absent.
+fn static_recheck_command(
+    gap_ledger: &Value,
+    root: &Path,
+    options: &FirstPrOptions,
+) -> Option<String> {
     if !uses_check_output_gap_ledger(root) {
         return None;
     }
-    let before_raw = options
-        .check_output
-        .as_deref()
-        .unwrap_or(DEFAULT_CHECK_OUTPUT);
-    if !resolve_path(root, before_raw).is_file() {
+    if string_path(gap_ledger, &["inputs", "source_kind"]).as_deref() != Some("check_output") {
+        return None;
+    }
+    let before_raw =
+        string_path(gap_ledger, &["inputs", "records"]).filter(|path| !path.trim().is_empty())?;
+    let before_path = resolve_path(root, &before_raw);
+    if let Some(supplied) = options.check_output.as_deref()
+        && resolve_path(root, supplied) != before_path
+    {
+        return None;
+    }
+    if !before_path.is_file() {
         return None;
     }
     let after_raw = match before_raw.strip_suffix(".json") {
         Some(stem) => format!("{stem}.after.json"),
         None => format!("{before_raw}.after.json"),
     };
-    let before = options.anchored_arg(before_raw);
+    let before = options.anchored_arg(&before_raw);
     let after = options.anchored_arg(&after_raw);
     Some(format!(
         "ripr check --root {} --base {} --worktree --json > {after} && ripr outcome --before {before} --after {after}",
@@ -4865,6 +4886,10 @@ mod tests {
         ledger["records"][0]["receipt_command"] = json!(
             "ripr receipt write --gap g --verify-command 'pytest tests/test_pricing.py' --status not_run --out target/ripr/receipts/g.json"
         );
+        ledger["inputs"] = json!({
+            "source_kind": "check_output",
+            "records": DEFAULT_CHECK_OUTPUT,
+        });
 
         // No check report on disk: nothing to compare against.
         write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger.clone())?;
@@ -4894,7 +4919,7 @@ mod tests {
         );
 
         // A `receipt write` receipt with the check report on disk.
-        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger)?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger.clone())?;
         write_first_pr(&repo, &options)?;
         let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
         assert_eq!(packet["selected"]["state"], "top_gap");
@@ -4947,6 +4972,45 @@ mod tests {
             "{markdown}"
         );
         check_first_pr(&repo, &options)?;
+
+        // Provenance: the before report is the one the ledger was built from,
+        // never the default path merely because it exists.
+        let recheck_for = |ledger: &Value, options: &FirstPrOptions| -> Result<Value, String> {
+            write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger.clone())?;
+            write_first_pr(&repo, options)?;
+            let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+            assert_eq!(packet["selected"]["state"], "top_gap", "{packet}");
+            Ok(packet["selected"]["static_recheck_command"].clone())
+        };
+        let mut unnamed = ledger.clone();
+        unnamed
+            .as_object_mut()
+            .ok_or("ledger fixture must be an object")?
+            .remove("inputs");
+        assert_eq!(recheck_for(&unnamed, &options)?, Value::Null);
+        let mut records_source = ledger.clone();
+        records_source["inputs"]["source_kind"] = json!("records");
+        assert_eq!(recheck_for(&records_source, &options)?, Value::Null);
+        let mut saved = ledger.clone();
+        saved["inputs"]["records"] = json!("saved/check.json");
+        assert_eq!(
+            recheck_for(&saved, &options)?,
+            Value::Null,
+            "an absent named report must not fall back to the default check.json"
+        );
+        write_json(
+            &repo.join("saved/check.json"),
+            check_output_with_python_repair_card(),
+        )?;
+        let saved_before = options.anchored_arg("saved/check.json");
+        let saved_after = options.anchored_arg("saved/check.after.json");
+        assert_eq!(
+            recheck_for(&saved, &options)?,
+            json!(format!(
+                "ripr check --root {} --base origin/main --worktree --json > {saved_after} && ripr outcome --before {saved_before} --after {saved_after}",
+                bound_arg(".")
+            ))
+        );
         cleanup(&repo)
     }
 
