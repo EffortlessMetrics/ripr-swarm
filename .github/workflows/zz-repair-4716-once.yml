@@ -135,7 +135,7 @@ jobs:
           set -euo pipefail
           cargo +1.95.0 fmt --all
           npm --prefix packaging/npm/launcher test
-          npm --prefix packaging/npm/launcher pack --dry-run --json --ignore-scripts >/tmp/npm-pack.json
+          (cd packaging/npm/launcher && npm pack --dry-run --json --ignore-scripts >/tmp/npm-pack.json)
           cargo +1.95.0 test -p xtask npm_launcher
 
       - name: Commit repairs and remove one-shot workflow
