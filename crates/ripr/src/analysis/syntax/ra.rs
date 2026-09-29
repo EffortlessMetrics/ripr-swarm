@@ -143,6 +143,14 @@ pub(crate) struct ModuleItemScopes {
     /// Names each fn calls as a parsed single-segment free function
     /// (`check(..)`), outside macro arguments, strings and comments.
     pub(crate) direct_calls: BTreeMap<(usize, String), std::collections::BTreeSet<String>>,
+    /// Fns carrying a `cfg` or `cfg_attr` attribute anywhere in their
+    /// syntax (outer, inner `#![..]`, or on a statement), whitespace
+    /// ignored: such a fn may not be the one that compiles.
+    pub(crate) fns_with_cfg: std::collections::BTreeSet<(usize, String)>,
+    /// Names each fn binds inside itself: every identifier pattern
+    /// (parameters, `let`, `for`, `if let`, closure and match bindings)
+    /// and every named item in its body (`const`, `static`, nested `fn`).
+    pub(crate) bound_names: BTreeMap<(usize, String), std::collections::BTreeSet<String>>,
 }
 
 /// The module scopes of `text`'s functions. `None` when the file does not
@@ -164,6 +172,39 @@ pub(crate) fn module_item_scopes(text: &str) -> Option<ModuleItemScopes> {
             line_index.line(fn_token.text_range().start()),
             name.text().to_string(),
         );
+        if function
+            .syntax()
+            .descendants()
+            .filter_map(ast::Attr::cast)
+            .any(|attribute| {
+                let compact: String = attribute
+                    .syntax()
+                    .text()
+                    .to_string()
+                    .chars()
+                    .filter(|character| !character.is_whitespace())
+                    .collect();
+                compact.starts_with("#[cfg") || compact.starts_with("#![cfg")
+            })
+        {
+            scopes.fns_with_cfg.insert(key.clone());
+        }
+        let bound = function
+            .syntax()
+            .descendants()
+            .filter(|node| node != function.syntax())
+            .filter_map(|node| {
+                if let Some(pattern) = ast::IdentPat::cast(node.clone()) {
+                    return pattern.name().map(|name| name.text().to_string());
+                }
+                ast::Const::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .or_else(|| ast::Static::cast(node.clone()).and_then(|item| item.name()))
+                    .or_else(|| ast::Fn::cast(node).and_then(|item| item.name()))
+                    .map(|name| name.text().to_string())
+            })
+            .collect();
+        scopes.bound_names.insert(key.clone(), bound);
         if let Some(body) = function.body() {
             if body
                 .syntax()

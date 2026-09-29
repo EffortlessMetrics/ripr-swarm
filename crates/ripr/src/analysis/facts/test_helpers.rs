@@ -28,11 +28,12 @@
 //!   test whose body holds a `use` item;
 //! - the parsed test body calls it as a single-segment free function
 //!   (`check(..)`, not `self.check(..)`, `path::check(..)`, or the text
-//!   `check(` in a string or comment), and neither a nested `fn` nor a
-//!   `let` binding in the test shadows the name;
-//! - the helper has no `#[cfg(..)]` attribute (a disabled helper can stand
-//!   beside a macro-defined real one), no `use` item or nested `fn` in its
-//!   body, and it does not share a line with the test;
+//!   `check(` in a string or comment), and the test binds no name equal
+//!   to it anywhere (parameter, `let`, `for`, `if let`, closure or match
+//!   binding, `const`, `static` or nested `fn`);
+//! - the helper has no `cfg`/`cfg_attr` attribute anywhere (a disabled
+//!   helper can stand beside a macro-defined real one), no `use` item or
+//!   nested `fn` in its body, and it does not share a line with the test;
 //! - one hop: the helper's calls and parser-backed assertions are added
 //!   with the helper's own line numbers; the assertions of helpers the
 //!   helper calls are not followed.
@@ -102,6 +103,10 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
             if scopes.item_fns.get(&helper_key) != Some(test_module)
                 || !calls_directly(scopes, &test_key, &call.name)
                 || test_shadows(test, &call.name)
+                || scopes
+                    .bound_names
+                    .get(&test_key)
+                    .is_none_or(|bound| bound.contains(&call.name))
                 || !helper_body_is_plain(scopes, &helper_key, helper)
                 || spans_overlap(helper, test)
             {
@@ -175,18 +180,16 @@ fn calls_directly(scopes: &ModuleItemScopes, test_key: &(usize, String), name: &
         .is_some_and(|called| called.contains(name))
 }
 
-/// A helper whose assertion is the one that runs: no `#[cfg(..)]` gate (a
-/// cfg-disabled helper can stand beside a macro-defined real one), and no
-/// `use` item or nested `fn` in its body that could shadow the owner.
+/// A helper whose assertion is the one that runs: no `cfg`/`cfg_attr`
+/// attribute anywhere in it (a cfg-disabled helper can stand beside a
+/// macro-defined real one), and no `use` item or nested `fn` in its body
+/// that could shadow the owner.
 fn helper_body_is_plain(
     scopes: &ModuleItemScopes,
     helper_key: &(usize, String),
     helper: &FunctionFact,
 ) -> bool {
-    !helper
-        .attrs
-        .iter()
-        .any(|attribute| attribute.starts_with("#[cfg"))
+    !scopes.fns_with_cfg.contains(helper_key)
         && !scopes.fns_with_local_use.contains(helper_key)
         && helper.nested_fn_names.is_empty()
 }

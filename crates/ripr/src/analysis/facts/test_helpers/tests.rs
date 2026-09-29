@@ -120,6 +120,41 @@ fn helpers_that_cannot_be_resolved_to_one_cfg_test_function_grant_nothing()
             "        check(10, false);\n",
         ),
         (
+            "cfg attribute with spaces",
+            "    #[ cfg(any()) ]\n    fn check(x: u32, want: bool) {\n        assert_eq!(gate(x), want);\n    }\n",
+            "        check(10, false);\n",
+        ),
+        (
+            "inner cfg attribute",
+            "    fn check(x: u32, want: bool) {\n        #![cfg(any())]\n        assert_eq!(gate(x), want);\n    }\n",
+            "        check(10, false);\n",
+        ),
+        (
+            "for binding",
+            "    fn check(x: u32, want: bool) {\n        assert_eq!(gate(x), want);\n    }\n    fn noop(_: u32, _: bool) {}\n",
+            "        for check in [noop as fn(u32, bool)] {\n            check(10, false);\n        }\n",
+        ),
+        (
+            "closure parameter",
+            "    fn check(x: u32, want: bool) {\n        assert_eq!(gate(x), want);\n    }\n    fn noop(_: u32, _: bool) {}\n",
+            "        [noop as fn(u32, bool)].iter().for_each(|check| check(10, false));\n",
+        ),
+        (
+            "if let binding",
+            "    fn check(x: u32, want: bool) {\n        assert_eq!(gate(x), want);\n    }\n    fn noop(_: u32, _: bool) {}\n",
+            "        if let Some(check) = Some(noop as fn(u32, bool)) {\n            check(10, false);\n        }\n",
+        ),
+        (
+            "let without initializer",
+            "    fn check(x: u32, want: bool) {\n        assert_eq!(gate(x), want);\n    }\n    fn noop(_: u32, _: bool) {}\n",
+            "        let check: fn(u32, bool);\n        check = noop;\n        check(10, false);\n",
+        ),
+        (
+            "const item",
+            "    fn check(x: u32, want: bool) {\n        assert_eq!(gate(x), want);\n    }\n    fn noop(_: u32, _: bool) {}\n",
+            "        #[allow(non_upper_case_globals)]\n        const check: fn(u32, bool) = noop;\n        check(10, false);\n",
+        ),
+        (
             "use item in the helper body",
             "    fn check(x: u32, want: bool) {\n        use crate::other::gate;\n        assert_eq!(gate(x), want);\n    }\n",
             "        check(10, false);\n",
