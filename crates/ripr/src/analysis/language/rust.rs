@@ -1808,6 +1808,7 @@ impl RustAdapter {
             &index,
             &findings,
             &changed_rust_paths,
+            &options.root,
         )?
         .into_iter()
         .collect();

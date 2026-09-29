@@ -55,7 +55,10 @@ classified owner actually consulted that file.
 Lesson: stderr disclosure on a different analysis mode is not a machine
 limitation. Related-test dropout is a completeness fact, not a classification
 vocabulary change. Owner-call scans must mask comments and strings so a
-comment mentioning the owner cannot make the crate partial.
+comment mentioning the owner cannot make the crate partial. A `fn owner()`
+declaration, a same-named call in another crate, and a long repository path
+are not reasons to abort analysis or mark an unused nightly file as
+consulted; a turbofish `owner::<T>(...)` and `#[ test ]` still are.
 
 ## 2026-07-29: Property tests and lexical fallback disclosure
 
