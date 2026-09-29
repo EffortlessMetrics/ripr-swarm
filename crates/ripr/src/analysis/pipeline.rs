@@ -1064,15 +1064,29 @@ fn detect_repo_preview_advisories(
             continue;
         }
         let file_count = files.len();
+        let javascript_file_count = files
+            .iter()
+            .filter(|path| is_javascript_family_path(std::path::Path::new(path)))
+            .count();
         let sample_paths: Vec<String> = files.into_iter().take(3).collect();
         advisories.push(PreviewLanguageAdvisory {
             language: language.as_str().to_string(),
             file_count,
             sample_paths,
+            javascript_file_count,
             enabled: analyzed_only,
         });
     }
     advisories
+}
+
+/// Whether a routed path is a JavaScript-family source (`.js`, `.jsx`,
+/// `.mjs`, `.cjs`), using the router's own exact extension lists.
+fn is_javascript_family_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .and_then(super::language::ts_js_source_kind)
+        == Some(super::language::TsJsSourceKind::JavaScript)
 }
 
 /// Languages that route through a compiled preview adapter, in stable order.
@@ -1106,7 +1120,8 @@ fn detect_preview_advisories<'a, I>(
 where
     I: Iterator<Item = &'a diff::ChangedFile>,
 {
-    let mut counts: Vec<(LanguageId, usize, Vec<String>)> = Vec::new();
+    // `(language, file count, JavaScript-family count, sample paths)`.
+    let mut counts: Vec<(LanguageId, usize, usize, Vec<String>)> = Vec::new();
     for changed in paths {
         let Some(language) = super::language::route(&changed.path) else {
             continue;
@@ -1127,26 +1142,29 @@ where
             continue;
         }
         let normalized = changed.path.to_string_lossy().replace('\\', "/");
-        match counts.iter_mut().find(|(lang, _, _)| *lang == language) {
-            Some((_, count, samples)) => {
+        let javascript = usize::from(is_javascript_family_path(&changed.path));
+        match counts.iter_mut().find(|(lang, _, _, _)| *lang == language) {
+            Some((_, count, javascript_count, samples)) => {
                 *count += 1;
+                *javascript_count += javascript;
                 if samples.len() < 3 {
                     samples.push(normalized);
                 }
             }
-            None => counts.push((language, 1, vec![normalized])),
+            None => counts.push((language, 1, javascript, vec![normalized])),
         }
     }
 
     let mut advisories: Vec<PreviewLanguageAdvisory> = Vec::new();
     for language in PREVIEW_LANGUAGE_ORDER {
-        if let Some((_, file_count, sample_paths)) =
-            counts.iter().find(|(lang, _, _)| lang == language)
+        if let Some((_, file_count, javascript_file_count, sample_paths)) =
+            counts.iter().find(|(lang, _, _, _)| lang == language)
         {
             advisories.push(PreviewLanguageAdvisory {
                 language: language.as_str().to_string(),
                 file_count: *file_count,
                 sample_paths: sample_paths.clone(),
+                javascript_file_count: *javascript_file_count,
                 enabled: enabled.contains(language) && language.is_available(),
             });
         }
@@ -2872,6 +2890,43 @@ index 0000000..1111111 100644
                     == AnalysisLimitationKind::LanguageScopeUnsupported),
             "a not-enabled adapter must not emit a preview skip limitation"
         );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #4555: the advisory counts the JavaScript half of the TS/JS family so
+    /// prose can call a JavaScript-only diff JavaScript; `.mts` and `.d.ts`
+    /// stay TypeScript, `.mjs`/`.cjs`/`.jsx` count as JavaScript.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn typescript_advisory_counts_javascript_family_files() -> Result<(), String> {
+        let root = temp_root("issue-4555-ts-advisory-javascript-count")?;
+        let diff_file = root.join("ts.diff");
+        write(
+            &diff_file,
+            &added_file_diff(&[
+                "src/a.js",
+                "src/b.mjs",
+                "src/c.cjs",
+                "src/d.jsx",
+                "src/e.mts",
+                "src/f.ts",
+            ]),
+        )?;
+
+        let result = run_diff_pipeline_with_oracle_policy(
+            &excluded_path_advisory_options(&root, diff_file),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+        )?;
+
+        let advisory = result
+            .preview_language_advisories
+            .iter()
+            .find(|advisory| advisory.language == "typescript")
+            .ok_or_else(|| "expected a TypeScript advisory".to_string())?;
+        assert_eq!(advisory.file_count, 6);
+        assert_eq!(advisory.javascript_file_count, 4);
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
