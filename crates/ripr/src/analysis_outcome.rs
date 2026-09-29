@@ -40,6 +40,21 @@ impl AnalysisOutcomeKind {
         }
     }
 
+    /// What the outcome means, in words, for the human `check` header. The
+    /// schema value (`as_str`) is printed beside it.
+    pub(crate) const fn plain_label(self) -> &'static str {
+        match self {
+            Self::NoScope => "nothing was in scope",
+            Self::NoChangedLines => "the diff has no changed lines",
+            Self::NoBehavioralCandidates => "no changed line is behavior ripr checks",
+            Self::CompleteNoFindings => "no findings",
+            Self::CompleteWithFindings => "findings below",
+            Self::PartialWithLimitations => "limitations below",
+            Self::UnsupportedInput => "the input is not supported",
+            Self::AnalysisFailed => "the analysis failed",
+        }
+    }
+
     pub(crate) const fn is_complete(self) -> bool {
         matches!(
             self,

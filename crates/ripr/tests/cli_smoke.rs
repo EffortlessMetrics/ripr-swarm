@@ -3125,6 +3125,7 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     let repair = run_ripr(&[
         "agent",
         "repair",
+        "--json",
         "--root",
         &root_path,
         "--seam-id",
@@ -4545,6 +4546,7 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     let before = run_ripr(&[
         "agent",
         "repair",
+        "--json",
         "--root",
         &root_arg,
         "--seam-id",
@@ -4603,6 +4605,7 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     let after = run_ripr(&[
         "agent",
         "repair",
+        "--json",
         "--root",
         &root_arg,
         "--seam-id",
@@ -4685,6 +4688,7 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     let replay = run_ripr(&[
         "agent",
         "repair",
+        "--json",
         "--root",
         &root_arg,
         "--seam-id",
@@ -4896,7 +4900,7 @@ fn built_repair_fixture(label: &str) -> Result<PathBuf, Box<dyn std::error::Erro
 
 fn run_repair_phase(root: &Path, selector: &[&str], phase: &str) -> Result<Output, std::io::Error> {
     let root_arg = root.display().to_string();
-    let mut args = vec!["agent", "repair", "--root", root_arg.as_str()];
+    let mut args = vec!["agent", "repair", "--json", "--root", root_arg.as_str()];
     args.extend_from_slice(selector);
     args.extend(["--phase", phase]);
     run_command(env!("CARGO_BIN_EXE_ripr"), None, &args)
@@ -5267,7 +5271,7 @@ fn run_repair_phase_redirected(
     stderr: &Path,
 ) -> Result<Output, std::io::Error> {
     let root_arg = root.display().to_string();
-    let mut args = vec!["agent", "repair", "--root", root_arg.as_str()];
+    let mut args = vec!["agent", "repair", "--json", "--root", root_arg.as_str()];
     args.extend_from_slice(selector);
     args.extend(["--phase", phase]);
     spawn_command(
@@ -10893,7 +10897,7 @@ fn python_check_safe_action(
         .find(|line| line.starts_with("  Safe next action:"))
         .ok_or_else(|| format!("check printed no safe next action:\n{stdout}"))?;
     assert!(
-        stdout.contains("State: preview_limited"),
+        stdout.contains("State: preview language, advisory only (preview_limited)"),
         "expected preview_limited triage:\n{stdout}"
     );
     Ok(line.to_string())
@@ -15010,6 +15014,7 @@ fn repair_route_before(root: &Path) -> Result<String, Box<dyn std::error::Error>
     let before = run_ripr(&[
         "agent",
         "repair",
+        "--json",
         "--root",
         &root_arg,
         "--seam-id",
@@ -15257,6 +15262,7 @@ fn agent_status_restarts_a_failed_attempt_and_completes_a_finished_one()
     let after = run_ripr(&[
         "agent",
         "repair",
+        "--json",
         "--root",
         &root_arg,
         "--attempt",
@@ -15297,6 +15303,7 @@ fn agent_status_restarts_a_failed_attempt_and_completes_a_finished_one()
     let after = run_ripr(&[
         "agent",
         "repair",
+        "--json",
         "--root",
         &root_arg,
         "--attempt",
@@ -15352,6 +15359,7 @@ fn repair_route_after(root: &Path, attempt_id: &str) -> std::process::Output {
     run_ripr(&[
         "agent",
         "repair",
+        "--json",
         "--root",
         &root_arg,
         "--attempt",
@@ -16321,6 +16329,7 @@ fn agent_status_retains_an_earlier_attempt_outcome_after_a_later_finish()
     let second_before = run_ripr(&[
         "agent",
         "repair",
+        "--json",
         "--root",
         &root_arg,
         "--seam-id",

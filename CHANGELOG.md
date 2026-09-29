@@ -1124,6 +1124,16 @@ are scoped or reviewed.
   focused test with the missing discriminator next to the nearest related
   test", matching the new test `pilot` names, where it used to say "extend
   the nearest related test".
+- `ripr agent repair` no longer prints 9 to 13 KB of JSON to stdout unasked.
+  By default each phase prints a short human summary that names the seam, the
+  movement and where the full packet, receipt and verify documents were
+  written. `--json` prints the packet (before phase), the envelope (after
+  phase) or the verification receipt (verify phase) on stdout as before,
+  matching `ripr agent status --json`. `ripr check`'s default output now
+  leads its `Analysis outcome:` and `State:` lines with plain words and keeps
+  the id in parentheses, for example `Analysis outcome: findings below
+  (analysis complete; complete_with_findings).` and `State: a test gap to
+  inspect or repair (top_gap)`.
 
 ### Added
 
