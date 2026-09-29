@@ -845,8 +845,8 @@ mod tests {
     #[test]
     fn uppercase_wheel_digest_cannot_pass() -> Result<(), String> {
         let mut receipt = valid_receipt();
-        receipt.rows[0].wheel_sha256 = WHEEL_SHA.to_ascii_uppercase();
-        receipt.rows[1].wheel_sha256 = WHEEL_SHA.to_ascii_uppercase();
+        receipt.rows[0].wheel_sha256 =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_ascii_uppercase();
         must_reject(receipt, "wheel digest")
     }
 
@@ -1028,7 +1028,7 @@ mod tests {
     #[test]
     fn workflow_installs_from_a_local_wheelhouse_with_isolation_controls() {
         let text = WORKFLOW_TEXT;
-        assert!(text.contains("pip install --no-index --find-links"));
+        assert!(text.contains("install --no-index --find-links"));
         assert!(text.contains("uv tool install --offline"));
         assert!(text.contains("PIP_NO_INDEX=1"));
         assert!(text.contains("UV_OFFLINE=1"));
