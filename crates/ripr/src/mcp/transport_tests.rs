@@ -52,7 +52,7 @@ async fn fatal_output_limit_wakes_receive_while_input_remains_open() -> Result<(
     }
     if tokio::time::timeout(std::time::Duration::from_secs(5), receiving)
         .await
-        .map_err(|_| "fatal send did not wake open-input receive".to_string())?
+        .map_err(|_error| "fatal send did not wake open-input receive".to_string())?
         .is_some()
     {
         return Err("fatal send did not terminate receive".into());
@@ -149,7 +149,7 @@ async fn consumed_protocol_error_survives_receive_cancellation_behind_busy_write
     drop(held);
     let message = tokio::time::timeout(std::time::Duration::from_secs(5), transport.receive())
         .await
-        .map_err(|_| "protocol error resume timed out".to_string())?
+        .map_err(|_error| "protocol error resume timed out".to_string())?
         .ok_or_else(|| "transport failed to recover next valid message".to_string())?;
     if !matches!(message, ClientJsonRpcMessage::Request(_)) {
         return Err("next valid request was not recovered".into());
@@ -251,7 +251,9 @@ async fn framing_retains_a_partial_message_when_receive_is_cancelled() -> Result
     let completed =
         tokio::time::timeout(std::time::Duration::from_secs(5), read_frame(&mut reader))
             .await
-            .map_err(|_| "cancelled receive did not complete after its delimiter".to_string())??;
+            .map_err(|_error| {
+                "cancelled receive did not complete after its delimiter".to_string()
+            })??;
     match completed {
         FrameRead::Frame(value) if value.as_slice() == b"{\"split\":true}" => Ok(()),
         _ => Err("cancelled receive discarded the consumed prefix".to_string()),

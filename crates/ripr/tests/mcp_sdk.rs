@@ -207,7 +207,7 @@ async fn sdk_session(
     })
     .await;
     let operation = operation
-        .map_err(|_| "SDK session exceeded its owned deadline".to_string())
+        .map_err(|_error| "SDK session exceeded its owned deadline".to_string())
         .and_then(|result| result);
     let mut forced_cleanup = false;
     let cleanup = async {
@@ -220,7 +220,7 @@ async fn sdk_session(
                     .map_err(|error| format!("request SDK peer termination: {error}"))?;
                 tokio::time::timeout(Duration::from_secs(3), child.wait())
                     .await
-                    .map_err(|_| "terminated SDK peer exceeded its reap deadline".to_string())?
+                    .map_err(|_error| "terminated SDK peer exceeded its reap deadline".to_string())?
                     .map_err(|error| format!("reap terminated SDK peer: {error}"))
             }
         }

@@ -40,13 +40,13 @@ impl Admission {
         self.pending
             .lock()
             .map(|id| id.is_some())
-            .map_err(|_| Error::other("MCP admission unavailable"))
+            .map_err(|_error| Error::other("MCP admission unavailable"))
     }
     fn admit(&self, id: RequestId) -> Result<(), Error> {
         let mut pending = self
             .pending
             .lock()
-            .map_err(|_| Error::other("MCP admission unavailable"))?;
+            .map_err(|_error| Error::other("MCP admission unavailable"))?;
         if pending.is_some() {
             return Err(Error::other("MCP admission already pending"));
         }
@@ -57,7 +57,7 @@ impl Admission {
         let mut pending = self
             .pending
             .lock()
-            .map_err(|_| Error::other("MCP admission unavailable"))?;
+            .map_err(|_error| Error::other("MCP admission unavailable"))?;
         if id.is_some() && *pending == id {
             *pending = None;
             self.wake.notify_one();
@@ -66,10 +66,10 @@ impl Admission {
     }
 }
 fn record_failure(failure: &Failure, reason: &'static str) {
-    if let Ok(mut stored) = failure.reason.lock() {
-        if stored.is_none() {
-            *stored = Some(reason);
-        }
+    if let Ok(mut stored) = failure.reason.lock()
+        && stored.is_none()
+    {
+        *stored = Some(reason);
     }
     // A response send task can fail while the SDK is awaiting receive.
     // Notify retains a permit even if that future is between polls.
@@ -216,11 +216,11 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
             let mut bytes = BytesMut::from(frame.as_slice());
             match JsonRpcMessageCodec::<ClientJsonRpcMessage>::default().decode_eof(&mut bytes) {
                 Ok(Some(message)) => {
-                    if let ClientJsonRpcMessage::Request(request) = &message {
-                        if self.admission.admit(request.id.clone()).is_err() {
-                            record_failure(&self.failure, "MCP admission unavailable");
-                            return None;
-                        }
+                    if let ClientJsonRpcMessage::Request(request) = &message
+                        && self.admission.admit(request.id.clone()).is_err()
+                    {
+                        record_failure(&self.failure, "MCP admission unavailable");
+                        return None;
                     }
                     return Some(message);
                 }
@@ -273,14 +273,15 @@ where
         pending_protocol_error: None,
         writer_needs_drain: false,
     };
-    let server = McpServer::new(status).map_err(|_| "MCP status projection failed".to_owned())?;
+    let server =
+        McpServer::new(status).map_err(|_error| "MCP status projection failed".to_owned())?;
     let service = match server.serve(transport).await {
         Ok(service) => service,
         Err(error) => {
             let reason = failure
                 .reason
                 .lock()
-                .map_err(|_| "MCP transport status unavailable".to_string())?
+                .map_err(|_error| "MCP transport status unavailable".to_string())?
                 .take();
             return match reason {
                 Some(reason) => Err(reason.to_string()),
@@ -298,11 +299,11 @@ where
     service
         .waiting()
         .await
-        .map_err(|_| "MCP SDK service failed".to_string())?;
+        .map_err(|_error| "MCP SDK service failed".to_string())?;
     let error = failure
         .reason
         .lock()
-        .map_err(|_| "MCP transport status unavailable".to_string())?
+        .map_err(|_error| "MCP transport status unavailable".to_string())?
         .take();
     match error {
         Some(error) => Err(error.to_string()),

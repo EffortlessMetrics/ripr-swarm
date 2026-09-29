@@ -52,11 +52,11 @@ async fn cancelled_partial_write_resumes_without_repeating_bytes() -> Result<(),
     });
     tokio::time::timeout(std::time::Duration::from_secs(5), writer.close())
         .await
-        .map_err(|_| "resumed writer timed out".to_string())?
+        .map_err(|_error| "resumed writer timed out".to_string())?
         .map_err(|error| error.to_string())?;
     let actual = collector
         .await
-        .map_err(|_| "output collector failed".to_string())??;
+        .map_err(|_error| "output collector failed".to_string())??;
     if actual != expected {
         return Err("cancelled send duplicated or truncated frame bytes".into());
     }

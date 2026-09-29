@@ -22,7 +22,7 @@ impl McpServer {
                     super::MAX_MESSAGE_BYTES,
                     super::MAX_RESPONSE_BYTES,
                 )
-                .map_err(|_| ErrorData::internal_error("serialize workspace status", None))?,
+                .map_err(|_error| ErrorData::internal_error("serialize workspace status", None))?,
             )?,
             resource_status: typed(
                 protocol::status_resource_result(
@@ -30,7 +30,7 @@ impl McpServer {
                     super::MAX_MESSAGE_BYTES,
                     super::MAX_RESPONSE_BYTES,
                 )
-                .map_err(|_| ErrorData::internal_error("serialize workspace status", None))?,
+                .map_err(|_error| ErrorData::internal_error("serialize workspace status", None))?,
             )?,
         };
         // Domain JSON carries status/catalog data, not version-dependent SDK
@@ -51,7 +51,7 @@ impl McpServer {
 }
 fn typed<T: DeserializeOwned>(value: serde_json::Value) -> Result<T, ErrorData> {
     serde_json::from_value(value)
-        .map_err(|_| ErrorData::internal_error("invalid status projection", None))
+        .map_err(|_error| ErrorData::internal_error("invalid status projection", None))
 }
 impl ServerHandler for McpServer {
     fn get_tool(&self, name: &str) -> Option<Tool> {

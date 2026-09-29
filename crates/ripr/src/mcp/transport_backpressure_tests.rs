@@ -20,7 +20,7 @@ impl OutputGate {
         if let Some(waker) = self
             .waker
             .lock()
-            .map_err(|_| "output gate poisoned")?
+            .map_err(|_error| "output gate poisoned")?
             .take()
         {
             waker.wake();
@@ -103,7 +103,7 @@ async fn next_reply<R: AsyncRead + Unpin>(reader: &mut BufReader<R>) -> Result<V
     let mut bytes = Vec::new();
     let count = tokio::time::timeout(Duration::from_secs(5), reader.read_until(b'\n', &mut bytes))
         .await
-        .map_err(|_| "actual SDK reply deadline")?
+        .map_err(|_error| "actual SDK reply deadline")?
         .map_err(|error| error.to_string())?;
     if count == 0 {
         return Err("actual SDK reply stream ended early".into());
@@ -166,7 +166,7 @@ async fn actual_sdk_held_stdout_preserves_serial_request_admission() -> Result<(
         .map_err(|error| error.to_string())?;
     tokio::time::timeout(Duration::from_secs(5), gate.blocked.notified())
         .await
-        .map_err(|_| "actual response writer never reached Pending")?;
+        .map_err(|_error| "actual response writer never reached Pending")?;
     // Give queued, nonempty input a bounded opportunity to expose admission
     // beyond the one response whose stdout write has actually suspended.
     let exceeded = tokio::time::timeout(Duration::from_millis(200), async {
@@ -196,7 +196,7 @@ async fn actual_sdk_held_stdout_preserves_serial_request_admission() -> Result<(
     drop(input);
     tokio::time::timeout(Duration::from_secs(5), service_task)
         .await
-        .map_err(|_| "SDK service did not terminate after actual responses and EOF")?
+        .map_err(|_error| "SDK service did not terminate after actual responses and EOF")?
         .map_err(|error| error.to_string())??;
     if ids != (0..BURST).collect() {
         return Err("actual SDK status response IDs differ from the finite input burst".into());
@@ -335,17 +335,85 @@ async fn cancelled_partial_response_retains_admission_until_actual_flush() -> Re
     });
     tokio::time::timeout(Duration::from_secs(5), require_request(&mut transport, 2))
         .await
-        .map_err(|_| "cancelled partial response did not resume before admission")??;
+        .map_err(|_error| "cancelled partial response did not resume before admission")??;
     transport.close().await.map_err(|error| error.to_string())?;
     let bytes = tokio::time::timeout(Duration::from_secs(5), collector)
         .await
-        .map_err(|_| "partial reply collector exceeded its deadline")?
+        .map_err(|_error| "partial reply collector exceeded its deadline")?
         .map_err(|error| error.to_string())??;
     let response: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
     if response.get("id").and_then(Value::as_i64) != Some(1)
         || bytes.iter().filter(|byte| **byte == b'\n').count() != 1
     {
         return Err("resumed actual reply was duplicated or lost its original ID".into());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancelled_flush_retains_admission_after_all_reply_bytes_are_written() -> Result<(), String>
+{
+    use std::{future::Future, future::poll_fn};
+    struct FlushHeldWriter {
+        bytes: Vec<u8>,
+        gate: Arc<OutputGate>,
+    }
+    impl AsyncWrite for FlushHeldWriter {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            bytes: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            self.bytes.extend_from_slice(bytes);
+            Poll::Ready(Ok(bytes.len()))
+        }
+        fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            if !self.bytes.is_empty() && self.gate.held.load(Ordering::SeqCst) {
+                let Ok(mut waker) = self.gate.waker.lock() else {
+                    return Poll::Ready(Err(Error::other("test flush gate poisoned")));
+                };
+                *waker = Some(cx.waker().clone());
+                return Poll::Pending;
+            }
+            Poll::Ready(Ok(()))
+        }
+        fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            self.poll_flush(cx)
+        }
+    }
+    let gate = Arc::new(OutputGate::default());
+    gate.held.store(true, Ordering::SeqCst);
+    let mut transport = direct_transport(FlushHeldWriter {
+        bytes: Vec::new(),
+        gate: gate.clone(),
+    });
+    require_request(&mut transport, 1).await?;
+    {
+        let mut sending = Box::pin(transport.send(reply(1)));
+        poll_fn(|cx| match sending.as_mut().poll(cx) {
+            Poll::Pending => Poll::Ready(Ok(())),
+            Poll::Ready(_) => Poll::Ready(Err("reply flush never reached Pending".to_string())),
+        })
+        .await?;
+    }
+    let expected =
+        super::super::writer::encode_message(&reply(1)).map_err(|error| error.to_string())?;
+    {
+        let writer = transport.writer.lock().await;
+        if writer.output().bytes != expected {
+            return Err(
+                "flush control did not write the entire actual reply before cancellation".into(),
+            );
+        }
+    }
+    require_pending(&mut transport).await?;
+    gate.release()?;
+    tokio::time::timeout(Duration::from_secs(5), require_request(&mut transport, 2))
+        .await
+        .map_err(|_error| "cancelled flush did not resume before admission")??;
+    let writer = transport.writer.lock().await;
+    if writer.output().bytes != expected {
+        return Err("cancelled flush duplicated or changed the completed reply frame".into());
     }
     Ok(())
 }
@@ -370,7 +438,7 @@ async fn fatal_send_wakes_receive_with_an_admitted_request() -> Result<(), Strin
     }
     if tokio::time::timeout(Duration::from_secs(5), transport.receive())
         .await
-        .map_err(|_| "fatal output did not release blocked receive for termination")?
+        .map_err(|_error| "fatal output did not release blocked receive for termination")?
         .is_some()
     {
         return Err("fatal output admitted another request".into());
