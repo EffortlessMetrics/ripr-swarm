@@ -114,13 +114,14 @@ struct PackageWalk {
 /// paths) on `context`. See the module docs for the two recorded facts.
 ///
 /// Returns, for each candidate reached through an external crate root, the
-/// declaring package's root prefix (`/`-separated with a trailing `/`, empty
-/// for the workspace root), so diff scoping can keep that package's tests.
+/// root prefix of every declaring package (`/`-separated with a trailing
+/// `/`, empty for the workspace root), so diff scoping keeps all of their
+/// tests.
 pub(crate) fn apply_module_graph_evidence<'a, I>(
     workspace_root: &Path,
     context: &mut SourceRoleContext,
     candidates: I,
-) -> BTreeMap<PathBuf, String>
+) -> BTreeMap<PathBuf, BTreeSet<String>>
 where
     I: IntoIterator<Item = &'a Path>,
 {
@@ -201,7 +202,7 @@ where
             .get_or_insert_with(|| external_root_declarers(workspace_root, listing.as_ref()))
             .clone();
         let mut declarers_prove_unreached = declarers_listed;
-        let mut declaring_package = None;
+        let mut declaring_packages = BTreeSet::new();
         for package_dir in &declarers {
             let Some(walk) = walks
                 .entry(package_dir.clone())
@@ -220,7 +221,7 @@ where
                         .get_or_insert_with(|| member_package_dirs(workspace_root))
                         .contains(package_dir) =>
                 {
-                    declaring_package.get_or_insert(package_dir.clone());
+                    declaring_packages.insert(package_dir.clone());
                 }
                 Some(Origin::Production) => declarers_prove_unreached = false,
                 // Reached only from a test, bench or example root: compiled,
@@ -229,9 +230,13 @@ where
                 None => declarers_prove_unreached &= walk.proves_unreached(),
             }
         }
-        if let Some(package_dir) = declaring_package {
-            if let Some(prefix) = package_prefix(workspace_root, &package_dir) {
-                external_packages.insert(relative.clone(), prefix);
+        if !declaring_packages.is_empty() {
+            let prefixes = declaring_packages
+                .iter()
+                .filter_map(|package_dir| package_prefix(workspace_root, package_dir))
+                .collect::<BTreeSet<_>>();
+            if !prefixes.is_empty() {
+                external_packages.insert(relative.clone(), prefixes);
             }
             context.declared_production_sources.insert(relative);
         } else if owner_proves_unreached
@@ -498,8 +503,8 @@ fn read_manifest(workspace_root: &Path, package_dir: &Path) -> Option<(String, t
     Some((text, value))
 }
 
-/// Explicit `[lib]`/`[[bin]]` paths plus the autodiscovered `src/lib.rs`,
-/// `src/main.rs` and `src/bin/` roots.
+/// Explicit `[lib]`/`[[bin]]` paths plus the autodiscovered `src/lib.rs`
+/// (unless `[lib] path` replaces it), `src/main.rs` and `src/bin/` roots.
 fn production_roots(manifest: &toml::Value, package_dir: &Path) -> BTreeSet<PathBuf> {
     let mut roots = BTreeSet::new();
     collect_explicit_paths(manifest.get("bin"), package_dir, &mut roots);
@@ -511,7 +516,17 @@ fn production_roots(manifest: &toml::Value, package_dir: &Path) -> BTreeSet<Path
         );
     }
     let src = package_dir.join("src");
-    roots.insert(src.join("lib.rs"));
+    // A package has one library: a declared `[lib] path` replaces
+    // `src/lib.rs` as the root. A `path` that is not a string keeps the
+    // default, so an unreadable declaration never drops a real root.
+    let custom_lib_path = manifest
+        .get("lib")
+        .and_then(|lib| lib.get("path"))
+        .and_then(toml::Value::as_str)
+        .is_some_and(|path| !path.trim().is_empty());
+    if !custom_lib_path {
+        roots.insert(src.join("lib.rs"));
+    }
     roots.insert(src.join("main.rs"));
     roots.extend(autodiscovered(&src.join("bin")));
     roots

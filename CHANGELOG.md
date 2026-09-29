@@ -1248,12 +1248,14 @@ are scoped or reviewed.
   findings when no `mod`, `#[path]` or `include!` from any Cargo target names
   it, since rustc never compiles it; the run reports a limitation naming the
   file instead. The out-of-line modules of an external root (`[lib] path =
-  "../shared/lib.rs"`) now seed, and the declaring package's tests stay in
-  the Draft scope. The orphan rule applies only when every Rust file in the
-  workspace resolves statically; an item-position macro call (other than
-  `thread_local!`), a `cfg_if!`-wrapped declaration, a dynamic `#[path]` or a
-  parse error anywhere keeps the previous layout rule, since such a file
-  could reach the orphan. The editor partition uses the same evidence.
+  "../shared/lib.rs"`) now seed, and the tests of every package declaring
+  that root stay in the Draft scope. A declared `[lib] path` replaces
+  `src/lib.rs` as the library root. The orphan rule applies only when every
+  Rust file in the workspace resolves statically; a macro call other than
+  std's (at item level or inside a function), a `cfg_if!`-wrapped
+  declaration, a dynamic `#[path]` or a parse error anywhere keeps the
+  previous layout rule, since such a file could reach the orphan. The editor
+  partition uses the same evidence.
 
 ### Added
 

@@ -1591,11 +1591,9 @@ impl RustAdapter {
                 // the declaring package, whose tests must stay in scope.
                 let changed_package_roots = changed_rust_paths
                     .iter()
-                    .filter_map(|path| {
-                        external_module_packages
-                            .get(path)
-                            .cloned()
-                            .or_else(|| workspace::package_root(path))
+                    .flat_map(|path| match external_module_packages.get(path) {
+                        Some(prefixes) => prefixes.iter().cloned().collect::<Vec<_>>(),
+                        None => workspace::package_root(path).into_iter().collect(),
                     })
                     .collect::<std::collections::BTreeSet<_>>();
                 // Files the layout heuristics cannot place (custom Cargo
@@ -1623,7 +1621,8 @@ impl RustAdapter {
                     }
                     let manifest_dir_prefixes = expansion.manifest_dir_prefixes().to_vec();
                     let mut dependent_package_roots = expansion.into_dependent_package_roots();
-                    dependent_package_roots.extend(external_module_packages.values().cloned());
+                    dependent_package_roots
+                        .extend(external_module_packages.values().flatten().cloned());
                     (dependent_package_roots, manifest_dir_prefixes)
                 }
             } else {
@@ -5214,6 +5213,95 @@ let _ = (result, note, raw);"##,
             "a `#[path]` module outside the external root's directory must seed: {:?}",
             finding_files(&root, &result)
         );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_keeps_every_package_sharing_an_external_root_in_scope() -> Result<(), String> {
+        // #4802 review: two packages compile the same external root. Only
+        // the second holds the discriminating test, so keeping just the
+        // first declaring package would drop the test that relates.
+        let root = temp_root("module-graph-shared-external-root")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[workspace]\nmembers=['first','second']\nresolver='2'\n",
+        )?;
+        for name in ["first", "second"] {
+            write(
+                &root.join(format!("{name}/Cargo.toml")),
+                &format!(
+                    "[package]\nname='{name}'\nversion='0.1.0'\nedition='2021'\n[lib]\npath='../shared/lib.rs'\n"
+                ),
+            )?;
+        }
+        write(
+            &root.join("shared/lib.rs"),
+            "mod helper;\npub use helper::discount;\n",
+        )?;
+        write(&root.join("shared/helper.rs"), DISCOUNT_SOURCE)?;
+        write(
+            &root.join("second/tests/t.rs"),
+            "#[test]\nfn discount_applies() {\n    assert_eq!(second::discount(150), 140);\n}\n",
+        )?;
+        let diff = predicate_change_diff("shared/helper.rs");
+
+        let result = module_graph_diff(&root, &diff)?;
+
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| finding.probe.location.file.ends_with("shared/helper.rs"))
+            .ok_or_else(|| {
+                format!(
+                    "the shared root's module must seed: {:?}",
+                    finding_files(&root, &result)
+                )
+            })?;
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .any(|test| test.name == "discount_applies"),
+            "the second declaring package's test must relate: {:?}",
+            finding.related_tests
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_skips_children_of_a_replaced_default_lib_root() -> Result<(), String> {
+        // #4802 review: `[lib] path = "lib/real.rs"` replaces `src/lib.rs` as
+        // the library root, so a module only the unused `src/lib.rs`
+        // declares is never compiled. The real root's module is the control.
+        let root = temp_root("module-graph-replaced-lib-root")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='real'\nversion='0.1.0'\nedition='2021'\n[lib]\npath='lib/real.rs'\n",
+        )?;
+        write(&root.join("lib/real.rs"), "pub mod declared;\n")?;
+        write(&root.join("lib/declared.rs"), DISCOUNT_SOURCE)?;
+        write(&root.join("src/lib.rs"), "pub mod orphan;\n")?;
+        write(&root.join("src/orphan.rs"), DISCOUNT_SOURCE)?;
+        let diff = format!(
+            "{}{}",
+            predicate_change_diff("lib/declared.rs"),
+            predicate_change_diff("src/orphan.rs")
+        );
+
+        let result = module_graph_diff(&root, &diff)?;
+
+        let files = finding_files(&root, &result);
+        assert!(
+            files.iter().any(|file| file == "lib/declared.rs"),
+            "the declared library root's module must seed: {files:?}"
+        );
+        assert!(
+            !files.iter().any(|file| file == "src/orphan.rs"),
+            "a module only the replaced src/lib.rs declares must not seed: {files:?}"
+        );
+        assert_eq!(orphan_limitation_paths(&result), vec!["src/orphan.rs"]);
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }

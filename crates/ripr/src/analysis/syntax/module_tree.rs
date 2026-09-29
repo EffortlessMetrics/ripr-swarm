@@ -19,6 +19,9 @@
 //!   `macro_rules!`), where edges only exist after expansion;
 //! - any other item-position macro call (a dependency's macro can expand to
 //!   `mod name;`), except std's `thread_local!` and `compile_error!`;
+//! - any macro call inside a body other than a std macro that cannot emit
+//!   items: a statement macro, or a block expression a macro returns, can
+//!   declare `#[path = "..."] mod name;` inside a function;
 //! - a non-literal `include!`, including the generated-code shape that
 //!   names `OUT_DIR` (build output can declare `#[path]` modules).
 //!
@@ -38,6 +41,48 @@ use crate::analysis::facts::ModulePathTarget;
 /// Std item-position macros whose expansion cannot declare a module.
 /// Compared after any `std::`/`core::` prefix is dropped.
 const ITEM_MACROS_WITHOUT_MODULES: [&str; 2] = ["thread_local", "compile_error"];
+
+/// Std macros that expand to an expression or statement with no item in it,
+/// so their calls inside a body cannot declare a module. Compared after any
+/// `std::`/`core::`/`alloc::` prefix is dropped. A dependency macro that
+/// shadows one of these names is not modeled.
+const BODY_MACROS_WITHOUT_MODULES: [&str; 35] = [
+    "assert",
+    "assert_eq",
+    "assert_matches",
+    "assert_ne",
+    "cfg",
+    "column",
+    "compile_error",
+    "concat",
+    "dbg",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "env",
+    "eprint",
+    "eprintln",
+    "file",
+    "format",
+    "format_args",
+    "include_bytes",
+    "include_str",
+    "line",
+    "matches",
+    "module_path",
+    "option_env",
+    "panic",
+    "print",
+    "println",
+    "stringify",
+    "thread_local",
+    "todo",
+    "unimplemented",
+    "unreachable",
+    "vec",
+    "write",
+    "writeln",
+];
 
 /// One out-of-line module-tree edge declared by a Rust file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -111,19 +156,33 @@ pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
         let callee = callee
             .strip_prefix("std::")
             .or_else(|| callee.strip_prefix("core::"))
+            .or_else(|| callee.strip_prefix("alloc::"))
             .unwrap_or(callee);
         if callee != "include" {
-            // An item-position macro from any crate can expand to `mod x;`
-            // without spelling `mod` here, so its expansion is unknown.
-            // Std's item macros that cannot declare modules are the only
-            // exception.
+            // A macro from any crate can expand to `mod x;` without
+            // spelling `mod` here, so its expansion is unknown. Std macros
+            // that cannot declare modules are the only exception.
             let item_position = macro_call.syntax().parent().is_some_and(|parent| {
                 matches!(
                     parent.kind(),
                     SyntaxKind::SOURCE_FILE | SyntaxKind::ITEM_LIST
                 )
             });
-            if item_position && !ITEM_MACROS_WITHOUT_MODULES.contains(&callee) {
+            let known_without_modules = if item_position {
+                ITEM_MACROS_WITHOUT_MODULES.contains(&callee)
+            } else {
+                // Inside a body any other macro can expand to
+                // `#[path = "x.rs"] mod x;`, directly as a statement or in
+                // a block expression it returns.
+                BODY_MACROS_WITHOUT_MODULES.contains(&callee)
+            };
+            // Arguments stay an unparsed token tree, so a call nested in
+            // them (`println!("{}", dep::with_module!())`) is checked here.
+            if !known_without_modules
+                || macro_call
+                    .token_tree()
+                    .is_some_and(|tokens| nests_unknown_macro_call(&tokens))
+            {
                 scan.complete = false;
             }
             continue;
@@ -155,6 +214,26 @@ pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
         scan.complete = false;
     }
     scan
+}
+
+/// Whether a macro argument token tree spells a call (`name!(`, `name![`,
+/// `name!{`) to a macro outside [`BODY_MACROS_WITHOUT_MODULES`].
+fn nests_unknown_macro_call(tokens: &ast::TokenTree) -> bool {
+    let tokens = tokens
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect::<Vec<_>>();
+    tokens.windows(3).any(|window| {
+        window[0].kind() == SyntaxKind::IDENT
+            && window[1].kind() == SyntaxKind::BANG
+            && matches!(
+                window[2].kind(),
+                SyntaxKind::L_PAREN | SyntaxKind::L_BRACK | SyntaxKind::L_CURLY
+            )
+            && !BODY_MACROS_WITHOUT_MODULES.contains(&window[0].text())
+    })
 }
 
 /// The inline modules enclosing an out-of-line declaration, outermost first,
@@ -228,6 +307,10 @@ mod tests {
             "decl::declare_mod!(generated);\n",
             "cfg_if::cfg_if! { if #[cfg(unix)] { include!(\"unix.rs\"); } }\n",
             "mod outer { lazy_static::lazy_static! { static ref X: u8 = 1; } }\n",
+            "fn f() { decl::declare_path_mod!(generated); }\n",
+            "fn f() -> u8 { decl::with_module!(generated) }\n",
+            "fn f() { let _ = preinclude!(\"x.rs\"); }\n",
+            "fn f() { println!(\"{}\", decl::with_module!(generated)); }\n",
             "mod broken\n",
         ] {
             assert!(
@@ -249,7 +332,7 @@ mod tests {
         let scan = rust_module_tree_scan(
             "// mod commented;\n\
              const TEXT: &str = \"mod quoted;\";\n\
-             fn f() { let _ = preinclude!(\"x.rs\"); println!(\"in a body\"); }\n\
+             fn f() { println!(\"in a body\"); assert_eq!(1, 1); let _ = std::vec![1]; assert!(!(1 != 2), \"{}\", format!(\"x\")); }\n\
              thread_local! { static COUNT: u8 = 0; }\n\
              mod r#type;\n\
              mod r#async { mod r#match; }\n\
