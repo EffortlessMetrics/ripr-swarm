@@ -11,6 +11,10 @@ are scoped or reviewed.
 
 ### Fixed
 
+- LSP: a request whose method starts with `$/` and that ripr does not handle
+  now gets a `-32601` method-not-found error, as the LSP spec requires. It got
+  no response at all, so a client that sent one waited on it forever.
+  Unhandled `$/` notifications are still ignored.
 - LSP: the server now asks clients for `textDocument/didSave`. It advertised
   only the numeric full-sync kind, which under the LSP spec does not request
   save notifications, so a strictly conforming editor could save without ripr
