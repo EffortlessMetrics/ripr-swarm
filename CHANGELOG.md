@@ -11,6 +11,14 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr doctor` no longer installs a Rust toolchain. In a checkout whose
+  `rust-toolchain.toml` pins a toolchain that is not installed, its
+  `cargo --version` and `rustc --version` probes made rustup download and
+  install that toolchain, then reported "cargo timed out" and "rustc not
+  available". The `cargo metadata` probe behind `[[analysis.test_harnesses]]`
+  did the same during `ripr check`. Probes now run with
+  `RUSTUP_AUTO_INSTALL=0`, and a probe that exits non-zero names the tool's
+  own error, such as rustup's "toolchain ... is not installed" (#4734).
 - TypeScript: a change inside a module-private helper now relates to tests
   that call an exported function reaching it in the same module, including a
   value a same-module factory built. unjs/defu tests call `defu(...)`, built
