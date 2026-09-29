@@ -1,4 +1,4 @@
-# RIPR-SPEC-0180: Inline test-module region cage
+# RIPR-SPEC-0181: Inline test-module region cage
 
 Status: proposed
 
