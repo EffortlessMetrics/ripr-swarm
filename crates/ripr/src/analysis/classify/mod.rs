@@ -34,6 +34,7 @@ pub(in crate::analysis) use related_tests::{
     find_related_tests_with_candidate_index, package_prefix,
 };
 pub(in crate::analysis) use reveal::FileUseStatements;
+pub(in crate::analysis) use reveal::contains_as_whole_word;
 pub(in crate::analysis) use reveal::reveal_evidence_with_expression;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
 // RIPR-SPEC-0106: re-export the variant parsers so test_grip_evidence.rs can
