@@ -1,0 +1,45 @@
+name: npm Launcher
+
+on:
+  pull_request:
+    paths:
+      - "packaging/npm/launcher/**"
+      - "policy/distribution.toml"
+      - "policy/non-rust-allowlist.toml"
+      - "policy/dependency_allowlist.txt"
+      - "policy/ci-risk-packs.toml"
+      - "xtask/src/policy/distribution/**"
+      - ".github/workflows/npm-launcher.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "packaging/npm/launcher/**"
+      - "policy/distribution.toml"
+      - "policy/non-rust-allowlist.toml"
+      - "policy/dependency_allowlist.txt"
+      - "policy/ci-risk-packs.toml"
+      - "xtask/src/policy/distribution/**"
+      - ".github/workflows/npm-launcher.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  launcher:
+    name: script-free launcher contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Test launcher
+        run: npm test --prefix packaging/npm/launcher
+
+      - name: Verify package contents
+        run: npm --prefix packaging/npm/launcher pack --dry-run --json --ignore-scripts
