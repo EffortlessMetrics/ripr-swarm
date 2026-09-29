@@ -1,7 +1,6 @@
 use crate::analysis::ClassifiedSeam;
-use crate::analysis::repair_route::{
-    NewTestKind, NewTestProposalProvenance, RepairTargetSelection, repair_packet_eligibility,
-};
+use crate::analysis::new_test_target::{NewTestKind, NewTestProposalProvenance};
+use crate::analysis::repair_route::{RepairTargetSelection, repair_packet_eligibility};
 use crate::analysis::seam_inventory::inventory_classified_seams_at;
 use crate::analysis::seams::SeamKind;
 use crate::app::repair_attempt::edit_cage_policy_from_packet;

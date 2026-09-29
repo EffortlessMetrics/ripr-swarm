@@ -18,12 +18,9 @@ use super::test_grip_evidence::{RelatedTestGrip, TestGripEvidence, TestTargetEvi
 use crate::analysis::canonical_gap::canonical_gap_identity;
 use crate::domain::{OracleKind, OracleStrength, RelationReason, StageState};
 
-#[expect(
-    unused_imports,
-    reason = "re-export reserved provenance for repair-route consumers"
-)]
-pub(crate) use super::new_test_target::NewTestProposalProvenance;
-pub(crate) use super::new_test_target::{NewTestKind, NewTestTargetProposal};
+pub(crate) use super::new_test_target::{
+    NewTestKind, NewTestProposalProvenance, NewTestTargetProposal,
+};
 
 pub(crate) const REPAIR_ROUTE_AUTHORITY_BOUNDARY: &str =
     "analysis/producer-owned-repair-route-readiness";
@@ -557,6 +554,11 @@ fn value_target_selection(
         return RepairTargetSelection::Existing(existing.clone());
     }
     if let Some(proposal) = admission.and_then(|admission| admission.proposal.clone()) {
+        if proposal.kind != NewTestKind::Integration
+            || proposal.provenance != NewTestProposalProvenance::ProducerOwned
+        {
+            return RepairTargetSelection::Missing;
+        }
         return RepairTargetSelection::Proposed(proposal);
     }
     RepairTargetSelection::Missing
