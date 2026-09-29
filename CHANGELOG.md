@@ -16,6 +16,13 @@ are scoped or reviewed.
   CLI route that analyzes the diff. Before, only `initialize` carried them.
   Workspace status no longer says a `ripr.toml` is detected when the root has
   none; that limitation now appears only when one was found.
+- TypeScript: when a test imports the changed function through an alias
+  ripr could not resolve, such as `@/lib/math` with
+  `[typescript] resolve_tsconfig_paths` unset, `ripr check` no longer says
+  no test references the function and asks for a new test. The missing
+  discriminator and next step now name the test, the import path and why it
+  was not resolved, with the same fix the limitation evidence gives. The
+  finding stays `no_static_path`. (#4550)
 - TypeScript: `[typescript] resolve_tsconfig_paths` now reads
   `tsconfig.json` and `jsconfig.json` the way `tsc` does, with `//` and
   `/* */` comments and trailing commas. Before, any comment (and

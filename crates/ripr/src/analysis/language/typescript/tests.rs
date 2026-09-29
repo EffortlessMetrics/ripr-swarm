@@ -8782,6 +8782,130 @@ fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> 
     Ok(())
 }
 
+/// #4550: when the only test that plausibly reaches the owner imports it
+/// through an alias ripr did not resolve, the no-reach `missing` summary and
+/// next step name that import and the limitation's own recovery instead of
+/// claiming no test references the owner. A finding without the limitation
+/// keeps the generic text. The class stays `no_static_path` either way.
+#[test]
+fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/owner.ts"),
+        start_line: 1,
+        end_line: 1,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        exported_as_default: false,
+        class_default_export: false,
+        arity: None,
+        params: Vec::new(),
+        source_text: None,
+        imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
+    };
+    let test_importing = |source: &str, imported: &str, body: &str| TypeScriptTest {
+        name: "discounts".to_string(),
+        local_name: "discounts".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("src/owner.test.ts"),
+        line: 1,
+        body_text: body.to_string(),
+        assertions: vec![strong_be_assertion()],
+        mocks_in_file: Vec::new(),
+        scope_bindings: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: source.to_string(),
+            imported: Some(imported.to_string()),
+            local: imported.to_string(),
+            namespace: false,
+        }],
+    };
+    let all_owners = [owner];
+    let classify = |tests: &[TypeScriptTest]| {
+        classify_change(
+            Path::new("src/owner.ts"),
+            1,
+            "return a - b;",
+            &all_owners,
+            tests,
+            None,
+            &ReExportIndex::empty(),
+            None, // flag OFF
+        )
+        .ok_or_else(|| "expected a finding".to_string())
+    };
+
+    let finding = classify(&[test_importing(
+        "@/owner",
+        "applyDiscount",
+        "const result = applyDiscount(100, 10);\nexpect(result).toBe(90);",
+    )])?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert_evidence_contains(
+        &finding,
+        "typescript_limitation: typescript_path_alias_unresolved",
+    );
+    let missing = finding
+        .missing
+        .first()
+        .ok_or("expected a missing summary")?;
+    assert!(
+        missing.starts_with(
+            "Test `discounts` imports `applyDiscount` through non-relative specifier `@/owner`, which ripr did not resolve"
+        ) && missing.contains("`[typescript] resolve_tsconfig_paths` is unset or false"),
+        "missing must name the import and the typed cause, got: {missing}"
+    );
+    assert!(
+        !finding
+            .missing
+            .iter()
+            .any(|line| line.contains("add a test that calls the changed owner")),
+        "missing must not tell the user to add a test that already exists: {:?}",
+        finding.missing
+    );
+    let next = finding
+        .recommended_next_step
+        .as_deref()
+        .ok_or("expected a next step")?;
+    assert!(
+        next.contains("test `discounts` imports `applyDiscount` through `@/owner`")
+            && next.contains("set `[typescript] resolve_tsconfig_paths = true` for credit"),
+        "next step must name the import and the recovery, got: {next}"
+    );
+
+    // Negative control: a test that neither imports nor calls the owner
+    // carries no alias limitation, so the generic no-reach text stays.
+    let finding = classify(&[test_importing(
+        "lodash",
+        "debounce",
+        "expect(debounce(1)).toBe(1);",
+    )])?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("typescript_path_alias_unresolved")),
+        "control must not carry the alias limitation: {:?}",
+        finding.evidence
+    );
+    assert_eq!(
+        finding.missing.first().map(String::as_str),
+        Some("No test references `applyDiscount(` — add a test that calls the changed owner.")
+    );
+    assert!(
+        finding
+            .recommended_next_step
+            .as_deref()
+            .is_some_and(|next| next.contains("no test references the changed owner")),
+        "control keeps the generic next step, got: {:?}",
+        finding.recommended_next_step
+    );
+    Ok(())
+}
+
 /// RIPR-SPEC-0099 test 3 — AMBIGUOUS FAIL-CLOSED (flag ON):
 /// paths value `["src/*","lib/*"]` (multi-entry) → excluded from alias map
 /// → uncredited, stays `no_static_path`, disclosure limitation IS emitted.
@@ -14231,6 +14355,26 @@ fn alias_advice_names_the_real_cause_when_flag_is_on() -> Result<(), String> {
     assert!(
         !why.contains("strict JSON"),
         "the advice must not ask for strict JSON: tsc accepts JSONC (#4549), got: {why}"
+    );
+    // #4550: the no-reach text names the unresolved import and the parse
+    // failure, reusing the limitation's cause instead of "No test references".
+    let missing = finding
+        .missing
+        .first()
+        .ok_or("expected a missing summary")?;
+    assert!(
+        missing.contains("`@/util`")
+            && missing.contains("could not be parsed as JSON with comments"),
+        "missing must name the alias import and the parse failure, got: {missing}"
+    );
+    let next = finding
+        .recommended_next_step
+        .as_deref()
+        .ok_or("expected a next step")?;
+    assert!(
+        next.contains("fix the tsconfig.json syntax for credit")
+            && !next.contains("resolve_tsconfig_paths = true"),
+        "next step must name the config fix, not the already-enabled flag, got: {next}"
     );
     assert!(
         !why.contains("resolve_tsconfig_paths = true"),
