@@ -1,5 +1,7 @@
 use crate::analysis::cancellation;
-use crate::analysis::language::{LanguageAdapter, LanguageId, RustAdapter, route};
+use crate::analysis::language::{
+    LanguageAdapter, LanguageId, RustAdapter, is_vendored_rust_crate_dir, route,
+};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_IGNORED_DIRS: &[&str] = &[
@@ -81,7 +83,9 @@ fn visit(
         let path = entry.path();
         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
         if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            if DEFAULT_IGNORED_DIRS.contains(&name) {
+            // A `cargo vendor` crate is third-party source like `target`:
+            // walking it indexes thousands of files no test here observes.
+            if DEFAULT_IGNORED_DIRS.contains(&name) || is_vendored_rust_crate_dir(&path) {
                 continue;
             }
             visit(root, &path, adapter, out)?;
@@ -180,6 +184,33 @@ mod tests {
 
         let result = discover_rust_files(&dir)?;
         assert_eq!(result, vec![PathBuf::from("src/lib.rs")]);
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn discover_prunes_cargo_vendor_crates_but_not_a_vendor_named_module()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir =
+            std::env::temp_dir().join(format!("ripr-discover-cargo-vendor-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src/vendor"))?;
+        fs::write(dir.join("src/lib.rs"), "")?;
+        // A hand-written `vendor` module has no checksum file and stays.
+        fs::write(dir.join("src/vendor/mod.rs"), "")?;
+        fs::create_dir_all(dir.join("vendor/serde/src"))?;
+        fs::write(dir.join("vendor/serde/.cargo-checksum.json"), "{}")?;
+        fs::write(dir.join("vendor/serde/src/lib.rs"), "")?;
+
+        let result = discover_rust_files(&dir)?;
+        assert_eq!(
+            result,
+            vec![
+                PathBuf::from("src/lib.rs"),
+                PathBuf::from("src/vendor/mod.rs")
+            ]
+        );
 
         let _ = fs::remove_dir_all(&dir);
         Ok(())
