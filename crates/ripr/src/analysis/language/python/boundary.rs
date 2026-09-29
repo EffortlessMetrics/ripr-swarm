@@ -446,6 +446,9 @@ fn starts_with_keyword(text: &str, keyword: &str) -> bool {
         .is_some_and(|after| after.is_empty() || after.starts_with(char::is_whitespace))
 }
 
+/// Owner parameters paired with the parametrize argname their argument names.
+type CaseArguments = Vec<(String, String)>;
+
 /// A literal binding for one owner parameter in one test call.
 #[derive(Clone, Debug)]
 struct Binding {
@@ -565,7 +568,7 @@ fn bind_call_arguments(
     test: &PythonTest,
     skip: usize,
     arglist: &str,
-) -> Option<(BTreeMap<String, Binding>, Vec<(String, String)>)> {
+) -> Option<(BTreeMap<String, Binding>, CaseArguments)> {
     let positional: Vec<&str> = owner
         .parameters
         .iter()
