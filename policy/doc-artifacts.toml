@@ -911,7 +911,14 @@ standalone_reason = "Issue #4585 records local result-bound usefulness feedback 
 [[artifact]]
 id = "RIPR-SPEC-0180"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0180-repair-attempt-store-identity.md"
+path = "docs/specs/RIPR-SPEC-0180-lsp-saved-edit-sequence.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #1578 records the saved-edit sequence harness: a repeatable cold-start through explicit-full refresh sequence reuses landed cache, scheduler, and delivery metrics; a stale cached answer cannot satisfy a speed target; a fast run cannot hide redundant full rescans or duplicate diagnostics; and historical 2s/10s/30s figures remain proposals rather than gates."
+[[artifact]]
+id = "RIPR-SPEC-0181"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0181-repair-attempt-store-identity.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Issue #4797 records the RepairAttempt store identity and resolver: one typed store owns durable attempt location, the default repository-local directory stays byte/behavior compatible, and an explicit --store is resolved against --root for before, status, after, and verify without CWD, mtime, or silent fallback."

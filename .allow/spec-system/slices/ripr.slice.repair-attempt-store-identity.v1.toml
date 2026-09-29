@@ -3,7 +3,7 @@ id = "ripr.slice.repair-attempt-store-identity.v1"
 generation = 1
 
 source_issue = "issue:4797"
-design_reference = "RIPR-SPEC-0180"
+design_reference = "RIPR-SPEC-0181"
 change_class = "behavior_change"
 
 claim_boundary = """
@@ -42,7 +42,7 @@ forbidden_seams = [
 ]
 
 [[requirement_delta]]
-requirement_id = "RIPR-SPEC-0180"
+requirement_id = "RIPR-SPEC-0181"
 requirement_generation = 1
 
 [implementation_claim]
