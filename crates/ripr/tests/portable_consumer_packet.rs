@@ -12,13 +12,20 @@ use std::process::Command;
 use std::process::Output;
 
 fn python3() -> Result<PathBuf, String> {
-    for candidate in ["/usr/bin/python3", "/usr/local/bin/python3"] {
+    for candidate in [
+        "/usr/bin/python3",
+        "/usr/local/bin/python3",
+        "/opt/homebrew/bin/python3",
+    ] {
         let path = Path::new(candidate);
         if path.is_file() {
             return Ok(path.to_path_buf());
         }
     }
-    Err("python3 is not available at /usr/bin/python3 or /usr/local/bin/python3".to_string())
+    Err(
+        "python3 is not available at /usr/bin/python3, /usr/local/bin/python3, or /opt/homebrew/bin/python3"
+            .to_string(),
+    )
 }
 
 fn run_python(python: &Path, args: &[String], path: Option<&str>) -> Result<Output, String> {
@@ -95,7 +102,17 @@ fn workspace_root() -> Result<PathBuf, String> {
         .map_err(|error| format!("workspace root: {error}"))
 }
 
-fn temp_root(label: &str) -> Result<PathBuf, String> {
+struct TempDirGuard {
+    path: PathBuf,
+}
+
+impl Drop for TempDirGuard {
+    fn drop(&mut self) {
+        if let Ok(()) = fs::remove_dir_all(&self.path) {}
+    }
+}
+
+fn temp_root(label: &str) -> Result<TempDirGuard, String> {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|error| error.to_string())?
@@ -105,7 +122,7 @@ fn temp_root(label: &str) -> Result<PathBuf, String> {
         std::process::id()
     ));
     fs::create_dir_all(&dir).map_err(|error| format!("temp dir: {error}"))?;
-    Ok(dir)
+    Ok(TempDirGuard { path: dir })
 }
 
 fn copy_file(src: &Path, dst: &Path) -> Result<(), String> {
@@ -192,22 +209,31 @@ fn stage_native_packet(
     .map_err(|error| format!("manifest: {error}"))
 }
 
-#[test]
-fn native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback() -> Result<(), String> {
+struct NativeJourney {
+    _root: TempDirGuard,
+    python: PathBuf,
+    packet: PathBuf,
+    subject: PathBuf,
+    out: PathBuf,
+    foreign: PathBuf,
+    decoy: PathBuf,
+    diff: PathBuf,
+}
+
+fn stage_native_journey(label: &str) -> Result<NativeJourney, String> {
     let python = python3()?;
     let workspace = workspace_root()?;
-    let root = temp_root("boundary")?;
-    let packet = root.join("packet");
-    let subject = root.join("subject");
-    let out = root.join("out");
-    let foreign = root.join("foreign");
-    let decoy = root.join("decoy");
-    let diff = root.join("change.diff");
+    let root = temp_root(label)?;
+    let packet = root.path.join("packet");
+    let subject = root.path.join("subject");
+    let out = root.path.join("out");
+    let foreign = root.path.join("foreign");
+    let decoy = root.path.join("decoy");
+    let diff = root.path.join("change.diff");
     fs::create_dir_all(&packet).map_err(|error| format!("packet: {error}"))?;
     fs::create_dir_all(&out).map_err(|error| format!("out: {error}"))?;
     fs::create_dir_all(&foreign).map_err(|error| format!("foreign: {error}"))?;
     fs::create_dir_all(&decoy).map_err(|error| format!("decoy: {error}"))?;
-
     stage_boundary_subject(&workspace, &subject, &diff)?;
     stage_native_packet(
         &python,
@@ -215,7 +241,6 @@ fn native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback() -> 
         &packet,
         Path::new(env!("CARGO_BIN_EXE_ripr")),
     )?;
-
     let decoy_payload = decoy.join("ripr");
     fs::write(
         &decoy_payload,
@@ -223,28 +248,42 @@ fn native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback() -> 
     )
     .map_err(|error| format!("decoy: {error}"))?;
     make_executable(&decoy_payload)?;
+    Ok(NativeJourney {
+        _root: root,
+        python,
+        packet,
+        subject,
+        out,
+        foreign,
+        decoy,
+        diff,
+    })
+}
 
-    let path = format!("{}:/usr/bin:/bin", decoy.display());
-    let args = vec![
-        packet.join("run.py").to_string_lossy().into_owned(),
+fn consume_native(
+    journey: &NativeJourney,
+    operation: &str,
+    extra: &[&str],
+) -> Result<(std::process::Output, serde_json::Value), String> {
+    let path = format!("{}:/usr/bin:/bin", journey.decoy.display());
+    let mut args = vec![
+        journey.packet.join("run.py").to_string_lossy().into_owned(),
         "--packet".to_string(),
-        packet.to_string_lossy().into_owned(),
+        journey.packet.to_string_lossy().into_owned(),
         "--subject-root".to_string(),
-        subject.to_string_lossy().into_owned(),
+        journey.subject.to_string_lossy().into_owned(),
         "--out".to_string(),
-        out.to_string_lossy().into_owned(),
+        journey.out.to_string_lossy().into_owned(),
         "--operation".to_string(),
-        "check".to_string(),
-        "--diff".to_string(),
-        diff.to_string_lossy().into_owned(),
+        operation.to_string(),
         "--foreign-cwd".to_string(),
-        foreign.to_string_lossy().into_owned(),
+        journey.foreign.to_string_lossy().into_owned(),
         "--timeout-seconds".to_string(),
         "120".to_string(),
-        "--require-nonzero-subjects".to_string(),
     ];
-    let output = run_python(&python, &args, Some(&path))?;
-    let receipt_path = out.join("packet-consumption-receipt.json");
+    args.extend(extra.iter().map(|value| (*value).to_string()));
+    let output = run_python(&journey.python, &args, Some(&path))?;
+    let receipt_path = journey.out.join("packet-consumption-receipt.json");
     if !receipt_path.is_file() {
         return Err(format!(
             "missing receipt: status={:?} stderr={}",
@@ -256,6 +295,21 @@ fn native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback() -> 
         &fs::read_to_string(&receipt_path).map_err(|error| format!("read receipt: {error}"))?,
     )
     .map_err(|error| format!("parse receipt: {error}"))?;
+    Ok((output, receipt))
+}
+
+#[test]
+fn native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback() -> Result<(), String> {
+    let journey = stage_native_journey("boundary")?;
+    let (output, receipt) = consume_native(
+        &journey,
+        "check",
+        &[
+            "--diff",
+            journey.diff.to_str().ok_or("diff path is not utf-8")?,
+            "--require-nonzero-subjects",
+        ],
+    )?;
     if !output.status.success() {
         return Err(format!("native packet failed: {receipt}"));
     }
@@ -270,13 +324,13 @@ fn native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback() -> 
             "boundary-gap fixture produced zero findings: {receipt}"
         ));
     }
-    let stderr = fs::read_to_string(out.join("stderr.bin"))
+    let stderr = fs::read_to_string(journey.out.join("stderr.bin"))
         .map_err(|error| format!("stderr.bin: {error}"))?;
     if stderr.contains("DECOY_RAN") {
         return Err("PATH decoy was selected as the payload".to_string());
     }
     let stdout =
-        fs::read(out.join("stdout.bin")).map_err(|error| format!("stdout.bin: {error}"))?;
+        fs::read(journey.out.join("stdout.bin")).map_err(|error| format!("stdout.bin: {error}"))?;
     let product: serde_json::Value =
         serde_json::from_slice(&stdout).map_err(|error| format!("product json: {error}"))?;
     if product["schema_version"] != "0.2" {
@@ -284,6 +338,44 @@ fn native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback() -> 
     }
     if product["tool"] != "ripr" {
         return Err(format!("consumer rewrote tool identity: {product}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn native_packet_pilot_consumes_the_summary_artifact() -> Result<(), String> {
+    let journey = stage_native_journey("pilot")?;
+    let (output, receipt) = consume_native(&journey, "pilot", &[])?;
+    if !output.status.success() {
+        return Err(format!("native pilot failed: {receipt}"));
+    }
+    if receipt["classification"] != "complete" {
+        return Err(format!("expected complete pilot, got {receipt}"));
+    }
+    if !receipt["argv"]
+        .as_array()
+        .ok_or("missing argv")?
+        .iter()
+        .any(|value| value == "--out")
+    {
+        return Err(format!("pilot argv omitted --out: {receipt}"));
+    }
+    let summary = fs::read(journey.out.join("pilot-summary.json"))
+        .map_err(|error| format!("pilot-summary.json: {error}"))?;
+    let product: serde_json::Value =
+        serde_json::from_slice(&summary).map_err(|error| format!("pilot json: {error}"))?;
+    if product["schema_version"] != "0.2" {
+        return Err(format!("unexpected pilot schema: {product}"));
+    }
+    if product["tool"] != "ripr" {
+        return Err(format!("consumer rewrote pilot tool identity: {product}"));
+    }
+    let stdout = fs::read_to_string(journey.out.join("stdout.bin"))
+        .map_err(|error| format!("stdout.bin: {error}"))?;
+    if stdout.trim_start().starts_with('{') {
+        return Err(format!(
+            "pilot classified terminal stdout instead of the summary artifact: {stdout}"
+        ));
     }
     Ok(())
 }
