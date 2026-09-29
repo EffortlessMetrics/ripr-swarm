@@ -2484,8 +2484,8 @@ mod tests {
             related
                 .iter()
                 .find(|test| test.name == "combinations_inexact_size_hints")
-                .map(|test| (test.oracle_strength, test.oracle_kind)),
-            Some((OracleStrength::Strong, OracleKind::ExactValue)),
+                .map(|test| (test.oracle_strength.as_str(), test.oracle_kind.as_str())),
+            Some(("strong", "exact_value")),
             "combinations test listed once with strongest oracle: {named:?}"
         );
     }
