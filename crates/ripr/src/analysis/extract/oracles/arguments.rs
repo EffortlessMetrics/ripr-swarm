@@ -13,6 +13,28 @@ pub(super) fn ensure_assertion_arguments(line: &str) -> Option<Vec<String>> {
     macro_invocation_arguments(line, "ensure!")
 }
 
+/// The new scalar predicate credit requires an entire outer assertion. The
+/// older argument helper deliberately recognizes macro calls inside a line;
+/// that is not sufficient authority for this narrower classification.
+pub(super) fn outer_assertion_condition(line: &str) -> Option<String> {
+    let text = line.trim();
+    let suffix = text.strip_prefix("assert!")?.trim_start();
+    if !suffix.starts_with('(') {
+        return None;
+    }
+    let contents = delimited_contents_at(suffix, 0)?;
+    let after = suffix.get(contents.len() + 2..)?.trim();
+    if !matches!(after, "" | ";") {
+        return None;
+    }
+    split_top_level_commas(&contents).into_iter().next()
+}
+
+pub(super) fn parenthesized_contents(text: &str) -> Option<String> {
+    let contents = delimited_contents_at(text, 0)?;
+    (contents.len() + 2 == text.len()).then_some(contents)
+}
+
 fn macro_invocation_arguments(line: &str, macro_name: &str) -> Option<Vec<String>> {
     line.match_indices(macro_name)
         .filter_map(|(index, _)| {
