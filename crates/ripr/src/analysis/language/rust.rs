@@ -279,6 +279,20 @@ impl PartialDiffScope {
         }
     }
 
+    /// The env override and effective size of the budget that did NOT stop
+    /// selection. Raising only the stopping budget may not widen the
+    /// partition: when the next file hits both budgets the stop reason is the
+    /// file budget, and the unchanged line budget then rejects that file.
+    pub(crate) fn other_budget(&self) -> (&'static str, usize) {
+        match self.stop_reason {
+            PartialDiffStopReason::FileBudget => (PARTIAL_DIFF_LINE_BUDGET_ENV, self.line_budget),
+            PartialDiffStopReason::LineBudget
+            | PartialDiffStopReason::LineBudgetExceededOnFirstFile => {
+                (PARTIAL_DIFF_FILE_BUDGET_ENV, self.file_budget)
+            }
+        }
+    }
+
     /// Whether any changed-line file of the diff is known to be outside the
     /// selected partition. `false` only when every changed-line file was
     /// selected (for example a single oversized first file); the run still
@@ -3397,6 +3411,7 @@ fn absent_delimiter_boundary_returns_head() {
             file_stop.stop_reason.budget_env(),
             PARTIAL_DIFF_FILE_BUDGET_ENV
         );
+        assert_eq!(file_stop.other_budget(), (PARTIAL_DIFF_LINE_BUDGET_ENV, 40));
 
         let line_stop = require_partial(
             select_partial_diff_partition(
@@ -3417,6 +3432,7 @@ fn absent_delimiter_boundary_returns_head() {
             line_stop.stop_reason.budget_env(),
             PARTIAL_DIFF_LINE_BUDGET_ENV
         );
+        assert_eq!(line_stop.other_budget(), (PARTIAL_DIFF_FILE_BUDGET_ENV, 7));
 
         let first_file_stop = require_partial(
             select_partial_diff_partition(

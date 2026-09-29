@@ -367,12 +367,16 @@ fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
          (gate_eligibility: {}).\n",
         crate::analysis::PartialDiffScope::GATE_ELIGIBILITY,
     ));
-    // RIPR-PROP-0019 decision 6: raising the explicit override is the only
+    // RIPR-PROP-0019 decision 6: raising the explicit overrides is the only
     // continuation route; the budget has no off switch (zero is rejected).
+    // Both budgets are named: the next file can hit both, and the selector
+    // then reports only the file budget.
+    let (other_env, other_budget) = scope.other_budget();
     out.push_str(&format!(
-        "  To widen the analyzed partition, set {budget_env} above {budget} and re-run; \
-         the budget cannot be switched off, overrides above the analysis-cost limit are \
-         clamped, and named partition continuation is not available.\n  partition_identity: {}\n\n",
+        "  To widen the analyzed partition, raise {budget_env} above {budget} and re-run; the \
+         next file may also need {other_env} above {other_budget}. Overrides above the \
+         analysis-cost limit are clamped, the budget cannot be switched off, and named \
+         partition continuation is not available.\n  partition_identity: {}\n\n",
         scope.partition_identity,
     ));
 }
@@ -2033,7 +2037,8 @@ mod tests {
                     "Found 1 finding(s) before stopping.",
                     "NOT inspected: at least 3 changed file(s) and at least 90 changed line(s); \
                      more findings may exist beyond the budget.",
-                    "set RIPR_PARTIAL_DIFF_FILE_BUDGET above 1 and re-run",
+                    "raise RIPR_PARTIAL_DIFF_FILE_BUDGET above 1 and re-run",
+                    "may also need RIPR_PARTIAL_DIFF_LINE_BUDGET above 40",
                 ],
             ),
             (
@@ -2045,7 +2050,8 @@ mod tests {
                      (RIPR_PARTIAL_DIFF_LINE_BUDGET=40)",
                     "Found 1 finding(s) before stopping.",
                     "more findings may exist beyond the budget.",
-                    "set RIPR_PARTIAL_DIFF_LINE_BUDGET above 40 and re-run",
+                    "raise RIPR_PARTIAL_DIFF_LINE_BUDGET above 40 and re-run",
+                    "may also need RIPR_PARTIAL_DIFF_FILE_BUDGET above 7",
                 ],
             ),
             (
@@ -2059,7 +2065,8 @@ mod tests {
                     "Found 1 finding(s) before stopping.",
                     "Every changed file ripr's language adapters read was selected",
                     "this result stays partial and is not a complete-scope claim",
-                    "set RIPR_PARTIAL_DIFF_LINE_BUDGET above 40 and re-run",
+                    "raise RIPR_PARTIAL_DIFF_LINE_BUDGET above 40 and re-run",
+                    "may also need RIPR_PARTIAL_DIFF_FILE_BUDGET above 7",
                 ],
             ),
         ];
