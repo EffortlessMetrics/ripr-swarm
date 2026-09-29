@@ -1512,6 +1512,66 @@ mod tests {
     }
 
     #[test]
+    fn changed_rust_file_read_by_lexical_fallback_is_a_partial_outcome() -> Result<(), String> {
+        // #4722: a changed file the Rust parser refuses loses its probe
+        // shapes and its own tests. The run must disclose a typed producer
+        // limitation naming the file, so downstream gates fail closed, and
+        // the parsing control must stay complete.
+        for (label, source, degraded) in [
+            (
+                "lexical-fallback-changed",
+                "pub fn f(x: i32) -> bool { x >= 1 }\npub fn broken( {\n",
+                true,
+            ),
+            (
+                "lexical-fallback-control",
+                "pub fn f(x: i32) -> bool { x >= 1 }\n",
+                false,
+            ),
+        ] {
+            let root = temp_root(label)?;
+            write(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write(&root.join("src/lib.rs"), source)?;
+            let result = run_pipeline_for_diff_text(
+                &sample_rust_diff_options(root),
+                &OraclePolicy::default(),
+                &[LanguageId::Rust],
+                &[],
+                SAMPLE_RUST_DIFF,
+            )?;
+            let outcome = result
+                .analysis_outcome
+                .ok_or_else(|| format!("{label}: outcome must be projected"))?;
+            assert_eq!(
+                outcome.counts.changed_file_count, 1,
+                "{label}: diff must parse"
+            );
+            let fallback = outcome.limitations.iter().find(|limitation| {
+                limitation.kind == AnalysisLimitationKind::ProducerFailure
+                    && limitation.path.as_deref() == Some("src/lib.rs")
+            });
+            if degraded {
+                assert_eq!(
+                    outcome.kind,
+                    AnalysisOutcomeKind::PartialWithLimitations,
+                    "{label}"
+                );
+                let limitation =
+                    fallback.ok_or_else(|| format!("{label}: fallback limitation missing"))?;
+                let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+                assert!(detail.contains("lexical fallback"), "{label}: {detail}");
+            } else {
+                assert!(fallback.is_none(), "{label}: {:?}", outcome.limitations);
+                assert!(outcome.kind.is_complete(), "{label}: {:?}", outcome.kind);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn enabled_rust_does_not_project_a_config_exclusion() -> Result<(), String> {
         // #4376(a) negative control: with rust enabled, no exclusion.
         let root = temp_root("outcome-rust-enabled")?;
