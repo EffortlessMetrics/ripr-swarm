@@ -496,7 +496,8 @@ mod tests {
             != Some(crate::analysis::seam_cache::FILE_FACT_CACHE_SCHEMA_VERSION)
         {
             return Err(format!(
-                "cache.schema_version must track FILE_FACT_CACHE_SCHEMA_VERSION, got {:?}",
+                "cache.schema_version must track FILE_FACT_CACHE_SCHEMA_VERSION {}, got {:?}",
+                crate::analysis::seam_cache::FILE_FACT_CACHE_SCHEMA_VERSION,
                 cache.get("schema_version")
             ));
         }
@@ -509,7 +510,8 @@ mod tests {
             != Some(crate::analysis::seam_cache::CACHE_SCHEMA_VERSION)
         {
             return Err(format!(
-                "input_fingerprint.schema_version must track CACHE_SCHEMA_VERSION, got {:?}",
+                "input_fingerprint.schema_version must track CACHE_SCHEMA_VERSION {}, got {:?}",
+                crate::analysis::seam_cache::CACHE_SCHEMA_VERSION,
                 fingerprint.get("schema_version")
             ));
         }
