@@ -19,6 +19,18 @@ are scoped or reviewed.
   relation follows at most three same-module calls, respects parameter and
   local shadowing, and reports such reach as `weakly_exposed`, naming the
   exported callers, never `exposed` on its own.
+- Commands ripr prints now run. For a missing agent receipt, `ripr reports
+  index` suggests `ripr agent status`, which names the repair attempt's
+  next step, instead of an `agent receipt` call missing its required
+  flags. It no longer suggests the repository-internal `cargo xtask
+  check-pr` and `cargo xtask pr-summary`. Invalid-receipt
+  guidance names `--seam-id`, and Perl receipt commands use the canonical
+  `ripr receipt write` form instead of a `--verify-cmd` flag `outcome` never
+  had. Help screens and guides that contradicted the CLI were corrected,
+  including the `first-pr` cost disclosure, which described an analysis the
+  command never runs, and `docs/CONFIGURATION.md`'s claim that `context`
+  accepts `--format`. A test now fails when a public guide passes a flag
+  that its command's help does not list (#4573).
 - LSP: a request whose method starts with `$/` and that ripr does not handle
   now gets a `-32601` method-not-found error, as the LSP spec requires. It got
   no response at all, so a client that sent one waited on it forever.
@@ -335,6 +347,20 @@ are scoped or reviewed.
   the `Agent review packet` block already did. The stored artifacts keep
   their bound root; only the summary rendering rewrites the checkout path, and
   only where it is a whole path token.
+
+- LSP: `ripr.collectRepairPacket` and `ripr.collectContext` now reject a
+  `gap_id` that is present but not a string (such as `42` or `true`) with an
+  error naming `gap_id`. The repair command used to return the top gap's
+  packet instead of the one asked for, and the context command blamed another
+  field. An absent, `null`, empty or blank `gap_id` still means "not given"
+  (the top packet), as RIPR-SPEC-0077 specifies. A `gap_id` that
+  `actionable-gaps.json` does not hold no longer gets that report's first
+  packet: the gap ledger is tried, then a status packet naming the gap.
+
+- Rust cache entries now reject same-key semantic payload edits before serving
+  facts or classified evidence. File-fact, full/compact classified, shard and
+  corpus-fingerprint generations cold-recompute once; checksums do not
+  authenticate writers able to recompute them (#4382).
 
 ### Added
 
