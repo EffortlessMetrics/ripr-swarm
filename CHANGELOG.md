@@ -22,6 +22,10 @@ are scoped or reviewed.
   become misses and are recomputed. A `ripr check` artifact from another
   build of the same version is refused for reuse, and the `analyzer_version`
   in a targeted-rerun input fingerprint carries the same build identity.
+- LSP: a request whose method starts with `$/` and that ripr does not handle
+  now gets a `-32601` method-not-found error, as the LSP spec requires. It got
+  no response at all, so a client that sent one waited on it forever.
+  Unhandled `$/` notifications are still ignored.
 - MCP: a client that opens with `server/discover` (protocol `2026-07-28`)
   now receives the same instructions as an `initialize` client, including the
   CLI route that analyzes the diff. Before, only `initialize` carried them.
