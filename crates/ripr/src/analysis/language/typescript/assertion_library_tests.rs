@@ -487,9 +487,9 @@ describe('control', () => {
 }
 
 /// Negative (#4638 review): a test or describe callback parameter named like
-/// the imported binding shadows it. (A bare first test parameter is the
-/// AVA / tape execution-context receiver and keeps its own mapping, so the
-/// test fixture destructures its parameters.)
+/// the imported binding shadows it. A bare first test parameter with that
+/// name is also not read as an AVA / tape receiver: mocha passes `done`
+/// there, so the call is credited through neither route.
 #[test]
 fn assertion_binding_shadowed_by_callback_parameter_is_not_credited() {
     let tests = extract_tests(
@@ -504,6 +504,9 @@ it('test parameters', ({ assert, strictEqual, expect }) => {
   strictEqual(total([1, 2]), 3)
   expect(total([1, 2])).to.equal(3)
 })
+it('first parameter', function (assert) {
+  assert.strictEqual(total([1, 2]), 3)
+})
 describe.each([[1]])('describe parameters', (assert, strictEqual, expect) => {
   it('totals', () => {
     assert.strictEqual(total([1, 2]), 3)
@@ -513,7 +516,7 @@ describe.each([[1]])('describe parameters', (assert, strictEqual, expect) => {
 })
 "#,
     );
-    assert_eq!(tests.len(), 2, "{tests:?}");
+    assert_eq!(tests.len(), 3, "{tests:?}");
     assert!(
         tests.iter().all(|test| test.assertions.is_empty()),
         "{tests:?}"
@@ -592,4 +595,23 @@ it('adds', () => {
             .all(|(_, kind, strength)| (kind.clone(), strength.clone()) == exact),
         "{strict:?}"
     );
+}
+
+/// Positive control (#4638 review): an AVA / tape receiver that does not
+/// collide with an imported assertion binding keeps its own mapping.
+#[test]
+fn non_colliding_receiver_keeps_its_mapping() {
+    let assertions = only_assertions(
+        "test/cart.test.js",
+        r#"
+const assert = require('node:assert')
+
+test('receiver', (t) => {
+  t.is(total([1, 2]), 3)
+})
+"#,
+    );
+    assert_eq!(assertions.len(), 1, "{assertions:?}");
+    assert_eq!(assertions[0].matcher, "is");
+    assert_eq!(assertions[0].oracle_kind, OracleKind::ExactValue);
 }

@@ -1439,7 +1439,13 @@ pub(crate) fn test_name_and_assertions_from_call(
 
     let name = string_argument(call.arguments.first()?)?;
     let callback = call.arguments.get(declaration_callback_index(call))?;
-    let receiver = test_callback_receiver_name(callback);
+    // A first parameter named like an imported assertion binding
+    // (`const assert = require('node:assert')` + `it('x', function (assert)
+    // {...})`) is ambiguous: mocha passes `done` there, AVA / tape an
+    // execution context. Neither the import nor the receiver is credited
+    // (#4638 review, fail-closed).
+    let receiver =
+        test_callback_receiver_name(callback).filter(|receiver| !bindings.binds_local(receiver));
     // A test callback parameter or a test-body declaration named like an
     // imported assertion binding shadows it (#4638 review; the #4102 guard).
     let parameters = argument_parameter_names(callback);

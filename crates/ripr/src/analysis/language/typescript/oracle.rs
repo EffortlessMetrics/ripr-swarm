@@ -583,6 +583,19 @@ impl TypeScriptAssertionBindings {
         }
     }
 
+    /// Whether `name` is the local name of any recorded binding.
+    pub(crate) fn binds_local(&self, name: &str) -> bool {
+        self.assert_objects
+            .iter()
+            .any(|(local, _, _)| local == name)
+            || self
+                .assert_methods
+                .iter()
+                .any(|(local, _, _)| local == name)
+            || self.chai_expects.iter().any(|local| local == name)
+            || self.chai_modules.iter().any(|local| local == name)
+    }
+
     fn is_empty(&self) -> bool {
         self.assert_objects.is_empty()
             && self.assert_methods.is_empty()

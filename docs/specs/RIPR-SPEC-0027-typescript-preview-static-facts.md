@@ -178,7 +178,9 @@ Assertions / oracles the adapter must recognise:
   the reverse) is not credited. A named method import (`strictEqual(a, b)`)
   maps the same way as the module it comes from. A binding re-declared in the
   test body, as a test or describe callback parameter, or in an enclosing
-  describe body is shadowed and not credited. chai
+  describe body is shadowed and not credited; a first test-callback
+  parameter with that name is not read as an AVA / tape receiver either.
+  chai
   `expect(x).to.equal(y)` / `.to.eql(y)` /
   `.to.deep.equal(y)` → exact-value (relational under `.not`);
   `.to.be.true` / `.false` / `.ok` / `.null` / `.undefined` → smoke;
