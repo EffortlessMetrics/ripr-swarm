@@ -3,7 +3,7 @@ use super::related_tests::*;
 use super::*;
 use crate::analysis::facts::{FunctionSourceRole, WorkspaceRootAuthority, build_index};
 use crate::analysis::repair_route::{
-    RepairRouteState, is_safe_for_repair_packet, repair_packet_eligibility,
+    RepairRouteState, RepairTargetSelection, is_safe_for_repair_packet, repair_packet_eligibility,
 };
 use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
 use crate::analysis::seam_classification::ClassifiedSeam;
@@ -14117,6 +14117,22 @@ fn route_must_stay_unready(case: &ConstructorFieldCase, label: &str) -> Result<(
     Ok(())
 }
 
+fn authority_must_refuse_packet(classified: &ClassifiedSeam, reason: &str) -> Result<(), String> {
+    let eligibility = repair_packet_eligibility(classified);
+    match &eligibility.readiness.target_selection {
+        RepairTargetSelection::Missing => {}
+        other => {
+            return Err(format!(
+                "{reason}: unadmitted existing target must stay Missing, got {other:?}"
+            ));
+        }
+    }
+    if eligibility.eligible() || is_safe_for_repair_packet(classified) {
+        return Err(reason.to_string());
+    }
+    Ok(())
+}
+
 const CONSTRUCTOR_FIELD_PRODUCTION: &str = r#"
 pub struct HirLet {
     pub name: String,
@@ -16055,10 +16071,10 @@ fn changed_test_bytes_invalidate_target_admission() -> Result<(), String> {
         class: crate::analysis::seam_classification::classify_seam(&case.seam, &evidence),
         evidence,
     };
-    if is_safe_for_repair_packet(&classified) {
-        return Err("changed test bytes must not keep a repair packet".to_string());
-    }
-    Ok(())
+    authority_must_refuse_packet(
+        &classified,
+        "changed test bytes must not keep a repair packet",
+    )
 }
 
 #[test]
@@ -16082,10 +16098,10 @@ fn changed_production_bytes_invalidate_target_admission() -> Result<(), String> 
         class: crate::analysis::seam_classification::classify_seam(&case.seam, &evidence),
         evidence,
     };
-    if is_safe_for_repair_packet(&classified) {
-        return Err("changed production bytes must not keep a repair packet".to_string());
-    }
-    Ok(())
+    authority_must_refuse_packet(
+        &classified,
+        "changed production bytes must not keep a repair packet",
+    )
 }
 
 #[test]
@@ -16106,10 +16122,10 @@ fn different_package_identity_invalidates_target_admission() -> Result<(), Strin
         class: crate::analysis::seam_classification::classify_seam(&case.seam, &evidence),
         evidence,
     };
-    if is_safe_for_repair_packet(&classified) {
-        return Err("different package identity must not keep a repair packet".to_string());
-    }
-    Ok(())
+    authority_must_refuse_packet(
+        &classified,
+        "different package identity must not keep a repair packet",
+    )
 }
 
 #[test]
@@ -16159,10 +16175,7 @@ fn symlink_escape_invalidates_target_admission() -> Result<(), String> {
         evidence,
     };
     let _ = fs::remove_dir_all(&outside);
-    if is_safe_for_repair_packet(&classified) {
-        return Err("symlink escape must not keep a repair packet".to_string());
-    }
-    Ok(())
+    authority_must_refuse_packet(&classified, "symlink escape must not keep a repair packet")
 }
 
 #[test]
@@ -16176,10 +16189,10 @@ fn absent_workspace_authority_invalidates_target_admission() -> Result<(), Strin
         class: crate::analysis::seam_classification::classify_seam(&case.seam, &evidence),
         evidence,
     };
-    if is_safe_for_repair_packet(&classified) {
-        return Err("absent authority must not keep a repair packet".to_string());
-    }
-    Ok(())
+    authority_must_refuse_packet(
+        &classified,
+        "absent authority must not keep a repair packet",
+    )
 }
 
 #[test]
@@ -16205,12 +16218,10 @@ fn duplicate_evidence_function_identity_invalidates_target() -> Result<(), Strin
         class: crate::analysis::seam_classification::classify_seam(&case.seam, &evidence),
         evidence,
     };
-    if is_safe_for_repair_packet(&classified) {
-        return Err(
-            "duplicate evidence-function identity must not keep a repair packet".to_string(),
-        );
-    }
-    Ok(())
+    authority_must_refuse_packet(
+        &classified,
+        "duplicate evidence-function identity must not keep a repair packet",
+    )
 }
 
 #[test]

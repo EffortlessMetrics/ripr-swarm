@@ -17,7 +17,10 @@ an assertion-message-only field mention, and an assertion-local shadow of the
 owner-result binding are also not owner-result observations: credit only a
 parser-backed discriminating condition or compared operands, and fail closed
 when the bare callee identity is ambiguous, including a local binding of the
-owner name that is not itself the parser-backed direct owner-result.
+owner name that is not itself the parser-backed direct owner-result. A related
+test that failed target admission stays `Missing`; ranking must not fall
+through to a Proposed InlineUnit or Integration target just because the
+`field_value` fact is now present.
 
 ## 2026-09-29: Whole-object equality is not an effect observer of a different collection (#4575)
 

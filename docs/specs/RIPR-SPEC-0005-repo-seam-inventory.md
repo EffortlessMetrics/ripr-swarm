@@ -287,7 +287,8 @@ against fixture repos.
   already-gripped; wrapper, helper-transfer, shadow, reassignment, sibling
   field, token coincidence, unknown activation, failed target authority,
   mutable field borrow, assertion-message-only field credit, assertion-local
-  shadow, and same-name local or imported callees stay non-ready.
+  shadow, and same-name local or imported callees stay non-ready. An
+  unadmitted related test does not fall through to a Proposed target.
 - `analysis/related-test-ranking-v2-stabilization`: tests that direct owner
 calls outrank weaker relationship signals, strong oracles outrank smoke-only
 oracles inside the same relation, activation-value overlap breaks remaining
