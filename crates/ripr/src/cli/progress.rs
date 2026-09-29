@@ -792,7 +792,7 @@ mod tests {
     #[test]
     fn elapsed_class_is_bucketed_not_raw_millis() {
         assert_eq!(elapsed_class(Duration::from_millis(1999)), None);
-        assert_eq!(elapsed_class(Duration::from_millis(2000)), Some("2s"));
+        assert_eq!(elapsed_class(Duration::from_secs(2)), Some("2s"));
         assert_eq!(elapsed_class(Duration::from_millis(4999)), Some("2s"));
         assert_eq!(elapsed_class(Duration::from_secs(5)), Some("5s"));
         assert_eq!(elapsed_class(Duration::from_secs(90)), Some("1m"));
