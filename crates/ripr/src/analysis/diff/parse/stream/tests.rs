@@ -317,6 +317,87 @@ fn declared_ranges_reject_line_zero_and_unusable_end_coordinates() -> Result<(),
 }
 
 #[test]
+fn signed_declared_hunk_numbers_are_malformed() -> Result<(), String> {
+    let mut failures = Vec::new();
+    for body in [
+        "@@ -+1 +1 @@\n-old\n+new\n",
+        "@@ -1 ++1 @@\n-old\n+new\n",
+        "@@ -1,+1 +1,1 @@\n-old\n+new\n",
+        "@@ -1,1 +1,+1 @@\n-old\n+new\n",
+        "@@ -+0,0 +1,1 @@\n+new\n",
+        "@@ -0,+0 +1,1 @@\n+new\n",
+    ] {
+        let input = format!("{FIRST_FILE}--- a/src/b.rs\n+++ b/src/b.rs\n{body}");
+        if let Err(error) = check_declared_hunk_status(&input, true) {
+            failures.push(error);
+        }
+        let parsed = parse_unbounded(&input);
+        let first = parsed
+            .changed_files
+            .iter()
+            .find(|file| file.path == Path::new("src/a.rs"))
+            .ok_or_else(|| "signed range lost earlier valid file".to_string())?;
+        if !first.added_lines.iter().any(|line| line.text == "new") {
+            failures.push("signed range lost earlier advisory source".to_string());
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+#[test]
+fn excess_zero_count_sides_never_emit_line_zero() -> Result<(), String> {
+    for body in [
+        "@@ -0,0 +1,1 @@\n-unexpected\n+expected\n",
+        "@@ -1,1 +0,0 @@\n+unexpected\n-expected\n",
+    ] {
+        let input = format!("{FIRST_FILE}--- a/src/b.rs\n+++ b/src/b.rs\n{body}");
+        check_declared_hunk_status(&input, true)?;
+        for parsed in [
+            parse_unbounded(&input),
+            parse_bounded_lines(input.lines(), 8)?,
+        ] {
+            if parsed
+                .changed_files
+                .iter()
+                .flat_map(|file| file.added_lines.iter().chain(&file.removed_lines))
+                .any(|line| line.line == 0)
+            {
+                return Err(format!(
+                    "malformed excess published nonexistent coordinate zero: {parsed:?}"
+                ));
+            }
+            let first = parsed
+                .changed_files
+                .iter()
+                .find(|file| file.path == Path::new("src/a.rs"))
+                .ok_or_else(|| "zero-side excess lost earlier valid file".to_string())?;
+            if !first.added_lines.iter().any(|line| line.text == "new")
+                || !parsed.limitations.iter().any(|item| {
+                    item.kind == AnalysisLimitationKind::MalformedDiff
+                        && item.affected_items == Some(1)
+                })
+            {
+                return Err(
+                    "zero-side excess lost valid advisory source or its single limitation".into(),
+                );
+            }
+        }
+        if crate::analysis::diff::parse_unified_diff(&input)
+            .iter()
+            .flat_map(|file| file.added_lines.iter().chain(&file.removed_lines))
+            .any(|line| line.line == 0)
+        {
+            return Err("legacy Vec API exposed nonexistent coordinate zero".into());
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn excess_body_counter_overflow_keeps_only_usable_advisory_coordinates() -> Result<(), String> {
     let start = usize::MAX - 2;
     for (added, body) in [

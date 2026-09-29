@@ -17410,6 +17410,95 @@ fn truncated_declared_hunk_is_incomplete_through_file_and_stdin()
     Ok(())
 }
 
+#[test]
+fn truncated_unsupported_file_hunk_is_incomplete_through_file_and_stdin()
+-> Result<(), Box<dyn std::error::Error>> {
+    let scratch = unique_temp_workspace("declared-hunk-unsupported-language");
+    std::fs::create_dir(&scratch)?;
+    let _cleanup = DeclaredHunkScratch(scratch.clone());
+    let root = workspace_root().join("fixtures/boundary_gap/input");
+    let root_arg = root.display().to_string();
+    for (label, input, complete) in [
+        (
+            "partial",
+            "--- a/README.md\n+++ b/README.md\n@@ -0,0 +1,2 @@\n+retained\n",
+            false,
+        ),
+        (
+            "complete",
+            "--- a/README.md\n+++ b/README.md\n@@ -0,0 +1,1 @@\n+retained\n",
+            true,
+        ),
+    ] {
+        let path = scratch.join(format!("{label}.patch"));
+        std::fs::write(&path, input)?;
+        let path_arg = path.display().to_string();
+        let file = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            None,
+            &["check", "--root", &root_arg, "--diff", &path_arg, "--json"],
+        )?;
+        let stdin = run_ripr_with_stdin(
+            &["check", "--root", &root_arg, "--diff", "-", "--json"],
+            input.as_bytes(),
+        )?;
+        for (channel, output) in [("file", file), ("stdin", stdin)] {
+            if !output.status.success() {
+                return Err(format!(
+                    "{label}/{channel}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                )
+                .into());
+            }
+            let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+            let outcome = report
+                .pointer("/analysis_outcome/outcome")
+                .ok_or("missing typed outcome")?;
+            if outcome
+                .pointer("/counts/changed_file_count")
+                .and_then(serde_json::Value::as_u64)
+                != Some(1)
+                || outcome
+                    .pointer("/counts/probe_count")
+                    .and_then(serde_json::Value::as_u64)
+                    != Some(0)
+            {
+                return Err(
+                    "unsupported-language control must retain one file and zero probes".into(),
+                );
+            }
+            let malformed = outcome
+                .get("limitations")
+                .and_then(serde_json::Value::as_array)
+                .ok_or("missing typed limitations")?
+                .iter()
+                .any(|item| {
+                    item.get("kind").and_then(serde_json::Value::as_str) == Some("malformed_diff")
+                        && item
+                            .get("producer_stage")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("diff_parse")
+                        && item
+                            .pointer("/recovery/kind")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("retry")
+                });
+            if report
+                .pointer("/analysis_outcome/analysis_complete")
+                .and_then(serde_json::Value::as_bool)
+                != Some(complete)
+                || malformed == complete
+            {
+                return Err(format!(
+                    "{label}/{channel}: unsupported language hid malformed input: {report}"
+                )
+                .into());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// #4319 end-to-end silence guarantee for the attached-terminal stdin
 /// disclosure at the cli boundary (`cli::parse::disclose_attached_terminal_stdin_read`):
 /// the note may be emitted only when the child's stdin is an attached

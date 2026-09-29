@@ -99,16 +99,23 @@ fn parse_hunk_header(raw: &str) -> Option<HunkHeader> {
 
 fn parse_range(segment: &str) -> Option<(usize, usize)> {
     let (start, count) = match segment.split_once(',') {
-        Some((start, count)) => (start, count.parse::<usize>().ok()?),
+        Some((start, count)) => (start, parse_hunk_number(count)?),
         None => (segment, 1),
     };
-    let start = start.parse::<usize>().ok()?;
+    let start = parse_hunk_number(start)?;
     // Positive spans name real one-based lines. The exclusive end must fit:
     // usize::MAX itself is not a usable source coordinate (see hunk guard).
     if (count > 0 && start == 0) || start.checked_add(count).is_none() {
         return None;
     }
     Some((start, count))
+}
+
+fn parse_hunk_number(raw: &str) -> Option<usize> {
+    if raw.is_empty() || !raw.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    raw.parse().ok()
 }
 
 mod parser_state {
@@ -640,6 +647,14 @@ mod parser_state {
             }
             self.account_hunk_line(raw);
             if raw.starts_with("\\ No newline at end of file") {
+                return;
+            }
+
+            // Empty sides may start at zero, but an excess body line cannot
+            // turn that cursor into a real one-based source coordinate.
+            if (raw.starts_with('+') && self.new_line == 0)
+                || (raw.starts_with('-') && self.old_line == 0)
+            {
                 return;
             }
 

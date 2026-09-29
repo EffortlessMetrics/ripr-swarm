@@ -33,11 +33,15 @@ fact packet remains advisory rather than complete.
 For ordinary two-way hunks, malformed input includes invalid numeric ranges
 and a body that disagrees with the declared old/new line counts at EOF or a
 hunk/file boundary. Omitted counts mean one and explicit zero counts mean zero;
-the no-newline marker does not consume a source line. Ranges with positive
-counts must start on a one-based line and may not reach an
-unusable `usize::MAX` coordinate. Zero-count sides may start at zero.
+the no-newline marker does not consume a source line. Coordinates and counts
+must use unsigned ASCII digits. Ranges with positive counts must start on a
+one-based line and may not reach an unusable `usize::MAX` coordinate.
+Zero-count sides may start at zero.
 If an excess body exhausts a coordinate counter, the counter backstop closes
 the hunk before emitting that unusable added/removed coordinate.
+An excess body line on a zero-count side must not emit primary line zero.
+Malformed diff input remains incomplete independently of enabled language
+adapters; language-scoped conflict and n-way exclusions remain unchanged.
 Previously parsed changes remain advisory evidence, carrying `malformed_diff`,
 `diff_parse`, and `retry` through the existing outcome projection. Existing
 metadata-only section handling is unchanged by span accounting.
