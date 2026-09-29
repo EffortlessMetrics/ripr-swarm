@@ -183,6 +183,7 @@ fn classified_with(
             discriminate: stage(StageState::Weak),
             observed_values: Vec::<ValueFact>::new(),
             missing_discriminators,
+            new_test_target: None,
         },
         seam,
         class,
@@ -875,6 +876,7 @@ fn why_line_uses_static_discriminator_summary_when_no_missing_discriminator() {
             ),
             observed_values: Vec::<ValueFact>::new(),
             missing_discriminators: Vec::new(),
+            new_test_target: None,
         },
         seam,
         class: SeamGripClass::WeaklyGripped,
@@ -899,6 +901,7 @@ fn why_line_falls_back_to_class_label_when_no_summary_or_missing_discriminator()
             discriminate: StageEvidence::new(StageState::Weak, Confidence::Medium, "   "),
             observed_values: Vec::<ValueFact>::new(),
             missing_discriminators: Vec::new(),
+            new_test_target: None,
         },
         seam,
         class: SeamGripClass::Ungripped,
@@ -1204,6 +1207,107 @@ fn pilot_terminal_route_label_has_one_shape_for_every_language() {
             route.language.as_str()
         );
     }
+}
+
+#[test]
+fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Result<(), String> {
+    use super::language_routes::PilotLanguageRoutesState;
+    use crate::domain::LanguageId;
+
+    // A Go repository: no Rust seams, no routed language. Pilot said
+    // "complete", "none ranked", and offered a test-then-compare loop.
+    let artifacts = pilot_artifacts();
+    let root = Path::new(".");
+    let go_only = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], &[])
+        .with_unanalyzed(vec![("Go", 2)], false);
+    assert_eq!(go_only.state, PilotLanguageRoutesState::UnanalyzedOnly);
+    let context = PilotSummaryContext {
+        language_routes: Some(&go_only),
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        !terminal.contains("none ranked by the default pilot policy"),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains("languages ripr does not analyze"),
+        "{terminal}"
+    );
+    assert!(terminal.contains("found: Go (2 files)"), "{terminal}");
+    assert!(!terminal.contains("ripr outcome --before"), "{terminal}");
+    assert!(
+        terminal.ends_with("No follow-up command applies: review changes in these languages with their own tests.\n"),
+        "{terminal}"
+    );
+    let md = render_pilot_summary_md(&[], context);
+    assert!(md.contains("Found: Go (2 files)."), "{md}");
+    assert!(!md.contains("ripr outcome --before"), "{md}");
+    let json = render_pilot_summary_json(&[], context);
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert_eq!(parsed["language_routes"]["state"], "unanalyzed_only");
+    assert_eq!(
+        parsed["language_routes"]["unanalyzed_languages"][0]["language"],
+        "Go"
+    );
+    assert_eq!(
+        parsed["language_routes"]["unanalyzed_languages"][0]["file_count"],
+        2
+    );
+    // No seam exists to snapshot or measure, so JSON offers no follow-up
+    // command either.
+    assert!(parsed["next"]["after_snapshot_command"].is_null(), "{json}");
+    assert!(parsed["next"]["outcome_command"].is_null(), "{json}");
+    assert!(parsed["next"]["repair_command"].is_null(), "{json}");
+
+    // Rust seams present: the ranking stands and the Go files stay a JSON
+    // note, so Rust users' output is unchanged.
+    let with_rust = PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], &[])
+        .with_unanalyzed(vec![("Go", 2)], true);
+    assert_eq!(with_rust.state, PilotLanguageRoutesState::NotDetected);
+    assert!(with_rust.unanalyzed_only().is_none());
+    let json = render_pilot_summary_json(
+        &[],
+        PilotSummaryContext {
+            language_routes: Some(&with_rust),
+            ..pilot_context(&artifacts)
+        },
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert_eq!(
+        parsed["language_routes"]["unanalyzed_languages"][0]["language"],
+        "Go"
+    );
+
+    // A Rust crate with no seams yet (a lone `pub const`) plus a CI script
+    // is a Rust repository, not an unanalyzed one.
+    let seamless_rust = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], &[])
+        .with_unanalyzed(vec![("Shell", 1)], true);
+    assert!(seamless_rust.unanalyzed_only().is_none());
+
+    // Nothing unanalyzed: the JSON shape is unchanged for Rust users.
+    let plain = PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], &[]);
+    let json = render_pilot_summary_json(
+        &[],
+        PilotSummaryContext {
+            language_routes: Some(&plain),
+            ..pilot_context(&artifacts)
+        },
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert_eq!(
+        parsed["language_routes"],
+        serde_json::json!({"state": "not_detected", "routes": []})
+    );
+    assert!(
+        parsed["next"]["after_snapshot_command"].is_string(),
+        "{json}"
+    );
+    assert!(parsed["next"]["outcome_command"].is_string(), "{json}");
+    Ok(())
 }
 
 #[test]
