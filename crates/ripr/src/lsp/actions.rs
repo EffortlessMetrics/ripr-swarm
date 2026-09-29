@@ -64,17 +64,12 @@ pub(super) fn code_action_response(
         // absent; other clients keep the legacy omission.
         actions.push(action);
     }
-    if let Some(diagnostic) = params
-        .context
-        .diagnostics
-        .iter()
-        .find(|d| {
-            is_ripr_diagnostic(d)
-                && !is_seam_diagnostic(d)
-                && !is_gap_diagnostic(d)
-                && !is_delivery_limitation(d)
-        })
-    {
+    if let Some(diagnostic) = params.context.diagnostics.iter().find(|d| {
+        is_ripr_diagnostic(d)
+            && !is_seam_diagnostic(d)
+            && !is_gap_diagnostic(d)
+            && !is_delivery_limitation(d)
+    }) {
         actions.push(copy_context_action(
             INSPECT_FINDING_CONTEXT_TITLE,
             INSPECT_FINDING_CONTEXT_COMMAND_TITLE,
@@ -2391,11 +2386,13 @@ mod tests {
         };
         let params = code_action_params(vec![limitation])?;
         let mut features = ClientFeatureProfile::unsupported();
-        features.ripr_editor = Some(super::super::client_features::RiprEditorClientCapabilities {
-            version: "test".to_string(),
-            commands: vec![COPY_CONTEXT_COMMAND.to_string()],
-            guarded_test_edit: false,
-        });
+        features.ripr_editor = Some(
+            super::super::client_features::RiprEditorClientCapabilities {
+                version: "test".to_string(),
+                commands: vec![COPY_CONTEXT_COMMAND.to_string()],
+                guarded_test_edit: false,
+            },
+        );
         let actions = code_action_response(&params, None, &features);
         assert_eq!(action_titles(&actions), vec![REFRESH_ANALYSIS_TITLE]);
 
@@ -2404,11 +2401,8 @@ mod tests {
             data: Some(serde_json::json!({"finding_id": "finding:control"})),
             ..Default::default()
         };
-        let ordinary_actions = code_action_response(
-            &code_action_params(vec![ordinary])?,
-            None,
-            &features,
-        );
+        let ordinary_actions =
+            code_action_response(&code_action_params(vec![ordinary])?, None, &features);
         assert_eq!(
             action_titles(&ordinary_actions),
             vec![INSPECT_FINDING_CONTEXT_TITLE, REFRESH_ANALYSIS_TITLE],
