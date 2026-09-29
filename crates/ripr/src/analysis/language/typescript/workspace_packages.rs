@@ -17,7 +17,14 @@
 //!   the package directory;
 //! - a candidate counts only when it is an indexed workspace source file
 //!   (build output such as `dist/` is not indexed, `.d.ts` is excluded), and
-//!   the distinct counted candidates must be exactly one.
+//!   the distinct counted candidates must be exactly one;
+//! - when every candidate is build output, each is mirrored into `src/`
+//!   (`./esm/middleware.mjs` or `./middleware.js` → `src/middleware`), the
+//!   layout the package's own test runner aliases to (`resolve.alias`,
+//!   `moduleNameMapper`); the mirrored sources must again be exactly one.
+//!
+//! The package's own tests importing it by name (#4769, zustand) resolve the
+//! same way: the root `package.json` is one of the manifests.
 //!
 //! Anything else fails closed, so the import keeps no relation, as before.
 
@@ -102,15 +109,23 @@ impl WorkspacePackages {
             None if subpath == "." => package.entry_fields.clone(),
             None => vec![subpath.clone()],
         };
-        let mut found: BTreeSet<String> = BTreeSet::new();
-        for candidate in candidates {
-            found.extend(self.source_file_for(&package.dir, &candidate));
+        let unique = |targets: &mut dyn Iterator<Item = String>| {
+            let found: BTreeSet<String> = targets
+                .filter_map(|target| self.source_file_for(&package.dir, &target))
+                .collect();
+            let mut found = found.into_iter();
+            match (found.next(), found.next()) {
+                (Some(only), None) => Some(PathBuf::from(only)),
+                _ => None,
+            }
+        };
+        let any_source = candidates
+            .iter()
+            .any(|target| self.source_file_for(&package.dir, target).is_some());
+        if any_source {
+            return unique(&mut candidates.into_iter());
         }
-        let mut found = found.into_iter();
-        match (found.next(), found.next()) {
-            (Some(only), None) => Some(PathBuf::from(only)),
-            _ => None,
-        }
+        unique(&mut candidates.iter().filter_map(|target| src_mirror(target)))
     }
 
     /// The package whose name is the longest `/`-bounded prefix of
@@ -165,6 +180,24 @@ impl WorkspacePackages {
             _ => None,
         }
     }
+}
+
+/// Build-output directory names a mirrored target drops before `src/`.
+const BUILD_DIRS: [&str; 8] = ["dist", "esm", "cjs", "lib", "build", "out", "es", "module"];
+
+/// The `src/` counterpart of a JavaScript build-output target:
+/// `./esm/middleware.mjs` → `src/middleware`, `./index.js` → `src/index`.
+/// Declaration files and non-JavaScript targets have none.
+fn src_mirror(target: &str) -> Option<String> {
+    let path = target.trim_start_matches("./");
+    let stem = [".mjs", ".cjs", ".js", ".jsx"]
+        .iter()
+        .find_map(|ext| path.strip_suffix(ext))?;
+    let stem = match stem.split_once('/') {
+        Some((first, rest)) if BUILD_DIRS.contains(&first) => rest,
+        _ => stem,
+    };
+    Some(format!("src/{stem}"))
 }
 
 /// Every string target an `exports` value gives `subpath`, across all
@@ -348,15 +381,63 @@ mod tests {
     }
 
     #[test]
-    fn build_output_only_targets_fail_closed() -> Result<(), String> {
+    fn build_output_targets_mirror_into_src_or_fail_closed() -> Result<(), String> {
+        let packages = packages(
+            &[
+                (
+                    "packages/core",
+                    r#"{"name":"core","main":"./dist/index.js","types":"./dist/index.d.ts"}"#,
+                ),
+                (
+                    "packages/bundle",
+                    r#"{"name":"bundle","main":"./dist/bundle.js"}"#,
+                ),
+            ],
+            &["packages/core/src/index.ts", "packages/bundle/src/index.ts"],
+        )?;
+        assert_eq!(
+            packages.resolve("core"),
+            Some(PathBuf::from("packages/core/src/index.ts"))
+        );
+        // The mirrored file does not exist: no guess at another source.
+        assert_eq!(packages.resolve("bundle"), None);
+        Ok(())
+    }
+
+    /// #4769: zustand's own tests import `zustand/middleware`; the root
+    /// manifest's `./*` export names only published build output, which
+    /// mirrors to `src/middleware.ts`.
+    #[test]
+    fn self_import_through_build_output_pattern_resolves_to_src() -> Result<(), String> {
         let packages = packages(
             &[(
-                "packages/core",
-                r#"{"name":"core","main":"./dist/index.js","types":"./dist/index.d.ts"}"#,
+                ".",
+                r#"{"name":"zustand","exports":{
+                    "./package.json":"./package.json",
+                    ".":{"import":{"types":"./esm/index.d.mts","default":"./esm/index.mjs"},"default":{"types":"./index.d.ts","default":"./index.js"}},
+                    "./*":{"import":{"types":"./esm/*.d.mts","default":"./esm/*.mjs"},"default":{"types":"./*.d.ts","default":"./*.js"}}
+                }}"#,
             )],
-            &["packages/core/src/index.ts"],
+            &[
+                "src/index.ts",
+                "src/middleware.ts",
+                "src/middleware/devtools.ts",
+                "tests/devtools.test.tsx",
+            ],
         )?;
-        assert_eq!(packages.resolve("core"), None);
+        assert_eq!(
+            packages.resolve("zustand/middleware"),
+            Some(PathBuf::from("src/middleware.ts"))
+        );
+        assert_eq!(
+            packages.resolve("zustand"),
+            Some(PathBuf::from("src/index.ts"))
+        );
+        assert_eq!(
+            packages.resolve("zustand/middleware/devtools"),
+            Some(PathBuf::from("src/middleware/devtools.ts"))
+        );
+        assert_eq!(packages.resolve("zustand/missing"), None);
         Ok(())
     }
 
