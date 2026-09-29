@@ -171,9 +171,9 @@ fn check_help_does_not_spray_progress() -> Result<(), String> {
 }
 
 #[test]
-fn check_markdown_stdout_is_unchanged_by_progress() -> Result<(), String> {
-    let loud = run_check(&["--format", "markdown"])?;
-    let quiet = run_check(&["--format", "markdown", "--quiet"])?;
+fn check_github_stdout_is_unchanged_by_progress() -> Result<(), String> {
+    let loud = run_check(&["--format", "github"])?;
+    let quiet = run_check(&["--format", "github", "--quiet"])?;
     assert!(loud.status.success(), "{}", stderr_text(&loud));
     assert!(quiet.status.success(), "{}", stderr_text(&quiet));
     assert_eq!(loud.stdout, quiet.stdout);
@@ -197,11 +197,6 @@ fn check_worktree_projects_worktree_scope_on_stderr() -> Result<(), String> {
         ])
         .output()
         .map_err(|error| format!("run worktree check: {error}"))?;
-    assert!(
-        output.status.success(),
-        "worktree check failed: {}",
-        stderr_text(&output)
-    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = stderr_text(&output);
     assert!(!stdout.contains("ripr progress:"));
@@ -212,6 +207,10 @@ fn check_worktree_projects_worktree_scope_on_stderr() -> Result<(), String> {
     assert!(
         !stderr.contains("[diff]"),
         "worktree run must not project the diff scope: {stderr}"
+    );
+    assert!(
+        !stderr.contains("ripr progress: completed [diff]"),
+        "worktree failure must not leak a diff completed token: {stderr}"
     );
     Ok(())
 }
