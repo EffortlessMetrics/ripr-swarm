@@ -148,6 +148,63 @@ fn line(value: Value) -> Result<Vec<u8>, String> {
 }
 
 #[test]
+fn readable_request_id_larger_than_output_cap_terminates_without_oversized_reply()
+-> Result<(), String> {
+    // The escaped ID fits the public input cap but cannot fit the output
+    // cap even in a minimal correlated error. A null or omitted substitute
+    // would falsely suggest the readable request ID was unknown.
+    const INPUT_CAP: usize = 256 * 1024;
+    const OUTPUT_CAP: usize = 128 * 1024;
+    let root = workspace_root()?;
+    let request_id = "\n".repeat(70 * 1024);
+    let discover = line(json!({
+        "jsonrpc": "2.0",
+        "id": "discover",
+        "method": "server/discover",
+        "params": { "_meta": current_meta() }
+    }))?;
+    let request = line(json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "tools/list",
+        "params": { "_meta": current_meta() }
+    }))?;
+    if request.len() > INPUT_CAP {
+        return Err("giant-ID fixture exceeds the input cap before execution".into());
+    }
+    let output = run_mcp(&root, &[&discover, &request])?;
+    let first = output
+        .stdout
+        .split(|byte| *byte == b'\n')
+        .find(|frame| !frame.is_empty())
+        .ok_or_else(|| "no actual discovery reply before the giant-ID request".to_string())?;
+    let discovery: Value = serde_json::from_slice(first).map_err(|error| error.to_string())?;
+    if discovery.get("id").and_then(Value::as_str) != Some("discover")
+        || discovery.get("result").is_none()
+    {
+        return Err("giant-ID control did not reach a successful actual discovery".into());
+    }
+    for frame in output.stdout.split(|byte| *byte == b'\n') {
+        if frame.len() > OUTPUT_CAP {
+            return Err(format!(
+                "MCP emitted a {}-byte frame beyond the {OUTPUT_CAP}-byte output cap",
+                frame.len()
+            ));
+        }
+    }
+    if output.status.success() {
+        return Err(
+            "uncorrelatable bounded output must terminate with an operational error".into(),
+        );
+    }
+    let stderr = std::str::from_utf8(&output.stderr).map_err(|error| error.to_string())?;
+    if stderr.len() > 1024 || !stderr.contains("MCP output limit") {
+        return Err("termination must retain a bounded, redacted MCP output-limit reason".into());
+    }
+    Ok(())
+}
+
+#[test]
 fn legacy_stdio_lifecycle_lists_and_reads_the_same_bounded_status() -> Result<(), String> {
     let root = workspace_root()?;
     let initialize = line(json!({
