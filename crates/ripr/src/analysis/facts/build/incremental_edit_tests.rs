@@ -361,7 +361,9 @@ fn observer_predicate_facts_recompute_after_build_miss_and_match_warm() -> TestR
         // MockExpectation/Medium. Only the cache fixture models that old kind.
         prior_assertion.kind = OracleKind::MockExpectation;
         prior_assertion.strength = OracleStrength::Medium;
-        cache.store_file_facts(&prior_key, &prior_facts)?;
+        cache
+            .store_file_facts(&prior_key, &prior_facts)
+            .map_err(|error| format!("store prior-build file facts: {error:?}"))?;
         if !matches!(cache.load_file_facts(&prior_key), CacheLoad::Hit(ref facts) if facts == &prior_facts)
         {
             return Err("prior-build seed did not read its exact real facts".into());
