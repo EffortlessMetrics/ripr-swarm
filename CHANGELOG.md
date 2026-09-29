@@ -11,6 +11,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `docs/OUTPUT_SCHEMA.md` now matches live producers for the public
+  command-to-version table (`diff`, `repo-exposure-json`, `rerun`,
+  `agent brief`, and `repair_after_refusal`), the `swarm queue` `0.2`
+  envelope plus its omitted fields and `python` language default, nested
+  `rerun` cache-identity versions that move, and the `cache status --json`
+  `status` field contract (#4618).
 - Commands ripr prints now run. For a missing agent receipt, `ripr reports
   index` suggests `ripr agent status`, which names the repair attempt's
   next step, instead of an `agent receipt` call missing its required

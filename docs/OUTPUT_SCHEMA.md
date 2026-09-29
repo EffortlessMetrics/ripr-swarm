@@ -42,10 +42,15 @@ map is:
 | `ripr check --format sarif` | `version` | `2.1.0` (standard SARIF envelope) |
 | `ripr gate evaluate` | `schema_version` | `0.1` |
 | `ripr doctor --json` | `schema_version` | `0.3` |
-| `ripr agent packet` | `schema_version` | `0.4` |
+| `ripr diff --json` (`kind: "ripr_diff"`) | `schema_version` | `0.1` |
+| `ripr check --format repo-exposure-json` | `schema_version` | `0.3` |
+| `ripr rerun --json` | `schema_version` | `ripr-targeted-rerun-v1` |
+| `ripr agent packet` and `ripr check --format agent-seam-packets-json` | `schema_version` | `0.4` |
+| `ripr agent brief` | `schema_version` | `0.1` |
 | `ripr agent receipt` | `schema_version` | `0.5` |
 | `ripr agent verify` | `schema_version` | `0.3` |
 | `ripr agent repair --phase after` success stdout | `schema_version` | `0.1` |
+| `ripr agent repair --phase after` refusal stdout (`repair_after_refusal`) | `schema_version` | `0.2` |
 | `ripr agent status` | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
 | `ripr receipt write/check` | `schema_version` | `0.1` |
@@ -105,6 +110,17 @@ PATH, symlinks resolved, or `null`), `path_ripr_is_cargo_build_output`,
 `.fingerprint/` directories in a `target/<profile>/` directory. The warnings are
 advisory: they never change `status` or the exit code, because a workspace build
 on PATH is a legitimate development setup.
+
+`ripr cache status --json` (schema `0.1`) prints one object with
+`schema_version`, `cache_dir` (the inspected directory), `status`,
+`total_size_bytes`, and `entry_count` (regular files under the cache;
+symlinks skipped). That `schema_version` versions this status report, not
+the on-disk cache layers (those carry their own versions in their directory
+names). `status` is `ok`, `not_found` (no cache directory yet; both counts
+are `0`), `partial` (some directories or entries, including the cache
+directory itself, could not be read, so the counts are lower bounds), or
+`unavailable` (the path is not a directory, is a symlink, or its metadata
+could not be read; both counts are `0`).
 
 ## JSON object key ordering
 
@@ -13316,7 +13332,7 @@ The queue envelope is:
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "tool": "ripr",
   "report": "swarm-queue",
   "scope": "repo",
@@ -13428,6 +13444,13 @@ The queue envelope is:
   ]
 }
 ```
+
+The example is abbreviated. The real envelope also carries top-level
+`analysis_outcome`, `analysis_outcome_error`, `analysis_outcome_status`,
+`assignment_policy`, `must_not_infer`, and `source_currentness`. `--language`
+defaults to `python`, so in a repository whose ledger holds only Rust records
+the default queue reports `language_records_total: 0` and an empty `packets`
+array; pass `--language rust` to consider Rust records.
 
 `source_currentness` is the live producer-backed authority for a packet source.
 It contains `status`, `queue_state`, `reason`, `refresh_commands`,
@@ -16421,7 +16444,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "0.1",
+    "schema_version": "1.9",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -16432,8 +16455,8 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "0.3",
-      "analyzer_version": "0.10.0",
+      "schema_version": "1.15",
+      "analyzer_version": "0.11.0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
       "cfg_features_hash": "…",
@@ -16514,6 +16537,12 @@ targeted-rerun receipt shape:
   "authority_boundary": "static evidence only; no before snapshot was supplied, so gap movement is not inferred"
 }
 ```
+
+`cache.schema_version` and `cache.input_fingerprint.schema_version` version
+the file-fact cache and its input identity, not this report. They move
+whenever cache identity changes, so a consumer dispatches on the top-level
+`schema_version` and treats the nested values as opaque. Nested
+`analyzer_version` is the producing `ripr` package version and also moves.
 
 For a changed-test selector, `selector.kind` is `changed_test`. `changed_test`
 names the repository-relative parsed test file and may append
