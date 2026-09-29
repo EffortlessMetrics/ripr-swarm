@@ -16579,7 +16579,9 @@ matching-record index and do not hide other current scopes. The overall result
 is `limited` only when no current scope resolves. Missing, root-mismatched, or
 otherwise unresolved selectors emit `state: "limited"`, an empty `seams` array,
 and a named `limitation` such as `canonical_gap_unresolved` or
-`stale_gap_ledger`. They never fall back to an unrelated workspace scan.
+`stale_gap_ledger`. They never fall back to an unrelated workspace scan. A
+`--gap-ledger` that cannot be read or parsed is not a limitation: the command
+exits 2 without a report, as it does for an unreadable `--changed-test`.
 
 Both selectors reuse valid file facts but recompute the selected evidence. A
 `canonical_gap_id` is domain-supplied and nullable; it is never derived from a
