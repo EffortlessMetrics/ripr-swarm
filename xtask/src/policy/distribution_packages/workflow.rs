@@ -1,6 +1,9 @@
-use super::{rule, DistributionTarget, WorkflowTarget, ARCHIVE_WORKFLOW_PATH, RULE_WORKFLOW};
+use super::{ARCHIVE_WORKFLOW_PATH, DistributionTarget, RULE_WORKFLOW, WorkflowTarget, rule};
 
-pub(super) fn parse_workflow_targets(text: &str, violations: &mut Vec<String>) -> Vec<WorkflowTarget> {
+pub(super) fn parse_workflow_targets(
+    text: &str,
+    violations: &mut Vec<String>,
+) -> Vec<WorkflowTarget> {
     let mut rows = Vec::new();
     let mut current_target: Option<(String, usize)> = None;
     let mut current_executable: Option<String> = None;
