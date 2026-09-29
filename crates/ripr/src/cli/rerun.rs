@@ -2401,7 +2401,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "lang-typescript")]
     fn unique_temp_root(name: &str) -> Result<PathBuf, String> {
         let root = std::env::temp_dir().join(format!(
             "ripr-{name}-{}-{}",
@@ -2491,7 +2490,6 @@ mod tests {
         write_file(path, &rendered)
     }
 
-    #[cfg(feature = "lang-typescript")]
     fn write_file(path: &Path, contents: &str) -> Result<(), String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
