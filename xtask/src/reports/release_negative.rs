@@ -3,7 +3,7 @@
 //!
 //! Architecture: this harness orchestrates fixture creation, one-mutation
 //! injection, command execution, failure-receipt retention, byte-exact
-//! restoration, and reporting. The installed candidate binary remains the
+//! restoration, and reporting. The candidate binary remains the
 //! ONLY artifact / pair / verify / receipt validator — this module never
 //! parses artifact validity independently of that binary, never duplicates
 //! comparability rules, and asserts process exit status before the closed
@@ -312,14 +312,19 @@ pub(crate) fn release_negative_corpus(args: &[String]) -> Result<(), String> {
                 args.qualification.as_ref(),
                 "release-negative-corpus.json",
                 &body,
-            )?;
+            )
+            .map_err(|write_error| {
+                format!(
+                    "{phase_error}; additionally JSON failure report was not written: {write_error}"
+                )
+            })?;
             write_corpus_report(
                 args.qualification.as_ref(),
                 "release-negative-corpus.md",
                 &format!(
                     "# release-negative-corpus\n\nStatus: fail\n\nThe corpus run failed before the case matrix completed:\n\n```text\n{phase_error}\n```\n"
                 ),
-            )?;
+            ).map_err(|write_error| format!("{phase_error}; additionally Markdown failure report was not written: {write_error}"))?;
             Err(
                 "release negative corpus failed; see target/ripr/reports/release-negative-corpus.md"
                     .to_string(),
@@ -2205,6 +2210,10 @@ fn case_receipt_json(receipt: &CaseReceipt) -> Value {
     })
 }
 
+fn baseline_retained_under(report: &NegativeCorpusReport) -> String {
+    format!("{}/baseline", report.evidence_root)
+}
+
 fn negative_corpus_json(report: &NegativeCorpusReport) -> Result<String, String> {
     let passed = report
         .cases
@@ -2229,7 +2238,7 @@ fn negative_corpus_json(report: &NegativeCorpusReport) -> Result<String, String>
             "before_sha": report.baseline_before_sha,
             "after_sha": report.baseline_after_sha,
             "artifacts": report.baseline_artifacts.iter().map(artifact_digest_json).collect::<Vec<_>>(),
-            "retained_under": "target/ripr/release-negative-corpus/baseline",
+            "retained_under": baseline_retained_under(report),
             "cleanup": report.baseline_cleanup,
         },
         "cases": report.cases.iter().map(case_receipt_json).collect::<Vec<_>>(),
@@ -2277,7 +2286,7 @@ fn negative_corpus_markdown(report: &NegativeCorpusReport) -> String {
         }
     ));
     body.push_str(&format!("Version: {}\n\n", report.version));
-    body.push_str("Integrated negative corpus for the release-readiness artifact/pair/verify/receipt authority chain (#2824). The installed candidate binary is the only validator; every case asserts exit status first, then the closed reason token, then byte-exact restoration and a passing control rerun.\n\n");
+    body.push_str("Integrated negative corpus for the release-readiness artifact/pair/verify/receipt authority chain (#2824). The candidate binary is the only validator; every case asserts exit status first, then the closed reason token, then byte-exact restoration and a passing control rerun.\n\n");
     body.push_str("## Candidate\n\n");
     body.push_str(&format!("- path: `{}`\n", report.candidate.path));
     body.push_str(&format!(
@@ -2290,7 +2299,10 @@ fn negative_corpus_markdown(report: &NegativeCorpusReport) -> String {
     body.push_str(&format!("- before SHA: `{}`\n", report.baseline_before_sha));
     body.push_str(&format!("- after SHA: `{}`\n", report.baseline_after_sha));
     body.push_str(&format!("- fixture cleanup: {}\n", report.baseline_cleanup));
-    body.push_str("- retained artifacts (target/ripr/release-negative-corpus/baseline):\n");
+    body.push_str(&format!(
+        "- retained artifacts ({}):\n",
+        baseline_retained_under(report)
+    ));
     for artifact in &report.baseline_artifacts {
         body.push_str(&format!("  - `{}` `{}`\n", artifact.name, artifact.sha256));
     }
