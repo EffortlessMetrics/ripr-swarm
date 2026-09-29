@@ -26,6 +26,7 @@ const STATIC_GAP_CLASSES: [&str; 3] = ["weakly_exposed", "reachable_unrevealed",
 struct ReviewCommentsRunError {
     message: String,
     timed_out: bool,
+    oversized: bool,
 }
 
 impl ReviewCommentsRunError {
@@ -33,6 +34,15 @@ impl ReviewCommentsRunError {
         Self {
             message,
             timed_out: true,
+            oversized: false,
+        }
+    }
+
+    fn oversized(message: String) -> Self {
+        Self {
+            message,
+            timed_out: false,
+            oversized: true,
         }
     }
 }
@@ -42,6 +52,7 @@ impl From<String> for ReviewCommentsRunError {
         Self {
             message,
             timed_out: false,
+            oversized: false,
         }
     }
 }
@@ -151,6 +162,8 @@ where
             Err(err) => {
                 let status = if err.timed_out {
                     "limited_timeout"
+                } else if err.oversized {
+                    "limited_oversized"
                 } else {
                     "failed"
                 };
@@ -404,7 +417,7 @@ fn validate_run_receipt(
     );
     let receipt_status = receipt.get("status").and_then(Value::as_str);
     match receipt_status {
-        Some("in_progress" | "complete" | "limited_timeout" | "failed") => {}
+        Some("in_progress" | "complete" | "limited_timeout" | "limited_oversized" | "failed") => {}
         Some(other) => violations.push(format!(
             "run_receipt.status {other:?} is not contract-valid"
         )),
@@ -455,7 +468,7 @@ fn validate_run_receipt(
                 violations.push("complete run_receipt.missing_artifacts must be empty".to_string());
             }
         }
-        Some("limited_timeout" | "failed") => {
+        Some("limited_timeout" | "limited_oversized" | "failed") => {
             if receipt
                 .get("active_phase")
                 .and_then(Value::as_str)
@@ -578,11 +591,16 @@ fn run_ripr_review_comments(
     if output.status.is_some_and(|status| status.success()) {
         Ok(())
     } else {
-        Err(ReviewCommentsRunError::from(format!(
+        let message = format!(
             "ripr review-comments failed\nstdout:\n{}\nstderr:\n{}",
             output.stdout.trim(),
             output.stderr.trim()
-        )))
+        );
+        if producer_message_reports_diff_scope_oversized(&message) {
+            Err(ReviewCommentsRunError::oversized(message))
+        } else {
+            Err(ReviewCommentsRunError::from(message))
+        }
     }
 }
 
@@ -593,6 +611,14 @@ fn review_comments_timeout_secs() -> Result<u64, String> {
         }),
         Err(_) => Ok(DEFAULT_TOOL_TIMEOUT_SECS),
     }
+}
+
+fn producer_message_reports_diff_scope_oversized(message: &str) -> bool {
+    message.lines().any(|line| {
+        let trimmed = line.trim();
+        let without_cli = trimmed.strip_prefix("ripr: ").unwrap_or(trimmed);
+        without_cli.starts_with("diff_scope_oversized:")
+    })
 }
 
 fn review_comments_timeout_ms() -> Result<u64, String> {
@@ -965,6 +991,27 @@ fn review_comments_receipt(
                 serde_json::json!([{
                     "category": "analysis_timeout",
                     "repair_route": "perf/review-comments-phase-budget"
+                }]),
+            );
+            object.insert(
+                "non_claims".to_string(),
+                serde_json::json!(["no complete route inventory", "no all-clear"]),
+            );
+        } else if status == "limited_oversized" {
+            object.insert(
+                "active_phase".to_string(),
+                object
+                    .get("active_phase")
+                    .cloned()
+                    .unwrap_or_else(|| Value::String("canonical_analysis".to_string())),
+            );
+            object.insert(
+                "limitations".to_string(),
+                serde_json::json!([{
+                    "category": "diff_scope_oversized",
+                    "repair_route": first_line(error.unwrap_or(
+                        "raise RIPR_MAX_REVIEW_INDEX_FILES or reduce the reviewed closure"
+                    ))
                 }]),
             );
             object.insert(
@@ -1665,6 +1712,53 @@ mod tests {
         assert_eq!(standalone["status"], "limited_timeout");
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
         Ok(())
+    }
+
+    #[test]
+    fn write_wrapper_preserves_typed_oversized_receipt() -> Result<(), String> {
+        let (repo, options) = prepared_review_repo("ripr-review-comments-oversized")?;
+        write_review_comments_with_runner(&repo, &options, |_repo, _options| {
+            Err(ReviewCommentsRunError::oversized(
+                "ripr: diff_scope_oversized: 801 indexed Rust files (grip working-set 1) exceed the RIPR_MAX_REVIEW_INDEX_FILES limit (800)".to_string(),
+            ))
+        })?;
+
+        let packet = read_packet(&repo)?;
+        assert_eq!(packet["run_receipt"]["status"], "limited_oversized");
+        assert_eq!(
+            packet["run_receipt"]["limitations"][0]["category"],
+            "diff_scope_oversized"
+        );
+        let standalone = fs::read_to_string(repo.join(REVIEW_COMMENTS_RECEIPT))
+            .map_err(|err| format!("read oversized receipt: {err}"))?;
+        let standalone: Value = serde_json::from_str(&standalone)
+            .map_err(|err| format!("parse oversized receipt: {err}"))?;
+        assert_eq!(standalone["status"], "limited_oversized");
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn write_wrapper_does_not_infer_oversized_from_unrelated_text() -> Result<(), String> {
+        let (repo, options) = prepared_review_repo("ripr-review-comments-text-oversized")?;
+        write_review_comments_with_runner(&repo, &options, |_repo, _options| {
+            Err("a non-oversized failure mentions oversized in its context".to_string())
+        })?;
+
+        let packet = read_packet(&repo)?;
+        assert_eq!(packet["run_receipt"]["status"], "failed");
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn producer_message_classifies_cli_prefixed_oversized_lines() {
+        assert!(producer_message_reports_diff_scope_oversized(
+            "ripr review-comments failed\nstderr:\nripr: diff_scope_oversized: 801 indexed Rust files exceed the limit (800)"
+        ));
+        assert!(!producer_message_reports_diff_scope_oversized(
+            "ripr review-comments failed\nstderr:\nthe working set looks oversized"
+        ));
     }
 
     #[test]

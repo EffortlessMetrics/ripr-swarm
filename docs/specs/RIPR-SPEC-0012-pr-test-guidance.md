@@ -85,6 +85,18 @@ Rayon workers do not inherit the caller's thread-local token. An outer wrapper
 is required for a hard process bound. The wider phase/shutdown contract remains
 under #1778/#1699/#1604; this canonical slice does not complete those issues.
 
+### Review-guidance size budget
+
+`RIPR_MAX_REVIEW_INDEX_FILES` defaults to 800 (the `RIPR_MAX_DIFF_INDEX_FILES`
+family). The default diff route discovers the Rust files it would index and
+the grip working-set size (changed-line files) before loading file bytes or
+building the second closure index. Either count above the named ceiling ends
+the run with a `diff_scope_oversized` error and a `#1604` receipt whose
+`status` is `limited_oversized`, `last_completed_phase` names the last
+finished phase, and `limitations[].category` is `diff_scope_oversized`. The
+result is never a silently partial guidance packet. Chunked windows and
+analysis-index handoff remain later slices.
+
 ## Surfaces
 
 The default GitHub surface is:

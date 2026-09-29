@@ -39,6 +39,11 @@ therefore carries `analysis_scope.run_status = "limited_diff_scope"` and the
 `review_comments_diff_scope_only` limitation route instead of presenting the
 result as a full-repo scan. It does not post to GitHub.
 
+`RIPR_MAX_REVIEW_INDEX_FILES` (default 800) is the named size ceiling for that
+inventory. An oversized closure fails closed with `diff_scope_oversized` and a
+receipt status of `limited_oversized` instead of running until the host kills
+the process. Raise the variable only on a machine with enough memory.
+
 When a gap decision ledger already exists, the same command can render from the
 explicit repair-card layer instead of rerunning analysis:
 

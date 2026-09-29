@@ -36,6 +36,15 @@ Options:
                  safe boundaries. Non-preemptible operations can overrun it.
                  Use an outer orchestration wrapper for a hard process bound.
 
+Environment:
+  RIPR_MAX_REVIEW_INDEX_FILES
+                 Maximum Rust files (and grip working-set size) the default
+                 review-comments inventory may load before failing closed as
+                 diff_scope_oversized with a receipt status of limited_oversized.
+                 Default: 800, in the RIPR_MAX_DIFF_INDEX_FILES family. Raise
+                 only on a machine with enough memory. Invalid values fail with
+                 a diagnostic naming the variable.
+
 The review-comments command writes a bounded advisory PR guidance report as
 JSON plus a sibling Markdown file. It joins existing static seam evidence with
 the changed-line diff by default and only places line guidance on changed

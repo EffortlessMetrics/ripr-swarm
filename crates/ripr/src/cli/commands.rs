@@ -70,6 +70,21 @@ fn record_review_comments_timeout(
     }
 }
 
+fn record_review_comments_oversized(
+    receipt: &mut output::review_comments_receipt::ReviewCommentsRunReceipt,
+    receipt_path: &Path,
+    phase: &str,
+    error: String,
+) -> String {
+    receipt.limited_oversized(phase, &error);
+    match receipt.write_atomic(receipt_path) {
+        Ok(()) => error,
+        Err(receipt_error) => {
+            format!("{error}; failed to persist terminal receipt: {receipt_error}")
+        }
+    }
+}
+
 fn load_review_comments_analysis_outcome(
     path: Option<&Path>,
     root: &Path,
@@ -1300,6 +1315,15 @@ fn review_comments_with_diff_loader_at(
     load_diff: impl Fn(&Path, &str, &str) -> Result<String, String>,
     now: impl Fn() -> Instant + Send + Sync + 'static,
 ) -> Result<(), String> {
+    review_comments_with_size_budget_at(args, load_diff, now, None)
+}
+
+fn review_comments_with_size_budget_at(
+    args: &[String],
+    load_diff: impl Fn(&Path, &str, &str) -> Result<String, String>,
+    now: impl Fn() -> Instant + Send + Sync + 'static,
+    size_budget: Option<usize>,
+) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         help::print_review_comments_help();
         return Ok(());
@@ -1510,12 +1534,17 @@ fn review_comments_with_diff_loader_at(
         sufficient: &first_stage_sufficient,
     };
     let scoped_inventory = analysis::cancellation::with_token(&cancellation, || {
+        let review_index_limit = match size_budget {
+            Some(limit) => limit,
+            None => analysis::review_guidance_index_file_limit()?,
+        };
         analysis::inventory_diff_scoped_classified_seams_staged_at_with_config(
             &input.root,
             &config,
             &working_set.files,
             &changed_owner_names,
             &stages,
+            review_index_limit,
         )
     })
     .map_err(|error| {
@@ -1524,6 +1553,13 @@ fn review_comments_with_diff_loader_at(
                 == Some(analysis::cancellation::AnalysisAbortKind::DeadlineExceeded)
         {
             record_review_comments_timeout(&mut receipt, &receipt_path, "canonical_analysis")
+        } else if analysis::is_diff_scope_oversized(&error) {
+            record_review_comments_oversized(
+                &mut receipt,
+                &receipt_path,
+                "canonical_analysis",
+                error,
+            )
         } else {
             record_review_comments_error(&mut receipt, &receipt_path, "canonical_analysis", error)
         }
@@ -6600,6 +6636,128 @@ language = "rust"
         assert!(rendered_md.contains("run status: `limited_diff_scope`"));
         assert!(rendered_md.contains("Advisory static evidence only"));
 
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    fn two_file_review_comments_crate(label: &str) -> Result<PathBuf, String> {
+        let root = unique_command_test_dir(label);
+        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"review_comments_budget_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|err| format!("write Cargo.toml: {err}"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn alpha() -> i32 { 1 }\n")
+            .map_err(|err| format!("write src/lib.rs: {err}"))?;
+        std::fs::write(root.join("src/beta.rs"), "pub fn beta() -> i32 { 2 }\n")
+            .map_err(|err| format!("write src/beta.rs: {err}"))?;
+        Ok(root)
+    }
+
+    #[test]
+    fn review_comments_oversized_closure_writes_classified_receipt() -> Result<(), String> {
+        let root = two_file_review_comments_crate("review-comments-oversized")?;
+        let out = root.join("target/ripr/review/comments.json");
+        let root_arg = root.display().to_string();
+        let out_arg = out.display().to_string();
+        let result = review_comments_with_size_budget_at(
+            &args(&[
+                "--root", &root_arg, "--base", "HEAD~1", "--head", "HEAD", "--out", &out_arg,
+            ]),
+            |_root, _base, _head| {
+                Ok("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn alpha() -> i32 { 0 }\n+pub fn alpha() -> i32 { 1 }\n".to_string())
+            },
+            Instant::now,
+            Some(1),
+        );
+        let error = match result {
+            Ok(()) => {
+                let _ = std::fs::remove_dir_all(&root);
+                return Err("oversized review-comments must fail closed".to_string());
+            }
+            Err(error) => error,
+        };
+        if !analysis::is_diff_scope_oversized(&error) {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(format!("expected named oversized error, got {error}"));
+        }
+        let receipt_path = out.with_file_name("run-receipt.json");
+        let receipt: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&receipt_path)
+                .map_err(|err| format!("read oversized receipt: {err}"))?,
+        )
+        .map_err(|err| format!("parse oversized receipt: {err}"))?;
+        if receipt.get("status").and_then(serde_json::Value::as_str) != Some("limited_oversized") {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(format!(
+                "receipt status must be limited_oversized: {receipt}"
+            ));
+        }
+        if receipt
+            .get("last_completed_phase")
+            .and_then(serde_json::Value::as_str)
+            != Some("language_facts")
+        {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(format!(
+                "last_completed_phase must stay language_facts: {receipt}"
+            ));
+        }
+        if receipt
+            .get("active_phase")
+            .and_then(serde_json::Value::as_str)
+            != Some("canonical_analysis")
+        {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(format!(
+                "active_phase must be canonical_analysis: {receipt}"
+            ));
+        }
+        if receipt["limitations"][0]["category"] != "diff_scope_oversized" {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(format!(
+                "limitation category must be diff_scope_oversized: {receipt}"
+            ));
+        }
+        if out.exists() || out.with_extension("md").exists() {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err("oversized inventory must not publish review artifacts".to_string());
+        }
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_at_named_ceiling_still_renders() -> Result<(), String> {
+        let root = two_file_review_comments_crate("review-comments-at-ceiling")?;
+        let out = root.join("target/ripr/review/comments.json");
+        let root_arg = root.display().to_string();
+        let out_arg = out.display().to_string();
+        review_comments_with_size_budget_at(
+            &args(&[
+                "--root", &root_arg, "--base", "HEAD~1", "--head", "HEAD", "--out", &out_arg,
+            ]),
+            |_root, _base, _head| {
+                Ok("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn alpha() -> i32 { 0 }\n+pub fn alpha() -> i32 { 1 }\n".to_string())
+            },
+            Instant::now,
+            Some(2),
+        )?;
+        let receipt_path = out.with_file_name("run-receipt.json");
+        let receipt: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&receipt_path)
+                .map_err(|err| format!("read at-ceiling receipt: {err}"))?,
+        )
+        .map_err(|err| format!("parse at-ceiling receipt: {err}"))?;
+        if receipt.get("status").and_then(serde_json::Value::as_str) != Some("complete") {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(format!("at-ceiling run must complete: {receipt}"));
+        }
+        if !out.exists() {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err("at-ceiling run must publish comments.json".to_string());
+        }
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
         Ok(())
     }

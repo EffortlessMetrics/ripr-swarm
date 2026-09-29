@@ -66,7 +66,7 @@ pub(crate) use seam_inventory::{
     inventory_classified_seams_at_with_config, inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_classified_seams_staged_at_with_config, inventory_seams_at_with_config,
-    workspace_cache_key_at_with_config,
+    review_guidance_index_file_limit, workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use workspace::PathDependencyAdjacency;

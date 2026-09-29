@@ -7306,7 +7306,11 @@ evidence with the changed-line diff, but it reports a scoped review input
 instead of full-repo truth: changed production files plus bounded immediate
 caller files. The JSON and Markdown carry `analysis_scope.run_status =
 "limited_diff_scope"` and the `review_comments_diff_scope_only` limitation
-route so large-repo users can see the narrowed basis. When `--gap-ledger` is
+route so large-repo users can see the narrowed basis. `RIPR_MAX_REVIEW_INDEX_FILES`
+(default 800) is the named size ceiling for the files that inventory would
+index and the grip working-set. Crossing it fails closed as
+`diff_scope_oversized` with `run_receipt.status = "limited_oversized"` rather
+than a host SIGTERM. When `--gap-ledger` is
 supplied, the JSON and Markdown carry `analysis_scope.run_status =
 "artifact_scope"` and the `review_comments_gap_ledger_artifact_scope_only`
 limitation route so users can see that RIPR consumed a supplied ledger artifact

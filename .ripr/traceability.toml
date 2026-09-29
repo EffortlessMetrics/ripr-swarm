@@ -1076,6 +1076,12 @@ spec = "docs/specs/RIPR-SPEC-0012-pr-test-guidance.md"
 tests = [
   "crates/ripr/src/cli/commands.rs::review_comments_canonical_deadline_cancellation_records_timeout",
   "crates/ripr/src/cli/commands.rs::review_comments_source_error_wins_over_later_clock_expiry",
+  "crates/ripr/src/cli/commands.rs::review_comments_oversized_closure_writes_classified_receipt",
+  "crates/ripr/src/cli/commands.rs::review_comments_at_named_ceiling_still_renders",
+  "crates/ripr/src/analysis/seam_inventory.rs::review_guidance_budget_stops_inventory_before_index_build",
+  "crates/ripr/src/analysis/seam_inventory.rs::size_budget_fails_closed_when_indexed_files_exceed_the_ceiling",
+  "crates/ripr/src/analysis/seam_inventory.rs::size_budget_fails_closed_when_grip_working_set_exceeds_the_ceiling",
+  "crates/ripr/src/analysis/seam_inventory.rs::review_index_file_limit_rejects_zero",
   "crates/ripr/src/analysis/seam_inventory.rs::scoped_evidence_rejects_deadline_after_the_final_seam",
   "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs::owned_deadline_stops_context_test_loops_without_completing_context",
   "crates/ripr/src/analysis/cancellation.rs::owned_budget_expires_and_default_token_has_no_deadline",
@@ -1123,7 +1129,8 @@ code = [
   "crates/ripr/src/analysis/cancellation.rs",
   "crates/ripr/src/analysis/test_grip_evidence.rs",
   "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
-  "crates/ripr/src/output/review_comments.rs"
+  "crates/ripr/src/output/review_comments.rs",
+  "crates/ripr/src/output/review_comments_receipt.rs"
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0012-pr-test-guidance.md",

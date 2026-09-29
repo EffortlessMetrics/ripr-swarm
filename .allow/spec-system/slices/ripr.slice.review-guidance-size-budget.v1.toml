@@ -1,0 +1,63 @@
+schema_version = "2.0"
+id = "ripr.slice.review-guidance-size-budget.v1"
+generation = 1
+
+source_issue = "issue:4388"
+design_reference = "RIPR-SPEC-0012"
+change_class = "behavior_change"
+
+claim_boundary = """
+Slice 1 of #4388 only: give the review-guidance / `ripr review-comments`
+inventory an explicit size budget (`RIPR_MAX_REVIEW_INDEX_FILES`, default 800,
+RIPR_MAX_DIFF_INDEX_FILES family) over indexed Rust file count and grip
+working-set size. Oversized closures fail closed before file-byte load and
+index build with a named `diff_scope_oversized` error and a #1604 receipt
+(`status = limited_oversized`, `last_completed_phase`,
+`limitations[].category = diff_scope_oversized`) instead of host SIGTERM/oomd
+silence. Does not change guidance content or classification semantics, does
+not add chunked windows (slice 2), and does not hand off the analysis-stage
+index (slice 3). The rerun unstaged inventory path stays unbounded by this
+ceiling.
+"""
+
+non_goals = [
+  "chunked guidance windows or per-phase memory bounding (slice 2)",
+  "consuming --check-output as a replacement for the second index (slice 3)",
+  "changing guidance content or exposure classification",
+  "a new receipt family or schema_version bump",
+  "raising this repo's CI RIPR_MAX_DIFF_INDEX_FILES / RIPR_MAX_REVIEW_INDEX_FILES",
+]
+
+return_conditions = [
+  "Return to root if a complete-looking comments.json is published for an oversized closure.",
+  "Return to root if the oversized error lacks last_completed_phase or limitations.",
+  "Return to root if chunked windows or index handoff land in this slice.",
+]
+
+owned_seams = [
+  "seam:ripr:analysis:review-guidance-size-budget",
+  "seam:ripr:cli:review-comments-oversized-receipt",
+]
+
+shared_seams = [
+  "seam:ripr:output:review-comments-run-receipt",
+  "seam:ripr:contract:review-comments-schema",
+]
+
+forbidden_seams = [
+  "seam:ripr:analysis:exposure-classification",
+  "seam:ripr:fixtures:goldens",
+]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0012"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"

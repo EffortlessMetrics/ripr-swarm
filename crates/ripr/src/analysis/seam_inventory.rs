@@ -16,6 +16,7 @@
 //!
 //! Both contracts are pinned by tests in this file.
 
+use super::DIFF_SCOPE_OVERSIZED_PREFIX;
 use super::classify::exact_error_variant;
 use super::rust_index::{
     self, PROBE_SHAPE_CALL_DELETION, PROBE_SHAPE_ERROR_PATH, PROBE_SHAPE_FIELD_CONSTRUCTION,
@@ -41,6 +42,7 @@ use super::workspace;
 use crate::analysis::cancellation;
 use crate::config::RiprConfig;
 use std::collections::BTreeSet;
+use std::env::VarError;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -62,7 +64,182 @@ pub(crate) const PILOT_SEAM_BUDGET_ENV: &str = "RIPR_PILOT_SEAM_BUDGET";
 /// Operators can raise or remove the cap via `RIPR_PILOT_SEAM_BUDGET`.
 pub(crate) const DEFAULT_PILOT_SEAM_BUDGET: usize = 2_000;
 
+/// Default ceiling on Rust files the review-guidance inventory may load
+/// before failing closed (#4388 slice 1). Same default as
+/// `RIPR_MAX_DIFF_INDEX_FILES`; a dedicated knob so analysis can raise its
+/// own cap without letting review-comments OOM on the second index.
+const REVIEW_INDEX_FILE_LIMIT: usize = 800;
+
+/// Env override for [`REVIEW_INDEX_FILE_LIMIT`]. Operators on larger
+/// runners raise it; CI can lower it to exercise the named ceiling.
+pub(crate) const REVIEW_INDEX_FILE_LIMIT_ENV: &str = "RIPR_MAX_REVIEW_INDEX_FILES";
+
 const LATENCY_TRACE_ENV: &str = "RIPR_REPO_EXPOSURE_LATENCY_TRACE";
+
+/// Resolve the review-guidance indexed-file / grip working-set ceiling.
+pub(crate) fn review_guidance_index_file_limit() -> Result<usize, String> {
+    review_index_file_limit_from_env(std::env::var(REVIEW_INDEX_FILE_LIMIT_ENV))
+}
+
+fn review_index_file_limit_from_env(value: Result<String, VarError>) -> Result<usize, String> {
+    match value {
+        Ok(raw) => {
+            let parsed = raw.trim().parse::<usize>().map_err(|err| {
+                format!("{REVIEW_INDEX_FILE_LIMIT_ENV} must be a positive integer: {err}")
+            })?;
+            if parsed == 0 {
+                return Err(format!(
+                    "{REVIEW_INDEX_FILE_LIMIT_ENV} must be a positive integer"
+                ));
+            }
+            Ok(parsed)
+        }
+        Err(VarError::NotPresent) => Ok(REVIEW_INDEX_FILE_LIMIT),
+        Err(VarError::NotUnicode(_)) => {
+            Err(format!("{REVIEW_INDEX_FILE_LIMIT_ENV} must be valid UTF-8"))
+        }
+    }
+}
+
+/// Fail closed before the review-guidance index build that can exhaust a
+/// constrained runner (#4388). Either the files about to be indexed or the
+/// grip working-set (changed-line files passed into inventory) may trip the
+/// named ceiling. The error reuses the `diff_scope_oversized` prefix so
+/// consumers can classify it without a new receipt family.
+pub(crate) fn enforce_review_guidance_size_budget(
+    indexed_file_count: usize,
+    grip_working_set_size: usize,
+    limit: usize,
+) -> Result<(), String> {
+    if indexed_file_count <= limit && grip_working_set_size <= limit {
+        return Ok(());
+    }
+    Err(format!(
+        "{DIFF_SCOPE_OVERSIZED_PREFIX}: {indexed_file_count} indexed Rust files \
+         (grip working-set {grip_working_set_size}) exceed the {REVIEW_INDEX_FILE_LIMIT_ENV} \
+         limit ({limit}); review-comments was not run to protect runner memory. \
+         Repair route: reduce the reviewed closure, or raise the limit via \
+         {REVIEW_INDEX_FILE_LIMIT_ENV}=<number> on a machine with enough memory."
+    ))
+}
+
+#[cfg(test)]
+mod review_guidance_size_budget_tests {
+    use super::*;
+
+    #[test]
+    fn review_index_file_limit_defaults_when_unset() {
+        assert_eq!(
+            review_index_file_limit_from_env(Err(VarError::NotPresent)),
+            Ok(REVIEW_INDEX_FILE_LIMIT)
+        );
+    }
+
+    #[test]
+    fn review_index_file_limit_parses_positive_override() {
+        assert_eq!(
+            review_index_file_limit_from_env(Ok("  50 ".to_string())),
+            Ok(50)
+        );
+    }
+
+    #[test]
+    fn review_index_file_limit_rejects_zero() {
+        let result = review_index_file_limit_from_env(Ok("0".to_string()));
+        assert!(
+            matches!(&result, Err(message) if message.contains("RIPR_MAX_REVIEW_INDEX_FILES") && message.contains("positive integer")),
+            "zero must name the variable, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn review_index_file_limit_rejects_non_numeric() {
+        let result = review_index_file_limit_from_env(Ok("lots".to_string()));
+        assert!(
+            matches!(&result, Err(message) if message.contains("RIPR_MAX_REVIEW_INDEX_FILES") && message.contains("positive integer")),
+            "non-numeric must name the variable, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn review_index_file_limit_rejects_non_unicode() {
+        let result = review_index_file_limit_from_env(Err(VarError::NotUnicode("x".into())));
+        assert!(
+            matches!(&result, Err(message) if message.contains("RIPR_MAX_REVIEW_INDEX_FILES") && message.contains("valid UTF-8")),
+            "non-unicode must name the variable, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn size_budget_allows_counts_at_the_named_ceiling() -> Result<(), String> {
+        enforce_review_guidance_size_budget(800, 800, 800)?;
+        enforce_review_guidance_size_budget(0, 0, 1)?;
+        enforce_review_guidance_size_budget(1, 0, 1)
+    }
+
+    #[test]
+    fn size_budget_fails_closed_when_indexed_files_exceed_the_ceiling() {
+        let result = enforce_review_guidance_size_budget(801, 1, 800);
+        let message = match result {
+            Ok(()) => "expected oversized indexed files to fail closed".to_string(),
+            Err(message) => message,
+        };
+        assert!(
+            message.starts_with(DIFF_SCOPE_OVERSIZED_PREFIX),
+            "must use the shared oversized prefix, got {message}"
+        );
+        assert!(
+            message.contains("801 indexed Rust files"),
+            "must report indexed count, got {message}"
+        );
+        assert!(
+            message.contains("grip working-set 1"),
+            "must report working-set count, got {message}"
+        );
+        assert!(
+            message.contains("RIPR_MAX_REVIEW_INDEX_FILES") && message.contains("800"),
+            "must name the ceiling, got {message}"
+        );
+        assert!(
+            crate::analysis::is_diff_scope_oversized(&message),
+            "production matcher must accept the named error"
+        );
+    }
+
+    #[test]
+    fn size_budget_fails_closed_when_grip_working_set_exceeds_the_ceiling() {
+        let result = enforce_review_guidance_size_budget(2, 3, 2);
+        let message = match result {
+            Ok(()) => "expected oversized working-set to fail closed".to_string(),
+            Err(message) => message,
+        };
+        assert!(
+            message.starts_with(DIFF_SCOPE_OVERSIZED_PREFIX),
+            "must use the shared oversized prefix, got {message}"
+        );
+        assert!(
+            message.contains("grip working-set 3"),
+            "must report the over-limit working-set, got {message}"
+        );
+        assert!(
+            !message.contains("chunked") && !message.contains("check-output"),
+            "slice 1 must not absorb later-slice repair routes: {message}"
+        );
+    }
+
+    #[test]
+    fn size_budget_does_not_match_a_wrapped_or_forged_prefix() {
+        for lookalike in [
+            "workspace analysis failed: diff_scope_oversized: wrapped must not match",
+            "adiff_scope_oversized: forged prefix must not match",
+        ] {
+            assert!(
+                !crate::analysis::is_diff_scope_oversized(lookalike),
+                "matcher must stay fail-closed for {lookalike:?}"
+            );
+        }
+    }
+}
 
 /// Walk production Rust files at `root` and emit the raw seam inventory.
 /// Used by the `repo-seams-*` formats; the classified inventory used by
@@ -1176,17 +1353,21 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
         changed_owner_names,
         !no_impact_fast_path_disabled(),
         None,
+        None,
     )
 }
 
 /// [`inventory_diff_scoped_classified_seams_at_with_config`] with staged
-/// evidence; see [`DiffScopeEvidenceStages`].
+/// evidence; see [`DiffScopeEvidenceStages`]. `review_index_limit` is the
+/// review-guidance size ceiling (#4388 slice 1); the caller resolves the
+/// env-tunable value so invalid configuration is a named command error.
 pub(crate) fn inventory_diff_scoped_classified_seams_staged_at_with_config(
     root: &Path,
     config: &RiprConfig,
     changed_files: &[PathBuf],
     changed_owner_names: &[String],
     stages: &DiffScopeEvidenceStages<'_>,
+    review_index_limit: usize,
 ) -> Result<ScopedClassifiedSeamInventory, String> {
     inventory_diff_scoped_classified_seams_inner(
         root,
@@ -1195,13 +1376,15 @@ pub(crate) fn inventory_diff_scoped_classified_seams_staged_at_with_config(
         changed_owner_names,
         !no_impact_fast_path_disabled(),
         Some(stages),
+        Some(review_index_limit),
     )
 }
 
 /// Shared body behind [`inventory_diff_scoped_classified_seams_at_with_config`].
 /// The explicit `fast_path_enabled` flag is the removal control (issue
 /// #3859, control 12): tests drive the disabled route directly instead
-/// of mutating the process environment.
+/// of mutating the process environment. `review_size_budget` is `Some` only
+/// on the review-comments staged path (#4388 slice 1).
 fn inventory_diff_scoped_classified_seams_inner(
     root: &Path,
     config: &RiprConfig,
@@ -1209,6 +1392,7 @@ fn inventory_diff_scoped_classified_seams_inner(
     changed_owner_names: &[String],
     fast_path_enabled: bool,
     stages: Option<&DiffScopeEvidenceStages<'_>>,
+    review_size_budget: Option<usize>,
 ) -> Result<ScopedClassifiedSeamInventory, String> {
     cancellation::checkpoint()?;
     if fast_path_enabled {
@@ -1233,7 +1417,21 @@ fn inventory_diff_scoped_classified_seams_inner(
             Duration::ZERO,
         );
     }
-    let state = collect_workspace_state(root, config)?;
+    let rust_files = workspace::discover_rust_files(root)?;
+    if let Some(limit) = review_size_budget {
+        trace_latency_phase(
+            "review_guidance_size_budget",
+            &format!(
+                "indexed_{}_working_set_{}_limit_{}",
+                rust_files.len(),
+                changed_files.len(),
+                limit
+            ),
+            Duration::ZERO,
+        );
+        enforce_review_guidance_size_budget(rust_files.len(), changed_files.len(), limit)?;
+    }
+    let state = collect_workspace_state_from_files(root, config, rust_files)?;
     cancellation::checkpoint()?;
     let workspace_cache_key = state.cache_key();
     let total_rust_files = state.files.len();
@@ -2612,6 +2810,65 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         std::fs::write(path, content).map_err(|err| format!("write {}: {err}", path.display()))
     }
 
+    fn two_file_review_crate(label: &str) -> Result<PathBuf, String> {
+        let root = make_tempdir(label)?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"review_budget_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        write_file(&root.join("src/lib.rs"), "pub fn alpha() -> i32 { 1 }\n")?;
+        write_file(&root.join("src/beta.rs"), "pub fn beta() -> i32 { 2 }\n")?;
+        Ok(root)
+    }
+
+    #[test]
+    fn review_guidance_budget_stops_inventory_before_index_build() -> Result<(), String> {
+        let root = two_file_review_crate("review-budget-over")?;
+        let config = RiprConfig::default();
+        let changed = vec![PathBuf::from("src/lib.rs")];
+        let result = inventory_diff_scoped_classified_seams_inner(
+            &root,
+            &config,
+            &changed,
+            &[],
+            false,
+            None,
+            Some(1),
+        );
+        let message = match result {
+            Ok(_) => {
+                let _ = std::fs::remove_dir_all(&root);
+                return Err("over-limit review inventory must fail closed".to_string());
+            }
+            Err(message) => message,
+        };
+        if !crate::analysis::is_diff_scope_oversized(&message) {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(format!("expected named oversized error, got {message}"));
+        }
+        if !message.contains("2 indexed Rust files") {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(format!("expected discovered file count, got {message}"));
+        }
+        if !message.contains("grip working-set 1") {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(format!("expected working-set count, got {message}"));
+        }
+        let at_limit = inventory_diff_scoped_classified_seams_inner(
+            &root,
+            &config,
+            &changed,
+            &[],
+            false,
+            None,
+            Some(2),
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        at_limit.map(|_| ()).map_err(|error| {
+            format!("at-limit review inventory must proceed to the index path, got {error}")
+        })
+    }
+
     /// Rewrite `path` with identical content until the inode change time
     /// advances, so ctime-based assertions hold on filesystems with coarse
     /// timestamp granularity. Bounded so a filesystem that never bumps
@@ -3841,6 +4098,7 @@ marker = "libtest_mimic::Trial"
             &[],
             false,
             None,
+            None,
         )?;
         if !full.classified.is_empty() {
             return Err("docs-only diff must classify no seams on the full path".to_owned());
@@ -4064,6 +4322,7 @@ marker = "libtest_mimic::Trial"
             &[],
             true,
             None,
+            None,
         )?;
         let full = inventory_diff_scoped_classified_seams_inner(
             &root,
@@ -4071,6 +4330,7 @@ marker = "libtest_mimic::Trial"
             &changed,
             &[],
             false,
+            None,
             None,
         )?;
         // ClassifiedSeam carries evidence payloads without structural

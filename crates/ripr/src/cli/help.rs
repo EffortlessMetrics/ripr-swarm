@@ -343,6 +343,8 @@ mod tests {
             "safe boundaries",
             "Non-preemptible operations can overrun",
             "outer orchestration wrapper for a hard process bound",
+            "RIPR_MAX_REVIEW_INDEX_FILES",
+            "limited_oversized",
         ] {
             if !text.contains(required) {
                 return Err(format!("review-comments help omitted {required:?}"));

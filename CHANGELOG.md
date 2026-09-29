@@ -9,6 +9,14 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Added
+
+- `ripr review-comments` now has a named size ceiling (`RIPR_MAX_REVIEW_INDEX_FILES`,
+  default 800) over indexed Rust files and the grip working-set. Oversized
+  closures fail closed with `diff_scope_oversized` and a `#1604` receipt
+  (`status = limited_oversized`, `last_completed_phase`, `limitations`) instead
+  of dying by host SIGTERM/oomd with no receipt.
+
 ### Fixed
 
 - MCP: a client that opens with `server/discover` (protocol `2026-07-28`)

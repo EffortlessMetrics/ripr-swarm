@@ -93,6 +93,21 @@ impl ReviewCommentsRunReceipt {
         self.terminalize_non_claims();
     }
 
+    pub fn limited_oversized(&mut self, active_phase: &str, error: &str) {
+        self.status = "limited_oversized";
+        self.active_phase = Some(active_phase.to_string());
+        let repair_route = if error.trim().is_empty() {
+            "raise RIPR_MAX_REVIEW_INDEX_FILES or reduce the reviewed closure".to_string()
+        } else {
+            error.to_string()
+        };
+        self.limitations.push(ReviewCommentsReceiptLimitation {
+            category: "diff_scope_oversized".to_string(),
+            repair_route,
+        });
+        self.terminalize_non_claims();
+    }
+
     pub fn failed(&mut self, active_phase: &str, error: &str) {
         self.status = "failed";
         self.active_phase = Some(active_phase.to_string());
@@ -306,6 +321,50 @@ mod tests {
         );
         assert_eq!(timeout_json["non_claims"][1], "no complete route inventory");
         assert_eq!(timeout_json["non_claims"][2], "no all-clear");
+
+        let oversized_path = dir.join("oversized.json");
+        let mut oversized = sample_receipt();
+        oversized.phase("language_facts", "canonical_analysis");
+        oversized.limited_oversized(
+            "canonical_analysis",
+            "diff_scope_oversized: 801 indexed Rust files (grip working-set 1) exceed the RIPR_MAX_REVIEW_INDEX_FILES limit (800); review-comments was not run to protect runner memory.",
+        );
+        assert_eq!(oversized.status, "limited_oversized");
+        assert_eq!(
+            oversized.active_phase.as_deref(),
+            Some("canonical_analysis")
+        );
+        assert_eq!(
+            oversized.last_completed_phase.as_deref(),
+            Some("language_facts")
+        );
+        assert_eq!(oversized.limitations[0].category, "diff_scope_oversized");
+        assert!(
+            oversized.limitations[0]
+                .repair_route
+                .starts_with("diff_scope_oversized:")
+        );
+        assert_eq!(
+            oversized.non_claims,
+            vec![
+                "static review guidance is advisory evidence only",
+                "no complete route inventory",
+                "no all-clear",
+            ]
+        );
+        oversized.write_atomic(&oversized_path)?;
+        let oversized_json: Value = serde_json::from_slice(
+            &fs::read(&oversized_path)
+                .map_err(|err| format!("read oversized receipt failed: {err}"))?,
+        )
+        .map_err(|err| format!("parse oversized receipt failed: {err}"))?;
+        assert_eq!(oversized_json["status"], "limited_oversized");
+        assert_eq!(oversized_json["last_completed_phase"], "language_facts");
+        assert_eq!(oversized_json["active_phase"], "canonical_analysis");
+        assert_eq!(
+            oversized_json["limitations"][0]["category"],
+            "diff_scope_oversized"
+        );
 
         let failure_path = dir.join("failed.json");
         let mut failure = sample_receipt();
