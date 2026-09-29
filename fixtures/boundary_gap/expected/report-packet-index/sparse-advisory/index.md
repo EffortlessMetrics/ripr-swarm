@@ -24,12 +24,12 @@ Calibration:
 
 Validation receipts:
 - Agent receipt: missing
-  - next: `ripr agent repair --root . --attempt <attempt-id> --phase after`
+  - next: `ripr agent status --root .`
 - Check PR: missing
 
 Missing expected:
 - Agent receipt: not_generated
-  - next: `ripr agent repair --root . --attempt <attempt-id> --phase after`
+  - next: `ripr agent status --root .`
 - Check PR: not_generated
 
 Limits:

@@ -603,10 +603,8 @@ fn doc_invocations(doc: &str) -> Vec<DocInvocation> {
             if !boundary {
                 continue;
             }
-            let end = tail
-                .find(['`', '|', ';', '&', ')', '#', '"', '\''])
-                .unwrap_or(tail.len());
-            let tokens: Vec<&str> = tail[..end].split_whitespace().collect();
+            let command = command_text(tail);
+            let tokens: Vec<&str> = command.split_whitespace().collect();
             let words = tokens
                 .iter()
                 .take(2)
@@ -641,6 +639,28 @@ fn doc_invocations(doc: &str) -> Vec<DocInvocation> {
         }
     }
     found
+}
+
+/// The command text after `ripr `: it ends at a code-span, pipe, or shell
+/// separator outside quotes. Each quoted value becomes one `VALUE` token, so
+/// a flag after `--diff "a b.patch"` is still checked; an unterminated quote
+/// ends the command.
+fn command_text(tail: &str) -> String {
+    let mut text = String::new();
+    let mut chars = tail.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '`' | '|' | ';' | '&' | ')' | '#' => break,
+            '"' | '\'' => {
+                if !chars.by_ref().any(|close| close == c) {
+                    break;
+                }
+                text.push_str("VALUE");
+            }
+            _ => text.push(c),
+        }
+    }
+    text
 }
 
 fn help_lists_flag(help: &str, flag: &str) -> bool {
@@ -725,8 +745,7 @@ fn public_docs_only_pass_flags_the_command_help_lists() -> Result<(), String> {
 }
 
 #[test]
-fn doc_flag_guard_rejects_a_removed_flag_and_accepts_prose_and_continuations() -> Result<(), String>
-{
+fn doc_flag_guard_rejects_removed_flags_and_accepts_prose() -> Result<(), String> {
     let mut cache = std::collections::BTreeMap::new();
     let bad = "Run `ripr check --no-such-flag` first.\n";
     let drift = undocumented_doc_flags(&[("bad.md", bad)], &mut cache)?;
@@ -739,6 +758,13 @@ fn doc_flag_guard_rejects_a_removed_flag_and_accepts_prose_and_continuations() -
     if drift.len() != 1 || !drift[0].contains("`ripr agent repair --bogus`") {
         return Err(format!(
             "guard missed a continued-line subcommand flag: {drift:?}"
+        ));
+    }
+    let quoted = "Run `ripr check --diff \"a b.patch\" --bogus`.\n";
+    let drift = undocumented_doc_flags(&[("quoted.md", quoted)], &mut cache)?;
+    if drift.len() != 1 || !drift[0].contains("`ripr check --bogus`") {
+        return Err(format!(
+            "guard missed a flag after a quoted value: {drift:?}"
         ));
     }
     let good = "Use ripr check with --json, or `ripr pilot --root .`. The ripr is static; \

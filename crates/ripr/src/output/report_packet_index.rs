@@ -623,7 +623,9 @@ fn artifact_specs(input: &ReportPacketIndexInput) -> Vec<ArtifactSpec> {
             authority: false,
             description: "Focused repair receipt.",
             default_status: "available",
-            next_command: Some("ripr agent repair --root . --attempt <attempt-id> --phase after"),
+            // The repair after phase writes the receipt; agent status names the
+            // attempt's next command, or the route to start one.
+            next_command: Some("ripr agent status --root ."),
         },
         ArtifactSpec {
             id: "pr_summary",

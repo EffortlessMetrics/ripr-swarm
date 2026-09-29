@@ -11,10 +11,11 @@ are scoped or reviewed.
 
 ### Fixed
 
-- Commands ripr prints now run. `ripr reports index` suggests the repair
-  after phase for a missing agent receipt, not an `agent receipt` call
-  missing its required flags. It no longer suggests the repository-internal
-  `cargo xtask check-pr` and `cargo xtask pr-summary`. Invalid-receipt
+- Commands ripr prints now run. For a missing agent receipt, `ripr reports
+  index` suggests `ripr agent status`, which names the repair attempt's
+  next step, instead of an `agent receipt` call missing its required
+  flags. It no longer suggests the repository-internal `cargo xtask
+  check-pr` and `cargo xtask pr-summary`. Invalid-receipt
   guidance names `--seam-id`, and Perl receipt commands use the canonical
   `ripr receipt write` form instead of a `--verify-cmd` flag `outcome` never
   had. Help screens and guides that contradicted the CLI were corrected,

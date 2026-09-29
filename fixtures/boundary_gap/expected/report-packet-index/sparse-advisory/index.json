@@ -147,7 +147,7 @@
           "required": false,
           "authority": false,
           "description": "Focused repair receipt.",
-          "next_command": "ripr agent repair --root . --attempt <attempt-id> --phase after"
+          "next_command": "ripr agent status --root ."
         },
         {
           "id": "check_pr",
@@ -173,7 +173,7 @@
       "path": "target/ripr/reports/agent-receipt.json",
       "required": false,
       "reason": "not_generated",
-      "next_command": "ripr agent repair --root . --attempt <attempt-id> --phase after"
+      "next_command": "ripr agent status --root ."
     },
     {
       "id": "check_pr",
