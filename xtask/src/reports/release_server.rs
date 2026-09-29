@@ -6,6 +6,8 @@ use sha2::{Digest, Sha256};
 
 use crate::{command_success_owned, run_owned};
 
+mod payload;
+
 pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
     let version = required_release_arg(args, "version", "RAW_VERSION")?;
     let target = required_release_arg(args, "target", "TARGET")?;
@@ -13,41 +15,13 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
     let archive = required_release_arg(args, "archive", "ARCHIVE")?;
     let version = normalize_release_version(&version);
     let asset_name = format!("ripr-server-v{version}-{target}.{archive}");
-    let package_dir = Path::new("package");
+    let payload_paths = payload::stage_final_native_payload(&version, &target, &executable)?;
+    let payload_identity =
+        payload::verify_final_native_payload(&payload_paths, &version, &target, &executable)?;
+    let package_dir = &payload_paths.payload_dir;
     let dist_dir = Path::new("dist");
-
-    if package_dir.exists() {
-        fs::remove_dir_all(package_dir)
-            .map_err(|err| format!("failed to remove {}: {err}", package_dir.display()))?;
-    }
-    fs::create_dir_all(package_dir)
-        .map_err(|err| format!("failed to create {}: {err}", package_dir.display()))?;
     fs::create_dir_all(dist_dir)
         .map_err(|err| format!("failed to create {}: {err}", dist_dir.display()))?;
-
-    let built_executable = Path::new("target")
-        .join(&target)
-        .join("release")
-        .join(&executable);
-    fs::copy(&built_executable, package_dir.join(&executable)).map_err(|err| {
-        format!(
-            "failed to copy {} into {}: {err}",
-            built_executable.display(),
-            package_dir.display()
-        )
-    })?;
-    copy_release_file("LICENSE-MIT", package_dir)?;
-    copy_release_file("LICENSE-APACHE", package_dir)?;
-    fs::write(
-        package_dir.join("README-server.txt"),
-        release_server_readme(&version),
-    )
-    .map_err(|err| {
-        format!(
-            "failed to write {}: {err}",
-            package_dir.join("README-server.txt").display()
-        )
-    })?;
 
     let asset_path = dist_dir.join(&asset_name);
     if asset_path.exists() {
@@ -76,6 +50,15 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
         )
     })?;
     eprintln!("wrote {}", asset_path.display());
+    eprintln!(
+        "verified final native payload {} from {}",
+        payload_identity.payload_sha256(),
+        payload_paths.identity_json.display()
+    );
+    eprintln!(
+        "wrote human payload identity {}",
+        payload_paths.identity_markdown.display()
+    );
     Ok(())
 }
 
@@ -310,16 +293,6 @@ pub(crate) fn required_release_arg(
 
 pub(crate) fn normalize_release_version(version: &str) -> String {
     version.trim().trim_start_matches('v').to_string()
-}
-
-fn copy_release_file(file_name: &str, package_dir: &Path) -> Result<(), String> {
-    fs::copy(file_name, package_dir.join(file_name)).map_err(|err| {
-        format!(
-            "failed to copy {file_name} into {}: {err}",
-            package_dir.display()
-        )
-    })?;
-    Ok(())
 }
 
 pub(crate) fn release_server_readme(version: &str) -> String {
