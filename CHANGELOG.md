@@ -11,6 +11,14 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Rust files saved with a UTF-8 byte-order mark now analyze like the same
+  file without one. The mark made the parser fail, so the file silently fell
+  back to lexical facts and a change to an item on line 1 got false
+  `no_static_path` warnings (#4583). A Rust file that is not UTF-8, such as a
+  Latin-1 test fixture, no longer stops `ripr check` for the whole workspace
+  with exit 2; it is indexed on lexical fallback and named with
+  `rust_source_not_utf8` (#4582). `--diff FILE` and `--diff -` now accept a
+  diff containing non-UTF-8 bytes, as `--base` already did (#4584).
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from

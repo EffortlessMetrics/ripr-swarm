@@ -21,6 +21,16 @@ pub struct LoadedDiff {
     pub effective_base: Option<String>,
 }
 
+/// Decode a supplied diff the same way the git-run path decodes its stdout
+/// (`run_git_diff_with_unified`). A diff carries the raw bytes of every
+/// changed file, so one Latin-1 or binary-ish text file in the change made
+/// `--diff` refuse the whole diff that `ripr check` itself accepts. Paths stay
+/// distinct because git C-quotes non-UTF-8 path bytes by default.
+pub(crate) fn decode_diff_text(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes)
+        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
+}
+
 pub fn load_diff(
     root: &Path,
     base: Option<&str>,
@@ -42,12 +52,12 @@ pub fn load_diff_with_effective_base(
             // looks like a silent hang, so the CLI adapters disclose the read
             // before dispatching here; the loader itself stays silent so
             // library callers never receive CLI-branded stderr text.
-            let mut buffer = String::new();
+            let mut buffer = Vec::new();
             std::io::stdin()
-                .read_to_string(&mut buffer)
+                .read_to_end(&mut buffer)
                 .map_err(|err| format!("failed to read diff from stdin: {err}"))?;
             return Ok(LoadedDiff {
-                text: buffer,
+                text: decode_diff_text(buffer),
                 effective_base: None,
             });
         }
@@ -61,10 +71,10 @@ pub fn load_diff_with_effective_base(
                 diff_file.display()
             ));
         }
-        let text = std::fs::read_to_string(diff_file)
+        let bytes = std::fs::read(diff_file)
             .map_err(|err| format!("failed to read diff file {}: {err}", diff_file.display()))?;
         return Ok(LoadedDiff {
-            text,
+            text: decode_diff_text(bytes),
             effective_base: None,
         });
     }
@@ -861,6 +871,33 @@ mod tests {
             !message.contains("os error"),
             "the OS error text must not stand in for the cause: {message}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn diff_file_with_non_utf8_content_loads_like_the_git_route() -> std::io::Result<()> {
+        // A Latin-1 line in an unrelated changed file used to refuse the
+        // whole `--diff` input ("stream did not contain valid UTF-8") that
+        // the git-run route decodes lossily.
+        let dir = unique_fixture_root("load-diff-non-utf8")?;
+        ignore_remove_dir_all(&dir);
+        fs::create_dir_all(&dir)?;
+        let diff_path = dir.join("change.diff");
+        fs::write(
+            &diff_path,
+            b"diff --git a/notes.txt b/notes.txt\n--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n-caf\xe9\n+caf\xe9s\ndiff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-fn a() -> bool { 1 > 0 }\n+fn a() -> bool { 1 >= 0 }\n",
+        )?;
+
+        let result = load_diff(&dir, None, Some(&diff_path), None);
+        ignore_remove_dir_all(&dir);
+        let text = result.map_err(std::io::Error::other)?;
+        assert!(text.contains("-caf\u{fffd}\n+caf\u{fffd}s\n"), "{text}");
+        let files = crate::analysis::diff::parse_unified_diff(&text);
+        let rust = files
+            .iter()
+            .find(|file| file.path == std::path::Path::new("src/lib.rs"))
+            .ok_or_else(|| std::io::Error::other("rust file missing from parsed diff"))?;
+        assert_eq!(rust.added_lines[0].text, "fn a() -> bool { 1 >= 0 }");
         Ok(())
     }
 

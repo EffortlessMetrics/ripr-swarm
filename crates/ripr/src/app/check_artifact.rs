@@ -410,9 +410,11 @@ fn resolve_diff_text(
     git_timeout: Option<std::time::Duration>,
 ) -> Result<String, String> {
     match source {
-        DiffSourceIdentity::DiffFile { path } => std::fs::read_to_string(path).map_err(|err| {
-            format!("recorded diff file {path} no longer exists or is unreadable: {err}")
-        }),
+        DiffSourceIdentity::DiffFile { path } => std::fs::read(path)
+            .map(crate::analysis::decode_diff_text)
+            .map_err(|err| {
+                format!("recorded diff file {path} no longer exists or is unreadable: {err}")
+            }),
         DiffSourceIdentity::BaseHead { base, .. } => {
             crate::analysis::load_diff(root, base.as_deref(), None, git_timeout)
                 .map_err(|err| format!("recorded base/head diff could not be re-resolved: {err}"))

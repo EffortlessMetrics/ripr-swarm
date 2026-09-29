@@ -274,6 +274,11 @@ pub struct RustIndex {
     pub include_parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
     #[serde(default)]
     pub include_limitations: Vec<RustIncludeLimitation>,
+    /// Indexed files whose bytes are not UTF-8. They stay indexed from a
+    /// lossy decode on lexical fallback and the fallback disclosure names
+    /// them with `rust_source_not_utf8`.
+    #[serde(default)]
+    pub non_utf8_sources: BTreeSet<PathBuf>,
     /// Physical file-level include targets discovered before contextual
     /// ownership is reduced to one parent. This remains populated for
     /// ambiguous/conflicting include requirements so module resolution keeps
