@@ -6,6 +6,99 @@ const SOURCE_B: &str =
     "pub fn gate_state(flag: bool) -> bool {\n    if !flag { true } else { false }\n}\n";
 
 #[test]
+fn clean_open_rust_file_is_indexed_without_seeding_findings() -> Result<(), String> {
+    let root = unique_lsp_test_root("consumed-source-clean-open")?;
+    write_lsp_scope_fixture(root.path())?;
+    run_lsp_scope_git(root.path(), &["init"])?;
+    run_lsp_scope_git(root.path(), &["config", "user.email", "ripr@example.invalid"])?;
+    run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &["add", "Cargo.toml", "src/lib.rs", "tests/end_to_end.rs"],
+    )?;
+    run_lsp_scope_git(root.path(), &["commit", "-m", "base"])?;
+    let path = root.path().join("src/lib.rs");
+    let raw = fs::read(&path).map_err(|error| format!("read clean Rust source: {error}"))?;
+    let config = LspAnalysisConfig {
+        base_ref: Some("HEAD".to_string()),
+        mode: Mode::Instant,
+        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+        ..LspAnalysisConfig::default()
+    };
+    let index_only = std::iter::once(std::path::PathBuf::from("src/lib.rs")).collect();
+    let ordinary = crate::lsp::diagnostics::workspace_diagnostics_with_config(
+        root.path(), &config, true,
+    )?;
+    if !ordinary.snapshot.findings.is_empty()
+        || ordinary.snapshot.rust_consumed_sources.digest(&ordinary.snapshot.root, &path).is_some()
+    {
+        return Err("SETUP: clean ordinary diff unexpectedly indexed or probed source".into());
+    }
+    let cold = crate::lsp::diagnostics::workspace_diagnostics_with_config_and_open_rust_paths(
+        root.path(), &config, true, &index_only,
+    )?;
+    let warm = crate::lsp::diagnostics::workspace_diagnostics_with_config_and_open_rust_paths(
+        root.path(), &config, true, &index_only,
+    )?;
+    let expected = content_digest(&raw);
+    for (stage, result) in [("cold", &cold), ("warm", &warm)] {
+        if result.snapshot.rust_consumed_sources.digest(&result.snapshot.root, &path)
+            != Some(expected.clone())
+            || !result.snapshot.findings.is_empty()
+        {
+            return Err(format!("{stage} clean open source was not index-only captured"));
+        }
+    }
+    if cold.snapshot.rust_consumed_sources.file_fact_cache.misses == 0
+        || warm.snapshot.rust_consumed_sources.file_fact_cache.hits == 0
+    {
+        return Err("clean open file did not exercise cold and warm fact-cache loads".into());
+    }
+    let foreign = std::iter::once(std::path::PathBuf::from("outside.rs")).collect();
+    let refused = crate::lsp::diagnostics::workspace_diagnostics_with_config_and_open_rust_paths(
+        root.path(), &config, true, &foreign,
+    )?;
+    if refused.snapshot.rust_consumed_sources.digest(&refused.snapshot.root, &path).is_some() {
+        return Err("undiscovered open path admitted unrelated Rust source".into());
+    }
+    let untracked_path = root.path().join("src/untracked.rs");
+    fs::write(&untracked_path, SOURCE_B)
+        .map_err(|error| format!("write untracked Rust source: {error}"))?;
+    let untracked = std::iter::once(std::path::PathBuf::from("src/untracked.rs")).collect();
+    let refused = crate::lsp::diagnostics::workspace_diagnostics_with_config_and_open_rust_paths(
+        root.path(), &config, true, &untracked,
+    )?;
+    if refused
+        .snapshot
+        .rust_consumed_sources
+        .digest(&refused.snapshot.root, &untracked_path)
+        .is_some()
+    {
+        return Err("discovered but untracked open Rust source acquired authority".into());
+    }
+    let uri = file_uri_for_path(&path)?;
+    let source_a = String::from_utf8(raw)
+        .map_err(|error| format!("fixture clean Rust source is not UTF-8: {error}"))?;
+    let mut documents = DocumentStore::default();
+    documents.open(quarantine_open_params(&uri, &source_a));
+    fs::write(&path, SOURCE_B)
+        .map_err(|error| format!("write later clean-path disk B: {error}"))?;
+    documents.change(quarantine_change_params(&uri, 2, SOURCE_B));
+    let (pending, _) = documents.pending_analyzed_digests(
+        root.path(),
+        &warm.snapshot.rust_consumed_sources,
+    );
+    if pending.get(&uri).and_then(Option::as_ref) != Some(&expected) {
+        return Err("clean open producer A was relabeled as later disk or buffer B".into());
+    }
+    documents.note_refresh_analyzed(None, &pending, &[]);
+    if documents.state_for_uri(&uri).is_none_or(|state| !state.is_quarantined()) {
+        return Err("clean A snapshot served as current for later buffer B".into());
+    }
+    Ok(())
+}
+
+#[test]
 fn rust_prepare_refuses_missing_conflicting_and_unloaded_paths_but_preserves_non_rust()
 -> Result<(), String> {
     let root = unique_lsp_test_root("consumed-source-refusal")?;

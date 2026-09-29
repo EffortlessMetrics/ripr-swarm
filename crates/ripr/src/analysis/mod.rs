@@ -219,6 +219,7 @@ pub(crate) fn targeted_typescript_findings_for_scope(
         diff_file: None,
         mode: AnalysisMode::Draft,
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
         include_unchanged_tests: config.analysis().include_unchanged_tests().unwrap_or(true),
         resolve_tsconfig_paths: config.typescript().resolve_tsconfig_paths(),
         perl_facts_path: None,
@@ -499,6 +500,9 @@ pub enum AnalysisMode {
 #[derive(Clone, Debug)]
 pub struct AnalysisOptions {
     pub root: PathBuf,
+    /// LSP-only, index-only paths admitted from open saved Rust documents.
+    /// These never seed changed-file probes or public analysis input.
+    pub(crate) open_rust_index_paths: std::collections::BTreeSet<PathBuf>,
     pub base: Option<String>,
     pub diff_file: Option<PathBuf>,
     pub mode: AnalysisMode,
@@ -1084,6 +1088,7 @@ index 0000000..1111111 100644
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
         })
@@ -1107,6 +1112,7 @@ index 0000000..1111111 100644
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
         })
@@ -1161,6 +1167,7 @@ fn premium_customer_gets_discount() {
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
         })?;
@@ -1376,6 +1383,7 @@ fn test_with_predicate() {
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
         })?;
@@ -1445,6 +1453,7 @@ index 0000000..1111111 100644
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
         })?;
@@ -1464,6 +1473,7 @@ index 0000000..1111111 100644
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
         })?;
@@ -1493,6 +1503,7 @@ mod git_candidate_entry_tests {
                 .map_err(|error| error.to_string())?,
             )),
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             ..default_options_for_entry_test()?
         })
     }
@@ -1509,6 +1520,7 @@ mod git_candidate_entry_tests {
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
         })

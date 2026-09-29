@@ -17044,7 +17044,10 @@ fn quarantine_finding(id: &str, file: &str) -> Finding {
     finding
 }
 
-fn quarantine_workspace_diagnostics(fixture: &QuarantineFixture) -> WorkspaceDiagnostics {
+fn quarantine_workspace_diagnostics(
+    fixture: &QuarantineFixture,
+    source_a: &str,
+) -> WorkspaceDiagnostics {
     // `headline_eligible` is the producer-owned eligibility signal the
     // delivery budget reads (#1973); without it the stored selection omits
     // the diagnostics and pull/push serve an empty set.
@@ -17071,9 +17074,14 @@ fn quarantine_workspace_diagnostics(fixture: &QuarantineFixture) -> WorkspaceDia
         1,
         &LspAnalysisConfig::default(),
     );
+    // This synthetic snapshot explicitly names the bytes it purports to have
+    // consumed. Preparation must never mint that claim from a later disk read.
+    let mut rust_consumed_sources = crate::analysis::consumed_source::ConsumedRustSources::default();
+    rust_consumed_sources.record(Path::new("src/a.rs"), Some(source_a.as_bytes()));
+    rust_consumed_sources.record(Path::new("src/b.rs"), Some(QUARANTINE_TEXT_B.as_bytes()));
     let snapshot = AnalysisSnapshot {
         root: fixture.root.clone(),
-        rust_consumed_sources: Default::default(),
+        rust_consumed_sources,
         input_identity: Some(input_identity),
         base: Some("origin/main".to_string()),
         mode: Mode::Draft,
@@ -17110,9 +17118,10 @@ fn quarantine_workspace_diagnostics(fixture: &QuarantineFixture) -> WorkspaceDia
 fn commit_quarantine_snapshot(
     backend: &Backend,
     fixture: &QuarantineFixture,
+    source_a: &str,
 ) -> Result<(), String> {
     backend
-        .refresh_plan(quarantine_workspace_diagnostics(fixture))
+        .refresh_plan(quarantine_workspace_diagnostics(fixture, source_a))
         .ok_or_else(|| "expected committed snapshot".to_string())?;
     Ok(())
 }
@@ -17222,7 +17231,7 @@ async fn dirty_document_withdraws_line_local_diagnostics_and_discloses() -> Resu
     backend
         .did_open(quarantine_open_params(&fixture.uri_b, QUARANTINE_TEXT_B))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
 
     // Clean documents are served on pull.
     let served = pull_document_json(backend, &fixture.uri_a, None).await?;
@@ -17357,7 +17366,7 @@ async fn hover_without_evidence_names_an_unsaved_buffer() -> Result<(), String> 
     backend
         .did_open(quarantine_open_params(&fixture.uri_b, QUARANTINE_TEXT_B))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     backend
         .did_change(quarantine_change_params(
             &fixture.uri_a,
@@ -17466,7 +17475,7 @@ async fn save_with_changed_content_lifts_quarantine_and_resumes_refresh() -> Res
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     backend
         .did_change(quarantine_change_params(
             &fixture.uri_a,
@@ -17499,7 +17508,7 @@ async fn save_with_changed_content_lifts_quarantine_and_resumes_refresh() -> Res
 
     // The refresh commits: the analyzed saved content catches up with the
     // buffer and the quarantine lifts.
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A_DIRTY)?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
         .ok_or_else(|| "expected document state".to_string())?;
@@ -17560,7 +17569,7 @@ async fn save_with_unchanged_content_dedups_and_keeps_lifted_quarantine() -> Res
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     // Record the initial save so the dedup path has a recorded digest.
     backend
         .did_save(quarantine_save_params(&fixture.uri_a, QUARANTINE_TEXT_A))
@@ -17679,7 +17688,7 @@ async fn repeated_open_change_save_cycles_keep_identities_consistent() -> Result
         }
 
         // The refresh analyzes the new saved content and the quarantine lifts.
-        commit_quarantine_snapshot(backend, &fixture)?;
+        commit_quarantine_snapshot(backend, &fixture, &dirty_text)?;
         let state = backend
             .document_state_for_test(&fixture.uri_a)
             .ok_or_else(|| "expected document state".to_string())?;
@@ -17727,7 +17736,7 @@ async fn unsaved_buffer_text_never_enters_snapshot_or_status_payloads() -> Resul
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
 
     const UNSAVED: &str = "fn a() -> bool { UNSAVED_BUFFER_MARKER }";
     backend
@@ -17818,7 +17827,7 @@ async fn superseded_transaction_leaves_document_state_unadvanced() -> Result<(),
     backend
         .did_open(quarantine_open_params(&fixture.uri_b, QUARANTINE_TEXT_B))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
 
     // Save new content; the document is quarantined until the new saved
     // content is analyzed. The fixture mirrors the persisted bytes.
@@ -17835,7 +17844,7 @@ async fn superseded_transaction_leaves_document_state_unadvanced() -> Result<(),
     // superseded: it never becomes latest_analysis. Document identities
     // must not advance with it.
     let transaction = backend
-        .prepare_refresh_transaction(quarantine_workspace_diagnostics(&fixture))
+        .prepare_refresh_transaction(quarantine_workspace_diagnostics(&fixture, QUARANTINE_TEXT_A_DIRTY))
         .ok_or_else(|| "expected prepared transaction".to_string())?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
@@ -17867,7 +17876,7 @@ async fn superseded_transaction_leaves_document_state_unadvanced() -> Result<(),
     drop(transaction);
 
     // When a transaction does commit, identities advance with it.
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A_DIRTY)?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
         .ok_or_else(|| "expected document state".to_string())?;
@@ -17891,7 +17900,7 @@ async fn externally_changed_disk_content_does_not_falsely_clear_quarantine() -> 
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
         .ok_or_else(|| "expected document state".to_string())?;
@@ -17906,7 +17915,7 @@ async fn externally_changed_disk_content_does_not_falsely_clear_quarantine() -> 
     // old-content buffer must not be marked clean against them.
     std::fs::write(&fixture.path_a, QUARANTINE_TEXT_A_DIRTY)
         .map_err(|err| format!("external rewrite failed: {err}"))?;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A_DIRTY)?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
         .ok_or_else(|| "expected document state".to_string())?;

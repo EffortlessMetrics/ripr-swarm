@@ -16,7 +16,9 @@ use crate::analysis::inventory_classified_seams_at_with_config;
 use crate::analysis::seams::SeamGripClass;
 use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_fields};
-use crate::app::check_workspace_worktree_with_sources;
+use crate::app::{
+    check_workspace_worktree_with_sources_and_open_rust_paths,
+};
 use crate::config::{ConfigSeverity, LspDiagnosticProfile, SeverityConfig};
 #[cfg(test)]
 use crate::domain::RelatedTest;
@@ -756,6 +758,20 @@ pub(super) fn workspace_diagnostics_with_config(
     config: &LspAnalysisConfig,
     defer_seam_inventory: bool,
 ) -> Result<WorkspaceDiagnostics, String> {
+    workspace_diagnostics_with_config_and_open_rust_paths(
+        root,
+        config,
+        defer_seam_inventory,
+        &Default::default(),
+    )
+}
+
+pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths(
+    root: &Path,
+    config: &LspAnalysisConfig,
+    defer_seam_inventory: bool,
+    open_rust_index_paths: &std::collections::BTreeSet<std::path::PathBuf>,
+) -> Result<WorkspaceDiagnostics, String> {
     let input = config.check_input(root);
     // Saved-workspace authority (#3183): editor refreshes analyze the live
     // tracked working tree, including staged and unstaged bytes that the
@@ -763,7 +779,11 @@ pub(super) fn workspace_diagnostics_with_config(
     // `ripr check --worktree`. Document quarantine remains the independent
     // authority that prevents unsaved buffers from being served as current.
     let (output, origins, consumed_sources) =
-        match check_workspace_worktree_with_sources(input, config.repo_config()) {
+        match check_workspace_worktree_with_sources_and_open_rust_paths(
+            input,
+            config.repo_config(),
+            open_rust_index_paths,
+        ) {
             Ok(pair) => pair,
             // #2303: a git invocation that exceeded the configured cooperative
             // deadline commits a limited snapshot (zero findings, one typed
@@ -1118,9 +1138,15 @@ pub(super) fn workspace_diagnostics_with_config_and_cancellation(
     config: &LspAnalysisConfig,
     defer_seam_inventory: bool,
     cancellation: &AnalysisCancellationToken,
+    open_rust_index_paths: &std::collections::BTreeSet<std::path::PathBuf>,
 ) -> Result<WorkspaceDiagnostics, String> {
     crate::analysis::cancellation::with_token(cancellation, || {
-        workspace_diagnostics_with_config(root, config, defer_seam_inventory)
+        workspace_diagnostics_with_config_and_open_rust_paths(
+            root,
+            config,
+            defer_seam_inventory,
+            open_rust_index_paths,
+        )
     })
 }
 

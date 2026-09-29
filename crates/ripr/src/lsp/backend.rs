@@ -429,6 +429,10 @@ impl Backend {
         self.log_refresh_started(request).await;
         let root = request.root.clone();
         let config = request.config.clone();
+        // Snapshot only admitted open paths before the blocking analysis.
+        // The Rust adapter still discovers and reads the saved bytes itself;
+        // a later document change cannot add paths to this invocation.
+        let open_rust_index_paths = self.open_rust_index_paths_for_root(&root);
         let defer_seam_inventory = request.scope.defer_seam_inventory();
         let cancellation = request.cancellation.clone();
         let execution_gate = self.refresh_scheduler.execution_gate();
@@ -458,6 +462,7 @@ impl Backend {
                 &config,
                 defer_seam_inventory,
                 &cancellation,
+                &open_rust_index_paths,
             )
         })
         .await;
@@ -794,6 +799,27 @@ impl Backend {
         )
         .await;
         RefreshAttemptOutcome::Published
+    }
+
+    fn open_rust_index_paths_for_root(&self, root: &Path) -> std::collections::BTreeSet<PathBuf> {
+        use std::path::Component;
+
+        let Ok(documents) = self.documents.lock() else {
+            return Default::default();
+        };
+        documents
+            .documents
+            .keys()
+            .filter(|uri| super::uri::file_uri_is_within_root(root, uri))
+            .filter_map(super::uri::path_from_file_uri)
+            .filter_map(|path| path.strip_prefix(root).ok().map(Path::to_path_buf))
+            .filter(|path| {
+                path.extension().is_some_and(|extension| extension == "rs")
+                    && path
+                        .components()
+                        .all(|component| matches!(component, Component::Normal(_)))
+            })
+            .collect()
     }
 
     pub(super) async fn report_refresh_failure_after(

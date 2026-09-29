@@ -79,6 +79,30 @@ pub(crate) fn check_workspace_worktree_with_sources(
     check_with_progress_and_origins(input, config, AnalysisProgressScope::Worktree, None)
 }
 
+pub(crate) fn check_workspace_worktree_with_sources_and_open_rust_paths(
+    input: CheckInput,
+    config: &RiprConfig,
+    open_rust_index_paths: &std::collections::BTreeSet<PathBuf>,
+) -> Result<
+    (
+        CheckOutput,
+        crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
+        crate::analysis::consumed_source::ConsumedRustSources,
+    ),
+    String,
+> {
+    if open_rust_index_paths.is_empty() {
+        return check_workspace_worktree_with_sources(input, config);
+    }
+    check_with_progress_and_origins_with_open_rust_paths(
+        input,
+        config,
+        AnalysisProgressScope::Worktree,
+        None,
+        open_rust_index_paths,
+    )
+}
+
 /// Runs the repo-baseline static exposure analysis for a workspace. This
 /// seeds probes from every currently-probeable production syntax shape
 /// rather than from a diff. Use this when the answer to "is the repo's
@@ -126,10 +150,33 @@ pub(crate) fn check_with_progress(
 }
 
 fn check_with_progress_and_origins(
+    input: CheckInput,
+    config: &RiprConfig,
+    scope: AnalysisProgressScope,
+    sink: Option<&dyn AnalysisProgressSink>,
+) -> Result<
+    (
+        CheckOutput,
+        crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
+        crate::analysis::consumed_source::ConsumedRustSources,
+    ),
+    String,
+> {
+    check_with_progress_and_origins_with_open_rust_paths(
+        input,
+        config,
+        scope,
+        sink,
+        &Default::default(),
+    )
+}
+
+fn check_with_progress_and_origins_with_open_rust_paths(
     mut input: CheckInput,
     config: &RiprConfig,
     scope: AnalysisProgressScope,
     sink: Option<&dyn AnalysisProgressSink>,
+    open_rust_index_paths: &std::collections::BTreeSet<PathBuf>,
 ) -> Result<
     (
         CheckOutput,
@@ -174,7 +221,8 @@ fn check_with_progress_and_origins(
         }
     }
 
-    let options = options_builder::analysis_options_from_input_and_config(&input, config);
+    let mut options = options_builder::analysis_options_from_input_and_config(&input, config);
+    options.open_rust_index_paths.clone_from(open_rust_index_paths);
 
     // Build the language list from config. When --perl-facts is provided,
     // automatically add Perl to the enabled list (the user explicitly opted in

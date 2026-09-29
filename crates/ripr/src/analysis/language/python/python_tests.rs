@@ -1839,6 +1839,7 @@ fn analyze_diff_emits_finding_for_changed_python_file_on_disk() -> Result<(), St
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![
@@ -1931,6 +1932,7 @@ fn analyze_diff_suppresses_multiline_docstring_interior_change() -> Result<(), S
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let changed_files = vec![ChangedFile {
         path: production_rel,
@@ -1983,6 +1985,7 @@ fn analyze_diff_does_not_hide_behavior_after_same_line_docstring() -> Result<(),
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let changed_files = vec![ChangedFile {
         path: production_rel,
@@ -2032,6 +2035,7 @@ fn analyze_diff_does_not_hide_code_replaced_by_multiline_docstring() -> Result<(
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let changed_files = vec![ChangedFile {
         path: production_rel,
@@ -2124,6 +2128,7 @@ def test_encode_status():\n    assert encode_status('paid')['status'] == 'paid'\
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -2298,6 +2303,7 @@ fn analyze_diff_does_not_count_vendor_subtree_changes() -> Result<(), String> {
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -2356,6 +2362,7 @@ fn analyze_diff_does_not_count_environment_subtree_changes() -> Result<(), Strin
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -2414,6 +2421,7 @@ fn analyze_diff_still_counts_regular_source_changes() -> Result<(), String> {
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -3115,6 +3123,7 @@ fn analyze_diff_counts_python_file_but_skips_unreadable_workspace_source() -> Re
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -3507,6 +3516,7 @@ fn probed_lines_for_python_rewrite(
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let line = |(line, text): &(usize, &str)| crate::analysis::diff::ChangedLine {
         line: *line,
