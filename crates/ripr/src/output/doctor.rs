@@ -784,6 +784,14 @@ pub(crate) fn doctor_tool_check(tool: &str) -> (DoctorStatus, String) {
 }
 
 fn doctor_tool_check_for_root(tool: &str, root: &Path) -> (DoctorStatus, String) {
+    if RUST_TOOLCHAIN_TOOLS.contains(&tool)
+        && let Some(file) = crate::config::repository_toolchain_path_pin(root)
+    {
+        return (
+            DoctorStatus::Fail,
+            crate::config::toolchain_path_pin_refusal(&file),
+        );
+    }
     doctor_tool_check_with_timeout_result_at(
         tool,
         DOCTOR_TOOL_TIMEOUT,

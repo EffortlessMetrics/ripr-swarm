@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Security: ripr no longer runs `cargo` or `rustc` in a repository whose
+  nearest `rust-toolchain.toml` selects a toolchain by `path`. rustup would
+  execute that path, and `/proc/self/cwd/...` points it into the checkout, so
+  `ripr doctor` in a cloned repository ran the repository's own program.
+  Doctor now reports the check as not run and names the file, and the
+  test-harness `cargo metadata` probe fails closed. Setting
+  `RUSTUP_TOOLCHAIN` restores the probes (#4740).
 - Security: the workflow `ripr init --ci github` writes no longer consumes
   gate inputs a pull request can commit under `target/ripr` or `target/ci`
   (#4731), only treats ripr comments posted by `github-actions[bot]` as its

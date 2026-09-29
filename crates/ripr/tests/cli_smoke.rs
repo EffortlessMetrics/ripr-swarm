@@ -17903,3 +17903,75 @@ fn check_rejects_invalid_ripr_git_timeout_env() -> Result<(), String> {
     ignore_remove_dir_all(&workspace);
     Ok(())
 }
+
+/// A cloned repository's `rust-toolchain.toml` can name a toolchain `path`,
+/// and `/proc/self/cwd` makes that path point into the checkout, so rustup's
+/// `cargo` proxy would run the repository's own program. `ripr doctor` must
+/// not spawn the toolchain there.
+#[cfg(target_os = "linux")]
+#[test]
+fn doctor_does_not_run_a_repository_selected_toolchain_path() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let root = unique_temp_workspace("toolchain-path-pin");
+    let marker = root.join("repository-toolchain-ran");
+    let setup = (|| -> std::io::Result<()> {
+        std::fs::create_dir_all(root.join("tc/bin"))?;
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"pinned\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn f() {}\n")?;
+        std::fs::write(
+            root.join("rust-toolchain.toml"),
+            "[toolchain]\npath = \"/proc/self/cwd/tc\"\n",
+        )?;
+        for tool in ["cargo", "rustc"] {
+            let script = root.join("tc/bin").join(tool);
+            std::fs::write(
+                &script,
+                format!(
+                    "#!/bin/sh\ntouch '{}'\necho '{tool} 9.9.9'\n",
+                    marker.display()
+                ),
+            )?;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))?;
+        }
+        Ok(())
+    })();
+    let result = setup
+        .map_err(|err| format!("fixture: {err}"))
+        .and_then(|()| {
+            // The fixture only discriminates where `cargo` is a rustup proxy.
+            let proxy = probe_command("cargo")
+                .arg("--version")
+                .current_dir(&root)
+                .env_remove("RUSTUP_TOOLCHAIN")
+                .output();
+            if !marker.exists() {
+                println!("skipped: `cargo` here is not a rustup proxy ({proxy:?})");
+                return Ok(());
+            }
+            std::fs::remove_file(&marker).map_err(|err| format!("reset marker: {err}"))?;
+            let output = probe_command(env!("CARGO_BIN_EXE_ripr"))
+                .arg("doctor")
+                .current_dir(&root)
+                .env_remove("RUSTUP_TOOLCHAIN")
+                .output()
+                .map_err(|err| format!("spawn ripr doctor: {err}"))?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if marker.exists() {
+                return Err(format!(
+                    "ripr doctor ran the repository's toolchain program: {stdout}"
+                ));
+            }
+            if !stdout.contains("selects a toolchain by `path`") {
+                return Err(format!(
+                    "doctor must name the refused toolchain file: {stdout}"
+                ));
+            }
+            Ok(())
+        });
+    ignore_remove_dir_all(&root);
+    result
+}

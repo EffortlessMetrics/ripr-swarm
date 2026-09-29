@@ -13,6 +13,7 @@ use std::path::{Component, Path, PathBuf};
 
 mod model;
 mod python;
+mod toolchain_file;
 #[cfg(feature = "lang-typescript")]
 mod typescript;
 
@@ -32,6 +33,7 @@ pub(crate) use python::{
     is_python_excluded_dir_everywhere, python_project_marker_name, python_source_dir_marker_name,
     source_dir_contains_detectable_python,
 };
+pub(crate) use toolchain_file::{repository_toolchain_path_pin, toolchain_path_pin_refusal};
 #[cfg(feature = "lang-typescript")]
 pub(crate) use typescript::{
     is_detectable_excluded_typescript_path, is_detectable_generated_typescript_path,
