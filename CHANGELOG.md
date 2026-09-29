@@ -9,8 +9,47 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Added
+
+- LSP: `cargo xtask lsp-performance-report` writes an identity-bound saved-edit
+  sequence receipt (`ripr-lsp-saved-edit-sequence-v1`) covering cold start,
+  unchanged save/refresh, production/related/unrelated edits, rename, config
+  change, cancellation, corrupt cache, and explicit full refresh. A stale
+  cached answer cannot satisfy a speed target, and a fast elapsed time cannot
+  hide a redundant full rescan or duplicate diagnostic publication. The
+  historical 2s/10s/30s figures remain proposals, not gates.
+
 ### Fixed
 
+- `ripr check` is faster on large repositories, with byte-identical JSON on
+  12 real commits of tokio, vite, Django and ripr. TypeScript test selection
+  walked the directory tree for `package.json` twice per owner and test;
+  a vite commit went from 6.7 s to 3.2 s. Rust classification no longer
+  reparses the owner's file per probe unless the file could admit the
+  derived tuple slice, and computes each related test's value facts once
+  per owner instead of once per probe; a ripr commit went
+  from 11.1 s to 8.1 s.
+- Python: a changed dunder method now relates to the tests that use its class.
+  `LowerBound.__init__` relates to tests that construct `LowerBound(...)`,
+  instead of tests that define their own helper class with `def __init__`.
+  Other dunders such as `__setitem__` relate, uncertain, to tests that build
+  an instance. When tests import the class but reach it in a shape ripr cannot
+  bind (a unittest mixin's `self.Cache`), the finding is `static_unknown` with
+  the `dynamic_dispatch` limit rather than `no_static_path`. A `def name(`
+  header in a test is no longer read as a call of `name`. Replays of
+  packaging and cachetools bug fixes moved 25 false `no_static_path` or
+  wrongly related findings; each flagged line's mutants were killed by the
+  project's own suite.
+- Rust: the bounded transitive-reach walk behind `no_static_path` disclosures
+  now follows every function sharing a callee's name. It followed only the
+  first one indexed, so jiter's `decode_to_tape`, reached through one of two
+  `decode` impls, and indexmap's `get_disjoint_mut` helpers read a silent
+  `no_static_path` with no named limitation. Classification is unchanged;
+  those findings now name the unresolved path and a test to inspect.
+- Python: a reflowed multi-line function signature no longer produces a probe
+  per parameter line. `self,`, `key,`, `*args,` and the closing `):` carry no
+  behavior of their own; four of cachetools c0fdf6a's thirteen probes were
+  these lines. Parameter defaults keep their probe.
 - Security: Rust source discovery skips symlinked `.rs` entries, as the
   Python and TypeScript readers already did. A cloned repository or pull
   request that committed `src/zero.rs -> /dev/zero` made `ripr check` read
@@ -49,6 +88,18 @@ are scoped or reviewed.
 - Security: a base ref starting with `-` is refused before `git diff` runs,
   including from LSP `baseRef` settings, so it can never be parsed as a diff
   option such as `--output` (#4730).
+- Rust: a test related to a finding only because its name shares a word with
+  the changed code or names the changed function no longer supplies the
+  finding's discriminator when another related test actually calls the
+  changed code. Before, a test that pinned
+  `ParseError::MalformedSource == ParseError::MalformedSource` without calling
+  the changed `try_parse` turned a mutation no test catches into `exposed`
+  (#4486). Its assertions still appear among the related tests. On a 14-file
+  diff of ripr itself, 7 of 40 `exposed` findings moved to `weakly_exposed`;
+  each had credited an assertion from an unrelated module, such as an LSP
+  transport test for a change in `reach.rs`. Same-file and same-module tests
+  still credit, since they commonly reach private helpers through the
+  module's own entry point.
 - Security: `ripr pilot` and other commands that write to default paths
   inside the analyzed repository no longer write through a symlink committed
   there. A cloned repository could commit
@@ -133,6 +184,17 @@ are scoped or reviewed.
   properties of `module.exports = { ... }` are now owners that `require()`
   tests relate to; non-function values and computed keys still produce none,
   and an export name assigned twice in one file produces no owner. (#4545)
+- TypeScript/JavaScript preview: a test that imports `tsc` build output
+  (`import { looksLikeNumber } from '../build/lib/string-utils.js'`) now
+  relates to the TypeScript source (`lib/string-utils.ts`) through the root
+  `tsconfig.json`'s own `compilerOptions.outDir` and `rootDir`. The import
+  named the excluded, unindexed build tree, so a change to the source reported
+  `no_static_path`. The mapping needs the root `tsconfig.json` to set both
+  `outDir` and `rootDir` itself; it applies only when nothing exists at the
+  imported path (a built tree keeps the import on the build file) and
+  exactly one source file exists at the mapped path. It does not follow
+  `extends` and does not need `resolve_tsconfig_paths`.
+  (#4551)
 - TypeScript/JavaScript preview: mocha, `node:test` and Vitest suites written
   with `context`, `suite` or `specify`, with an options object before the
   callback (`it(name, { timeout }, fn)`), or with a `describe` title that is
@@ -1141,6 +1203,10 @@ are scoped or reviewed.
   report `field_assignment_value_unresolved` instead of an ineffective repair
   route.
 
+- LSP: receipt status for an actionable gap with no recorded attempt now
+  reports `not_available`. It used to report the first entry of
+  `swarm-attempt-ledger.json`, which is another gap's latest attempt outcome.
+  With no actionable gap it still reports the ledger's latest entry.
 - Rust literal match-arm observation is now bound to the input that
   selects the changed arm. A test asserting a sibling arm's result, a
   diagnostic-only call, an ambiguous owner, a conditional input, or an
@@ -1220,6 +1286,24 @@ are scoped or reviewed.
   ([#3999](https://github.com/EffortlessMetrics/ripr-swarm/issues/3999),
   [#4000](https://github.com/EffortlessMetrics/ripr-swarm/issues/4000),
   [#4287](https://github.com/EffortlessMetrics/ripr-swarm/pull/4287)).
+- On the Python and TypeScript preview route, `ripr first-pr` now shows how to
+  see whether the gap moved after the test edit. A `ripr receipt write`
+  receipt records only the verify status it is given and re-checks nothing,
+  so when the check report the gap came from is on disk, a `Static re-check
+  after verify` line follows the receipt:
+  `ripr check ... --worktree --json > .../check.after.json && ripr outcome
+  --before .../check.json --after .../check.after.json`, with a `Receipt
+  boundary` line saying the receipt does not re-check the gap and static
+  movement is not a runtime or mutation result. The stale-evidence refresh
+  that first-pr prints after a test edit now passes `--worktree` too: without
+  it, `ripr check` read the files as committed at HEAD, missed the uncommitted
+  test edit, and first-pr selected the gap the edit had just closed again.
+- `ripr check --worktree` now starts its diff at the merge base of `--base`
+  and `HEAD`, as the committed `<base>...HEAD` diff does. It ran
+  `git diff <base>` against the base tip, so once the base gained commits
+  after the branch forked, those commits showed up, reversed, as branch
+  changes. With no merge base (a shallow clone) it still diffs from the base
+  tip.
 - `ripr check`, `ripr pilot` and `ripr agent repair` now name one gap with the
   same word. The changed line `check` reports as `weakly_exposed` and the
   seam `pilot` reports as `weakly_gripped` both read `weak` first, for
@@ -1231,6 +1315,15 @@ are scoped or reviewed.
   focused test with the missing discriminator next to the nearest related
   test", matching the new test `pilot` names, where it used to say "extend
   the nearest related test".
+- With rustup 1.28.1 or later, `ripr doctor` no longer installs a Rust
+  toolchain. In a checkout whose `rust-toolchain.toml` pins a toolchain that
+  is not installed, its `cargo --version` and `rustc --version` probes made
+  rustup download and install that toolchain, then reported "cargo timed
+  out" and "rustc not available". The `cargo metadata` probe behind
+  `[[analysis.test_harnesses]]` did the same during `ripr check`. Probes now
+  run with `RUSTUP_AUTO_INSTALL=0` (older rustup ignores it), and a probe
+  that exits non-zero names the tool's own error, such as rustup's
+  "toolchain ... is not installed" (#4734).
 - A deeply nested Rust file anywhere in the workspace no longer aborts
   `ripr check`, `ripr pilot`, or the LSP with a stack overflow. A lexical scan
   now refuses a source file before parsing when its estimated nesting depth
@@ -1251,6 +1344,25 @@ are scoped or reviewed.
   attempt's result; that file is now a compatibility copy of the latest
   finish, and `ripr agent status` reads the attempt's own receipt first
   (#4636).
+- Cached analysis is no longer shared between different builds of the same
+  version. The file-fact and classified-seam caches under
+  `target/ripr/cache` keyed on the package version alone, so a `0.11.0`
+  binary built from one commit served facts and classifications that a
+  `0.11.0` binary from another commit had written, including across an
+  upgrade from a release candidate to the final release. The key now names
+  the build commit; a build with uncommitted changes or no commit record also
+  names a digest of its crate sources and lockfile. Entries from other builds
+  become misses and are recomputed. A `ripr check` artifact from another
+  build of the same version is refused for reuse, and the `analyzer_version`
+  in a targeted-rerun input fingerprint carries the same build identity.
+- Editors: the language server no longer drops the first-useful-action
+  report that the generated CI workflow and `ripr reports first-action`
+  write. Its verify command now saves its output where the receipt reads it
+  (`> <root>/target/ripr/workflow/agent-verify.json`), and the server refused
+  any command containing `>`, so it reported `cache_limited` with a
+  `run ripr check` recovery that could not help. One trailing redirect into
+  the workspace's `target/ripr/` is accepted; every other redirect is still
+  refused.
 
 ### Added
 
