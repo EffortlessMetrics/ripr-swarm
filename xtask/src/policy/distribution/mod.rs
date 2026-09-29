@@ -2,7 +2,7 @@ mod contract;
 mod crate_targets;
 mod targets;
 mod version;
-mod wheelhouse;
+pub(crate) mod wheelhouse;
 mod workflow;
 
 use std::fs;

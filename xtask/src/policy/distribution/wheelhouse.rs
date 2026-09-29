@@ -315,9 +315,9 @@ fn write_gate_reports(
         .map_err(|err| format!("failed to create {}: {err}", reports.display()))?;
     let report_json = reports.join("python-wheelhouse-qualification.json");
     let report_md = reports.join("python-wheelhouse-qualification.md");
-    fs::write(report_json, format!("{json}\n"))
+    fs::write(&report_json, format!("{json}\n"))
         .map_err(|err| format!("failed to write {}: {err}", report_json.display()))?;
-    fs::write(report_md, markdown)
+    fs::write(&report_md, markdown)
         .map_err(|err| format!("failed to write {}: {err}", report_md.display()))?;
     if receipts.is_dir() {
         let copy_json = receipts.join("wheelhouse-qualification.json");
