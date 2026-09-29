@@ -32,38 +32,13 @@ are scoped or reviewed.
 
 ### Fixed
 
-- Python: a parametrized test whose cases never reach a changed comparison
-  boundary no longer makes the finding `exposed`. `sign(x)` under
-  `@pytest.mark.parametrize("x", [5, -3])` bound no literal input, so a
-  `x > 0` -> `x >= 0` change kept the oracle's `exposed` verdict although the
-  mutant survives both cases. Each statically certain parametrize case now
-  binds its literal argvalue, so the finding is `weakly_exposed` and names
-  `x == 0` as the missing boundary (#4559). A case marked skip or xfail, or
-  an argname a lambda, loop or tuple target may shadow, binds nothing.
-- Python: a test that imports a package and calls the owner through its
-  submodule attribute (`import click` then `click.utils._expand_args(...)`)
-  is now related to the owner, and so is an owner in a package
-  `__init__.py` called through its module import (`from dateutil import
-  zoneinfo` then `zoneinfo.get_zonefile_instance(...)`). On pallets/click and
-  dateutil such changes were `no_static_path` although the calling tests kill
-  the mutants (#4560).
-- Python: `unittest` classes that inherit `TestCase` through another class in
-  the same file (`class ZoneInfoGettzTest(GettzTest)`), and test methods on a
-  mixin such a class inherits, are now collected, under the subclass that
-  runs them. On dateutil a change killed by
-  `ZoneInfoGettzTest.testZoneInfoNewInstance` was `no_static_path` (#4562).
-- Python: a related test that replaces the owner with `patch.object(...)`
-  (context manager or decorator) now gives the same `mocked_module`
-  static limit as `patch(...)` and `monkeypatch.setattr(...)`. It was
-  `weakly_exposed` although the test calls the mock, not the owner (#4565).
-- Python: an exact assertion on the owner's own output now counts as
-  observing it when the call goes through the owner's module
-  (`assert utils.sign(0) == 0`), through a result local
-  (`result = sign(0)` then `assert result == 0`), or through an import inside
-  the test function. These findings said the assertion "does not observe the
-  changed owner's output" and stayed `weakly_exposed` although the tests kill
-  the mutants. The comparison-boundary check still applies to these calls
-  (#4567).
+- An unchanged Rust test file that the reference parser refuses is no longer
+  a silent related-test hole. If a classified owner consults that
+  lexical-fallback file (the file contributed a related test, or it calls the
+  owner but lexical extraction dropped the test), `ripr check` records
+  `rust_lexical_test_index_partial` and the outcome is
+  `partial_with_limitations`. An unused nightly-syntax test file in the same
+  crate does not make the run partial (#4775).
 - Direct collection StateWrite (`items.push(...)` on a passed identifier)
   now binds the affected collection through the existing propagation
   witness. Asserting a different collection, the return value, a callee-name
@@ -74,8 +49,8 @@ are scoped or reviewed.
 - `ripr doctor` and `ripr first-pr --check` treat a start-here packet written
   by another ripr version, or with no `ripr_version`, as stale evidence and
   print the refresh command instead of trusting it after an upgrade (#4757).
-- Changes in languages ripr does not analyze (Go, Java, C, C++, shell and
-  others) are no longer called non-source files. A Go-only diff reported
+- Changes in languages ripr does not analyze (Go, Java, C, C++ and others)
+  are no longer called non-source files. A Go-only diff reported
   `no_behavioral_candidates (analysis complete)` and said the empty result was
   correct; a Rust + Go diff reported only the Rust half, as a complete
   analysis. Both now report `partial_with_limitations` with a
@@ -88,7 +63,10 @@ are scoped or reviewed.
   `null`), and `ripr doctor` lists them, in mixed workspaces too (#4750).
   `ripr first-pr` reports no gap to assign there instead of a wrong-root
   loop through `--root` and `ripr doctor`, and `ripr init` warns that the
-  configuration will report those changes as not analyzed.
+  configuration will report those changes as not analyzed. Shell and
+  PowerShell scripts are named on stderr as not analyzed but do not make an
+  otherwise complete analysis partial, so a Rust PR that touches a CI script
+  keeps its complete outcome; a diff of only scripts stays partial.
 - A partial (`limited_partial_scope`) run now tells JSON, LSP and VS Code
   users which budget stopped it. The JSON `analysis_scope.continuation`
   string, the LSP top limitation and the `diff_scope_oversized` recovery
@@ -109,6 +87,17 @@ are scoped or reviewed.
   derived tuple slice, and computes each related test's value facts once
   per owner instead of once per probe; a ripr commit went
   from 11.1 s to 8.1 s.
+
+- The preview note no longer calls a JavaScript file a TypeScript file. On a
+  CommonJS package such as mime-types, `Changed file(s) by language:
+  javascript: 1` was followed by `this diff contains 1 TypeScript file`. A
+  JavaScript-only diff now says `JavaScript file(s)`, a mixed one
+  `TypeScript/JavaScript files`, and the not-enabled and not-compiled notes
+  name the `TypeScript/JavaScript adapter`; the
+  `enabled = ["rust", "typescript"]` hint stays, with a line saying it covers
+  JavaScript too. `PreviewLanguageAdvisory` gains the public field
+  `javascript_file_count`; code that builds the struct with a literal must
+  set it (#4555).
 - Python: a changed dunder method now relates to the tests that use its class.
   `LowerBound.__init__` relates to tests that construct `LowerBound(...)`,
   instead of tests that define their own helper class with `def __init__`.
@@ -140,6 +129,12 @@ are scoped or reviewed.
   returned value, so any exact assertion such as
   `expect(discount(500)).toBe(450)` made a `>=` to `>` change read `exposed`
   with "no repair to make", although 500 takes the discount either way.
+- Python and TypeScript: a returned relational comparison such as
+  `return total > 100` is now a predicate boundary on `total == 100`, as the
+  `if` form and the Rust tail expression already were. A `>=` to `>` change
+  read `exposed` with "no repair to make" when the only test asserted
+  `is_large(500) == True`, which holds either way. Equality returns, computed
+  operands and compound conditions stay return values.
 - Rust findings now list the related tests that call the changed owner before
   tests matched only by a weak name token, as RIPR-SPEC-0021 already required.
   On `tokio-rs/bytes` the "Related tests appear to reach" line quoted
@@ -1521,6 +1516,19 @@ are scoped or reviewed.
   heading in a code span, as the owner line already did. A file name holding
   Markdown link brackets or `*` rendered as a link or emphasis in that heading
   (#4605).
+- Rust diff analysis follows the module tree (#4435). A changed file under
+  `src/`, or beside a declared `[lib]` root outside `src/`, no longer seeds
+  findings when no `mod`, `#[path]` or `include!` from any Cargo target names
+  it, since rustc never compiles it; the run reports a limitation naming the
+  file instead. The out-of-line modules of an external root (`[lib] path =
+  "../shared/lib.rs"`) now seed, and the tests of every package declaring
+  that root stay in the Draft scope. A declared `[lib] path` replaces
+  `src/lib.rs` as the library root. The orphan rule applies only when every
+  Rust file in the workspace resolves statically; a macro call other than
+  std's (at item level or inside a function), a `cfg_if!`-wrapped
+  declaration, a dynamic `#[path]` or a parse error anywhere keeps the
+  previous layout rule, since such a file could reach the orphan. The editor
+  partition uses the same evidence.
 - Each repair attempt keeps its own result. The after phase copies the
   receipt and the verify document into the attempt's artifacts directory and
   records them in `attempt.json` as `terminal_artifacts`, bound by path,
@@ -1580,6 +1588,54 @@ are scoped or reviewed.
   `ripr check --root DIR ...`. It printed `ripr check`, which analyzes the
   current directory rather than the one doctor diagnosed
   ([#4890](https://github.com/EffortlessMetrics/ripr-swarm/issues/4890)).
+- TypeScript: minified bundles (`*.min.js`, `*.min.mjs`, `*.min.cjs`) are
+  skipped like `*.generated.*` files. A rebuilt `public/js/app.min.js`
+  became a `no_static_path` finding whose JSON carried the 1.4 MB line
+  twice.
+- Rust: checked-in generated code and `cargo vendor` crates no longer turn
+  into findings. A file whose first five lines carry an `@generated`
+  (prost, tonic, Diesel), rust-bindgen, or `Code generated ... DO NOT EDIT`
+  comment is skipped like `bindings.rs`, and so is every file in a
+  directory holding `.cargo-checksum.json`. A `cargo vendor` bump used to
+  add hundreds of `no_static_path` findings, or fail the whole check with
+  `diff_scope_oversized` once it passed 2000 lines. The skipped files are
+  named in the existing generated-code limitation, the header is read
+  from the committed file rather than uncommitted edits, and
+  repository-wide runs count the skipped files as a partial run. A
+  hand-written `src/vendor/` module stays analyzed.
+
+- Python: a parametrized test whose cases never reach a changed comparison
+  boundary no longer makes the finding `exposed`. `sign(x)` under
+  `@pytest.mark.parametrize("x", [5, -3])` bound no literal input, so a
+  `x > 0` -> `x >= 0` change kept the oracle's `exposed` verdict although the
+  mutant survives both cases. Each statically certain parametrize case now
+  binds its literal argvalue, so the finding is `weakly_exposed` and names
+  `x == 0` as the missing boundary (#4559). A case marked skip or xfail, or
+  an argname a lambda, loop or tuple target may shadow, binds nothing.
+- Python: a test that imports a package and calls the owner through its
+  submodule attribute (`import click` then `click.utils._expand_args(...)`)
+  is now related to the owner, and so is an owner in a package
+  `__init__.py` called through its module import (`from dateutil import
+  zoneinfo` then `zoneinfo.get_zonefile_instance(...)`). On pallets/click and
+  dateutil such changes were `no_static_path` although the calling tests kill
+  the mutants (#4560).
+- Python: `unittest` classes that inherit `TestCase` through another class in
+  the same file (`class ZoneInfoGettzTest(GettzTest)`), and test methods on a
+  mixin such a class inherits, are now collected, under the subclass that
+  runs them. On dateutil a change killed by
+  `ZoneInfoGettzTest.testZoneInfoNewInstance` was `no_static_path` (#4562).
+- Python: a related test that replaces the owner with `patch.object(...)`
+  (context manager or decorator) now gives the same `mocked_module`
+  static limit as `patch(...)` and `monkeypatch.setattr(...)`. It was
+  `weakly_exposed` although the test calls the mock, not the owner (#4565).
+- Python: an exact assertion on the owner's own output now counts as
+  observing it when the call goes through the owner's module
+  (`assert utils.sign(0) == 0`), through a result local
+  (`result = sign(0)` then `assert result == 0`), or through an import inside
+  the test function. These findings said the assertion "does not observe the
+  changed owner's output" and stayed `weakly_exposed` although the tests kill
+  the mutants. The comparison-boundary check still applies to these calls
+  (#4567).
 
 ### Added
 
