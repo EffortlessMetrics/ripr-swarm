@@ -254,14 +254,11 @@ fn binding_invalidated_before(
                     .map(|token| token.text())
                     .unwrap_or(""),
             )
+            && let Some(lhs) = bin.lhs()
+            && (path_is_binding(&lhs, &binding.name)
+                || field_receiver_is_binding(&lhs, &binding.name))
         {
-            if let Some(lhs) = bin.lhs() {
-                if path_is_binding(&lhs, &binding.name)
-                    || field_receiver_is_binding(&lhs, &binding.name)
-                {
-                    return true;
-                }
-            }
+            return true;
         }
         if let Some(reference) = ast::RefExpr::cast(node)
             && reference.mut_token().is_some()
