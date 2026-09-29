@@ -7,9 +7,11 @@ mod ids;
 mod lexical;
 mod repo;
 
+#[cfg(test)]
+pub(crate) use binding_predicate::PredicateOperandSide;
 pub(crate) use binding_predicate::{
     BindingPredicateResolution, BindingValueResolution, ChangedBindingPredicateUse,
-    PredicateOperandSide, resolve_changed_binding_uses,
+    resolve_changed_binding_uses,
 };
 pub(crate) use classify::parser_expression_for_probe;
 pub(crate) use diff::probes_for_file_with_relations;
