@@ -171,7 +171,7 @@ async fn sdk_session(
                 .await
             {
                 Err(rmcp::service::ServiceError::McpError(error))
-                    if serde_json::to_value(&error.code).map_err(|error| error.to_string())?
+                    if serde_json::to_value(error.code).map_err(|error| error.to_string())?
                         == serde_json::json!(expected_resource_code) =>
                 {
                     if error.message != "unknown resource; available: ripr://workspace/status"
