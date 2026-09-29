@@ -1037,13 +1037,15 @@ mod tests {
     #[test]
     fn analyzes_simple_predicate_gap() -> Result<(), String> {
         let root = temp_dir("simple");
-        fs::create_dir_all(root.join("src")).unwrap();
-        fs::create_dir_all(root.join("tests")).unwrap();
+        fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("failed to create src directory: {error}"))?;
+        fs::create_dir_all(root.join("tests"))
+            .map_err(|error| format!("failed to create tests directory: {error}"))?;
         fs::write(
             root.join("Cargo.toml"),
             "[package]\nname='x'\nversion='0.1.0'\nedition='2024'\n",
         )
-        .unwrap();
+        .map_err(|error| format!("failed to write Cargo.toml: {error}"))?;
         fs::write(
             root.join("src/lib.rs"),
             r#"
@@ -1052,7 +1054,7 @@ pub fn price(amount: i32, threshold: i32) -> i32 {
 }
 "#,
         )
-        .unwrap();
+        .map_err(|error| format!("failed to write src/lib.rs: {error}"))?;
         fs::write(
             root.join("tests/pricing.rs"),
             r#"
@@ -1063,7 +1065,7 @@ fn premium_customer_gets_discount() {
 }
 "#,
         )
-        .unwrap();
+        .map_err(|error| format!("failed to write tests/pricing.rs: {error}"))?;
         fs::write(
             root.join("diff.patch"),
             r#"diff --git a/src/lib.rs b/src/lib.rs
@@ -1076,7 +1078,7 @@ index 0000000..1111111 100644
  }
 "#,
         )
-        .unwrap();
+        .map_err(|error| format!("failed to write diff.patch: {error}"))?;
         let out = run_analysis(&AnalysisOptions {
             root: root.clone(),
             base: None,

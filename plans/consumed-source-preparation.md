@@ -42,8 +42,8 @@ Public `CheckOutput`, source-range DTOs and existing origin-wrapper signatures
 remain unchanged. `AnalysisResult` already has private fields. Other extensions
 retain inherited fallback, including non-`.rs` Rust-language buffers. Reads
 outside the captured vectors do not establish complete include/dependency
-identity. #1602/#4807 retain that broader work. Preserve #4830 identity-law and
-#4844 RepairAttempt ownership.
+identity. #1602/#4807 retain that broader work. Preserve the #4830
+identity-law and #4844 RepairAttempt ownership.
 
 ## Proof
 
