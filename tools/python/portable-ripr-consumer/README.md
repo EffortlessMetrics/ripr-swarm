@@ -35,7 +35,10 @@ python3 run.py \
 
 `--packet`, `--subject-root`, and `--out` are required. The payload is always
 the packet-relative executable resolved to an absolute path. PATH is never
-used to select `ripr`.
+used to select `ripr`. `--operation pilot` passes `--out` to the payload and
+classifies `out/pilot-summary.json`, not human terminal stdout. `--diff` is
+valid only with `--operation check`. Manifest `argv_template` verbs must
+match the allowlisted operation.
 
 ## What this proves
 
@@ -45,6 +48,13 @@ used to select `ripr`.
   payload, timeout, malformed or partial product JSON, typed product
   limitation, zero subjects when required, subject-tree drift, unwritable
   output, launch failure.
+- Product `analysis_outcome` kinds are the producer-owned set
+  (`complete_with_findings`, `partial_with_limitations`,
+  `unsupported_input`, `analysis_failed`, and the other complete kinds).
+  Invented kinds fail closed.
+- `--subject-digest` is checked before and after launch. A subject tree
+  larger than the digest scanner cap is `environment_unavailable`, not
+  identity drift.
 - A compact receipt at `out/packet-consumption-receipt.json` keeps packet,
   payload, and subject identity separate.
 
