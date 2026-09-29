@@ -35,11 +35,27 @@ jobs:
               text = path.read_text(encoding="utf-8")
               count = text.count(old)
               if count != 1:
-                  raise SystemExit(f"{path}: expected one replacement, found {count}: {old[:120]!r}")
+                  raise SystemExit(
+                      f"{path}: expected one replacement, found {count}: {old[:120]!r}"
+                  )
               path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
           def joined(*lines: str) -> str:
               return "\n".join(lines)
+
+          def replace_near(
+              text: str, marker: str, old: str, new: str, span: int = 320
+          ) -> str:
+              start = text.find(marker)
+              if start < 0:
+                  raise SystemExit(f"missing marker: {marker!r}")
+              segment = text[start : start + span]
+              count = segment.count(old)
+              if count != 1:
+                  raise SystemExit(
+                      f"expected one nearby replacement for {marker!r}, found {count}: {old!r}"
+                  )
+              return text[:start] + segment.replace(old, new, 1) + text[start + span :]
 
           workflow_repository_expr = "$" + "{{ job.workflow_repository }}"
           workflow_sha_expr = "$" + "{{ job.workflow_sha }}"
@@ -57,23 +73,23 @@ jobs:
               "execution: {selected: 5, executed: 5, failed: 0, not_run: 0}, archive_readback_verified: true, build_identities:",
           )
           old_instrument = joined(
-              '      - name: Fetch receipt instrument without credentials',
-              '        shell: bash',
-              '        run: |',
-              '          set -euo pipefail',
+              "      - name: Fetch receipt instrument without credentials",
+              "        shell: bash",
+              "        run: |",
+              "          set -euo pipefail",
               '          git init "${GITHUB_WORKSPACE}"',
               '          git -C "${GITHUB_WORKSPACE}" remote add origin "https://github.com/EffortlessMetrics/ripr-swarm.git"',
               '          git -C "${GITHUB_WORKSPACE}" -c credential.helper= -c http.extraheader= fetch --no-tags --depth=1 origin "${GITHUB_SHA}"',
               '          git -C "${GITHUB_WORKSPACE}" checkout --detach FETCH_HEAD',
           )
           new_instrument = joined(
-              '      - name: Fetch receipt instrument without credentials',
-              '        shell: bash',
-              '        env:',
-              f'          RECEIPT_INSTRUMENT_REPOSITORY: {workflow_repository_expr}',
-              f'          RECEIPT_INSTRUMENT_SHA: {workflow_sha_expr}',
-              '        run: |',
-              '          set -euo pipefail',
+              "      - name: Fetch receipt instrument without credentials",
+              "        shell: bash",
+              "        env:",
+              f"          RECEIPT_INSTRUMENT_REPOSITORY: {workflow_repository_expr}",
+              f"          RECEIPT_INSTRUMENT_SHA: {workflow_sha_expr}",
+              "        run: |",
+              "          set -euo pipefail",
               '          test "${RECEIPT_INSTRUMENT_REPOSITORY}" = "EffortlessMetrics/ripr-swarm"',
               '          [[ "${RECEIPT_INSTRUMENT_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]',
               '          git init "${GITHUB_WORKSPACE}"',
@@ -84,134 +100,225 @@ jobs:
           replace_once(workflow, old_instrument, new_instrument)
           replace_once(
               workflow,
-              "conclusion=\"$(jq -r --arg name \"build and qualify ${target}\" '[.jobs[] | select(.name == $name)] | if length == 1 then .[0].conclusion // \"unknown\" elif length == 0 then \"missing\" else \"duplicate\" end' \"${response}\")\"",
-              "conclusion=\"$(jq -r --arg suffix \"build and qualify ${target}\" '[.jobs[] | select(.name == $suffix or (.name | endswith(\" / \" + $suffix)))] | if length == 1 then .[0].conclusion // \"unknown\" elif length == 0 then \"missing\" else \"duplicate\" end' \"${response}\")\"",
+              'conclusion="$(jq -r --arg name "build and qualify ${target}" \'[.jobs[] | select(.name == $name)] | if length == 1 then .[0].conclusion // "unknown" elif length == 0 then "missing" else "duplicate" end\' "${response}")"',
+              'conclusion="$(jq -r --arg suffix "build and qualify ${target}" \'[.jobs[] | select(.name == $suffix or (.name | endswith(" / " + $suffix)))] | if length == 1 then .[0].conclusion // "unknown" elif length == 0 then "missing" else "duplicate" end\' "${response}")"',
+          )
+
+          allowlist = Path("policy/workflow_allowlist.txt")
+          replace_once(
+              allowlist,
+              ".github/workflows/server-archive-qualification.yml|89|Exact measured largest run block retains ruleset diagnostics plus five-target producer, payload-identity, archive-readback, and receipt-v3 aggregation; credential-free qualification delegates payload and archive construction to Rust xtask commands.",
+              ".github/workflows/server-archive-qualification.yml|90|Exact measured largest run block retains ruleset diagnostics plus five-target producer, explicit archive-readback evidence, and receipt-v3 aggregation; credential-free qualification delegates payload and archive construction to Rust xtask commands.",
           )
 
           tests = Path("xtask/src/tests.rs")
-          marker_anchor = joined(
-              '            "--arg repository \\"${REPOSITORY}\\"",',
-              '            "release_assets_created: false",',
-              '',
+          test_text = tests.read_text(encoding="utf-8")
+          function_start = test_text.find(
+              "fn server_archive_qualification_workflow_is_sha_bound_and_credential_free()"
           )
-          marker_insert = marker_anchor + joined(
-              '            "archive_readback_verified = $true",',
-              '            "archive_readback_verified: true",',
-              f'            "RECEIPT_INSTRUMENT_REPOSITORY: {workflow_repository_expr}",',
-              f'            "RECEIPT_INSTRUMENT_SHA: {workflow_sha_expr}",',
-              '            "endswith(\\" / \\" + $suffix)",',
-              '',
+          next_test = test_text.find(
+              "#[test]\nfn server_archive_ruleset_shape_fixtures_are_strict_and_discriminating()",
+              function_start,
           )
-          replace_once(tests, marker_anchor, marker_insert)
+          if function_start < 0 or next_test < 0:
+              raise SystemExit("qualification invariant test boundaries were not found")
+          block = test_text[function_start:next_test]
 
-          negative_anchor = joined(
-              '        (',
+          block = replace_near(
+              block, '.matches("git init ', "!= 3", "!= 4"
+          )
+          block = replace_near(
+              block,
+              '.matches("-c credential.helper= -c http.extraheader= fetch")',
+              "!= 3",
+              "!= 4",
+          )
+          block = replace_near(
+              block,
+              '.matches("https://github.com/EffortlessMetrics/ripr-swarm.git")',
+              "!= 4",
+              "!= 5",
+          )
+          if (
+              "candidate source must use three isolated unauthenticated git fetches"
+              not in block
+          ):
+              raise SystemExit("stale fetch-count diagnostic was not found")
+          block = block.replace(
+              "candidate source must use three isolated unauthenticated git fetches",
+              "candidate source must use four isolated unauthenticated git fetches",
+              1,
+          )
+          block = replace_near(
+              block,
+              '.matches("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")',
+              "!= 3",
+              "!= 5",
+          )
+          block = replace_near(
+              block,
+              '.matches("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c")',
+              "!= 2",
+              "!= 3",
+          )
+          old_builder = '            "cargo build --locked -p ripr --release",'
+          if block.count(old_builder) != 1:
+              raise SystemExit("stale inline Cargo builder marker was not found once")
+          block = block.replace(
+              old_builder,
+              '            "cargo xtask release-server-archive",',
+              1,
+          )
+
+          required_marker = '            "release_assets_created: false",\n'
+          if block.count(required_marker) != 1:
+              raise SystemExit("release-assets marker was not found once")
+          block = block.replace(
+              required_marker,
+              required_marker
+              + joined(
+                  '            "archive_readback_verified = $true",',
+                  '            "archive_readback_verified: true",',
+                  f'            "RECEIPT_INSTRUMENT_REPOSITORY: {workflow_repository_expr}",',
+                  f'            "RECEIPT_INSTRUMENT_SHA: {workflow_sha_expr}",',
+                  '            "endswith(\\" / \\" + $suffix)",',
+                  "",
+              ),
+              1,
+          )
+
+          old_builder_fixture = joined(
+              "        (",
+              '            "unlocked server build",',
+              '            workflow.replacen("cargo build --locked -p ripr", "cargo build -p ripr", 1),',
+              "        ),",
+          )
+          new_builder_fixture = joined(
+              "        (",
+              '            "bypassed delegated server builder",',
+              "            workflow.replacen(",
+              '                "cargo xtask release-server-archive",',
+              '                "cargo xtask release-server-payload",',
+              "                1,",
+              "            ),",
+              "        ),",
+          )
+          if block.count(old_builder_fixture) != 1:
+              raise SystemExit("stale unlocked-builder negative fixture was not found once")
+          block = block.replace(old_builder_fixture, new_builder_fixture, 1)
+
+          token_fixture = joined(
+              "        (",
               '            "token credential",',
               '            workflow.replacen("ruleset_mode", "GH_TOKEN", 1),',
-              '        ),',
-              '',
+              "        ),",
+              "",
           )
-          negative_insert = joined(
-              '        (',
+          extra_fixtures = joined(
+              "        (",
               '            "caller SHA receipt instrument",',
-              '            workflow.replacen(',
+              "            workflow.replacen(",
               f'                "RECEIPT_INSTRUMENT_SHA: {workflow_sha_expr}",',
               f'                "RECEIPT_INSTRUMENT_SHA: {github_sha_expr}",',
-              '                1,',
-              '            ),',
-              '        ),',
-              '        (',
+              "                1,",
+              "            ),",
+              "        ),",
+              "        (",
               '            "exact-only matrix job lookup",',
-              '            workflow.replacen(',
+              "            workflow.replacen(",
               '                "select(.name == $suffix or (.name | endswith(\\" / \\" + $suffix)))",',
               '                "select(.name == $suffix)",',
-              '                1,',
-              '            ),',
-              '        ),',
-              '        (',
+              "                1,",
+              "            ),",
+              "        ),",
+              "        (",
               '            "implicit archive readback",',
-              '            workflow.replacen(',
+              "            workflow.replacen(",
               '                "archive_readback_verified: true",',
               '                "archive_shape_verified: true",',
-              '                1,',
-              '            ),',
-              '        ),',
-              '        (',
-              '            "token credential",',
-              '            workflow.replacen("ruleset_mode", "GH_TOKEN", 1),',
-              '        ),',
-              '',
+              "                1,",
+              "            ),",
+              "        ),",
+              token_fixture,
           )
-          replace_once(tests, negative_anchor, negative_insert)
+          if block.count(token_fixture) != 1:
+              raise SystemExit("token negative fixture was not found once")
+          block = block.replace(token_fixture, extra_fixtures, 1)
 
+          test_text = test_text[:function_start] + block + test_text[next_test:]
           new_test = r'''
-          #[test]
-          fn server_archive_terminal_job_name_filter_accepts_direct_and_reusable_names(
-          ) -> Result<(), String> {
-              let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-                  .parent()
-                  .ok_or_else(|| "xtask manifest should have a repository parent".to_string())?;
-              let workflow = fs::read_to_string(
-                  repo_root.join(".github/workflows/server-archive-qualification.yml"),
-              )
-              .map_err(|error| format!("failed to read qualification workflow: {error}"))?;
-              let marker = r#"conclusion="$(jq -r --arg suffix "build and qualify ${target}" '"#;
-              let filter_start = workflow
-                  .find(marker)
-                  .map(|offset| offset + marker.len())
-                  .ok_or_else(|| "terminal job-name jq marker is missing".to_string())?;
-              let terminator = r#"' "${response}")""#;
-              let filter_end = workflow[filter_start..]
-                  .find(terminator)
-                  .ok_or_else(|| "terminal job-name jq terminator is missing".to_string())?;
-              let filter = workflow[filter_start..filter_start + filter_end].trim();
-              let root = temp_dir("server-terminal-job-names");
-              let fixture = root.join("workflow-jobs.json");
-              let suffix = "build and qualify x86_64-unknown-linux-gnu";
-              let run = |names: &[&str]| -> Result<String, String> {
-                  let jobs = names
-                      .iter()
-                      .map(|name| serde_json::json!({"name": name, "conclusion": "success"}))
-                      .collect::<Vec<_>>();
-                  fs::write(
-                      &fixture,
-                      serde_json::to_vec(&serde_json::json!({"jobs": jobs}))
-                          .map_err(|error| format!("serialize workflow-jobs fixture: {error}"))?,
-                  )
-                  .map_err(|error| format!("write {}: {error}", fixture.display()))?;
-                  let output = std::process::Command::new("jq")
-                      .args(["-r", "--arg", "suffix", suffix, filter])
-                      .arg(&fixture)
-                      .output()
-                      .map_err(|error| format!("run terminal job-name jq filter: {error}"))?;
-                  if !output.status.success() {
-                      return Err(format!(
-                          "terminal job-name jq filter failed: {}",
-                          String::from_utf8_lossy(&output.stderr)
-                      ));
-                  }
-                  String::from_utf8(output.stdout)
-                      .map(|value| value.trim().to_string())
-                      .map_err(|error| format!("terminal job-name jq output was not UTF-8: {error}"))
-              };
+#[test]
+fn server_archive_terminal_job_name_filter_accepts_direct_and_reusable_names(
+) -> Result<(), String> {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest should have a repository parent".to_string())?;
+    let workflow = fs::read_to_string(
+        repo_root.join(".github/workflows/server-archive-qualification.yml"),
+    )
+    .map_err(|error| format!("failed to read qualification workflow: {error}"))?;
+    let marker = r#"conclusion="$(jq -r --arg suffix "build and qualify ${target}" '"#;
+    let filter_start = workflow
+        .find(marker)
+        .map(|offset| offset + marker.len())
+        .ok_or_else(|| "terminal job-name jq marker is missing".to_string())?;
+    let terminator = r#"' "${response}")""#;
+    let filter_end = workflow[filter_start..]
+        .find(terminator)
+        .ok_or_else(|| "terminal job-name jq terminator is missing".to_string())?;
+    let filter = workflow[filter_start..filter_start + filter_end].trim();
+    let root = temp_dir("server-terminal-job-names");
+    let fixture = root.join("workflow-jobs.json");
+    let suffix = "build and qualify x86_64-unknown-linux-gnu";
+    let run = |names: &[&str]| -> Result<String, String> {
+        let jobs = names
+            .iter()
+            .map(|name| serde_json::json!({"name": name, "conclusion": "success"}))
+            .collect::<Vec<_>>();
+        fs::write(
+            &fixture,
+            serde_json::to_vec(&serde_json::json!({"jobs": jobs}))
+                .map_err(|error| format!("serialize workflow-jobs fixture: {error}"))?,
+        )
+        .map_err(|error| format!("write {}: {error}", fixture.display()))?;
+        let output = std::process::Command::new("jq")
+            .args(["-r", "--arg", "suffix", suffix, filter])
+            .arg(&fixture)
+            .output()
+            .map_err(|error| format!("run terminal job-name jq filter: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "terminal job-name jq filter failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        String::from_utf8(output.stdout)
+            .map(|value| value.trim().to_string())
+            .map_err(|error| format!("terminal job-name jq output was not UTF-8: {error}"))
+    };
 
-              let rehearse = format!("rehearse / {suffix}");
-              let qualify = format!("qualify / {suffix}");
-              assert_eq!(run(&[suffix])?, "success");
-              assert_eq!(run(&[&rehearse])?, "success");
-              assert_eq!(run(&[&qualify])?, "success");
-              assert_eq!(run(&[])?, "missing");
-              assert_eq!(run(&[suffix, &rehearse])?, "duplicate");
-              ignore_remove_dir_all(&root);
-              Ok(())
-          }
+    let rehearse = format!("rehearse / {suffix}");
+    let qualify = format!("qualify / {suffix}");
+    assert_eq!(run(&[suffix])?, "success");
+    assert_eq!(run(&[&rehearse])?, "success");
+    assert_eq!(run(&[&qualify])?, "success");
+    assert_eq!(run(&[])?, "missing");
+    assert_eq!(run(&[suffix, &rehearse])?, "duplicate");
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
 
-          '''
-          replace_once(
-              tests,
-              "#[test]\nfn server_archive_ruleset_shape_fixtures_are_strict_and_discriminating()",
-              new_test + "#[test]\nfn server_archive_ruleset_shape_fixtures_are_strict_and_discriminating()",
+'''
+          insertion_marker = (
+              "#[test]\n"
+              "fn server_archive_ruleset_shape_fixtures_are_strict_and_discriminating()"
           )
+          if test_text.count(insertion_marker) != 1:
+              raise SystemExit("ruleset test insertion marker was not found once")
+          test_text = test_text.replace(
+              insertion_marker, new_test + insertion_marker, 1
+          )
+          tests.write_text(test_text, encoding="utf-8")
           PY
           git rm -f .github/workflows/zz-repair-4699-review.yml
 
