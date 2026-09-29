@@ -20,6 +20,57 @@ pub struct LoadedDiff {
     pub effective_base: Option<String>,
 }
 
+/// Decode a supplied diff the same way the git-run path decodes its stdout
+/// (`run_git_diff_with_unified`). A diff carries the raw bytes of every
+/// changed file, so one Latin-1 or binary-ish text file in the change made
+/// `--diff` refuse the whole diff that `ripr check` itself accepts.
+///
+/// Hunk payloads decode lossily. Path identity must not: the git route pins
+/// `core.quotePath=true`, so non-UTF-8 path bytes arrive C-quoted, but a
+/// supplied diff made with `quotePath=false` carries them raw, and a lossy
+/// decode would merge distinct names onto one U+FFFD path (#3601). A
+/// file-header line that is not UTF-8 therefore fails closed, naming the
+/// regeneration command.
+fn decode_diff_text(source: &str, bytes: Vec<u8>) -> Result<String, String> {
+    let error = match String::from_utf8(bytes) {
+        Ok(text) => return Ok(text),
+        Err(error) => error,
+    };
+    let bytes = error.as_bytes();
+    let lines = bytes.split(|byte| *byte == b'\n').collect::<Vec<_>>();
+    let not_utf8 = |line: &[u8]| std::str::from_utf8(line).is_err();
+    // A `---`/`+++` pair is a file header in a plain unified diff too.
+    let raw_marker_pair = lines.windows(2).any(|pair| {
+        matches!(pair, [old, new] if old.starts_with(b"--- ")
+            && new.starts_with(b"+++ ")
+            && (not_utf8(old) || not_utf8(new)))
+    });
+    let raw_header = lines.iter().any(|line| {
+        not_utf8(line)
+            && DIFF_PATH_HEADER_PREFIXES
+                .iter()
+                .any(|prefix| line.starts_with(prefix))
+    });
+    if raw_marker_pair || raw_header {
+        return Err(format!(
+            "failed to read {source}: a file header names a path that is not UTF-8 and \
+             not C-quoted, so distinct paths cannot be told apart; regenerate the diff \
+             with `git -c core.quotePath=true diff ...`"
+        ));
+    }
+    Ok(String::from_utf8_lossy(bytes).into_owned())
+}
+
+/// Git file-header lines that carry a path. None can be a hunk line, which
+/// always starts with `+`, `-`, a space or a backslash.
+const DIFF_PATH_HEADER_PREFIXES: &[&[u8]] = &[
+    b"diff --git ",
+    b"rename from ",
+    b"rename to ",
+    b"copy from ",
+    b"copy to ",
+];
+
 pub fn load_diff(
     root: &Path,
     base: Option<&str>,
@@ -43,10 +94,10 @@ pub fn load_diff_with_effective_base(
             // library callers never receive CLI-branded stderr text.
             // #4480: stdin is bounded by the shared CLI input cap, so a
             // producer that never closes the pipe cannot grow memory forever.
-            let text = crate::bounded_input::read_reader_to_string(std::io::stdin().lock())
+            let buffer = crate::bounded_input::read_reader(std::io::stdin().lock())
                 .map_err(|err| format!("failed to read diff from stdin: {err}"))?;
             return Ok(LoadedDiff {
-                text,
+                text: decode_diff_text("diff from stdin", buffer)?,
                 effective_base: None,
             });
         }
@@ -62,10 +113,10 @@ pub fn load_diff_with_effective_base(
         }
         // #4480: bounded, so `--diff /dev/zero` or a multi-GB log fails with
         // the input limit instead of reading until memory is exhausted.
-        let text = crate::bounded_input::read_to_string(diff_file)
+        let bytes = crate::bounded_input::read(diff_file)
             .map_err(|err| format!("failed to read diff file {}: {err}", diff_file.display()))?;
         return Ok(LoadedDiff {
-            text,
+            text: decode_diff_text(&format!("diff file {}", diff_file.display()), bytes)?,
             effective_base: None,
         });
     }
@@ -119,11 +170,29 @@ pub fn load_worktree_diff_with_effective_base(
 
     let base = resolve_effective_base(root, base, git_timeout)?;
 
-    let text = run_git_diff(root, &base, &["--submodule=short"], git_timeout)?;
+    let origin = worktree_diff_origin(root, &base, git_timeout);
+    let text = run_git_diff(root, &origin, &["--submodule=short"], git_timeout)?;
     Ok(LoadedDiff {
         text,
         effective_base: Some(base),
     })
+}
+
+/// The commit a `--worktree` diff starts from: the merge base of `base` and
+/// `HEAD`, the same origin the committed `<base>...HEAD` form uses. Diffing
+/// from the base tip instead would report every commit the base gained after
+/// the branch forked, reversed, as a change in this branch, so a worktree
+/// re-check after a test edit would not cover the same PR changes as the
+/// check it is compared with. Without a merge base (a shallow clone, an
+/// unborn branch) the base tip stays the origin, as before.
+fn worktree_diff_origin(root: &Path, base: &str, git_timeout: Option<Duration>) -> String {
+    crate::git::run_git_output_with_deadline(root, &["merge-base", base, "HEAD"], git_timeout)
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|commit| commit.trim().to_string())
+        .filter(|commit| !commit.is_empty())
+        .unwrap_or_else(|| base.to_string())
 }
 
 /// Resolve the base ref the diff will actually run against, which is also
@@ -946,6 +1015,56 @@ mod tests {
     }
 
     #[test]
+    fn diff_file_with_non_utf8_content_loads_like_the_git_route() -> std::io::Result<()> {
+        // A Latin-1 line in an unrelated changed file used to refuse the
+        // whole `--diff` input ("stream did not contain valid UTF-8") that
+        // the git-run route decodes lossily.
+        let dir = unique_fixture_root("load-diff-non-utf8")?;
+        ignore_remove_dir_all(&dir);
+        fs::create_dir_all(&dir)?;
+        let diff_path = dir.join("change.diff");
+        fs::write(
+            &diff_path,
+            b"diff --git a/notes.txt b/notes.txt\n--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n-caf\xe9\n+caf\xe9s\ndiff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-fn a() -> bool { 1 > 0 }\n+fn a() -> bool { 1 >= 0 }\n",
+        )?;
+
+        let result = load_diff(&dir, None, Some(&diff_path), None);
+        ignore_remove_dir_all(&dir);
+        let text = result.map_err(std::io::Error::other)?;
+        assert!(text.contains("-caf\u{fffd}\n+caf\u{fffd}s\n"), "{text}");
+        let files = crate::analysis::diff::parse_unified_diff(&text);
+        let rust = files
+            .iter()
+            .find(|file| file.path == std::path::Path::new("src/lib.rs"))
+            .ok_or_else(|| std::io::Error::other("rust file missing from parsed diff"))?;
+        assert_eq!(rust.added_lines[0].text, "fn a() -> bool { 1 >= 0 }");
+        Ok(())
+    }
+
+    #[test]
+    fn diff_file_with_raw_non_utf8_path_fails_closed() -> std::io::Result<()> {
+        // `quotePath=false` emits raw path bytes; a lossy decode would merge
+        // `p_\xff.rs` and `p_\xfe.rs` onto one U+FFFD path (#3601).
+        let git_diff = b"diff --git a/src/p_\xff.rs b/src/p_\xff.rs\n--- a/src/p_\xff.rs\n+++ b/src/p_\xff.rs\n@@ -1 +1 @@\n-a\n+b\n".to_vec();
+        let plain_diff = b"--- src/p_\xfe.rs\n+++ src/p_\xfe.rs\n@@ -1 +1 @@\n-a\n+b\n".to_vec();
+        for bytes in [git_diff, plain_diff] {
+            let Err(message) = decode_diff_text("diff from stdin", bytes) else {
+                return Err(std::io::Error::other(
+                    "a raw non-UTF-8 path must fail closed",
+                ));
+            };
+            assert!(message.contains("core.quotePath=true"), "{message}");
+        }
+        // C-quoted paths are ASCII, so only the hunk payload decodes lossily.
+        let quoted =
+            b"diff --git \"a/src/p_\\377.rs\" \"b/src/p_\\377.rs\"\n@@ -1 +1 @@\n-caf\xe9\n+b\n"
+                .to_vec();
+        let text = decode_diff_text("diff from stdin", quoted).map_err(std::io::Error::other)?;
+        assert!(text.contains("-caf\u{fffd}"), "{text}");
+        Ok(())
+    }
+
+    #[test]
     fn missing_diff_file_keeps_the_os_read_error() -> std::io::Result<()> {
         // #4376(c) negative control: a path that is not a directory keeps the
         // OS error, so genuine read failures (missing file, ACL denial) are
@@ -1698,6 +1817,58 @@ mod tests {
             loaded.as_ref().is_ok_and(|diff| diff.contains("src.rs")),
             "expected a resolvable explicit base to analyze the changed file, got: {loaded:?}"
         );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_load_starts_at_the_merge_base_when_the_base_moved_on() -> std::io::Result<()> {
+        // The branch forks at A and changes feature.rs; the base then gains
+        // B, which changes upstream.rs. The committed `main...HEAD` diff
+        // names only feature.rs, and the worktree diff must cover the same
+        // PR changes plus the uncommitted edit, not B reversed.
+        let dir = unique_fixture_root("worktree-merge-base")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        fs::write(dir.join("feature.rs"), "fn feature() -> u32 { 1 }\n")?;
+        fs::write(dir.join("upstream.rs"), "fn upstream() -> u32 { 1 }\n")?;
+        fs::write(dir.join("edit.rs"), "fn edit() -> u32 { 1 }\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "--quiet", "-m", "A"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "-b", "feature"])?;
+        fs::write(dir.join("feature.rs"), "fn feature() -> u32 { 2 }\n")?;
+        run_git_checked(&dir, &["commit", "--quiet", "-am", "feature"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "main"])?;
+        fs::write(dir.join("upstream.rs"), "fn upstream() -> u32 { 2 }\n")?;
+        run_git_checked(&dir, &["commit", "--quiet", "-am", "B"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "feature"])?;
+        fs::write(dir.join("edit.rs"), "fn edit() -> u32 { 2 }\n")?;
+
+        let tip_diff = run_git_checked(&dir, &["diff", "main"])?;
+        assert!(
+            tip_diff.contains("upstream.rs"),
+            "fixture precondition: a base-tip diff must carry the base's own change:\n{tip_diff}"
+        );
+        let committed = load_diff(&dir, Some("main"), None, None).map_err(std::io::Error::other)?;
+        assert!(
+            committed.contains("feature.rs") && !committed.contains("upstream.rs"),
+            "fixture precondition: the committed range names only the branch change:\n{committed}"
+        );
+
+        let loaded = load_worktree_diff_with_effective_base(&dir, Some("main"), None)
+            .map_err(std::io::Error::other)?;
+        assert!(
+            loaded.text.contains("feature.rs") && loaded.text.contains("edit.rs"),
+            "the worktree diff must keep the branch change and the uncommitted edit:\n{}",
+            loaded.text
+        );
+        assert!(
+            !loaded.text.contains("upstream.rs"),
+            "the worktree diff must not report the base's later commit as a branch change:\n{}",
+            loaded.text
+        );
+        assert_eq!(loaded.effective_base.as_deref(), Some("main"));
 
         ignore_remove_dir_all(&dir);
         Ok(())
