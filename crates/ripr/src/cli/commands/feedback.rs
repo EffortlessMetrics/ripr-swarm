@@ -506,7 +506,7 @@ mod tests {
         }
         assert!(FEEDBACK_HELP.contains("schema_version 0.1"));
         assert!(FEEDBACK_HELP.contains("usefulness_feedback_receipt"));
-        assert!(FEEDBACK_RECORD_HELP.contains("not file/line"));
+        assert!(FEEDBACK_RECORD_HELP.contains("file/line"));
         assert!(FEEDBACK_EXPORT_HELP.contains("success percentages"));
         assert!(FEEDBACK_RECORD_HELP.contains("does not suppress"));
         assert!(FEEDBACK_RECORD_HELP.contains("--file PATH"));

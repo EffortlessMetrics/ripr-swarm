@@ -481,11 +481,9 @@ fn receipt_matches_row(receipt: &FeedbackReceipt, row: &RouteQualityRow) -> bool
     {
         return true;
     }
-    if let (Some(digest), Some(kind)) = (&receipt.identity.route_digest, &row.repair_kind)
-        && digest == kind
-    {
-        return true;
-    }
+    // Repair-kind / route-digest coincidence is not identity: many rows share
+    // a kind. Unmatched receipts stay unmatched rather than attaching to every
+    // similarly named route.
     false
 }
 
