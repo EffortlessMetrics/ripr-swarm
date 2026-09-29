@@ -28,7 +28,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -n -A8 -B3 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c' xtask/src/tests.rs
           ruby -ryaml -e '
             doc = YAML.load_file(ARGV[0])
             steps = doc.fetch("jobs").fetch("repair").fetch("steps")
@@ -44,7 +43,23 @@ jobs:
               File.write(path, step.fetch("run"))
             end
           ' .github/workflows/zz-repair-4699-review.yml
-          sed -i 's/span: int = 320/span: int = 120/' /tmp/repair.sh
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('/tmp/repair.sh')
+          text = path.read_text(encoding='utf-8').replace(
+              'span: int = 320', 'span: int = 120', 1
+          )
+          marker = '.matches("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c")'
+          start = text.index(marker)
+          end = text.index('          )', start)
+          segment = text[start:end]
+          needle = '              "!= 3",\n'
+          if segment.count(needle) != 1:
+              raise SystemExit('download invariant replacement call not found once')
+          segment = segment.replace(needle, needle + '              220,\n', 1)
+          path.write_text(text[:start] + segment + text[end:], encoding='utf-8')
+          PY
           grep -F 'span: int = 120' /tmp/repair.sh
 
       - name: Apply and validate repair
