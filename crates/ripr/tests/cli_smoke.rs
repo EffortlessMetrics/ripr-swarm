@@ -15296,6 +15296,44 @@ fn repair_route_manifest(
     )?)?)
 }
 
+/// Writes one receipt to both the compatibility projection and the digest-bound
+/// attempt-local artifact, then updates `terminal_artifacts` so status still
+/// reads this attempt's result.
+fn repair_route_write_terminal_receipt(
+    root: &Path,
+    attempt_id: &str,
+    receipt: &serde_json::Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = serde_json::to_vec_pretty(receipt)?;
+    std::fs::write(root.join("target/ripr/reports/agent-receipt.json"), &bytes)?;
+    let manifest_path = root
+        .join("target/ripr/repair-attempts")
+        .join(attempt_id)
+        .join("attempt.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path)?)?;
+    let digest = sha256_hex_bytes(&bytes);
+    let size = u64::try_from(bytes.len())?;
+    let Some(artifacts) = manifest["terminal_artifacts"].as_array_mut() else {
+        return Err("attempt retained no terminal_artifacts".into());
+    };
+    let Some(receipt_artifact) = artifacts
+        .iter_mut()
+        .find(|artifact| artifact["role"] == "agent_receipt")
+    else {
+        return Err("attempt retained no agent_receipt".into());
+    };
+    let relative = receipt_artifact["path"]
+        .as_str()
+        .ok_or("agent_receipt path missing")?
+        .to_string();
+    std::fs::write(root.join(&relative), &bytes)?;
+    receipt_artifact["sha256"] = serde_json::Value::String(digest);
+    receipt_artifact["bytes"] = serde_json::Value::from(size);
+    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+    Ok(())
+}
+
 fn repair_route_attempt<'a>(
     report: &'a serde_json::Value,
     attempt_id: &str,
@@ -15678,7 +15716,7 @@ fn agent_status_is_complete_only_for_an_advisory_improved_receipt_at_head()
         receipt["status"] = serde_json::Value::String("advisory".to_string());
         receipt["analysis_outcome_status"] = serde_json::Value::String("complete".to_string());
         receipt["analysis_outcome_error"] = serde_json::Value::Null;
-        std::fs::write(&receipt_path, serde_json::to_vec_pretty(&receipt)?)?;
+        repair_route_write_terminal_receipt(&root, &attempt_id, &receipt)?;
     }
     let manifest = repair_route_manifest(&root, &attempt_id)?;
     assert_eq!(manifest["state"], "ready_to_finish", "{manifest:#}");
@@ -15749,7 +15787,7 @@ fn agent_status_is_complete_only_for_an_advisory_improved_receipt_at_head()
     // A receipt that names a different after verdict is not this attempt's.
     receipt["repair_attempt"]["delta_sha256"] =
         serde_json::Value::String(format!("sha256:{}", "0".repeat(64)));
-    std::fs::write(&receipt_path, serde_json::to_vec_pretty(&receipt)?)?;
+    repair_route_write_terminal_receipt(&root, &attempt_id, &receipt)?;
     let report = repair_route_status(&root)?;
     let attempt = repair_route_attempt(&report, &attempt_id)?;
     assert_eq!(attempt["disposition"], "unconfirmed", "{report:#}");

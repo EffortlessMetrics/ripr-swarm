@@ -845,10 +845,15 @@ pub(crate) fn retain_terminal_evidence(
             let existing = std::fs::read(&destination)
                 .map_err(|error| format!("read {} failed: {error}", destination.display()))?;
             if sha256_bytes(&existing) != digest {
-                return Err(format!(
-                    "repair attempt destination is immutable and already exists: {}",
-                    destination.display()
-                ));
+                if !manifest.terminal_artifacts.is_empty() {
+                    return Err(format!(
+                        "repair attempt destination is immutable and already exists: {}",
+                        destination.display()
+                    ));
+                }
+                // Restore and crash-before-manifest leave unpublished leftover
+                // files. They are not a committed result; retry may replace them.
+                replace_file_atomically(&destination, &bytes)?;
             }
         } else {
             write_bytes_atomic(&destination, &bytes)?;
@@ -930,6 +935,17 @@ pub(crate) fn complete_pending_terminal_retention(
         && bound("/repair_attempt/delta_sha256", &after.delta_sha256)
         && bound("/repair_attempt/packet_sha256", &after.packet_sha256))
     {
+        return Ok(false);
+    }
+    let verify_bytes = std::fs::read(&verify_path)
+        .map_err(|error| format!("read {} failed: {error}", verify_path.display()))?;
+    let Some(expected_verify) = receipt
+        .pointer("/provenance/verify_artifact/sha256")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return Ok(false);
+    };
+    if expected_verify != sha256_bytes(&verify_bytes) {
         return Ok(false);
     }
     retain_terminal_evidence(
@@ -1332,10 +1348,11 @@ pub(crate) fn restore_repair_attempt_to_awaiting_edit(
     }
     manifest.state = RepairAttemptState::AwaitingEdit;
     manifest.after = None;
-    // Terminal files stay on disk (immutable). They are not before-phase
-    // inputs; clearing the manifest field keeps the restored awaiting_edit
-    // record from claiming a finished result. A retry re-attaches them when
-    // the bytes still match.
+    // Terminal files stay on disk. They are not before-phase inputs; clearing
+    // the manifest field keeps the restored awaiting_edit record from claiming
+    // a finished result. A retry reuses them when the bytes still match, and
+    // may replace unpublished leftovers when a later finish produces a new
+    // timestamped receipt.
     manifest.terminal_artifacts.clear();
     validate_manifest(&manifest)?;
     let mut bytes = serde_json::to_vec_pretty(&manifest)
@@ -3427,13 +3444,27 @@ mod tests {
     }
 
     fn bound_receipt_bytes(manifest: &RepairAttemptManifest) -> Result<Vec<u8>, String> {
+        bound_receipt_bytes_with_verify(manifest, None)
+    }
+
+    fn bound_receipt_bytes_with_verify(
+        manifest: &RepairAttemptManifest,
+        verify_sha256: Option<&str>,
+    ) -> Result<Vec<u8>, String> {
         let after = manifest
             .after
             .as_ref()
             .ok_or("finished sample has no after")?;
+        let mut provenance = serde_json::json!({ "movement": "unchanged" });
+        if let Some(sha256) = verify_sha256 {
+            provenance["verify_artifact"] = serde_json::json!({
+                "path": crate::agent::loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT,
+                "sha256": sha256
+            });
+        }
         let value = serde_json::json!({
             "status": "advisory",
-            "provenance": { "movement": "unchanged" },
+            "provenance": provenance,
             "repair_attempt": {
                 "attempt_id": after.attempt_id.as_str(),
                 "after_head": after.repository_head,
@@ -3581,16 +3612,17 @@ mod tests {
         let reports = root.join("target/ripr/reports");
         std::fs::create_dir_all(&reports)
             .map_err(|error| format!("create {} failed: {error}", reports.display()))?;
-        std::fs::write(
-            reports.join("agent-receipt.json"),
-            bound_receipt_bytes(&finished)?,
-        )
-        .map_err(|error| format!("write receipt failed: {error}"))?;
+        let verify_bytes = b"{\"kind\":\"verify\"}\n";
         std::fs::write(
             root.join("target/ripr/workflow/agent-verify.json"),
-            b"{\"kind\":\"verify\"}\n",
+            verify_bytes,
         )
         .map_err(|error| format!("write verify failed: {error}"))?;
+        std::fs::write(
+            reports.join("agent-receipt.json"),
+            bound_receipt_bytes_with_verify(&finished, Some(&sha256_bytes(verify_bytes)))?,
+        )
+        .map_err(|error| format!("write receipt failed: {error}"))?;
 
         if !complete_pending_terminal_retention(&root, finished.repair_attempt_id.as_str())? {
             return Err("matching compatibility receipt should complete retention".to_string());
@@ -3602,6 +3634,122 @@ mod tests {
         }
         if complete_pending_terminal_retention(&root, finished.repair_attempt_id.as_str())? {
             return Err("a second completion must be a no-op".to_string());
+        }
+
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn pending_terminal_retention_refuses_a_replaced_verify_projection() -> Result<(), String> {
+        let root = test_repo_root("retain-pending-verify")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "pending-verify")?;
+        let finished = finish_sample_attempt(&root, &prepared)?;
+        let reports = root.join("target/ripr/reports");
+        std::fs::create_dir_all(&reports)
+            .map_err(|error| format!("create {} failed: {error}", reports.display()))?;
+        let original_verify = b"{\"kind\":\"verify\",\"attempt\":\"a\"}\n";
+        std::fs::write(
+            reports.join("agent-receipt.json"),
+            bound_receipt_bytes_with_verify(&finished, Some(&sha256_bytes(original_verify)))?,
+        )
+        .map_err(|error| format!("write receipt failed: {error}"))?;
+        std::fs::write(
+            root.join("target/ripr/workflow/agent-verify.json"),
+            b"{\"kind\":\"verify\",\"attempt\":\"b\"}\n",
+        )
+        .map_err(|error| format!("write replaced verify failed: {error}"))?;
+
+        if complete_pending_terminal_retention(&root, finished.repair_attempt_id.as_str())? {
+            return Err(
+                "a replaced verify projection must not be retained as A's evidence".to_string(),
+            );
+        }
+        let manifest = load_repair_attempt_manifest(&root, &finished.repair_attempt_id)?;
+        if !manifest.terminal_artifacts.is_empty() {
+            return Err("pending completion must leave terminal_artifacts empty".to_string());
+        }
+
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn restored_attempt_may_replace_unpublished_terminal_files() -> Result<(), String> {
+        let root = test_repo_root("retain-restore")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "restore")?;
+        let finished = finish_sample_attempt(&root, &prepared)?;
+        let reports = root.join("target/ripr/reports");
+        std::fs::create_dir_all(&reports)
+            .map_err(|error| format!("create {} failed: {error}", reports.display()))?;
+        let receipt_path = reports.join("agent-receipt.json");
+        let verify_path = root.join("target/ripr/workflow/agent-verify.json");
+        std::fs::write(&receipt_path, bound_receipt_bytes(&finished)?)
+            .map_err(|error| format!("write receipt failed: {error}"))?;
+        std::fs::write(&verify_path, b"{\"kind\":\"verify\"}\n")
+            .map_err(|error| format!("write verify failed: {error}"))?;
+        retain_terminal_evidence(
+            &root,
+            &finished.repair_attempt_id,
+            &[
+                BeforeArtifactSource {
+                    role: TERMINAL_RECEIPT_ROLE,
+                    path: &receipt_path,
+                },
+                BeforeArtifactSource {
+                    role: TERMINAL_VERIFY_ROLE,
+                    path: &verify_path,
+                },
+            ],
+        )?;
+
+        restore_repair_attempt_to_awaiting_edit(&root, &finished.repair_attempt_id)?;
+        let restored = load_repair_attempt_manifest(&root, &finished.repair_attempt_id)?;
+        let packet = root.join(&find_manifest_artifact(&restored, "agent_packet")?.path);
+        finish_repair_attempt(
+            &root,
+            &finished.repair_attempt_id,
+            &packet,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
+        let retried = load_repair_attempt_manifest(&root, &finished.repair_attempt_id)?;
+        let mut receipt: serde_json::Value =
+            serde_json::from_slice(&bound_receipt_bytes(&retried)?)
+                .map_err(|error| format!("parse retried receipt: {error}"))?;
+        receipt["generated_at"] = serde_json::json!("retry");
+        std::fs::write(
+            &receipt_path,
+            serde_json::to_vec_pretty(&receipt)
+                .map_err(|error| format!("serialize retried receipt: {error}"))?,
+        )
+        .map_err(|error| format!("write retried receipt failed: {error}"))?;
+        std::fs::write(&verify_path, b"{\"kind\":\"verify\",\"retry\":true}\n")
+            .map_err(|error| format!("write retried verify failed: {error}"))?;
+
+        retain_terminal_evidence(
+            &root,
+            &retried.repair_attempt_id,
+            &[
+                BeforeArtifactSource {
+                    role: TERMINAL_RECEIPT_ROLE,
+                    path: &receipt_path,
+                },
+                BeforeArtifactSource {
+                    role: TERMINAL_VERIFY_ROLE,
+                    path: &verify_path,
+                },
+            ],
+        )?;
+        let retained = load_repair_attempt_manifest(&root, &retried.repair_attempt_id)?;
+        match load_attempt_terminal_receipt(&root, &retained) {
+            AttemptTerminalReceipt::Issued { value, .. } => {
+                if value["generated_at"] != "retry" {
+                    return Err("retry must retain the new receipt bytes".to_string());
+                }
+            }
+            other => return Err(format!("expected issued retried receipt, got {other:?}")),
         }
 
         std::fs::remove_dir_all(&root)
