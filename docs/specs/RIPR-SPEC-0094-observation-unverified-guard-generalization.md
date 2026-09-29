@@ -210,6 +210,31 @@ Proof: `strongest_oracle_cannot_borrow_weaker_assertion_confirmation`,
 `equally_strong_confirmed_oracle_preserves_discrimination_in_either_order`,
 and the `oracle_confirmation_mixed` fixture registered in the honesty corpus.
 
+## Direct collection StateWrite observer (#4575)
+
+One effect family is admitted through the existing `PropagationWitnessV1`
+direct-sink authority: a bare-identifier collection mutation such as
+`items.push(5)` whose receiver is a passed mutable collection.
+
+Confirmation for that family requires the assertion's **primary observed
+subject** to be that same receiver:
+
+- `assert_eq!(items, expected)` observes `items` and retains useful evidence.
+- `assert_eq!(other, expected)` and `assert_eq!(other, items)` observe
+  `other` and stay `observation_unverified`.
+- A return-value assertion, a string containing the callee name, or an
+  unrelated mock does not confirm the collection sink.
+
+`self.field.push`, helper/dynamic receivers, and other effect families keep
+the existing Part C path. This does not absorb oracle-pooling (#4404) or
+rewrite the shared witness type (#3160).
+
+Proof: `mutating_collection_a_while_asserting_b_stays_unverified`,
+`asserting_affected_collection_retains_confirmation_in_either_order`,
+`direct_collection_push_completes_effect_target_and_rejects_wrong_observer`,
+`direct_collection_state_write_requires_complete_witness`, and
+`direct_collection_mutation_discriminates_actual_observer_not_sibling_collection`.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/reveal.rs` unit tests for all new families.
@@ -229,7 +254,9 @@ and the `oracle_confirmation_mixed` fixture registered in the honesty corpus.
   - `RevealAssertionAnalysis.strongest_observation_confirmed` keeps confirmation
     on the assertion supplying the selected strength and kind.
   - `analyze_related_assertions` computes `observation_confirmed =
-    has_token_match || (is_effect_family && effect_observer_confirms)`.
+    has_token_match || (is_effect_family && effect_observer_confirms)`, except
+    the direct collection StateWrite family (#4575) which requires the
+    assertion's primary observed subject to be the mutated receiver.
   - `assertion_matches_probe_detail` receives `match_arm_variants` param.
   - `build_discriminate_evidence` updated message.
 

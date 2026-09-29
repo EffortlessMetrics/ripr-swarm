@@ -3,6 +3,19 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-09-29: Whole-object equality is not an effect observer of a different collection (#4575)
+
+A SideEffect `items.push(...)` on a passed collection can be confirmed by
+`assert_eq!(items, expected)` and must stay unverified for `assert_eq!(other, expected)`
+or `assert_eq!(other, items)`. Kind-matching `WholeObjectEquality` / token
+coincidence on the expected side is not identity with the mutated receiver.
+
+Pin this as a should-stay-`weakly_exposed` control for the sibling collection.
+Do not generalize that rule to every effect family: mock/snapshot/whole-object
+observers for `persist_audit(record)` and `notifier.send(...)` remain on the
+existing Part C path. Reuse `PropagationWitnessV1`; do not mint a second
+witness DTO.
+
 ## 2026-09-16: Parallel-build test flakes are shared-state mechanisms (#3742)
 
 A rotating family of suite failures under parallel cargo builds (observed

@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Direct collection StateWrite (`items.push(...)` on a passed identifier)
+  now binds the affected collection through the existing propagation
+  witness. Asserting a different collection, the return value, a callee-name
+  string, or an unrelated mock no longer confirms that effect; asserting the
+  actual collection retains discrimination. Return, error, and field
+  direct-sink behavior is unchanged
+  ([#4575](https://github.com/EffortlessMetrics/ripr-swarm/issues/4575)).
 - MCP: a client that opens with `server/discover` (protocol `2026-07-28`)
   now receives the same instructions as an `initialize` client, including the
   CLI route that analyzes the diff. Before, only `initialize` carried them.
