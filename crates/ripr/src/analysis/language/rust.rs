@@ -203,6 +203,17 @@ impl PartialDiffStopReason {
             Self::LineBudgetExceededOnFirstFile => "line_budget_exceeded_on_first_file",
         }
     }
+
+    /// The env override that controls the budget which stopped selection:
+    /// the only continuation route for a partial run (RIPR-PROP-0019
+    /// decision 6). Owned here so every renderer names the same variable for
+    /// the same stop reason.
+    pub(crate) fn budget_env(self) -> &'static str {
+        match self {
+            Self::FileBudget => PARTIAL_DIFF_FILE_BUDGET_ENV,
+            Self::LineBudget | Self::LineBudgetExceededOnFirstFile => PARTIAL_DIFF_LINE_BUDGET_ENV,
+        }
+    }
 }
 
 /// The typed run state of a `limited_partial_scope` diff analysis
@@ -256,6 +267,25 @@ impl PartialDiffScope {
     pub const CONTINUATION_DISCLOSURE: &'static str = "partial result: raise RIPR_PARTIAL_DIFF_FILE_BUDGET and/or \
          RIPR_PARTIAL_DIFF_LINE_BUDGET to widen the analyzed partition; named \
          partition continuation is not available";
+
+    /// The effective (post-clamp) size of the budget that stopped selection:
+    /// the file budget for [`PartialDiffStopReason::FileBudget`], otherwise
+    /// the line budget.
+    pub(crate) fn stopping_budget(&self) -> usize {
+        match self.stop_reason {
+            PartialDiffStopReason::FileBudget => self.file_budget,
+            PartialDiffStopReason::LineBudget
+            | PartialDiffStopReason::LineBudgetExceededOnFirstFile => self.line_budget,
+        }
+    }
+
+    /// Whether any changed-line file of the diff is known to be outside the
+    /// selected partition. `false` only when every changed-line file was
+    /// selected (for example a single oversized first file); the run still
+    /// stays `limited_partial_scope` and never claims complete findings.
+    pub(crate) fn has_known_uninspected_scope(&self) -> bool {
+        self.uninspected_files_lower_bound > 0 || self.uninspected_changed_lines_lower_bound > 0
+    }
 
     /// Whether `path` (any spelling) names a selected file.
     pub(crate) fn selects(&self, path: &Path) -> bool {

@@ -337,6 +337,15 @@ are scoped or reviewed.
   `actionable-gaps.json` does not hold no longer gets that report's first
   packet: the gap ledger is tried, then a status packet naming the gap.
 
+- `ripr check` human output for a budget-stopped (`limited_partial_scope`)
+  run now names the budget that stopped it and its size (for example
+  `the file budget of 200 changed file(s) (RIPR_PARTIAL_DIFF_FILE_BUDGET=200)`),
+  says how many findings were produced before the stop and that more may
+  exist beyond the budget, and tells you to raise that one variable to widen
+  the partition. When every changed file was selected (a single oversized
+  first file), it no longer prints "at least 0 changed file(s) ... may contain
+  additional findings"; it says the result stays partial instead.
+
 ### Added
 
 - Zed: a Zed extension in `editors/zed` starts `ripr lsp --stdio` from your
