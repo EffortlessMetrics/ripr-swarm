@@ -11,6 +11,10 @@ are scoped or reviewed.
 
 ### Added
 
+- CLI: one typed public command catalog now owns RIPR command paths, aliases,
+  and public/compatibility/advanced/internal classification, with parser and
+  typo-suggestion two-way parity. Human help, workflow discovery, and
+  `help --json` are unchanged (#4822).
 - CLI: `ripr pr-ledger record --out-jsonl` and `ripr policy history --out-jsonl`
   append one compact JSONL record so adopting consumers can populate history
   trend fields. Generated CI still only reads those files when present and
@@ -109,6 +113,16 @@ are scoped or reviewed.
   packaging and cachetools bug fixes moved 25 false `no_static_path` or
   wrongly related findings; each flagged line's mutants were killed by the
   project's own suite.
+- `ripr doctor` in a TypeScript repository no longer recommends `ripr check`
+  without saying TypeScript is off: it names the enable step beside the
+  first command, because `check` skips files of a language that is not
+  enabled. In a mixed Python and TypeScript repository the enable tip now
+  keeps the languages already enabled (`["rust", "python", "typescript"]`)
+  instead of offering `["rust", "typescript"]`, which switched Python off and
+  made the next doctor run suggest the opposite edit. In a JavaScript-only
+  repository the tip offered `["rust", "javascript"]`, which configuration
+  loading rejects; it now offers the `typescript` entry, which analyzes
+  JavaScript.
 - Rust: the bounded transitive-reach walk behind `no_static_path` disclosures
   now follows every function sharing a callee's name. It followed only the
   first one indexed, so jiter's `decode_to_tape`, reached through one of two
@@ -320,6 +334,16 @@ are scoped or reviewed.
   (`changed_test_unresolved`, `changed_test_owner_unresolved`,
   `changed_test_owner_ambiguous`) with exit 0. It used to exit 2 with empty
   stdout, so a `--json` caller got nothing to parse (#4571).
+- Rust workspaces: a test in one crate that calls `Type::method()` on a type
+  imported from a path dependency (`use tracing_core::LevelFilter;` then
+  `LevelFilter::current()`) now relates to the changed method even when the
+  method name is common. Same-named functions and methods of other types can
+  never be the target of `Type::method(`, so they no longer refuse the call;
+  another impl of a type with that name, a trait default method or a blanket
+  impl still does. Dependency names with `-` now match the `_` spelling in
+  `use` paths. Before, the tracing `LevelFilter::current` test in
+  `tracing-subscriber` left the change `weakly_exposed` with no related
+  call (#4558).
 - Monorepos: `ripr check` run from a package directory of a pnpm, npm, yarn
   or bun workspace, or of a uv workspace, now roots at the directory that
   declares the workspace. The implicit root walk counts the nearest
