@@ -17,8 +17,9 @@ are scoped or reviewed.
   an empty or half-written JSON file in place of the previous complete one,
   and a reader such as `ripr lsp` could see the torn file. They now write a
   temporary file beside the destination, flush it and rename it over the
-  old one. Symlinked and non-regular destinations are still refused, and
-  an existing file's permissions are kept.
+  old one. Symlinked, non-regular and read-only destinations are still
+  refused, an existing file's permissions are kept, and a long destination
+  name does not lengthen the temporary file's name.
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from

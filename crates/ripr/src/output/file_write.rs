@@ -3,17 +3,14 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Replace `path` with `bytes` so a reader sees the old file or the complete
-/// new one, never a truncated or half-written file. The bytes go to an
-/// exclusively created temporary file beside the destination, which is
-/// flushed and then renamed over it. An interrupted run, a full disk or a
-/// failed write leaves the previous file untouched and removes the temporary
-/// file where the process survives to do so. An existing destination that
-/// is not a regular file is refused, as before.
+/// new one, never a truncated or half-written file (see
+/// [`crate::atomic_file::replace_streamed`]). An interrupted run, a full disk
+/// or a failed write leaves the previous file untouched. An existing
+/// destination that is not a regular file is refused, as before, and so is a
+/// read-only one: a direct write was refused by its permissions, and a rename
+/// would replace it regardless of them.
 pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     write_with(path, |file| file.write_all(bytes))
 }
@@ -24,46 +21,8 @@ pub(crate) fn write_with(
     path: &Path,
     fill: impl FnOnce(&mut File) -> io::Result<()>,
 ) -> io::Result<()> {
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)?;
     validate_destination(path)?;
-    let Some(name) = path.file_name() else {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "output path has no file name",
-        ));
-    };
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    // Hidden, and distinct per process and call, so concurrent writers of
-    // one destination never share a temporary file.
-    let temp_path = parent.join(format!(
-        ".{}.ripr-{}-{nanos}-{sequence}.tmp",
-        name.to_string_lossy(),
-        std::process::id()
-    ));
-    let published = (|| {
-        let mut temp = create_exclusive(&temp_path)?;
-        if let Ok(metadata) = fs::metadata(path)
-            && metadata.is_file()
-        {
-            temp.set_permissions(metadata.permissions())?;
-        }
-        fill(&mut temp)?;
-        temp.sync_all()?;
-        drop(temp);
-        fs::rename(&temp_path, path)
-    })();
-    if published.is_err() {
-        let _ = fs::remove_file(&temp_path);
-    }
-    published
+    crate::atomic_file::replace_streamed(path, fill)
 }
 
 pub(crate) fn create_exclusive(path: &Path) -> io::Result<File> {
@@ -74,6 +33,12 @@ pub(crate) fn create_exclusive(path: &Path) -> io::Result<File> {
 /// destinations rather than silently replacing them.
 pub(crate) fn validate_destination(path: &Path) -> io::Result<()> {
     match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() && metadata.permissions().readonly() => {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "output destination is read-only",
+            ))
+        }
         Ok(metadata) if metadata.file_type().is_file() => Ok(()),
         Ok(_) => Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -173,6 +138,47 @@ mod tests {
         write(&dir.join("nested/dir/out.md"), b"# ok\n")
             .map_err(|err| format!("nested write: {err}"))?;
         let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn a_destination_name_near_the_filename_limit_is_still_written() -> Result<(), String> {
+        // A temporary name derived from the destination's name would pass the
+        // 255-byte filename limit here and turn a valid `--out` into an error.
+        let dir = fresh_dir("long-name")?;
+        let path = dir.join(format!("{}.json", "r".repeat(245)));
+        write(&path, b"{}\n").map_err(|err| format!("write: {err}"))?;
+        assert_eq!(
+            fs::read(&path).map_err(|err| format!("read: {err}"))?,
+            b"{}\n"
+        );
+        assert_eq!(leftovers(&dir)?, Vec::<String>::new());
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn a_read_only_destination_is_refused_and_left_untouched() -> Result<(), String> {
+        let dir = fresh_dir("read-only")?;
+        let path = dir.join("report.json");
+        fs::write(&path, b"previous").map_err(|err| format!("seed: {err}"))?;
+        let writable = fs::metadata(&path)
+            .map_err(|err| format!("metadata: {err}"))?
+            .permissions();
+        let mut read_only = writable.clone();
+        read_only.set_readonly(true);
+        fs::set_permissions(&path, read_only).map_err(|err| format!("chmod: {err}"))?;
+        let outcome = write(&path, b"replacement");
+        let contents = fs::read(&path).map_err(|err| format!("read: {err}"));
+        let leftover = leftovers(&dir);
+        let _ = fs::set_permissions(&path, writable);
+        let _ = fs::remove_dir_all(&dir);
+        let Err(error) = outcome else {
+            return Err("a read-only destination was replaced".to_string());
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(contents?, b"previous");
+        assert_eq!(leftover?, Vec::<String>::new());
         Ok(())
     }
 
