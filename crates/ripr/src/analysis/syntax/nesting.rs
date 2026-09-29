@@ -88,6 +88,11 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
     // Per-depth counters, indexed by bracket depth.
     let mut else_if: Vec<usize> = vec![0];
     let mut operators: Vec<usize> = vec![0];
+    // Sum of `operators` over the open-bracket stack: the length of the
+    // operator chain the current token extends. A run before `(` continues
+    // into it, and a `(..)` or `[..]` run continues after it closes, so
+    // `((x + 1 ..) + 1 ..)` nested deep counts as one chain.
+    let mut open_operators = 0usize;
     // True when the previous significant token ends an operand, so a
     // following `-`, `*`, `&` or `!` is binary, not prefix.
     let mut after_operand = false;
@@ -170,11 +175,15 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
             b')' | b']' | b'}' => {
                 depth = depth.saturating_sub(1);
                 else_if.truncate(depth + 1);
-                operators.truncate(depth + 1);
-                if byte == b'}'
-                    && let Some(run) = operators.get_mut(depth)
-                {
-                    *run = 0;
+                let closed: usize = operators.drain(depth + 1..).sum();
+                if let Some(run) = operators.get_mut(depth) {
+                    if byte == b'}' {
+                        // A block ends the enclosing chain.
+                        open_operators = open_operators.saturating_sub(closed + *run);
+                        *run = 0;
+                    } else {
+                        *run = run.saturating_add(closed);
+                    }
                 }
                 after_operand = true;
                 unary_run = 0;
@@ -184,6 +193,7 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
                     *chain = 0;
                 }
                 if let Some(run) = operators.get_mut(depth) {
+                    open_operators = open_operators.saturating_sub(*run);
                     *run = 0;
                 }
                 after_operand = false;
@@ -199,7 +209,8 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
             | b'=' => {
                 if let Some(run) = operators.get_mut(depth) {
                     *run = run.saturating_add(1);
-                    estimate.operator_run = estimate.operator_run.max(*run);
+                    open_operators = open_operators.saturating_add(1);
+                    estimate.operator_run = estimate.operator_run.max(open_operators);
                 }
                 after_operand = byte == b'?';
             }
@@ -372,6 +383,18 @@ mod tests {
                 "pub fn f(x: i32) -> i32 {{ x{} }}\n",
                 ".clone()".repeat(5_000)
             ),
+            // Short runs per depth that chain through parens into one tree,
+            // left-nested and right-nested.
+            format!(
+                "pub fn f(x: i32) -> i32 {{ {}x{} }}\n",
+                "(".repeat(200),
+                format!("){}", " + 1".repeat(40)).repeat(200)
+            ),
+            format!(
+                "pub fn f(x: i32) -> i32 {{ {}x{} }}\n",
+                format!("{}(", "1 + ".repeat(40)).repeat(200),
+                ")".repeat(200)
+            ),
             format!(
                 "pub fn g(o: &S) -> Option<i32> {{ Some(o{}.v) }}\n",
                 ".s.as_ref()?".repeat(20_000)
@@ -422,7 +445,7 @@ mod tests {
             .collect();
         let source = format!("fn f(&self) -> Option<f64> {{\n{statements}None }}\n");
         let estimate = estimate_rust_nesting(&source);
-        assert!(estimate.operator_run < 16, "{estimate:?}");
+        assert!(estimate.operator_run < 32, "{estimate:?}");
         assert!(rust_nesting_refusal(&source).is_none());
     }
 }
