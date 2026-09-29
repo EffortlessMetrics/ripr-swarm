@@ -1,0 +1,68 @@
+name: Export Python wheel uv repair once
+
+on:
+  push:
+    branches:
+      - build/4490-python-wheel-rehearsal
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out candidate branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: build/4490-python-wheel-rehearsal
+          persist-credentials: false
+
+      - name: Repair pinned uv executable invocations
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('.github/workflows/python-wheel-qualification.yml')
+          text = path.read_text(encoding='utf-8')
+          replacements = {
+              '"${venv}/bin/python" -m uv --version': '"${venv}/bin/uv" --version',
+              'TOOL_UV_VERSION="$("${python}" -m uv --version)"': 'TOOL_UV_VERSION="$("${GITHUB_WORKSPACE}/target/ripr/python-build/venv/bin/uv" --version)"',
+              'test "$("${bootstrap}/bin/python" -m uv --version)" = "uv ${UV_VERSION}"': 'test "$("${bootstrap}/bin/uv" --version | awk \'{print $1, $2}\')" = "uv ${UV_VERSION}"',
+              '"${bootstrap}/bin/python" -m uv tool install "${wheel}"': '"${bootstrap}/bin/uv" tool install "${wheel}"',
+              '"${bootstrap}/bin/python" -m uv tool install --force "${wheel}"': '"${bootstrap}/bin/uv" tool install --force "${wheel}"',
+              '"${bootstrap}/bin/python" -m uv tool uninstall ripr-rs': '"${bootstrap}/bin/uv" tool uninstall ripr-rs',
+          }
+          for old, new in replacements.items():
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected one occurrence of {old!r}, found {count}')
+              text = text.replace(old, new, 1)
+          path.write_text(text, encoding='utf-8')
+
+      - name: Validate repaired workflow source
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F '"${bootstrap}/bin/uv" --version' .github/workflows/python-wheel-qualification.yml
+          grep -F '"${bootstrap}/bin/uv" tool install' .github/workflows/python-wheel-qualification.yml
+          if grep -F '"${bootstrap}/bin/python" -m uv' .github/workflows/python-wheel-qualification.yml; then
+            echo '::error::consumer workflow still invokes uv as a Python module' >&2
+            exit 1
+          fi
+
+      - name: Stage repaired workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p repair/.github/workflows
+          cp .github/workflows/python-wheel-qualification.yml repair/.github/workflows/
+
+      - name: Upload repaired workflow
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: python-wheel-uv-repair
+          path: repair
+          if-no-files-found: error
+          retention-days: 1
