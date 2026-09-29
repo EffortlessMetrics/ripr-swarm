@@ -15,8 +15,10 @@ are scoped or reviewed.
   longer lists now returns the "no repair packet for gap" answer. It used to
   return the first packet in the file, so an agent following a diagnostic
   published before the artifact was rewritten received another gap's edit
-  surface, verify command and receipt command. Receipt status likewise
-  reports `not_available` instead of another gap's latest attempt outcome.
+  surface, verify command and receipt command. When receipt status is for an
+  actionable gap with no recorded attempt, it likewise reports `not_available`
+  instead of another gap's latest attempt outcome; with no actionable gap it
+  still reports the attempt ledger's latest entry.
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from

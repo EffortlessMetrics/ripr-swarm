@@ -14755,6 +14755,24 @@ fn execute_command_collect_repair_packet_never_substitutes_another_gaps_packet()
             reason.contains("gap:rust:no-longer-listed"),
             "the sentinel must name the requested gap, got {reason}"
         );
+
+        // actionable-gaps.json is bounded (`packet_limit`), so a gap it does
+        // not list may still be an actionable ledger record. That record's
+        // own packet is the answer, never the artifact's first packet.
+        write_gap_decision_ledger(root.path())?;
+        let from_ledger = backend
+            .execute_command(collect("gap:rust:pricing:threshold-boundary"))
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected the ledger record's packet".to_string())?;
+        assert_eq!(
+            from_ledger["canonical_gap_id"], "gap:rust:pricing:threshold-boundary",
+            "a gap past the projection bound must resolve to its own ledger packet: {from_ledger}"
+        );
+        assert_eq!(
+            from_ledger["verify_command"],
+            "cargo xtask fixtures boundary_gap"
+        );
         Ok(())
     })
 }

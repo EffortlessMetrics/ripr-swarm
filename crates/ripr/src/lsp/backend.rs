@@ -7061,10 +7061,12 @@ fn collect_repair_packet_from_actionable_gaps(path: &Path, gap_id: Option<&str>)
     };
     let packets = report.get("packets").and_then(|v| v.as_array())?;
     let packet = if let Some(id) = gap_id {
-        // A named gap that this artifact no longer lists (it was rewritten
-        // after the diagnostic was published) is absent here. Another gap's
-        // packet would hand the agent the wrong edit surface and commands;
-        // fall through to the ledger, which also matches by id only.
+        // A named gap this artifact does not list is absent here: the
+        // projection is bounded by `packet_limit`, or it was rewritten after
+        // the diagnostic was published. Another gap's packet would hand the
+        // agent the wrong edit surface and commands; fall through to the
+        // ledger, which also matches by id only. Ledger freshness against the
+        // current checkout is the ledger validator's job (#4544).
         packets.iter().find(|p| {
             p.get("canonical_gap_id")
                 .and_then(|v| v.as_str())
