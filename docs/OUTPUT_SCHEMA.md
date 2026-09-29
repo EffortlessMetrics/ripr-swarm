@@ -160,6 +160,12 @@ the stream: the unannotated-denominator notice (suppressed or not-current
 findings) and, when any level exceeds 10, a notice naming how many annotations
 of that level were emitted. Per-finding annotations follow.
 
+When the producer-owned `analysis_outcome` is not complete (for example
+`unsupported_input` or `partial_with_limitations`), the stream starts with a
+`ripr analysis incomplete` warning naming the outcome kind and each limitation
+with its recovery, and the clean `No static exposure findings found` notice is
+not printed.
+
 `ripr check --format human` is the bounded default terminal surface. It prints
 header and summary counts, then one `Start here:` triage block with a closed
 state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or
