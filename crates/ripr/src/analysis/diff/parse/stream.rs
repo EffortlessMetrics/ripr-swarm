@@ -81,6 +81,7 @@ fn parse_lines<'a, E>(
         }
 
         if state.in_hunk()
+            && state.can_end_at_plain_boundary()
             && parse_old_path_marker(raw)
             && lines.peek().is_some_and(|next| is_new_path_marker(next))
         {
@@ -99,8 +100,11 @@ fn parse_lines<'a, E>(
         state.consume_hunk_line(raw, &mut files);
     }
 
-    // #4375: end of stream closes the final open file section, so a section
-    // truncated at EOF counts exactly like one closed by a later boundary.
+    // End of stream closes a hunk that was still open: lines it promised but
+    // never delivered are malformed. #4375: end of stream also closes the
+    // final open file section, so a section truncated at EOF counts exactly
+    // like one closed by a later boundary.
+    state.close_hunk();
     state.close_file_section_accounting();
     Ok(ParsedDiff {
         changed_files: files.into_values().collect(),
