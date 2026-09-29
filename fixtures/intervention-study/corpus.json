@@ -2881,7 +2881,7 @@
   ],
   "kind": "ripr_intervention_study_corpus",
   "schema_version": "ripr_intervention_study_corpus.v1",
-  "spec": "RIPR-SPEC-0182",
+  "spec": "RIPR-SPEC-0183",
   "valid": {
     "adjudication": {
       "blinded_to_condition": true,
