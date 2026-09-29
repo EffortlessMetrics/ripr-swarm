@@ -5386,8 +5386,12 @@ fn module_owner_needs_a_local_imported_from_the_owner_module() -> Result<(), Str
 #[test]
 fn header_param_line_defaults_reads_defaults_on_one_header_line() {
     let names = |text: &str| {
-        super::no_behavior::header_param_line_defaults(text)
-            .map(|params| params.into_iter().map(|param| param.name).collect::<Vec<_>>())
+        super::no_behavior::header_param_line_defaults(text).map(|params| {
+            params
+                .into_iter()
+                .map(|param| param.name)
+                .collect::<Vec<_>>()
+        })
     };
     assert_eq!(
         names("        alias_is_default=None,"),
@@ -5397,9 +5401,15 @@ fn header_param_line_defaults_reads_defaults_on_one_header_line() {
         names("    key: str = \"k\", *, strict=False,"),
         Some(vec!["key".to_string(), "strict".to_string()])
     );
-    assert_eq!(names("    limit=10) -> int:"), Some(vec!["limit".to_string()]));
+    assert_eq!(
+        names("    limit=10) -> int:"),
+        Some(vec!["limit".to_string()])
+    );
     assert_eq!(names("def f(a, b=1,"), Some(vec!["b".to_string()]));
-    assert_eq!(names("    options=dict(a=1),"), Some(vec!["options".to_string()]));
+    assert_eq!(
+        names("    options=dict(a=1),"),
+        Some(vec!["options".to_string()])
+    );
     // No default, a comment, or text that is not a parameter list.
     assert_eq!(names("        self,"), None);
     assert_eq!(names("    x=1,  # was 2"), None);
@@ -5422,7 +5432,9 @@ fn classify_multi_line_header_line(
         .ok_or_else(|| format!("fixture has no line {line}"))?;
     let span = super::no_behavior::multi_line_def_header_span(source, def_line);
     if !span.is_some_and(|(start, end)| (start..=end).contains(&line)) {
-        return Err(format!("line {line} must sit inside the header span {span:?}"));
+        return Err(format!(
+            "line {line} must sit inside the header span {span:?}"
+        ));
     }
     let context = PythonNoBehaviorContext {
         multi_line_def_header_line: true,
@@ -5537,7 +5549,10 @@ fn diff_mode_reads_a_default_added_inside_a_multi_line_header() -> Result<(), St
     )?;
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     let [finding] = result.findings.as_slice() else {
-        return Err(format!("expected one finding, got {}", result.findings.len()));
+        return Err(format!(
+            "expected one finding, got {}",
+            result.findings.len()
+        ));
     };
     assert_eq!(finding.probe.location.line, 3);
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
@@ -5545,6 +5560,37 @@ fn diff_mode_reads_a_default_added_inside_a_multi_line_header() -> Result<(), St
         missing_discriminator_values(finding).contains(&"call `render` without `verbose`"),
         "{:?}",
         missing_discriminator_values(finding)
+    );
+    Ok(())
+}
+
+#[test]
+fn nested_class_dunder_relates_through_its_outer_class() -> Result<(), String> {
+    let owners = extract_owners(
+        Path::new("src/pkg/shapes.py"),
+        "class Outer:\n    class Inner:\n        def __init__(self, size):\n            self.size = size\n\n\nclass Inner:\n    def __init__(self, size):\n        self.size = -size\n",
+    );
+    let nested = owners
+        .iter()
+        .find(|owner| owner.name == "__init__" && owner.start_line == 3)
+        .ok_or("nested __init__ owner")?;
+    assert_eq!(
+        nested.qualified_name, "Inner.__init__",
+        "qualified name is unchanged"
+    );
+    assert_eq!(nested.class_path, "Outer.Inner");
+    let tests = extract_tests(
+        Path::new("tests/test_shapes.py"),
+        "from pkg.shapes import Outer\nfrom pkg import shapes\n\n\ndef test_outer_member():\n    assert Outer.Inner(3).size == 3\n\n\ndef test_module_member():\n    assert shapes.Outer.Inner(4).size == 4\n\n\ndef test_top_level_inner():\n    from pkg.shapes import Inner\n    assert Inner(5).size == -5\n",
+    );
+    assert_eq!(tests.len(), 3);
+    assert_eq!(
+        candidate_relations(nested, &tests),
+        vec![
+            ("test_module_member".to_string(), "constructor_call"),
+            ("test_outer_member".to_string(), "constructor_call"),
+        ],
+        "only constructions through `Outer` reach the nested class"
     );
     Ok(())
 }

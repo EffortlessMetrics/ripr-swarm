@@ -187,6 +187,10 @@ struct PythonOwner {
     /// (not shadowed locally). Empty for class and module owners. Used only
     /// to resolve named predicate boundary operands (`boundary.rs`, #4227).
     module_constants: Vec<module_constants::PythonModuleConstant>,
+    /// Dotted path of the enclosing classes of a method owner, outermost
+    /// first (`Outer.Inner` for `Outer.Inner.__init__`). Empty for other
+    /// owners. `qualified_name` keeps only the innermost class.
+    class_path: String,
 }
 
 /// One declared parameter of a Python function owner.
