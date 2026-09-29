@@ -84,6 +84,7 @@ pub fn check_workspace_repo_with_config(
     check_with_progress(input, config, AnalysisProgressScope::Repo, None)
 }
 
+#[cfg(test)]
 pub(crate) fn check_workspace_repo_with_origins(
     input: CheckInput,
     config: &RiprConfig,
