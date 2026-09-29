@@ -6,7 +6,8 @@ const CRATE_TEXT: &str = include_str!("../../../../crates/ripr/Cargo.toml");
 const NPM_MANIFEST_TEXT: &str = include_str!("../../../../packaging/npm/launcher/package.json");
 const NPM_BIN_TEXT: &str = include_str!("../../../../packaging/npm/launcher/bin/ripr.cjs");
 const NPM_LIBRARY_TEXT: &str = include_str!("../../../../packaging/npm/launcher/lib/launcher.cjs");
-const NPM_TEST_TEXT: &str = include_str!("../../../../packaging/npm/launcher/test/launcher.test.cjs");
+const NPM_TEST_TEXT: &str =
+    include_str!("../../../../packaging/npm/launcher/test/launcher.test.cjs");
 
 fn parsed_contract(text: &str) -> Result<DistributionContract, String> {
     parse_distribution_contract(CONTRACT_PATH, text)
@@ -100,7 +101,12 @@ fn stale_feature_contract_is_rejected() -> Result<(), String> {
 #[test]
 fn independent_crate_version_is_rejected() -> Result<(), String> {
     let mutated_crate = CRATE_TEXT.replace("version.workspace = true", "version = \"9.9.9\"");
-    let violations = evaluated(CONTRACT_TEXT, WORKSPACE_TEXT, &mutated_crate, NPM_MANIFEST_TEXT)?;
+    let violations = evaluated(
+        CONTRACT_TEXT,
+        WORKSPACE_TEXT,
+        &mutated_crate,
+        NPM_MANIFEST_TEXT,
+    )?;
     assert!(
         violations
             .iter()
@@ -111,11 +117,7 @@ fn independent_crate_version_is_rejected() -> Result<(), String> {
 
 #[test]
 fn npm_launcher_version_and_dependency_drift_are_rejected() -> Result<(), String> {
-    let stale = NPM_MANIFEST_TEXT.replacen(
-        "\"version\": \"0.11.0\"",
-        "\"version\": \"0.10.0\"",
-        1,
-    );
+    let stale = NPM_MANIFEST_TEXT.replacen("\"version\": \"0.11.0\"", "\"version\": \"0.10.0\"", 1);
     let violations = evaluated(CONTRACT_TEXT, WORKSPACE_TEXT, CRATE_TEXT, &stale)?;
     assert!(
         violations
