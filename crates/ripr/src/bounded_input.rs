@@ -144,6 +144,11 @@ mod tests {
             .err()
             .ok_or("5-byte file must exceed a 4-byte limit")?;
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(
+            err.to_string()
+                .contains("input exceeds the 4 byte input limit;"),
+            "{err}"
+        );
         Ok(())
     }
 
