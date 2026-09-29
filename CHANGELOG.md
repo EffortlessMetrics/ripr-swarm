@@ -40,6 +40,11 @@ are scoped or reviewed.
   CLI route that analyzes the diff. Before, only `initialize` carried them.
   Workspace status no longer says a `ripr.toml` is detected when the root has
   none; that limitation now appears only when one was found.
+- `ripr rerun --changed-test` with an unknown test node, an unparsed test
+  file, or an ambiguous owner now returns the documented `limited` report
+  (`changed_test_unresolved`, `changed_test_owner_unresolved`,
+  `changed_test_owner_ambiguous`) with exit 0. It used to exit 2 with empty
+  stdout, so a `--json` caller got nothing to parse (#4571).
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from
@@ -63,6 +68,11 @@ are scoped or reviewed.
   root they started with, are told which folder is not analyzed, and hover
   on a file from that folder says it is outside the analyzed root. The VS
   Code extension keeps its folder-picker behavior.
+- `ripr agent brief --json`: `before_snapshot_command` now creates
+  `target/ripr/workflow` before redirecting into it, so the first loop command
+  works in a fresh checkout. When the requested scope matches nothing and no
+  other agent-actionable seam is visible, the warning says so instead of
+  claiming it is showing all repo-actionable seams (#4592).
 - LSP: an editor that opens two workspace folders, or none, now hears why
   ripr is silent. Before, the server stopped analysis and sent nothing: the
   startup `ripr/analysisStatus` was dropped because the transport discards
@@ -392,6 +402,15 @@ are scoped or reviewed.
   `actionable-gaps.json` does not hold no longer gets that report's first
   packet: the gap ledger is tried, then a status packet naming the gap.
 
+- `ripr check` human output for a budget-stopped (`limited_partial_scope`)
+  run now names the budget that stopped it and its size (for example
+  `the file budget of 200 changed file(s) (RIPR_PARTIAL_DIFF_FILE_BUDGET=200)`),
+  says how many findings were produced before the stop and that more may
+  exist beyond the budget, and tells you to raise that variable, noting the
+  other budget the next file may also need. When every changed file ripr's language adapters read was
+  selected (a single oversized first file), it no longer prints "at least 0
+  changed file(s) ... may contain additional findings"; it says the result
+  stays partial instead.
 - Rust cache entries now reject same-key semantic payload edits before serving
   facts or classified evidence. File-fact, full/compact classified, shard and
   corpus-fingerprint generations cold-recompute once; checksums do not

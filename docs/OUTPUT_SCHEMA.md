@@ -14169,16 +14169,16 @@ The JSON shape uses schema `0.1`:
         "seam_id": "f3c9e4d21a0b7c88"
       },
       "verification": {
-        "before_snapshot_command": "mkdir -p target/ripr/workflow target/ripr/reports && ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json",
-        "after_snapshot_command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/after.repo-exposure.json",
-        "verify_command": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json",
+        "before_snapshot_command": "mkdir -p /work/repo/target/ripr/workflow && ripr check --root /work/repo --mode draft --format repo-exposure-json > /work/repo/target/ripr/workflow/before.repo-exposure.json",
+        "after_snapshot_command": "ripr check --root /work/repo --mode draft --format repo-exposure-json > /work/repo/target/ripr/workflow/after.repo-exposure.json",
+        "verify_command": "ripr agent verify --root /work/repo --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json",
         "suggested_test_command": "cargo test discounted_total_boundary_discriminator"
       }
     }
   ],
   "next": {
-    "inspect_packet": "ripr check --root . --mode draft --format agent-seam-packets-json > target/ripr/workflow/agent-seam-packets.json",
-    "verify_after_edit": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
+    "inspect_packet": "ripr check --root /work/repo --mode draft --format agent-seam-packets-json > /work/repo/target/ripr/workflow/agent-seam-packets.json",
+    "verify_after_edit": "ripr agent verify --root /work/repo --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
   },
   "warnings": []
 }
@@ -14198,7 +14198,11 @@ Field contract:
   `same_file_seam`, `explicit_seam_id`, or `repo_actionable_fallback`.
 - `top_seams[].packet_ref` — pointer to the full agent seam packet.
 - `top_seams[].verification` — before/after static evidence commands and an
-  optional focused test command.
+  optional focused test command. The snapshot and verify commands are anchored
+  at the analyzed root, so they run from any directory; `before_snapshot_command`
+  first creates `target/ripr/workflow` under that root, because the before
+  snapshot is the loop's first write. `suggested_test_command` is a bare
+  `cargo test <name>` and runs from the analyzed root.
 
 Static examples use abbreviated JSON fragments to show routing behavior.
 
@@ -16572,8 +16576,14 @@ whenever cache identity changes, so a consumer dispatches on the top-level
 For a changed-test selector, `selector.kind` is `changed_test`. `changed_test`
 names the repository-relative parsed test file and may append
 `::<test_node>` to select one test function within that file. An unknown or
-ambiguous node is a named limitation. Without a node, all parsed tests in the
-file participate. The report returns only seams owned by uniquely resolved
+ambiguous node is a named limitation: `state: "limited"`, an empty `seams`
+array, exit 0, and `limitation.kind` `changed_test_unresolved` (no parsed test
+matches the file or node), `changed_test_owner_unresolved` (the selected tests
+call no production owner ripr resolves), or `changed_test_owner_ambiguous`
+(two production functions share a called name). The index is built before the
+selector resolves, so `cache` still reports the file-fact work that ran and
+the `input_fingerprint`. Without a node, all parsed
+tests in the file participate. The report returns only seams owned by uniquely resolved
 functions directly called from the selected test scope.
 
 For a gap selector, `selector.kind` is `canonical_gap`, with
