@@ -154,7 +154,7 @@ fn should_record_without_path(
         || parser_span_for_finding(finding, parser_spans).is_some()
 }
 
-fn relative_finding_path<'a>(root: &Path, finding: &'a Finding) -> Option<PathBuf> {
+fn relative_finding_path(root: &Path, finding: &Finding) -> Option<PathBuf> {
     let file = &finding.probe.location.file;
     if let Ok(relative) = file.strip_prefix(root) {
         return Some(relative.to_path_buf());
@@ -181,9 +181,7 @@ fn origin_for_finding(
     if !finding.source_currentness.permits_candidate_action() {
         return Some(coarse_on_line(captured, finding.probe.location.line));
     }
-    let Some(span) = span else {
-        return None;
-    };
+    let span = span?;
     if has_standalone_cr(captured) {
         return Some(missing_input_origin());
     }

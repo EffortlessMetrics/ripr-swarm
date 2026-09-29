@@ -6,7 +6,8 @@
 
 use super::config::LspAnalysisConfig;
 use super::diagnostics::{
-    finding_diagnostics_by_uri_with_profile, workspace_diagnostics_with_config,
+    FindingDiagnosticProjection, finding_diagnostics_by_uri_with_profile,
+    workspace_diagnostics_with_config,
 };
 use super::position::expression_span_range_on_saved_line;
 use super::tests::{run_lsp_scope_git, unique_lsp_test_root};
@@ -295,10 +296,11 @@ fn repo_producer_projects_the_same_predicate_span() -> Result<(), String> {
         &output.findings,
         &crate::config::SeverityConfig::default(),
         true,
-        LspDiagnosticProfile::Full,
-        None,
-        &PositionEncodingKind::UTF16,
-        &origins,
+        FindingDiagnosticProjection::new(
+            LspDiagnosticProfile::Full,
+            &PositionEncodingKind::UTF16,
+            &origins,
+        ),
     )?;
     let diagnostics: Vec<Diagnostic> = grouped.into_values().flatten().collect();
     let selected = predicate_diagnostics(&diagnostics, &source)?;
