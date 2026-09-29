@@ -9670,4 +9670,3 @@ metrics = [
   "executed_control_pass_requires_executed_evidence",
   "executed_control_projections_deterministic",
 ]
-
