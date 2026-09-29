@@ -11,6 +11,16 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Nested `rerun --json` cache-identity versions in `docs/OUTPUT_SCHEMA.md`
+  now track live `FILE_FACT_CACHE_SCHEMA_VERSION` (`1.10`) and
+  `CACHE_SCHEMA_VERSION` (`1.16`). Producer-backed docs tests fail when those
+  nested values, the command-to-version table, swarm-queue envelope, or
+  cache-status field contract drift from producers (#4618).
+- Default human `Hidden:` output names the language and preview status of
+  omitted findings (`Python preview: 1`) so a mixed-repo remainder is not a
+  bare count. Rust-only remainder stays the count line. (#4395)
+- `docs/CONFIGURATION.md` no longer groups Python with opt-in TypeScript and
+  JavaScript; Python preview is marker-auto when no `ripr.toml` exists. (#4395)
 - TypeScript: a change inside a module-private helper now relates to tests
   that call an exported function reaching it in the same module, including a
   value a same-module factory built. unjs/defu tests call `defu(...)`, built
@@ -40,6 +50,11 @@ are scoped or reviewed.
   CLI route that analyzes the diff. Before, only `initialize` carried them.
   Workspace status no longer says a `ripr.toml` is detected when the root has
   none; that limitation now appears only when one was found.
+- `ripr rerun --changed-test` with an unknown test node, an unparsed test
+  file, or an ambiguous owner now returns the documented `limited` report
+  (`changed_test_unresolved`, `changed_test_owner_unresolved`,
+  `changed_test_owner_ambiguous`) with exit 0. It used to exit 2 with empty
+  stdout, so a `--json` caller got nothing to parse (#4571).
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from
@@ -63,6 +78,11 @@ are scoped or reviewed.
   root they started with, are told which folder is not analyzed, and hover
   on a file from that folder says it is outside the analyzed root. The VS
   Code extension keeps its folder-picker behavior.
+- `ripr agent brief --json`: `before_snapshot_command` now creates
+  `target/ripr/workflow` before redirecting into it, so the first loop command
+  works in a fresh checkout. When the requested scope matches nothing and no
+  other agent-actionable seam is visible, the warning says so instead of
+  claiming it is showing all repo-actionable seams (#4592).
 - LSP: an editor that opens two workspace folders, or none, now hears why
   ripr is silent. Before, the server stopped analysis and sent nothing: the
   startup `ripr/analysisStatus` was dropped because the transport discards
@@ -95,6 +115,12 @@ are scoped or reviewed.
   report, and uses the exporter on PATH unless the user sets
   `RIPR_ALLOW_REPO_PERL_EXECUTABLE=1`. The VS Code extension already required
   a trusted workspace to start the server.
+- `docs/OUTPUT_SCHEMA.md`, `docs/LLM_OPERATOR_GUIDE.md`, and
+  `docs/interop/mcp.md` now match the JSON agents receive: five missing
+  version-table rows, the `swarm queue` `0.2` example and its `python`
+  language default, the receipt's omitted `safe_to_merge` and `--test` flag,
+  the seventh `agent status` artifact, the `rerun` cache versions, the receipt
+  movement vocabulary, and a `cache status --json` field contract (#4608).
 - Rust related tests are the ones that name or reach the changed code, not
   every test that shares a word with it. A test name now relates only when it
   contains a probe token as a whole word (`new` no longer matches `renews_`), a
@@ -136,6 +162,14 @@ are scoped or reviewed.
   value does not.
 - Rust: the one-line signature of a new function whose body is added too is no
   longer probed; it only repeated the body's findings.
+- `ripr check` run from a crate subdirectory such as `src/` now analyzes the
+  crate. In a repository whose `Cargo.toml` has no `[workspace]` table, the
+  root stayed the subdirectory, the diff fell outside it, and the JSON reported
+  `analysis_complete: true` with no findings. The implicit root now walks up to
+  the nearest `Cargo.toml`, or to the git top level when there is none, and
+  says so on stderr. The walk stops at the git top level, so a `[workspace]` in
+  an enclosing repository no longer claims a nested one. `ripr cache` resolves
+  the same root (#4610).
 - `review-comments` observes its cooperative analysis budget during canonical
   inventory and rejects cancelled evidence before classification. Git diff
   discovery consumes the remaining budget; deadline cancellation records a
@@ -386,6 +420,15 @@ are scoped or reviewed.
   `actionable-gaps.json` does not hold no longer gets that report's first
   packet: the gap ledger is tried, then a status packet naming the gap.
 
+- `ripr check` human output for a budget-stopped (`limited_partial_scope`)
+  run now names the budget that stopped it and its size (for example
+  `the file budget of 200 changed file(s) (RIPR_PARTIAL_DIFF_FILE_BUDGET=200)`),
+  says how many findings were produced before the stop and that more may
+  exist beyond the budget, and tells you to raise that variable, noting the
+  other budget the next file may also need. When every changed file ripr's language adapters read was
+  selected (a single oversized first file), it no longer prints "at least 0
+  changed file(s) ... may contain additional findings"; it says the result
+  stays partial instead.
 - Rust cache entries now reject same-key semantic payload edits before serving
   facts or classified evidence. File-fact, full/compact classified, shard and
   corpus-fingerprint generations cold-recompute once; checksums do not
@@ -1070,7 +1113,17 @@ are scoped or reviewed.
   ([#3999](https://github.com/EffortlessMetrics/ripr-swarm/issues/3999),
   [#4000](https://github.com/EffortlessMetrics/ripr-swarm/issues/4000),
   [#4287](https://github.com/EffortlessMetrics/ripr-swarm/pull/4287)).
-
+- `ripr check`, `ripr pilot` and `ripr agent repair` now name one gap with the
+  same word. The changed line `check` reports as `weakly_exposed` and the
+  seam `pilot` reports as `weakly_gripped` both read `weak` first, for
+  example `Static exposure: weak (weakly_exposed, warning, ...)`,
+  `(weak, weakly_gripped)` and `weak -> exposed (weakly_gripped ->
+  strongly_gripped, improved)`. The words are the ones the `check` summary
+  line already uses (weak, unrevealed, no path, unknown). The schema values
+  are unchanged. The repair packet's actionability reason now says "add a
+  focused test with the missing discriminator next to the nearest related
+  test", matching the new test `pilot` names, where it used to say "extend
+  the nearest related test".
 
 ### Added
 
