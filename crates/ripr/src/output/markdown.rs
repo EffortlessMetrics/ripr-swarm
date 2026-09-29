@@ -24,6 +24,205 @@ pub(crate) fn markdown_text(value: &str) -> String {
     value.replace('\\', "\\\\")
 }
 
+/// Render `text` as one CommonMark inline code span, delimiters included.
+///
+/// Untrusted text (paths, changed expressions, owner and test names) reaches
+/// PR comments and step summaries through code spans. A backslash does not
+/// escape a backtick inside a code span, so a lone backtick in the text used
+/// to close a single-backtick span early and let `@mention` or raw HTML after
+/// it render live. Here the delimiter is a backtick run one longer than the
+/// longest run inside the text, so no run inside can close the span. Line
+/// endings become spaces so the span stays on one line and a blank line
+/// cannot end the paragraph. One space pads each side when the text starts or
+/// ends with a backtick, or when it starts and ends with a space (CommonMark
+/// strips exactly one such space pair). Empty text renders as `` ` ` ``.
+///
+/// Ordinary text without backticks renders as `` `text` ``, byte-identical to
+/// the plain `format!("`{text}`")` it replaces. The result is for block and
+/// list contexts; a GFM table cell additionally needs `|` escaped as `\|`.
+pub(crate) fn code_span(text: &str) -> String {
+    let text = one_line(text);
+    if text.is_empty() {
+        return "` `".to_string();
+    }
+    let mut longest_run = 0usize;
+    let mut run = 0usize;
+    for ch in text.chars() {
+        if ch == '`' {
+            run += 1;
+            longest_run = longest_run.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    let fence = "`".repeat(longest_run + 1);
+    let edge_backtick = text.starts_with('`') || text.ends_with('`');
+    let stripped_space_pair =
+        text.starts_with(' ') && text.ends_with(' ') && text.chars().any(|ch| ch != ' ');
+    let pad = if edge_backtick || stripped_space_pair {
+        " "
+    } else {
+        ""
+    };
+    format!("{fence}{pad}{text}{pad}{fence}")
+}
+
+/// Content of `text` when the whole of it is exactly one inline code span as
+/// [`code_span`] renders it, else `None`. It inverts [`code_span`] for text
+/// without line endings, so a renderer reading a section back from a posted
+/// comment body recovers the original value, backticks included.
+pub(crate) fn code_span_content(text: &str) -> Option<String> {
+    let fence_len = text.chars().take_while(|ch| *ch == '`').count();
+    if fence_len == 0 || text.len() < fence_len * 2 {
+        return None;
+    }
+    // Backticks are one byte each, so byte offsets from the fence length are
+    // exact; `get` refuses a split inside a multi-byte character.
+    let fence = text.get(..fence_len)?;
+    let inner = text.get(fence_len..text.len() - fence_len)?;
+    let closing = text.get(text.len() - fence_len..)?;
+    if closing != fence || inner.is_empty() || inner.ends_with('`') {
+        return None;
+    }
+    // A run of exactly `fence_len` backticks inside would close the span early.
+    let mut run = 0usize;
+    for ch in inner.chars().chain(std::iter::once(' ')) {
+        if ch == '`' {
+            run += 1;
+        } else {
+            if run == fence_len {
+                return None;
+            }
+            run = 0;
+        }
+    }
+    let content = match inner
+        .strip_prefix(' ')
+        .and_then(|rest| rest.strip_suffix(' '))
+    {
+        Some(stripped) if inner.chars().any(|ch| ch != ' ') => stripped,
+        _ => inner,
+    };
+    Some(content.to_string())
+}
+
+/// [`code_span`] for a GFM table cell: every `|` becomes `\|`, so a pipe in
+/// the text cannot split the cell. GFM unescapes `\|` inside the cell before
+/// it parses the code span, so the span still shows a bare `|`.
+pub(crate) fn table_code_span(text: &str) -> String {
+    code_span(text).replace('|', "\\|")
+}
+
+/// Untrusted prose for a Markdown block (a comment section or a paragraph):
+/// neutralises `@mention` and raw HTML outside code spans. See [`neutralize`].
+pub(crate) fn prose(text: &str) -> String {
+    neutralize(text, false)
+}
+
+/// Untrusted prose on one line (a list item or a heading): line endings
+/// become spaces so the text cannot start a new block, then [`prose`].
+pub(crate) fn inline_prose(text: &str) -> String {
+    neutralize(&one_line(text), false)
+}
+
+/// [`inline_prose`] that also renders `*`, `_`, `[` and `]` literally outside
+/// code spans, for free text that must not turn into emphasis or a link.
+pub(crate) fn inline_prose_literal(text: &str) -> String {
+    neutralize(&one_line(text), true)
+}
+
+/// [`inline_prose`] for a GFM table cell: `|` also becomes `\|`.
+pub(crate) fn table_cell_text(text: &str) -> String {
+    inline_prose(text).replace('|', "\\|")
+}
+
+fn one_line(text: &str) -> String {
+    text.replace("\r\n", " ").replace(['\r', '\n'], " ")
+}
+
+/// Neutralise untrusted prose outside code spans (#4468).
+///
+/// `@` followed by a username character gains a word joiner (U+2060), so
+/// GitHub renders the text but does not notify the named user or team, and
+/// `<` becomes `&lt;`, so no raw HTML or autolink renders. A code span, as
+/// CommonMark reads it, is copied unchanged: its content is already literal,
+/// and ripr renders its own spans through [`code_span`]. A backslash escape
+/// is copied as a pair, so an escaped backtick opens no span; `\@` is not a
+/// pair, since the escaped `@` still renders as a mention. The result is
+/// idempotent, so text read back from a posted body can be rendered again.
+fn neutralize(text: &str, literal_markup: bool) -> String {
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut out = String::with_capacity(text.len());
+    let mut index = 0usize;
+    while let Some(&ch) = chars.get(index) {
+        match ch {
+            '\\' => match chars.get(index + 1) {
+                Some(&next) if next.is_ascii_punctuation() && next != '@' => {
+                    out.push(ch);
+                    out.push(next);
+                    index += 2;
+                }
+                _ => {
+                    out.push(ch);
+                    index += 1;
+                }
+            },
+            '`' => {
+                let run = backtick_run(&chars, index);
+                let end = closing_backtick_run(&chars, index + run, run).unwrap_or(index + run);
+                out.extend(chars.get(index..end).unwrap_or_default());
+                index = end;
+            }
+            '<' => {
+                out.push_str("&lt;");
+                index += 1;
+            }
+            '@' => {
+                out.push('@');
+                if chars
+                    .get(index + 1)
+                    .is_some_and(|next| next.is_ascii_alphanumeric() || *next == '-')
+                {
+                    out.push('\u{2060}');
+                }
+                index += 1;
+            }
+            '*' | '_' | '[' | ']' if literal_markup => {
+                out.push('\\');
+                out.push(ch);
+                index += 1;
+            }
+            _ => {
+                out.push(ch);
+                index += 1;
+            }
+        }
+    }
+    out
+}
+
+fn backtick_run(chars: &[char], start: usize) -> usize {
+    chars
+        .iter()
+        .skip(start)
+        .take_while(|ch| **ch == '`')
+        .count()
+}
+
+/// End (exclusive) of the first run of exactly `len` backticks at or after
+/// `from`, which closes a code span opened by a run of `len`.
+fn closing_backtick_run(chars: &[char], from: usize, len: usize) -> Option<usize> {
+    let mut index = from;
+    while index < chars.len() {
+        let run = backtick_run(chars, index);
+        if run == len {
+            return Some(index + run);
+        }
+        index += run.max(1);
+    }
+    None
+}
+
 /// One-line disclosure emitted in place of a PowerShell variant when the bash
 /// command is unsupported or compound and no honest translation exists
 /// (#2628). Standalone emitters append the sentence period; emitters that
@@ -354,6 +553,136 @@ fn powershell_literal(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every case must read back unchanged, and its span must hold no
+    /// backtick run as long as its fence (else the span closes early).
+    fn assert_code_span(text: &str, expected: &str) {
+        let rendered = code_span(text);
+        assert_eq!(rendered, expected, "code span for {text:?}");
+        let fence_len = rendered.chars().take_while(|ch| *ch == '`').count();
+        let inner = rendered
+            .get(fence_len..rendered.len() - fence_len)
+            .unwrap_or_default();
+        let mut run = 0usize;
+        for ch in inner.chars().chain(std::iter::once(' ')) {
+            if ch == '`' {
+                run += 1;
+            } else {
+                assert_ne!(run, fence_len, "inner run closes {rendered:?}");
+                run = 0;
+            }
+        }
+        let one_line = text.replace("\r\n", " ").replace(['\r', '\n'], " ");
+        let expected_content = if one_line.is_empty() {
+            " ".to_string()
+        } else {
+            one_line
+        };
+        assert_eq!(
+            code_span_content(&rendered),
+            Some(expected_content),
+            "round trip for {text:?}"
+        );
+    }
+
+    #[test]
+    fn code_span_keeps_plain_text_byte_identical() {
+        assert_code_span(
+            "amount >= discount_threshold",
+            "`amount >= discount_threshold`",
+        );
+        assert_code_span("src/lib.rs:12", "`src/lib.rs:12`");
+        assert_code_span("a | b", "`a | b`");
+    }
+
+    #[test]
+    fn code_span_single_backtick_cannot_close_the_span() {
+        assert_code_span(
+            "\"x` @octocat <img src=x onerror=alert(1)> | y\" (equality boundary)",
+            "``\"x` @octocat <img src=x onerror=alert(1)> | y\" (equality boundary)``",
+        );
+    }
+
+    #[test]
+    fn code_span_double_backtick_run_gets_a_longer_fence() {
+        assert_code_span("a``b @octocat", "```a``b @octocat```");
+        assert_code_span("a`b``c```d", "````a`b``c```d````");
+    }
+
+    #[test]
+    fn code_span_pads_text_that_starts_or_ends_with_a_backtick() {
+        assert_code_span("`x", "`` `x ``");
+        assert_code_span("x`", "`` x` ``");
+        assert_code_span("`", "`` ` ``");
+        assert_code_span("``x``", "``` ``x`` ```");
+    }
+
+    #[test]
+    fn code_span_replaces_line_endings_with_spaces() {
+        assert_code_span("a\nb\r\nc\rd", "`a b c d`");
+        assert_code_span("x\n\n@octocat <img>", "`x  @octocat <img>`");
+    }
+
+    #[test]
+    fn code_span_preserves_an_edge_space_pair_and_empty_text() {
+        assert_code_span(" a ", "`  a  `");
+        assert_code_span("", "` `");
+        assert_eq!(code_span_content("plain"), None);
+        assert_eq!(code_span_content("`a` and `b`"), None);
+        assert_eq!(code_span_content("``a`"), None);
+        assert_eq!(code_span_content("`é"), None);
+    }
+
+    #[test]
+    fn table_code_span_escapes_pipes_after_choosing_the_fence() {
+        assert_eq!(table_code_span("a | b"), "`a \\| b`");
+        assert_eq!(table_code_span("x`|@y"), "``x`\\|@y``");
+        assert_eq!(table_code_span("plain"), "`plain`");
+    }
+
+    #[test]
+    fn prose_neutralises_mentions_and_raw_html() {
+        assert_eq!(prose("ping @octocat now"), "ping @\u{2060}octocat now");
+        assert_eq!(prose("@org/team"), "@\u{2060}org/team");
+        assert_eq!(prose("<script>x</script>"), "&lt;script>x&lt;/script>");
+        // `@` without a username character after it stays as written.
+        assert_eq!(prose("a @ b, a@"), "a @ b, a@");
+        assert_eq!(prose("line\n@octocat"), "line\n@\u{2060}octocat");
+        // An escaped `@` still renders as a mention, so it is neutralised.
+        assert_eq!(prose("\\@octocat"), "\\@\u{2060}octocat");
+    }
+
+    #[test]
+    fn prose_leaves_text_inside_code_spans_untouched() {
+        let span = code_span("a` @octocat <img>");
+        let text = format!("Add an assertion for {span} and tell @octocat <b>");
+        assert_eq!(
+            prose(&text),
+            format!("Add an assertion for {span} and tell @\u{2060}octocat &lt;b>")
+        );
+        // An unclosed backtick run is literal text, so what follows it is not
+        // protected by it.
+        assert_eq!(prose("a ` @octocat"), "a ` @\u{2060}octocat");
+        assert_eq!(prose("``x` @octocat"), "``x` @\u{2060}octocat");
+        // An escaped backtick opens no span.
+        assert_eq!(prose("\\`@octocat`"), "\\`@\u{2060}octocat`");
+    }
+
+    #[test]
+    fn prose_is_idempotent() {
+        let once = prose("@octocat <img> `@x` \\@y");
+        assert_eq!(prose(&once), once);
+    }
+
+    #[test]
+    fn inline_and_table_prose_stay_on_one_line_and_in_one_cell() {
+        assert_eq!(inline_prose("a\r\n# b\n@c"), "a # b @\u{2060}c");
+        assert_eq!(table_cell_text("a | @b\n<i>"), "a \\| @\u{2060}b &lt;i>");
+        assert_eq!(
+            inline_prose_literal("*a* [l](u) `*k*` snake_case"),
+            "\\*a\\* \\[l\\](u) `*k*` snake\\_case"
+        );
+    }
 
     #[test]
     fn markdown_text_escapes_backslashes() {

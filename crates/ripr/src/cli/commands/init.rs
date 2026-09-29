@@ -392,6 +392,14 @@ env:
   #           pull-requests: write, which this workflow grants)
   RIPR_COMMENT_MODE: ${{ vars.RIPR_COMMENT_MODE || 'off' }}
 
+# One run per PR: a newer push cancels the older run. Only the newest head's
+# placements are valid, and two overlapping runs would each snapshot the
+# existing inline comments before either publishes, then both create the
+# same cards.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ripr:
     name: RIPR advisory reports
@@ -402,16 +410,28 @@ jobs:
     # blocking behaviour. See docs/CALIBRATED_GATE_POLICY.md.
     continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}
     steps:
+      # Analyze the PR head, not the default `refs/pull/N/merge` commit.
+      # Review comments and `::warning` annotations are placed on the PR
+      # head's lines; when the base branch has moved lines in a changed
+      # file, merge-commit line numbers point at the wrong line, and GitHub
+      # rejects the whole review when a line falls outside the PR diff.
+      # upload-sarif detects the head checkout and reports it as
+      # refs/pull/N/head. A manual run keeps the dispatched commit.
       - uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned to a commit SHA for the same reason as rust-cache below.
+      # dtolnay/rust-toolchain stable branch = 6bed0761d98439e5a578e2877258200ad565ba87.
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
 
-      # Cache the cargo registry, git checkouts, and dependency builds
-      # (#2008): an uncached `cargo install ripr --locked` recompiles for
-      # minutes on every PR. The install itself still runs (no stale-binary
-      # risk); the warm caches cut most of the compile.
+      # Cache the cargo registry, git checkouts, and installed binaries
+      # (#2008): an uncached `cargo install ripr` recompiles for minutes on
+      # every PR. The install below names an exact version, so a cached
+      # binary of that version is reused and any other version is rebuilt.
       # Pinned to a commit SHA (#2190 review): the generated workflow
       # grants pull-requests: write and security-events: write, so a
       # mutable third-party tag is a supply-chain risk in consumer repos.
@@ -420,8 +440,13 @@ jobs:
         with:
           shared-key: ripr-install
 
+      # Pinned to the ripr that generated this workflow. The steps below use
+      # that version's commands and flags; an unpinned install takes the
+      # newest crates.io release, whose CLI may not match. To upgrade,
+      # install the newer ripr and compare
+      # `ripr init --ci github --force --dry-run` with this file.
       - name: Install ripr
-        run: cargo install ripr --locked
+        run: cargo install ripr --version @RIPR_VERSION@ --locked
 
       - name: Generate RIPR pilot packet
         continue-on-error: true
@@ -559,7 +584,7 @@ jobs:
               | (.body // "") as $body
               | {
                   comment_id: .id,
-                  dedupe_key: ($body | capture("<!-- ripr:dedupe=(?<key>[^ ]+)").key),
+                  dedupe_key: ($body | capture("<!-- ripr:dedupe=(?<key>.*?)(?: presentation=[^ ]+)? -->").key),
                   path: .path,
                   line: (.line // .original_line),
                   side: (.side // "RIGHT"),
@@ -581,6 +606,8 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          RIPR_ACTOR: ${{ github.actor }}
+          RIPR_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           mkdir -p target/ripr/review
           comment_args=(
@@ -603,7 +630,15 @@ jobs:
           else
             comment_args+=(--no-token)
           fi
-          comment_args+=(--write-permission)
+          # GitHub gives Dependabot runs a read-only token whatever the
+          # permissions block says, so the plan must not claim write. Check
+          # the PR author too: a maintainer who reopens a Dependabot PR is the
+          # event actor, and the run can still carry the read-only token.
+          if [ "${RIPR_ACTOR:-}" = "dependabot[bot]" ] || [ "${RIPR_PR_AUTHOR:-}" = "dependabot[bot]" ]; then
+            comment_args+=(--no-write-permission)
+          else
+            comment_args+=(--write-permission)
+          fi
           ripr "${comment_args[@]}"
 
       - name: Publish RIPR inline comments
@@ -622,13 +657,14 @@ jobs:
           publishable="$(mktemp)"
           jq '
             def captured($regex; $flags): [capture($regex; $flags).value][0] // null;
+            def code_span_line($label): captured("\n" + $label + ":\n(?<value>(?<fence>`+)[^`\n](?:[^\n]*[^`\n])?\\k<fence>)(?:\n|$)"; "");
             def compact_body:
               .body as $full
               | ($full | captured("^### ripr gap: (?<value>[^\n]+)"; "") // "repairable gap") as $gap
               | ($full | captured("\nRepair:\n(?<value>[^\n]+)"; "") // "Follow the bounded repair route in the RIPR artifact.") as $repair
-              | ($full | captured("\nStart the repair:\n`(?<value>[^`]+)`"; "")) as $start
-              | ($full | captured("\nVerify:\n`(?<value>[^`]+)`"; "") // "ripr agent verify") as $verify
-              | (if $start then "Start the repair: `\($start)`" else "Verify: `\($verify)`" end) as $next
+              | ($full | code_span_line("Start the repair")) as $start
+              | ($full | code_span_line("Verify") // "`ripr agent verify`") as $verify
+              | (if $start then "Start the repair: \($start)" else "Verify: \($verify)" end) as $next
               | "**ripr: \($gap)** — \($repair)\n\n\($next)\n\n<details><summary>Full RIPR repair card</summary>\n\n\($full)\n\n</details>\n\n<!-- ripr:dedupe=\(.dedupe_key) presentation=compact-v1 -->";
             [
               .operations[]?
@@ -640,7 +676,7 @@ jobs:
 
           review_body="$(jq -r '
             (.summary.publishable // 0) as $inline
-            | ((.summary.summary_only // 0) + ([.skipped[]? | select(.skip_reason == "inline_comment_cap_reached")] | length)) as $additional
+            | ((.summary.summary_only // 0) + ([.skipped[]? | select(.skip_reason == "inline_comment_cap_reached" or .skip_reason == "comment_body_too_large")] | length)) as $additional
             | (.summary.suppressed // 0) as $suppressed
             | (if $inline == 1 then "" else "s" end) as $inline_suffix
             | (if $additional == 1 then "" else "s" end) as $additional_suffix
@@ -653,7 +689,7 @@ jobs:
 
           create_count="$(jq '[.[] | select(.operation == "create")] | length' "$publishable")"
           update_count="$(jq '[.[] | select(.operation == "update")] | length' "$publishable")"
-          additional_count="$(jq '(.summary.summary_only // 0) + ([.skipped[]? | select(.skip_reason == "inline_comment_cap_reached")] | length)' "$plan")"
+          additional_count="$(jq '(.summary.summary_only // 0) + ([.skipped[]? | select(.skip_reason == "inline_comment_cap_reached" or .skip_reason == "comment_body_too_large")] | length)' "$plan")"
           suppressed_count="$(jq '.summary.suppressed // 0' "$plan")"
 
           jq -c '.[] | select(.operation == "update")' "$publishable" \
@@ -969,11 +1005,13 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p target/ripr/reports
+          # Record the analyzed commit. On a PR, GITHUB_SHA names the merge
+          # commit, which this workflow does not check out.
           history_args=(
             policy history
             --root .
             --current target/ripr/reports/policy-operations.json
-            --commit "$GITHUB_SHA"
+            --commit "$(git rev-parse HEAD)"
             --out target/ripr/reports/policy-history.json
             --out-md target/ripr/reports/policy-history.md
           )
@@ -1332,6 +1370,31 @@ jobs:
             markdown_inline() {
               printf '%s' "$1" | tr '\r\n' '  ' | sed 's/`/\\`/g'
             }
+            # Artifacts bind commands to this runner's absolute checkout
+            # (#3999), but a summary reader copies them on another machine.
+            # Rewrite the checkout path, where it is a whole path token, to
+            # the repository root `.`, like the Agent review packet block.
+            repo_relative() {
+              RIPR_CHECKOUT_PHYSICAL="$(pwd -P)" RIPR_CHECKOUT_LOGICAL="$PWD" awk '
+                function rel(s, root,   out, i, pre, rest, before, after) {
+                  out = ""
+                  while (root != "" && (i = index(s, root)) > 0) {
+                    pre = substr(s, 1, i - 1)
+                    rest = substr(s, i + length(root))
+                    before = substr(pre, length(pre), 1)
+                    after = substr(rest, 1, 1)
+                    if ((before == "" || before ~ /[ \047"`=(]/) && (after == "" || after ~ /[\/ \047"`):]/)) {
+                      out = out pre "."
+                    } else {
+                      out = out pre root
+                    }
+                    s = rest
+                  }
+                  return out s
+                }
+                { print rel(rel($0, ENVIRON["RIPR_CHECKOUT_PHYSICAL"]), ENVIRON["RIPR_CHECKOUT_LOGICAL"]) }
+              '
+            }
 
             echo '## RIPR advisory summary'
             echo
@@ -1654,10 +1717,10 @@ jobs:
                 panel_missing="$(markdown_inline "$panel_missing")"
                 panel_related="$(markdown_inline "$panel_related")"
                 panel_suggested="$(markdown_inline "$panel_suggested")"
-                panel_verify="$(markdown_inline "$panel_verify")"
-                panel_agent="$(markdown_inline "$panel_agent")"
-                panel_repair="$(markdown_inline "$panel_repair")"
-                panel_receipt="$(markdown_inline "$panel_receipt")"
+                panel_verify="$(markdown_inline "$(printf '%s\n' "$panel_verify" | repo_relative)")"
+                panel_agent="$(markdown_inline "$(printf '%s\n' "$panel_agent" | repo_relative)")"
+                panel_repair="$(markdown_inline "$(printf '%s\n' "$panel_repair" | repo_relative)")"
+                panel_receipt="$(markdown_inline "$(printf '%s\n' "$panel_receipt" | repo_relative)")"
                 panel_gate_mode="$(markdown_inline "$panel_gate_mode")"
                 panel_gate_decision="$(markdown_inline "$panel_gate_decision")"
                 panel_warning_count="$(markdown_inline "$panel_warning_count")"
@@ -1697,7 +1760,7 @@ jobs:
               if [ -f target/ripr/reports/pr-review-front-panel.md ]; then
                 echo '<details><summary>Full report: target/ripr/reports/pr-review-front-panel.md</summary>'
                 echo
-                cat target/ripr/reports/pr-review-front-panel.md
+                repo_relative < target/ripr/reports/pr-review-front-panel.md
                 echo
                 echo '</details>'
               fi
@@ -1727,9 +1790,9 @@ jobs:
                 action_why="$(markdown_inline "$action_why")"
                 action_seam="$(markdown_inline "$action_seam")"
                 action_target="$(markdown_inline "$action_target")"
-                action_repair="$(markdown_inline "$action_repair")"
-                action_verify="$(markdown_inline "$action_verify")"
-                action_receipt="$(markdown_inline "$action_receipt")"
+                action_repair="$(markdown_inline "$(printf '%s\n' "$action_repair" | repo_relative)")"
+                action_verify="$(markdown_inline "$(printf '%s\n' "$action_verify" | repo_relative)")"
+                action_receipt="$(markdown_inline "$(printf '%s\n' "$action_receipt" | repo_relative)")"
                 action_fallback="$(markdown_inline "$action_fallback")"
                 action_warning_count="$(markdown_inline "$action_warning_count")"
                 echo '#### Recommended next test at a glance'
@@ -1762,7 +1825,7 @@ jobs:
               if [ -f target/ripr/reports/first-useful-action.md ]; then
                 echo '<details><summary>Full report: target/ripr/reports/first-useful-action.md</summary>'
                 echo
-                cat target/ripr/reports/first-useful-action.md
+                repo_relative < target/ripr/reports/first-useful-action.md
                 echo
                 echo '</details>'
               fi
@@ -2622,6 +2685,7 @@ jobs:
           sarif_file: target/ripr/reports/ripr-seams.sarif
           category: ripr-seams
 "#
+    .replace("@RIPR_VERSION@", env!("CARGO_PKG_VERSION"))
     .replace(
         "@RIPR_REPAIR_AFTER_PHASE@",
         &format!("{REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}"),
@@ -2760,6 +2824,25 @@ mod tests {
         assert!(!workflow.contains("@RIPR_"), "unsubstituted placeholder");
         assert!(workflow.contains(&format!("='{MANUAL_VERIFY_LABEL}'")));
         assert!(workflow.contains(&format!("echo '- Receipt: {NO_RECEIPT_BEFORE_REPAIR}'")));
+    }
+
+    /// W5: an unpinned `cargo install ripr` installs whatever release is
+    /// latest, so CI could run an older ripr that lacks the commands this
+    /// workflow calls, or change behavior silently on a later release. The
+    /// install pins the generating binary's own version and keeps `--locked`.
+    #[test]
+    fn generated_workflow_pins_the_generating_ripr_version() {
+        let workflow = generated_github_actions_workflow();
+        let pinned = format!(
+            "run: cargo install ripr --version {} --locked",
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(workflow.contains(&pinned), "missing {pinned}");
+        let installs: Vec<&str> = workflow
+            .lines()
+            .filter(|line| line.contains("run: cargo install"))
+            .collect();
+        assert_eq!(installs.len(), 1, "{installs:?}");
     }
 
     /// The `cli_smoke` tests drive `ripr init` as a subprocess, so they prove

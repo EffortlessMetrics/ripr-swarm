@@ -1,6 +1,7 @@
 use crate::analysis;
 use crate::app::agent_brief::{
-    AgentBriefPolicy, AgentBriefResolvedWorkingSet, select_agent_brief_seams,
+    AgentBriefChangedScope, AgentBriefPolicy, AgentBriefResolvedWorkingSet,
+    select_agent_brief_seams,
 };
 use crate::app::{self, CheckInput, Mode, OutputFormat};
 use crate::cli::commands_numeric::parse_positive_u64;
@@ -78,7 +79,7 @@ fn load_review_comments_analysis_outcome(
     let Some(path) = path else {
         return Ok(None);
     };
-    let text = std::fs::read_to_string(path).map_err(|error| {
+    let text = crate::bounded_input::read_to_string(path).map_err(|error| {
         format!(
             "review-comments --check-output {} is invalid: read failed: {error}",
             path.display()
@@ -223,6 +224,8 @@ mod cache_command;
 mod config_command;
 #[path = "commands/context.rs"]
 mod context;
+#[path = "commands/feedback.rs"]
+mod feedback_command;
 #[path = "commands/policy.rs"]
 mod policy_commands;
 #[path = "commands/receipt.rs"]
@@ -232,9 +235,9 @@ mod swarm_command;
 
 pub(super) use agent::agent;
 pub(super) use context::context;
-// The receipt help bodies live beside the receipt parser but are also the
-// flag source for `ripr receipt write|check` suggestions, so `cli::help` needs
-// a path to them.
+// Flag-documenting help bodies live beside their parsers so `cli::help`
+// suggestions mine the same text `--help` prints.
+pub(super) use feedback_command::{FEEDBACK_EXPORT_HELP, FEEDBACK_RECORD_HELP};
 #[cfg(test)]
 use policy_commands::{
     parse_policy_history_options, parse_policy_operations_options,
@@ -254,6 +257,10 @@ pub(super) use cache_command::{CACHE_CLEAR_HELP, CACHE_STATUS_HELP};
 
 pub(super) fn receipt(args: &[String]) -> Result<(), String> {
     receipt_command::run_receipt(args)
+}
+
+pub(super) fn feedback(args: &[String]) -> Result<(), String> {
+    feedback_command::run_feedback(args)
 }
 
 pub(super) fn swarm(args: &[String]) -> Result<(), String> {
@@ -308,13 +315,13 @@ pub(super) fn outcome(args: &[String]) -> Result<(), String> {
     }
 
     let options = parse_outcome_options(args)?;
-    let before_json = std::fs::read_to_string(&options.before).map_err(|err| {
+    let before_json = crate::bounded_input::read_to_string(&options.before).map_err(|err| {
         format!(
             "read {} failed: {err}",
             output::outcome::display_path(&options.before)
         )
     })?;
-    let after_json = std::fs::read_to_string(&options.after).map_err(|err| {
+    let after_json = crate::bounded_input::read_to_string(&options.after).map_err(|err| {
         format!(
             "read {} failed: {err}",
             output::outcome::display_path(&options.after)
@@ -369,7 +376,7 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
         analysis::inventory_classified_seams_at_with_config(&options.root, &config)?;
     let calibration = match &options.mutation_calibration {
         Some(path) => {
-            let contents = std::fs::read_to_string(path).map_err(|err| {
+            let contents = crate::bounded_input::read_to_string(path).map_err(|err| {
                 format!(
                     "read evidence-health calibration context {} failed: {err}",
                     output::outcome::display_path(path)
@@ -1349,7 +1356,7 @@ fn review_comments_with_diff_loader_at(
                 "review-comments accepts at most one of --gap-ledger or --check-output".to_string(),
             );
         }
-        let gap_ledger_text = std::fs::read_to_string(gap_ledger).map_err(|err| {
+        let gap_ledger_text = crate::bounded_input::read_to_string(gap_ledger).map_err(|err| {
             record_review_comments_error(
                 &mut receipt,
                 &receipt_path,
@@ -1492,12 +1499,29 @@ fn review_comments_with_diff_loader_at(
         .iter()
         .map(|owner| owner.owner.clone())
         .collect::<Vec<_>>();
+    // Review slots fill from changed lines and changed owners first, so
+    // the rest of the scope is only evaluated when those fall short.
+    let changed_scope = AgentBriefChangedScope::new(&working_set);
+    let policy = AgentBriefPolicy::from_config(&config);
+    let first_stage = |seam: &analysis::RepoSeam| changed_scope.contains(seam);
+    let first_stage_sufficient = |classified: &[analysis::ClassifiedSeam]| {
+        changed_scope.fills_selection(
+            classified,
+            output::review_comments::DEFAULT_REVIEW_MAX_SUMMARY_ITEMS,
+            policy,
+        )
+    };
+    let stages = analysis::DiffScopeEvidenceStages {
+        first: &first_stage,
+        sufficient: &first_stage_sufficient,
+    };
     let scoped_inventory = analysis::cancellation::with_token(&cancellation, || {
-        analysis::inventory_diff_scoped_classified_seams_at_with_config(
+        analysis::inventory_diff_scoped_classified_seams_staged_at_with_config(
             &input.root,
             &config,
             &working_set.files,
             &changed_owner_names,
+            &stages,
         )
     })
     .map_err(|error| {
@@ -1520,12 +1544,32 @@ fn review_comments_with_diff_loader_at(
     )?;
     receipt.phase("canonical_analysis", "route_construction");
     receipt.write_atomic(&receipt_path)?;
-    let selection = select_agent_brief_seams(
+    let mut selection = select_agent_brief_seams(
         &scoped_inventory.classified,
         &working_set,
         output::review_comments::DEFAULT_REVIEW_MAX_SUMMARY_ITEMS,
-        AgentBriefPolicy::from_config(&config),
+        policy,
     );
+    if scoped_inventory.unevaluated_seams > 0 {
+        // The cap count covers only evaluated seams, so it is a floor.
+        for warning in &mut selection.warnings {
+            if warning.ends_with("omitted by the brief cap") {
+                *warning = format!("at least {warning}");
+            }
+        }
+        let skipped = scoped_inventory.unevaluated_seams;
+        let (noun, verb) = if skipped == 1 {
+            ("seam", "was")
+        } else {
+            ("seams", "were")
+        };
+        selection.warnings.push(format!(
+            "{skipped} scoped {noun} outside changed lines and changed owner functions {verb} \
+             not evaluated: seams on changed lines and in changed owners already filled all {} \
+             review slots",
+            output::review_comments::DEFAULT_REVIEW_MAX_SUMMARY_ITEMS
+        ));
+    }
     enforce_review_comments_deadline(
         &mut receipt,
         &receipt_path,
@@ -1619,8 +1663,8 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
     }
 
     let options = parse_calibrate_cargo_mutants_options(rest)?;
-    let repo_exposure_json =
-        std::fs::read_to_string(&options.repo_exposure_json).map_err(|err| {
+    let repo_exposure_json = crate::bounded_input::read_to_string(&options.repo_exposure_json)
+        .map_err(|err| {
             format!(
                 "read {} failed: {err}",
                 output::outcome::display_path(&options.repo_exposure_json)
@@ -1745,7 +1789,7 @@ fn read_json_value(path: &Path) -> Result<serde_json::Value, String> {
 }
 
 fn read_calibration_text(path: &Path) -> Result<String, String> {
-    std::fs::read_to_string(path)
+    crate::bounded_input::read_to_string(path)
         .map_err(|err| format!("read {} failed: {err}", output::outcome::display_path(path)))
 }
 
@@ -3165,7 +3209,7 @@ fn assistant_loop_health_generated_at() -> Result<String, String> {
 }
 
 fn read_optional_text_for_report(label: &str, path: &Path) -> Result<String, String> {
-    std::fs::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_to_string(path).map_err(|err| {
         format!(
             "read {label} {} failed: {err}",
             output::baseline_delta::display_path(path)
@@ -3182,7 +3226,7 @@ fn read_optional_manifest_for_report(
     } else {
         root.join(manifest)
     };
-    match std::fs::read_to_string(&read_path) {
+    match crate::bounded_input::read_to_string(&read_path) {
         Ok(text) => Some(Ok(text)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
         Err(err) => Some(Err(format!(
@@ -3224,21 +3268,22 @@ fn parse_outcome_format(value: &str) -> Result<OutcomeFormat, String> {
     }
 }
 
+/// Review-comments diff through the shared range authority (#4538): the base
+/// and head are verified like `ripr check` verifies its base, and the range
+/// uses the pinned diff presentation, so ambient `color.diff` or
+/// `diff.submodule` config cannot empty or widen the changed-line set.
 fn load_review_comments_diff(root: &Path, base: &str, head: &str) -> Result<String, String> {
-    let range = format!("{base}...{head}");
-    let output = crate::git::run_git_output_with_deadline(
+    let base = analysis::resolve_effective_base(
         root,
-        &["diff", "--unified=0", "--no-ext-diff", &range],
+        Some(base),
         analysis::cancellation::remaining_budget(),
     )?;
-    if !output.status.success() {
-        return Err(format!(
-            "git diff for review-comments failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    String::from_utf8(output.stdout)
-        .map_err(|err| format!("git diff for review-comments was not UTF-8: {err}"))
+    analysis::load_diff_range_with_deadline(
+        root,
+        &base,
+        head,
+        analysis::cancellation::remaining_budget(),
+    )
 }
 
 fn review_comments_markdown_path(json_path: &Path) -> PathBuf {
@@ -6481,6 +6526,75 @@ language = "rust"
     }
 
     #[test]
+    fn review_comments_diff_uses_the_pinned_range_authority() -> Result<(), String> {
+        // #4538: the production review-comments loader must go through the
+        // shared range authority. The raw control proves the fixture
+        // discriminates: ambient `color.diff=always` colors a plain
+        // `git diff`, and the old private loader parsed that as zero changed
+        // lines. The same loader must name unresolvable revisions in ripr's
+        // own voice instead of git's `ambiguous argument` advice.
+        use crate::testing::fixture_git::{fixture_git_ok, remove_fixture_tree};
+        let root = unique_command_test_dir("review-comments-pinned-diff");
+        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+        let lib = root.join("src/lib.rs");
+        fixture_git_ok(&root, &["init", "-q", "--initial-branch=main"])?;
+        for (key, value) in [
+            ("user.name", "Review Comments"),
+            ("user.email", "review-comments@example.com"),
+            ("commit.gpgsign", "false"),
+            ("color.diff", "always"),
+        ] {
+            fixture_git_ok(&root, &["config", "--local", key, value])?;
+        }
+        std::fs::write(&lib, "pub fn f(x: i32) -> bool { x > 1 }\n")
+            .map_err(|err| format!("write base lib: {err}"))?;
+        fixture_git_ok(&root, &["add", "."])?;
+        fixture_git_ok(&root, &["commit", "-q", "-m", "base"])?;
+        std::fs::write(&lib, "pub fn f(x: i32) -> bool { x >= 1 }\n")
+            .map_err(|err| format!("write head lib: {err}"))?;
+        fixture_git_ok(&root, &["commit", "-q", "-am", "head"])?;
+
+        let raw = crate::git::run_git_output_with_deadline(
+            &root,
+            &["diff", "--unified=0", "--no-ext-diff", "HEAD~1...HEAD"],
+            None,
+        )?;
+        let raw = String::from_utf8_lossy(&raw.stdout).into_owned();
+        assert!(
+            raw.contains('\u{1b}'),
+            "color.diff=always control did not color the raw diff, so the fixture does not discriminate:\n{raw}"
+        );
+        assert!(analysis::parse_unified_diff(&raw).is_empty());
+
+        let diff = load_review_comments_diff(&root, "HEAD~1", "HEAD")?;
+        assert!(
+            !diff.contains('\u{1b}'),
+            "pinned diff kept ANSI color:\n{diff}"
+        );
+        let changed = analysis::parse_unified_diff(&diff);
+        assert_eq!(changed.len(), 1, "expected one changed file: {diff}");
+
+        let Err(err) = load_review_comments_diff(&root, "no-such-base", "HEAD") else {
+            return Err("an unresolvable base must fail".to_string());
+        };
+        assert!(
+            err.contains("the base `no-such-base` does not resolve to a commit")
+                && !err.contains("ambiguous argument"),
+            "base failure must be named by ripr, got: {err}"
+        );
+        let Err(err) = load_review_comments_diff(&root, "HEAD~1", "no-such-head") else {
+            return Err("an unresolvable head must fail".to_string());
+        };
+        assert!(
+            err.contains("the head `no-such-head` does not resolve to a commit")
+                && err.contains("--head <ref>")
+                && !err.contains("ambiguous argument"),
+            "head failure must be named by ripr, got: {err}"
+        );
+        remove_fixture_tree(&root)
+    }
+
+    #[test]
     fn review_comments_returns_diff_loader_errors() -> Result<(), String> {
         let root = unique_command_test_dir("review-comments-diff-error");
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
@@ -6644,6 +6758,100 @@ language = "rust"
         assert!(rendered_md.contains("analysis scope: `diff_scoped_changed_files`"));
         assert!(rendered_md.contains("scoped production files: 2/3"));
         assert!(rendered_md.contains("review_comments_diff_scope_only"));
+        assert!(
+            !rendered_json.contains("not evaluated") && scope.get("unevaluated_seams").is_none(),
+            "a scope the changed lines cannot fill is evaluated in full"
+        );
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_skips_evidence_outside_changed_lines_once_they_fill_the_review_slots()
+    -> Result<(), String> {
+        let root = unique_command_test_dir("review-comments-staged-scope");
+        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"review_comments_staged_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|err| format!("write Cargo.toml: {err}"))?;
+        // Twelve changed one-line predicates fill the ten review slots;
+        // the unchanged thirteenth function is never evaluated.
+        let changed = (1..=12)
+            .map(|n| format!("pub fn changed_{n}(value: i32) -> i32 {{ if value > {n} {{ 1 }} else {{ 0 }} }}\n"))
+            .collect::<String>();
+        std::fs::write(
+            root.join("src/lib.rs"),
+            format!("{changed}pub fn untouched(value: i32) -> i32 {{ if value > 99 {{ 1 }} else {{ 0 }} }}\n"),
+        )
+        .map_err(|err| format!("write src/lib.rs: {err}"))?;
+        let removed = (1..=12)
+            .map(|n| format!("-pub fn changed_{n}(value: i32) -> i32 {{ if value >= {n} {{ 1 }} else {{ 0 }} }}\n"))
+            .collect::<String>();
+        let added = changed
+            .lines()
+            .map(|line| format!("+{line}\n"))
+            .collect::<String>();
+        let diff = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,12 +1,12 @@\n{removed}{added}"
+        );
+
+        let out = root.join("target/ripr/review/comments.json");
+        review_comments_with_diff_loader(
+            &args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "HEAD~1",
+                "--head",
+                "HEAD",
+                "--out",
+                &out.display().to_string(),
+            ]),
+            move |_diff_root, _base, _head| Ok(diff.clone()),
+        )?;
+
+        let rendered_json = std::fs::read_to_string(&out)
+            .map_err(|err| format!("read review comments JSON: {err}"))?;
+        let value: serde_json::Value = serde_json::from_str(&rendered_json)
+            .map_err(|err| format!("parse review comments JSON: {err}"))?;
+        let returned = value["comments"].as_array().map_or(0, Vec::len)
+            + value["summary_only"].as_array().map_or(0, Vec::len);
+        assert_eq!(
+            returned,
+            output::review_comments::DEFAULT_REVIEW_MAX_SUMMARY_ITEMS
+        );
+        assert!(
+            !rendered_json.contains("untouched"),
+            "the unchanged function's seam must not be evaluated or rendered"
+        );
+        assert_eq!(value["analysis_scope"]["unevaluated_seams"], 1);
+        let messages = value["warnings"]
+            .as_array()
+            .ok_or("warnings must be an array")?
+            .iter()
+            .filter_map(|warning| warning["message"].as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            messages.contains(
+                &"1 scoped seam outside changed lines and changed owner functions was not \
+                  evaluated: seams on changed lines and in changed owners already filled all 10 \
+                  review slots"
+            ),
+            "missing staged-scope warning in {messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .filter(|message| message.contains("omitted by the brief cap"))
+                .all(|message| message.starts_with("at least ")),
+            "a cap count over evaluated seams only is a floor: {messages:?}"
+        );
+        let rendered_md = std::fs::read_to_string(out.with_extension("md"))
+            .map_err(|err| format!("read review comments Markdown: {err}"))?;
+        assert!(rendered_md.contains("- scoped seams not evaluated: 1"));
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
         Ok(())
@@ -7957,8 +8165,8 @@ language = "rust"
         let fixture = generated_workflow_smoke_fixture();
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
-        // Install caching (#2008): the registry/git/dependency caches are
-        // warm, and the install still runs fresh (no stale-binary risk).
+        // Install caching (#2008): the install names an exact version, so a
+        // cached binary is reused only when it is that version.
         // Pinned to a SHA, not the mutable v2 tag (#2190 review).
         assert!(workflow.contains("Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32"));
         assert!(!workflow.contains("Swatinem/rust-cache@v2"));
@@ -8034,7 +8242,10 @@ language = "rust"
             existing_comments.contains("pulls/${{ github.event.pull_request.number }}/comments")
         );
         assert!(existing_comments.contains("target/ripr/review/existing-comments.json"));
-        assert!(existing_comments.contains("capture(\"<!-- ripr:dedupe=(?<key>[^ ]+)\")"));
+        assert!(
+            existing_comments
+                .contains("capture(\"<!-- ripr:dedupe=(?<key>.*?)(?: presentation=[^ ]+)? -->\")")
+        );
 
         let comment_plan = workflow_step(&workflow, "Plan RIPR inline comments");
         assert!(comment_plan.contains("env.RIPR_COMMENT_MODE != 'off'"));
@@ -8359,7 +8570,7 @@ language = "rust"
         assert!(policy_history.contains("continue-on-error: true"));
         assert!(policy_history.contains("policy history"));
         assert!(policy_history.contains("--current target/ripr/reports/policy-operations.json"));
-        assert!(policy_history.contains("--commit \"$GITHUB_SHA\""));
+        assert!(policy_history.contains("--commit \"$(git rev-parse HEAD)\""));
         assert!(policy_history.contains("--history .ripr/policy-history.jsonl"));
         assert!(policy_history.contains("--pr-number \"${{ github.event.number }}\""));
         assert!(policy_history.contains("--out target/ripr/reports/policy-history.json"));
@@ -8599,7 +8810,7 @@ language = "rust"
         assert!(summary.contains(".top_issue.receipt.artifact // \"not_available\""));
         assert!(summary.contains(".policy.mode // \"not_available\""));
         assert!(summary.contains(".policy.decision // \"not_available\""));
-        assert!(summary.contains("cat target/ripr/reports/pr-review-front-panel.md"));
+        assert!(summary.contains("repo_relative < target/ripr/reports/pr-review-front-panel.md"));
         assert!(summary.contains("PR review summary was not generated"));
         assert!(summary.contains("### Recommended next test"));
         assert!(summary.contains("#### Recommended next test at a glance"));
@@ -8652,7 +8863,7 @@ language = "rust"
         assert!(summary.contains(".commands.verify // \"not_available\""));
         assert!(summary.contains(".commands.receipt // \"not_available\""));
         assert!(summary.contains(".fallback.kind // \"none\""));
-        assert!(summary.contains("cat target/ripr/reports/first-useful-action.md"));
+        assert!(summary.contains("repo_relative < target/ripr/reports/first-useful-action.md"));
         assert!(summary.contains("Recommended next test was not generated"));
         assert!(summary.contains("cat target/ripr/pilot/pilot-summary.md"));
         assert!(summary.contains("cat target/ripr/workflow/agent-review-summary.md"));

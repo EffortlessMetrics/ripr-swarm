@@ -310,6 +310,54 @@ mod tests {
     }
 
     #[test]
+    fn over_deep_rust_file_falls_back_with_typed_nesting_reason() -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("index_nesting_budget")?;
+        fs::create_dir_all(root.join("src"))?;
+        write_manifest(&root)?;
+        let deep = format!(
+            "pub fn deep(x: i32) -> i32 {{ {}x{} }}\n",
+            "(".repeat(5_000),
+            ")".repeat(5_000)
+        );
+        fs::write(root.join("src/deep.rs"), deep)?;
+        fs::write(
+            root.join("src/lib.rs"),
+            "pub fn shallow(x: i32) -> i32 { x }\n",
+        )?;
+        let files = vec![PathBuf::from("src/deep.rs"), PathBuf::from("src/lib.rs")];
+
+        // The production index path must not abort; the deep file keeps its
+        // lexical facts and the shallow file stays parser-backed.
+        let index = build_index(&root, &files)?;
+        let deep_facts = index
+            .files
+            .get(Path::new("src/deep.rs"))
+            .ok_or("deep file missing from index")?;
+        assert!(deep_facts.used_lexical_fallback);
+        assert!(index.functions.iter().any(|f| f.name == "deep"));
+        let lib_facts = index
+            .files
+            .get(Path::new("src/lib.rs"))
+            .ok_or("lib file missing from index")?;
+        assert!(!lib_facts.used_lexical_fallback);
+
+        let cold = crate::analysis::rust_index::lexical_fallback_disclosure(&index)
+            .ok_or("missing lexical fallback disclosure")?;
+        assert!(
+            cold.contains("ripr: src/deep.rs: static limit rust_nesting_budget:"),
+            "{cold}"
+        );
+        assert!(!cold.contains("src/lib.rs"), "{cold}");
+        let warm = crate::analysis::rust_index::lexical_fallback_disclosure_at(
+            &root,
+            &crate::analysis::rust_index::lexical_fallback_files(&index),
+        );
+        assert_eq!(warm.as_deref(), Some(cold.as_str()));
+        fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
     fn build_index_collects_functions_and_tests_from_workspace_files() -> Result<(), Box<dyn Error>>
     {
         let root = temp_dir("index_functions")?;
@@ -881,6 +929,107 @@ pub fn check(x: i32) -> bool {
         assert_eq!(empty.file_fact_cache.misses, 0);
         assert_eq!(empty.file_fact_cache.stores, 0);
         assert!(empty.file_fact_cache.invalidated_files.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn same_key_valid_json_payload_edit_recomputes_actual_index() -> Result<(), Box<dyn Error>> {
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let root = std::env::temp_dir().join(format!("ripr-integrity-index-{stamp}"));
+        fs::create_dir(&root)?;
+        let fixture = CacheInventoryFixture {
+            cache: RepoFileFactCache::at_dir(root.join("cache")),
+            root,
+        };
+        fs::create_dir(fixture.root.join("src"))?;
+        write_manifest(&fixture.root)?;
+        let files = [(
+            PathBuf::from("src/lib.rs"),
+            b"pub fn value() -> i32 { 1 }\n#[test]\nfn actual_test() { let _ = value(); }\n"
+                .to_vec(),
+        )];
+        let build = || {
+            build_index_with_file_fact_cache(
+                &fixture.root,
+                &files,
+                &RaRustSyntaxAdapter,
+                &LexicalRustSyntaxAdapter,
+                &fixture.cache,
+                || fixture.cache.known_file_paths(),
+            )
+        };
+        let cold = build()?;
+        if cold.index.functions.is_empty() || cold.index.tests.is_empty() {
+            return Err("integrity fixture must produce functions and tests".into());
+        }
+        let entries = fs::read_dir(fixture.root.join("cache"))?.collect::<Result<Vec<_>, _>>()?;
+        if entries.len() != 1 {
+            return Err("expected exactly one seeded entry".into());
+        }
+        let entry = entries.first().ok_or("missing seeded entry")?.path();
+        let original = fs::read(&entry)?;
+        let mut edited: serde_json::Value = serde_json::from_slice(&original)?;
+        fs::write(&entry, serde_json::to_vec(&edited)?)?;
+        let reformatted = build()?;
+        if reformatted.file_fact_cache.hits != 1 || reformatted.index.tests != cold.index.tests {
+            return Err("semantic-preserving JSON formatting must remain a warm hit".into());
+        }
+        let changed_source_key = RepoFileFactCacheKey::new(
+            &PathBuf::from("src/lib.rs"),
+            b"pub fn changed_source() {}\n",
+        );
+        if !matches!(
+            fixture.cache.load_file_facts(&changed_source_key),
+            CacheLoad::Miss
+        ) {
+            return Err("ordinary changed-source identity must remain a miss".into());
+        }
+        let original_keys = edited
+            .as_object()
+            .ok_or("envelope must be object")?
+            .iter()
+            .filter(|(key, _)| key.as_str() != "file_facts")
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect::<Vec<_>>();
+        let facts = edited.get_mut("file_facts").ok_or("missing facts")?;
+        let encoded_facts = serde_json::to_string(facts)?;
+        let changed_facts = encoded_facts.replace("actual_test", "forged_test");
+        if encoded_facts == changed_facts {
+            return Err("test-name edit must change real facts".into());
+        }
+        *facts = serde_json::from_str(&changed_facts)?;
+        for (key, value) in original_keys {
+            if edited.get(&key) != Some(&value) {
+                return Err("identity or digest changed".into());
+            }
+        }
+        let altered = serde_json::to_vec(&edited)?;
+        if altered == original {
+            return Err("payload edit must change bytes".into());
+        }
+        fs::write(&entry, altered)?;
+        let recovered = build()?;
+        if recovered.file_fact_cache.hits != 0
+            || recovered.file_fact_cache.corrupt_ignored != 1
+            || recovered.file_fact_cache.stores != 1
+            || recovered.file_fact_cache.misses != 0
+        {
+            return Err(format!(
+                "same-key semantic corruption must reparse: {:?}",
+                recovered.file_fact_cache
+            )
+            .into());
+        }
+        if recovered.index.files != cold.index.files
+            || recovered.index.functions != cold.index.functions
+            || recovered.index.tests != cold.index.tests
+        {
+            return Err("recovered complete index must equal cold source truth".into());
+        }
+        let warm = build()?;
+        if warm.file_fact_cache.hits != 1 || warm.index.tests != cold.index.tests {
+            return Err("corrected entry must warm-hit original evidence".into());
+        }
         Ok(())
     }
 

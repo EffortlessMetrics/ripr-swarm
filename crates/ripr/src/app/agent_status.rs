@@ -11,9 +11,10 @@ use crate::agent::loop_commands::{
     check_repo_exposure_command, display_path, shell_arg,
 };
 use crate::app::repair_attempt::{
-    AfterPhaseHeadAdmission, DivergedHeadRecovery, REPAIR_ATTEMPT_DIRECTORY,
-    RepairAttemptInventoryEntry, RepairAttemptManifest, RepairAttemptState,
-    after_phase_head_admission, diverged_head_recovery, inventory_repair_attempts,
+    AfterPhaseHeadAdmission, AttemptTerminalReceipt, DivergedHeadRecovery,
+    REPAIR_ATTEMPT_DIRECTORY, RepairAttemptInventoryEntry, RepairAttemptManifest,
+    RepairAttemptState, after_phase_head_admission, diverged_head_recovery,
+    inventory_repair_attempts, load_attempt_terminal_receipt,
 };
 use crate::output::agent_receipt::AgentReceiptReading;
 use crate::output::markdown::{COMMAND_SHELL_DISCLOSURE, PowershellForm, powershell_form};
@@ -181,21 +182,35 @@ pub(crate) enum AgentStatusAttemptReceipt {
     /// after verdict (the file is absent, or it parses but belongs to other
     /// work). A receipt whose JSON cannot be read at all is `Unreadable`,
     /// not `NotIssued`: conflating them would tell an orchestrator the
-    /// receipt was never issued.
+    /// receipt was never issued. Used only for legacy manifests that never
+    /// retained an attempt-local result.
     NotIssued,
-    /// The workflow receipt is bound to a different repair attempt. The
-    /// workflow keeps one receipt, so a later attempt's after phase replaced
-    /// the receipt this attempt's after phase wrote; its outcome can no
-    /// longer be read from it.
+    /// The workflow receipt is bound to a different repair attempt, and this
+    /// attempt has no retained terminal receipt to read instead (legacy
+    /// one-slot projection). A later attempt's after phase replaced the
+    /// compatibility file; the earlier outcome can no longer be reconstructed
+    /// from it.
     Superseded { by_attempt_id: String },
     /// The receipt file at the workflow receipt path exists but is not
     /// parseable JSON, so status cannot tell whether it was issued for this
     /// attempt's after verdict. Distinct from `NotIssued`, which means no
     /// receipt file is there (or the readable file belongs to other work).
+    /// Used only when this attempt did not retain a local result.
     Unreadable,
+    /// This attempt declared terminal retention but the local result cannot
+    /// be projected (missing, digest mismatch, path escape, or binding
+    /// mismatch). Status must not fall back to another attempt's
+    /// compatibility receipt.
+    Unavailable {
+        path: Option<String>,
+        reason: String,
+    },
     /// The receipt bound to this attempt's after verdict, read through the
-    /// receipt owner.
-    Issued(AgentReceiptReading),
+    /// receipt owner. `path` is the exact artifact that was read.
+    Issued {
+        path: String,
+        reading: AgentReceiptReading,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -250,7 +265,7 @@ impl AgentStatusReport {
         self.repair_attempts
             .iter()
             .find_map(|attempt| match &attempt.receipt {
-                AgentStatusAttemptReceipt::Issued(reading) if reading.test_not_run() => {
+                AgentStatusAttemptReceipt::Issued { reading, .. } if reading.test_not_run() => {
                     Some(reading)
                 }
                 _ => None,
@@ -397,13 +412,14 @@ fn read_workflow_receipt(root: &Path) -> WorkflowReceiptRead {
     }
 }
 
-/// Whether the workflow receipt was issued for exactly this attempt's after
-/// verdict: the attempt-bound receipt records the attempt, its after HEAD, and
-/// the delta and packet digests the finish measured. A receipt bound to
-/// another attempt superseded this attempt's receipt (the workflow keeps one
-/// receipt); a legacy unbound receipt, or one issued before a later finish of
-/// the same attempt, does not match.
+/// Whether a receipt was issued for exactly this attempt's after verdict.
+///
+/// Status prefers the attempt-local terminal receipt. The one-slot
+/// compatibility file is used only for legacy manifests that never retained
+/// a local result. A declared-but-unusable local result never falls back to
+/// another attempt's projection.
 fn attempt_receipt(
+    root: &Path,
     manifest: &RepairAttemptManifest,
     receipt: &WorkflowReceiptRead,
 ) -> AgentStatusAttemptReceipt {
@@ -414,6 +430,22 @@ fn attempt_receipt(
     else {
         return AgentStatusAttemptReceipt::NotApplicable;
     };
+    match load_attempt_terminal_receipt(root, manifest) {
+        AttemptTerminalReceipt::Issued { path, value } => AgentStatusAttemptReceipt::Issued {
+            path,
+            reading: AgentReceiptReading::from_value(&value),
+        },
+        AttemptTerminalReceipt::Unavailable { path, reason } => {
+            AgentStatusAttemptReceipt::Unavailable { path, reason }
+        }
+        AttemptTerminalReceipt::NotRetained => legacy_workflow_attempt_receipt(after, receipt),
+    }
+}
+
+fn legacy_workflow_attempt_receipt(
+    after: &crate::app::repair_attempt::RepairAttemptAfter,
+    receipt: &WorkflowReceiptRead,
+) -> AgentStatusAttemptReceipt {
     let receipt = match receipt {
         WorkflowReceiptRead::Missing => return AgentStatusAttemptReceipt::NotIssued,
         WorkflowReceiptRead::Unreadable => return AgentStatusAttemptReceipt::Unreadable,
@@ -427,7 +459,10 @@ fn attempt_receipt(
         && bound("/repair_attempt/delta_sha256", &after.delta_sha256)
         && bound("/repair_attempt/packet_sha256", &after.packet_sha256)
     {
-        AgentStatusAttemptReceipt::Issued(AgentReceiptReading::from_value(receipt))
+        AgentStatusAttemptReceipt::Issued {
+            path: WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string(),
+            reading: AgentReceiptReading::from_value(receipt),
+        }
     } else if let Some(other) = receipt
         .pointer("/repair_attempt/attempt_id")
         .and_then(Value::as_str)
@@ -455,7 +490,7 @@ fn status_repair_attempt(
     receipt: &WorkflowReceiptRead,
 ) -> AgentStatusRepairAttempt {
     let restart = Some(new_repair_attempt_command(root_display, &manifest.seam_id));
-    let receipt = attempt_receipt(manifest, receipt);
+    let receipt = attempt_receipt(root, manifest, receipt);
     let evidence_head = manifest.after.as_ref().map_or_else(
         || manifest.repository_head.clone(),
         |after| after.repository_head.clone(),
@@ -538,10 +573,10 @@ fn status_after_disposition(
         // receipt whose grip did not rise leaves the gap open, so the seam is
         // restarted; any other reading is reported, never called finished.
         RepairAttemptState::ReadyToFinish => match receipt {
-            AgentStatusAttemptReceipt::Issued(reading) if reading.shows_gap_closed() => {
+            AgentStatusAttemptReceipt::Issued { reading, .. } if reading.shows_gap_closed() => {
                 ("ready_to_finish", "finished", None)
             }
-            AgentStatusAttemptReceipt::Issued(reading) if reading.leaves_gap_open() => {
+            AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open() => {
                 ("ready_to_finish", "gap_open", restart)
             }
             _ => ("ready_to_finish", "unconfirmed", None),
@@ -626,7 +661,7 @@ fn finished_attempt_warnings(
 
 fn unconfirmed_receipt_reason(attempt: &AgentStatusRepairAttempt) -> String {
     match &attempt.receipt {
-        AgentStatusAttemptReceipt::Issued(reading) if !reading.is_advisory() => format!(
+        AgentStatusAttemptReceipt::Issued { reading, .. } if !reading.is_advisory() => format!(
             "its receipt is `{}`{} and an invalid or incomplete receipt does not show the gap closed (movement `{}`)",
             reading.status.as_deref().unwrap_or("unknown"),
             reading
@@ -636,7 +671,7 @@ fn unconfirmed_receipt_reason(attempt: &AgentStatusRepairAttempt) -> String {
                 .unwrap_or_default(),
             reading.movement.as_deref().unwrap_or("unknown")
         ),
-        AgentStatusAttemptReceipt::Issued(reading) => format!(
+        AgentStatusAttemptReceipt::Issued { reading, .. } => format!(
             "its receipt reports movement `{}`, which does not show the gap closed{}",
             reading.movement.as_deref().unwrap_or("unknown"),
             reading
@@ -654,6 +689,11 @@ fn unconfirmed_receipt_reason(attempt: &AgentStatusRepairAttempt) -> String {
         AgentStatusAttemptReceipt::Unreadable => format!(
             "the receipt at `{WORKFLOW_AGENT_RECEIPT_ARTIFACT}` exists but could not be parsed as JSON, so status cannot tell whether it was issued for this attempt's after verdict"
         ),
+        AgentStatusAttemptReceipt::Unavailable { reason, .. } => {
+            format!(
+                "{reason}; status does not reconstruct the outcome from another attempt's compatibility receipt"
+            )
+        }
         _ => format!(
             "no receipt at `{WORKFLOW_AGENT_RECEIPT_ARTIFACT}` was issued for its after verdict"
         ),
@@ -875,6 +915,73 @@ fn pilot_found_no_repair_target(root: &Path) -> bool {
             .is_some_and(Value::is_null)
 }
 
+/// The Python preview repair card a complete `ripr pilot` run recorded when
+/// it ranked no seam and recorded no repair start (`python_first_use.status`
+/// is `ready`). `ripr agent repair` targets ranked seams only, so sending the
+/// user back to pilot only records the same card again (onboarding Python
+/// walk, #4227). Returns the card's missing discriminator and verify command
+/// when the summary carries them.
+struct PilotPythonCard {
+    missing_discriminator: Option<String>,
+    verify_command: Option<String>,
+}
+
+fn pilot_python_repair_card_ready(root: &Path) -> Option<PilotPythonCard> {
+    let text = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)).ok()?;
+    let summary = serde_json::from_str::<Value>(&text).ok()?;
+    let complete = summary.pointer("/status").and_then(Value::as_str) == Some("complete");
+    let no_seams = summary
+        .pointer("/top_actionable_seams")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty);
+    let no_repair_start = summary
+        .pointer("/next/repair_command")
+        .is_some_and(Value::is_null);
+    let first_use = summary.pointer("/python_first_use")?;
+    let ready = first_use.get("status").and_then(Value::as_str) == Some("ready")
+        && first_use
+            .get("repair_cards_total")
+            .and_then(Value::as_u64)
+            .is_some_and(|total| total > 0);
+    if !(complete && no_seams && no_repair_start && ready) {
+        return None;
+    }
+    let card = first_use.get("top_repair_card");
+    let text_at = |pointer: &str| {
+        card.and_then(|card| card.pointer(pointer))
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+    };
+    Some(PilotPythonCard {
+        missing_discriminator: text_at("/missing_discriminator"),
+        verify_command: text_at("/verify_command"),
+    })
+}
+
+fn pilot_python_repair_card_message(card: &PilotPythonCard, root_display: &str) -> String {
+    let mut message = "the last complete `ripr pilot` run ranked no seam but produced a Python preview repair card".to_string();
+    if let Some(discriminator) = &card.missing_discriminator {
+        message.push_str(&format!(" for missing discriminator `{discriminator}`"));
+    }
+    message.push_str(&format!(
+        "; `ripr agent repair` targets ranked seams only, and running pilot again unchanged records the same card. Follow the card from `ripr first-pr --root {root}`, which names the test to strengthen and its verify command",
+        root = shell_arg(root_display)
+    ));
+    if let Some(verify) = &card.verify_command {
+        message.push_str(&format!(" (`{verify}`)"));
+    }
+    message.push_str(&format!(
+        ", then rerun `ripr check --root {}` to see whether static evidence now finds the discriminator",
+        shell_arg(root_display)
+    ));
+    message.push_str(&format!(
+        ". If the workspace changed since that run, rerun `{}`",
+        pilot_select_command(root_display)
+    ));
+    message
+}
+
 /// Python first-use statuses that record "pilot produced no repair card"
 /// (`output::pilot::types::PilotPythonFirstUseStatus`). `analysis_unavailable`
 /// is a failed analysis, not that fact, and `ready` has repair cards.
@@ -1056,6 +1163,14 @@ fn legacy_next_command(
             });
             return None;
         }
+        if let Some(card) = pilot_python_repair_card_ready(root) {
+            warnings.push(AgentStatusWarning {
+                kind: "pilot_python_repair_card_no_agent_repair".to_string(),
+                artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
+                message: pilot_python_repair_card_message(&card, root_display),
+            });
+            return None;
+        }
         return Some(AgentStatusCommand {
             step: "select_seam".to_string(),
             artifact: "target/ripr/pilot".to_string(),
@@ -1092,7 +1207,7 @@ fn attempt_condition(attempt: &AgentStatusRepairAttempt) -> String {
         },
         "not_published" => "prepared but never published".to_string(),
         "gap_open" => {
-            let AgentStatusAttemptReceipt::Issued(reading) = &attempt.receipt else {
+            let AgentStatusAttemptReceipt::Issued { reading, .. } = &attempt.receipt else {
                 return attempt.state.to_string();
             };
             let mut condition = format!(
@@ -1122,7 +1237,7 @@ fn attempt_condition(attempt: &AgentStatusRepairAttempt) -> String {
 fn attempt_outcome(attempt: &AgentStatusRepairAttempt) -> String {
     let mut parts = Vec::new();
     match &attempt.receipt {
-        AgentStatusAttemptReceipt::Issued(reading) => parts.push(format!(
+        AgentStatusAttemptReceipt::Issued { reading, .. } => parts.push(format!(
             "receipt `{}`, movement `{}`",
             reading.status.as_deref().unwrap_or("unknown"),
             reading.movement.as_deref().unwrap_or("unknown")
@@ -1135,6 +1250,9 @@ fn attempt_outcome(attempt: &AgentStatusRepairAttempt) -> String {
         }
         AgentStatusAttemptReceipt::Unreadable => {
             parts.push("receipt present but unreadable".to_string());
+        }
+        AgentStatusAttemptReceipt::Unavailable { .. } => {
+            parts.push("retained receipt unavailable".to_string());
         }
         AgentStatusAttemptReceipt::NotApplicable => {}
     }
@@ -1354,19 +1472,38 @@ fn agent_status_repair_attempt_json(attempt: &AgentStatusRepairAttempt) -> Value
 }
 
 fn attempt_receipt_json(receipt: &AgentStatusAttemptReceipt) -> Value {
-    let (reading, superseded_by, unreadable) = match receipt {
+    let (path, reading, superseded_by, unreadable, unavailable) = match receipt {
         AgentStatusAttemptReceipt::NotApplicable => return Value::Null,
-        AgentStatusAttemptReceipt::NotIssued => (None, None, false),
-        AgentStatusAttemptReceipt::Superseded { by_attempt_id } => {
-            (None, Some(by_attempt_id.as_str()), false)
+        AgentStatusAttemptReceipt::NotIssued => {
+            (WORKFLOW_AGENT_RECEIPT_ARTIFACT, None, None, false, None)
         }
-        AgentStatusAttemptReceipt::Unreadable => (None, None, true),
-        AgentStatusAttemptReceipt::Issued(reading) => (Some(reading), None, false),
+        AgentStatusAttemptReceipt::Superseded { by_attempt_id } => (
+            WORKFLOW_AGENT_RECEIPT_ARTIFACT,
+            None,
+            Some(by_attempt_id.as_str()),
+            false,
+            None,
+        ),
+        AgentStatusAttemptReceipt::Unreadable => {
+            (WORKFLOW_AGENT_RECEIPT_ARTIFACT, None, None, true, None)
+        }
+        AgentStatusAttemptReceipt::Unavailable { path, reason } => (
+            path.as_deref().unwrap_or(WORKFLOW_AGENT_RECEIPT_ARTIFACT),
+            None,
+            None,
+            false,
+            Some(reason.as_str()),
+        ),
+        AgentStatusAttemptReceipt::Issued { path, reading } => {
+            (path.as_str(), Some(reading), None, false, None)
+        }
     };
     serde_json::json!({
-        "path": WORKFLOW_AGENT_RECEIPT_ARTIFACT,
+        "path": path,
         "issued_for_attempt": reading.is_some(),
         "unreadable": unreadable,
+        "unavailable": unavailable.is_some(),
+        "unavailable_reason": unavailable,
         "superseded_by": superseded_by,
         "status": reading.and_then(|reading| reading.status.as_deref()),
         "movement": reading.and_then(|reading| reading.movement.as_deref()),
@@ -1921,17 +2058,21 @@ mod tests {
         let manifest = ready_to_finish_manifest()?;
 
         assert_eq!(
-            attempt_receipt(&manifest, &WorkflowReceiptRead::Unreadable),
+            attempt_receipt(Path::new("."), &manifest, &WorkflowReceiptRead::Unreadable),
             AgentStatusAttemptReceipt::Unreadable
         );
         assert_eq!(
-            attempt_receipt(&manifest, &WorkflowReceiptRead::Missing),
+            attempt_receipt(Path::new("."), &manifest, &WorkflowReceiptRead::Missing),
             AgentStatusAttemptReceipt::NotIssued,
             "a missing receipt file stays not issued"
         );
         let unbound = serde_json::json!({});
         assert_eq!(
-            attempt_receipt(&manifest, &WorkflowReceiptRead::Parsed(unbound)),
+            attempt_receipt(
+                Path::new("."),
+                &manifest,
+                &WorkflowReceiptRead::Parsed(unbound)
+            ),
             AgentStatusAttemptReceipt::NotIssued,
             "a readable receipt bound to other work stays not issued"
         );
@@ -1942,6 +2083,70 @@ mod tests {
         assert_eq!(unreadable["issued_for_attempt"], false);
         let not_issued = attempt_receipt_json(&AgentStatusAttemptReceipt::NotIssued);
         assert_eq!(not_issued["unreadable"], false);
+        Ok(())
+    }
+
+    /// A finished attempt that never retained `terminal_artifacts` still reads
+    /// the one-slot compatibility file. An exact match is issued; a receipt
+    /// bound to another attempt stays superseded and is not reconstructed.
+    #[test]
+    fn agent_status_legacy_manifest_does_not_reconstruct_a_superseded_receipt() -> Result<(), String>
+    {
+        let manifest = ready_to_finish_manifest()?;
+        let after = manifest
+            .after
+            .as_ref()
+            .ok_or_else(|| "fixture after missing".to_string())?;
+        let other = serde_json::json!({
+            "repair_attempt": {
+                "attempt_id": "repair-attempt-aaaaaaaaaaaaaaaaaaaaaaaa",
+                "after_head": after.repository_head,
+                "delta_sha256": after.delta_sha256,
+                "packet_sha256": after.packet_sha256
+            }
+        });
+        assert_eq!(
+            attempt_receipt(
+                Path::new("."),
+                &manifest,
+                &WorkflowReceiptRead::Parsed(other)
+            ),
+            AgentStatusAttemptReceipt::Superseded {
+                by_attempt_id: "repair-attempt-aaaaaaaaaaaaaaaaaaaaaaaa".to_string()
+            }
+        );
+        let superseded = attempt_receipt_json(&AgentStatusAttemptReceipt::Superseded {
+            by_attempt_id: "repair-attempt-aaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+        });
+        assert_eq!(superseded["issued_for_attempt"], false);
+        assert_eq!(superseded["unavailable"], false);
+        assert_eq!(
+            superseded["superseded_by"],
+            "repair-attempt-aaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+
+        let matching = serde_json::json!({
+            "repair_attempt": {
+                "attempt_id": after.attempt_id.as_str(),
+                "after_head": after.repository_head,
+                "delta_sha256": after.delta_sha256,
+                "packet_sha256": after.packet_sha256
+            }
+        });
+        match attempt_receipt(
+            Path::new("."),
+            &manifest,
+            &WorkflowReceiptRead::Parsed(matching),
+        ) {
+            AgentStatusAttemptReceipt::Issued { path, .. } => {
+                assert_eq!(path, WORKFLOW_AGENT_RECEIPT_ARTIFACT);
+            }
+            other => {
+                return Err(format!(
+                    "an exact matching legacy receipt must stay issued, not {other:?}"
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -1979,6 +2184,7 @@ mod tests {
                 },
             }),
             last_after_refusal: None,
+            terminal_artifacts: Vec::new(),
         })
     }
 
@@ -2644,13 +2850,6 @@ mod tests {
             summary(
                 "complete",
                 "required",
-                r#""python_first_use": {"status": "ready", "repair_cards_total": 1},"#,
-                enabled_routes,
-                "null",
-            ),
-            summary(
-                "complete",
-                "required",
                 r#""python_first_use": {"status": "analysis_unavailable", "repair_cards_total": 0},"#,
                 enabled_routes,
                 "null",
@@ -2691,6 +2890,72 @@ mod tests {
             report.next_command.as_ref().map(|next| next.step.as_str()),
             Some("select_seam")
         );
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #4227 onboarding Python walk: a complete pilot run that ranked no seam
+    /// and recorded no repair start but produced a Python preview repair card
+    /// used to send status back to `ripr pilot`, which records the same card
+    /// again. Status now stops and names the first-pr route for the card.
+    #[test]
+    fn agent_status_routes_a_pilot_python_repair_card_to_first_pr() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("pilot-python-card");
+        let summary = |status: &str, seams: &str, first_use: &str, repair: &str| {
+            format!(
+                r#"{{"status": "{status}", "top_actionable_seams": {seams}, "python_first_use": {first_use}, "language_routes": {{"state": "required", "routes": [{{"language": "python", "enabled": true, "command": "ripr check --root ."}}]}}, "next": {{"repair_command": {repair}}}}}"#
+            )
+        };
+        let ready = r#"{"status": "ready", "repair_cards_total": 1, "top_repair_card": {"missing_discriminator": "amount == DISCOUNT_THRESHOLD", "verify_command": "pytest tests/test_pricing.py::test_discount"}}"#;
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary("complete", "[]", ready, "null"),
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert!(report.next_command.is_none(), "{:?}", report.next_command);
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_python_repair_card_no_agent_repair")
+            .ok_or_else(|| format!("expected a Python card warning: {:?}", report.warnings))?;
+        assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
+        for expected in [
+            "produced a Python preview repair card for missing discriminator `amount == DISCOUNT_THRESHOLD`",
+            "running pilot again unchanged records the same card",
+            "`ripr first-pr --root",
+            "(`pytest tests/test_pricing.py::test_discount`)",
+            "then rerun `ripr check --root",
+            "If the workspace changed since that run, rerun `ripr pilot --root",
+        ] {
+            assert!(warning.message.contains(expected), "{}", warning.message);
+        }
+        let rendered = render_agent_status_markdown(&report);
+        assert!(
+            !rendered.contains("```bash\nripr pilot --root"),
+            "{rendered}"
+        );
+
+        // Controls: a ranked seam, a recorded repair start, an incomplete run,
+        // or a ready status without cards keeps status on `select_seam`.
+        for control in [
+            summary("timed_out", "[]", ready, "null"),
+            summary("complete", "[]", ready, r#""ripr check --root .""#),
+            summary(
+                "complete",
+                "[]",
+                r#"{"status": "ready", "repair_cards_total": 0}"#,
+                "null",
+            ),
+        ] {
+            write_file(&root.join(PILOT_SUMMARY_ARTIFACT), &control)?;
+            let report = build_agent_status_report(&root, Path::new("."));
+            let next = report
+                .next_command
+                .as_ref()
+                .ok_or_else(|| format!("expected pilot for control {control}"))?;
+            assert_eq!(next.step, "select_seam", "{control}");
+        }
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())

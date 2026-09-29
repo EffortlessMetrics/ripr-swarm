@@ -52,8 +52,10 @@ target/ripr/pilot/pilot-summary.md
 The pilot summary is the first screen. It should name the top actionable gap,
 why it matters, and the related test to inspect when available. When the gap is
 eligible for a repair transaction, it ends with the `ripr agent repair ...
---phase before` command for that seam (step 5). Otherwise it ends with the
-snapshot commands in step 7.
+--phase before` command for that seam (step 5). A run with no Rust seam and a
+Python repair card instead ends with the card's route: `ripr first-pr`, the test
+edit, the card's verify command, then the receipt command `first-pr` names.
+Otherwise it ends with the snapshot commands in step 7.
 
 If the pilot reports `partial`, use the retry command it prints. Do not guess
 at cache or timeout settings.
@@ -156,7 +158,11 @@ follow as `Manual verify without a repair attempt (needs before and after snapsh
 compares a before snapshot taken before the test edit with an after snapshot
 taken after it, so it fails as printed on a checkout without them. Without a repair start, they read
 `Verify after the test edit` and `Receipt after verify`, because neither can
-run before the test edit. `ripr pr-summary` carries the same start command as
+run before the test edit. A `ripr receipt write` command printed there records
+`--status not_run`, which is true when it runs as printed; a `Receipt status`
+line follows it and says to pass `--status passed` when the verify command
+exited 0 and `--status failed` when it did not, since only the reader knows
+that outcome. `ripr pr-summary` carries the same start command as
 its first local reproduction command, and its Markdown, like
 `gate-decision.md`, follows the start with the after-phase step and the same
 manual labels. The generated CI job summary leads its `First-run status` block

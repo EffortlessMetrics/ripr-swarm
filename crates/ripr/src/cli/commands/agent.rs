@@ -39,9 +39,20 @@ use super::write_text_file;
 /// (`kind: "repair_after_result"`). The envelope is its own versioned
 /// contract: the agent verify 0.3 document rides unchanged under `verify`
 /// and the agent status 0.1 document under `agent_status`, so every stdout
-/// document's shape is identifiable from its `schema_version`. Refusal
-/// paths keep printing the bare agent verify 0.3 document instead.
+/// document's shape is identifiable from its `schema_version`. Refusals
+/// after the verify render keep printing the bare agent verify 0.3 document
+/// instead; typed refusals before it print `repair_after_refusal`.
 const REPAIR_AFTER_RESULT_SCHEMA_VERSION: &str = "0.1";
+
+/// Schema version of the `ripr agent repair --phase after` typed-refusal
+/// document (`kind: "repair_after_refusal"`). A deliberate named refusal that
+/// happens before any verify document exists (a diverged HEAD, drifted
+/// analysis inputs, a no-movement verify refusal) exits 3 with this document
+/// on stdout, so the phase keeps its one-stdout-document contract on every
+/// exit-3 path. Its version is distinct from the success envelope's `0.1`
+/// and the bare verify document's `0.3`, so every after-phase stdout shape
+/// stays identifiable from `schema_version` alone.
+const REPAIR_AFTER_REFUSAL_SCHEMA_VERSION: &str = "0.2";
 
 pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     let command = parse_agent_args(args)?;
@@ -53,7 +64,18 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
         AgentCommand::Start(options) => run_agent_start(options).map_err(CommandError::from),
         AgentCommand::Brief(options) => run_agent_brief(options).map_err(CommandError::from),
         AgentCommand::Packet(options) => run_agent_packet(options).map_err(CommandError::from),
-        AgentCommand::Verify(options) => run_agent_verify(options).map_err(CommandError::from),
+        // A deliberate named refusal (drifted analysis inputs, no movement)
+        // maps to exit code 3, as it does inside `repair --phase after`.
+        // Stdout stays empty on every refusal: the release negative corpus
+        // (RIPR-SPEC-0134) treats a rendered stdout on rejection as a breach,
+        // because the verify command's stdout is the verify artifact.
+        AgentCommand::Verify(options) => run_agent_verify(options).map_err(|error| {
+            if agent_verify_error_is_typed_refusal(&error) {
+                CommandError::Decision(error)
+            } else {
+                CommandError::Failure(error)
+            }
+        }),
         // Typed refusals carry the Decision variant (exit code 3).
         AgentCommand::VerifyExecute(options) => run_agent_verify_execute(options),
         AgentCommand::Receipt(options) => run_agent_receipt(options).map_err(CommandError::from),
@@ -343,12 +365,21 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
     )
 }
 
+/// Exact `render_agent_verify` error for drifted analysis inputs.
+const AGENT_VERIFY_INPUT_DRIFT_ERROR: &str =
+    "agent verify artifacts are incomparable: analysis input identities differ";
+
+/// Prefix of the `render_agent_verify` error for a no-movement refusal.
+const AGENT_VERIFY_NO_MOVEMENT_PREFIX: &str =
+    "agent verify no repository movement between before and after artifacts";
+
 /// True when a `render_agent_verify` error is a deliberate named refusal
 /// (input-identity drift or a no-movement verify refusal) rather than an
-/// operational failure.
+/// operational failure. Matched on the whole message or its leading clause,
+/// never a substring: path-bearing operational errors echo user-supplied
+/// paths, and a path must not turn an unreadable input into a refusal.
 fn agent_verify_error_is_typed_refusal(error: &str) -> bool {
-    error.contains("analysis input identities differ")
-        || error.contains("no repository movement between before and after artifacts")
+    error == AGENT_VERIFY_INPUT_DRIFT_ERROR || error.starts_with(AGENT_VERIFY_NO_MOVEMENT_PREFIX)
 }
 
 fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), CommandError> {
@@ -388,7 +419,7 @@ fn run_agent_receipt_for_attempt(
     ensure_command_root(&options.root, "agent receipt")?;
 
     let verify_path = validate_agent_receipt_verify_path(&options.root, &options.verify_json)?;
-    let verify_json = std::fs::read_to_string(&verify_path).map_err(|err| {
+    let verify_json = crate::bounded_input::read_to_string(&verify_path).map_err(|err| {
         format!(
             "read agent receipt verify JSON {} failed: {err}",
             output::outcome::display_path(&verify_path)
@@ -594,6 +625,19 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), CommandError> {
     // A deliberate named refusal once the after phase selected its attempt
     // (typed) is recorded above and maps to the decision exit code 3.
     // Operational errors after selection stay ordinary failures: exit 2.
+    if refusal.typed
+        && !refusal.stdout_document_printed
+        && let (Err(error), Some((_, attempt_id))) = (&result, &refusal.selected_attempt)
+    {
+        // Exit 3 means "read the stdout JSON document for the answer"
+        // (docs/EXIT_CODES.md): a typed refusal before any verify document
+        // exists still prints exactly one document, naming the cause and the
+        // recovery the narration gave on stderr.
+        match render_repair_after_refusal_json(attempt_id.as_str(), error, &refusal.narration) {
+            Ok(rendered) => print!("{rendered}"),
+            Err(render_error) => eprintln!("ripr: {render_error}"),
+        }
+    }
     if refusal.selected_attempt.is_some() && refusal.typed {
         result.map_err(CommandError::Decision)
     } else {
@@ -618,6 +662,31 @@ struct AfterPhaseRefusalContext {
     /// unreadable retained packet or manifest, a failed snapshot write,
     /// failed receipt or apply-record publication) stay exit code 2.
     typed: bool,
+    /// Set once the phase printed its one stdout document (the bare verify
+    /// document on a post-verify refusal), so a refusal never prints a
+    /// second document.
+    stdout_document_printed: bool,
+}
+
+/// The typed-refusal stdout document of an after phase that refused with a
+/// named cause before any verify document existed: the attempt, the final
+/// error, and the narrated cause and recovery lines (the same lines stderr
+/// carries and the attempt record keeps).
+fn render_repair_after_refusal_json(
+    attempt_id: &str,
+    error: &str,
+    narration: &[String],
+) -> Result<String, String> {
+    let document = serde_json::json!({
+        "schema_version": REPAIR_AFTER_REFUSAL_SCHEMA_VERSION,
+        "kind": "repair_after_refusal",
+        "attempt_id": attempt_id,
+        "error": error.trim(),
+        "narration": narration,
+    });
+    serde_json::to_string_pretty(&document)
+        .map(|rendered| format!("{rendered}\n"))
+        .map_err(|error| format!("serialize after-phase refusal document failed: {error}"))
 }
 
 impl AfterPhaseRefusalContext {
@@ -738,6 +807,9 @@ fn run_agent_repair_phase(
         }
         AgentRepairPhase::After => {
             ensure_command_root(&root, "agent repair --phase after")?;
+            if let Some(id) = attempt_id.as_deref() {
+                crate::app::repair_attempt::complete_pending_terminal_retention(&root, id)?;
+            }
             let attempt = crate::app::repair_attempt::resolve_awaiting_repair_attempt(
                 &root,
                 attempt_id.as_deref(),
@@ -764,7 +836,7 @@ fn run_agent_repair_phase(
             write_agent_repo_exposure_snapshot(&root, &after)?;
 
             let packet_path = attempt.packet_path.clone();
-            let packet_bytes = std::fs::read(&packet_path).map_err(|error| {
+            let packet_bytes = crate::bounded_input::read(&packet_path).map_err(|error| {
                 format!(
                     "read retained repair packet {} failed: {error}",
                     packet_path.display()
@@ -868,7 +940,7 @@ fn run_agent_repair_phase(
                     // validation, and rendering failures are operational
                     // (exit 2) even though the attempt was already selected.
                     if agent_verify_error_is_typed_refusal(&error) {
-                        if error.contains("analysis input identities differ") {
+                        if error == AGENT_VERIFY_INPUT_DRIFT_ERROR {
                             for line in repair_after_input_drift_lines(&root, &attempt) {
                                 refusal.narrate(line);
                             }
@@ -954,6 +1026,27 @@ fn run_agent_repair_phase(
                     Some(&packet_path),
                 );
 
+                // Attempt-local copy of the just-written receipt and the
+                // verify document it was built from. The compatibility
+                // projection above can be replaced by a later finish; this
+                // retain is the surviving authority for this attempt.
+                if receipt_result.is_ok() {
+                    crate::app::repair_attempt::retain_terminal_evidence(
+                        &root,
+                        &attempt.attempt_id,
+                        &[
+                            crate::app::repair_attempt::BeforeArtifactSource {
+                                role: crate::app::repair_attempt::TERMINAL_RECEIPT_ROLE,
+                                path: &root.join("target/ripr/reports/agent-receipt.json"),
+                            },
+                            crate::app::repair_attempt::BeforeArtifactSource {
+                                role: crate::app::repair_attempt::TERMINAL_VERIFY_ROLE,
+                                path: &verify_json,
+                            },
+                        ],
+                    )?;
+                }
+
                 // The status report the finished after phase embeds in its
                 // single stdout document. Built here it reads exactly what
                 // `ripr agent status --json` would print at this point: after
@@ -1036,6 +1129,7 @@ fn run_agent_repair_phase(
                 Ok(status_rendered) => status_rendered,
                 Err(error) => {
                     print!("{rendered_verify}");
+                    refusal.stdout_document_printed = true;
                     return Err(error);
                 }
             };
