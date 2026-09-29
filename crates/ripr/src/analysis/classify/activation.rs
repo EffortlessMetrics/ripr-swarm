@@ -1563,8 +1563,11 @@ pub(in crate::analysis) fn owner_input_values(activation: &ActivationEvidence) -
 /// ([`crate::analysis::value_resolution::test_let_bound_literal`]) rather
 /// than a second let scanner. Only a bound number or boolean counts: the
 /// shared scan strips string contents, so a string binding is not an exact
-/// value here. Anything else (a computed expression, a non-literal
-/// initializer) yields nothing.
+/// value here. An identifier with no `let` binding may be an rstest
+/// `#[case]` parameter, which yields one value per case row
+/// ([`crate::analysis::value_resolution::test_case_bound_literals`]).
+/// Anything else (a computed expression, a non-literal initializer)
+/// yields nothing.
 fn owner_argument_values(test: &TestSummary, argument: &str) -> Vec<String> {
     let direct = scalar_values(argument);
     if !direct.is_empty() {
@@ -1574,10 +1577,20 @@ fn owner_argument_values(test: &TestSummary, argument: &str) -> Vec<String> {
     if !is_plain_identifier(name) {
         return Vec::new();
     }
-    crate::analysis::value_resolution::test_let_bound_literal(&test.body, name)
+    let let_bound: Vec<String> =
+        crate::analysis::value_resolution::test_let_bound_literal(&test.body, name)
+            .filter(|value| !value.starts_with(['"', '\'']))
+            .filter(|value| scalar_values(value).as_slice() == std::slice::from_ref(value))
+            .into_iter()
+            .collect();
+    if !let_bound.is_empty() {
+        return let_bound;
+    }
+    // An rstest `#[case]` parameter carries one value per case row.
+    crate::analysis::value_resolution::test_case_bound_literals(test, name)
+        .into_iter()
         .filter(|value| !value.starts_with(['"', '\'']))
         .filter(|value| scalar_values(value).as_slice() == std::slice::from_ref(value))
-        .into_iter()
         .collect()
 }
 
@@ -2238,6 +2251,43 @@ mod tests {
         assert!(has_observed_boundary_equality(&activation));
         assert!(activation.missing_discriminators.is_empty());
         assert_eq!(owner_input_values(&activation), vec!["10"]);
+    }
+
+    #[test]
+    fn rstest_case_parameter_owner_argument_is_an_owner_input() {
+        // `#[case(10, false)] fn t(#[case] amount: i32, ..) { score(amount) }`:
+        // each case row's value flows into the owner (#4601).
+        let mut test = test_with_body_call(
+            "fn score_boundary(#[case] amount: i32, #[case] expected: bool) {\n    assert_eq!(score(amount), expected);\n}",
+            11,
+            "assert_eq!(score(amount), expected);",
+        );
+        test.attrs = vec![
+            "#[rstest]".to_string(),
+            "#[case(10, false)]".to_string(),
+            "#[case(11, true)]".to_string(),
+        ];
+        let activation = boundary_activation(&test);
+
+        assert_eq!(owner_input_values(&activation), vec!["10", "11"]);
+        assert!(has_observed_boundary_equality(&activation));
+    }
+
+    #[test]
+    fn rstest_case_parameter_fails_closed_on_mut_or_let_rebinding() {
+        for body in [
+            "fn score_boundary(#[case] mut amount: i32) {\n    amount += 1;\n    assert!(score(amount));\n}",
+            "fn score_boundary(#[case] amount: i32) {\n    let amount = amount + 1;\n    assert!(score(amount));\n}",
+        ] {
+            let mut test = test_with_body_call(body, 12, "assert!(score(amount));");
+            test.attrs = vec!["#[rstest]".to_string(), "#[case(10)]".to_string()];
+            let activation = boundary_activation(&test);
+
+            assert!(
+                owner_input_values(&activation).is_empty(),
+                "`{body}` must not bind a case value to the owner"
+            );
+        }
     }
 
     #[test]

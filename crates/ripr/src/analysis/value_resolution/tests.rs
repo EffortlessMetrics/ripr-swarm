@@ -888,3 +888,42 @@ fn a_test_file_declaring_the_same_constant_name_may_shadow_the_owner() {
         "DISCOUNT_THRESHOLD"
     ));
 }
+
+#[test]
+fn extract_rstest_cases_maps_case_rows_to_case_marked_parameters_only() {
+    // Real rstest marks case parameters `#[case]`; unmarked parameters are
+    // fixtures and take no case column.
+    let test = TestSummary {
+        name: "t".to_string(),
+        file: std::path::PathBuf::from("src/lib.rs"),
+        start_line: 1,
+        end_line: 1,
+        body: "fn t(fixture: Db, #[case] x: u32, #[values(vec![1])] v: Vec<u8>, #[case] mut expected: bool) { assert_eq!(gate(x), expected); }".to_string(),
+        calls: Vec::new(),
+        assertions: Vec::new(),
+        literals: Vec::new(),
+        attrs: vec![
+            "#[rstest]".to_string(),
+            "#[case(10, false)]".to_string(),
+            "#[case(11, true)]".to_string(),
+        ],
+        nested_fn_names: Vec::new(),
+        let_bindings: Vec::new(),
+    };
+
+    let (cases, params) = extract_rstest_cases(&test);
+
+    assert_eq!(params, vec!["x", "expected"]);
+    assert_eq!(
+        cases,
+        vec![
+            vec!["10".to_string(), "false".to_string()],
+            vec!["11".to_string(), "true".to_string()],
+        ]
+    );
+    assert_eq!(
+        extract_fn_param_names(&test.body),
+        vec!["fixture", "x", "v", "expected"],
+        "every parameter still counts for shadow invalidation"
+    );
+}

@@ -1390,6 +1390,12 @@ fn is_assignment_operator(text: &str) -> bool {
 /// Read attrs from `TestFact.attrs` (populated by the parser-backed
 /// index path); no filesystem reads.
 fn extract_rstest_cases(test: &TestSummary) -> (Vec<Vec<String>>, Vec<String>) {
+    let (cases, params) = extract_rstest_case_params(test);
+    (cases, params.into_iter().map(|param| param.name).collect())
+}
+
+/// [`extract_rstest_cases`] with each case parameter's full header fact.
+fn extract_rstest_case_params(test: &TestSummary) -> (Vec<Vec<String>>, Vec<FnParam>) {
     let mut cases: Vec<Vec<String>> = Vec::new();
     let mut is_rstest = false;
     for attr in &test.attrs {
@@ -1409,8 +1415,45 @@ fn extract_rstest_cases(test: &TestSummary) -> (Vec<Vec<String>>, Vec<String>) {
     if !is_rstest && cases.is_empty() {
         return (Vec::new(), Vec::new());
     }
-    let params = extract_fn_param_names(&test.body);
+    // rstest binds case values positionally to the `#[case]` parameters
+    // only; the others are fixtures. Without any `#[case]` marker (the
+    // legacy `#[rstest(a, b, case(..))]` spelling) every parameter counts.
+    let params = extract_fn_params(&test.body);
+    let params = if params.iter().any(|param| param.is_case) {
+        params.into_iter().filter(|param| param.is_case).collect()
+    } else {
+        params
+    };
     (cases, params)
+}
+
+/// The values rstest `#[case(..)]` rows bind to the test parameter
+/// `ident`, one per row, for the check-path activation stage (which can
+/// promote a finding to `exposed`). Fails closed to no values when the
+/// parameter is `mut` or any `let` in the body declares the same name,
+/// since either may rebind it before the owner call.
+pub(crate) fn test_case_bound_literals(test: &TestSummary, ident: &str) -> Vec<String> {
+    let cleaned = strip_comments_and_strings(&test.body);
+    let rebound = find_all(&cleaned, "let ").into_iter().any(|start| {
+        let after_let = &cleaned[start + 4..];
+        let stmt = &after_let[..top_level_semicolon(after_let).unwrap_or(after_let.len())];
+        let lhs = &stmt[..first_single_eq(stmt).unwrap_or(stmt.len())];
+        let_binding_ident(lhs).is_some_and(|(name, _)| name == ident)
+    });
+    if rebound {
+        return Vec::new();
+    }
+    let (cases, params) = extract_rstest_case_params(test);
+    let Some(position) = params.iter().position(|param| param.name == ident) else {
+        return Vec::new();
+    };
+    if params[position].is_mut {
+        return Vec::new();
+    }
+    cases
+        .iter()
+        .filter_map(|case| case.get(position).map(|value| value.trim().to_string()))
+        .collect()
 }
 
 fn attr_matches_name_or_call(attr: &str, name: &str) -> bool {
@@ -1440,27 +1483,88 @@ fn attr_inner(attr: &str) -> Option<&str> {
 /// always present on the first non-attr line. Best-effort: skip
 /// `&self` / `self` and reject anything not identifier-shaped.
 fn extract_fn_param_names(body: &str) -> Vec<String> {
+    extract_fn_params(body)
+        .into_iter()
+        .map(|param| param.name)
+        .collect()
+}
+
+/// One parameter of a test fn header: its name and whether it carries
+/// rstest's `#[case]` attribute.
+struct FnParam {
+    name: String,
+    is_case: bool,
+    is_mut: bool,
+}
+
+/// Parameters of the `fn` header in `body`. Parameter attributes
+/// (`#[case] x: u32`, `#[values(1, 2)] y: u8`) are stripped before the
+/// name is read, and the list ends at the parenthesis that balances the
+/// opening one, so an attribute's own arguments never cut it short.
+fn extract_fn_params(body: &str) -> Vec<FnParam> {
     let Some(open) = body.find('(') else {
         return Vec::new();
     };
     let after = &body[open + 1..];
-    let Some(close) = after.find(')') else {
+    let mut depth = 0usize;
+    let mut close = None;
+    for (at, character) in after.char_indices() {
+        match character {
+            '(' | '[' => depth += 1,
+            ')' if depth == 0 => {
+                close = Some(at);
+                break;
+            }
+            ')' | ']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    let Some(close) = close else {
         return Vec::new();
     };
     let raw = &after[..close];
     let mut out = Vec::new();
     for part in split_top_level(raw) {
-        let part = part.trim();
+        let mut part = part.trim();
+        let mut is_case = false;
+        while let Some(rest) = part.strip_prefix("#[") {
+            let Some(end) = balanced_attribute_end(rest) else {
+                break;
+            };
+            let attribute = rest[..end].trim();
+            is_case |= attribute == "case" || attribute == "rstest::case";
+            part = rest[end + 1..].trim_start();
+        }
         if part.is_empty() || part == "self" || part.starts_with('&') {
             continue;
         }
         let ident = part.split(':').next().unwrap_or(part).trim();
+        let is_mut = ident.starts_with("mut ");
         let ident = ident.strip_prefix("mut ").unwrap_or(ident).trim();
         if is_simple_identifier(ident) {
-            out.push(ident.to_string());
+            out.push(FnParam {
+                name: ident.to_string(),
+                is_case,
+                is_mut,
+            });
         }
     }
     out
+}
+
+/// Offset of the `]` closing an attribute whose `#[` was already
+/// consumed, skipping brackets nested in its arguments (`vec![1]`).
+fn balanced_attribute_end(rest: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (at, character) in rest.char_indices() {
+        match character {
+            '[' => depth += 1,
+            ']' if depth == 0 => return Some(at),
+            ']' => depth -= 1,
+            _ => {}
+        }
+    }
+    None
 }
 
 /// `for (a, b) in [(L, L), ...] { ... }` and
