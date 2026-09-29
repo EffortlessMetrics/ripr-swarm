@@ -1,4 +1,4 @@
-name: Finalize final-payload staging repair once
+name: Export final-payload workflow repair once
 
 on:
   push:
@@ -8,12 +8,8 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: finalize-final-payload-4699
-  cancel-in-progress: false
-
 jobs:
-  finalize:
+  export:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     steps:
@@ -23,145 +19,24 @@ jobs:
           ref: feat/4521-final-native-payload
           fetch-depth: 0
 
-      - name: Integrate current main
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin main
-          git merge --no-edit origin/main
-
-      - name: Repair archive validation, regression proof, and workflow policy
+      - name: Prepare reviewed qualification workflow repair
         shell: python
         run: |
           from pathlib import Path
 
-          release = Path('xtask/src/reports/release_server.rs')
-          text = release.read_text(encoding='utf-8')
-          old = '''    let archive = required_release_arg(args, "archive", "ARCHIVE")?;
-    let version = normalize_release_version(&version);
-    let asset_name = format!("ripr-server-v{version}-{target}.{archive}");
-'''
-          new = '''    let archive = required_release_arg(args, "archive", "ARCHIVE")?;
-    let version = normalize_release_version(&version);
-    let archive_format = ReleaseServerArchiveFormat::parse(&archive)?;
-    let asset_name = format!("ripr-server-v{version}-{target}.{archive}");
-'''
-          if old not in text:
-              raise SystemExit('release archive argument block not found')
-          text = text.replace(old, new, 1)
+          source = Path('.github/workflows/server-archive-qualification.yml')
+          text = source.read_text(encoding='utf-8')
 
-          old = '''    match archive.as_str() {
-        "zip" => create_zip_archive(&staged.payload_dir, &asset_path)?,
-        "tar.gz" => create_tar_gz_archive(&staged.payload_dir, &asset_path)?,
-        other => {
-            return Err(format!(
-                "unsupported release server archive format `{other}`"
-            ));
-        }
-    }
-'''
-          new = '''    match archive_format {
-        ReleaseServerArchiveFormat::Zip => {
-            create_zip_archive(&staged.payload_dir, &asset_path)?;
-        }
-        ReleaseServerArchiveFormat::TarGz => {
-            create_tar_gz_archive(&staged.payload_dir, &asset_path)?;
-        }
-    }
-'''
-          if old not in text:
-              raise SystemExit('release archive dispatch block not found')
-          text = text.replace(old, new, 1)
+          text = text.replace(
+              'uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable',
+              'uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # v1',
+          )
+          text = text.replace('toolchain: stable', 'toolchain: 1.95.0')
+          text = text.replace(
+              'Native runtime compatibility remains unqualified under issue #4489',
+              'Native runtime compatibility remains unqualified under EffortlessMetrics/ripr-swarm#4489',
+          )
 
-          marker = '''pub(crate) fn normalize_release_version(version: &str) -> String {
-    version.trim().trim_start_matches('v').to_string()
-}
-
-'''
-          addition = '''#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ReleaseServerArchiveFormat {
-    Zip,
-    TarGz,
-}
-
-impl ReleaseServerArchiveFormat {
-    fn parse(value: &str) -> Result<Self, String> {
-        match value {
-            "zip" => Ok(Self::Zip),
-            "tar.gz" => Ok(Self::TarGz),
-            other => Err(format!(
-                "unsupported release server archive format `{other}`"
-            )),
-        }
-    }
-}
-
-pub(crate) fn normalize_release_version(version: &str) -> String {
-    version.trim().trim_start_matches('v').to_string()
-}
-
-'''
-          if marker not in text:
-              raise SystemExit('release version helper marker not found')
-          text = text.replace(marker, addition, 1)
-          release.write_text(text, encoding='utf-8')
-
-          tests = Path('xtask/src/tests.rs')
-          text = tests.read_text(encoding='utf-8')
-          start_marker = '#[test]\nfn release_server_archive_prepares_package_before_format_validation() -> Result<(), String> {'
-          end_marker = '\n#[test]\nfn create_zip_archive_writes_flat_package_contents() -> Result<(), String> {'
-          start = text.find(start_marker)
-          if start < 0:
-              raise SystemExit('legacy archive preparation regression test not found')
-          end = text.find(end_marker, start)
-          if end < 0:
-              raise SystemExit('archive preparation regression test end marker not found')
-          replacement = '''#[test]
-fn release_server_archive_rejects_invalid_format_before_build_or_staging() -> Result<(), String> {
-    with_temp_cwd("release-server-archive-invalid-format", |root| {
-        let executable = if cfg!(windows) { "ripr.exe" } else { "ripr" };
-        let args = vec![
-            "--version".to_string(),
-            "v1.2.3".to_string(),
-            "--target".to_string(),
-            "x86_64-unknown-linux-gnu".to_string(),
-            "--executable".to_string(),
-            executable.to_string(),
-            "--archive".to_string(),
-            "bad-format".to_string(),
-        ];
-
-        let Err(err) = super::release_server_archive(&args) else {
-            return Err("unsupported archive format should fail".to_string());
-        };
-        assert!(err.contains("unsupported release server archive format"));
-        assert!(
-            !root.join("dist").exists(),
-            "invalid format must fail before creating distribution output"
-        );
-        assert!(
-            !root.join("package").exists(),
-            "invalid format must not restore the removed ambient package staging directory"
-        );
-        assert!(
-            !root
-                .join("target")
-                .join("ripr")
-                .join("distribution")
-                .exists(),
-            "invalid format must fail before deterministic payload staging"
-        );
-        Ok(())
-    })
-}
-'''
-          text = text[:start] + replacement + text[end:]
-          tests.write_text(text, encoding='utf-8')
-
-          workflow = Path('.github/workflows/server-archive-qualification.yml')
-          text = workflow.read_text(encoding='utf-8')
           loop_start = '          for directory in payload-identities/ripr-final-native-payload-*; do\n'
           direct_identity = '            identity="${directory}/payload-identity.json"\n'
           recursive_identity = '            mapfile -t identities < <(find "${directory}" -type f -name payload-identity.json -print)\n'
@@ -185,40 +60,17 @@ fn release_server_archive_rejects_invalid_format_before_build_or_staging() -> Re
               text = text[:start] + replacement + text[end:]
           elif recursive_identity not in text:
               raise SystemExit('payload identity aggregation loop not found')
-          text = text.replace('toolchain: stable', 'toolchain: 1.95.0')
-          text = text.replace(' # stable\n', ' # v1\n')
-          text = text.replace(
-              'Native runtime compatibility remains unqualified under issue #4489',
-              'Native runtime compatibility remains unqualified under EffortlessMetrics/ripr-swarm#4489',
-          )
-          workflow.write_text(text, encoding='utf-8')
 
-          allowlist = Path('policy/workflow_allowlist.txt')
-          text = allowlist.read_text(encoding='utf-8')
-          old_row = '.github/workflows/server-archive-qualification.yml|82|Exact measured largest run block after preserving curl transport status, bounded rate-limit tokens, response digests, and strict public ruleset shape diagnostics; credential-free, artifact-only qualification delegates packaging and manifest generation to Rust xtask commands.'
-          new_row = '.github/workflows/server-archive-qualification.yml|89|Exact measured largest run block retains ruleset diagnostics plus five-target producer, payload-identity, archive-readback, and receipt-v3 aggregation; credential-free qualification delegates payload and archive construction to Rust xtask commands.'
-          if old_row in text:
-              text = text.replace(old_row, new_row, 1)
-          elif new_row not in text:
-              raise SystemExit('qualification workflow budget row not found')
-          allowlist.write_text(text, encoding='utf-8')
+          export = Path('.repair-export/server-archive-qualification.yml')
+          export.parent.mkdir(parents=True, exist_ok=True)
+          export.write_text(text, encoding='utf-8')
 
-          Path('.github/workflows/zz-export-4699-repair.yml').unlink()
-
-      - name: Validate exact integrated repair
+      - name: Commit repaired bytes under a non-workflow path
         shell: bash
         run: |
           set -euo pipefail
-          rustup toolchain install 1.95.0 --profile minimal --component rustfmt
-          cargo +1.95.0 fmt --all
-          cargo +1.95.0 fmt --all --check
-          cargo +1.95.0 xtask check-workflows
-          cargo +1.95.0 test -p xtask release_server_archive_rejects_invalid_format_before_build_or_staging -- --nocapture
-
-      - name: Commit and push repaired candidate
-        shell: bash
-        run: |
-          set -euo pipefail
-          git add --all
-          git commit -m "fix(distribution): validate archive format before payload staging"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .repair-export/server-archive-qualification.yml
+          git commit -m "ci(distribution): retain repaired qualification workflow bytes"
           git push origin HEAD:feat/4521-final-native-payload
