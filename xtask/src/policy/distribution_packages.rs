@@ -106,14 +106,8 @@ pub(crate) fn check_distribution_packages() -> Result<(), String> {
     read_violations.append(&mut outcome.violations);
     outcome.violations = read_violations;
 
-    write_report(
-        "distribution-packages.json",
-        &distribution_json(&outcome)?,
-    )?;
-    write_report(
-        "distribution-packages.md",
-        &distribution_markdown(&outcome),
-    )?;
+    write_report("distribution-packages.json", &distribution_json(&outcome)?)?;
+    write_report("distribution-packages.md", &distribution_markdown(&outcome))?;
 
     if outcome.violations.is_empty() {
         Ok(())
@@ -153,11 +147,11 @@ fn evaluate_distribution_contract(
     if let Some(version) = &cargo_version {
         match map_pep440_version(version) {
             Ok(pypi_version) => outcome.pypi_version = Some(pypi_version),
-            Err(error) => outcome.violations.push(rule(
-                RULE_VERSION,
-                WORKSPACE_MANIFEST_PATH,
-                &error,
-            )),
+            Err(error) => {
+                outcome
+                    .violations
+                    .push(rule(RULE_VERSION, WORKSPACE_MANIFEST_PATH, &error))
+            }
         }
         outcome.npm_version = Some(version.clone());
     }
@@ -300,10 +294,7 @@ fn validate_ripr_manifest(
     }
 }
 
-fn validate_distribution_manifest(
-    manifest: &DistributionManifest,
-    violations: &mut Vec<String>,
-) {
+fn validate_distribution_manifest(manifest: &DistributionManifest, violations: &mut Vec<String>) {
     let fixed_values = [
         (
             "schema_version",
