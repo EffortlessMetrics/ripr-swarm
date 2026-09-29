@@ -15,6 +15,10 @@ are scoped or reviewed.
   now gets a `-32601` method-not-found error, as the LSP spec requires. It got
   no response at all, so a client that sent one waited on it forever.
   Unhandled `$/` notifications are still ignored.
+- `ripr check` spends less time rescanning test files. The same-name-import
+  gate re-masked every related test file's source for every probe; one scan
+  per file now serves the whole run. On a ripr commit, a warm check went from
+  8.6 s to 6.6 s with byte-identical JSON.
 - LSP: the server now asks clients for `textDocument/didSave`. It advertised
   only the numeric full-sync kind, which under the LSP spec does not request
   save notifications, so a strictly conforming editor could save without ripr
@@ -262,6 +266,47 @@ are scoped or reviewed.
   closed (exit 2) naming the variable and the value, like `--git-timeout` and
   the `RIPR_PARTIAL_*_BUDGET` overrides. It used to keep the default deadline
   silently (#4374).
+- Python: a function a package re-exports from its `__init__.py` is now
+  related to tests that call it through the package. On humanize
+  (`import humanize`, `humanize.naturaldelta(...)`) and more-itertools
+  (`import more_itertools as mi`, `mi.one(...)` via `from .more import *`)
+  every changed line read `no_static_path` although mutating those lines
+  fails the projects' own tests. Renamed re-exports, `_private` names under a
+  star import, and names a declared `__all__` omits are not followed.
+
+- Python pytest verify commands now run as `python -m pytest path::node`
+  instead of bare `pytest path::node`. `-m` puts the repository root on
+  `sys.path`, so a flat-layout package such as `pricing/__init__.py` imports
+  during collection; bare `pytest` stopped there with `ModuleNotFoundError`
+  (exit 4). The interpreter is spelled `python`, like the unittest route's
+  `python -m unittest`, because it names the virtual environment's interpreter
+  on every platform. Repair-card, LSP skeleton, and dogfood consumers accept
+  both the new form and the bare form earlier artifacts carry.
+
+- `ripr first-pr` now prints the receipt path its receipt command writes. For a
+  Python or TypeScript preview gap, `Receipt path:` named a
+  `gap-pr-...targeted-test-outcome.json` file while the printed
+  `ripr receipt write` command wrote `--out gap-python-....json`; the path now
+  is the file the printed command writes (its `--out`, or the receipt
+  writer's default for its `--gap`), else the ledger's recorded path, and the
+  first-pr default only when first-pr builds the command itself.
+
+- `ripr first-pr` no longer leaves `--status not_run` unexplained in the
+  receipt it presents as the step after verify. A `Receipt status` line now
+  follows a `ripr receipt write ... --status not_run` command in the CLI
+  summary and `start-here.md`, telling the reader to pass `--status passed`
+  when the verify command exited 0 and `--status failed` when it did not. The
+  command itself is unchanged, still runs as printed, and records `not_run`
+  when left as is.
+
+- The generated CI job summary's `PR review summary` and `Recommended next
+  test` blocks, their collapsed full reports included, now print copyable
+  commands at the repository root (`ripr agent verify --root . ...`,
+  `> ./target/...`) instead of the runner's absolute checkout path that
+  `ripr agent start` binds into `workflow.json` and `agent-brief.json`, like
+  the `Agent review packet` block already did. The stored artifacts keep
+  their bound root; only the summary rendering rewrites the checkout path, and
+  only where it is a whole path token.
 
 ### Added
 
