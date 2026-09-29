@@ -1,4 +1,4 @@
-# RIPR-SPEC-0180: Shared behavior-evidence witness adapters and parity corpus
+# RIPR-SPEC-0181: Shared behavior-evidence witness adapters and parity corpus
 
 Status: proposed
 
@@ -30,7 +30,7 @@ Linked issues:
 
 Linked PRs:
 
-- None yet
+- #4847 — this slice
 
 Support-tier impact:
 

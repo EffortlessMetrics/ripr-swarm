@@ -911,7 +911,14 @@ standalone_reason = "Issue #4585 records local result-bound usefulness feedback 
 [[artifact]]
 id = "RIPR-SPEC-0180"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0180-shared-behavior-evidence-witness.md"
+path = "docs/specs/RIPR-SPEC-0180-lsp-saved-edit-sequence.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #1578 records the saved-edit sequence harness: a repeatable cold-start through explicit-full refresh sequence reuses landed cache, scheduler, and delivery metrics; a stale cached answer cannot satisfy a speed target; a fast run cannot hide redundant full rescans or duplicate diagnostics; and historical 2s/10s/30s figures remain proposals rather than gates."
+[[artifact]]
+id = "RIPR-SPEC-0181"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0181-shared-behavior-evidence-witness.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issue #4790 records the shared behavior-evidence witness adapters and paired parity corpus: one internal BehaviorEvidenceWitnessV1 projects existing Rust Finding and ClassifiedSeam facts without recomputing public classes, and a deterministic report distinguishes equal, explained_scope_difference, contradiction, and not_comparable."

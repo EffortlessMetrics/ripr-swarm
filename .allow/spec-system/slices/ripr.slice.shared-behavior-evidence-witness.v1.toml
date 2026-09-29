@@ -3,7 +3,7 @@ id = "ripr.slice.shared-behavior-evidence-witness.v1"
 generation = 1
 
 source_issue = "issue:4790"
-design_reference = "RIPR-SPEC-0180"
+design_reference = "RIPR-SPEC-0181"
 change_class = "behavior_change"
 
 claim_boundary = """
@@ -34,7 +34,7 @@ return_conditions = [
 
 owned_seams = [
   "seam:ripr:analysis:witness",
-  "seam:ripr:contract:ripr-spec-0180-shared-witness",
+  "seam:ripr:contract:ripr-spec-0181-shared-witness",
 ]
 
 shared_seams = [
@@ -50,7 +50,7 @@ forbidden_seams = [
 ]
 
 [[requirement_delta]]
-requirement_id = "RIPR-SPEC-0180#shared-witness-adapters-and-parity-corpus"
+requirement_id = "RIPR-SPEC-0181#shared-witness-adapters-and-parity-corpus"
 requirement_generation = 1
 
 [implementation_claim]
