@@ -3,6 +3,25 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-09-29: Shared-witness adapters must not promote candidate reach (#4790)
+
+`analysis::witness` projects existing `Finding` and `ClassifiedSeam` facts. It
+does not recompute stage meaning. Two traps showed up while writing the
+parity corpus:
+
+- A producer `reach=yes` backed only by `weak_token_substring` (or other
+  candidate relations) must keep those identities in `candidate_facts`. Copying
+  them into established reach is a false promotion even if the producer class
+  stays unchanged.
+- Inherent `diff_only_subject_set` versus `workspace_complete` is the normal
+  cross-path pairing. Treating that pair as an explaining scope difference
+  collapses exact-vs-broad, sibling-field, and missing-observer contradictions
+  into `explained_scope_difference`. Only partial index, stale/wrong input,
+  preview language, and named cross-language limits explain a difference.
+
+Pin both with the #4790 corpus. Later slices (#4792–#4794) migrate authority;
+they must not delete these controls.
+
 ## 2026-09-16: Parallel-build test flakes are shared-state mechanisms (#3742)
 
 A rotating family of suite failures under parallel cargo builds (observed

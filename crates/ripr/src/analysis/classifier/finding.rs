@@ -73,7 +73,7 @@ pub(in crate::analysis) fn build_finding(
         ));
     }
 
-    Finding {
+    let finding = Finding {
         id: context.probe.id.0.clone(),
         canonical_gap: None,
         probe: context.probe.clone(),
@@ -102,7 +102,9 @@ pub(in crate::analysis) fn build_finding(
         // evidence; this constructor has none, so the disposition stays the
         // explicit unknown (#3280).
         source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
-    }
+    };
+    crate::analysis::witness::retain_finding_projection(&finding);
+    finding
 }
 
 /// True when a **single** related-test assertion is simultaneously a strong
