@@ -264,6 +264,7 @@ pub(crate) fn render_gap_record_review_comments_json(
     let mut suppressed = Vec::new();
     let mut seen_dedupe = BTreeSet::new();
     let analysis_scope = ReviewCommentsAnalysisScope::gap_ledger_artifact(records);
+    let seam_claimed_dedupe = seam_claimed_dedupe_keys(root, gap_ledger_path, records);
 
     for record in records {
         let comment = match gap_record_comment_json(
@@ -271,6 +272,7 @@ pub(crate) fn render_gap_record_review_comments_json(
             gap_ledger_path,
             record,
             &mut seen_dedupe,
+            &seam_claimed_dedupe,
             causal_projection.as_ref(),
         ) {
             Ok(comment) => comment,
@@ -512,6 +514,7 @@ fn gap_record_comment_json(
     gap_ledger_path: &str,
     record: &GapRecord,
     seen_dedupe: &mut BTreeSet<String>,
+    seam_claimed_dedupe: &BTreeSet<String>,
     causal_projection: Option<&CausalDeltaArtifact>,
 ) -> Result<Value, Value> {
     // Route through the shared eligibility authority (#3281): a record
@@ -594,13 +597,17 @@ fn gap_record_comment_json(
             "PR comments require a non-empty anchor and dedupe fingerprint.",
         ));
     }
-    let Some(seam_id) = record.seam_id.as_deref().and_then(non_empty) else {
+    // Seam identity is optional on a gap-record card (#4524): the card is
+    // keyed by its GapRecord, and preview-language `--check-output` records
+    // carry no seam. A record that has one still wins a shared dedupe key.
+    let seam_id = record.seam_id.as_deref().and_then(non_empty);
+    if seam_id.is_none() && seam_claimed_dedupe.contains(dedupe) {
         return Err(gap_record_suppressed_json(
             record,
-            "missing_seam_identity",
-            "PR comments require producer-owned seam identity.",
+            "duplicate_dedupe_fingerprint",
+            "A GapRecord with producer-owned seam identity emits this PR comment dedupe key.",
         ));
-    };
+    }
     if !seen_dedupe.insert(dedupe.to_string()) {
         return Err(gap_record_suppressed_json(
             record,
@@ -640,7 +647,6 @@ fn gap_record_comment_json(
         "gap_state": record.gap_state.as_str(),
         "policy_state": record.policy_state.as_str(),
         "repairability": record.repairability.as_str(),
-        "seam_id": seam_id,
         "dedupe_key": dedupe,
         "source_location": source_location,
         "placement": {
@@ -682,12 +688,48 @@ fn gap_record_comment_json(
             "verify_command": verify_command,
         },
     });
+    if let Some(seam_id) = seam_id
+        && let Some(object) = value.as_object_mut()
+    {
+        object.insert("seam_id".to_string(), json!(seam_id));
+    }
     if let Some(projection) = causal_projection
         && let Some(object) = value.as_object_mut()
     {
         projection.insert_delta_fields(object, non_empty(&record.canonical_gap_id).as_deref());
     }
     Ok(value)
+}
+
+/// Dedupe keys a seam-carrying record renders a card for, so a seamless
+/// record sharing the key yields to it regardless of ledger order.
+fn seam_claimed_dedupe_keys(
+    root: &Path,
+    gap_ledger_path: &str,
+    records: &[GapRecord],
+) -> BTreeSet<String> {
+    let mut seen = BTreeSet::new();
+    let none_claimed = BTreeSet::new();
+    records
+        .iter()
+        .filter(|record| record.seam_id.as_deref().and_then(non_empty).is_some())
+        .filter_map(|record| {
+            gap_record_comment_json(
+                root,
+                gap_ledger_path,
+                record,
+                &mut seen,
+                &none_claimed,
+                None,
+            )
+            .ok()
+        })
+        .filter_map(|card| {
+            card.get("dedupe_key")
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+        })
+        .collect()
 }
 
 fn gap_record_suppressed_json(record: &GapRecord, reason: &str, message: &str) -> Value {
@@ -1342,7 +1384,9 @@ fn push_markdown_items(lines: &mut Vec<String>, heading: &str, value: Option<&Va
     };
 
     for item in items {
-        let seam_id = string_field(item, "seam_id").unwrap_or("unknown");
+        let seam_id = string_field(item, "seam_id")
+            .or_else(|| string_field(item, "gap_id"))
+            .unwrap_or("unknown");
         let reason = string_field(item, "reason").unwrap_or("No reason available.");
         let source_location = markdown_source_location(item);
         let state = string_field(item, "gap_state")
@@ -1516,7 +1560,9 @@ fn push_suppressed_items(lines: &mut Vec<String>, value: Option<&Value>) {
         return;
     };
     for item in items {
-        let seam_id = string_field(item, "seam_id").unwrap_or("unknown");
+        let seam_id = string_field(item, "seam_id")
+            .or_else(|| string_field(item, "gap_id"))
+            .unwrap_or("unknown");
         let reason = string_field(item, "reason").unwrap_or("unknown");
         lines.push(format!(
             "- {}: {}",
@@ -3198,7 +3244,13 @@ mod tests {
             value["comments"][0].get("confidence").is_none(),
             "repair cards should not expose generic confidence optics"
         );
-        assert_eq!(value["suppressed"][0]["reason"], "missing_seam_identity");
+        // The seamless duplicate yields its dedupe key to the seam-carrying
+        // card (#4524) instead of being suppressed for its missing seam.
+        assert_eq!(
+            value["suppressed"][0]["reason"],
+            "duplicate_dedupe_fingerprint"
+        );
+        assert_eq!(value["suppressed"][0]["gap_id"], "gap:duplicate");
         assert_eq!(value["suppressed"][1]["reason"], "not_pr_comment_eligible");
 
         // The schema fixture must retain the real eligible producer shape;
@@ -3231,7 +3283,11 @@ mod tests {
     }
 
     #[test]
-    fn review_comments_gap_ledger_without_seam_identity_is_suppressed() -> Result<(), String> {
+    fn review_comments_gap_ledger_without_seam_identity_renders_gap_keyed_card()
+    -> Result<(), String> {
+        // Preview-language `--check-output` records carry no seam identity
+        // (#4524). The card stays keyed by its GapRecord and omits `seam_id`
+        // rather than substituting the gap ID for it.
         let mut record = eligible_gap_record_json("gap:missing-seam", "dedupe:missing-seam");
         record
             .as_object_mut()
@@ -3247,11 +3303,27 @@ mod tests {
             "target/ripr/reports/gap-decision-ledger.json",
             &records,
         )?;
-        let value: Value = serde_json::from_str(&rendered)
-            .map_err(|err| format!("parse suppressed JSON: {err}"))?;
-        assert_eq!(value["summary"]["comments"], 0);
-        assert_eq!(value["summary"]["suppressed"], 1);
-        assert_eq!(value["suppressed"][0]["reason"], "missing_seam_identity");
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse card JSON: {err}"))?;
+        assert_eq!(value["summary"]["comments"], 1);
+        assert_eq!(value["summary"]["suppressed"], 0);
+        let card = &value["comments"][0];
+        assert_eq!(card["gap_id"], "gap:missing-seam");
+        assert_eq!(card["dedupe_key"], "dedupe:missing-seam");
+        assert!(
+            card.get("seam_id").is_none(),
+            "seam_id was synthesized: {card}"
+        );
+
+        let markdown = render_gap_record_review_comments_markdown(
+            Path::new("."),
+            "main",
+            "HEAD",
+            &Mode::Draft,
+            "target/ripr/reports/gap-decision-ledger.json",
+            &records,
+        );
+        assert!(markdown.contains("- `gap:missing-seam` @ "), "{markdown}");
         Ok(())
     }
 
@@ -3327,14 +3399,55 @@ mod tests {
     }
 
     #[test]
-    fn review_comments_missing_seam_does_not_consume_duplicate_slot() -> Result<(), String> {
-        let mut legacy = eligible_gap_record_json("gap:legacy", "dedupe:shared");
-        legacy
+    fn review_comments_seam_carrying_record_wins_a_shared_dedupe_key() -> Result<(), String> {
+        let mut seamless = eligible_gap_record_json("gap:seamless", "dedupe:shared");
+        seamless
             .as_object_mut()
-            .ok_or("legacy fixture should be an object")?
+            .ok_or("seamless fixture should be an object")?
             .remove("seam_id");
-        let valid = eligible_gap_record_json("gap:valid", "dedupe:shared");
-        let records_json = serde_json::json!({ "records": [legacy, valid] }).to_string();
+        let with_seam = eligible_gap_record_json("gap:with-seam", "dedupe:shared");
+        // A seamless record must not take the key from a seam-carrying one,
+        // whichever comes first in the ledger.
+        for records in [
+            [seamless.clone(), with_seam.clone()],
+            [with_seam.clone(), seamless.clone()],
+        ] {
+            let records_json = serde_json::json!({ "records": records }).to_string();
+            let records =
+                crate::output::gap_decision_ledger::parse_gap_records_json(&records_json)?;
+            let rendered = render_gap_record_review_comments_json(
+                Path::new("."),
+                "main",
+                "HEAD",
+                &Mode::Draft,
+                "target/ripr/reports/gap-decision-ledger.json",
+                &records,
+            )?;
+            let value: Value = serde_json::from_str(&rendered)
+                .map_err(|err| format!("parse shared-key JSON: {err}"))?;
+            assert_eq!(value["summary"]["comments"], 1);
+            assert_eq!(value["summary"]["suppressed"], 1);
+            assert_eq!(value["comments"][0]["gap_id"], "gap:with-seam");
+            assert_eq!(value["suppressed"][0]["gap_id"], "gap:seamless");
+            assert_eq!(
+                value["suppressed"][0]["reason"],
+                "duplicate_dedupe_fingerprint"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_ineligible_seam_record_does_not_claim_a_shared_dedupe_key()
+    -> Result<(), String> {
+        let mut seamless = eligible_gap_record_json("gap:seamless", "dedupe:shared");
+        seamless
+            .as_object_mut()
+            .ok_or("seamless fixture should be an object")?
+            .remove("seam_id");
+        let mut waived = eligible_gap_record_json("gap:waived", "dedupe:shared");
+        waived["policy_state"] = serde_json::json!("waived");
+        let records_json = serde_json::json!({ "records": [waived, seamless] }).to_string();
         let records = crate::output::gap_decision_ledger::parse_gap_records_json(&records_json)?;
         let rendered = render_gap_record_review_comments_json(
             Path::new("."),
@@ -3345,11 +3458,13 @@ mod tests {
             &records,
         )?;
         let value: Value = serde_json::from_str(&rendered)
-            .map_err(|err| format!("parse mixed migration JSON: {err}"))?;
+            .map_err(|err| format!("parse waived-key JSON: {err}"))?;
         assert_eq!(value["summary"]["comments"], 1);
-        assert_eq!(value["summary"]["suppressed"], 1);
-        assert_eq!(value["comments"][0]["gap_id"], "gap:valid");
-        assert_eq!(value["suppressed"][0]["reason"], "missing_seam_identity");
+        assert_eq!(value["comments"][0]["gap_id"], "gap:seamless");
+        assert_eq!(
+            value["suppressed"][0]["reason"],
+            "policy_state_not_commentable"
+        );
         Ok(())
     }
 
