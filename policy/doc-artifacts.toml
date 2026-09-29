@@ -919,7 +919,15 @@ standalone_reason = "Issue #1578 records the saved-edit sequence harness: a repe
 [[artifact]]
 id = "RIPR-SPEC-0181"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0181-same-test-boundary-oracle-pairing.md"
+path = "docs/specs/RIPR-SPEC-0181-inline-test-module-region-cage.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #4783 records the producer-neutral inline test-module region cage: an external before/after edit of a production Rust file is admitted only as a pure insertion into one exact existing test-required inline module, without granting whole-file production permission or InlineUnit producer admission."
+
+[[artifact]]
+id = "RIPR-SPEC-0182"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0182-same-test-boundary-oracle-pairing.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Honesty fix: a predicate probe does not read exposed unless one test both feeds a boundary input to the owner and holds a discriminating oracle on that call's result; a split names same_test_pairing_missing and stays at most weakly_exposed; the same-call control stays exposed; no schema bump; fixture-backed by split_test_boundary_oracle (#4828)."

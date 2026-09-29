@@ -3,7 +3,7 @@ id = "ripr.slice.same-test-boundary-oracle-pairing.v1"
 generation = 1
 
 source_issue = "issue:4828"
-design_reference = "RIPR-SPEC-0181"
+design_reference = "RIPR-SPEC-0182"
 change_class = "spec_or_contract_change"
 
 claim_boundary = """
@@ -45,7 +45,7 @@ forbidden_seams = [
 ]
 
 [[requirement_delta]]
-requirement_id = "RIPR-SPEC-0181"
+requirement_id = "RIPR-SPEC-0182"
 requirement_generation = 1
 
 [implementation_claim]
