@@ -72,7 +72,7 @@ pub(crate) fn route(path: &Path) -> Option<LanguageId> {
 /// language name shown to users. A changed file with one of these carries
 /// behavior ripr did not analyze, unlike documentation or configuration, so
 /// the pipeline records it as a typed limitation instead of calling an empty
-/// result correct. Matching is exact and case-sensitive, like [`route`].
+/// result correct. Matching is exact after ASCII case folding.
 const UNANALYZED_SOURCE_LANGUAGES: &[(&str, &str)] = &[
     ("go", "Go"),
     ("java", "Java"),
@@ -115,6 +115,10 @@ const UNANALYZED_SOURCE_LANGUAGES: &[(&str, &str)] = &[
     ("svelte", "Svelte"),
 ];
 
+#[cfg(test)]
+pub(crate) const UNANALYZED_SOURCE_LANGUAGES_FOR_TESTS: &[(&str, &str)] =
+    UNANALYZED_SOURCE_LANGUAGES;
+
 /// The language name of a source file that no ripr adapter reads, or `None`
 /// for routed sources ([`route`]) and for non-source files such as
 /// documentation, configuration and data.
@@ -122,7 +126,9 @@ pub(crate) fn unanalyzed_source_language(path: &Path) -> Option<&'static str> {
     if route(path).is_some() {
         return None;
     }
-    let ext = path.extension()?.to_str()?;
+    // Case-folded: `B.C` or `Main.JAVA` is still source (unlike `route`,
+    // which only claims what an adapter can actually read).
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     UNANALYZED_SOURCE_LANGUAGES
         .iter()
         .find(|(known, _)| *known == ext)
@@ -142,6 +148,8 @@ mod tests {
             ("include/calc.h", Some("C")),
             ("src/calc.cpp", Some("C++")),
             ("scripts/build.sh", Some("Shell")),
+            ("legacy/B.C", Some("C")),
+            ("src/Main.JAVA", Some("Java")),
             ("web/App.vue", Some("Vue")),
             // Routed sources belong to an adapter, not to this list.
             ("src/lib.rs", None),

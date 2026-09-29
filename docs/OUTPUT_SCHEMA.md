@@ -14541,7 +14541,12 @@ Field contract:
   and `guidance_category`/`guidance`: the existing `typescript_diff_first`
   repair route for TypeScript and JavaScript, the `python_diff_first` repair
   route for Python, the unavailable-adapter notice for a language this binary
-  cannot analyze, otherwise `null`.
+  cannot analyze, otherwise `null`. `state` is `unanalyzed_only` when the
+  repository has no Rust source, no routed language, and source in languages no
+  ripr adapter reads (Go, Java, C, shell and others); the empty ranking is then
+  a non-claim, and no follow-up command applies. `unanalyzed_languages` —
+  additive, present only when such source exists — lists `{language,
+  file_count}` per language name.
 - `next` — advisory follow-up commands. Complete summaries include the public
   `ripr outcome` before/after receipt command, and `repair_command`: the
   `ripr agent repair --seam-id <id> --phase before` command for the top seam

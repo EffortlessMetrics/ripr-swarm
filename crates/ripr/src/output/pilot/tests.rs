@@ -1213,7 +1213,7 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
     let artifacts = pilot_artifacts();
     let root = Path::new(".");
     let go_only = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], &[])
-        .with_unanalyzed(vec![("Go", 2)]);
+        .with_unanalyzed(vec![("Go", 2)], false);
     assert_eq!(go_only.state, PilotLanguageRoutesState::UnanalyzedOnly);
     let context = PilotSummaryContext {
         language_routes: Some(&go_only),
@@ -1253,9 +1253,44 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
     // Rust seams present: the ranking stands and the Go files stay a JSON
     // note, so Rust users' output is unchanged.
     let with_rust = PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], &[])
-        .with_unanalyzed(vec![("Go", 2)]);
+        .with_unanalyzed(vec![("Go", 2)], true);
     assert_eq!(with_rust.state, PilotLanguageRoutesState::NotDetected);
     assert!(with_rust.unanalyzed_only().is_none());
+    let json = render_pilot_summary_json(
+        &[],
+        PilotSummaryContext {
+            language_routes: Some(&with_rust),
+            ..pilot_context(&artifacts)
+        },
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert_eq!(
+        parsed["language_routes"]["unanalyzed_languages"][0]["language"],
+        "Go"
+    );
+
+    // A Rust crate with no seams yet (a lone `pub const`) plus a CI script
+    // is a Rust repository, not an unanalyzed one.
+    let seamless_rust = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], &[])
+        .with_unanalyzed(vec![("Shell", 1)], true);
+    assert!(seamless_rust.unanalyzed_only().is_none());
+
+    // Nothing unanalyzed: the JSON shape is unchanged for Rust users.
+    let plain = PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], &[]);
+    let json = render_pilot_summary_json(
+        &[],
+        PilotSummaryContext {
+            language_routes: Some(&plain),
+            ..pilot_context(&artifacts)
+        },
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert_eq!(
+        parsed["language_routes"],
+        serde_json::json!({"state": "not_detected", "routes": []})
+    );
     Ok(())
 }
 

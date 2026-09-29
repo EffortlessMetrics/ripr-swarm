@@ -139,9 +139,16 @@ impl PilotLanguageRoutes {
     /// Record source in languages no adapter reads
     /// (`analysis::workspace_unanalyzed_source_languages`). With no Rust seam
     /// and no routed language, they decide what the empty ranking means.
-    pub(crate) fn with_unanalyzed(mut self, unanalyzed: Vec<(&'static str, usize)>) -> Self {
+    /// A Rust crate with no seams yet is still a Rust repository, so
+    /// `rust_source_present` keeps it out of the unanalyzed-only state.
+    pub(crate) fn with_unanalyzed(
+        mut self,
+        unanalyzed: Vec<(&'static str, usize)>,
+        rust_source_present: bool,
+    ) -> Self {
         if self.state == PilotLanguageRoutesState::NotDetected
             && !self.rust_seams_present
+            && !rust_source_present
             && !unanalyzed.is_empty()
         {
             self.state = PilotLanguageRoutesState::UnanalyzedOnly;

@@ -37,6 +37,8 @@ pub(crate) use id::LanguageId;
 pub(crate) use perl::PerlAdapter;
 #[cfg(feature = "lang-python")]
 pub(crate) use python::{PythonAdapter, detect_python_test_framework};
+#[cfg(test)]
+pub(crate) use router::UNANALYZED_SOURCE_LANGUAGES_FOR_TESTS;
 pub(crate) use router::{
     JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS, TsJsSourceKind,
     is_ts_js_source_extension, route, ts_js_source_kind, unanalyzed_source_language,

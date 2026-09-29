@@ -393,11 +393,19 @@ fn unanalyzed_source_language_limitation(
     if paths.is_empty() {
         return Ok(None);
     }
-    let languages = by_language
+    const MAX_NAMED_LANGUAGES: usize = 4;
+    let mut languages = by_language
         .iter()
+        .take(MAX_NAMED_LANGUAGES)
         .map(|(language, count)| format!("{language}: {count}"))
         .collect::<Vec<_>>()
         .join(", ");
+    if by_language.len() > MAX_NAMED_LANGUAGES {
+        languages.push_str(&format!(
+            " and {} more language(s)",
+            by_language.len() - MAX_NAMED_LANGUAGES
+        ));
+    }
     let mut listed = paths
         .iter()
         .take(MAX_NAMED_PATHS)
@@ -1652,6 +1660,25 @@ mod tests {
         );
         assert_eq!(outcome.kind, AnalysisOutcomeKind::PartialWithLimitations);
         assert!(unanalyzed_language_limitation(&outcome).is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn many_unanalyzed_languages_with_long_paths_stay_within_text_bounds() -> Result<(), String> {
+        // Review finding: 28 languages under a deep path overflowed the
+        // 512-character recovery bound and failed the whole analysis.
+        let files = super::super::language::UNANALYZED_SOURCE_LANGUAGES_FOR_TESTS
+            .iter()
+            .map(|(extension, _)| {
+                changed_file(&format!(
+                    "services/payments/internal/processor/very/deep/tree/handler.{extension}"
+                ))
+            })
+            .collect::<Vec<_>>();
+        let limitation = unanalyzed_source_language_limitation(&files)?
+            .ok_or_else(|| "every file is unanalyzed source".to_string())?;
+        assert_eq!(limitation.affected_items, Some(files.len() as u64));
+        assert!(limitation.recovery.detail.contains("more language(s)"));
         Ok(())
     }
 

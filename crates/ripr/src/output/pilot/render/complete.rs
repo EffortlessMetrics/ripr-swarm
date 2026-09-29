@@ -691,19 +691,21 @@ fn push_language_routes_json(out: &mut String, routes: Option<&PilotLanguageRout
     if !routes.routes.is_empty() {
         out.push_str("\n    ");
     }
-    out.push_str("],\n");
-    out.push_str("    \"unanalyzed_languages\": [");
-    for (idx, (language, count)) in routes.unanalyzed.iter().enumerate() {
-        out.push_str(if idx == 0 { "\n" } else { ",\n" });
-        out.push_str(&format!(
-            "      {{ \"language\": \"{}\", \"file_count\": {count} }}",
-            json_escape(language)
-        ));
-    }
+    out.push(']');
+    // Omitted when empty, so pilot JSON for supported repositories is
+    // unchanged.
     if !routes.unanalyzed.is_empty() {
-        out.push_str("\n    ");
+        out.push_str(",\n    \"unanalyzed_languages\": [");
+        for (idx, (language, count)) in routes.unanalyzed.iter().enumerate() {
+            out.push_str(if idx == 0 { "\n" } else { ",\n" });
+            out.push_str(&format!(
+                "      {{ \"language\": \"{}\", \"file_count\": {count} }}",
+                json_escape(language)
+            ));
+        }
+        out.push_str("\n    ]");
     }
-    out.push_str("]\n");
+    out.push('\n');
     out.push_str("  },\n");
 }
 
