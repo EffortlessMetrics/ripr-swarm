@@ -42,6 +42,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Rust: a predicate probe no longer reads `exposed` when a boundary input
+  comes from a test that asserts nothing and a discriminating oracle comes
+  from a different test. `exposed` requires one test that both feeds a
+  boundary input to the owner and holds a discriminating oracle on that
+  call's result. Otherwise the finding stays at most `weakly_exposed` and
+  names `same_test_pairing_missing`. `assert_eq!(gate(10), true)` stays
+  `exposed` (#4828).
 - An unusable cache directory no longer prints one `repo file fact cache entry
   ignored` line per source file. With `RIPR_CACHE_DIR` pointing at a file,
   `ripr check` on this repository printed 723 identical-shape lines before the
@@ -1698,6 +1705,11 @@ are scoped or reviewed.
   changed owner's output" and stayed `weakly_exposed` although the tests kill
   the mutants. The comparison-boundary check still applies to these calls
   (#4567).
+
+- Two-way diff hunks with missing or excess body lines, or invalid numeric
+  ranges, disclose incomplete analysis instead of reporting a complete result.
+  File and piped input retain earlier changes as advisory evidence and carry
+  the typed malformed-diff recovery route (#4375).
 
 ### Added
 
