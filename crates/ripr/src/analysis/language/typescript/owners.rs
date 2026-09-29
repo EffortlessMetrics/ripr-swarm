@@ -863,7 +863,7 @@ fn find_owner_extraction_gap(
 ///   argument (`define([...], function () {...})`).
 fn expression_statement_function_gap(
     expression: &Expression<'_>,
-    source: &str,
+    source: &SourceText<'_>,
     changed: &std::collections::HashSet<usize>,
 ) -> Option<(usize, &'static str, (usize, usize))> {
     let hit = |function: &Expression<'_>, shape: &'static str| {
