@@ -79,7 +79,7 @@ fn load_review_comments_analysis_outcome(
     let Some(path) = path else {
         return Ok(None);
     };
-    let text = std::fs::read_to_string(path).map_err(|error| {
+    let text = crate::bounded_input::read_to_string(path).map_err(|error| {
         format!(
             "review-comments --check-output {} is invalid: read failed: {error}",
             path.display()
@@ -224,6 +224,8 @@ mod cache_command;
 mod config_command;
 #[path = "commands/context.rs"]
 mod context;
+#[path = "commands/feedback.rs"]
+mod feedback_command;
 #[path = "commands/policy.rs"]
 mod policy_commands;
 #[path = "commands/receipt.rs"]
@@ -233,9 +235,9 @@ mod swarm_command;
 
 pub(super) use agent::agent;
 pub(super) use context::context;
-// The receipt help bodies live beside the receipt parser but are also the
-// flag source for `ripr receipt write|check` suggestions, so `cli::help` needs
-// a path to them.
+// Flag-documenting help bodies live beside their parsers so `cli::help`
+// suggestions mine the same text `--help` prints.
+pub(super) use feedback_command::{FEEDBACK_EXPORT_HELP, FEEDBACK_RECORD_HELP};
 #[cfg(test)]
 use policy_commands::{
     parse_policy_history_options, parse_policy_operations_options,
@@ -255,6 +257,10 @@ pub(super) use cache_command::{CACHE_CLEAR_HELP, CACHE_STATUS_HELP};
 
 pub(super) fn receipt(args: &[String]) -> Result<(), String> {
     receipt_command::run_receipt(args)
+}
+
+pub(super) fn feedback(args: &[String]) -> Result<(), String> {
+    feedback_command::run_feedback(args)
 }
 
 pub(super) fn swarm(args: &[String]) -> Result<(), String> {
@@ -309,13 +315,13 @@ pub(super) fn outcome(args: &[String]) -> Result<(), String> {
     }
 
     let options = parse_outcome_options(args)?;
-    let before_json = std::fs::read_to_string(&options.before).map_err(|err| {
+    let before_json = crate::bounded_input::read_to_string(&options.before).map_err(|err| {
         format!(
             "read {} failed: {err}",
             output::outcome::display_path(&options.before)
         )
     })?;
-    let after_json = std::fs::read_to_string(&options.after).map_err(|err| {
+    let after_json = crate::bounded_input::read_to_string(&options.after).map_err(|err| {
         format!(
             "read {} failed: {err}",
             output::outcome::display_path(&options.after)
@@ -370,7 +376,7 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
         analysis::inventory_classified_seams_at_with_config(&options.root, &config)?;
     let calibration = match &options.mutation_calibration {
         Some(path) => {
-            let contents = std::fs::read_to_string(path).map_err(|err| {
+            let contents = crate::bounded_input::read_to_string(path).map_err(|err| {
                 format!(
                     "read evidence-health calibration context {} failed: {err}",
                     output::outcome::display_path(path)
@@ -1350,7 +1356,7 @@ fn review_comments_with_diff_loader_at(
                 "review-comments accepts at most one of --gap-ledger or --check-output".to_string(),
             );
         }
-        let gap_ledger_text = std::fs::read_to_string(gap_ledger).map_err(|err| {
+        let gap_ledger_text = crate::bounded_input::read_to_string(gap_ledger).map_err(|err| {
             record_review_comments_error(
                 &mut receipt,
                 &receipt_path,
@@ -1657,8 +1663,8 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
     }
 
     let options = parse_calibrate_cargo_mutants_options(rest)?;
-    let repo_exposure_json =
-        std::fs::read_to_string(&options.repo_exposure_json).map_err(|err| {
+    let repo_exposure_json = crate::bounded_input::read_to_string(&options.repo_exposure_json)
+        .map_err(|err| {
             format!(
                 "read {} failed: {err}",
                 output::outcome::display_path(&options.repo_exposure_json)
@@ -1783,7 +1789,7 @@ fn read_json_value(path: &Path) -> Result<serde_json::Value, String> {
 }
 
 fn read_calibration_text(path: &Path) -> Result<String, String> {
-    std::fs::read_to_string(path)
+    crate::bounded_input::read_to_string(path)
         .map_err(|err| format!("read {} failed: {err}", output::outcome::display_path(path)))
 }
 
@@ -3203,7 +3209,7 @@ fn assistant_loop_health_generated_at() -> Result<String, String> {
 }
 
 fn read_optional_text_for_report(label: &str, path: &Path) -> Result<String, String> {
-    std::fs::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_to_string(path).map_err(|err| {
         format!(
             "read {label} {} failed: {err}",
             output::baseline_delta::display_path(path)
@@ -3220,7 +3226,7 @@ fn read_optional_manifest_for_report(
     } else {
         root.join(manifest)
     };
-    match std::fs::read_to_string(&read_path) {
+    match crate::bounded_input::read_to_string(&read_path) {
         Ok(text) => Some(Ok(text)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
         Err(err) => Some(Err(format!(

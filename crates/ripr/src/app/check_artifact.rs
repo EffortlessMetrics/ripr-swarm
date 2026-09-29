@@ -411,7 +411,7 @@ fn resolve_diff_bytes(
     git_timeout: Option<std::time::Duration>,
 ) -> Result<Vec<u8>, String> {
     match source {
-        DiffSourceIdentity::DiffFile { path } => std::fs::read(path).map_err(|err| {
+        DiffSourceIdentity::DiffFile { path } => crate::bounded_input::read(path).map_err(|err| {
             format!("recorded diff file {path} no longer exists or is unreadable: {err}")
         }),
         DiffSourceIdentity::BaseHead { base, .. } => {
@@ -468,7 +468,7 @@ fn analysis_options_identity(
 ) -> Result<AnalysisOptionsIdentity, String> {
     let perl_facts_content_hash = match perl_facts_path {
         Some(path) => {
-            let text = std::fs::read_to_string(path).map_err(|err| {
+            let text = crate::bounded_input::read_to_string(path).map_err(|err| {
                 format!(
                     "recorded Perl facts packet {} no longer exists or is unreadable: {err}",
                     path.display()
