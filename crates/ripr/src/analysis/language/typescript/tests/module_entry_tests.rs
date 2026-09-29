@@ -175,10 +175,9 @@ fn direct_owner_relation_is_not_capped_by_entry_reach() -> Result<(), String> {
 
 #[test]
 fn entries_follow_factory_products_wrappers_and_export_lists() {
-    assert_eq!(
-        entry_names(MERGE, "_merge"),
-        ["createMerge", "default", "merge"]
-    );
+    // `createMerge` only returns the closure that calls `_merge`; calling the
+    // factory itself does not run it (Codex review on #4526).
+    assert_eq!(entry_names(MERGE, "_merge"), ["default", "merge"]);
     let listed = "function _merge(a: any): any {\n  return a;\n}\nconst combine = (a: any) => _merge(a);\nexport { combine as merge };\n";
     assert_eq!(entry_names(listed, "_merge"), ["merge"]);
     let curried = "function _merge(a: any): any {\n  return a;\n}\nconst make = () => (a: any) => _merge(a);\nexport const merge = make();\n";
@@ -193,6 +192,45 @@ fn entries_are_not_invented_for_rebound_names() {
     // So does a body-local declaration.
     let local = "function _merge(a: any): any {\n  return a;\n}\nexport function merge(a: any): any {\n  const _merge = (b: any) => b;\n  return _merge(a);\n}\n";
     assert!(entry_names(local, "_merge").is_empty());
+    // A destructured parameter binds it too.
+    let destructured = "function _merge(a: any): any {\n  return a;\n}\nexport function merge({ _merge }: any, a: any): any {\n  return _merge(a);\n}\n";
+    assert!(entry_names(destructured, "_merge").is_empty());
+    let array = "function _merge(a: any): any {\n  return a;\n}\nexport function merge([_merge]: any[], a: any): any {\n  return _merge(a);\n}\n";
+    assert!(entry_names(array, "_merge").is_empty());
+    // So does a nested callback's parameter.
+    let callback = "function _merge(a: any): any {\n  return a;\n}\nexport function merge(fns: any[], a: any): any {\n  return fns.map((_merge) => _merge(a));\n}\n";
+    assert!(entry_names(callback, "_merge").is_empty());
+    // A factory parameter captured by the returned closure is not the helper.
+    let captured = "function _merge(a: any): any {\n  return a;\n}\nfunction build(_merge: (a: any) => any) {\n  return (a: any) => _merge(a);\n}\nexport const merge = build((a: any) => a);\n";
+    assert!(entry_names(captured, "_merge").is_empty());
+}
+
+#[test]
+fn anonymous_default_exports_are_entries() {
+    let function = "function _merge(a: any): any {\n  return a;\n}\nexport default function (a: any): any {\n  return _merge(a);\n}\n";
+    assert_eq!(entry_names(function, "_merge"), ["default"]);
+    let arrow =
+        "function _merge(a: any): any {\n  return a;\n}\nexport default (a: any) => _merge(a);\n";
+    assert_eq!(entry_names(arrow, "_merge"), ["default"]);
+}
+
+#[test]
+fn test_calling_only_the_factory_does_not_relate() -> Result<(), String> {
+    assert_not_entry_related(
+        "factory-only",
+        MERGE,
+        "import { it, expect } from 'vitest';\nimport { createMerge } from '../src/merge';\n\nit('builds', () => {\n  expect(typeof createMerge()).toBe('function');\n});\n",
+    )
+}
+
+#[test]
+fn anonymous_default_wrapper_relates_through_default_import() -> Result<(), String> {
+    let wrapper = "function _merge(base: any, defaults: any): any {\n  const out = { ...defaults };\n  for (const key of Object.keys(base)) {\n    out[key] = base[key];\n  }\n  return out;\n}\n\nexport default function (base: any, defaults: any): any {\n  return _merge(base, defaults);\n}\n";
+    assert_entry_related(
+        "anonymous-default",
+        wrapper,
+        "import { it, expect } from 'vitest';\nimport combine from '../src/merge';\n\nit('merges', () => {\n  expect(combine({ a: 1 }, { b: 2 })).toEqual({ a: 1, b: 2 });\n});\n",
+    )
 }
 
 #[test]

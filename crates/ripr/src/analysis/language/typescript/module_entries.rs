@@ -16,7 +16,8 @@
 //! names whose code reaches it through a bounded same-module call graph, so the
 //! relation layer can relate tests of those entries to the owner. The graph is
 //! syntax-only and fail-closed: an edge exists only for a bare call to a
-//! top-level declaration name that the calling body does not rebind, and a
+//! top-level declaration name whose every mention in the enclosing function is
+//! a bare call, a function's own edges exclude the functions it returns, and a
 //! factory product reaches only what the factory's directly returned function
 //! calls. Reach through an entry is weaker than a direct owner call: it is
 //! admitted only when no test calls the owner itself, and the classifier never
@@ -50,10 +51,15 @@ struct ModuleNode<'s> {
     returned_texts: Vec<CallText<'s>>,
 }
 
-/// A function's source text plus the parameter names it binds.
+/// Code whose bare calls count, plus the enclosing function text that decides
+/// whether a name is rebound there.
 struct CallText<'s> {
-    text: &'s str,
-    params: Vec<String>,
+    /// The calling code. For a function's own node, the directly returned
+    /// functions are blanked out: they run only when the product is called.
+    calls: String,
+    /// The whole enclosing function (the factory, for a returned closure), so
+    /// its parameters and locals shadow the top-level binding too.
+    scope: &'s str,
 }
 
 /// Exported entries per top-level owner name.
@@ -142,9 +148,19 @@ fn collect_statement<'s>(
         }
         Statement::ExportDefaultDeclaration(export) => match &export.declaration {
             ExportDefaultDeclarationKind::FunctionDeclaration(func) => {
-                if let Some(name) = collect_function(func, source, nodes) {
+                // An anonymous default function is a node of its own; no
+                // declaration can be named `default`, so the key is free.
+                let name = func
+                    .id
+                    .as_ref()
+                    .map_or_else(|| "default".to_string(), |id| id.name.to_string());
+                if collect_function_as(func, &name, source, nodes) {
                     record_export(exports, &name, "default");
                 }
+            }
+            ExportDefaultDeclarationKind::ArrowFunctionExpression(arrow) => {
+                collect_arrow_as(arrow, "default", source, nodes);
+                record_export(exports, "default", "default");
             }
             ExportDefaultDeclarationKind::Identifier(ident) => {
                 record_export(exports, ident.name.as_str(), "default");
@@ -175,16 +191,69 @@ fn collect_function<'s>(
     nodes: &mut BTreeMap<String, ModuleNode<'s>>,
 ) -> Option<String> {
     let name = func.id.as_ref()?.name.to_string();
-    // Overload signatures carry no body; only the implementation counts.
-    let body = func.body.as_ref()?;
-    let node = nodes.entry(name.clone()).or_default();
-    node.call_texts.push(CallText {
-        text: span_text(source, func.span),
-        params: parameter_names(&func.params),
-    });
+    collect_function_as(func, &name, source, nodes).then_some(name)
+}
+
+/// Record `func` as node `name`; `false` for an overload signature, which
+/// carries no body.
+fn collect_function_as<'s>(
+    func: &Function<'_>,
+    name: &str,
+    source: &'s str,
+    nodes: &mut BTreeMap<String, ModuleNode<'s>>,
+) -> bool {
+    let Some(body) = func.body.as_ref() else {
+        return false;
+    };
+    let returned = returned_functions(&body.statements);
+    add_function_node(name, func.span, &returned, source, nodes);
+    true
+}
+
+fn collect_arrow_as<'s>(
+    arrow: &ArrowFunctionExpression<'_>,
+    name: &str,
+    source: &'s str,
+    nodes: &mut BTreeMap<String, ModuleNode<'s>>,
+) {
+    let returned = if arrow.expression {
+        // `(m) => (...args) => ...`: the expression body is the returned value.
+        arrow_expression_body(arrow)
+            .and_then(function_span)
+            .into_iter()
+            .collect()
+    } else {
+        returned_functions(&arrow.body.statements)
+    };
+    add_function_node(name, arrow.span, &returned, source, nodes);
+}
+
+/// A function node: its own calls exclude the functions it returns, which
+/// become the calls of any value it builds.
+fn add_function_node<'s>(
+    name: &str,
+    span: oxc_span::Span,
+    returned: &[oxc_span::Span],
+    source: &'s str,
+    nodes: &mut BTreeMap<String, ModuleNode<'s>>,
+) {
+    let scope = span_text(source, span);
+    let mut own = scope.to_string();
+    for inner in returned {
+        let start = inner.start.saturating_sub(span.start) as usize;
+        let end = inner.end.saturating_sub(span.start) as usize;
+        if let Some(range) = own.get(start..end) {
+            let blank = " ".repeat(range.len());
+            own.replace_range(start..end, &blank);
+        }
+    }
+    let node = nodes.entry(name.to_string()).or_default();
+    node.call_texts.push(CallText { calls: own, scope });
     node.returned_texts
-        .extend(returned_function_texts(&body.statements, source));
-    Some(name)
+        .extend(returned.iter().map(|inner| CallText {
+            calls: span_text(source, *inner).to_string(),
+            scope,
+        }));
 }
 
 /// Top-level `const`/`let`/`var` declarators this module can follow; returns
@@ -204,34 +273,13 @@ fn collect_variables<'s>(
         };
         match unwrap_type_wrappers(init) {
             Expression::ArrowFunctionExpression(arrow) => {
-                let node = nodes.entry(name.to_string()).or_default();
-                node.call_texts.push(CallText {
-                    text: span_text(source, arrow.span),
-                    params: parameter_names(&arrow.params),
-                });
-                if arrow.expression {
-                    // `(m) => (...args) => ...`: the expression body is the
-                    // returned value.
-                    node.returned_texts.extend(
-                        arrow_expression_body(arrow).and_then(|body| function_text(body, source)),
-                    );
-                } else {
-                    node.returned_texts
-                        .extend(returned_function_texts(&arrow.body.statements, source));
-                }
+                collect_arrow_as(arrow, name, source, nodes);
                 names.push(name.to_string());
             }
             Expression::FunctionExpression(func) => {
-                let node = nodes.entry(name.to_string()).or_default();
-                node.call_texts.push(CallText {
-                    text: span_text(source, func.span),
-                    params: parameter_names(&func.params),
-                });
-                if let Some(body) = func.body.as_ref() {
-                    node.returned_texts
-                        .extend(returned_function_texts(&body.statements, source));
-                }
-                names.push(name.to_string());
+                names.extend(
+                    collect_function_as(func, name, source, nodes).then(|| name.to_string()),
+                );
             }
             Expression::CallExpression(call) => {
                 let Expression::Identifier(callee) = unwrap_type_wrappers(&call.callee) else {
@@ -246,29 +294,23 @@ fn collect_variables<'s>(
     names
 }
 
-/// Function expressions the body returns from its own top-level `return`
-/// statements. Nested returns (inside `if` or loops) are not followed.
-fn returned_function_texts<'s>(statements: &[Statement<'_>], source: &'s str) -> Vec<CallText<'s>> {
+/// Spans of the function expressions the body returns from its own top-level
+/// `return` statements. Nested returns (inside `if` or loops) are not followed.
+fn returned_functions(statements: &[Statement<'_>]) -> Vec<oxc_span::Span> {
     statements
         .iter()
         .filter_map(|statement| match statement {
             Statement::ReturnStatement(ret) => ret.argument.as_ref(),
             _ => None,
         })
-        .filter_map(|argument| function_text(argument, source))
+        .filter_map(function_span)
         .collect()
 }
 
-fn function_text<'s>(expression: &Expression<'_>, source: &'s str) -> Option<CallText<'s>> {
+fn function_span(expression: &Expression<'_>) -> Option<oxc_span::Span> {
     match unwrap_type_wrappers(expression) {
-        Expression::ArrowFunctionExpression(arrow) => Some(CallText {
-            text: span_text(source, arrow.span),
-            params: parameter_names(&arrow.params),
-        }),
-        Expression::FunctionExpression(func) => Some(CallText {
-            text: span_text(source, func.span),
-            params: parameter_names(&func.params),
-        }),
+        Expression::ArrowFunctionExpression(arrow) => Some(arrow.span),
+        Expression::FunctionExpression(func) => Some(func.span),
         _ => None,
     }
 }
@@ -290,21 +332,6 @@ fn unwrap_type_wrappers<'a>(expression: &'a Expression<'a>) -> &'a Expression<'a
         Expression::ParenthesizedExpression(inner) => unwrap_type_wrappers(&inner.expression),
         other => other,
     }
-}
-
-fn parameter_names(params: &FormalParameters<'_>) -> Vec<String> {
-    let mut names: Vec<String> = params
-        .items
-        .iter()
-        .filter_map(|item| binding_identifier_name(&item.pattern))
-        .map(str::to_string)
-        .collect();
-    if let Some(rest) = params.rest.as_ref()
-        && let Some(name) = binding_identifier_name(&rest.rest.argument)
-    {
-        names.push(name.to_string());
-    }
-    names
 }
 
 fn span_text(source: &str, span: oxc_span::Span) -> &str {
@@ -332,7 +359,7 @@ fn node_callees<'n>(
     let mut callees = BTreeSet::new();
     for text in texts {
         for token in text
-            .text
+            .calls
             .split(|ch: char| !is_javascript_identifier_char(ch))
             .filter(|token| !token.is_empty())
             .collect::<BTreeSet<_>>()
@@ -347,18 +374,45 @@ fn node_callees<'n>(
     callees
 }
 
-/// A bare call to `name` the function text does not rebind: a parameter or a
-/// body-local declaration of the same name shadows the top-level binding.
+/// A bare call to `name` that the enclosing function cannot have rebound.
+/// Fail-closed: every mention of `name` in the scope must be a bare call. Any
+/// other mention (a parameter, including destructured and nested-callback
+/// parameters, an assignment, a `function name` declaration, a value passed
+/// along) may bind or alias it, so no edge is recorded.
 fn text_calls_top_level(text: &CallText<'_>, name: &str) -> bool {
-    !text.params.iter().any(|param| param == name)
-        && contains_call_name(text.text, name)
-        && !local_identifier_declared_in_test_body(function_body_text(text.text), name)
+    contains_call_name(&text.calls, name) && every_mention_is_a_bare_call(text.scope, name)
 }
 
-/// The text after the function's parameter list, so the scan for body-local
-/// declarations does not read the parameter list or the function's own name.
-fn function_body_text(text: &str) -> &str {
-    text.find('{').map_or(text, |open| &text[open..])
+fn every_mention_is_a_bare_call(scope: &str, name: &str) -> bool {
+    scope.match_indices(name).all(|(idx, _)| {
+        let before = &scope[..idx];
+        let after = &scope[idx + name.len()..];
+        let bounded_before = before
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_javascript_identifier_char(ch));
+        let bounded_after = after
+            .chars()
+            .next()
+            .is_none_or(|ch| !is_javascript_identifier_char(ch));
+        if !(bounded_before && bounded_after) {
+            // Part of a longer identifier: not a mention of `name`.
+            return true;
+        }
+        let member = before.trim_end().ends_with('.');
+        let declared = before
+            .trim_end()
+            .strip_suffix("function")
+            .is_some_and(|rest| {
+                rest.chars()
+                    .next_back()
+                    .is_none_or(|ch| !is_javascript_identifier_char(ch))
+            });
+        let rest = after.trim_start();
+        let called = rest.starts_with('(') || rest.starts_with("?.(");
+        // `x.name(...)` is a member call, which is another binding entirely.
+        member || (called && !declared)
+    })
 }
 
 fn reachable_within_hops<'n>(

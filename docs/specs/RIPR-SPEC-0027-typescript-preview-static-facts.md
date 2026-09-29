@@ -186,14 +186,19 @@ namespace chains, and dynamic property access remain advisory or unsupported.
 
 A top-level function owner may also relate through a same-module entry: an
 exported name of the owner's module whose code reaches the owner within three
-call edges. An edge is a bare call to a top-level declaration name that the
-calling function does not rebind through a parameter or body-local
-declaration. A value built by a same-module factory (`export const defu =
-createDefu()`, with `as`/`satisfies`/non-null/parentheses stripped) calls
-what the factory's directly returned function calls, not what the factory
-runs while building it; a factory imported from another module is not
-followed. Named, listed (`export { local as name }`) and default exports count;
-type-only exports and re-exports from other modules do not. The test's call of
+call edges. An edge is a bare call to a top-level declaration name, and only
+when every mention of that name in the enclosing function is a bare call: a
+parameter (plain, destructured, or of a nested callback), a local
+declaration, an assignment or a value use may rebind it, so no edge is
+recorded. A function's own edges exclude the functions it directly returns.
+A value built by a same-module factory (`export const defu = createDefu()`,
+with `as`/`satisfies`/non-null/parentheses stripped) calls what the factory's
+directly returned function calls, checked against the factory's whole text so
+a captured factory parameter or local shadows too; calling the factory itself
+does not reach them, and a factory imported from another module is not
+followed. Named, listed (`export { local as name }`) and default exports,
+including an anonymous default function or arrow, count; type-only exports and
+re-exports from other modules do not. The test's call of
 the entry must pass every identity gate a direct or imported owner call does.
 The relation is `helper_owner_call` with `medium` confidence and is admitted
 only when no owner-call, import-call, receiver, class-method, module-observer,
