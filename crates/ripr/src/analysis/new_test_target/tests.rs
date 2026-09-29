@@ -37,7 +37,9 @@ fn write_file(root: &Path, relative: &str, contents: &str) -> Result<(), String>
 }
 
 fn public_library_source() -> &'static str {
-    r#"pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    r#"/// Ordinary public crate-root item.
+#[inline]
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
     if amount >= threshold {
         amount - 10
     } else {
@@ -244,6 +246,90 @@ fn private_owner_stays_missing_without_an_inline_unit_proposal() -> Result<(), S
     if !missing.contains("private") && !missing.contains("visibility") {
         return Err(format!(
             "Missing must name the visibility blocker, got {missing:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// Negative: a `pub fn` inside a private module is not a crate-root public
+/// library item. An integration test cannot name it, so the route stays
+/// Missing instead of proposing an unbuildable file.
+#[test]
+fn public_fn_inside_private_module_stays_missing() -> Result<(), String> {
+    let root = claim_root("private-module")?;
+    write_file(
+        &root.0,
+        "Cargo.toml",
+        "[package]\nname = \"pricing\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    write_file(
+        &root.0,
+        "src/lib.rs",
+        r#"mod hidden {
+    pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+        if amount >= threshold {
+            amount - 10
+        } else {
+            amount
+        }
+    }
+}
+"#,
+    )?;
+    write_file(&root.0, "tests/smoke.rs", unrelated_smoke_test())?;
+
+    let classified = inventory_classified_seams_at(&root.0)?;
+    let entry = boundary_entry(&classified)?;
+    let readiness = repair_packet_eligibility(entry).readiness;
+
+    if let RepairTargetSelection::Proposed(proposal) = &readiness.target_selection {
+        return Err(format!(
+            "private-module owner must not earn {:?} {}",
+            proposal.kind,
+            proposal.file.display()
+        ));
+    }
+    if !matches!(readiness.target_selection, RepairTargetSelection::Missing) {
+        return Err(format!(
+            "expected Missing, got {:?}",
+            readiness.target_selection
+        ));
+    }
+    let missing = readiness.missing_evidence.join(" | ");
+    if !missing.contains("private") && !missing.contains("visibility") {
+        return Err(format!(
+            "Missing must name the visibility blocker, got {missing:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// Positive: a documented, attributed crate-root `pub fn` in a declared
+/// `[lib] path` still earns one Integration proposal.
+#[test]
+fn documented_public_item_on_declared_lib_path_earns_integration_proposal() -> Result<(), String> {
+    let root = claim_root("declared-lib-path")?;
+    write_file(
+        &root.0,
+        "Cargo.toml",
+        "[package]\nname = \"pricing\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[lib]\npath = \"src/api.rs\"\n",
+    )?;
+    write_file(&root.0, "src/api.rs", public_library_source())?;
+    write_file(&root.0, "tests/smoke.rs", unrelated_smoke_test())?;
+
+    let classified = inventory_classified_seams_at(&root.0)?;
+    let entry = boundary_entry(&classified)?;
+    let readiness = repair_packet_eligibility(entry).readiness;
+
+    let file = proposed_file_display(&readiness.target_selection)?;
+    if file.starts_with("src/") || !file.ends_with(".rs") {
+        return Err(format!(
+            "declared lib path proposed a non-test file: {file}"
+        ));
+    }
+    if !readiness.is_repair_ready() {
+        return Err(format!(
+            "documented public item on declared lib path was not ready: {readiness:?}"
         ));
     }
     Ok(())

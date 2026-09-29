@@ -137,9 +137,7 @@ fn try_admit_new_integration_test(
         .as_ref()
         .ok_or(NewTestProposalBlocker::PathUnsafe)?;
     let package = owning_package(&authority.root, seam.file())?;
-    if !owner_is_public_library_item(index, owner_fn, &package) {
-        return Err(NewTestProposalBlocker::PrivateOwner);
-    }
+    owner_is_public_library_item(index, owner_fn, &package)?;
     if !package.has_library_target {
         return Err(NewTestProposalBlocker::LibraryTargetUnresolved);
     }
@@ -165,6 +163,7 @@ fn try_admit_new_integration_test(
 
 struct PackageFacts {
     package_dir: PathBuf,
+    library_root: PathBuf,
     library_crate_name: String,
     autotests: bool,
     has_library_target: bool,
@@ -223,8 +222,14 @@ fn owning_package(
                         })
                     })
                     .unwrap_or(false);
+            let library_root = if directory.as_os_str().is_empty() {
+                normalize_relative(&lib_path)
+            } else {
+                normalize_relative(&directory.join(&lib_path))
+            };
             return Ok(PackageFacts {
                 package_dir: directory,
+                library_root,
                 library_crate_name: lib_name.replace('-', "_"),
                 autotests,
                 has_library_target,
@@ -243,42 +248,41 @@ fn owner_is_public_library_item(
     index: &RustIndex,
     owner_fn: &FunctionSummary,
     package: &PackageFacts,
-) -> bool {
-    let package_relative = owner_fn
-        .file
-        .strip_prefix(&package.package_dir)
-        .unwrap_or(&owner_fn.file);
-    if package_relative != Path::new("src/lib.rs") {
-        return false;
+) -> Result<(), NewTestProposalBlocker> {
+    if normalize_relative(&owner_fn.file) != package.library_root {
+        return Err(NewTestProposalBlocker::PrivateOwner);
     }
     let Some(facts) = index.files.get(&owner_fn.file) else {
-        return false;
+        return Err(NewTestProposalBlocker::OwnerUnresolved);
     };
-    function_item_is_crate_public(&facts.source, owner_fn.start_line)
+    if facts.used_lexical_fallback {
+        return Err(NewTestProposalBlocker::OwnerUnresolved);
+    }
+    if !owner_symbol_is_crate_root(owner_fn) {
+        return Err(NewTestProposalBlocker::PrivateOwner);
+    }
+    if function_item_is_crate_public(&facts.source, owner_fn.start_line) {
+        Ok(())
+    } else {
+        Err(NewTestProposalBlocker::PrivateOwner)
+    }
+}
+
+fn owner_symbol_is_crate_root(owner_fn: &FunctionSummary) -> bool {
+    let expected = format!(
+        "{}::{}",
+        crate::analysis::stable_path_text(&owner_fn.file),
+        owner_fn.name
+    );
+    owner_fn.id.0 == expected
 }
 
 fn function_item_is_crate_public(source: &str, start_line: usize) -> bool {
-    let lines: Vec<&str> = source.lines().collect();
-    let mut index = start_line.saturating_sub(1);
-    while index > 0 {
-        let previous = lines
-            .get(index.saturating_sub(1))
-            .copied()
-            .unwrap_or("")
-            .trim();
-        if previous.is_empty()
-            || previous.starts_with("///")
-            || previous.starts_with("//!")
-            || previous.starts_with("//")
-            || previous.starts_with("#[")
-            || previous.starts_with("#!")
-        {
-            index -= 1;
-            continue;
-        }
-        break;
-    }
-    let declaration = lines.get(index).copied().unwrap_or("").trim();
+    let declaration = source
+        .lines()
+        .nth(start_line.saturating_sub(1))
+        .unwrap_or("")
+        .trim();
     crate_public_fn_declaration(declaration)
 }
 
