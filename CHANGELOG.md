@@ -11,6 +11,11 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Default human `Hidden:` output names the language and preview status of
+  omitted findings (`Python preview: 1`) so a mixed-repo remainder is not a
+  bare count. Rust-only remainder stays the count line. (#4395)
+- `docs/CONFIGURATION.md` no longer groups Python with opt-in TypeScript and
+  JavaScript; Python preview is marker-auto when no `ripr.toml` exists. (#4395)
 - MCP: a client that opens with `server/discover` (protocol `2026-07-28`)
   now receives the same instructions as an `initialize` client, including the
   CLI route that analyzes the diff. Before, only `initialize` carried them.

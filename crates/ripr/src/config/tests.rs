@@ -42,6 +42,44 @@ fn missing_config_uses_behavior_preserving_defaults() -> Result<(), String> {
     Ok(())
 }
 
+/// #4395(a): the three public claim surfaces must describe marker-auto Python
+/// when no `ripr.toml` exists, not an unconditional Rust-only default.
+#[test]
+fn public_docs_state_python_marker_auto_when_no_ripr_toml() -> Result<(), String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let configuration = fs::read_to_string(root.join("docs/CONFIGURATION.md"))
+        .map_err(|err| format!("read CONFIGURATION.md: {err}"))?;
+    let readme = fs::read_to_string(root.join("README.md"))
+        .map_err(|err| format!("read README.md: {err}"))?;
+    let support = fs::read_to_string(root.join("docs/status/SUPPORT_TIERS.md"))
+        .map_err(|err| format!("read SUPPORT_TIERS.md: {err}"))?;
+
+    assert!(
+        configuration.contains("with no `ripr.toml`")
+            && configuration.contains("keep Python preview off"),
+        "CONFIGURATION.md `[languages].enabled` default must state absent-config marker-auto Python and the rust-only opt-out"
+    );
+    assert!(
+        !configuration.contains("opt-in TypeScript, JavaScript, and Python evidence"),
+        "CONFIGURATION.md must not lump Python with opt-in TypeScript/JavaScript; Python is marker-auto when no ripr.toml exists"
+    );
+    assert!(
+        readme.contains("With no `ripr.toml`") && readme.contains("enables Python preview"),
+        "README.md must state marker-auto Python activation"
+    );
+    assert!(
+        readme.contains(r#"enabled = ["rust"]"#) && readme.contains("keeps Python off"),
+        "README.md must state the rust-only opt-out"
+    );
+    assert!(
+        support.contains("with no `ripr.toml`")
+            && support.contains("Python project markers")
+            && support.contains(r#"enabled = ["rust"]"#),
+        "SUPPORT_TIERS.md must reconcile marker-auto Python with the rust-only opt-out"
+    );
+    Ok(())
+}
+
 #[cfg(feature = "lang-python")]
 #[test]
 fn missing_config_detects_root_python_project_markers() -> Result<(), String> {
