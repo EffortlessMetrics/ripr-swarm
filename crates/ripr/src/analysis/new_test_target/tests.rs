@@ -1,13 +1,15 @@
 use crate::analysis::ClassifiedSeam;
+#[cfg(unix)]
 use crate::analysis::facts::build_index;
-use crate::analysis::new_test_target::{
-    NewTestKind, NewTestProposalProvenance, admit_new_integration_test,
-};
-use crate::analysis::repair_route::{
-    RepairRouteReadiness, RepairTargetSelection, repair_packet_eligibility,
-};
+#[cfg(unix)]
+use crate::analysis::new_test_target::admit_new_integration_test;
+use crate::analysis::new_test_target::{NewTestKind, NewTestProposalProvenance};
+#[cfg(unix)]
+use crate::analysis::repair_route::RepairRouteReadiness;
+use crate::analysis::repair_route::{RepairTargetSelection, repair_packet_eligibility};
 use crate::analysis::seam_inventory::inventory_classified_seams_at;
 use crate::analysis::seams::SeamKind;
+#[cfg(unix)]
 use crate::analysis::workspace::discover_rust_files;
 use crate::app::repair_attempt::edit_cage_policy_from_packet;
 use std::fs;
@@ -747,6 +749,7 @@ fn dangling_symlink(root: &Path, relative: &str) -> Result<(), String> {
         .map_err(|error| format!("symlink {relative}: {error}"))
 }
 
+#[cfg(unix)]
 fn leaf_is_present(path: &Path) -> Result<bool, String> {
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
