@@ -18,9 +18,12 @@ use super::test_grip_evidence::{RelatedTestGrip, TestGripEvidence, TestTargetEvi
 use crate::analysis::canonical_gap::canonical_gap_identity;
 use crate::domain::{OracleKind, OracleStrength, RelationReason, StageState};
 
-pub(crate) use super::new_test_target::{
-    NewTestKind, NewTestProposalProvenance, NewTestTargetProposal,
-};
+#[expect(
+    unused_imports,
+    reason = "re-export reserved provenance for repair-route consumers"
+)]
+pub(crate) use super::new_test_target::NewTestProposalProvenance;
+pub(crate) use super::new_test_target::{NewTestKind, NewTestTargetProposal};
 
 pub(crate) const REPAIR_ROUTE_AUTHORITY_BOUNDARY: &str =
     "analysis/producer-owned-repair-route-readiness";
