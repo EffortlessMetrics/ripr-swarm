@@ -47,7 +47,7 @@ async fn completed_saved_analysis_keeps_consumed_a_when_disk_and_buffer_become_b
     let backend = service.inner();
     backend.initialize_test_workspace_root();
     tokio::time::timeout(
-        Duration::from_secs(120),
+        Duration::from_mins(2),
         backend.did_open(quarantine_open_params(&uri, SOURCE_A)),
     )
     .await
@@ -78,9 +78,41 @@ async fn completed_saved_analysis_keeps_consumed_a_when_disk_and_buffer_become_b
                         .is_some_and(|owner| owner.0.contains("gate_state"))
             })
         {
-            return Err(
-                "SETUP: actual A producer lacks the required nonempty source subject".to_string(),
-            );
+            let probes = produced
+                .findings
+                .iter()
+                .take(8)
+                .map(|finding| {
+                    serde_json::json!({
+                        "id": finding.probe.id,
+                        "path": finding.probe.location.file,
+                        "line": finding.probe.location.line,
+                        "column": finding.probe.location.column,
+                        "owner": finding.probe.owner,
+                        "expression": finding.probe.expression,
+                    })
+                })
+                .collect::<Vec<_>>();
+            let detail = serde_json::json!({
+                "root": produced.root,
+                "expected_path": "src/lib.rs",
+                "expected_owner_contains": "gate_state",
+                "expected_expression_contains": "flag",
+                "findings_count": produced.findings.len(),
+                "probes_first_eight": probes,
+                "base": produced.base,
+                "mode": produced.mode,
+                "seams_deferred": produced.seams_deferred,
+                "partial_scope": produced.partial_scope,
+                "component_outcomes": produced.component_outcomes,
+                "out_of_scope_test_file_findings": produced.out_of_scope_test_file_findings,
+                "analysis_outcome": produced.analysis_outcome.as_ref().map(|outcome| {
+                    serde_json::json!({"kind": outcome.kind, "counts": outcome.counts, "limitations": outcome.limitations})
+                }),
+            });
+            return Err(format!(
+                "SETUP: actual A producer lacks the required nonempty source subject; {detail}"
+            ));
         }
         if !backend.is_current_refresh_generation(generation) {
             return Err("SETUP: A generation was not current at barrier".to_string());
@@ -121,7 +153,7 @@ async fn completed_saved_analysis_keeps_consumed_a_when_disk_and_buffer_become_b
     if digest_a != content_digest(SOURCE_A.as_bytes()) || digest_a == digest_b {
         return Err("SETUP: actual disk A does not match distinct intended A".to_string());
     }
-    let ((), produced_id) = tokio::time::timeout(Duration::from_secs(120), async {
+    let ((), produced_id) = tokio::time::timeout(Duration::from_mins(2), async {
         tokio::join!(
             backend.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::ExplicitRefresh),
             controller
