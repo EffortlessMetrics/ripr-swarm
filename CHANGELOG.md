@@ -1243,6 +1243,17 @@ are scoped or reviewed.
   attempt's result; that file is now a compatibility copy of the latest
   finish, and `ripr agent status` reads the attempt's own receipt first
   (#4636).
+- Rust diff analysis follows the module tree (#4435). A changed file under
+  `src/`, or beside a declared `[lib]` root outside `src/`, no longer seeds
+  findings when no `mod`, `#[path]` or `include!` from any Cargo target names
+  it, since rustc never compiles it; the run reports a limitation naming the
+  file instead. The out-of-line modules of an external root (`[lib] path =
+  "../shared/lib.rs"`) now seed, and the declaring package's tests stay in
+  the Draft scope. The orphan rule applies only when every Rust file in the
+  workspace resolves statically; an item-position macro call (other than
+  `thread_local!`), a `cfg_if!`-wrapped declaration, a dynamic `#[path]` or a
+  parse error anywhere keeps the previous layout rule, since such a file
+  could reach the orphan. The editor partition uses the same evidence.
 
 ### Added
 
