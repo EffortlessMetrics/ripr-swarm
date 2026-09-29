@@ -1,7 +1,7 @@
 //! Producer-owned InlineUnit `NewTestTargetProposal` admission (#4784).
 //!
 //! When no existing test can own a test-only repair, this module may earn
-//! one exact insertion into an already-governed inline `#[cfg(test)]` module
+//! one exact insertion into an already-governed inline cfg-test module
 //! from RustIndex and parser-backed source-role facts. It does not invent
 //! expected values, generate a test body, or create a missing test module.
 //! Integration-file proposals stay out of scope.
@@ -71,7 +71,7 @@ pub(crate) enum NewTestProposalBlocker {
 impl NewTestProposalBlocker {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
-            Self::NoTestModule => "no governed inline #[cfg(test)] module exists in the owner file",
+            Self::NoTestModule => "no governed inline cfg-test module exists in the owner file",
             Self::AmbiguousModule => {
                 "more than one governed inline test module or insertion anchor is plausible"
             }
