@@ -498,13 +498,17 @@ fn observation_from_oracle(
             OracleKind::ExactValue | OracleKind::WholeObjectEquality,
             OracleStrength::Strong | OracleStrength::Medium,
         ) => Some(OwnerResultObservation::Strong),
-        (
-            OracleKind::RelationalCheck | OracleKind::Snapshot | OracleKind::SmokeOnly,
-            OracleStrength::Weak | OracleStrength::Smoke | OracleStrength::Medium,
-        ) => Some(OwnerResultObservation::Weak),
-        (OracleKind::RelationalCheck, OracleStrength::Strong) => {
+        (OracleKind::RelationalCheck, OracleStrength::Strong | OracleStrength::Medium) => {
             Some(OwnerResultObservation::Strong)
         }
+        (
+            OracleKind::Snapshot | OracleKind::SmokeOnly,
+            OracleStrength::Medium | OracleStrength::Strong,
+        ) => Some(OwnerResultObservation::Strong),
+        (
+            OracleKind::RelationalCheck | OracleKind::Snapshot | OracleKind::SmokeOnly,
+            OracleStrength::Weak | OracleStrength::Smoke,
+        ) => Some(OwnerResultObservation::Weak),
         _ => None,
     }
 }

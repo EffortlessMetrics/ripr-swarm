@@ -15861,6 +15861,76 @@ mod tests {
 }
 
 #[test]
+fn nested_field_receiver_token_collision_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+pub struct Wrapper {
+    pub plan: DiagnosticRefreshPlan,
+}
+
+pub fn other_plan() -> DiagnosticRefreshPlan {
+    DiagnosticRefreshPlan {
+        suppressed_payload_bytes: 8,
+        published_payload_bytes: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_nested_receiver() {
+        let plan = diagnostic_refresh_plan(8, 0);
+        let other = Wrapper {
+            plan: other_plan(),
+        };
+        assert!(other.plan.suppressed_payload_bytes > 0);
+        let _keep = plan.published_payload_bytes;
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "nested receiver other.plan.field")
+}
+
+#[test]
+fn medium_snapshot_owner_result_field_stays_already_gripped() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_snapshot_field() {
+        let unchanged = diagnostic_refresh_plan(8, 0);
+        assert_snapshot!(unchanged.suppressed_payload_bytes);
+    }
+}
+"#,
+    )?;
+    let eligibility = repair_packet_eligibility(&case.classified);
+    let readiness = &eligibility.readiness;
+    if case.classified.class != SeamGripClass::StronglyGripped
+        || case.classified.evidence.discriminate.state != StageState::Yes
+        || !case.classified.evidence.missing_discriminators.is_empty()
+        || readiness.state != RepairRouteState::AlreadyGripped
+        || is_safe_for_repair_packet(&case.classified)
+    {
+        return Err(format!(
+            "matching Medium snapshot must stay AlreadyGripped: class={:?}, discriminate={:?}, missing={:?}, readiness={:?}, eligible={}",
+            case.classified.class,
+            case.classified.evidence.discriminate.state,
+            case.classified.evidence.missing_discriminators,
+            readiness.state,
+            eligibility.eligible()
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn method_same_name_callee_without_resolution_stays_non_ready() -> Result<(), String> {
     let case = refresh_plan_case(
         r#"
