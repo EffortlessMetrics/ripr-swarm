@@ -395,7 +395,7 @@ pub(crate) fn named_limitations_for_unresolved_ownership(
 ///
 /// `alias_unavailable` carries the typed flag-ON load gap (#4106-B): when the
 /// flag is on and the map is None, the advice names the REAL cause (missing
-/// config / unparseable JSON / JSONC comments / unsupported `extends` /
+/// config / unparseable JSON(C) / unsupported `extends` /
 /// unreadable config) instead of telling the user to enable a flag that is
 /// already enabled. A None map with a None gap means the flag is off — the
 /// only case where "enable the flag" advice is honest.

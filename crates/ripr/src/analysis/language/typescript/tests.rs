@@ -14084,7 +14084,7 @@ fn alias_load_gap_types_distinguish_flag_on_failures() -> Result<(), String> {
     assert!(err.is_none());
     assert_eq!(gap, Some(TsAliasMapLoadGap::ConfigMissing));
 
-    // Invalid strict JSON (no comments) — parse failure without JSONC hint.
+    // Malformed JSON — parse failure.
     ts_write_file(
         &root.join("tsconfig.json"),
         "{ \"compilerOptions\": { INVALID }\n",
@@ -14092,31 +14092,23 @@ fn alias_load_gap_types_distinguish_flag_on_failures() -> Result<(), String> {
     let (map, err, gap) = load_alias_map_with_read_error(&root);
     assert!(map.is_none() && err.is_none());
     match gap {
-        Some(TsAliasMapLoadGap::ConfigUnparseable {
-            jsonc_comments: false,
-            ..
-        }) => {}
+        Some(TsAliasMapLoadGap::ConfigUnparseable { .. }) => {}
         other => {
-            return Err(format!("expected plain ConfigUnparseable, got {other:?}"));
+            return Err(format!("expected ConfigUnparseable, got {other:?}"));
         }
     }
 
-    // JSONC: comments make the strict parser fail and the gap names them.
+    // JSONC: comments are accepted like `tsc` accepts them (#4549), so a
+    // commented config yields the map and no gap.
     ts_write_file(
         &root.join("tsconfig.json"),
         "{\n  // compiler options\n  \"compilerOptions\": { \"baseUrl\": \".\", \"paths\": { \"@/*\": [\"./src/*\"] } }\n}\n",
     )?;
     let (map, err, gap) = load_alias_map_with_read_error(&root);
-    assert!(map.is_none() && err.is_none());
-    match gap {
-        Some(TsAliasMapLoadGap::ConfigUnparseable {
-            jsonc_comments: true,
-            ..
-        }) => {}
-        other => {
-            return Err(format!("expected JSONC ConfigUnparseable, got {other:?}"));
-        }
-    }
+    assert!(
+        map.is_some() && err.is_none() && gap.is_none(),
+        "JSONC comments must not fail the load, gap: {gap:?}"
+    );
 
     // extends is a distinct typed cause.
     ts_write_file(
@@ -14233,8 +14225,12 @@ fn alias_advice_names_the_real_cause_when_flag_is_on() -> Result<(), String> {
             )
         })?;
     assert!(
-        why.contains("could not be parsed as strict JSON"),
+        why.contains("could not be parsed as JSON with comments"),
         "the advice must name the parse failure, got: {why}"
+    );
+    assert!(
+        !why.contains("strict JSON"),
+        "the advice must not ask for strict JSON: tsc accepts JSONC (#4549), got: {why}"
     );
     assert!(
         !why.contains("resolve_tsconfig_paths = true"),

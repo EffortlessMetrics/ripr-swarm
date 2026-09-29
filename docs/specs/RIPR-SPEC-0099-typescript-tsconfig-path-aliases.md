@@ -63,7 +63,7 @@ OFF preserves the existing conservative behavior.
 `root/tsconfig.json` then `root/jsconfig.json`. It is **fail-closed** on
 every ambiguity:
 
-- Missing file, JSON parse error, or missing `compilerOptions.baseUrl` → `None`.
+- Missing file, JSONC parse error, or missing `compilerOptions.baseUrl` → `None`.
 - `extends` or `references` present → `None` (no transitive following).
 - Empty or multi-entry `paths` value array, or a template with more than one
   `*` → retain the literal/single-wildcard key as an unresolved blocker. A
@@ -83,6 +83,12 @@ relative path ONLY when ALL of:
    preference: two existing candidates for one alias (`src/owner.mts` and
    `src/owner.cts`) resolve to `None`, and a near-miss suffix that is not a
    routed source extension is not a candidate.
+
+Amendment (#4549): the config is read as JSONC, matching `tsc`. `//` and
+`/* */` comments and trailing commas before `}` / `]` are removed outside
+string literals, then the text is parsed strictly. An unterminated block
+comment or string literal, and any other syntax error, still fails closed
+with the `ConfigUnparseable` gap; the advice no longer asks for strict JSON.
 
 ### 3. Resolver threading
 
@@ -321,6 +327,9 @@ result:    NO typescript_path_alias_unresolved limitation emitted
 - `crates/ripr/src/analysis/language/typescript/tsconfig/precedence_tests.rs::lower_prefix_ties_do_not_block_a_unique_longer_prefix`
 - `crates/ripr/src/analysis/language/typescript/tsconfig/precedence_tests.rs::suffix_must_match_before_prefix_precedence_applies`
 - `crates/ripr/src/analysis/language/typescript/tsconfig/precedence_tests.rs::direct_and_barrel_relations_do_not_borrow_a_same_named_fallback_owner`
+
+- `crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::jsonc_tsconfig_with_comments_and_trailing_commas_resolves`
+- `crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::unterminated_block_comment_fails_closed_as_unparseable`
 
 ## Implementation Mapping
 

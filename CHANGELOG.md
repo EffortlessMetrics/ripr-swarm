@@ -16,6 +16,13 @@ are scoped or reviewed.
   CLI route that analyzes the diff. Before, only `initialize` carried them.
   Workspace status no longer says a `ripr.toml` is detected when the root has
   none; that limitation now appears only when one was found.
+- TypeScript: `[typescript] resolve_tsconfig_paths` now reads
+  `tsconfig.json` and `jsconfig.json` the way `tsc` does, with `//` and
+  `/* */` comments and trailing commas. Before, any comment (and
+  `tsc --init` output is mostly comments) made alias resolution give up, and
+  the finding told users to rewrite the file as strict JSON. Malformed
+  files, including an unclosed block comment, still resolve no aliases and
+  say the file could not be parsed. (#4549)
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from

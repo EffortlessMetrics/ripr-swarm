@@ -2382,7 +2382,7 @@ pub(crate) fn classify_change(
 
 /// Like [`classify_change`], but carries the typed flag-ON alias-map load gap
 /// (#4106-B) so the `typescript_path_alias_unresolved` advice names the real
-/// fail-closed cause (missing / unparseable / JSONC / `extends` / unreadable
+/// fail-closed cause (missing / unparseable / `extends` / unreadable
 /// config) instead of telling the user to enable a flag that is already on.
 #[allow(
     clippy::too_many_arguments,
