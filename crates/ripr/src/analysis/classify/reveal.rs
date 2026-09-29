@@ -2481,7 +2481,7 @@ mod tests {
             "packed to the render cap: {named:?}"
         );
         assert!(
-            named.iter().any(|name| *name == "while_some_is_untested"),
+            named.contains(&"while_some_is_untested"),
             "a second test must survive the 8-row cap: {named:?}"
         );
     }
