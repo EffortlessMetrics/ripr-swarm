@@ -148,6 +148,7 @@ jobs:
             echo "ruleset_response_sha256=${ruleset_response_sha256}"
             echo "ruleset_id=${ruleset_id}"
           } >> "${GITHUB_OUTPUT}"
+
   build:
     name: build and qualify ${{ matrix.target }}
     needs: verify-candidate
@@ -221,7 +222,7 @@ jobs:
         shell: bash
         run: cargo xtask release-server-archive --version "$QUALIFICATION_VERSION" --target "${{ matrix.target }}" --executable "${{ matrix.executable }}" --archive "${{ matrix.archive }}"
 
-      - name: Verify archive checksum and extraction
+      - name: Verify archive checksum, extraction, and payload identity
         if: runner.os != 'Windows'
         shell: bash
         env:
@@ -231,6 +232,7 @@ jobs:
           set -euo pipefail
           version="${QUALIFICATION_VERSION#v}"
           archive="dist/ripr-server-v${version}-${TARGET}.tar.gz"
+          identity="target/ripr/distribution/v${version}/${TARGET}/payload-identity.json"
           expected="$(tr -d '[:space:]' < "${archive}.sha256")"
           actual="$(sha256sum "${archive}" | cut -d ' ' -f 1)"
           test "${actual}" = "${expected}"
@@ -246,10 +248,12 @@ jobs:
           test -f extracted/LICENSE-MIT
           test -f extracted/LICENSE-APACHE
           test -f extracted/README-server.txt
+          test -f "${identity}"
           expected_binary_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "ripr") | .version')"
           test "${version}" = "${expected_binary_version}"
           test "$(head -n 1 extracted/README-server.txt)" = "ripr server ${version}"
           test "$("extracted/${EXECUTABLE}" --version)" = "ripr ${expected_binary_version} ($(git rev-parse HEAD))"
+          cargo xtask release-server-archive --verify-payload-dir extracted --payload-identity "${identity}"
 
       - name: Verify Linux glibc floor
         if: runner.os == 'Linux'
@@ -281,15 +285,17 @@ jobs:
             exit 1
           fi
 
-      - name: Verify archive checksum and extraction
+      - name: Verify archive checksum, extraction, and payload identity
         if: runner.os == 'Windows'
         shell: pwsh
         env:
           TARGET: ${{ matrix.target }}
           EXECUTABLE: ${{ matrix.executable }}
         run: |
+          $ErrorActionPreference = 'Stop'
           $version = $env:QUALIFICATION_VERSION.TrimStart('v')
           $archive = "dist/ripr-server-v$version-$env:TARGET.zip"
+          $identity = "target/ripr/distribution/v$version/$env:TARGET/payload-identity.json"
           $expected = (Get-Content -Raw "$archive.sha256").Trim()
           $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
           if ($actual -ne $expected.ToLowerInvariant()) { throw "archive checksum mismatch" }
@@ -302,6 +308,7 @@ jobs:
           if (-not (Test-Path extracted\LICENSE-MIT)) { throw "MIT license missing" }
           if (-not (Test-Path extracted\LICENSE-APACHE)) { throw "Apache license missing" }
           if (-not (Test-Path extracted\README-server.txt)) { throw "archive readme missing" }
+          if (-not (Test-Path $identity)) { throw "payload identity missing" }
           $expectedBinaryVersion = ((cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages | Where-Object name -eq 'ripr').version
           if ($version -ne $expectedBinaryVersion) { throw "qualification version does not match package version" }
           if ((Get-Content extracted\README-server.txt -First 1) -ne "ripr server $version") { throw "archive label mismatch" }
@@ -309,6 +316,65 @@ jobs:
           $versionExit = $LASTEXITCODE
           $candidateHead = (& git rev-parse HEAD).Trim()
           if ($versionExit -ne 0 -or $versionOutput -ne "ripr $expectedBinaryVersion ($candidateHead)") { throw "archive binary version check failed" }
+          & cargo xtask release-server-archive --verify-payload-dir extracted --payload-identity $identity
+          if ($LASTEXITCODE -ne 0) { throw "archive payload identity verification failed" }
+
+      - name: Record exact build and payload identity
+        shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
+          EXECUTABLE: ${{ matrix.executable }}
+          ARCHIVE: ${{ matrix.archive }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:QUALIFICATION_VERSION.TrimStart('v')
+          $archivePath = "dist/ripr-server-v$version-$env:TARGET.$env:ARCHIVE"
+          $payloadRoot = "target/ripr/distribution/v$version/$env:TARGET"
+          $payloadIdentityPath = "$payloadRoot/payload-identity.json"
+          $payloadMarkdownPath = "$payloadRoot/payload-identity.md"
+          if (-not (Test-Path $archivePath)) { throw 'qualified archive missing' }
+          if (-not (Test-Path $payloadIdentityPath)) { throw 'payload identity missing' }
+          if (-not (Test-Path $payloadMarkdownPath)) { throw 'payload identity markdown missing' }
+          $payload = Get-Content -Raw $payloadIdentityPath | ConvertFrom-Json
+          $rustcVersion = (& rustc -vV) -join "`n"
+          if ($LASTEXITCODE -ne 0) { throw 'rustc identity unavailable' }
+          $cargoVersion = (& cargo -vV) -join "`n"
+          if ($LASTEXITCODE -ne 0) { throw 'cargo identity unavailable' }
+          $head = (& git rev-parse HEAD).Trim().ToLowerInvariant()
+          $tree = (& git rev-parse 'HEAD^{tree}').Trim().ToLowerInvariant()
+          if ($LASTEXITCODE -ne 0 -or $head -ne $env:CANDIDATE_SHA.ToLowerInvariant()) { throw 'build source SHA mismatch' }
+          $lock = (Get-FileHash -Algorithm SHA256 Cargo.lock).Hash.ToLowerInvariant()
+          if ($payload.schema_version -ne 1 -or $payload.kind -ne 'ripr_final_native_payload') { throw 'payload identity schema mismatch' }
+          if ($payload.product -ne 'ripr' -or $payload.version -ne $version -or $payload.target -ne $env:TARGET -or $payload.executable -ne $env:EXECUTABLE) { throw 'payload identity product tuple mismatch' }
+          if ($payload.source.commit_sha -ne $head -or $payload.source.tree_sha -ne $tree) { throw 'payload source identity mismatch' }
+          if ($payload.cargo_lock_sha256 -ne $lock) { throw 'payload Cargo.lock identity mismatch' }
+          if ($payload.toolchain.rustc_verbose_version -ne $rustcVersion -or $payload.toolchain.cargo_verbose_version -ne $cargoVersion) { throw 'payload toolchain identity mismatch' }
+          if ($payload.native_runtime_evidence.state -ne 'unqualified') { throw 'payload compatibility evidence was promoted outside #4489' }
+          if (@($payload.files).Count -lt 4) { throw 'payload file identity is incomplete' }
+          $payloadIdentitySha256 = (Get-FileHash -Algorithm SHA256 $payloadIdentityPath).Hash.ToLowerInvariant()
+          New-Item -ItemType Directory -Force build-identity | Out-Null
+          Copy-Item $payloadIdentityPath "build-identity/$env:TARGET-payload-identity.json"
+          Copy-Item $payloadMarkdownPath "build-identity/$env:TARGET-payload-identity.md"
+          [ordered]@{
+            target = $env:TARGET
+            candidate_sha = $head
+            candidate_tree = $tree
+            version = $version
+            archive_file = [IO.Path]::GetFileName($archivePath)
+            archive_sha256 = (Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLowerInvariant()
+            cargo_lock_sha256 = $lock
+            qualification_workflow_sha256 = (Get-FileHash -Algorithm SHA256 .github/workflows/server-archive-qualification.yml).Hash.ToLowerInvariant()
+            rehearsal_workflow_sha256 = (Get-FileHash -Algorithm SHA256 .github/workflows/release-server-binaries.yml).Hash.ToLowerInvariant()
+            rustc_verbose_version = $rustcVersion
+            cargo_verbose_version = $cargoVersion
+            payload_identity_file = "$env:TARGET-payload-identity.json"
+            payload_identity_sha256 = $payloadIdentitySha256
+            payload_aggregate_sha256 = $payload.payload_aggregate_sha256
+            payload_files = $payload.files
+            native_runtime_evidence = $payload.native_runtime_evidence
+            archive_readback_verified = $true
+            execution = [ordered]@{ selected = $true; executed = $true; failed = $false; not_run = $false }
+          } | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 "build-identity/$env:TARGET-build.json"
 
       - name: Upload qualified server artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -317,41 +383,14 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-      - name: Record exact build inputs
-        shell: pwsh
-        env:
-          TARGET: ${{ matrix.target }}
-          ARCHIVE: ${{ matrix.archive }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $version = $env:QUALIFICATION_VERSION.TrimStart('v')
-          $archivePath = "dist/ripr-server-v$version-$env:TARGET.$env:ARCHIVE"
-          if (-not (Test-Path $archivePath)) { throw 'qualified archive missing' }
-          $rustcVersion = (& rustc -vV) -join "`n"
-          if ($LASTEXITCODE -ne 0) { throw 'rustc identity unavailable' }
-          $cargoVersion = (& cargo -vV) -join "`n"
-          if ($LASTEXITCODE -ne 0) { throw 'cargo identity unavailable' }
-          $head = (& git rev-parse HEAD).Trim().ToLowerInvariant()
-          if ($LASTEXITCODE -ne 0 -or $head -ne $env:CANDIDATE_SHA.ToLowerInvariant()) { throw 'build source SHA mismatch' }
-          New-Item -ItemType Directory -Force build-identity | Out-Null
-          [ordered]@{
-            target = $env:TARGET
-            candidate_sha = $head
-            version = $version
-            archive_file = [IO.Path]::GetFileName($archivePath)
-            archive_sha256 = (Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLowerInvariant()
-            cargo_lock_sha256 = (Get-FileHash -Algorithm SHA256 Cargo.lock).Hash.ToLowerInvariant()
-            qualification_workflow_sha256 = (Get-FileHash -Algorithm SHA256 .github/workflows/server-archive-qualification.yml).Hash.ToLowerInvariant()
-            rehearsal_workflow_sha256 = (Get-FileHash -Algorithm SHA256 .github/workflows/release-server-binaries.yml).Hash.ToLowerInvariant()
-            rustc_verbose_version = $rustcVersion
-            cargo_verbose_version = $cargoVersion
-          } | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 "build-identity/$env:TARGET.json"
-
-      - name: Upload exact build identity
+      - name: Upload exact build and payload identity
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ripr-server-build-identity-${{ matrix.target }}
-          path: build-identity/${{ matrix.target }}.json
+          path: |
+            build-identity/${{ matrix.target }}-build.json
+            build-identity/${{ matrix.target }}-payload-identity.json
+            build-identity/${{ matrix.target }}-payload-identity.md
           if-no-files-found: error
 
   manifest:
@@ -424,21 +463,22 @@ jobs:
             test "$(jq -r --arg target "${target}" '.assets[$target].url' "${manifest}")" = "https://github.com/${REPOSITORY}/releases/download/v${version}/${file}"
           done < <(jq -r '.[]' <<< "${EXPECTED_TARGETS}")
 
-      - name: Verify aggregate checksums and write receipt
+      - name: Verify aggregate payload and build identities
         shell: bash
         env:
-          RULESET_MODE: ${{ needs.verify-candidate.outputs.ruleset_mode }}
-          RULESET_SOURCE_URL: ${{ needs.verify-candidate.outputs.ruleset_source_url }}
-          RULESET_RESPONSE_SHA256: ${{ needs.verify-candidate.outputs.ruleset_response_sha256 }}
-          RULESET_ID: ${{ needs.verify-candidate.outputs.ruleset_id }}
+          EXPECTED_TARGETS: '["x86_64-pc-windows-msvc","x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-apple-darwin","aarch64-apple-darwin"]'
         run: |
           set -euo pipefail
           (cd dist && sha256sum -c SHA256SUMS)
           version="${QUALIFICATION_VERSION#v}"
-          jq -s 'sort_by(.target)' build-identities/*.json > build-identities.json
-          test "$(find build-identities -maxdepth 1 -type f -name '*.json' | wc -l)" -eq 5
+          tree="$(git rev-parse 'HEAD^{tree}')"
+          jq -s 'sort_by(.target)' build-identities/*-build.json > build-identities.json
+          test "$(find build-identities -maxdepth 1 -type f -name '*-build.json' | wc -l)" -eq 5
+          test "$(find build-identities -maxdepth 1 -type f -name '*-payload-identity.json' | wc -l)" -eq 5
+          test "$(find build-identities -maxdepth 1 -type f -name '*-payload-identity.md' | wc -l)" -eq 5
           jq -e \
             --arg sha "${CANDIDATE_SHA,,}" \
+            --arg tree "${tree}" \
             --arg version "${version}" \
             --arg lock "$(sha256sum Cargo.lock | cut -d ' ' -f 1)" \
             --arg qualification "$(sha256sum .github/workflows/server-archive-qualification.yml | cut -d ' ' -f 1)" \
@@ -447,16 +487,46 @@ jobs:
             'length == 5 and
              ([.[].target] == ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]) and
              all(.[];
-               .candidate_sha == $sha and .version == $version and
-               .cargo_lock_sha256 == $lock and
-               .qualification_workflow_sha256 == $qualification and
-               .rehearsal_workflow_sha256 == $rehearsal and
-               (.rustc_verbose_version | length > 0) and
-               (.cargo_verbose_version | length > 0) and
+               .candidate_sha == $sha and .candidate_tree == $tree and .version == $version and
+               .cargo_lock_sha256 == $lock and .qualification_workflow_sha256 == $qualification and
+               .rehearsal_workflow_sha256 == $rehearsal and .archive_readback_verified == true and
+               (.rustc_verbose_version | length > 0) and (.cargo_verbose_version | length > 0) and
+               (.payload_identity_sha256 | test("^[0-9a-f]{64}$")) and
+               (.payload_aggregate_sha256 | test("^[0-9a-f]{64}$")) and
+               (.payload_files | type == "array" and length >= 4) and
+               .native_runtime_evidence.state == "unqualified" and
+               .execution == {selected: true, executed: true, failed: false, not_run: false} and
                (.archive_sha256 == $manifest[0].assets[.target].sha256) and
                (.archive_file == ("ripr-server-v" + $version + "-" + .target +
                  (if .target == "x86_64-pc-windows-msvc" then ".zip" else ".tar.gz" end))))' \
             build-identities.json >/dev/null
+          while IFS= read -r target; do
+            build="build-identities/${target}-build.json"
+            identity="build-identities/${target}-payload-identity.json"
+            test -f "${build}"
+            test -f "${identity}"
+            test "$(sha256sum "${identity}" | awk '{print $1}')" = "$(jq -r '.payload_identity_sha256' "${build}")"
+            jq -e --arg target "${target}" --arg version "${version}" --arg sha "${CANDIDATE_SHA,,}" --arg tree "${tree}" '
+              .schema_version == 1 and .kind == "ripr_final_native_payload" and
+              .product == "ripr" and .version == $version and .target == $target and
+              .source.commit_sha == $sha and .source.tree_sha == $tree and
+              (.files | type == "array" and length >= 4) and
+              (.payload_aggregate_sha256 | test("^[0-9a-f]{64}$")) and
+              .native_runtime_evidence.state == "unqualified"
+            ' "${identity}" >/dev/null
+            test "$(jq -r '.payload_aggregate_sha256' "${identity}")" = "$(jq -r '.payload_aggregate_sha256' "${build}")"
+          done < <(jq -r '.[]' <<< "${EXPECTED_TARGETS}")
+
+      - name: Write qualification receipt
+        shell: bash
+        env:
+          RULESET_MODE: ${{ needs.verify-candidate.outputs.ruleset_mode }}
+          RULESET_SOURCE_URL: ${{ needs.verify-candidate.outputs.ruleset_source_url }}
+          RULESET_RESPONSE_SHA256: ${{ needs.verify-candidate.outputs.ruleset_response_sha256 }}
+          RULESET_ID: ${{ needs.verify-candidate.outputs.ruleset_id }}
+        run: |
+          set -euo pipefail
+          version="${QUALIFICATION_VERSION#v}"
           manifest_sha256="$(sha256sum "dist/ripr-server-manifest-v${version}.json" | cut -d ' ' -f 1)"
           checksums_sha256="$(sha256sum dist/SHA256SUMS | cut -d ' ' -f 1)"
           jq -n \
@@ -472,7 +542,7 @@ jobs:
             --arg checksums_sha256 "${checksums_sha256}" \
             --slurpfile build_identities build-identities.json \
             --argjson targets '["x86_64-pc-windows-msvc","x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-apple-darwin","aarch64-apple-darwin"]' \
-            '{schema_version: 2, status: "qualified_archive_shape", candidate_sha: $candidate_sha, candidate_tag: $candidate_tag, version: $version, targets: $targets, build_identities: $build_identities[0], manifest_sha256: $manifest_sha256, sha256sums_sha256: $checksums_sha256, ruleset: {mode: $ruleset_mode, source_url: $ruleset_source_url, response_sha256: $ruleset_response_sha256, repository: $repository, id: $ruleset_id}, actions_artifacts_only: true, release_assets_created: false, repository_contents_written: false, secrets_required: false, limitations: ["Actions artifact retention is not a public release", "Manifest URLs are prospective and were not fetched"]}' \
+            '{schema_version: 3, status: "qualified_payload_and_archive_shape", candidate_sha: $candidate_sha, candidate_tag: $candidate_tag, version: $version, targets: $targets, target_execution: {selected: 5, executed: 5, failed: 0, not_run: 0}, build_identities: $build_identities[0], manifest_sha256: $manifest_sha256, sha256sums_sha256: $checksums_sha256, ruleset: {mode: $ruleset_mode, source_url: $ruleset_source_url, response_sha256: $ruleset_response_sha256, repository: $repository, id: $ruleset_id}, actions_artifacts_only: true, release_assets_created: false, repository_contents_written: false, secrets_required: false, limitations: ["Native runtime compatibility remains unqualified under #4489", "Actions artifact retention is not a public release", "Manifest URLs are prospective and were not fetched"]}' \
             > dist/server-archive-qualification-receipt.json
           {
             echo "# Server archive qualification receipt"
@@ -480,21 +550,21 @@ jobs:
             echo "- candidate SHA: ${CANDIDATE_SHA}"
             echo "- candidate tag: ${CANDIDATE_TAG:-none supplied}"
             echo "- version: ${version}"
-            echo "- targets: five supported server targets"
-            echo "- per-target build inputs and archive digests: recorded in JSON receipt"
+            echo "- target execution: selected 5; executed 5; failed 0; not run 0"
+            echo "- final native payload identities: five retained and archive-readback verified"
+            echo "- native runtime compatibility: unqualified under #4489"
             echo "- manifest SHA256: ${manifest_sha256}"
             echo "- SHA256SUMS SHA256: ${checksums_sha256}"
             echo "- ruleset mode: ${RULESET_MODE}"
             echo "- ruleset source: ${RULESET_SOURCE_URL}"
             echo "- ruleset response SHA256: ${RULESET_RESPONSE_SHA256}"
             echo "- ruleset ID: ${RULESET_ID}"
-            echo "- aggregate SHA256SUMS: verified"
             echo "- GitHub Release assets: not created"
             echo "- repository contents writes: none"
             echo "- secrets: not required"
           } > dist/server-archive-qualification-receipt.md
 
-      - name: Upload qualification manifest and receipt
+      - name: Upload qualification manifest, payload identities, and receipt
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ripr-server-qualification-manifest
@@ -503,6 +573,10 @@ jobs:
             dist/SHA256SUMS
             dist/server-archive-qualification-receipt.json
             dist/server-archive-qualification-receipt.md
+            build-identities.json
+            build-identities/*-build.json
+            build-identities/*-payload-identity.json
+            build-identities/*-payload-identity.md
           if-no-files-found: error
 
 # Authority: this workflow is qualification-only and never creates GitHub
