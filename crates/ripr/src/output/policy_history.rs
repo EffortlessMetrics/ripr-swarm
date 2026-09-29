@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 
 const SCHEMA_VERSION: &str = "0.1";
 const REPORT_KIND: &str = "policy_history";
-const LIMITS_NOTE: &str = "Read-only advisory policy history report. It reads explicit history inputs and never appends, mutates policy, or changes gate authority.";
+const LIMITS_NOTE: &str = "Read-only advisory policy history report. It reads explicit history inputs and does not mutate policy or change gate authority. Default execution and generated CI do not append history; `--out-jsonl` is the opt-in producer.";
 
 pub(crate) const DEFAULT_POLICY_HISTORY_OUT: &str = "target/ripr/reports/policy-history.json";
 pub(crate) const DEFAULT_POLICY_HISTORY_MD_OUT: &str = "target/ripr/reports/policy-history.md";
@@ -260,6 +260,13 @@ pub(crate) fn render_policy_history_jsonl_record(
         .map_err(|err| format!("failed to render policy history JSONL record: {err}"))
 }
 
+pub(crate) fn policy_history_current_is_durable(report: &PolicyHistoryReport) -> bool {
+    !report
+        .unknowns
+        .iter()
+        .any(|notice| notice.kind == "current_policy_operations_unavailable")
+}
+
 fn policy_history_json_value(report: &PolicyHistoryReport) -> Value {
     json!({
         "schema_version": SCHEMA_VERSION,
@@ -375,7 +382,7 @@ pub(crate) fn render_policy_history_markdown(report: &PolicyHistoryReport) -> St
 
     out.push_str("\n## Append Record\n\n");
     out.push_str(
-        "The command may show this record for manual review, but it does not write history automatically.\n",
+        "The command may show this record for manual review. Default execution and generated CI do not write history; `--out-jsonl` is the opt-in producer.\n",
     );
     out.push_str("\nLimits:\n");
     out.push_str(LIMITS_NOTE);
@@ -1262,6 +1269,10 @@ mod tests {
                 .iter()
                 .any(|warning| warning.kind == "policy_operations_malformed")
         );
+        assert!(
+            !policy_history_current_is_durable(&report),
+            "malformed current must not be treated as a durable snapshot"
+        );
     }
 
     #[test]
@@ -1305,6 +1316,10 @@ mod tests {
             "ready_for_acknowledgeable",
             &["visible-only", "acknowledgeable"],
         )));
+        assert!(
+            policy_history_current_is_durable(&report),
+            "parsed current operations must be durable"
+        );
         let line = render_policy_history_jsonl_record(&report)?;
         assert!(
             !line.contains('\n') && !line.contains('\r'),
@@ -1435,6 +1450,10 @@ mod tests {
         );
         assert_eq!(report.current.current_policy_ceiling, "config_error");
         assert_eq!(report.input_artifacts[0].status, "malformed");
+        assert!(
+            !policy_history_current_is_durable(&report),
+            "unavailable current must not be treated as a durable snapshot"
+        );
     }
 
     #[test]

@@ -40,6 +40,7 @@ pub(crate) fn append_line(path: &Path, line: &str) -> io::Result<()> {
     }
     let mut file = open(path, OpenKind::Append)?;
     let len = file.metadata()?.len();
+    let mut payload = Vec::new();
     if len > 0 {
         file.seek(SeekFrom::Start(len - 1))?;
         let mut last = [0u8; 1];
@@ -47,11 +48,12 @@ pub(crate) fn append_line(path: &Path, line: &str) -> io::Result<()> {
         // POSIX requires an intervening seek when switching from read to write.
         file.seek(SeekFrom::End(0))?;
         if last[0] != b'\n' {
-            file.write_all(b"\n")?;
+            payload.push(b'\n');
         }
     }
-    file.write_all(line.as_bytes())?;
-    file.write_all(b"\n")?;
+    payload.extend_from_slice(line.as_bytes());
+    payload.push(b'\n');
+    file.write_all(&payload)?;
     Ok(())
 }
 

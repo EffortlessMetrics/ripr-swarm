@@ -315,7 +315,8 @@ pub(crate) fn parse_policy_history_options(
     }
 
     if let Some(jsonl) = out_jsonl.as_ref()
-        && (jsonl == &out || jsonl == &out_md)
+        && (crate::output::path::same_output_leaf(jsonl, &out)
+            || crate::output::path::same_output_leaf(jsonl, &out_md))
     {
         return Err(
             "policy history --out-jsonl must not be the same path as --out or --out-md".to_string(),

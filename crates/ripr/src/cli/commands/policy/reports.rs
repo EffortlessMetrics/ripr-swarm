@@ -217,6 +217,14 @@ pub(crate) fn policy_history(args: &[String]) -> Result<(), String> {
     let rendered_json = output::policy_history::render_policy_history_json(&report)?;
     let rendered_md = output::policy_history::render_policy_history_markdown(&report);
     write_policy_report_files(&options.out, &options.out_md, &rendered_json, &rendered_md)?;
+    if options.out_jsonl.is_some()
+        && !output::policy_history::policy_history_current_is_durable(&report)
+    {
+        return Err(
+            "policy history --out-jsonl refuses to append when current policy operations are unavailable or malformed"
+                .to_string(),
+        );
+    }
     maybe_append_jsonl(
         options.out_jsonl.as_deref(),
         &output::policy_history::render_policy_history_jsonl_record(&report)?,

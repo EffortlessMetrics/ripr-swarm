@@ -3451,6 +3451,7 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::policy_history_parses_option_surface",
   "crates/ripr/src/cli/commands.rs::tests::policy_history_command_writes_reports",
   "crates/ripr/src/cli/commands.rs::tests::policy_history_out_jsonl_is_opt_in_and_feeds_non_null_trend",
+  "crates/ripr/src/cli/commands.rs::tests::policy_history_out_jsonl_refuses_unavailable_current",
   "crates/ripr/src/cli/help.rs::tests::command_specific_help_usage_lines_are_stable",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
 ]

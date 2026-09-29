@@ -2203,7 +2203,8 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
     }
 
     if let Some(jsonl) = out_jsonl.as_ref()
-        && (jsonl == &out || jsonl == &out_md)
+        && (output::path::same_output_leaf(jsonl, &out)
+            || output::path::same_output_leaf(jsonl, &out_md))
     {
         return Err(
             "pr-ledger record --out-jsonl must not be the same path as --out or --out-md"
@@ -5295,6 +5296,20 @@ mod tests {
                     .to_string()
             )
         );
+        assert_eq!(
+            parse_policy_history_options(&args(&[
+                "--current",
+                "ops.json",
+                "--out",
+                "./policy-history.json",
+                "--out-jsonl",
+                "policy-history.json",
+            ])),
+            Err(
+                "policy history --out-jsonl must not be the same path as --out or --out-md"
+                    .to_string()
+            )
+        );
     }
 
     #[test]
@@ -5808,6 +5823,40 @@ mod tests {
     }
 
     #[test]
+    fn policy_history_out_jsonl_refuses_unavailable_current() -> Result<(), String> {
+        let dir = unique_command_test_dir("policy-history-jsonl-refuse");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create history dir: {err}"))?;
+        let current = dir.join("missing-policy-operations.json");
+        let jsonl = dir.join("policy-history.jsonl");
+        let out = dir.join("policy-history.json");
+        let out_md = dir.join("policy-history.md");
+        let error = match policy(&args(&[
+            "history",
+            "--current",
+            &current.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+            "--out-jsonl",
+            &jsonl.display().to_string(),
+        ])) {
+            Err(error) => error,
+            Ok(()) => return Err("unavailable current must refuse --out-jsonl".to_string()),
+        };
+        assert!(
+            error.contains("refuses to append"),
+            "expected refuse error, got {error}"
+        );
+        assert!(
+            !jsonl.exists(),
+            "unavailable current must not produce a durable JSONL line"
+        );
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove history dir: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
     fn policy_promotion_command_writes_reports() -> Result<(), String> {
         let dir = unique_command_test_dir("policy-promotion");
         std::fs::create_dir_all(&dir).map_err(|err| format!("create promotion dir: {err}"))?;
@@ -6243,6 +6292,26 @@ language = "rust"
                 "gap-ledger.json",
                 "--out",
                 "ledger.json",
+                "--out-jsonl",
+                "ledger.json",
+            ])),
+            Err(
+                "pr-ledger record --out-jsonl must not be the same path as --out or --out-md"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            parse_pr_evidence_ledger_options(&args(&[
+                "--pr-number",
+                "123",
+                "--base",
+                "base",
+                "--head",
+                "head",
+                "--gap-ledger",
+                "gap-ledger.json",
+                "--out",
+                "./ledger.json",
                 "--out-jsonl",
                 "ledger.json",
             ])),
