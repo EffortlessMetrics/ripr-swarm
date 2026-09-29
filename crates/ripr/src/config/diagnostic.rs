@@ -80,6 +80,7 @@ impl ConfigDiagnostic {
             | "severity.findings.propagation_unknown"
             | "severity.findings.static_unknown" => vec!["info", "warning", "note"],
             path if path.starts_with("severity.seams.") => vec!["off", "info", "warning", "note"],
+            "lsp.diagnostic_profile" => vec!["actionable", "full"],
             _ => Vec::new(),
         };
         Self {
@@ -99,9 +100,9 @@ impl ConfigDiagnostic {
     }
 }
 
-impl From<String> for ConfigDiagnostic {
+impl From<String> for Box<ConfigDiagnostic> {
     fn from(message: String) -> Self {
-        Self::unavailable(message)
+        Box::new(ConfigDiagnostic::unavailable(message))
     }
 }
 

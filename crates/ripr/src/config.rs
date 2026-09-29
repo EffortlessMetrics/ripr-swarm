@@ -309,9 +309,14 @@ fn parse_config(text: &str) -> Result<RiprConfig, String> {
 
 /// Preserve semantic source locations without changing the typed configuration
 /// authority. Consumers can project this diagnostic into their own transports.
-pub(crate) fn parse_config_diagnostic(text: &str) -> Result<RiprConfig, ConfigDiagnostic> {
-    let raw: RawConfig = toml::from_str(text)
-        .map_err(|err| ConfigDiagnostic::structural(format!("invalid ripr.toml: {err}")))?;
+/// The diagnostic is boxed: it is deliberately rich (spans, expected values),
+/// which would otherwise trip `clippy::result_large_err` on every parser hop.
+pub(crate) fn parse_config_diagnostic(text: &str) -> Result<RiprConfig, Box<ConfigDiagnostic>> {
+    let raw: RawConfig = toml::from_str(text).map_err(|err| {
+        Box::new(ConfigDiagnostic::structural(format!(
+            "invalid ripr.toml: {err}"
+        )))
+    })?;
     RiprConfig::from_raw(raw, text)
 }
 
@@ -321,7 +326,7 @@ pub(crate) fn tests_only_parse(text: &str) -> Result<RiprConfig, String> {
 }
 
 impl RiprConfig {
-    fn from_raw(raw: RawConfig, text: &str) -> Result<Self, ConfigDiagnostic> {
+    fn from_raw(raw: RawConfig, text: &str) -> Result<Self, Box<ConfigDiagnostic>> {
         let mut config = RiprConfig::default();
         if let Some(analysis) = raw.analysis {
             if let Some(mode) = analysis.mode {
@@ -677,7 +682,7 @@ fn merge_severity(
     mut current: SeverityConfig,
     raw: RawSeverityConfig,
     text: &str,
-) -> Result<SeverityConfig, ConfigDiagnostic> {
+) -> Result<SeverityConfig, Box<ConfigDiagnostic>> {
     if let Some(findings) = raw.findings {
         merge_finding_severity(&mut current.findings, findings, text)?;
     }
@@ -691,7 +696,7 @@ fn merge_finding_severity(
     current: &mut FindingSeverityConfig,
     raw: RawFindingSeverityConfig,
     text: &str,
-) -> Result<(), ConfigDiagnostic> {
+) -> Result<(), Box<ConfigDiagnostic>> {
     assign_severity(
         &mut current.exposed,
         raw.exposed,
@@ -748,7 +753,7 @@ fn merge_seam_severity(
     current: &mut SeamSeverityConfig,
     raw: RawSeamSeverityConfig,
     text: &str,
-) -> Result<(), ConfigDiagnostic> {
+) -> Result<(), Box<ConfigDiagnostic>> {
     assign_severity(
         &mut current.strongly_gripped,
         raw.strongly_gripped,
@@ -835,7 +840,7 @@ fn assign_severity(
     field: &str,
     allow_off: bool,
     text: &str,
-) -> Result<(), ConfigDiagnostic> {
+) -> Result<(), Box<ConfigDiagnostic>> {
     if let Some(value) = raw {
         *target = parse_severity(field, value.get_ref(), allow_off)
             .map_err(|message| ConfigDiagnostic::at_value(message, field, value.span(), text))?;
@@ -1018,6 +1023,10 @@ fn marker_path_is_exact(marker: &str) -> bool {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "Tests assert an expected config diagnostic via `.expect_err(\"why\")`; the closure-style helper makes the expected failure mode part of the assertion message."
+)]
 mod tests;
 
 /// The config a bound immutable-subject run uses (#3279 R4): the
