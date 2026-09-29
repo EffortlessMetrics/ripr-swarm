@@ -225,11 +225,11 @@ completeness limits, lexical-fallback provenance and shard descriptors. JSON
 whitespace/object-key ordering does not affect integrity. Derived
 `FileFacts.role_provenance` is skipped by serialization and recomputed.
 
-The integrity generations are file facts `1.10`, full classified `1.17`, compact
-classified `0.23`, shards `0.23` and corpus fingerprints `0.3`. Full and
-sharded generations move again for producer-owned Integration proposals
-(#4576); compact stays at `0.23` because compact evidence does not carry
-that admission. The integrity transition follows the unsigned
+The integrity generations are file facts `1.11`, full classified `1.18`, compact
+classified `0.24`, shards `0.24` and corpus fingerprints `0.3`. Full and
+sharded generations move past main's #4597 `1.17` / `0.23` for producer-owned
+Integration proposals (#4576); compact stays at main's `0.24` because compact
+evidence does not carry that admission. The integrity transition follows the unsigned
 nesting-budget generations from #4475. Older unsigned
 generations cold-recompute; no source migration is needed. Decoded key/schema
 mismatches invalidate before digest checking. Matching current entries with
@@ -1023,7 +1023,7 @@ languages continue. The accepted managed producer values are
 | `producer` | string | none | Selects managed producer mode. Accepted values are `perl-ripr-facts`, `perllsp`, and `perl-lsp`. |
 | `executable` | path | `perl-ripr-facts` on PATH for the canonical producer; `perllsp` on PATH for `perllsp`/`perl-lsp` | Overrides the Perl facts exporter executable path in managed mode, but only when the user running ripr sets `RIPR_ALLOW_REPO_PERL_EXECUTABLE=1`; without it ripr ignores the key, says so, and uses the PATH default, so a cloned repository cannot choose a program for `ripr check`, `ripr doctor` or `ripr lsp` to run. No producer is invoked merely because a default executable exists. |
 | `timeout_ms` | integer | `30000` | Maximum time in milliseconds for the managed producer invocation. `0` also resolves to `30000`; it does not disable the timeout. |
-| `cache_dir` | path | `target/ripr/perl-facts` | Directory for generated Perl fact packets in managed mode. |
+| `cache_dir` | path | `target/ripr/perl-facts` | Directory for generated Perl fact packets in managed mode. Must be a repository-relative path without `..`; an absolute or escaping path is a config error. |
 
 To evaluate preview languages, keep Rust enabled and add only the preview
 adapters the repo wants to inspect:
