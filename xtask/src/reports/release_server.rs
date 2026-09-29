@@ -32,12 +32,7 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
     fs::create_dir_all(dist_dir)
         .map_err(|err| format!("failed to create {}: {err}", dist_dir.display()))?;
 
-    let staged = payload::stage_final_native_payload(
-        &version,
-        &target,
-        &executable,
-        &archive,
-    )?;
+    let staged = payload::stage_final_native_payload(&version, &target, &executable, &archive)?;
     let identity_sha256 = payload::payload_identity_sha256(&staged)?;
 
     let asset_path = dist_dir.join(&asset_name);
