@@ -304,7 +304,7 @@ Updated:
 ## Pending — ts_pkg_discovery_no_package (7)
 
 Reason:
-RIPR-SPEC-0122: digest Next step wraps instead of cutting the remedy; stop reasons carry a gloss; boxed-wrapper limitation text has no whitespace runs (#4323)
+RIPR-SPEC-0122: Hidden remainder names omitted preview-language identity (#4395); formatting-only, no class or JSON change.
 
 Command:
 `cargo xtask goldens bless ts_pkg_discovery_no_package --reason "..."`

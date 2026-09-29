@@ -423,7 +423,7 @@ Updated:
 ## Pending — typescript_strict_actionability (9)
 
 Reason:
-RIPR-SPEC-0122: digest Next step wraps instead of cutting the remedy; stop reasons carry a gloss; boxed-wrapper limitation text has no whitespace runs (#4323)
+RIPR-SPEC-0122: Hidden remainder names omitted preview-language identity (#4395); formatting-only, no class or JSON change.
 
 Command:
 `cargo xtask goldens bless typescript_strict_actionability --reason "..."`

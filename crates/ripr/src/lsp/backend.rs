@@ -13,7 +13,7 @@ use super::diagnostics::{
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
     diagnostic_hover_response, finding_hover_response, hover_response, hover_with_snapshot_status,
-    is_gap_diagnostic,
+    is_gap_diagnostic, markdown_hover,
 };
 use super::lens::{LensViewIdentity, code_lens_response, lens_view_identity};
 use super::payload_bounds::{
@@ -28,8 +28,9 @@ use super::refresh_scheduler::{
 use super::state::{
     AnalysisAttemptState, AnalysisFailure, AnalysisFailureKind, AnalysisHealth, AnalysisSnapshot,
     ConfigPullState, DocumentStalenessReason, DocumentStore, QuarantineTransition,
-    WorkspaceFolderEventRejection, WorkspaceFolderSelection, WorkspaceFolderSet,
-    WorkspaceRootAuthority, WorkspaceRootState, content_digest, format_duration,
+    WorkspaceFolderEntry, WorkspaceFolderEventRejection, WorkspaceFolderSelection,
+    WorkspaceFolderSet, WorkspaceRootAuthority, WorkspaceRootState, content_digest,
+    format_duration,
 };
 use super::uri::{
     CappedArtifactRead, absolute_join, display_path, file_uri_for_path, file_uri_is_within_root,
@@ -1453,6 +1454,100 @@ impl Backend {
             .await;
     }
 
+    /// The selected root to keep when a folder event leaves several folders
+    /// (#4459). Helix, and any client that shares one server across
+    /// repositories, adds each newly opened repository as a workspace folder;
+    /// treating that as ambiguous stopped analysis for the repository the
+    /// user was already in. For clients without the `riprEditor`
+    /// integration, a root that is selected, analyzable and still in the set
+    /// stays the session root and the other folders go unanalyzed. The VS
+    /// Code extension owns root selection, so it keeps the RIPR-SPEC-0139
+    /// ambiguous transition. A set with no selected root (for example two
+    /// folders at `initialize`) is still ambiguous: nothing is kept.
+    fn kept_root_for_added_folders(&self, entries: &[WorkspaceFolderEntry]) -> Option<PathBuf> {
+        let generic_client = self
+            .client_features
+            .lock()
+            .map(|features| features.ripr_editor.is_none())
+            .unwrap_or(false);
+        if !generic_client {
+            return None;
+        }
+        let current = self.workspace_root_authority();
+        if !current.allows_analysis() {
+            return None;
+        }
+        let root = current.effective_root?;
+        entries
+            .iter()
+            .any(|entry| entry.path == root)
+            .then_some(root)
+    }
+
+    /// Say which folders a kept root leaves unanalyzed, in the log and on
+    /// screen, so a user who opened a second repository learns why it has no
+    /// evidence.
+    async fn disclose_kept_root(&self, root: &Path, others: &[PathBuf]) {
+        let listed = others
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let message = format!(
+            "ripr keeps analyzing {}. Not analyzed by this server: {listed}. ripr analyzes one workspace root per server; open another repository in its own editor session to analyze it.",
+            root.display()
+        );
+        self.client
+            .log_message(MessageType::INFO, message.clone())
+            .await;
+        self.client.show_message(MessageType::INFO, message).await;
+    }
+
+    /// Warn when a workspace-folder change moves the root into a blocked
+    /// state the client has not been told about. Startup is covered by
+    /// [`Self::disclose_blocked_startup_root`]; an unchanged blocked state is
+    /// not repeated.
+    async fn disclose_blocked_root_transition(&self, previous: &WorkspaceRootAuthority) {
+        let current = self.workspace_root_authority();
+        if current.state == previous.state
+            && current.candidate_roots == previous.candidate_roots
+            && current.detail == previous.detail
+        {
+            return;
+        }
+        self.disclose_blocked_root(&current).await;
+    }
+
+    /// Warn once at startup when the workspace root blocks analysis.
+    async fn disclose_blocked_startup_root(&self) {
+        let root = self.workspace_root_authority();
+        self.disclose_blocked_root(&root).await;
+    }
+
+    /// The warning always goes to the log; clients without the `riprEditor`
+    /// integration also get `window/showMessage`, because `ripr/analysisStatus`
+    /// is the only other place the blocked state appears and generic editors
+    /// do not render it. The VS Code extension renders its own root state.
+    async fn disclose_blocked_root(&self, root: &WorkspaceRootAuthority) {
+        let Some(message) = blocked_root_message(root) else {
+            return;
+        };
+        let message = format!("ripr {message}");
+        self.client
+            .log_message(MessageType::WARNING, message.clone())
+            .await;
+        let generic_client = self
+            .client_features
+            .lock()
+            .map(|features| features.ripr_editor.is_none())
+            .unwrap_or(true);
+        if generic_client {
+            self.client
+                .show_message(MessageType::WARNING, message)
+                .await;
+        }
+    }
+
     /// Deliver the optional client disclosures that follow an
     /// initialize-time failure commit — one `window/logMessage` warning plus
     /// one analysis-status publication — within
@@ -2344,10 +2439,48 @@ impl Backend {
             .map(|state| state.text.clone())
     }
 
+    /// The hover for a position with no evidence to show. A generic editor
+    /// has no other place that says why ripr is quiet, so name a blocked
+    /// root or an unsaved buffer before falling back to the CLI pointer.
+    fn hover_without_evidence(&self, uri: &Uri) -> Hover {
+        if let Some(message) = blocked_root_message(&self.workspace_root_authority()) {
+            return markdown_hover(format!("**ripr** {message}"));
+        }
+        if let Some(root) = self.effective_root()
+            && let Some(path) = path_from_file_uri(uri)
+            && !path_is_within_root(&root, &path)
+        {
+            return markdown_hover(format!(
+                "**ripr** this file is outside the analyzed workspace root {}. ripr analyzes one workspace root per server; open this file's repository in its own editor session to analyze it.",
+                root.display()
+            ));
+        }
+        if let Some((_, reason)) = self.document_quarantine(uri) {
+            // Only a divergent buffer is fixed by saving; a file with no
+            // analyzed saved content needs an analysis run.
+            let route = match reason {
+                DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent => {
+                    "ripr analyzes saved files; save the file to refresh its evidence."
+                }
+                DocumentStalenessReason::NoAnalyzedSavedContent => {
+                    "ripr has not analyzed this file's saved content yet; its evidence appears after the next refresh (`ripr.refresh`) completes. A new file must be saved first."
+                }
+            };
+            return markdown_hover(format!(
+                "**ripr** evidence for this file is paused: {}. {route}",
+                reason.description()
+            ));
+        }
+        hover_response()
+    }
+
     /// The quarantine state of an open document, as `(path, reason)`.
     /// `None` means the document is unknown or clean: its buffer matches the
     /// saved content the committed snapshot analyzed.
-    fn document_quarantine(&self, uri: &Uri) -> Option<(PathBuf, DocumentStalenessReason)> {
+    pub(super) fn document_quarantine(
+        &self,
+        uri: &Uri,
+    ) -> Option<(PathBuf, DocumentStalenessReason)> {
         let documents = self.documents.lock().ok()?;
         let state = documents.state_for_uri(uri)?;
         let quarantine = state.quarantine.as_ref()?;
@@ -3437,6 +3570,48 @@ fn workspace_diagnostics_are_root_contained(
         })
 }
 
+/// The user-facing warning body (callers prefix `ripr`) for a root that
+/// blocks analysis, or `None` when analysis may run. Names the folders for an
+/// ambiguous set so the user can see which roots the editor sent.
+fn blocked_root_message(root: &WorkspaceRootAuthority) -> Option<String> {
+    if root.allows_analysis() {
+        return None;
+    }
+    let detail = root.detail.as_deref().unwrap_or("no usable workspace root");
+    let folders = if root.candidate_roots.is_empty() {
+        String::new()
+    } else {
+        let listed = root
+            .candidate_roots
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        // Removed and changed roots carry the previous root, not the
+        // folders the client sent.
+        let label = match root.state {
+            WorkspaceRootState::RootRemoved | WorkspaceRootState::RootChanged => "Previous root",
+            _ => "Folders",
+        };
+        format!(" {label}: {listed}.")
+    };
+    // The stored details already name the recovery for ambiguous, removed
+    // and changed roots; an unavailable root only says what the client sent.
+    let guidance = match root.state {
+        WorkspaceRootState::WorkspaceAmbiguous => " ripr analyzes one workspace root per server.",
+        WorkspaceRootState::RootUnavailable => {
+            " Open the repository folder as the editor's workspace root, then restart the language server."
+        }
+        WorkspaceRootState::SelectedSingleRoot
+        | WorkspaceRootState::RootRemoved
+        | WorkspaceRootState::RootChanged => "",
+    };
+    Some(format!(
+        "analysis is stopped ({}): {detail}.{folders}{guidance}",
+        root.state.as_str()
+    ))
+}
+
 fn root_recovery_route(state: &WorkspaceRootState) -> &'static str {
     match state {
         WorkspaceRootState::SelectedSingleRoot => "refresh",
@@ -3782,6 +3957,14 @@ impl LanguageServer for Backend {
         if self.configuration_mode() == ConfigurationMode::Pull {
             self.schedule_configuration_pull().await;
         }
+        // tower-lsp-server suppresses custom notifications until `initialize`
+        // has returned, so the status published by the initialize-time root
+        // and config transitions never reached the client. Publish the
+        // startup state once the session is live, and name a root that
+        // blocks analysis over a standard channel: without this, a generic
+        // editor opened on two folders or on no folder sees nothing at all.
+        self.publish_analysis_status().await;
+        self.disclose_blocked_startup_root().await;
     }
 
     async fn initialize(&self, params: InitializeParams) -> LspResult<InitializeResult> {
@@ -3972,7 +4155,9 @@ impl LanguageServer for Backend {
         let (outcome, root_epoch) = match delta {
             Ok(pair) => pair,
             Err(rejection) => {
+                let previous = self.workspace_root_authority();
                 self.reject_workspace_folder_update(rejection).await;
+                self.disclose_blocked_root_transition(&previous).await;
                 return;
             }
         };
@@ -4028,7 +4213,9 @@ impl LanguageServer for Backend {
         let folder_set_epoch = match action {
             None => return,
             Some(Err(rejection)) => {
+                let previous = self.workspace_root_authority();
                 self.reject_workspace_folder_update(rejection).await;
+                self.disclose_blocked_root_transition(&previous).await;
                 return;
             }
             Some(Ok(folder_set_epoch)) => folder_set_epoch,
@@ -4049,15 +4236,37 @@ impl LanguageServer for Backend {
                     .first()
                     .map(|entry| WorkspaceRootResolution::Selected(entry.path.clone())),
                 WorkspaceFolderSelection::AmbiguousFolders => {
-                    Some(WorkspaceRootResolution::Ambiguous(
-                        set.entries()
-                            .iter()
-                            .map(|entry| entry.path.clone())
-                            .collect(),
-                    ))
+                    match self.kept_root_for_added_folders(set.entries()) {
+                        Some(root) => Some(WorkspaceRootResolution::Selected(root)),
+                        None => Some(WorkspaceRootResolution::Ambiguous(
+                            set.entries()
+                                .iter()
+                                .map(|entry| entry.path.clone())
+                                .collect(),
+                        )),
+                    }
                 }
             };
             (resolution, set.folder_set_epoch())
+        };
+        // Reaching here means the stored set changed (an accepted delta or a
+        // drift-correction replacement), so a kept root is announced once
+        // per change.
+        let kept_root = match &derived.0 {
+            Some(WorkspaceRootResolution::Selected(root)) => {
+                let others = {
+                    let Ok(set) = self.workspace_folders.lock() else {
+                        return;
+                    };
+                    set.entries()
+                        .iter()
+                        .filter(|entry| &entry.path != root)
+                        .map(|entry| entry.path.clone())
+                        .collect::<Vec<_>>()
+                };
+                (!others.is_empty()).then(|| (root.clone(), others))
+            }
+            _ => None,
         };
         if derived.1 != folder_set_epoch {
             return;
@@ -4066,8 +4275,21 @@ impl LanguageServer for Backend {
             None => WorkspaceRootAuthority::removed(self.effective_root()),
             Some(resolution) => Self::workspace_root_authority_for_resolution(resolution),
         };
+        let previous = self.workspace_root_authority();
         self.apply_workspace_folder_set_authority(authority, folder_set_epoch)
             .await;
+        self.disclose_blocked_root_transition(&previous).await;
+        // Announce only a root that actually stayed selected: a kept root
+        // that is no longer a directory, or an application dropped for a
+        // newer event, must not claim it is still analyzed.
+        if let Some((root, others)) = kept_root {
+            let current = self.workspace_root_authority();
+            if current.allows_analysis()
+                && current.effective_root.as_deref() == Some(root.as_path())
+            {
+                self.disclose_kept_root(&root, &others).await;
+            }
+        }
         self.reload_repository_config().await;
     }
 
@@ -4253,10 +4475,9 @@ impl LanguageServer for Backend {
             self.verbose_params_bytes(&params),
         )
         .await;
-        let result = Ok(Some(
-            self.hover_for_position(&params)
-                .unwrap_or_else(hover_response),
-        ));
+        let result = Ok(Some(self.hover_for_position(&params).unwrap_or_else(
+            || self.hover_without_evidence(&params.text_document_position_params.text_document.uri),
+        )));
         self.trace_response("textDocument/hover", &result).await;
         result
     }
@@ -4373,6 +4594,10 @@ pub(crate) const COLLECT_EVIDENCE_CONTEXT_ARGUMENT_SHAPES: &str = "one object: \
 {\"seam_id\": \"...\", \"evidence_identity\": {...}}; copy both from a ripr seam \
 diagnostic's data";
 
+/// Accepted argument shapes for `ripr.collectRepairPacket`, quoted in its errors.
+pub(crate) const COLLECT_REPAIR_PACKET_ARGUMENT_SHAPES: &str = "no arguments for the top \
+packet, or one object {\"gap_id\": \"...\"} for a specific gap";
+
 /// Longest client-supplied id echoed back in an error message.
 const ECHOED_ID_MAX_CHARS: usize = 120;
 
@@ -4390,20 +4615,53 @@ fn context_command_target(
             "`{command}` expects {shapes}"
         )));
     };
-    keys.iter()
-        .find_map(|key| {
-            args.get(*key)
-                .and_then(|value| value.as_str())
-                .filter(|id| !id.trim().is_empty())
-                .map(|id| (*key, id.to_string()))
-        })
-        .ok_or_else(|| {
-            let one_of = if keys.len() > 1 { "one of " } else { "" };
-            LspError::invalid_params(format!(
-                "`{command}` needs a non-empty string {one_of}`{}`; it expects {shapes}",
-                keys.join("`, `")
-            ))
-        })
+    // Every present target key is validated before one is chosen, so a
+    // mistyped higher-precedence id (`{"gap_id": 42, "seam_id": "..."}`) is
+    // reported under its own name instead of being skipped for a later key.
+    // A blank id counts as not given, so the next key is used.
+    let mut target = None;
+    for key in keys {
+        if let Some(id) = optional_id_argument(command, args, key, shapes)?
+            && target.is_none()
+        {
+            target = Some((*key, id.to_string()));
+        }
+    }
+    target.ok_or_else(|| {
+        let one_of = if keys.len() > 1 { "one of " } else { "" };
+        LspError::invalid_params(format!(
+            "`{command}` needs a non-empty string {one_of}`{}`; it expects {shapes}",
+            keys.join("`, `")
+        ))
+    })
+}
+
+/// Reads one optional id argument of an agent command. An absent key, a
+/// JSON `null`, or a string that is empty after trimming is `Ok(None)`: the
+/// id was not given (RIPR-SPEC-0077: an absent or empty `gap_id` selects the
+/// top gap). Any other non-string value is rejected with InvalidParams naming
+/// the field. A mistyped id must never fall through to a different target
+/// (such as the top repair packet): answering a request for one gap with
+/// another gap's packet is a wrong actionable signal.
+fn optional_id_argument<'a>(
+    command: &str,
+    args: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    shapes: &str,
+) -> LspResult<Option<&'a str>> {
+    let found = match args.get(key) {
+        None | Some(serde_json::Value::Null) => return Ok(None),
+        Some(serde_json::Value::String(id)) if id.trim().is_empty() => return Ok(None),
+        Some(serde_json::Value::String(id)) => return Ok(Some(id)),
+        Some(serde_json::Value::Bool(_)) => "a boolean",
+        Some(serde_json::Value::Number(_)) => "a number",
+        Some(serde_json::Value::Array(_)) => "an array",
+        Some(serde_json::Value::Object(_)) => "an object",
+    };
+    Err(LspError::invalid_params(format!(
+        "`{command}`: `{key}` must be a string when present, got {found}; \
+it expects {shapes}"
+    )))
 }
 
 fn context_target_not_found(command: &str, key: &str, id: &str) -> LspError {
@@ -4653,17 +4911,23 @@ impl Backend {
             return Ok(self.collect_workspace_status());
         }
         if params.command == COLLECT_REPAIR_PACKET_COMMAND {
-            if params
-                .arguments
-                .first()
-                .is_some_and(|first| !first.is_object() && !first.is_null())
-            {
-                return Err(LspError::invalid_params(format!(
-                    "`{COLLECT_REPAIR_PACKET_COMMAND}` expects no arguments for the top packet, \
-or one object {{\"gap_id\": \"...\"}} for a specific gap"
-                )));
-            }
-            return Ok(self.collect_repair_packet(&params.arguments));
+            let gap_id = match params.arguments.first() {
+                None | Some(serde_json::Value::Null) => None,
+                Some(serde_json::Value::Object(args)) => optional_id_argument(
+                    COLLECT_REPAIR_PACKET_COMMAND,
+                    args,
+                    "gap_id",
+                    COLLECT_REPAIR_PACKET_ARGUMENT_SHAPES,
+                )?
+                .map(str::trim),
+                Some(_) => {
+                    return Err(LspError::invalid_params(format!(
+                        "`{COLLECT_REPAIR_PACKET_COMMAND}` expects \
+{COLLECT_REPAIR_PACKET_ARGUMENT_SHAPES}"
+                    )));
+                }
+            };
+            return Ok(self.collect_repair_packet(gap_id));
         }
         if params.command == COLLECT_TOP_LIMITATION_COMMAND {
             return Ok(self.collect_top_limitation());
@@ -6417,7 +6681,10 @@ fn collect_gap_record_context_packet(
 const DEFAULT_ACTIONABLE_GAPS_OUT: &str = "target/ripr/reports/actionable-gaps.json";
 
 impl Backend {
-    fn collect_repair_packet(&self, arguments: &[LSPAny]) -> Option<LSPAny> {
+    /// `gap_id` is already validated by `optional_id_argument`: `None` means
+    /// the caller asked for the top packet, never that a malformed id was
+    /// dropped.
+    fn collect_repair_packet(&self, gap_id: Option<&str>) -> Option<LSPAny> {
         let health = self.analysis_health_snapshot();
         if !health.allows_current_repairs() {
             return Some(repair_packet_sentinel("analysis_snapshot_stale"));
@@ -6429,33 +6696,19 @@ impl Backend {
             )));
         }
         let root = self.root.lock().ok()?.clone();
-        let gap_id_arg = arguments
-            .first()
-            .and_then(|v| v.as_object())
-            .and_then(|obj| obj.get("gap_id"))
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(ToOwned::to_owned);
 
         // Try actionable-gaps.json first (preferred: projection-validated).
         let actionable_path = absolute_join(&root, Path::new(DEFAULT_ACTIONABLE_GAPS_OUT));
-        if let Some(result) =
-            collect_repair_packet_from_actionable_gaps(&actionable_path, gap_id_arg.as_deref())
-        {
+        if let Some(result) = collect_repair_packet_from_actionable_gaps(&actionable_path, gap_id) {
             return Some(result);
         }
 
         // Fallback: gap-decision-ledger.json using the existing GapRecord machinery.
         let ledger_path = absolute_join(&root, Path::new(DEFAULT_GAP_DECISION_LEDGER_OUT));
-        collect_repair_packet_from_ledger(&root, &ledger_path, gap_id_arg.as_deref())
+        collect_repair_packet_from_ledger(&root, &ledger_path, gap_id)
             // Neither source holds a packet: say so and name the route,
             // instead of a null the client can only render as "no response".
-            .or_else(|| {
-                Some(repair_packet_sentinel(&no_repair_packet_reason(
-                    gap_id_arg.as_deref(),
-                )))
-            })
+            .or_else(|| Some(repair_packet_sentinel(&no_repair_packet_reason(gap_id))))
     }
 
     fn collect_top_limitation(&self) -> Option<LSPAny> {
@@ -6841,15 +7094,15 @@ fn collect_repair_packet_from_actionable_gaps(path: &Path, gap_id: Option<&str>)
         Err(_) => return Some(repair_packet_sentinel(MALFORMED_ACTIONABLE_GAPS_REASON)),
     };
     let packets = report.get("packets").and_then(|v| v.as_array())?;
+    // A requested gap must match exactly. Answering an unknown id with the
+    // first packet handed out another gap's repair instructions; `None` lets
+    // the caller try the ledger, then say which gap has no packet.
     let packet = if let Some(id) = gap_id {
-        packets
-            .iter()
-            .find(|p| {
-                p.get("canonical_gap_id")
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|cid| cid == id)
-            })
-            .or_else(|| packets.first())?
+        packets.iter().find(|p| {
+            p.get("canonical_gap_id")
+                .and_then(|v| v.as_str())
+                .is_some_and(|cid| cid == id)
+        })?
     } else {
         packets
             .iter()

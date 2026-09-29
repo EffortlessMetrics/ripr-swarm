@@ -24,7 +24,7 @@ Start here:
   Suggested test file: tests/test_discount.py
   Suggested test: test_calculate_discount_smoke
   Test node: tests/test_discount.py::test_calculate_discount_smoke
-  Verify command: pytest tests/test_discount.py::test_calculate_discount_smoke (high)
+  Verify command: python -m pytest tests/test_discount.py::test_calculate_discount_smoke (high)
   Next step: Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `amount == threshold`.
   Evidence:
     - reach yes: 1 related Python test(s) found for owner `calculate_discount`
@@ -36,7 +36,7 @@ Next: drill into the top finding:
   ripr context --root fixtures/python_ranking_noise_control/input --diff fixtures/python_ranking_noise_control/diff.patch --mode fast --at probe:src_c_discount.py:python_preview:91995184
 
 Hidden:
-  3 lower-priority finding(s) omitted from default human output.
+  3 lower-priority finding(s) omitted from default human output (Python preview: 3).
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

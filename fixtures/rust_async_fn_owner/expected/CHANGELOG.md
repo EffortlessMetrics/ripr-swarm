@@ -191,7 +191,7 @@ Updated:
 ## Pending — rust_async_fn_owner (4)
 
 Reason:
-RIPR-SPEC-0122: digest Next step wraps instead of cutting the remedy; stop reasons carry a gloss; boxed-wrapper limitation text has no whitespace runs (#4323)
+RIPR-SPEC-0122: discriminator evidence line no longer says yes on findings that are not exposed
 
 Command:
 `cargo xtask goldens bless rust_async_fn_owner --reason "..."`

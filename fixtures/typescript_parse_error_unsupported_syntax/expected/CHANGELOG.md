@@ -459,7 +459,7 @@ Updated:
 ## Pending — typescript_parse_error_unsupported_syntax (5)
 
 Reason:
-RIPR-SPEC-0122: digest Next step wraps instead of cutting the remedy; stop reasons carry a gloss; boxed-wrapper limitation text has no whitespace runs (#4323)
+RIPR-SPEC-0122: partial outcome with findings no longer claims zero findings; the analyzed-scope caveat names the finding count
 
 Command:
 `cargo xtask goldens bless typescript_parse_error_unsupported_syntax --reason "..."`

@@ -1,8 +1,9 @@
+use super::module_constants::{module_literal_constants, with_module_rebinding};
 use super::owners_tests::{
     collect_imports_from_statements, collect_owners_from_statements, collect_tests_from_statements,
     module_owner,
 };
-use super::source_utils::{line_for_range_end, line_for_range_start, text_for_range};
+use super::source_utils::{SourceText, line_for_range_end, line_for_range_start, text_for_range};
 use super::{PythonOwner, PythonTest, expr_full_name};
 use crate::domain::{LanguageId as DomainLanguageId, StaticLimitKind};
 use rustpython_parser::{
@@ -240,6 +241,9 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
             return snapshot;
         }
     };
+    // One line-start index per file; every line lookup below is a binary
+    // search against it rather than a rescan from byte 0 (#4495).
+    let source = &SourceText::new(source);
 
     let module_range = TextRange::new(
         TextSize::from(0),
@@ -255,12 +259,14 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
     );
 
     let imports = collect_imports_from_statements(file, &module.body);
+    let module_constants = module_literal_constants(source, &module.body);
     collect_owners_from_statements(
         file,
         source,
         &module.body,
         None,
         &imports,
+        &module_constants,
         &mut snapshot.owners,
     );
     snapshot
@@ -275,6 +281,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         &imports,
         &mut snapshot.tests,
     );
+    with_module_rebinding(source, &module.body, &mut snapshot.tests);
     collect_source_facts_from_statements(
         file,
         source,
@@ -294,7 +301,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
 /// f-strings, and string expressions inside control-flow blocks are deliberately
 /// excluded: they are not docstrings, even when they use triple quotes.
 fn collect_docstring_line_ranges(
-    source: &str,
+    source: &SourceText<'_>,
     scope_body: &[Stmt],
     out: &mut Vec<RangeInclusive<usize>>,
 ) {
@@ -313,7 +320,7 @@ fn collect_docstring_line_ranges(
 /// docstring token. A docstring may share a line with behavioral code through a
 /// semicolon; such boundary lines must remain analyzable.
 fn push_docstring_only_line_ranges(
-    source: &str,
+    source: &SourceText<'_>,
     range: TextRange,
     out: &mut Vec<RangeInclusive<usize>>,
 ) {
@@ -353,7 +360,7 @@ fn push_docstring_only_line_ranges(
 }
 
 fn collect_nested_docstring_scopes(
-    source: &str,
+    source: &SourceText<'_>,
     statements: &[Stmt],
     out: &mut Vec<RangeInclusive<usize>>,
 ) {
@@ -444,7 +451,7 @@ pub(super) fn source_fact_snapshot_observation(facts: &PythonSourceFacts) -> usi
 fn push_source_fact(
     out: &mut Vec<PythonSourceFact>,
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     kind: PythonSourceFactKind,
     owner: Option<&str>,
     range: TextRange,
@@ -463,7 +470,7 @@ fn push_source_fact(
 
 fn collect_source_facts_from_statements(
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     statements: &[Stmt],
     class_context: Option<&str>,
     current_owner: Option<&str>,
@@ -857,7 +864,7 @@ fn collect_source_facts_from_statements(
 
 struct PythonFunctionSourceContext<'a> {
     file: &'a Path,
-    source: &'a str,
+    source: &'a SourceText<'a>,
     class_context: Option<&'a str>,
     name: &'a str,
     range: TextRange,
@@ -915,7 +922,7 @@ fn collect_source_facts_from_function(
 
 fn collect_decorator_fact(
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     decorator: &Expr,
     owner: Option<&str>,
     out: &mut Vec<PythonSourceFact>,
@@ -933,7 +940,7 @@ fn collect_decorator_fact(
 
 fn collect_parameter_facts(
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     args: &ast::Arguments,
     owner: Option<&str>,
     out: &mut Vec<PythonSourceFact>,
@@ -983,7 +990,7 @@ fn collect_parameter_facts(
 
 fn collect_assignment_target_facts(
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     target: &Expr,
     owner: Option<&str>,
     out: &mut Vec<PythonSourceFact>,
@@ -1003,7 +1010,7 @@ fn collect_assignment_target_facts(
 
 fn collect_source_facts_from_except_handlers(
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     handlers: &[ast::ExceptHandler],
     class_context: Option<&str>,
     current_owner: Option<&str>,
@@ -1027,7 +1034,7 @@ fn collect_source_facts_from_except_handlers(
 
 fn collect_source_facts_from_expr(
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     expr: &Expr,
     owner: Option<&str>,
     out: &mut Vec<PythonSourceFact>,
@@ -1283,7 +1290,7 @@ fn collect_source_facts_from_expr(
 
 fn collect_source_facts_from_comprehensions(
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     comprehensions: &[ast::Comprehension],
     owner: Option<&str>,
     out: &mut Vec<PythonSourceFact>,

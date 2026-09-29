@@ -82,6 +82,20 @@ Updated:
 
 Reason:
 RIPR-SPEC-0122: digest lines never end inside an open code span
+RIPR-SPEC-0087: derive the TypeScript boundary input from a read-only parameter and a literal or single immutable integer module const; a complete packet's Start-here line names its action, test file, and verify command
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_constant_first --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — ts_repair_packet_boundary_constant_first (8)
+
+Reason:
+RIPR-SPEC-0122: integrate first-hour output fixes with Python and TypeScript boundary packets
 
 Command:
 `cargo xtask goldens bless ts_repair_packet_boundary_constant_first --reason "..."`
@@ -95,6 +109,19 @@ Updated:
 
 Reason:
 RIPR-SPEC-0122: digest Next step wraps instead of cutting the remedy; stop reasons carry a gloss; boxed-wrapper limitation text has no whitespace runs (#4323)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_constant_first --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — ts_repair_packet_boundary_constant_first (9)
+
+Reason:
+RIPR-SPEC-0122: digest Next step wraps instead of cutting the remedy (#4323, main merge)
 
 Command:
 `cargo xtask goldens bless ts_repair_packet_boundary_constant_first --reason "..."`

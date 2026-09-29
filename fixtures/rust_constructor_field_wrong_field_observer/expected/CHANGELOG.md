@@ -196,7 +196,7 @@ Updated:
 ## Pending — rust_constructor_field_wrong_field_observer (4)
 
 Reason:
-RIPR-SPEC-0122: digest Next step wraps instead of cutting the remedy; stop reasons carry a gloss; boxed-wrapper limitation text has no whitespace runs (#4323)
+RIPR-SPEC-0122: discriminator evidence line no longer says yes on findings that are not exposed
 
 Command:
 `cargo xtask goldens bless rust_constructor_field_wrong_field_observer --reason "..."`

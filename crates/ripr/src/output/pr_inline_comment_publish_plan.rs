@@ -3,7 +3,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::markdown::{code_span, code_span_content};
+use super::markdown::{code_span, code_span_content, inline_prose, prose};
 use super::review_comments::SUMMARY_REASON_INLINE_CAP_REACHED;
 
 const SCHEMA_VERSION: &str = "0.1";
@@ -11,6 +11,33 @@ const REPORT_KIND: &str = "pr_inline_comment_publish_plan";
 const STATUS: &str = "advisory";
 const DEFAULT_GENERATED_AT: &str = "unknown";
 pub(crate) const DEFAULT_MAX_INLINE_COMMENTS: usize = 3;
+/// Character budget for one untrusted field rendered as a code span in an
+/// inline comment body: a changed expression or behavior, a missing
+/// discriminator, a verify command, or a repair start (#4446). Source text
+/// has no size bound; without this a 40,000-character string literal made an
+/// 80,324-character body.
+const CODE_FIELD_CHAR_BUDGET: usize = 1_000;
+/// Character budget for one untrusted prose field (why this matters, repair
+/// text, guidance reason), which can embed an assertion shape or expression.
+const PROSE_FIELD_CHAR_BUDGET: usize = 2_000;
+/// Character budget for a heading field (gap title, repair route title).
+const TITLE_FIELD_CHAR_BUDGET: usize = 200;
+/// Skip reason for a comment whose projected published body exceeds
+/// [`PUBLISHED_BODY_BYTE_CEILING`] (#4446).
+const SKIP_REASON_COMMENT_BODY_TOO_LARGE: &str = "comment_body_too_large";
+/// Hard ceiling on the projected published body of one inline comment.
+///
+/// GitHub rejects a comment body over 65,536 characters, and the generated
+/// workflow posts every created inline comment in ONE review request, so a
+/// single oversized body fails the request with 422 and loses every comment in
+/// the batch. The ceiling is measured in UTF-8 bytes, which is never less than
+/// the character or UTF-16 unit count GitHub may apply, and it keeps 5,536
+/// bytes of headroom below the cap for encoding differences.
+const PUBLISHED_BODY_BYTE_CEILING: usize = 60_000;
+/// Bytes of fixed text the workflow's `compact_body` wrapper adds around the
+/// plan body besides the dedupe key: the bold gap line, the `<details>`
+/// block, the dedupe marker, and its fallback repair/verify strings.
+const PUBLISHED_BODY_WRAPPER_BYTES: usize = 256;
 const LIMITS_NOTE: &str = "Advisory inline-comment publish plan only; default workflows do not post comments, summary-only guidance is never published inline, and gate decisions remain separate.";
 
 pub(crate) const DEFAULT_COMMENT_PUBLISH_PLAN_OUT: &str =
@@ -414,24 +441,26 @@ pub(crate) fn render_comment_publish_plan_markdown(report: &CommentPublishPlanRe
                 continue;
             }
             out.push_str(&format!(
-                "- {} {}:{} {}\n",
+                "- {} {} {}\n",
                 operation.operation,
-                operation.placement.path,
-                operation.placement.line,
+                inline_prose(&format!(
+                    "{}:{}",
+                    operation.placement.path, operation.placement.line
+                )),
                 code_span(&operation.dedupe_key)
             ));
             if let Some(body) = operation.body.as_deref() {
                 if let Some(gap) = gap_title_from_comment_body(body) {
-                    out.push_str(&format!("  - gap: {gap}\n"));
+                    out.push_str(&format!("  - gap: {}\n", inline_prose(&gap)));
                 }
                 if let Some(changed) = changed_behavior_from_body(Some(body)) {
                     out.push_str(&format!("  - changed behavior: {}\n", code_span(&changed)));
                 }
                 if let Some(route) = repair_route_from_body(Some(body)) {
-                    out.push_str(&format!("  - repair route: {route}\n"));
+                    out.push_str(&format!("  - repair route: {}\n", inline_prose(&route)));
                 }
                 if let Some(repair) = repair_from_body(Some(body)) {
-                    out.push_str(&format!("  - repair: {repair}\n"));
+                    out.push_str(&format!("  - repair: {}\n", inline_prose(&repair)));
                 }
                 if let Some(start) = start_repair_from_body(Some(body)) {
                     out.push_str(&format!("  - start the repair: {}\n", code_span(&start)));
@@ -666,6 +695,20 @@ fn add_comment_item_plan(
     if existing_comment.is_some() {
         matched_existing.insert(dedupe_key.clone());
     }
+    if projected_published_body_bytes(&body, &dedupe_key) > PUBLISHED_BODY_BYTE_CEILING {
+        // Kept out of the batched review so it cannot fail the request for
+        // every other comment; the recommendation stays in comments.md.
+        report.skipped.push(PlanSkipped {
+            source_collection: "comments".to_string(),
+            source_id,
+            dedupe_key: Some(dedupe_key),
+            skip_reason: SKIP_REASON_COMMENT_BODY_TOO_LARGE.to_string(),
+            message: format!(
+                "Inline comment body would exceed the {PUBLISHED_BODY_BYTE_CEILING}-byte publish ceiling."
+            ),
+        });
+        return;
+    }
     let operation = match existing_comment {
         Some(existing_comment) if existing_comment_matches_body(existing_comment, &body) => "keep",
         Some(_) => "update",
@@ -686,6 +729,31 @@ fn add_comment_item_plan(
         skip_reason: None,
         blocked_reason: None,
     });
+}
+
+/// Upper bound, in UTF-8 bytes, of the body the generated workflow publishes
+/// for `body`. Its `compact_body` jq wraps the full plan body with a bold line
+/// built from the gap title, the first Repair line, and the start or verify
+/// line (disjoint parts of `body`, so at most `body` again), plus fixed text
+/// and the dedupe key.
+fn projected_published_body_bytes(body: &str, dedupe_key: &str) -> usize {
+    body.len()
+        .saturating_mul(2)
+        .saturating_add(dedupe_key.len())
+        .saturating_add(PUBLISHED_BODY_WRAPPER_BYTES)
+}
+
+/// `text` cut to at most `budget` characters, with an explicit elision marker
+/// naming how many characters were dropped. The cut is on a `char` boundary,
+/// never inside a multi-byte character, and happens before any code-span
+/// rendering so the fence is chosen from the text actually shown.
+fn bounded_field(text: &str, budget: usize) -> String {
+    let total = text.chars().count();
+    if total <= budget {
+        return text.to_string();
+    }
+    let kept = text.chars().take(budget).collect::<String>();
+    format!("{kept} ... [ripr elided {} chars]", total - budget)
 }
 
 fn permission_blockers(input: &CommentPublishPlanInput) -> Vec<(String, String)> {
@@ -822,9 +890,11 @@ fn comment_body(item: &Value) -> String {
     if let Some(missing) = string_field(item, "missing_discriminator") {
         let changed = normalize_missing_discriminator(&missing);
         let why = "A related test reaches this code, but no equality-boundary assertion was found.";
+        // Bounded here before the code span; `repair_card_body` bounds the
+        // Changed behavior copy itself, so `changed` goes there unbounded.
         let repair = format!(
             "Add one focused boundary assertion for {}.",
-            code_span(&changed)
+            code_span(&bounded_field(&changed, CODE_FIELD_CHAR_BUDGET))
         );
         // A seam that passed the repair-packet flip carries the transaction's
         // start (#3906). It replaces the bare verify line: the before phase
@@ -873,28 +943,46 @@ fn repair_card_body(
     repair: &str,
     next: NextStep<'_>,
 ) -> String {
-    let mut body = format!("### ripr gap: {gap_title}\n\n");
+    // Every field may carry text from user source; each is bounded before it
+    // is rendered (#4446), and prose outside ripr's code spans cannot mention
+    // a user or render raw HTML (#4468).
+    let mut body = format!(
+        "### ripr gap: {}\n\n",
+        inline_prose(&bounded_field(gap_title, TITLE_FIELD_CHAR_BUDGET))
+    );
     if let Some(changed) = changed_behavior {
         body.push_str("Changed behavior:\n");
-        body.push_str(&code_span(changed));
+        body.push_str(&code_span(&bounded_field(changed, CODE_FIELD_CHAR_BUDGET)));
         body.push_str("\n\n");
     }
     body.push_str("Why this matters:\n");
-    body.push_str(why.trim());
+    body.push_str(&prose(&bounded_field(why.trim(), PROSE_FIELD_CHAR_BUDGET)));
     if let Some(route) = repair_route {
         body.push_str("\n\nRepair route:\n");
-        body.push_str(route.trim());
+        body.push_str(&inline_prose(&bounded_field(
+            route.trim(),
+            TITLE_FIELD_CHAR_BUDGET,
+        )));
     }
     body.push_str("\n\nRepair:\n");
-    body.push_str(repair.trim());
+    body.push_str(&prose(&bounded_field(
+        repair.trim(),
+        PROSE_FIELD_CHAR_BUDGET,
+    )));
     match next {
         NextStep::Verify(verify) => {
             body.push_str("\n\nVerify:\n");
-            body.push_str(&code_span(verify.trim()));
+            body.push_str(&code_span(&bounded_field(
+                verify.trim(),
+                CODE_FIELD_CHAR_BUDGET,
+            )));
         }
         NextStep::StartRepair(command) => {
             body.push_str("\n\nStart the repair:\n");
-            body.push_str(&code_span(command.trim()));
+            body.push_str(&code_span(&bounded_field(
+                command.trim(),
+                CODE_FIELD_CHAR_BUDGET,
+            )));
             body.push_str(
                 "\n\nIt prints the `--attempt ... --phase after` command that verifies the new test.",
             );
@@ -1043,6 +1131,9 @@ fn skipped_summary(reason: &str, count: usize) -> String {
             format!("{count} recommendation was kept out of inline comments")
         }
         "suppressed" => format!("{count} suppressed recommendation remains visible"),
+        SKIP_REASON_COMMENT_BODY_TOO_LARGE => format!(
+            "{count} recommendation was too large to post inline and remains in `comments.md`"
+        ),
         "mode_off" => "inline comment planning is disabled".to_string(),
         _ => format!("{count} recommendation was skipped"),
     }
@@ -1180,6 +1271,208 @@ mod tests {
             rendered.contains("  - verify: `` ripr agent verify `x` ``\n"),
             "{rendered}"
         );
+    }
+
+    /// #4468: prose outside ripr's code spans (Why, Repair, route, gap title
+    /// and the plan's path) cannot mention a user or render raw HTML, while
+    /// ripr's own span over the hostile expression stays byte-for-byte.
+    #[test]
+    fn inline_comment_prose_neutralises_mentions_and_raw_html() {
+        let span = code_span("a` @octocat | <img>");
+        let repair = format!("Assert {span} for @octocat <script>alert(1)</script>.");
+        let guidance = serde_json::json!({
+            "comments": [{
+                "id": "c",
+                "dedupe_key": "ripr:c",
+                "placement": {"path": "src/`@octocat|<b>.rs", "line": 7, "side": "RIGHT", "mode": "exact_seam_line"},
+                "reason": "safe",
+                "repair_card": {
+                    "gap_kind": "Custom@octocat<i>",
+                    "changed_behavior": "a` @octocat | <img>",
+                    "why_this_matters": "Ask @octocat\n<img src=x onerror=alert(1)>",
+                    "repair": repair,
+                    "repair_route": {"route_kind": "Route@octocat<u>"}
+                }
+            }],
+            "summary_only": [],
+            "suppressed": []
+        });
+        let report = build_comment_publish_plan_report(CommentPublishPlanInput {
+            root: ".".to_string(),
+            generated_at: "2026-05-10T12:00:00Z".to_string(),
+            mode: CommentMode::Plan,
+            max_inline_comments: 3,
+            pr_guidance_path: Some("comments.json".to_string()),
+            pr_guidance_json: Some(Ok(guidance.to_string())),
+            existing_comments_path: None,
+            existing_comments_json: None,
+            permission: CommentPermissionContext::default(),
+        });
+        let body = report
+            .operations
+            .first()
+            .and_then(|operation| operation.body.clone())
+            .unwrap_or_default();
+        let joiner = '\u{2060}';
+        assert!(
+            body.contains(&format!("### ripr gap: custom@{joiner}octocat&lt;i>\n\n")),
+            "{body}"
+        );
+        assert!(
+            body.contains(&format!("Changed behavior:\n{span}\n\n")),
+            "{body}"
+        );
+        assert!(
+            body.contains(&format!(
+                "Why this matters:\nAsk @{joiner}octocat\n&lt;img src=x onerror=alert(1)>\n\n"
+            )),
+            "{body}"
+        );
+        assert!(
+            body.contains(&format!("Repair route:\nroute@{joiner}octocat&lt;u>\n\n")),
+            "{body}"
+        );
+        assert!(
+            body.contains(&format!(
+                "Repair:\nAssert {span} for @{joiner}octocat &lt;script>alert(1)&lt;/script>."
+            )),
+            "{body}"
+        );
+
+        let rendered = render_comment_publish_plan_markdown(&report);
+        assert!(
+            rendered.contains(&format!(
+                "- create src/`@{joiner}octocat|&lt;b>.rs:7 `ripr:c`\n"
+            )),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(&format!(
+                "  - repair: Assert {span} for @{joiner}octocat &lt;script>alert(1)&lt;/script>.\n"
+            )),
+            "{rendered}"
+        );
+        for line in rendered.lines().chain(body.lines()) {
+            assert!(!line.contains("@octocat") || line.contains(&span), "{line}");
+            assert!(!line.contains("<script>"), "{line}");
+        }
+    }
+
+    /// #4446: an oversized expression from user source is bounded per field,
+    /// with an elision marker, cut on a char boundary before the code span.
+    #[test]
+    fn inline_comment_body_bounds_an_oversized_expression() {
+        let literal = format!("x == \"{}é`\"", "a".repeat(40_000));
+        let body = comment_body(&serde_json::json!({
+            "repair_card": {
+                "gap_kind": "MissingBoundaryAssertion",
+                "changed_behavior": literal,
+                "why_this_matters": format!("Changed behavior {literal} has a gap."),
+                "repair": literal,
+                "verify_command": format!("ripr agent verify {literal}")
+            }
+        }));
+        assert!(body.len() < 10_000, "body is {} bytes", body.len());
+        assert!(
+            projected_published_body_bytes(&body, "ripr:c") < PUBLISHED_BODY_BYTE_CEILING,
+            "{}",
+            body.len()
+        );
+        assert!(body.contains("... [ripr elided 39"), "{body}");
+        let changed = changed_behavior_from_body(Some(&body)).unwrap_or_default();
+        assert_eq!(
+            changed,
+            format!(
+                "x == \"{} ... [ripr elided 39009 chars]",
+                "a".repeat(CODE_FIELD_CHAR_BUDGET - 6)
+            )
+        );
+
+        let fallback = comment_body(&serde_json::json!({
+            "missing_discriminator": "é".repeat(5_000)
+        }));
+        assert!(
+            fallback.contains(&format!(
+                "Changed behavior:\n`{} ... [ripr elided 4000 chars]`\n\n",
+                "é".repeat(CODE_FIELD_CHAR_BUDGET)
+            )),
+            "{fallback}"
+        );
+        assert_eq!(bounded_field("short", 10), "short");
+        assert_eq!(bounded_field("ééé", 2), "éé ... [ripr elided 1 chars]");
+    }
+
+    /// #4446: a body whose published form would pass the ceiling is kept out
+    /// of the batched review with a machine-readable skip reason, and the
+    /// other comments in the plan stay publishable.
+    #[test]
+    fn inline_comment_publish_plan_skips_an_over_ceiling_body() {
+        let oversized_key = format!("ripr:{}", "k".repeat(70_000));
+        let guidance = serde_json::json!({
+            "comments": [
+                {
+                    "id": "big",
+                    "dedupe_key": oversized_key,
+                    "placement": {"path": "src/lib.rs", "line": 1, "side": "RIGHT", "mode": "exact_seam_line"},
+                    "reason": "safe"
+                },
+                {
+                    "id": "small",
+                    "dedupe_key": "ripr:small",
+                    "placement": {"path": "src/lib.rs", "line": 2, "side": "RIGHT", "mode": "exact_seam_line"},
+                    "reason": "safe"
+                }
+            ],
+            "summary_only": [],
+            "suppressed": []
+        });
+        let input = |guidance: &Value| CommentPublishPlanInput {
+            root: ".".to_string(),
+            generated_at: "2026-05-10T12:00:00Z".to_string(),
+            mode: CommentMode::Inline,
+            max_inline_comments: 3,
+            pr_guidance_path: Some("comments.json".to_string()),
+            pr_guidance_json: Some(Ok(guidance.to_string())),
+            existing_comments_path: None,
+            existing_comments_json: None,
+            permission: CommentPermissionContext {
+                pull_request: Some(1),
+                event_name: Some("pull_request".to_string()),
+                head_repo: Some("EffortlessMetrics/ripr".to_string()),
+                base_repo: Some("EffortlessMetrics/ripr".to_string()),
+                token_available: true,
+                write_permission: true,
+            },
+        };
+        let report = build_comment_publish_plan_report(input(&guidance));
+        assert!(
+            report
+                .operations
+                .iter()
+                .all(|operation| operation.dedupe_key == "ripr:small" && operation.safe_to_publish),
+            "{:?}",
+            report.operations.len()
+        );
+        assert_eq!(report.operations.len(), 1);
+        assert_eq!(report.summary.publishable, 1);
+        assert!(report.summary.safe_to_publish);
+        assert_eq!(report.skipped.len(), 1);
+        assert_eq!(
+            report.skipped[0].skip_reason,
+            SKIP_REASON_COMMENT_BODY_TOO_LARGE
+        );
+        assert_eq!(report.skipped[0].source_id.as_deref(), Some("big"));
+
+        let alone = serde_json::json!({
+            "comments": [guidance["comments"][0].clone()],
+            "summary_only": [],
+            "suppressed": []
+        });
+        let report = build_comment_publish_plan_report(input(&alone));
+        assert!(report.operations.is_empty());
+        assert!(!report.summary.safe_to_publish);
+        let rendered = render_comment_publish_plan_markdown(&report);
+        assert!(rendered.contains("too large to post inline"), "{rendered}");
     }
 
     #[test]

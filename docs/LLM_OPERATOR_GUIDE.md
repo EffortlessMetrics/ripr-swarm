@@ -61,7 +61,7 @@ without chat history:
 | Agent review summary | `target/ripr/workflow/agent-review-summary.{json,md}` |
 
 Generated GitHub CI also uploads these paths under the `ripr-reports` artifact.
-It keeps compatibility copies of packet, brief, verify, and receipt JSON under
+It keeps compatibility copies of the packet and brief JSON under
 `target/ripr/agent/`.
 
 ## Ordinary path: `ripr agent repair`
@@ -90,7 +90,9 @@ under `verify` with the status report embedded beside it under
 `agent_status` — so an orchestrator can `JSON.parse` stdout once and every
 stdout document's shape is identifiable from its `schema_version`; narration
 stays on stderr. When the after phase refuses after the verify render, stdout
-is the bare verify 0.3 document alone. For the
+is the bare verify 0.3 document alone; a typed refusal before it (diverged
+HEAD, drifted analysis inputs, no movement; exit `3`) prints the
+`repair_after_refusal` document with the cause and recovery. For the
 separately authorized `verify` phase of a trust-bound Python attempt, see
 [Repair attempt identity](REPAIR_ATTEMPT.md). The numbered steps below are the
 lower-level manual equivalent, kept for explicit control and debugging.
@@ -304,17 +306,24 @@ fingerprint when available, command-template version, artifact hashes, before
 class, after class, movement, and static boundary flags. It stays advisory and
 does not claim runtime proof.
 
-Receipt states should be read conservatively:
+Read the receipt's movement from `summary.next_action.kind` conservatively:
 
-| State | Reviewer interpretation |
+| `summary.next_action.kind` | Reviewer interpretation |
 | --- | --- |
-| `improved` | Static evidence improved; inspect the focused test and keep the receipt. |
+| `improved` | Static evidence improved; run the focused test, keep it only if it passes, and keep the receipt. |
+| `changed` | Static evidence changed without reaching a higher grip class; inspect the focused test and classification context. |
 | `unchanged` | Static evidence did not move; inspect whether the test observes the missing discriminator. |
 | `regressed` | Static evidence weakened; inspect the test change and classification context. |
 | `resolved` | The selected gap no longer appears in the after snapshot. |
 | `new_gap` | A new static gap appeared; inspect changed owner/test relation. |
-| `missing_artifact` | Run the missing command from `agent status`. |
-| `stale_artifact` | Regenerate before/after, verify, or receipt artifacts. |
+| `unknown` | Movement could not be established; do not use the receipt as review evidence. |
+
+`summary.receipt_state` is the receipt's lifecycle (`receipt_missing`,
+`receipt_found`, `receipt_stale`, `receipt_gap_mismatch`,
+`receipt_movement_improved`, `receipt_movement_unchanged`,
+`receipt_not_applicable`). Missing and stale workflow artifacts are reported
+by `ripr agent status`: run the command it names in `missing_commands`, or
+regenerate the artifact its `stale_artifact` warning names.
 
 ## 7. Build The Reviewer Summary
 
@@ -370,8 +379,9 @@ ripr agent verify-execute \
   `verification_executed_fail`, `verification_rejected_policy`,
   `verification_wrong_root`, `verification_timed_out`,
   `verification_cancelled`). Usage errors stay plain stderr messages with no
-  disposition. The exit status distinguishes only whether a bounded
-  observation was committed.
+  disposition. Exit `0` means a bounded observation was committed (including
+  a failing verify command), `3` a typed refusal (read the stdout JSON), and
+  `2` that the result could not be written.
 
 The packet chooses which provenance-validated producer artifacts to compare;
 it never authors the command. Route authority is layered: the typed
@@ -401,14 +411,17 @@ The generated GitHub workflow from:
 ripr init --ci github
 ```
 
-runs the same advisory loop around the top pilot seam when one is available. It
-uploads:
+prepares the before side of the same advisory loop (workflow, brief, and
+packet) around the top pilot seam when one is available; the after snapshot,
+verify, and receipt need a test edit and run locally. It uploads:
 
 ```text
 target/ripr/pilot
-target/ripr/workflow
 target/ripr/agent
+target/ripr/workflow
 target/ripr/reports
+target/ripr/review
+target/ci
 ```
 
 It also appends the pilot summary and agent review summary to the GitHub job
