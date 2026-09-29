@@ -79,7 +79,7 @@ fn load_review_comments_analysis_outcome(
     let Some(path) = path else {
         return Ok(None);
     };
-    let text = std::fs::read_to_string(path).map_err(|error| {
+    let text = crate::bounded_input::read_to_string(path).map_err(|error| {
         format!(
             "review-comments --check-output {} is invalid: read failed: {error}",
             path.display()
@@ -224,6 +224,8 @@ mod cache_command;
 mod config_command;
 #[path = "commands/context.rs"]
 mod context;
+#[path = "commands/feedback.rs"]
+mod feedback_command;
 #[path = "commands/policy.rs"]
 mod policy_commands;
 #[path = "commands/receipt.rs"]
@@ -233,9 +235,9 @@ mod swarm_command;
 
 pub(super) use agent::agent;
 pub(super) use context::context;
-// The receipt help bodies live beside the receipt parser but are also the
-// flag source for `ripr receipt write|check` suggestions, so `cli::help` needs
-// a path to them.
+// Flag-documenting help bodies live beside their parsers so `cli::help`
+// suggestions mine the same text `--help` prints.
+pub(super) use feedback_command::{FEEDBACK_EXPORT_HELP, FEEDBACK_RECORD_HELP};
 #[cfg(test)]
 use policy_commands::{
     parse_policy_history_options, parse_policy_operations_options,
@@ -255,6 +257,10 @@ pub(super) use cache_command::{CACHE_CLEAR_HELP, CACHE_STATUS_HELP};
 
 pub(super) fn receipt(args: &[String]) -> Result<(), String> {
     receipt_command::run_receipt(args)
+}
+
+pub(super) fn feedback(args: &[String]) -> Result<(), String> {
+    feedback_command::run_feedback(args)
 }
 
 pub(super) fn swarm(args: &[String]) -> Result<(), String> {
@@ -309,13 +315,13 @@ pub(super) fn outcome(args: &[String]) -> Result<(), String> {
     }
 
     let options = parse_outcome_options(args)?;
-    let before_json = std::fs::read_to_string(&options.before).map_err(|err| {
+    let before_json = crate::bounded_input::read_to_string(&options.before).map_err(|err| {
         format!(
             "read {} failed: {err}",
             output::outcome::display_path(&options.before)
         )
     })?;
-    let after_json = std::fs::read_to_string(&options.after).map_err(|err| {
+    let after_json = crate::bounded_input::read_to_string(&options.after).map_err(|err| {
         format!(
             "read {} failed: {err}",
             output::outcome::display_path(&options.after)
@@ -370,7 +376,7 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
         analysis::inventory_classified_seams_at_with_config(&options.root, &config)?;
     let calibration = match &options.mutation_calibration {
         Some(path) => {
-            let contents = std::fs::read_to_string(path).map_err(|err| {
+            let contents = crate::bounded_input::read_to_string(path).map_err(|err| {
                 format!(
                     "read evidence-health calibration context {} failed: {err}",
                     output::outcome::display_path(path)
@@ -1355,7 +1361,7 @@ fn review_comments_with_diff_loader_at(
                 "review-comments accepts at most one of --gap-ledger or --check-output".to_string(),
             );
         }
-        let gap_ledger_text = std::fs::read_to_string(gap_ledger).map_err(|err| {
+        let gap_ledger_text = crate::bounded_input::read_to_string(gap_ledger).map_err(|err| {
             record_review_comments_error(
                 &mut receipt,
                 &receipt_path,
@@ -1662,8 +1668,8 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
     }
 
     let options = parse_calibrate_cargo_mutants_options(rest)?;
-    let repo_exposure_json =
-        std::fs::read_to_string(&options.repo_exposure_json).map_err(|err| {
+    let repo_exposure_json = crate::bounded_input::read_to_string(&options.repo_exposure_json)
+        .map_err(|err| {
             format!(
                 "read {} failed: {err}",
                 output::outcome::display_path(&options.repo_exposure_json)
@@ -1788,7 +1794,7 @@ fn read_json_value(path: &Path) -> Result<serde_json::Value, String> {
 }
 
 fn read_calibration_text(path: &Path) -> Result<String, String> {
-    std::fs::read_to_string(path)
+    crate::bounded_input::read_to_string(path)
         .map_err(|err| format!("read {} failed: {err}", output::outcome::display_path(path)))
 }
 
@@ -3208,7 +3214,7 @@ fn assistant_loop_health_generated_at() -> Result<String, String> {
 }
 
 fn read_optional_text_for_report(label: &str, path: &Path) -> Result<String, String> {
-    std::fs::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_to_string(path).map_err(|err| {
         format!(
             "read {label} {} failed: {err}",
             output::baseline_delta::display_path(path)
@@ -3225,7 +3231,7 @@ fn read_optional_manifest_for_report(
     } else {
         root.join(manifest)
     };
-    match std::fs::read_to_string(&read_path) {
+    match crate::bounded_input::read_to_string(&read_path) {
         Ok(text) => Some(Ok(text)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
         Err(err) => Some(Err(format!(
@@ -3267,21 +3273,22 @@ fn parse_outcome_format(value: &str) -> Result<OutcomeFormat, String> {
     }
 }
 
+/// Review-comments diff through the shared range authority (#4538): the base
+/// and head are verified like `ripr check` verifies its base, and the range
+/// uses the pinned diff presentation, so ambient `color.diff` or
+/// `diff.submodule` config cannot empty or widen the changed-line set.
 fn load_review_comments_diff(root: &Path, base: &str, head: &str) -> Result<String, String> {
-    let range = format!("{base}...{head}");
-    let output = crate::git::run_git_output_with_deadline(
+    let base = analysis::resolve_effective_base(
         root,
-        &["diff", "--unified=0", "--no-ext-diff", &range],
+        Some(base),
         analysis::cancellation::remaining_budget(),
     )?;
-    if !output.status.success() {
-        return Err(format!(
-            "git diff for review-comments failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    String::from_utf8(output.stdout)
-        .map_err(|err| format!("git diff for review-comments was not UTF-8: {err}"))
+    analysis::load_diff_range_with_deadline(
+        root,
+        &base,
+        head,
+        analysis::cancellation::remaining_budget(),
+    )
 }
 
 fn review_comments_markdown_path(json_path: &Path) -> PathBuf {
@@ -6785,6 +6792,75 @@ language = "rust"
         };
         assert!(err.contains("is not a directory"));
         Ok(())
+    }
+
+    #[test]
+    fn review_comments_diff_uses_the_pinned_range_authority() -> Result<(), String> {
+        // #4538: the production review-comments loader must go through the
+        // shared range authority. The raw control proves the fixture
+        // discriminates: ambient `color.diff=always` colors a plain
+        // `git diff`, and the old private loader parsed that as zero changed
+        // lines. The same loader must name unresolvable revisions in ripr's
+        // own voice instead of git's `ambiguous argument` advice.
+        use crate::testing::fixture_git::{fixture_git_ok, remove_fixture_tree};
+        let root = unique_command_test_dir("review-comments-pinned-diff");
+        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+        let lib = root.join("src/lib.rs");
+        fixture_git_ok(&root, &["init", "-q", "--initial-branch=main"])?;
+        for (key, value) in [
+            ("user.name", "Review Comments"),
+            ("user.email", "review-comments@example.com"),
+            ("commit.gpgsign", "false"),
+            ("color.diff", "always"),
+        ] {
+            fixture_git_ok(&root, &["config", "--local", key, value])?;
+        }
+        std::fs::write(&lib, "pub fn f(x: i32) -> bool { x > 1 }\n")
+            .map_err(|err| format!("write base lib: {err}"))?;
+        fixture_git_ok(&root, &["add", "."])?;
+        fixture_git_ok(&root, &["commit", "-q", "-m", "base"])?;
+        std::fs::write(&lib, "pub fn f(x: i32) -> bool { x >= 1 }\n")
+            .map_err(|err| format!("write head lib: {err}"))?;
+        fixture_git_ok(&root, &["commit", "-q", "-am", "head"])?;
+
+        let raw = crate::git::run_git_output_with_deadline(
+            &root,
+            &["diff", "--unified=0", "--no-ext-diff", "HEAD~1...HEAD"],
+            None,
+        )?;
+        let raw = String::from_utf8_lossy(&raw.stdout).into_owned();
+        assert!(
+            raw.contains('\u{1b}'),
+            "color.diff=always control did not color the raw diff, so the fixture does not discriminate:\n{raw}"
+        );
+        assert!(analysis::parse_unified_diff(&raw).is_empty());
+
+        let diff = load_review_comments_diff(&root, "HEAD~1", "HEAD")?;
+        assert!(
+            !diff.contains('\u{1b}'),
+            "pinned diff kept ANSI color:\n{diff}"
+        );
+        let changed = analysis::parse_unified_diff(&diff);
+        assert_eq!(changed.len(), 1, "expected one changed file: {diff}");
+
+        let Err(err) = load_review_comments_diff(&root, "no-such-base", "HEAD") else {
+            return Err("an unresolvable base must fail".to_string());
+        };
+        assert!(
+            err.contains("the base `no-such-base` does not resolve to a commit")
+                && !err.contains("ambiguous argument"),
+            "base failure must be named by ripr, got: {err}"
+        );
+        let Err(err) = load_review_comments_diff(&root, "HEAD~1", "no-such-head") else {
+            return Err("an unresolvable head must fail".to_string());
+        };
+        assert!(
+            err.contains("the head `no-such-head` does not resolve to a commit")
+                && err.contains("--head <ref>")
+                && !err.contains("ambiguous argument"),
+            "head failure must be named by ripr, got: {err}"
+        );
+        remove_fixture_tree(&root)
     }
 
     #[test]

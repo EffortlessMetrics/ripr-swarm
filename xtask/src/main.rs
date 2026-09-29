@@ -38,6 +38,7 @@ mod fixture_contracts;
 #[path = "../../crates/ripr/src/output/gap_source_subject/shared.rs"]
 mod gap_source_subject_shared;
 mod no_panic;
+mod output_enum_contracts;
 mod policy;
 mod product_gate_plan;
 mod public_api_surface;
@@ -13421,6 +13422,7 @@ fn check_output_contracts() -> Result<(), String> {
         "crates/ripr/src/domain/mod.rs",
         "crates/ripr/src/domain/classification.rs",
         "crates/ripr/src/domain/evidence.rs",
+        "crates/ripr/src/domain/language.rs",
         "crates/ripr/src/domain/probe.rs",
         "crates/ripr/src/domain/summary.rs",
         "crates/ripr/src/domain/support.rs",
@@ -13521,7 +13523,7 @@ fn check_output_contracts() -> Result<(), String> {
             }
             "exposure_class" | "severity" | "probe_family" | "delta" | "flow_sink"
             | "stage_state" | "confidence" | "oracle_kind" | "oracle_strength" | "stop_reason"
-            | "value_context" | "oracle_alignment" | "source_currentness" => {
+            | "value_context" | "oracle_alignment" | "source_currentness" | "static_limit_kind" => {
                 require_contract_value(
                     "crates/ripr/src/domain/",
                     &domain,
@@ -13584,6 +13586,22 @@ fn check_output_contracts() -> Result<(), String> {
             )),
         }
     }
+
+    let mut registry: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for entry in &seen {
+        if let Some((kind, value)) = entry.split_once('|') {
+            registry
+                .entry(kind.to_string())
+                .or_default()
+                .insert(value.to_string());
+        }
+    }
+    output_enum_contracts::check_enum_completeness(
+        &registry,
+        &schema,
+        &|path| read_text_lossy(Path::new(path)),
+        &mut violations,
+    )?;
 
     // These producer-owned kinds are durable artifacts in the governed Python
     // repair path. Removing a registry row must fail too, not just a bad row.
@@ -15041,6 +15059,43 @@ fn display_repo_path(root: &Path, path: &Path) -> String {
     normalize_path(display_path)
 }
 
+/// #4395(a): README, CONFIGURATION, and SUPPORT_TIERS must describe marker-auto
+/// Python when no `ripr.toml` exists, not an unconditional Rust-only default.
+fn python_marker_auto_docs_violations(
+    configuration: &str,
+    readme: &str,
+    support: &str,
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    if !(configuration.contains("with no `ripr.toml`")
+        && configuration.contains("keep Python preview off"))
+    {
+        violations.push(
+            "docs/CONFIGURATION.md `[languages].enabled` default must state absent-config marker-auto Python and the rust-only opt-out".to_string(),
+        );
+    }
+    if configuration.contains("opt-in TypeScript, JavaScript, and Python evidence") {
+        violations.push(
+            "docs/CONFIGURATION.md must not lump Python with opt-in TypeScript/JavaScript; Python is marker-auto when no ripr.toml exists".to_string(),
+        );
+    }
+    if !(readme.contains("With no `ripr.toml`") && readme.contains("enables Python preview")) {
+        violations.push("README.md must state marker-auto Python activation".to_string());
+    }
+    if !(readme.contains(r#"enabled = ["rust"]"#) && readme.contains("keeps Python off")) {
+        violations.push("README.md must state the rust-only opt-out".to_string());
+    }
+    if !(support.contains("with no `ripr.toml`")
+        && support.contains("Python project markers")
+        && support.contains(r#"enabled = ["rust"]"#))
+    {
+        violations.push(
+            "docs/status/SUPPORT_TIERS.md must reconcile marker-auto Python with the rust-only opt-out".to_string(),
+        );
+    }
+    violations
+}
+
 fn check_readme_state() -> Result<(), String> {
     let readme_path = Path::new("README.md");
     let readme = read_text_lossy(readme_path)?;
@@ -15082,6 +15137,14 @@ fn check_readme_state() -> Result<(), String> {
         }
     }
 
+    let configuration = read_text_lossy(Path::new("docs/CONFIGURATION.md"))?;
+    let support = read_text_lossy(Path::new("docs/status/SUPPORT_TIERS.md"))?;
+    violations.extend(python_marker_auto_docs_violations(
+        &configuration,
+        &readme,
+        &support,
+    ));
+
     let capabilities_source = read_text_lossy(Path::new("metrics/capabilities.toml"))?;
     let matrix = read_text_lossy(Path::new("docs/CAPABILITY_MATRIX.md"))?;
     if !matrix.contains("metrics/capabilities.toml") {
@@ -15118,6 +15181,7 @@ fn check_readme_state() -> Result<(), String> {
                 "Keep README.md linked to active planning, metrics, campaign, and automation docs.",
                 "Keep README's capability snapshot compact and aligned with docs/CAPABILITY_MATRIX.md.",
                 "Update metrics/capabilities.toml and docs/CAPABILITY_MATRIX.md when capability status or next checkpoints change.",
+                "Keep README, docs/CONFIGURATION.md, and docs/status/SUPPORT_TIERS.md aligned on marker-auto Python when no ripr.toml exists.",
             ],
             rerun_command: "cargo xtask check-readme-state",
             exception_template: None,

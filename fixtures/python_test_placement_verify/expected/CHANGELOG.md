@@ -339,6 +339,7 @@ Updated:
 ## Pending — python_test_placement_verify (6)
 
 Reason:
+RIPR-SPEC-0122: bounded human check output leads the exposure line with the plain word the summary uses (weak, no path, unknown) before the schema value
 RIPR-SPEC-0122: Python pytest verify commands now emit python -m pytest so a flat-layout package imports from the repository root; wording only, no exposure class change
 
 Command:
@@ -352,6 +353,7 @@ Updated:
 
 Reason:
 RIPR-SPEC-0046 RIPR-SPEC-0047: check JSON now carries a top-level source_subject stamp with the analysis-time content digests of the files a derived gap ledger names (#4544); no finding, classification, or human output changed.
+RIPR-SPEC-0122: Hidden remainder names omitted preview-language identity (#4395); formatting-only, no class or JSON change.
 
 Command:
 `cargo xtask goldens bless python_test_placement_verify --reason "..."`

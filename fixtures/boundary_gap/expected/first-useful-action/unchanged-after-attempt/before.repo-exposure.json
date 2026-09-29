@@ -54,7 +54,7 @@
         "actionability": {
           "class": "actionable_related_test_extension",
           "has_concrete_guidance": true,
-          "reason": "extend the nearest related test with the missing discriminator",
+          "reason": "add a focused test with the missing discriminator next to the nearest related test",
           "signals": {
             "assertion_shape": true,
             "candidate_value": true,
@@ -202,7 +202,7 @@
           },
           "static_limitations": [],
           "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json",
-          "why": "extend the nearest related test with the missing discriminator"
+          "why": "add a focused test with the missing discriminator next to the nearest related test"
         },
         "evidence_path": {
           "activate": {
@@ -306,7 +306,7 @@
             "relation_confidence": "high",
             "relation_reason": "direct_owner_call"
           },
-          "reason": "extend the nearest related test with the missing discriminator",
+          "reason": "add a focused test with the missing discriminator next to the nearest related test",
           "recommended_test": {
             "file": "tests/pricing.rs",
             "name": "discounted_total_boundary_discriminator",
