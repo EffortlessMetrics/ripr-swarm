@@ -446,10 +446,11 @@ fn archive_inventory(
                 }
             }
             "Cargo.toml" => {
-                let manifest: toml::Value = std::str::from_utf8(&body)
-                    .map_err(|error| format!("packaged manifest UTF-8: {error}"))?
-                    .parse()
-                    .map_err(|error| format!("packaged manifest TOML: {error}"))?;
+                let manifest: toml::Value = toml::from_str(
+                    std::str::from_utf8(&body)
+                        .map_err(|error| format!("packaged manifest UTF-8: {error}"))?,
+                )
+                .map_err(|error| format!("packaged manifest TOML: {error}"))?;
                 if manifest
                     .get("package")
                     .and_then(|value| value.get("name"))
@@ -465,10 +466,11 @@ fn archive_inventory(
                 }
             }
             "Cargo.lock" => {
-                let lock: toml::Value = std::str::from_utf8(&body)
-                    .map_err(|error| format!("packaged lock UTF-8: {error}"))?
-                    .parse()
-                    .map_err(|error| format!("packaged lock TOML: {error}"))?;
+                let lock: toml::Value = toml::from_str(
+                    std::str::from_utf8(&body)
+                        .map_err(|error| format!("packaged lock UTF-8: {error}"))?,
+                )
+                .map_err(|error| format!("packaged lock TOML: {error}"))?;
                 if lock
                     .get("version")
                     .and_then(toml::Value::as_integer)

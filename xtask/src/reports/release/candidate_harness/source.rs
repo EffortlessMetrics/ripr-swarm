@@ -39,10 +39,11 @@ impl AdmittedSource {
         let workspace_bytes = blobs
             .get("Cargo.toml")
             .ok_or_else(|| "candidate source lacks committed root Cargo.toml".to_string())?;
-        let workspace: toml::Value = std::str::from_utf8(workspace_bytes)
-            .map_err(|error| format!("source manifest UTF-8: {error}"))?
-            .parse()
-            .map_err(|error| format!("source manifest TOML: {error}"))?;
+        let workspace: toml::Value = toml::from_str(
+            std::str::from_utf8(workspace_bytes)
+                .map_err(|error| format!("source manifest UTF-8: {error}"))?,
+        )
+        .map_err(|error| format!("source manifest TOML: {error}"))?;
         let package_prefix = if workspace.get("package").is_some() {
             ""
         } else {
@@ -52,10 +53,11 @@ impl AdmittedSource {
         let manifest_bytes = blobs
             .get(&manifest_path)
             .ok_or_else(|| "candidate source lacks committed package Cargo.toml".to_string())?;
-        let manifest: toml::Value = std::str::from_utf8(manifest_bytes)
-            .map_err(|error| format!("package manifest UTF-8: {error}"))?
-            .parse()
-            .map_err(|error| format!("package manifest TOML: {error}"))?;
+        let manifest: toml::Value = toml::from_str(
+            std::str::from_utf8(manifest_bytes)
+                .map_err(|error| format!("package manifest UTF-8: {error}"))?,
+        )
+        .map_err(|error| format!("package manifest TOML: {error}"))?;
         let package = manifest
             .get("package")
             .ok_or_else(|| "candidate manifest lacks package".to_string())?;

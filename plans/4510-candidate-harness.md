@@ -143,6 +143,18 @@ The external authentic fixture owns its existing Cargo target and temporary
 configuration. These corrections and the legal wrong-tree registry control are
 source changes; compilation and actual end-to-end execution remain NOT_RUN.
 
+At ce023f419b6694d4771ae06942a93155e694a5c8, owning test compilation
+passed and the three argument controls plus actual separate Git registry
+fixture each passed with one test executed and none ignored. The source
+custody control then failed with native status 101: valid `[package]` document
+bytes were rejected by the TOML value parser. This is an implementation defect,
+not a timeout or fixture instrumentation failure. Topology and package/install
+controls were NOT_RUN. Raw evidence remains under
+`target/ripr/reports/4510-tests-first/ce023-controls-native`.
+The correction uses document deserialization for the root and package
+manifests, normalized archive manifest and packaged lock, preserving UTF-8 and
+malformed-document error contexts. Successor execution remains NOT_RUN.
+
 ## Later shared-harness scope (not the first PR)
 
 Private release submodule xtask/src/reports/release/candidate_harness.rs plus tests.rs, called from release.rs existing install path; candidate_registry existing grant accessor only as needed; run.rs narrow captured typed observation extension only if absent; release-server sha256_file and existing path/container helpers reused. One private CandidateProofPacket DTO/render projection exported through existing reports module for4505-4508. No new release-readiness command/qualification aggregate. No public crate/deps.
