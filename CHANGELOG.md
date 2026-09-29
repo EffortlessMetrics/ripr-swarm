@@ -11,6 +11,10 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Rust `proptest!` and `quickcheck!` token trees are reparsed as items, so
+  inner `#[test]` / `quickcheck!` functions keep their real lines, owner
+  calls, and `prop_assert*` oracles. An unmarked `proptest!` fn stays a
+  function fact, not a test (#4789).
 - Security: Rust source discovery skips symlinked `.rs` entries, as the
   Python and TypeScript readers already did. A cloned repository or pull
   request that committed `src/zero.rs -> /dev/zero` made `ripr check` read
