@@ -576,7 +576,9 @@ name = "repository configuration"
 spec = "docs/specs/RIPR-SPEC-0007-repository-configuration.md"
 tests = [
   "crates/ripr/src/config.rs::tests::missing_config_uses_behavior_preserving_defaults",
-  "crates/ripr/src/config.rs::tests::public_docs_state_python_marker_auto_when_no_ripr_toml",
+  "xtask/src/tests.rs::public_docs_state_python_marker_auto_when_no_ripr_toml",
+  "xtask/src/tests.rs::python_marker_auto_docs_accept_required_phrases",
+  "xtask/src/tests.rs::python_marker_auto_docs_reject_opt_in_python_lumping",
   "crates/ripr/src/config.rs::tests::config_file_sets_core_operational_defaults",
   "crates/ripr/src/config.rs::tests::explicit_cli_mode_wins_over_config_mode",
   "crates/ripr/src/config.rs::tests::config_mode_applies_when_cli_mode_is_not_explicit",
