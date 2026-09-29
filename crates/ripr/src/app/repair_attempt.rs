@@ -3555,12 +3555,9 @@ mod tests {
             role: TERMINAL_RECEIPT_ROLE.to_string(),
             path: "target/ripr/reports/agent-receipt.json".to_string(),
             sha256: sha256_bytes(&std::fs::read(&outside).map_err(|error| error.to_string())?),
-            bytes: u64::try_from(
-                std::fs::metadata(&outside)
-                    .map_err(|error| error.to_string())?
-                    .len(),
-            )
-            .map_err(|error| error.to_string())?,
+            bytes: std::fs::metadata(&outside)
+                .map_err(|error| error.to_string())?
+                .len(),
         }];
         match load_attempt_terminal_receipt(&root, &finished) {
             AttemptTerminalReceipt::Unavailable { reason, .. }

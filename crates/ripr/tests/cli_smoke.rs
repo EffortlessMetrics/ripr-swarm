@@ -16357,7 +16357,7 @@ fn agent_status_does_not_fall_back_to_another_attempt_when_local_receipt_is_unus
         .join("target/ripr/repair-attempts")
         .join(&first)
         .join("attempt.json");
-    let mut first_manifest: serde_json::Value =
+    let first_manifest: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&first_manifest_path)?)?;
     let terminal = first_manifest["terminal_artifacts"]
         .as_array()
