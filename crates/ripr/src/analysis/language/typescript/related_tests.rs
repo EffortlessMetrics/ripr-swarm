@@ -665,11 +665,7 @@ pub(crate) fn related_test_candidates<'a>(
     if candidates.is_empty() && !owner.module_entries.is_empty() {
         candidates = all_tests
             .iter()
-            .filter(|test| {
-                workspace_root
-                    .map(|root| same_package_root(&owner.file, &test.file, root))
-                    .unwrap_or(true)
-            })
+            .filter(in_owner_package)
             .filter(|test| {
                 module_entry_relation(test, owner, reexport_index, alias_map, workspace_root)
             })

@@ -12,9 +12,7 @@ are scoped or reviewed.
 ### Fixed
 
 - `ripr check` is faster on large repositories, with byte-identical JSON on
-  12 real commits of tokio, vite, Django and ripr. Python source-fact
-  extraction found each fact's line by scanning the file from the start;
-  a Django commit went from 6.9 s to 1.5 s. TypeScript test selection
+  12 real commits of tokio, vite, Django and ripr. TypeScript test selection
   walked the directory tree for `package.json` twice per owner and test;
   a vite commit went from 6.7 s to 3.2 s. Rust classification no longer
   reparses the owner's file per probe unless the file could admit the
