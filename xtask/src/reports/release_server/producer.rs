@@ -87,22 +87,14 @@ pub(crate) fn build_release_executable(
         .join(target)
         .join("release")
         .join(executable);
-    let artifact = select_binary_artifact(
-        &output,
-        &expected_executable,
-        &contract.product.features,
-    )?;
+    let artifact = select_binary_artifact(&output, &expected_executable, &contract.product.features)?;
     let executable_version_line = run_output_owned(
         &artifact.executable.to_string_lossy(),
         &["--version".to_string()],
     )?
     .trim()
     .to_string();
-    validate_version_line(
-        &executable_version_line,
-        version,
-        &source_commit,
-    )?;
+    validate_version_line(&executable_version_line, version, &source_commit)?;
 
     Ok(ProducerBuildReceipt {
         schema_version: PRODUCER_SCHEMA_VERSION,
@@ -130,9 +122,24 @@ pub(crate) fn bind_to_payload_identity(
     identity: &FinalNativePayloadIdentity,
 ) -> Result<(), String> {
     let mut violations = Vec::new();
-    compare("product", &producer.product, &identity.product, &mut violations);
-    compare("version", &producer.version, &identity.version, &mut violations);
-    compare("target", &producer.target, &identity.target, &mut violations);
+    compare(
+        "product",
+        &producer.product,
+        &identity.product,
+        &mut violations,
+    );
+    compare(
+        "version",
+        &producer.version,
+        &identity.version,
+        &mut violations,
+    );
+    compare(
+        "target",
+        &producer.target,
+        &identity.target,
+        &mut violations,
+    );
     compare(
         "executable",
         &producer.executable,
@@ -412,7 +419,10 @@ fn git_rev_parse(revision: &str) -> Result<String, String> {
 }
 
 fn checked_output(program: &str, args: &[&str], label: &str) -> Result<String, String> {
-    let args = args.iter().map(|arg| (*arg).to_string()).collect::<Vec<_>>();
+    let args = args
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect::<Vec<_>>();
     let output = run_output_owned(program, &args)?;
     let output = output.replace("\r\n", "\n").trim().to_string();
     if output.is_empty() {
@@ -434,42 +444,69 @@ mod tests {
     use super::*;
 
     #[test]
-    fn canonical_feature_set_rejects_wrong_feature_build() {
-        let error = normalized_release_features(
-            &["default".to_string(), "lang-rust".to_string()],
-            &[
-                "lang-python".to_string(),
-                "lang-rust".to_string(),
-                "lang-typescript".to_string(),
-            ],
-        )
-        .expect_err("wrong feature set must fail");
-        assert!(error.contains("canonical release features"));
+    fn canonical_feature_set_rejects_wrong_feature_build() -> Result<(), String> {
+        let error = require_error(
+            normalized_release_features(
+                &["default".to_string(), "lang-rust".to_string()],
+                &[
+                    "lang-python".to_string(),
+                    "lang-rust".to_string(),
+                    "lang-typescript".to_string(),
+                ],
+            ),
+            "wrong feature set",
+        )?;
+        if !error.contains("canonical release features") {
+            return Err(format!("unexpected feature-set error: {error}"));
+        }
+        Ok(())
     }
 
     #[test]
-    fn version_line_rejects_stale_and_dirty_binary() {
+    fn version_line_rejects_stale_and_dirty_binary() -> Result<(), String> {
         let commit = "a".repeat(40);
-        assert!(validate_version_line("ripr 0.11.0 (old)", "0.11.0", &commit).is_err());
-        assert!(
+        let stale = require_error(
+            validate_version_line("ripr 0.11.0 (old)", "0.11.0", &commit),
+            "stale binary version",
+        )?;
+        if !stale.contains("identity mismatch") {
+            return Err(format!("unexpected stale-version error: {stale}"));
+        }
+        let dirty = require_error(
             validate_version_line(
                 &format!("ripr 0.11.0 ({commit}-dirty)"),
                 "0.11.0",
-                &commit
-            )
-            .is_err()
-        );
-        assert!(
-            validate_version_line(&format!("ripr 0.11.0 ({commit})"), "0.11.0", &commit)
-                .is_ok()
-        );
+                &commit,
+            ),
+            "dirty binary version",
+        )?;
+        if !dirty.contains("identity mismatch") {
+            return Err(format!("unexpected dirty-version error: {dirty}"));
+        }
+        validate_version_line(&format!("ripr 0.11.0 ({commit})"), "0.11.0", &commit)
     }
 
     #[test]
-    fn receipt_rejects_noncanonical_build_arguments() {
+    fn receipt_rejects_noncanonical_build_arguments() -> Result<(), String> {
         let mut receipt = fixture_receipt();
-        receipt.cargo_arguments.push("--no-default-features".to_string());
-        assert!(validate_receipt_shape(&receipt).is_err());
+        receipt
+            .cargo_arguments
+            .push("--no-default-features".to_string());
+        let error = require_error(
+            validate_receipt_shape(&receipt),
+            "noncanonical build arguments",
+        )?;
+        if !error.contains("cargo_arguments") {
+            return Err(format!("unexpected receipt error: {error}"));
+        }
+        Ok(())
+    }
+
+    fn require_error<T>(result: Result<T, String>, label: &str) -> Result<String, String> {
+        let Err(error) = result else {
+            return Err(format!("{label} unexpectedly succeeded"));
+        };
+        Ok(error)
     }
 
     fn fixture_receipt() -> ProducerBuildReceipt {
