@@ -3371,6 +3371,77 @@ fn absent_delimiter_boundary_returns_head() {
         Ok(())
     }
 
+    /// The human partial-scope disclosure tests hand-build scope records; this
+    /// pins that the real selector produces those shapes, including a
+    /// first-file stop with a changed non-source file beside it: the file is
+    /// never a candidate, so no uninspected scope is known and the disclosure
+    /// may only claim that every file ripr's adapters read was selected.
+    #[test]
+    fn partial_stop_reason_shapes_match_the_human_disclosure_fixtures() -> Result<(), String> {
+        let file_stop = require_partial(
+            select_partial_diff_partition(
+                &[
+                    changed_file("src/a.rs", 30, 0),
+                    changed_file("src/b.rs", 30, 0),
+                ],
+                &budgets(1, 40),
+                ALL_LANGUAGES,
+            ),
+            "file-budget stop",
+        )?;
+        assert_eq!(file_stop.stop_reason, PartialDiffStopReason::FileBudget);
+        assert_eq!(file_stop.selected_changed_lines, 30);
+        assert!(file_stop.has_known_uninspected_scope());
+        assert_eq!(file_stop.stopping_budget(), 1);
+        assert_eq!(
+            file_stop.stop_reason.budget_env(),
+            PARTIAL_DIFF_FILE_BUDGET_ENV
+        );
+
+        let line_stop = require_partial(
+            select_partial_diff_partition(
+                &[
+                    changed_file("src/a.rs", 35, 0),
+                    changed_file("src/b.rs", 30, 0),
+                ],
+                &budgets(7, 40),
+                ALL_LANGUAGES,
+            ),
+            "line-budget stop",
+        )?;
+        assert_eq!(line_stop.stop_reason, PartialDiffStopReason::LineBudget);
+        assert_eq!(line_stop.selected_changed_lines, 35);
+        assert!(line_stop.has_known_uninspected_scope());
+        assert_eq!(line_stop.stopping_budget(), 40);
+        assert_eq!(
+            line_stop.stop_reason.budget_env(),
+            PARTIAL_DIFF_LINE_BUDGET_ENV
+        );
+
+        let first_file_stop = require_partial(
+            select_partial_diff_partition(
+                &[
+                    changed_file("src/a.rs", 60, 0),
+                    changed_file("README.md", 1, 0),
+                ],
+                &budgets(7, 40),
+                ALL_LANGUAGES,
+            ),
+            "first-file stop beside a non-source file",
+        )?;
+        assert_eq!(
+            first_file_stop.stop_reason,
+            PartialDiffStopReason::LineBudgetExceededOnFirstFile
+        );
+        assert_eq!(first_file_stop.selected_changed_lines, 60);
+        assert!(
+            !first_file_stop.has_known_uninspected_scope(),
+            "README.md is never a partition candidate, so no uninspected scope is known"
+        );
+        assert_eq!(first_file_stop.stopping_budget(), 40);
+        Ok(())
+    }
+
     #[test]
     fn partial_first_file_exception_wins_over_simultaneous_hit() -> Result<(), String> {
         // file_budget=1 means the second file would hit both budgets, but the

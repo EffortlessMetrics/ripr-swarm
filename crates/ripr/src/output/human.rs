@@ -347,9 +347,9 @@ fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
         ));
     } else {
         out.push_str(&format!(
-            "  Found {found} finding(s) before stopping. Every changed file in the diff was \
-             selected, but the budget was exceeded, so this result stays partial and is not a \
-             complete-scope claim.\n",
+            "  Found {found} finding(s) before stopping. Every changed file ripr's language \
+             adapters read was selected, but the budget was exceeded, so this result stays \
+             partial and is not a complete-scope claim.\n",
         ));
     }
     for file in &scope.selected_files {
@@ -1970,11 +1970,24 @@ mod tests {
         Ok(())
     }
 
+    /// A partial-scope report whose scope record has the shape the real
+    /// selector produces for `stop_reason` (pinned against the selector by
+    /// `analysis::language::rust::tests::partial_stop_reason_shapes_match_the_human_disclosure_fixtures`).
     fn partial_scope_output(
         stop_reason: crate::analysis::PartialDiffStopReason,
         uninspected_files: usize,
         uninspected_lines: usize,
     ) -> CheckOutput {
+        use crate::analysis::PartialDiffStopReason;
+        // file_budget 1 / line_budget 40: a file-budget stop selected one
+        // 30-line file; a line-budget stop (file budget 7) selected 35 lines
+        // and the next file would overshoot; a first-file stop selected one
+        // 60-line file alone.
+        let (file_budget, selected_changed_lines) = match stop_reason {
+            PartialDiffStopReason::FileBudget => (1, 30),
+            PartialDiffStopReason::LineBudget => (7, 35),
+            PartialDiffStopReason::LineBudgetExceededOnFirstFile => (7, 60),
+        };
         CheckOutput {
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
@@ -1993,11 +2006,11 @@ mod tests {
             partial_scope: Some(crate::analysis::PartialDiffScope {
                 run_status: crate::analysis::PartialDiffScope::RUN_STATUS.to_string(),
                 diff_identity: "sha256:abc".to_string(),
-                file_budget: 7,
+                file_budget,
                 line_budget: 40,
                 budget_disclosures: Vec::new(),
                 selected_files: vec!["src/a.rs".to_string()],
-                selected_changed_lines: 60,
+                selected_changed_lines,
                 uninspected_files_lower_bound: uninspected_files,
                 uninspected_changed_lines_lower_bound: uninspected_lines,
                 stop_reason,
@@ -2015,12 +2028,12 @@ mod tests {
                 3,
                 90,
                 vec![
-                    "analysis stopped at the file budget of 7 changed file(s) \
-                     (RIPR_PARTIAL_DIFF_FILE_BUDGET=7)",
+                    "analysis stopped at the file budget of 1 changed file(s) \
+                     (RIPR_PARTIAL_DIFF_FILE_BUDGET=1)",
                     "Found 1 finding(s) before stopping.",
                     "NOT inspected: at least 3 changed file(s) and at least 90 changed line(s); \
                      more findings may exist beyond the budget.",
-                    "set RIPR_PARTIAL_DIFF_FILE_BUDGET above 7 and re-run",
+                    "set RIPR_PARTIAL_DIFF_FILE_BUDGET above 1 and re-run",
                 ],
             ),
             (
@@ -2044,6 +2057,7 @@ mod tests {
                      (RIPR_PARTIAL_DIFF_LINE_BUDGET=40); the first selected file alone exceeded \
                      it and was analyzed whole",
                     "Found 1 finding(s) before stopping.",
+                    "Every changed file ripr's language adapters read was selected",
                     "this result stays partial and is not a complete-scope claim",
                     "set RIPR_PARTIAL_DIFF_LINE_BUDGET above 40 and re-run",
                 ],

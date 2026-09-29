@@ -342,9 +342,10 @@ are scoped or reviewed.
   `the file budget of 200 changed file(s) (RIPR_PARTIAL_DIFF_FILE_BUDGET=200)`),
   says how many findings were produced before the stop and that more may
   exist beyond the budget, and tells you to raise that one variable to widen
-  the partition. When every changed file was selected (a single oversized
-  first file), it no longer prints "at least 0 changed file(s) ... may contain
-  additional findings"; it says the result stays partial instead.
+  the partition. When every changed file ripr's language adapters read was
+  selected (a single oversized first file), it no longer prints "at least 0
+  changed file(s) ... may contain additional findings"; it says the result
+  stays partial instead.
 
 ### Added
 
