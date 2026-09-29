@@ -15861,6 +15861,52 @@ mod tests {
 }
 
 #[test]
+fn local_owner_name_binding_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+pub fn other_plan(suppressed: usize, published: usize) -> DiagnosticRefreshPlan {
+    DiagnosticRefreshPlan {
+        suppressed_payload_bytes: suppressed,
+        published_payload_bytes: published,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_local_callee_binding() {
+        let diagnostic_refresh_plan = other_plan;
+        let unchanged = diagnostic_refresh_plan(8, 0);
+        assert!(unchanged.suppressed_payload_bytes > 0);
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "local binding that shadows the owner callee")
+}
+
+#[test]
+fn same_name_owner_result_binding_completes_canonical_route() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_same_name_result_binding() {
+        let diagnostic_refresh_plan = diagnostic_refresh_plan(8, 0);
+        assert!(diagnostic_refresh_plan.suppressed_payload_bytes > 0);
+    }
+}
+"#,
+    )?;
+    route_must_be_ready(&case)
+}
+
+#[test]
 fn nested_field_receiver_token_collision_stays_non_ready() -> Result<(), String> {
     let case = refresh_plan_case(
         r#"

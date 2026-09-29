@@ -191,7 +191,9 @@ overwrite, or mutable escape — including a mutable borrow of the observed
 field. The field must appear in the assertion's parser-backed condition or
 compared operands, not only in a message or format argument, and not on an
 assertion-local shadow of the binding. A same-name function defined or
-imported in the test's module is not the production owner. Exact owner-result
+imported in the test's module is not the production owner, and neither is a
+local binding of that name unless that binding is itself the parser-backed
+direct owner-result. Exact owner-result
 field equality stays
 already-gripped and must not grow a missing fact. A name-related or
 proximity-related test with unknown owner activation must not receive a missing

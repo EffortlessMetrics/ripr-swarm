@@ -27,8 +27,9 @@ are scoped or reviewed.
   known. Exact field equality stays already-gripped; wrappers, helper
   transfer, shadows, sibling fields, token coincidence, unknown activation,
   failed target authority, mutable field borrows, assertion-message-only
-  field mentions, assertion-local shadows, and same-name local or imported
-  callees stay non-ready (#1981).
+  field mentions, assertion-local shadows, same-name local or imported
+  callees, and local callee bindings of the owner name stay non-ready
+  (#1981).
 - `ripr check` is faster on large repositories, with byte-identical JSON on
   12 real commits of tokio, vite, Django and ripr. TypeScript test selection
   walked the directory tree for `package.json` twice per owner and test;

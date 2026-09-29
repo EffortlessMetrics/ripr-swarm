@@ -16,7 +16,8 @@ A same-name local or imported callee, a mutable borrow of the observed field,
 an assertion-message-only field mention, and an assertion-local shadow of the
 owner-result binding are also not owner-result observations: credit only a
 parser-backed discriminating condition or compared operands, and fail closed
-when the bare callee identity is ambiguous.
+when the bare callee identity is ambiguous, including a local binding of the
+owner name that is not itself the parser-backed direct owner-result.
 
 ## 2026-09-29: Default output-dir create failures must name the relocate flag (#4774)
 

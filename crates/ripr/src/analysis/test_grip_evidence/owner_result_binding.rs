@@ -157,6 +157,31 @@ fn owner_callee_is_ambiguous(function: &ast::Fn, owner_name: &str) -> bool {
     nested_owner_fn(function, owner_name)
         || sibling_owner_fn(function, owner_name)
         || foreign_owner_import(function, owner_name)
+        || local_owner_binding(function, owner_name)
+}
+
+fn local_owner_binding(function: &ast::Fn, owner_name: &str) -> bool {
+    function
+        .syntax()
+        .descendants()
+        .filter_map(ast::IdentPat::cast)
+        .any(|pattern| {
+            pattern.name().is_some_and(|name| name.text() == owner_name)
+                && !ident_pat_is_direct_owner_result(&pattern, owner_name)
+        })
+}
+
+fn ident_pat_is_direct_owner_result(pattern: &ast::IdentPat, owner_name: &str) -> bool {
+    pattern
+        .syntax()
+        .parent()
+        .and_then(ast::LetStmt::cast)
+        .is_some_and(|binding| {
+            plain_binding_name(&binding).as_deref() == Some(owner_name)
+                && binding.initializer().is_some_and(|initializer| {
+                    initializer_is_direct_owner_call(&initializer, owner_name)
+                })
+        })
 }
 
 fn nested_owner_fn(function: &ast::Fn, owner_name: &str) -> bool {

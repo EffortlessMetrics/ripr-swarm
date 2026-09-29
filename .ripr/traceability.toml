@@ -361,6 +361,8 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::local_same_name_constructor_stays_non_ready",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::nested_same_name_constructor_stays_non_ready",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::imported_same_name_callee_stays_non_ready",
+  "crates/ripr/src/analysis/test_grip_evidence.rs::tests::local_owner_name_binding_stays_non_ready",
+  "crates/ripr/src/analysis/test_grip_evidence.rs::tests::same_name_owner_result_binding_completes_canonical_route",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::nested_field_receiver_token_collision_stays_non_ready",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::medium_snapshot_owner_result_field_stays_already_gripped",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::unrelated_strong_assertion_on_other_object_stays_non_ready",
