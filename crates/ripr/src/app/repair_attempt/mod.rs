@@ -3,7 +3,10 @@
 //! Repository-global artifacts under `target/ripr/workflow` remain compatibility
 //! projections. The durable transaction is selected by `RepairAttemptId`, and
 //! the after phase consumes the retained before snapshot and packet attached to
-//! that exact attempt.
+//! that exact attempt. Store location is owned by [`store`]: before, status,
+//! and after resolve one store identity instead of joining a hardcoded path.
+
+mod store;
 
 use crate::agent::loop_commands::{bound_root, display_path, shell_arg};
 use crate::analysis::is_test_surface_path;
@@ -39,6 +42,11 @@ const CARGO_DEFAULT_BUILD_OUTPUT_DIR: &str = "target";
 /// The lockfile Cargo writes at the workspace root when it resolves
 /// dependencies.
 const CARGO_WORKSPACE_LOCKFILE: &str = "Cargo.lock";
+
+pub(crate) use store::{
+    RepairAttemptStoreAccess, RepairAttemptStoreCurrentness, RepairAttemptStoreIdentity,
+    RepairAttemptStoreRef, resolve_store,
+};
 
 static ATTEMPT_NONCE: AtomicU64 = AtomicU64::new(0);
 
@@ -124,6 +132,11 @@ pub(crate) struct RepairAttemptManifest {
     /// one-slot compatibility receipt.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) terminal_artifacts: Vec<RepairAttemptArtifact>,
+    /// Portable store identity. Absent on default-store and legacy manifests
+    /// so ordinary before → after bytes stay compatible. Explicit stores
+    /// record the locator; absolute checkout spelling is not identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) store: Option<RepairAttemptStoreIdentity>,
 }
 
 /// Why the last after phase of an attempt refused, recorded by the attempt
@@ -152,18 +165,29 @@ pub(crate) struct RepairAttemptAfter {
     pub(crate) verdict: EditCageVerdict,
 }
 
+fn open_attempt(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+) -> Result<(RepairAttemptStoreRef, PathBuf, RepairAttemptManifest), String> {
+    let store = resolve_store(root, store, RepairAttemptStoreAccess::Open)?;
+    let (path, manifest) = load_repair_attempt_by_id(&store, attempt_id)?;
+    Ok((store, path, manifest))
+}
+
 /// The only attempt state that may authorize a receipt. This is deliberately
 /// derived from the durable manifest and its immutable before artifacts rather
 /// than from the workflow filenames, which are compatibility outputs.
-pub(crate) fn receipt_binding(
+
+pub(crate) fn receipt_binding_from(
     root: &Path,
+    store: Option<&Path>,
     seam_id: &str,
     packet_path: &Path,
     attempt_id: Option<&str>,
 ) -> Result<serde_json::Value, String> {
-    let root = root
-        .canonicalize()
-        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let store = resolve_store(root, store, RepairAttemptStoreAccess::Open)?;
+    let root = store.canonical_root().to_path_buf();
     let packet = std::fs::read(packet_path).map_err(|error| {
         format!(
             "read repair packet {} failed: {error}",
@@ -178,7 +202,7 @@ pub(crate) fn receipt_binding(
     )?;
     let (manifest_path, manifest) = if let Some(attempt_id) = attempt_id {
         let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
-        let loaded = load_repair_attempt_by_id(&root, &attempt_id)?;
+        let loaded = load_repair_attempt_by_id(&store, &attempt_id)?;
         if loaded.1.seam_id != seam_id {
             return Err(format!(
                 "repair attempt {} belongs to seam `{}`, not `{seam_id}`",
@@ -188,20 +212,16 @@ pub(crate) fn receipt_binding(
         }
         loaded
     } else {
-        let manifests_root = root.join(REPAIR_ATTEMPT_DIRECTORY);
         let mut matches = Vec::new();
-        for entry in std::fs::read_dir(&manifests_root)
-            .map_err(|error| format!("read {} failed: {error}", manifests_root.display()))?
-        {
-            let entry =
-                entry.map_err(|error| format!("read repair attempt entry failed: {error}"))?;
-            let path = entry.path().join(REPAIR_ATTEMPT_MANIFEST);
-            if !path.is_file() {
+        for entry in inventory_repair_attempts_in(&store)? {
+            let RepairAttemptInventoryEntry::Valid(manifest) = entry else {
                 continue;
-            }
-            let manifest = read_repair_attempt_manifest_at(&root, &path)?;
+            };
             if manifest.seam_id == seam_id {
-                matches.push((path, manifest));
+                let path = store
+                    .attempt_directory(&manifest.repair_attempt_id)
+                    .join(REPAIR_ATTEMPT_MANIFEST);
+                matches.push((path, *manifest));
             }
         }
         if matches.len() != 1 {
@@ -303,17 +323,17 @@ pub(crate) fn receipt_binding(
 
 /// Ensure a verify document consumed for an exact attempt names that attempt's
 /// retained before snapshot and its committed content digest.
-pub(crate) fn validate_verify_binding(
+
+pub(crate) fn validate_verify_binding_from(
     root: &Path,
+    store: Option<&Path>,
     attempt_id: &str,
     verify_before_path: &str,
     verify_before_sha256: &str,
 ) -> Result<(), String> {
-    let root = root
-        .canonicalize()
-        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
     let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
-    let (_, manifest) = load_repair_attempt_by_id(&root, &attempt_id)?;
+    let (store, _, manifest) = open_attempt(root, store, &attempt_id)?;
+    let root = store.canonical_root().to_path_buf();
     let expected = find_manifest_artifact(&manifest, "before_snapshot")?;
     let expected_path = root
         .join(&expected.path)
@@ -395,6 +415,9 @@ pub(crate) struct BeginRepairAttemptOptions<'a> {
     pub(crate) sources: &'a [BeforeArtifactSource<'a>],
     pub(crate) expected_repository_head: Option<&'a str>,
     pub(crate) next_command_suffix: Option<&'a str>,
+    /// Explicit store locator, resolved against `root`. `None` is the
+    /// repository-local default and keeps next-command bytes compatible.
+    pub(crate) store: Option<&'a Path>,
 }
 
 pub(crate) fn begin_repair_attempt_with(
@@ -407,6 +430,7 @@ pub(crate) fn begin_repair_attempt_with(
         sources,
         expected_repository_head,
         next_command_suffix,
+        store,
     } = options;
     if seam_id.trim().is_empty() {
         return Err("repair attempt requires a non-empty seam ID".to_string());
@@ -415,10 +439,9 @@ pub(crate) fn begin_repair_attempt_with(
         return Err("repair attempt requires at least one before-phase artifact".to_string());
     }
 
-    let canonical_root = root
-        .canonicalize()
-        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
-    let repository_head = crate::agent::artifact::current_git_head(&canonical_root)
+    let store = resolve_store(root, store, RepairAttemptStoreAccess::Prepare)?;
+    let canonical_root = store.canonical_root();
+    let repository_head = crate::agent::artifact::current_git_head(canonical_root)
         .map_err(|error| format!("repair attempt requires a concrete repository HEAD: {error}"))?;
     // Pre-publication head gate: compare the caller's verified pin against
     // the repository HEAD this publication would record, before the attempt
@@ -433,16 +456,16 @@ pub(crate) fn begin_repair_attempt_with(
     let created_unix_ms = current_unix_ms()?;
     let nonce = ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed);
     let repair_attempt_id = repair_attempt_id_from_parts(
-        &display_path(&canonical_root),
+        &display_path(canonical_root),
         seam_id,
         &repository_head,
         created_unix_ms,
         std::process::id(),
         nonce,
     )?;
-    let attempt_directory = reserve_attempt_directory(&canonical_root, &repair_attempt_id)?;
+    let attempt_directory = reserve_attempt_directory(&store, &repair_attempt_id)?;
     complete_repair_attempt(
-        &canonical_root,
+        &store,
         &attempt_directory,
         AttemptPublication {
             root_argument,
@@ -475,14 +498,19 @@ struct AttemptPublication<'a> {
 /// directory. Any failure removes the reserved directory, so a failed begin
 /// leaves neither an orphan attempt nor a partial artifact set behind.
 fn complete_repair_attempt(
-    canonical_root: &Path,
+    store: &RepairAttemptStoreRef,
     attempt_directory: &Path,
     publication: AttemptPublication<'_>,
 ) -> Result<BeginRepairAttemptResult, String> {
+    let canonical_root = store.canonical_root();
     let result = stage_before_artifacts(canonical_root, attempt_directory, publication.sources)
         .and_then(|artifacts| {
+            let store_flag = match store.manifest_identity() {
+                Some(identity) => format!(" --store {}", shell_arg(&identity.locator)),
+                None => String::new(),
+            };
             let next_command = format!(
-                "ripr agent repair --root {} --attempt {} --phase after{}",
+                "ripr agent repair --root {}{store_flag} --attempt {} --phase after{}",
                 shell_arg(&bound_root(&display_path(publication.root_argument))),
                 shell_arg(publication.repair_attempt_id.as_str()),
                 publication.next_command_suffix.unwrap_or_default()
@@ -532,8 +560,9 @@ fn complete_repair_attempt(
                 after: None,
                 last_after_refusal: None,
                 terminal_artifacts: Vec::new(),
+                store: store.manifest_identity(),
             };
-            let manifest_path = write_repair_attempt_manifest(canonical_root, &manifest)?;
+            let manifest_path = write_repair_attempt_manifest(store, &manifest)?;
             Ok(BeginRepairAttemptResult {
                 manifest,
                 manifest_path,
@@ -545,6 +574,13 @@ fn complete_repair_attempt(
     result
 }
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "default-store wrappers are the test and remaining-default caller surface; CLI explicit-store uses the _from authority"
+    )
+)]
 pub(crate) fn repair_attempt_directory(root: &Path, attempt_id: &RepairAttemptId) -> PathBuf {
     root.join(REPAIR_ATTEMPT_DIRECTORY)
         .join(attempt_id.as_str())
@@ -554,14 +590,27 @@ pub(crate) fn repair_attempt_directory(root: &Path, attempt_id: &RepairAttemptId
 /// including its before commitment and artifact digest bindings. Consumers
 /// that extend the attempt (the Python repair-trust binding) read the
 /// retained provenance through this authority instead of re-parsing files.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "default-store wrappers are the test and remaining-default caller surface; CLI explicit-store uses the _from authority"
+    )
+)]
 pub(crate) fn load_repair_attempt_manifest(
     root: &Path,
     attempt_id: &RepairAttemptId,
 ) -> Result<RepairAttemptManifest, String> {
-    let root = root
-        .canonicalize()
-        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
-    let (_, manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
+    load_repair_attempt_manifest_from(root, None, attempt_id)
+}
+
+pub(crate) fn load_repair_attempt_manifest_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+) -> Result<RepairAttemptManifest, String> {
+    let store = resolve_store(root, store, RepairAttemptStoreAccess::Open)?;
+    let (_, manifest) = load_repair_attempt_by_id(&store, attempt_id)?;
     Ok(manifest)
 }
 
@@ -582,15 +631,26 @@ pub(crate) enum RepairAttemptInventoryEntry {
 pub(crate) fn inventory_repair_attempts(
     root: &Path,
 ) -> Result<Vec<RepairAttemptInventoryEntry>, String> {
-    let manifests_root = root.join(REPAIR_ATTEMPT_DIRECTORY);
-    if !manifests_root.is_dir() {
+    inventory_repair_attempts_from(root, None)
+}
+
+pub(crate) fn inventory_repair_attempts_from(
+    root: &Path,
+    store: Option<&Path>,
+) -> Result<Vec<RepairAttemptInventoryEntry>, String> {
+    let store = resolve_store(root, store, RepairAttemptStoreAccess::Open)?;
+    inventory_repair_attempts_in(&store)
+}
+
+fn inventory_repair_attempts_in(
+    store: &RepairAttemptStoreRef,
+) -> Result<Vec<RepairAttemptInventoryEntry>, String> {
+    let manifests_root = store.resolved_path();
+    if store.currentness() == RepairAttemptStoreCurrentness::Missing || !manifests_root.is_dir() {
         return Ok(Vec::new());
     }
-    let root = root
-        .canonicalize()
-        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
     let mut entries = Vec::new();
-    for entry in std::fs::read_dir(&manifests_root)
+    for entry in std::fs::read_dir(manifests_root)
         .map_err(|error| format!("read {} failed: {error}", manifests_root.display()))?
     {
         let entry = entry.map_err(|error| format!("read repair attempt entry failed: {error}"))?;
@@ -599,7 +659,7 @@ pub(crate) fn inventory_repair_attempts(
             continue;
         }
         let directory = entry.file_name().to_string_lossy().into_owned();
-        entries.push(match read_repair_attempt_manifest_at(&root, &path) {
+        entries.push(match read_repair_attempt_manifest_at(store, &path) {
             Ok(manifest) => RepairAttemptInventoryEntry::Valid(Box::new(manifest)),
             Err(error) => RepairAttemptInventoryEntry::Invalid { directory, error },
         });
@@ -694,7 +754,7 @@ fn read_bound_terminal_receipt(
     manifest: &RepairAttemptManifest,
     artifact: &RepairAttemptArtifact,
 ) -> Result<(String, serde_json::Value), String> {
-    let bytes = read_terminal_artifact_bytes(root, &manifest.repair_attempt_id, artifact)?;
+    let bytes = read_terminal_artifact_bytes(root, manifest, artifact)?;
     let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
         format!(
             "repair attempt terminal receipt {} is not JSON: {error}",
@@ -722,7 +782,7 @@ fn read_bound_terminal_receipt(
 
 fn read_terminal_artifact_bytes(
     root: &Path,
-    attempt_id: &RepairAttemptId,
+    manifest: &RepairAttemptManifest,
     artifact: &RepairAttemptArtifact,
 ) -> Result<Vec<u8>, String> {
     if artifact.path.is_empty() || Path::new(&artifact.path).is_absolute() {
@@ -731,8 +791,15 @@ fn read_terminal_artifact_bytes(
             artifact.path
         ));
     }
-    let artifacts_root =
-        repair_attempt_directory(root, attempt_id).join(REPAIR_ATTEMPT_ARTIFACTS_DIRECTORY);
+    let locator = manifest
+        .store
+        .as_ref()
+        .map(|identity| Path::new(identity.locator.as_str()));
+    let store = resolve_store(root, locator, RepairAttemptStoreAccess::Open)?;
+    store.matches_manifest(manifest.store.as_ref())?;
+    let artifacts_root = store
+        .attempt_directory(&manifest.repair_attempt_id)
+        .join(REPAIR_ATTEMPT_ARTIFACTS_DIRECTORY);
     let artifacts_root = artifacts_root.canonicalize().map_err(|error| {
         format!(
             "canonicalize repair attempt artifacts directory {} failed: {error}",
@@ -770,26 +837,41 @@ fn read_terminal_artifact_bytes(
 /// reference is updated only after those bytes are durable. Existing matching
 /// files are reused; a different committed payload is refused rather than
 /// replaced.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "default-store wrappers are the test and remaining-default caller surface; CLI explicit-store uses the _from authority"
+    )
+)]
 pub(crate) fn retain_terminal_evidence(
     root: &Path,
+    attempt_id: &RepairAttemptId,
+    sources: &[BeforeArtifactSource<'_>],
+) -> Result<Vec<RepairAttemptArtifact>, String> {
+    retain_terminal_evidence_from(root, None, attempt_id, sources)
+}
+
+pub(crate) fn retain_terminal_evidence_from(
+    root: &Path,
+    store: Option<&Path>,
     attempt_id: &RepairAttemptId,
     sources: &[BeforeArtifactSource<'_>],
 ) -> Result<Vec<RepairAttemptArtifact>, String> {
     if sources.is_empty() {
         return Err("terminal retention requires at least one after-phase artifact".to_string());
     }
-    let root = root
-        .canonicalize()
-        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
-    let (manifest_path, mut manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
+    let (store, manifest_path, mut manifest) = open_attempt(root, store, attempt_id)?;
+    let root = store.canonical_root().to_path_buf();
     if manifest.state != RepairAttemptState::ReadyToFinish {
         return Err(format!(
             "repair attempt {} is not ready_to_finish; terminal evidence is retained only after a compliant finish",
             attempt_id.as_str()
         ));
     }
-    let destination_directory =
-        repair_attempt_directory(&root, attempt_id).join(REPAIR_ATTEMPT_ARTIFACTS_DIRECTORY);
+    let destination_directory = store
+        .attempt_directory(attempt_id)
+        .join(REPAIR_ATTEMPT_ARTIFACTS_DIRECTORY);
     let mut retained = Vec::with_capacity(sources.len());
     let mut roles = BTreeSet::new();
     let mut names = BTreeSet::new();
@@ -887,7 +969,7 @@ pub(crate) fn retain_terminal_evidence(
         .map_err(|error| format!("serialize repair attempt terminal retention failed: {error}"))?;
     bytes.push(b'\n');
     replace_manifest_bytes(&manifest_path, &bytes)?;
-    read_repair_attempt_manifest_at(&root, &manifest_path)?;
+    read_repair_attempt_manifest_at(&store, &manifest_path)?;
     Ok(retained)
 }
 
@@ -896,17 +978,31 @@ pub(crate) fn retain_terminal_evidence(
 /// artifacts. No-op when the attempt is not finished, already retained, or
 /// the compatibility receipt is missing or bound to a different attempt.
 /// Does not re-run verify or rewrite committed bytes.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "default-store wrappers are the test and remaining-default caller surface; CLI explicit-store uses the _from authority"
+    )
+)]
 pub(crate) fn complete_pending_terminal_retention(
     root: &Path,
     attempt_id: &str,
 ) -> Result<bool, String> {
+    complete_pending_terminal_retention_from(root, None, attempt_id)
+}
+
+pub(crate) fn complete_pending_terminal_retention_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &str,
+) -> Result<bool, String> {
     let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
-    let root = root
-        .canonicalize()
-        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
-    let Ok((_, manifest)) = load_repair_attempt_by_id(&root, &attempt_id) else {
+    let locator = store;
+    let Ok((store, _, manifest)) = open_attempt(root, locator, &attempt_id) else {
         return Ok(false);
     };
+    let root = store.canonical_root().to_path_buf();
     if manifest.state != RepairAttemptState::ReadyToFinish
         || find_terminal_artifact_by_role(&manifest, TERMINAL_RECEIPT_ROLE).is_some()
     {
@@ -947,8 +1043,9 @@ pub(crate) fn complete_pending_terminal_retention(
     if expected_verify != sha256_bytes(&verify_bytes) {
         return Ok(false);
     }
-    retain_terminal_evidence(
+    retain_terminal_evidence_from(
         &root,
+        locator,
         &attempt_id,
         &[
             BeforeArtifactSource {
@@ -966,23 +1063,27 @@ pub(crate) fn complete_pending_terminal_retention(
 
 /// Loads the retained edit-cage policy of a durable attempt from its staged
 /// baseline artifact, re-verifying the artifact digest first.
-pub(crate) fn load_edit_cage_policy(
+
+pub(crate) fn load_edit_cage_policy_from(
     root: &Path,
+    store: Option<&Path>,
     attempt_id: &RepairAttemptId,
 ) -> Result<crate::edit_cage::EditCagePolicy, String> {
-    Ok(load_edit_cage_baseline(root, attempt_id)?.policy().clone())
+    Ok(load_edit_cage_baseline_from(root, store, attempt_id)?
+        .policy()
+        .clone())
 }
 
 /// Loads the retained edit-cage baseline of a durable attempt from its staged
 /// artifact, re-verifying the artifact digest first.
-pub(crate) fn load_edit_cage_baseline(
+
+pub(crate) fn load_edit_cage_baseline_from(
     root: &Path,
+    store: Option<&Path>,
     attempt_id: &RepairAttemptId,
 ) -> Result<crate::edit_cage::AttemptBaseline, String> {
-    let root = root
-        .canonicalize()
-        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
-    let (_, manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
+    let (store, _, manifest) = open_attempt(root, store, attempt_id)?;
+    let root = store.canonical_root();
     let artifact = find_manifest_artifact(&manifest, "edit_cage_baseline")?;
     let path = root.join(&artifact.path);
     let bytes =
@@ -999,11 +1100,14 @@ pub(crate) fn load_edit_cage_baseline(
 /// Reserve the attempt transaction exclusively. Creating the directory with
 /// `create_dir` (not check-then-act) fails closed when the attempt identity is
 /// already taken, so an existing attempt is never reused or overwritten.
-fn reserve_attempt_directory(root: &Path, attempt_id: &RepairAttemptId) -> Result<PathBuf, String> {
-    let attempts_root = root.join(REPAIR_ATTEMPT_DIRECTORY);
-    std::fs::create_dir_all(&attempts_root)
+fn reserve_attempt_directory(
+    store: &RepairAttemptStoreRef,
+    attempt_id: &RepairAttemptId,
+) -> Result<PathBuf, String> {
+    let attempts_root = store.resolved_path();
+    std::fs::create_dir_all(attempts_root)
         .map_err(|error| format!("create {} failed: {error}", attempts_root.display()))?;
-    let attempt_directory = attempts_root.join(attempt_id.as_str());
+    let attempt_directory = store.attempt_directory(attempt_id);
     std::fs::create_dir(&attempt_directory).map_err(|error| {
         if error.kind() == std::io::ErrorKind::AlreadyExists {
             return format!(
@@ -1017,18 +1121,20 @@ fn reserve_attempt_directory(root: &Path, attempt_id: &RepairAttemptId) -> Resul
 }
 
 pub(crate) fn write_repair_attempt_manifest(
-    root: &Path,
+    store: &RepairAttemptStoreRef,
     manifest: &RepairAttemptManifest,
 ) -> Result<PathBuf, String> {
     validate_manifest(manifest)?;
-    let path =
-        repair_attempt_directory(root, &manifest.repair_attempt_id).join(REPAIR_ATTEMPT_MANIFEST);
+    let path = store
+        .attempt_directory(&manifest.repair_attempt_id)
+        .join(REPAIR_ATTEMPT_MANIFEST);
     let mut rendered = serde_json::to_vec_pretty(manifest)
         .map_err(|error| format!("serialize repair attempt manifest failed: {error}"))?;
     rendered.push(b'\n');
     write_bytes_atomic(&path, &rendered)?;
     if manifest.state == RepairAttemptState::AwaitingEdit {
-        let commitment_path = repair_attempt_directory(root, &manifest.repair_attempt_id)
+        let commitment_path = store
+            .attempt_directory(&manifest.repair_attempt_id)
             .join(REPAIR_ATTEMPT_COMMITMENT);
         let commitment = sha256_bytes(&manifest_before_bytes(manifest)?);
         if commitment_path.exists() {
@@ -1273,21 +1379,36 @@ pub(crate) fn write_edit_cage_baseline(
 /// Resolve the durable before inputs for one after-phase invocation. Attempt ID
 /// is the ordinary authority; seam selection remains a compatibility route and
 /// fails closed when more than one awaiting attempt shares that seam.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "default-store wrappers are the test and remaining-default caller surface; CLI explicit-store uses the _from authority"
+    )
+)]
 pub(crate) fn resolve_awaiting_repair_attempt(
     root: &Path,
     attempt_id: Option<&str>,
     seam_id: Option<&str>,
 ) -> Result<ResolvedRepairAttempt, String> {
+    resolve_awaiting_repair_attempt_from(root, None, attempt_id, seam_id)
+}
+
+pub(crate) fn resolve_awaiting_repair_attempt_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: Option<&str>,
+    seam_id: Option<&str>,
+) -> Result<ResolvedRepairAttempt, String> {
     let root_argument = root;
-    let root = root
-        .canonicalize()
-        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let store = resolve_store(root, store, RepairAttemptStoreAccess::Open)?;
+    let canonical_root = store.canonical_root();
     let (manifest_path, manifest) = match (attempt_id, seam_id) {
         (Some(attempt_id), None) => {
             let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
-            load_repair_attempt_by_id(&root, &attempt_id)?
+            load_repair_attempt_by_id(&store, &attempt_id)?
         }
-        (None, Some(seam_id)) => select_awaiting_repair_attempt_by_seam(&root, seam_id)?,
+        (None, Some(seam_id)) => select_awaiting_repair_attempt_by_seam(&store, seam_id)?,
         (Some(_), Some(_)) => {
             return Err(
                 "repair after selection accepts either attempt ID or seam ID, not both".to_string(),
@@ -1304,8 +1425,8 @@ pub(crate) fn resolve_awaiting_repair_attempt(
         ));
     }
     let before_snapshot_path =
-        root.join(&find_manifest_artifact(&manifest, "before_snapshot")?.path);
-    let packet_path = root.join(&find_manifest_artifact(&manifest, "agent_packet")?.path);
+        canonical_root.join(&find_manifest_artifact(&manifest, "before_snapshot")?.path);
+    let packet_path = canonical_root.join(&find_manifest_artifact(&manifest, "agent_packet")?.path);
     Ok(ResolvedRepairAttempt {
         attempt_id: manifest.repair_attempt_id,
         seam_id: manifest.seam_id,
@@ -1325,14 +1446,26 @@ pub(crate) fn resolve_awaiting_repair_attempt(
 /// authority: it requires the committed after state and rewrites exactly
 /// `state = awaiting_edit, after = None`, which the immutable before
 /// commitment re-verifies on the next load — any other drift fails closed.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "default-store wrappers are the test and remaining-default caller surface; CLI explicit-store uses the _from authority"
+    )
+)]
 pub(crate) fn restore_repair_attempt_to_awaiting_edit(
     root: &Path,
     attempt_id: &RepairAttemptId,
 ) -> Result<(), String> {
-    let root = root
-        .canonicalize()
-        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
-    let (manifest_path, mut manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
+    restore_repair_attempt_to_awaiting_edit_from(root, None, attempt_id)
+}
+
+pub(crate) fn restore_repair_attempt_to_awaiting_edit_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+) -> Result<(), String> {
+    let (_store, manifest_path, mut manifest) = open_attempt(root, store, attempt_id)?;
     if manifest.state == RepairAttemptState::AwaitingEdit {
         return Err(format!(
             "repair attempt {} is already awaiting_edit; no restore is needed",
@@ -1366,17 +1499,32 @@ pub(crate) fn restore_repair_attempt_to_awaiting_edit(
 /// transaction admits them (the cage evaluates every committed path), while
 /// a trust-bound attempt, whose selection pins the head, requires the exact
 /// prepared head. Any other head movement records `stale`.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "default-store wrappers are the test and remaining-default caller surface; CLI explicit-store uses the _from authority"
+    )
+)]
 pub(crate) fn finish_repair_attempt(
     root: &Path,
     attempt_id: &RepairAttemptId,
     packet_path: &Path,
     movement: HeadMovement,
 ) -> Result<RepairAttemptAfter, String> {
+    finish_repair_attempt_from(root, None, attempt_id, packet_path, movement)
+}
+
+pub(crate) fn finish_repair_attempt_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    packet_path: &Path,
+    movement: HeadMovement,
+) -> Result<RepairAttemptAfter, String> {
     let root_argument = root;
-    let root = root
-        .canonicalize()
-        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
-    let (manifest_path, mut manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
+    let (store, manifest_path, mut manifest) = open_attempt(root, store, attempt_id)?;
+    let root = store.canonical_root().to_path_buf();
     if manifest.state != RepairAttemptState::AwaitingEdit {
         return Err(after_phase_not_awaiting_error(
             &display_path(root_argument),
@@ -1476,15 +1624,29 @@ pub(crate) fn finish_repair_attempt(
 /// `last_after_refusal` moves, so the refusal can never alter the attempt's
 /// state, its after verdict, or its receipt binding. A later after phase that
 /// reaches `finish_repair_attempt` clears it.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "default-store wrappers are the test and remaining-default caller surface; CLI explicit-store uses the _from authority"
+    )
+)]
 pub(crate) fn record_repair_attempt_after_refusal(
     root: &Path,
     attempt_id: &RepairAttemptId,
     reason: &str,
 ) -> Result<(), String> {
-    let root = root
-        .canonicalize()
-        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
-    let (manifest_path, mut manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
+    record_repair_attempt_after_refusal_from(root, None, attempt_id, reason)
+}
+
+pub(crate) fn record_repair_attempt_after_refusal_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    reason: &str,
+) -> Result<(), String> {
+    let (store, manifest_path, mut manifest) = open_attempt(root, store, attempt_id)?;
+    let root = store.canonical_root().to_path_buf();
     let reason = bounded_refusal_reason(reason);
     if reason.is_empty() {
         return Err("an after-phase refusal needs a non-empty reason".to_string());
@@ -1499,7 +1661,7 @@ pub(crate) fn record_repair_attempt_after_refusal(
         .map_err(|error| format!("serialize repair attempt refusal failed: {error}"))?;
     bytes.push(b'\n');
     replace_manifest_bytes(&manifest_path, &bytes)?;
-    read_repair_attempt_manifest_at(&root, &manifest_path).map(|_| ())
+    read_repair_attempt_manifest_at(&store, &manifest_path).map(|_| ())
 }
 
 /// Upper bound on a recorded after-phase refusal message.
@@ -1609,11 +1771,13 @@ pub(crate) fn after_phase_head_admission(
 }
 
 /// [`after_phase_head_admission`] for an attempt selected by identity.
-pub(crate) fn after_phase_head_admission_by_id(
+
+pub(crate) fn after_phase_head_admission_by_id_from(
     root: &Path,
+    store: Option<&Path>,
     attempt_id: &RepairAttemptId,
 ) -> Result<AfterPhaseHeadAdmission, String> {
-    let manifest = load_repair_attempt_manifest(root, attempt_id)?;
+    let manifest = load_repair_attempt_manifest_from(root, store, attempt_id)?;
     after_phase_head_admission(root, &manifest)
 }
 
@@ -1729,14 +1893,14 @@ pub(crate) fn repair_attempt_state_label(state: &RepairAttemptState) -> &'static
 /// retained edit-cage baseline (committed changes included) without
 /// finishing the attempt, so an after phase refused for incomparable
 /// analysis inputs can name what moved.
-pub(crate) fn analysis_input_changes(
+
+pub(crate) fn analysis_input_changes_from(
     root: &Path,
+    store: Option<&Path>,
     attempt_id: &RepairAttemptId,
 ) -> Result<Vec<String>, String> {
-    let root = root
-        .canonicalize()
-        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
-    let (_, manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
+    let (store, _, manifest) = open_attempt(root, store, attempt_id)?;
+    let root = store.canonical_root().to_path_buf();
     let baseline_artifact = find_manifest_artifact(&manifest, "edit_cage_baseline")?;
     let baseline_bytes = std::fs::read(root.join(&baseline_artifact.path))
         .map_err(|error| format!("read staged edit-cage baseline failed: {error}"))?;
@@ -1765,15 +1929,15 @@ fn is_analysis_input_path(path: &str) -> bool {
 }
 
 fn select_awaiting_repair_attempt_by_seam(
-    root: &Path,
+    store: &RepairAttemptStoreRef,
     seam_id: &str,
 ) -> Result<(PathBuf, RepairAttemptManifest), String> {
     if seam_id.trim().is_empty() {
         return Err("repair after selection requires a non-empty seam ID".to_string());
     }
-    let manifests_root = root.join(REPAIR_ATTEMPT_DIRECTORY);
+    let manifests_root = store.resolved_path();
     let mut matches = Vec::new();
-    for entry in std::fs::read_dir(&manifests_root)
+    for entry in std::fs::read_dir(manifests_root)
         .map_err(|error| format!("read {} failed: {error}", manifests_root.display()))?
     {
         let entry = entry.map_err(|error| format!("read repair attempt entry failed: {error}"))?;
@@ -1781,7 +1945,7 @@ fn select_awaiting_repair_attempt_by_seam(
         if !path.is_file() {
             continue;
         }
-        let manifest = read_repair_attempt_manifest_at(root, &path)?;
+        let manifest = read_repair_attempt_manifest_at(store, &path)?;
         if manifest.seam_id == seam_id && manifest.state == RepairAttemptState::AwaitingEdit {
             matches.push((path, manifest));
         }
@@ -1796,10 +1960,12 @@ fn select_awaiting_repair_attempt_by_seam(
 }
 
 fn load_repair_attempt_by_id(
-    root: &Path,
+    store: &RepairAttemptStoreRef,
     attempt_id: &RepairAttemptId,
 ) -> Result<(PathBuf, RepairAttemptManifest), String> {
-    let path = repair_attempt_directory(root, attempt_id).join(REPAIR_ATTEMPT_MANIFEST);
+    let path = store
+        .attempt_directory(attempt_id)
+        .join(REPAIR_ATTEMPT_MANIFEST);
     if !path.is_file() {
         return Err(format!(
             "repair attempt manifest not found for {} at {}",
@@ -1807,7 +1973,7 @@ fn load_repair_attempt_by_id(
             path.display()
         ));
     }
-    let manifest = read_repair_attempt_manifest_at(root, &path)?;
+    let manifest = read_repair_attempt_manifest_at(store, &path)?;
     if manifest.repair_attempt_id != *attempt_id {
         return Err("repair attempt manifest identity does not match its selector".to_string());
     }
@@ -1815,14 +1981,14 @@ fn load_repair_attempt_by_id(
 }
 
 fn read_repair_attempt_manifest_at(
-    root: &Path,
+    store: &RepairAttemptStoreRef,
     path: &Path,
 ) -> Result<RepairAttemptManifest, String> {
     let raw = std::fs::read_to_string(path)
         .map_err(|error| format!("read {} failed: {error}", path.display()))?;
     let manifest: RepairAttemptManifest = serde_json::from_str(&raw)
         .map_err(|error| format!("decode {} failed: {error}", path.display()))?;
-    validate_manifest_at(root, path, &manifest)?;
+    validate_manifest_at(store, path, &manifest)?;
     Ok(manifest)
 }
 
@@ -2057,22 +2223,24 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
 }
 
 fn validate_manifest_at(
-    root: &Path,
+    store: &RepairAttemptStoreRef,
     manifest_path: &Path,
     manifest: &RepairAttemptManifest,
 ) -> Result<(), String> {
     validate_manifest(manifest)?;
-    let root = root
-        .canonicalize()
-        .map_err(|error| format!("canonicalize manifest root failed: {error}"))?;
+    store.matches_manifest(manifest.store.as_ref())?;
+    let root = store.canonical_root();
     let declared_root = PathBuf::from(&manifest.root)
         .canonicalize()
         .map_err(|error| format!("canonicalize declared manifest root failed: {error}"))?;
     if declared_root != root {
         return Err("repair attempt manifest root does not match selected repository".to_string());
     }
-    let expected_manifest =
-        repair_attempt_directory(&root, &manifest.repair_attempt_id).join(REPAIR_ATTEMPT_MANIFEST);
+    let expected_manifest = store
+        .attempt_directory(&manifest.repair_attempt_id)
+        .canonicalize()
+        .map_err(|error| format!("canonicalize expected attempt directory failed: {error}"))?
+        .join(REPAIR_ATTEMPT_MANIFEST);
     if manifest_path
         .canonicalize()
         .map_err(|error| format!("canonicalize manifest path failed: {error}"))?
@@ -2080,14 +2248,16 @@ fn validate_manifest_at(
     {
         return Err("repair attempt manifest path is not bound to its identity".to_string());
     }
-    let commitment_path = repair_attempt_directory(&root, &manifest.repair_attempt_id)
+    let commitment_path = store
+        .attempt_directory(&manifest.repair_attempt_id)
         .join(REPAIR_ATTEMPT_COMMITMENT);
     let commitment = std::fs::read_to_string(&commitment_path)
         .map_err(|error| format!("read before commitment failed: {error}"))?;
     if commitment.trim() != sha256_bytes(&manifest_before_bytes(manifest)?) {
         return Err("repair attempt before commitment failed".to_string());
     }
-    let artifacts_root = repair_attempt_directory(&root, &manifest.repair_attempt_id)
+    let artifacts_root = store
+        .attempt_directory(&manifest.repair_attempt_id)
         .join(REPAIR_ATTEMPT_ARTIFACTS_DIRECTORY);
     for artifact in &manifest.artifacts {
         let path = root.join(&artifact.path);
@@ -2359,7 +2529,12 @@ mod tests {
             after: None,
             last_after_refusal: None,
             terminal_artifacts: Vec::new(),
+            store: None,
         })
+    }
+
+    fn prepared_store(root: &Path) -> Result<RepairAttemptStoreRef, String> {
+        resolve_store(root, None, RepairAttemptStoreAccess::Prepare)
     }
 
     #[test]
@@ -2530,7 +2705,7 @@ mod tests {
     fn manifest_write_is_atomic_and_round_trips() -> Result<(), String> {
         let root = test_root("manifest")?;
         let manifest = sample_manifest(&root)?;
-        let path = write_repair_attempt_manifest(&root, &manifest)?;
+        let path = write_repair_attempt_manifest(&prepared_store(&root)?, &manifest)?;
         let raw = std::fs::read_to_string(&path)
             .map_err(|error| format!("read {} failed: {error}", path.display()))?;
         let decoded: RepairAttemptManifest = serde_json::from_str(&raw)
@@ -2725,8 +2900,9 @@ mod tests {
     fn attempt_directory_reservation_is_exclusive() -> Result<(), String> {
         let root = test_root("reserve")?;
         let attempt_id = RepairAttemptId::parse("repair-attempt-0123456789abcdef01234567")?;
-        reserve_attempt_directory(&root, &attempt_id)?;
-        let second = reserve_attempt_directory(&root, &attempt_id);
+        let store = prepared_store(&root)?;
+        reserve_attempt_directory(&store, &attempt_id)?;
+        let second = reserve_attempt_directory(&store, &attempt_id);
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
         match second {
@@ -2811,6 +2987,7 @@ mod tests {
             }],
             expected_repository_head: None,
             next_command_suffix: None,
+            store: None,
         });
         if result.is_ok() {
             return Err("begin_repair_attempt accepted a missing artifact source".to_string());
@@ -2844,7 +3021,8 @@ mod tests {
         let root = test_repo_root("publish")?;
         let head = crate::agent::artifact::current_git_head(&root)?;
         let attempt_id = RepairAttemptId::parse("repair-attempt-0123456789abcdef01234567")?;
-        let attempt_directory = reserve_attempt_directory(&root, &attempt_id)?;
+        let store = prepared_store(&root)?;
+        let attempt_directory = reserve_attempt_directory(&store, &attempt_id)?;
         let source = root.join("before.json");
         std::fs::write(&source, b"{}")
             .map_err(|error| format!("write {} failed: {error}", source.display()))?;
@@ -2854,7 +3032,7 @@ mod tests {
         std::fs::create_dir(attempt_directory.join(REPAIR_ATTEMPT_MANIFEST))
             .map_err(|error| format!("create occupied manifest path failed: {error}"))?;
         let result = complete_repair_attempt(
-            &root,
+            &store,
             &attempt_directory,
             AttemptPublication {
                 root_argument: &root,
@@ -2967,10 +3145,9 @@ mod tests {
         {
             return Err(format!("unexpected exact finish result: {after:?}"));
         }
-        let (_, first_manifest) =
-            load_repair_attempt_by_id(&root, &first.manifest.repair_attempt_id)?;
-        let (_, second_manifest) =
-            load_repair_attempt_by_id(&root, &second.manifest.repair_attempt_id)?;
+        let (_, _, first_manifest) = open_attempt(&root, None, &first.manifest.repair_attempt_id)?;
+        let (_, _, second_manifest) =
+            open_attempt(&root, None, &second.manifest.repair_attempt_id)?;
         if first_manifest.state != RepairAttemptState::ReadyToFinish
             || second_manifest.state != RepairAttemptState::AwaitingEdit
         {
@@ -3008,6 +3185,7 @@ mod tests {
             }],
             expected_repository_head: Some(drifted_pin),
             next_command_suffix: None,
+            store: None,
         });
         match mismatch {
             Err(error) if error.contains("head moved") => {}
@@ -3052,6 +3230,7 @@ mod tests {
             next_command_suffix: Some(
                 " --edit-authorized --edit-authority <operator-or-agent-identity>",
             ),
+            store: None,
         })?;
         for fragment in ["--edit-authorized", "--edit-authority"] {
             if !published.manifest.next_command.contains(fragment) {
@@ -3175,7 +3354,7 @@ mod tests {
             &resolved.packet_path,
             HeadMovement::AdmitDescendantCommits,
         )?;
-        let (_, finished) = load_repair_attempt_by_id(&root, &attempt_id)?;
+        let (_, _, finished) = open_attempt(&root, None, &attempt_id)?;
         if finished.state == RepairAttemptState::AwaitingEdit || finished.after.is_none() {
             return Err(format!(
                 "the sample attempt did not finish into a terminal state: {:?}",
@@ -3186,7 +3365,7 @@ mod tests {
         // Restoring returns the exact before state, so the identical retry
         // resolves the attempt again.
         restore_repair_attempt_to_awaiting_edit(&root, &attempt_id)?;
-        let (_, restored) = load_repair_attempt_by_id(&root, &attempt_id)?;
+        let (_, _, restored) = open_attempt(&root, None, &attempt_id)?;
         if restored.state != RepairAttemptState::AwaitingEdit || restored.after.is_some() {
             return Err(format!(
                 "the restored attempt is not awaiting_edit without an after block: {:?}",
@@ -3219,7 +3398,7 @@ mod tests {
         let root = test_repo_root("refusal")?;
         let prepared = prepare_sample_attempt(&root, "seam:sample", "refusal")?;
         let attempt_id = prepared.manifest.repair_attempt_id.clone();
-        let (manifest_path, _) = load_repair_attempt_by_id(&root, &attempt_id)?;
+        let (_, manifest_path, _) = open_attempt(&root, None, &attempt_id)?;
         let before_bytes = std::fs::read(&manifest_path)
             .map_err(|error| format!("read {} failed: {error}", manifest_path.display()))?;
         if String::from_utf8_lossy(&before_bytes).contains("last_after_refusal") {
@@ -3228,7 +3407,7 @@ mod tests {
 
         let long_reason = format!("agent verify refused: {}", "x".repeat(10_000));
         record_repair_attempt_after_refusal(&root, &attempt_id, &long_reason)?;
-        let (_, refused) = load_repair_attempt_by_id(&root, &attempt_id)?;
+        let (_, _, refused) = open_attempt(&root, None, &attempt_id)?;
         let refusal = refused
             .last_after_refusal
             .clone()
@@ -3276,7 +3455,7 @@ mod tests {
             &resolved.packet_path,
             HeadMovement::AdmitDescendantCommits,
         )?;
-        let (_, finished) = load_repair_attempt_by_id(&root, &attempt_id)?;
+        let (_, _, finished) = open_attempt(&root, None, &attempt_id)?;
         if finished.last_after_refusal.is_some() {
             return Err("finish must clear the earlier refusal".to_string());
         }
@@ -3407,6 +3586,7 @@ mod tests {
             ],
             expected_repository_head: None,
             next_command_suffix: None,
+            store: None,
         })
     }
 
@@ -3756,6 +3936,142 @@ mod tests {
                 }
             }
             other => return Err(format!("expected issued retried receipt, got {other:?}")),
+        }
+
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_store_before_and_after_share_identity_and_stay_isolated() -> Result<(), String> {
+        let root = test_repo_root("store-roundtrip")?;
+        let alt = Path::new("target/ripr/alt-attempts");
+        let first = {
+            let workflow = root.join("target/ripr/workflow");
+            std::fs::create_dir_all(&workflow)
+                .map_err(|error| format!("create {} failed: {error}", workflow.display()))?;
+            let before = workflow.join("before-alt.json");
+            let packet = workflow.join("packet-alt.json");
+            let baseline = workflow.join("baseline-alt.json");
+            std::fs::write(&before, b"{}")
+                .map_err(|error| format!("write {} failed: {error}", before.display()))?;
+            let packet_text = serde_json::json!({
+                "seam_id": "seam:alt",
+                "allowed_edit_surface": ["tests/target.rs"],
+                "forbidden_files": []
+            })
+            .to_string();
+            std::fs::write(&packet, packet_text.as_bytes())
+                .map_err(|error| format!("write {} failed: {error}", packet.display()))?;
+            let policy = edit_cage_policy_from_packet(&packet_text, "seam:alt")?;
+            write_edit_cage_baseline(&root, &baseline, &policy)?;
+            begin_repair_attempt_with(BeginRepairAttemptOptions {
+                root: &root,
+                root_argument: &root,
+                seam_id: "seam:alt",
+                sources: &[
+                    BeforeArtifactSource {
+                        role: "before_snapshot",
+                        path: &before,
+                    },
+                    BeforeArtifactSource {
+                        role: "agent_packet",
+                        path: &packet,
+                    },
+                    BeforeArtifactSource {
+                        role: "edit_cage_baseline",
+                        path: &baseline,
+                    },
+                ],
+                expected_repository_head: None,
+                next_command_suffix: None,
+                store: Some(alt),
+            })?
+        };
+        if first.manifest.store.is_none() {
+            return Err("explicit store omitted its manifest identity".to_string());
+        }
+        if !first.manifest.next_command.contains("--store")
+            || !first
+                .manifest
+                .next_command
+                .contains("target/ripr/alt-attempts")
+        {
+            return Err(format!(
+                "explicit next command lost --store: {}",
+                first.manifest.next_command
+            ));
+        }
+        let encoded = serde_json::to_value(&first.manifest)
+            .map_err(|error| format!("encode explicit manifest failed: {error}"))?;
+        if encoded.get("store").and_then(|value| value.get("locator"))
+            != Some(&serde_json::Value::String(
+                "target/ripr/alt-attempts".to_string(),
+            ))
+        {
+            return Err(format!(
+                "explicit store identity was not retained: {encoded}"
+            ));
+        }
+
+        let resolved = resolve_awaiting_repair_attempt_from(
+            &root,
+            Some(alt),
+            Some(first.manifest.repair_attempt_id.as_str()),
+            None,
+        )?;
+        if resolved.attempt_id != first.manifest.repair_attempt_id {
+            return Err("explicit after resolved a different attempt".to_string());
+        }
+
+        let default_miss = resolve_awaiting_repair_attempt(
+            &root,
+            Some(first.manifest.repair_attempt_id.as_str()),
+            None,
+        );
+        match default_miss {
+            Err(error) if error.contains("not found") => {}
+            other => {
+                return Err(format!(
+                    "default store must not see an explicit-store attempt: {other:?}"
+                ));
+            }
+        }
+
+        let other = Path::new("target/ripr/other-attempts");
+        let other_miss = resolve_awaiting_repair_attempt_from(
+            &root,
+            Some(other),
+            Some(first.manifest.repair_attempt_id.as_str()),
+            None,
+        );
+        match other_miss {
+            Err(error) if error.contains("does not fall back") || error.contains("not found") => {}
+            other => {
+                return Err(format!(
+                    "a second explicit store must not resolve the first: {other:?}"
+                ));
+            }
+        }
+
+        let defaulted = prepare_sample_attempt(&root, "seam:default", "default")?;
+        if defaulted.manifest.store.is_some() {
+            return Err("default store leaked a manifest store object".to_string());
+        }
+        if defaulted.manifest.next_command.contains("--store") {
+            return Err(format!(
+                "default next command named --store: {}",
+                defaulted.manifest.next_command
+            ));
+        }
+        let default_bytes = serde_json::to_vec(&defaulted.manifest)
+            .map_err(|error| format!("encode default manifest failed: {error}"))?;
+        if default_bytes
+            .windows(7)
+            .any(|window| window == b"\"store\"")
+        {
+            return Err("default manifest serialized a store field".to_string());
         }
 
         std::fs::remove_dir_all(&root)

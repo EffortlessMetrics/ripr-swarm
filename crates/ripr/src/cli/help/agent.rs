@@ -172,10 +172,13 @@ change cache behavior, or touch LSP/MCP surfaces.
 "#;
 pub(super) const AGENT_STATUS_HELP: &str = r#"Report local agent-loop artifact state and the next command to run.
 
-Usage: ripr agent status [--root PATH] [--json] [--out PATH]
+Usage: ripr agent status [--root PATH] [--store PATH] [--json] [--out PATH]
 
 Options:
   --root PATH      Workspace root. Defaults to current directory.
+  --store PATH     Explicit repair-attempt store, resolved against --root.
+                   Defaults to `target/ripr/repair-attempts`. Missing explicit
+                   stores do not fall back to the default.
   --json           Emit the machine-readable status report. Human Markdown is the default.
   --out PATH       Must resolve to the default workflow directory
                    (target/ripr/workflow); any other path fails closed
@@ -204,13 +207,16 @@ tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
 "#;
 pub(super) const AGENT_REPAIR_HELP: &str = r#"Run the before/edit/after repair transaction and its verification phase for one named gap.
 
-Usage: ripr agent repair [--root PATH] --seam-id ID --phase before
-       ripr agent repair [--root PATH] (--attempt ID|--seam-id ID) --phase after
-       ripr agent repair [--root PATH] --attempt ID --phase verify
+Usage: ripr agent repair [--root PATH] [--store PATH] --seam-id ID --phase before
+       ripr agent repair [--root PATH] [--store PATH] (--attempt ID|--seam-id ID) --phase after
+       ripr agent repair [--root PATH] [--store PATH] --attempt ID --phase verify
            [--verify-authorized --verify-authority ID] [--verify-rollback]
 
 Options:
   --root PATH          Workspace root. Defaults to current directory.
+  --store PATH         Explicit repair-attempt store, resolved against --root.
+                       Defaults to `target/ripr/repair-attempts`. Missing
+                       explicit stores do not fall back to the default.
   --seam-id ID         Select one visible seam by ID; required for `before` and
                        the compatibility selector for `after`. `ripr pilot
                        --root .` lists seam IDs; `ripr check` finding IDs

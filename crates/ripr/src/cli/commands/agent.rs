@@ -405,13 +405,14 @@ fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), Co
 }
 
 fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
-    run_agent_receipt_for_attempt(options, None, None)
+    run_agent_receipt_for_attempt(options, None, None, None)
 }
 
 fn run_agent_receipt_for_attempt(
     options: AgentReceiptOptions,
     attempt_id: Option<&str>,
     attempt_packet_path: Option<&Path>,
+    store: Option<&Path>,
 ) -> Result<(), String> {
     ensure_command_root(&options.root, "agent receipt")?;
 
@@ -431,8 +432,9 @@ fn run_agent_receipt_for_attempt(
             .and_then(|inputs| inputs.get("before_content_sha256"))
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| "agent verify JSON is missing before_content_sha256".to_string())?;
-        crate::app::repair_attempt::validate_verify_binding(
+        crate::app::repair_attempt::validate_verify_binding_from(
             &options.root,
+            store,
             attempt_id,
             &validated.input_paths.before,
             before_sha256,
@@ -444,8 +446,9 @@ fn run_agent_receipt_for_attempt(
         .root
         .join(crate::app::repair_attempt::REPAIR_ATTEMPT_DIRECTORY);
     let repair_attempt_binding = if packet_path.exists() || attempts_root.exists() {
-        Some(crate::app::repair_attempt::receipt_binding(
+        Some(crate::app::repair_attempt::receipt_binding_from(
             &options.root,
+            store,
             &options.seam_id,
             packet_path,
             attempt_id,
@@ -559,7 +562,11 @@ fn run_agent_status(options: AgentStatusOptions) -> Result<(), String> {
             ));
         }
     }
-    let report = app::agent_status::build_agent_status_report(&options.root, &options.root);
+    let report = app::agent_status::build_agent_status_report_from(
+        &options.root,
+        &options.root,
+        options.store.as_deref(),
+    );
     if options.json {
         let rendered = app::agent_status::render_agent_status_json(&report)?;
         print!("{rendered}");
@@ -607,12 +614,14 @@ fn run_agent_review_summary(options: AgentReviewSummaryOptions) -> Result<(), St
 fn run_agent_repair(options: AgentRepairOptions) -> Result<(), CommandError> {
     let mut refusal = AfterPhaseRefusalContext::default();
     let result = run_agent_repair_phase(options, &mut refusal);
-    if let (Err(error), Some((root, attempt_id))) = (&result, &refusal.selected_attempt)
-        && let Err(record_error) = crate::app::repair_attempt::record_repair_attempt_after_refusal(
-            root,
-            attempt_id,
-            &after_refusal_reason(error, &refusal.narration),
-        )
+    if let (Err(error), Some((root, store, attempt_id))) = (&result, &refusal.selected_attempt)
+        && let Err(record_error) =
+            crate::app::repair_attempt::record_repair_attempt_after_refusal_from(
+                root,
+                store.as_deref(),
+                attempt_id,
+                &after_refusal_reason(error, &refusal.narration),
+            )
     {
         eprintln!(
             "ripr: could not record the after-phase refusal on attempt `{}`: {record_error}",
@@ -624,7 +633,7 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), CommandError> {
     // Operational errors after selection stay ordinary failures: exit 2.
     if refusal.typed
         && !refusal.stdout_document_printed
-        && let (Err(error), Some((_, attempt_id))) = (&result, &refusal.selected_attempt)
+        && let (Err(error), Some((_, _, attempt_id))) = (&result, &refusal.selected_attempt)
     {
         // Exit 3 means "read the stdout JSON document for the answer"
         // (docs/EXIT_CODES.md): a typed refusal before any verify document
@@ -649,7 +658,11 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), CommandError> {
 /// refusal was a deliberate named refusal rather than an operational error.
 #[derive(Default)]
 struct AfterPhaseRefusalContext {
-    selected_attempt: Option<(PathBuf, crate::app::repair_attempt::RepairAttemptId)>,
+    selected_attempt: Option<(
+        PathBuf,
+        Option<PathBuf>,
+        crate::app::repair_attempt::RepairAttemptId,
+    )>,
     narration: Vec<String>,
     /// Set only at a deliberate named refusal (diverged HEAD, drifted
     /// analysis inputs, a no-movement verify refusal, or a replaced
@@ -732,7 +745,9 @@ fn run_agent_repair_phase(
         edit_authorization,
         verify_authorization,
         verify_rollback,
+        store,
     } = options;
+    let store_ref = store.as_deref();
 
     match phase {
         AgentRepairPhase::Before => {
@@ -805,14 +820,18 @@ fn run_agent_repair_phase(
         AgentRepairPhase::After => {
             ensure_command_root(&root, "agent repair --phase after")?;
             if let Some(id) = attempt_id.as_deref() {
-                crate::app::repair_attempt::complete_pending_terminal_retention(&root, id)?;
+                crate::app::repair_attempt::complete_pending_terminal_retention_from(
+                    &root, store_ref, id,
+                )?;
             }
-            let attempt = crate::app::repair_attempt::resolve_awaiting_repair_attempt(
+            let attempt = crate::app::repair_attempt::resolve_awaiting_repair_attempt_from(
                 &root,
+                store_ref,
                 attempt_id.as_deref(),
                 seam_id.as_deref(),
             )?;
-            refusal.selected_attempt = Some((root.clone(), attempt.attempt_id.clone()));
+            refusal.selected_attempt =
+                Some((root.clone(), store.clone(), attempt.attempt_id.clone()));
             eprintln!(
                 "ripr: agent repair --phase after for attempt `{}` (seam `{}`) at {}",
                 attempt.attempt_id.as_str(),
@@ -848,8 +867,9 @@ fn run_agent_repair_phase(
 
             // The trust binding, when the attempt carries one, is re-verified
             // by digest immediately before the applied edit is recorded.
-            let retained_binding = crate::app::python_repair_binding::load_retained_binding(
+            let retained_binding = crate::app::python_repair_binding::load_retained_binding_from(
                 &root,
+                store_ref,
                 &attempt.attempt_id,
             )?;
             let verified_binding = match &retained_binding {
@@ -879,40 +899,42 @@ fn run_agent_repair_phase(
             // restore the prepared head. A trust-bound attempt keeps its
             // exact-head rule and its typed `stale` record. The rule is the
             // attempt authority's, which `ripr agent status` reads too.
-            let head_movement = match crate::app::repair_attempt::after_phase_head_admission_by_id(
-                &root,
-                &attempt.attempt_id,
-            )? {
-                crate::app::repair_attempt::AfterPhaseHeadAdmission::Current { movement } => {
-                    movement
-                }
-                crate::app::repair_attempt::AfterPhaseHeadAdmission::FinishesStale { .. } => {
-                    crate::edit_cage::HeadMovement::RequireBaselineHead
-                }
-                crate::app::repair_attempt::AfterPhaseHeadAdmission::RefusedDiverged {
-                    current_head,
-                } => {
-                    for line in crate::app::repair_attempt::diverged_head_recovery(
-                        &crate::agent::loop_commands::display_path(&root),
-                        attempt.attempt_id.as_str(),
-                        &attempt.seam_id,
-                        &attempt.repository_head,
-                        &current_head,
-                    )
-                    .lines()
-                    {
-                        refusal.narrate(line);
+            let head_movement =
+                match crate::app::repair_attempt::after_phase_head_admission_by_id_from(
+                    &root,
+                    store_ref,
+                    &attempt.attempt_id,
+                )? {
+                    crate::app::repair_attempt::AfterPhaseHeadAdmission::Current { movement } => {
+                        movement
                     }
-                    // A deliberate named refusal: narrated cause and recovery
-                    // above, so it maps to the decision exit code 3.
-                    refusal.typed = true;
-                    return Err(format!(
-                        "repair attempt `{}` cannot finish: HEAD {current_head} does not descend from its before-phase head {}",
-                        attempt.attempt_id.as_str(),
-                        attempt.repository_head
-                    ));
-                }
-            };
+                    crate::app::repair_attempt::AfterPhaseHeadAdmission::FinishesStale {
+                        ..
+                    } => crate::edit_cage::HeadMovement::RequireBaselineHead,
+                    crate::app::repair_attempt::AfterPhaseHeadAdmission::RefusedDiverged {
+                        current_head,
+                    } => {
+                        for line in crate::app::repair_attempt::diverged_head_recovery(
+                            &crate::agent::loop_commands::display_path(&root),
+                            attempt.attempt_id.as_str(),
+                            &attempt.seam_id,
+                            &attempt.repository_head,
+                            &current_head,
+                        )
+                        .lines()
+                        {
+                            refusal.narrate(line);
+                        }
+                        // A deliberate named refusal: narrated cause and recovery
+                        // above, so it maps to the decision exit code 3.
+                        refusal.typed = true;
+                        return Err(format!(
+                            "repair attempt `{}` cannot finish: HEAD {current_head} does not descend from its before-phase head {}",
+                            attempt.attempt_id.as_str(),
+                            attempt.repository_head
+                        ));
+                    }
+                };
 
             // Review summaries consume the canonical diff-scoped producer
             // outcome. Generate it from the same current root before issuing
@@ -938,7 +960,7 @@ fn run_agent_repair_phase(
                     // (exit 2) even though the attempt was already selected.
                     if agent_verify_error_is_typed_refusal(&error) {
                         if error == AGENT_VERIFY_INPUT_DRIFT_ERROR {
-                            for line in repair_after_input_drift_lines(&root, &attempt) {
+                            for line in repair_after_input_drift_lines(&root, store_ref, &attempt) {
                                 refusal.narrate(line);
                             }
                         }
@@ -959,10 +981,10 @@ fn run_agent_repair_phase(
             // an orchestrator can parse with one JSON.parse call.
             let after_tail = |refusal: &mut AfterPhaseRefusalContext| -> Result<String, String> {
                 use crate::app::python_repair_binding::{
-                    ManifestConfirmationError, confirm_manifest_unchanged, write_apply_record,
+                    ManifestConfirmationError, confirm_manifest_unchanged, write_apply_record_from,
                 };
                 use crate::app::repair_attempt::{
-                    finish_repair_attempt, restore_repair_attempt_to_awaiting_edit,
+                    finish_repair_attempt_from, restore_repair_attempt_to_awaiting_edit_from,
                 };
 
                 // The retained binding's manifest bytes are confirmed again
@@ -988,8 +1010,13 @@ fn run_agent_repair_phase(
                 // This makes the durable delta the exact delta the receipt
                 // binds, while the receipt itself remains outside the measured
                 // edit window.
-                let cage_after =
-                    finish_repair_attempt(&root, &attempt.attempt_id, &packet_path, head_movement)?;
+                let cage_after = finish_repair_attempt_from(
+                    &root,
+                    store_ref,
+                    &attempt.attempt_id,
+                    &packet_path,
+                    head_movement,
+                )?;
                 eprintln!(
                     "ripr: edit-cage verdict for attempt `{}`: {:?}",
                     cage_after.attempt_id.as_str(),
@@ -997,6 +1024,7 @@ fn run_agent_repair_phase(
                 );
                 for line in repair_after_cage_recovery_lines(
                     &root,
+                    store_ref,
                     &attempt.seam_id,
                     &attempt.repository_head,
                     &cage_after,
@@ -1021,6 +1049,7 @@ fn run_agent_repair_phase(
                     },
                     Some(cage_after.attempt_id.as_str()),
                     Some(&packet_path),
+                    store_ref,
                 );
 
                 // Attempt-local copy of the just-written receipt and the
@@ -1028,8 +1057,9 @@ fn run_agent_repair_phase(
                 // projection above can be replaced by a later finish; this
                 // retain is the surviving authority for this attempt.
                 if receipt_result.is_ok() {
-                    crate::app::repair_attempt::retain_terminal_evidence(
+                    crate::app::repair_attempt::retain_terminal_evidence_from(
                         &root,
+                        store_ref,
                         &attempt.attempt_id,
                         &[
                             crate::app::repair_attempt::BeforeArtifactSource {
@@ -1048,7 +1078,8 @@ fn run_agent_repair_phase(
                 // single stdout document. Built here it reads exactly what
                 // `ripr agent status --json` would print at this point: after
                 // the finish and the receipt write, before the apply record.
-                let status_report = app::agent_status::build_agent_status_report(&root, &root);
+                let status_report =
+                    app::agent_status::build_agent_status_report_from(&root, &root, store_ref);
                 let status_rendered = app::agent_status::render_agent_status_json(&status_report)?;
 
                 // The apply record is published last: the receipt re-evaluates
@@ -1076,8 +1107,9 @@ fn run_agent_repair_phase(
                             refusal.typed = true;
                         }
                     } else {
-                        let record_outcome = write_apply_record(
+                        let record_outcome = write_apply_record_from(
                             &root,
+                            store_ref,
                             &attempt.attempt_id,
                             &binding.artifact_sha256,
                             verified,
@@ -1097,8 +1129,9 @@ fn run_agent_repair_phase(
                                 // attempt to awaiting_edit: the identical retry is
                                 // otherwise rejected and the record could never be
                                 // recreated.
-                                match restore_repair_attempt_to_awaiting_edit(
+                                match restore_repair_attempt_to_awaiting_edit_from(
                                     &root,
+                                    store_ref,
                                     &attempt.attempt_id,
                                 ) {
                                     Ok(()) => {
@@ -1181,6 +1214,7 @@ fn run_agent_repair_phase(
                         authority: verify_authorization.authority.clone(),
                     },
                     rollback: verify_rollback,
+                    store: store_ref,
                 },
             )?;
             let rendered = std::fs::read_to_string(&receipt_path).map_err(|error| {
@@ -1318,6 +1352,7 @@ fn authored_test_changed(
 /// that recovers: a new attempt prepared while the gap still exists.
 fn repair_after_cage_recovery_lines(
     root: &Path,
+    store: Option<&Path>,
     seam_id: &str,
     before_head: &str,
     after: &crate::app::repair_attempt::RepairAttemptAfter,
@@ -1355,7 +1390,7 @@ fn repair_after_cage_recovery_lines(
                 violations.len() - CAGE_RECOVERY_MAX_VIOLATIONS
             ));
         }
-        lines.extend(untracked_output_hints(root, after));
+        lines.extend(untracked_output_hints(root, store, after));
     }
     let root_arg = shell_arg(&display_path(root));
     let seam_arg = shell_arg(seam_id);
@@ -1381,11 +1416,13 @@ fn repair_after_cage_recovery_lines(
 /// leaves its verdict unchanged. An unreadable baseline yields no hint.
 fn untracked_output_hints(
     root: &Path,
+    store: Option<&Path>,
     after: &crate::app::repair_attempt::RepairAttemptAfter,
 ) -> Vec<String> {
     use crate::edit_cage::EditCageViolationKind;
 
-    let Ok(baseline) = crate::app::repair_attempt::load_edit_cage_baseline(root, &after.attempt_id)
+    let Ok(baseline) =
+        crate::app::repair_attempt::load_edit_cage_baseline_from(root, store, &after.attempt_id)
     else {
         return Vec::new();
     };
@@ -1434,6 +1471,7 @@ fn untracked_output_hints(
 /// still awaiting the edit: the lines name the changed inputs and the rerun.
 fn repair_after_input_drift_lines(
     root: &Path,
+    store: Option<&Path>,
     attempt: &crate::app::repair_attempt::ResolvedRepairAttempt,
 ) -> Vec<String> {
     use crate::agent::loop_commands::{display_path, shell_arg};
@@ -1442,7 +1480,8 @@ fn repair_after_input_drift_lines(
     let attempt_arg = shell_arg(attempt.attempt_id.as_str());
     let seam_arg = shell_arg(&attempt.seam_id);
     let mut lines = Vec::new();
-    match crate::app::repair_attempt::analysis_input_changes(root, &attempt.attempt_id) {
+    match crate::app::repair_attempt::analysis_input_changes_from(root, store, &attempt.attempt_id)
+    {
         Ok(paths) if !paths.is_empty() => {
             lines.push(format!(
                 "analysis inputs changed after the before phase: {}. The before and after snapshots must analyze the same Cargo manifests, Git-tracked Cargo.lock files, and ripr.toml (an untracked Cargo.lock that the build writes does not count).",

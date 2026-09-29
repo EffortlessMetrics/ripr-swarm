@@ -13,8 +13,9 @@ use crate::agent::loop_commands::{
 use crate::app::repair_attempt::{
     AfterPhaseHeadAdmission, AttemptTerminalReceipt, DivergedHeadRecovery,
     REPAIR_ATTEMPT_DIRECTORY, RepairAttemptInventoryEntry, RepairAttemptManifest,
-    RepairAttemptState, after_phase_head_admission, diverged_head_recovery,
-    inventory_repair_attempts, load_attempt_terminal_receipt,
+    RepairAttemptState, RepairAttemptStoreAccess, after_phase_head_admission,
+    diverged_head_recovery, inventory_repair_attempts_from, load_attempt_terminal_receipt,
+    resolve_store,
 };
 use crate::output::agent_receipt::AgentReceiptReading;
 use crate::output::markdown::{COMMAND_SHELL_DISCLOSURE, PowershellForm, powershell_form};
@@ -284,6 +285,14 @@ impl AgentStatusReport {
 }
 
 pub(crate) fn build_agent_status_report(root: &Path, root_argument: &Path) -> AgentStatusReport {
+    build_agent_status_report_from(root, root_argument, None)
+}
+
+pub(crate) fn build_agent_status_report_from(
+    root: &Path,
+    root_argument: &Path,
+    store: Option<&Path>,
+) -> AgentStatusReport {
     let root_display = display_path(root_argument);
     // #3999: every next command binds the selected root once, here; the
     // report's `root` field keeps the invocation spelling.
@@ -298,7 +307,8 @@ pub(crate) fn build_agent_status_report(root: &Path, root_argument: &Path) -> Ag
     warnings.extend(stale_warnings(&artifacts));
     let missing_commands = missing_commands(root_argument, seam.as_ref(), &artifacts);
     let receipt = read_workflow_receipt(root);
-    let repair_attempts = inspect_repair_attempts(root, &command_root, &receipt, &mut warnings);
+    let repair_attempts =
+        inspect_repair_attempts(root, &command_root, &receipt, &mut warnings, store);
     let next_command = select_next_command(
         root,
         &command_root,
@@ -327,13 +337,28 @@ fn inspect_repair_attempts(
     root_display: &str,
     receipt: &WorkflowReceiptRead,
     warnings: &mut Vec<AgentStatusWarning>,
+    store: Option<&Path>,
 ) -> Option<Vec<AgentStatusRepairAttempt>> {
-    let entries = match inventory_repair_attempts(root) {
+    let resolved = match resolve_store(root, store, RepairAttemptStoreAccess::Open) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            warnings.push(AgentStatusWarning {
+                kind: "repair_attempt_unreadable".to_string(),
+                artifact: store
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| REPAIR_ATTEMPT_DIRECTORY.to_string()),
+                message: format!("could not open repair attempt store: {error}"),
+            });
+            return None;
+        }
+    };
+    let store_label = resolved.locator().to_string();
+    let entries = match inventory_repair_attempts_from(root, store) {
         Ok(entries) => entries,
         Err(error) => {
             warnings.push(AgentStatusWarning {
                 kind: "repair_attempt_unreadable".to_string(),
-                artifact: REPAIR_ATTEMPT_DIRECTORY.to_string(),
+                artifact: store_label,
                 message: format!("could not list repair attempts: {error}"),
             });
             return None;
@@ -358,7 +383,7 @@ fn inspect_repair_attempts(
                 trusted = false;
                 warnings.push(AgentStatusWarning {
                     kind: "repair_attempt_unreadable".to_string(),
-                    artifact: format!("{REPAIR_ATTEMPT_DIRECTORY}/{directory}/attempt.json"),
+                    artifact: format!("{store_label}/{directory}/attempt.json"),
                     message: format!(
                         "repair attempt `{directory}` was refused ({error}); status selects no next command until it is repaired or removed"
                     ),
@@ -1840,7 +1865,7 @@ fn modified_unix_ms(time: Option<SystemTime>) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::Duration;
 
     fn unique_agent_status_test_dir(label: &str) -> PathBuf {
@@ -1977,6 +2002,61 @@ mod tests {
                 "repair loop must not require the superseded projection `{}`",
                 artifact["name"]
             );
+        }
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// Status consumes the same store resolver as before/after. An attempt in
+    /// an explicit store is invisible to the default store, and a missing
+    /// explicit store does not fall back to the default inventory.
+    #[test]
+    fn agent_status_reads_only_the_selected_store() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("selected-store");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        run_git(&root, &["init"])?;
+        run_git(
+            &root,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )?;
+        run_git(&root, &["config", "user.name", "RIPR Test"])?;
+        write_file(&root.join("README.md"), "# test\n")?;
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        let alt = Path::new("target/ripr/alt-attempts");
+        prepare_attempt_fixture_in(&root, "seam:explicit-store", Some(alt))?;
+
+        let default_report = build_agent_status_report(&root, &root);
+        if !default_report.repair_attempts.is_empty() {
+            std::fs::remove_dir_all(&root).ok();
+            return Err(format!(
+                "default status saw explicit-store attempts: {:?}",
+                default_report.repair_attempts
+            ));
+        }
+
+        let explicit_report = build_agent_status_report_from(&root, &root, Some(alt));
+        if explicit_report.repair_attempts.len() != 1 {
+            std::fs::remove_dir_all(&root).ok();
+            return Err(format!(
+                "explicit status missed the prepared attempt: {:?}",
+                explicit_report.repair_attempts
+            ));
+        }
+
+        let missing = Path::new("target/ripr/missing-store");
+        let missing_report = build_agent_status_report_from(&root, &root, Some(missing));
+        let warned = missing_report.warnings.iter().any(|warning| {
+            warning.kind == "repair_attempt_unreadable"
+                && warning.message.contains("does not fall back")
+        });
+        if !missing_report.repair_attempts.is_empty() || !warned {
+            std::fs::remove_dir_all(&root).ok();
+            return Err(format!(
+                "missing explicit store fell back or stayed silent: attempts={:?} warnings={:?}",
+                missing_report.repair_attempts, missing_report.warnings
+            ));
         }
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
@@ -2185,6 +2265,7 @@ mod tests {
             }),
             last_after_refusal: None,
             terminal_artifacts: Vec::new(),
+            store: None,
         })
     }
 
@@ -2195,6 +2276,14 @@ mod tests {
     /// Publishes one real repair attempt the way the before phase does, so
     /// status reads a trusted attempt directory rather than a synthetic one.
     fn prepare_attempt_fixture(root: &Path, seam_id: &str) -> Result<(), String> {
+        prepare_attempt_fixture_in(root, seam_id, None)
+    }
+
+    fn prepare_attempt_fixture_in(
+        root: &Path,
+        seam_id: &str,
+        store: Option<&Path>,
+    ) -> Result<(), String> {
         use crate::app::repair_attempt::{
             BeforeArtifactSource, BeginRepairAttemptOptions, begin_repair_attempt_with,
             edit_cage_policy_from_packet, write_edit_cage_baseline,
@@ -2235,6 +2324,7 @@ mod tests {
             ],
             expected_repository_head: None,
             next_command_suffix: None,
+            store,
         })?;
         Ok(())
     }

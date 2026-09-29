@@ -242,6 +242,7 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
             next_command_suffix: binding
                 .as_ref()
                 .map(|_| " --edit-authorized --edit-authority <operator-or-agent-identity>"),
+            store: options.store.as_deref(),
         },
     )?;
     if let Some(binding) = &binding {
