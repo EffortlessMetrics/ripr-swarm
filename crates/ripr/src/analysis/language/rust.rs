@@ -16,6 +16,7 @@ use super::super::{
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 use crate::analysis::cancellation;
 use crate::analysis::facts::{FunctionSummary, RustIndex};
+use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
 use crate::config::OraclePolicy;
 use crate::domain::{
     ExposureClass, Finding, Probe, SourceCurrentness, StaticLimitKind, StopReason,
@@ -1431,113 +1432,9 @@ fn generated_pattern_matches(pattern: &str, path: &Path) -> bool {
     if pattern.contains('/') {
         path_glob_matches(pattern, &normalized_path)
     } else {
-        path.file_name().is_some_and(|name| {
-            let pattern_chars = pattern.chars().collect::<Vec<_>>();
-            let name_chars = name.to_string_lossy().chars().collect::<Vec<_>>();
-            let mut memo = vec![vec![None; name_chars.len() + 1]; pattern_chars.len() + 1];
-            glob_segment_chars_match(&pattern_chars, &name_chars, 0, 0, &mut memo)
-        })
+        path.file_name()
+            .is_some_and(|name| segment_glob_matches(pattern, &name.to_string_lossy()))
     }
-}
-
-fn path_glob_matches(pattern: &str, path: &str) -> bool {
-    let pattern_segments = pattern
-        .split('/')
-        .filter(|segment| !segment.is_empty() && *segment != ".")
-        .map(|segment| segment.chars().collect::<Vec<_>>())
-        .collect::<Vec<_>>();
-    let path_segments = path
-        .split('/')
-        .filter(|segment| !segment.is_empty() && *segment != ".")
-        .map(|segment| segment.chars().collect::<Vec<_>>())
-        .collect::<Vec<_>>();
-    let mut memo = vec![vec![None; path_segments.len() + 1]; pattern_segments.len() + 1];
-    glob_segments_match(&pattern_segments, &path_segments, 0, 0, &mut memo)
-}
-
-fn glob_segments_match(
-    pattern: &[Vec<char>],
-    path: &[Vec<char>],
-    pattern_index: usize,
-    path_index: usize,
-    memo: &mut [Vec<Option<bool>>],
-) -> bool {
-    if let Some(result) = memo[pattern_index][path_index] {
-        return result;
-    }
-
-    let result = if pattern_index == pattern.len() {
-        path_index == path.len()
-    } else if pattern[pattern_index] == ['*', '*'] {
-        glob_segments_match(pattern, path, pattern_index + 1, path_index, memo)
-            || (path_index < path.len()
-                && glob_segments_match(pattern, path, pattern_index, path_index + 1, memo))
-    } else if path_index == path.len() {
-        false
-    } else {
-        let segment_pattern = &pattern[pattern_index];
-        let segment = &path[path_index];
-        let mut segment_memo = vec![vec![None; segment.len() + 1]; segment_pattern.len() + 1];
-        glob_segment_chars_match(segment_pattern, segment, 0, 0, &mut segment_memo)
-            && glob_segments_match(pattern, path, pattern_index + 1, path_index + 1, memo)
-    };
-
-    memo[pattern_index][path_index] = Some(result);
-    result
-}
-
-fn glob_segment_chars_match(
-    pattern: &[char],
-    segment: &[char],
-    pattern_index: usize,
-    segment_index: usize,
-    memo: &mut [Vec<Option<bool>>],
-) -> bool {
-    if let Some(result) = memo[pattern_index][segment_index] {
-        return result;
-    }
-
-    let result = if pattern_index == pattern.len() {
-        segment_index == segment.len()
-    } else {
-        match pattern[pattern_index] {
-            '*' => {
-                glob_segment_chars_match(pattern, segment, pattern_index + 1, segment_index, memo)
-                    || (segment_index < segment.len()
-                        && glob_segment_chars_match(
-                            pattern,
-                            segment,
-                            pattern_index,
-                            segment_index + 1,
-                            memo,
-                        ))
-            }
-            '?' => {
-                segment_index < segment.len()
-                    && glob_segment_chars_match(
-                        pattern,
-                        segment,
-                        pattern_index + 1,
-                        segment_index + 1,
-                        memo,
-                    )
-            }
-            expected => {
-                segment_index < segment.len()
-                    && segment[segment_index] == expected
-                    && glob_segment_chars_match(
-                        pattern,
-                        segment,
-                        pattern_index + 1,
-                        segment_index + 1,
-                        memo,
-                    )
-            }
-        }
-    };
-
-    memo[pattern_index][segment_index] = Some(result);
-    result
 }
 
 impl RustAdapter {
@@ -1688,11 +1585,18 @@ impl RustAdapter {
                 // of reading the whole working set. No-op without a token
                 // (CLI path).
                 cancellation::checkpoint()?;
-                let full = options.root.join(file);
-                let bytes = std::fs::read(&full)
-                    .map_err(|err| format!("failed to read {}: {err}", full.display()))?;
-                Ok((file.clone(), bytes))
+                // Committed-history diffs read HEAD content for dirty
+                // tracked files; a path with no content at HEAD is skipped.
+                crate::analysis::committed_source::read_source_bytes(&options.root, file)
+                    .map(|bytes| bytes.map(|bytes| (file.clone(), bytes)))
+                    .map_err(|err| {
+                        format!(
+                            "failed to read {}: {err}",
+                            options.root.join(file).display()
+                        )
+                    })
             })
+            .filter_map(Result::transpose)
             .collect::<Result<Vec<_>, String>>()?;
         let cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
             &options.root,
@@ -1784,13 +1688,16 @@ impl RustAdapter {
             })
         {
             changed_rust_files += 1;
-            // Producer-owned source role (#3283): only production
-            // subjects and explicitly opted-in production-like targets
-            // seed diff probes; Cargo benches, examples, integration
-            // tests, and confirmed test-target files stay indexed
-            // evidence without harness-plumbing obligations.
-            let role = workspace::classify_with(&changed.path, &source_role_context);
-            if !role.seeds_production_findings() {
+            // Producer-owned source role (#3283): production subjects and
+            // opted-in production-like targets seed diff probes; Cargo
+            // benches, examples, integration tests, and confirmed
+            // test-target files stay indexed evidence without
+            // harness-plumbing obligations. Changed automation (`xtask/`)
+            // and Cargo build scripts (`build.rs`) are reviewed behavior
+            // and seed too. `seeds_diff_probes` is shared with
+            // the LSP scope partition so the editor keeps what this loop
+            // reports.
+            if !workspace::seeds_diff_probes(&changed.path, &source_role_context) {
                 continue;
             }
             // Cooperative cancellation (#1972): check once per changed file
@@ -4649,6 +4556,311 @@ let _ = (result, note, raw);"##,
             "bench harness plumbing must not become production probes: {:?}",
             result.findings
         );
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_seeds_probes_for_changed_repo_automation_files() -> Result<(), String> {
+        // `xtask/` is evidence role for repo-mode indexing, but a changed
+        // automation file is reviewed behavior. Without the automation
+        // exemption the whole diff counted as a changed Rust file yet
+        // produced zero candidate lines and no disclosure (the 0.11 Rust
+        // challenge p1745 case: 329 changed xtask lines, 0 probes). The
+        // exemption must not reach xtask's own integration tests: an
+        // unannotated helper under `xtask/tests/` stays evidence.
+        let root = temp_root("xtask-automation-seeds")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[workspace]\nmembers = ['xtask']\nresolver = '2'\n",
+        )?;
+        write(
+            &root.join("xtask/Cargo.toml"),
+            "[package]\nname='xtask'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write(
+            &root.join("xtask/src/main.rs"),
+            "fn wedged(stuck: usize, limit: usize) -> bool {\n    stuck > limit\n}\nfn main() {\n    let _ = wedged(1, 0);\n}\n",
+        )?;
+        write(
+            &root.join("xtask/tests/help.rs"),
+            "fn rendered(ok: bool) -> &'static str {\n    if ok { \"out\" } else { \"err\" }\n}\n#[test]\nfn help_renders() {\n    assert_eq!(rendered(true), \"out\");\n}\n",
+        )?;
+        let changed_files = diff::parse_unified_diff(
+            "diff --git a/xtask/src/main.rs b/xtask/src/main.rs\n\
+         new file mode 100644\n\
+         --- /dev/null\n\
+         +++ b/xtask/src/main.rs\n\
+         @@ -0,0 +1,6 @@\n\
+         +fn wedged(stuck: usize, limit: usize) -> bool {\n\
+         +    stuck > limit\n\
+         +}\n\
+         +fn main() {\n\
+         +    let _ = wedged(1, 0);\n\
+         +}\n\
+         diff --git a/xtask/tests/help.rs b/xtask/tests/help.rs\n\
+         new file mode 100644\n\
+         --- /dev/null\n\
+         +++ b/xtask/tests/help.rs\n\
+         @@ -0,0 +1,7 @@\n\
+         +fn rendered(ok: bool) -> &'static str {\n\
+         +    if ok { \"out\" } else { \"err\" }\n\
+         +}\n\
+         +#[test]\n\
+         +fn help_renders() {\n\
+         +    assert_eq!(rendered(true), \"out\");\n\
+         +}\n",
+        );
+
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+
+        assert_eq!(result.changed_files, 2);
+        assert!(
+            result.candidate_line_count > 0,
+            "a changed automation file must seed candidate lines"
+        );
+        assert!(
+            result.findings.iter().any(|finding| finding
+                .probe
+                .location
+                .file
+                .to_string_lossy()
+                .replace('\\', "/")
+                .ends_with("xtask/src/main.rs")
+                && finding.probe.location.line == 2),
+            "the changed xtask predicate must become a probe: {:?}",
+            result.findings
+        );
+        assert!(
+            result.findings.iter().all(|finding| !finding
+                .probe
+                .location
+                .file
+                .to_string_lossy()
+                .replace('\\', "/")
+                .contains("xtask/tests/")),
+            "xtask integration-test helpers must stay evidence: {:?}",
+            result.findings
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_seeds_probes_for_changed_build_scripts() -> Result<(), String> {
+        // A root `build.rs` has no `src` component, so repo mode keeps it
+        // out of the production set. A changed one used to count as a
+        // changed Rust file with zero candidate lines and no disclosure.
+        let root = temp_root("build-script-seeds")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='sample'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub fn value() -> u32 { 1 }\n")?;
+        write(
+            &root.join("build.rs"),
+            "fn wants_rerun(stamp: u64, limit: u64) -> bool {\n    stamp > limit\n}\nfn main() {\n    let _ = wants_rerun(1, 0);\n}\n",
+        )?;
+        let changed_files = diff::parse_unified_diff(
+            "diff --git a/build.rs b/build.rs\n\
+         new file mode 100644\n\
+         --- /dev/null\n\
+         +++ b/build.rs\n\
+         @@ -0,0 +1,6 @@\n\
+         +fn wants_rerun(stamp: u64, limit: u64) -> bool {\n\
+         +    stamp > limit\n\
+         +}\n\
+         +fn main() {\n\
+         +    let _ = wants_rerun(1, 0);\n\
+         +}\n",
+        );
+
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+
+        assert_eq!(result.changed_files, 1);
+        assert!(
+            result.findings.iter().any(|finding| finding
+                .probe
+                .location
+                .file
+                .to_string_lossy()
+                .replace('\\', "/")
+                .ends_with("build.rs")
+                && finding.probe.location.line == 2),
+            "the changed build-script predicate must become a probe: {:?}",
+            result.findings
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_seeds_declared_lib_root_outside_src_with_its_tests() -> Result<(), String> {
+        // `[lib] path = "lib/odd.rs"` has no `src` component. A change there
+        // used to report one changed file, zero candidate lines and a
+        // complete analysis; Draft narrowing also dropped the package's
+        // tests, so even a seeded probe read as `no_static_path`.
+        let root = temp_root("declared-lib-root")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='odd'\nversion='0.1.0'\nedition='2021'\n[lib]\npath='lib/odd.rs'\n",
+        )?;
+        write(
+            &root.join("lib/odd.rs"),
+            "pub fn discount(total: u32) -> u32 {\n    if total > 100 { total - 10 } else { total }\n}\n",
+        )?;
+        write(
+            &root.join("tests/t.rs"),
+            "#[test]\nfn discount_applies() {\n    assert_eq!(odd::discount(150), 140);\n}\n",
+        )?;
+        let changed_files = diff::parse_unified_diff(
+            "diff --git a/lib/odd.rs b/lib/odd.rs\n\
+         --- a/lib/odd.rs\n\
+         +++ b/lib/odd.rs\n\
+         @@ -1,3 +1,3 @@\n\
+          pub fn discount(total: u32) -> u32 {\n\
+         -    if total >= 100 { total - 10 } else { total }\n\
+         +    if total > 100 { total - 10 } else { total }\n\
+          }\n",
+        );
+
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+
+        assert_eq!(result.changed_files, 1);
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| {
+                finding
+                    .probe
+                    .location
+                    .file
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .ends_with("lib/odd.rs")
+            })
+            .ok_or_else(|| {
+                format!(
+                    "the changed lib-root predicate must become a probe: {:?}",
+                    result.findings
+                )
+            })?;
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .any(|test| test.name == "discount_applies"),
+            "the package's integration test must stay in the Draft index: {:?}",
+            finding.related_tests
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_skips_build_scripts_cargo_never_compiles() -> Result<(), String> {
+        // `package.build = false`: Cargo never compiles this `build.rs`
+        // (it may not even type-check), so it must not seed findings.
+        let root = temp_root("build-script-disabled")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='sample'\nversion='0.1.0'\nedition='2024'\nbuild=false\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub fn value() -> u32 { 1 }\n")?;
+        write(
+            &root.join("build.rs"),
+            "fn wants_rerun(stamp: u64, limit: u64) -> bool {\n    stamp > limit\n}\nfn main() {\n    let _ = wants_rerun(1, 0);\n}\n",
+        )?;
+        let changed_files = diff::parse_unified_diff(
+            "diff --git a/build.rs b/build.rs\n\
+         new file mode 100644\n\
+         --- /dev/null\n\
+         +++ b/build.rs\n\
+         @@ -0,0 +1,6 @@\n\
+         +fn wants_rerun(stamp: u64, limit: u64) -> bool {\n\
+         +    stamp > limit\n\
+         +}\n\
+         +fn main() {\n\
+         +    let _ = wants_rerun(1, 0);\n\
+         +}\n",
+        );
+
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+
+        assert_eq!(result.changed_files, 1);
+        assert!(
+            result.findings.is_empty(),
+            "a disabled build script must not seed probes: {:?}",
+            result.findings
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }
 

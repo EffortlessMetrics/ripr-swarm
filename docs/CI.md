@@ -267,7 +267,7 @@ implement and validate the lane-selection logic.
 | Label | Effect |
 | --- | --- |
 | `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. |
-| `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run, and release-readiness. |
+| `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run, unlocked install resolution, and release-readiness. |
 | `vscode` | Run editor extension lanes even when no editor path changed. |
 | `coverage` | Run coverage lanes and upload coverage artifacts. |
 | `ripr-waive` | Acknowledge a soft static exposure finding for this PR. Does not skip CI and does not apply when `full-ci` is present. |
@@ -279,8 +279,8 @@ New labels that affect CI must update this table, the PR template, and the
 budget/risk-pack policy files in the same PR.
 
 These labels are the documented target vocabulary. Today, `release-check` and
-`full-ci` activate the Rust workflow's package list, publish dry-run, and
-release-readiness steps on pull requests. Other label effects remain target vocabulary until a later PR
+`full-ci` activate the Rust workflow's package list, publish dry-run, unlocked
+install resolution, and release-readiness steps on pull requests. Other label effects remain target vocabulary until a later PR
 wires them into a PR plan or workflow condition. The GitHub Settings App
 contract in `.github/settings.yml` codifies these label names, descriptions,
 and colors so the reviewable vocabulary does not drift in the GitHub UI.
@@ -498,6 +498,30 @@ release_version="$(cargo pkgid -p ripr | sed 's/.*#//')"
 cargo xtask release-readiness --version "$release_version"
 ```
 
+The unlocked install resolution step builds the packaged crate the way
+`cargo install ripr` without `--locked` does: it unpacks the `.crate`, deletes
+its `Cargo.lock`, re-resolves, and checks. It catches a dependency that only
+compiles under the committed lock (#3787):
+
+```bash
+cargo package -p ripr --no-verify
+tar xzf "target/package/ripr-$release_version.crate" -C "$RUNNER_TEMP"
+cd "$RUNNER_TEMP/ripr-$release_version" && rm Cargo.lock && cargo generate-lockfile
+cargo check --target-dir "$RUNNER_TEMP/unlocked-target"
+```
+
+The legacy workflow's `Rust-only feature lane` job (#4252) runs the Rust-only
+feature set (#2400, #3128) on Linux:
+
+```bash
+cargo test -p ripr --locked --no-default-features --features lang-rust --no-fail-fast
+```
+
+It runs on every push to `main` or `master`, on manual dispatch, and on pull
+request `opened`, `synchronize`, and `reopened` events whose diff touches
+`crates/`, `fixtures/`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain*`, or
+`.cargo/`. Label events and other pull requests skip the compile. It is not
+a required check. The Windows advisory lane runs the same command on Windows.
 The CI workflow also has an explicit MSRV job that pins Rust `1.95.0` and runs:
 
 ```bash
@@ -508,8 +532,8 @@ The `release-proof` job pins the declared `1.95.0` toolchain; the MSRV job
 duplicates that baseline and runs only on manual dispatch or `full-ci` pull
 requests.
 
-The legacy workflow's `release-proof` and `msrv` jobs run on `ubuntu-latest`.
-They carry release-surface and baseline proof and must not
+The legacy workflow's `release-proof`, `rust-only-features`, and `msrv` jobs
+run on `ubuntu-latest`. They carry release-surface and baseline proof and must not
 depend on self-hosted runner capacity when preparing a source release. The
 routed Rust-small workflow remains the swarm development lane that selects
 self-hosted runners when available and falls back to hosted capacity.
@@ -578,8 +602,10 @@ writes advisory Markdown and JSON summaries of semantic expected-output drift
 for reviewers. `test-oracle-report` writes an advisory baseline for the strength
 of `ripr`'s own Rust test oracles. If no tests are selected, both report formats
 use status `not_run` and explain that oracle evidence was not established; this
-is distinct from a nonempty all-strong `pass` and remains advisory. `dogfood` writes a non-blocking
-`ripr`-on-`ripr` report from stable fixture diffs. `critic` writes an advisory
+is distinct from a nonempty all-strong `pass` and remains advisory. `dogfood` writes a
+`ripr`-on-`ripr` report from stable fixture diffs; its findings stay advisory,
+but the command, and `ci-full`, fails when any scenario records errors (report
+status `warn`). `critic` writes an advisory
 adversarial review packet from the current diff, reports, and receipts.
 `reports index` writes a reviewer front door for generated reports and includes
 the repo-ops packet statuses for command mutability, PR-ready, worktree doctor,
@@ -669,8 +695,13 @@ The coverage workflow currently runs:
 
 ```bash
 cargo llvm-cov clean --workspace
+cargo build -p ripr
 cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
 ```
+
+The plain `cargo build -p ripr` comes first because tests that spawn the
+binary resolve a pre-built `target/debug/ripr` and never start a nested build,
+while `cargo llvm-cov` builds into its own target directory.
 
 It uploads `lcov.info` as the `rust-lcov` GitHub Actions artifact and uploads
 the same file to Codecov with the `rust` flag and `rust-workspace` upload name.
@@ -754,9 +785,10 @@ moving them onto the shared `sccache`/`/mnt/ci-cache` path used by
 `routed-rust.yml` is a tracked follow-up rather than part of this placement
 change.
 
-Release and publish workflows (`publish-extension.yml`,
-`release-server-binaries.yml`) and branch protection (`.github/settings.yml`)
-are intentionally out of scope for this placement change.
+Publication workflow `publish-extension.yml`, the read-only server-binary
+rehearsal `release-server-binaries.yml`, and branch protection
+(`.github/settings.yml`) are intentionally out of scope for this placement
+change. Public release publication belongs to `EffortlessMetrics/ripr`.
 
 ## SARIF and Policy Contract
 
@@ -837,6 +869,22 @@ SARIF upload documentation uses `github/codeql-action/upload-sarif@v4`; keep
 the RIPR job, artifact upload, and optional SARIF steps advisory until the
 repository has chosen a baseline policy.
 
+The generated workflow installs the exact `ripr` version that generated it
+(`cargo install ripr --version <that version> --locked`), because its steps
+use that version's commands and flags; a later release does not change CI
+behavior until you regenerate. That version must be published on crates.io: a
+workflow generated by an unreleased development build names a version crates.io
+does not have yet, so its install step fails and no ripr step runs. Generate the
+committed workflow with a released `ripr`. To upgrade, install
+the newer `ripr` and compare its `ripr init --ci github --force --dry-run`
+output with the committed file (`--force` lets the dry run plan over the
+existing file; nothing is written). On pull requests the workflow checks out the PR head
+commit, not GitHub's `refs/pull/N/merge` commit, so annotation and review
+comment lines match the lines in the PR diff after the base branch moves. A
+newer push cancels the older run of the same PR. Dependabot runs get a
+read-only token, so their inline-comment plan records
+`missing_write_permission` instead of attempting a post.
+
 For a CI-first user, the useful output is the artifact packet:
 
 - `target/ripr/pilot/` - first-screen pilot summary, repo exposure snapshot,
@@ -900,8 +948,9 @@ The generated workflow runs the pure renderer on pull requests:
 ```bash
 ripr review-comments \
   --root . \
-  --base "$GITHUB_BASE_SHA" \
-  --head "$GITHUB_SHA" \
+  --base "origin/$GITHUB_BASE_REF" \
+  --head HEAD \
+  --check-output target/ripr/pr/check.json \
   --out target/ripr/review/comments.json
 ```
 
@@ -1135,6 +1184,23 @@ analysis, grade an agent, or change pass/fail authority.
 See [Assistant loop health workflow](ASSISTANT_LOOP_HEALTH_WORKFLOW.md) for how
 maintainers and coding agents read completeness, missing inputs, unchanged
 movement, repair queue entries, and advisory limits.
+
+For the artifact composition commands `ripr pr-summary`, `ripr first-action`,
+`ripr pr-review front-panel`, and `ripr reports index`, `--root <path>` names
+the selected repository; its default is the current working directory.
+`pr-summary` reads its fixed artifact locations and a relative `--baseline`
+under that root, and writes its three summary outputs there. The other three
+commands retain their explicit artifact and output path conventions: relative
+paths resolve from the process working directory. From a foreign directory,
+pass absolute artifact/output paths to those commands alongside `--root`.
+These commands compose existing artifacts rather than establishing new
+analysis or release qualification.
+
+On Windows, `pr-summary` accepts ordinary relative paths and fully qualified
+absolute paths for `--root` and `--baseline`, including UNC and verbatim paths.
+It rejects partially qualified paths such as `C:repo` or `\repo`, whose Windows
+join semantics can replace the selected root. This restriction applies only
+on Windows; colon-containing relative filenames remain valid on other systems.
 
 Generated CI also projects the first useful action when at least one explicit
 input artifact is already present. It runs `ripr first-action --root .` with

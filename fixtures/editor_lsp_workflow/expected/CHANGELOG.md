@@ -280,3 +280,27 @@ Hand-curated editor projection; the matching producer output is pinned by `cargo
 Updated:
 - `expected/lsp-code-actions.json`
 - `expected/lsp-hover.md`
+
+## Pending — editor_lsp_workflow (4)
+
+Reason:
+RIPR-SPEC-0122: human-full carries per-finding drill-in commands (#4379); digest why-line names the incomplete stage; unreached static_unknown asks for a test first
+
+Command:
+`cargo xtask goldens bless editor_lsp_workflow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — editor_lsp_workflow (5)
+
+Reason:
+RIPR-SPEC-0122: discriminator evidence line no longer says yes on findings that are not exposed
+
+Command:
+`cargo xtask goldens bless editor_lsp_workflow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

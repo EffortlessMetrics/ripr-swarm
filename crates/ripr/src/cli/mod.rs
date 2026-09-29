@@ -12,6 +12,7 @@ mod parse;
 mod rerun;
 mod suggest;
 
+pub(crate) use parse::expect_value;
 pub(crate) use suggest::unknown_argument;
 
 /// Top-level error of command dispatch, carrying the process exit-code
@@ -157,6 +158,10 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
     let packet_text = String::from_utf8(packet_bytes.clone())
         .map_err(|error| format!("agent packet is not UTF-8: {error}"))?;
     let policy = crate::app::repair_attempt::edit_cage_policy_from_packet(&packet_text, seam_id)?;
+    // Recheck immediately before baseline capture so ignore-rule drift observed
+    // during preparation refuses attempt publication.
+    crate::edit_cage::validate_build_output_precondition(root, &policy)
+        .map_err(|error| format!("{error} No repair attempt was started."))?;
     let edit_cage_baseline = root.join("target/ripr/workflow/attempt-baseline.json");
     crate::app::repair_attempt::write_edit_cage_baseline(root, &edit_cage_baseline, &policy)?;
 
@@ -238,6 +243,9 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
     }
     eprintln!(
         "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below."
+    );
+    eprintln!(
+        "ripr: keep this command's output out of the checkout: the edit cage counts a file you redirect it into (for example `> packet.json` or `2> before.err`) as an edit outside the test surface. The packet is already at target/ripr/workflow/agent-packet.json; to keep a copy, redirect under target/ripr/ or outside the repository. The same applies to the after phase."
     );
     eprintln!(
         "ripr: repair attempt {} is awaiting the focused test edit",

@@ -4,14 +4,14 @@ root: fixtures/python_test_placement_verify/input
 
 Summary: 2 probe(s), 0 exposed, 2 weak, 0 unrevealed, 0 no path, 0 unknown
 
-Changed file(s) by language: python: 2, rust: 0.
+Changed file(s) by language: python: 2.
 
 Analysis outcome: complete_with_findings (analysis complete).
   Counts: 2 changed file(s), 2 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s).
 
 Start here:
   State: preview_limited
-  Safe next action: preview-language evidence is advisory; complete the missing repair-packet fields before acting.
+  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it.
   File: src/pricing.py:2
   Language: python
   Language status: preview
@@ -24,7 +24,7 @@ Start here:
   Suggested test file: tests/test_pricing.py
   Suggested test: test_calculate_discount_smoke
   Test node: tests/test_pricing.py::test_calculate_discount_smoke
-  Verify command: pytest tests/test_pricing.py::test_calculate_discount_smoke (high)
+  Verify command: python -m pytest tests/test_pricing.py::test_calculate_discount_smoke (high)
   Next step: Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `amount == threshold`.
   Evidence:
     - reach yes: 1 related Python test(s) found for owner `calculate_discount`
@@ -41,4 +41,4 @@ Hidden:
   Machine data: rerun with --format json
 
 
-Note: 2 Python files analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
+Note: 2 Python files analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

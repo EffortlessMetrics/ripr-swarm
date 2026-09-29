@@ -24,6 +24,7 @@ pub(super) enum CliCommand {
     Reports(Vec<String>),
     Calibrate(Vec<String>),
     Receipt(Vec<String>),
+    Feedback(Vec<String>),
     Agent(Vec<String>),
     Swarm(Vec<String>),
     Diff(Vec<String>),
@@ -71,10 +72,7 @@ impl CliCommand {
                     Some((target, rest)) => (target.clone(), rest.to_vec()),
                     None => return Ok(Self::Help),
                 };
-                let mut injected = Vec::with_capacity(rest.len() + 1);
-                injected.push("--help".to_string());
-                injected.extend(rest);
-                Self::from_parts(Some(&target), injected)
+                Self::from_parts(Some(&target), help_request_args(rest))
             }
             Some("--version" | "-V") => Ok(Self::Version),
             Some("init") => Ok(Self::Init(command_args)),
@@ -97,6 +95,7 @@ impl CliCommand {
             Some("reports") => Ok(Self::Reports(command_args)),
             Some("calibrate") => Ok(Self::Calibrate(command_args)),
             Some("receipt") => Ok(Self::Receipt(command_args)),
+            Some("feedback") => Ok(Self::Feedback(command_args)),
             Some("agent") => Ok(Self::Agent(command_args)),
             Some("swarm") => Ok(Self::Swarm(command_args)),
             Some("diff") => Ok(Self::Diff(command_args)),
@@ -136,6 +135,24 @@ fn wants_all(args: &[String]) -> bool {
     args.first().is_some_and(|arg| arg == "--all")
 }
 
+/// Arguments for `ripr help <command> [words...] [flags...]` (#4378).
+///
+/// `--help` goes after the leading subcommand words, so `help agent repair`
+/// dispatches as `agent repair --help` and reaches the subcommand's own help
+/// instead of the parent overview. A subcommand-bearing parser matches its
+/// first argument, so a prepended `--help` would always win there; an unknown
+/// word now reaches that parser's unknown-subcommand error rather than
+/// printing unrelated help. Flags keep their order after `--help`.
+fn help_request_args(rest: Vec<String>) -> Vec<String> {
+    let words = rest.iter().take_while(|arg| !arg.starts_with('-')).count();
+    let mut injected = Vec::with_capacity(rest.len() + 1);
+    let mut rest = rest.into_iter();
+    injected.extend(rest.by_ref().take(words));
+    injected.push("--help".to_string());
+    injected.extend(rest);
+    injected
+}
+
 /// Every command the parser accepts. Also the source for typo suggestions and
 /// for the `ripr help --all` completeness test, so a command cannot be
 /// reachable-but-undocumented.
@@ -162,6 +179,7 @@ pub(super) const KNOWN_COMMANDS: &[&str] = &[
     "reports",
     "calibrate",
     "receipt",
+    "feedback",
     "agent",
     "swarm",
     "diff",
@@ -343,6 +361,7 @@ mod tests {
             (Some("reports"), CliCommand::Reports(Vec::new())),
             (Some("calibrate"), CliCommand::Calibrate(Vec::new())),
             (Some("receipt"), CliCommand::Receipt(Vec::new())),
+            (Some("feedback"), CliCommand::Feedback(Vec::new())),
             (Some("agent"), CliCommand::Agent(Vec::new())),
             (Some("swarm"), CliCommand::Swarm(Vec::new())),
             (Some("diff"), CliCommand::Diff(Vec::new())),
@@ -465,6 +484,26 @@ mod tests {
         assert_eq!(
             CliCommand::from_parts(Some("help"), args(&["check", "--root", "."])),
             Ok(CliCommand::Check(args(&["--help", "--root", "."])))
+        );
+    }
+
+    /// `ripr help agent repair` must reach the repair subcommand's help, not
+    /// the parent `agent` overview (#4378). A prepended `--help` is matched by
+    /// the `agent` parser's first-argument branch before `repair` is seen.
+    #[test]
+    fn help_places_help_flag_after_subcommand_words() {
+        assert_eq!(
+            CliCommand::from_parts(Some("help"), args(&["agent", "repair"])),
+            Ok(CliCommand::Agent(args(&["repair", "--help"])))
+        );
+        assert_eq!(
+            CliCommand::from_parts(Some("help"), args(&["swarm", "queue", "--json"])),
+            Ok(CliCommand::Swarm(args(&["queue", "--help", "--json"])))
+        );
+        // Flags right after the command keep the old shape.
+        assert_eq!(
+            CliCommand::from_parts(Some("help"), args(&["agent", "--json"])),
+            Ok(CliCommand::Agent(args(&["--help", "--json"])))
         );
     }
 

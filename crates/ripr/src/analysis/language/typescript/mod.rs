@@ -42,14 +42,27 @@ pub(crate) use oxc_span::{GetSpan, SourceType};
 pub(crate) use std::path::{Path, PathBuf};
 
 mod actionability;
+mod annotation_only;
+#[cfg(test)]
+mod annotation_only_tests;
+mod boundary_input;
+#[cfg(test)]
+mod boundary_input_tests;
 mod bounded_read;
 mod bun_bridge;
 mod classifier;
 mod discovery;
+mod module_entries;
+#[cfg(test)]
+mod line_index_tests;
+#[cfg(test)]
+mod new_declaration_tests;
 mod oracle;
 mod owners;
 mod package;
 pub(crate) use package::detect_framework_for_root;
+#[cfg(test)]
+mod ambient_declaration_tests;
 mod parse;
 mod paths;
 mod probe_shape;
@@ -67,10 +80,13 @@ mod types;
 // submodule's `use super::*;` resolves, and so that `tests.rs` which
 // uses `use super::*;` can access all items.
 pub(crate) use actionability::*;
+pub(crate) use annotation_only::*;
+pub(crate) use boundary_input::*;
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use classifier::*;
 pub(crate) use discovery::*;
+pub(crate) use module_entries::*;
 pub(crate) use oracle::*;
 pub(crate) use owners::*;
 pub(crate) use package::*;
@@ -227,9 +243,9 @@ impl LanguageAdapter for TypeScriptAdapter {
             };
         let alias_map_ref: Option<&TsAliasMap> = alias_map.as_ref();
 
-        // Build the single-hop re-export index from all non-test workspace files
+        // Build the bounded re-export index from all non-test workspace files
         // (RIPR-SPEC-0095). The index enables crediting tests that reach the owner
-        // via an explicit `export { N } from './owner'` barrel-file re-export.
+        // through `export { N } from` / `export * from` barrel chains.
         // Sources come from the Phase-1 cache so each file is read once per run.
         let reexport_index = ReExportIndex::build(
             &workspace_files,
@@ -248,6 +264,12 @@ impl LanguageAdapter for TypeScriptAdapter {
         // so the summary must not attribute JS files to typescript.
         let mut changed_typescript: usize = 0;
         let mut changed_javascript: usize = 0;
+        // Whether any finding in this diff was classified against the
+        // TypeScript test index: an owner-backed TS/JS finding, or a Bun
+        // cross-language finding. Partial test extraction is disclosed only
+        // then (#4261); an ownerless, import-only or deletion-only TS change
+        // never reads the index.
+        let mut test_index_consumed = false;
         for changed in changed_files {
             for added in &changed.added_lines {
                 if let Some(finding) = bun_cross_language_finding_for_changed_rust_line(
@@ -256,6 +278,7 @@ impl LanguageAdapter for TypeScriptAdapter {
                     &added.text,
                     &all_tests,
                 ) {
+                    test_index_consumed = true;
                     findings.push(finding);
                 }
             }
@@ -279,6 +302,11 @@ impl LanguageAdapter for TypeScriptAdapter {
             // operates on production owners. Test file edits are still
             // counted in the file tally.
             if is_test_file(&changed.path) {
+                continue;
+            }
+            // Declaration files are counted but never probed: they are
+            // type-only and have no runtime behavior a test could observe.
+            if is_typescript_declaration_file(&changed.path) {
                 continue;
             }
 
@@ -312,8 +340,81 @@ impl LanguageAdapter for TypeScriptAdapter {
                 }
                 continue;
             }
+            // A decorator on the line above a method is invisible to the
+            // one-line annotation-only check, so any decorator in the file
+            // keeps method lines probed (#4282).
+            let file_has_decorators = source_by_normalized
+                .get(&normalized_path(&changed.path))
+                .is_none_or(|source| {
+                    source
+                        .lines()
+                        .any(|line| line.trim_start().starts_with('@'))
+                });
+            // Ambient declarations are type-only; their lines are found from
+            // the syntax tree, since `declare` is also a legal runtime
+            // identifier and can start a line inside a template literal.
+            let ambient = source_by_normalized
+                .get(&normalized_path(&changed.path))
+                .map(|source| ambient_declaration_lines(&changed.path, source))
+                .unwrap_or_default();
+            let is_probe_candidate = |line: usize, text: &str| {
+                !should_ignore_typescript_changed_line(text)
+                    && !ambient
+                        .iter()
+                        .any(|(start, end)| (*start..=*end).contains(&line))
+            };
+            let removed_texts: Vec<&str> = changed
+                .removed_lines
+                .iter()
+                .map(|removed| removed.text.as_str())
+                .collect();
             for added in &changed.added_lines {
-                if should_ignore_typescript_changed_line(&added.text) {
+                if !is_probe_candidate(added.line, &added.text) {
+                    continue;
+                }
+                // New-declaration guard: the opening line of a NEW function,
+                // method, or arrow owner (no paired removed line) whose body
+                // carries its own added lines has no behavior of its own —
+                // the body lines are the probes. Probing it would ask for a
+                // discriminator no test can supply. A changed signature
+                // (paired removed line), a default value, or a one-line
+                // body keeps its probe.
+                if !changed
+                    .removed_lines
+                    .iter()
+                    .any(|removed| removed.new_side_line == added.line)
+                    && is_new_owner_opening_line(
+                        &changed.path,
+                        added.line,
+                        &added.text,
+                        &all_owners,
+                        &removed_texts,
+                        |line| {
+                            changed.added_lines.iter().any(|other| {
+                                other.line == line && is_probe_candidate(other.line, &other.text)
+                            })
+                        },
+                    )
+                {
+                    continue;
+                }
+                // Annotation-only guard (#4282): TypeScript erases types, so a
+                // line whose in-place removed counterpart differs only in type
+                // syntax has no behavior for a test to discriminate. Pairing
+                // mirrors the Python adapter (same new-side position).
+                if changed
+                    .removed_lines
+                    .iter()
+                    .find(|removed| removed.new_side_line == added.line)
+                    .is_some_and(|removed| {
+                        is_annotation_only_signature_change(
+                            &changed.path,
+                            &removed.text,
+                            &added.text,
+                            file_has_decorators,
+                        )
+                    })
+                {
                     continue;
                 }
                 if let Some(mut finding) = classify_change_with_alias_state(
@@ -327,6 +428,7 @@ impl LanguageAdapter for TypeScriptAdapter {
                     alias_map_ref,
                     alias_load_gap.as_ref(),
                 ) {
+                    test_index_consumed = true;
                     finding.evidence.extend(discovery_evidence.clone());
                     // Inject verify-command evidence derived from the strongest
                     // related test and the package-discovery facts already
@@ -431,26 +533,22 @@ impl LanguageAdapter for TypeScriptAdapter {
                 .with_detail(format!("read failed: {}", failure.error))?,
             );
         }
-        // Partial test extraction: one typed limitation per affected test
-        // file, carrying the taxonomy name so JSON consumers can key on it.
-        for gap in &extraction_gaps {
-            let limitation = test_extraction_partial_limitation(gap);
-            limitations.push(
-                AnalysisLimitation::new(
-                    AnalysisLimitationKind::LanguageScopeUnsupported,
-                    AnalysisStage::LanguageAdapter,
-                    AnalysisRecovery::new(
-                        AnalysisRecoveryKind::Retry,
-                        "Re-run analysis after the adapter learns to extract the disclosed test shape.",
-                    )?,
-                )
-                .with_path(gap.file.to_string_lossy())?
-                .with_affected_items(1)?
-                .with_detail(format!(
-                    "typescript_test_extraction_partial: {} at {}",
-                    gap.shape, limitation.sample_source
-                ))?,
-            );
+        // Partial test extraction: one typed limitation summarizing the
+        // affected test files (a single file keeps its path), carrying the
+        // taxonomy name so JSON consumers can key on it.
+        // The index is workspace-wide, so a diff that classified nothing
+        // against it (Rust-only, or TS test edits only) is not made partial by
+        // test shapes it never consulted (#4261).
+        let consulted_gaps: &[_] = if test_index_consumed {
+            &extraction_gaps
+        } else {
+            &[]
+        };
+        // One summary limitation for the whole workspace-wide index, not one
+        // line per unrelated test file: the gaps are not in the diff, so a
+        // per-file list buried the changed-file result.
+        if let Some(limitation) = test_extraction_partial_summary(consulted_gaps)? {
+            limitations.push(limitation);
         }
         // Partial owner extraction (#4104-A): changed lines inside owner
         // shapes the extractor does not index produce no finding, so this
@@ -615,5 +713,85 @@ impl LanguageAdapter for TypeScriptAdapter {
             skipped_files: 0,
             partial_reason: Some("typescript_repo_mode_not_implemented_diff_first".to_string()),
         })
+    }
+}
+
+/// Recovery for partial test extraction. Re-running cannot change the
+/// result, so the recovery names what the reader can inspect or rewrite.
+const TEST_EXTRACTION_PARTIAL_RECOVERY: &str = "Some test files (affected items) register tests in shapes the TypeScript extractor does not index; the JSON limitation detail names samples. Check whether they exercise the changed code before trusting a no-path or weak result, or register them as top-level `test`/`it` calls with plain string titles (array-form `.each` is indexed)";
+
+/// Samples named in a multi-file extraction-partial summary.
+const TEST_EXTRACTION_PARTIAL_SAMPLES: usize = 3;
+
+/// Collapse per-file test-extraction gaps into one typed limitation. A single
+/// gap keeps its path; several gaps carry the file count, the first few
+/// samples, and the remainder count.
+fn test_extraction_partial_summary(
+    gaps: &[TypeScriptTestExtractionGap],
+) -> Result<Option<AnalysisLimitation>, String> {
+    let recovery = || {
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::InspectFailure,
+            TEST_EXTRACTION_PARTIAL_RECOVERY,
+        )
+    };
+    match gaps {
+        [] => Ok(None),
+        [gap] => {
+            let limitation = test_extraction_partial_limitation(gap);
+            Ok(Some(
+                AnalysisLimitation::new(
+                    AnalysisLimitationKind::LanguageScopeUnsupported,
+                    AnalysisStage::LanguageAdapter,
+                    recovery()?,
+                )
+                .with_path(gap.file.to_string_lossy())?
+                .with_affected_items(1)?
+                .with_detail(format!(
+                    "typescript_test_extraction_partial: {} at {}",
+                    gap.shape, limitation.sample_source
+                ))?,
+            ))
+        }
+        _ => {
+            let files = gaps
+                .iter()
+                .map(|gap| normalized_path(&gap.file))
+                .collect::<std::collections::BTreeSet<_>>();
+            let samples = gaps
+                .iter()
+                .take(TEST_EXTRACTION_PARTIAL_SAMPLES)
+                .map(|gap| {
+                    format!(
+                        "{} at {}",
+                        gap.shape,
+                        test_extraction_partial_limitation(gap).sample_source
+                    )
+                })
+                .collect::<Vec<_>>();
+            let remainder = gaps.len().saturating_sub(samples.len());
+            let head = format!(
+                "typescript_test_extraction_partial: {} test file(s) register tests the extractor does not index",
+                files.len()
+            );
+            let mut detail = format!("{head}; e.g. {}", samples.join("; "));
+            if remainder > 0 {
+                detail.push_str(&format!(" (+{remainder} more)"));
+            }
+            if detail.chars().count()
+                > crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS
+            {
+                detail = head;
+            }
+            Ok(Some(
+                AnalysisLimitation::new(
+                    AnalysisLimitationKind::LanguageScopeUnsupported,
+                    AnalysisStage::LanguageAdapter,
+                    recovery()?,
+                )
+                .with_affected_items(u64::try_from(files.len()).unwrap_or(u64::MAX))?
+                .with_detail(detail)?,
+            ))
+        }
     }
 }

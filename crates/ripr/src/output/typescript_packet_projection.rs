@@ -47,13 +47,97 @@ pub(crate) enum TargetAssertionShape {
         observed_call: String,
         discriminator: String,
     },
+    /// The discriminator's boundary operand is a named constant
+    /// (`amount == DISCOUNT_THRESHOLD`) that this projection cannot resolve
+    /// to a concrete value, so no observed literal input can be shown to hit
+    /// it (#4215). `shape` carries the same boundary placeholder as
+    /// `Unreachable`, and the packet fails closed: "undecided" is not
+    /// evidence that the observed input discriminates the boundary.
+    UnresolvedBoundary {
+        shape: String,
+        observed_call: String,
+        discriminator: String,
+        constant: String,
+    },
+    /// The observed call input does not hit the boundary (or its constant
+    /// was unresolved on the discriminator text alone), but the analysis
+    /// side pinned the boundary input statically (`typescript_boundary_input`
+    /// evidence: the owner reads the parameter unchanged and the other operand
+    /// is an integer literal or a single immutable integer module `const`).
+    /// `shape` is the observed call with that argument replaced by the
+    /// boundary value, so the packet stays delegatable with a concrete input
+    /// that hits the missing discriminator.
+    DerivedBoundary {
+        shape: String,
+        observed_call: String,
+        boundary_call: String,
+        discriminator: String,
+        operand: String,
+        value: i64,
+    },
+}
+
+/// The analysis-side boundary input fact (`typescript_boundary_input:
+/// parameter=<p>;index=<i>;operand=<o>;value=<v>`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TypeScriptBoundaryInputFact {
+    parameter: String,
+    index: usize,
+    operand: String,
+    value: i64,
+}
+
+const TYPESCRIPT_BOUNDARY_INPUT_PREFIX: &str = "typescript_boundary_input: ";
+
+impl TypeScriptBoundaryInputFact {
+    /// Parse one evidence line; any missing or malformed field is `None`.
+    pub(crate) fn parse(line: &str) -> Option<Self> {
+        let body = line.strip_prefix(TYPESCRIPT_BOUNDARY_INPUT_PREFIX)?;
+        let mut fields = BTreeMap::new();
+        for field in body.split(';') {
+            let (key, value) = field.split_once('=')?;
+            if fields.insert(key.trim(), value.trim()).is_some() {
+                return None;
+            }
+        }
+        if fields.len() != 4 {
+            return None;
+        }
+        let parameter = fields.get("parameter")?.to_string();
+        let operand = fields.get("operand")?.to_string();
+        if !is_plain_identifier(&parameter) || operand.is_empty() {
+            return None;
+        }
+        Some(Self {
+            parameter,
+            index: fields.get("index")?.parse().ok()?,
+            operand,
+            value: fields.get("value")?.parse().ok()?,
+        })
+    }
+}
+
+/// The single boundary input fact on a finding; two or more disagreeing
+/// lines are ambiguous and yield `None`.
+fn typescript_boundary_input_fact(finding: &Finding) -> Option<TypeScriptBoundaryInputFact> {
+    let mut facts = finding
+        .evidence
+        .iter()
+        .filter(|line| line.starts_with(TYPESCRIPT_BOUNDARY_INPUT_PREFIX));
+    let first = facts.next()?;
+    if facts.next().is_some() {
+        return None;
+    }
+    TypeScriptBoundaryInputFact::parse(first)
 }
 
 impl TargetAssertionShape {
     fn shape(&self) -> &str {
         match self {
             Self::Observed { shape } => shape,
-            Self::Unreachable { shape, .. } => shape,
+            Self::Unreachable { shape, .. }
+            | Self::UnresolvedBoundary { shape, .. }
+            | Self::DerivedBoundary { shape, .. } => shape,
         }
     }
 
@@ -62,7 +146,7 @@ impl TargetAssertionShape {
     /// eligible through the normal complete-contract projection.
     fn packet_ineligibility_reason(&self) -> Option<String> {
         match self {
-            Self::Observed { .. } => None,
+            Self::Observed { .. } | Self::DerivedBoundary { .. } => None,
             Self::Unreachable {
                 observed_call,
                 discriminator,
@@ -71,6 +155,59 @@ impl TargetAssertionShape {
                 "observed call input `{observed_call}` does not reach the missing \
                  discriminator `{discriminator}`; derive an input that hits the \
                  boundary before the packet is delegatable"
+            )),
+            Self::UnresolvedBoundary {
+                observed_call,
+                discriminator,
+                constant,
+                ..
+            } => Some(format!(
+                "boundary constant `{constant}` in the missing discriminator \
+                 `{discriminator}` is not resolved to a concrete value, so the observed \
+                 call input `{observed_call}` is not shown to hit it; derive an input \
+                 equal to `{constant}` before the packet is delegatable"
+            )),
+        }
+    }
+
+    /// Stop condition forbidding reuse of the observed input when the packet
+    /// fails closed on the boundary; `None` for the observed shape.
+    fn boundary_stop_condition(&self) -> Option<String> {
+        match self {
+            Self::Observed { .. } => None,
+            Self::DerivedBoundary {
+                observed_call,
+                boundary_call,
+                discriminator,
+                operand,
+                value,
+                ..
+            } => {
+                let source = if *operand == value.to_string() {
+                    "the literal boundary".to_string()
+                } else {
+                    format!("`{operand}` = {value}")
+                };
+                Some(format!(
+                    "The observed call `{observed_call}` is not shown to hit the missing \
+                     discriminator `{discriminator}`; the boundary input `{boundary_call}` \
+                     is derived from {source}. Stop if that derivation no longer holds: \
+                     re-run `ripr check` before writing the assertion."
+                ))
+            }
+            Self::Unreachable { discriminator, .. } => Some(format!(
+                "Do not reuse the observed call input; it cannot reach the missing \
+                 discriminator `{discriminator}`. Derive an input that hits the \
+                 boundary first."
+            )),
+            Self::UnresolvedBoundary {
+                discriminator,
+                constant,
+                ..
+            } => Some(format!(
+                "Do not reuse the observed call input; it is not shown to equal \
+                 `{constant}` in the missing discriminator `{discriminator}`. Derive \
+                 an input equal to `{constant}` first."
             )),
         }
     }
@@ -98,11 +235,43 @@ impl TargetAssertionShape {
 ///   placeholder shape naming the boundary (repo convention
 ///   `/* boundary input for <discriminator> */`) replaces the observed input;
 ///   the caller fails the packet closed via the shared validator.
+/// - The boundary operand is an unresolved named constant
+///   (`amount == DISCOUNT_THRESHOLD`) and no argument is that constant → the
+///   same placeholder, failed closed (#4215). A constant is never bound by a
+///   call argument, so unlike a parameter-named boundary (`amount >=
+///   threshold`) "undecided" here means the observed input is unrelated to
+///   the boundary, not that it might bind to it.
+#[cfg(test)]
 pub(crate) fn typescript_target_assertion_shape(
     family: &crate::domain::ProbeFamily,
     observed: &str,
     missing_discriminator: Option<&str>,
     owner_name: Option<&str>,
+) -> TargetAssertionShape {
+    typescript_target_assertion_shape_with_boundary_input(
+        family,
+        observed,
+        missing_discriminator,
+        owner_name,
+        None,
+    )
+}
+
+/// [`typescript_target_assertion_shape`] with the analysis-side boundary
+/// input fact. The fact only ever replaces a non-delegatable verdict
+/// (`Misses`, an unresolved constant, or an undecided binding) with a
+/// concrete boundary input; it never overrides an observed input that hits
+/// the boundary, and it applies only when it names the same comparison: the
+/// discriminator's receiver is the fact's parameter, its boundary operand is
+/// the fact's operand (text-equal constant or equal integer literal), the
+/// operator is equality, and the observed call has an argument at the
+/// fact's position.
+pub(crate) fn typescript_target_assertion_shape_with_boundary_input(
+    family: &crate::domain::ProbeFamily,
+    observed: &str,
+    missing_discriminator: Option<&str>,
+    owner_name: Option<&str>,
+    boundary_input: Option<&TypeScriptBoundaryInputFact>,
 ) -> TargetAssertionShape {
     let expected_clause = match family {
         crate::domain::ProbeFamily::ErrorPath => ".toThrow(expected)",
@@ -126,15 +295,38 @@ pub(crate) fn typescript_target_assertion_shape(
     let Some(comparison) = parse_static_comparison(discriminator) else {
         return observed_shape;
     };
-    match static_argument_reaches_boundary(&call, &comparison) {
-        Some(true) | None => observed_shape,
-        Some(false) => TargetAssertionShape::Unreachable {
-            shape: format!(
-                "{}(/* boundary input for {discriminator} */){expected_clause}",
-                call.callee
-            ),
+    let placeholder_shape = || {
+        format!(
+            "expect({}(/* boundary input for {discriminator} */)){expected_clause}",
+            call.callee
+        )
+    };
+    let reach = static_argument_reaches_boundary(&call, &comparison);
+    if !matches!(reach, BoundaryReach::Hits)
+        && let Some(fact) = boundary_input
+        && let Some(boundary_call) = derived_boundary_call(&call, &comparison, fact)
+    {
+        return TargetAssertionShape::DerivedBoundary {
+            shape: format!("expect({boundary_call}){expected_clause}"),
+            observed_call: observed.to_string(),
+            boundary_call,
+            discriminator: discriminator.to_string(),
+            operand: fact.operand.clone(),
+            value: fact.value,
+        };
+    }
+    match reach {
+        BoundaryReach::Hits | BoundaryReach::Undecided => observed_shape,
+        BoundaryReach::Misses => TargetAssertionShape::Unreachable {
+            shape: placeholder_shape(),
             observed_call: observed.to_string(),
             discriminator: discriminator.to_string(),
+        },
+        BoundaryReach::UnresolvedConstant(constant) => TargetAssertionShape::UnresolvedBoundary {
+            shape: placeholder_shape(),
+            observed_call: observed.to_string(),
+            discriminator: discriminator.to_string(),
+            constant,
         },
     }
 }
@@ -216,10 +408,16 @@ fn split_top_level_args(inner: &str) -> Vec<String> {
     let mut depth = 0usize;
     let mut quote: Option<char> = None;
     let mut current = String::new();
+    let mut escaped = false;
     for ch in inner.chars() {
         match quote {
             Some(q) => {
-                if ch == q {
+                // `\"` inside a string neither closes it nor splits on a comma.
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == q {
                     quote = None;
                 }
                 current.push(ch);
@@ -275,22 +473,50 @@ enum StaticComparisonOp {
     Less,         // <
 }
 
+impl StaticComparisonOp {
+    /// The operator with its operands swapped: `a >= b` is `b <= a`.
+    fn mirrored(self) -> Self {
+        match self {
+            Self::Equal | Self::NotEqual => self,
+            Self::GreaterEqual => Self::LessEqual,
+            Self::LessEqual => Self::GreaterEqual,
+            Self::Greater => Self::Less,
+            Self::Less => Self::Greater,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum StaticLiteral {
+enum StaticBoundary {
     Int(i64),
     Str(String),
+    /// A constant-shaped operand (`DISCOUNT_THRESHOLD`) with no value in the
+    /// finding evidence.
+    Constant(String),
 }
 
 struct StaticComparison {
+    receiver: String,
     receiver_is_length: bool,
     op: StaticComparisonOp,
-    boundary: StaticLiteral,
+    boundary: StaticBoundary,
+}
+
+/// Static verdict of the observed call input against the discriminator.
+#[derive(Debug, Eq, PartialEq)]
+enum BoundaryReach {
+    Hits,
+    Misses,
+    Undecided,
+    /// The boundary is a named constant that no argument names.
+    UnresolvedConstant(String),
 }
 
 /// Parse a discriminator like `user.length == 3` into a static comparison.
 ///
-/// Conservative: only `<ident>` / `<ident>.length` receivers and int or plain
-/// string boundary literals are recognized; anything else stays undecided.
+/// Conservative: only `<ident>` / `<ident>.length` receivers and int, plain
+/// string, or constant-shaped (`UPPER_CASE`) boundaries are recognized;
+/// anything else stays undecided.
 fn parse_static_comparison(discriminator: &str) -> Option<StaticComparison> {
     const OPS: [(&str, StaticComparisonOp); 8] = [
         ("===", StaticComparisonOp::Equal),
@@ -318,11 +544,27 @@ fn parse_static_comparison(discriminator: &str) -> Option<StaticComparison> {
         }
     }
     let (position, len, op) = best?;
-    let receiver = discriminator[..position].trim();
-    let boundary_raw = discriminator[position + len..].trim();
+    let left = discriminator[..position].trim();
+    let right = discriminator[position + len..].trim();
+    // The analysis side keeps operand order (`DISCOUNT_THRESHOLD <= amount`
+    // becomes `DISCOUNT_THRESHOLD == amount`), so a boundary written first
+    // is read with the operator mirrored (#4215 review).
+    static_comparison_from(left, op, right)
+        .or_else(|| static_comparison_from(right, op.mirrored(), left))
+}
+
+fn static_comparison_from(
+    receiver: &str,
+    op: StaticComparisonOp,
+    boundary_raw: &str,
+) -> Option<StaticComparison> {
     let receiver_is_length = parse_static_receiver(receiver)?;
-    let boundary = parse_static_literal(boundary_raw)?;
+    let boundary = parse_static_literal(boundary_raw).or_else(|| {
+        is_constant_shaped_operand(boundary_raw)
+            .then(|| StaticBoundary::Constant(boundary_raw.to_string()))
+    })?;
     Some(StaticComparison {
+        receiver: receiver.trim().to_string(),
         receiver_is_length,
         op,
         boundary,
@@ -371,11 +613,46 @@ fn parse_plain_string_literal(raw: &str) -> Option<String> {
     Some(inner.to_string())
 }
 
-fn parse_static_literal(raw: &str) -> Option<StaticLiteral> {
-    if let Ok(value) = raw.parse::<i64>() {
-        return Some(StaticLiteral::Int(value));
+fn parse_static_literal(raw: &str) -> Option<StaticBoundary> {
+    if let Some(value) = parse_integer_literal(raw) {
+        return Some(StaticBoundary::Int(value));
     }
-    parse_plain_string_literal(raw).map(StaticLiteral::Str)
+    parse_plain_string_literal(raw).map(StaticBoundary::Str)
+}
+
+/// An integer literal as `i64`, reading JavaScript numeric separators
+/// (`5_000`) the way the analysis-side boundary input does. A separator
+/// must sit between two digits.
+fn parse_integer_literal(raw: &str) -> Option<i64> {
+    if !raw.contains('_') {
+        return raw.parse::<i64>().ok();
+    }
+    // JavaScript rejects separators in a legacy leading-zero literal.
+    if raw.trim_start_matches(['-', '+']).starts_with('0') {
+        return None;
+    }
+    let bytes = raw.as_bytes();
+    let separators_between_digits = bytes.iter().enumerate().all(|(index, byte)| {
+        *byte != b'_'
+            || (index > 0
+                && bytes[index - 1].is_ascii_digit()
+                && bytes.get(index + 1).is_some_and(u8::is_ascii_digit))
+    });
+    if !separators_between_digits {
+        return None;
+    }
+    raw.replace('_', "").parse::<i64>().ok()
+}
+
+/// A constant-shaped operand: leading ASCII uppercase, then uppercase, digits,
+/// or `_` only. Mirrors the analysis-side `is_constant_shaped_operand`
+/// (typescript classifier, #4104-E3). A lowercase identifier is NOT treated
+/// as a constant: it may name a parameter the observed arguments bind to.
+fn is_constant_shaped_operand(operand: &str) -> bool {
+    operand.starts_with(|ch: char| ch.is_ascii_uppercase())
+        && operand
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
 }
 
 fn apply_static_comparison(op: StaticComparisonOp, lhs: i64, rhs: i64) -> bool {
@@ -390,14 +667,82 @@ fn apply_static_comparison(op: StaticComparisonOp, lhs: i64, rhs: i64) -> bool {
 }
 
 /// Statically decide whether the observed call's argument satisfies the
-/// discriminator comparison: `Some(true)` reaches the boundary, `Some(false)`
-/// provably does not, `None` is undecided.
+/// discriminator comparison.
 ///
 /// The discriminator receiver binds to the observed argument only when the
 /// call has exactly one argument: without signature evidence a multi-argument
 /// binding would be a guess, and a wrong "cannot reach" verdict is worse than
-/// no verdict.
+/// no verdict. An unresolved constant boundary is judged before that binding:
+/// it fails the packet closed at any arity unless some argument IS the
+/// constant, because a wrong actionable packet is worse than a missed one.
 fn static_argument_reaches_boundary(
+    call: &StaticCall,
+    comparison: &StaticComparison,
+) -> BoundaryReach {
+    if let StaticBoundary::Constant(name) = &comparison.boundary {
+        if call.args.iter().any(|argument| argument.trim() == name) {
+            return BoundaryReach::Undecided;
+        }
+        return BoundaryReach::UnresolvedConstant(name.clone());
+    }
+    match static_literal_argument_reaches_boundary(call, comparison) {
+        Some(true) => BoundaryReach::Hits,
+        Some(false) => BoundaryReach::Misses,
+        None => BoundaryReach::Undecided,
+    }
+}
+
+/// The observed call with the fact's argument replaced by the boundary
+/// value, when the fact names exactly this comparison. `None` keeps the
+/// existing verdict.
+fn derived_boundary_call(
+    call: &StaticCall,
+    comparison: &StaticComparison,
+    fact: &TypeScriptBoundaryInputFact,
+) -> Option<String> {
+    if comparison.receiver_is_length
+        || comparison.op != StaticComparisonOp::Equal
+        || comparison.receiver != fact.parameter
+    {
+        return None;
+    }
+    let operand_matches = match &comparison.boundary {
+        StaticBoundary::Constant(name) => *name == fact.operand,
+        StaticBoundary::Int(value) => {
+            *value == fact.value && parse_integer_literal(&fact.operand) == Some(*value)
+        }
+        StaticBoundary::Str(_) => false,
+    };
+    // A spread argument shifts every later position; refuse to bind. An
+    // escape anywhere in the arguments makes the split uncertain, and the
+    // rebuilt call copies the other arguments verbatim, so refuse that too.
+    if !operand_matches
+        || fact.index >= call.args.len()
+        || call
+            .args
+            .iter()
+            .any(|argument| argument.trim_start().starts_with("...") || argument.contains('\\'))
+    {
+        return None;
+    }
+    let args: Vec<String> = call
+        .args
+        .iter()
+        .enumerate()
+        .map(|(index, argument)| {
+            if index == fact.index {
+                fact.value.to_string()
+            } else {
+                argument.clone()
+            }
+        })
+        .collect();
+    Some(format!("{}({})", call.callee, args.join(", ")))
+}
+
+/// `Some(true)` reaches a literal boundary, `Some(false)` provably does not,
+/// `None` is undecided.
+fn static_literal_argument_reaches_boundary(
     call: &StaticCall,
     comparison: &StaticComparison,
 ) -> Option<bool> {
@@ -407,7 +752,7 @@ fn static_argument_reaches_boundary(
     let argument = call.args[0].trim();
     if comparison.receiver_is_length {
         let text = parse_plain_string_literal(argument)?;
-        let StaticLiteral::Int(boundary) = comparison.boundary else {
+        let StaticBoundary::Int(boundary) = comparison.boundary else {
             return None;
         };
         // JavaScript `String.prototype.length` counts UTF-16 code units, not
@@ -416,11 +761,12 @@ fn static_argument_reaches_boundary(
         return Some(apply_static_comparison(comparison.op, length, boundary));
     }
     match &comparison.boundary {
-        StaticLiteral::Int(boundary) => {
-            let value = argument.parse::<i64>().ok()?;
+        StaticBoundary::Int(boundary) => {
+            let value = parse_integer_literal(argument)?;
             Some(apply_static_comparison(comparison.op, value, *boundary))
         }
-        StaticLiteral::Str(boundary) => {
+        StaticBoundary::Constant(_) => None,
+        StaticBoundary::Str(boundary) => {
             let value = parse_plain_string_literal(argument)?;
             match comparison.op {
                 StaticComparisonOp::Equal => Some(value == *boundary),
@@ -449,7 +795,8 @@ fn static_argument_reaches_boundary(
 /// - G-G (#4105): the observed oracle call input must reach — or be statically
 ///   undecidable against — the named discriminator boundary. A provably
 ///   non-reaching input keeps the record projected with a boundary placeholder
-///   shape but fails the packet closed (`agent_packet` ineligible).
+///   shape but fails the packet closed (`agent_packet` ineligible). An
+///   unresolved named-constant boundary fails closed the same way (#4215).
 pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> {
     // G-A: only the terminal `incomplete_repair_packet` branch is eligible.
     let category = evidence_value(finding, "actionability_category: ")?;
@@ -538,12 +885,14 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
     // provably non-reaching observed input as the shape for the boundary —
     // an agent following it verbatim would duplicate a non-discriminating
     // assertion.
+    let boundary_input = typescript_boundary_input_fact(finding);
     let target_shape = evidence_value(finding, "typescript_oracle_observed: ").map(|observed| {
-        typescript_target_assertion_shape(
+        typescript_target_assertion_shape_with_boundary_input(
             &finding.probe.family,
             observed,
             missing_discriminator.as_deref(),
             owner_name.as_deref(),
+            boundary_input.as_ref(),
         )
     });
     let assertion_shape = target_shape.as_ref().map(|shape| shape.shape().to_string());
@@ -552,14 +901,10 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
             .to_string(),
         "Stop if the verification command cannot run from this workspace.".to_string(),
     ];
-    if let Some(boundary_stop) = target_shape.as_ref().and_then(|shape| match shape {
-        TargetAssertionShape::Observed { .. } => None,
-        TargetAssertionShape::Unreachable { discriminator, .. } => Some(format!(
-            "Do not reuse the observed call input; it cannot reach the missing \
-             discriminator `{discriminator}`. Derive an input that hits the \
-             boundary first."
-        )),
-    }) {
+    if let Some(boundary_stop) = target_shape
+        .as_ref()
+        .and_then(TargetAssertionShape::boundary_stop_condition)
+    {
         stop_conditions.push(boundary_stop);
     }
 
@@ -1084,7 +1429,7 @@ mod tests {
             .as_deref()
             .ok_or_else(|| "shape must be present".to_string())?;
         assert_eq!(
-            shape, "login(/* boundary input for user.length == 3 */).toBe(expected)",
+            shape, "expect(login(/* boundary input for user.length == 3 */)).toBe(expected)",
             "shape must name the boundary, not the observed input"
         );
         assert!(
@@ -1203,7 +1548,8 @@ mod tests {
         assert_eq!(
             shape,
             TargetAssertionShape::Unreachable {
-                shape: "limit(/* boundary input for amount == 3 */).toBe(expected)".to_string(),
+                shape: "expect(limit(/* boundary input for amount == 3 */)).toBe(expected)"
+                    .to_string(),
                 observed_call: "limit(5)".to_string(),
                 discriminator: "amount == 3".to_string(),
             }
@@ -1375,5 +1721,417 @@ mod tests {
             matches!(shape, TargetAssertionShape::Observed { .. }),
             "UTF-16 length 3 must reach the boundary: {shape:?}"
         );
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // #4215: an unresolved named-constant boundary is not evidence that the
+    // observed input discriminates it; the packet fails closed.
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// The onboarding `tsapp` repro: `amount >= DISCOUNT_THRESHOLD` changed,
+    /// the only related assertion observes `discountedTotal(20000)`, and the
+    /// missing discriminator names the constant. The packet must not be
+    /// delegatable, and its shape must name the boundary, not `20000`.
+    #[test]
+    fn unresolved_constant_boundary_fails_closed_with_boundary_placeholder() -> Result<(), String> {
+        let mut finding = boundary_finding(
+            "discountedTotal(20000)",
+            "18000",
+            "amount == DISCOUNT_THRESHOLD",
+        );
+        finding.probe.owner = Some(SymbolId(
+            "typescript:src/pricing.ts::discountedTotal".to_string(),
+        ));
+        let record = typescript_gap_record_for(&finding).ok_or_else(|| {
+            "record must still project for the named-constant finding".to_string()
+        })?;
+        let route = record
+            .repair_route
+            .as_ref()
+            .ok_or_else(|| "repair route must be present".to_string())?;
+        assert_eq!(
+            route.assertion_shape.as_deref(),
+            Some(
+                "expect(discountedTotal(/* boundary input for amount == DISCOUNT_THRESHOLD */)).toBe(expected)"
+            ),
+            "shape must name the boundary, not the observed input"
+        );
+        assert!(
+            route.stop_conditions.iter().any(|stop| {
+                stop.contains("Do not reuse the observed call input")
+                    && stop.contains("DISCOUNT_THRESHOLD")
+            }),
+            "a stop condition must forbid reusing the observed input: {:?}",
+            route.stop_conditions
+        );
+        let error = match validate_agent_gap_record_packet(&record) {
+            Err(error) => error,
+            Ok(()) => {
+                return Err(
+                    "packet must fail closed when the boundary constant is unresolved".to_string(),
+                );
+            }
+        };
+        assert!(
+            error.contains("DISCOUNT_THRESHOLD") && error.contains("discountedTotal(20000)"),
+            "validator reason must name the constant and the observed input: {error}"
+        );
+        Ok(())
+    }
+
+    /// The same finding with a literal threshold that the observed input
+    /// hits stays complete: the fail-closed arm is specific to unresolved
+    /// constants, not to every `>=`/`==` boundary.
+    #[test]
+    fn literal_boundary_hit_by_observed_input_stays_delegatable() -> Result<(), String> {
+        let mut finding = boundary_finding("discountedTotal(10000)", "9000", "amount == 10000");
+        finding.probe.owner = Some(SymbolId(
+            "typescript:src/pricing.ts::discountedTotal".to_string(),
+        ));
+        let record =
+            typescript_gap_record_for(&finding).ok_or_else(|| "record must project".to_string())?;
+        let route = record
+            .repair_route
+            .as_ref()
+            .ok_or_else(|| "repair route must be present".to_string())?;
+        assert_eq!(
+            route.assertion_shape.as_deref(),
+            Some("expect(discountedTotal(10000)).toBe(expected)")
+        );
+        validate_agent_gap_record_packet(&record)
+            .map_err(|error| format!("literal boundary hit must stay delegatable; got: {error}"))
+    }
+
+    /// A literal written first is read with the operator mirrored:
+    /// `3 < amount` is `amount > 3`.
+    #[test]
+    fn target_shape_literal_first_mirrors_the_operator() {
+        let hit = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "limit(5)",
+            Some("3 < amount"),
+            Some("limit"),
+        );
+        assert!(
+            matches!(hit, TargetAssertionShape::Observed { .. }),
+            "{hit:?}"
+        );
+        let miss = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "limit(2)",
+            Some("3 < amount"),
+            Some("limit"),
+        );
+        assert!(
+            matches!(miss, TargetAssertionShape::Unreachable { .. }),
+            "{miss:?}"
+        );
+    }
+
+    #[test]
+    fn target_shape_constant_boundary_is_judged_at_any_arity_unless_an_argument_names_it() {
+        for (observed, discriminator) in [
+            ("discountedTotal(20000)", "amount == DISCOUNT_THRESHOLD"),
+            ("discountedTotal(20000)", "amount >= DISCOUNT_THRESHOLD"),
+            (
+                "discountedTotal(20000, true)",
+                "amount == DISCOUNT_THRESHOLD",
+            ),
+            ("pad('abc')", "user.length == MIN_LEN"),
+        ] {
+            let owner = observed.split('(').next();
+            let shape = typescript_target_assertion_shape(
+                &ProbeFamily::Predicate,
+                observed,
+                Some(discriminator),
+                owner,
+            );
+            assert!(
+                matches!(shape, TargetAssertionShape::UnresolvedBoundary { .. }),
+                "`{observed}` vs `{discriminator}` must fail closed: {shape:?}"
+            );
+        }
+        // A constant written first is still the boundary (the analysis side
+        // keeps operand order: `DISCOUNT_THRESHOLD <= amount` becomes
+        // `DISCOUNT_THRESHOLD == amount`).
+        let constant_first = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "discountedTotal(20000)",
+            Some("DISCOUNT_THRESHOLD == amount"),
+            Some("discountedTotal"),
+        );
+        assert!(
+            matches!(
+                constant_first,
+                TargetAssertionShape::UnresolvedBoundary { ref constant, .. }
+                    if constant == "DISCOUNT_THRESHOLD"
+            ),
+            "a leading constant boundary must fail closed: {constant_first:?}"
+        );
+        // An argument that IS the constant may hit the boundary: undecided.
+        let names_constant = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "discountedTotal(DISCOUNT_THRESHOLD)",
+            Some("amount == DISCOUNT_THRESHOLD"),
+            Some("discountedTotal"),
+        );
+        assert!(
+            matches!(names_constant, TargetAssertionShape::Observed { .. }),
+            "an argument naming the constant stays undecided: {names_constant:?}"
+        );
+    }
+
+    fn boundary_input_fact(parameter: &str, index: usize, operand: &str, value: i64) -> String {
+        format!(
+            "typescript_boundary_input: parameter={parameter};index={index};operand={operand};value={value}"
+        )
+    }
+
+    fn parsed_fact(line: &str) -> Result<TypeScriptBoundaryInputFact, String> {
+        TypeScriptBoundaryInputFact::parse(line).ok_or_else(|| format!("fact must parse: {line}"))
+    }
+
+    /// #4410 / RC rehearsal: a literal boundary the observed input misses
+    /// (`shipping(1000)` vs `amount == 5000`) projects the derived boundary
+    /// input and stays delegatable through the shared validator; the observed
+    /// input stays as context in a stop condition.
+    #[test]
+    fn missed_literal_boundary_with_input_fact_derives_the_boundary_call() -> Result<(), String> {
+        let mut finding = boundary_finding("shipping(1000)", "500", "amount == 5000");
+        finding.probe.owner = Some(SymbolId(
+            "typescript:src/shipping.mts::shipping".to_string(),
+        ));
+        // Control: without the fact the packet fails closed (#4105).
+        let closed =
+            typescript_gap_record_for(&finding).ok_or_else(|| "record must project".to_string())?;
+        assert!(validate_agent_gap_record_packet(&closed).is_err());
+
+        finding
+            .evidence
+            .push(boundary_input_fact("amount", 0, "5000", 5000));
+        let record =
+            typescript_gap_record_for(&finding).ok_or_else(|| "record must project".to_string())?;
+        let route = record
+            .repair_route
+            .as_ref()
+            .ok_or_else(|| "repair route must be present".to_string())?;
+        assert_eq!(
+            route.assertion_shape.as_deref(),
+            Some("expect(shipping(5000)).toBe(expected)")
+        );
+        assert!(
+            route.stop_conditions.iter().any(|stop| stop
+                .contains("The observed call `shipping(1000)` is not shown to hit")
+                && stop.contains("`shipping(5000)` is derived from the literal boundary")),
+            "{:?}",
+            route.stop_conditions
+        );
+        validate_agent_gap_record_packet(&record)
+            .map_err(|error| format!("derived literal boundary must be delegatable: {error}"))
+    }
+
+    /// The onboarding `tsapp` shape: the constant resolved on the analysis
+    /// side turns the #4215 fail-closed packet into a delegatable one.
+    #[test]
+    fn resolved_constant_boundary_with_input_fact_is_delegatable() -> Result<(), String> {
+        let mut finding = boundary_finding(
+            "discountedTotal(20000)",
+            "18000",
+            "amount == DISCOUNT_THRESHOLD",
+        );
+        finding.probe.owner = Some(SymbolId(
+            "typescript:src/pricing.ts::discountedTotal".to_string(),
+        ));
+        finding.evidence.push(boundary_input_fact(
+            "amount",
+            0,
+            "DISCOUNT_THRESHOLD",
+            10000,
+        ));
+        let record =
+            typescript_gap_record_for(&finding).ok_or_else(|| "record must project".to_string())?;
+        let route = record
+            .repair_route
+            .as_ref()
+            .ok_or_else(|| "repair route must be present".to_string())?;
+        assert_eq!(
+            route.assertion_shape.as_deref(),
+            Some("expect(discountedTotal(10000)).toBe(expected)")
+        );
+        assert!(
+            route
+                .stop_conditions
+                .iter()
+                .any(|stop| stop.contains("derived from `DISCOUNT_THRESHOLD` = 10000")),
+            "{:?}",
+            route.stop_conditions
+        );
+        validate_agent_gap_record_packet(&record)
+            .map_err(|error| format!("resolved constant must be delegatable: {error}"))
+    }
+
+    #[test]
+    fn input_fact_binds_its_argument_position_and_both_operand_orders() -> Result<(), String> {
+        let rate_fact = parsed_fact(&boundary_input_fact("amount", 1, "100", 100))?;
+        let shape = typescript_target_assertion_shape_with_boundary_input(
+            &ProbeFamily::Predicate,
+            "applyRate(0.1, 50)",
+            Some("amount == 100"),
+            Some("applyRate"),
+            Some(&rate_fact),
+        );
+        assert_eq!(shape.shape(), "expect(applyRate(0.1, 100)).toBe(expected)");
+        assert!(shape.packet_ineligibility_reason().is_none());
+
+        let constant_fact = parsed_fact(&boundary_input_fact("amount", 0, "LIMIT", 7))?;
+        let first = typescript_target_assertion_shape_with_boundary_input(
+            &ProbeFamily::Predicate,
+            "check(1)",
+            Some("LIMIT == amount"),
+            Some("check"),
+            Some(&constant_fact),
+        );
+        assert_eq!(first.shape(), "expect(check(7)).toBe(expected)");
+        Ok(())
+    }
+
+    /// Codex on #4429: the analysis side reads `5_000` as 5000, so the
+    /// projection must too, or the literal route never becomes delegatable.
+    #[test]
+    fn separator_literal_boundary_derives_the_boundary_call() -> Result<(), String> {
+        let fact = parsed_fact(&boundary_input_fact("amount", 0, "5_000", 5000))?;
+        let shape = typescript_target_assertion_shape_with_boundary_input(
+            &ProbeFamily::Predicate,
+            "shipping(1_000)",
+            Some("amount == 5_000"),
+            Some("shipping"),
+            Some(&fact),
+        );
+        assert_eq!(shape.shape(), "expect(shipping(5000)).toBe(expected)");
+        assert!(shape.packet_ineligibility_reason().is_none());
+        for malformed in ["5__000", "5000_", "_5000", "0_5"] {
+            assert_eq!(parse_integer_literal(malformed), None, "{malformed}");
+        }
+        Ok(())
+    }
+
+    /// An escaped quote no longer ends the string when splitting arguments.
+    #[test]
+    fn argument_split_keeps_escaped_quotes_inside_their_string() {
+        assert_eq!(
+            split_top_level_args(r#""a\",b", 50"#),
+            vec![r#""a\",b""#.to_string(), "50".to_string()]
+        );
+    }
+
+    /// An observed input that already hits the boundary keeps its own shape.
+    #[test]
+    fn input_fact_never_overrides_an_observed_input_that_hits() -> Result<(), String> {
+        let fact = parsed_fact(&boundary_input_fact("amount", 0, "5000", 5000))?;
+        let shape = typescript_target_assertion_shape_with_boundary_input(
+            &ProbeFamily::Predicate,
+            "shipping(5000)",
+            Some("amount == 5000"),
+            Some("shipping"),
+            Some(&fact),
+        );
+        assert!(
+            matches!(shape, TargetAssertionShape::Observed { .. }),
+            "{shape:?}"
+        );
+        Ok(())
+    }
+
+    /// A fact that does not name exactly this comparison, or cannot bind the
+    /// observed call, leaves the fail-closed verdict in place.
+    #[test]
+    fn mismatched_input_facts_keep_the_packet_closed() -> Result<(), String> {
+        for (label, observed, discriminator, fact) in [
+            (
+                "other parameter",
+                "shipping(1000)",
+                "amount == 5000",
+                boundary_input_fact("total", 0, "5000", 5000),
+            ),
+            (
+                "other literal value",
+                "shipping(1000)",
+                "amount == 5000",
+                boundary_input_fact("amount", 0, "4000", 4000),
+            ),
+            (
+                "operand text differs from value",
+                "shipping(1000)",
+                "amount == 5000",
+                boundary_input_fact("amount", 0, "LIMIT", 5000),
+            ),
+            (
+                "other constant",
+                "discountedTotal(20000)",
+                "amount == DISCOUNT_THRESHOLD",
+                boundary_input_fact("amount", 0, "OTHER_LIMIT", 10000),
+            ),
+            (
+                "position beyond the observed arguments",
+                "shipping(1000)",
+                "amount == 5000",
+                boundary_input_fact("amount", 1, "5000", 5000),
+            ),
+            (
+                "spread argument",
+                "shipping(...orders)",
+                "amount == 5000",
+                boundary_input_fact("amount", 0, "5000", 5000),
+            ),
+            (
+                "length receiver",
+                "login('alice')",
+                "user.length == 3",
+                boundary_input_fact("user", 0, "3", 3),
+            ),
+            (
+                "escaped quote in another argument",
+                r#"apply("a\",b", 50)"#,
+                "amount == 100",
+                boundary_input_fact("amount", 1, "100", 100),
+            ),
+        ] {
+            let fact = parsed_fact(&fact)?;
+            let owner = observed.split('(').next();
+            let shape = typescript_target_assertion_shape_with_boundary_input(
+                &ProbeFamily::Predicate,
+                observed,
+                Some(discriminator),
+                owner,
+                Some(&fact),
+            );
+            assert!(
+                !matches!(shape, TargetAssertionShape::DerivedBoundary { .. }),
+                "{label}: {shape:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_or_duplicate_input_facts_are_ignored() {
+        for line in [
+            "typescript_boundary_input: parameter=amount;index=0;operand=5000",
+            "typescript_boundary_input: parameter=amount;index=x;operand=5000;value=5000",
+            "typescript_boundary_input: parameter=amount;index=0;operand=5000;value=5.5",
+            "typescript_boundary_input: parameter=a b;index=0;operand=5000;value=5000",
+            "typescript_boundary_input: parameter=amount;index=0;operand=5000;value=5000;extra=1",
+            "typescript_boundary_input: parameter=amount;parameter=total;index=0;operand=5000",
+        ] {
+            assert!(TypeScriptBoundaryInputFact::parse(line).is_none(), "{line}");
+        }
+        let mut finding = boundary_finding("shipping(1000)", "500", "amount == 5000");
+        finding
+            .evidence
+            .push(boundary_input_fact("amount", 0, "5000", 5000));
+        finding
+            .evidence
+            .push(boundary_input_fact("amount", 0, "5000", 5000));
+        assert!(typescript_boundary_input_fact(&finding).is_none());
     }
 }

@@ -27,17 +27,26 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
 - `0`: the command completed (for `verify-execute`, the verification ran;
   read the disposition in the stdout JSON).
 - `3`: the command completed by reaching a blocking decision or typed
-  refusal; read the report or the stdout JSON document for the answer.
+  refusal; read the report or the stdout JSON document for the answer
+  (standalone `ripr agent verify` is the exception: its refusal is named on
+  stderr and stdout stays empty; see below).
 - `2`: the invocation or operation failed; retrying differently is
   appropriate.
 
 ## When you see exit code 2
 
-- **Analysis error**: the diff could not be parsed, the base ref could not
-  be resolved, or the workspace root could not be determined.
+- **Analysis error**: the diff could not be read (a missing or unreadable
+  `--diff` path, or a directory), the diff exceeded its scope limits
+  (`diff_scope_oversized`), the base ref could not be resolved, or the
+  workspace root could not be determined. A diff that is read but does not
+  parse (no file headers or hunks) is not an exit-2 error: `ripr check` exits
+  `0` with the typed outcome `unsupported_input (analysis incomplete)`.
 - **User error**: unknown command, missing required argument, or invalid
   config.
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
+- **Closed output pipe**: the reader of stdout went away early (for example
+  `ripr doctor | head`). ripr stops quietly with `2`, not `0`, because its
+  output was cut short; it never turns a would-be `3` into a pass.
 
 ## When you see exit code 3
 
@@ -48,10 +57,21 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
   rendered the typed refusal JSON on stdout; `ripr agent repair --phase
   after` refused with a named cause after selecting its attempt — a diverged
   HEAD, drifted analysis inputs, a no-movement verify refusal, or a replaced
-  trust-binding manifest — with the recovery narrated and the refusal
-  recorded on the attempt. Operational errors after attempt selection (an
-  unreadable retained packet or manifest, a failed artifact write) still
-  exit `2`.
+  trust-binding manifest — with the recovery narrated on stderr, the refusal
+  recorded on the attempt, and one JSON document on stdout (the
+  `repair_after_refusal` document naming the cause and recovery when the
+  refusal came before the verify render, otherwise the bare agent verify
+  document). Operational errors after attempt selection (an unreadable
+  retained packet or manifest, a failed artifact write) still exit `2`.
+- **Typed verify refusal**: standalone `ripr agent verify` refused the pair
+  for drifted analysis inputs (`analysis input identities differ`) or no
+  repository movement between the artifacts — the same named refusals the
+  repair after phase maps to `3`. This is the one exit-`3` path whose stdout
+  stays empty: `agent verify`'s stdout is the verify artifact (the packet's
+  `next` loop redirects it into `agent-verify.json`), and a rejected verify
+  renders nothing to it (RIPR-SPEC-0134). The named cause is on stderr.
+  Other verify rejections (unreadable or invalid artifacts, lineage or
+  metadata mismatches) exit `2`.
 
 These are findings- and policy-driven exits, not operational failures; a
 monitoring system should page on `2`, not on `3`.
@@ -68,14 +88,27 @@ scope for the root: Rust is enabled and either Rust markers (`Cargo.toml` or
 Python-only or TypeScript-only root reports those checks as `skipped` with
 the reason and does not fail on them. A Rust root, a root with Rust sources but no
 `Cargo.toml`, and an empty root under the Rust-only default still fail on a
-missing manifest or toolchain.
+missing manifest.
+
+The toolchain checks depend on the profile. Under the default `analysis`
+profile, a missing `cargo` or `rustc`, or a workspace `rustc` older than
+RIPR's build MSRV, is reported as `advisory` and does not change the exit
+code: the installed binary can still analyze the workspace. A missing `cargo`
+still withholds evidence that reads `cargo metadata`. Under
+`--profile source-build`, the same conditions are failures and exit `2`, while
+enabled language runtimes stay visible but do not decide that profile's exit.
 
 ## CI integration
 
-In generated GitHub Actions workflows, ripr preserves the exit code:
+The GitHub Actions workflow that `ripr init --ci github` generates preserves
+the exit code:
 
-```yaml
-ripr check --root . --mode draft --format json > check.json || check_status=$?
+```bash
+check_status=0
+ripr check \
+  --root . \
+  --base "origin/${{ github.base_ref }}" \
+  --format json > target/ripr/pr/check.json || check_status=$?
 ```
 
 The `|| check_status=$?` pattern captures the exit code without failing the

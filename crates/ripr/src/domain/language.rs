@@ -5,6 +5,30 @@
 //! These are pure-data enums shared between the analysis adapter layer and
 //! the output renderers that emit additive optional language metadata fields.
 
+/// Program prefix of a generated pytest verify command.
+///
+/// `python -m pytest` rather than bare `pytest`: `-m` puts the working
+/// directory on `sys.path`, so a flat-layout package at the repository root
+/// imports without a `pythonpath` setting, where bare `pytest` fails
+/// collection with `ModuleNotFoundError`. The interpreter is spelled `python`,
+/// like the unittest route's `python -m unittest`: inside a virtual
+/// environment, where pytest is normally installed, `python` names the
+/// environment's interpreter on Linux, macOS and Windows alike, while
+/// `python3` is absent from Windows virtual environments.
+pub(crate) const PYTEST_VERIFY_PROGRAM: &str = "python -m pytest";
+
+/// Whether a verify command runs pytest.
+///
+/// Accepts the generated `python -m pytest ...` form and the bare
+/// `pytest ...` form earlier artifacts and recorded evals carry, so a
+/// consumer reading either keeps its pytest-specific behavior.
+pub(crate) fn is_pytest_verify_command(command: &str) -> bool {
+    command
+        .strip_prefix(PYTEST_VERIFY_PROGRAM)
+        .or_else(|| command.strip_prefix("pytest"))
+        .is_some_and(|rest| rest.starts_with(' '))
+}
+
 /// The set of source languages an adapter can report.
 ///
 /// `Rust` is the reference language. `TypeScript`, `JavaScript`, `Python`,
@@ -148,7 +172,8 @@ impl LanguageId {
     pub(crate) fn enable_prerequisite(self) -> Option<String> {
         match self {
             LanguageId::Perl => Some(format!(
-                "Perl also needs a fact packet: pass --perl-facts <packet.json>, or configure [perl].producer with a compatible Perl fact exporter (`{PERL_FACT_EXPORTER}`, not yet published)"
+                "Perl also needs a fact packet: {}",
+                perl_fact_packet_guidance()
             )),
             _ => None,
         }
@@ -159,6 +184,14 @@ impl LanguageId {
 /// mode invokes (`<exporter> ripr-facts --schema ...`). It is not yet
 /// published, so no surface may present Perl analysis as installable.
 pub(crate) const PERL_FACT_EXPORTER: &str = "perl-ripr-facts";
+
+/// How to supply a Perl fact packet, shared by the enable prerequisite and
+/// the adapter's `unavailable` reason so the two cannot diverge.
+pub(crate) fn perl_fact_packet_guidance() -> String {
+    format!(
+        "pass --perl-facts <packet.json>, or configure [perl].producer with a compatible Perl fact exporter (`{PERL_FACT_EXPORTER}`, not yet published)"
+    )
+}
 
 /// Whether an adapter is the reference (`Stable`) implementation for a
 /// language or a `Preview` adapter.
@@ -417,6 +450,18 @@ impl StaticLimitKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pytest_verify_command_accepts_module_and_legacy_bare_forms() {
+        assert!(is_pytest_verify_command(
+            "python -m pytest tests/test_pricing.py::test_boundary"
+        ));
+        assert!(is_pytest_verify_command("pytest tests/test_pricing.py"));
+        assert!(!is_pytest_verify_command("python -m pytestx tests"));
+        assert!(!is_pytest_verify_command("pytestx tests"));
+        assert!(!is_pytest_verify_command("python -m unittest tests.test_x"));
+        assert!(!is_pytest_verify_command("python -m pytest"));
+    }
 
     #[test]
     fn language_id_wire_strings_are_stable() {

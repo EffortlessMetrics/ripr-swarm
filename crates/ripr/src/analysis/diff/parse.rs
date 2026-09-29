@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::analysis_outcome::{
@@ -12,6 +11,8 @@ use super::path::{
     parse_old_path_for_confinement, parse_old_path_marker, parse_rename_from_path,
     parse_rename_to_path,
 };
+
+mod stream;
 
 /// Default file-count limit for parsed diffs. Same default as the Rust adapter
 /// (`analysis/language/rust.rs:DIFF_INDEX_FILE_LIMIT`); kept in sync so the
@@ -37,18 +38,7 @@ fn parse_unified_diff_with_metadata_and_limit(
     input: &str,
     limit: usize,
 ) -> Result<ParsedDiff, String> {
-    let parsed = parse_unified_diff_with_metadata(input);
-    if parsed.changed_files.len() > limit {
-        return Err(format!(
-            "diff_scope_oversized: {} changed files exceed the {DIFF_FILE_LIMIT_ENV} \
-             limit ({limit}); analysis was not run to protect runner memory before \
-             probe expansion. Repair route: reduce the diff scope, split the extraction \
-             PR, run a narrower diff, or raise the limit via \
-             {DIFF_FILE_LIMIT_ENV}=<number>.",
-            parsed.changed_files.len()
-        ));
-    }
-    Ok(parsed)
+    stream::parse_bounded_lines(input.lines(), limit)
 }
 
 fn diff_file_limit_from_env() -> usize {
@@ -64,102 +54,7 @@ pub fn parse_unified_diff(input: &str) -> Vec<ChangedFile> {
 }
 
 pub(crate) fn parse_unified_diff_with_metadata(input: &str) -> ParsedDiff {
-    let mut files: BTreeMap<PathBuf, ChangedFile> = BTreeMap::new();
-    let mut state = parser_state::ParserState::default();
-
-    // Collect lines so we can peek at the next line for the RANK-2 fix:
-    // when `in_hunk` and we see `--- <plausible-path>` immediately followed by
-    // `+++ <path>`, we must close the current hunk and open a new file section
-    // rather than misinterpreting the markers as hunk-body payload.
-    let lines: Vec<&str> = input.lines().collect();
-    let mut i = 0;
-    while i < lines.len() {
-        let raw = lines[i];
-
-        if state.handle_diff_boundary(raw) {
-            i += 1;
-            continue;
-        }
-
-        // Binary file sentinel: `Binary files a/x and b/x differ` (or
-        // `/dev/null` variants) signals that this file has no textual hunks
-        // and produces no analyzable line-level probes. Treat it as a hunk
-        // closer so a following textual file-section is not mis-attributed to
-        // the binary file's still-open hunk, and so the parser does not fall
-        // through and consume the literal `Binary files ...` line as hunk
-        // payload.
-        if state.handle_binary_files_sentinel(raw) {
-            state.record_binary_deletion(raw);
-            i += 1;
-            continue;
-        }
-
-        if state.handle_submodule_mode(raw) {
-            i += 1;
-            continue;
-        }
-
-        if state.handle_submodule_index(raw) {
-            i += 1;
-            continue;
-        }
-
-        if state.handle_rename_metadata(raw, &mut files) {
-            i += 1;
-            continue;
-        }
-
-        // RANK-2 fix: detect a plain-diff file-section boundary while in_hunk.
-        // A genuine `--- payload` line inside a hunk starts with `-` (one dash)
-        // and is consumed as a removed line.  A file-section separator starts
-        // with `--- ` (three dashes + space) and is always followed immediately
-        // by `+++ <path>`.  We peek at the next line before committing.
-        if state.combined_quarantine()
-            && parse_old_path_marker(raw)
-            && lines
-                .get(i + 1)
-                .is_some_and(|next| is_new_path_marker(next))
-        {
-            // A plain `---`/`+++` pair can follow a combined hunk without a
-            // `diff --git` boundary. Combined source text carries parent
-            // prefix columns and cannot match these unprefixed markers.
-            state.close_combined_quarantine();
-        }
-
-        if state.in_hunk()
-            && parse_old_path_marker(raw)
-            && lines
-                .get(i + 1)
-                .is_some_and(|next| is_new_path_marker(next))
-        {
-            // This `--- ` line opens a new file section: close the current hunk
-            // and fall through to the normal path-marker handler below.
-            state.close_hunk();
-        }
-
-        if state.register_path_marker(raw, &mut files) {
-            i += 1;
-            continue;
-        }
-
-        if state.handle_hunk_header(raw) {
-            i += 1;
-            continue;
-        }
-
-        state.consume_hunk_line(raw, &mut files);
-        i += 1;
-    }
-
-    ParsedDiff {
-        changed_files: files.into_values().collect(),
-        deleted_file_count: state.deleted_file_count(),
-        submodule_file_count: state.submodule_file_count(),
-        renamed_file_count: state.renamed_file_count(),
-        pure_rename_file_count: state.pure_rename_file_count(),
-        pure_rename_paths: state.pure_rename_paths(),
-        limitations: state.limitations(),
-    }
+    stream::parse_unbounded(input)
 }
 
 #[derive(Debug, Default)]
@@ -251,6 +146,11 @@ mod parser_state {
         submodule_counted: bool,
         submodule_new_file: bool,
         submodule_file_count: usize,
+        /// Set for a symlink (mode `120000`) file section. Git renders the
+        /// link target as the blob's one line, which is a path, not source,
+        /// so the section's path is not registered and its hunk lines are
+        /// consumed without being recorded (#4577).
+        symlink_section: bool,
         rename_section: bool,
         pure_rename_section: bool,
         rename_from_path: Option<PathBuf>,
@@ -426,6 +326,31 @@ mod parser_state {
             false
         }
 
+        /// Mark a symlink section from its mode or index header. This only
+        /// observes: `deleted file mode` must still reach the deletion
+        /// accounting in `register_path_marker`.
+        pub(super) fn note_symlink_header(&mut self, raw: &str) {
+            if self.in_hunk {
+                return;
+            }
+            let is_symlink = match raw
+                .strip_prefix("new file mode ")
+                .or_else(|| raw.strip_prefix("deleted file mode "))
+            {
+                Some(mode) => mode == "120000",
+                None => {
+                    let mut fields = raw.split_whitespace();
+                    fields.next() == Some("index")
+                        && fields.next().is_some_and(|range| range.contains(".."))
+                        && fields.next() == Some("120000")
+                        && fields.next().is_none()
+                }
+            };
+            if is_symlink {
+                self.symlink_section = true;
+            }
+        }
+
         pub(super) fn handle_submodule_index(&mut self, raw: &str) -> bool {
             if self.in_hunk {
                 return false;
@@ -460,6 +385,9 @@ mod parser_state {
         /// a hunk is still open (RANK-2 fix).
         pub(super) fn close_hunk(&mut self) {
             self.in_hunk = false;
+            // A plain-diff file boundary also ends a symlink section; git's
+            // own sections reset it at `diff --git` (#4594 review).
+            self.symlink_section = false;
             self.saw_old_path_marker = false;
             self.conflict_region = None;
         }
@@ -524,6 +452,14 @@ mod parser_state {
                 }
                 return false;
             };
+            if self.symlink_section {
+                // A symlink is not source: registering its path would count
+                // it as a changed file and admit the link into indexing
+                // (#4577, #4594 review). Its hunk lines are skipped too.
+                self.current_path = None;
+                self.saw_old_path_marker = false;
+                return true;
+            }
             if self.submodule_section
                 && !self.submodule_counted
                 && (self.submodule_new_file || self.section_old_path.as_ref() == Some(&path))
@@ -568,6 +504,7 @@ mod parser_state {
             self.submodule_section = false;
             self.submodule_counted = false;
             self.submodule_new_file = false;
+            self.symlink_section = false;
             self.rename_section = false;
             self.pure_rename_section = false;
             self.rename_from_path = None;
@@ -659,7 +596,6 @@ mod parser_state {
                 self.saw_old_path_marker = false;
                 return;
             }
-
             let Some(path) = self.current_path.clone() else {
                 return;
             };
@@ -671,7 +607,7 @@ mod parser_state {
             // one changed program. Emitting their lines as ordinary changes
             // invents behavior that exists in neither parent, so quarantine the
             // region and record it instead (#2828). Coordinates still advance so
-            // that lines after the region keep honest line numbers.
+            // that lines after a quarantined region keep honest line numbers.
             let side = match raw.as_bytes().first() {
                 Some(b'+') => Some(ConflictSide::Added),
                 Some(b'-') => Some(ConflictSide::Removed),
@@ -1101,6 +1037,60 @@ deleted file mode 100644
     }
 
     #[test]
+    fn symlink_sections_record_no_changed_source_lines() {
+        // #4577: git renders a symlink (mode 120000) as a one-line blob whose
+        // content is the link target. That line is a path, not source, and
+        // must not become a changed line at the symlink's `.rs` path. The
+        // sections below are verbatim git output for an added link, a
+        // retargeted link, and a type change in each direction.
+        let added = "diff --git a/src/link.rs b/src/link.rs\nnew file mode 120000\nindex 0000000..32bcc48\n--- /dev/null\n+++ b/src/link.rs\n@@ -0,0 +1 @@\n+lib.rs\n\\ No newline at end of file\n";
+        assert!(parse_unified_diff(added).is_empty());
+
+        let retargeted = "diff --git a/src/lnk2.rs b/src/lnk2.rs\nindex 1541615..32bcc48 120000\n--- a/src/lnk2.rs\n+++ b/src/lnk2.rs\n@@ -1 +1 @@\n-b.rs\n\\ No newline at end of file\n+lib.rs\n\\ No newline at end of file\n";
+        assert!(parse_unified_diff(retargeted).is_empty());
+
+        // File -> symlink at src/b.rs, then symlink -> file at src/link.rs.
+        // The regular-file halves keep their lines, so the flag is scoped to
+        // its own section and resets at the next boundary.
+        let type_changes = "diff --git a/src/b.rs b/src/b.rs\ndeleted file mode 100644\nindex 7d37b56..0000000\n--- a/src/b.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-pub fn b() -> u32 { 2 }\ndiff --git a/src/b.rs b/src/b.rs\nnew file mode 120000\nindex 0000000..32bcc48\n--- /dev/null\n+++ b/src/b.rs\n@@ -0,0 +1 @@\n+lib.rs\n\\ No newline at end of file\ndiff --git a/src/link.rs b/src/link.rs\ndeleted file mode 120000\nindex 32bcc48..0000000\n--- a/src/link.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-lib.rs\n\\ No newline at end of file\ndiff --git a/src/link.rs b/src/link.rs\nnew file mode 100644\nindex 0000000..ebd9dfb\n--- /dev/null\n+++ b/src/link.rs\n@@ -0,0 +1 @@\n+pub fn c(x: u32) -> bool { x > 3 }\n";
+        let parsed = parse_unified_diff_with_metadata(type_changes);
+        assert_eq!(parsed.deleted_file_count, 2);
+        assert!(
+            parsed
+                .changed_files
+                .iter()
+                .all(|file| file.path != std::path::Path::new("src/b.rs")),
+            "the symlink half of a type change must not register: {:?}",
+            parsed.changed_files
+        );
+        let link = parsed
+            .changed_files
+            .iter()
+            .find(|file| file.path == std::path::Path::new("src/link.rs"));
+        let added: Vec<&str> = link
+            .map(|file| {
+                file.added_lines
+                    .iter()
+                    .map(|line| line.text.as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(added, vec!["pub fn c(x: u32) -> bool { x > 3 }"]);
+    }
+
+    #[test]
+    fn plain_file_boundary_after_symlink_section_keeps_source_lines() {
+        // #4594 review: a plain `---`/`+++` boundary after a symlink hunk
+        // starts an ordinary file whose lines must survive.
+        let diff = "diff --git a/src/link.rs b/src/link.rs\nnew file mode 120000\n--- /dev/null\n+++ b/src/link.rs\n@@ -0,0 +1 @@\n+lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-old\n+new\n";
+        let parsed = parse_unified_diff(diff);
+        assert_eq!(parsed.len(), 1, "{parsed:?}");
+        assert_eq!(parsed[0].path, PathBuf::from("src/lib.rs"));
+        assert_eq!(parsed[0].added_lines.len(), 1);
+        assert_eq!(parsed[0].removed_lines.len(), 1);
+    }
+
+    #[test]
     fn metadata_does_not_count_non_gitlink_or_unconfined_submodule_markers() {
         let regular = "diff --git a/src/lib.rs b/src/lib.rs\nindex 1111111..2222222 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-old\n+new\n";
         assert_eq!(
@@ -1149,6 +1139,7 @@ deleted file mode 100644
         let spaced = "diff --git a/src/old file.rs b/src/new file.rs\nsimilarity index 80%\nrename from src/old file.rs\nrename to src/new file.rs\n--- \"a/src/old file.rs\"\n+++ \"b/src/new file.rs\"\n@@ -1 +1 @@\n-old\n+new\n";
         let parsed = parse_unified_diff_with_metadata(spaced);
         assert_eq!(parsed.renamed_file_count, 1);
+        assert_eq!(parsed.pure_rename_file_count, 0);
         assert_eq!(parsed.changed_files.len(), 1);
         assert_eq!(
             parsed.changed_files[0].path,
@@ -1173,6 +1164,7 @@ deleted file mode 100644
 ";
 
         let files = parse_unified_diff(diff);
+
         assert!(files.is_empty());
     }
 
@@ -1739,8 +1731,8 @@ deleted file mode 100644
             "error must use diff_scope_oversized prefix: {err}"
         );
         assert!(
-            err.contains("10 changed files"),
-            "error must name the file count: {err}"
+            err.contains("at least 6 changed files"),
+            "error must name the observed lower bound, not the unread total: {err}"
         );
         Ok(())
     }

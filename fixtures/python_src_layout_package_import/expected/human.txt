@@ -4,14 +4,14 @@ root: fixtures/python_src_layout_package_import/input
 
 Summary: 2 probe(s), 0 exposed, 2 weak, 0 unrevealed, 0 no path, 0 unknown
 
-Changed file(s) by language: python: 2, rust: 0.
+Changed file(s) by language: python: 2.
 
 Analysis outcome: complete_with_findings (analysis complete).
   Counts: 2 changed file(s), 4 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s).
 
 Start here:
   State: preview_limited
-  Safe next action: preview-language evidence is advisory; complete the missing repair-packet fields before acting.
+  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it.
   File: src/pricing/discounts.py:2
   Language: python
   Language status: preview
@@ -19,12 +19,12 @@ Start here:
   Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/pricing/discounts.py:bulk_discount:predicate_boundary:predicate:quantity>100
   Changed behavior: if quantity > 100:
-  Missing discriminator: A strong Python oracle reaches `bulk_discount`, but static evidence does not place a related test input at the changed predicate boundary `quantity == 100`. No strong related test …
+  Missing discriminator: A strong Python oracle reaches `bulk_discount`, but static evidence does not place a related test input at the changed predicate boundary `quantity == 100`. No strong related test…
   Related test: tests/test_discounts.py:4 test_bulk_discount_large_order
   Suggested test file: tests/test_discounts.py
   Suggested test: test_bulk_discount_large_order
   Test node: tests/test_discounts.py::test_bulk_discount_large_order
-  Verify command: pytest tests/test_discounts.py::test_bulk_discount_large_order (high)
+  Verify command: python -m pytest tests/test_discounts.py::test_bulk_discount_large_order (high)
   Next step: Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `quantity == 100`.
   Evidence:
     - reach yes: 1 related Python test(s) found for owner `bulk_discount`
@@ -41,4 +41,4 @@ Hidden:
   Machine data: rerun with --format json
 
 
-Note: 2 Python files analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
+Note: 2 Python files analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

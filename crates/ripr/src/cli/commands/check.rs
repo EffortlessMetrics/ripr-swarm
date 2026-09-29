@@ -9,7 +9,9 @@ use crate::analysis;
 use crate::app::{self, CheckInput, OutputFormat};
 use crate::cli::commands_context::ensure_command_root;
 use crate::cli::help;
-use crate::cli::parse::{expect_value, parse_format, parse_mode};
+use crate::cli::parse::{
+    disclose_attached_terminal_stdin_read, expect_value, parse_format, parse_mode,
+};
 use crate::cli::suggest::unknown_argument;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
 use crate::output;
@@ -28,6 +30,46 @@ fn repo_scope_diff_bound_warning(
 Use --format json for diff-scoped findings, or --format repo-exposure-summary-json for a bounded repo summary.",
         format.primary_cli_name()
     ))
+}
+
+/// A repo-scoped format does not read the diff, but `--base` is still
+/// recorded as snapshot provenance (`base_revision`) and `--diff` still
+/// names an input. Both must exist, exactly as on the diff-scoped path,
+/// so a typo exits 2 instead of producing an artifact that records a ref
+/// or file that is not there (#4445).
+fn validate_repo_scope_diff_inputs(
+    input: &CheckInput,
+    base_explicitly_provided: bool,
+) -> Result<(), String> {
+    if let Some(diff) = input.diff_file.as_deref() {
+        if diff != Path::new("-") && !diff.is_file() {
+            return Err(format!(
+                "check: --diff {} is not a readable file",
+                diff.display()
+            ));
+        }
+        return Ok(());
+    }
+    if !base_explicitly_provided {
+        return Ok(());
+    }
+    let Some(base) = input.base.as_deref() else {
+        return Ok(());
+    };
+    let commit = format!("{base}^{{commit}}");
+    let output = crate::git::run_git_output_with_deadline(
+        &input.root,
+        &["rev-parse", "--verify", "--quiet", commit.as_str()],
+        input.git_timeout,
+    )?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "check: base revision {base:?} does not resolve to a commit in {}",
+            input.root.display()
+        ))
+    }
 }
 
 pub(super) fn resolve_workspace_root(start: &Path) -> Result<Option<PathBuf>, String> {
@@ -72,17 +114,23 @@ fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<(), String>
 }
 
 fn parse_git_timeout(value: &str) -> Result<Option<std::time::Duration>, String> {
-    let secs: u64 = value.parse().map_err(|_parse_err| {
-        format!("--git-timeout requires a non-negative integer (seconds); got {value:?}")
-    })?;
-    validate_git_timeout_secs(secs)
+    parse_git_timeout_from("--git-timeout", value)
 }
 
-fn validate_git_timeout_secs(secs: u64) -> Result<Option<std::time::Duration>, String> {
+/// Parse a git timeout in seconds from `source` (the flag or the env var),
+/// naming that source in every refusal so a typo never runs with a silently
+/// different deadline (#4374).
+fn parse_git_timeout_from(
+    source: &str,
+    value: &str,
+) -> Result<Option<std::time::Duration>, String> {
+    let secs: u64 = value.parse().map_err(|_parse_err| {
+        format!("{source} requires a non-negative integer (seconds); got {value:?}")
+    })?;
     let timeout = std::time::Duration::from_secs(secs);
     if std::time::Instant::now().checked_add(timeout).is_none() {
         return Err(format!(
-            "--git-timeout is too large for the platform deadline; got {secs} seconds"
+            "{source} is too large for the platform deadline; got {secs} seconds"
         ));
     }
     Ok((secs > 0).then_some(timeout))
@@ -90,18 +138,19 @@ fn validate_git_timeout_secs(secs: u64) -> Result<Option<std::time::Duration>, S
 
 fn git_timeout_from_env(
     explicit: bool,
-    env_value: Option<&str>,
+    env_value: Result<String, std::env::VarError>,
 ) -> Result<Option<Option<std::time::Duration>>, String> {
     if explicit {
         return Ok(None);
     }
-    let Some(value) = env_value else {
-        return Ok(None);
-    };
-    let Ok(secs) = value.parse::<u64>() else {
-        return Ok(None);
-    };
-    validate_git_timeout_secs(secs).map(Some)
+    match env_value {
+        Ok(value) => parse_git_timeout_from("RIPR_GIT_TIMEOUT", &value).map(Some),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        // Present but unreadable is still a misconfiguration (#4374).
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err("RIPR_GIT_TIMEOUT must be valid UTF-8".to_string())
+        }
+    }
 }
 
 pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
@@ -250,7 +299,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // not passed on the command line. Seconds; 0 disables the deadline.
     if let Some(timeout) = git_timeout_from_env(
         git_timeout_explicitly_provided,
-        std::env::var("RIPR_GIT_TIMEOUT").ok().as_deref(),
+        std::env::var("RIPR_GIT_TIMEOUT"),
     )? {
         input.git_timeout = timeout;
     }
@@ -305,7 +354,19 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                 .to_string(),
         );
     }
-    let config = load_for_root(&input.root)?;
+    // #4252: a bound subject configures itself from its candidate tree
+    // (#3279 R4 below), so the worktree ripr.toml is never read for it.
+    // Loading it here only to feed the argv gates let a worktree file the
+    // subject must ignore still decide the run: an unparseable file, or a
+    // `languages.enabled` entry this binary lacks (`python` in a Rust-only
+    // build), aborted it with exit 2, and a worktree `[analysis] mode`
+    // carried into a subject whose tree sets none. The gates below read
+    // only argv-derived state, so the pure default serves them.
+    let config = if candidate_tree.is_some() {
+        RiprConfig::default()
+    } else {
+        load_for_root(&input.root)?
+    };
     apply_to_check_input(&mut input, &config, explicit);
     let format = input.format;
     // #3278 review M1: repo-scope formats, repo exposure, and the gap
@@ -429,6 +490,9 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     {
         eprintln!("{warning}");
     }
+    if format.is_repo_scope() {
+        validate_repo_scope_diff_inputs(&input, base_explicitly_provided)?;
+    }
     if let Some(gap_ledger) = gap_ledger.as_ref() {
         write_stdout_chunked(&render_check_gap_ledger_badge(
             gap_ledger, &format, &config,
@@ -461,11 +525,20 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         )?;
         return Ok(());
     }
-    // Capture root and diff_file before input is moved into the analysis call.
-    // These are needed for the RIPR-SPEC-0112 disclosure check after the analysis.
-    let input_root = input.root.clone();
+    // Capture diff_file before input is moved into the analysis call; the
+    // RIPR-SPEC-0112 disclosure gate after the analysis needs it.
     let input_diff_file_is_some = input.diff_file.is_some();
     let limited_check_input = input.clone();
+    // #4319: `--diff -` reads the diff from stdin. On an attached terminal
+    // that blocks until EOF with no visible sign of why, so the cli adapter
+    // discloses the read before dispatching; the analysis loader itself
+    // stays silent for library callers. Only the diff-scoped pipeline path
+    // consumes the stdin read — repo-scoped and seam-inventory formats
+    // ignore `--diff` entirely (see the zero-findings warning below), so
+    // they must not claim to be reading it.
+    if !format.is_repo_scope() && !format.is_repo_seam_inventory() {
+        disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
+    }
     let output_result = if format.is_repo_seam_inventory() {
         // Repo seam-driven formats do not consume legacy repo `Findings`,
         // so skip `run_repo_analysis` and let `render_check` drive the
@@ -524,17 +597,19 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         output.no_scope_provided = true;
     }
     // #2425: when --diff was explicitly provided but produced zero findings
-    // on a diff-scoped format, warn on stderr that the diff may be malformed.
-    // A non-diff file (log, source, random text) produces zero parsed files
-    // silently, which can be mistaken for a clean bill of health. This does
-    // NOT change the exit code or the JSON contract — stderr advisory only.
-    // Repo-scoped formats (repo-exposure-json, etc.) intentionally ignore
-    // --diff for their analysis scope, so the warning is gated to diff-scoped
-    // formats only.
-    if input_diff_file_is_some && output.findings.is_empty() && !format.is_repo_scope() {
-        eprintln!(
-            "ripr: --diff produced zero findings. If the diff file is not a valid unified diff, this result is empty because nothing was parsed — not because all behavior is covered."
-        );
+    // on a diff-scoped format, disclose on stderr why the result is empty.
+    // This does NOT change the exit code or the JSON contract — stderr
+    // advisory only. Repo-scoped formats (repo-exposure-json, etc.)
+    // intentionally ignore --diff for their analysis scope, so the hedge is
+    // gated to diff-scoped formats only. #4376(a)/#4395(c): the hedge runs
+    // before stdout is rendered, so it must name the typed cause when one
+    // exists instead of guessing at diff validity.
+    if input_diff_file_is_some
+        && output.findings.is_empty()
+        && !format.is_repo_scope()
+        && let Some(hedge) = zero_findings_diff_hedge(output.analysis_outcome.as_ref())
+    {
+        eprintln!("{hedge}");
     }
     // #2642: surface expired suppression entries as a stderr warning so they
     // are visible even in --json mode (the human output already shows them as
@@ -549,22 +624,19 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             suppression.warnings.len()
         );
     }
-    // RIPR-SPEC-0112: disclose when the analyzed diff was committed history (an
-    // explicit --base or the resolved default base; both run `git diff
-    // <base>...HEAD`) AND the working tree has uncommitted changes to tracked
-    // source files. Those changes were NOT analyzed. A zero-finding result in this
-    // state must NOT be read as a clean pass — the user's uncommitted edits were
-    // excluded from the diff. Fires independent of findings.is_empty() (honest
-    // whether or not committed diff had findings), but the false-clean risk is
-    // highest when findings are empty. Does NOT fire for --diff (file-based
-    // diff), --worktree (edits included), --candidate-tree (exact trees, no live
-    // worktree), or repo-scope formats (they read the live files).
+    // RIPR-SPEC-0112: the analysis sets `unanalyzed_working_tree` when a
+    // committed-history diff (an explicit --base or the resolved default base;
+    // both run `git diff <base>...HEAD`) read the HEAD content of tracked
+    // source or test files that have uncommitted edits. Those edits were NOT
+    // analyzed, so a zero-finding result must not read as a clean pass. It
+    // stays off for --diff, --worktree, --candidate-tree and repo-scope
+    // formats, none of which is a committed-history diff of the live tree.
     let committed_history_diff = !worktree_explicitly_provided
         && !input_diff_file_is_some
         && candidate_tree.is_none()
         && !format.is_repo_scope();
-    if committed_history_diff && analysis::working_tree_has_tracked_changes(&input_root) {
-        output.unanalyzed_working_tree = true;
+    if !committed_history_diff {
+        output.unanalyzed_working_tree = false;
     }
     let navigation = if worktree_explicitly_provided && write_artifact.is_none() {
         None
@@ -582,6 +654,49 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         navigation.as_ref(),
     )?)?;
     Ok(())
+}
+
+/// The stderr hedge for an explicit `--diff` run that produced zero findings
+/// (#2425, #2491). The first stderr line a user reads must be the true cause
+/// of the empty result (#4376(a), #4395(c)):
+///
+/// - when the producer outcome records a language adapter that was disabled
+///   by config or unavailable in this binary, name that typed cause;
+/// - when the diff parsed to at least one changed file, the diff was valid
+///   and the analysis outcome on stdout already explains the empty result,
+///   so no diff-validity guess is printed;
+/// - only when nothing parsed (or no outcome exists) print the generic
+///   "may not be a valid unified diff" hint.
+fn zero_findings_diff_hedge(
+    outcome: Option<&crate::analysis_outcome::AnalysisOutcome>,
+) -> Option<String> {
+    use crate::analysis_outcome::AnalysisLimitationKind;
+    let generic = "ripr: --diff produced zero findings. If the diff file is not a valid unified diff, this result is empty because nothing was parsed — not because all behavior is covered.";
+    let Some(outcome) = outcome else {
+        return Some(generic.to_string());
+    };
+    let causes = outcome
+        .limitations
+        .iter()
+        .filter(|limitation| limitation.kind == AnalysisLimitationKind::LanguageAdapterUnavailable)
+        .map(|limitation| {
+            limitation
+                .bounded_detail
+                .clone()
+                .unwrap_or_else(|| limitation.recovery.detail.trim_end_matches('.').to_string())
+        })
+        .collect::<Vec<_>>();
+    if !causes.is_empty() {
+        return Some(format!(
+            "ripr: --diff produced zero findings because changed files were not analyzed: {}. \
+             This empty result is not a clean pass; see the analysis outcome for the recovery.",
+            causes.join("; ")
+        ));
+    }
+    if outcome.counts.changed_file_count > 0 {
+        return None;
+    }
+    Some(generic.to_string())
 }
 
 /// Write `text` to stdout in bounded chunks.
@@ -826,6 +941,135 @@ mod tests {
     };
     use super::*;
 
+    /// Run the real diff pipeline over the sample workspace's valid Rust diff
+    /// with the given effective language set, returning the producer outcome
+    /// the zero-findings hedge consumes.
+    fn sample_diff_outcome(
+        label: &str,
+        enabled: Vec<crate::domain::LanguageId>,
+    ) -> Result<(usize, crate::analysis_outcome::AnalysisOutcome), String> {
+        let root = copy_sample_workspace_to_temp(label)?;
+        let mut config = RiprConfig::default();
+        config.languages.enabled = enabled;
+        let input = CheckInput {
+            root: root.clone(),
+            diff_file: Some(root.join("example.diff")),
+            ..CheckInput::default()
+        };
+        let result = app::check_workspace_with_config(input, &config);
+        if let Ok(()) = std::fs::remove_dir_all(&root) {}
+        let output = result?;
+        let outcome = output
+            .analysis_outcome
+            .ok_or_else(|| "diff pipeline must project an analysis outcome".to_string())?;
+        Ok((output.findings.len(), outcome))
+    }
+
+    #[test]
+    fn zero_findings_hedge_names_config_excluded_rust_instead_of_diff_validity()
+    -> Result<(), String> {
+        // #4376(a): `[languages] enabled = ["typescript"]` over a valid Rust
+        // diff. The hedge must name the configuration cause, never the
+        // "may not be a valid unified diff" guess.
+        use crate::domain::LanguageId;
+        for (label, enabled) in [
+            ("hedge-rust-excluded-ts", vec![LanguageId::TypeScript]),
+            ("hedge-rust-excluded-empty", Vec::new()),
+        ] {
+            let (findings, outcome) = sample_diff_outcome(label, enabled)?;
+            assert_eq!(
+                findings, 0,
+                "fixture precondition: {label} must analyze nothing"
+            );
+            assert!(
+                outcome.counts.changed_file_count > 0,
+                "fixture precondition: the valid sample diff must parse"
+            );
+            assert_eq!(
+                outcome.kind,
+                crate::analysis_outcome::AnalysisOutcomeKind::PartialWithLimitations,
+                "an excluded Rust adapter must not claim a complete analysis ({label})"
+            );
+            let hedge = zero_findings_diff_hedge(Some(&outcome))
+                .ok_or_else(|| format!("{label}: a typed exclusion must be named on stderr"))?;
+            assert!(
+                hedge.contains("rust is not in the effective [languages].enabled set"),
+                "{label}: {hedge}"
+            );
+            assert!(
+                !hedge.contains("not a valid unified diff"),
+                "{label}: {hedge}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn zero_findings_hedge_names_unavailable_adapter_before_diff_validity() -> Result<(), String> {
+        // #4395(c): a valid diff whose only changed file needs an adapter
+        // that is not available (Perl in a default build) must lead with
+        // the availability cause.
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+            AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
+        };
+        let outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::PartialWithLimitations,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                ..AnalysisOutcomeCounts::default()
+            },
+            vec![
+                AnalysisLimitation::new(
+                    AnalysisLimitationKind::LanguageAdapterUnavailable,
+                    AnalysisStage::LanguageAdapter,
+                    AnalysisRecovery::new(
+                        AnalysisRecoveryKind::EnableLanguage,
+                        "Use a ripr binary built with Cargo feature `lang-perl`.",
+                    )?,
+                )
+                .with_detail(
+                    "perl changed 1 file(s), but the preview adapter was not enabled or available",
+                )?,
+            ],
+        )?;
+        let hedge = zero_findings_diff_hedge(Some(&outcome))
+            .ok_or_else(|| "an unavailable adapter must be named on stderr".to_string())?;
+        assert!(hedge.contains("perl changed 1 file(s)"), "{hedge}");
+        assert!(!hedge.contains("not a valid unified diff"), "{hedge}");
+        Ok(())
+    }
+
+    #[test]
+    fn zero_findings_hedge_is_silent_for_a_parsed_diff_and_generic_when_nothing_parsed()
+    -> Result<(), String> {
+        // A parsed Rust diff with Rust enabled: the diff was valid, so no
+        // diff-validity guess is printed (the outcome on stdout explains).
+        let (_, outcome) =
+            sample_diff_outcome("hedge-rust-enabled", vec![crate::domain::LanguageId::Rust])?;
+        assert!(outcome.counts.changed_file_count > 0);
+        assert!(
+            zero_findings_diff_hedge(Some(&outcome)).is_none(),
+            "a parsed diff must not be blamed for diff validity"
+        );
+        // Nothing parsed (or no outcome): the generic hint remains.
+        let empty = crate::analysis_outcome::AnalysisOutcome::new(
+            crate::analysis_outcome::AnalysisOutcomeKind::NoScope,
+            crate::analysis_outcome::AnalysisIdentity::default(),
+            crate::analysis_outcome::AnalysisOutcomeCounts::default(),
+            Vec::new(),
+        )?;
+        for outcome in [Some(&empty), None] {
+            let hedge = zero_findings_diff_hedge(outcome)
+                .ok_or_else(|| "an unparsed diff must keep the generic hint".to_string())?;
+            assert!(hedge.contains("not a valid unified diff"), "{hedge}");
+        }
+        Ok(())
+    }
+
     #[test]
     fn repo_scope_format_with_base_emits_scope_warning() -> Result<(), String> {
         let warning = repo_scope_diff_bound_warning(OutputFormat::RepoExposureJson, true, None)
@@ -927,17 +1171,49 @@ mod tests {
     #[test]
     fn git_timeout_environment_is_a_fallback_and_zero_disables() -> Result<(), String> {
         assert_eq!(
-            git_timeout_from_env(false, Some("12")),
+            git_timeout_from_env(false, Ok("12".to_string())),
             Ok(Some(Some(std::time::Duration::from_secs(12))))
         );
-        assert_eq!(git_timeout_from_env(false, Some("0")), Ok(Some(None)));
-        assert_eq!(git_timeout_from_env(false, Some("invalid")), Ok(None));
-        assert_eq!(git_timeout_from_env(false, None), Ok(None));
-        assert_eq!(git_timeout_from_env(true, Some("12")), Ok(None));
-        let error = git_timeout_from_env(false, Some("18446744073709551615"))
+        assert_eq!(
+            git_timeout_from_env(false, Ok("0".to_string())),
+            Ok(Some(None))
+        );
+        assert_eq!(
+            git_timeout_from_env(false, Err(std::env::VarError::NotPresent)),
+            Ok(None)
+        );
+        assert_eq!(git_timeout_from_env(true, Ok("12".to_string())), Ok(None));
+        // An explicit --git-timeout wins, so a bad env value is not read.
+        assert_eq!(
+            git_timeout_from_env(true, Ok("invalid".to_string())),
+            Ok(None)
+        );
+        let error = git_timeout_from_env(false, Ok("18446744073709551615".to_string()))
             .err()
             .ok_or("an overflowing timeout should fail closed")?;
-        assert!(error.contains("too large"));
+        assert!(error.contains("RIPR_GIT_TIMEOUT is too large"), "{error}");
+        // #4374: non-numeric and beyond-u64 values fail closed naming the
+        // variable instead of silently keeping the default deadline.
+        for value in ["invalid", "99999999999999999999", "-1", ""] {
+            let error = git_timeout_from_env(false, Ok(value.to_string()))
+                .err()
+                .ok_or(format!("RIPR_GIT_TIMEOUT={value:?} should fail closed"))?;
+            assert_eq!(
+                error,
+                format!(
+                    "RIPR_GIT_TIMEOUT requires a non-negative integer (seconds); got {value:?}"
+                )
+            );
+        }
+        assert_eq!(
+            git_timeout_from_env(
+                false,
+                Err(std::env::VarError::NotUnicode(std::ffi::OsString::from(
+                    "x"
+                )))
+            ),
+            Err("RIPR_GIT_TIMEOUT must be valid UTF-8".to_string())
+        );
         Ok(())
     }
 

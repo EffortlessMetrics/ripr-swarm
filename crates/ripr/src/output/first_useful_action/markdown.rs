@@ -12,6 +12,11 @@ struct ProofPathSections {
     receipt_heading: &'static str,
 }
 
+/// The step that writes `analysis-outcome.json` beside the verify file; the
+/// receipt is incomplete without it (#4304).
+const ANALYSIS_OUTCOME_HEADING: &str = "Analysis Outcome For The Receipt";
+const ANALYSIS_OUTCOME_LABEL: &str = "Analysis outcome for the receipt";
+
 fn proof_path_sections(report: &FirstUsefulActionReport) -> ProofPathSections {
     let repair_start = report.commands.repair.is_some();
     let (verify_heading, receipt_heading) = if repair_start {
@@ -79,6 +84,11 @@ pub(crate) fn render_first_useful_action_markdown(report: &FirstUsefulActionRepo
         ));
     }
 
+    if let Some(outcome) = &report.commands.analysis_outcome {
+        out.push_str(&format!("## {ANALYSIS_OUTCOME_HEADING}\n\n"));
+        out.push_str(&format!("`{outcome}`\n\n"));
+    }
+
     if let Some(verify) = &report.commands.verify {
         out.push_str(&format!("## {}\n\n", sections.verify_heading));
         out.push_str(&format!("`{verify}`\n\n"));
@@ -87,6 +97,15 @@ pub(crate) fn render_first_useful_action_markdown(report: &FirstUsefulActionRepo
     if let Some(receipt) = &report.commands.receipt {
         out.push_str(&format!("## {}\n\n", sections.receipt_heading));
         out.push_str(&format!("`{receipt}`\n\n"));
+    }
+
+    // Routes that cannot name one producing command (stale evidence, an
+    // incomplete receipt) hand off to `agent status`, which names the command
+    // for each missing workflow artifact. Show it so the Markdown reader is not
+    // left without a next step.
+    if let Some(status) = &report.commands.status {
+        out.push_str("## Check Workflow Status\n\n");
+        out.push_str(&format!("`{status}`\n\n"));
     }
 
     if report.status != "actionable"
@@ -179,6 +198,9 @@ fn render_one_screen_recommendation_markdown(report: &FirstUsefulActionReport, o
         out.push_str(&format!(
             "- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n"
         ));
+    }
+    if let Some(outcome) = &report.commands.analysis_outcome {
+        out.push_str(&format!("- {ANALYSIS_OUTCOME_LABEL}: `{outcome}`\n"));
     }
     out.push_str(&format!(
         "- {}: `{verify_command}`\n",

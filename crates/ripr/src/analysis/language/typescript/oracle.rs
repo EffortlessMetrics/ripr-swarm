@@ -135,7 +135,7 @@ pub(crate) fn weak_oracle_recommendation(
 /// syntax-only and conservative.
 pub(crate) fn collect_expect_assertions_in_statements(
     statements: &oxc_allocator::Vec<'_, Statement<'_>>,
-    source: &str,
+    source: &SourceText<'_>,
     receiver: Option<&str>,
 ) -> Vec<TypeScriptAssertion> {
     let mut out = Vec::new();
@@ -149,7 +149,7 @@ pub(crate) fn collect_expect_assertions_in_statements(
 /// an AVA-style callback receiver (`t`) — the `t.is(...)` shape.
 fn assertion_from_expression_any(
     expr: &Expression<'_>,
-    source: &str,
+    source: &SourceText<'_>,
     receiver: Option<&str>,
 ) -> Option<TypeScriptAssertion> {
     expect_assertion_from_expression(expr, source)
@@ -158,7 +158,7 @@ fn assertion_from_expression_any(
 
 pub(crate) fn collect_expect_assertions_in_statement(
     stmt: &Statement<'_>,
-    source: &str,
+    source: &SourceText<'_>,
     receiver: Option<&str>,
     out: &mut Vec<TypeScriptAssertion>,
 ) {
@@ -247,7 +247,7 @@ pub(crate) fn collect_expect_assertions_in_statement(
 
 pub(crate) fn collect_expect_assertions_from_statement_vec(
     statements: &oxc_allocator::Vec<'_, Statement<'_>>,
-    source: &str,
+    source: &SourceText<'_>,
     receiver: Option<&str>,
     out: &mut Vec<TypeScriptAssertion>,
 ) {
@@ -263,7 +263,7 @@ pub(crate) fn collect_expect_assertions_from_statement_vec(
 /// property name.
 pub(crate) fn expect_assertion_from_expression(
     expr: &Expression<'_>,
-    source: &str,
+    source: &SourceText<'_>,
 ) -> Option<TypeScriptAssertion> {
     let expr = match expr {
         Expression::AwaitExpression(await_expr) => &await_expr.argument,
@@ -310,7 +310,7 @@ pub(crate) fn expect_assertion_from_expression(
     Some(TypeScriptAssertion {
         matcher: matcher.to_string(),
         argument_count: outer_call.arguments.len(),
-        line: line_for_offset(source, outer_call.span.start as usize),
+        line: source.line_for_offset(outer_call.span.start as usize),
         oracle_kind,
         oracle_strength,
         mock_payload,
@@ -329,7 +329,7 @@ pub(crate) fn expect_assertion_from_expression(
 /// is NOT matched, and an unrecognized method returns `None`.
 pub(crate) fn ava_assertion_from_expression(
     expr: &Expression<'_>,
-    source: &str,
+    source: &SourceText<'_>,
     receiver: &str,
 ) -> Option<TypeScriptAssertion> {
     let expr = match expr {
@@ -376,7 +376,7 @@ pub(crate) fn ava_assertion_from_expression(
     Some(TypeScriptAssertion {
         matcher: method.to_string(),
         argument_count: call.arguments.len(),
-        line: line_for_offset(source, call.span.start as usize),
+        line: source.line_for_offset(call.span.start as usize),
         oracle_kind,
         oracle_strength,
         mock_payload: None,
@@ -844,16 +844,24 @@ pub(crate) fn oracle_metadata_evidence_lines(
 /// added `throw` — produced a "complete" packet whose repair action restated an
 /// assertion that cannot observe the change.
 ///
-/// Returns an empty `Vec` when there are no oracle-eligible candidates or no
-/// family-matching assertions with metadata to surface.
+/// Returns an empty `Vec` when no candidate observes an owner call or no
+/// family-matching assertions with metadata exist.
 pub(crate) fn collect_oracle_metadata_evidence_lines(
     probe_family: &ProbeFamily,
     candidates: &[TypeScriptRelatedCandidate<'_>],
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
 ) -> Vec<String> {
-    // Only oracle-eligible candidates (direct call, imported call, etc.)
+    // Candidates observing an owner-name call: trusted relations by
+    // construction, plus gate-denied relations whose test still calls the
+    // owner by name — assertion classification is independent of relation
+    // credit (see `candidate_observes_owner_call`).
     let strongest_assertion_with_file = candidates
         .iter()
-        .filter(|c| c.relation.uses_oracle())
+        .filter(|candidate| {
+            candidate_observes_owner_call(candidate, owner, alias_map, workspace_root)
+        })
         .flat_map(|candidate| {
             candidate
                 .test

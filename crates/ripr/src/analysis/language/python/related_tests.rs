@@ -154,10 +154,14 @@ pub(super) fn verify_command_for_test(test: &PythonTest) -> Option<String> {
     match test.framework {
         "pytest" => {
             let node = test.qualified_name.replace('.', "::");
-            Some(format!("pytest {path}::{node}"))
+            Some(format!(
+                "{} {}::{node}",
+                crate::domain::PYTEST_VERIFY_PROGRAM,
+                shell_quote_file_arg(&path)
+            ))
         }
         "unittest" => {
-            let module = unittest_module_for_path(&path);
+            let module = shell_quote_file_arg(&unittest_module_for_path(&path));
             Some(format!(
                 "python -m unittest {module}.{}",
                 test.qualified_name
@@ -173,6 +177,25 @@ fn unittest_module_for_path(path: &str) -> String {
         .replace(['/', '\\'], ".")
 }
 
+/// Quote one path or module token for a POSIX shell.
+///
+/// Suggested verify commands are text an agent may paste into a shell. The
+/// TypeScript command uses the same character class: a relative path made of
+/// ASCII letters, digits, `.`, `_`, `/`, and `-` stays readable, and any other
+/// byte is single-quoted so `$()`, backticks, spaces, and quotes are not
+/// expanded. Stored node ids and test-file paths stay the raw spelling; only
+/// the command text is quoted. This does not run the command.
+fn shell_quote_file_arg(file_str: &str) -> String {
+    if !file_str.is_empty()
+        && file_str
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
+    {
+        return file_str.to_string();
+    }
+    format!("'{}'", file_str.replace('\'', "'\\''"))
+}
+
 pub(super) fn python_repair_placement(
     class: &ExposureClass,
     related_candidates: &[PythonRelatedCandidate<'_>],
@@ -186,36 +209,27 @@ pub(super) fn python_repair_placement(
     let path = normalized_path(&candidate.test.file);
     match candidate.test.framework {
         "pytest" => {
-            let node_id = format!(
-                "{path}::{}",
-                candidate.test.qualified_name.replace('.', "::")
-            );
+            let node = candidate.test.qualified_name.replace('.', "::");
+            let node_id = format!("{path}::{node}");
             Some(PythonRepairPlacement {
                 repair_action: "strengthen_existing_test",
                 suggested_test_file: path,
                 suggested_test_name: candidate.test.name.clone(),
-                suggested_test_node_id: Some(node_id.clone()),
-                verify_command: format!("pytest {node_id}"),
+                suggested_test_node_id: Some(node_id),
+                verify_command: verify_command_for_test(candidate.test)?,
                 verify_command_confidence: "high",
                 location_reason: "strengthen existing weak pytest relation",
             })
         }
-        "unittest" => {
-            let selector = format!(
-                "{}.{}",
-                unittest_module_for_path(&path),
-                candidate.test.qualified_name
-            );
-            Some(PythonRepairPlacement {
-                repair_action: "strengthen_existing_test",
-                suggested_test_file: path,
-                suggested_test_name: candidate.test.name.clone(),
-                suggested_test_node_id: None,
-                verify_command: format!("python -m unittest {selector}"),
-                verify_command_confidence: "high",
-                location_reason: "strengthen existing weak unittest relation",
-            })
-        }
+        "unittest" => Some(PythonRepairPlacement {
+            repair_action: "strengthen_existing_test",
+            suggested_test_file: path,
+            suggested_test_name: candidate.test.name.clone(),
+            suggested_test_node_id: None,
+            verify_command: verify_command_for_test(candidate.test)?,
+            verify_command_confidence: "high",
+            location_reason: "strengthen existing weak unittest relation",
+        }),
         _ => None,
     }
 }
@@ -487,6 +501,10 @@ fn import_alias_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
             && import.alias != owner.name
             && contains_call_name(&test.body_text, &import.alias))
             || (imported_module_matches_owner(import, owner)
+                // A parameter, fixture or assignment named like the module
+                // alias (`def test_one(pkg): pkg.one(...)`) calls a local
+                // value, not the imported module.
+                && !test_binds_local(test, &import.alias)
                 && contains_attribute_call(&test.body_text, &import.alias, &owner.name))
     })
 }
@@ -497,6 +515,11 @@ pub(super) fn imported_module_matches_owner(import: &PythonImport, owner: &Pytho
         .file_stem()
         .and_then(|stem| stem.to_str())
         .is_some_and(|stem| import.imported.rsplit('.').next() == Some(stem))
+        // `import humanize` / `import more_itertools as mi` binds a package
+        // whose `__init__.py` re-exports the owner (`reexports.rs`). The full
+        // dotted package path must match; the caller still requires the
+        // owner's name through the alias (`mi.one(`).
+        || (import.source_module.is_empty() && owner.reexport_modules.contains(&import.imported))
 }
 
 /// The dotted module paths under which the owner file can be imported.
@@ -516,7 +539,7 @@ pub(super) fn imported_module_matches_owner(import: &PythonImport, owner: &Pytho
 /// projects that really write `from src.pricing.discounts import ...` still
 /// match. Each form is a complete module path compared by exact equality; no
 /// stem or suffix matching is introduced.
-fn owner_module_paths(file: &Path) -> Vec<String> {
+pub(super) fn owner_module_paths(file: &Path) -> Vec<String> {
     let normalized = normalized_path(file);
     let mut parts = normalized
         .split('/')
@@ -561,6 +584,9 @@ pub(super) fn import_source_module_matches_owner(
         return false;
     }
     owner_module_paths(&owner.file).contains(&import.source_module)
+        // `from humanize import naturaldelta`: the package re-exports the
+        // owner under its own name, so the package path identifies it too.
+        || (import.imported == owner.name && owner.reexport_modules.contains(&import.source_module))
 }
 
 /// Free-function module-identity evidence: a strong observing test imports the
@@ -869,6 +895,7 @@ fn test_references_module_symbol(test: &PythonTest, owner: &PythonOwner, symbol:
                 && contains_name_reference(body, &import.alias);
         }
         imported_module_matches_owner(import, owner)
+            && !test_binds_local(test, &import.alias)
             && contains_member_reference(body, &import.alias, symbol)
     })
 }

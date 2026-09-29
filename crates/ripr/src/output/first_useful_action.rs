@@ -19,7 +19,7 @@ use model::{
     ActionSelected, ActionTarget,
 };
 pub(crate) use model::{FirstUsefulActionInput, FirstUsefulActionReport};
-use parsing::{ParsedSources, parse_sources};
+use parsing::{ASSISTANT_PROOF_LABEL, ParsedSources, RECEIPT_LABEL, parse_sources};
 use selection::select_report;
 
 const SCHEMA_VERSION: &str = "0.1";
@@ -91,7 +91,10 @@ fn stale_report(
         ],
         None,
         ActionCommands {
-            status: Some(loop_commands::agent_status_command(&input.root, None)),
+            status: Some(loop_commands::agent_status_command(
+                &command_root(input),
+                None,
+            )),
             ..ActionCommands::default()
         },
         evidence(input, "unknown"),
@@ -117,13 +120,14 @@ fn read_error_report(
     inputs: &ActionInputs,
     generated_at: &str,
 ) -> Option<FirstUsefulActionReport> {
-    let (_label, path) = parsed.read_errors.first()?;
+    let (label, path) = parsed.read_errors.first()?;
     let mut warnings = Vec::new();
     warnings.push(format!("missing required artifact: {path}"));
     Some(missing_required_report(
         input,
         inputs,
         generated_at,
+        MissingRequired::for_input_label(label),
         path,
         warnings,
     ))
@@ -142,6 +146,7 @@ fn receipt_report(
             input,
             inputs,
             generated_at,
+            MissingRequired::CompleteReceipt,
             "receipt verify/artifact evidence",
             vec![format!(
                 "receipt movement `{movement}` is not promotable: {reason}"
@@ -703,6 +708,7 @@ fn missing_assistant_proof_report(
         input,
         inputs,
         generated_at,
+        MissingRequired::AssistantProof,
         DEFAULT_TEST_ORACLE_ASSISTANT_PROOF_OUT,
         warnings,
     ))
@@ -758,6 +764,7 @@ fn repair_start_report(
         target_from_guidance_item(card),
         ActionCommands {
             repair: Some(repair),
+            analysis_outcome: string_path(card, &["llm_guidance", "analysis_outcome_command"]),
             verify: string_path(card, &["llm_guidance", "verify_command"]),
             receipt: string_path(card, &["receipt_command"])
                 .or_else(|| string_path(card, &["llm_guidance", "receipt_command"])),
@@ -912,13 +919,83 @@ fn no_actionable_report(
     )
 }
 
+/// The artifact a fail-closed report asks for. The title, the reason and the
+/// offered command all come from this, so an agent is sent to regenerate the
+/// artifact that is actually missing rather than one it already has (#4268).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MissingRequired<'a> {
+    /// No joined assistant proof exists yet.
+    AssistantProof,
+    /// A receipt was supplied but carries no promotable verify evidence.
+    CompleteReceipt,
+    /// A supplied input could not be read or parsed.
+    UnreadableInput(&'a str),
+}
+
+impl<'a> MissingRequired<'a> {
+    /// Maps a `read_errors` label to the artifact the agent must regenerate.
+    /// The proof and receipt have producing commands; any other input is named
+    /// so it can be supplied again, with no command guessed for it.
+    fn for_input_label(label: &'a str) -> Self {
+        match label {
+            ASSISTANT_PROOF_LABEL => Self::AssistantProof,
+            RECEIPT_LABEL => Self::CompleteReceipt,
+            other => Self::UnreadableInput(other),
+        }
+    }
+}
+
 fn missing_required_report(
     input: &FirstUsefulActionInput,
     inputs: &ActionInputs,
     generated_at: &str,
+    required: MissingRequired<'_>,
     missing: &str,
     warnings: Vec<String>,
 ) -> FirstUsefulActionReport {
+    let (title, why, why_first, commands) = match required {
+        MissingRequired::AssistantProof => (
+            "Generate assistant proof before routing".to_string(),
+            "Required joined proof input is missing.",
+            vec![
+                "Required joined proof input is missing.",
+                "The report must not infer proof state from a raw artifact chain.",
+            ],
+            ActionCommands {
+                assistant_proof: Some(assistant_proof_command()),
+                ..ActionCommands::default()
+            },
+        ),
+        MissingRequired::CompleteReceipt => (
+            "Regenerate a complete agent receipt before routing".to_string(),
+            "The supplied receipt carries no promotable verify evidence.",
+            vec![
+                "Receipt movement routes only from a complete analysis outcome.",
+                "The report must not promote receipt movement it cannot validate.",
+            ],
+            // A complete receipt needs a persisted verify file and its sibling
+            // analysis outcome, and the seam may be unknown when the receipt
+            // is unreadable. `agent status` owns that sequence and names the
+            // command for each missing workflow artifact, so route there
+            // rather than offer a partial chain.
+            ActionCommands {
+                status: Some(loop_commands::agent_status_command(
+                    &command_root(input),
+                    None,
+                )),
+                ..ActionCommands::default()
+            },
+        ),
+        MissingRequired::UnreadableInput(label) => (
+            format!("Supply a readable {label} before routing"),
+            "A supplied input could not be read.",
+            vec![
+                "A supplied input could not be read.",
+                "The report must not route from a partial artifact set.",
+            ],
+            ActionCommands::default(),
+        ),
+    };
     base_report(
         input,
         inputs,
@@ -927,17 +1004,11 @@ fn missing_required_report(
         "agent",
         "generate_missing_artifact",
         None,
-        "Generate assistant proof before routing",
-        "Required joined proof input is missing.",
-        vec![
-            "Required joined proof input is missing.",
-            "The report must not infer proof state from a raw artifact chain.",
-        ],
+        &title,
+        why,
+        why_first,
         None,
-        ActionCommands {
-            assistant_proof: Some(assistant_proof_command()),
-            ..ActionCommands::default()
-        },
+        commands,
         evidence(input, "unknown"),
         Some(ActionFallback {
             kind: "missing_required_artifact".to_string(),
@@ -1510,35 +1581,44 @@ fn seam_commands(input: &FirstUsefulActionInput, parsed: &ParsedSources) -> Acti
     ActionCommands {
         context_packet: Some(format!(
             "ripr agent packet --root {} --seam-id {} --json",
-            loop_commands::shell_arg(&input.root),
+            loop_commands::shell_arg(&command_root(input)),
             loop_commands::shell_arg(&seam_id)
         )),
         after_snapshot: Some(loop_commands::check_repo_exposure_command(
-            &input.root,
+            &command_root(input),
             "draft",
             loop_commands::WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
         )),
+        // #4304: every file the receipt reads is written by a command listed
+        // here. The verify output lands at the path `receipt --verify-json`
+        // names, and the analysis outcome lands beside it, where the receipt
+        // looks for it.
+        analysis_outcome: Some(loop_commands::check_analysis_outcome_command(
+            &command_root(input),
+            "draft",
+            loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
+        )),
         verify: Some(loop_commands::agent_verify_command(
-            &input.root,
+            &command_root(input),
             loop_commands::WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
             loop_commands::WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
-            None,
+            Some(loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT),
         )),
         receipt: Some(loop_commands::agent_receipt_command(
-            &input.root,
+            &command_root(input),
             loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT,
             &seam_id,
             None,
         )),
         command_specs: Some(ActionCommandSpecs {
             verify: Some(command_specs::agent_verify_command_spec(
-                &input.root,
+                &command_root(input),
                 loop_commands::WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
                 loop_commands::WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
-                None,
+                Some(loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT),
             )),
             receipt: Some(command_specs::agent_receipt_command_spec(
-                &input.root,
+                &command_root(input),
                 loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT,
                 &seam_id,
                 None,
@@ -1550,10 +1630,17 @@ fn seam_commands(input: &FirstUsefulActionInput, parsed: &ParsedSources) -> Acti
     }
 }
 
+/// The selected root bound once for product-generated commands (#4000): a
+/// relative `--root` resolves against the invocation working directory, the
+/// same directory the report inputs were resolved against.
+fn command_root(input: &FirstUsefulActionInput) -> String {
+    loop_commands::bound_root(&input.root)
+}
+
 fn receipt_command(input: &FirstUsefulActionInput, parsed: &ParsedSources) -> Option<String> {
     let seam_id = selected_seam_id(parsed)?;
     Some(loop_commands::agent_receipt_command(
-        &input.root,
+        &command_root(input),
         loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT,
         &seam_id,
         None,

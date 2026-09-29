@@ -10,20 +10,21 @@
 /// `help_overview_fits_one_screen` pins the envelope so this cannot silently
 /// grow back into a dump.
 ///
-/// The first line is not free prose: "changed Rust code where the nearby tests
-/// may not actually catch the behavior" is the canonical description of what
-/// `ripr` looks for, listed as such in `docs/TERMINOLOGY.md` and reused in
-/// `docs/QUICKSTART.md`. Reword it there first, everywhere, or not at all —
-/// `help_runs` in `tests/cli_smoke.rs` holds this line to that vocabulary.
-pub(super) const HELP: &str = r#"ripr — find changed Rust code where nearby tests may not actually catch the
-       changed behavior.
+/// The first line is not free prose: "changed code where the nearby tests may
+/// not actually catch the behavior" is the canonical description of what
+/// `ripr` looks for, listed as such in `docs/TERMINOLOGY.md`. Reword it there
+/// first, everywhere, or not at all — `help_runs` in `tests/cli_smoke.rs`
+/// holds this line to that vocabulary. The language note stops Python and
+/// TypeScript users from concluding ripr does not apply to them.
+pub(super) const HELP: &str = r#"ripr — find changed code where nearby tests may not actually catch the
+       changed behavior (Rust; Python and TypeScript in preview).
 
 Usage:
   ripr <command> [options]
 
 Try this first:
   ripr doctor                     Check this workspace can produce evidence.
-  ripr check --base origin/main   Analyze the current diff, name the top gap.
+  ripr check                      Analyze the current diff, name the top gap.
 
 The loop is: ripr names one gap -> you add one focused test -> ripr records
 whether the gap closed. `ripr.toml` is optional; the zero-config run is the
@@ -39,7 +40,7 @@ What are you trying to do?
   Repair one named gap  ripr agent repair --seam-id ID --phase before
                         # edit one focused test
                         ripr agent repair --attempt ID --phase after
-  Compose PR evidence   ripr first-pr --root . --base origin/main --head HEAD
+  Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
   Work in an editor     ripr lsp --stdio
   Adopt advisory CI     ripr init --ci github
 
@@ -67,10 +68,10 @@ Options for one command: ripr help <command>
 
 Task map:
   Diagnose setup        ripr doctor
-  Inspect one change    ripr check --base origin/main
+  Inspect one change    ripr check
   Guided repo adoption  ripr pilot --root .
   Repair one named gap  ripr agent repair --seam-id ID --phase before|after|verify
-  Compose PR evidence   ripr first-pr --root . --base origin/main --head HEAD
+  Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
   Adopt advisory CI     ripr init --ci github
 
 Setup:
@@ -82,8 +83,8 @@ Setup:
 
 Analysis:
   ripr pilot [--root PATH] [--out PATH] [--mode draft] [--max-seams 5] [--timeout-ms 30000]
-  ripr check [--base origin/main] [--worktree] [--diff PATH] [--mode draft] [--format FORMAT]
-  ripr diff [--root .] [--base origin/main] [--head HEAD] [--mode draft] [--json]
+  ripr check [--base REV] [--worktree] [--diff PATH] [--mode draft] [--format FORMAT]
+  ripr diff [--root .] [--base REV] [--head HEAD] [--mode draft] [--json]
   ripr explain [--base REV|--diff PATH] <finding-id|file:line>
   ripr context [--base REV|--diff PATH] --at <finding-id|file:line>
   ripr rerun --changed-test PATH[::TEST_NODE] [--root PATH] [--json] [--out PATH]
@@ -111,7 +112,7 @@ Editor & Agent:
 
 PR & Review:
   ripr outcome --before PATH --after PATH [--format md|json] [--out PATH]
-  ripr first-pr [--root .] [--base origin/main] [--head HEAD] [--gap-ledger target/ripr/reports/gap-decision-ledger.json] [--out-dir target/ripr/reports] [--check]
+  ripr first-pr [--root .] [--base REV] [--head HEAD] [--gap-ledger target/ripr/reports/gap-decision-ledger.json] [--out-dir target/ripr/reports] [--check]
   ripr start-here [same options as first-pr]
   ripr first-action [--root .] (--pr-guidance target/ripr/review/comments.json|--assistant-proof target/ripr/reports/test-oracle-assistant-proof.json|--gap-ledger target/ripr/reports/gap-decision-ledger.json|--ledger target/ripr/reports/pr-evidence-ledger.json) [--out target/ripr/reports/first-useful-action.json]
   ripr review-comments --root . --base SHA --head SHA [--out target/ripr/review/comments.json]
@@ -148,18 +149,22 @@ Reports:
   ripr reports ts-false-actionable --corpus <path> [--out target/ripr/reports/typescript-false-actionable-audit.json]
   ripr receipt write --gap <canonical_gap_id> --verify-command "<cmd>" --status <verify_status> [--packet <packet_id>] [--out PATH] [--json]
   ripr receipt check [--path PATH] [--gap <canonical_gap_id>]
+  ripr feedback record --snapshot ID --reason CODE [--item ID] [--root PATH] [--json]
+  ripr feedback export [--root PATH] [--route-quality PATH] [--out PATH] [--json]
 
 What it does:
-  Reads changed Rust code, creates mutation-like probes, and estimates whether
-  tests appear to reach, infect, propagate, and reveal the changed behavior
-  through meaningful oracles. It does not run mutants.
+  Reads changed Rust code (Python and TypeScript in preview), creates
+  mutation-like probes, and estimates whether tests appear to reach, infect,
+  propagate, and reveal the changed behavior through meaningful oracles. It
+  does not run mutants.
 
 Quick start (one command per group):
   ripr doctor                                             # setup
-  ripr check --base origin/main                           # ordinary first value
+  ripr check                                              # ordinary first value
   ripr agent repair --seam-id ID --phase before           # repair
-  ripr first-pr --root . --base origin/main --head HEAD   # PR evidence
+  ripr first-pr --root . --base BASE --head HEAD          # PR evidence
   ripr init --ci github                                   # advisory CI
+  # Replace BASE with your PR base ref.
   ripr reports index                                      # reports
 
 Start-here path:
