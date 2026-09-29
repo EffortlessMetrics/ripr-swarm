@@ -212,8 +212,9 @@ fn git_spawn_failed_because_missing_on_path(
 }
 
 fn program_is_git(program: &str) -> bool {
-    Path::new(program)
-        .file_name()
+    program
+        .rsplit(['/', '\\'])
+        .next()
         .is_some_and(|name| name == "git" || name == "git.exe")
 }
 
