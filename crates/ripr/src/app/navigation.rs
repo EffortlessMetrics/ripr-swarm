@@ -34,6 +34,18 @@ pub(crate) fn finding_navigation(
     artifact_path: Option<&Path>,
     mode_explicit: bool,
 ) -> FindingNavigation {
+    finding_navigation_with_worktree(input, artifact_path, mode_explicit, false)
+}
+
+/// [`finding_navigation`] for a run that may have analyzed the working tree:
+/// `worktree` carries `--worktree` forward so the drill-in commands see the
+/// same uncommitted edits as the check that listed the finding.
+pub(crate) fn finding_navigation_with_worktree(
+    input: &CheckInput,
+    artifact_path: Option<&Path>,
+    mode_explicit: bool,
+    worktree: bool,
+) -> FindingNavigation {
     let mut args = vec![format!(
         "--root {}",
         shell_arg(&input.root.display().to_string())
@@ -49,8 +61,13 @@ pub(crate) fn finding_navigation(
             "--diff {}",
             shell_arg(&diff_file.display().to_string())
         ));
-    } else if let Some(base) = input.base.as_deref() {
-        args.push(format!("--base {}", shell_arg(base)));
+    } else {
+        if let Some(base) = input.base.as_deref() {
+            args.push(format!("--base {}", shell_arg(base)));
+        }
+        if worktree {
+            args.push("--worktree".to_string());
+        }
     }
 
     if mode_explicit || input.mode != Mode::Draft {
@@ -116,6 +133,32 @@ mod tests {
         assert_eq!(
             navigation.explain_command("probe:id"),
             "ripr explain --root repo --from 'saved artifact.json' --mode ready probe:id"
+        );
+    }
+
+    /// `check --worktree` lists findings from uncommitted edits; its drill-in
+    /// commands must analyze the same edits, not the committed history.
+    #[test]
+    fn finding_navigation_carries_worktree_scope_after_the_base() {
+        let input = CheckInput {
+            base: Some("HEAD".to_string()),
+            ..CheckInput::default()
+        };
+        let navigation = finding_navigation_with_worktree(&input, None, false, true);
+        assert_eq!(
+            navigation.explain_command("src/calc.py:5"),
+            "ripr explain --root . --base HEAD --worktree src/calc.py:5"
+        );
+        assert_eq!(
+            navigation.context_command("src/calc.py:5"),
+            "ripr context --root . --base HEAD --worktree --at src/calc.py:5"
+        );
+        // An artifact already records the worktree diff; `--from` wins.
+        let from_artifact =
+            finding_navigation_with_worktree(&input, Some(Path::new("wt.json")), false, true);
+        assert_eq!(
+            from_artifact.explain_command("probe:id"),
+            "ripr explain --root . --from wt.json probe:id"
         );
     }
 
