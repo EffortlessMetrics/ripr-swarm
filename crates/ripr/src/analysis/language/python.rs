@@ -90,7 +90,7 @@ use no_behavior::{
 };
 use no_behavior::{
     is_python_import_line, is_python_no_behavior_line, is_python_structural_line,
-    python_quiet_lines_covered_by_run,
+    is_structural_def_header_text, multi_line_def_header_span, python_quiet_lines_covered_by_run,
 };
 use oracles::collect_assertions_from_statements;
 #[cfg(test)]
@@ -108,8 +108,9 @@ use related_tests::{
     verify_command_for_test,
 };
 use related_tests::{
-    first_parenthesized_string_argument, import_source_module_matches_owner,
-    strong_test_calls_owner_method_on_bound_receiver, strong_test_imports_owner_from_module,
+    first_parenthesized_string_argument, import_module_may_be_owners,
+    import_source_module_matches_owner, strong_test_calls_owner_method_on_bound_receiver,
+    strong_test_imports_owner_from_module, strong_tests_import_only_rival_modules,
 };
 #[cfg(test)]
 use sink_alignment::strong_oracle_observes_owner;
@@ -183,6 +184,10 @@ struct PythonOwner {
     /// Dotted package paths whose `__init__.py` re-exports this owner under
     /// its own name (`reexports.rs`). Empty until the workspace pass fills it.
     reexport_modules: Vec<String>,
+    /// Src-layout short module names of this owner's file that another
+    /// workspace source file also produces (`related_tests.rs`, #4566).
+    /// Empty until the workspace pass fills it.
+    ambiguous_src_modules: Vec<related_tests::AmbiguousSrcModule>,
     /// Module-scope literal constants visible in a function/method owner
     /// (not shadowed locally). Empty for class and module owners. Used only
     /// to resolve named predicate boundary operands (`boundary.rs`, #4227).
@@ -538,6 +543,10 @@ impl PythonAdapter {
         reexports::apply_package_reexports(&mut all_owners, |file| {
             workspace_read.sources.get(file).map(String::as_str)
         });
+        related_tests::apply_src_module_ambiguity(
+            &mut all_owners,
+            workspace_files.iter().filter(|file| !is_test_file(file)),
+        );
 
         // Walk-count cap disclosure: one named limitation carrying the
         // refused count, mirroring the TypeScript adapter's
@@ -679,6 +688,8 @@ impl PythonAdapter {
                     || is_python_no_behavior_line(&added.text)
                     || is_python_structural_line(&added.text)
             });
+            // Header span per owner, computed once per changed file.
+            let mut header_spans: BTreeMap<usize, Option<(usize, usize)>> = BTreeMap::new();
             for (added_index, added) in changed.added_lines.iter().enumerate() {
                 // Pair the in-place removed line (same new-side position) so the
                 // classifier can credit the changed-sink token on the DELTA only.
@@ -722,6 +733,23 @@ impl PythonAdapter {
                                     && !is_python_no_behavior_line(&other.text)
                             })
                     }),
+                    structural_def_header_line: is_structural_def_header_text(&added.text)
+                        && workspace_read
+                            .sources
+                            .get(&changed.path)
+                            .zip(owner_for_changed_line(
+                                &changed.path,
+                                added.line,
+                                &all_owners,
+                            ))
+                            .and_then(|(source, owner)| {
+                                *header_spans.entry(owner.start_line).or_insert_with(|| {
+                                    multi_line_def_header_span(source, owner.start_line)
+                                })
+                            })
+                            .is_some_and(|(def_line, header_end)| {
+                                (def_line..=header_end).contains(&added.line)
+                            }),
                 };
                 if let Some(finding) = classify_change_with_context(
                     &changed.path,
