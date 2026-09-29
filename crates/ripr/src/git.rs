@@ -1028,11 +1028,8 @@ mod tests {
                 .unwrap_or(0)
         ));
         std::fs::create_dir_all(&empty_path).map_err(|err| format!("create empty PATH: {err}"))?;
-        let mut command = Command::new("git");
-        command
-            .current_dir(&empty_path)
-            .env("PATH", &empty_path)
-            .args(["--version"]);
+        let mut command = git_command(&empty_path, &["--version"]);
+        command.env("PATH", &empty_path);
         let result = collect_output_with_deadline(command, None, "git --version");
         let _ = std::fs::remove_dir_all(&empty_path);
         match result {
