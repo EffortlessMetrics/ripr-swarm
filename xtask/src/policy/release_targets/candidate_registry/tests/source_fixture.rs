@@ -51,8 +51,23 @@ fn git(root: &Path, values: &[&str]) -> Result<String, String> {
     )?;
     if output.timed_out || !output.status.is_some_and(|status| status.success()) {
         return Err(format!(
-            "fixture Git {values:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+            "fixture Git {values:?} in {} failed: timed_out={}, status={:?}, duration={:?}, stdout(first 4096 bytes)={}, stderr(first 4096 bytes)={}",
+            root.display(),
+            output.timed_out,
+            output.status,
+            output.duration,
+            String::from_utf8_lossy(
+                output
+                    .stdout
+                    .get(..output.stdout.len().min(4096))
+                    .unwrap_or_default()
+            ),
+            String::from_utf8_lossy(
+                output
+                    .stderr
+                    .get(..output.stderr.len().min(4096))
+                    .unwrap_or_default()
+            )
         ));
     }
     String::from_utf8(output.stdout)
