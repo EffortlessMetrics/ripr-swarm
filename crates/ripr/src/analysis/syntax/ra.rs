@@ -129,28 +129,67 @@ pub(crate) fn parser_oracles_for_function(
     Some(oracles)
 }
 
-/// Line spans (first, last) of every inline `mod name { .. }` in `text`,
-/// nested ones included. `None` when the file does not parse cleanly, so a
-/// caller that needs module scope fails closed.
-pub(crate) fn inline_module_line_spans(text: &str) -> Option<Vec<(usize, usize)>> {
+/// Module scope of a file's functions, keyed by (fn-token line, name) as
+/// function and test facts record them.
+#[derive(Debug, Default)]
+pub(crate) struct ModuleItemScopes {
+    /// Every fn that is a direct item of the file or of an inline
+    /// `mod name { .. }`, mapped to the line span of its innermost inline
+    /// module (`None` at the file's top level). A fn nested in another fn's
+    /// body, or an associated fn, is absent: it is not visible module-wide.
+    pub(crate) item_fns: BTreeMap<(usize, String), Option<(usize, usize)>>,
+    /// Fns whose body holds a `use` item, which may shadow a module item.
+    pub(crate) fns_with_local_use: std::collections::BTreeSet<(usize, String)>,
+}
+
+/// The module scopes of `text`'s functions. `None` when the file does not
+/// parse cleanly, so a caller that needs module scope fails closed.
+pub(crate) fn module_item_scopes(text: &str) -> Option<ModuleItemScopes> {
     let parse = parse_clean_source_file(text)?;
     let line_index = LineIndex::new(text);
-    Some(
-        parse
-            .tree()
-            .syntax()
-            .descendants()
-            .filter_map(ast::Module::cast)
-            .filter(|module| module.item_list().is_some())
-            .map(|module| {
-                let range = module.syntax().text_range();
-                (
-                    line_index.line(range.start()),
-                    line_index.line_for_range_end(range.end()),
-                )
-            })
-            .collect(),
-    )
+    let mut scopes = ModuleItemScopes::default();
+    for function in parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+    {
+        let (Some(name), Some(fn_token)) = (function.name(), function.fn_token()) else {
+            continue;
+        };
+        let key = (
+            line_index.line(fn_token.text_range().start()),
+            name.text().to_string(),
+        );
+        if function.body().is_some_and(|body| {
+            body.syntax()
+                .descendants()
+                .any(|node| ast::Use::can_cast(node.kind()))
+        }) {
+            scopes.fns_with_local_use.insert(key.clone());
+        }
+        let Some(parent) = function.syntax().parent() else {
+            continue;
+        };
+        let module = match parent.kind() {
+            ra_ap_syntax::SyntaxKind::SOURCE_FILE => None,
+            ra_ap_syntax::SyntaxKind::ITEM_LIST => {
+                match parent.parent().and_then(ast::Module::cast) {
+                    Some(module) => {
+                        let range = module.syntax().text_range();
+                        Some((
+                            line_index.line(range.start()),
+                            line_index.line_for_range_end(range.end()),
+                        ))
+                    }
+                    None => continue,
+                }
+            }
+            _ => continue,
+        };
+        scopes.item_fns.insert(key, module);
+    }
+    Some(scopes)
 }
 
 fn include_literal_path(expression: &str) -> Option<PathBuf> {

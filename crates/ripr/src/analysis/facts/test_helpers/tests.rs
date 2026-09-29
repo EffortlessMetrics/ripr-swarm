@@ -176,9 +176,10 @@ fn credited_helper_calls_stay_out_of_the_test_body_calls() -> Result<(), Box<dyn
 
 #[test]
 fn helper_outside_the_test_module_is_not_credited() -> Result<(), Box<dyn Error>> {
-    // Review of #4715: a test in `mod smoke` calling `check` resolves to
-    // its own import, not to the unique `check` in sibling `mod strict`;
-    // a parent-module helper (`use super::*`) is not credited either.
+    // Reviews of #4715: a test in `mod smoke` calling `check` resolves to
+    // its own import, not to the unique `check` in sibling `mod strict`; a
+    // `use` in the test body, a parent-module helper (`use super::*`) and a
+    // helper nested in another fn's body are not credited either.
     for (shape, source) in [
         (
             "sibling module with an import",
@@ -190,6 +191,18 @@ fn helper_outside_the_test_module_is_not_credited() -> Result<(), Box<dyn Error>
             "parent module",
             format!(
                 "{GATE}#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    fn check(x: u32, want: bool) {{\n        assert_eq!(gate(x), want);\n    }}\n\n    mod inner {{\n        use super::*;\n\n        #[test]\n        fn boundary() {{\n            check(10, false);\n        }}\n    }}\n}}\n"
+            ),
+        ),
+        (
+            "use item in the test body",
+            format!(
+                "{GATE}pub mod testutil;\n\n#[cfg(test)]\nmod tests {{\n    fn check(x: u32, want: bool) {{\n        assert_eq!(super::gate(x), want);\n    }}\n\n    #[test]\n    fn boundary() {{\n        use crate::testutil::check;\n        check(10, false);\n    }}\n}}\n"
+            ),
+        ),
+        (
+            "helper nested in another fn's body",
+            format!(
+                "{GATE}pub mod testutil;\n\n#[cfg(test)]\nmod tests {{\n    use crate::testutil::check;\n\n    fn strict_suite() {{\n        fn check(x: u32, want: bool) {{\n            assert_eq!(super::gate(x), want);\n        }}\n        check(0, false);\n    }}\n\n    #[test]\n    fn boundary() {{\n        check(10, false);\n    }}\n}}\n"
             ),
         ),
     ] {
