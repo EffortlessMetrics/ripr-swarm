@@ -5,9 +5,9 @@ The **PyPI distribution name is `ripr-rs`**, while the installed executable and
 product name remain `ripr`.
 
 > **Qualification status:** this package adapter is under no-publish rehearsal.
-> A checked-in manifest or a locally built wheel does not mean that a public
-> PyPI release exists. Use published installation commands only after a release
-> has been independently verified from PyPI.
+> A checked-in manifest or a locally built wheel does not mean that a public PyPI
+> release exists. Use published installation commands only after a release has
+> been independently verified from PyPI.
 
 ## Intended installation
 
