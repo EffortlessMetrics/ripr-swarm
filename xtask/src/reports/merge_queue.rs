@@ -50,6 +50,7 @@ struct EndpointRecord {
     path: String,
     http_status: u16,
     body: Value,
+    truncated: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -260,6 +261,10 @@ fn parse_endpoint_record(key: &str, record: &Value) -> Result<EndpointRecord, St
         path,
         http_status,
         body,
+        truncated: record
+            .get("truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     })
 }
 
@@ -315,7 +320,7 @@ fn collect_live_snapshot(repo: &str) -> Result<CaptureSnapshot, String> {
         &mut endpoints,
         &format!("{repo_path}/branches/{default_branch}/protection"),
     )?;
-    record_live_get(
+    record_live_get_paginated(
         &mut endpoints,
         &format!("{repo_path}/rulesets?includes_parents=true"),
     )?;
@@ -364,27 +369,54 @@ fn record_live_get(
     endpoints: &mut BTreeMap<String, EndpointRecord>,
     path: &str,
 ) -> Result<(), String> {
+    record_live_get_with(endpoints, path, false)
+}
+
+fn record_live_get_paginated(
+    endpoints: &mut BTreeMap<String, EndpointRecord>,
+    path: &str,
+) -> Result<(), String> {
+    record_live_get_with(endpoints, path, true)
+}
+
+fn record_live_get_with(
+    endpoints: &mut BTreeMap<String, EndpointRecord>,
+    path: &str,
+    paginate: bool,
+) -> Result<(), String> {
     let request_path = if path.starts_with('/') {
         path.to_string()
     } else {
         format!("/{path}")
     };
     let key = format!("GET {request_path}");
-    let captured = capture_output(
-        "gh",
-        &[
-            "api",
+    let mut args = vec!["api"];
+    if paginate {
+        args.extend([
+            "--paginate",
+            "-X",
+            "GET",
+            request_path.trim_start_matches('/'),
+        ]);
+    } else {
+        args.extend([
             "--include",
             "-X",
             "GET",
             request_path.trim_start_matches('/'),
-        ],
-        &format!("gh api GET {request_path}"),
-    )
-    .map_err(|err| {
-        format!("merge-queue capture could not invoke read-only `gh api GET {request_path}`: {err}")
-    })?;
-    let parsed = parse_gh_include_output(&captured.stdout, &captured.stderr);
+        ]);
+    }
+    let captured =
+        capture_output("gh", &args, &format!("gh api GET {request_path}")).map_err(|err| {
+            format!(
+                "merge-queue capture could not invoke read-only `gh api GET {request_path}`: {err}"
+            )
+        })?;
+    let parsed = if paginate {
+        parse_gh_paginated_output(&captured.stdout)
+    } else {
+        parse_gh_include_output(&captured.stdout)
+    };
     let mut body = parsed.body;
     redact_secrets(&mut body);
     endpoints.insert(
@@ -394,6 +426,7 @@ fn record_live_get(
             path: request_path,
             http_status: parsed.http_status,
             body,
+            truncated: parsed.truncated,
         },
     );
     Ok(())
@@ -402,27 +435,80 @@ fn record_live_get(
 struct GhInclude {
     http_status: u16,
     body: Value,
+    truncated: bool,
 }
 
-fn parse_gh_include_output(stdout: &str, stderr: &str) -> GhInclude {
+fn parse_gh_include_output(stdout: &str) -> GhInclude {
     if let Some(parsed) = parse_include_text(stdout) {
-        return parsed;
-    }
-    if let Some(parsed) = parse_include_text(stderr) {
         return parsed;
     }
     if let Ok(body) = serde_json::from_str::<Value>(stdout.trim()) {
         return GhInclude {
             http_status: 200,
             body,
+            truncated: false,
         };
     }
+    unreadable_gh_body()
+}
+
+fn parse_gh_paginated_output(stdout: &str) -> GhInclude {
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return unreadable_gh_body();
+    }
+    if let Ok(body) = serde_json::from_str::<Value>(trimmed) {
+        return GhInclude {
+            http_status: 200,
+            body,
+            truncated: false,
+        };
+    }
+
+    let mut stream = serde_json::Deserializer::from_str(trimmed).into_iter::<Value>();
+    let mut merged = Vec::new();
+    let mut saw_any = false;
+    loop {
+        match stream.next() {
+            Some(Ok(Value::Array(items))) => {
+                saw_any = true;
+                merged.extend(items);
+            }
+            Some(Ok(other)) => {
+                saw_any = true;
+                merged.push(other);
+            }
+            Some(Err(_)) => {
+                return if saw_any {
+                    GhInclude {
+                        http_status: 200,
+                        body: json!(merged),
+                        truncated: true,
+                    }
+                } else {
+                    unreadable_gh_body()
+                };
+            }
+            None => break,
+        }
+    }
+    if !saw_any {
+        return unreadable_gh_body();
+    }
+    GhInclude {
+        http_status: 200,
+        body: json!(merged),
+        truncated: false,
+    }
+}
+
+fn unreadable_gh_body() -> GhInclude {
     GhInclude {
         http_status: 0,
         body: json!({
             "message": "gh api produced no parseable HTTP response",
-            "stderr": truncate_for_receipt(stderr),
         }),
+        truncated: false,
     }
 }
 
@@ -442,6 +528,7 @@ fn parse_include_text(text: &str) -> Option<GhInclude> {
     Some(GhInclude {
         http_status: status,
         body,
+        truncated: false,
     })
 }
 
@@ -510,7 +597,14 @@ fn build_packet(snapshot: &CaptureSnapshot) -> Result<Value, String> {
     let identity = identity_payload(snapshot, &observation, &desired);
     let rollback = rollback_payload(&desired, &observation, &identity);
     let prior = prior_payload(snapshot.prior_receipt.as_ref(), &identity);
-    let exit_state = classify_exit(&observation, &apply, &authorities, &rollback, &prior);
+    let exit_state = classify_exit(
+        &observation,
+        &apply,
+        &authorities,
+        &rollback,
+        &prior,
+        &desired,
+    );
 
     let mut packet = Map::new();
     insert(&mut packet, "schema_version", json!(SCHEMA_VERSION));
@@ -539,7 +633,7 @@ fn build_packet(snapshot: &CaptureSnapshot) -> Result<Value, String> {
     insert(
         &mut packet,
         "report",
-        report_payload(exit_state, snapshot, &rollback),
+        report_payload(exit_state, snapshot, &rollback, &desired),
     );
     insert(&mut packet, "authorities", authorities);
     insert(&mut packet, "rollback_capture", rollback);
@@ -572,6 +666,7 @@ fn desired_payload(snapshot: &CaptureSnapshot) -> Value {
         "repository": extracted.repository,
         "classic_protection_desired": extracted.classic,
         "required_contexts": extracted.required_contexts,
+        "valid": desired_settings_valid(&extracted),
     })
 }
 
@@ -601,6 +696,22 @@ fn extract_settings_desired(text: &str) -> SettingsDesired {
         }),
         required_contexts,
     }
+}
+
+fn desired_settings_valid(extracted: &SettingsDesired) -> bool {
+    extracted
+        .repository
+        .get("default_branch")
+        .and_then(Value::as_str)
+        .is_some_and(|name| !name.is_empty())
+}
+
+fn desired_is_valid(desired: &Value) -> bool {
+    desired.get("valid") == Some(&json!(true))
+        && desired
+            .pointer("/repository/default_branch")
+            .and_then(Value::as_str)
+            .is_some_and(|name| !name.is_empty())
 }
 
 fn yaml_scalar(text: &str, key: &str) -> Value {
@@ -692,10 +803,10 @@ fn observation_payload(snapshot: &CaptureSnapshot, desired: &Value) -> Result<Va
         .filter(|ruleset| ruleset.get("in_active_default_branch_union") == Some(&json!(true)))
         .cloned()
         .collect();
-    let denominator_valid = !omitted_active
-        && list_record
-            .as_ref()
-            .is_some_and(|record| record.http_status == 200);
+    let list_complete = list_record
+        .as_ref()
+        .is_some_and(|record| record.http_status == 200 && !record.truncated);
+    let denominator_valid = !omitted_active && list_complete;
     let expected_ruleset = expected_ruleset_state(&all_rulesets);
     let required_union = required_context_union(
         desired
@@ -709,6 +820,12 @@ fn observation_payload(snapshot: &CaptureSnapshot, desired: &Value) -> Result<Va
     let merge_queue_rule = merge_queue_visibility(&all_rulesets, list_record.as_ref());
     let merge_methods = merge_methods_observation(repo_record.as_ref());
     let merge_group = merge_group_inventory(&snapshot.workspace.workflow_files);
+    let observed_default_sha = observed_sha(branch_record.as_ref())
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+    let workflows_match_default_branch = !observed_default_sha.is_empty()
+        && snapshot.workspace.workspace_head_sha == observed_default_sha;
     let update_branch = update_branch_observation(
         desired,
         repo_record.as_ref(),
@@ -719,6 +836,8 @@ fn observation_payload(snapshot: &CaptureSnapshot, desired: &Value) -> Result<Va
         list_record.as_ref(),
         omitted_active,
         &classic,
+        workflows_match_default_branch,
+        desired_is_valid(desired),
     );
     let complete = observation_complete(
         repo_record.as_ref(),
@@ -751,6 +870,8 @@ fn observation_payload(snapshot: &CaptureSnapshot, desired: &Value) -> Result<Va
         "merge_queue_rule": merge_queue_rule,
         "merge_methods": merge_methods,
         "merge_group_producers": merge_group.get("producers").cloned().unwrap_or(json!([])),
+        "merge_group_source": "workspace_checkout",
+        "merge_group_matches_observed_default_branch_sha": workflows_match_default_branch,
         "required_aggregate_names": merge_group.get("required_aggregate_names").cloned().unwrap_or(json!([])),
         "update_branch_automation": update_branch,
         "limitations": limitations,
@@ -921,11 +1042,13 @@ fn ruleset_observations(
             .unwrap_or("unknown")
             .to_string();
         let applicable = ruleset_targets_default_branch(&payload, default_branch);
-        let active_union = enforcement == "active" && applicable;
+        let active_union = enforcement == "active" && applicable == Some(true);
         let detail_missing = detail
             .as_ref()
             .is_none_or(|record| record.http_status != 200);
-        if active_union && detail_missing {
+        let targeting_unknown =
+            enforcement == "active" && target == "branch" && applicable.is_none();
+        if (active_union && detail_missing) || targeting_unknown {
             omitted_active = true;
         }
         all.push(json!({
@@ -933,7 +1056,7 @@ fn ruleset_observations(
             "name": payload.get("name").cloned().unwrap_or(summary.get("name").cloned().unwrap_or(Value::Null)),
             "enforcement": enforcement,
             "target": target,
-            "targets_default_branch": applicable,
+            "targets_default_branch": applicable == Some(true),
             "in_active_default_branch_union": active_union,
             "source": payload.get("source").cloned().unwrap_or(Value::Null),
             "payload_digest": sha256_json(&payload),
@@ -959,8 +1082,7 @@ fn ruleset_observations(
             .get("enforcement")
             .and_then(Value::as_str)
             .unwrap_or("unknown");
-        let active_union = enforcement == "active" && applicable;
-        if active_union {
+        if enforcement == "active" && applicable != Some(false) {
             omitted_active = true;
         }
         all.push(json!({
@@ -968,7 +1090,7 @@ fn ruleset_observations(
             "name": record.body.get("name").cloned().unwrap_or(Value::Null),
             "enforcement": enforcement,
             "target": record.body.get("target").cloned().unwrap_or(json!("unknown")),
-            "targets_default_branch": applicable,
+            "targets_default_branch": applicable == Some(true),
             "in_active_default_branch_union": false,
             "source": record.body.get("source").cloned().unwrap_or(Value::Null),
             "payload_digest": sha256_json(&record.body),
@@ -986,24 +1108,69 @@ fn ruleset_observations(
     (all, omitted_active)
 }
 
-fn ruleset_targets_default_branch(payload: &Value, default_branch: &str) -> bool {
+fn ruleset_targets_default_branch(payload: &Value, default_branch: &str) -> Option<bool> {
     if payload.get("target").and_then(Value::as_str) != Some("branch") {
-        return false;
+        return Some(false);
     }
-    let Some(conditions) = payload
-        .pointer("/conditions/ref_name/include")
-        .and_then(Value::as_array)
-    else {
-        return payload.get("target").and_then(Value::as_str) == Some("branch")
-            && payload.pointer("/conditions").is_none();
+    let Some(ref_name) = payload.pointer("/conditions/ref_name") else {
+        return if payload.pointer("/conditions").is_none() {
+            Some(true)
+        } else {
+            None
+        };
     };
-    conditions.iter().any(|item| {
-        item.as_str().is_some_and(|name| {
-            name == "~DEFAULT_BRANCH"
-                || name == default_branch
-                || name == format!("refs/heads/{default_branch}")
-        })
-    })
+    if let Some(excludes) = ref_name.get("exclude").and_then(Value::as_array) {
+        let mut unknown = false;
+        for item in excludes {
+            match ref_pattern_matches_default_branch(item, default_branch) {
+                Some(true) => return Some(false),
+                Some(false) => {}
+                None => unknown = true,
+            }
+        }
+        if unknown {
+            return None;
+        }
+    }
+    let Some(includes) = ref_name.get("include").and_then(Value::as_array) else {
+        return None;
+    };
+    if includes.is_empty() {
+        return Some(false);
+    }
+    let mut matched = false;
+    let mut unknown = false;
+    for item in includes {
+        match ref_pattern_matches_default_branch(item, default_branch) {
+            Some(true) => matched = true,
+            Some(false) => {}
+            None => unknown = true,
+        }
+    }
+    if matched {
+        Some(true)
+    } else if unknown {
+        None
+    } else {
+        Some(false)
+    }
+}
+
+fn ref_pattern_matches_default_branch(item: &Value, default_branch: &str) -> Option<bool> {
+    let name = item.as_str()?;
+    if name == "~DEFAULT_BRANCH"
+        || name == "~ALL"
+        || name == default_branch
+        || name == format!("refs/heads/{default_branch}")
+        || name == "*"
+        || name == "refs/heads/*"
+    {
+        return Some(true);
+    }
+    if name.contains('*') || name.contains('?') {
+        return None;
+    }
+    Some(false)
 }
 
 fn expected_ruleset_state(all: &[Value]) -> Value {
@@ -1223,6 +1390,8 @@ fn observation_limitations(
     list_record: Option<&EndpointRecord>,
     omitted_active: bool,
     classic_payload: &Value,
+    workflows_match_default_branch: bool,
+    desired_valid: bool,
 ) -> Vec<Value> {
     let mut limitations = Vec::new();
     if classic_payload.get("state") == Some(&json!(EXIT_NOT_PROVEN)) {
@@ -1238,6 +1407,12 @@ fn observation_limitations(
             "state": EXIT_NOT_PROVEN,
             "reason": "ruleset collection was unreadable; unreadability is not absence",
         }));
+    } else if list_record.is_some_and(|record| record.truncated) {
+        limitations.push(json!({
+            "surface": "ruleset_denominator",
+            "state": EXIT_NOT_PROVEN,
+            "reason": "ruleset collection was truncated before every page was captured",
+        }));
     }
     if omitted_active {
         limitations.push(json!({
@@ -1251,6 +1426,20 @@ fn observation_limitations(
             "surface": "classic_protection",
             "state": EXIT_NOT_PROVEN,
             "reason": "classic-protection endpoint was not captured",
+        }));
+    }
+    if !workflows_match_default_branch {
+        limitations.push(json!({
+            "surface": "merge_group_producers",
+            "state": EXIT_NOT_PROVEN,
+            "reason": "workspace workflow inventory is not the observed default-branch SHA; it is not live enforcement",
+        }));
+    }
+    if !desired_valid {
+        limitations.push(json!({
+            "surface": "desired_settings",
+            "state": EXIT_NOT_PROVEN,
+            "reason": "checked-in settings source is missing required repository fields",
         }));
     }
     limitations
@@ -1403,6 +1592,7 @@ fn identity_payload(snapshot: &CaptureSnapshot, observation: &Value, desired: &V
         "default_branch_sha": observation.pointer("/freshness/observed_default_branch_sha").cloned().unwrap_or(Value::Null),
         "settings_digest": desired.pointer("/source/digest").cloned().unwrap_or(Value::Null),
         "classic_permission": observation.pointer("/classic_protection/state").cloned().unwrap_or(json!(EXIT_NOT_PROVEN)),
+        "classic_payload_digest": observation.pointer("/classic_protection/payload_digest").cloned().unwrap_or(Value::Null),
         "ruleset_ids": ruleset_ids,
         "ruleset_payload_digests": digests,
     })
@@ -1410,8 +1600,15 @@ fn identity_payload(snapshot: &CaptureSnapshot, observation: &Value, desired: &V
 
 fn rollback_payload(desired: &Value, observation: &Value, identity: &Value) -> Value {
     let classic_ok = observation.pointer("/classic_protection/state") == Some(&json!("observed"))
-        || observation.pointer("/classic_protection/reason").is_some();
-    let rulesets_ok = observation.pointer("/rulesets/all").is_some();
+        && observation
+            .pointer("/classic_protection/payload_digest")
+            .and_then(Value::as_str)
+            .is_some();
+    let rulesets_ok = observation.get("denominator_valid") == Some(&json!(true))
+        && observation
+            .pointer("/rulesets/all")
+            .and_then(Value::as_array)
+            .is_some_and(|items| !items.is_empty());
     json!({
         "complete": classic_ok && rulesets_ok && identity.get("settings_digest").is_some(),
         "settings_digest": desired.pointer("/source/digest").cloned().unwrap_or(Value::Null),
@@ -1442,6 +1639,9 @@ fn prior_payload(prior: Option<&Value>, identity: &Value) -> Value {
     if prior_identity.get("classic_permission") != identity.get("classic_permission") {
         reasons.push("classic_permission_changed");
     }
+    if prior_identity.get("classic_payload_digest") != identity.get("classic_payload_digest") {
+        reasons.push("classic_payload_moved");
+    }
     if prior_identity.get("ruleset_ids") != identity.get("ruleset_ids")
         || prior_identity.get("ruleset_payload_digests") != identity.get("ruleset_payload_digests")
     {
@@ -1454,11 +1654,16 @@ fn prior_payload(prior: Option<&Value>, identity: &Value) -> Value {
     })
 }
 
-fn report_payload(exit_state: &str, snapshot: &CaptureSnapshot, rollback: &Value) -> Value {
+fn report_payload(
+    exit_state: &str,
+    snapshot: &CaptureSnapshot,
+    rollback: &Value,
+    desired: &Value,
+) -> Value {
     json!({
         "kind": "repository_settings_report.v1",
         "mq0_exit": exit_state,
-        "desired_valid": true,
+        "desired_valid": desired_is_valid(desired),
         "apply_observed": false,
         "live_observation_complete": exit_state == EXIT_READY || exit_state == EXIT_BLOCKED,
         "live_union_matches": Value::Null,
@@ -1475,6 +1680,7 @@ fn classify_exit(
     authorities: &Value,
     rollback: &Value,
     prior: &Value,
+    desired: &Value,
 ) -> &'static str {
     if prior.get("stale") == Some(&json!(true)) {
         return EXIT_DRIFT;
@@ -1484,6 +1690,11 @@ fn classify_exit(
             items.iter().any(|item| {
                 item.get("reference") == Some(&json!(format!("{DELETED_AUTHORITY_REPO}#{issue}")))
                     && item.get("available_controller") == Some(&json!(false))
+                    && matches!(
+                        item.get("disposition").and_then(Value::as_str),
+                        Some("deleted_not_available_controller")
+                            | Some("still_present_not_consumed_as_controller")
+                    )
             })
         })
     });
@@ -1491,6 +1702,7 @@ fn classify_exit(
         || observation.get("denominator_valid") != Some(&json!(true))
         || !authorities_disclosed
         || rollback.get("complete") != Some(&json!(true))
+        || !desired_is_valid(desired)
     {
         return EXIT_NOT_PROVEN;
     }
@@ -1909,15 +2121,33 @@ branches:
         workflows: Vec<WorkflowFile>,
         prior: Option<Value>,
     ) -> Result<CaptureSnapshot, String> {
+        snapshot_from_parts_custom(
+            repo,
+            endpoints,
+            workflows,
+            prior,
+            &settings_text(),
+            "abc123def456",
+        )
+    }
+
+    fn snapshot_from_parts_custom(
+        repo: &str,
+        endpoints: Value,
+        workflows: Vec<WorkflowFile>,
+        prior: Option<Value>,
+        settings: &str,
+        head_sha: &str,
+    ) -> Result<CaptureSnapshot, String> {
         parse_input_snapshot(
             &json!({
                 "repo": repo,
                 "endpoints": endpoints,
                 "workspace": {
                     "settings_yml_path": ".github/settings.yml",
-                    "settings_yml_text": settings_text(),
-                    "settings_ref": "abc123def456",
-                    "head_sha": "abc123def456",
+                    "settings_yml_text": settings,
+                    "settings_ref": head_sha,
+                    "head_sha": head_sha,
                     "workflow_files": workflows.iter().map(|file| json!({
                         "path": file.path,
                         "text": file.text,
@@ -2394,5 +2624,321 @@ branches:
             plan.iter()
                 .all(|item| !item.contains("PATCH") && !item.contains("POST"))
         );
+    }
+
+    #[test]
+    fn merge_queue_capture_truncated_ruleset_page_fails_denominator() -> Result<(), String> {
+        let mut endpoints = complete_endpoints(DEFAULT_REPO, &[tag_ruleset()], 200);
+        if let Some(record) = endpoints
+            .as_object_mut()
+            .and_then(|map| {
+                map.get_mut(&format!(
+                    "GET /repos/{DEFAULT_REPO}/rulesets?includes_parents=true"
+                ))
+            })
+            .and_then(Value::as_object_mut)
+        {
+            record.insert("truncated".to_string(), json!(true));
+        }
+        let packet = build_packet(&snapshot_from_parts(
+            DEFAULT_REPO,
+            endpoints,
+            Vec::new(),
+            None,
+        )?)?;
+        assert_eq!(packet.get("exit_state"), Some(&json!(EXIT_NOT_PROVEN)));
+        assert_eq!(
+            packet.pointer("/observation/denominator_valid"),
+            Some(&json!(false))
+        );
+        assert_eq!(
+            packet.pointer("/rollback_capture/complete"),
+            Some(&json!(false))
+        );
+        let limitations = packet
+            .pointer("/observation/limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "missing limitations".to_string())?;
+        assert!(limitations.iter().any(|item| {
+            item.get("surface") == Some(&json!("ruleset_denominator"))
+                && item
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .is_some_and(|reason| reason.contains("truncated"))
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_exclude_default_branch_stays_out_of_union() -> Result<(), String> {
+        let excluded = json!({
+            "id": 55,
+            "name": "exclude-main",
+            "enforcement": "active",
+            "target": "branch",
+            "source": "Repository",
+            "conditions": {
+                "ref_name": {
+                    "include": ["~ALL"],
+                    "exclude": ["~DEFAULT_BRANCH"]
+                }
+            },
+            "rules": [{ "type": "deletion" }],
+        });
+        let packet = build_packet(&snapshot_from_parts(
+            DEFAULT_REPO,
+            complete_endpoints(DEFAULT_REPO, &[tag_ruleset(), excluded], 200),
+            Vec::new(),
+            None,
+        )?)?;
+        assert_eq!(packet.get("exit_state"), Some(&json!(EXIT_READY)));
+        let all = packet
+            .pointer("/observation/rulesets/all")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "missing ruleset inventory".to_string())?;
+        let excluded_row = all
+            .iter()
+            .find(|item| item.get("id") == Some(&json!(55)))
+            .ok_or_else(|| "excluded ruleset missing from inventory".to_string())?;
+        assert_eq!(
+            excluded_row.get("targets_default_branch"),
+            Some(&json!(false))
+        );
+        assert_eq!(
+            excluded_row.get("in_active_default_branch_union"),
+            Some(&json!(false))
+        );
+        let union = packet
+            .pointer("/observation/rulesets/active_default_branch_union")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "missing active union".to_string())?;
+        assert!(union.iter().all(|item| item.get("id") != Some(&json!(55))));
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_unknown_include_glob_fails_denominator() -> Result<(), String> {
+        let unknown = ruleset_payload(
+            66,
+            "unknown-glob",
+            "active",
+            "branch",
+            &["refs/heads/m*"],
+            json!([{ "type": "deletion" }]),
+        );
+        let packet = build_packet(&snapshot_from_parts(
+            DEFAULT_REPO,
+            complete_endpoints(DEFAULT_REPO, &[tag_ruleset(), unknown], 200),
+            Vec::new(),
+            None,
+        )?)?;
+        assert_eq!(packet.get("exit_state"), Some(&json!(EXIT_NOT_PROVEN)));
+        assert_eq!(
+            packet.pointer("/observation/rulesets/omitted_active_default_branch_ruleset"),
+            Some(&json!(true))
+        );
+        assert_eq!(
+            packet.pointer("/observation/denominator_valid"),
+            Some(&json!(false))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_unread_listed_detail_fails_denominator() -> Result<(), String> {
+        let mut endpoints = complete_endpoints(DEFAULT_REPO, &[tag_ruleset()], 200);
+        if let Some(map) = endpoints.as_object_mut() {
+            if let Some(record) = map.get_mut(&format!(
+                "GET /repos/{DEFAULT_REPO}/rulesets?includes_parents=true"
+            )) && let Some(items) = record.get_mut("body").and_then(Value::as_array_mut)
+            {
+                items.push(json!({
+                    "id": 88,
+                    "name": "no-detail",
+                    "enforcement": "active",
+                    "target": "branch"
+                }));
+            }
+            map.insert(
+                format!("GET /repos/{DEFAULT_REPO}/rulesets/88"),
+                json!({
+                    "http_status": 403,
+                    "body": { "message": "Resource not accessible by integration" }
+                }),
+            );
+        }
+        let packet = build_packet(&snapshot_from_parts(
+            DEFAULT_REPO,
+            endpoints,
+            Vec::new(),
+            None,
+        )?)?;
+        assert_eq!(packet.get("exit_state"), Some(&json!(EXIT_NOT_PROVEN)));
+        assert_eq!(
+            packet.pointer("/observation/denominator_valid"),
+            Some(&json!(false))
+        );
+        assert_eq!(
+            packet.pointer("/observation/rulesets/omitted_active_default_branch_ruleset"),
+            Some(&json!(true))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_unread_authority_cannot_be_ready() -> Result<(), String> {
+        let mut endpoints = complete_endpoints(DEFAULT_REPO, &[tag_ruleset()], 200);
+        if let Some(map) = endpoints.as_object_mut() {
+            map.insert(
+                "GET /repos/EffortlessMetrics/.github/issues/2".to_string(),
+                json!({
+                    "http_status": 403,
+                    "body": { "message": "API rate limit exceeded" }
+                }),
+            );
+        }
+        let packet = build_packet(&snapshot_from_parts(
+            DEFAULT_REPO,
+            endpoints,
+            Vec::new(),
+            None,
+        )?)?;
+        assert_eq!(packet.get("exit_state"), Some(&json!(EXIT_NOT_PROVEN)));
+        let authorities = packet
+            .get("authorities")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "authorities missing".to_string())?;
+        let unread = authorities
+            .iter()
+            .find(|row| row.get("reference") == Some(&json!("EffortlessMetrics/.github#2")))
+            .ok_or_else(|| "authority #2 missing".to_string())?;
+        assert_eq!(unread.get("disposition"), Some(&json!(EXIT_NOT_PROVEN)));
+        assert_eq!(unread.get("available_controller"), Some(&json!(false)));
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_classic_403_rollback_is_incomplete() -> Result<(), String> {
+        let packet = build_packet(&snapshot_from_parts(
+            DEFAULT_REPO,
+            complete_endpoints(DEFAULT_REPO, &[tag_ruleset()], 403),
+            Vec::new(),
+            None,
+        )?)?;
+        assert_eq!(packet.get("exit_state"), Some(&json!(EXIT_NOT_PROVEN)));
+        assert_eq!(
+            packet.pointer("/rollback_capture/complete"),
+            Some(&json!(false))
+        );
+        assert_eq!(
+            packet.pointer("/observation/classic_protection/payload_digest"),
+            Some(&Value::Null)
+        );
+        assert_eq!(
+            packet.pointer("/report/rollback_valid"),
+            Some(&json!(false))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_classic_payload_digest_movement_is_stale() -> Result<(), String> {
+        let current = complete_snapshot()?;
+        let mut prior = build_packet(&current)?;
+        if let Some(identity) = prior.get_mut("identity").and_then(Value::as_object_mut) {
+            identity.insert(
+                "classic_payload_digest".to_string(),
+                json!("old-classic-digest"),
+            );
+        }
+        let packet = build_packet(&snapshot_from_parts(
+            DEFAULT_REPO,
+            complete_endpoints(DEFAULT_REPO, &[tag_ruleset()], 200),
+            Vec::new(),
+            Some(prior),
+        )?)?;
+        assert_eq!(packet.get("exit_state"), Some(&json!(EXIT_DRIFT)));
+        let reasons = packet
+            .pointer("/prior_receipt/reasons")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "missing stale reasons".to_string())?;
+        assert!(
+            reasons
+                .iter()
+                .any(|item| item == &json!("classic_payload_moved"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_workflow_sha_mismatch_is_not_live_enforcement() -> Result<(), String> {
+        let packet = build_packet(&snapshot_from_parts_custom(
+            DEFAULT_REPO,
+            complete_endpoints(DEFAULT_REPO, &[tag_ruleset()], 200),
+            vec![WorkflowFile {
+                path: ".github/workflows/routed-rust.yml".to_string(),
+                text: "on:\n  merge_group:\n".to_string(),
+            }],
+            None,
+            &settings_text(),
+            "workspace-only-sha",
+        )?)?;
+        assert_eq!(packet.get("exit_state"), Some(&json!(EXIT_NOT_PROVEN)));
+        assert_eq!(
+            packet.pointer("/observation/merge_group_source"),
+            Some(&json!("workspace_checkout"))
+        );
+        assert_eq!(
+            packet.pointer("/observation/merge_group_matches_observed_default_branch_sha"),
+            Some(&json!(false))
+        );
+        assert_eq!(packet.pointer("/observation/complete"), Some(&json!(false)));
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_missing_desired_default_branch_is_not_valid() -> Result<(), String> {
+        let packet = build_packet(&snapshot_from_parts_custom(
+            DEFAULT_REPO,
+            complete_endpoints(DEFAULT_REPO, &[tag_ruleset()], 200),
+            Vec::new(),
+            None,
+            "repository:\n  allow_squash_merge: true\n",
+            "abc123def456",
+        )?)?;
+        assert_eq!(packet.get("exit_state"), Some(&json!(EXIT_NOT_PROVEN)));
+        assert_eq!(packet.pointer("/desired/valid"), Some(&json!(false)));
+        assert_eq!(packet.pointer("/report/desired_valid"), Some(&json!(false)));
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_include_parser_does_not_copy_header_secrets() {
+        let stdout = "HTTP/2 200\nAuthorization: token ghp_should_not_leak\n\n{\"ok\":true}\n";
+        let parsed = parse_gh_include_output(stdout);
+        assert_eq!(parsed.http_status, 200);
+        assert_eq!(parsed.body, json!({ "ok": true }));
+        let rendered = parsed.body.to_string();
+        assert!(!rendered.contains("ghp_should_not_leak"));
+        let unreadable = parse_gh_include_output("ghp_should_not_leak not-json");
+        assert_eq!(unreadable.http_status, 0);
+        assert_eq!(
+            unreadable.body.get("message"),
+            Some(&json!("gh api produced no parseable HTTP response"))
+        );
+        assert!(!unreadable.body.to_string().contains("ghp_should_not_leak"));
+    }
+
+    #[test]
+    fn merge_queue_capture_paginated_concat_merges_and_marks_leftover() {
+        let merged = parse_gh_paginated_output("[{\"id\":1}]\n[{\"id\":2}]\n");
+        assert_eq!(merged.http_status, 200);
+        assert!(!merged.truncated);
+        assert_eq!(merged.body, json!([{ "id": 1 }, { "id": 2 }]));
+
+        let leftover = parse_gh_paginated_output("[{\"id\":1}]\n[{\"id\":2");
+        assert_eq!(leftover.http_status, 200);
+        assert!(leftover.truncated);
+        assert_eq!(leftover.body, json!([{ "id": 1 }]));
     }
 }
