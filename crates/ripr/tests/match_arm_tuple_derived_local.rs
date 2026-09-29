@@ -453,29 +453,26 @@ fn request_only_derived_locals_observe_the_changed_relation() -> Result<(), Stri
         finding.ripr,
         finding.related_tests
     );
-    // Related oracles are per-assertion; the owner tie is the relation reason,
-    // and the discriminating literals pin the projection's element identity.
-    let mut related = finding
+    // related_tests lists each test once. The kept oracle is the strongest
+    // assertion that observes this arm, not a same-rank length check.
+    let related: Vec<_> = finding
         .related_tests
         .iter()
-        .filter(|test| test.name == "request_only_projection_observes_join");
-    assert!(
-        related.clone().any(|test| {
-            test.relation_reason.is_some()
-                && test
-                    .oracle
-                    .as_deref()
-                    .is_some_and(|oracle| oracle.contains("request_identity_v2"))
-        }),
-        "the changed relation literal must be observed; related={:#?}",
+        .filter(|test| test.name == "request_only_projection_observes_join")
+        .collect();
+    assert_eq!(
+        related.len(),
+        1,
+        "one related_tests row per test; related={:#?}",
         finding.related_tests
     );
     assert!(
-        related.any(|test| test
-            .oracle
-            .as_deref()
-            .is_some_and(|oracle| oracle.contains("receipt-1"))),
-        "the projection element identity must be observed; related={:#?}",
+        related[0].relation_reason.is_some()
+            && related[0]
+                .oracle
+                .as_deref()
+                .is_some_and(|oracle| oracle.contains("request_identity_v2")),
+        "the changed relation literal must be the listed oracle; related={:#?}",
         finding.related_tests
     );
     Ok(())

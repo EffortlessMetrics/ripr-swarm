@@ -359,6 +359,8 @@ fn analyze_related_assertions(
         let cross_package_defeats_owner = match_context
             .owner_callee
             .is_some_and(|callee| cross_package_name_defeats(test, callee));
+        let mut best_row: Option<RelatedTest> = None;
+        let mut best_row_confirmed = false;
         for assertion in &test.assertions {
             let (matched, has_token_match) = assertion_matches_probe_detail_with_literals(
                 &match_context,
@@ -367,21 +369,14 @@ fn analyze_related_assertions(
                 import_defeats_owner,
                 cross_package_defeats_owner,
             );
-            if matched && !credits_oracle {
-                related.push(RelatedTest {
-                    name: test.name.clone(),
-                    file: test.file.clone(),
-                    line: test.start_line,
-                    oracle: Some(assertion.text.clone()),
-                    oracle_kind: assertion.kind.clone(),
-                    oracle_strength: probe_relative_oracle_strength(&probe.family, assertion),
-                    relation_reason,
-                    relation_confidence,
-                });
-            } else if matched {
-                let observation_confirmed = !confirm_required
-                    || has_token_match
-                    || (is_effect_family(&probe.family) && effect_observer_confirms(assertion));
+            if !matched {
+                continue;
+            }
+            let observation_confirmed = !confirm_required
+                || has_token_match
+                || (is_effect_family(&probe.family) && effect_observer_confirms(assertion));
+            let relative_strength = probe_relative_oracle_strength(&probe.family, assertion);
+            if credits_oracle {
                 if confirm_required {
                     // Observation is confirmed when the assertion specifically
                     // references the changed sub-expression. For value families
@@ -404,7 +399,6 @@ fn analyze_related_assertions(
                     }
                 }
                 matched_any = true;
-                let relative_strength = probe_relative_oracle_strength(&probe.family, assertion);
                 // Keep strength, kind, and confirmation on one assertion.
                 // An equally strong confirmed oracle wins over an unrelated
                 // one regardless of encounter order; a weaker oracle cannot.
@@ -417,17 +411,36 @@ fn analyze_related_assertions(
                     strongest_kind = assertion.kind.clone();
                     strongest_observation_confirmed = observation_confirmed;
                 }
-                related.push(RelatedTest {
-                    name: test.name.clone(),
-                    file: test.file.clone(),
-                    line: test.start_line,
-                    oracle: Some(assertion.text.clone()),
-                    oracle_kind: assertion.kind.clone(),
-                    oracle_strength: relative_strength,
-                    relation_reason,
-                    relation_confidence,
-                });
             }
+            let row = RelatedTest {
+                name: test.name.clone(),
+                file: test.file.clone(),
+                line: test.start_line,
+                oracle: Some(assertion.text.clone()),
+                oracle_kind: assertion.kind.clone(),
+                oracle_strength: relative_strength.clone(),
+                relation_reason,
+                relation_confidence,
+            };
+            // One row per test (#4760). Prefer the stronger oracle; at equal
+            // rank keep the one that actually observes this probe so a
+            // same-rank length check cannot hide the changed-arm pin.
+            let keep = match &best_row {
+                None => true,
+                Some(current) => {
+                    relative_strength.rank() > current.oracle_strength.rank()
+                        || (relative_strength.rank() == current.oracle_strength.rank()
+                            && observation_confirmed
+                            && !best_row_confirmed)
+                }
+            };
+            if keep {
+                best_row = Some(row);
+                best_row_confirmed = observation_confirmed;
+            }
+        }
+        if let Some(row) = best_row {
+            related.push(row);
         }
     }
 
@@ -2487,6 +2500,39 @@ mod tests {
                 .map(|test| (test.oracle_strength.as_str(), test.oracle_kind.as_str())),
             Some(("strong", "exact_value")),
             "combinations test listed once with strongest oracle: {named:?}"
+        );
+    }
+
+    #[test]
+    fn related_tests_keep_the_confirmed_oracle_over_a_same_rank_length_check() {
+        let probe = probe(
+            ProbeFamily::MatchArm,
+            "(true, false) => \"request_identity_v2\"",
+        );
+        let test = test_with_assertions(
+            "request_only_projection_observes_join",
+            vec![
+                oracle(
+                    "assert_eq!(terminal.len(), 1);",
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                ),
+                oracle(
+                    "assert_eq!(terminal[0].1, \"request_identity_v2\");",
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                ),
+            ],
+        );
+        let (_, _, related) = reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(related.len(), 1, "{related:#?}");
+        assert!(
+            related[0]
+                .oracle
+                .as_deref()
+                .is_some_and(|oracle| oracle.contains("request_identity_v2")),
+            "listed oracle must observe the changed arm, not a same-rank length check: {related:#?}"
         );
     }
 
