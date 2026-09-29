@@ -42,7 +42,7 @@ impl AttributedArchive {
             Path::new("cargo"),
             &args,
             source.root(),
-            Duration::from_secs(900),
+            Duration::from_mins(15),
             "qualified cargo package",
         )?;
         source.revalidate()?;
@@ -123,7 +123,7 @@ impl AttributedArchive {
             Path::new("cargo"),
             &args,
             &extracted,
-            Duration::from_secs(900),
+            Duration::from_mins(15),
             "qualified cargo install",
         )?;
         self.revalidate()?;
@@ -244,7 +244,7 @@ impl CandidateExecution<'_> {
                     cwd,
                     &[],
                     &[],
-                    Duration::from_secs(120),
+                    Duration::from_mins(2),
                     context,
                 )?;
                 candidate.revalidate()?;
