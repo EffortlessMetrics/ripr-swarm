@@ -9,6 +9,13 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Added
+
+- CI: a dispatch-only local-wheelhouse qualification lane records pip and uv
+  isolation facts and evaluates a fail-closed aggregate. Missing, skipped,
+  zero-subject, or mismatched rows cannot pass. No PyPI credentials or
+  publication (#4631).
+
 ### Fixed
 
 - Security: Rust source discovery skips symlinked `.rs` entries, as the
