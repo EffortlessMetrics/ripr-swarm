@@ -19,13 +19,14 @@ use std::path::{Path, PathBuf};
 use super::release::candidate_harness::{
     AdmittedSource, AttributedArchive, CandidateExecution, QualificationInput,
 };
-#[cfg(test)]
-use super::release::release_temp_root;
 use super::release::{
     BOUNDARY_GAP_SEAM_ID, CommandResult, absolute_installed_binary, artifact_string,
-    checkout_fixture_commit, command_details, create_authentic_repo_exposure_fixture, fixture_head,
-    git_worktree_is_clean, installed_ripr_binary, read_crate_version, read_json_value,
-    run_command_in_dir, run_fixture_git_command, run_packaged_install,
+    command_details, git_worktree_is_clean, installed_ripr_binary, read_crate_version,
+    read_json_value, run_command_in_dir, run_packaged_install,
+};
+#[cfg(test)]
+use super::release::{
+    checkout_fixture_commit, fixture_head, release_temp_root, run_fixture_git_command,
 };
 use super::release::{produce_authentic_chain_with_execution, run_producer_with_execution};
 use super::release_server::{hex_lower, sha256_file};
@@ -555,7 +556,7 @@ fn build_baseline(
     binary: CandidateExecution<'_>,
     corpus_dir: &Path,
 ) -> Result<BaselineContext, String> {
-    let fixture = create_authentic_repo_exposure_fixture()?;
+    let fixture = super::release::create_authentic_fixture_with_execution(binary)?;
     let result = (|| {
         if matches!(binary, CandidateExecution::Qualified(_)) {
             let doctor = binary.run(
@@ -727,7 +728,7 @@ fn execute_case(
         }
 
         // Restore the original bytes/state byte-exactly, verified by digest.
-        match restore_state(&workspace, &execution.snapshot) {
+        match restore_state_with_execution(binary, &workspace, &execution.snapshot) {
             Ok(mut restore_details) => {
                 receipt.restoration_outcome = "restored_byte_exact".to_string();
                 receipt.details.append(&mut restore_details);
@@ -871,7 +872,7 @@ fn produce_case_chain(env: &CaseEnv) -> Result<(), String> {
 
 fn verify_case_execution(env: &CaseEnv, mutation: &str) -> Result<CaseExecution, String> {
     produce_case_chain(env)?;
-    let snapshot = snapshot_state(env.root)?;
+    let snapshot = snapshot_state_with_execution(env.binary, env.root)?;
     Ok(CaseExecution {
         mutation: mutation.to_string(),
         argv: agent_verify_argv(BEFORE_ARTIFACT, AFTER_ARTIFACT),
@@ -889,7 +890,7 @@ fn verify_case_execution(env: &CaseEnv, mutation: &str) -> Result<CaseExecution,
 
 fn receipt_case_execution(env: &CaseEnv, mutation: &str) -> Result<CaseExecution, String> {
     produce_case_chain(env)?;
-    let snapshot = snapshot_state(env.root)?;
+    let snapshot = snapshot_state_with_execution(env.binary, env.root)?;
     Ok(CaseExecution {
         mutation: mutation.to_string(),
         argv: agent_receipt_argv(BOUNDARY_GAP_SEAM_ID, CASE_RECEIPT_OUT),
@@ -1151,8 +1152,12 @@ fn shift_final_hex(text: &str) -> Result<String, String> {
     Ok(chars.into_iter().collect())
 }
 
-fn commit_empty(root: &Path, message: &str) -> Result<String, String> {
-    run_fixture_git_command(
+fn commit_empty_with_execution(
+    binary: CandidateExecution<'_>,
+    root: &Path,
+    message: &str,
+) -> Result<String, String> {
+    binary.fixture_git(
         root,
         &[
             "-c",
@@ -1164,11 +1169,14 @@ fn commit_empty(root: &Path, message: &str) -> Result<String, String> {
         ],
         "corpus movement commit",
     )?;
-    fixture_head(root)
+    binary.fixture_head(root)
 }
 
-fn snapshot_state(root: &Path) -> Result<StateSnapshot, String> {
-    let head = fixture_head(root)?;
+fn snapshot_state_with_execution(
+    binary: CandidateExecution<'_>,
+    root: &Path,
+) -> Result<StateSnapshot, String> {
+    let head = binary.fixture_head(root)?;
     let mut files = Vec::new();
     for name in CHAIN_FILES {
         let path = root.join(name);
@@ -1192,7 +1200,11 @@ fn snapshot_state(root: &Path) -> Result<StateSnapshot, String> {
 
 /// Restore the snapshotted bytes and repository head, verifying every
 /// restored file by digest and the head by exact SHA equality.
-fn restore_state(root: &Path, snapshot: &StateSnapshot) -> Result<Vec<String>, String> {
+fn restore_state_with_execution(
+    binary: CandidateExecution<'_>,
+    root: &Path,
+    snapshot: &StateSnapshot,
+) -> Result<Vec<String>, String> {
     for file in &snapshot.files {
         let path = root.join(&file.name);
         fs::write(&path, &file.bytes)
@@ -1208,8 +1220,8 @@ fn restore_state(root: &Path, snapshot: &StateSnapshot) -> Result<Vec<String>, S
     // Remove command outputs the failing run may have created so the control
     // rerun starts from the snapshotted state exactly.
     let _ = fs::remove_file(root.join(CASE_RECEIPT_OUT));
-    checkout_fixture_commit(root, &snapshot.head)?;
-    let head = fixture_head(root)?;
+    binary.fixture_checkout(root, &snapshot.head)?;
+    let head = binary.fixture_head(root)?;
     if head != snapshot.head {
         return Err(format!(
             "restored head {head} does not match snapshot head {}",
@@ -1362,7 +1374,7 @@ fn case_artifact_revision_noncommit(env: &CaseEnv) -> Result<CaseExecution, Stri
         "rebind the after artifact repository head to a blob object present in the repository (snapshot follows; commitment re-committed)",
     )?;
     execution.original = artifact_digests(env.root, &[AFTER_ARTIFACT])?;
-    let blob = run_fixture_git_command(
+    let blob = env.binary.fixture_git(
         env.root,
         &["rev-parse", "HEAD:Cargo.toml"],
         "resolve fixture blob revision",
@@ -1504,12 +1516,12 @@ fn case_pair_unrelated_revisions(env: &CaseEnv) -> Result<CaseExecution, String>
         "rebind the after artifact to a fresh orphan root commit that shares no ancestry with the before revision (snapshot follows; commitment re-committed)",
     )?;
     execution.original = pair_digests(env)?;
-    run_fixture_git_command(
+    env.binary.fixture_git(
         env.root,
         &["checkout", "--quiet", "--orphan", "corpus-unrelated"],
         "create unrelated orphan branch",
     )?;
-    run_fixture_git_command(
+    env.binary.fixture_git(
         env.root,
         &[
             "-c",
@@ -1522,7 +1534,7 @@ fn case_pair_unrelated_revisions(env: &CaseEnv) -> Result<CaseExecution, String>
         ],
         "commit unrelated orphan root",
     )?;
-    let orphan = fixture_head(env.root)?;
+    let orphan = env.binary.fixture_head(env.root)?;
     rebind_artifact_head(env.root, AFTER_ARTIFACT, &orphan)?;
     execution.mutated = artifact_digests(env.root, &[AFTER_ARTIFACT])?;
     execution.expected = Expectation::reject("revisions are unrelated");
@@ -1618,7 +1630,7 @@ fn case_pair_no_movement_same_clean_revision(env: &CaseEnv) -> Result<CaseExecut
         "check out the before revision (real producer worktree state) and present the same current before artifact as both sides of the pair",
     )?;
     execution.original = artifact_digests(env.root, &[BEFORE_ARTIFACT])?;
-    checkout_fixture_commit(env.root, env.before_sha)?;
+    env.binary.fixture_checkout(env.root, env.before_sha)?;
     execution.mutated = artifact_digests(env.root, &[BEFORE_ARTIFACT])?;
     execution.argv = agent_verify_argv(BEFORE_ARTIFACT, BEFORE_ARTIFACT);
     execution.expected = Expectation::reject("no repository movement");
@@ -1649,7 +1661,7 @@ fn case_verify_replayed_against_another_pair(env: &CaseEnv) -> Result<CaseExecut
         "advance the repository, produce a third authentic after artifact, and replay the original verify JSON against the new pair bytes",
     )?;
     execution.original = artifact_digests(env.root, &[AFTER_ARTIFACT, VERIFY_JSON])?;
-    commit_empty(env.root, "corpus third state")?;
+    commit_empty_with_execution(env.binary, env.root, "corpus third state")?;
     run_producer_with_execution(env.binary, env.root, THIRD_ARTIFACT)?;
     fs::copy(env.root.join(THIRD_ARTIFACT), env.root.join(AFTER_ARTIFACT))
         .map_err(|err| format!("replay third artifact as after failed: {err}"))?;
@@ -1684,7 +1696,7 @@ fn case_verify_stale_after_repository_movement(env: &CaseEnv) -> Result<CaseExec
     )?;
     execution.original = artifact_digests(env.root, &[VERIFY_JSON, RECEIPT_JSON])?;
     let prior_receipt_digest = file_digest_prefixed(&env.root.join(RECEIPT_JSON))?;
-    commit_empty(env.root, "corpus post-verify movement")?;
+    commit_empty_with_execution(env.binary, env.root, "corpus post-verify movement")?;
     execution.mutated = artifact_digests(env.root, &[VERIFY_JSON, RECEIPT_JSON])?;
     execution.expected = Expectation::Reject {
         token: "[not_canonical]",
@@ -1769,7 +1781,7 @@ fn case_receipt_from_incomparable_verification(env: &CaseEnv) -> Result<CaseExec
         &format!("\"after\": \"{after_input}\""),
         &format!("\"after\": \"{before_input}\""),
     )?;
-    checkout_fixture_commit(env.root, env.before_sha)?;
+    env.binary.fixture_checkout(env.root, env.before_sha)?;
     execution.mutated = artifact_digests(env.root, &[VERIFY_JSON])?;
     execution.expected = Expectation::reject_without_out("[no_movement]");
     execution.retain = vec![(VERIFY_JSON.to_string(), VERIFY_JSON.to_string())];
@@ -1802,8 +1814,12 @@ const EQUALITY_TEST: &str = "\n#[test]\nfn equality_boundary_discounts() {\n    
 /// seam Y (discounted_total) gains the boundary test in the second commit.
 /// The chain must be linear — commits on divergent branches share no
 /// ancestry and fail the lineage gate instead. Returns (before, after) SHAs.
-fn build_two_seam_commits(root: &Path, before_sha: &str) -> Result<(String, String), String> {
-    checkout_fixture_commit(root, before_sha)?;
+fn build_two_seam_commits_with_execution(
+    binary: CandidateExecution<'_>,
+    root: &Path,
+    before_sha: &str,
+) -> Result<(String, String), String> {
+    binary.fixture_checkout(root, before_sha)?;
     let lib_path = root.join("src/lib.rs");
     let mut lib = crate::read_text_lossy(&lib_path)?;
     lib.push_str(LOYALTY_FN);
@@ -1812,12 +1828,12 @@ fn build_two_seam_commits(root: &Path, before_sha: &str) -> Result<(String, Stri
     let mut tests = crate::read_text_lossy(&tests_path)?;
     tests.push_str(LOYALTY_TEST);
     fs::write(&tests_path, tests).map_err(|err| format!("add loyalty weak test failed: {err}"))?;
-    run_fixture_git_command(
+    binary.fixture_git(
         root,
         &["-c", "core.hooksPath=", "add", "."],
         "stage two-seam before state",
     )?;
-    run_fixture_git_command(
+    binary.fixture_git(
         root,
         &[
             "-c",
@@ -1829,17 +1845,17 @@ fn build_two_seam_commits(root: &Path, before_sha: &str) -> Result<(String, Stri
         ],
         "commit two-seam before state",
     )?;
-    let before_two_seam = fixture_head(root)?;
+    let before_two_seam = binary.fixture_head(root)?;
     let mut tests = crate::read_text_lossy(&tests_path)?;
     tests.push_str(EQUALITY_TEST);
     fs::write(&tests_path, tests)
         .map_err(|err| format!("add equality boundary test failed: {err}"))?;
-    run_fixture_git_command(
+    binary.fixture_git(
         root,
         &["-c", "core.hooksPath=", "add", "."],
         "stage two-seam after state",
     )?;
-    run_fixture_git_command(
+    binary.fixture_git(
         root,
         &[
             "-c",
@@ -1851,7 +1867,7 @@ fn build_two_seam_commits(root: &Path, before_sha: &str) -> Result<(String, Stri
         ],
         "commit two-seam after state",
     )?;
-    let after_two_seam = fixture_head(root)?;
+    let after_two_seam = binary.fixture_head(root)?;
     if before_two_seam == after_two_seam {
         return Err("two-seam before and after commits are identical".to_string());
     }
@@ -1861,7 +1877,8 @@ fn build_two_seam_commits(root: &Path, before_sha: &str) -> Result<(String, Stri
 fn case_receipt_unmoved_retained_target(env: &CaseEnv) -> Result<CaseExecution, String> {
     // The receipt for the retained target must issue but stay `unchanged` —
     // movement on seam Y can never strengthen seam X.
-    let (before_two_seam, after_two_seam) = build_two_seam_commits(env.root, env.before_sha)?;
+    let (before_two_seam, after_two_seam) =
+        build_two_seam_commits_with_execution(env.binary, env.root, env.before_sha)?;
     produce_authentic_chain_with_execution(
         env.binary,
         env.root,
@@ -1917,7 +1934,7 @@ fn case_receipt_unmoved_retained_target(env: &CaseEnv) -> Result<CaseExecution, 
         .and_then(Value::as_str)
         .ok_or_else(|| "retained target seam_id is missing".to_string())?
         .to_string();
-    let snapshot = snapshot_state(env.root)?;
+    let snapshot = snapshot_state_with_execution(env.binary, env.root)?;
     Ok(CaseExecution {
         mutation: "no mutation: honesty pin — receipt for the retained target seam must stay `unchanged` while only the other seam moves".to_string(),
         argv: agent_receipt_argv(&retained_id, RECEIPT_JSON),
@@ -2461,6 +2478,27 @@ fn nested_cargo_lock_contention(stderr: &str) -> bool {
         || stderr.contains("Text file busy")
         || stderr.contains("os error 26")
         || stderr.contains("resource temporarily unavailable")
+}
+
+#[cfg(test)]
+fn snapshot_state(root: &Path) -> Result<StateSnapshot, String> {
+    snapshot_state_with_execution(CandidateExecution::Legacy(Path::new("ripr")), root)
+}
+#[cfg(test)]
+fn restore_state(root: &Path, snapshot: &StateSnapshot) -> Result<Vec<String>, String> {
+    restore_state_with_execution(
+        CandidateExecution::Legacy(Path::new("ripr")),
+        root,
+        snapshot,
+    )
+}
+#[cfg(test)]
+fn build_two_seam_commits(root: &Path, before_sha: &str) -> Result<(String, String), String> {
+    build_two_seam_commits_with_execution(
+        CandidateExecution::Legacy(Path::new("ripr")),
+        root,
+        before_sha,
+    )
 }
 
 #[cfg(test)]

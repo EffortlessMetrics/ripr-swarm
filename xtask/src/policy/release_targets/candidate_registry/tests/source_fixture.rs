@@ -152,6 +152,10 @@ version = '0.11.0'
     fs::write(source.join(".gitignore"), "src/foreign.rs\n").map_err(|error| error.to_string())?;
     fs::write(source.join("source.bin"), [0, b'\n', 255, b' ', b'\n'])
         .map_err(|error| error.to_string())?;
+    let fixture_input = source.join("fixtures/boundary_gap/input");
+    fs::create_dir_all(&fixture_input).map_err(|error| error.to_string())?;
+    fs::write(fixture_input.join("Cargo.toml"), "selected fixture A\n")
+        .map_err(|error| error.to_string())?;
     git(
         &source,
         &[
@@ -162,6 +166,7 @@ version = '0.11.0'
             "src/main.rs",
             ".gitignore",
             "source.bin",
+            "fixtures",
         ],
     )?;
     git(
@@ -294,6 +299,37 @@ fn admitted_source_rechecks_actual_git_and_controller_bytes() -> Result<(), Stri
         PathBuf::from(PINNED_JSON),
     )?;
     let admitted = AdmittedSource::admit(&input, "0.11.0")?;
+    let original_controller = read_artifact_tree(&fixture.controller);
+    let mut wrong_tree_registry = retire_template(repository_registry());
+    replace_row(
+        &mut wrong_tree_registry,
+        &fixture.artifact,
+        &fixture.sha,
+        &"0".repeat(40),
+        &fixture.reference,
+    )?;
+    let wrong_tree = tree(
+        &wrong_tree_registry,
+        &[(PINNED_JSON, fixture.artifact.clone())],
+    );
+    let wrong_tree_outcome = evaluate_candidate_registry(&wrong_tree, &controllers());
+    wrong_tree_outcome
+        .validated()
+        .map_err(|error| format!("wrong-tree registry fixture is not legal: {error}"))?;
+    for (path, bytes) in &wrong_tree.files {
+        fs::write(fixture.controller.join(path), bytes).map_err(|error| error.to_string())?;
+    }
+    require_refusal(
+        AdmittedSource::admit(&input, "0.11.0"),
+        &format!(
+            "candidate source identity changed at {}^{{tree}}",
+            fixture.sha
+        ),
+    )?;
+    for (path, bytes) in &original_controller.files {
+        fs::write(fixture.controller.join(path), bytes).map_err(|error| error.to_string())?;
+    }
+    AdmittedSource::admit(&input, "0.11.0")?.revalidate()?;
     if admitted.committed_file("source.bin") != Some([0, b'\n', 255, b' ', b'\n'].as_slice()) {
         return Err("Git binary batch capture changed non-UTF8/NUL/newline blob bytes".to_string());
     }
@@ -435,6 +471,11 @@ fn real_package_install_custody_rejects_ignored_foreign_and_changed_bytes() -> R
     fs::write(&archive_path, original).map_err(|error| error.to_string())?;
     archive.revalidate()?;
     let installed = archive.install(&owned)?;
+    if installed.fixture_bytes("Cargo.toml")? != b"selected fixture A\n" {
+        return Err(
+            "authentic fixture bytes did not come from admitted committed source".to_string(),
+        );
+    }
     let foreign = fixture.guard.root.join("foreign launch B");
     fs::create_dir(&foreign).map_err(|error| error.to_string())?;
     fs::write(

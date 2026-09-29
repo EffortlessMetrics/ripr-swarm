@@ -25,7 +25,10 @@ impl AttributedArchive {
         source.revalidate()?;
         let target = owned_root.join("package-target");
         let manifest = source.package_root().join("Cargo.toml");
+        let config = owned_cargo_config(owned_root, "package")?;
         let args = vec![
+            "--config".to_string(),
+            config.to_string_lossy().into_owned(),
             "package".to_string(),
             "--jobs".to_string(),
             "2".to_string(),
@@ -100,7 +103,10 @@ impl AttributedArchive {
         }
         let install_root = owned_root.join("installed");
         let target_root = owned_root.join("install-target");
+        let config = owned_cargo_config(owned_root, "install")?;
         let args = vec![
+            "--config".to_string(),
+            config.to_string_lossy().into_owned(),
             "install".to_string(),
             "--jobs".to_string(),
             "2".to_string(),
@@ -164,6 +170,64 @@ pub(crate) enum CandidateExecution<'a> {
 }
 
 impl CandidateExecution<'_> {
+    pub(crate) fn fixture_git(
+        self,
+        root: &Path,
+        args: &[&str],
+        context: &str,
+    ) -> Result<super::super::CommandResult, String> {
+        match self {
+            Self::Legacy(_) => super::super::run_fixture_git_command(root, args, context),
+            Self::Qualified(candidate) => {
+                candidate.revalidate()?;
+                let args = args
+                    .iter()
+                    .map(|arg| (*arg).to_string())
+                    .collect::<Vec<_>>();
+                let output = qualified_command(
+                    Path::new("git"),
+                    &args,
+                    root,
+                    Duration::from_secs(30),
+                    context,
+                )?;
+                candidate.revalidate()?;
+                let status = output
+                    .status
+                    .ok_or_else(|| format!("{context} has no process status"))?;
+                Ok(super::super::CommandResult {
+                    status: status.code(),
+                    success: status.success(),
+                    stdout: String::from_utf8(output.stdout)
+                        .map_err(|error| format!("{context} stdout UTF-8: {error}"))?,
+                    stderr: String::from_utf8(output.stderr)
+                        .map_err(|error| format!("{context} stderr UTF-8: {error}"))?,
+                })
+            }
+        }
+    }
+    pub(crate) fn fixture_head(self, root: &Path) -> Result<String, String> {
+        if matches!(self, Self::Legacy(_)) {
+            return super::super::fixture_head(root);
+        }
+        let result = self.fixture_git(root, &["rev-parse", "HEAD"], "read fixture HEAD")?;
+        let head = result.stdout.trim();
+        if head.len() != 40 || !head.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(format!("fixture HEAD is not a full commit SHA: {head}"));
+        }
+        Ok(head.to_string())
+    }
+    pub(crate) fn fixture_checkout(self, root: &Path, sha: &str) -> Result<(), String> {
+        if matches!(self, Self::Legacy(_)) {
+            return super::super::checkout_fixture_commit(root, sha);
+        }
+        self.fixture_git(
+            root,
+            &["checkout", "--quiet", "--detach", sha],
+            "checkout fixture commit",
+        )?;
+        Ok(())
+    }
     pub(crate) fn run(
         self,
         args: &[String],
@@ -204,6 +268,18 @@ impl CandidateExecution<'_> {
 }
 
 impl InstalledCandidate {
+    pub(crate) fn fixture_bytes(&self, relative: &str) -> Result<Vec<u8>, String> {
+        self.revalidate()?;
+        let path = format!("fixtures/boundary_gap/input/{relative}");
+        let bytes = self
+            .archive
+            .source
+            .committed_file(&path)
+            .ok_or_else(|| format!("admitted source lacks authentic fixture {path}"))?
+            .to_vec();
+        self.revalidate()?;
+        Ok(bytes)
+    }
     pub(crate) fn revalidate(&self) -> Result<(), String> {
         self.archive.revalidate()?;
         if std::fs::read(&self.binary)
@@ -226,6 +302,36 @@ impl InstalledCandidate {
     }
 }
 
+fn owned_cargo_config(root: &Path, phase: &str) -> Result<PathBuf, String> {
+    let temporary = root.join(format!("{phase}-temporary"));
+    std::fs::create_dir(&temporary)
+        .map_err(|error| format!("create owned Cargo temporary directory: {error}"))?;
+    let temporary = temporary
+        .canonicalize()
+        .map_err(|error| format!("resolve owned Cargo temporary directory: {error}"))?;
+    let value = temporary
+        .to_str()
+        .ok_or_else(|| "owned Cargo temporary path is not UTF-8".to_string())?;
+    let mut environment = toml::map::Map::new();
+    for name in ["TEMP", "TMP", "TMPDIR"] {
+        let mut setting = toml::map::Map::new();
+        setting.insert("value".to_string(), toml::Value::String(value.to_string()));
+        setting.insert("force".to_string(), toml::Value::Boolean(true));
+        setting.insert("relative".to_string(), toml::Value::Boolean(false));
+        environment.insert(name.to_string(), toml::Value::Table(setting));
+    }
+    let mut config = toml::map::Map::new();
+    config.insert("env".to_string(), toml::Value::Table(environment));
+    let path = root.join(format!("{phase}-cargo-config.toml"));
+    std::fs::write(
+        &path,
+        toml::to_string(&toml::Value::Table(config))
+            .map_err(|error| format!("encode owned Cargo configuration: {error}"))?,
+    )
+    .map_err(|error| format!("write owned Cargo configuration: {error}"))?;
+    Ok(path)
+}
+
 fn qualified_command(
     program: &Path,
     args: &[String],
@@ -238,7 +344,12 @@ fn qualified_command(
         args,
         cwd,
         &[],
-        &["CARGO_TARGET_DIR"],
+        &[
+            "CARGO_TARGET_DIR",
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+        ],
         timeout,
         context,
     )?;
