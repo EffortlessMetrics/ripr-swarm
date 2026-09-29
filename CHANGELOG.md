@@ -33,9 +33,20 @@ are scoped or reviewed.
 - Identity: `cargo xtask check-identity-registry` enforces one governed
   identifier catalog and generated `docs/identity` table. Vocabulary and
   compatibility map only; it does not migrate consumers (#4804).
+- CLI: `ripr check` projects producer-owned analysis stages and throttled
+  heartbeats onto stderr (`ripr progress: <stage> [<scope>]`) without changing
+  JSON, SARIF, or other machine stdout. A TTY stays silent under 250ms, then
+  reveals the active stage and heartbeats; producer `completed` is held until
+  the command actually succeeds. Unknown totals stay unknown; `--quiet`
+  suppresses the stream. This does not make analysis faster (#4810).
 
 ### Fixed
 
+- An unusable cache directory no longer prints one `repo file fact cache entry
+  ignored` line per source file. With `RIPR_CACHE_DIR` pointing at a file,
+  `ripr check` on this repository printed 723 identical-shape lines before the
+  one warning that mattered. A build now prints one line naming the count and
+  the first reason; a single bad entry keeps its old message (#4888).
 - An unchanged Rust test file that the reference parser refuses is no longer
   a silent related-test hole. If a classified owner consults that
   lexical-fallback file (the file contributed a related test, or it calls the
@@ -83,6 +94,17 @@ are scoped or reviewed.
   message and the recovery detail no longer say "at least 0 changed line(s)"
   when every changed file ripr's language adapters read was selected, and
   the VS Code next step no longer points only at the file budget.
+- Python: a parameter default on its own line inside a multi-line `def`
+  header is no longer credited `exposed` when every strong related call
+  passes that parameter by keyword or position. It reads `weakly_exposed`
+  and names the call to add, one that omits the parameter. A keyword never
+  counts as binding a positional-only parameter, in one-line headers too.
+- Python: a dunder method of a nested class (`Outer.Inner.__init__`) relates
+  to tests that build `Outer.Inner(...)` from an imported `Outer`. A dunder
+  with no related test whose tests import anything from its package (a
+  private descriptor's `__get__` behind a public decorator, cachetools
+  57d2e48) reads `static_unknown` with the `dynamic_dispatch` limit instead
+  of `no_static_path`. A root `lib/` directory is an import root like `src/`.
 - `ripr check` is faster on large repositories, with byte-identical JSON on
   12 real commits of tokio, vite, Django and ripr. TypeScript test selection
   walked the directory tree for `package.json` twice per owner and test;
@@ -1627,6 +1649,22 @@ are scoped or reviewed.
   from the committed file rather than uncommitted edits, and
   repository-wide runs count the skipped files as a partial run. A
   hand-written `src/vendor/` module stays analyzed.
+- `ripr agent repair` no longer prints 9 to 13 KB of JSON to stdout unasked.
+  By default each phase prints a short human summary that names the seam, the
+  movement and where the full packet, receipt and verify documents were
+  written. `--json` prints the packet (before phase), the envelope (after
+  phase) or the verification receipt (verify phase) on stdout as before,
+  matching `ripr agent status --json`. `ripr check`'s default output now
+  leads its `Analysis outcome:` and `State:` lines with plain words and keeps
+  the id in parentheses, for example `Analysis outcome: findings below
+  (analysis complete; complete_with_findings).` and `State: a test gap to
+  inspect or repair (top_gap)`.
+- `ripr check`'s `Limitation:` lines lead with plain words and keep the
+  schema tokens in parentheses, for example `Limitation: some changed files
+  were not analyzed during language analysis (language_scope_unsupported at
+  language_adapter); file: src/broken.ts; ...; recovery: enable the language
+  (enable_language) — ...`. Before, the kind, stage and recovery were bare
+  snake_case tokens (#4323).
 
 ### Added
 
