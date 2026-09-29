@@ -9590,8 +9590,8 @@ tests = [
   "crates/ripr/src/analysis/witness/tests.rs::favorable_stage_plus_absent_stage_cannot_collapse_to_equality",
   "crates/ripr/src/analysis/witness/tests.rs::removing_identity_or_digest_makes_the_row_not_comparable",
   "crates/ripr/src/analysis/witness/tests.rs::json_and_markdown_derive_from_the_same_normalized_dto",
-    "crates/ripr/src/analysis/witness/tests.rs::unspecified_repo_completeness_is_a_typed_limitation_not_optimistic_parity",
-    "crates/ripr/src/analysis/witness/tests.rs::production_retain_does_not_mutate_producer_classes_or_relations",
+  "crates/ripr/src/analysis/witness/tests.rs::unspecified_repo_completeness_is_a_typed_limitation_not_optimistic_parity",
+  "crates/ripr/src/analysis/witness/tests.rs::production_retain_does_not_mutate_producer_classes_or_relations",
 ]
 fixtures = []
 code = [
@@ -9603,5 +9603,9 @@ code = [
   "crates/ripr/src/analysis/classifier/finding.rs",
   "crates/ripr/src/analysis/seam_inventory.rs",
 ]
-outputs = []
-metrics = []
+outputs = [
+  "docs/specs/RIPR-SPEC-0180-shared-behavior-evidence-witness.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

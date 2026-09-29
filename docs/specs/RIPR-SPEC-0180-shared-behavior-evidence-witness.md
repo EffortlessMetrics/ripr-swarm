@@ -157,6 +157,6 @@ and named cross-language limits may explain a difference.
 
 ## Metrics
 
-This slice does not claim a public metric. Internal parity-row counts by
-disposition are test evidence only; they are not a support-tier or
-classifier-quality score.
+This slice does not claim a public support-tier or classifier-quality score.
+The traceability metric is `unit_test_pass_rate` for the paired corpus.
+Internal parity-row counts by disposition are test evidence only.
