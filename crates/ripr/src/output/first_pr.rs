@@ -1982,13 +1982,9 @@ fn why_for_gap(kind: &str, language: Option<&str>) -> String {
     }
 }
 
-/// The `--out` path a printed `ripr ...` receipt command writes, read with
-/// POSIX quoting (the `shell_arg` form every receipt command is rendered in).
-/// `None` for a command with no `--out`, an empty value, a shell operator
-/// before it, or unbalanced quoting, so the caller falls back rather than
-/// naming a guessed path.
-/// Shell words of a single `ripr ...` command, each with whether any part of
-/// it was quoted. `None` for a command this reader cannot take literally:
+/// Shell words of a single `ripr ...` command, read with POSIX quoting (the
+/// `shell_arg` form every receipt command is rendered in), each with whether
+/// any part of it was quoted. `None` for a command this reader cannot take literally:
 /// unbalanced quotes, a trailing escape, another program, or an unquoted
 /// shell operator (a redirect or a chained command writes elsewhere).
 fn ripr_command_words(command: &str) -> Option<Vec<(String, bool)>> {
