@@ -11,6 +11,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `docs/OUTPUT_SCHEMA.md`, `docs/LLM_OPERATOR_GUIDE.md`, and
+  `docs/interop/mcp.md` now match the JSON agents receive: five missing
+  version-table rows, the `swarm queue` `0.2` example and its `python`
+  language default, the receipt's omitted `safe_to_merge` and `--test` flag,
+  the seventh `agent status` artifact, the `rerun` cache versions, the receipt
+  movement vocabulary, and a `cache status --json` field contract (#4608).
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from
