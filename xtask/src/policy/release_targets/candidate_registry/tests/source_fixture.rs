@@ -60,6 +60,16 @@ fn git(root: &Path, values: &[&str]) -> Result<String, String> {
         .map_err(|error| format!("fixture Git output is not UTF-8: {error}"))
 }
 
+fn require_refusal<T>(result: Result<T, String>, expected: &str) -> Result<(), String> {
+    match result {
+        Ok(_) => Err(format!("custody unexpectedly accepted {expected}")),
+        Err(error) if error.contains(expected) => Ok(()),
+        Err(error) => Err(format!(
+            "expected custody refusal {expected}; actual unrelated failure: {error}"
+        )),
+    }
+}
+
 fn initialize(root: &Path) -> Result<(), String> {
     git(root, &["init", "--initial-branch=main"])?;
     for (key, value) in [
@@ -306,18 +316,20 @@ fn admitted_source_rechecks_actual_git_and_controller_bytes() -> Result<(), Stri
         ],
     )?;
     let other_sha = git(&fixture.source, &["rev-parse", "HEAD"])?;
-    if admitted.revalidate().is_ok() {
-        return Err("changed actual source HEAD admitted".to_string());
-    }
+    require_refusal(
+        admitted.revalidate(),
+        "candidate source identity changed at HEAD",
+    )?;
     git(&fixture.source, &["checkout", "--detach", &fixture.sha])?;
     admitted.revalidate()?;
     git(
         &fixture.source,
         &["update-ref", &fixture.reference, &other_sha],
     )?;
-    if admitted.revalidate().is_ok() {
-        return Err("moved actual selected source ref admitted".to_string());
-    }
+    require_refusal(
+        admitted.revalidate(),
+        &format!("candidate source identity changed at {}", fixture.reference),
+    )?;
     git(
         &fixture.source,
         &["update-ref", &fixture.reference, &fixture.sha],
@@ -329,20 +341,71 @@ fn admitted_source_rechecks_actual_git_and_controller_bytes() -> Result<(), Stri
 ",
     )
     .map_err(|error| error.to_string())?;
-    if admitted.revalidate().is_ok() {
-        return Err("changed actual source bytes admitted".to_string());
-    }
+    require_refusal(
+        admitted.revalidate(),
+        "candidate source checkout is not clean",
+    )?;
     git(&fixture.source, &["checkout", "--", "src/main.rs"])?;
     admitted.revalidate()?;
     let path = fixture.controller.join(PINNED_JSON);
     let mut changed = fixture.artifact.clone();
     changed.push(b' ');
     fs::write(&path, changed).map_err(|error| error.to_string())?;
-    if admitted.revalidate().is_ok() {
-        return Err("changed controller bytes admitted".to_string());
-    }
+    require_refusal(admitted.revalidate(), "candidate_digest")?;
     fs::write(path, &fixture.artifact).map_err(|error| error.to_string())?;
     admitted.revalidate()?;
+    fixture.guard.finish()
+}
+
+#[test]
+fn source_admission_refuses_same_alias_and_nested_physical_roots() -> Result<(), String> {
+    use crate::reports::release::candidate_harness::{AdmittedSource, QualificationInput};
+    let fixture = create_source_fixture()?;
+    let artifact = PathBuf::from(PINNED_JSON);
+    let separate = QualificationInput::new(
+        fixture.controller.clone(),
+        fixture.source.clone(),
+        artifact.clone(),
+    )?;
+    AdmittedSource::admit(&separate, "0.11.0")?;
+    let nested_source = fixture.controller.join("nested source");
+    fs::create_dir(&nested_source).map_err(|error| error.to_string())?;
+    for source in [
+        fixture.controller.clone(),
+        fixture.controller.join("."),
+        nested_source,
+    ] {
+        let input = QualificationInput::new(fixture.controller.clone(), source, artifact.clone())?;
+        require_refusal(
+            AdmittedSource::admit(&input, "0.11.0"),
+            "source/controller roots must be physically separate",
+        )?;
+    }
+    // The other containment direction uses an actual valid controller tree,
+    // copied below the source. The topology guard must win before dirty-source
+    // or wrong-HEAD errors; no admitted handle is fabricated.
+    let nested_controller = fixture.source.join("nested controller");
+    fs::create_dir(&nested_controller).map_err(|error| error.to_string())?;
+    let tree = read_artifact_tree(&fixture.controller);
+    for (path, bytes) in tree.files {
+        let output = nested_controller.join(path);
+        let parent = output
+            .parent()
+            .ok_or_else(|| "nested controller file parent missing".to_string())?;
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        fs::write(output, bytes).map_err(|error| error.to_string())?;
+    }
+    fs::create_dir(nested_controller.join("policy")).map_err(|error| error.to_string())?;
+    fs::copy(
+        fixture.controller.join("policy/release-targets.toml"),
+        nested_controller.join("policy/release-targets.toml"),
+    )
+    .map_err(|error| error.to_string())?;
+    let input = QualificationInput::new(nested_controller, fixture.source.clone(), artifact)?;
+    require_refusal(
+        AdmittedSource::admit(&input, "0.11.0"),
+        "source/controller roots must be physically separate",
+    )?;
     fixture.guard.finish()
 }
 
@@ -365,9 +428,10 @@ fn real_package_install_custody_rejects_ignored_foreign_and_changed_bytes() -> R
     let mut changed = original.clone();
     changed.push(b' ');
     fs::write(&archive_path, changed).map_err(|error| error.to_string())?;
-    if archive.revalidate().is_ok() {
-        return Err("changed same-version archive accepted".to_string());
-    }
+    require_refusal(
+        archive.revalidate(),
+        "produced archive bytes changed after attribution",
+    )?;
     fs::write(&archive_path, original).map_err(|error| error.to_string())?;
     archive.revalidate()?;
     let installed = archive.install(&owned)?;
@@ -399,9 +463,10 @@ fn real_package_install_custody_rejects_ignored_foreign_and_changed_bytes() -> R
     let mut changed = executable.clone();
     changed.push(b' ');
     fs::write(installed.binary(), changed).map_err(|error| error.to_string())?;
-    if installed.revalidate().is_ok() {
-        return Err("changed installed executable accepted".to_string());
-    }
+    require_refusal(
+        installed.revalidate(),
+        "installed executable bytes changed after custody capture",
+    )?;
     fs::write(installed.binary(), executable).map_err(|error| error.to_string())?;
     installed.revalidate()?;
     fs::write(
@@ -419,11 +484,27 @@ fn real_package_install_custody_rejects_ignored_foreign_and_changed_bytes() -> R
     }
     let rejected_root = fixture.guard.root.join("ignored included package");
     fs::create_dir(&rejected_root).map_err(|error| error.to_string())?;
-    if AttributedArchive::produce(AdmittedSource::admit(&input, "0.11.0")?, &rejected_root).is_ok()
-    {
-        return Err(
-            "Git-clean ignored included foreign file was attributed to source A".to_string(),
-        );
+    let refusal =
+        AttributedArchive::produce(AdmittedSource::admit(&input, "0.11.0")?, &rejected_root);
+    match refusal {
+        Err(error)
+            if error.contains(
+                "packaged ordinary entry is not the committed source blob: src/foreign.rs",
+            ) => {}
+        Err(error)
+            if error.contains("qualified cargo package failed with native status")
+                && error.contains("src/foreign.rs")
+                && (error.contains("not yet committed") || error.contains("uncommitted")) => {}
+        Err(error) => {
+            return Err(format!(
+                "ignored-file control had unrelated failure: {error}"
+            ));
+        }
+        Ok(_) => {
+            return Err(
+                "Git-clean ignored included foreign file was attributed to source A".to_string(),
+            );
+        }
     }
     fixture.guard.finish()
 }

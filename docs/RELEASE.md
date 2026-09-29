@@ -193,6 +193,8 @@ command: `--controller-root <control-checkout>`,
 `--candidate-artifact <controller-relative-registered-path>`. Partial inputs or
 an ineligible registry row refuse; this mode never falls back to smoke. The
 controller owns policy/registry bytes separately from the source HEAD/tree/ref.
+Canonical source/controller roots must not be equal or nested; separate
+worktrees may share the same repository.
 The package producer uses that source root and retains archive/executable byte
 custody for the installed doctor and authentic corpus chain. Ordinary archive
 entries must match raw committed source blobs; transformed/sparse checkouts and

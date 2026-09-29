@@ -242,9 +242,13 @@ fn qualified_command(
         timeout,
         context,
     )?;
-    if output.timed_out || !output.status.is_some_and(|status| status.success()) {
+    if output.timed_out {
+        return Err(format!("{context} exceeded owned process deadline"));
+    }
+    if !output.status.is_some_and(|status| status.success()) {
         return Err(format!(
-            "{context} failed or timed out: {}",
+            "{context} failed with native status {:?}: {}",
+            output.status.and_then(|status| status.code()),
             String::from_utf8_lossy(&output.stderr)
         ));
     }
@@ -302,12 +306,16 @@ fn archive_inventory(
             ".cargo_vcs_info.json" => {
                 let vcs: serde_json::Value = serde_json::from_slice(&body)
                     .map_err(|error| format!("Cargo VCS info: {error}"))?;
-                if vcs.pointer("/git/sha1").and_then(serde_json::Value::as_str)
-                    != Some(source.source_sha()?)
+                // Cargo may omit false. A present dirty field must be the
+                // boolean false; absence is accepted, not a provenance claim.
+                let dirty_ok = vcs.pointer("/git/dirty").is_none()
                     || vcs
                         .pointer("/git/dirty")
                         .and_then(serde_json::Value::as_bool)
-                        == Some(true)
+                        == Some(false);
+                if vcs.pointer("/git/sha1").and_then(serde_json::Value::as_str)
+                    != Some(source.source_sha()?)
+                    || !dirty_ok
                     || vcs.get("path_in_vcs").and_then(serde_json::Value::as_str)
                         != Some(source.package_prefix().trim_end_matches('/'))
                 {

@@ -31,6 +31,9 @@ impl AdmittedSource {
         if root.to_str().is_none() {
             return Err("qualification source root must be UTF-8".to_string());
         }
+        if root.starts_with(authority.root()) || authority.root().starts_with(&root) {
+            return Err("qualification source/controller roots must be physically separate, not equal or nested".to_string());
+        }
         verify_source_identity(&root, &authority)?;
         let blobs = committed_blobs(&root, authority.candidate_sha()?)?;
         let workspace_bytes = blobs

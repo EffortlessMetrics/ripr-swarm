@@ -172,7 +172,9 @@ after movement succeeds but discloses `historical_noncurrent`.
   `--controller-root`, `--candidate-source-root`, `--candidate-artifact` group.
   The registry grants authority only to exact registered controller bytes;
   actual source HEAD/tree/ref and raw committed input bytes are checked
-  independently. Qualified Cargo package/install use explicit owned roots.
+  independently. Canonical source/controller roots must not be equal or nested;
+  distinct worktrees of one repository are valid. Qualified Cargo package/install
+  use explicit owned roots.
   Ordinary archive entries must match committed blobs; only Cargo's original
   manifest, normalized manifest, lock and VCS metadata have explicit generated
   rules. Archive and installed executable bytes are revalidated before

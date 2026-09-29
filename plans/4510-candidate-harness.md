@@ -2,7 +2,7 @@
 
 Implementation in progress; successor compilation/runtime NOT_RUN. The owning baseline below passed; it does not admit an installed candidate. Fresh all-state4510 body search returned[]. Reuse existing release.rs package/install authority, candidate_registry and OwnedProcess, not a new candidate selector/controller.
 
-## Existing seams and actual gaps
+## Inherited seams and gaps (before the selected first PR)
 
 release.rs363 PackageInstallResult currently contains success/artifacts/details strings. run_packaged_install369 derives target/package/ripr-version.crate and installed binary, packages/validates traversal and link-free archive, extracts outside checkout, builds a workspace control binary, installs exact extracted crate, checks archive/workspace/installed SHA256 and reported version, then external doctor. It does not return typed candidate admission/archive inventory/executable identity, and derives ambient current checkout rather than requiring an accepted immutable candidate subject. It uses fixed install/report paths and best-effort removal, so cannot represent cleanup failures per reusable row. Refactor this owner rather than scrape details strings or duplicate install.
 
@@ -48,7 +48,8 @@ Controller root owns actual release policy, registry and registered artifact
 bytes. Candidate source root owns actual Git HEAD/tree/ref, manifests/lock and
 package inputs. The source commit precedes the control packet; controller HEAD
 need not equal the pin; candidate identity is checked independently. Separate
-worktrees of one repository are valid. Retain
+worktrees of one repository are valid; canonical physical roots must neither
+be equal nor contain one another. Retain
 and independently revalidate both domains. Source-promotion's different-repo
 common-directory condition is not this contract. No production pin/ref or
 checkout selection is created by this implementation.
@@ -128,7 +129,8 @@ live pin is an honest refusal, not candidate selection or a release verdict.
 Rollback the coherent invocation/custody slice to restore legacy entry behavior;
 preserve receipts before owned fixture cleanup. Later #4510 rows, budgets,
 cleanup taxonomy, downstream packets, blind acceptance and #2769 aggregation
-remain out of scope. Implementation and new tests remain NOT_RUN.
+remain out of scope. The source candidate and controls are committed; successor
+compilation and actual execution of the new controls remain NOT_RUN.
 
 ## Later shared-harness scope (not the first PR)
 

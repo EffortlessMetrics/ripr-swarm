@@ -74,6 +74,9 @@ pub(crate) struct CandidateAuthoritySnapshot {
 }
 
 impl CandidateAuthoritySnapshot {
+    pub(crate) fn root(&self) -> &std::path::Path {
+        &self.root
+    }
     pub(crate) fn candidate_sha(&self) -> Result<&str, String> {
         self.grant
             .candidate_sha()
