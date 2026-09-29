@@ -112,7 +112,10 @@ fn read_required(path: &str, violations: &mut Vec<String>) -> Option<String> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the checker evaluates exact authored path/text pairs so fixture tests can mutate each distribution surface independently"
+)]
 fn evaluate_contract(
     contract_path: &str,
     contract: &DistributionContract,
