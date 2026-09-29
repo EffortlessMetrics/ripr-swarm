@@ -115,9 +115,11 @@ on PATH is a legitimate development setup.
 `ripr cache status --json` (schema `0.1`) prints one object with
 `schema_version`, `cache_dir` (the inspected directory), `status`,
 `entry_count` (regular files under the cache, symlinks skipped), and
-`total_size_bytes`. `status` is `ok`, `not_found` (no cache directory yet;
-both counts are `0`), `partial` (some directories or entries, including the
-cache directory itself, could not be read, so the counts are lower bounds), or
+`total_size_bytes`. That `schema_version` versions this status report, not
+the on-disk cache layers (those carry their own versions in their directory
+names). `status` is `ok`, `not_found` (no cache directory yet; both counts
+are `0`), `partial` (some directories or entries, including the cache
+directory itself, could not be read, so the counts are lower bounds), or
 `unavailable` (the path is not a directory, is a symlink, or its metadata
 could not be read; both counts are `0`).
 
@@ -1030,7 +1032,7 @@ The evidence-first fields are additive in schema `0.2`:
       test imports a symbol name-matched to the owner from a NON-RELATIVE
       specifier (`@/...`, `#...`, bare package name) that the adapter could not
       resolve to a unique workspace file, so no credit was given. The real
-      producer is `static_limit.rs::named_limitations_for_alias_unresolved`;
+      producer is `static_limit.rs::alias_gap_for_unresolved_import`;
       it requires all three conditions (non-relative import, imported name
       matches the owner name, and the import did not credit the owner) and is
       classification-neutral (additive disclosure only).
@@ -2783,7 +2785,7 @@ Consumers must not treat limited artifacts as canonical actionable counts.
               "source_id": "f3c9e4d21a0b7c88"
             }
           ],
-          "why": "extend the nearest related test with the missing discriminator",
+          "why": "add a focused test with the missing discriminator next to the nearest related test",
           "recommended_repair": "Add or strengthen `assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)` for `input that hits the boundary: amount >= discount_threshold` in `tests/pricing_tests.rs` as `discounted_total_boundary_discriminator`.",
           "repair_route": {
             "repair_kind": "add_boundary_assertion",
@@ -2874,7 +2876,7 @@ Consumers must not treat limited artifacts as canonical actionable counts.
         ],
         "recommendation": {
           "action": "write_targeted_test",
-          "reason": "extend the nearest related test with the missing discriminator",
+          "reason": "add a focused test with the missing discriminator next to the nearest related test",
           "recommended_test": {
             "name": "discounted_total_boundary_discriminator",
             "file": "tests/pricing_tests.rs",
@@ -2909,7 +2911,7 @@ Consumers must not treat limited artifacts as canonical actionable counts.
         },
         "actionability": {
           "class": "actionable_related_test_extension",
-          "reason": "extend the nearest related test with the missing discriminator",
+          "reason": "add a focused test with the missing discriminator next to the nearest related test",
           "has_concrete_guidance": true,
           "signals": {
             "missing_discriminator": true,
@@ -11030,6 +11032,13 @@ Field contract:
 - `selected.gap_id`, `selected.canonical_gap_id`, and
   `selected.repair_route` are present when an explicit gap decision ledger
   drives the first action.
+- `selected.changed_behavior` is the changed expression the selected evidence
+  names: the review card's nonblank `seam.expression`, else its
+  `changed_behavior`, or the gap record's `repair_route.changed_behavior`, else
+  its record-level `changed_behavior`. It is omitted when the evidence names
+  none. `why` explains the selection and does not repeat the expression.
+  Markdown's one-screen `Changed behavior` line and the generated CI summary
+  read this field (F60-12).
 - `why_first` records deterministic routing reasons. It must not be an opaque
   score.
 - `target.*` records the recommended test file, related test, suggested test
@@ -13783,7 +13792,7 @@ schema bump.
         ],
         "recommendation": {
           "action": "write_targeted_test",
-          "reason": "extend the nearest related test with the missing discriminator",
+          "reason": "add a focused test with the missing discriminator next to the nearest related test",
           "recommended_test": {
             "name": "discounted_total_boundary_discriminator",
             "file": "tests/pricing.rs",
@@ -13804,7 +13813,7 @@ schema bump.
         },
         "actionability": {
           "class": "actionable_related_test_extension",
-          "reason": "extend the nearest related test with the missing discriminator",
+          "reason": "add a focused test with the missing discriminator next to the nearest related test",
           "has_concrete_guidance": true,
           "signals": {
             "missing_discriminator": true,
@@ -16474,7 +16483,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.9",
+    "schema_version": "1.11",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -16485,7 +16494,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.15",
+      "schema_version": "1.17",
       "analyzer_version": "0.11.0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
@@ -16571,7 +16580,8 @@ targeted-rerun receipt shape:
 `cache.schema_version` and `cache.input_fingerprint.schema_version` version
 the file-fact cache and its input identity, not this report. They move
 whenever cache identity changes, so a consumer dispatches on the top-level
-`schema_version` and treats the nested values as opaque.
+`schema_version` and treats the nested values as opaque. Nested
+`analyzer_version` is the producing `ripr` package version and also moves.
 
 For a changed-test selector, `selector.kind` is `changed_test`. `changed_test`
 names the repository-relative parsed test file and may append
@@ -16762,6 +16772,85 @@ correctness, coverage adequacy, or complete broader-input invalidation.
 p50 no greater than 30 seconds, and a cold-full-to-warm-targeted p50 speedup of
 at least 5x. Otherwise the receipt remains `inconclusive` and preserves the
 measured values.
+
+## LSP saved-edit sequence report
+
+`cargo xtask lsp-performance-report` writes:
+
+```text
+target/ripr/reports/lsp-performance.json
+target/ripr/reports/lsp-performance.md
+```
+
+The JSON schema is `ripr-lsp-saved-edit-sequence-v1`. It is an identity-bound
+receipt of one saved-workspace sequence, not a latency gate and not a best-run
+benchmark. Existing rust tests absorb the deterministic discriminators; the
+xtask command overlays source SHA. The sequence is a `ripr --lib` harness, so
+`binary_digest` stays `not_measured` rather than hashing an unexercised
+`target/debug/ripr`. Historical 2-second
+warm-save p95, 10-second cold-small-project, and 30-second warm-PR figures
+remain `proposal`. A stale cached answer cannot satisfy a speed target. Complete-scope
+semantic parity fails independently of elapsed time. A
+fast elapsed time cannot hide a redundant full rescan or duplicate diagnostic
+publication.
+
+```json
+{
+  "schema_version": "ripr-lsp-saved-edit-sequence-v1",
+  "tool": "ripr",
+  "report": "lsp-performance",
+  "identity": {
+    "source_sha": "abc123",
+    "binary_path": "ripr --lib saved_edit_sequence",
+    "binary_digest": "not_measured",
+    "host_class": "linux-x86_64",
+    "features": ["lang-rust"],
+    "cache_reset_procedure": "isolated RIPR_CACHE_DIR per sequence",
+    "sample_count": 1
+  },
+  "proposed_envelopes": [
+    {"name": "warm_bounded_save_p95_ms", "proposed_ms": 2000, "class": "proposal"},
+    {"name": "cold_small_project_ms", "proposed_ms": 10000, "class": "proposal"},
+    {"name": "warm_pr_sized_ms", "proposed_ms": 30000, "class": "proposal"}
+  ],
+  "steps": [
+    {
+      "step": "cold_start",
+      "analyses_started_delta": 1,
+      "requests_coalesced_delta": 0,
+      "completed_but_superseded_delta": 0,
+      "published_payload_bytes": 8,
+      "suppressed_payload_bytes": 0,
+      "run_status": "seams_deferred",
+      "cache_load_status": "miss",
+      "full_scan_fallback_reason": null,
+      "full_rescan": false,
+      "input_identity_unchanged": false,
+      "semantic_scope": "interactive",
+      "stale_semantic_output": false,
+      "elapsed_ms": 1,
+      "rss_bytes": "not_measured"
+    }
+  ],
+  "optimization_verdict": "no_change",
+  "claim_boundary": "sequence work counts, invalidation, stale-publication rejection, and semantic parity; historical latency figures remain proposals"
+}
+```
+
+Field contract:
+
+- `schema_version` - currently `"ripr-lsp-saved-edit-sequence-v1"`.
+- `identity.binary_path` - exact installed or development binary. A hidden
+  workspace binary cannot satisfy the harness.
+- `proposed_envelopes[].class` - `proposal` for the historical 2s/10s/30s
+  figures. `gating` and `achieved` are rejected for those names.
+- `steps[].cache_load_status` - `hit`, `miss`, `corrupt_ignored`, or
+  `not_observed`.
+- `steps[].semantic_scope` - `interactive` or `full`. Explicit full refresh
+  must be `full` and must not use `run_status: "seams_deferred"`.
+- `rss_bytes` - integer bytes, or the string `"not_measured"`.
+- `optimization_verdict` - `no_change` or `not_established` for this first
+  delivery. Semantic-reuse optimization remains #3796.
 
 ## Python repair verification records
 
