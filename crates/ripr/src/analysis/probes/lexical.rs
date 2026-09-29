@@ -67,7 +67,7 @@ fn classify_constant_declaration(text: &str) -> Vec<ProbeFamily> {
     if has_effect_shape(scan) {
         out.push(ProbeFamily::SideEffect);
     }
-    if scan.starts_with("match ") || scan.contains("=>") {
+    if scan.starts_with("match ") || has_match_arm_arrow(scan) {
         out.push(ProbeFamily::MatchArm);
     }
     out.push(ProbeFamily::StaticUnknown);
@@ -102,31 +102,54 @@ fn initializer_span(masked: &str) -> &str {
     masked
 }
 
-/// Whether a masked line carries a match-arm `=>`. An arrow inside a macro
-/// call's own delimiters (`buf_try_get_impl!(be => self, ..)`, `hash_map!{k =>
-/// v}`) is macro syntax, not a match arm, so only an arrow at the line's top
-/// delimiter depth counts, unless the line itself opens a `match` whose arms
-/// sit inside braces (`.map(|x| match x { A => 1 })`). Strings and comments
-/// are already masked.
+/// Whether a masked line carries a match-arm `=>`. An arrow counts when no
+/// delimiter encloses it on this line (`Some(v) => v + 1,`, `}) => break,`)
+/// or when its innermost enclosing delimiter is an arm block: the brace
+/// after a `match` scrutinee (`.map(|x| match x { A => 1 })`) or the rule
+/// brace of a `macro_rules!` definition. An arrow inside any other group is
+/// macro input (`buf_try_get_impl!(be => self, ..)`, `hash_map!{k => v}`,
+/// `route!(key => match value)`), not an arm. Strings and comments are
+/// already masked.
 fn has_match_arm_arrow(masked: &str) -> bool {
     if !masked.contains("=>") {
         return false;
     }
-    if masked
-        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .any(|word| word == "match")
-    {
-        return true;
-    }
-    let bytes = masked.as_bytes();
-    let mut depth = 0usize;
-    for (index, byte) in bytes.iter().enumerate() {
-        match byte {
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
-            b'=' if depth == 0 && bytes.get(index + 1) == Some(&b'>') => return true,
+    // One entry per open delimiter: whether arrows directly inside it are arms.
+    let mut groups: Vec<bool> = Vec::new();
+    let mut arms_follow = false;
+    let chars: Vec<char> = masked.chars().collect();
+    let mut index = 0;
+    while index < chars.len() {
+        let current = chars[index];
+        if current.is_alphanumeric() || current == '_' {
+            let start = index;
+            while index < chars.len() && (chars[index].is_alphanumeric() || chars[index] == '_') {
+                index += 1;
+            }
+            let word: String = chars[start..index].iter().collect();
+            if word == "match" || (word == "macro_rules" && chars.get(index) == Some(&'!')) {
+                arms_follow = true;
+            }
+            continue;
+        }
+        match current {
+            '{' => {
+                groups.push(arms_follow);
+                arms_follow = false;
+            }
+            '(' | '[' => groups.push(false),
+            ')' | ']' | '}' => {
+                groups.pop();
+            }
+            '=' if chars.get(index + 1) == Some(&'>') => {
+                if groups.last().copied().unwrap_or(true) {
+                    return true;
+                }
+                index += 1;
+            }
             _ => {}
         }
+        index += 1;
     }
     false
 }
@@ -878,6 +901,9 @@ mod tests {
             "let map = hash_map!{ \"a\" => 1 };",
             "vec![a => b]",
             "log(\"a => b\");",
+            "route!(key => match value);",
+            "const X: u32 = choose!(a => 1);",
+            "static MAP: Map = phf_map! { \"a\" => 1 };",
         ] {
             let families = classify_changed_line(text);
             assert!(
@@ -892,6 +918,10 @@ mod tests {
             "}) => break,",
             ".map(|x| match x { A => 1, B => 2 })",
             "let n = match state { State::On => 1, _ => 0 };",
+            "Some(v) => match v { A => 1, _ => 0 },",
+            "macro_rules! choose { ($v:expr) => { $v } }",
+            "($x:expr) => { $x };",
+            "const X: u32 = match MODE { Mode::A => 1, _ => 2 };",
         ] {
             let families = classify_changed_line(text);
             assert!(
