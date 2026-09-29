@@ -1,0 +1,56 @@
+name: Run PR 4699 repair v3
+
+on:
+  push:
+    branches:
+      - ops/repair-4699-v3
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out candidate branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: feat/4521-final-native-payload
+          fetch-depth: 0
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # v1
+        with:
+          toolchain: 1.95.0
+          components: rustfmt
+
+      - name: Extract repaired helper steps
+        shell: bash
+        run: |
+          set -euo pipefail
+          ruby -ryaml -e '
+            doc = YAML.load_file(ARGV[0])
+            steps = doc.fetch("jobs").fetch("repair").fetch("steps")
+            mapping = {
+              "Repair reusable qualification receipt boundaries" => "/tmp/repair.sh",
+              "Validate focused repair" => "/tmp/validate.sh",
+              "Export validated workflow repair" => "/tmp/export.sh",
+              "Commit and push validated non-workflow repairs" => "/tmp/commit.sh",
+            }
+            mapping.each do |name, path|
+              step = steps.find { |candidate| candidate["name"] == name }
+              abort("missing helper step: #{name}") unless step && step["run"]
+              File.write(path, step.fetch("run"))
+            end
+          ' .github/workflows/zz-repair-4699-review.yml
+          sed -i 's/span: int = 320/span: int = 120/' /tmp/repair.sh
+          grep -F 'span: int = 120' /tmp/repair.sh
+
+      - name: Apply and validate repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash /tmp/repair.sh
+          bash /tmp/validate.sh
+          bash /tmp/export.sh
+          bash /tmp/commit.sh
