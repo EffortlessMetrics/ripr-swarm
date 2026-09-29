@@ -11,6 +11,9 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr help pr-ledger` now shows `[--label LABEL]...` in the
+  `pr-ledger record` usage line. The option was accepted and listed under
+  Record options but missing from the synopsis (#4391).
 - Nested `rerun --json` cache-identity versions in `docs/OUTPUT_SCHEMA.md`
   now track live `FILE_FACT_CACHE_SCHEMA_VERSION` (`1.10`) and
   `CACHE_SCHEMA_VERSION` (`1.16`). Producer-backed docs tests fail when those
