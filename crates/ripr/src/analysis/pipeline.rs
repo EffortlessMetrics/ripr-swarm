@@ -270,18 +270,6 @@ fn non_source_disclosure_message(changed_files: &[diff::ChangedFile]) -> Option<
         .iter()
         .filter_map(|file| unanalyzed_source_language(&file.path))
         .collect::<std::collections::BTreeSet<_>>();
-    if !unanalyzed.is_empty()
-        && unanalyzed
-            .iter()
-            .all(|language| is_script_language(language))
-    {
-        let languages = unanalyzed.into_iter().collect::<Vec<_>>().join(", ");
-        return Some(format!(
-            "ripr: diff changed only scripts ripr does not analyze ({languages}); no analyzable \
-             Rust, TypeScript, Python, or Perl files found. The scripts were not analyzed, so \
-             this empty result says nothing about them."
-        ));
-    }
     if !unanalyzed.is_empty() {
         let languages = unanalyzed.into_iter().collect::<Vec<_>>().join(", ");
         return Some(format!(
@@ -387,8 +375,8 @@ fn rust_excluded_by_config_limitation(
 }
 
 /// The typed limitation for changed source files in languages no ripr adapter
-/// reads (Go, Java, C, ...); shell and PowerShell scripts are disclosed
-/// instead (see [`is_script_language`]). `None` when the diff has none. Without it
+/// reads (Go, Java, C, ...). Shell and PowerShell scripts count only when
+/// the diff changed no analyzable source (see [`is_script_language`]). `None` when the diff has none. Without it
 /// a Go-only diff read as `no_behavioral_candidates (analysis complete)` and a
 /// Rust + Go diff reported only the Rust half as a complete analysis.
 fn unanalyzed_source_language_limitation(
@@ -397,11 +385,14 @@ fn unanalyzed_source_language_limitation(
     const MAX_NAMED_PATHS: usize = 3;
     let mut by_language = std::collections::BTreeMap::<&str, usize>::new();
     let mut paths = Vec::new();
+    // Scripts do not downgrade a run that analyzed other source; they are
+    // named by `unanalyzed_script_disclosure_message` instead. A diff with no
+    // analyzable source keeps them as a limitation, so a script-only run is
+    // never reported complete.
+    let analyzed_other_source = changed_files.iter().any(|file| route(&file.path).is_some());
     for file in changed_files {
-        // Scripts are named by `unanalyzed_script_disclosure_message` and do
-        // not make the analysis partial.
-        if let Some(language) =
-            unanalyzed_source_language(&file.path).filter(|language| !is_script_language(language))
+        if let Some(language) = unanalyzed_source_language(&file.path)
+            .filter(|language| !(analyzed_other_source && is_script_language(language)))
         {
             *by_language.entry(language).or_default() += 1;
             paths.push(file.path.to_string_lossy().replace('\\', "/"));
@@ -476,15 +467,11 @@ fn submodule_disclosure_message(submodule_file_count: usize) -> Option<String> {
     })
 }
 
-/// Names changed shell or PowerShell scripts in a diff that also changed
-/// analyzable source. They were not analyzed, but by design they do not make
-/// the analysis partial, so this stderr line is where they are listed. A diff
-/// with no analyzable source is covered by `non_source_disclosure_message`.
+/// Names changed shell or PowerShell scripts. They were not analyzed; beside
+/// analyzed source they do not make the run partial, so this stderr line is
+/// where they are listed.
 fn unanalyzed_script_disclosure_message(changed_files: &[diff::ChangedFile]) -> Option<String> {
     const MAX_NAMED_PATHS: usize = 3;
-    if !changed_files.iter().any(|file| route(&file.path).is_some()) {
-        return None;
-    }
     let mut languages = std::collections::BTreeSet::new();
     let mut paths = Vec::new();
     for file in changed_files {
@@ -498,21 +485,32 @@ fn unanalyzed_script_disclosure_message(changed_files: &[diff::ChangedFile]) -> 
     if paths.is_empty() {
         return None;
     }
-    let mut listed = paths
-        .iter()
-        .take(MAX_NAMED_PATHS)
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(", ");
+    let mut listed = paths[..paths.len().min(MAX_NAMED_PATHS)].join(", ");
     if paths.len() > MAX_NAMED_PATHS {
         listed.push_str(&format!(" and {} more", paths.len() - MAX_NAMED_PATHS));
     }
     let languages = languages.into_iter().collect::<Vec<_>>().join(", ");
     Some(format!(
-        "ripr: {} changed script file(s) ({languages}) were not analyzed: {listed}. \
-         Scripts do not make the analysis partial; review them with their own checks.",
+        "ripr: {} changed script file(s) ({languages}) were not analyzed: {listed}; \
+         review them with their own checks.",
         paths.len()
     ))
+}
+
+/// The stderr lines that name unanalyzed changes: the non-source disclosure
+/// when its guard held, otherwise the script listing. The non-source line
+/// already names any changed script, so each script is named exactly once,
+/// including when a rename or submodule change suppressed that line.
+fn unanalyzed_disclosures(
+    non_source: Option<String>,
+    changed_files: &[diff::ChangedFile],
+) -> Vec<String> {
+    match non_source {
+        Some(message) => vec![message],
+        None => unanalyzed_script_disclosure_message(changed_files)
+            .into_iter()
+            .collect(),
+    }
 }
 
 fn emit_submodule_disclosure(submodule_file_count: usize, mut emit: impl FnMut(&str)) {
@@ -812,21 +810,18 @@ fn run_pipeline_for_diff_text(
     // PRs): an empty result with zero probes is not a "clean" result in that
     // case — the user needs to know ripr saw no analyzable source files
     // (#1888, #2304).
-    if findings.is_empty()
+    let non_source_message = (findings.is_empty()
         && rust_changed_files == 0
         && submodule_file_count == 0
         && renamed_file_count == 0
         && changed_files_by_language
             .iter()
-            .all(|(_, count)| *count == 0)
-        && let Some(message) = non_source_disclosure_message(&changed_files)
-    {
-        // Emit as stderr disclosure — this is not a Finding (no probe was
-        // generated), but the user needs to know why the result is empty.
-        eprintln!("{message}");
-    }
-
-    if let Some(message) = unanalyzed_script_disclosure_message(&changed_files) {
+            .all(|(_, count)| *count == 0))
+    .then(|| non_source_disclosure_message(&changed_files))
+    .flatten();
+    // Emit as stderr disclosures — these are not Findings (no probe was
+    // generated), but the user needs to know what was not analyzed.
+    for message in unanalyzed_disclosures(non_source_message, &changed_files) {
         eprintln!("{message}");
     }
 
@@ -1854,11 +1849,8 @@ mod tests {
             .collect::<Vec<_>>();
         let limitation = unanalyzed_source_language_limitation(&files)?
             .ok_or_else(|| "every file is unanalyzed source".to_string())?;
-        let non_script = super::super::language::UNANALYZED_SOURCE_LANGUAGES_FOR_TESTS
-            .iter()
-            .filter(|(_, language)| !is_script_language(language))
-            .count();
-        assert_eq!(limitation.affected_items, Some(non_script as u64));
+        // No analyzable source beside them, so scripts count too.
+        assert_eq!(limitation.affected_items, Some(files.len() as u64));
         assert!(limitation.recovery.detail.contains("more language(s)"));
         Ok(())
     }
@@ -1918,22 +1910,59 @@ mod tests {
         );
         let message = unanalyzed_script_disclosure_message(&files).unwrap_or_default();
         assert!(message.contains("2 changed script file(s)"), "{message}");
-        // Scripts alone record no limitation.
+        // Scripts with no analyzable source beside them stay a limitation.
         let scripts = vec![changed_file("scripts/ci.sh")];
-        assert!(unanalyzed_source_language_limitation(&scripts)?.is_none());
+        let limitation = unanalyzed_source_language_limitation(&scripts)?
+            .ok_or_else(|| "a script-only diff must stay a limitation".to_string())?;
+        assert_eq!(limitation.affected_items, Some(1));
         Ok(())
     }
 
     #[test]
-    fn script_only_diff_is_disclosed_once_and_never_called_correct() -> Result<(), String> {
+    fn script_only_diff_stays_incomplete_and_is_disclosed_once() -> Result<(), String> {
+        // Review finding: with nothing else analyzed, a script-only diff
+        // must not read as a complete analysis.
+        let root = temp_root("outcome-shell-only")?;
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &[],
+            SAMPLE_SHELL_DIFF,
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "outcome must be projected".to_string())?;
+        assert_eq!(
+            outcome.counts.changed_file_count, 1,
+            "fixture parses one script"
+        );
+        assert_eq!(outcome.kind, AnalysisOutcomeKind::PartialWithLimitations);
+        assert!(unanalyzed_language_limitation(&outcome).is_some());
         let files = vec![changed_file("scripts/ci.sh")];
-        // No analyzable source: the non-source message covers it and the
-        // script line stays silent, so the script is named once.
-        assert!(unanalyzed_script_disclosure_message(&files).is_none());
         let message = non_source_disclosure_message(&files)
             .ok_or_else(|| "a script-only diff must disclose".to_string())?;
-        assert!(message.contains("only scripts"), "{message}");
-        assert!(!message.contains("empty result is correct"), "{message}");
+        assert!(
+            message.contains("(Shell)") && message.contains("not a clean pass"),
+            "{message}"
+        );
+        // The non-source line already names the script, so it is named once.
+        let lines = unanalyzed_disclosures(Some(message.clone()), &files);
+        assert_eq!(lines, vec![message]);
+        Ok(())
+    }
+
+    #[test]
+    fn script_beside_a_rename_or_submodule_is_still_named() -> Result<(), String> {
+        // Review finding: an edited script rename (or a script beside a
+        // submodule bump) suppresses the non-source line; the script must
+        // still be named instead of reading as analyzed.
+        let files = vec![changed_file("scripts/test.sh")];
+        let lines = unanalyzed_disclosures(None, &files);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("scripts/test.sh"), "{lines:?}");
+        // Nothing to name: no line.
+        assert!(unanalyzed_disclosures(None, &[changed_file("README.md")]).is_empty());
         Ok(())
     }
 

@@ -42,7 +42,7 @@ are scoped or reviewed.
   configuration will report those changes as not analyzed. Shell and
   PowerShell scripts are named on stderr as not analyzed but do not make an
   otherwise complete analysis partial, so a Rust PR that touches a CI script
-  keeps its complete outcome.
+  keeps its complete outcome; a diff of only scripts stays partial.
 - `ripr check` is faster on large repositories, with byte-identical JSON on
   12 real commits of tokio, vite, Django and ripr. TypeScript test selection
   walked the directory tree for `package.json` twice per owner and test;
