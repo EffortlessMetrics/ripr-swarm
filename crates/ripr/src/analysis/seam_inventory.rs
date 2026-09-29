@@ -1432,7 +1432,8 @@ fn classify_scoped_seams(
         );
         evidence = pass.evidence_for(&first);
         cancellation::checkpoint()?;
-        let classified_first = seam_classification::classify_seams(&first, &evidence);
+        let classified_first =
+            classify_seams_retaining(&first, &evidence, super::witness::repo_adapter_input(true));
         if (stages.sufficient)(&classified_first) {
             trace_latency_phase(
                 "evidence_for_seams",
@@ -1477,6 +1478,16 @@ fn classify_complete_scoped_evidence(
         evidence,
         super::witness::repo_adapter_input(true),
     ))
+}
+
+fn classify_seams_retaining(
+    seams: &[RepoSeam],
+    evidence: &[test_grip_evidence::TestGripEvidence],
+    input: super::witness::AdapterInput,
+) -> Vec<ClassifiedSeam> {
+    let classified = seam_classification::classify_seams(seams, evidence);
+    super::witness::retain_classified_seams(&classified, input);
+    classified
 }
 
 fn classify_seams_owned_retaining(

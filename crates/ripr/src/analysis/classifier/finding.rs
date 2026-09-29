@@ -103,7 +103,6 @@ pub(in crate::analysis) fn build_finding(
         // explicit unknown (#3280).
         source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
     };
-    crate::analysis::witness::retain_finding_projection(&finding);
     finding
 }
 

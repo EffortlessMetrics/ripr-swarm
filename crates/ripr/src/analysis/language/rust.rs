@@ -721,6 +721,11 @@ fn owner_name_from_id(
     }
 }
 
+fn push_retained_finding(findings: &mut Vec<Finding>, finding: Finding) {
+    crate::analysis::witness::retain_finding_projection(&finding);
+    findings.push(finding);
+}
+
 fn apply_rust_no_static_path_limit(finding: &mut Finding, probe: &Probe, index: &RustIndex) {
     if !(finding.class == ExposureClass::NoStaticPath
         && finding.related_tests.is_empty()
@@ -1798,7 +1803,7 @@ impl RustAdapter {
                 if let Some(limit) = cross_language_limit_kind(&probe, &index, &finding.class) {
                     finding.static_limit_kind = Some(limit);
                 }
-                findings.push(finding);
+                push_retained_finding(&mut findings, finding);
             }
         }
 
@@ -1987,7 +1992,7 @@ impl RustAdapter {
                 if let Some(limit) = cross_language_limit_kind(&probe, &index, &finding.class) {
                     finding.static_limit_kind = Some(limit);
                 }
-                findings.push(finding);
+                push_retained_finding(&mut findings, finding);
             }
         }
 

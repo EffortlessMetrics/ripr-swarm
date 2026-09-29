@@ -555,6 +555,9 @@ fn split_repo_relations(
     (candidate, established)
 }
 
+/// Portable relation identity is the producer reason plus oracle facts.
+/// Test names, files, and checkout spelling are locators, not digest
+/// members; renaming a related test must not change equality.
 fn relation_from_reason(
     reason: RelationReason,
     oracle_kind: &str,

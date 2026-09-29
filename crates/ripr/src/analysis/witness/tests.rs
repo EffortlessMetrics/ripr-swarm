@@ -1054,6 +1054,24 @@ fn json_and_markdown_derive_from_the_same_normalized_dto() {
     let markdown = report.to_markdown();
     assert!(markdown.contains(row.case_id.as_str()));
     assert!(markdown.contains(row.disposition.as_str()));
+    assert!(
+        !markdown.contains("diff_semantic_digest"),
+        "markdown is the summary table; stage and digest fields live on the shared JSON DTO"
+    );
+    for field in [
+        "\"reach\"",
+        "\"activation\"",
+        "\"propagation\"",
+        "\"observation\"",
+        "\"discrimination\"",
+        "\"candidate_relation_identities\"",
+        "\"established_relation_identities\"",
+        "\"limitations\"",
+        "\"diff_semantic_digest\"",
+        "\"repo_semantic_digest\"",
+    ] {
+        assert!(json.contains(field), "json missing {field}");
+    }
 }
 
 #[test]
@@ -1086,4 +1104,88 @@ fn production_retain_does_not_mutate_producer_classes_or_relations() {
     assert_eq!(finding.related_tests.len(), related);
     assert!(from_finding(&finding).digest_matches());
     assert!(from_classified_seam(&seam).digest_matches());
+}
+
+#[test]
+fn unfilled_finding_language_is_a_typed_limitation_not_silent_rust() {
+    let filled = from_finding(&boundary_related_finding());
+    assert_eq!(filled.language, "rust");
+    assert!(
+        !filled
+            .limitations
+            .iter()
+            .any(|item| item == "unrepresentable_language")
+    );
+
+    let unfilled = FindingSpec {
+        language: None,
+        ..FindingSpec::default()
+    }
+    .build();
+    let witness = from_finding(&unfilled);
+    assert_eq!(witness.language, "unknown");
+    assert!(
+        witness
+            .limitations
+            .iter()
+            .any(|item| item == "unrepresentable_language")
+    );
+}
+
+#[test]
+fn absent_finding_canonical_gap_does_not_join_seam_gap_identity() {
+    let finding = FindingSpec {
+        canonical_id: None,
+        ..FindingSpec::default()
+    }
+    .build();
+    let diff = from_finding(&finding);
+    let repo = from_classified_seam(&boundary_related_seam());
+    assert_eq!(diff.portable_item_id, finding.id);
+    assert_ne!(diff.portable_item_id, repo.portable_item_id);
+    let report = pair_by_portable_id(std::slice::from_ref(&diff), std::slice::from_ref(&repo));
+    assert!(
+        !report.rows.is_empty(),
+        "unmatched identities must still emit rows"
+    );
+    assert!(
+        report
+            .rows
+            .iter()
+            .all(|row| row.disposition == ParityDisposition::NotComparable)
+    );
+}
+
+#[test]
+fn relation_identity_is_reason_and_oracle_not_test_name() {
+    let first = FindingSpec::default()
+        .related(
+            "rejects_zero",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            Some(RelationReason::DirectOwnerCall),
+        )
+        .build();
+    let second = FindingSpec::default()
+        .related(
+            "accepts_positive",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            Some(RelationReason::DirectOwnerCall),
+        )
+        .build();
+    let left = from_finding(&first);
+    let right = from_finding(&second);
+    assert_eq!(
+        left.established_relations
+            .iter()
+            .map(super::RelationWitness::semantic_identity)
+            .collect::<Vec<_>>(),
+        right
+            .established_relations
+            .iter()
+            .map(super::RelationWitness::semantic_identity)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(left.semantic_digest, right.semantic_digest);
 }
