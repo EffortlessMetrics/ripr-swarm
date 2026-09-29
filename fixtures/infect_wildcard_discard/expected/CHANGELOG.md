@@ -206,6 +206,7 @@ Updated:
 ## Pending — infect_wildcard_discard (3)
 
 Reason:
+RIPR-SPEC-0122: bounded human check output leads the exposure line with the plain word the summary uses (weak, no path, unknown) before the schema value
 RIPR-SPEC-0180 (#4478): the test's assert_eq pins the free owner's whole return value on its unconditional tail, so the return_value discriminator is confirmed
 
 Command:

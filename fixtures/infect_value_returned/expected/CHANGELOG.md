@@ -206,7 +206,19 @@ Updated:
 ## Pending — infect_value_returned (18)
 
 Reason:
-RIPR-SPEC-0180 (#4478): the test's assert_eq pins the free owner's whole return value on its unconditional tail, so the return_value discriminator is confirmed
+RIPR-SPEC-0122: bounded human check output leads the exposure line with the plain word the summary uses (weak, no path, unknown) before the schema value
+
+Command:
+`cargo xtask goldens bless infect_value_returned --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — infect_value_returned (19)
+
+Reason:
+RIPR-SPEC-0180 (#4478): the test's assert_eq pins the free owner's whole return value on its unconditional tail, so the return_value discriminator is confirmed; merged with the #4520 exposure-word wording
 
 Command:
 `cargo xtask goldens bless infect_value_returned --reason "..."`

@@ -115,9 +115,11 @@ on PATH is a legitimate development setup.
 `ripr cache status --json` (schema `0.1`) prints one object with
 `schema_version`, `cache_dir` (the inspected directory), `status`,
 `entry_count` (regular files under the cache, symlinks skipped), and
-`total_size_bytes`. `status` is `ok`, `not_found` (no cache directory yet;
-both counts are `0`), `partial` (some directories or entries, including the
-cache directory itself, could not be read, so the counts are lower bounds), or
+`total_size_bytes`. That `schema_version` versions this status report, not
+the on-disk cache layers (those carry their own versions in their directory
+names). `status` is `ok`, `not_found` (no cache directory yet; both counts
+are `0`), `partial` (some directories or entries, including the cache
+directory itself, could not be read, so the counts are lower bounds), or
 `unavailable` (the path is not a directory, is a symlink, or its metadata
 could not be read; both counts are `0`).
 
@@ -2783,7 +2785,7 @@ Consumers must not treat limited artifacts as canonical actionable counts.
               "source_id": "f3c9e4d21a0b7c88"
             }
           ],
-          "why": "extend the nearest related test with the missing discriminator",
+          "why": "add a focused test with the missing discriminator next to the nearest related test",
           "recommended_repair": "Add or strengthen `assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)` for `input that hits the boundary: amount >= discount_threshold` in `tests/pricing_tests.rs` as `discounted_total_boundary_discriminator`.",
           "repair_route": {
             "repair_kind": "add_boundary_assertion",
@@ -2874,7 +2876,7 @@ Consumers must not treat limited artifacts as canonical actionable counts.
         ],
         "recommendation": {
           "action": "write_targeted_test",
-          "reason": "extend the nearest related test with the missing discriminator",
+          "reason": "add a focused test with the missing discriminator next to the nearest related test",
           "recommended_test": {
             "name": "discounted_total_boundary_discriminator",
             "file": "tests/pricing_tests.rs",
@@ -2909,7 +2911,7 @@ Consumers must not treat limited artifacts as canonical actionable counts.
         },
         "actionability": {
           "class": "actionable_related_test_extension",
-          "reason": "extend the nearest related test with the missing discriminator",
+          "reason": "add a focused test with the missing discriminator next to the nearest related test",
           "has_concrete_guidance": true,
           "signals": {
             "missing_discriminator": true,
@@ -13783,7 +13785,7 @@ schema bump.
         ],
         "recommendation": {
           "action": "write_targeted_test",
-          "reason": "extend the nearest related test with the missing discriminator",
+          "reason": "add a focused test with the missing discriminator next to the nearest related test",
           "recommended_test": {
             "name": "discounted_total_boundary_discriminator",
             "file": "tests/pricing.rs",
@@ -13804,7 +13806,7 @@ schema bump.
         },
         "actionability": {
           "class": "actionable_related_test_extension",
-          "reason": "extend the nearest related test with the missing discriminator",
+          "reason": "add a focused test with the missing discriminator next to the nearest related test",
           "has_concrete_guidance": true,
           "signals": {
             "missing_discriminator": true,
@@ -16474,7 +16476,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.9",
+    "schema_version": "1.10",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -16485,7 +16487,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.15",
+      "schema_version": "1.16",
       "analyzer_version": "0.11.0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
@@ -16571,7 +16573,8 @@ targeted-rerun receipt shape:
 `cache.schema_version` and `cache.input_fingerprint.schema_version` version
 the file-fact cache and its input identity, not this report. They move
 whenever cache identity changes, so a consumer dispatches on the top-level
-`schema_version` and treats the nested values as opaque.
+`schema_version` and treats the nested values as opaque. Nested
+`analyzer_version` is the producing `ripr` package version and also moves.
 
 For a changed-test selector, `selector.kind` is `changed_test`. `changed_test`
 names the repository-relative parsed test file and may append
