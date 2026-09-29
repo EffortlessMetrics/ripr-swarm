@@ -728,8 +728,8 @@ impl ExecutedControlPacketV1 {
             }
         }
         for ((obligation_id, _, _), states) in subject_states {
-            let has_pass = states.iter().any(|state| *state == ResultState::Passed);
-            let has_fail = states.iter().any(|state| *state == ResultState::Failed);
+            let has_pass = states.contains(&ResultState::Passed);
+            let has_fail = states.contains(&ResultState::Failed);
             if has_pass && has_fail {
                 return Err(
                     ExecutedControlValidationError::ConflictingSameSubjectResults(obligation_id),
@@ -893,6 +893,11 @@ fn bind_result(
     }
 
     if result.state == ResultState::Substituted {
+        if obligation.permitted_substitute.is_none() {
+            return Err(ExecutedControlValidationError::SubstituteNotDeclared(
+                result.obligation_id.clone(),
+            ));
+        }
         if !obligation
             .acceptable_evidence_forms
             .contains(&EvidenceForm::DeclaredSubstitute)
