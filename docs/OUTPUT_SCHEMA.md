@@ -321,6 +321,15 @@ the typed outcome and its `limitations[]` rather than infer completeness from
 `findings` or `probes`. For `unsupported_input` and
 `partial_with_limitations`, zero findings is explicitly not a clean result.
 
+When an *unchanged* Rust test file is indexed by lexical fallback after the
+reference parser refuses it, and a classified owner consults that file for
+related-test evidence (a related test came from it, or the file source calls
+the owner but those tests were not extracted), the Rust adapter emits one
+`language_scope_unsupported` limitation whose detail starts with
+`rust_lexical_test_index_partial`. Unrelated parser-refused test files in the
+same crate do not make the run partial. Changed files that fall back lexically
+are a separate `producer_failure` lane (#4722), not this limitation.
+
 When supported raw findings align to a canonical evidence item, `ripr check
 --json` also emits an additive `finding_alignment` section. The section is
 omitted when no supported alignment item is present, so existing consumers can
@@ -3058,6 +3067,14 @@ Field contract:
     `ripr check`. This inventory still does not render Python findings, so
     a zero-seam result is not a clean Python result. It does not claim that
     full-repo Python analysis is unmodeled.
+  - `category: "generated_rust_source_skipped"` appears when repo exposure
+    skipped generated Rust that `ripr check` also skips (`bindings.rs`,
+    `schema.rs`, `generated.rs`, `*.gen.rs`, `*_generated.rs`, `generated_*`,
+    `gen/`, `generated/`, `out/`, plus `[languages.rust]
+    generated_file_patterns`). `run_status` remains `"complete"` because the
+    skip is intentional scope, not a truncated scan. It carries
+    `skipped_file_count`, a bounded `skipped_files` listing (up to three
+    paths), optional `skipped_files_omitted`, `repair_route`, and `detail`.
   - `typescript_readiness.source` is
     `"repo_exposure_typescript_readiness.v1"`.
   - `typescript_readiness.authority_boundary` is
@@ -16733,7 +16750,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.12",
+    "schema_version": "1.13",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -16744,7 +16761,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.18",
+      "schema_version": "1.19",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
