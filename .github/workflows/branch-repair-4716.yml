@@ -1,0 +1,66 @@
+name: Repair npm launcher policy branch
+
+on:
+  push:
+    branches:
+      - feat/4710-npm-launcher-core
+    paths:
+      - .github/workflows/branch-repair-4716.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: ${{ github.repository == 'EffortlessMetrics/ripr-swarm' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: feat/4710-npm-launcher-core
+
+      - name: Register the npm launcher runtime and focused controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("xtask/src/main.rs")
+          text = path.read_text(encoding="utf-8")
+          marker = '    if path.starts_with("packaging/python/") {\n'
+          insertion = '''    if matches!(
+              path,
+              "packaging/npm/launcher/bin/ripr.cjs"
+                  | "packaging/npm/launcher/lib/launcher.cjs"
+          ) || (path.starts_with("packaging/npm/launcher/test/")
+              && path.ends_with(".test.cjs"))
+          {
+              return Some("npm launcher runtime and focused launcher contract tests");
+          }
+          '''
+          if insertion in text:
+              raise SystemExit("npm launcher retention reason is already present")
+          if text.count(marker) != 1:
+              raise SystemExit(f"expected one Python packaging marker, found {text.count(marker)}")
+          path.write_text(text.replace(marker, insertion + marker, 1), encoding="utf-8")
+          PY
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.95.0
+          components: rustfmt
+
+      - name: Format, remove repair workflow, and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          rm .github/workflows/branch-repair-4716.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add xtask/src/main.rs .github/workflows/branch-repair-4716.yml
+          git diff --cached --check
+          git commit -m "fix(npm): register launcher non-Rust retention reason"
+          git push origin HEAD:feat/4710-npm-launcher-core
