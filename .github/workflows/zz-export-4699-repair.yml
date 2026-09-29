@@ -1,0 +1,72 @@
+name: Export final-payload workflow repair once
+
+on:
+  push:
+    branches:
+      - feat/4521-final-native-payload
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out candidate branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: feat/4521-final-native-payload
+          persist-credentials: false
+
+      - name: Prepare reviewed workflow and budget repair
+        shell: python
+        run: |
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/server-archive-qualification.yml')
+          text = workflow.read_text(encoding='utf-8')
+          old = 'Native runtime compatibility remains unqualified under issue #4489'
+          new = 'Native runtime compatibility remains unqualified under EffortlessMetrics/ripr-swarm#4489'
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('qualification limitation text not found')
+          workflow.write_text(text, encoding='utf-8')
+
+          allowlist = Path('policy/workflow_allowlist.txt')
+          policy = allowlist.read_text(encoding='utf-8')
+          old_row = '.github/workflows/server-archive-qualification.yml|82|Exact measured largest run block after preserving curl transport status, bounded rate-limit tokens, response digests, and strict public ruleset shape diagnostics; credential-free, artifact-only qualification delegates packaging and manifest generation to Rust xtask commands.'
+          new_row = '.github/workflows/server-archive-qualification.yml|89|Exact measured largest run block retains ruleset diagnostics plus five-target producer, payload-identity, archive-readback, and receipt-v3 aggregation; credential-free qualification delegates payload and archive construction to Rust xtask commands.'
+          if old_row in policy:
+              policy = policy.replace(old_row, new_row, 1)
+          elif new_row not in policy:
+              raise SystemExit('qualification workflow budget row not found')
+          allowlist.write_text(policy, encoding='utf-8')
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt
+
+      - name: Validate focused candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.95.0 fmt --all --check
+          cargo +1.95.0 test -p xtask release_server_archive_prepares_package_before_format_validation -- --nocapture
+
+      - name: Stage repaired files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p repair/.github/workflows repair/policy
+          cp .github/workflows/server-archive-qualification.yml repair/.github/workflows/
+          cp policy/workflow_allowlist.txt repair/policy/
+
+      - name: Upload repaired files
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: final-payload-workflow-repair
+          path: repair
+          if-no-files-found: error
+          retention-days: 1
