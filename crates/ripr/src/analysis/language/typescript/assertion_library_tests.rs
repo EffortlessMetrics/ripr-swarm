@@ -418,3 +418,102 @@ describe('mimeTypes', function () {
     );
     Ok(())
 }
+
+/// Negative (#4638 review): an imported assertion binding re-declared in the
+/// test body no longer reaches the library, so the local helper is not
+/// credited.
+#[test]
+fn assertion_binding_shadowed_in_test_body_is_not_credited() {
+    let assertions = only_assertions(
+        "test/cart.test.js",
+        r#"
+const assert = require('node:assert')
+const { strictEqual } = require('node:assert')
+const { expect } = require('chai')
+
+it('totals', () => {
+  const assert = { strictEqual: () => {} }
+  function strictEqual() {}
+  const expect = () => ({ to: { equal: () => {} } })
+  assert.strictEqual(total([1, 2]), 3)
+  strictEqual(total([1, 2]), 3)
+  expect(total([1, 2])).to.equal(3)
+})
+"#,
+    );
+    assert!(assertions.is_empty(), "{assertions:?}");
+}
+
+/// Negative (#4638 review): a declaration in an enclosing describe body
+/// shadows the imported binding for every test inside it; a sibling describe
+/// without the declaration still credits the import (positive control).
+#[test]
+fn assertion_binding_shadowed_in_enclosing_describe_is_not_credited() {
+    let tests = extract_tests(
+        Path::new("test/cart.test.js"),
+        r#"
+const assert = require('node:assert')
+const { strictEqual } = require('node:assert')
+const { expect } = require('chai')
+
+describe('shadowed', () => {
+  const assert = { strictEqual: () => {} }
+  const strictEqual = () => {}
+  let expect
+  describe('inner', () => {
+    it('totals', () => {
+      assert.strictEqual(total([1, 2]), 3)
+      strictEqual(total([1, 2]), 3)
+      expect(total([1, 2])).to.equal(3)
+    })
+  })
+})
+describe('control', () => {
+  it('totals', () => {
+    assert.strictEqual(total([1, 2]), 3)
+    strictEqual(total([1, 2]), 3)
+    expect(total([1, 2])).to.equal(3)
+  })
+})
+"#,
+    );
+    assert_eq!(tests.len(), 2, "{tests:?}");
+    assert_eq!(tests[0].name, "shadowed inner totals");
+    assert!(tests[0].assertions.is_empty(), "{:?}", tests[0].assertions);
+    assert_eq!(tests[1].name, "control totals");
+    assert_eq!(tests[1].assertions.len(), 3, "{:?}", tests[1].assertions);
+}
+
+/// Negative (#4638 review): a test or describe callback parameter named like
+/// the imported binding shadows it. (A bare first test parameter is the
+/// AVA / tape execution-context receiver and keeps its own mapping, so the
+/// test fixture destructures its parameters.)
+#[test]
+fn assertion_binding_shadowed_by_callback_parameter_is_not_credited() {
+    let tests = extract_tests(
+        Path::new("test/cart.test.js"),
+        r#"
+const assert = require('node:assert')
+const { strictEqual } = require('node:assert')
+const { expect } = require('chai')
+
+it('test parameters', ({ assert, strictEqual, expect }) => {
+  assert.strictEqual(total([1, 2]), 3)
+  strictEqual(total([1, 2]), 3)
+  expect(total([1, 2])).to.equal(3)
+})
+describe.each([[1]])('describe parameters', (assert, strictEqual, expect) => {
+  it('totals', () => {
+    assert.strictEqual(total([1, 2]), 3)
+    strictEqual(total([1, 2]), 3)
+    expect(total([1, 2])).to.equal(3)
+  })
+})
+"#,
+    );
+    assert_eq!(tests.len(), 2, "{tests:?}");
+    assert!(
+        tests.iter().all(|test| test.assertions.is_empty()),
+        "{tests:?}"
+    );
+}

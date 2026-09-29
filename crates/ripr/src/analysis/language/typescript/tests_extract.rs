@@ -664,12 +664,24 @@ pub(crate) fn collect_tests_from_statements(
             scope.levels.pop();
             continue;
         }
+        // An enclosing describe body or describe callback parameter that
+        // re-declares an imported assertion binding shadows it for every test
+        // inside (#4638 review). `levels[0]` is the file's own top level,
+        // where the import itself lives.
+        let assertion_bindings = scope.assertion_bindings.without_shadowed(|name| {
+            scope
+                .levels
+                .iter()
+                .skip(1)
+                .flatten()
+                .any(|(bound, _, _)| bound == name)
+        });
         if let Some(mut test) = test_from_statement(
             stmt,
             file,
             source,
             &scope.describe_names,
-            &scope.assertion_bindings,
+            &assertion_bindings,
         ) {
             test.mocks_in_file = mocks.to_vec();
             test.imports_in_file = imports.to_vec();
@@ -1428,6 +1440,17 @@ pub(crate) fn test_name_and_assertions_from_call(
     let name = string_argument(call.arguments.first()?)?;
     let callback = call.arguments.get(declaration_callback_index(call))?;
     let receiver = test_callback_receiver_name(callback);
+    // A test callback parameter or a test-body declaration named like an
+    // imported assertion binding shadows it (#4638 review; the #4102 guard).
+    let parameters = argument_parameter_names(callback);
+    let call_text = source
+        .get(call.span.start as usize..call.span.end as usize)
+        .unwrap_or_default();
+    let bindings = bindings.without_shadowed(|name| {
+        parameters.iter().any(|parameter| parameter == name)
+            || super::related_tests::local_identifier_declared_in_test_body(call_text, name)
+    });
+    let bindings = &bindings;
     let assertions = function_body_statements_from_argument(callback)
         .map(|statements| {
             collect_assertions_in_statements_with_bindings(

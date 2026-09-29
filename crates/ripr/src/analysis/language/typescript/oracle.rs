@@ -523,6 +523,40 @@ impl TypeScriptAssertionBindings {
         }
     }
 
+    /// These bindings minus every local name `is_shadowed` reports as
+    /// re-declared closer to the assertion (#4638 review): a test-body
+    /// declaration, a test or describe callback parameter, or an enclosing
+    /// describe-body declaration. A shadowed name no longer reaches the
+    /// imported library, so crediting it would credit a local helper.
+    pub(crate) fn without_shadowed(&self, is_shadowed: impl Fn(&str) -> bool) -> Self {
+        Self {
+            assert_objects: self
+                .assert_objects
+                .iter()
+                .filter(|(local, _)| !is_shadowed(local))
+                .cloned()
+                .collect(),
+            assert_methods: self
+                .assert_methods
+                .iter()
+                .filter(|(local, _)| !is_shadowed(local))
+                .cloned()
+                .collect(),
+            chai_expects: self
+                .chai_expects
+                .iter()
+                .filter(|local| !is_shadowed(local))
+                .cloned()
+                .collect(),
+            chai_modules: self
+                .chai_modules
+                .iter()
+                .filter(|local| !is_shadowed(local))
+                .cloned()
+                .collect(),
+        }
+    }
+
     fn is_empty(&self) -> bool {
         self.assert_objects.is_empty()
             && self.assert_methods.is_empty()
