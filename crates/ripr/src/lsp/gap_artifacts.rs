@@ -1374,6 +1374,9 @@ pub(super) fn command_payload_is_safe(root: &Path, command: &str) -> bool {
     if trimmed.is_empty() || trimmed.contains('\n') || trimmed.contains('\r') {
         return false;
     }
+    let Some(trimmed) = strip_workspace_redirect(root, trimmed) else {
+        return false;
+    };
     if trimmed
         .chars()
         .any(|character| matches!(character, ';' | '&' | '|' | '<' | '>' | '`' | '\0'))
@@ -1404,6 +1407,73 @@ pub(super) fn command_payload_is_safe(root: &Path, command: &str) -> bool {
         }
     }
     true
+}
+
+/// Split off the one stdout redirect the producers append (#4306 persists
+/// `agent verify` output where the receipt reads it; #3938 anchors that
+/// target at the resolved `--root`). Returns the command body, which the
+/// caller still validates in full, or `None` when a redirect is present but
+/// is not exactly one trailing `> <target>` whose target is a single
+/// `shell_arg`-rendered token naming a file under `<root>/target/ripr/`.
+/// A command without `>` passes through unchanged.
+fn strip_workspace_redirect<'a>(root: &Path, command: &'a str) -> Option<&'a str> {
+    if !command.contains('>') {
+        return Some(command);
+    }
+    let (body, tail) = command.rsplit_once(" > ")?;
+    if body.contains('>') {
+        return None;
+    }
+    let target = shell_arg_token(tail)?;
+    redirect_target_is_ripr_artifact(root, target).then_some(body)
+}
+
+/// Undo `loop_commands::shell_arg` for one token: bare when every character is
+/// in `[A-Za-z0-9._/:-]`, otherwise one single-quoted span with no embedded
+/// quote (the `'\''` escape is refused rather than decoded).
+fn shell_arg_token(token: &str) -> Option<&str> {
+    let bare = |value: &str| {
+        !value.is_empty()
+            && value
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '/' | '_' | '-' | ':'))
+    };
+    if bare(token) {
+        return Some(token);
+    }
+    let inner = token.strip_prefix('\'')?.strip_suffix('\'')?;
+    if inner.is_empty() || inner.contains(['\'', '\0', '\n', '\r']) {
+        return None;
+    }
+    Some(inner)
+}
+
+fn redirect_target_is_ripr_artifact(root: &Path, target: &str) -> bool {
+    let path = Path::new(target);
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
+        || !is_inside_workspace(root, path)
+    {
+        return false;
+    }
+    let relative = if path.is_absolute() {
+        let canonical_root = std::fs::canonicalize(root).ok();
+        match path.strip_prefix(root).ok().or_else(|| {
+            canonical_root
+                .as_deref()
+                .and_then(|canonical| path.strip_prefix(canonical).ok())
+        }) {
+            Some(relative) => relative.to_path_buf(),
+            None => return false,
+        }
+    } else {
+        path.to_path_buf()
+    };
+    let mut components = relative.components();
+    matches!(components.next(), Some(Component::Normal(first)) if first == "target")
+        && matches!(components.next(), Some(Component::Normal(second)) if second == "ripr")
+        && components.next().is_some()
 }
 
 /// `$`, `(` and `)` open command or process substitution (`$(cmd)`, `<(cmd)`,
@@ -2912,6 +2982,75 @@ mod tests {
             assert!(
                 command_payload_is_safe(&workspace, command),
                 "refused {command:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn command_payload_accepts_the_producers_anchored_verify_redirect() {
+        // #4306 persists `agent verify` output where the receipt reads it and
+        // #3938 anchors the target at `--root`; the first-useful-action
+        // artifact carries exactly this string, so refusing it dropped the
+        // whole artifact as `malformed_command_payload`.
+        let workspace = root();
+        let workspace_text = workspace.to_string_lossy().to_string();
+        for command_root in [".", workspace_text.as_str()] {
+            let command = if command_root == "." {
+                // `--root .` anchors at the process cwd; render it against
+                // the workspace so the test does not depend on the cwd.
+                format!(
+                    "{} > {}/target/ripr/workflow/agent-verify.json",
+                    crate::agent::loop_commands::agent_verify_command(
+                        ".",
+                        "target/ripr/workflow/before.repo-exposure.json",
+                        "target/ripr/workflow/after.repo-exposure.json",
+                        None,
+                    ),
+                    workspace_text
+                )
+            } else {
+                crate::agent::loop_commands::agent_verify_command(
+                    command_root,
+                    "target/ripr/workflow/before.repo-exposure.json",
+                    "target/ripr/workflow/after.repo-exposure.json",
+                    Some("target/ripr/workflow/agent-verify.json"),
+                )
+            };
+            assert!(command.contains(" > "), "{command}");
+            assert!(
+                command_payload_is_safe(&workspace, &command),
+                "refused {command:?}"
+            );
+        }
+        let body = "ripr agent verify --root . --before a.json --after b.json --json";
+        assert!(command_payload_is_safe(
+            &workspace,
+            &format!("{body} > target/ripr/workflow/agent-verify.json")
+        ));
+        assert!(command_payload_is_safe(
+            &workspace,
+            &format!("{body} > '/workspace/target/ripr/dir with space/v.json'")
+        ));
+        for command in [
+            format!("{body} > /elsewhere/target/ripr/workflow/agent-verify.json"),
+            format!("{body} > /workspace/src/lib.rs"),
+            format!("{body} > target/other.json"),
+            format!("{body} > target/ripr"),
+            format!("{body} > target/ripr/../../outside.json"),
+            format!("{body} > ./target/ripr/v.json"),
+            format!("{body} >> target/ripr/workflow/agent-verify.json"),
+            format!("{body} > other.json > target/ripr/workflow/agent-verify.json"),
+            format!("{body} > target/ripr/v.json extra"),
+            format!("{body} > target/ripr/v.json; id"),
+            format!("{body} > 'target/ripr/it'\\''s.json'"),
+            format!("{body} > $(id)/target/ripr/v.json"),
+            format!("{body} 2> target/ripr/v.json"),
+            format!("{body} >target/ripr/v.json"),
+            "cargo test > target/ripr/v.json | tee x".to_string(),
+        ] {
+            assert!(
+                !command_payload_is_safe(&workspace, &command),
+                "accepted {command:?}"
             );
         }
     }

@@ -11,6 +11,14 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Editors: the language server no longer drops the first-useful-action
+  report that the generated CI workflow and `ripr reports first-action`
+  write. Its verify command now saves its output where the receipt reads it
+  (`> <root>/target/ripr/workflow/agent-verify.json`), and the server refused
+  any command containing `>`, so it reported `cache_limited` with a
+  `run ripr check` recovery that could not help. One trailing redirect into
+  the workspace's `target/ripr/` is accepted; every other redirect is still
+  refused.
 - TypeScript: a change inside a module-private helper now relates to tests
   that call an exported function reaching it in the same module, including a
   value a same-module factory built. unjs/defu tests call `defu(...)`, built
