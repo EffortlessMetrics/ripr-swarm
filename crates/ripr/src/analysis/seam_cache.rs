@@ -252,7 +252,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.17` -> `1.18`: full classified evidence may carry a producer-owned
 /// Integration new-test proposal (#4576). A warm main `1.17` hit would hide
 /// a now-admitted `Proposed` target.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.18";
+/// `1.18` -> `1.19`: parser facts record each function's impl context
+/// (#4558), which relates sibling-crate `Type::method()` calls. Old
+/// classified entries would keep the refused relation.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.19";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -306,7 +309,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.18";
 /// Integration new-test proposal (#4576) — same semantic transition as
 /// the outer classified-seam cache. Compact evidence stays empty, so the
 /// compact generation remains main's `0.24`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.24";
+/// `0.24` -> `0.25`: function impl context (#4558) — same semantic
+/// transition as the outer classified-seam cache.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.25";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -362,7 +367,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.24";
 /// 0.22 -> 0.23: typed semantic-body integrity (#4382); unsigned generations cold-recompute.
 /// `0.23` -> `0.24`: BOM and non-UTF-8 Rust source decoding — same semantic
 /// transition as the outer classified-seam cache.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.24";
+/// `0.24` -> `0.25`: function impl context (#4558) — same semantic
+/// transition as the outer classified-seam cache.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.25";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -474,7 +481,10 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.11` -> `1.12`: `FunctionFact.impl_attrs` (the enclosing `impl` block's
 /// attributes). A warm pre-bump hit would deserialize it empty, so a
 /// `#[pymethods]` method would silently lose its cross-language limitation.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.12";
+/// `1.12` -> `1.13`: `FunctionFact.impl_context` (#4558). A warm pre-bump
+/// hit would deserialize every function as `Unknown`, so a type-path call
+/// could never relate until the file changed.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.13";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1372,6 +1382,36 @@ impl RepoSeamFactCache {
                     "sharded manifest expected {} shards but listed {}",
                     manifest.shard_count,
                     manifest.shards.len()
+                ),
+            };
+        }
+        // The declared total rides inside the manifest's semantic digest, but
+        // that digest is not writer authentication (#4382): a buggy producer
+        // can mint an internally valid manifest whose declared total exceeds
+        // — or overflows against — the sum of its per-shard counts. Cross-check
+        // the declared total against the digest-bound shard list BEFORE
+        // `Vec::with_capacity` so the load degrades to the typed
+        // corrupt/ignored rebuild instead of aborting on a capacity overflow.
+        let shard_list_seams = match manifest
+            .shards
+            .iter()
+            .try_fold(0usize, |sum, shard| sum.checked_add(shard.seams))
+        {
+            Some(shard_list_seams) => shard_list_seams,
+            None => {
+                return CacheLoad::CorruptIgnored {
+                    reason: format!(
+                        "sharded manifest per-shard counts overflow the declared total {}",
+                        manifest.total_seams
+                    ),
+                };
+            }
+        };
+        if shard_list_seams != manifest.total_seams {
+            return CacheLoad::CorruptIgnored {
+                reason: format!(
+                    "sharded manifest declared {} seams but shard list sums to {}",
+                    manifest.total_seams, shard_list_seams
                 ),
             };
         }
@@ -3399,7 +3439,8 @@ mod tests {
         // 1.8 -> 1.9: the Rust nesting budget moves over-deep sources to
         // lexical fallback, so a warm pre-bump parser-backed hit must miss.
         // 1.11 -> 1.12: impl_attrs carries the cross-language FFI marker.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.12");
+        // 1.12 -> 1.13: impl_context records the function's impl self type (#4558).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.13");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -3440,7 +3481,9 @@ mod tests {
         // 1.17 -> 1.18: full classified evidence may carry a producer-owned
         // Integration new-test proposal (#4576); a warm main 1.17 hit would
         // hide Proposed targets.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.18");
+        // 1.18 -> 1.19: function impl context (#4558) relates sibling-crate
+        // `Type::method()` calls.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.19");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3459,8 +3502,9 @@ mod tests {
         // 0.23 (sharded) / 0.24 (compact): BOM / non-UTF-8 decoding (#4597).
         // 0.24 (sharded) / 0.24 (compact): #4576 Integration proposals
         // persist on full classified evidence only; compact stays empty.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.24");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.24");
+        // 0.25 (sharded) / 0.25 (compact): function impl context (#4558).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.25");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.25");
     }
 
     #[test]
@@ -3725,6 +3769,55 @@ mod tests {
             CacheLoad::CorruptIgnored { .. }
         ) {
             return Err("corrupt single must not hide behind valid sharded fallback".to_owned());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn digest_valid_manifest_declaring_total_beyond_shard_list_degrades_before_allocation()
+    -> Result<(), String> {
+        let scratch = integrity_scratch("total-seams")?;
+        let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+        let key = empty_state().cache_key();
+        let seams = vec![sample_classified(); 2];
+        for stimulus in ["declared_total", "per_shard_count"] {
+            cache.store_classified_seams_with_limit(&key, &seams, None, 1)?;
+            if !matches!(
+                cache.load_sharded_classified_seams(&key),
+                CacheLoad::Hit((ref loaded, _, _)) if loaded.len() == 2
+            ) {
+                return Err("actual seeded shard set must warm hit before minting".to_owned());
+            }
+            // Mint an internally valid manifest: rebind the semantic digest
+            // over the mutated body exactly as the codec would for a (buggy)
+            // writer. Integrity is not writer authentication, so the digest
+            // cannot be the control that bounds the declared total — the
+            // digest-bound shard list is. Without the pre-allocation
+            // cross-check, `usize::MAX` reaches `Vec::with_capacity` and
+            // aborts the analysis with a capacity overflow (#4382).
+            let manifest_path = cache.sharded_manifest_path(&key);
+            let bytes = std::fs::read(&manifest_path).map_err(|err| err.to_string())?;
+            let mut manifest = codec::decode_sharded_manifest(&bytes)?;
+            match stimulus {
+                "declared_total" => manifest.total_seams = usize::MAX,
+                "per_shard_count" => {
+                    if manifest.shards.is_empty() {
+                        return Err("sharded seed must list at least one shard".to_owned());
+                    }
+                    manifest.shards[0].seams = usize::MAX;
+                }
+                other => return Err(format!("unsupported stimulus {other}")),
+            }
+            std::fs::write(&manifest_path, codec::encode_sharded_manifest(&manifest)?)
+                .map_err(|err| err.to_string())?;
+            if !matches!(
+                cache.load_sharded_classified_seams(&key),
+                CacheLoad::CorruptIgnored { .. }
+            ) {
+                return Err(format!(
+                    "{stimulus} beyond the shard list must degrade to a named rebuild, not abort"
+                ));
+            }
         }
         Ok(())
     }
