@@ -22,6 +22,7 @@ fn test_owner(name: &str, file: &str) -> TypeScriptOwner {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -1682,6 +1683,7 @@ fn find_related_tests_matches_by_call_name() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -1733,6 +1735,7 @@ fn find_related_tests_ignores_object_method_calls_for_function_owners() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -1769,6 +1772,7 @@ fn find_related_tests_matches_bounded_method_receiver_calls() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -1812,6 +1816,7 @@ fn find_related_tests_keeps_factory_receiver_calls_unrelated_for_method_owners()
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -1846,6 +1851,7 @@ fn find_related_tests_keeps_dynamic_method_receiver_calls_unrelated() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -1881,6 +1887,7 @@ fn find_related_tests_keeps_mocked_method_receiver_calls_unrelated() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -1921,6 +1928,7 @@ fn find_related_tests_keeps_mocked_function_owner_call_at_proximity() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -1971,6 +1979,7 @@ fn find_related_tests_keeps_mocked_arrow_function_owner_call_at_proximity() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2026,6 +2035,7 @@ fn find_related_tests_keeps_mocked_namespace_import_owner_call_at_proximity() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2074,6 +2084,7 @@ fn find_related_tests_credits_unmocked_function_owner_call() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2114,6 +2125,7 @@ fn classify_change_stays_weakly_exposed_when_test_mocks_owner_module() -> Result
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2181,6 +2193,7 @@ fn find_related_tests_matches_bounded_class_method_calls() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2223,6 +2236,7 @@ fn find_related_tests_keeps_shadowed_class_method_calls_unrelated() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2257,6 +2271,7 @@ fn find_related_tests_matches_same_file_class_method_calls() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2298,6 +2313,7 @@ fn find_related_tests_keeps_namespace_class_method_calls_unrelated() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2331,6 +2347,7 @@ fn find_related_tests_keeps_mocked_class_method_calls_unrelated() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2366,6 +2383,7 @@ fn find_related_tests_requires_class_name_for_class_method_calls() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2399,6 +2417,7 @@ fn find_related_tests_matches_module_initializer_named_import_observer() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2441,6 +2460,7 @@ fn find_related_tests_matches_module_initializer_namespace_observer() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2476,6 +2496,7 @@ fn find_related_tests_keeps_module_initializer_shadow_and_non_expect_references_
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2519,6 +2540,7 @@ fn find_related_tests_matches_named_import_alias_calls() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2573,6 +2595,7 @@ fn find_related_tests_alias_wrong_name_not_credited() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2614,6 +2637,7 @@ fn find_related_tests_alias_shadowed_local_not_credited_high() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2655,6 +2679,7 @@ fn find_related_tests_non_alias_import_still_direct_owner_call() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2704,6 +2729,7 @@ fn find_related_tests_namespace_import_unchanged_imported_owner_call() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2753,6 +2779,7 @@ fn find_related_tests_matches_namespace_import_member_calls() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2787,6 +2814,7 @@ fn find_related_tests_ignores_unrelated_and_type_only_import_aliases() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2830,6 +2858,7 @@ fn find_related_tests_ignores_call_shaped_string_mentions() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2866,6 +2895,7 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2916,6 +2946,7 @@ fn related_test_candidates_use_name_and_proximity_links_as_uncertain_relations()
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -2993,6 +3024,7 @@ fn related_test_name_proximity_ignores_partial_tokens() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -3026,6 +3058,7 @@ fn classify_change_uses_heuristic_links_as_weak_uncertain_proximity() -> Result<
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -3082,6 +3115,7 @@ fn classify_change_returns_weakly_exposed_when_related_test_exists() -> Result<(
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -3419,6 +3453,7 @@ fn classify_change_labels_javascript_sources_separately() -> Result<(), String> 
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -3468,6 +3503,7 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             decorated: false,
             exported_as_default: false,
             class_default_export: false,
+            module_entries: Vec::new(),
             arity: None,
             params: Vec::new(),
             source_text: None,
@@ -3484,6 +3520,7 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             decorated: false,
             exported_as_default: false,
             class_default_export: false,
+            module_entries: Vec::new(),
             arity: None,
             params: Vec::new(),
             source_text: None,
@@ -4217,6 +4254,7 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -4294,6 +4332,7 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -4367,6 +4406,7 @@ fn classify_change_returns_no_static_path_when_no_related_test() -> Result<(), S
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -4405,6 +4445,7 @@ fn classify_change_returns_none_when_line_is_outside_any_owner() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -5867,6 +5908,7 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -5925,6 +5967,7 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -5959,6 +6002,7 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -5994,6 +6038,7 @@ fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -6075,6 +6120,7 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         imports: Vec::new(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -6135,6 +6181,7 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         imports: Vec::new(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -6186,6 +6233,7 @@ fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() 
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -6271,6 +6319,7 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -7230,6 +7279,7 @@ fn package_local_filter_selects_same_package_test() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -7303,6 +7353,7 @@ fn package_local_filter_rejects_cross_package_test() {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -7453,6 +7504,7 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -7647,6 +7699,7 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -7757,6 +7810,7 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -7840,6 +7894,7 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         imports: Vec::new(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -7925,6 +7980,7 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         imports: Vec::new(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -8006,6 +8062,7 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         imports: Vec::new(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -8087,6 +8144,7 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         imports: Vec::new(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -8172,6 +8230,7 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -8265,6 +8324,7 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -8348,6 +8408,7 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         imports: Vec::new(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -8498,6 +8559,7 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -8583,6 +8645,7 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         imports: Vec::new(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -8712,6 +8775,7 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -8786,6 +8850,7 @@ fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> 
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -8883,6 +8948,7 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -8951,6 +9017,7 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -9013,6 +9080,7 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         imports: Vec::new(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -9073,6 +9141,7 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         imports: Vec::new(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -9133,6 +9202,7 @@ fn tsconfig_alias_advice_names_map_unavailable_cause() -> Result<(), String> {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
@@ -9209,6 +9279,7 @@ fn tsconfig_alias_advice_names_unmatched_pattern_cause() -> Result<(), String> {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
@@ -9286,6 +9357,7 @@ fn tsconfig_alias_advice_names_unresolved_candidate_cause() -> Result<(), String
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
@@ -9372,6 +9444,7 @@ fn tsconfig_alias_advice_names_absolute_base_url_cause() -> Result<(), String> {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: None,
@@ -9444,6 +9517,7 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -9562,6 +9636,7 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -9636,6 +9711,7 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -9718,6 +9794,7 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -10332,6 +10409,7 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -10643,6 +10721,7 @@ fn spec_0027_namespace_import_member_call_witnesses_boundary() -> Result<(), Str
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         imports: Vec::new(),
         params: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -11349,6 +11428,7 @@ fn boundary_witness_owner() -> TypeScriptOwner {
         decorated: false,
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
         arity: Some(1),
@@ -13091,7 +13171,8 @@ fn analyze_diff_discloses_changed_test_file_parse_error() -> Result<(), String> 
 }
 
 /// (b) A recognized test file that parses but registers a test with a
-/// template-literal title must emit `typescript_test_extraction_partial`.
+/// template-literal title in a body the extractor does not walk (an `if`
+/// block) must emit `typescript_test_extraction_partial`.
 #[test]
 fn analyze_diff_emits_test_extraction_partial_for_template_literal_title() -> Result<(), String> {
     let root = ts_unique_tempdir("tmpltitle")?;
@@ -13101,7 +13182,7 @@ fn analyze_diff_emits_test_extraction_partial_for_template_literal_title() -> Re
     )?;
     ts_write_file(
         &root.join("tests/calc.test.ts"),
-        "import { add } from '../src/calc';\nit(`adds ${1} and ${2}`, () => {\n  expect(add(1, 2)).toBe(3);\n});\n",
+        "import { add } from '../src/calc';\nif (process.env.CI) {\n  it(`adds ${1} and ${2}`, () => {\n    expect(add(1, 2)).toBe(3);\n  });\n}\n",
     )?;
 
     let adapter = TypeScriptAdapter;
@@ -13137,7 +13218,7 @@ fn analyze_diff_collapses_test_extraction_partial_into_one_summary() -> Result<(
     for index in 1..=5 {
         ts_write_file(
             &root.join(format!("tests/calc{index}.test.ts")),
-            "import { add } from '../src/calc';\nit(`adds ${1} and ${2}`, () => {\n  expect(add(1, 2)).toBe(3);\n});\n",
+            "import { add } from '../src/calc';\nif (process.env.CI) {\n  it(`adds ${1} and ${2}`, () => {\n    expect(add(1, 2)).toBe(3);\n  });\n}\n",
         )?;
     }
 
@@ -13343,37 +13424,40 @@ fn detect_partial_flags_tagged_template_each() -> Result<(), String> {
     Ok(())
 }
 
-/// Detector unit shape: `it(...)` generated inside a loop body is flagged.
+/// Detector unit shape: `it(...)` generated inside a `while` loop body (the
+/// extractor walks `for` loops and `.forEach` callbacks only) is flagged.
 #[test]
-fn detect_partial_flags_test_registered_in_loop() -> Result<(), String> {
+fn detect_partial_flags_test_registered_in_while_loop() -> Result<(), String> {
     let file = Path::new("tests/loop.test.ts");
-    let source = "for (const n of [1, 2]) {\n  it(\"case \" + n, () => {\n    expect(n).toBe(1);\n  });\n}\n";
+    let source = "let n = 0;\nwhile (n < 2) {\n  it(\"case \" + n, () => {\n    expect(n).toBe(1);\n  });\n  n++;\n}\n";
     let extracted = extract_tests(file, source);
     assert!(
         extracted.is_empty(),
-        "loop-generated tests are not extractable by design, got {extracted:?}"
+        "while-loop tests are not extracted, got {extracted:?}"
     );
     let gap = detect_partial_test_extraction(file, source, &extracted)
         .ok_or_else(|| "loop-generated test must be disclosed".to_string())?;
     assert_eq!(gap.shape, "test/it call in loop/callback/nested body");
-    assert_eq!(gap.sample_line, 2);
+    assert_eq!(gap.sample_line, 3);
     Ok(())
 }
 
-/// Detector unit shape: template-literal `it(`/`test(` titles are flagged.
+/// Detector unit shape: a template-literal `it(`/`test(` title in a body the
+/// extractor does not walk (a helper function) is flagged with that shape.
 #[test]
 fn detect_partial_flags_template_literal_title() -> Result<(), String> {
     let file = Path::new("tests/tmpl.test.ts");
-    let source = "it(`adds ${1}`, () => {\n  expect(1 + 1).toBe(2);\n});\n";
+    let source =
+        "function register() {\n  it(`adds ${1}`, () => {\n    expect(1 + 1).toBe(2);\n  });\n}\n";
     let extracted = extract_tests(file, source);
     assert!(
         extracted.is_empty(),
-        "template-literal titles are not extractable by design, got {extracted:?}"
+        "a helper function body is not walked, got {extracted:?}"
     );
     let gap = detect_partial_test_extraction(file, source, &extracted)
         .ok_or_else(|| "template-literal title must be disclosed".to_string())?;
     assert_eq!(gap.shape, "template-literal title");
-    assert_eq!(gap.sample_line, 1);
+    assert_eq!(gap.sample_line, 2);
     Ok(())
 }
 
@@ -14704,6 +14788,8 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
     assert!(!plain[0].exported_as_default);
 }
 
+mod loop_declared_tests;
 mod mock_form_tests;
+mod module_entry_tests;
 mod reexport_chain_tests;
 mod scope_receiver_tests;

@@ -660,6 +660,25 @@ pub(crate) fn related_test_candidates<'a>(
                 .map(|relation| TypeScriptRelatedCandidate { test, relation })
         })
         .collect();
+    // Same-module entry reach is admitted only when no test calls the owner
+    // itself, so a direct relation's oracle alone decides exposure.
+    if candidates.is_empty() && !owner.module_entries.is_empty() {
+        candidates = all_tests
+            .iter()
+            .filter(|test| {
+                workspace_root
+                    .map(|root| same_package_root(&owner.file, &test.file, root))
+                    .unwrap_or(true)
+            })
+            .filter(|test| {
+                module_entry_relation(test, owner, reexport_index, alias_map, workspace_root)
+            })
+            .map(|test| TypeScriptRelatedCandidate {
+                test,
+                relation: TypeScriptRelationKind::ModuleEntryCall,
+            })
+            .collect();
+    }
     if candidates.is_empty() {
         candidates = all_tests
             .iter()
@@ -739,6 +758,7 @@ pub(crate) fn owner_call_relation(
         // property binding of the name) calls the local declaration, not the
         // imported owner — do not credit DirectOwnerCall.
         && !local_identifier_declared_in_test_body(&test.body_text, &owner.name)
+        && !enclosing_scope_shadows(test, &owner.name)
         && !owner_name_destructured_from_unrelated_source(test, owner, alias_map, workspace_root)
         // #4103 shape 1: a bare `ownerName(...)` only counts when a
         // declaration anchors the name to the owner (same file, or an import
@@ -758,6 +778,7 @@ pub(crate) fn owner_call_relation(
             && import.local != owner.name
             && contains_call_name(&test.body_text, &import.local)
             && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+            && !enclosing_scope_shadows(test, &import.local)
     }) {
         return Some(TypeScriptRelationKind::ImportAliasOwnerCall);
     }
@@ -772,7 +793,9 @@ pub(crate) fn owner_call_relation(
         if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root) {
             return false;
         }
-        if local_identifier_declared_in_test_body(&test.body_text, &import.local) {
+        if local_identifier_declared_in_test_body(&test.body_text, &import.local)
+            || enclosing_scope_shadows(test, &import.local)
+        {
             return false;
         }
         if !import.namespace
@@ -828,11 +851,7 @@ pub(crate) fn owner_call_relation(
         }
         // An enclosing `describe`/`beforeEach` binding of the local name
         // shadows the import for every test in that scope.
-        if test
-            .scope_bindings
-            .iter()
-            .any(|binding| &binding.name == local)
-        {
+        if enclosing_scope_shadows(test, local) {
             return false;
         }
         reexport_index.resolve_to_owner(
@@ -847,6 +866,53 @@ pub(crate) fn owner_call_relation(
         return Some(TypeScriptRelationKind::ReExportChainFollowed);
     }
     None
+}
+
+/// Whether the test calls an exported name of the owner's module that reaches
+/// the owner (`TypeScriptOwner::module_entries`). Each entry is checked as if
+/// it were the changed owner, so the test must satisfy every identity gate a
+/// direct or imported owner call does (declaration anchor, shadowing, mocks,
+/// spy fabrication, import source). The stand-in owner carries no entries of
+/// its own, so reach through entries is never chained across modules.
+fn module_entry_relation(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    owner.module_entries.iter().any(|entry| {
+        let entry_owner = module_entry_owner(owner, entry);
+        owner_call_relation(
+            test,
+            &entry_owner,
+            reexport_index,
+            alias_map,
+            workspace_root,
+        )
+        .is_some_and(TypeScriptRelationKind::uses_oracle)
+    })
+}
+
+/// The owner as a test of `entry` sees it: same module, the entry's exported
+/// name, a plain callable, and no entries of its own.
+pub(crate) fn module_entry_owner(
+    owner: &TypeScriptOwner,
+    entry: &TypeScriptModuleEntry,
+) -> TypeScriptOwner {
+    TypeScriptOwner {
+        name: entry.name.clone(),
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        exported_as_default: entry.exported_as_default,
+        class_default_export: false,
+        method_kind: TypeScriptMethodKind::Ordinary,
+        module_entries: Vec::new(),
+        params: Vec::new(),
+        arity: None,
+        source_text: None,
+        ..owner.clone()
+    }
 }
 
 pub(crate) fn module_initializer_observer_relation(
@@ -983,6 +1049,16 @@ pub(crate) fn class_method_owner_call_relation(
         .any(|class_name| contains_member_call_name(&test.body_text, class_name, &owner.name))
 }
 
+/// `true` when a binding outside the test body but inside the file-level
+/// scope (a `describe` body or parameter, a loop header, a hook write, a
+/// test callback parameter) rebinds `name` for this test, so a call through
+/// `name` reaches that binding rather than an import or owner of the name.
+fn enclosing_scope_shadows(test: &TypeScriptTest, name: &str) -> bool {
+    test.scope_bindings
+        .iter()
+        .any(|binding| binding.name == name && !binding.file_level)
+}
+
 pub(crate) fn class_names_for_class_method_owner(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
@@ -995,6 +1071,7 @@ pub(crate) fn class_names_for_class_method_owner(
     let mut names = Vec::new();
     if normalized_module_path(&test.file) == normalized_module_path(&owner.file)
         && !local_identifier_declared_in_test_body(&test.body_text, class_name)
+        && !enclosing_scope_shadows(test, class_name)
     {
         push_unique_string(&mut names, class_name.to_string());
     }
@@ -1006,6 +1083,7 @@ pub(crate) fn class_names_for_class_method_owner(
         }
         if import.imported.as_deref() == Some(class_name)
             && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+            && !enclosing_scope_shadows(test, &import.local)
         {
             push_unique_string(&mut names, import.local.clone());
         }
@@ -1908,6 +1986,9 @@ fn ts_relation_to_domain(
         TypeScriptRelationKind::ReceiverOwnerCall => RelationReason::DirectOwnerCall,
         TypeScriptRelationKind::ClassMethodCall => RelationReason::DirectOwnerCall,
         TypeScriptRelationKind::ReExportChainFollowed => RelationReason::ReExportChainFollowed,
+        // The test calls a same-module export that calls the owner: the
+        // TypeScript form of a production helper that delegates to the owner.
+        TypeScriptRelationKind::ModuleEntryCall => RelationReason::HelperOwnerCall,
         // Heuristic relations: no strong domain mapping — emit None to preserve
         // the existing behaviour for these lower-confidence relation kinds.
         TypeScriptRelationKind::SameFileProximity
@@ -1921,7 +2002,8 @@ fn ts_relation_to_domain(
         | TypeScriptRelationKind::ReceiverOwnerCall
         | TypeScriptRelationKind::ClassMethodCall => RelationConfidence::High,
         TypeScriptRelationKind::ImportedOwnerCall
-        | TypeScriptRelationKind::ReExportChainFollowed => RelationConfidence::Medium,
+        | TypeScriptRelationKind::ReExportChainFollowed
+        | TypeScriptRelationKind::ModuleEntryCall => RelationConfidence::Medium,
         TypeScriptRelationKind::SameFileProximity
         | TypeScriptRelationKind::DescribeName
         | TypeScriptRelationKind::TestName => RelationConfidence::Low,
