@@ -820,7 +820,10 @@ mod tests {
         assert_eq!(join["denominators"]["reviewed_human_total"], 1);
         assert_eq!(join["denominators"]["unreviewed_total"], 1);
         assert!(join["reviewed_human_useful_rate"].is_null());
-        assert_eq!(join["denominators"]["rate_eligible_reviewed_human_total"], 0);
+        assert_eq!(
+            join["denominators"]["rate_eligible_reviewed_human_total"],
+            0
+        );
         Ok(())
     }
 
@@ -951,8 +954,14 @@ mod tests {
             let join = build_join(std::slice::from_ref(&receipt), document, comparison, &path);
             assert!(join["reviewed_human_useful_rate"].is_null(), "{label}");
             assert_eq!(join["denominators"]["reviewed_human_total"], 1, "{label}");
-            assert_eq!(join["denominators"]["rate_eligible_reviewed_human_total"], 0, "{label}");
-            assert_eq!(join["denominators"]["rate_excluded_reviewed_human_total"], 1, "{label}");
+            assert_eq!(
+                join["denominators"]["rate_eligible_reviewed_human_total"], 0,
+                "{label}"
+            );
+            assert_eq!(
+                join["denominators"]["rate_excluded_reviewed_human_total"], 1,
+                "{label}"
+            );
         }
         let unrelated_rows = serde_json::json!({
             "repair_route_quality_latest": [{
@@ -967,7 +976,8 @@ mod tests {
     }
 
     #[test]
-    fn usefulness_rate_excludes_each_ineligible_review_without_losing_counts() -> Result<(), String> {
+    fn usefulness_rate_excludes_each_ineligible_review_without_losing_counts() -> Result<(), String>
+    {
         let root = TempRoot::new("rate-exclusions")?;
         let valid = reviewed_payload(FeedbackReason::UsefulActionable);
         let live = valid.identity.clone();
@@ -979,7 +989,11 @@ mod tests {
         rejected.review_status = ReviewStatus::ReviewedRejected;
         let mut agent_review = valid.clone();
         agent_review.review_actor_kind = Some(ActorKind::Agent);
-        let unreviewed = payload("snap-current", Some("gap:alpha"), FeedbackReason::UsefulActionable);
+        let unreviewed = payload(
+            "snap-current",
+            Some("gap:alpha"),
+            FeedbackReason::UsefulActionable,
+        );
         let rows = rate_rows();
         for (key, feedback, human_total) in [
             ("historical", historical, 1),
@@ -992,8 +1006,14 @@ mod tests {
             let join = build_join(&[receipt], Some(&rows), Some(&live), &root.path);
             assert!(join["reviewed_human_useful_rate"].is_null(), "{key}");
             assert_eq!(join["denominators"]["receipts_total"], 1, "{key}");
-            assert_eq!(join["denominators"]["reviewed_human_total"], human_total, "{key}");
-            assert_eq!(join["denominators"]["rate_eligible_reviewed_human_total"], 0, "{key}");
+            assert_eq!(
+                join["denominators"]["reviewed_human_total"], human_total,
+                "{key}"
+            );
+            assert_eq!(
+                join["denominators"]["rate_eligible_reviewed_human_total"], 0,
+                "{key}"
+            );
             assert_eq!(join["judgments"]["useful"]["total"], 1, "{key}");
         }
         Ok(())
@@ -1006,7 +1026,11 @@ mod tests {
         let useful = reviewed_payload(FeedbackReason::UsefulActionable);
         let live = useful.identity.clone();
         record(&root.path, useful.clone(), "useful")?;
-        record(&root.path, reviewed_payload(FeedbackReason::WrongTarget), "incorrect")?;
+        record(
+            &root.path,
+            reviewed_payload(FeedbackReason::WrongTarget),
+            "incorrect",
+        )?;
         let mut stale = useful.clone();
         stale.identity.snapshot_id = "old-snapshot".to_string();
         record(&root.path, stale, "stale")?;
@@ -1023,14 +1047,24 @@ mod tests {
             route_quality: Some(route_quality),
             live_identity: Some(live),
         })?;
-        let parsed: serde_json::Value = serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
         assert_eq!(parsed, join);
         assert_eq!(join["rate_comparison_provided"], true);
         assert_eq!(join["denominators"]["receipts_total"], 5);
         assert_eq!(join["denominators"]["reviewed_human_total"], 5);
-        assert_eq!(join["denominators"]["rate_eligible_reviewed_human_total"], 2);
-        assert_eq!(join["denominators"]["rate_eligible_reviewed_human_useful"], 1);
-        assert_eq!(join["denominators"]["rate_excluded_reviewed_human_total"], 3);
+        assert_eq!(
+            join["denominators"]["rate_eligible_reviewed_human_total"],
+            2
+        );
+        assert_eq!(
+            join["denominators"]["rate_eligible_reviewed_human_useful"],
+            1
+        );
+        assert_eq!(
+            join["denominators"]["rate_excluded_reviewed_human_total"],
+            3
+        );
         assert_eq!(join["reviewed_human_useful_rate"], 0.5);
         assert_eq!(join["denominators"]["historical_total"], 1);
         assert_eq!(join["denominators"]["mismatched_total"], 1);
@@ -1050,8 +1084,14 @@ mod tests {
         let live = negative.identity.clone();
         let receipt = record(&root.path, negative, "negative")?.receipt;
         let join = build_join(&[receipt], Some(&rate_rows()), Some(&live), &root.path);
-        assert_eq!(join["denominators"]["rate_eligible_reviewed_human_total"], 1);
-        assert_eq!(join["denominators"]["rate_eligible_reviewed_human_useful"], 0);
+        assert_eq!(
+            join["denominators"]["rate_eligible_reviewed_human_total"],
+            1
+        );
+        assert_eq!(
+            join["denominators"]["rate_eligible_reviewed_human_useful"],
+            0
+        );
         assert_eq!(join["reviewed_human_useful_rate"], 0.0);
         Ok(())
     }
