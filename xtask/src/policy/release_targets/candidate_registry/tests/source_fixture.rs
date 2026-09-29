@@ -131,7 +131,7 @@ fn create_source_fixture() -> Result<SourceFixture, String> {
     initialize(&source)?;
     fs::create_dir(source.join("src")).map_err(|error| error.to_string())?;
     fs::write(source.join("Cargo.toml"),
-        "[package]\nname='ripr'\nversion='0.11.0'\nedition='2024'\ninclude=['src/**','Cargo.toml','Cargo.lock']\n")
+        "[package]\nname='ripr'\nversion='0.11.0'\nedition='2024'\ninclude=['src/**','Cargo.toml','Cargo.lock']\n\n[workspace]\n")
         .map_err(|error| error.to_string())?;
     fs::write(
         source.join("src/main.rs"),

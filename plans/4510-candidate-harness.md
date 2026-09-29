@@ -155,6 +155,24 @@ The correction uses document deserialization for the root and package
 manifests, normalized archive manifest and packaged lock, preserving UTF-8 and
 malformed-document error contexts. Successor execution remains NOT_RUN.
 
+At 1046f9adcf048647720b4bea40ebaf66d8db30ec, owning compilation
+and the source-custody and physical-root controls passed. The tiny Cargo
+package control then failed with native status 101 before producing an archive:
+its temporary source inherited the surrounding RIPR workspace. This is a
+fixture/setup defect, not an observed archive or install custody failure.
+The tiny source now explicitly declares its standalone workspace, following
+the existing nested-fixture convention. Production source attribution and
+negative oracles are unchanged; the updated fixture controls remain NOT_RUN.
+Direct-test temporary fixtures and the real machinery controller are prepared
+under exclusive owned sibling proof directories outside Cargo workspace
+ancestors. Compilation retains the pinned own checkout Cargo TEMP configuration.
+The legal controller outside an ancestor Cargo workspace is the intended proof
+class. A controller inside another Rust workspace is NOT_ESTABLISHED: Cargo
+may reject the extracted install input through ancestor workspace discovery.
+Keep that real topology as an explicit follow-up/refusal control before broader
+qualification; do not transform attributed production manifests or claim that
+the external positive proves all controller topologies.
+
 ## Later shared-harness scope (not the first PR)
 
 Private release submodule xtask/src/reports/release/candidate_harness.rs plus tests.rs, called from release.rs existing install path; candidate_registry existing grant accessor only as needed; run.rs narrow captured typed observation extension only if absent; release-server sha256_file and existing path/container helpers reused. One private CandidateProofPacket DTO/render projection exported through existing reports module for4505-4508. No new release-readiness command/qualification aggregate. No public crate/deps.
