@@ -604,6 +604,15 @@ fn validate_actionability_axis(
     }
     match axis.status.as_str() {
         STATUS_OBSERVED => {
+            let expected =
+                expected_actionability_without_ledger(portable.get(&observation.case_id));
+            if expected.status != STATUS_OBSERVED {
+                violations.push(format!(
+                    "{subject}.actionability: cannot count as observed `{}` without a non-blocked canonical gap-decision ledger (adapter: `{}`)",
+                    axis.value.as_deref().unwrap_or("<none>"),
+                    expected.source
+                ));
+            }
             if axis.source != ACTION_SOURCE_LEDGER {
                 violations.push(format!(
                     "{subject}.actionability.source: observed actionability must come from `{ACTION_SOURCE_LEDGER}`"
@@ -918,6 +927,8 @@ fn sha256_file(path: &Path) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use serde_json::json;
 
     use super::*;
@@ -1129,11 +1140,54 @@ mod tests {
     }
 
     #[test]
+    fn claimed_observed_no_action_without_ledger_is_rejected() {
+        let observation = CaseObservation {
+            case_id: "seed-quiet".to_string(),
+            inherited_from: "seed".to_string(),
+            coverage_stratum: STRATUM_PRODUCTION_QUIET.to_string(),
+            production_behavior: true,
+            classification: AxisObservation {
+                status: STATUS_OBSERVED.to_string(),
+                source: CLASS_SOURCE_CHECK_JSON.to_string(),
+                value: Some("exposed".to_string()),
+                cause: None,
+            },
+            actionability: AxisObservation {
+                status: STATUS_OBSERVED.to_string(),
+                source: ACTION_SOURCE_LEDGER.to_string(),
+                value: Some("no_action".to_string()),
+                cause: None,
+            },
+            false_actionable: Some(false),
+            disposition: "completed".to_string(),
+        };
+        let portable = BTreeMap::from([(
+            "seed-quiet".to_string(),
+            PortableObserved {
+                classification: "exposed".to_string(),
+                actionability_source: "governed_manifest_subject_contract".to_string(),
+            },
+        )]);
+        let violations =
+            validate_actionability_axis("observations (seed-quiet)", &observation, &portable);
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("cannot count as observed `no_action`")
+                    && violation.contains(ACTION_SOURCE_MANIFEST)
+            }),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
     fn retained_rolling_observation_packet_validates_against_current_panel() -> Result<(), String> {
+        let repository_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .ok_or_else(|| "xtask manifest has no repository parent".to_string())?;
         let manifest = super::super::load_and_validate_at(
-            Path::new("."),
+            repository_root,
             Path::new(super::super::MANIFEST_PATH),
         )?;
-        validate_at(Path::new("."), &manifest)
+        validate_at(repository_root, &manifest)
     }
 }
