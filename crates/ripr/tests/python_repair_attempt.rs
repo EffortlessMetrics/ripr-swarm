@@ -1601,12 +1601,26 @@ fn distinct_prepared_attempts_bind_their_exact_packet_inputs() -> Result<(), Str
         .map_err(|error| format!("read second manifest: {error}"))?;
     let second_binding = std::fs::read(binding_artifact_path(&fixture, second_id)?)
         .map_err(|error| format!("read second binding: {error}"))?;
+    let first_binding = std::fs::read(binding_artifact_path(&fixture, first_id)?)
+        .map_err(|error| format!("read first binding before refusal: {error}"))?;
+    let authored_before = [PRODUCTION_FILE, TARGET_TEST_FILE].into_iter()
+        .map(|path| std::fs::read(fixture.root.join(path)).map(|bytes| (path, bytes))
+            .map_err(|error| format!("read {path} before refusal: {error}")))
+        .collect::<Result<Vec<_>, _>>()?;
     // Do not reseal: an actual B packet cannot replace A's committed packet.
     // The attempt artifact seal may refuse before Python binding validation.
     std::fs::write(packet_path(first_id), &second_packet)
         .map_err(|error| format!("substitute foreign-attempt packet: {error}"))?;
     let refused = run_apply(&fixture, first_id, Some(AUTHORITY))?;
     require_failure(&refused, "apply A with B's sealed packet", "artifact binding failed")?;
+    for (path, before) in authored_before {
+        if std::fs::read(fixture.root.join(path)).map_err(|error| error.to_string())? != before {
+            return Err(format!("refusing the substituted packet changed {path}"));
+        }
+    }
+    if std::fs::read(binding_artifact_path(&fixture, first_id)?).map_err(|error| error.to_string())? != first_binding {
+        return Err("refusing the substituted packet changed A's retained binding".to_string());
+    }
     if std::fs::read(packet_path(second_id)).map_err(|error| error.to_string())? != second_packet
         || std::fs::read(binding_artifact_path(&fixture, second_id)?).map_err(|error| error.to_string())? != second_binding
         || std::fs::read(fixture.root.join("target/ripr/repair-attempts")
