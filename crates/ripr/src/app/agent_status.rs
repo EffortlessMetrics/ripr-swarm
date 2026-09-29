@@ -7,12 +7,14 @@ use crate::agent::loop_commands::{
     WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_brief_command, agent_packet_command,
     agent_receipt_command, agent_review_summary_command, agent_review_summary_markdown_command,
     agent_status_command, agent_status_markdown_command, agent_verify_command,
-    check_analysis_outcome_command, check_repo_exposure_command, display_path, shell_arg,
+    anchored_redirect_target, bound_root, check_analysis_outcome_command,
+    check_repo_exposure_command, display_path, shell_arg,
 };
 use crate::app::repair_attempt::{
-    AfterPhaseHeadAdmission, DivergedHeadRecovery, REPAIR_ATTEMPT_DIRECTORY,
-    RepairAttemptInventoryEntry, RepairAttemptManifest, RepairAttemptState,
-    after_phase_head_admission, diverged_head_recovery, inventory_repair_attempts,
+    AfterPhaseHeadAdmission, AttemptTerminalReceipt, DivergedHeadRecovery,
+    REPAIR_ATTEMPT_DIRECTORY, RepairAttemptInventoryEntry, RepairAttemptManifest,
+    RepairAttemptState, after_phase_head_admission, diverged_head_recovery,
+    inventory_repair_attempts, load_attempt_terminal_receipt,
 };
 use crate::output::agent_receipt::AgentReceiptReading;
 use crate::output::markdown::{COMMAND_SHELL_DISCLOSURE, PowershellForm, powershell_form};
@@ -180,21 +182,35 @@ pub(crate) enum AgentStatusAttemptReceipt {
     /// after verdict (the file is absent, or it parses but belongs to other
     /// work). A receipt whose JSON cannot be read at all is `Unreadable`,
     /// not `NotIssued`: conflating them would tell an orchestrator the
-    /// receipt was never issued.
+    /// receipt was never issued. Used only for legacy manifests that never
+    /// retained an attempt-local result.
     NotIssued,
-    /// The workflow receipt is bound to a different repair attempt. The
-    /// workflow keeps one receipt, so a later attempt's after phase replaced
-    /// the receipt this attempt's after phase wrote; its outcome can no
-    /// longer be read from it.
+    /// The workflow receipt is bound to a different repair attempt, and this
+    /// attempt has no retained terminal receipt to read instead (legacy
+    /// one-slot projection). A later attempt's after phase replaced the
+    /// compatibility file; the earlier outcome can no longer be reconstructed
+    /// from it.
     Superseded { by_attempt_id: String },
     /// The receipt file at the workflow receipt path exists but is not
     /// parseable JSON, so status cannot tell whether it was issued for this
     /// attempt's after verdict. Distinct from `NotIssued`, which means no
     /// receipt file is there (or the readable file belongs to other work).
+    /// Used only when this attempt did not retain a local result.
     Unreadable,
+    /// This attempt declared terminal retention but the local result cannot
+    /// be projected (missing, digest mismatch, path escape, or binding
+    /// mismatch). Status must not fall back to another attempt's
+    /// compatibility receipt.
+    Unavailable {
+        path: Option<String>,
+        reason: String,
+    },
     /// The receipt bound to this attempt's after verdict, read through the
-    /// receipt owner.
-    Issued(AgentReceiptReading),
+    /// receipt owner. `path` is the exact artifact that was read.
+    Issued {
+        path: String,
+        reading: AgentReceiptReading,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -242,6 +258,20 @@ impl AgentStatusCommand {
 }
 
 impl AgentStatusReport {
+    /// The first issued receipt that records no test run. A cold agent reads
+    /// `status: complete` plus movement `improved` as a pass, even when the
+    /// focused test fails; this names the missing test run explicitly.
+    pub(crate) fn unrun_test_receipt(&self) -> Option<&AgentReceiptReading> {
+        self.repair_attempts
+            .iter()
+            .find_map(|attempt| match &attempt.receipt {
+                AgentStatusAttemptReceipt::Issued { reading, .. } if reading.test_not_run() => {
+                    Some(reading)
+                }
+                _ => None,
+            })
+    }
+
     pub(crate) fn status(&self) -> &'static str {
         if self.next_command.is_some() || self.artifacts.iter().any(|artifact| !artifact.present) {
             "incomplete"
@@ -255,7 +285,10 @@ impl AgentStatusReport {
 
 pub(crate) fn build_agent_status_report(root: &Path, root_argument: &Path) -> AgentStatusReport {
     let root_display = display_path(root_argument);
-    keep_follow_up_templates_reachable(&root_display);
+    // #3999: every next command binds the selected root once, here; the
+    // report's `root` field keeps the invocation spelling.
+    let command_root = bound_root(&root_display);
+    keep_follow_up_templates_reachable(&command_root);
     let artifacts = ARTIFACTS
         .iter()
         .map(|artifact| inspect_artifact(root, artifact))
@@ -265,10 +298,10 @@ pub(crate) fn build_agent_status_report(root: &Path, root_argument: &Path) -> Ag
     warnings.extend(stale_warnings(&artifacts));
     let missing_commands = missing_commands(root_argument, seam.as_ref(), &artifacts);
     let receipt = read_workflow_receipt(root);
-    let repair_attempts = inspect_repair_attempts(root, &root_display, &receipt, &mut warnings);
+    let repair_attempts = inspect_repair_attempts(root, &command_root, &receipt, &mut warnings);
     let next_command = select_next_command(
         root,
-        &root_display,
+        &command_root,
         seam.as_ref(),
         repair_attempts.as_ref(),
         &missing_commands,
@@ -379,13 +412,14 @@ fn read_workflow_receipt(root: &Path) -> WorkflowReceiptRead {
     }
 }
 
-/// Whether the workflow receipt was issued for exactly this attempt's after
-/// verdict: the attempt-bound receipt records the attempt, its after HEAD, and
-/// the delta and packet digests the finish measured. A receipt bound to
-/// another attempt superseded this attempt's receipt (the workflow keeps one
-/// receipt); a legacy unbound receipt, or one issued before a later finish of
-/// the same attempt, does not match.
+/// Whether a receipt was issued for exactly this attempt's after verdict.
+///
+/// Status prefers the attempt-local terminal receipt. The one-slot
+/// compatibility file is used only for legacy manifests that never retained
+/// a local result. A declared-but-unusable local result never falls back to
+/// another attempt's projection.
 fn attempt_receipt(
+    root: &Path,
     manifest: &RepairAttemptManifest,
     receipt: &WorkflowReceiptRead,
 ) -> AgentStatusAttemptReceipt {
@@ -396,6 +430,22 @@ fn attempt_receipt(
     else {
         return AgentStatusAttemptReceipt::NotApplicable;
     };
+    match load_attempt_terminal_receipt(root, manifest) {
+        AttemptTerminalReceipt::Issued { path, value } => AgentStatusAttemptReceipt::Issued {
+            path,
+            reading: AgentReceiptReading::from_value(&value),
+        },
+        AttemptTerminalReceipt::Unavailable { path, reason } => {
+            AgentStatusAttemptReceipt::Unavailable { path, reason }
+        }
+        AttemptTerminalReceipt::NotRetained => legacy_workflow_attempt_receipt(after, receipt),
+    }
+}
+
+fn legacy_workflow_attempt_receipt(
+    after: &crate::app::repair_attempt::RepairAttemptAfter,
+    receipt: &WorkflowReceiptRead,
+) -> AgentStatusAttemptReceipt {
     let receipt = match receipt {
         WorkflowReceiptRead::Missing => return AgentStatusAttemptReceipt::NotIssued,
         WorkflowReceiptRead::Unreadable => return AgentStatusAttemptReceipt::Unreadable,
@@ -409,7 +459,10 @@ fn attempt_receipt(
         && bound("/repair_attempt/delta_sha256", &after.delta_sha256)
         && bound("/repair_attempt/packet_sha256", &after.packet_sha256)
     {
-        AgentStatusAttemptReceipt::Issued(AgentReceiptReading::from_value(receipt))
+        AgentStatusAttemptReceipt::Issued {
+            path: WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string(),
+            reading: AgentReceiptReading::from_value(receipt),
+        }
     } else if let Some(other) = receipt
         .pointer("/repair_attempt/attempt_id")
         .and_then(Value::as_str)
@@ -437,7 +490,7 @@ fn status_repair_attempt(
     receipt: &WorkflowReceiptRead,
 ) -> AgentStatusRepairAttempt {
     let restart = Some(new_repair_attempt_command(root_display, &manifest.seam_id));
-    let receipt = attempt_receipt(manifest, receipt);
+    let receipt = attempt_receipt(root, manifest, receipt);
     let evidence_head = manifest.after.as_ref().map_or_else(
         || manifest.repository_head.clone(),
         |after| after.repository_head.clone(),
@@ -520,10 +573,10 @@ fn status_after_disposition(
         // receipt whose grip did not rise leaves the gap open, so the seam is
         // restarted; any other reading is reported, never called finished.
         RepairAttemptState::ReadyToFinish => match receipt {
-            AgentStatusAttemptReceipt::Issued(reading) if reading.shows_gap_closed() => {
+            AgentStatusAttemptReceipt::Issued { reading, .. } if reading.shows_gap_closed() => {
                 ("ready_to_finish", "finished", None)
             }
-            AgentStatusAttemptReceipt::Issued(reading) if reading.leaves_gap_open() => {
+            AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open() => {
                 ("ready_to_finish", "gap_open", restart)
             }
             _ => ("ready_to_finish", "unconfirmed", None),
@@ -608,7 +661,7 @@ fn finished_attempt_warnings(
 
 fn unconfirmed_receipt_reason(attempt: &AgentStatusRepairAttempt) -> String {
     match &attempt.receipt {
-        AgentStatusAttemptReceipt::Issued(reading) if !reading.is_advisory() => format!(
+        AgentStatusAttemptReceipt::Issued { reading, .. } if !reading.is_advisory() => format!(
             "its receipt is `{}`{} and an invalid or incomplete receipt does not show the gap closed (movement `{}`)",
             reading.status.as_deref().unwrap_or("unknown"),
             reading
@@ -618,7 +671,7 @@ fn unconfirmed_receipt_reason(attempt: &AgentStatusRepairAttempt) -> String {
                 .unwrap_or_default(),
             reading.movement.as_deref().unwrap_or("unknown")
         ),
-        AgentStatusAttemptReceipt::Issued(reading) => format!(
+        AgentStatusAttemptReceipt::Issued { reading, .. } => format!(
             "its receipt reports movement `{}`, which does not show the gap closed{}",
             reading.movement.as_deref().unwrap_or("unknown"),
             reading
@@ -636,6 +689,11 @@ fn unconfirmed_receipt_reason(attempt: &AgentStatusRepairAttempt) -> String {
         AgentStatusAttemptReceipt::Unreadable => format!(
             "the receipt at `{WORKFLOW_AGENT_RECEIPT_ARTIFACT}` exists but could not be parsed as JSON, so status cannot tell whether it was issued for this attempt's after verdict"
         ),
+        AgentStatusAttemptReceipt::Unavailable { reason, .. } => {
+            format!(
+                "{reason}; status does not reconstruct the outcome from another attempt's compatibility receipt"
+            )
+        }
         _ => format!(
             "no receipt at `{WORKFLOW_AGENT_RECEIPT_ARTIFACT}` was issued for its after verdict"
         ),
@@ -797,11 +855,30 @@ fn select_next_command(
         (None, _) => {}
     }
 
-    legacy_next_command(root, root_display, seam, missing_commands)
+    legacy_next_command(root, root_display, seam, missing_commands, warnings)
 }
 
 /// Where `ripr pilot` writes its summary by default, relative to the root.
 const PILOT_SUMMARY_ARTIFACT: &str = "target/ripr/pilot/pilot-summary.json";
+
+/// The seam-selection route status offers before any seam is known. `ripr
+/// pilot` resolves a relative `--out` against the working directory, not
+/// `--root`, so the command names the pilot directory under the selected root
+/// explicitly; pasted from any directory it writes the summary status reads
+/// next (#4000).
+///
+/// The root is bound here, once (#4287): a caller may pass the raw `--root`
+/// or an already bound one. Binding is idempotent for an absolute root, so
+/// `--root` and `--out` always name the same bound directory and the pilot
+/// directory is never anchored twice.
+pub(crate) fn pilot_select_command(root: &str) -> String {
+    let root = bound_root(root);
+    format!(
+        "ripr pilot --root {} --out {}",
+        shell_arg(&root),
+        shell_arg(&anchored_redirect_target(&root, "target/ripr/pilot"))
+    )
+}
 
 /// The repair start `ripr pilot` recorded for its top seam (#3906), carried
 /// verbatim. Pilot fills `next.repair_command` only past the repair-packet
@@ -817,14 +894,248 @@ fn pilot_repair_command(root: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Whether a complete `ripr pilot` run ranked a top seam and recorded no
+/// repair start for it (`next.repair_command` is an explicit `null`). Sending the
+/// user back to pilot then only ranks the same seam again (#4216 row 3).
+/// A missing, unreadable, timed-out, or non-null summary is not this fact.
+fn pilot_found_no_repair_target(root: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)) else {
+        return false;
+    };
+    let Ok(summary) = serde_json::from_str::<Value>(&text) else {
+        return false;
+    };
+    summary.pointer("/status").and_then(Value::as_str) == Some("complete")
+        && summary
+            .pointer("/top_actionable_seams")
+            .and_then(Value::as_array)
+            .is_some_and(|seams| !seams.is_empty())
+        && summary
+            .pointer("/next/repair_command")
+            .is_some_and(Value::is_null)
+}
+
+/// The Python preview repair card a complete `ripr pilot` run recorded when
+/// it ranked no seam and recorded no repair start (`python_first_use.status`
+/// is `ready`). `ripr agent repair` targets ranked seams only, so sending the
+/// user back to pilot only records the same card again (onboarding Python
+/// walk, #4227). Returns the card's missing discriminator and verify command
+/// when the summary carries them.
+struct PilotPythonCard {
+    missing_discriminator: Option<String>,
+    verify_command: Option<String>,
+}
+
+fn pilot_python_repair_card_ready(root: &Path) -> Option<PilotPythonCard> {
+    let text = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)).ok()?;
+    let summary = serde_json::from_str::<Value>(&text).ok()?;
+    let complete = summary.pointer("/status").and_then(Value::as_str) == Some("complete");
+    let no_seams = summary
+        .pointer("/top_actionable_seams")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty);
+    let no_repair_start = summary
+        .pointer("/next/repair_command")
+        .is_some_and(Value::is_null);
+    let first_use = summary.pointer("/python_first_use")?;
+    let ready = first_use.get("status").and_then(Value::as_str) == Some("ready")
+        && first_use
+            .get("repair_cards_total")
+            .and_then(Value::as_u64)
+            .is_some_and(|total| total > 0);
+    if !(complete && no_seams && no_repair_start && ready) {
+        return None;
+    }
+    let card = first_use.get("top_repair_card");
+    let text_at = |pointer: &str| {
+        card.and_then(|card| card.pointer(pointer))
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+    };
+    Some(PilotPythonCard {
+        missing_discriminator: text_at("/missing_discriminator"),
+        verify_command: text_at("/verify_command"),
+    })
+}
+
+fn pilot_python_repair_card_message(card: &PilotPythonCard, root_display: &str) -> String {
+    let mut message = "the last complete `ripr pilot` run ranked no seam but produced a Python preview repair card".to_string();
+    if let Some(discriminator) = &card.missing_discriminator {
+        message.push_str(&format!(" for missing discriminator `{discriminator}`"));
+    }
+    message.push_str(&format!(
+        "; `ripr agent repair` targets ranked seams only, and running pilot again unchanged records the same card. Follow the card from `ripr first-pr --root {root}`, which names the test to strengthen and its verify command",
+        root = shell_arg(root_display)
+    ));
+    if let Some(verify) = &card.verify_command {
+        message.push_str(&format!(" (`{verify}`)"));
+    }
+    message.push_str(&format!(
+        ", then rerun `ripr check --root {}` to see whether static evidence now finds the discriminator",
+        shell_arg(root_display)
+    ));
+    message.push_str(&format!(
+        ". If the workspace changed since that run, rerun `{}`",
+        pilot_select_command(root_display)
+    ));
+    message
+}
+
+/// Python first-use statuses that record "pilot produced no repair card"
+/// (`output::pilot::types::PilotPythonFirstUseStatus`). `analysis_unavailable`
+/// is a failed analysis, not that fact, and `ready` has repair cards.
+const PILOT_NO_REPAIR_CARD_PYTHON_STATUSES: &[&str] = &["no_python_findings", "no_repair_cards"];
+
+/// The diff-first routes a complete `ripr pilot` run recorded when it ranked
+/// no seam, produced no repair card, and recorded no repair start.
+struct PilotCheckRoutes {
+    /// Languages whose route is enabled in `[languages]`, with their
+    /// distinct recorded check commands.
+    enabled_languages: Vec<String>,
+    commands: Vec<String>,
+    /// Routed languages the effective config does not enable, as the
+    /// `[languages] enabled` entry that turns each on.
+    disabled_config_languages: Vec<String>,
+}
+
+/// Reads the retained pilot summary (#4216, Python and TypeScript
+/// re-walks): `status: complete`, empty `top_actionable_seams`, an explicit
+/// null `next.repair_command`, `language_routes.state: required` (pilot
+/// itself sends the code to `ripr check`, which offers no `ripr agent
+/// repair` start), and no repair card (`python_first_use` absent, null, or
+/// a no-repair-card status). Sending the user back to pilot then only routes
+/// them to `ripr check` again, for any routed language. A missing,
+/// unreadable, timed-out, seam-ranking, repair-card-bearing,
+/// analysis-unavailable, or command-less summary is not this fact.
+fn pilot_routed_changed_code_to_check(root: &Path) -> Option<PilotCheckRoutes> {
+    let text = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)).ok()?;
+    let summary = serde_json::from_str::<Value>(&text).ok()?;
+    let complete = summary.pointer("/status").and_then(Value::as_str) == Some("complete");
+    let no_seams = summary
+        .pointer("/top_actionable_seams")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty);
+    let no_repair_start = summary
+        .pointer("/next/repair_command")
+        .is_some_and(Value::is_null);
+    let routes_required = summary
+        .pointer("/language_routes/state")
+        .and_then(Value::as_str)
+        == Some("required");
+    let no_repair_cards = summary
+        .pointer("/python_first_use")
+        .filter(|first_use| !first_use.is_null())
+        .is_none_or(|first_use| {
+            first_use
+                .get("status")
+                .and_then(Value::as_str)
+                .is_some_and(|status| PILOT_NO_REPAIR_CARD_PYTHON_STATUSES.contains(&status))
+        });
+    if !(complete && no_seams && no_repair_start && routes_required && no_repair_cards) {
+        return None;
+    }
+    let mut routes = PilotCheckRoutes {
+        enabled_languages: Vec::new(),
+        commands: Vec::new(),
+        disabled_config_languages: Vec::new(),
+    };
+    for route in summary
+        .pointer("/language_routes/routes")
+        .and_then(Value::as_array)?
+    {
+        let Some(command) = route.get("command").and_then(Value::as_str) else {
+            continue;
+        };
+        let language = route.get("language").and_then(Value::as_str);
+        if route.get("enabled").and_then(Value::as_bool) == Some(true) {
+            if let Some(language) = language {
+                routes.enabled_languages.push(language.to_string());
+            }
+            if !routes.commands.iter().any(|known| known == command) {
+                routes.commands.push(command.to_string());
+            }
+        } else if let Some(language) = language {
+            // JavaScript runs through the TypeScript-family adapter, which
+            // the `typescript` entry turns on (pilot `language_routes`).
+            let config_language = if language == "javascript" {
+                "typescript"
+            } else {
+                language
+            };
+            if !routes
+                .disabled_config_languages
+                .iter()
+                .any(|known| known == config_language)
+            {
+                routes
+                    .disabled_config_languages
+                    .push(config_language.to_string());
+            }
+        }
+    }
+    (!routes.commands.is_empty() || !routes.disabled_config_languages.is_empty()).then_some(routes)
+}
+
+/// "the python, typescript code", or "the code" for an empty list.
+fn routed_code_phrase(languages: &[String]) -> String {
+    if languages.is_empty() {
+        "the code".to_string()
+    } else {
+        format!("the {} code", languages.join(", "))
+    }
+}
+
+fn pilot_routed_to_check_message(routes: &PilotCheckRoutes, root_display: &str) -> String {
+    let mut message =
+        "the last complete `ripr pilot` run ranked no seam and produced no repair card".to_string();
+    if !routes.commands.is_empty() {
+        let commands = routes
+            .commands
+            .iter()
+            .map(|command| format!("`{command}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        message.push_str(&format!(
+            ": it routed {} to {commands}, which reviews changes diff-first and offers no `ripr agent repair` start, and running pilot again unchanged routes there again. Read the findings from {commands}, add or strengthen a test for the changed behavior by hand, then rerun {commands} to see whether static evidence now finds a discriminator",
+            routed_code_phrase(&routes.enabled_languages)
+        ));
+    }
+    if !routes.disabled_config_languages.is_empty() {
+        let entries = routes
+            .disabled_config_languages
+            .iter()
+            .map(|language| format!("\"{language}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let lead = if routes.commands.is_empty() {
+            ": "
+        } else {
+            ". Also, "
+        };
+        message.push_str(&format!(
+            "{lead}{} is not enabled in ripr.toml [languages], so `ripr check` does not analyze it yet: add {entries} to `[languages] enabled` in ripr.toml, then run `ripr check --root {}`",
+            routed_code_phrase(&routes.disabled_config_languages),
+            shell_arg(root_display)
+        ));
+    }
+    message.push_str(&format!(
+        ". If the workspace changed since that run, rerun `{}`",
+        pilot_select_command(root_display)
+    ));
+    message
+}
+
 /// The legacy seven-artifact loop, kept for `agent start` and manual users,
-/// with two refusals: it never recommends a command that needs a seam status
-/// does not know, and never a redirect into a directory that does not exist.
+/// with three refusals: it never recommends a command that needs a seam status
+/// does not know, never a redirect into a directory that does not exist, and
+/// never `ripr pilot` again after a complete pilot run found no repair start.
 fn legacy_next_command(
     root: &Path,
     root_display: &str,
     seam: Option<&AgentStatusSeam>,
     missing_commands: &[AgentStatusCommand],
+    warnings: &mut Vec<AgentStatusWarning>,
 ) -> Option<AgentStatusCommand> {
     let first = missing_commands.first()?;
     let Some(seam) = seam else {
@@ -836,11 +1147,35 @@ fn legacy_next_command(
                 command,
             });
         }
+        if pilot_found_no_repair_target(root) {
+            warnings.push(AgentStatusWarning {
+                kind: "pilot_found_no_repair_target".to_string(),
+                artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
+                message: "the last complete `ripr pilot` run offered no repair attempt: its top seam is not eligible for `ripr agent repair`, and running pilot again unchanged ranks the same seams. Read `target/ripr/pilot/pilot-summary.md` for that seam, add a test for it by hand in the crate that owns it, then rerun `ripr pilot` to rank the seams against that test".to_string(),
+            });
+            return None;
+        }
+        if let Some(routes) = pilot_routed_changed_code_to_check(root) {
+            warnings.push(AgentStatusWarning {
+                kind: "pilot_routed_to_check_no_repair_target".to_string(),
+                artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
+                message: pilot_routed_to_check_message(&routes, root_display),
+            });
+            return None;
+        }
+        if let Some(card) = pilot_python_repair_card_ready(root) {
+            warnings.push(AgentStatusWarning {
+                kind: "pilot_python_repair_card_no_agent_repair".to_string(),
+                artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
+                message: pilot_python_repair_card_message(&card, root_display),
+            });
+            return None;
+        }
         return Some(AgentStatusCommand {
             step: "select_seam".to_string(),
             artifact: "target/ripr/pilot".to_string(),
             reason: "no repair seam is known yet; `ripr pilot` inspects the workspace and selects the seam to repair".to_string(),
-            command: format!("ripr pilot --root {}", shell_arg(root_display)),
+            command: pilot_select_command(root_display),
         });
     };
     let target_directory_exists = Path::new(&first.artifact)
@@ -872,7 +1207,7 @@ fn attempt_condition(attempt: &AgentStatusRepairAttempt) -> String {
         },
         "not_published" => "prepared but never published".to_string(),
         "gap_open" => {
-            let AgentStatusAttemptReceipt::Issued(reading) = &attempt.receipt else {
+            let AgentStatusAttemptReceipt::Issued { reading, .. } = &attempt.receipt else {
                 return attempt.state.to_string();
             };
             let mut condition = format!(
@@ -902,7 +1237,7 @@ fn attempt_condition(attempt: &AgentStatusRepairAttempt) -> String {
 fn attempt_outcome(attempt: &AgentStatusRepairAttempt) -> String {
     let mut parts = Vec::new();
     match &attempt.receipt {
-        AgentStatusAttemptReceipt::Issued(reading) => parts.push(format!(
+        AgentStatusAttemptReceipt::Issued { reading, .. } => parts.push(format!(
             "receipt `{}`, movement `{}`",
             reading.status.as_deref().unwrap_or("unknown"),
             reading.movement.as_deref().unwrap_or("unknown")
@@ -915,6 +1250,9 @@ fn attempt_outcome(attempt: &AgentStatusRepairAttempt) -> String {
         }
         AgentStatusAttemptReceipt::Unreadable => {
             parts.push("receipt present but unreadable".to_string());
+        }
+        AgentStatusAttemptReceipt::Unavailable { .. } => {
+            parts.push("retained receipt unavailable".to_string());
         }
         AgentStatusAttemptReceipt::NotApplicable => {}
     }
@@ -986,6 +1324,7 @@ pub(crate) fn render_agent_status_json(report: &AgentStatusReport) -> Result<Str
         "repair_attempts": report.repair_attempts.iter().map(agent_status_repair_attempt_json).collect::<Vec<_>>(),
         "missing_commands": report.missing_commands.iter().map(agent_status_command_json).collect::<Vec<_>>(),
         "next_command": next_command,
+        "test_run": report.unrun_test_receipt().map(test_not_run_json),
         "warnings": report.warnings.iter().map(agent_status_warning_json).collect::<Vec<_>>()
     });
     serde_json::to_string_pretty(&value)
@@ -1004,6 +1343,12 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
     match &report.seam {
         Some(seam) => rendered.push_str(&format!("Seam: {} ({})\n", seam.seam_id, seam.source)),
         None => rendered.push_str("Seam: unknown\n"),
+    }
+    if let Some(reading) = report.unrun_test_receipt() {
+        rendered.push_str(&format!(
+            "Test run: none recorded. {}\n",
+            test_not_run_next_step(reading)
+        ));
     }
 
     rendered.push_str("\n## Artifacts\n\n");
@@ -1127,26 +1472,71 @@ fn agent_status_repair_attempt_json(attempt: &AgentStatusRepairAttempt) -> Value
 }
 
 fn attempt_receipt_json(receipt: &AgentStatusAttemptReceipt) -> Value {
-    let (reading, superseded_by, unreadable) = match receipt {
+    let (path, reading, superseded_by, unreadable, unavailable) = match receipt {
         AgentStatusAttemptReceipt::NotApplicable => return Value::Null,
-        AgentStatusAttemptReceipt::NotIssued => (None, None, false),
-        AgentStatusAttemptReceipt::Superseded { by_attempt_id } => {
-            (None, Some(by_attempt_id.as_str()), false)
+        AgentStatusAttemptReceipt::NotIssued => {
+            (WORKFLOW_AGENT_RECEIPT_ARTIFACT, None, None, false, None)
         }
-        AgentStatusAttemptReceipt::Unreadable => (None, None, true),
-        AgentStatusAttemptReceipt::Issued(reading) => (Some(reading), None, false),
+        AgentStatusAttemptReceipt::Superseded { by_attempt_id } => (
+            WORKFLOW_AGENT_RECEIPT_ARTIFACT,
+            None,
+            Some(by_attempt_id.as_str()),
+            false,
+            None,
+        ),
+        AgentStatusAttemptReceipt::Unreadable => {
+            (WORKFLOW_AGENT_RECEIPT_ARTIFACT, None, None, true, None)
+        }
+        AgentStatusAttemptReceipt::Unavailable { path, reason } => (
+            path.as_deref().unwrap_or(WORKFLOW_AGENT_RECEIPT_ARTIFACT),
+            None,
+            None,
+            false,
+            Some(reason.as_str()),
+        ),
+        AgentStatusAttemptReceipt::Issued { path, reading } => {
+            (path.as_str(), Some(reading), None, false, None)
+        }
     };
     serde_json::json!({
-        "path": WORKFLOW_AGENT_RECEIPT_ARTIFACT,
+        "path": path,
         "issued_for_attempt": reading.is_some(),
         "unreadable": unreadable,
+        "unavailable": unavailable.is_some(),
+        "unavailable_reason": unavailable,
         "superseded_by": superseded_by,
         "status": reading.and_then(|reading| reading.status.as_deref()),
         "movement": reading.and_then(|reading| reading.movement.as_deref()),
         "receipt_state": reading.map(|reading| reading.receipt_state.as_str()),
         "shows_gap_closed": reading.is_some_and(AgentReceiptReading::shows_gap_closed),
         "recommended_action": reading.and_then(|reading| reading.recommended_action.as_deref()),
+        "verification_status": reading.and_then(|reading| reading.verification_status.as_deref()),
         "analysis_outcome_error": reading.and_then(|reading| reading.analysis_outcome_error.as_deref())
+    })
+}
+
+/// One sentence for a repair receipt that records no test run: what the
+/// receipt does not establish and the step that still decides whether the
+/// test is kept. It speaks for the receipt only; a separate verification
+/// receipt (the trust-bound `--phase verify` route) is not read here.
+fn test_not_run_next_step(reading: &AgentReceiptReading) -> String {
+    let target = reading
+        .test_changed
+        .as_deref()
+        // The receipt's `test_changed` is whatever `--test` named: a path or a
+        // test identifier, so it is quoted, not presented as a file.
+        .map(|test| format!("the focused test (`{test}`)"))
+        .unwrap_or_else(|| "the focused test".to_string());
+    format!(
+        "The repair receipt compares static evidence only and records no run of {target}; run it with the project's test command and keep it only if it passes. A failing test can still show movement `improved`."
+    )
+}
+
+fn test_not_run_json(reading: &AgentReceiptReading) -> Value {
+    serde_json::json!({
+        "status": "not_recorded",
+        "test_changed": reading.test_changed,
+        "next_step": test_not_run_next_step(reading)
     })
 }
 
@@ -1403,7 +1793,7 @@ fn command_for_missing_artifact(
     seam: Option<&AgentStatusSeam>,
     artifact: &AgentStatusArtifact,
 ) -> String {
-    let root = display_path(root_argument);
+    let root = bound_root(&display_path(root_argument));
     let seam_id = seam
         .map(|seam| seam.seam_id.as_str())
         .unwrap_or("<seam-id>");
@@ -1485,6 +1875,26 @@ mod tests {
         }
     }
 
+    /// #4287: `pilot_select_command` binds its root once, so a raw root and an
+    /// already bound root render the same command and the pilot directory is
+    /// anchored exactly once under the bound root.
+    #[test]
+    fn pilot_select_command_binds_raw_and_bound_roots_once() {
+        let bound = bound_root(".");
+        let command = pilot_select_command(&bound);
+        assert_eq!(pilot_select_command("."), command);
+        assert_eq!(pilot_select_command(&bound_root(&bound)), command);
+        assert_eq!(
+            command,
+            format!(
+                "ripr pilot --root {} --out {}",
+                shell_arg(&bound),
+                shell_arg(&format!("{bound}/target/ripr/pilot"))
+            )
+        );
+        assert_eq!(command.matches("target/ripr/pilot").count(), 1, "{command}");
+    }
+
     #[test]
     fn agent_status_reports_missing_artifacts_and_next_commands() -> Result<(), String> {
         let root = unique_agent_status_test_dir("missing");
@@ -1518,7 +1928,10 @@ mod tests {
         // next command is the product route that selects a seam, not a
         // redirect into `target/ripr/workflow/` (#3906).
         assert_eq!(value["next_command"]["step"], "select_seam");
-        assert_eq!(value["next_command"]["command"], "ripr pilot --root .");
+        assert_eq!(
+            value["next_command"]["command"],
+            pilot_select_command(&bound_root("."))
+        );
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
@@ -1645,17 +2058,21 @@ mod tests {
         let manifest = ready_to_finish_manifest()?;
 
         assert_eq!(
-            attempt_receipt(&manifest, &WorkflowReceiptRead::Unreadable),
+            attempt_receipt(Path::new("."), &manifest, &WorkflowReceiptRead::Unreadable),
             AgentStatusAttemptReceipt::Unreadable
         );
         assert_eq!(
-            attempt_receipt(&manifest, &WorkflowReceiptRead::Missing),
+            attempt_receipt(Path::new("."), &manifest, &WorkflowReceiptRead::Missing),
             AgentStatusAttemptReceipt::NotIssued,
             "a missing receipt file stays not issued"
         );
         let unbound = serde_json::json!({});
         assert_eq!(
-            attempt_receipt(&manifest, &WorkflowReceiptRead::Parsed(unbound)),
+            attempt_receipt(
+                Path::new("."),
+                &manifest,
+                &WorkflowReceiptRead::Parsed(unbound)
+            ),
             AgentStatusAttemptReceipt::NotIssued,
             "a readable receipt bound to other work stays not issued"
         );
@@ -1666,6 +2083,70 @@ mod tests {
         assert_eq!(unreadable["issued_for_attempt"], false);
         let not_issued = attempt_receipt_json(&AgentStatusAttemptReceipt::NotIssued);
         assert_eq!(not_issued["unreadable"], false);
+        Ok(())
+    }
+
+    /// A finished attempt that never retained `terminal_artifacts` still reads
+    /// the one-slot compatibility file. An exact match is issued; a receipt
+    /// bound to another attempt stays superseded and is not reconstructed.
+    #[test]
+    fn agent_status_legacy_manifest_does_not_reconstruct_a_superseded_receipt() -> Result<(), String>
+    {
+        let manifest = ready_to_finish_manifest()?;
+        let after = manifest
+            .after
+            .as_ref()
+            .ok_or_else(|| "fixture after missing".to_string())?;
+        let other = serde_json::json!({
+            "repair_attempt": {
+                "attempt_id": "repair-attempt-aaaaaaaaaaaaaaaaaaaaaaaa",
+                "after_head": after.repository_head,
+                "delta_sha256": after.delta_sha256,
+                "packet_sha256": after.packet_sha256
+            }
+        });
+        assert_eq!(
+            attempt_receipt(
+                Path::new("."),
+                &manifest,
+                &WorkflowReceiptRead::Parsed(other)
+            ),
+            AgentStatusAttemptReceipt::Superseded {
+                by_attempt_id: "repair-attempt-aaaaaaaaaaaaaaaaaaaaaaaa".to_string()
+            }
+        );
+        let superseded = attempt_receipt_json(&AgentStatusAttemptReceipt::Superseded {
+            by_attempt_id: "repair-attempt-aaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+        });
+        assert_eq!(superseded["issued_for_attempt"], false);
+        assert_eq!(superseded["unavailable"], false);
+        assert_eq!(
+            superseded["superseded_by"],
+            "repair-attempt-aaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+
+        let matching = serde_json::json!({
+            "repair_attempt": {
+                "attempt_id": after.attempt_id.as_str(),
+                "after_head": after.repository_head,
+                "delta_sha256": after.delta_sha256,
+                "packet_sha256": after.packet_sha256
+            }
+        });
+        match attempt_receipt(
+            Path::new("."),
+            &manifest,
+            &WorkflowReceiptRead::Parsed(matching),
+        ) {
+            AgentStatusAttemptReceipt::Issued { path, .. } => {
+                assert_eq!(path, WORKFLOW_AGENT_RECEIPT_ARTIFACT);
+            }
+            other => {
+                return Err(format!(
+                    "an exact matching legacy receipt must stay issued, not {other:?}"
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -1703,6 +2184,7 @@ mod tests {
                 },
             }),
             last_after_refusal: None,
+            terminal_artifacts: Vec::new(),
         })
     }
 
@@ -1812,7 +2294,7 @@ mod tests {
         assert!(rendered.contains("Status: incomplete"));
         assert!(rendered.contains("| before snapshot | missing |"));
         assert!(rendered.contains("## Next Command"));
-        assert!(rendered.contains("ripr pilot --root ."));
+        assert!(rendered.contains(&pilot_select_command(&bound_root("."))));
         assert!(rendered.contains("No runtime mutation execution."));
         assert!(rendered.contains("No generated tests."));
 
@@ -1900,7 +2382,11 @@ mod tests {
         let fence = rendered
             .find(&format!(
                 "```bash\n{}\n```",
-                check_repo_exposure_command(".", "draft", WORKFLOW_AFTER_SNAPSHOT_ARTIFACT)
+                check_repo_exposure_command(
+                    &bound_root("."),
+                    "draft",
+                    WORKFLOW_AFTER_SNAPSHOT_ARTIFACT
+                )
             ))
             .ok_or_else(|| format!("after-snapshot command missing:\n{rendered}"))?;
         assert!(reason < note && note < fence, "{rendered}");
@@ -1930,8 +2416,11 @@ mod tests {
         // Issue #3872: the next-command redirect anchors at the resolved
         // --root, so both presented forms build from the same builder output
         // (the anchor math itself is pinned in loop_commands tests).
-        let next =
-            check_repo_exposure_command("repo root", "draft", WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT);
+        let next = check_repo_exposure_command(
+            &bound_root("repo root"),
+            "draft",
+            WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+        );
         let bash_form = format!("```bash\n{next}\n```\n");
         assert!(
             rendered.contains(bash_form.as_str()),
@@ -1985,7 +2474,7 @@ mod tests {
             command.step == "agent_packet"
                 && command.command
                     == agent_packet_command(
-                        "repo root",
+                        &bound_root("repo root"),
                         "67fc764ba37d77bd",
                         WORKFLOW_AGENT_PACKET_ARTIFACT,
                     )
@@ -2190,7 +2679,45 @@ mod tests {
             .as_ref()
             .ok_or_else(|| "expected a next command".to_string())?;
         assert_eq!(next.step, "select_seam");
-        assert_eq!(next.command, "ripr pilot --root .");
+        assert_eq!(next.command, pilot_select_command(&bound_root(".")));
+
+        // #4216 row 3: a complete pilot run that ranked a top seam and
+        // recorded no repair start is terminal for status. Sending the user
+        // back to `ripr pilot` would only rank the same seam again.
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            r#"{"status": "complete", "top_actionable_seams": [{"seam_id": "601d0f60f676a636"}], "next": {"repair_command": null}}"#,
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert_eq!(report.next_command, None, "{:?}", report.next_command);
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_found_no_repair_target")
+            .ok_or_else(|| format!("expected a no-repair-target warning: {:?}", report.warnings))?;
+        assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
+        assert!(
+            warning
+                .message
+                .contains("add a test for it by hand in the crate that owns it"),
+            "{}",
+            warning.message
+        );
+        let rendered = render_agent_status_markdown(&report);
+        assert!(!rendered.contains("ripr pilot --root"), "{rendered}");
+
+        // A pilot run that timed out is not that fact: rerunning pilot is
+        // still the way forward.
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            r#"{"status": "timed_out", "top_actionable_seams": [{"seam_id": "601d0f60f676a636"}], "next": {"repair_command": null}}"#,
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        let next = report
+            .next_command
+            .as_ref()
+            .ok_or_else(|| "expected a next command".to_string())?;
+        assert_eq!(next.step, "select_seam");
 
         // Status repeats the pilot value as its next command, so only a repair
         // start may pass. Any other string, even another ripr command, leaves
@@ -2206,7 +2733,229 @@ mod tests {
             .as_ref()
             .ok_or_else(|| "expected a next command".to_string())?;
         assert_eq!(next.step, "select_seam");
-        assert_eq!(next.command, "ripr pilot --root .");
+        assert_eq!(next.command, pilot_select_command(&bound_root(".")));
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #4216 (Python and TypeScript re-walks): a complete pilot run that
+    /// ranked no seam, produced no repair card, and routed the code to
+    /// `ripr check` is terminal for status, whatever the language. Status
+    /// names the hand step and the recorded check command instead of looping
+    /// back to pilot; a route not enabled in `[languages]` names the enable
+    /// step instead of promising a discriminator. Every other summary still
+    /// routes to pilot.
+    #[test]
+    fn agent_status_stops_when_pilot_routed_changed_code_to_check() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("pilot-routed-to-check");
+        let enabled_routes = r#"[{"language": "typescript", "enabled": true, "command": "ripr check --root ."}, {"language": "python", "enabled": true, "command": "ripr check --root ."}]"#;
+        let summary = |status: &str, state: &str, first_use: &str, routes: &str, repair: &str| {
+            format!(
+                r#"{{"status": "{status}", "top_actionable_seams": [], {first_use} "language_routes": {{"state": "{state}", "routes": {routes}}}, "next": {{"repair_command": {repair}}}}}"#
+            )
+        };
+        let stopped = |text: &str| -> Result<String, String> {
+            write_file(&root.join(PILOT_SUMMARY_ARTIFACT), text)?;
+            let report = build_agent_status_report(&root, Path::new("."));
+            if report.next_command.is_some() {
+                return Err(format!(
+                    "expected no next command for {text}: {:?}",
+                    report.next_command
+                ));
+            }
+            let warning = report
+                .warnings
+                .iter()
+                .find(|warning| warning.kind == "pilot_routed_to_check_no_repair_target")
+                .ok_or_else(|| {
+                    format!("expected a routed-to-check warning: {:?}", report.warnings)
+                })?;
+            assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
+            let rendered = render_agent_status_markdown(&report);
+            assert!(
+                !rendered.contains("```bash\nripr pilot --root"),
+                "{rendered}"
+            );
+            assert!(!warning.message.contains("  "), "{}", warning.message);
+            Ok(warning.message.clone())
+        };
+
+        // Positive: python_first_use null, missing key, or a no-repair-card
+        // status; the enabled routes name the check command and hand step.
+        for first_use in [
+            r#""python_first_use": null,"#,
+            "",
+            r#""python_first_use": {"status": "no_repair_cards", "repair_cards_total": 0},"#,
+            r#""python_first_use": {"status": "no_python_findings", "repair_cards_total": 0},"#,
+        ] {
+            let message = stopped(&summary(
+                "complete",
+                "required",
+                first_use,
+                enabled_routes,
+                "null",
+            ))?;
+            // The carried route keeps the pilot artifact's text; the rerun
+            // hint status generates binds the selected root (#4000).
+            for expected in [
+                "routed the typescript, python code to `ripr check --root .`".to_string(),
+                "add or strengthen a test for the changed behavior by hand, then rerun `ripr check --root .`".to_string(),
+                format!(
+                    "If the workspace changed since that run, rerun `{}`",
+                    pilot_select_command(&bound_root("."))
+                ),
+            ] {
+                assert!(message.contains(&expected), "{message}");
+            }
+        }
+
+        // A route not enabled in `[languages]` names the enable step and
+        // promises no discriminator.
+        let message = stopped(&summary(
+            "complete",
+            "required",
+            "",
+            r#"[{"language": "javascript", "enabled": false, "command": "ripr check --root ."}]"#,
+            "null",
+        ))?;
+        assert!(
+            message.contains("the typescript code is not enabled in ripr.toml [languages]"),
+            "{message}"
+        );
+        assert!(
+            message.contains(r#"add "typescript" to `[languages] enabled` in ripr.toml"#),
+            "{message}"
+        );
+        assert!(!message.contains("discriminator"), "{message}");
+
+        // A route without a language renders without a double space.
+        let message = stopped(&summary(
+            "complete",
+            "required",
+            "",
+            r#"[{"enabled": true, "command": "ripr check --root ."}]"#,
+            "null",
+        ))?;
+        assert!(
+            message.contains("routed the code to `ripr check --root .`"),
+            "{message}"
+        );
+
+        // Controls: every other summary keeps status on `select_seam`.
+        for control in [
+            summary("timed_out", "required", "", enabled_routes, "null"),
+            summary("complete", "supplementary", "", enabled_routes, "null"),
+            summary("complete", "not_detected", "", enabled_routes, "null"),
+            summary(
+                "complete",
+                "required",
+                r#""python_first_use": {"status": "analysis_unavailable", "repair_cards_total": 0},"#,
+                enabled_routes,
+                "null",
+            ),
+            summary(
+                "complete",
+                "required",
+                "",
+                enabled_routes,
+                r#""ripr check --root .""#,
+            ),
+            summary(
+                "complete",
+                "required",
+                "",
+                r#"[{"language": "perl", "enabled": false, "command": null}]"#,
+                "null",
+            ),
+            "{ not json".to_string(),
+        ] {
+            write_file(&root.join(PILOT_SUMMARY_ARTIFACT), &control)?;
+            let report = build_agent_status_report(&root, Path::new("."));
+            let next = report
+                .next_command
+                .as_ref()
+                .ok_or_else(|| format!("expected pilot for control {control}"))?;
+            assert_eq!(next.step, "select_seam", "{control}");
+            assert_eq!(
+                next.command,
+                pilot_select_command(&bound_root(".")),
+                "{control}"
+            );
+        }
+        std::fs::remove_file(root.join(PILOT_SUMMARY_ARTIFACT))
+            .map_err(|err| format!("remove summary: {err}"))?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert_eq!(
+            report.next_command.as_ref().map(|next| next.step.as_str()),
+            Some("select_seam")
+        );
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #4227 onboarding Python walk: a complete pilot run that ranked no seam
+    /// and recorded no repair start but produced a Python preview repair card
+    /// used to send status back to `ripr pilot`, which records the same card
+    /// again. Status now stops and names the first-pr route for the card.
+    #[test]
+    fn agent_status_routes_a_pilot_python_repair_card_to_first_pr() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("pilot-python-card");
+        let summary = |status: &str, seams: &str, first_use: &str, repair: &str| {
+            format!(
+                r#"{{"status": "{status}", "top_actionable_seams": {seams}, "python_first_use": {first_use}, "language_routes": {{"state": "required", "routes": [{{"language": "python", "enabled": true, "command": "ripr check --root ."}}]}}, "next": {{"repair_command": {repair}}}}}"#
+            )
+        };
+        let ready = r#"{"status": "ready", "repair_cards_total": 1, "top_repair_card": {"missing_discriminator": "amount == DISCOUNT_THRESHOLD", "verify_command": "pytest tests/test_pricing.py::test_discount"}}"#;
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary("complete", "[]", ready, "null"),
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert!(report.next_command.is_none(), "{:?}", report.next_command);
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_python_repair_card_no_agent_repair")
+            .ok_or_else(|| format!("expected a Python card warning: {:?}", report.warnings))?;
+        assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
+        for expected in [
+            "produced a Python preview repair card for missing discriminator `amount == DISCOUNT_THRESHOLD`",
+            "running pilot again unchanged records the same card",
+            "`ripr first-pr --root",
+            "(`pytest tests/test_pricing.py::test_discount`)",
+            "then rerun `ripr check --root",
+            "If the workspace changed since that run, rerun `ripr pilot --root",
+        ] {
+            assert!(warning.message.contains(expected), "{}", warning.message);
+        }
+        let rendered = render_agent_status_markdown(&report);
+        assert!(
+            !rendered.contains("```bash\nripr pilot --root"),
+            "{rendered}"
+        );
+
+        // Controls: a ranked seam, a recorded repair start, an incomplete run,
+        // or a ready status without cards keeps status on `select_seam`.
+        for control in [
+            summary("timed_out", "[]", ready, "null"),
+            summary("complete", "[]", ready, r#""ripr check --root .""#),
+            summary(
+                "complete",
+                "[]",
+                r#"{"status": "ready", "repair_cards_total": 0}"#,
+                "null",
+            ),
+        ] {
+            write_file(&root.join(PILOT_SUMMARY_ARTIFACT), &control)?;
+            let report = build_agent_status_report(&root, Path::new("."));
+            let next = report
+                .next_command
+                .as_ref()
+                .ok_or_else(|| format!("expected pilot for control {control}"))?;
+            assert_eq!(next.step, "select_seam", "{control}");
+        }
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
@@ -2232,7 +2981,10 @@ mod tests {
         assert_eq!(next.step, "repair_attempt_before");
         assert_eq!(
             next.command,
-            "ripr agent repair --root 'repo root' --seam-id from-receipt --phase before"
+            format!(
+                "ripr agent repair --root {} --seam-id from-receipt --phase before",
+                shell_arg(&bound_root("repo root"))
+            )
         );
         assert!(!next.command.contains('>'));
 
@@ -2263,13 +3015,17 @@ mod tests {
         assert!(commands.iter().any(|command| {
             command.step == "after_snapshot"
                 && command.command
-                    == check_repo_exposure_command(".", "draft", WORKFLOW_AFTER_SNAPSHOT_ARTIFACT)
+                    == check_repo_exposure_command(
+                        &bound_root("."),
+                        "draft",
+                        WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+                    )
         }));
         assert!(commands.iter().any(|command| {
             command.step == "analysis_outcome"
                 && command.command
                     == check_analysis_outcome_command(
-                        ".",
+                        &bound_root("."),
                         "draft",
                         WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
                     )
@@ -2277,13 +3033,17 @@ mod tests {
         assert!(commands.iter().any(|command| {
             command.step == "agent_brief"
                 && command.command
-                    == agent_brief_command(".", "seam-a", WORKFLOW_AGENT_BRIEF_ARTIFACT)
+                    == agent_brief_command(
+                        &bound_root("."),
+                        "seam-a",
+                        WORKFLOW_AGENT_BRIEF_ARTIFACT,
+                    )
         }));
         assert!(commands.iter().any(|command| {
             command.step == "agent_verify"
                 && command.command
                     == agent_verify_command(
-                        ".",
+                        &bound_root("."),
                         WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
                         WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
                         Some(WORKFLOW_AGENT_VERIFY_ARTIFACT),
@@ -2292,7 +3052,10 @@ mod tests {
         assert!(commands.iter().any(|command| {
             command.step == "agent_receipt"
                 && command.command
-                    == "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id seam-a --json --out target/ripr/reports/agent-receipt.json"
+                    == format!(
+                        "ripr agent receipt --root {} --verify-json target/ripr/workflow/agent-verify.json --seam-id seam-a --json --out target/ripr/reports/agent-receipt.json",
+                        shell_arg(&bound_root("."))
+                    )
         }));
     }
 

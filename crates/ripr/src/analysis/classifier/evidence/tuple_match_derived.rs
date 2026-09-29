@@ -4,11 +4,12 @@
 //! interpreter. Every unsupported owner, closure, initializer, result-flow, or
 //! oracle shape leaves the existing weak evidence unchanged.
 
-use crate::analysis::classify::{ProbeContext, file_imports_foreign_callee_name};
+use crate::analysis::classify::ProbeContext;
 use crate::analysis::rust_index::find_file_facts;
+use crate::analysis::syntax::parse_clean_source_file;
 use crate::domain::{Confidence, Probe, ProbeFamily, RelationReason, StageEvidence, StageState};
 use ra_ap_syntax::ast::{HasArgList, HasAttrs, HasName};
-use ra_ap_syntax::{AstNode, Edition, SourceFile, SyntaxNode, ast};
+use ra_ap_syntax::{AstNode, SyntaxNode, ast};
 use std::path::{Component, Path, PathBuf};
 
 struct DerivedWitness {
@@ -77,10 +78,10 @@ pub(super) fn discrimination(
                 .earliest_unresolved_reason
                 .is_some()
             || !assertion_namespace_is_standalone(&owner.file, &test.file)
-            || file_imports_foreign_callee_name(
+            || context.test_file_imports_foreign_callee_name(
+                &test.file,
                 &test_facts.source,
                 &owner.name,
-                &context.index.package_names,
             )
         {
             continue;
@@ -454,8 +455,7 @@ fn arm_source_matches(arm: &ast::MatchArm, claimed: &str) -> Option<bool> {
 }
 
 fn parsed(source: &str) -> Option<ast::SourceFile> {
-    let parse = SourceFile::parse(source, Edition::CURRENT);
-    parse.errors().is_empty().then(|| parse.tree())
+    parse_clean_source_file(source).map(|parse| parse.tree())
 }
 
 fn named_function(root: &ast::SourceFile, name: &str) -> Option<ast::Fn> {
@@ -496,7 +496,10 @@ fn same_current_file(
     let Ok(owner_path) = authority.root.join(owner_file).canonicalize() else {
         return false;
     };
-    let Ok(probe_path) = authority.root.join(probe_file).canonicalize() else {
+    // Probe locations are `--root` as given joined with the changed path, so
+    // they resolve from the working directory. Joining them onto the
+    // canonical authority root again only works for an absolute or `.` root.
+    let Ok(probe_path) = probe_file.canonicalize() else {
         return false;
     };
     owner_path == probe_path

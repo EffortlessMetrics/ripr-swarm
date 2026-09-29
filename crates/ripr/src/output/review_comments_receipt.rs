@@ -8,7 +8,9 @@ use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 pub(crate) const REVIEW_COMMENTS_RECEIPT_SCHEMA_VERSION: &str = "0.1";
 
@@ -43,10 +45,31 @@ impl ReviewCommentsRunReceipt {
         head: &str,
         timeout_ms: u64,
         expected_artifacts: &[String],
+        revision_budget: Option<Duration>,
     ) -> Self {
         let root_identity = canonical_root_identity(root);
-        let base_sha = resolve_revision(root, base);
-        let head_sha = resolve_revision(root, head);
+        // #4363 review: the two revision probes must not each block for the
+        // fixed one-minute ceiling when the caller configured a shorter
+        // review-comments budget — the CLI checks its `--timeout-ms`
+        // deadline only after this constructor returns, so two probes at
+        // the fixed ceiling could block 120s against a 1s budget. Each
+        // probe is capped at the remaining budget (still bounded by the
+        // fixed ceiling), and the remaining time is re-derived between the
+        // two probes so the pair cannot outblock the caller's budget.
+        let resolve_started = std::time::Instant::now();
+        let remaining = |spent: std::time::Duration| match revision_budget {
+            Some(budget) => {
+                let remaining = budget.saturating_sub(spent);
+                if remaining.is_zero() {
+                    None
+                } else {
+                    Some(remaining.min(RECEIPT_REVISION_DEADLINE))
+                }
+            }
+            None => Some(RECEIPT_REVISION_DEADLINE),
+        };
+        let base_sha = resolve_revision(root, base, remaining(resolve_started.elapsed()));
+        let head_sha = resolve_revision(root, head, remaining(resolve_started.elapsed()));
         let reusable_cache_identity = reusable_cache_identity(&root_identity, &base_sha, &head_sha);
         Self {
             schema_version: REVIEW_COMMENTS_RECEIPT_SCHEMA_VERSION,
@@ -123,23 +146,40 @@ impl ReviewCommentsRunReceipt {
             .unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(parent)
             .map_err(|err| format!("create receipt parent {} failed: {err}", parent.display()))?;
+        super::file_write::validate_destination(path)
+            .map_err(|err| format!("review-comments receipt output refused: {err}"))?;
 
         let temp_path = atomic_temp_path(path);
         let mut committed = self.clone();
         committed.atomic_write_status = "committed";
         let json = serde_json::to_vec_pretty(&committed)
             .map_err(|err| format!("serialize review-comments receipt failed: {err}"))?;
-        fs::write(&temp_path, json)
-            .map_err(|err| format!("write review-comments receipt temp failed: {err}"))?;
+        // Acquisition failure never removes a path we did not create.
+        let mut temp = super::file_write::create_exclusive(&temp_path)
+            .map_err(|err| format!("create review-comments receipt output temp failed: {err}"))?;
+        if let Err(err) = temp.write_all(&json) {
+            drop(temp);
+            let _ = fs::remove_file(&temp_path);
+            return Err(format!(
+                "write review-comments receipt output temp failed: {err}"
+            ));
+        }
+        drop(temp);
         if let Err(err) = fs::rename(&temp_path, path) {
             if err.kind() != std::io::ErrorKind::AlreadyExists {
                 let _ = fs::remove_file(&temp_path);
                 return Err(format!("publish review-comments receipt failed: {err}"));
             }
+            super::file_write::validate_destination(path).map_err(|error| {
+                let _ = fs::remove_file(&temp_path);
+                format!("review-comments receipt output refused: {error}")
+            })?;
             fs::remove_file(path).map_err(|remove_err| {
+                let _ = fs::remove_file(&temp_path);
                 format!("replace review-comments receipt failed: {remove_err}")
             })?;
             fs::rename(&temp_path, path).map_err(|rename_err| {
+                let _ = fs::remove_file(&temp_path);
                 format!("publish review-comments receipt failed: {rename_err}")
             })?;
         }
@@ -194,13 +234,30 @@ fn reusable_cache_identity(root: &str, base: &str, head: &str) -> String {
     format!("sha256:{:x}", hasher.finalize())
 }
 
-fn resolve_revision(root: &Path, revision: &str) -> String {
+/// Cooperative ceiling for each receipt revision probe (#2303, #4363). The
+/// caller's remaining `--timeout-ms` budget further caps it (#4363 review).
+const RECEIPT_REVISION_DEADLINE: Duration = Duration::from_mins(1);
+
+/// Cooperative deadline for receipt revision resolution (#2303, #4363). The
+/// receipt flow must not block past the deadline on a hung git; an unresolved
+/// revision degrades to the raw revision string exactly as any other
+/// `rev-parse` failure always has. The caller's remaining `--timeout-ms`
+/// budget further caps each probe (#4363 review); `None` means the budget is
+/// exhausted or the caller declared none, and the probe is skipped entirely.
+fn resolve_revision(root: &Path, revision: &str, deadline: Option<Duration>) -> String {
     let object = format!("{revision}^{{commit}}");
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["rev-parse", "--verify", &object])
-        .output();
+    // `current_dir(root)` in the shared helper is equivalent to the previous
+    // `git -C root` form for every root git could resolve; a missing root now
+    // fails the spawn instead of exiting non-zero, which lands in the same
+    // silent fallback.
+    let output = match deadline {
+        Some(deadline) => crate::git::run_git_output_with_deadline(
+            root,
+            &["rev-parse", "--verify", &object],
+            Some(deadline),
+        ),
+        None => Err("revision resolution budget exhausted (not spawned)".to_string()),
+    };
     output
         .ok()
         .filter(|output| output.status.success())
@@ -231,7 +288,98 @@ mod tests {
             "HEAD",
             30_000,
             &["comments.json".to_string()],
+            None,
         )
+    }
+
+    /// A real single-commit repository, so `HEAD` actually resolves and a
+    /// raw-revision fallback is distinguishable from a resolved SHA.
+    fn single_commit_repo(label: &str) -> Result<PathBuf, String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-receipt-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&dir).map_err(|err| format!("create repo dir failed: {err}"))?;
+        let git = |args: &[&str]| -> Result<(), String> {
+            let output =
+                crate::git::run_git_output_with_deadline(&dir, args, Some(Duration::from_secs(30)))
+                    .map_err(|err| format!("run git {args:?} failed: {err}"))?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "git {args:?} failed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ))
+            }
+        };
+        git(&["init", "-q"])?;
+        fs::write(dir.join("f.txt"), "value\n")
+            .map_err(|err| format!("write fixture file failed: {err}"))?;
+        git(&["add", "."])?;
+        git(&[
+            "-c",
+            "user.name=ripr-test",
+            "-c",
+            "user.email=ripr-test@example.com",
+            "commit",
+            "-q",
+            "-m",
+            "init",
+        ])?;
+        Ok(dir)
+    }
+
+    #[test]
+    fn receipt_revision_probes_respect_the_caller_budget() -> Result<(), String> {
+        // #4363 review: each revision probe is capped at the caller's
+        // remaining `--timeout-ms` budget, and an exhausted budget skips
+        // the probe entirely (the raw-revision fallback, exactly like any
+        // other rev-parse failure) — a 1s budget must never block for the
+        // fixed one-minute ceiling twice.
+        let dir = single_commit_repo("budget")?;
+        let artifacts = vec!["comments.json".to_string()];
+        let resolved = ReviewCommentsRunReceipt::new(
+            &dir,
+            "HEAD",
+            "HEAD",
+            30_000,
+            &artifacts,
+            Some(Duration::from_secs(30)),
+        );
+        if resolved.base_sha == "HEAD" || resolved.base_sha.len() != 40 {
+            return Err(format!(
+                "a healthy budget must resolve HEAD to a SHA, got {:?}",
+                resolved.base_sha
+            ));
+        }
+        let skipped = ReviewCommentsRunReceipt::new(
+            &dir,
+            "HEAD",
+            "HEAD",
+            30_000,
+            &artifacts,
+            Some(Duration::ZERO),
+        );
+        if skipped.base_sha != "HEAD" || skipped.head_sha != "HEAD" {
+            return Err(format!(
+                "an exhausted budget must skip both probes and fall back to the raw revision, got base={:?} head={:?}",
+                skipped.base_sha, skipped.head_sha
+            ));
+        }
+        let ceiling = ReviewCommentsRunReceipt::new(&dir, "HEAD", "HEAD", 30_000, &artifacts, None);
+        if ceiling.base_sha != resolved.base_sha {
+            return Err(format!(
+                "the no-budget fixed-ceiling path must still resolve, got {:?}",
+                ceiling.base_sha
+            ));
+        }
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
     }
 
     #[test]
@@ -352,6 +500,8 @@ mod tests {
         let mut receipt = sample_receipt();
 
         receipt.write_atomic(&path)?;
+        // Exclusive staging must still support replacing an existing regular receipt.
+        receipt.write_atomic(&path)?;
 
         // File exists and is valid JSON
         let content =
@@ -371,6 +521,83 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn receipt_temp_refuses_planted_symlink_without_clobbering_target() -> Result<(), String> {
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-receipt-symlink-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|time| time.as_nanos())
+                .unwrap_or(0),
+        ));
+        let _cleanup = Cleanup(dir.clone());
+        fs::create_dir_all(&dir).map_err(|err| format!("setup directory: {err}"))?;
+        let path = dir.join("receipt.json");
+        let mut receipt = sample_receipt();
+        // Positive control reaches the production authority before the probe.
+        receipt.write_atomic(&path)?;
+        fs::remove_file(&path).map_err(|err| format!("remove control receipt: {err}"))?;
+        let sentinel = dir.join("outside.txt");
+        fs::write(&sentinel, b"protected receipt sentinel")
+            .map_err(|err| format!("setup sentinel: {err}"))?;
+        let temp = atomic_temp_path(&path);
+        std::os::unix::fs::symlink(&sentinel, &temp)
+            .map_err(|err| format!("setup planted temp: {err}"))?;
+        let mut refused = sample_receipt();
+        let result = refused.write_atomic(&path);
+        let observed = fs::read(&sentinel).map_err(|err| format!("read sentinel: {err}"))?;
+        let untouched = observed == b"protected receipt sentinel";
+        let link_preserved = fs::symlink_metadata(&temp)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false);
+        let published = path.exists();
+        assert!(
+            untouched,
+            "production receipt temp write followed planted link; outside sentinel changed to {} bytes; result={result:?}",
+            observed.len()
+        );
+        assert!(
+            result.is_err(),
+            "exclusive temp acquisition must refuse planted path"
+        );
+        assert!(
+            link_preserved,
+            "refusal must not remove an attacker-owned temp path"
+        );
+        assert!(!published, "refused receipt must not publish an artifact");
+        assert_eq!(refused.atomic_write_status, "not_written");
+        // Final publication also refuses a planted destination leaf.
+        fs::remove_file(&temp).map_err(|err| format!("remove planted fixture temp: {err}"))?;
+        std::os::unix::fs::symlink(&sentinel, &path)
+            .map_err(|err| format!("setup planted destination: {err}"))?;
+        let result = refused.write_atomic(&path);
+        assert!(result.is_err(), "receipt destination link must be refused");
+        assert_eq!(
+            fs::read(&sentinel).map_err(|err| err.to_string())?,
+            observed
+        );
+        assert!(
+            fs::symlink_metadata(&path)
+                .map_err(|err| err.to_string())?
+                .file_type()
+                .is_symlink()
+        );
+        assert!(
+            !temp.exists(),
+            "destination refusal must not acquire a temp"
+        );
+        assert_eq!(refused.atomic_write_status, "not_written");
         Ok(())
     }
 
