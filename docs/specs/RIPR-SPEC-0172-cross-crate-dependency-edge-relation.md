@@ -118,7 +118,10 @@ rules above:
 - the owner's crate must not bring a type named `T` in from another crate,
   or glob-import another crate, in its library source: then
   `dependency_name::...::T` may name that type, and no re-export is
-  resolved here;
+  resolved here. A glob rooted at `std`, `core` or `alloc`, at a module
+  the same file declares, or at a name that file imports through a local
+  or standard path (`use core::{num};` then `use num::*;`) is local and
+  does not refuse;
 - a `let` binding of the owner name cannot shadow `T::owner(` and does not
   defeat this route.
 
@@ -202,6 +205,7 @@ call.
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_imported_from_owner_crate_admits_across_crates`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_fails_closed_without_owner_identity`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_refuses_foreign_type_names_and_quoted_paths`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_admits_past_local_and_standard_globs`
 - `crates/ripr/src/analysis/syntax/ra.rs::tests::impl_context_names_the_self_type_only_for_plain_named_impls`
 
 ## Implementation Mapping
