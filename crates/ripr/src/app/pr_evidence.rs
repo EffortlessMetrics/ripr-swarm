@@ -1095,7 +1095,7 @@ mod tests {
         let bounded =
             run_git_output_bytes_within(&missing, &["rev-parse", "HEAD"], Duration::from_mins(1));
         match bounded {
-            Err(err) if !crate::git::is_git_invocation_timeout(&err) => {}
+            Err(err) if !err.contains(crate::git::GIT_INVOCATION_TIMEOUT_PREFIX) => {}
             other => return Err(format!("control: expected a spawn failure, got {other:?}")),
         }
         match run_git_output_bytes_within(&missing, &["rev-parse", "HEAD"], Duration::ZERO) {
