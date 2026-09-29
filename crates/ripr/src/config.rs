@@ -13,6 +13,7 @@ use std::path::{Component, Path, PathBuf};
 
 mod model;
 mod python;
+mod toolchain_file;
 #[cfg(feature = "lang-typescript")]
 mod typescript;
 
@@ -32,6 +33,7 @@ pub(crate) use python::{
     is_python_excluded_dir_everywhere, python_project_marker_name, python_source_dir_marker_name,
     source_dir_contains_detectable_python,
 };
+pub(crate) use toolchain_file::{repository_toolchain_path_pin, toolchain_path_pin_refusal};
 #[cfg(feature = "lang-typescript")]
 pub(crate) use typescript::{
     is_detectable_excluded_typescript_path, is_detectable_generated_typescript_path,
@@ -211,10 +213,15 @@ pub(crate) fn generated_init_config() -> &'static str {
 }
 
 pub(crate) fn config_fingerprint(source_text: &str) -> String {
+    bytes_fingerprint(source_text.as_bytes())
+}
+
+/// [`config_fingerprint`] over raw bytes, for inputs that need not be UTF-8.
+pub(crate) fn bytes_fingerprint(bytes: &[u8]) -> String {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;
     let mut hash = FNV_OFFSET;
-    for byte in source_text.as_bytes() {
+    for byte in bytes {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(FNV_PRIME);
     }
@@ -391,7 +398,12 @@ impl RiprConfig {
                 producer: perl.producer,
                 executable: perl.executable.map(PathBuf::from),
                 timeout_ms: perl.timeout_ms.unwrap_or(30_000),
-                cache_dir: perl.cache_dir.map(PathBuf::from),
+                // Repository config: ripr creates, writes and renames files
+                // here, so it must not name a directory outside the checkout.
+                cache_dir: perl
+                    .cache_dir
+                    .map(|path| parse_relative_path("perl.cache_dir", &path))
+                    .transpose()?,
             };
         }
         Ok(config)
