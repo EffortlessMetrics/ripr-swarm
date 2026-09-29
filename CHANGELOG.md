@@ -42,6 +42,51 @@ are scoped or reviewed.
   changed owner's output" and stayed `weakly_exposed` although the tests kill
   the mutants. The comparison-boundary check still applies to these calls
   (#4567).
+- Security: Rust source discovery skips symlinked `.rs` entries, as the
+  Python and TypeScript readers already did. A cloned repository or pull
+  request that committed `src/zero.rs -> /dev/zero` made `ripr check` read
+  until it ran out of memory (#4751).
+- Security: ripr's git calls pass `-c core.fsmonitor=false`, so a
+  repository's own `core.fsmonitor` program (reachable from an extracted
+  archive or a planted nested repository) does not run on `git status`
+  (#4744).
+- Security: `[perl].cache_dir` must be a repository-relative path without
+  `..`. An absolute or escaping value is now a config error instead of a
+  directory ripr creates and writes outside the checkout. The cache directory
+  now resolves under the analyzed root rather than the working directory, so
+  `--root <checkout>` cannot place it elsewhere either (#4745).
+- Security: `ripr doctor` probes every language runtime (`node`, `bun`,
+  `pnpm`, `python3`, `pytest`) outside the checkout, as it already did for
+  `yarn`. Run inside it, pnpm fetched and ran the release a project's
+  `packageManager` named, and version managers read project files (#4742).
+- Security: ripr no longer runs `cargo` or `rustc` in a repository whose
+  nearest `rust-toolchain.toml` selects a toolchain by `path`. rustup would
+  execute that path, and `/proc/self/cwd/...` points it into the checkout, so
+  `ripr doctor` in a cloned repository ran the repository's own program.
+  Doctor now reports the check as not run and names the file, and the
+  test-harness `cargo metadata` probe fails closed. Setting
+  `RUSTUP_TOOLCHAIN` restores the probes (#4740).
+- Security: the workflow `ripr init --ci github` writes no longer consumes
+  gate inputs a pull request can commit under `target/ripr` or `target/ci`
+  (#4731), only treats ripr comments posted by `github-actions[bot]` as its
+  own (#4732), and no longer leaves the job token in `.git/config`, prints
+  unfolded repository paths to the log, or interpolates composite-action
+  inputs into shell (#4733). Regenerate the workflow with
+  `ripr init --ci github --force` to pick this up.
+- Security: `ripr lsp` no longer reads a whole client-named file to digest
+  an opened document. It digests only a regular file no larger than one LSP
+  message, so `didOpen` for `/dev/zero`, a FIFO or a multi-GB file can no
+  longer exhaust memory or hang the server (#4729).
+- Security: a base ref starting with `-` is refused before `git diff` runs,
+  including from LSP `baseRef` settings, so it can never be parsed as a diff
+  option such as `--output` (#4730).
+- Security: `ripr pilot` and other commands that write to default paths
+  inside the analyzed repository no longer write through a symlink committed
+  there. A cloned repository could commit
+  `target/ripr/pilot/pilot-summary.md` as a link to any file the user can
+  write, and `ripr pilot` replaced that file. Those writes, and ripr's
+  temporary files, now refuse a symlink, FIFO or directory at the output
+  path (#4719).
 - Nested `rerun --json` cache-identity versions in `docs/OUTPUT_SCHEMA.md`
   now track live `FILE_FACT_CACHE_SCHEMA_VERSION` (`1.10`) and
   `CACHE_SCHEMA_VERSION` (`1.16`). Producer-backed docs tests fail when those
@@ -125,6 +170,9 @@ are scoped or reviewed.
   blocked root, a file outside the analyzed root, an edited buffer whose
   evidence is paused until the file is saved, or a file no refresh has
   analyzed yet.
+- CI: the `ripr init --ci github` workflow pins `shell: bash` for every job,
+  so its bash-only steps still parse on a Windows runner, and the README
+  names `ripr init --ci github` as the CI entry point (#4391).
 - `ripr review-comments` no longer times out on a large diff. It evaluates
   seams on changed lines and in changed owner functions first, and skips the
   rest of the scope when those already fill the ten review slots; a warning
@@ -1155,6 +1203,26 @@ are scoped or reviewed.
   focused test with the missing discriminator next to the nearest related
   test", matching the new test `pilot` names, where it used to say "extend
   the nearest related test".
+- A deeply nested Rust file anywhere in the workspace no longer aborts
+  `ripr check`, `ripr pilot`, or the LSP with a stack overflow. A lexical scan
+  now refuses a source file before parsing when its estimated nesting depth
+  passes 256, an `else if` chain passes 2,048 links, or an operator chain
+  passes 4,096. That file gets lexical-fallback facts, and the
+  fallback disclosure names the `rust_nesting_budget` reason on cold and warm
+  runs. Cache generations bumped, so a warm cache cannot serve facts from
+  before the budget (#4475).
+- `ripr check --format repo-exposure-md` puts the file path in each Top gaps
+  heading in a code span, as the owner line already did. A file name holding
+  Markdown link brackets or `*` rendered as a link or emphasis in that heading
+  (#4605).
+- Each repair attempt keeps its own result. The after phase copies the
+  receipt and the verify document into the attempt's artifacts directory and
+  records them in `attempt.json` as `terminal_artifacts`, bound by path,
+  size, and SHA-256. Finishing a second attempt used to overwrite
+  `target/ripr/reports/agent-receipt.json`, the only copy of the first
+  attempt's result; that file is now a compatibility copy of the latest
+  finish, and `ripr agent status` reads the attempt's own receipt first
+  (#4636).
 
 ### Added
 
@@ -1454,6 +1522,13 @@ are scoped or reviewed.
   `valid` / `incomplete` / `not_run` — a structural currentness-readiness
   verdict, never a robustness or adequacy claim
   ([#3565](https://github.com/EffortlessMetrics/ripr-swarm/issues/3565)).
+- `ripr feedback record` writes a local usefulness receipt bound to one
+  analysis snapshot (`--snapshot`, required) with a reason from a closed list,
+  such as `useful_actionable` or `false_actionable`, under
+  `target/ripr/feedback/`. `ripr feedback export` joins those receipts onto an
+  existing `route-quality.json`, listing receipts that match no row instead of
+  inventing movement. Recording changes no diagnostic, classification,
+  baseline, suppression, gate, or gap closure (#4684).
 
 ### Changed
 
