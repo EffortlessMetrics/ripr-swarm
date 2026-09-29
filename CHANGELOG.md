@@ -21,7 +21,8 @@ are scoped or reviewed.
   found" for an incomplete analysis; it leads with a warning naming the
   outcome and each limitation (#4721). In a repository written only in such
   languages, `ripr pilot` names them instead of an empty "none ranked"
-  result with a test-then-compare loop, and `ripr doctor` lists them.
+  result with a test-then-compare loop (its JSON `next` commands are
+  `null`), and `ripr doctor` lists them, in mixed workspaces too (#4750).
   `ripr first-pr` reports no gap to assign there instead of a wrong-root
   loop through `--root` and `ripr doctor`, and `ripr init` warns that the
   configuration will report those changes as not analyzed.

@@ -14583,6 +14583,8 @@ Field contract:
   `ripr outcome` before/after receipt command, and `repair_command`: the
   `ripr agent repair --seam-id <id> --phase before` command for the top seam
   when its repair-packet eligibility flip holds, otherwise `null` (#3906).
+  When `language_routes.state` is `unanalyzed_only`, `after_snapshot_command`
+  and `outcome_command` are `null`: there is no seam to snapshot or measure.
   Partial summaries include a retry command with a larger explicit timeout.
 
 The Markdown sibling prints the same summary, puts the top recommendation first,

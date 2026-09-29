@@ -505,34 +505,47 @@ fn language_runtime_probes(root: &Path) -> Vec<(&'static str, &'static str, &'st
 /// false for the detected language. If no markers are found, prints
 /// `none detected` rather than claiming any language.
 fn report_detected_languages(root: &Path) {
-    let detected = detect_languages(root);
-    if detected.is_empty() {
-        println!("- Detected languages: none detected");
-        if let Some(line) = unanalyzed_languages_line(
-            &crate::analysis::workspace_unanalyzed_source_languages(root),
-        ) {
-            println!("{line}");
-        }
-        return;
+    for line in detected_languages_lines(
+        &detect_languages(root),
+        &crate::analysis::workspace_unanalyzed_source_languages(root),
+    ) {
+        println!("{line}");
     }
-    let entries: Vec<String> = detected
-        .iter()
-        .map(|id| {
-            let tier = language_status(*id).as_str().to_string();
-            let available = id.is_available();
-            if available {
-                format!("{} ({})", id.as_str(), tier)
-            } else {
-                format!("{} ({}) [adapter not compiled]", id.as_str(), tier)
-            }
-        })
-        .collect();
-    println!("- Detected languages: {}", entries.join(", "));
 }
 
-/// Names source ripr cannot analyze when no supported language was found,
-/// so a Go or Java repository is told why `ripr check` will find nothing
-/// instead of being sent there as the recommended first command.
+/// The detected-languages line, followed by the unanalyzed-languages line
+/// whenever such source exists: a mixed Rust and Go workspace needs the Go
+/// half named as much as a Go-only one does.
+fn detected_languages_lines(
+    detected: &[LanguageId],
+    unanalyzed: &[(&'static str, usize)],
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    if detected.is_empty() {
+        lines.push("- Detected languages: none detected".to_string());
+    } else {
+        let entries: Vec<String> = detected
+            .iter()
+            .map(|id| {
+                let tier = language_status(*id).as_str().to_string();
+                let available = id.is_available();
+                if available {
+                    format!("{} ({})", id.as_str(), tier)
+                } else {
+                    format!("{} ({}) [adapter not compiled]", id.as_str(), tier)
+                }
+            })
+            .collect();
+        lines.push(format!("- Detected languages: {}", entries.join(", ")));
+    }
+    lines.extend(unanalyzed_languages_line(unanalyzed));
+    lines
+}
+
+/// Names source ripr cannot analyze, so a Go or Java repository is told why
+/// `ripr check` will find nothing instead of being sent there as the
+/// recommended first command, and a mixed workspace learns which half is
+/// reported as not analyzed.
 fn unanalyzed_languages_line(unanalyzed: &[(&'static str, usize)]) -> Option<String> {
     if unanalyzed.is_empty() {
         return None;
@@ -1455,6 +1468,22 @@ mod tests {
             "{line}"
         );
         assert!(line.contains("never as clean"), "{line}");
+
+        // Mixed workspace: the Go half is named beside the detected Rust.
+        let lines = detected_languages_lines(&[LanguageId::Rust], &[("Go", 2)]);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(
+            lines[0].starts_with("- Detected languages: rust"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[1].starts_with("~ Unanalyzed languages: Go (2 file(s))"),
+            "{lines:?}"
+        );
+        let lines = detected_languages_lines(&[], &[("Go", 2)]);
+        assert_eq!(lines[0], "- Detected languages: none detected", "{lines:?}");
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(detected_languages_lines(&[LanguageId::Rust], &[]).len(), 1);
     }
 
     #[test]

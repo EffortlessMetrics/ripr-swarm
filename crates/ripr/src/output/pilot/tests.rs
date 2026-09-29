@@ -1252,6 +1252,11 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
         parsed["language_routes"]["unanalyzed_languages"][0]["file_count"],
         2
     );
+    // No seam exists to snapshot or measure, so JSON offers no follow-up
+    // command either.
+    assert!(parsed["next"]["after_snapshot_command"].is_null(), "{json}");
+    assert!(parsed["next"]["outcome_command"].is_null(), "{json}");
+    assert!(parsed["next"]["repair_command"].is_null(), "{json}");
 
     // Rust seams present: the ranking stands and the Go files stay a JSON
     // note, so Rust users' output is unchanged.
@@ -1294,6 +1299,11 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
         parsed["language_routes"],
         serde_json::json!({"state": "not_detected", "routes": []})
     );
+    assert!(
+        parsed["next"]["after_snapshot_command"].is_string(),
+        "{json}"
+    );
+    assert!(parsed["next"]["outcome_command"].is_string(), "{json}");
     Ok(())
 }
 

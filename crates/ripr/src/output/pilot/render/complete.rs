@@ -136,14 +136,21 @@ pub(crate) fn render_pilot_summary_json(
         "    \"inspect_packet\": \"{}\",\n",
         json_escape(&display_path(&context.artifacts.agent_seam_packets_json))
     ));
-    out.push_str(&format!(
-        "    \"after_snapshot_command\": \"{}\",\n",
-        json_escape(&commands.after_snapshot)
-    ));
-    out.push_str(&format!(
-        "    \"outcome_command\": \"{}\",\n",
-        json_escape(&commands.outcome)
-    ));
+    // An unanalyzed-only workspace has no seam to snapshot or measure, so
+    // offering the follow-up commands would send the reader into a loop.
+    if unanalyzed_only(context).is_some() {
+        out.push_str("    \"after_snapshot_command\": null,\n");
+        out.push_str("    \"outcome_command\": null,\n");
+    } else {
+        out.push_str(&format!(
+            "    \"after_snapshot_command\": \"{}\",\n",
+            json_escape(&commands.after_snapshot)
+        ));
+        out.push_str(&format!(
+            "    \"outcome_command\": \"{}\",\n",
+            json_escape(&commands.outcome)
+        ));
+    }
     match top
         .first()
         .and_then(|entry| repair_start_command(context.root, entry))
