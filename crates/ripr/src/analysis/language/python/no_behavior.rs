@@ -243,15 +243,15 @@ fn is_inert_annotation(annotation: &str) -> bool {
 /// in `:` (comments aside) the shape is not understood and there is no span,
 /// so a span never reaches into the body.
 fn multi_line_def_header_span(source: &str, owner_start_line: usize) -> Option<(usize, usize)> {
-    let lines: Vec<&str> = source.lines().collect();
     let first = owner_start_line.checked_sub(1)?;
-    let def_index = (first..lines.len().min(first + 64)).find(|&index| {
-        let trimmed = lines[index].trim_start();
+    let mut lines = source.lines().enumerate().skip(first);
+    let (def_index, def_text) = lines.by_ref().take(64).find(|(_, text)| {
+        let trimmed = text.trim_start();
         trimmed.starts_with("def ") || trimmed.starts_with("async def ")
     })?;
     let mut depth: i32 = 0;
-    for (index, text) in lines.iter().enumerate().skip(def_index).take(256) {
-        let code = text.split_once('#').map_or(*text, |(code, _)| code);
+    for (index, text) in std::iter::once((def_index, def_text)).chain(lines.take(255)) {
+        let code = text.split_once('#').map_or(text, |(code, _)| code);
         for ch in code.chars() {
             match ch {
                 '(' | '[' | '{' => depth += 1,

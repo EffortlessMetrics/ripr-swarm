@@ -5151,13 +5151,45 @@ fn dunder_owner_needs_its_class_imported_from_the_owner_package() -> Result<(), 
             ("test_package_member".to_string(), "constructor_call"),
         ]
     );
-    // `pkgx` is not a package above `pkg.cache`.
+    // `pk` is not a package above `pkg.cache`.
     let prefix = extract_tests(
         Path::new("tests/test_prefix.py"),
         "from pk import Cache\n\n\ndef test_prefix():\n    assert Cache(3).n == 3\n",
     );
     assert_eq!(prefix.len(), 1);
     assert!(candidate_relations(init, &prefix).is_empty());
+    // A `cache` module from another package, and the bare `src` layout root.
+    let other_module = extract_tests(
+        Path::new("tests/test_other_module.py"),
+        "import other.cache\nimport other.cache as oc\nfrom other import cache\nfrom src import Cache\n\n\ndef test_from_other():\n    assert cache.Cache(3).n == 3\n\n\ndef test_dotted_other():\n    assert other.cache.Cache(3).n == 3\n\n\ndef test_aliased_other():\n    assert oc.Cache(3).n == 3\n\n\ndef test_src_root():\n    assert Cache(3).n == 3\n",
+    );
+    assert_eq!(other_module.len(), 4);
+    assert!(candidate_relations(init, &other_module).is_empty());
+    // A star import from the owner module binds the class by name.
+    let star = extract_tests(
+        Path::new("tests/test_star.py"),
+        "from pkg.cache import *\n\n\ndef test_star():\n    assert Cache(3).n == 3\n",
+    );
+    assert_eq!(star.len(), 1);
+    assert_eq!(
+        candidate_relations(init, &star),
+        vec![("test_star".to_string(), "constructor_call")]
+    );
+    // An import root other than the repository root or `src`.
+    let lib_owners = extract_owners(
+        Path::new("lib/pkg/cache.py"),
+        "class Cache:\n    def __init__(self, n):\n        self.n = n\n",
+    );
+    let lib_init = flat_owner(&lib_owners, "Cache.__init__")?;
+    let lib_tests = extract_tests(
+        Path::new("tests/test_lib.py"),
+        "from pkg.cache import Cache\n\n\ndef test_lib_layout():\n    assert Cache(3).n == 3\n",
+    );
+    assert_eq!(lib_tests.len(), 1);
+    assert_eq!(
+        candidate_relations(lib_init, &lib_tests),
+        vec![("test_lib_layout".to_string(), "constructor_call")]
+    );
     Ok(())
 }
 
@@ -5211,6 +5243,27 @@ fn unbound_dunder_owner_is_a_dynamic_dispatch_limit_not_no_static_path() -> Resu
     )
     .ok_or("the changed line must produce a finding")?;
     assert_eq!(finding.class, ExposureClass::NoStaticPath);
+
+    // An import this adapter does not read (inside `try:`) still names the
+    // class: an unknown, not an actionable `no_static_path`.
+    let guarded_tests = extract_tests(
+        Path::new("tests/test_guarded.py"),
+        "try:\n    from cachetools import Cache\nexcept ImportError:\n    Cache = None\n\n\ndef test_insert():\n    cache = Cache(maxsize=2)\n    cache[1] = 1\n    assert cache[1] == 1\n",
+    );
+    assert_eq!(
+        guarded_tests.len(),
+        1,
+        "fixture must parse the guarded test"
+    );
+    let finding = classify_change(
+        owner_file,
+        3,
+        "        self.data[key] = value",
+        &owners,
+        &guarded_tests,
+    )
+    .ok_or("the changed line must produce a finding")?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
     Ok(())
 }
 

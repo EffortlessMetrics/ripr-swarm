@@ -408,7 +408,13 @@ fn test_uses_owner_class(
     let body = &test.body_text;
     test.imports.iter().any(|import| {
         if imports_owner_class(import, owner, class) {
-            return !test_binds_local(test, &import.alias) && uses_name(body, &import.alias);
+            // `from pkg.cache import *` binds the class under its own name.
+            let local = if import.imported == "*" {
+                class
+            } else {
+                import.alias.as_str()
+            };
+            return !test_binds_local(test, local) && uses_name(body, local);
         }
         imports_owner_module(import, owner)
             && !test_binds_local(test, &import.alias)
@@ -416,46 +422,67 @@ fn test_uses_owner_class(
     })
 }
 
-/// `from M import <class>` where `M` is the owner's module or a package that
-/// contains it (`from attr import Attribute` for `src/attr/_make.py`: packages
-/// re-export their submodules' classes). Method owners carry no resolved
-/// re-export set, so the package prefix stands in for it.
+/// `from M import <class>` (or `from M import *`) where `M` is the owner's
+/// module or a package that contains it (`from attr import Attribute` for
+/// `src/attr/_make.py`: packages re-export their submodules' classes). Method
+/// owners carry no resolved re-export set, so the package prefix stands in
+/// for it.
 fn imports_owner_class(import: &PythonImport, owner: &PythonOwner, class: &str) -> bool {
-    import.imported == class && module_contains_owner(&import.source_module, owner)
+    (import.imported == class || import.imported == "*")
+        && module_contains_owner(&import.source_module, owner)
 }
 
-/// `import <owner module>` or `from <package> import <owner module>`,
-/// including a package that contains the owner (`import cachetools` for
-/// `src/cachetools/__init__.py`, `import attr` for `src/attr/_make.py`).
+/// An import that binds the owner's module or a package containing it:
+/// `import pkg.cache`, `from pkg import cache`, `import cachetools` for
+/// `src/cachetools/__init__.py`, `import attr` for `src/attr/_make.py`. The
+/// full dotted path must match: `from other import cache` binds a different
+/// `cache` module.
 fn imports_owner_module(import: &PythonImport, owner: &PythonOwner) -> bool {
-    imported_module_matches_owner(import, owner)
-        || (import.source_module.is_empty() && module_contains_owner(&import.imported, owner))
+    if import.imported == "*" {
+        return false;
+    }
+    let module = if import.source_module.is_empty() {
+        import.imported.clone()
+    } else {
+        format!("{}.{}", import.source_module, import.imported)
+    };
+    module_contains_owner(&module, owner)
 }
 
-/// Whether dotted `module` is one of the owner's module paths or a package
-/// above it. Empty never matches.
+/// Whether dotted `module` names the owner's module or a package above it,
+/// under any import root: each of the owner's module paths is also tried
+/// without its leading segments (`pkg.cache` for `lib/pkg/cache.py`). A bare
+/// `src` layout root is not a package. Empty never matches.
 fn module_contains_owner(module: &str, owner: &PythonOwner) -> bool {
     !module.is_empty()
+        && module != "src"
         && owner_module_paths(&owner.file).iter().any(|path| {
-            path == module
-                || path
-                    .strip_prefix(module)
-                    .is_some_and(|rest| rest.starts_with('.'))
+            std::iter::once(path.as_str())
+                .chain(path.match_indices('.').map(|(idx, _)| &path[idx + 1..]))
+                .any(|suffix| {
+                    suffix == module
+                        || suffix
+                            .strip_prefix(module)
+                            .is_some_and(|rest| rest.starts_with('.'))
+                })
         })
 }
 
-/// Whether the test's module imports the dunder owner's class or the owner
-/// module at all, even though no test body references the class in a shape
-/// this adapter can bind (`self.Cache(...)` through a unittest mixin
-/// attribute, or a test-local subclass).
-pub(super) fn test_imports_owner_class_or_module(
+/// Whether a test may reach the dunder owner's class in a shape this adapter
+/// cannot bind: its module imports the class or the owner module
+/// (`self.Cache(...)` through a unittest mixin attribute, or a test-local
+/// subclass), or its body names the class through an import this adapter
+/// does not read (`try: from pkg.cache import Cache`). Such a test makes the
+/// owner a dynamic-dispatch limit rather than `no_static_path`.
+pub(super) fn test_may_reach_owner_class(
     test: &PythonTest,
     owner: &PythonOwner,
     class: &str,
 ) -> bool {
-    test.imports.iter().any(|import| {
-        imports_owner_module(import, owner) || imports_owner_class(import, owner, class)
-    })
+    contains_name_reference(&test.body_text, class)
+        || test.imports.iter().any(|import| {
+            imports_owner_module(import, owner) || imports_owner_class(import, owner, class)
+        })
 }
 
 pub(super) fn body_calls_owner(body_text: &str, owner: &PythonOwner) -> bool {

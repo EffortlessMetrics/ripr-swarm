@@ -1,6 +1,6 @@
 use super::related_tests::{
     PythonRelatedCandidate, body_calls_owner, dunder_method_class, is_python_identifier_char,
-    line_prefix_looks_like_comment_or_string, test_imports_owner_class_or_module,
+    line_prefix_looks_like_comment_or_string, test_may_reach_owner_class,
 };
 use super::{PythonImport, PythonOracleShape, PythonOwner, PythonTest, split_python_assignment};
 use crate::domain::{OracleStrength, StaticLimitKind};
@@ -129,7 +129,8 @@ pub(super) fn static_limit_for_change(
 /// adapter cannot always bind to the class — a unittest mixin's `self.Cache`
 /// attribute or a test-local subclass — so "no static test path" is not a safe
 /// claim. Returns `None` when a test relates, or when no test imports the
-/// owner at all (a class no test imports keeps `no_static_path`).
+/// owner's class or module and none names the class (such a class keeps
+/// `no_static_path`).
 pub(super) fn implicit_dunder_dispatch_limit(
     owner: &PythonOwner,
     all_tests: &[PythonTest],
@@ -141,7 +142,7 @@ pub(super) fn implicit_dunder_dispatch_limit(
     let class = dunder_method_class(owner)?;
     all_tests
         .iter()
-        .any(|test| test_imports_owner_class_or_module(test, owner, class))
+        .any(|test| test_may_reach_owner_class(test, owner, class))
         .then(|| PythonStaticLimit {
             kind: StaticLimitKind::DynamicDispatch,
             evidence: format!(
@@ -149,7 +150,7 @@ pub(super) fn implicit_dunder_dispatch_limit(
                 owner.qualified_name
             ),
             missing: format!(
-                "Static limit `dynamic_dispatch`: `{}` is a dunder method Python invokes through syntax on an instance of `{class}`; tests import `{class}` or its module, but the preview adapter cannot bind the instance a test builds to the class, so it does not claim that no test reaches the owner.",
+                "Static limit `dynamic_dispatch`: `{}` is a dunder method Python invokes through syntax on an instance of `{class}`; tests import or name `{class}`, but the preview adapter cannot bind the instance a test builds to the class, so it does not claim that no test reaches the owner.",
                 owner.qualified_name
             ),
         })
