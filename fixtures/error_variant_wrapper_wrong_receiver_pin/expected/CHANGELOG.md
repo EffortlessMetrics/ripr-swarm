@@ -76,7 +76,7 @@ Updated:
 ## Pending — error_variant_wrapper_wrong_receiver_pin (7)
 
 Reason:
-RIPR-SPEC-0122: the analysis outcome and state lines lead with plain words; the id stays in parentheses
+RIPR-SPEC-0021: emitted related tests keep relation-confidence order so the primary Related test is the strongest relation
 
 Command:
 `cargo xtask goldens bless error_variant_wrapper_wrong_receiver_pin --reason "..."`
