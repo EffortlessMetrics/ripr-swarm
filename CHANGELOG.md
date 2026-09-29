@@ -17,6 +17,10 @@ are scoped or reviewed.
   `analysis_complete: true` with no findings. The implicit root now walks up to
   the nearest `Cargo.toml`, or to the git top level when there is none, and
   says so on stderr. `ripr cache` resolves the same root (#4610).
+- LSP: a request whose method starts with `$/` and that ripr does not handle
+  now gets a `-32601` method-not-found error, as the LSP spec requires. It got
+  no response at all, so a client that sent one waited on it forever.
+  Unhandled `$/` notifications are still ignored.
 - MCP: a client that opens with `server/discover` (protocol `2026-07-28`)
   now receives the same instructions as an `initialize` client, including the
   CLI route that analyzes the diff. Before, only `initialize` carried them.
