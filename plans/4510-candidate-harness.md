@@ -10,7 +10,110 @@ candidate_registry.rs owns deny_unknown_fields CandidateIdentity169 (sha/tree/re
 
 xtask/run.rs uses ripr::process_owner::OwnedProcess. capture_output_with_timeout475 already owns timeout/termination; capture_bytes_in_dir_with_timeout550 and capture_stdout_to_file_with_timeout607 provide narrower output/cwd forms. Extend this boundary for declared cwd/env and bounded stdout/stderr/rawbyte digests plus explicit termination/reap/cleanup states if needed. Do not create a second process runner. OwnedProcess Windows assign-before-execution Job Object containment already exists. Harness telemetry reuses this owner.
 
-## Coherent files and API
+## Selected first PR: actual admitted package subject for existing corpus
+
+The first slice is one private source-to-archive-to-installed-subject custody
+spine consumed by the existing negative-corpus authentic baseline. It does not
+complete the later reusable-row harness or pronounce #2769 qualified. Preserve
+#3924's historical accepted lifecycle-integration defer; successor #2769's
+[execution graph](https://github.com/EffortlessMetrics/ripr-swarm/issues/2769#issuecomment-5882045830)
+requires explicit candidate admission before this harness.
+
+Extend existing `release-negative-corpus --version` with an all-or-none input
+group: `--controller-root`, `--candidate-source-root`, `--candidate-artifact`.
+The exact controller-relative artifact bytes pass the existing registry
+resolver; neither a filename nor a newest-file heuristic grants authority.
+Reject partial, blank, duplicate and unsafe inputs before cleanup or spawning.
+No group preserves explicitly unqualified legacy smoke. An admission error in
+qualification mode never falls back to legacy. Do not gate the fifteen ambient
+`release-readiness` checks or create a new command/readiness aggregate.
+
+Controller root owns actual release policy, registry and registered artifact
+bytes. Candidate source root owns actual Git HEAD/tree/ref, manifests/lock and
+package inputs. The source commit precedes the control packet; controller HEAD
+must not equal the pin. Separate worktrees of one repository are valid. Retain
+and independently revalidate both domains. Source-promotion's different-repo
+common-directory condition is not this contract. No production pin/ref or
+checkout selection is created by this implementation.
+
+Extend `candidate_registry`'s existing validated grant with complete identity
+and raw-byte custody, keeping constructors private. A private release admission
+module uses the existing bounded explicit-CWD process owner for actual Git.
+Refactor the existing package owner only as needed to return a private installed
+subject, retaining its legacy wrapper. All source builds, archive/install paths
+and product execution use explicit owned roots. Do not reconstruct trusted
+handles from supplied digest strings, details text, matching versions or unequal
+workspace/executable hashes. No new public crate or dependency.
+
+`release_negative::resolve_candidate` passes the admitted absolute installed
+binary to existing `build_baseline` and `produce_authentic_chain_in_fixture`.
+That genuine consumer creates concrete before/after commits and runs installed
+RIPR analysis, verify and receipt. Retain source/archive/executable custody and
+mode in the same corpus report. The existing external installed doctor is
+another actual observation. Later cases consume the same subject; no synthetic
+passed row or second qualification verdict.
+
+### Archive attribution
+
+Cargo's [package documentation](https://doc.rust-lang.org/cargo/commands/cargo-package.html)
+explicitly says VCS metadata does not verify provenance. Check parsed
+`.cargo_vcs_info.json` SHA, `dirty=false` and package-relative `path_in_vcs`, then
+map every ordinary packaged entry to exact committed source bytes. Retain paths,
+sizes, SHA256 and committed blob identities. Reject duplicates, traversal,
+links, unsupported types and unexpected or ignored/untracked included files,
+even when tracked Git status is clean. Initially refuse source symlink
+flattening rather than admit content from outside the selected source.
+
+Generated files have explicit rules: `Cargo.toml.orig` matches committed package
+manifest; VCS metadata is checked above; normalized `Cargo.toml` and packaged
+`Cargo.lock` are retained outputs of the successful bounded Cargo invocation in
+fresh exclusively owned output. Parse/check package/version/bin and lock
+identities. Their attribution is producer custody and retained actual bytes,
+not a claim to independently reimplement every Cargo normalization rule. Unknown
+generated/copied entries or unsupported normalization fail visibly. The archive
+handle is constructed only by successful production plus validation, never from
+an arbitrary caller archive/hash. Revalidate archive bytes/inventory before
+extraction/install and executable bytes before product consumers.
+
+Boundary checks remain unlocked: this is observed local producer custody, not
+atomic checkout exclusion, hostile-host protection or authenticated build
+attestation. Retain that limitation rather than strengthening hashes into
+provenance claims.
+
+### Tests first and acceptance
+
+- Parser controls cover legacy, complete qualification group and malformed,
+  partial, duplicate, blank and unsafe inputs.
+- A real temporary source repository commits the candidate first and creates a
+  fully qualified ref. A separate controller fixture then registers its actual
+  SHA/tree/ref through the real evaluator/resolver. Controller HEAD differs.
+  Independently mutate both root domains and require refusal/revalidation; the
+  restored unchanged positive remains usable.
+- Decoy source/foreign package/install paths remain byte-identical on admission
+  refusal, with no producer invocation. Ignored included foreign input rejects.
+- A dependency-free real Cargo fixture named `ripr` exercises actual package,
+  extraction, install and absolute execution with a unique source token. Wrong
+  same-version source/archive/executable, metadata/inventory and post-production
+  substitutions reject. This proves machinery only; never fabricate doctor or
+  baseline success from that fixture.
+- Actual RIPR selected through a legal fixture registry must be genuinely
+  packaged/installed, run external doctor and produce the existing authentic
+  before/after/verify/receipt baseline with nonzero observations before delivery
+  is claimed. The full corpus remains a separately reported actual denominator.
+
+Observe behavioral RED before production; compilation/host failure is not RED.
+After an explicit native lease run focused registry/package/corpus controls,
+actual tiny producer, real RIPR baseline and relevant characterizations, then
+fmt, committed check-fast/precommit and independent selector parity. Preserve
+raw native exits, deadlines, owned process cleanup and failures. No eligible
+live pin is an honest refusal, not candidate selection or a release verdict.
+
+Rollback the coherent invocation/custody slice to restore legacy entry behavior;
+preserve receipts before owned fixture cleanup. Later #4510 rows, budgets,
+cleanup taxonomy, downstream packets, blind acceptance and #2769 aggregation
+remain out of scope. Implementation and new tests remain NOT_RUN.
+
+## Later shared-harness scope (not the first PR)
 
 Private release submodule xtask/src/reports/release/candidate_harness.rs plus tests.rs, called from release.rs existing install path; candidate_registry existing grant accessor only as needed; run.rs narrow captured typed observation extension only if absent; release-server sha256_file and existing path/container helpers reused. One private CandidateProofPacket DTO/render projection exported through existing reports module for4505-4508. No new release-readiness command/qualification aggregate. No public crate/deps.
 
