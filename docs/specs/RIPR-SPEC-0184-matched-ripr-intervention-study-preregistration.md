@@ -1,4 +1,4 @@
-# RIPR-SPEC-0183: Matched RIPR intervention-study preregistration
+# RIPR-SPEC-0184: Matched RIPR intervention-study preregistration
 
 Status: proposed
 
