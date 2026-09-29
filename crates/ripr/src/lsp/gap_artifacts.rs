@@ -1442,7 +1442,13 @@ fn shell_arg_token(token: &str) -> Option<&str> {
         return Some(token);
     }
     let inner = token.strip_prefix('\'')?.strip_suffix('\'')?;
-    if inner.is_empty() || inner.contains(['\'', '\0', '\n', '\r']) {
+    // PowerShell also closes a `'` span on a typographic quote (U+2018-U+201F),
+    // which would expose the rest of the target as commands; mirrors
+    // `substitution_is_quoted` and the VS Code client's `redirectTailPath`.
+    if inner.is_empty()
+        || inner.contains(['\'', '\0', '\n', '\r'])
+        || inner.contains(|ch: char| ('\u{2018}'..='\u{201f}').contains(&ch))
+    {
         return None;
     }
     Some(inner)
@@ -3043,6 +3049,8 @@ mod tests {
             format!("{body} > target/ripr/v.json extra"),
             format!("{body} > target/ripr/v.json; id"),
             format!("{body} > 'target/ripr/it'\\''s.json'"),
+            format!("{body} > 'target/ripr/a\u{2019} ; Write-Output injected #.json'"),
+            format!("{body} > 'target/ripr/a\u{201c}b.json'"),
             format!("{body} > $(id)/target/ripr/v.json"),
             format!("{body} 2> target/ripr/v.json"),
             format!("{body} >target/ripr/v.json"),
