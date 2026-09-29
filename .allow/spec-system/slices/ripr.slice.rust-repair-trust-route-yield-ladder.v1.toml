@@ -41,3 +41,6 @@ status = "implemented"
 commands = [
   "cargo test -p xtask rust_repair_trust",
 ]
+
+[support_claim]
+state = "unchanged"
