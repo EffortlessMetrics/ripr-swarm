@@ -56,11 +56,13 @@ use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
 use classify::{classify_change, classify_change_with_old};
 mod discriminators;
+mod module_constants;
 mod no_behavior;
 mod oracles;
 mod owners_tests;
 mod parse_budget;
 mod probe_shape;
+mod reexports;
 mod related_tests;
 mod repo;
 mod sink_alignment;
@@ -176,6 +178,13 @@ struct PythonOwner {
     /// Empty for class and module owners. Used only to bind literal test-call
     /// arguments to predicate boundary operands (`boundary.rs`).
     parameters: Vec<PythonParameter>,
+    /// Dotted package paths whose `__init__.py` re-exports this owner under
+    /// its own name (`reexports.rs`). Empty until the workspace pass fills it.
+    reexport_modules: Vec<String>,
+    /// Module-scope literal constants visible in a function/method owner
+    /// (not shadowed locally). Empty for class and module owners. Used only
+    /// to resolve named predicate boundary operands (`boundary.rs`, #4227).
+    module_constants: Vec<module_constants::PythonModuleConstant>,
 }
 
 /// One declared parameter of a Python function owner.
@@ -245,6 +254,9 @@ struct PythonTest {
     parametrized: bool,
     framework: &'static str,
     assertions: Vec<PythonAssertion>,
+    /// How the test and its module can rebind names and attributes; guards
+    /// module-constant boundary resolution (`boundary.rs`, #4227).
+    constant_rebinding: module_constants::PythonTestRebinding,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -516,6 +528,9 @@ impl PythonAdapter {
                 all_owners.extend(facts.owners);
             }
         }
+        reexports::apply_package_reexports(&mut all_owners, |file| {
+            workspace_read.sources.get(file).map(String::as_str)
+        });
 
         // Walk-count cap disclosure: one named limitation carrying the
         // refused count, mirroring the TypeScript adapter's
@@ -724,6 +739,9 @@ mod new_declaration_tests;
 
 #[cfg(test)]
 mod python_tests;
+
+#[cfg(test)]
+mod reexport_tests;
 
 #[cfg(test)]
 mod tests;

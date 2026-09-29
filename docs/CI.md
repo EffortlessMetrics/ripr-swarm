@@ -863,7 +863,11 @@ ripr init --ci github
 ```
 
 Copy the generated file, not a workflow from this page. Run
-`ripr init --ci github --dry-run` to print it without writing anything. It
+`ripr init --ci github --dry-run` to print it without writing anything. The
+workflow installs the ripr version that generated it
+(`cargo install ripr --version <that version> --locked`), so a later release
+does not change CI behavior until you rerun `ripr init --ci github --force`
+with the newer ripr and review the diff. It
 uploads the pilot, report, and agent artifact directories. The official GitHub
 SARIF upload documentation uses `github/codeql-action/upload-sarif@v4`; keep
 the RIPR job, artifact upload, and optional SARIF steps advisory until the
@@ -875,7 +879,10 @@ the newer `ripr` and compare its `ripr init --ci github --force --dry-run`
 output with the committed file (`--force` lets the dry run plan over the
 existing file; nothing is written). On pull requests the workflow checks out the PR head
 commit, not GitHub's `refs/pull/N/merge` commit, so annotation and review
-comment lines match the lines in the PR diff after the base branch moves.
+comment lines match the lines in the PR diff after the base branch moves. A
+newer push cancels the older run of the same PR. Dependabot runs get a
+read-only token, so their inline-comment plan records
+`missing_write_permission` instead of attempting a post.
 
 For a CI-first user, the useful output is the artifact packet:
 
