@@ -1,8 +1,8 @@
 use super::module_constants::{
     PythonModuleConstant, constants_visible_in_function, python_test_rebinding,
 };
-#[cfg(test)]
 use super::parametrize::parametrize_cases;
+#[cfg(test)]
 use super::source_facts::extract_source_facts;
 use super::source_utils::{
     line_for_range_end, line_for_range_start, normalized_path, text_for_range,
