@@ -16580,7 +16580,8 @@ when no commit is recorded. Two builds of one version therefore report
 the file-fact cache and its input identity, not this report. They move
 whenever cache identity changes, so a consumer dispatches on the top-level
 `schema_version` and treats the nested values as opaque. Nested
-`analyzer_version` is the producing `ripr` package version and also moves.
+`analyzer_version` is the producing build identity described above and also
+moves.
 
 For a changed-test selector, `selector.kind` is `changed_test`. `changed_test`
 names the repository-relative parsed test file and may append
