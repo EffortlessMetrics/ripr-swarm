@@ -401,6 +401,12 @@ mod tests {
             .any(|detail| detail.contains(LIMITATION_NAME))
     }
 
+    fn names_producer_failure(result: &crate::analysis::language::LanguageDiffResult) -> bool {
+        result.limitations.iter().any(|limitation| {
+            limitation.kind == crate::analysis_outcome::AnalysisLimitationKind::ProducerFailure
+        })
+    }
+
     fn fallback_file(path: &str, source: &str, test_names: &[&str]) -> FileFacts {
         FileFacts {
             path: PathBuf::from(path),
@@ -999,6 +1005,61 @@ mod tests {
         assert!(
             !names_this_limitation(&result),
             "a changed test file is #4722, not #4775, got {:?}",
+            result.limitations
+        );
+        assert!(
+            names_producer_failure(&result),
+            "the #4722 producer_failure limitation must still be present for a changed unparseable file, got {:?}",
+            result.limitations
+        );
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn producer_failure_does_not_drop_unchanged_lexical_test_limitation() -> Result<(), String> {
+        let source = compact_owner_test("price");
+        let broken = format!("pub fn noise() {{}}\n{PARSER_REFUSAL}");
+        RaRustSyntaxAdapter
+            .summarize_file(Path::new("tests/price.rs"), &source)
+            .err()
+            .ok_or_else(|| {
+                "fixture precondition: tests/price.rs must fail the reference parser".to_string()
+            })?;
+        RaRustSyntaxAdapter
+            .summarize_file(Path::new("src/broken.rs"), &broken)
+            .err()
+            .ok_or_else(|| {
+                "fixture precondition: src/broken.rs must fail the reference parser".to_string()
+            })?;
+
+        let root = temp_root("compose-4722-4775")?;
+        write_demo_crate(&root, &[("tests/price.rs", source.as_str())])?;
+        write(&root.join("src/broken.rs"), &broken)?;
+        let changed_files = diff::parse_unified_diff(&format!(
+            "{}\
+             diff --git a/src/broken.rs b/src/broken.rs\n\
+             new file mode 100644\n\
+             --- /dev/null\n\
+             +++ b/src/broken.rs\n\
+             @@ -0,0 +1,2 @@\n\
+             +pub fn noise() {{}}\n\
+             +fn refuse_reference_parser(\n",
+            price_diff()
+        ));
+        let result = super::super::RustAdapter.analyze_diff(
+            &analysis_options(root.clone()),
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+        assert!(
+            names_this_limitation(&result),
+            "an unchanged consulted fallback test must still be #4775 when a changed file is producer_failure, got {:?}",
+            result.limitations
+        );
+        assert!(
+            names_producer_failure(&result),
+            "composing #4775 must not drop #4722 producer_failure, got {:?}",
             result.limitations
         );
         let _ = fs::remove_dir_all(root);

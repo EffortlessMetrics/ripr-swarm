@@ -1175,7 +1175,7 @@ impl RustAdapter {
         // tests. The findings it still yields are not a complete analysis of
         // that file, so the run discloses a typed producer limitation instead
         // of presenting the degraded result as complete.
-        let limitations = lexical_fallback_limitations(
+        let mut limitations = lexical_fallback_limitations(
             &index,
             analyzable_changed_files
                 .iter()
@@ -1268,14 +1268,19 @@ impl RustAdapter {
             }
         }
 
-        let limitations = lexical_test_grip::limitation_for_consulted_unchanged_lexical_tests(
-            &index,
-            &findings,
-            &changed_rust_paths,
-            &options.root,
-        )?
-        .into_iter()
-        .collect();
+        // #4775: unchanged lexical-fallback test files are a separate
+        // language-scope limitation. Compose with #4722 rather than
+        // replacing producer_failure when both apply.
+        if let Some(limitation) =
+            lexical_test_grip::limitation_for_consulted_unchanged_lexical_tests(
+                &index,
+                &findings,
+                &changed_rust_paths,
+                &options.root,
+            )?
+        {
+            limitations.push(limitation);
+        }
 
         Ok(LanguageDiffResult {
             findings,
