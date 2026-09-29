@@ -17,6 +17,7 @@ use rustpython_parser::{
     ast::{self, Expr, Ranged, Stmt},
     text_size::TextRange,
 };
+use std::collections::BTreeSet;
 use std::path::Path;
 
 #[cfg(test)]
@@ -247,6 +248,7 @@ pub(super) fn collect_tests_from_statements(
     imports: &[PythonImport],
     out: &mut Vec<PythonTest>,
 ) {
+    let local_classes = LocalTestClasses::of(statements);
     for stmt in statements {
         match stmt {
             Stmt::FunctionDef(function) if function.name.as_str().starts_with("test") => {
@@ -304,8 +306,12 @@ pub(super) fn collect_tests_from_statements(
                 });
             }
             Stmt::ClassDef(class) => {
-                let class_is_unittest = is_unittest_class(class) || in_unittest_class;
-                if class_is_unittest || is_pytest_class(class) {
+                let class_is_unittest =
+                    in_unittest_class || local_classes.unittest.contains(class.name.as_str());
+                if class_is_unittest
+                    || is_pytest_class(class)
+                    || local_classes.mixins.contains(class.name.as_str())
+                {
                     let class_name = class.name.to_string();
                     let nested_class_context = qualified_test_name(class_context, &class_name);
                     collect_tests_from_statements(
@@ -443,6 +449,81 @@ fn is_unittest_class(class: &ast::StmtClassDef) -> bool {
     class.bases.iter().any(|base| {
         expr_full_name(base).is_some_and(|name| name == "TestCase" || name.ends_with(".TestCase"))
     })
+}
+
+/// Test classes resolved through same-scope inheritance (#4562).
+///
+/// - `unittest`: classes that reach `TestCase` directly or through bases
+///   defined in the same scope (`class ZoneInfoGettzTest(GettzTest)` with
+///   `class GettzTest(unittest.TestCase, TzFoldMixin)`), whatever their name.
+/// - `mixins`: same-scope classes that a collected test class lists as a base
+///   (`TzFoldMixin`). Their `test*` methods run through that subclass. They
+///   run as unittest tests when a unittest class inherits them. A mixin that
+///   no collected class inherits never runs and is not collected.
+///
+/// Bases defined in another module are not followed.
+#[derive(Default)]
+struct LocalTestClasses<'a> {
+    unittest: BTreeSet<&'a str>,
+    mixins: BTreeSet<&'a str>,
+}
+
+impl<'a> LocalTestClasses<'a> {
+    fn of(statements: &'a [Stmt]) -> Self {
+        let classes: Vec<(&'a str, Vec<String>, bool)> = statements
+            .iter()
+            .filter_map(|stmt| match stmt {
+                Stmt::ClassDef(class) => Some((
+                    class.name.as_str(),
+                    class.bases.iter().filter_map(expr_full_name).collect(),
+                    is_unittest_class(class),
+                )),
+                _ => None,
+            })
+            .collect();
+        let mut found = Self::default();
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for (name, bases, direct) in &classes {
+                if !found.unittest.contains(name)
+                    && (*direct
+                        || bases
+                            .iter()
+                            .any(|base| found.unittest.contains(base.as_str())))
+                {
+                    found.unittest.insert(name);
+                    changed = true;
+                }
+            }
+        }
+        for (name, bases, _) in &classes {
+            if found.unittest.contains(name) || name.starts_with("Test") {
+                for base in bases {
+                    if let Some((mixin, _, _)) = classes
+                        .iter()
+                        .find(|(candidate, _, _)| *candidate == base.as_str())
+                        && !found.unittest.contains(mixin)
+                    {
+                        found.mixins.insert(mixin);
+                    }
+                }
+            }
+        }
+        // A mixin inherited by a unittest class runs under unittest.
+        let unittest_mixins: Vec<&'a str> = found
+            .mixins
+            .iter()
+            .copied()
+            .filter(|mixin| {
+                classes.iter().any(|(name, bases, _)| {
+                    found.unittest.contains(name) && bases.iter().any(|base| base == mixin)
+                })
+            })
+            .collect();
+        found.unittest.extend(unittest_mixins);
+        found
+    }
 }
 
 fn is_pytest_class(class: &ast::StmtClassDef) -> bool {

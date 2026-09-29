@@ -90,7 +90,10 @@ Test discovery:
 
 - `pytest` test functions with the default `test` name prefix at module level
 - pytest test methods with the same prefix under `class Test*`
-- `unittest.TestCase` subclasses and their default `test`-prefixed methods
+- `unittest.TestCase` subclasses and their default `test`-prefixed methods,
+  including classes that reach `TestCase` through a base defined in the same
+  file, and the `test`-prefixed methods of a same-file mixin that a collected
+  test class inherits (#4562); an uninherited mixin is not collected
 - parametrized tests via `@pytest.mark.parametrize` (recognised
   syntactically)
 - pytest fixture and parameter names captured from test function signatures

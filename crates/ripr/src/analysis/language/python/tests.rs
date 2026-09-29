@@ -259,6 +259,51 @@ class Policy:
     assert_eq!(owners[4].owner_kind, Some(OwnerKind::ClassMethod));
 }
 
+/// #4562, the dateutil `test_tz.py` shape: a `TestCase` subclass reached
+/// through a same-file base, and a mixin whose test methods run through a
+/// `TestCase` subclass, are collected; an uninherited mixin is not.
+#[test]
+fn extract_tests_follows_same_file_unittest_bases_and_mixins() {
+    let tests = extract_tests(
+        Path::new("tests/test_tz.py"),
+        r#"
+import unittest
+
+class TzFoldMixin(object):
+    def testFoldPositiveUTCOffset(self):
+        self.assertEqual(self.gettz("A"), 1)
+
+class GettzTest(unittest.TestCase, TzFoldMixin):
+    def testGettz(self):
+        self.assertEqual(gettz("A"), 1)
+
+class ZoneInfoGettzTest(GettzTest):
+    def testZoneInfoNewInstance(self):
+        self.assertIsNot(get_zonefile_instance(), get_zonefile_instance(new_instance=True))
+
+class UnusedMixin(object):
+    def test_never_runs(self):
+        helper()
+
+class Helper:
+    def test_not_a_test_class(self):
+        helper()
+"#,
+    );
+    let collected: Vec<(&str, &str)> = tests
+        .iter()
+        .map(|test| (test.qualified_name.as_str(), test.framework))
+        .collect();
+    assert_eq!(
+        collected,
+        vec![
+            ("TzFoldMixin.testFoldPositiveUTCOffset", "unittest"),
+            ("GettzTest.testGettz", "unittest"),
+            ("ZoneInfoGettzTest.testZoneInfoNewInstance", "unittest"),
+        ]
+    );
+}
+
 #[test]
 fn extract_tests_recognizes_pytest_parametrize_and_unittest() {
     let tests = extract_tests(

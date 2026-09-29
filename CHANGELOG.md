@@ -22,6 +22,10 @@ are scoped or reviewed.
   submodule attribute (`import click` then `click.utils._expand_args(...)`)
   is now related to the owner. On pallets/click such changes were
   `no_static_path` although the calling tests kill the mutants (#4560).
+- Python: `unittest` classes that inherit `TestCase` through another class in
+  the same file (`class ZoneInfoGettzTest(GettzTest)`), and test methods on a
+  mixin such a class inherits, are now collected. On dateutil a change killed
+  by `ZoneInfoGettzTest.testZoneInfoNewInstance` was `no_static_path` (#4562).
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from
