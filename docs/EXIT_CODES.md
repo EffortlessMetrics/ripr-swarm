@@ -45,7 +45,9 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
   part of its scope also exits `0`, with `partial_with_limitations`: a diff
   over the smaller partial budget (its limitation is also named
   `diff_scope_oversized`), a changed Rust file the parser refused and read
-  lexically, or a changed file whose language adapter is unavailable.
+  lexically, or a changed file whose language adapter is unavailable. The
+  parser follows stable Rust, so a changed file using nightly-only syntax it
+  cannot parse (guard patterns, never patterns) also makes the run partial.
 - **User error**: unknown command, missing required argument, or invalid
   config.
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
@@ -84,10 +86,12 @@ These are findings- and policy-driven exits, not operational failures; a
 monitoring system should page on `2`, not on `3`.
 
 Some refusals still exit `2` because the command could not do what was asked:
-`ripr receipt check` when the receipt is orphaned, mismatched, or not
-receipt-ready (the verdict is in the `--json` document), `ripr agent repair
---phase verify` without its explicit authorization or on a moved tree, and a
-repair `--phase after` whose edit cage recorded a violation.
+`ripr receipt check` when the receipt is orphaned or its gap does not match
+the ledger (the verdict is in the `--json` document), when a named `--ledger`
+cannot be read, or when `--gap` names a different gap than the receipt;
+`ripr agent receipt` when the attempt is not receipt-ready; `ripr agent
+repair --phase verify` without its explicit authorization or on a moved
+tree; and a repair `--phase after` whose edit cage recorded a violation.
 
 ## `ripr doctor` exit codes
 

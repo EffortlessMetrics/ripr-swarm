@@ -86,13 +86,21 @@ fn report_failure(err: &CommandError) {
 }
 
 /// A typed stdout write error whose cause is a closed pipe, as produced by
-/// the chunked stdout writers.
+/// the chunked stdout writers and the streamed repo-exposure JSON writer.
 fn is_closed_stdout_error(message: &str) -> bool {
-    (message.starts_with("write to stdout failed") || message.starts_with("flush stdout failed"))
+    CLOSED_STDOUT_WRITE_PREFIXES
+        .iter()
+        .any(|prefix| message.starts_with(prefix))
         && CLOSED_PIPE_MARKERS
             .iter()
             .any(|marker| message.contains(marker))
 }
+
+const CLOSED_STDOUT_WRITE_PREFIXES: [&str; 3] = [
+    "write to stdout failed",
+    "flush stdout failed",
+    "write repo exposure JSON failed",
+];
 
 const CLOSED_PIPE_MARKERS: [&str; 3] = ["Broken pipe", "(os error 232)", "(os error 109)"];
 
@@ -165,7 +173,7 @@ mod tests {
         }
         if !super::is_closed_stdout_error("write to stdout failed: Broken pipe (os error 32)")
             || !super::is_closed_stdout_error(
-                "write to stdout failed: write repo exposure JSON failed: Broken pipe (os error 32)",
+                "write repo exposure JSON failed: Broken pipe (os error 32)",
             )
             || !super::is_closed_stdout_error(
                 "flush stdout failed: The pipe is being closed. (os error 232)",
