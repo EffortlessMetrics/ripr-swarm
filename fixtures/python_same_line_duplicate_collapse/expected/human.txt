@@ -15,8 +15,8 @@ Start here:
   File: src/checkout.py:2
   Language: python
   Language status: preview
-  Static exposure: weakly_exposed (warning, confidence 0.40)
-  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
+  Static exposure: weak (weakly_exposed, warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/checkout.py:checkout_payload:field_value:field_construction:return_status_paid_event_receipt.sent_id_order_id
   Changed behavior: return {"status": "paid", "event": "receipt.sent", "id": order_id}
   Missing discriminator: Related Python test reaches `checkout_payload` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed field or object value.
@@ -24,7 +24,7 @@ Start here:
   Suggested test file: tests/test_checkout.py
   Suggested test: test_checkout_payload_smoke
   Test node: tests/test_checkout.py::test_checkout_payload_smoke
-  Verify command: pytest tests/test_checkout.py::test_checkout_payload_smoke (high)
+  Verify command: python -m pytest tests/test_checkout.py::test_checkout_payload_smoke (high)
   Next step: Python preview: strengthen the existing related test with a field/object assertion for missing discriminator `status == "paid"`.
   Evidence:
     - reach yes: 1 related Python test(s) found for owner `checkout_payload`

@@ -46,7 +46,7 @@
       "flow_sinks": [
         {"kind":"unknown","text":"if amount >= threshold:","line":2}
       ],
-      "evidence": ["owner: apply_discount", "owner_kind: function", "test_framework: pytest (test_apply_discount_boundary)", "test_verify_command: pytest tests/test_discount.py::test_apply_discount_boundary (test_apply_discount_boundary)", "related_test_relation: syntactic_call (test_apply_discount_boundary)", "test_oracle: exact_value strong (test_apply_discount_boundary)"],
+      "evidence": ["owner: apply_discount", "owner_kind: function", "test_framework: pytest (test_apply_discount_boundary)", "test_verify_command: python -m pytest tests/test_discount.py::test_apply_discount_boundary (test_apply_discount_boundary)", "related_test_relation: syntactic_call (test_apply_discount_boundary)", "test_oracle: exact_value strong (test_apply_discount_boundary)"],
       "missing": ["Related Python test reaches `apply_discount` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
       "assertion_texts": {
         "5": "assert apply_discount(100, 100) == 90"
@@ -129,5 +129,6 @@
       "category": "preview_language_advisory",
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
-  ]
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/discount.py","digest":"sha256:d260af53ab841a83c48695889929cf7e04dde8a9af83b4e7d40640d63305a985"}]}
 }

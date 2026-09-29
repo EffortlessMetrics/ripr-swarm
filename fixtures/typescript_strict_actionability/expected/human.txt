@@ -15,12 +15,14 @@ Start here:
   File: src/observed.ts:2
   Language: typescript
   Language status: preview
-  Static exposure: weakly_exposed (warning, confidence 0.40)
-  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
+  Static exposure: weak (weakly_exposed, warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return count + 1;
   Missing discriminator: Only heuristic TypeScript test links were found for `normalizeCount`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
   Related test: tests/observed.test.ts:1 normalizeCount exact value
-  Next step: TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == count + 1`; no actionable repair packet is emitted until verify,…
+  Next step: TypeScript preview advisory: add or strengthen a focused assertion for missing
+    discriminator `return value == count + 1`; no actionable repair packet is emitted until verify,
+    receipt, and edit-boundary fields are available.
   Evidence:
     - reach weak: 1 related test(s) found for owner `normalizeCount`
     - infection unknown: TypeScript preview adapter does not yet model infection.
@@ -31,7 +33,7 @@ Next: drill into the top finding:
   ripr context --root fixtures/typescript_strict_actionability/input --diff fixtures/typescript_strict_actionability/diff.patch --mode fast --at probe:src_observed.ts:typescript_preview:d09a8abb
 
 Hidden:
-  2 lower-priority finding(s) omitted from default human output.
+  2 lower-priority finding(s) omitted from default human output (TypeScript preview: 2).
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

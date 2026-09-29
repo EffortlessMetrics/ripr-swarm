@@ -15,8 +15,8 @@ Start here:
   File: src/notifier.py:2
   Language: python
   Language status: preview
-  Static exposure: weakly_exposed (warning, confidence 0.40)
-  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
+  Static exposure: weak (weakly_exposed, warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/notifier.py:send_alert:return_value:return_value:client.post/alerts_level_level_priority_critical
   Changed behavior: return client.post("/alerts", {"level": level, "priority": "critical"})
   Missing discriminator: Related Python test reaches `send_alert` but the strongest extracted oracle is `mock_expectation`; add or strengthen a focused assertion for the returned value.
@@ -24,7 +24,7 @@ Start here:
   Suggested test file: tests/test_notifier.py
   Suggested test: test_send_alert_calls_post
   Test node: tests/test_notifier.py::test_send_alert_calls_post
-  Verify command: pytest tests/test_notifier.py::test_send_alert_calls_post (high)
+  Verify command: python -m pytest tests/test_notifier.py::test_send_alert_calls_post (high)
   Next step: Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == <expected value>`.
   Evidence:
     - reach yes: 1 related Python test(s) found for owner `send_alert`

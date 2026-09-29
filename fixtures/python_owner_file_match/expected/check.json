@@ -46,7 +46,7 @@
       "flow_sinks": [
         {"kind":"return_value","text":"return amount + 7","line":2}
       ],
-      "evidence": ["owner: calculate_total", "owner_kind: function", "test_framework: pytest (test_checkout_total_includes_fee)", "test_verify_command: pytest tests/test_checkout.py::test_checkout_total_includes_fee (test_checkout_total_includes_fee)", "related_test_relation: syntactic_call (test_checkout_total_includes_fee)", "test_oracle: exact_value strong (test_checkout_total_includes_fee)"],
+      "evidence": ["owner: calculate_total", "owner_kind: function", "test_framework: pytest (test_checkout_total_includes_fee)", "test_verify_command: python -m pytest tests/test_checkout.py::test_checkout_total_includes_fee (test_checkout_total_includes_fee)", "related_test_relation: syntactic_call (test_checkout_total_includes_fee)", "test_oracle: exact_value strong (test_checkout_total_includes_fee)"],
       "missing": ["Related Python test reaches `calculate_total` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
       "assertion_texts": {
       },
@@ -96,5 +96,6 @@
       "category": "preview_language_advisory",
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
-  ]
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/catalog.py","digest":"sha256:0083d15ca13f822ded8e0b0c0e165a620a82e8f3390fbc45950f2d506bb6150f"}]}
 }

@@ -15,8 +15,8 @@ Start here:
   File: src/session.py:3
   Language: python
   Language status: preview
-  Static exposure: weakly_exposed (warning, confidence 0.40)
-  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
+  Static exposure: weak (weakly_exposed, warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/session.py:Session.refresh:field_value:field_construction:self.status=active
   Changed behavior: self.status = "active"
   Missing discriminator: A strong Python oracle reaches `refresh`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add…
@@ -24,7 +24,7 @@ Start here:
   Suggested test file: tests/test_session.py
   Suggested test: test_session_refresh
   Test node: tests/test_session.py::test_session_refresh
-  Verify command: pytest tests/test_session.py::test_session_refresh (high)
+  Verify command: python -m pytest tests/test_session.py::test_session_refresh (high)
   Next step: Python preview: strengthen the existing related test with a field/object assertion for missing discriminator `self.status == "active"`.
   Evidence:
     - reach yes: 1 related Python test(s) found for owner `refresh`

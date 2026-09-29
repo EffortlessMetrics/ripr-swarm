@@ -95,6 +95,15 @@ Owners the adapter must recognise:
 - arrow functions assigned to a `const`/`let` (`const name = (...) => { ... }`)
 - class declarations and class methods
 - exported and default-exported variants of the above
+- top-level CommonJS assignment exports whose value is a function or arrow
+  (#4545): `exports.NAME = ...` and `module.exports.NAME = ...` (owner
+  `NAME`), `module.exports = function NAME(...)` or an arrow (the module's
+  default-export owner, `NAME` or `default`), and static-identifier function
+  properties of `module.exports = { ... }`; non-function values, computed or
+  string-literal keys, compound or chained assignments, and nested
+  assignments yield no owner; a name that more than one CommonJS export in
+  the same file defines (`module.exports = { f }` then
+  `module.exports.f = ...`) yields no owner for any of them
 - React-ish component functions when obvious (named PascalCase function
   declarations or PascalCase arrow consts returning JSX)
 - module-scope `const` initializers that participate in changed behavior
@@ -111,8 +120,42 @@ Test discovery:
 
 - `test(...)`, `it(...)`, and `describe(...)` blocks, including nested
   `describe` for hierarchical naming
+- mocha BDD `specify(...)` and `context(...)`, and the mocha TDD / Vitest /
+  `node:test` `suite(...)`, as test and describe roots with the same active
+  modifiers (`.only`, `.concurrent`, `.sequential`); `.skip`, `xit`, and
+  `xcontext` register nothing (#4548)
+- an options object between the title and the callback
+  (`it(name, { timeout }, fn)`, `describe(name, { concurrency }, fn)`); a
+  trailing timeout (`test(name, fn, 5000)`) keeps argument 1 as the callback;
+  an options object (before or after the callback) whose `skip` / `todo` /
+  `fails` key holds anything but literal `false` / `undefined`, or that
+  holds a spread, computed key, or method, registers nothing, exactly like
+  `.skip`
+- a `describe` / `context` / `suite` whose title is not a string literal
+  (`describe(Div.name, fn)`, a template literal): its body is walked and the
+  suite is named by the computed-title placeholder `<computed title, line N>`
 - Jest/Vitest `test.each`, `it.each`, and table-driven variants when
   syntactically identifiable
+- `test(...)`, `it(...)`, and `describe(...)` registered inside a `for`,
+  `for...of`, or `for...in` loop body or a `.forEach(...)` callback, at file
+  or `describe` level. The body is extracted once and relates to owners
+  exactly as an ordinary test body does; the loop variables and callback
+  parameters shadow every enclosing binding of the same name, including an
+  imported owner or class name, so a call through a shadowing binding is not
+  an owner call. A loop is walked only when it is known to run at least
+  once: its iterable is a non-empty array or object literal,
+  `Object.entries`/`keys`/`values` of one, or a `const` whose innermost
+  binding in scope is a single declaration of one; a counted `for` needs a
+  literal start and bound that admit the first iteration. A test inside any
+  other loop (an empty, reassignable, imported or parameter iterable, a
+  non-literal bound) could be credited without existing, so that loop is not
+  walked and stays disclosed as `typescript_test_extraction_partial`, as does
+  a `for...of`/`for...in` whose target is not a declaration.
+- a computed title (a template literal with substitutions, a concatenation,
+  an identifier) is never evaluated: the test is named by the enclosing
+  `describe` names, the placeholder `<computed title, line N>`, and the line
+  of the registration. A string literal or a substitution-free template keeps
+  its text.
 - top-level `expect(...)` calls when paired with a `test`/`it` block
 - exported test files matched by configured patterns (default:
   `*.test.ts`, `*.test.tsx`, `*.spec.ts`, `*.spec.tsx`, and the
@@ -137,6 +180,35 @@ Assertions / oracles the adapter must recognise:
   snapshot oracle (weak / static-limited)
 - bare `expect(actual).toBeTruthy()` / `toBeFalsy()` /
   `toBeDefined()` → smoke oracle
+- assertion libraries reached through a binding the test file imports from
+  `assert`, `node:assert`, `assert/strict`, `node:assert/strict`, or `chai`
+  (ESM import, top-level `require(...)`, or `require('chai').expect`; #4547):
+  `assert.strictEqual` / `deepStrictEqual` → exact-value oracle; `equal` /
+  `deepEqual` → exact-value only in strict mode (bound from `assert/strict`,
+  `node:assert/strict`, or the `strict` export) and relational under legacy
+  `node:assert`, whose `==` comparison is loose; chai `assert.equal` (loose
+  `==`) → relational and chai `assert.deepEqual` (strict deep equality) →
+  exact-value; `notStrictEqual` / `notDeepStrictEqual` / `notEqual` /
+  `notDeepEqual` / `match`, `node:assert` `doesNotMatch`, and chai `notMatch`
+  / `include` / `notInclude` / `lengthOf` → relational; `ok`, chai `isTrue` /
+  `isFalse` / `isOk` / `isNotOk` / `isNull` / `isUndefined` / `isDefined`,
+  and the bare callable `assert(value)` → smoke; `throws` / `doesNotThrow`
+  and `node:assert` `rejects` / `doesNotReject` → broad error-path oracle. A
+  method the bound API does not have (a chai-only method on `node:assert`, or
+  the reverse) is not credited. A named method import (`strictEqual(a, b)`)
+  maps the same way as the module it comes from. A binding re-declared in the
+  test body, as a test or describe callback parameter, or in an enclosing
+  describe body is shadowed and not credited; a first test-callback
+  parameter with that name is not read as an AVA / tape receiver either.
+  chai
+  `expect(x).to.equal(y)` / `.to.eql(y)` /
+  `.to.deep.equal(y)` → exact-value (relational under `.not`);
+  `.to.be.true` / `.false` / `.ok` / `.null` / `.undefined` → smoke;
+  `.to.throw(...)` → broad error; `.include` / `.contain` / `.match` /
+  `.above` / `.below` / `.lengthOf` → relational. The observed expression is
+  the first (actual) argument. A same-named local helper and a Jest/Vitest
+  `expect` are never read as these libraries, and unrecognised methods or
+  chain words are not credited
 
 The 0.8.1 Bun UB advisory lane also permits internal, evidence-only
 TypeScript facts for the configured Bun bridge calibration routes: syntactic
@@ -181,9 +253,30 @@ the test constructs a local receiver with `new ClassName(...)` or a named import
 alias for that class and then calls `receiver.method(...)`. Static class-method
 owners may use a bounded direct class member relation only when the test calls
 `ClassName.method(...)` through the same-file class name or an unshadowed named
-import alias. Factory returns, dependency injection, mocked modules, prototype
-aliases, namespace chains, and dynamic property access remain advisory or
-unsupported.
+import alias. Dependency injection, mocked modules, prototype aliases,
+namespace chains, and dynamic property access remain advisory or unsupported.
+
+A top-level function owner may also relate through a same-module entry: an
+exported name of the owner's module whose code reaches the owner within three
+call edges. An edge is a bare call to a top-level declaration name, and only
+when every mention of that name in the enclosing function is a bare call: a
+parameter (plain, destructured, or of a nested callback), a local
+declaration, an assignment or a value use may rebind it, so no edge is
+recorded. A function's own edges exclude the functions it directly returns.
+A value built by a same-module factory (`export const defu = createDefu()`,
+with `as`/`satisfies`/non-null/parentheses stripped) calls what the factory's
+directly returned function calls, checked against the factory's whole text so
+a captured factory parameter or local shadows too; calling the factory itself
+does not reach them, and a factory imported from another module is not
+followed. Named, listed (`export { local as name }`) and default exports,
+including an anonymous default function or arrow, count; type-only exports and
+re-exports from other modules do not. The test's call of
+the entry must pass every identity gate a direct or imported owner call does.
+The relation is `helper_owner_call` with `medium` confidence and is admitted
+only when no owner-call, import-call, receiver, class-method, module-observer,
+or re-export relation exists, so it never mixes with a relation that calls the
+owner. Reach only through entries is at most `weakly_exposed`, and the
+missing-evidence line names the entries the related tests call.
 
 A test is related to an owner only when the test references the owner. When
 no owner-call, import-call, receiver, class-method, module-observer, or
@@ -195,8 +288,8 @@ local declaration; a named-import local of the owner; or a namespace member
 `ns.owner` whose import resolves to the owner module. Such a link stays
 `weakly_exposed` with `actionability_category = ambiguous_related_test`. A
 test that only names the owner in its title, its `describe(...)` title, or its
-file stem, or that only calls a sibling owner from the same module, is not
-related: when no test references the owner, the finding is `no_static_path`
+file stem, or that only calls a sibling owner from the same module that is not
+a same-module entry reaching the owner, is not related: when no test references the owner, the finding is `no_static_path`
 with reach `no` and the missing reference named (`No test references
 \`owner(\``).
 

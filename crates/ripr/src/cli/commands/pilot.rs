@@ -42,7 +42,7 @@ fn write_pilot_repo_exposure_json(
         output::render::detect_python_repo_exposure_guidance_pub(&input.root, classified);
     let write_failed = |err: String| format!("write {} failed: {err}", path.display());
     if pilot_budget_truncated {
-        return std::fs::write(
+        return write_pilot_file(
             path,
             output::repo_exposure::render_repo_exposure_json(
                 classified,
@@ -50,8 +50,7 @@ fn write_pilot_repo_exposure_json(
                 ts_guidance.as_ref(),
                 python_guidance.as_ref(),
             ),
-        )
-        .map_err(|err| write_failed(err.to_string()));
+        );
     }
     // Base `None`: pilot's printed after-snapshot command passes no `--base`
     // or `--diff`, so both snapshots intentionally carry no base under
@@ -63,18 +62,23 @@ fn write_pilot_repo_exposure_json(
         None,
         config,
     )?;
-    let file = std::fs::File::create(path).map_err(|err| write_failed(err.to_string()))?;
-    let mut writer = std::io::BufWriter::new(file);
-    output::repo_exposure::write_repo_exposure_json_with_context(
-        classified,
-        limit_info,
-        ts_guidance.as_ref(),
-        python_guidance.as_ref(),
-        &context,
-        &mut writer,
-    )
-    .map_err(write_failed)?;
-    std::io::Write::flush(&mut writer).map_err(|err| write_failed(err.to_string()))
+    let mut render_error = None;
+    output::file_write::write_with(path, |file| {
+        let mut writer = std::io::BufWriter::new(file);
+        if let Err(err) = output::repo_exposure::write_repo_exposure_json_with_context(
+            classified,
+            limit_info,
+            ts_guidance.as_ref(),
+            python_guidance.as_ref(),
+            &context,
+            &mut writer,
+        ) {
+            render_error = Some(err);
+            return Err(std::io::Error::other("repo exposure rendering failed"));
+        }
+        std::io::Write::flush(&mut writer)
+    })
+    .map_err(|err| write_failed(render_error.take().unwrap_or_else(|| err.to_string())))
 }
 
 pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
@@ -100,8 +104,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     apply_to_check_input(&mut input, &config, options.explicit);
 
     let artifacts = pilot_artifacts(&options.out_dir);
-    std::fs::create_dir_all(&options.out_dir)
-        .map_err(|err| format!("create {} failed: {err}", options.out_dir.display()))?;
+    output::file_write::create_output_dir(&options.out_dir, "--out")?;
 
     let analysis_root = input.root.clone();
     let analysis_config = config.clone();
@@ -144,26 +147,14 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             python_first_use: None,
             language_routes: None,
         };
-        std::fs::write(
+        write_pilot_file(
             &artifacts.pilot_summary_json,
             output::pilot::render_pilot_timeout_summary_json(context),
-        )
-        .map_err(|err| {
-            format!(
-                "write {} failed: {err}",
-                artifacts.pilot_summary_json.display()
-            )
-        })?;
-        std::fs::write(
+        )?;
+        write_pilot_file(
             &artifacts.pilot_summary_md,
             output::pilot::render_pilot_timeout_summary_md(context),
-        )
-        .map_err(|err| {
-            format!(
-                "write {} failed: {err}",
-                artifacts.pilot_summary_md.display()
-            )
-        })?;
+        )?;
         print!("{}", output::pilot::render_pilot_timeout_terminal(context));
         return Ok(());
     };
@@ -190,6 +181,10 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         !classified.is_empty(),
         config.languages().enabled(),
         &analysis::workspace_preview_language_files(&input.root),
+    )
+    .with_unanalyzed(
+        analysis::workspace_unanalyzed_source_languages(&input.root),
+        !analysis::workspace_rust_files(&input.root).is_empty(),
     );
     let context = output::pilot::PilotSummaryContext {
         root: &input.root,
@@ -213,7 +208,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         limit_info.as_ref(),
         pilot_budget_truncated,
     )?;
-    std::fs::write(
+    write_pilot_file(
         &artifacts.repo_exposure_md,
         output::repo_exposure::render_repo_exposure_md(
             &classified,
@@ -221,48 +216,24 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
         ),
-    )
-    .map_err(|err| {
-        format!(
-            "write {} failed: {err}",
-            artifacts.repo_exposure_md.display()
-        )
-    })?;
-    std::fs::write(
+    )?;
+    write_pilot_file(
         &artifacts.agent_seam_packets_json,
         output::agent_seam_packets::render_agent_seam_packets_json_with_causal(
             &classified,
             limit_info.as_ref(),
             causal_projection.as_ref(),
         ),
-    )
-    .map_err(|err| {
-        format!(
-            "write {} failed: {err}",
-            artifacts.agent_seam_packets_json.display()
-        )
-    })?;
+    )?;
 
-    std::fs::write(
+    write_pilot_file(
         &artifacts.pilot_summary_json,
         output::pilot::render_pilot_summary_json(&classified, context),
-    )
-    .map_err(|err| {
-        format!(
-            "write {} failed: {err}",
-            artifacts.pilot_summary_json.display()
-        )
-    })?;
-    std::fs::write(
+    )?;
+    write_pilot_file(
         &artifacts.pilot_summary_md,
         output::pilot::render_pilot_summary_md(&classified, context),
-    )
-    .map_err(|err| {
-        format!(
-            "write {} failed: {err}",
-            artifacts.pilot_summary_md.display()
-        )
-    })?;
+    )?;
 
     print!(
         "{}",
@@ -390,6 +361,13 @@ fn pilot_artifacts(out_dir: &Path) -> output::pilot::PilotArtifacts {
     }
 }
 
+/// Pilot artifacts default under the analyzed repository, which may commit a
+/// symlink at an artifact path; never write through it.
+fn write_pilot_file(path: &Path, contents: impl AsRef<[u8]>) -> Result<(), String> {
+    output::file_write::write(path, contents.as_ref())
+        .map_err(|err| format!("write output {} failed: {err}", path.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -492,5 +470,48 @@ mod tests {
 
         assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
         assert_eq!(cancelled_rx.recv_timeout(Duration::from_secs(1)), Ok(()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unwritable_out_dir_names_out_not_out_dir() -> Result<(), String> {
+        use crate::testing::unwritable_output::OutputDirFixture;
+
+        let env = OutputDirFixture::unwritable("pilot-ro", "pilot")?;
+        let root = OutputDirFixture::path_arg(&env.root)?;
+        let out = OutputDirFixture::path_arg(&env.target)?;
+        let error = match pilot(&args(&["--root", root, "--out", out])) {
+            Err(error) => error,
+            Ok(()) => return Err("unwritable --out must fail before analysis".to_string()),
+        };
+        assert!(error.contains(&format!("create {out} failed:")), "{error}");
+        assert!(
+            error.contains("write elsewhere with --out PATH"),
+            "pilot must name --out PATH, got {error}"
+        );
+        assert!(
+            !error.contains("--out-dir"),
+            "pilot must not name first-pr's flag, got {error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn occupying_file_out_dir_does_not_name_the_relocate_flag() -> Result<(), String> {
+        use crate::testing::unwritable_output::OutputDirFixture;
+
+        let env = OutputDirFixture::occupying_file("pilot-file", "pilot")?;
+        let root = OutputDirFixture::path_arg(&env.root)?;
+        let out = OutputDirFixture::path_arg(&env.target)?;
+        let error = match pilot(&args(&["--root", root, "--out", out])) {
+            Err(error) => error,
+            Ok(()) => return Err("file occupying --out must fail".to_string()),
+        };
+        assert!(error.contains(&format!("create {out} failed:")), "{error}");
+        assert!(
+            !error.contains("write elsewhere"),
+            "a file occupying --out is not a not-writable tree: {error}"
+        );
+        Ok(())
     }
 }

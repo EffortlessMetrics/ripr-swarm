@@ -15,8 +15,8 @@ Start here:
   File: src/commands.py:8
   Language: python
   Language status: preview
-  Static exposure: weakly_exposed (warning, confidence 0.40)
-  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
+  Static exposure: weak (weakly_exposed, warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/commands.py:main:call_or_output_effect:side_effect:print_shipment_queued
   Changed behavior: print("shipment queued")
   Missing discriminator: Related Python test reaches `main` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed output/log/call effect.
@@ -24,7 +24,7 @@ Start here:
   Suggested test file: tests/test_commands.py
   Suggested test: test_main_smoke
   Test node: tests/test_commands.py::test_main_smoke
-  Verify command: pytest tests/test_commands.py::test_main_smoke (high)
+  Verify command: python -m pytest tests/test_commands.py::test_main_smoke (high)
   Next step: Python preview: strengthen the existing related test with an output/log/call-effect assertion for missing discriminator `output contains "shipment queued"`.
   Evidence:
     - reach yes: 1 related Python test(s) found for owner `main`

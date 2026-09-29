@@ -46,7 +46,7 @@
       "flow_sinks": [
         {"kind":"unknown","text":"if value <= 0:","line":2}
       ],
-      "evidence": ["owner: normalize_quantity", "owner_kind: function", "missing_discriminator: value == 0", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_quantity.py", "suggested_test_name: test_rejects_zero_quantity", "suggested_test_node_id: tests/test_quantity.py::test_rejects_zero_quantity", "suggested_verify_command: pytest tests/test_quantity.py::test_rejects_zero_quantity", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_rejects_zero_quantity)", "test_verify_command: pytest tests/test_quantity.py::test_rejects_zero_quantity (test_rejects_zero_quantity)", "related_test_relation: syntactic_call (test_rejects_zero_quantity)", "test_oracle: broad_error weak (test_rejects_zero_quantity)", "test_oracle_shape: exception_assertion (test_rejects_zero_quantity)"],
+      "evidence": ["owner: normalize_quantity", "owner_kind: function", "missing_discriminator: value == 0", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_quantity.py", "suggested_test_name: test_rejects_zero_quantity", "suggested_test_node_id: tests/test_quantity.py::test_rejects_zero_quantity", "suggested_verify_command: python -m pytest tests/test_quantity.py::test_rejects_zero_quantity", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_rejects_zero_quantity)", "test_verify_command: python -m pytest tests/test_quantity.py::test_rejects_zero_quantity (test_rejects_zero_quantity)", "related_test_relation: syntactic_call (test_rejects_zero_quantity)", "test_oracle: broad_error weak (test_rejects_zero_quantity)", "test_oracle_shape: exception_assertion (test_rejects_zero_quantity)"],
       "missing": ["Related Python test reaches `normalize_quantity` but the strongest extracted oracle is `broad_error`; add or strengthen a focused assertion for the changed boundary."],
       "assertion_texts": {
       },
@@ -85,7 +85,7 @@
         "suggested_test_file": "tests/test_quantity.py",
         "suggested_test_name": "test_rejects_zero_quantity",
         "suggested_test_node_id": "tests/test_quantity.py::test_rejects_zero_quantity",
-        "verify_command": "pytest tests/test_quantity.py::test_rejects_zero_quantity",
+        "verify_command": "python -m pytest tests/test_quantity.py::test_rejects_zero_quantity",
         "verify_command_confidence": "high"
        },
       "python_repair_card": {
@@ -108,7 +108,7 @@
           "pytest_node_id": "tests/test_quantity.py::test_rejects_zero_quantity"
          },
         "verify": {
-          "command": "pytest tests/test_quantity.py::test_rejects_zero_quantity",
+          "command": "python -m pytest tests/test_quantity.py::test_rejects_zero_quantity",
           "confidence": "high"
          },
         "receipt": {
@@ -143,5 +143,6 @@
       "category": "preview_language_advisory",
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
-  ]
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/quantity.py","digest":"sha256:91244e00a43870aa4fe321e1640ae2b64827e97f4e1b7230c25621d87b1639a4"},{"path":"tests/test_quantity.py","digest":"sha256:d791ef8cf2f7dfcace4a698bc2f5e65076d20923c9d96f561e775f4aeb274539"}]}
 }

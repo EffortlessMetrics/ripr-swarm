@@ -2,6 +2,7 @@ use super::super::rust_index::{
     OracleFact, OracleTextShape, TestSummary, extract_identifier_tokens, has_oracle_text_shape,
 };
 
+use super::reach::is_proximity_only;
 use super::rust_string_literals;
 use crate::domain::*;
 
@@ -271,7 +272,7 @@ fn analyze_related_assertions(
     // confirming signal is token coincidence by construction); it stays
     // below `exposed` and carries the typed
     // `wrapper_error_binding_unresolved` limitation attached by
-    // `apply_wrapper_error_binding_limit` (analysis/language/rust.rs).
+    // `apply_wrapper_error_binding_limit` (analysis/language/rust/oracles.rs).
     let wrapper_seam = error_construction_variant.is_none()
         && matches!(
             probe.family,
@@ -304,10 +305,33 @@ fn analyze_related_assertions(
     // For families that need token confirmation: start pessimistic and clear
     // once a token_match fires.
     let mut observation_unverified = false;
+    // When any related test is tied to the owner by a call, helper chain,
+    // assertion affinity or seam callee, reach comes from that test.
+    // Same-file and same-module relations do not count: `reach.rs` treats
+    // them as proximity with no reach. A test related only because its name or
+    // path contains a changed token or the owner's name, with no captured
+    // call, helper chain or assertion affinity (`WeakTokenSubstring`,
+    // `OwnerNamedTest`), may never run the changed code, so its
+    // assertions stay visible but cannot supply the credited oracle: a test
+    // named `malformedsource_variant_is_distinct` that pins
+    // `ParseError::MalformedSource == ParseError::MalformedSource` observes
+    // nothing the changed `try_parse` does (#4486). Same-file and same-module
+    // tests keep crediting: they commonly exercise a private helper through
+    // the module's own entry point, which the relation cannot see.
+    let name_only = |reason: RelationReason| {
+        matches!(
+            reason,
+            RelationReason::WeakTokenSubstring | RelationReason::OwnerNamedTest
+        )
+    };
+    let reach_bearing_related = related_tests
+        .iter()
+        .any(|(_, reason)| !name_only(*reason) && !is_proximity_only(*reason));
 
     for (test, reason) in related_tests {
         let relation_reason = Some(*reason);
         let relation_confidence = Some(reason.confidence());
+        let credits_oracle = !(reach_bearing_related && name_only(*reason));
         if test.assertions.is_empty() {
             related.push(RelatedTest {
                 name: test.name.clone(),
@@ -343,7 +367,18 @@ fn analyze_related_assertions(
                 import_defeats_owner,
                 cross_package_defeats_owner,
             );
-            if matched {
+            if matched && !credits_oracle {
+                related.push(RelatedTest {
+                    name: test.name.clone(),
+                    file: test.file.clone(),
+                    line: test.start_line,
+                    oracle: Some(assertion.text.clone()),
+                    oracle_kind: assertion.kind.clone(),
+                    oracle_strength: probe_relative_oracle_strength(&probe.family, assertion),
+                    relation_reason,
+                    relation_confidence,
+                });
+            } else if matched {
                 let observation_confirmed = !confirm_required
                     || has_token_match
                     || (is_effect_family(&probe.family) && effect_observer_confirms(assertion));
@@ -1730,7 +1765,22 @@ pub(in crate::analysis) fn contains_as_whole_word(text: &str, token: &str) -> bo
 fn finalize_related_tests(mut related: Vec<RelatedTest>) -> Vec<RelatedTest> {
     related.sort_by(|a, b| a.name.cmp(&b.name).then(a.line.cmp(&b.line)));
     related.dedup_by(|a, b| a.name == b.name && a.oracle == b.oracle);
+    // Renderers present the first entry as the primary related test, so the
+    // strongest relation leads. The sort is stable: name and line order holds
+    // within one confidence tier, and the dedup above is unchanged.
+    related.sort_by_key(|test| std::cmp::Reverse(related_test_rank(test)));
     related
+}
+
+/// Sort rank of an emitted related test: higher relation confidence ranks
+/// first; an unknown relation origin ranks with `Opaque`.
+fn related_test_rank(test: &RelatedTest) -> u8 {
+    match test.relation_confidence {
+        Some(RelationConfidence::High) => 3,
+        Some(RelationConfidence::Medium) => 2,
+        Some(RelationConfidence::Low) => 1,
+        Some(RelationConfidence::Opaque) | None => 0,
+    }
 }
 
 fn build_observe_evidence(matched_any: bool) -> StageEvidence {
@@ -2090,6 +2140,57 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    fn related(name: &str, line: usize, reason: Option<RelationReason>) -> RelatedTest {
+        RelatedTest {
+            name: name.to_string(),
+            file: PathBuf::from("tests/lib.rs"),
+            line,
+            oracle: Some(format!("assert_eq!({name}, 1);")),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            relation_reason: reason,
+            relation_confidence: reason.map(RelationReason::confidence),
+        }
+    }
+
+    /// Renderers show the first related test as the primary one, so the
+    /// finalized order must lead with the strongest relation rather than
+    /// the alphabetically first name.
+    #[test]
+    fn finalized_related_tests_lead_with_the_strongest_relation() {
+        let finalized = finalize_related_tests(vec![
+            related(
+                "a_same_file_neighbor",
+                3,
+                Some(RelationReason::SameTestFile),
+            ),
+            related("b_unknown_origin", 5, None),
+            related(
+                "c_direct_owner_call",
+                9,
+                Some(RelationReason::DirectOwnerCall),
+            ),
+            related(
+                "c_direct_owner_call",
+                9,
+                Some(RelationReason::DirectOwnerCall),
+            ),
+            related(
+                "d_direct_owner_call",
+                1,
+                Some(RelationReason::DirectOwnerCall),
+            ),
+        ]);
+        let names: Vec<&str> = finalized.iter().map(|test| test.name.as_str()).collect();
+        let ranks: Vec<u8> = finalized.iter().map(related_test_rank).collect();
+        let mut descending = ranks.clone();
+        descending.sort_by(|a, b| b.cmp(a));
+        assert_eq!(ranks, descending, "ranks must not increase: {names:?}");
+        assert_eq!(names.first(), Some(&"c_direct_owner_call"));
+        assert_eq!(names.last(), Some(&"b_unknown_origin"));
+        assert_eq!(names.len(), 4, "duplicate entries still dedup: {names:?}");
+    }
+
     #[test]
     fn strongest_oracle_cannot_borrow_weaker_assertion_confirmation() -> Result<(), String> {
         for family in [ProbeFamily::ReturnValue, ProbeFamily::CallDeletion] {
@@ -2135,6 +2236,87 @@ mod tests {
                         "unrelated test supplied exact discrimination: {discriminate:?}"
                     ));
                 }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn name_only_test_cannot_supply_the_oracle_for_reach_from_another_test() -> Result<(), String> {
+        let probe = probe(ProbeFamily::ReturnValue, "compute_score(input)");
+        // Token-confirmed and strong on its own: #4404's single-assertion
+        // binding does not stop it, only its relation can.
+        let confirmed_exact = oracle(
+            "assert_eq!(compute_score, 42);",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+        let weak = oracle(
+            "assert!(compute_score(input).is_ok());",
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+        );
+        let proximity_test = test_with_assertions("compute_score_named", vec![confirmed_exact]);
+        let owner_test = test_with_assertions("calls_owner", vec![weak]);
+        for name_only in [
+            RelationReason::WeakTokenSubstring,
+            RelationReason::OwnerNamedTest,
+        ] {
+            for related in [
+                vec![
+                    (&proximity_test, name_only),
+                    (&owner_test, RelationReason::DirectOwnerCall),
+                ],
+                vec![
+                    (&owner_test, RelationReason::DirectOwnerCall),
+                    (&proximity_test, name_only),
+                ],
+            ] {
+                let (_, discriminate, _) = reveal_evidence(&probe, &related);
+                if discriminate.state == StageState::Yes {
+                    return Err(format!(
+                        "{name_only:?} test supplied the oracle for reach from another test: {discriminate:?}"
+                    ));
+                }
+            }
+        }
+        // A same-file or same-module test commonly reaches a private helper
+        // through the module's entry point, so it keeps crediting.
+        for proximity in [RelationReason::SameTestFile, RelationReason::SameModule] {
+            let (_, discriminate, _) = reveal_evidence(
+                &probe,
+                &[
+                    (&proximity_test, proximity),
+                    (&owner_test, RelationReason::DirectOwnerCall),
+                ],
+            );
+            if discriminate.state != StageState::Yes {
+                return Err(format!(
+                    "{proximity:?} test lost its oracle credit: {discriminate:?}"
+                ));
+            }
+        }
+        // With no reach-bearing relation, reach itself stays weak or absent
+        // (reach.rs), so the proximity oracle keeps its old reading here.
+        // An assertionless same-file or same-module neighbour supplies no
+        // reach either, so it must not switch the rule on.
+        let bystander = test_with_assertions("same_file_bystander", Vec::new());
+        for related in [
+            vec![(&proximity_test, RelationReason::WeakTokenSubstring)],
+            vec![
+                (&bystander, RelationReason::SameTestFile),
+                (&proximity_test, RelationReason::WeakTokenSubstring),
+            ],
+            vec![
+                (&bystander, RelationReason::SameModule),
+                (&proximity_test, RelationReason::OwnerNamedTest),
+            ],
+        ] {
+            let (_, discriminate, _) = reveal_evidence(&probe, &related);
+            if discriminate.state != StageState::Yes {
+                return Err(format!(
+                    "relation with no reach-bearing test lost its oracle reading: {discriminate:?}"
+                ));
             }
         }
         Ok(())

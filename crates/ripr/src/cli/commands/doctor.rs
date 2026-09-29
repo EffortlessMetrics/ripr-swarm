@@ -82,6 +82,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
     ok &= report_doctor_core_check(core_report, "git_repository");
     report_config_status(&root, core_evaluation.config, &mut ok);
     report_cache_status(&root);
+    report_generated_workflow_status(&root);
     report_detected_languages(&root);
     ok &= add_language_runtime_probes(&root, &enabled_languages, &mut report, true, probe_runtime);
     suggest_preview_language_enablement(&root);
@@ -119,6 +120,9 @@ fn doctor_json(root: &Path, profile: output::doctor::DoctorProfile) -> Result<()
     let enabled_languages = enabled_languages(&evaluation.config);
     let _ =
         add_language_runtime_probes(root, &enabled_languages, &mut report, false, probe_runtime);
+    if let Some(advisory) = generated_workflow_advisory(root) {
+        report.add_advisory_check("generated_workflow", advisory);
+    }
     println!("{}", report.render_json()?);
     output::doctor::doctor_report_result(&report)
 }
@@ -323,11 +327,11 @@ fn add_language_runtime_probes<F>(
     mut probe: F,
 ) -> bool
 where
-    F: FnMut(&str, bool) -> (output::doctor::DoctorStatus, String),
+    F: FnMut(&str) -> (output::doctor::DoctorStatus, String),
 {
     let mut ok = true;
     for (language, tool, hint) in language_runtime_probes_for(root, enabled) {
-        let (status, evidence) = probe(tool, tool == "yarn");
+        let (status, evidence) = probe(tool);
         // A language runtime is an analysis capability, not a prerequisite
         // for building RIPR from source: the source-build profile keeps the
         // probe visible but never lets it decide that profile's status.
@@ -344,14 +348,12 @@ where
     ok
 }
 
-fn probe_runtime(tool: &str, isolated: bool) -> (output::doctor::DoctorStatus, String) {
-    // yarn loads project config on --version; probe it isolated so a
-    // hostile checkout cannot execute code via doctor (#2183 review).
-    if isolated {
-        output::doctor::doctor_tool_check_isolated(tool)
-    } else {
-        output::doctor::doctor_tool_check(tool)
-    }
+fn probe_runtime(tool: &str) -> (output::doctor::DoctorStatus, String) {
+    // Probe every runtime outside the checkout. yarn loads project config on
+    // --version (#2183 review), and pnpm fetches and runs the release a
+    // project `packageManager` names; version managers read project files too.
+    // A hostile checkout must not choose what doctor executes.
+    output::doctor::doctor_tool_check_isolated(tool)
 }
 
 fn runtime_probe_is_required(language: &str, tool: &str, enabled: &[LanguageId]) -> bool {
@@ -505,24 +507,59 @@ fn language_runtime_probes(root: &Path) -> Vec<(&'static str, &'static str, &'st
 /// false for the detected language. If no markers are found, prints
 /// `none detected` rather than claiming any language.
 fn report_detected_languages(root: &Path) {
-    let detected = detect_languages(root);
-    if detected.is_empty() {
-        println!("- Detected languages: none detected");
-        return;
+    for line in detected_languages_lines(
+        &detect_languages(root),
+        &crate::analysis::workspace_unanalyzed_source_languages(root),
+    ) {
+        println!("{line}");
     }
-    let entries: Vec<String> = detected
+}
+
+/// The detected-languages line, followed by the unanalyzed-languages line
+/// whenever such source exists: a mixed Rust and Go workspace needs the Go
+/// half named as much as a Go-only one does.
+fn detected_languages_lines(
+    detected: &[LanguageId],
+    unanalyzed: &[(&'static str, usize)],
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    if detected.is_empty() {
+        lines.push("- Detected languages: none detected".to_string());
+    } else {
+        let entries: Vec<String> = detected
+            .iter()
+            .map(|id| {
+                let tier = language_status(*id).as_str().to_string();
+                let available = id.is_available();
+                if available {
+                    format!("{} ({})", id.as_str(), tier)
+                } else {
+                    format!("{} ({}) [adapter not compiled]", id.as_str(), tier)
+                }
+            })
+            .collect();
+        lines.push(format!("- Detected languages: {}", entries.join(", ")));
+    }
+    lines.extend(unanalyzed_languages_line(unanalyzed));
+    lines
+}
+
+/// Names source ripr cannot analyze, so a Go or Java repository is told why
+/// `ripr check` will find nothing instead of being sent there as the
+/// recommended first command, and a mixed workspace learns which half is
+/// reported as not analyzed.
+fn unanalyzed_languages_line(unanalyzed: &[(&'static str, usize)]) -> Option<String> {
+    if unanalyzed.is_empty() {
+        return None;
+    }
+    let found = unanalyzed
         .iter()
-        .map(|id| {
-            let tier = language_status(*id).as_str().to_string();
-            let available = id.is_available();
-            if available {
-                format!("{} ({})", id.as_str(), tier)
-            } else {
-                format!("{} ({}) [adapter not compiled]", id.as_str(), tier)
-            }
-        })
-        .collect();
-    println!("- Detected languages: {}", entries.join(", "));
+        .map(|(language, count)| format!("{language} ({count} file(s))"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "~ Unanalyzed languages: {found}; ripr analyzes Rust, plus TypeScript/JavaScript and Python as previews, so changes to this source are reported as not analyzed, never as clean"
+    ))
 }
 
 /// When a preview language is detected in `root` but is not yet enabled in
@@ -1244,6 +1281,66 @@ fn report_cache_status(root: &Path) {
     println!("- Cache size: {size_display} (run `ripr cache status` for details)");
 }
 
+const GENERATED_WORKFLOW_PATH: &str = ".github/workflows/ripr.yml";
+
+/// Largest generated workflow doctor reads. The template is a few KiB; a
+/// bigger file is not one `ripr init` wrote.
+const GENERATED_WORKFLOW_MAX_BYTES: u64 = 1024 * 1024;
+
+/// Flags a `ripr init --ci github` workflow generated by another ripr
+/// version (#4738). The 0.10-and-earlier template installed ripr unpinned,
+/// so after a release CI ran the new binary against the old steps; later
+/// templates pin the generating version. Advisory only: a stale template is
+/// not a failed check. It recognizes the template's own `cargo install ripr`
+/// step, not every way a hand-written workflow could install ripr.
+fn generated_workflow_advisory(root: &Path) -> Option<String> {
+    let path = root.join(GENERATED_WORKFLOW_PATH);
+    // A repository can commit this path as a symlink (to `/dev/zero`, say);
+    // `ripr init` only ever writes a regular file, so read nothing else.
+    if !std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file()) {
+        return None;
+    }
+    let workflow =
+        crate::bounded_input::read_to_string_with_limit(&path, GENERATED_WORKFLOW_MAX_BYTES)
+            .ok()?;
+    generated_workflow_line(&workflow, env!("CARGO_PKG_VERSION"))
+}
+
+fn report_generated_workflow_status(root: &Path) {
+    if let Some(advisory) = generated_workflow_advisory(root) {
+        println!("~ Generated workflow: {advisory}");
+    }
+}
+
+fn generated_workflow_line(workflow: &str, current_version: &str) -> Option<String> {
+    let install = workflow.lines().find_map(|line| {
+        let command = line.trim().trim_start_matches("run:").trim();
+        let rest = command.strip_prefix("cargo install ripr")?;
+        (rest.is_empty() || rest.starts_with(char::is_whitespace)).then_some(rest)
+    })?;
+    let words: Vec<&str> = install.split_whitespace().collect();
+    let pinned = words
+        .windows(2)
+        .find(|pair| pair[0] == "--version")
+        .map(|pair| pair[1])
+        .or_else(|| {
+            words
+                .iter()
+                .find_map(|word| word.strip_prefix("--version="))
+        });
+    let refresh =
+        "refresh it with `ripr init --ci github --force` and review the diff before committing";
+    match pinned {
+        None => Some(format!(
+            "{GENERATED_WORKFLOW_PATH} installs ripr without a version (the ripr 0.10-and-earlier template), so CI runs whatever release is newest against these steps; {refresh}"
+        )),
+        Some(version) if version.trim_start_matches('=') != current_version => Some(format!(
+            "{GENERATED_WORKFLOW_PATH} installs ripr {version}, but this is ripr {current_version}; {refresh}"
+        )),
+        Some(_) => None,
+    }
+}
+
 /// Recursively sum file sizes under `dir`. Returns 0 when the directory
 /// does not exist or cannot be read — cache absence is not a problem.
 fn dir_size_bytes(dir: &Path) -> u64 {
@@ -1342,6 +1439,72 @@ mod tests {
     use super::*;
 
     #[test]
+    fn generated_workflow_line_flags_unpinned_and_other_version_installs() {
+        // The exact install step `ripr 0.10.0 init --ci github` wrote.
+        let v010 = "      - name: Install ripr\n        run: cargo install ripr --locked\n";
+        let pinned = "      - name: Install ripr\n        run: cargo install ripr --version 0.11.0 --locked\n";
+
+        let unpinned = generated_workflow_line(v010, "0.11.0");
+        assert!(
+            unpinned
+                .as_deref()
+                .is_some_and(|line| line.contains("without a version")
+                    && line.contains("ripr init --ci github --force")),
+            "{unpinned:?}"
+        );
+        let older = generated_workflow_line(pinned, "0.12.0");
+        assert!(
+            older
+                .as_deref()
+                .is_some_and(|line| line.contains("installs ripr 0.11.0, but this is ripr 0.12.0")),
+            "{older:?}"
+        );
+        assert_eq!(generated_workflow_line(pinned, "0.11.0"), None);
+        assert_eq!(generated_workflow_line("jobs: {}\n", "0.11.0"), None);
+        assert_eq!(
+            generated_workflow_line("        run: cargo install ripr-tools --locked\n", "0.11.0"),
+            None
+        );
+    }
+
+    #[test]
+    fn generated_workflow_advisory_reads_only_a_bounded_regular_file() -> Result<(), String> {
+        let root = unique_command_test_dir("workflow-advisory");
+        let workflows = root.join(".github/workflows");
+        std::fs::create_dir_all(&workflows).map_err(|err| format!("create dir: {err}"))?;
+        let path = root.join(GENERATED_WORKFLOW_PATH);
+        std::fs::write(&path, "        run: cargo install ripr --locked\n")
+            .map_err(|err| format!("write workflow: {err}"))?;
+        let unpinned = generated_workflow_advisory(&root);
+        let mut oversized = "        run: cargo install ripr --locked\n".to_string();
+        oversized.push_str(&"#".repeat(GENERATED_WORKFLOW_MAX_BYTES as usize));
+        std::fs::write(&path, oversized).map_err(|err| format!("write workflow: {err}"))?;
+        let too_big = generated_workflow_advisory(&root);
+        #[cfg(unix)]
+        let through_link = {
+            std::fs::remove_file(&path).map_err(|err| format!("remove workflow: {err}"))?;
+            // A link to a real workflow outside the checkout is still not a
+            // file `ripr init` wrote.
+            let outside = root.join("outside.yml");
+            std::fs::write(&outside, "        run: cargo install ripr --locked\n")
+                .map_err(|err| format!("write outside: {err}"))?;
+            std::os::unix::fs::symlink(&outside, &path).map_err(|err| format!("symlink: {err}"))?;
+            generated_workflow_advisory(&root)
+        };
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+        assert!(
+            unpinned.as_deref().is_some_and(|line| line
+                .starts_with(".github/workflows/ripr.yml installs ripr without a version")),
+            "{unpinned:?}"
+        );
+        assert_eq!(too_big, None);
+        #[cfg(unix)]
+        assert_eq!(through_link, None);
+        Ok(())
+    }
+
+    #[test]
     #[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
     fn language_runtime_probes_follow_detected_languages() -> Result<(), String> {
         // #2071: rust-only roots get no probes; a python root with pytest
@@ -1422,6 +1585,33 @@ mod tests {
             std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         }
         Ok(())
+    }
+
+    #[test]
+    fn unanalyzed_languages_line_names_go_as_not_analyzed() {
+        assert_eq!(unanalyzed_languages_line(&[]), None);
+        let line = unanalyzed_languages_line(&[("Go", 2), ("Shell", 1)]).unwrap_or_default();
+        assert!(
+            line.starts_with("~ Unanalyzed languages: Go (2 file(s)), Shell (1 file(s));"),
+            "{line}"
+        );
+        assert!(line.contains("never as clean"), "{line}");
+
+        // Mixed workspace: the Go half is named beside the detected Rust.
+        let lines = detected_languages_lines(&[LanguageId::Rust], &[("Go", 2)]);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(
+            lines[0].starts_with("- Detected languages: rust"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[1].starts_with("~ Unanalyzed languages: Go (2 file(s))"),
+            "{lines:?}"
+        );
+        let lines = detected_languages_lines(&[], &[("Go", 2)]);
+        assert_eq!(lines[0], "- Detected languages: none detected", "{lines:?}");
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(detected_languages_lines(&[LanguageId::Rust], &[]).len(), 1);
     }
 
     #[test]
@@ -1619,7 +1809,7 @@ mod tests {
             &[LanguageId::TypeScript],
             &mut required_report,
             false,
-            |tool, _isolated| {
+            |tool| {
                 if tool == "node" {
                     (
                         output::doctor::DoctorStatus::Fail,
@@ -1652,7 +1842,7 @@ mod tests {
             &[LanguageId::Rust],
             &mut optional_report,
             false,
-            |tool, _isolated| {
+            |tool| {
                 if tool == "node" {
                     (
                         output::doctor::DoctorStatus::Fail,
@@ -1690,7 +1880,7 @@ mod tests {
             &[LanguageId::Python],
             &mut configured_only_report,
             false,
-            |tool, _isolated| {
+            |tool| {
                 (
                     output::doctor::DoctorStatus::Fail,
                     format!("{tool} not available"),
@@ -1721,7 +1911,7 @@ mod tests {
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
         std::fs::write(root.join("package.json"), "{}")
             .map_err(|err| format!("write package marker: {err}"))?;
-        let missing_node = |tool: &str, _isolated: bool| {
+        let missing_node = |tool: &str| {
             if tool == "node" {
                 (
                     output::doctor::DoctorStatus::Fail,

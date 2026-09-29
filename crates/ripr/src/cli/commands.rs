@@ -79,7 +79,7 @@ fn load_review_comments_analysis_outcome(
     let Some(path) = path else {
         return Ok(None);
     };
-    let text = std::fs::read_to_string(path).map_err(|error| {
+    let text = crate::bounded_input::read_to_string(path).map_err(|error| {
         format!(
             "review-comments --check-output {} is invalid: read failed: {error}",
             path.display()
@@ -224,6 +224,8 @@ mod cache_command;
 mod config_command;
 #[path = "commands/context.rs"]
 mod context;
+#[path = "commands/feedback.rs"]
+mod feedback_command;
 #[path = "commands/policy.rs"]
 mod policy_commands;
 #[path = "commands/receipt.rs"]
@@ -233,9 +235,9 @@ mod swarm_command;
 
 pub(super) use agent::agent;
 pub(super) use context::context;
-// The receipt help bodies live beside the receipt parser but are also the
-// flag source for `ripr receipt write|check` suggestions, so `cli::help` needs
-// a path to them.
+// Flag-documenting help bodies live beside their parsers so `cli::help`
+// suggestions mine the same text `--help` prints.
+pub(super) use feedback_command::{FEEDBACK_EXPORT_HELP, FEEDBACK_RECORD_HELP};
 #[cfg(test)]
 use policy_commands::{
     parse_policy_history_options, parse_policy_operations_options,
@@ -255,6 +257,10 @@ pub(super) use cache_command::{CACHE_CLEAR_HELP, CACHE_STATUS_HELP};
 
 pub(super) fn receipt(args: &[String]) -> Result<(), String> {
     receipt_command::run_receipt(args)
+}
+
+pub(super) fn feedback(args: &[String]) -> Result<(), String> {
+    feedback_command::run_feedback(args)
 }
 
 pub(super) fn swarm(args: &[String]) -> Result<(), String> {
@@ -309,13 +315,13 @@ pub(super) fn outcome(args: &[String]) -> Result<(), String> {
     }
 
     let options = parse_outcome_options(args)?;
-    let before_json = std::fs::read_to_string(&options.before).map_err(|err| {
+    let before_json = crate::bounded_input::read_to_string(&options.before).map_err(|err| {
         format!(
             "read {} failed: {err}",
             output::outcome::display_path(&options.before)
         )
     })?;
-    let after_json = std::fs::read_to_string(&options.after).map_err(|err| {
+    let after_json = crate::bounded_input::read_to_string(&options.after).map_err(|err| {
         format!(
             "read {} failed: {err}",
             output::outcome::display_path(&options.after)
@@ -370,7 +376,7 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
         analysis::inventory_classified_seams_at_with_config(&options.root, &config)?;
     let calibration = match &options.mutation_calibration {
         Some(path) => {
-            let contents = std::fs::read_to_string(path).map_err(|err| {
+            let contents = crate::bounded_input::read_to_string(path).map_err(|err| {
                 format!(
                     "read evidence-health calibration context {} failed: {err}",
                     output::outcome::display_path(path)
@@ -699,7 +705,12 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
         records_path,
         records_json: read_optional_text_for_report(options.source.label(), options.source.path()),
     };
-    let report = output::gap_decision_ledger::build_gap_decision_ledger_report(input);
+    let selected_root = PathBuf::from(&input.root);
+    let mut report = output::gap_decision_ledger::build_gap_decision_ledger_report(input);
+    output::gap_decision_ledger::stamp_gap_decision_ledger_source_subject(
+        &mut report,
+        &selected_root,
+    )?;
     let rendered_json = output::gap_decision_ledger::render_gap_decision_ledger_json(&report)?;
     let rendered_md = output::gap_decision_ledger::render_gap_decision_ledger_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
@@ -1350,7 +1361,7 @@ fn review_comments_with_diff_loader_at(
                 "review-comments accepts at most one of --gap-ledger or --check-output".to_string(),
             );
         }
-        let gap_ledger_text = std::fs::read_to_string(gap_ledger).map_err(|err| {
+        let gap_ledger_text = crate::bounded_input::read_to_string(gap_ledger).map_err(|err| {
             record_review_comments_error(
                 &mut receipt,
                 &receipt_path,
@@ -1657,8 +1668,8 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
     }
 
     let options = parse_calibrate_cargo_mutants_options(rest)?;
-    let repo_exposure_json =
-        std::fs::read_to_string(&options.repo_exposure_json).map_err(|err| {
+    let repo_exposure_json = crate::bounded_input::read_to_string(&options.repo_exposure_json)
+        .map_err(|err| {
             format!(
                 "read {} failed: {err}",
                 output::outcome::display_path(&options.repo_exposure_json)
@@ -1783,7 +1794,7 @@ fn read_json_value(path: &Path) -> Result<serde_json::Value, String> {
 }
 
 fn read_calibration_text(path: &Path) -> Result<String, String> {
-    std::fs::read_to_string(path)
+    crate::bounded_input::read_to_string(path)
         .map_err(|err| format!("read {} failed: {err}", output::outcome::display_path(path)))
 }
 
@@ -3203,7 +3214,7 @@ fn assistant_loop_health_generated_at() -> Result<String, String> {
 }
 
 fn read_optional_text_for_report(label: &str, path: &Path) -> Result<String, String> {
-    std::fs::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_to_string(path).map_err(|err| {
         format!(
             "read {label} {} failed: {err}",
             output::baseline_delta::display_path(path)
@@ -3220,7 +3231,7 @@ fn read_optional_manifest_for_report(
     } else {
         root.join(manifest)
     };
-    match std::fs::read_to_string(&read_path) {
+    match crate::bounded_input::read_to_string(&read_path) {
         Ok(text) => Some(Ok(text)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
         Err(err) => Some(Err(format!(
@@ -3262,21 +3273,22 @@ fn parse_outcome_format(value: &str) -> Result<OutcomeFormat, String> {
     }
 }
 
+/// Review-comments diff through the shared range authority (#4538): the base
+/// and head are verified like `ripr check` verifies its base, and the range
+/// uses the pinned diff presentation, so ambient `color.diff` or
+/// `diff.submodule` config cannot empty or widen the changed-line set.
 fn load_review_comments_diff(root: &Path, base: &str, head: &str) -> Result<String, String> {
-    let range = format!("{base}...{head}");
-    let output = crate::git::run_git_output_with_deadline(
+    let base = analysis::resolve_effective_base(
         root,
-        &["diff", "--unified=0", "--no-ext-diff", &range],
+        Some(base),
         analysis::cancellation::remaining_budget(),
     )?;
-    if !output.status.success() {
-        return Err(format!(
-            "git diff for review-comments failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    String::from_utf8(output.stdout)
-        .map_err(|err| format!("git diff for review-comments was not UTF-8: {err}"))
+    analysis::load_diff_range_with_deadline(
+        root,
+        &base,
+        head,
+        analysis::cancellation::remaining_budget(),
+    )
 }
 
 fn review_comments_markdown_path(json_path: &Path) -> PathBuf {
@@ -4274,6 +4286,270 @@ mod tests {
         assert!(markdown.contains("gate candidates=`1`"));
 
         std::fs::remove_dir_all(&dir).map_err(|err| format!("remove gap ledger dir: {err}"))?;
+        Ok(())
+    }
+
+    fn read_json_file(path: &Path) -> Result<serde_json::Value, String> {
+        serde_json::from_str(
+            &std::fs::read_to_string(path)
+                .map_err(|err| format!("read {}: {err}", path.display()))?,
+        )
+        .map_err(|err| format!("parse {}: {err}", path.display()))
+    }
+
+    fn gap_ledger_from(
+        root: &str,
+        flag: &str,
+        input: &Path,
+        out: &Path,
+    ) -> Result<serde_json::Value, String> {
+        let out_md = out.with_extension("md");
+        reports(&args(&[
+            "gap-ledger",
+            "--root",
+            root,
+            flag,
+            &input.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]))?;
+        read_json_file(out)
+    }
+
+    fn pricing_gap_record(anchor_file: &str) -> serde_json::Value {
+        serde_json::json!({
+            "gap_id": "gap:pr:pricing",
+            "canonical_gap_id": "gap:rust:pricing",
+            "kind": "MissingBoundaryAssertion",
+            "language": "rust",
+            "language_status": "stable",
+            "gap_state": "actionable",
+            "repair_route": {
+                "route_kind": "AddBoundaryAssertion",
+                "related_test": "tests/pricing.rs::discount_threshold"
+            },
+            "anchor": {"file": anchor_file, "line": 1}
+        })
+    }
+
+    /// #4544: the ledger writer never hashes the workspace. A records input
+    /// without an analysis stamp yields no usable stamp (the LSP then reports
+    /// `unverifiable_subject`), and re-rendering that unstamped ledger through
+    /// `--records` does not mint a fresh stamp for the current bytes.
+    #[test]
+    fn reports_gap_ledger_without_an_input_stamp_is_unavailable_and_stays_so() -> Result<(), String>
+    {
+        use crate::output::gap_source_subject::{SourceSubjectCheck, check_source_subject};
+        let dir = unique_command_test_dir("gap-ledger-source-subject-missing");
+        std::fs::create_dir_all(dir.join("src")).map_err(|err| format!("create src: {err}"))?;
+        std::fs::write(dir.join("src/pricing.rs"), "abc\n")
+            .map_err(|err| format!("write anchor: {err}"))?;
+        let records = dir.join("records.json");
+        std::fs::write(
+            &records,
+            serde_json::json!({"records": [pricing_gap_record("src/pricing.rs")]}).to_string(),
+        )
+        .map_err(|err| format!("write records: {err}"))?;
+        let root = dir.display().to_string();
+
+        let ledger = gap_ledger_from(&root, "--records", &records, &dir.join("ledger.json"))?;
+        assert_eq!(ledger.get("source_subject"), None);
+        assert_eq!(
+            ledger["source_subject_unavailable"],
+            serde_json::json!("input_source_subject_missing")
+        );
+        let required = std::collections::BTreeSet::from([
+            "src/pricing.rs".to_string(),
+            "tests/pricing.rs".to_string(),
+        ]);
+        assert!(matches!(
+            check_source_subject(&dir, ledger.get("source_subject"), &required),
+            SourceSubjectCheck::Unverifiable(_)
+        ));
+
+        let rerendered = gap_ledger_from(
+            &root,
+            "--records",
+            &dir.join("ledger.json"),
+            &dir.join("rerendered.json"),
+        )?;
+        assert_eq!(rerendered.get("source_subject"), None);
+        assert_eq!(
+            rerendered["source_subject_unavailable"],
+            serde_json::json!("input_source_subject_missing")
+        );
+
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
+        Ok(())
+    }
+
+    /// #4544: a stamped input's digests are copied, never recomputed: the
+    /// ledger carries the input's digest even though the file changed before
+    /// the ledger was written, so the LSP reports the ledger stale. The root is
+    /// relative and the record names the anchor by absolute path, which must
+    /// still resolve to the same repo-relative stamp entry.
+    #[test]
+    fn reports_gap_ledger_copies_the_input_stamp_for_absolute_paths_under_a_relative_root()
+    -> Result<(), String> {
+        use crate::output::gap_source_subject::{SourceSubjectCheck, check_source_subject};
+        let dir = unique_repo_relative_test_dir("gap-ledger-source-subject-copy");
+        assert!(dir.is_relative(), "{}", dir.display());
+        std::fs::create_dir_all(dir.join("src")).map_err(|err| format!("create src: {err}"))?;
+        std::fs::write(dir.join("src/pricing.rs"), "abc\n")
+            .map_err(|err| format!("write anchor: {err}"))?;
+        let absolute_anchor = std::env::current_dir()
+            .map_err(|err| format!("cwd: {err}"))?
+            .join(&dir)
+            .join("src/pricing.rs");
+        let root = dir.display().to_string();
+        let analysis_stamp = serde_json::json!({
+            "digest_algorithm": "sha256",
+            "files": [
+                {
+                    "path": "src/pricing.rs",
+                    "digest": "sha256:edeaaff3f1774ad2888673770c6d64097e391bc362d7d6fb34982ddf0efd18cb"
+                },
+                {"path": "tests/pricing.rs", "digest": null}
+            ]
+        });
+        let records = dir.join("records.json");
+        std::fs::write(
+            &records,
+            serde_json::json!({
+                "root": root,
+                "source_subject": analysis_stamp,
+                "records": [pricing_gap_record(&absolute_anchor.display().to_string())]
+            })
+            .to_string(),
+        )
+        .map_err(|err| format!("write records: {err}"))?;
+        // The workspace moves on after the analysis stamped it.
+        std::fs::write(dir.join("src/pricing.rs"), "abd\n")
+            .map_err(|err| format!("edit anchor: {err}"))?;
+
+        let ledger = gap_ledger_from(&root, "--records", &records, &dir.join("ledger.json"))?;
+        assert_eq!(ledger["source_subject"], analysis_stamp);
+        assert_eq!(ledger.get("source_subject_unavailable"), None);
+        let required = std::collections::BTreeSet::from([
+            "src/pricing.rs".to_string(),
+            "tests/pricing.rs".to_string(),
+        ]);
+        assert_eq!(
+            check_source_subject(&dir, ledger.get("source_subject"), &required),
+            SourceSubjectCheck::Stale("src/pricing.rs".to_string())
+        );
+
+        // Re-rendering the written ledger keeps the analysis stamp.
+        let rerendered = gap_ledger_from(
+            &root,
+            "--records",
+            &dir.join("ledger.json"),
+            &dir.join("rerendered.json"),
+        )?;
+        assert_eq!(rerendered["source_subject"], analysis_stamp);
+
+        // A stamp that omits a named file yields no usable stamp.
+        std::fs::write(
+            &records,
+            serde_json::json!({
+                "root": root,
+                "source_subject": {"digest_algorithm": "sha256", "files": [
+                    analysis_stamp["files"][0].clone()
+                ]},
+                "records": [pricing_gap_record("src/pricing.rs")]
+            })
+            .to_string(),
+        )
+        .map_err(|err| format!("rewrite records: {err}"))?;
+        let incomplete =
+            gap_ledger_from(&root, "--records", &records, &dir.join("incomplete.json"))?;
+        assert_eq!(incomplete.get("source_subject"), None);
+        assert_eq!(
+            incomplete["source_subject_unavailable"],
+            serde_json::json!("input_source_subject_incomplete")
+        );
+
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
+        Ok(())
+    }
+
+    /// #4544 regression: analysis, then an edit, then the ledger write. The
+    /// repo-exposure artifact stamps the bytes the analysis run read; the
+    /// ledger derived after the edit copies that stamp, so the LSP-side check
+    /// reports the edited file stale instead of vouching for the new bytes.
+    #[test]
+    fn reports_gap_ledger_after_an_edit_keeps_the_analysis_time_stamp() -> Result<(), String> {
+        use crate::output::gap_source_subject::{SourceSubjectCheck, check_source_subject};
+        let dir = unique_command_test_dir("gap-ledger-source-subject-analysis");
+        let fixture = repo_root().join("fixtures/boundary_gap/input");
+        for file in ["Cargo.toml", "src/lib.rs", "tests/pricing.rs"] {
+            let target = dir.join(file);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|err| format!("create {}: {err}", parent.display()))?;
+            }
+            std::fs::copy(fixture.join(file), &target)
+                .map_err(|err| format!("copy {file}: {err}"))?;
+        }
+        let config = crate::config::RiprConfig::default();
+        let (classified, limit_info) =
+            crate::analysis::inventory_classified_seams_at_with_config(&dir, &config)?;
+        let context = crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
+            dir.clone(),
+            "draft".to_string(),
+            None,
+            &config,
+        )?;
+        let repo_exposure_json =
+            crate::output::repo_exposure::render_repo_exposure_json_with_context(
+                &classified,
+                limit_info.as_ref(),
+                None,
+                None,
+                &context,
+            )?;
+        let repo_exposure = dir.join("repo-exposure.json");
+        std::fs::write(&repo_exposure, &repo_exposure_json)
+            .map_err(|err| format!("write repo exposure: {err}"))?;
+        let analysis_stamp = read_json_file(&repo_exposure)?["source_subject"].clone();
+        let stamped_paths = analysis_stamp["files"]
+            .as_array()
+            .map(|files| {
+                files
+                    .iter()
+                    .filter_map(|file| file["path"].as_str().map(ToOwned::to_owned))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        assert_eq!(stamped_paths, ["src/lib.rs", "tests/pricing.rs"]);
+
+        std::fs::write(
+            dir.join("src/lib.rs"),
+            format!(
+                "{}\n// edited after analysis\n",
+                std::fs::read_to_string(dir.join("src/lib.rs"))
+                    .map_err(|err| format!("read lib: {err}"))?
+            ),
+        )
+        .map_err(|err| format!("edit lib: {err}"))?;
+
+        let ledger = gap_ledger_from(
+            &dir.display().to_string(),
+            "--repo-exposure",
+            &repo_exposure,
+            &dir.join("ledger.json"),
+        )?;
+        assert_eq!(ledger.get("source_subject_unavailable"), None);
+        assert_eq!(ledger["source_subject"], analysis_stamp);
+        let required = stamped_paths.into_iter().collect();
+        assert_eq!(
+            check_source_subject(&dir, ledger.get("source_subject"), &required),
+            SourceSubjectCheck::Stale("src/lib.rs".to_string())
+        );
+
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
         Ok(())
     }
 
@@ -6519,6 +6795,75 @@ language = "rust"
     }
 
     #[test]
+    fn review_comments_diff_uses_the_pinned_range_authority() -> Result<(), String> {
+        // #4538: the production review-comments loader must go through the
+        // shared range authority. The raw control proves the fixture
+        // discriminates: ambient `color.diff=always` colors a plain
+        // `git diff`, and the old private loader parsed that as zero changed
+        // lines. The same loader must name unresolvable revisions in ripr's
+        // own voice instead of git's `ambiguous argument` advice.
+        use crate::testing::fixture_git::{fixture_git_ok, remove_fixture_tree};
+        let root = unique_command_test_dir("review-comments-pinned-diff");
+        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+        let lib = root.join("src/lib.rs");
+        fixture_git_ok(&root, &["init", "-q", "--initial-branch=main"])?;
+        for (key, value) in [
+            ("user.name", "Review Comments"),
+            ("user.email", "review-comments@example.com"),
+            ("commit.gpgsign", "false"),
+            ("color.diff", "always"),
+        ] {
+            fixture_git_ok(&root, &["config", "--local", key, value])?;
+        }
+        std::fs::write(&lib, "pub fn f(x: i32) -> bool { x > 1 }\n")
+            .map_err(|err| format!("write base lib: {err}"))?;
+        fixture_git_ok(&root, &["add", "."])?;
+        fixture_git_ok(&root, &["commit", "-q", "-m", "base"])?;
+        std::fs::write(&lib, "pub fn f(x: i32) -> bool { x >= 1 }\n")
+            .map_err(|err| format!("write head lib: {err}"))?;
+        fixture_git_ok(&root, &["commit", "-q", "-am", "head"])?;
+
+        let raw = crate::git::run_git_output_with_deadline(
+            &root,
+            &["diff", "--unified=0", "--no-ext-diff", "HEAD~1...HEAD"],
+            None,
+        )?;
+        let raw = String::from_utf8_lossy(&raw.stdout).into_owned();
+        assert!(
+            raw.contains('\u{1b}'),
+            "color.diff=always control did not color the raw diff, so the fixture does not discriminate:\n{raw}"
+        );
+        assert!(analysis::parse_unified_diff(&raw).is_empty());
+
+        let diff = load_review_comments_diff(&root, "HEAD~1", "HEAD")?;
+        assert!(
+            !diff.contains('\u{1b}'),
+            "pinned diff kept ANSI color:\n{diff}"
+        );
+        let changed = analysis::parse_unified_diff(&diff);
+        assert_eq!(changed.len(), 1, "expected one changed file: {diff}");
+
+        let Err(err) = load_review_comments_diff(&root, "no-such-base", "HEAD") else {
+            return Err("an unresolvable base must fail".to_string());
+        };
+        assert!(
+            err.contains("the base `no-such-base` does not resolve to a commit")
+                && !err.contains("ambiguous argument"),
+            "base failure must be named by ripr, got: {err}"
+        );
+        let Err(err) = load_review_comments_diff(&root, "HEAD~1", "no-such-head") else {
+            return Err("an unresolvable head must fail".to_string());
+        };
+        assert!(
+            err.contains("the head `no-such-head` does not resolve to a commit")
+                && err.contains("--head <ref>")
+                && !err.contains("ambiguous argument"),
+            "head failure must be named by ripr, got: {err}"
+        );
+        remove_fixture_tree(&root)
+    }
+
+    #[test]
     fn review_comments_returns_diff_loader_errors() -> Result<(), String> {
         let root = unique_command_test_dir("review-comments-diff-error");
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
@@ -8102,6 +8447,58 @@ language = "rust"
         assert_contains_all(&workflow, "artifact path", fixture.artifact_paths);
         assert_contains_all(&workflow, "summary section", fixture.summary_sections);
 
+        // Workflow hardening: the job token is not persisted into the
+        // checkout that PR-controlled code runs in.
+        assert!(
+            workflow.contains("          fetch-depth: 0\n          persist-credentials: false\n")
+        );
+        // Checked-in or cache-restored files under target/ripr and target/ci
+        // are removed after the cache restore and before any RIPR step, so
+        // gate inputs read "when present" come only from this run.
+        let cleanup = workflow_step(&workflow, "Remove checked-in RIPR artifacts");
+        assert!(cleanup.contains("run: rm -rf target/ripr target/ci"));
+        let cache_at = workflow.find("Swatinem/rust-cache@").unwrap_or(usize::MAX);
+        let cleanup_at = workflow
+            .find("      - name: Remove checked-in RIPR artifacts")
+            .unwrap_or(0);
+        assert!(
+            cache_at < cleanup_at,
+            "cleanup must follow the cache restore"
+        );
+        assert_step_before(
+            &workflow,
+            "Remove checked-in RIPR artifacts",
+            "Install ripr",
+        );
+        assert_step_before(
+            &workflow,
+            "Remove checked-in RIPR artifacts",
+            "Generate RIPR pilot packet",
+        );
+        // Only comments the workflow itself posted count as existing RIPR
+        // comments; a marker from another author cannot suppress or be
+        // PATCHed.
+        let capture = workflow_step(&workflow, "Capture existing RIPR inline comments");
+        assert!(
+            capture.contains(
+                r#"| select(.user.login == "github-actions[bot]" and .user.type == "Bot")"#
+            )
+        );
+        // Repository-derived text printed to the log folds CR/LF so it
+        // cannot open a line GitHub parses as a workflow command.
+        let publish = workflow_step(&workflow, "Publish RIPR inline comments");
+        assert!(publish.contains(
+            r#"jq -r '.blocked[]? | "- \(.blocked_reason): \(.message)" | gsub("[\r\n]"; " ")'"#
+        ));
+        assert!(publish.contains(
+            r#"dedupe_key="$(jq -r '.dedupe_key | tostring | gsub("[\r\n]"; " ")' <<< "$operation")""#
+        ));
+        assert!(publish.contains(
+            r#"select(.operation == "keep") | .dedupe_key | tostring | gsub("[\r\n]"; " ")'"#
+        ));
+        assert!(!publish.contains("jq -r '.dedupe_key' "));
+        assert!(!publish.contains(r#"| .dedupe_key' "$publishable""#));
+
         let prepare = workflow_step(&workflow, "Prepare RIPR editor-agent artifacts");
         assert!(prepare.contains("RIPR_TOP_SEAM_ID"));
         // first-pr checks the review cards were built for its base; the
@@ -8734,7 +9131,7 @@ language = "rust"
         assert!(summary.contains(".top_issue.receipt.artifact // \"not_available\""));
         assert!(summary.contains(".policy.mode // \"not_available\""));
         assert!(summary.contains(".policy.decision // \"not_available\""));
-        assert!(summary.contains("cat target/ripr/reports/pr-review-front-panel.md"));
+        assert!(summary.contains("repo_relative < target/ripr/reports/pr-review-front-panel.md"));
         assert!(summary.contains("PR review summary was not generated"));
         assert!(summary.contains("### Recommended next test"));
         assert!(summary.contains("#### Recommended next test at a glance"));
@@ -8787,7 +9184,7 @@ language = "rust"
         assert!(summary.contains(".commands.verify // \"not_available\""));
         assert!(summary.contains(".commands.receipt // \"not_available\""));
         assert!(summary.contains(".fallback.kind // \"none\""));
-        assert!(summary.contains("cat target/ripr/reports/first-useful-action.md"));
+        assert!(summary.contains("repo_relative < target/ripr/reports/first-useful-action.md"));
         assert!(summary.contains("Recommended next test was not generated"));
         assert!(summary.contains("cat target/ripr/pilot/pilot-summary.md"));
         assert!(summary.contains("cat target/ripr/workflow/agent-review-summary.md"));

@@ -13,13 +13,16 @@ use super::diagnostics::{
     DiagnosticBatch, WorkspaceDiagnostics, add_canonical_group_data, canonical_finding_groups,
     canonical_group_has_mixed_classes, diagnostic_for_classified_seam, diagnostic_for_finding,
     diagnostic_refresh_plan, diagnostic_severity_for_class, finding_diagnostics_by_uri,
-    take_all_uris, workspace_diagnostic_batches, workspace_diagnostic_batches_with_config,
-    workspace_diagnostics_with_config,
+    finding_diagnostics_by_uri_with_profile, take_all_uris, workspace_diagnostic_batches,
+    workspace_diagnostic_batches_with_config, workspace_diagnostics_with_config,
 };
 use super::gap_artifacts::{
     GapArtifactIdentity, GapArtifactKind, GapArtifactRejection, ValidatedGapArtifact,
 };
-use super::hover::{classified_seam_hover_response, hover_response, hover_with_snapshot_status};
+use super::hover::{
+    classified_seam_hover_response, diagnostic_covers_position, hover_response,
+    hover_with_snapshot_status,
+};
 use super::input_identity::LspAnalysisInputIdentity;
 use super::lens::{code_lens_response, lens_title_is_static_language_clean, lens_view_identity};
 use super::progress::ProgressEvent;
@@ -904,8 +907,8 @@ fn serve_stdio_call_presence_observer() -> Result<(), String> {
         "serve_streams should set the explicit in-flight request concurrency bound (#2034)"
     );
     assert!(
-        serve_streams.contains(".serve(service)"),
-        "serve_streams should hand the bounded transport, the socket, and the service to the tower LSP server"
+        serve_streams.contains(".serve(dollar_requests::AnswerDollarRequests(service))"),
+        "serve_streams should hand the bounded transport, the socket, and the service (behind the `$/` request layer, #4456) to the tower LSP server"
     );
 
     Ok(())
@@ -1709,6 +1712,19 @@ fn framed_code_lens_refresh_follows_semantic_lens_view_changes() -> Result<(), S
                 "fixture must produce at least one code lens, or the refresh counts pass vacuously: {lenses}"
             ));
         }
+        let emitted_lens_command = lenses
+            .pointer("/result/0/command/command")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("nonempty lens response omitted its command")?;
+        let advertised_commands = initialize
+            .pointer("/result/capabilities/executeCommandProvider/commands")
+            .and_then(serde_json::Value::as_array)
+            .ok_or("initialization omitted command advertisement")?;
+        if emitted_lens_command != "ripr.refresh"
+            || !advertised_commands.iter().any(|command| command.as_str() == Some(emitted_lens_command))
+        {
+            return Err(format!("actual lens command is not the advertised refresh: {emitted_lens_command:?}"));
+        }
 
         // Refresh 2: byte-identical inputs. A new snapshot commits with a
         // fresh wall-clock age (the rendered title suffix changes), but the
@@ -1720,7 +1736,7 @@ fn framed_code_lens_refresh_follows_semantic_lens_view_changes() -> Result<(), S
                 "id": 3,
                 "method": "workspace/executeCommand",
                 "params": {
-                    "command": REFRESH_COMMAND,
+                    "command": emitted_lens_command,
                     "arguments": []
                 }
             }),
@@ -1766,7 +1782,7 @@ fn framed_code_lens_refresh_follows_semantic_lens_view_changes() -> Result<(), S
                 "id": 4,
                 "method": "workspace/executeCommand",
                 "params": {
-                    "command": REFRESH_COMMAND,
+                    "command": emitted_lens_command,
                     "arguments": []
                 }
             }),
@@ -6958,6 +6974,209 @@ fn diagnostic_for_finding_uses_one_character_range_for_empty_expression() {
 
     assert_eq!(diagnostic.range.start.character, 2);
     assert_eq!(diagnostic.range.end.character, 3);
+}
+
+/// Issue #4602 fixture: analyzer column 1 plus a tab and a CJK/astral prefix
+/// before the changed expression. UTF-16 start 36..42 covers `x >= 5`.
+const INDENTED_UNICODE_PROBE_LINE: &str = "\tlet s = \"日本語🎉\"; let _ = s; return x >= 5;";
+
+fn finding_on_saved_pricing_line(
+    root: &Path,
+    line_text: &str,
+    expression: &str,
+) -> Result<Finding, String> {
+    let src = root.join("src");
+    fs::create_dir_all(&src).map_err(|err| format!("create src: {err}"))?;
+    let body = format!("fn probe_line() {{\n{line_text}\n}}\n");
+    fs::write(src.join("pricing.rs"), body).map_err(|err| format!("write pricing.rs: {err}"))?;
+    let mut finding = sample_finding();
+    finding.probe.location.line = 2;
+    finding.probe.location.column = 1;
+    finding.probe.expression = expression.to_string();
+    Ok(finding)
+}
+
+fn assert_finding_range(
+    diagnostic: &Diagnostic,
+    start_character: u32,
+    end_character: u32,
+) -> Result<(), String> {
+    if diagnostic.range.start.line != 1 {
+        return Err(format!(
+            "expected LSP line 1, got {}",
+            diagnostic.range.start.line
+        ));
+    }
+    if diagnostic.range.start.character != start_character
+        || diagnostic.range.end.character != end_character
+    {
+        return Err(format!(
+            "expected characters {start_character}..{end_character}, got {}..{}",
+            diagnostic.range.start.character, diagnostic.range.end.character
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn diagnostic_for_finding_underlines_indented_expression_not_leading_whitespace()
+-> Result<(), String> {
+    let root = unique_lsp_test_root("finding-range-verbatim")?;
+    let finding =
+        finding_on_saved_pricing_line(root.path(), INDENTED_UNICODE_PROBE_LINE, "x >= 5")?;
+    let diagnostic = diagnostic_for_finding(root.path(), &finding);
+    assert_finding_range(&diagnostic, 36, 42)?;
+    if diagnostic
+        .data
+        .as_ref()
+        .and_then(|data| data.get("source_range"))
+        .and_then(|range| range.get("column"))
+        .and_then(serde_json::Value::as_u64)
+        != Some(1)
+    {
+        return Err("analyzer source_range.column must stay 1".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn diagnostic_for_finding_hover_covers_expression_not_indentation() -> Result<(), String> {
+    let root = unique_lsp_test_root("finding-range-hover")?;
+    let finding =
+        finding_on_saved_pricing_line(root.path(), INDENTED_UNICODE_PROBE_LINE, "x >= 5")?;
+    let diagnostic = diagnostic_for_finding(root.path(), &finding);
+    if diagnostic_covers_position(
+        &diagnostic,
+        &Position {
+            line: 1,
+            character: 0,
+        },
+    ) {
+        return Err("hover must not match on the leading tab".to_string());
+    }
+    if !diagnostic_covers_position(
+        &diagnostic,
+        &Position {
+            line: 1,
+            character: 36,
+        },
+    ) {
+        return Err("hover must match on the changed expression".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn diagnostic_for_finding_falls_back_to_first_non_whitespace_when_expression_is_absent()
+-> Result<(), String> {
+    let root = unique_lsp_test_root("finding-range-missing-expr")?;
+    let finding = finding_on_saved_pricing_line(root.path(), "\t    return true;", "x >= 5")?;
+    let diagnostic = diagnostic_for_finding(root.path(), &finding);
+    // Tab (1) + four spaces, then `return true;` — width of `x >= 5` is 6.
+    assert_finding_range(&diagnostic, 5, 11)
+}
+
+#[test]
+fn diagnostic_for_finding_keeps_column_span_when_saved_file_cannot_be_read() {
+    let mut finding = sample_finding();
+    finding.probe.location.file = PathBuf::from("src/does-not-exist.rs");
+    finding.probe.location.column = 1;
+    finding.probe.expression = "x >= 5".to_string();
+
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+
+    assert_eq!(diagnostic.range.start.character, 0);
+    assert_eq!(diagnostic.range.end.character, 6);
+}
+
+#[test]
+fn diagnostic_for_finding_keeps_column_span_when_line_is_past_eof() -> Result<(), String> {
+    let root = unique_lsp_test_root("finding-range-past-eof")?;
+    let mut finding = finding_on_saved_pricing_line(root.path(), "    x >= 5;", "x >= 5")?;
+    finding.probe.location.line = 99;
+    let diagnostic = diagnostic_for_finding(root.path(), &finding);
+    assert_eq!(diagnostic.range.start.character, 0);
+    assert_eq!(diagnostic.range.end.character, 6);
+    Ok(())
+}
+
+#[test]
+fn diagnostic_for_finding_keeps_column_span_when_saved_file_is_not_utf8() -> Result<(), String> {
+    let root = unique_lsp_test_root("finding-range-latin1")?;
+    let src = root.path().join("src");
+    fs::create_dir_all(&src).map_err(|err| format!("create src: {err}"))?;
+    fs::write(src.join("pricing.rs"), [0xffu8, b'\n', b'x'])
+        .map_err(|err| format!("write pricing.rs: {err}"))?;
+    let mut finding = sample_finding();
+    finding.probe.location.line = 2;
+    finding.probe.location.column = 1;
+    finding.probe.expression = "x >= 5".to_string();
+    let diagnostic = diagnostic_for_finding(root.path(), &finding);
+    assert_eq!(diagnostic.range.start.character, 0);
+    assert_eq!(diagnostic.range.end.character, 6);
+    Ok(())
+}
+
+#[test]
+fn diagnostic_for_finding_locates_expression_on_crlf_saved_line() -> Result<(), String> {
+    let root = unique_lsp_test_root("finding-range-crlf")?;
+    let src = root.path().join("src");
+    fs::create_dir_all(&src).map_err(|err| format!("create src: {err}"))?;
+    let body = format!("fn probe_line() {{\r\n{INDENTED_UNICODE_PROBE_LINE}\r\n}}\r\n");
+    fs::write(src.join("pricing.rs"), body).map_err(|err| format!("write pricing.rs: {err}"))?;
+    let mut finding = sample_finding();
+    finding.probe.location.line = 2;
+    finding.probe.location.column = 1;
+    finding.probe.expression = "x >= 5".to_string();
+    let diagnostic = diagnostic_for_finding(root.path(), &finding);
+    assert_finding_range(&diagnostic, 36, 42)
+}
+
+#[test]
+fn diagnostic_for_finding_measures_saved_prefix_in_negotiated_encoding() -> Result<(), String> {
+    let root = unique_lsp_test_root("finding-range-encoding")?;
+    let finding =
+        finding_on_saved_pricing_line(root.path(), INDENTED_UNICODE_PROBE_LINE, "x >= 5")?;
+    let width_start = |encoding: &PositionEncodingKind| -> Result<(u32, u32), String> {
+        let grouped = finding_diagnostics_by_uri_with_profile(
+            root.path(),
+            std::slice::from_ref(&finding),
+            &crate::config::SeverityConfig::default(),
+            true,
+            crate::config::LspDiagnosticProfile::Full,
+            None,
+            encoding,
+        )?;
+        let diagnostic = grouped
+            .values()
+            .flatten()
+            .next()
+            .ok_or_else(|| "expected a finding diagnostic".to_string())?;
+        Ok((
+            diagnostic.range.start.character,
+            diagnostic.range.end.character,
+        ))
+    };
+
+    if width_start(&PositionEncodingKind::UTF16)? != (36, 42) {
+        return Err(format!(
+            "UTF-16 start/end {:?}",
+            width_start(&PositionEncodingKind::UTF16)?
+        ));
+    }
+    if width_start(&PositionEncodingKind::UTF8)? != (44, 50) {
+        return Err(format!(
+            "UTF-8 start/end {:?}",
+            width_start(&PositionEncodingKind::UTF8)?
+        ));
+    }
+    if width_start(&PositionEncodingKind::UTF32)? != (35, 41) {
+        return Err(format!(
+            "UTF-32 start/end {:?}",
+            width_start(&PositionEncodingKind::UTF32)?
+        ));
+    }
+    Ok(())
 }
 
 #[test]
@@ -12324,6 +12543,7 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
                 reason: "observed values skip equality boundary".to_string(),
                 flow_sink: None,
             }],
+            new_test_target: None,
         },
         class: SeamGripClass::WeaklyGripped,
     }
@@ -12360,6 +12580,7 @@ fn sample_side_effect_seam_without_related_tests() -> crate::analysis::Classifie
             discriminate: StageEvidence::new(StageState::No, Confidence::Low, "no discriminator"),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            new_test_target: None,
         },
         class: SeamGripClass::Ungripped,
     }
@@ -13548,11 +13769,16 @@ fn execute_command_context_commands_reject_unreadable_arguments_with_shapes() ->
     runtime.block_on(async {
         let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
         let backend = service.inner();
-        let cases: [(&str, Vec<serde_json::Value>, &str); 6] = [
+        let cases: [(&str, Vec<serde_json::Value>, &str); 8] = [
             (COLLECT_CONTEXT_COMMAND, vec![], "expects one object"),
             (
                 COLLECT_CONTEXT_COMMAND,
                 vec![serde_json::json!("probe:src/lib.rs:1:predicate")],
+                "expects one object",
+            ),
+            (
+                COLLECT_CONTEXT_COMMAND,
+                vec![serde_json::Value::Null],
                 "expects one object",
             ),
             (
@@ -13568,6 +13794,11 @@ fn execute_command_context_commands_reject_unreadable_arguments_with_shapes() ->
             (
                 COLLECT_EVIDENCE_CONTEXT_COMMAND,
                 vec![],
+                "expects one object",
+            ),
+            (
+                COLLECT_EVIDENCE_CONTEXT_COMMAND,
+                vec![serde_json::json!("not-an-object")],
                 "expects one object",
             ),
             (
@@ -13600,6 +13831,138 @@ fn execute_command_context_commands_reject_unreadable_arguments_with_shapes() ->
                 error.message
             );
         }
+        Ok(())
+    })
+}
+
+/// Runs one server-executed command on `backend` and returns its
+/// InvalidParams error, or explains what came back instead.
+async fn expect_invalid_params(
+    backend: &Backend,
+    command: &str,
+    argument: serde_json::Value,
+) -> Result<tower_lsp_server::jsonrpc::Error, String> {
+    let described = format!("{command} {argument}");
+    let result = backend
+        .execute_command(ExecuteCommandParams {
+            command: command.to_string(),
+            arguments: vec![argument],
+            work_done_progress_params: Default::default(),
+        })
+        .await;
+    match result {
+        Ok(value) => Err(format!("{described}: expected an error, got {value:?}")),
+        Err(error) if error.code == tower_lsp_server::jsonrpc::ErrorCode::InvalidParams => {
+            Ok(error)
+        }
+        Err(error) => Err(format!(
+            "{described}: expected InvalidParams, got {error:?}"
+        )),
+    }
+}
+
+/// A present `gap_id` that is not a string is the caller's fault and is
+/// reported under `gap_id`, even when a `seam_id` is also present: the
+/// handler looks `gap_id` up first, so blaming `seam_id` named the wrong
+/// field.
+#[test]
+fn execute_command_collect_context_rejects_malformed_gap_id_naming_gap_id() -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let cases = [
+            (
+                serde_json::json!({"gap_id": 42, "seam_id": "seam:src/lib.rs:1"}),
+                "a number",
+            ),
+            (
+                serde_json::json!({"gap_id": false, "finding_id": "probe:src/lib.rs:1:predicate"}),
+                "a boolean",
+            ),
+            (
+                serde_json::json!({"gap_id": {"id": "gap:rust:x"}}),
+                "an object",
+            ),
+        ];
+        for (argument, got) in cases {
+            let error =
+                expect_invalid_params(backend, COLLECT_CONTEXT_COMMAND, argument.clone()).await?;
+            assert!(
+                error.message.contains(&format!(
+                    "`gap_id` must be a string when present, got {got}"
+                )),
+                "{argument}: error must name `gap_id` and what was expected: {}",
+                error.message
+            );
+            assert!(
+                !error.message.contains("`seam_id` `") && !error.message.contains("`finding_id` `"),
+                "{argument}: error must not blame another field: {}",
+                error.message
+            );
+        }
+        Ok(())
+    })
+}
+
+/// Positive controls for the context target: a valid `gap_id` is still the
+/// looked-up target, and a JSON `null` or blank `gap_id` counts as absent so
+/// the next key in precedence order is used, as before.
+#[test]
+fn execute_command_collect_context_valid_or_null_gap_id_keeps_target() -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("context-gap-id-target")?;
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let error = expect_invalid_params(
+            backend,
+            COLLECT_CONTEXT_COMMAND,
+            serde_json::json!({"gap_id": "gap:rust:absent"}),
+        )
+        .await?;
+        assert!(
+            error
+                .message
+                .contains("`gap_id` `gap:rust:absent` is not in the gap ledger"),
+            "a valid gap_id must stay the looked-up target: {}",
+            error.message
+        );
+        let error = expect_invalid_params(
+            backend,
+            COLLECT_CONTEXT_COMMAND,
+            serde_json::json!({"gap_id": null, "finding_id": "probe:unknown:1:predicate"}),
+        )
+        .await?;
+        assert!(
+            error.message.contains(
+                "`finding_id` `probe:unknown:1:predicate` is not in the current analysis snapshot"
+            ),
+            "a null gap_id must be treated as absent: {}",
+            error.message
+        );
+        let error = expect_invalid_params(
+            backend,
+            COLLECT_CONTEXT_COMMAND,
+            serde_json::json!({"gap_id": "  ", "finding_id": "probe:unknown:1:predicate"}),
+        )
+        .await?;
+        assert!(
+            error.message.contains(
+                "`finding_id` `probe:unknown:1:predicate` is not in the current analysis snapshot"
+            ),
+            "a blank gap_id must be treated as absent: {}",
+            error.message
+        );
         Ok(())
     })
 }
@@ -14392,7 +14755,10 @@ fn write_actionable_gaps_report(
     std::fs::create_dir_all(&reports_dir)
         .map_err(|err| format!("create reports dir failed: {err}"))?;
     let path = reports_dir.join("actionable-gaps.json");
-    std::fs::write(&path, report.to_string())
+    // #4544: stamp the fixture as the producer does so the packet is current.
+    let stamped =
+        crate::output::gap_source_subject::with_source_subject_for_test(root, report.clone());
+    std::fs::write(&path, stamped.to_string())
         .map_err(|err| format!("write actionable-gaps.json failed: {err}"))?;
     Ok(())
 }
@@ -14404,7 +14770,11 @@ fn write_gap_decision_ledger(root: &std::path::Path) -> Result<(), String> {
     std::fs::create_dir_all(&reports_dir)
         .map_err(|err| format!("create reports dir failed: {err}"))?;
     let path = reports_dir.join("gap-decision-ledger.json");
-    std::fs::write(&path, complete_gap_decision_ledger_json())
+    // #4544: stamp the fixture as the producer does so the ledger is current.
+    let ledger = serde_json::from_str::<serde_json::Value>(complete_gap_decision_ledger_json())
+        .map_err(|err| format!("parse fixture ledger failed: {err}"))?;
+    let stamped = crate::output::gap_source_subject::with_source_subject_for_test(root, ledger);
+    std::fs::write(&path, stamped.to_string())
         .map_err(|err| format!("write gap-decision-ledger.json failed: {err}"))?;
     Ok(())
 }
@@ -14588,6 +14958,154 @@ fn execute_command_collect_repair_packet_incomplete_gap_returns_sentinel() -> Re
     })
 }
 
+/// A present `gap_id` that is not a string must be rejected, not silently
+/// dropped: dropping it answered a request for one gap with the top
+/// gap's packet, a wrong actionable signal. The fixture holds a complete top
+/// packet so a fall-through would visibly succeed.
+#[test]
+fn execute_command_collect_repair_packet_rejects_malformed_gap_id() -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("repair-packet-malformed-gap-id")?;
+        write_actionable_gaps_report(root.path(), &complete_actionable_gaps_report())?;
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let cases = [
+            (serde_json::json!({"gap_id": 42}), "a number"),
+            (serde_json::json!({"gap_id": true}), "a boolean"),
+            (
+                serde_json::json!({"gap_id": ["gap:rust:pricing-boundary"]}),
+                "an array",
+            ),
+        ];
+        for (argument, got) in cases {
+            let error =
+                expect_invalid_params(backend, COLLECT_REPAIR_PACKET_COMMAND, argument.clone())
+                    .await?;
+            assert!(
+                error.message.contains(&format!(
+                    "`gap_id` must be a string when present, got {got}"
+                )) && error.message.contains("no arguments for the top packet"),
+                "{argument}: error must name `gap_id`, the expectation, and the shapes: {}",
+                error.message
+            );
+        }
+        Ok(())
+    })
+}
+
+/// Positive control: without a `gap_id` (no arguments, an empty object, a
+/// null `gap_id`, or an empty or blank one, per RIPR-SPEC-0077) the top
+/// packet is still returned, and a valid, padded `gap_id` still selects its
+/// packet.
+#[test]
+fn execute_command_collect_repair_packet_absent_or_valid_gap_id_returns_packet()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("repair-packet-absent-gap-id")?;
+        write_actionable_gaps_report(root.path(), &complete_actionable_gaps_report())?;
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let cases = [
+            vec![],
+            vec![serde_json::Value::Null],
+            vec![serde_json::json!({})],
+            vec![serde_json::json!({"gap_id": null})],
+            vec![serde_json::json!({"gap_id": ""})],
+            vec![serde_json::json!({"gap_id": "  "})],
+            vec![serde_json::json!({"gap_id": " gap:rust:pricing-boundary "})],
+        ];
+        for arguments in cases {
+            let described = format!("{arguments:?}");
+            let packet = backend
+                .execute_command(ExecuteCommandParams {
+                    command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+                    arguments,
+                    work_done_progress_params: Default::default(),
+                })
+                .await
+                .map_err(|err| format!("{described}: execute_command failed: {err}"))?
+                .ok_or_else(|| format!("{described}: expected a repair packet"))?;
+            assert_eq!(packet["kind"], "repair_packet", "{described}");
+            assert_eq!(
+                packet["canonical_gap_id"], "gap:rust:pricing-boundary",
+                "{described}: expected the packet, got {packet}"
+            );
+        }
+        Ok(())
+    })
+}
+
+/// A requested `gap_id` that `actionable-gaps.json` does not hold must not be
+/// answered with that report's first packet (another gap's repair
+/// instructions). An id held only by the gap ledger reaches the ledger, and
+/// an id held by neither gets the sentinel naming it.
+#[test]
+fn execute_command_collect_repair_packet_unknown_gap_id_never_returns_another_gap()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("repair-packet-unknown-gap-id")?;
+        write_actionable_gaps_report(root.path(), &complete_actionable_gaps_report())?;
+        write_gap_decision_ledger(root.path())?;
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let run = |gap_id: &'static str| {
+            backend.execute_command(ExecuteCommandParams {
+                command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+                arguments: vec![serde_json::json!({ "gap_id": gap_id })],
+                work_done_progress_params: Default::default(),
+            })
+        };
+
+        let ledger_only = run("gap:rust:pricing:threshold-boundary")
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected the ledger packet".to_string())?;
+        assert_eq!(
+            ledger_only["canonical_gap_id"], "gap:rust:pricing:threshold-boundary",
+            "an id only the ledger holds must reach the ledger: {ledger_only}"
+        );
+
+        let unknown = run("gap:rust:absent")
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected the no-packet sentinel".to_string())?;
+        assert_eq!(
+            unknown["status"], "not_actionable_or_incomplete",
+            "{unknown}"
+        );
+        assert!(
+            unknown["canonical_gap_id"].is_null(),
+            "an unknown id must not carry another gap's packet: {unknown}"
+        );
+        let reason = unknown["reason"]
+            .as_str()
+            .ok_or_else(|| format!("sentinel must carry a string reason: {unknown}"))?;
+        assert!(
+            reason.contains("no repair packet for gap `gap:rust:absent`"),
+            "the sentinel must name the requested gap: {reason}"
+        );
+        Ok(())
+    })
+}
+
 #[test]
 fn execute_command_collect_repair_packet_complete_gap_returns_full_packet() -> Result<(), String> {
     // A well-formed actionable-gaps.json with a complete packet must emit the
@@ -14696,6 +15214,145 @@ fn execute_command_collect_repair_packet_complete_gap_returns_full_packet() -> R
                 "repair packet must not contain mutation-runtime term '{term}'"
             );
         }
+        Ok(())
+    })
+}
+
+#[test]
+fn execute_command_collect_repair_packet_never_substitutes_another_gaps_packet()
+-> Result<(), String> {
+    // A diagnostic published before actionable-gaps.json was rewritten can
+    // name a gap the new artifact no longer lists. The answer must not be the
+    // artifact's first packet: that is another gap's edit surface, verify
+    // command and receipt command.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("repair-packet-unknown-gap")?;
+        write_actionable_gaps_report(root.path(), &complete_actionable_gaps_report())?;
+
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let collect = |gap_id: &str| ExecuteCommandParams {
+            command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+            arguments: vec![serde_json::json!({ "gap_id": gap_id })],
+            work_done_progress_params: Default::default(),
+        };
+
+        // Seed sanity: the listed gap still returns its own packet.
+        let listed = backend
+            .execute_command(collect("gap:rust:pricing-boundary"))
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected the listed gap's packet".to_string())?;
+        assert_eq!(listed["canonical_gap_id"], "gap:rust:pricing-boundary");
+
+        let result = backend
+            .execute_command(collect("gap:rust:no-longer-listed"))
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected a sentinel, not null".to_string())?;
+        assert_ne!(
+            result["canonical_gap_id"], "gap:rust:pricing-boundary",
+            "another gap's packet was returned for an unlisted gap: {result}"
+        );
+        assert!(
+            result.get("verify_command").is_none() && result.get("receipt_command").is_none(),
+            "an unlisted gap must carry no commands, got {result}"
+        );
+        assert_eq!(result["kind"], "repair_packet");
+        assert_eq!(result["status"], "not_actionable_or_incomplete");
+        let reason = result["reason"]
+            .as_str()
+            .ok_or_else(|| format!("sentinel must carry a string reason, got {result}"))?;
+        assert!(
+            reason.contains("gap:rust:no-longer-listed"),
+            "the sentinel must name the requested gap, got {reason}"
+        );
+
+        // actionable-gaps.json is bounded (`packet_limit`), so a gap it does
+        // not list may still be an actionable ledger record. That record's
+        // own packet is the answer, never the artifact's first packet.
+        write_gap_decision_ledger(root.path())?;
+        let from_ledger = backend
+            .execute_command(collect("gap:rust:pricing:threshold-boundary"))
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected the ledger record's packet".to_string())?;
+        assert_eq!(
+            from_ledger["canonical_gap_id"], "gap:rust:pricing:threshold-boundary",
+            "a gap past the projection bound must resolve to its own ledger packet: {from_ledger}"
+        );
+        assert_eq!(
+            from_ledger["verify_command"],
+            "cargo xtask fixtures boundary_gap"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn execute_command_collect_repair_packet_discloses_stale_actionable_gaps_subject()
+-> Result<(), String> {
+    // #4544: after the packet's anchor file changes (an edit or a branch
+    // switch), the repair packet command returns a typed stale sentinel
+    // naming the regeneration command, not the old packet.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("repair-packet-stale-subject")?;
+        let report = complete_actionable_gaps_report();
+        let related_test = report["packets"][0]["primary_anchor"]["file"]
+            .as_str()
+            .ok_or_else(|| "fixture packet must name an anchor file".to_string())?
+            .to_string();
+        write_actionable_gaps_report(root.path(), &report)?;
+
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let collect = || {
+            backend.execute_command(ExecuteCommandParams {
+                command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+                arguments: vec![serde_json::json!({ "gap_id": "gap:rust:pricing-boundary" })],
+                work_done_progress_params: Default::default(),
+            })
+        };
+        let current = collect()
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected full repair packet".to_string())?;
+        assert_ne!(
+            current["status"], "not_actionable_or_incomplete",
+            "a current actionable-gaps.json must render its packet: {current}"
+        );
+
+        let related_path = root.path().join(&related_test);
+        if let Some(parent) = related_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| format!("create dir failed: {err}"))?;
+        }
+        std::fs::write(&related_path, "pub fn price() {}\n")
+            .map_err(|err| format!("write anchor file failed: {err}"))?;
+        let stale = collect()
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected stale sentinel".to_string())?;
+        assert_eq!(stale["status"], "not_actionable_or_incomplete");
+        let reason = stale["reason"]
+            .as_str()
+            .ok_or_else(|| "sentinel must carry a string reason".to_string())?;
+        assert!(
+            reason.starts_with(&format!("stale_subject: {related_test} changed"))
+                && reason.contains("cargo xtask lane1-evidence-audit"),
+            "stale actionable-gaps.json must be disclosed, got {stale}"
+        );
         Ok(())
     })
 }

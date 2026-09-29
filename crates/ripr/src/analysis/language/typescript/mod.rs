@@ -45,6 +45,8 @@ mod actionability;
 mod annotation_only;
 #[cfg(test)]
 mod annotation_only_tests;
+#[cfg(test)]
+mod assertion_library_tests;
 mod boundary_input;
 #[cfg(test)]
 mod boundary_input_tests;
@@ -52,6 +54,9 @@ mod bounded_read;
 mod bun_bridge;
 mod classifier;
 mod discovery;
+#[cfg(test)]
+mod line_index_tests;
+mod module_entries;
 #[cfg(test)]
 mod new_declaration_tests;
 mod oracle;
@@ -72,6 +77,7 @@ mod tests_extract;
 mod tests_extract_tests;
 pub(crate) mod tsconfig;
 mod types;
+mod workspace_packages;
 
 // Re-export all submodule items unconditionally so that every sibling
 // submodule's `use super::*;` resolves, and so that `tests.rs` which
@@ -83,6 +89,7 @@ pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use classifier::*;
 pub(crate) use discovery::*;
+pub(crate) use module_entries::*;
 pub(crate) use oracle::*;
 pub(crate) use owners::*;
 pub(crate) use package::*;
@@ -133,6 +140,10 @@ impl LanguageAdapter for TypeScriptAdapter {
         _oracle_policy: &OraclePolicy,
         changed_files: &[ChangedFile],
     ) -> Result<LanguageDiffResult, String> {
+        // Directory-module resolution (#4546) and the tsconfig outDir
+        // mapping (#4551) are memoized for this run only (#4638 and #4800
+        // reviews); the scope drops the cache when the run returns.
+        let _directory_modules = DirectoryModuleCacheScope::open();
         // Phase 1: discover and index every accepted file in the workspace
         // so we can find related tests for any owner regardless of whether
         // the test file itself changed in this diff.
@@ -237,11 +248,25 @@ impl LanguageAdapter for TypeScriptAdapter {
                 // honest "enable the flag" advice for this path (#4106-B).
                 (None, None, None)
             };
+        // In-workspace package names resolve whether or not the tsconfig
+        // flag is on (#4554): `import ... from '@scope/pkg/sub'` in a sibling
+        // package's test names that package's source when its manifest says
+        // so unambiguously. The load gap is kept, so alias advice is as before.
+        let workspace_packages =
+            workspace_packages::WorkspacePackages::discover(&options.root, &workspace_files);
+        let alias_map = if workspace_packages.is_empty() {
+            alias_map
+        } else {
+            Some(match alias_map {
+                Some(map) => map.with_workspace_packages(workspace_packages),
+                None => TsAliasMap::workspace_packages_only(&options.root, workspace_packages),
+            })
+        };
         let alias_map_ref: Option<&TsAliasMap> = alias_map.as_ref();
 
-        // Build the single-hop re-export index from all non-test workspace files
+        // Build the bounded re-export index from all non-test workspace files
         // (RIPR-SPEC-0095). The index enables crediting tests that reach the owner
-        // via an explicit `export { N } from './owner'` barrel-file re-export.
+        // through `export { N } from` / `export * from` barrel chains.
         // Sources come from the Phase-1 cache so each file is read once per run.
         let reexport_index = ReExportIndex::build(
             &workspace_files,

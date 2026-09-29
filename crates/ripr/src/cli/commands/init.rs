@@ -25,11 +25,38 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
     // an existing `ripr.toml` without `--force`, and a root that is not a
     // directory.
     let plan = init_plan(&options)?;
+    if let Some(warning) = unanalyzed_root_warning(&options.root) {
+        eprintln!("{warning}");
+    }
     if options.dry_run {
         print_init_dry_run(&plan);
         return Ok(());
     }
     apply_init_plan(&plan)
+}
+
+/// Warn before configuring ripr for a repository it cannot analyze: a Go or
+/// Java repository got a workflow and "run `ripr check`" with no hint that
+/// every change would be reported as not analyzed.
+fn unanalyzed_root_warning(root: &Path) -> Option<String> {
+    if !crate::analysis::workspace_rust_files(root).is_empty()
+        || !crate::analysis::workspace_preview_language_files(root).is_empty()
+    {
+        return None;
+    }
+    let unanalyzed = crate::analysis::workspace_unanalyzed_source_languages(root);
+    if unanalyzed.is_empty() {
+        return None;
+    }
+    let found = unanalyzed
+        .iter()
+        .map(|(language, count)| format!("{language} ({count} file(s))"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "ripr: warning: the root `{}` has {found} source and no Rust, TypeScript/JavaScript or Python source. ripr does not analyze these languages, so `ripr check` and this configuration will report their changes as not analyzed.",
+        output::path::human_path(root)
+    ))
 }
 
 /// What `ripr init` would do to one file.
@@ -39,8 +66,8 @@ enum InitAction {
     Create,
     /// The path exists and `--force` was given; it would be replaced.
     Overwrite,
-    /// The config exists without `--force`, but `--ci` still has work to do,
-    /// so the config is left as the user wrote it.
+    /// The config exists and `--ci` has work to do, so the config is left as
+    /// the user wrote it, with or without `--force`.
     LeaveUnchanged,
 }
 
@@ -105,8 +132,12 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
         ));
     }
 
+    // With `--ci`, `--force` only lets the workflow be replaced. Refreshing a
+    // workflow after an upgrade (`ripr init --ci github --force`, which
+    // `ripr doctor` recommends) must not reset a customized `ripr.toml`;
+    // `ripr init --force` without `--ci` still resets the config.
     let config_action = if path_is_occupied(&config_path)? {
-        if options.force {
+        if options.force && options.ci.is_none() {
             InitAction::Overwrite
         } else {
             InitAction::LeaveUnchanged
@@ -392,6 +423,13 @@ env:
   #           pull-requests: write, which this workflow grants)
   RIPR_COMMENT_MODE: ${{ vars.RIPR_COMMENT_MODE || 'off' }}
 
+# Every run step is bash (arrays, mktemp, [ -f ]). Pin the shell so the
+# steps still parse if a job is moved to windows-latest, whose default run
+# shell is PowerShell.
+defaults:
+  run:
+    shell: bash
+
 # One run per PR: a newer push cancels the older run. Only the newest head's
 # placements are valid, and two overlapping runs would each snapshot the
 # existing inline comments before either publishes, then both create the
@@ -417,10 +455,14 @@ jobs:
       # rejects the whole review when a line falls outside the PR diff.
       # upload-sarif detects the head checkout and reports it as
       # refs/pull/N/head. A manual run keeps the dispatched commit.
+      # No step pushes or fetches after checkout, so the job token is not
+      # left in .git/config where PR-controlled code (build scripts run by
+      # `cargo`, analyzed sources) could read it.
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       # Pinned to a commit SHA for the same reason as rust-cache below.
       # dtolnay/rust-toolchain stable branch = 6bed0761d98439e5a578e2877258200ad565ba87.
@@ -439,6 +481,16 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           shared-key: ripr-install
+
+      # Every RIPR input under target/ripr and target/ci must come from this
+      # run. The gate, ledger, and policy steps read several files there only
+      # when present (sarif-policy, agent-verify, agent-receipt, calibration,
+      # coverage), and nothing in this workflow writes some of them, so a
+      # pull request could commit forged copies (`git add -f`) or the cache
+      # restored above could carry stale ones. Remove both directories before
+      # the first RIPR step; steps you add later that write there still work.
+      - name: Remove checked-in RIPR artifacts
+        run: rm -rf target/ripr target/ci
 
       # Pinned to the ripr that generated this workflow. The steps below use
       # that version's commands and flags; an unpinned install takes the
@@ -580,6 +632,11 @@ jobs:
             kind: "pr_inline_comment_existing_comments",
             comments: [
               .[]?[]?
+              # Only comments this workflow posted: it publishes with
+              # github.token, whose author is github-actions[bot]. Anyone can
+              # write the marker; a marked comment from another author must
+              # not suppress a RIPR card or be PATCHed by this job.
+              | select(.user.login == "github-actions[bot]" and .user.type == "Bot")
               | select((.body // "") | contains("<!-- ripr:dedupe="))
               | (.body // "") as $body
               | {
@@ -650,7 +707,9 @@ jobs:
           plan=target/ripr/review/comment-publish-plan.json
           if ! jq -e '.summary.safe_to_publish == true' "$plan" >/dev/null; then
             echo "RIPR inline comments were not published because the publish plan is not safe."
-            jq -r '.blocked[]? | "- \(.blocked_reason): \(.message)"' "$plan" || true
+            # Messages can quote repository paths; fold CR/LF so a path
+            # cannot start a new line that GitHub reads as a workflow command.
+            jq -r '.blocked[]? | "- \(.blocked_reason): \(.message)" | gsub("[\r\n]"; " ")' "$plan" || true
             exit 0
           fi
 
@@ -695,7 +754,7 @@ jobs:
           jq -c '.[] | select(.operation == "update")' "$publishable" \
             | while IFS= read -r operation; do
                 comment_id="$(jq -r '.existing_comment_id' <<< "$operation")"
-                dedupe_key="$(jq -r '.dedupe_key' <<< "$operation")"
+                dedupe_key="$(jq -r '.dedupe_key | tostring | gsub("[\r\n]"; " ")' <<< "$operation")"
                 body="$(jq -r '.published_body' <<< "$operation")"
                 payload="$(mktemp)"
                 jq -n --arg body "$body" '{body: $body}' > "$payload"
@@ -738,7 +797,7 @@ jobs:
             fi
           fi
 
-          jq -r '.[] | select(.operation == "keep") | .dedupe_key' "$publishable" \
+          jq -r '.[] | select(.operation == "keep") | .dedupe_key | tostring | gsub("[\r\n]"; " ")' "$publishable" \
             | while IFS= read -r dedupe_key; do
                 echo "RIPR inline comment already current: $dedupe_key"
               done
@@ -772,6 +831,10 @@ jobs:
             > target/ripr/reports/ripr-seams.sarif
 
       - name: Render RIPR repo badge artifacts
+        # These files are uploaded with this PR run; they do not update a
+        # README badge endpoint on the default branch. To publish a badge,
+        # set up a separate reviewed badge-refresh workflow as described at
+        # https://github.com/EffortlessMetrics/ripr/blob/main/docs/BADGE_ADOPTION.md
         continue-on-error: true
         run: |
           mkdir -p target/ripr/reports
@@ -1370,6 +1433,31 @@ jobs:
             markdown_inline() {
               printf '%s' "$1" | tr '\r\n' '  ' | sed 's/`/\\`/g'
             }
+            # Artifacts bind commands to this runner's absolute checkout
+            # (#3999), but a summary reader copies them on another machine.
+            # Rewrite the checkout path, where it is a whole path token, to
+            # the repository root `.`, like the Agent review packet block.
+            repo_relative() {
+              RIPR_CHECKOUT_PHYSICAL="$(pwd -P)" RIPR_CHECKOUT_LOGICAL="$PWD" awk '
+                function rel(s, root,   out, i, pre, rest, before, after) {
+                  out = ""
+                  while (root != "" && (i = index(s, root)) > 0) {
+                    pre = substr(s, 1, i - 1)
+                    rest = substr(s, i + length(root))
+                    before = substr(pre, length(pre), 1)
+                    after = substr(rest, 1, 1)
+                    if ((before == "" || before ~ /[ \047"`=(]/) && (after == "" || after ~ /[\/ \047"`):]/)) {
+                      out = out pre "."
+                    } else {
+                      out = out pre root
+                    }
+                    s = rest
+                  }
+                  return out s
+                }
+                { print rel(rel($0, ENVIRON["RIPR_CHECKOUT_PHYSICAL"]), ENVIRON["RIPR_CHECKOUT_LOGICAL"]) }
+              '
+            }
 
             echo '## RIPR advisory summary'
             echo
@@ -1692,10 +1780,10 @@ jobs:
                 panel_missing="$(markdown_inline "$panel_missing")"
                 panel_related="$(markdown_inline "$panel_related")"
                 panel_suggested="$(markdown_inline "$panel_suggested")"
-                panel_verify="$(markdown_inline "$panel_verify")"
-                panel_agent="$(markdown_inline "$panel_agent")"
-                panel_repair="$(markdown_inline "$panel_repair")"
-                panel_receipt="$(markdown_inline "$panel_receipt")"
+                panel_verify="$(markdown_inline "$(printf '%s\n' "$panel_verify" | repo_relative)")"
+                panel_agent="$(markdown_inline "$(printf '%s\n' "$panel_agent" | repo_relative)")"
+                panel_repair="$(markdown_inline "$(printf '%s\n' "$panel_repair" | repo_relative)")"
+                panel_receipt="$(markdown_inline "$(printf '%s\n' "$panel_receipt" | repo_relative)")"
                 panel_gate_mode="$(markdown_inline "$panel_gate_mode")"
                 panel_gate_decision="$(markdown_inline "$panel_gate_decision")"
                 panel_warning_count="$(markdown_inline "$panel_warning_count")"
@@ -1735,7 +1823,7 @@ jobs:
               if [ -f target/ripr/reports/pr-review-front-panel.md ]; then
                 echo '<details><summary>Full report: target/ripr/reports/pr-review-front-panel.md</summary>'
                 echo
-                cat target/ripr/reports/pr-review-front-panel.md
+                repo_relative < target/ripr/reports/pr-review-front-panel.md
                 echo
                 echo '</details>'
               fi
@@ -1765,9 +1853,9 @@ jobs:
                 action_why="$(markdown_inline "$action_why")"
                 action_seam="$(markdown_inline "$action_seam")"
                 action_target="$(markdown_inline "$action_target")"
-                action_repair="$(markdown_inline "$action_repair")"
-                action_verify="$(markdown_inline "$action_verify")"
-                action_receipt="$(markdown_inline "$action_receipt")"
+                action_repair="$(markdown_inline "$(printf '%s\n' "$action_repair" | repo_relative)")"
+                action_verify="$(markdown_inline "$(printf '%s\n' "$action_verify" | repo_relative)")"
+                action_receipt="$(markdown_inline "$(printf '%s\n' "$action_receipt" | repo_relative)")"
                 action_fallback="$(markdown_inline "$action_fallback")"
                 action_warning_count="$(markdown_inline "$action_warning_count")"
                 echo '#### Recommended next test at a glance'
@@ -1800,7 +1888,7 @@ jobs:
               if [ -f target/ripr/reports/first-useful-action.md ]; then
                 echo '<details><summary>Full report: target/ripr/reports/first-useful-action.md</summary>'
                 echo
-                cat target/ripr/reports/first-useful-action.md
+                repo_relative < target/ripr/reports/first-useful-action.md
                 echo
                 echo '</details>'
               fi
@@ -2779,6 +2867,25 @@ mod tests {
         );
     }
 
+    /// #4391: the steps use bash-only syntax, so the job pins `shell: bash`
+    /// instead of inheriting a runner default (PowerShell on Windows).
+    #[test]
+    fn generated_workflow_pins_bash_for_every_run_step() {
+        let workflow = generated_github_actions_workflow();
+        let defaults_at = workflow
+            .find("\ndefaults:\n  run:\n    shell: bash\n")
+            .unwrap_or(usize::MAX);
+        let jobs_at = workflow.find("\njobs:\n").unwrap_or(usize::MAX);
+        assert!(
+            defaults_at < jobs_at && jobs_at != usize::MAX,
+            "the workflow must pin bash for every job:\n{workflow}"
+        );
+        assert!(
+            workflow.contains("gate_args=("),
+            "bash-only syntax the pin protects"
+        );
+    }
+
     /// The workflow carries the shared proof-path labels (#3906) inside
     /// single-quoted shell strings, so none may hold a single quote, and
     /// every placeholder must be substituted.
@@ -2833,6 +2940,26 @@ mod tests {
             std::env::temp_dir().join(format!("ripr-init-{name}-{}-{stamp}", std::process::id()));
         std::fs::create_dir_all(&root).map_err(|err| format!("create temp root failed: {err}"))?;
         Ok(root)
+    }
+
+    #[test]
+    fn unanalyzed_root_warning_names_go_only_repositories() -> Result<(), String> {
+        let root = temp_root("go-only")?;
+        std::fs::write(root.join("main.go"), "package main\n")
+            .map_err(|err| format!("write main.go: {err}"))?;
+        let warning = unanalyzed_root_warning(&root).unwrap_or_default();
+        assert!(warning.contains("Go (1 file(s))"), "{warning}");
+        assert!(
+            warning.contains("report their changes as not analyzed"),
+            "{warning}"
+        );
+        // Negative control: Rust source beside the Go file is analyzable.
+        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("mkdir: {err}"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn f() {}\n")
+            .map_err(|err| format!("write lib.rs: {err}"))?;
+        assert_eq!(unanalyzed_root_warning(&root), None);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+        Ok(())
     }
 
     fn options(root: &Path) -> InitOptions {
@@ -2921,6 +3048,40 @@ mod tests {
         let plan = init_plan(&opts)?;
         assert_eq!(plan[0].action, InitAction::LeaveUnchanged);
         assert_eq!(plan[1].action, InitAction::Create);
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// Upgrade path: refreshing an existing workflow with `--force` replaces
+    /// the workflow and keeps the repository's own `ripr.toml`.
+    #[test]
+    fn plan_ci_force_refreshes_the_workflow_and_keeps_the_config() -> Result<(), String> {
+        let root = temp_root("ci-force")?;
+        write(
+            &root.join(CONFIG_FILE_NAME),
+            "[lsp]\nseam_diagnostics = false\n",
+        )?;
+        let workflow = root.join(".github/workflows/ripr.yml");
+        if let Some(parent) = workflow.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("create {} failed: {err}", parent.display()))?;
+        }
+        write(&workflow, "run: cargo install ripr --locked\n")?;
+        let mut opts = options(&root);
+        opts.ci = Some(InitCi::Github);
+        opts.force = true;
+
+        let plan = init_plan(&opts)?;
+        assert_eq!(plan[0].action, InitAction::LeaveUnchanged);
+        assert_eq!(plan[1].action, InitAction::Overwrite);
+        apply_init_plan(&plan)?;
+        let config = std::fs::read_to_string(root.join(CONFIG_FILE_NAME))
+            .map_err(|err| format!("read config failed: {err}"))?;
+        assert_eq!(config, "[lsp]\nseam_diagnostics = false\n");
+        let written = std::fs::read_to_string(&workflow)
+            .map_err(|err| format!("read workflow failed: {err}"))?;
+        assert!(written.contains("--version"), "{written}");
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())

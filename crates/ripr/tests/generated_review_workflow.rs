@@ -315,6 +315,22 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
         );
     }
 
+    // The PR review summary and Recommended next test blocks print commands
+    // a reader copies on another machine, so they never name this runner's
+    // checkout. `generated_summary_prints_repository_relative_commands`
+    // holds the rewrite to artifacts that do carry the checkout path.
+    for heading in ["### PR review summary\n", "### Recommended next test\n"] {
+        let block = summary
+            .split(heading)
+            .nth(1)
+            .and_then(|rest| rest.split("\n### ").next())
+            .ok_or_else(|| format!("summary has no {heading:?} block"))?;
+        assert!(
+            !block.contains(root_text),
+            "{heading:?} prints the runner checkout path:\n{block}"
+        );
+    }
+
     let commands = replay::printed_commands(&summary);
     let runnable = commands
         .iter()
@@ -1122,13 +1138,14 @@ fn far_above_threshold_discounts() {
         Ok(format!("{}:{inherited}", bin.display()))
     }
 
-    /// Run a script the way a GitHub-hosted Linux step does without a
-    /// `shell:` key (`bash -e {0}`), with the freshly built `ripr` first on
-    /// PATH.
+    /// Run a script the way a GitHub-hosted Linux step does under the
+    /// generated workflow's `defaults.run.shell: bash`
+    /// (`bash --noprofile --norc -eo pipefail {0}`), with the freshly built
+    /// `ripr` first on PATH.
     pub(super) fn bash(dir: &Path, script: &str, env: &[(String, String)]) -> TestResult<Output> {
         let mut command = Command::new("bash");
         command
-            .args(["--noprofile", "--norc", "-e", "-c", script])
+            .args(["--noprofile", "--norc", "-eo", "pipefail", "-c", script])
             .current_dir(dir)
             .env("PATH", path_with_ripr()?)
             .stdin(Stdio::null());
@@ -1967,12 +1984,20 @@ fn generated_existing_comment_capture_reads_keys_with_spaces() -> Result<(), Box
     // fail the step.
     let unmarked_body = "LGTM, but see ripr:dedupe docs";
     let unclosed_body = "<!-- ripr:dedupe=ripr:seam-3:src/x.rs:1";
+    // Forged markers: a well-formed RIPR marker from a person, and one from
+    // another bot. The workflow posts only as github-actions[bot], so
+    // neither may suppress a card or become a PATCH target.
+    let forged_user_body = "<!-- ripr:dedupe=ripr:seam-4:src/lib.rs:5 -->";
+    let forged_bot_body = "<!-- ripr:dedupe=ripr:seam-5:src/lib.rs:6 -->";
+    let actions_bot = r#"{"login":"github-actions[bot]","type":"Bot"}"#;
     let raw = format!(
-        "[[{{\"id\":1,\"body\":{},\"path\":\"src/we ird/pricing.rs\",\"line\":12}},{{\"id\":2,\"body\":{},\"path\":\"src/lib.rs\",\"line\":3}},{{\"id\":3,\"body\":{},\"path\":\"src/lib.rs\",\"line\":4}},{{\"id\":4,\"body\":{},\"path\":\"src/x.rs\",\"line\":1}}]]",
+        "[[{{\"id\":1,\"user\":{actions_bot},\"body\":{},\"path\":\"src/we ird/pricing.rs\",\"line\":12}},{{\"id\":2,\"user\":{actions_bot},\"body\":{},\"path\":\"src/lib.rs\",\"line\":3}},{{\"id\":3,\"user\":{actions_bot},\"body\":{},\"path\":\"src/lib.rs\",\"line\":4}},{{\"id\":4,\"user\":{actions_bot},\"body\":{},\"path\":\"src/x.rs\",\"line\":1}}],[{{\"id\":5,\"user\":{{\"login\":\"mallory\",\"type\":\"User\"}},\"body\":{},\"path\":\"src/lib.rs\",\"line\":5}},{{\"id\":6,\"user\":{{\"login\":\"other-app[bot]\",\"type\":\"Bot\"}},\"body\":{},\"path\":\"src/lib.rs\",\"line\":6}}]]",
         json_string(&compact_body),
         json_string(&legacy_body),
         json_string(unmarked_body),
-        json_string(unclosed_body)
+        json_string(unclosed_body),
+        json_string(forged_user_body),
+        json_string(forged_bot_body)
     );
     fs::create_dir_all(root.join("target/ripr/review"))?;
     fs::write(
@@ -2000,6 +2025,79 @@ fn generated_existing_comment_capture_reads_keys_with_spaces() -> Result<(), Box
         .unwrap_or_default();
     assert_eq!(keys, vec![compact_key, legacy_key], "{captured}");
     assert_eq!(captured["comments"][0]["body"], "card", "{captured}");
+    Ok(())
+}
+
+/// A pull request can commit files under `target/ripr` or `target/ci`
+/// (`git add -f`) that later gate, ledger, and policy steps read when
+/// present. The generated cleanup step must remove them, and only them,
+/// before the first RIPR step.
+#[cfg(unix)]
+#[test]
+fn generated_cleanup_step_removes_checked_in_ripr_artifacts() -> Result<(), Box<dyn Error>> {
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-cleanup-forged-inputs-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root)?;
+    let output = run_ripr_init(&root)?;
+    if !output.status.success() {
+        let _ = fs::remove_dir_all(&root);
+        return Err(format!(
+            "ripr init failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    let workflow = fs::read_to_string(root.join(".github/workflows/ripr.yml"))?;
+    let marker = "      - name: Remove checked-in RIPR artifacts\n        run: ";
+    let at = workflow.find(marker).ok_or("missing cleanup step")?;
+    let script = workflow[at + marker.len()..]
+        .lines()
+        .next()
+        .ok_or("empty cleanup step")?
+        .to_string();
+    let first_ripr = workflow
+        .find("      - name: Generate RIPR pilot packet")
+        .ok_or("missing pilot step")?;
+    assert!(at < first_ripr, "cleanup must precede the first RIPR step");
+
+    let forged = [
+        "target/ripr/reports/sarif-policy.json",
+        "target/ripr/reports/agent-receipt.json",
+        "target/ripr/workflow/agent-verify.json",
+        "target/ci/labels.json",
+    ];
+    for path in forged {
+        let path = root.join(path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, "{}")?;
+    }
+    // Unrelated build output stays: the step is not a cache purge.
+    fs::create_dir_all(root.join("target/debug"))?;
+    fs::write(root.join("target/debug/keep"), "")?;
+
+    let run = run_sh(&script, &root)?;
+    let remaining = forged
+        .iter()
+        .filter(|path| root.join(path).exists())
+        .collect::<Vec<_>>();
+    let kept = root.join("target/debug/keep").exists();
+    let _ = fs::remove_dir_all(&root);
+    assert!(
+        run.status.success(),
+        "cleanup failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(
+        remaining.is_empty(),
+        "forged inputs remained: {remaining:?}"
+    );
+    assert!(kept, "cleanup removed unrelated target output");
     Ok(())
 }
 
@@ -2267,6 +2365,156 @@ fn jq_program_between(workflow: &str, open: &str, close: &str) -> Result<String,
     Ok(rest[..end].to_string())
 }
 
+/// The CI summary's PR review summary and Recommended next test blocks,
+/// collapsed full reports included, print commands a reader copies on
+/// another machine. When `ripr agent start` bound them to the runner's
+/// absolute checkout (#3999), the summary names the repository root `.`
+/// instead, like the Agent review packet block; a sibling path that only
+/// shares the checkout's prefix is left alone.
+#[cfg(unix)]
+#[test]
+fn generated_summary_prints_repository_relative_commands() -> Result<(), Box<dyn Error>> {
+    let tools = run_sh(
+        "command -v bash >/dev/null && command -v jq >/dev/null && command -v awk >/dev/null",
+        std::env::temp_dir().as_path(),
+    )?;
+    if !tools.status.success() {
+        if std::env::var_os("GITHUB_ACTIONS").is_some() {
+            return Err("bash, jq or awk is missing under GitHub Actions".into());
+        }
+        eprintln!(
+            "skipping generated_summary_prints_repository_relative_commands: bash, jq or awk missing"
+        );
+        return Ok(());
+    }
+
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let root = std::env::temp_dir()
+        .join(format!(
+            "ripr-summary-relative-{}-{nonce}",
+            std::process::id()
+        ))
+        .join("my repo");
+    fs::create_dir_all(root.join("target/ripr/reports"))?;
+    let root = root.canonicalize()?;
+    let output = run_ripr_init(&root)?;
+    if !output.status.success() {
+        return Err(format!(
+            "ripr init failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    let workflow = fs::read_to_string(root.join(".github/workflows/ripr.yml"))?;
+    let script = summary_run_script(&workflow)?;
+
+    let checkout = root.to_str().ok_or("non-utf8 temp path")?;
+    let sibling = format!("{checkout}-other/notes.md");
+    let verify = format!(
+        "ripr agent verify --root '{checkout}' --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > '{checkout}/target/ripr/workflow/agent-verify.json'"
+    );
+    let receipt = format!(
+        "ripr agent receipt --root '{checkout}' --verify-json target/ripr/workflow/agent-verify.json --seam-id s1 --json"
+    );
+    let agent = format!("ripr agent brief --root '{checkout}' --seam-id s1 --json");
+    fs::write(
+        root.join("target/ripr/reports/pr-review-front-panel.json"),
+        serde_json::json!({
+            "status": "ready",
+            "top_issue": {"verify_command": verify, "agent_command": agent},
+        })
+        .to_string(),
+    )?;
+    fs::write(
+        root.join("target/ripr/reports/pr-review-front-panel.md"),
+        format!("- Verify after the test edit: `{verify}`\n- Notes: `{sibling}`\n"),
+    )?;
+    fs::write(
+        root.join("target/ripr/reports/first-useful-action.json"),
+        serde_json::json!({
+            "status": "ready",
+            "commands": {"verify": verify, "receipt": receipt},
+        })
+        .to_string(),
+    )?;
+    fs::write(
+        root.join("target/ripr/reports/first-useful-action.md"),
+        format!("- Verify after the test edit: `{verify}`\n- Receipt after verify: `{receipt}`\n"),
+    )?;
+
+    let summary_path = root.join("step-summary.md");
+    let summary_text = summary_path.to_str().ok_or("non-utf8 temp path")?;
+    let run = run_sh(
+        &format!("export GITHUB_STEP_SUMMARY='{summary_text}'\n{script}"),
+        &root,
+    )?;
+    assert!(
+        run.status.success(),
+        "summary step failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let summary = fs::read_to_string(&summary_path)?;
+    let relative_verify = "ripr agent verify --root '.' --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > './target/ripr/workflow/agent-verify.json'";
+    for heading in ["### PR review summary\n", "### Recommended next test\n"] {
+        let block = summary
+            .split(heading)
+            .nth(1)
+            .and_then(|rest| rest.split("\n### ").next())
+            .ok_or_else(|| format!("summary has no {heading:?} block:\n{summary}"))?;
+        let without_sibling = block.replace(&sibling, "");
+        assert!(
+            !without_sibling.contains(checkout),
+            "{heading:?} prints the runner checkout path:\n{block}"
+        );
+        // The at-a-glance line and the collapsed full report both rewrite.
+        assert_eq!(
+            block.matches(relative_verify).count(),
+            2,
+            "{heading:?} must print verify at the repository root twice:\n{block}"
+        );
+    }
+    assert!(
+        summary.contains("ripr agent receipt --root '.' --verify-json"),
+        "{summary}"
+    );
+    assert!(
+        summary.contains("ripr agent brief --root '.' --seam-id s1 --json"),
+        "{summary}"
+    );
+    assert!(
+        summary.contains(&format!("- Notes: `{sibling}`")),
+        "a path that only shares the checkout prefix must stay as written:\n{summary}"
+    );
+
+    if let Some(parent) = root.parent() {
+        fs::remove_dir_all(parent)?;
+    }
+    Ok(())
+}
+
+/// Unix-only like its callers (see `annotation_run_script`).
+#[cfg(unix)]
+fn summary_run_script(workflow: &str) -> Result<String, String> {
+    let marker = "- name: Add RIPR advisory summary";
+    let start = workflow.find(marker).ok_or("missing summary step")?;
+    let rest = &workflow[start..];
+    let run_marker = "\n        run: |\n";
+    let run_at = rest.find(run_marker).ok_or("missing summary run")?;
+    let body = &rest[run_at + run_marker.len()..];
+    let end = body
+        .find("\n      - name:")
+        .ok_or("summary step does not end")?;
+    let script = body[..end].trim_end();
+    if !script.contains("repo_relative()") {
+        return Err("summary script has no repo_relative rewrite".to_string());
+    }
+    Ok(script
+        .lines()
+        .map(|line| line.strip_prefix("          ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
 /// Unix-only like its callers: the shell-backed tests that use this
 /// helper are `#[cfg(unix)]`, and an ungated helper is dead code (and a
 /// `-D warnings` failure) on Windows builds.
@@ -2379,14 +2627,15 @@ fn run_ripr_init(root: &std::path::Path) -> Result<std::process::Output, Box<dyn
 }
 
 /// One spawn site for executing extracted capture-step shell (process-policy
-/// bound). GitHub Actions runs a `run:` step without `shell:` as `bash -e`
-/// on ubuntu-latest, so the helper mirrors that invocation instead of a
-/// bare `sh -c`, which would not enable errexit. Unix-only, so Windows
-/// builds never see a dead helper.
+/// bound). The generated workflow pins `defaults.run.shell: bash`, which
+/// GitHub Actions runs as `bash --noprofile --norc -eo pipefail {0}`, so the
+/// helper mirrors that invocation instead of a bare `sh -c`, which would
+/// enable neither errexit nor pipefail. Unix-only, so Windows builds never
+/// see a dead helper.
 #[cfg(unix)]
 fn run_sh(script: &str, cwd: &std::path::Path) -> Result<std::process::Output, Box<dyn Error>> {
     Ok(Command::new("bash")
-        .args(["-e", "-c", script])
+        .args(["--noprofile", "--norc", "-eo", "pipefail", "-c", script])
         .current_dir(cwd)
         .output()?)
 }

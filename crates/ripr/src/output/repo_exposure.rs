@@ -18,7 +18,7 @@ use crate::analysis::canonical_gap::{CanonicalGapIdentity, canonical_gap_identit
 use crate::analysis::seams::SeamGripClass;
 use crate::output::evidence_record::{evidence_record_for, evidence_record_json_value};
 use crate::output::json::escape as json_escape;
-use crate::output::markdown::{code_span, inline_prose, inline_prose_literal, table_cell_text};
+use crate::output::markdown::{code_span, inline_prose_literal, table_cell_text};
 use crate::output::path::display_path;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -142,6 +142,7 @@ pub(crate) fn write_repo_exposure_json<W: io::Write>(
         ts_guidance,
         python_guidance,
         None,
+        None,
         out,
     )
 }
@@ -159,6 +160,7 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
     out: &mut W,
 ) -> Result<(), String> {
     let placeholder = repo_exposure_artifact_metadata(context, CONTENT_SHA256_PLACEHOLDER)?;
+    let source_subject = repo_exposure_source_subject(classified, &context.root);
     let mut hasher = Sha256Writer::new();
     write_repo_exposure_json_document(
         classified,
@@ -166,6 +168,7 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         ts_guidance,
         python_guidance,
         Some(&placeholder),
+        source_subject.as_ref(),
         &mut hasher,
     )
     .map_err(|err| format!("hash repo exposure JSON failed: {err}"))?;
@@ -178,6 +181,7 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         ts_guidance,
         python_guidance,
         Some(&metadata),
+        source_subject.as_ref(),
         out,
     )
     .map_err(|err| format!("write repo exposure JSON failed: {err}"))
@@ -204,12 +208,37 @@ pub(crate) fn render_repo_exposure_json_with_context(
     String::from_utf8(bytes).map_err(|err| format!("repo exposure JSON was not UTF-8: {err}"))
 }
 
+/// #4544: the content digests of every workspace file the seam entries name,
+/// read in this analysis run. A gap ledger or actionable-gaps report derived
+/// from this artifact copies these digests; it never hashes the workspace
+/// itself. `None` when no seam names a file or a file cannot be read, so the
+/// derived reports disclose `unverifiable_subject` instead of a partial stamp.
+fn repo_exposure_source_subject(
+    classified: &[ClassifiedSeam],
+    root: &std::path::Path,
+) -> Option<serde_json::Value> {
+    let canonical_gaps = canonical_gap_identities(classified);
+    let mut files = std::collections::BTreeSet::new();
+    for entry in classified {
+        let mut seam_json = String::new();
+        push_classified_json(&mut seam_json, entry, canonical_gaps.get(entry.seam.id()));
+        let seam = serde_json::from_str::<serde_json::Value>(&seam_json).ok()?;
+        crate::output::gap_source_subject::named_files_in_value(root, &seam, &mut files);
+    }
+    if files.is_empty() {
+        return None;
+    }
+    let stamp = crate::output::gap_source_subject::stamp_source_subject(root, &files).ok()?;
+    serde_json::to_value(stamp).ok()
+}
+
 fn write_repo_exposure_json_document<W: io::Write>(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
     artifact: Option<&serde_json::Value>,
+    source_subject: Option<&serde_json::Value>,
     out: &mut W,
 ) -> io::Result<()> {
     let metrics = ExposureMetrics::from(classified);
@@ -223,6 +252,9 @@ fn write_repo_exposure_json_document<W: io::Write>(
     )?;
     if let Some(artifact) = artifact {
         writeln!(out, "  \"artifact\": {},", artifact)?;
+    }
+    if let Some(source_subject) = source_subject {
+        writeln!(out, "  \"source_subject\": {},", source_subject)?;
     }
     writeln!(out, "  \"scope\": \"repo\",")?;
 
@@ -881,9 +913,13 @@ pub(crate) fn render_repo_exposure_md(
 fn push_top_gap_md(out: &mut String, entry: &ClassifiedSeam) {
     let seam = &entry.seam;
     let evidence = &entry.evidence;
+    // Path in a code span, like the owner line: odd names can contain
+    // `[y](z)` and `*` that would otherwise render as a link or emphasis.
+    // Do not fold this into #4473's prose neutralization; that owner still
+    // leaves link/emphasis syntax live in headings (#4605).
     out.push_str(&format!(
         "### {}:{} {}\n\n",
-        inline_prose(&display_path(seam.file())),
+        code_span(&display_path(seam.file())),
         seam.display_line(),
         seam.kind().as_str()
     ));
@@ -1039,6 +1075,7 @@ mod tests {
         Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
         StageState, ValueFact,
     };
+    use crate::output::markdown::{code_span, inline_prose_literal};
 
     fn stage(state: StageState) -> StageEvidence {
         StageEvidence::new(state, Confidence::Medium, "test stage")
@@ -1117,6 +1154,7 @@ mod tests {
                 reason: "observed values do not include the equality-boundary case".to_string(),
                 flow_sink: None,
             }],
+            new_test_target: None,
         };
         ClassifiedSeam {
             seam,
@@ -1451,6 +1489,84 @@ mod tests {
         assert!(md.contains("predicate_boundary"));
         assert!(md.contains("amount >= discount_threshold"));
         assert!(md.contains("discount_threshold (equality boundary)"));
+    }
+
+    fn top_gap_heading(md: &str) -> &str {
+        md.lines()
+            .find(|line| line.starts_with("### "))
+            .unwrap_or("")
+    }
+
+    #[test]
+    fn markdown_top_gap_heading_puts_the_path_in_a_code_span() {
+        let md = render_repo_exposure_md(&[weakly_gripped_classified()], None, None, None);
+        let heading = top_gap_heading(&md);
+        assert_eq!(
+            heading,
+            format!(
+                "### {}:{} {}",
+                code_span("src/pricing.rs"),
+                42,
+                "predicate_boundary",
+            ),
+            "ordinary path must be a code span in the heading, like owner:\n{md}"
+        );
+        assert!(
+            md.contains(&format!(
+                "- owner: {}\n",
+                code_span("pricing::discounted_total")
+            )),
+            "owner line remains a code span:\n{md}"
+        );
+        assert_ne!(
+            heading,
+            format!("### {}", code_span("src/pricing.rs:42 predicate_boundary")),
+            "line and kind stay outside the path span:\n{md}"
+        );
+        assert_ne!(
+            heading, "### src/pricing.rs:42 predicate_boundary",
+            "bare path in the heading lets Markdown parse the file name:\n{md}"
+        );
+    }
+
+    #[test]
+    fn markdown_top_gap_heading_code_span_holds_link_emphasis_and_backticks() {
+        // Unix-legal name reachable through #[path]: inner backtick, emphasis,
+        // and a Markdown link. #4473's inline_prose leaves [y](z) and * live
+        // in a heading; wrapping the path in code_span (same owner as owner:)
+        // is the heading-only fix (#4605).
+        let path = "src/a|b`x]*[y](z).rs";
+        let md = render_repo_exposure_md(
+            &[classified_at(
+                path,
+                "odd::owner",
+                2,
+                SeamGripClass::WeaklyGripped,
+            )],
+            None,
+            None,
+            None,
+        );
+        let heading = top_gap_heading(&md);
+        let expected = format!("### {}:{} {}", code_span(path), 2, "predicate_boundary");
+        assert_eq!(
+            heading, expected,
+            "odd path must use the owner-line code-span fence:\n{md}"
+        );
+        assert_ne!(
+            heading,
+            format!("### {path}:2 predicate_boundary"),
+            "bare [y](z) and * in the heading render as a link and emphasis:\n{md}"
+        );
+        assert_ne!(
+            heading,
+            format!("### {}:2 predicate_boundary", inline_prose_literal(path)),
+            "literal-markup neutralization is not this heading's contract:\n{md}"
+        );
+        assert!(
+            md.contains(&format!("- owner: {}\n", code_span("odd::owner"))),
+            "owner line stays a code span for the odd owner too:\n{md}"
+        );
     }
 
     #[test]

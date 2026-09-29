@@ -15,12 +15,15 @@ Start here:
   File: src/profile.ts:3
   Language: typescript
   Language status: preview
-  Static exposure: weakly_exposed (warning, confidence 0.40)
-  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
+  Static exposure: weak (weakly_exposed, warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return await Promise.reject(new Error("missing id"));
   Missing discriminator: Only heuristic TypeScript test links were found for `loadProfile`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
   Related test: tests/profile.test.ts:1 rejects missing profile id broadly
-  Next step: TypeScript preview advisory: broad error evidence does not establish missing discriminator `rejects Error matching "missing id"`; add an exact payload to `toThrow` (string,…
+  Next step: TypeScript preview advisory: broad error evidence does not establish missing
+    discriminator `rejects Error matching "missing id"`; add an exact payload to `toThrow` (string,
+    object, or class reference) and no actionable repair packet is emitted until verify, receipt,
+    and edit-boundary fields are available.
   Evidence:
     - reach weak: 1 related test(s) found for owner `loadProfile`
     - infection unknown: TypeScript preview adapter does not yet model infection.
@@ -31,7 +34,7 @@ Next: drill into the top finding:
   ripr context --root fixtures/typescript_awaited_promise_reject/input --diff fixtures/typescript_awaited_promise_reject/diff.patch --mode fast --at probe:src_profile.ts:typescript_preview:9da98202
 
 Hidden:
-  1 lower-priority finding(s) omitted from default human output.
+  1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

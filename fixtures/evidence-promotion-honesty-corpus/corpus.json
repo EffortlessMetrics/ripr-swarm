@@ -19,6 +19,19 @@
       ]
     },
     {
+      "id": "rust_proximity_name_oracle_not_credited",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/proximity_name_oracle_not_credited",
+      "vector": "name_proximity_test_supplies_oracle_for_reach_from_another_test",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 2 },
+        { "type": "must_not_promote" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
       "id": "py_multiline_docstring_interior_no_behavior",
       "language": "python",
       "tier": "pure",
@@ -1064,6 +1077,22 @@
         { "type": "must_not_have_receipt_command" },
         { "type": "must_not_promote" },
         { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "ts_mocked_barrel_unrelated_assertion",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_adversarial_mocked_barrel",
+      "vector": "mocked_barrel_strong_oracle_observes_unrelated_sink",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_disclose_scope" },
+        { "type": "must_not_emit_repair_packet" },
+        { "type": "must_not_have_verify_command" },
+        { "type": "must_not_have_receipt_command" },
+        { "type": "must_not_promote" },
         { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },

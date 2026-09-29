@@ -46,7 +46,7 @@
       "flow_sinks": [
         {"kind":"return_value","text":"return f\"NO:{code}\"","line":2}
       ],
-      "evidence": ["owner: status_label", "owner_kind: function", "missing_discriminator: return value == <expected value>", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_status.py", "suggested_test_name: test_len", "suggested_test_node_id: tests/test_status.py::test_len", "suggested_verify_command: pytest tests/test_status.py::test_len", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_len)", "test_verify_command: pytest tests/test_status.py::test_len (test_len)", "related_test_relation: syntactic_call (test_len)", "test_oracle: exact_value strong (test_len)"],
+      "evidence": ["owner: status_label", "owner_kind: function", "missing_discriminator: return value == <expected value>", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_status.py", "suggested_test_name: test_len", "suggested_test_node_id: tests/test_status.py::test_len", "suggested_verify_command: python -m pytest tests/test_status.py::test_len", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_len)", "test_verify_command: python -m pytest tests/test_status.py::test_len (test_len)", "related_test_relation: syntactic_call (test_len)", "test_oracle: exact_value strong (test_len)"],
       "missing": ["A strong Python oracle reaches `status_label`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output."],
       "assertion_texts": {
       },
@@ -85,7 +85,7 @@
         "suggested_test_file": "tests/test_status.py",
         "suggested_test_name": "test_len",
         "suggested_test_node_id": "tests/test_status.py::test_len",
-        "verify_command": "pytest tests/test_status.py::test_len",
+        "verify_command": "python -m pytest tests/test_status.py::test_len",
         "verify_command_confidence": "high"
        },
       "python_repair_card": {
@@ -108,7 +108,7 @@
           "pytest_node_id": "tests/test_status.py::test_len"
          },
         "verify": {
-          "command": "pytest tests/test_status.py::test_len",
+          "command": "python -m pytest tests/test_status.py::test_len",
           "confidence": "high"
          },
         "receipt": {
@@ -144,5 +144,6 @@
       "category": "preview_language_advisory",
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
-  ]
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/status.py","digest":"sha256:91e98a3f7971f2ee70a7189374beff1a8f956b4eefdf3fff7cf8108d974a4b49"},{"path":"tests/test_status.py","digest":"sha256:6527f2e25d019377aacf97cd86772b759e612976577e2f9a63a2cdb63834ddc1"}]}
 }
