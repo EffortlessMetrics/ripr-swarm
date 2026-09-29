@@ -26,6 +26,7 @@ pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
         if !ret.errors.is_empty() {
             return Vec::new();
         }
+        let indexed = IndexedSource::new(source);
         let imports = extract_imports_from_statements(&ret.program.body);
         let mocks = extract_mocks_from_statements(&ret.program.body, &imports);
         let mut tests = Vec::new();
@@ -33,7 +34,7 @@ pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
         collect_tests_from_statements(
             &ret.program.body,
             file,
-            source,
+            &indexed,
             &mocks,
             &imports,
             &mut scope,
@@ -559,7 +560,7 @@ fn string_value(expression: &Expression<'_>) -> Option<String> {
 pub(crate) fn collect_tests_from_statements(
     statements: &[Statement<'_>],
     file: &Path,
-    source: &str,
+    source: &IndexedSource<'_>,
     mocks: &[String],
     imports: &[TypeScriptImport],
     scope: &mut TestScope,
@@ -1337,7 +1338,7 @@ fn argument_parameter_names(argument: &oxc_ast::ast::Argument<'_>) -> Vec<String
 
 pub(crate) fn describe_body_from_statement<'a>(
     stmt: &'a Statement<'a>,
-    source: &str,
+    source: &IndexedSource<'_>,
 ) -> Option<(String, &'a oxc_allocator::Vec<'a, Statement<'a>>)> {
     let Statement::ExpressionStatement(expr_stmt) = stmt else {
         return None;
@@ -1358,7 +1359,7 @@ pub(crate) fn describe_body_from_statement<'a>(
 pub(crate) fn test_from_statement(
     stmt: &Statement<'_>,
     file: &Path,
-    source: &str,
+    source: &IndexedSource<'_>,
     describe_stack: &[String],
 ) -> Option<TypeScriptTest> {
     let Statement::ExpressionStatement(expr_stmt) = stmt else {
@@ -1373,7 +1374,7 @@ pub(crate) fn test_from_statement(
         local_name: name,
         describe_names: describe_stack.to_vec(),
         file: file.to_path_buf(),
-        line: line_for_offset(source, call.span.start as usize),
+        line: source.line(call.span.start as usize),
         body_text: source[call.span.start as usize..call.span.end as usize].to_string(),
         assertions,
         // Populated by `extract_tests` (the only public extractor) once
@@ -1386,7 +1387,7 @@ pub(crate) fn test_from_statement(
 
 pub(crate) fn test_name_and_assertions_from_call(
     call: &oxc_ast::ast::CallExpression<'_>,
-    source: &str,
+    source: &IndexedSource<'_>,
 ) -> Option<(String, Vec<TypeScriptAssertion>)> {
     if !call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
         && !call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
@@ -1470,7 +1471,7 @@ fn is_active_declaration_modifier(name: &str) -> bool {
 /// runtime value. A spread argument is not a title.
 fn title_argument(
     arg: &oxc_ast::ast::Argument<'_>,
-    source: &str,
+    source: &IndexedSource<'_>,
     registration_start: usize,
 ) -> Option<String> {
     match arg {
@@ -1479,7 +1480,7 @@ fn title_argument(
         oxc_ast::ast::Argument::TemplateLiteral(template) if template.single_quasi().is_some() => {
             template.single_quasi().map(|quasi| quasi.to_string())
         }
-        _ => Some(computed_title(line_for_offset(source, registration_start))),
+        _ => Some(computed_title(source.line(registration_start))),
     }
 }
 
@@ -1811,6 +1812,7 @@ pub(crate) fn detect_partial_test_extraction(
             // Parse-error disclosure owns this case; do not double-report.
             return None;
         }
+        let source = &IndexedSource::new(source);
         let mut finder = UnextractedTestFinder {
             source,
             extracted_starts: &extracted_starts,
@@ -1860,7 +1862,7 @@ fn extracted_span_starts(source: &str, extracted: &[TypeScriptTest]) -> Vec<usiz
 /// (statement containers, call arguments, function bodies). Array-element and
 /// object-property subtrees are out of scope for this disclosure slice.
 struct UnextractedTestFinder<'a> {
-    source: &'a str,
+    source: &'a IndexedSource<'a>,
     extracted_starts: &'a [usize],
     gap: Option<(usize, &'static str, String)>,
 }
@@ -2065,7 +2067,7 @@ impl UnextractedTestFinder<'_> {
                 && tagged_template_tag_is_test_each(&tagged.tag)
             {
                 self.gap = Some((
-                    line_for_offset(self.source, call.span.start as usize),
+                    self.source.line(call.span.start as usize),
                     "tagged-template .each",
                     snippet_for_span(
                         self.source,
@@ -2084,7 +2086,7 @@ impl UnextractedTestFinder<'_> {
                     _ => "test/it call in loop/callback/nested body",
                 };
                 self.gap = Some((
-                    line_for_offset(self.source, call.span.start as usize),
+                    self.source.line(call.span.start as usize),
                     shape,
                     snippet_for_span(
                         self.source,
@@ -2173,7 +2175,7 @@ impl UnextractedTestFinder<'_> {
         if statement_position && self.gap.is_none() && tagged_template_tag_is_test_each(&tagged.tag)
         {
             self.gap = Some((
-                line_for_offset(self.source, tagged.span.start as usize),
+                self.source.line(tagged.span.start as usize),
                 "tagged-template .each",
                 snippet_for_span(
                     self.source,
