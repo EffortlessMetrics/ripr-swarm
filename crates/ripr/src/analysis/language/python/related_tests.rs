@@ -154,7 +154,11 @@ pub(super) fn verify_command_for_test(test: &PythonTest) -> Option<String> {
     match test.framework {
         "pytest" => {
             let node = test.qualified_name.replace('.', "::");
-            Some(format!("pytest {}::{node}", shell_quote_file_arg(&path)))
+            Some(format!(
+                "{} {}::{node}",
+                crate::domain::PYTEST_VERIFY_PROGRAM,
+                shell_quote_file_arg(&path)
+            ))
         }
         "unittest" => {
             let module = shell_quote_file_arg(&unittest_module_for_path(&path));
@@ -497,6 +501,10 @@ fn import_alias_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
             && import.alias != owner.name
             && contains_call_name(&test.body_text, &import.alias))
             || (imported_module_matches_owner(import, owner)
+                // A parameter, fixture or assignment named like the module
+                // alias (`def test_one(pkg): pkg.one(...)`) calls a local
+                // value, not the imported module.
+                && !test_binds_local(test, &import.alias)
                 && contains_attribute_call(&test.body_text, &import.alias, &owner.name))
     })
 }
@@ -507,6 +515,11 @@ pub(super) fn imported_module_matches_owner(import: &PythonImport, owner: &Pytho
         .file_stem()
         .and_then(|stem| stem.to_str())
         .is_some_and(|stem| import.imported.rsplit('.').next() == Some(stem))
+        // `import humanize` / `import more_itertools as mi` binds a package
+        // whose `__init__.py` re-exports the owner (`reexports.rs`). The full
+        // dotted package path must match; the caller still requires the
+        // owner's name through the alias (`mi.one(`).
+        || (import.source_module.is_empty() && owner.reexport_modules.contains(&import.imported))
 }
 
 /// The dotted module paths under which the owner file can be imported.
@@ -526,7 +539,7 @@ pub(super) fn imported_module_matches_owner(import: &PythonImport, owner: &Pytho
 /// projects that really write `from src.pricing.discounts import ...` still
 /// match. Each form is a complete module path compared by exact equality; no
 /// stem or suffix matching is introduced.
-fn owner_module_paths(file: &Path) -> Vec<String> {
+pub(super) fn owner_module_paths(file: &Path) -> Vec<String> {
     let normalized = normalized_path(file);
     let mut parts = normalized
         .split('/')
@@ -571,6 +584,9 @@ pub(super) fn import_source_module_matches_owner(
         return false;
     }
     owner_module_paths(&owner.file).contains(&import.source_module)
+        // `from humanize import naturaldelta`: the package re-exports the
+        // owner under its own name, so the package path identifies it too.
+        || (import.imported == owner.name && owner.reexport_modules.contains(&import.source_module))
 }
 
 /// Free-function module-identity evidence: a strong observing test imports the
@@ -879,6 +895,7 @@ fn test_references_module_symbol(test: &PythonTest, owner: &PythonOwner, symbol:
                 && contains_name_reference(body, &import.alias);
         }
         imported_module_matches_owner(import, owner)
+            && !test_binds_local(test, &import.alias)
             && contains_member_reference(body, &import.alias, symbol)
     })
 }

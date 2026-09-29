@@ -359,3 +359,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_cross_file_import_reference (6)
+
+Reason:
+RIPR-SPEC-0122: exposed findings default to info severity
+
+Command:
+`cargo xtask goldens bless python_cross_file_import_reference --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_cross_file_import_reference (7)
+
+Reason:
+RIPR-SPEC-0122: Python pytest verify commands now emit python -m pytest so a flat-layout package imports from the repository root; wording only, no exposure class change
+
+Command:
+`cargo xtask goldens bless python_cross_file_import_reference --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

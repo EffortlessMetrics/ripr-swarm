@@ -473,6 +473,27 @@ fn initialize_is_accepted_exactly_once() -> Result<(), String> {
     exit_and_wait(&mut session)
 }
 
+#[test]
+fn initialize_advertises_full_sync_with_save_notifications() -> Result<(), String> {
+    // Saved content is ripr's analysis input. Under the LSP spec only the
+    // options form's `save` field opts a client into `textDocument/didSave`;
+    // the bare numeric kind does not. `save: true` is also the shape the VS
+    // Code compatibility check accepts.
+    let mut session = LspSession::spawn()?;
+    let response = session.request("initialize", initialize_params())?;
+    let result = expect_result(&response, "initialize")?;
+    let sync = &result["capabilities"]["textDocumentSync"];
+    if sync["openClose"] != serde_json::json!(true)
+        || sync["change"] != serde_json::json!(1)
+        || sync["save"] != serde_json::json!(true)
+    {
+        return Err(format!(
+            "textDocumentSync must request open/close, full changes and didSave: {sync}"
+        ));
+    }
+    exit_and_wait(&mut session)
+}
+
 // ── 3. `initialized` notification transition ──
 
 #[test]
@@ -513,6 +534,27 @@ fn normal_request_after_initialize_returns_result() -> Result<(), String> {
     if !text.contains("ripr") {
         return Err(format!("hover contents should describe ripr, got: {text}"));
     }
+    exit_and_wait(&mut session)
+}
+
+/// LSP 3.17 "$ Notifications and Requests": a `$/` notification may be
+/// ignored, but a `$/` request must be answered with `MethodNotFound`
+/// (#4456). tower-lsp-server drops both unless ripr's layer answers.
+#[test]
+fn dollar_request_is_answered_method_not_found() -> Result<(), String> {
+    let mut session = LspSession::spawn()?;
+    handshake(&mut session)?;
+    session.notify("$/ripr-unknown", Some(serde_json::json!({})))?;
+    let response = session.request("$/ripr-unknown", serde_json::json!({}))?;
+    expect_error(&response, "$/ripr-unknown", -32601)?;
+    let data = response.pointer("/error/data");
+    if data != Some(&serde_json::json!("$/ripr-unknown")) {
+        return Err(format!(
+            "`$/` MethodNotFound should name the method like other unknown methods: {response}"
+        ));
+    }
+    let hover = session.request("textDocument/hover", hover_params())?;
+    expect_result(&hover, "textDocument/hover")?;
     exit_and_wait(&mut session)
 }
 

@@ -568,3 +568,27 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — boundary_gap (6)
+
+Reason:
+RIPR-SPEC-0122: discriminator evidence line no longer says yes on findings that are not exposed
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_gap (7)
+
+Reason:
+Agent brief before-snapshot command creates target/ripr/workflow before redirecting into it (#4592)
+
+Command:
+Edited by hand; the brief golden is compared by `editor_agent_loop_fixture_outputs_match_expected` in `crates/ripr/tests/cli_smoke.rs`.
+
+Updated:
+- `expected/editor-agent-loop/agent-brief.json`
