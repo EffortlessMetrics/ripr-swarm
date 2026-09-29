@@ -1417,9 +1417,21 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         alias: "tax".to_string(),
         source_module: String::new(),
     };
-    assert!(imported_module_matches_owner(&dotted, &owner));
-    assert!(imported_module_matches_owner(&plain, &owner));
-    assert!(!imported_module_matches_owner(&mismatched, &owner));
+    assert!(imported_module_matches_owner(
+        &dotted,
+        &owner,
+        Path::new("tests/test_x.py")
+    ));
+    assert!(imported_module_matches_owner(
+        &plain,
+        &owner,
+        Path::new("tests/test_x.py")
+    ));
+    assert!(!imported_module_matches_owner(
+        &mismatched,
+        &owner,
+        Path::new("tests/test_x.py")
+    ));
 }
 
 /// #4566: a src-layout short module name two workspace files share

@@ -74,6 +74,12 @@ pub(crate) struct TsAliasMap {
     /// The template may itself contain a `*`; the captured group from the
     /// specifier replaces that `*` in the template.
     glob_entries: Vec<GlobEntry>,
+    /// `true` when the entries above came from a loaded tsconfig/jsconfig.
+    /// A map built only to carry `packages` has no tsconfig, so its
+    /// unresolved advice stays the flag-off / load-gap advice.
+    tsconfig_loaded: bool,
+    /// In-workspace package names (#4554), consulted after `paths`.
+    packages: super::workspace_packages::WorkspacePackages,
 }
 
 #[derive(Debug, Clone)]
@@ -242,6 +248,34 @@ impl TsAliasMapLoadGap {
 }
 
 impl TsAliasMap {
+    /// A map that resolves only in-workspace package names: the tsconfig
+    /// alias flag is off or its config did not load (#4554).
+    pub(crate) fn workspace_packages_only(
+        root: &Path,
+        packages: super::workspace_packages::WorkspacePackages,
+    ) -> Self {
+        Self {
+            root: root.to_path_buf(),
+            base_url: ".".to_string(),
+            packages,
+            ..Self::default()
+        }
+    }
+
+    /// Adds in-workspace package-name resolution after `paths` (#4554).
+    pub(crate) fn with_workspace_packages(
+        mut self,
+        packages: super::workspace_packages::WorkspacePackages,
+    ) -> Self {
+        self.packages = packages;
+        self
+    }
+
+    /// `true` when the map's `paths` entries came from a loaded config.
+    pub(crate) fn has_tsconfig(&self) -> bool {
+        self.tsconfig_loaded
+    }
+
     /// `true` when this map has no entries (opt-out / parse-failure path).
     pub(crate) fn is_empty(&self) -> bool {
         self.literal_entries.is_empty() && self.glob_entries.is_empty()
@@ -287,10 +321,21 @@ impl TsAliasMap {
     /// 5. After substituting the captured `*`, the candidate path resolves to
     ///    EXACTLY ONE existing workspace file (.ts/.tsx/.js/.jsx/.mts/.cts/
     ///    .mjs/.cjs).
+    ///
+    /// A specifier `paths` does not resolve then falls back to an
+    /// in-workspace package name (`workspace_packages.rs`, #4554), as the
+    /// compiler falls back to module resolution.
     pub(crate) fn resolve(&self, specifier: &str) -> Option<PathBuf> {
         if specifier.starts_with("./") || specifier.starts_with("../") {
             return None; // relative paths are handled by the normal resolver
         }
+        self.tsconfig_loaded
+            .then(|| self.resolve_paths(specifier))
+            .flatten()
+            .or_else(|| self.packages.resolve(specifier))
+    }
+
+    fn resolve_paths(&self, specifier: &str) -> Option<PathBuf> {
         if self.is_empty() {
             return None;
         }
@@ -523,6 +568,8 @@ fn parse_alias_map(root: &Path, text: &str) -> Result<TsAliasMap, TsAliasMapBloc
         base_url_absolute,
         literal_entries,
         glob_entries,
+        tsconfig_loaded: true,
+        packages: Default::default(),
     })
 }
 

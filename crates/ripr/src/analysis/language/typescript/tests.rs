@@ -7333,6 +7333,67 @@ fn package_local_filter_admits_cross_package_test_importing_owner_file() -> Resu
     Ok(())
 }
 
+/// Review #4611: the constructor arm's bare class-name match stays inside the
+/// owner's package. A sibling-package test constructing its own same-named
+/// class is not related; one that imports the owner's class is.
+#[test]
+fn cross_package_constructor_requires_owner_class_import() -> Result<(), String> {
+    let root = ts_unique_tempdir("pkg-cross-ctor")?;
+    ts_write_file(&root.join("packages/a/package.json"), r#"{"name":"a"}"#)?;
+    ts_write_file(&root.join("packages/b/package.json"), r#"{"name":"b"}"#)?;
+
+    let mut owner = test_owner("constructor", "packages/a/src/cart.ts");
+    owner.owner_kind = OwnerKind::Method;
+    owner.method_kind = TypeScriptMethodKind::Constructor;
+    owner.class_name = Some("Cart".into());
+    let rival = TypeScriptTest {
+        name: "total".into(),
+        local_name: "total".into(),
+        describe_names: Vec::new(),
+        file: "packages/b/tests/cart.test.ts".into(),
+        line: 4,
+        body_text: "expect(new Cart(1).total).toBe(1)".into(),
+        assertions: Vec::new(),
+        mocks_in_file: Vec::new(),
+        scope_bindings: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/cart".into(),
+            imported: Some("Cart".into()),
+            local: "Cart".into(),
+            namespace: false,
+        }],
+    };
+    let candidates = related_test_candidates(
+        &owner,
+        std::slice::from_ref(&rival),
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+    );
+    assert!(
+        !candidates
+            .iter()
+            .any(|candidate| candidate.relation == TypeScriptRelationKind::ReceiverOwnerCall),
+        "got {candidates:?}"
+    );
+
+    let mut importer = rival;
+    importer.imports_in_file[0].source = "../../a/src/cart".into();
+    let candidates = related_test_candidates(
+        &owner,
+        std::slice::from_ref(&importer),
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+    );
+    assert_eq!(candidates.len(), 1, "got {candidates:?}");
+    assert_eq!(
+        candidates[0].relation,
+        TypeScriptRelationKind::ReceiverOwnerCall
+    );
+    Ok(())
+}
+
 /// CommonJS require() destructuring: `const { fn } = require('./path')` should
 /// be extracted as an import with `imported = Some("fn")`, `local = "fn"`,
 /// `namespace = false`.
@@ -9996,7 +10057,7 @@ fn spec_0104_ts_oracle_kind_matches_seam_mapping_table() {
 
 // ── Helpers for cockpit-delta-5 / issue-#1245 tests ──────────────────────────
 
-fn ts_unique_tempdir(label: &str) -> Result<PathBuf, String> {
+pub(super) fn ts_unique_tempdir(label: &str) -> Result<PathBuf, String> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|err| format!("system time: {err}"))?
@@ -10010,7 +10071,7 @@ fn ts_unique_tempdir(label: &str) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn ts_write_file(path: &Path, contents: &str) -> Result<(), String> {
+pub(super) fn ts_write_file(path: &Path, contents: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|err| format!("create_dir_all({}): {err}", parent.display()))?;

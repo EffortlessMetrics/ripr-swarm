@@ -462,7 +462,10 @@ pub(crate) fn named_limitations_for_alias_unresolved(
             // cause; an absent map is either flag-off (the only honest "enable
             // the flag" case) or a typed flag-ON load gap naming the real
             // config problem.
-            let (cause_text, recovery_hint) = match (alias_map, alias_unavailable) {
+            // A map that carries only workspace package names (#4554) has no
+            // tsconfig of its own: its advice is the flag-off / load-gap one.
+            let tsconfig_map = alias_map.filter(|map| map.has_tsconfig());
+            let (cause_text, recovery_hint) = match (tsconfig_map, alias_unavailable) {
                 (Some(map), _) => {
                     let (cause, hint) = map.unresolve_cause_for(&import.source).parts();
                     (cause.to_string(), hint.to_string())

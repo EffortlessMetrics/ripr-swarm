@@ -580,6 +580,16 @@ pub(crate) fn receiver_owner_call_relation(
     // construction, so a test that executes `new ClassName(...)` exercises it
     // directly — there is no member-call needle for a `constructor` name.
     if owner.method_kind == TypeScriptMethodKind::Constructor {
+        // The bare class name below is a name match, not file identity. It
+        // is kept inside the owner's package; a test in another workspace
+        // package must construct the class through a same-file or resolved
+        // import binding, or a same-named class there would lend it its
+        // oracle (#4552 review).
+        if workspace_root.is_some_and(|root| !same_package_root(&owner.file, &test.file, root)) {
+            return constructor_names_for_method_owner(test, owner, alias_map, workspace_root)
+                .iter()
+                .any(|candidate| contains_new_expression_call(&test.body_text, candidate));
+        }
         let mut constructor_names = Vec::new();
         if let Some(class_name) = owner.class_name.as_deref() {
             constructor_names.push(class_name.to_string());
