@@ -243,10 +243,10 @@ fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repair
     }
     if has_safe_target {
         present_evidence.push(SAFE_TEST_TARGET_EVIDENCE.to_string());
-        if matches!(target_selection, RepairTargetSelection::Proposed(_)) {
-            if let Some(admission) = admission {
-                present_evidence.push(admission.present_reason().to_string());
-            }
+        if matches!(target_selection, RepairTargetSelection::Proposed(_))
+            && let Some(admission) = admission
+        {
+            present_evidence.push(admission.present_reason().to_string());
         }
     }
     let mut missing_evidence = Vec::new();
