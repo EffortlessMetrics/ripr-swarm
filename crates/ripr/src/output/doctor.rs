@@ -878,11 +878,15 @@ fn doctor_tool_run_result(
 }
 
 /// Evidence for a probe that ran and exited non-zero. The tool exists, so
-/// "not available" would be false; its first stderr line carries the real
-/// cause, such as rustup's "toolchain ... is not installed" (#4734).
+/// "not available" would be false; its stderr carries the real cause, such
+/// as rustup's "toolchain ... is not installed" (#4734). The first `error:`
+/// line wins, because rustup can print a `warn:` line first (duplicate
+/// toolchain files); otherwise the first nonempty line.
 fn doctor_exit_failure_evidence(tool: &str, output: &std::process::Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr);
-    match stderr.lines().map(str::trim).find(|line| !line.is_empty()) {
+    let mut lines = stderr.lines().map(str::trim).filter(|line| !line.is_empty());
+    let first = lines.clone().next();
+    match lines.find(|line| line.starts_with("error:")).or(first) {
         Some(line) => format!("{tool} --version failed ({}): {line}", output.status),
         None => format!("{tool} --version failed ({})", output.status),
     }
@@ -2436,15 +2440,15 @@ mod tests {
     }
 
     /// A tool that runs and exits non-zero is present, so doctor names the
-    /// exit and the tool's own first stderr line instead of "not available"
-    /// (#4734).
+    /// exit and the tool's own `error:` line, skipping a leading `warn:`,
+    /// instead of "not available" (#4734).
     #[cfg(unix)]
     #[test]
     fn doctor_tool_nonzero_exit_names_the_tool_error() {
         let mut command = doctor_tool_command("sh");
         command.args([
             "-c",
-            "printf '\\nerror: toolchain 1.81.0 is not installed\\nhelp: run rustup\\n' >&2; exit 1",
+            "printf '\\nwarn: both rust-toolchain and rust-toolchain.toml exist\\nerror: toolchain 1.81.0 is not installed\\nhelp: run rustup\\n' >&2; exit 1",
         ]);
         let result = doctor_tool_check_with_command("rustc", command, DOCTOR_TOOL_TIMEOUT, None);
         assert_eq!(result.status, DoctorStatus::Fail);
