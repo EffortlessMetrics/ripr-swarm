@@ -1044,9 +1044,10 @@ fn collect_context_commands_reject_missing_or_malformed_first_argument_on_the_wi
         let command = params
             .get("command")
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| format!("{case}: fixture must name a command"))?;
+            .ok_or_else(|| format!("{case}: fixture must name a command"))?
+            .to_string();
         let response = session.request("workspace/executeCommand", params)?;
-        expect_typed_invalid_params_naming(&response, case, &[command, "expects one object"])?;
+        expect_typed_invalid_params_naming(&response, case, &[&command, "expects one object"])?;
     }
     let status = session.request(
         "workspace/executeCommand",
