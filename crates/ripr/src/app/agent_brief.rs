@@ -276,12 +276,22 @@ pub(crate) fn select_agent_brief_seams<'a>(
     let mut direct = direct_candidates(classified, working_set, policy, &mut warnings);
 
     if direct.candidates.is_empty() && direct.allow_fallback {
-        warnings.push(format!(
-            "No seams matched the requested scope (source: {}); showing all \
-             repo-actionable seams instead — this is NOT a scoped result.",
-            working_set.source.as_str()
-        ));
         direct.candidates = fallback_candidates(classified, policy);
+        // Say "showing" only when the fallback has something to show; an
+        // empty brief under that warning reads as a filtering bug.
+        warnings.push(if direct.candidates.is_empty() {
+            format!(
+                "No seams matched the requested scope (source: {}), and the repository \
+                 has no agent-actionable seams to show instead.",
+                working_set.source.as_str()
+            )
+        } else {
+            format!(
+                "No seams matched the requested scope (source: {}); showing all \
+                 repo-actionable seams instead — this is NOT a scoped result.",
+                working_set.source.as_str()
+            )
+        });
     }
 
     direct
@@ -1548,6 +1558,30 @@ mod tests {
             ]
         );
         assert!(!selection.top_seams.is_empty());
+    }
+
+    #[test]
+    fn agent_brief_scope_degradation_warning_does_not_promise_an_empty_fallback() {
+        let seam = classified(
+            "src/pricing.rs",
+            88,
+            "pricing::discounted_total",
+            "amount >= discount_threshold",
+            SeamGripClass::StronglyGripped,
+        );
+        let seams = vec![seam];
+        let working_set = AgentBriefResolvedWorkingSet::base("origin/main", vec![]);
+
+        let selection = select(&seams, &working_set, 3);
+
+        assert!(selection.top_seams.is_empty());
+        assert_eq!(
+            selection.warnings,
+            vec![
+                "No seams matched the requested scope (source: base), and the repository \
+                 has no agent-actionable seams to show instead."
+            ]
+        );
     }
 
     #[test]

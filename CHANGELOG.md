@@ -11,6 +11,11 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr agent brief --json`: `before_snapshot_command` now creates
+  `target/ripr/workflow` before redirecting into it, so the first loop command
+  works in a fresh checkout. When the requested scope matches nothing and the
+  repository has no agent-actionable seam either, the warning says so instead
+  of claiming it is showing all repo-actionable seams (#4592).
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from
