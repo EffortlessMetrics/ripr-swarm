@@ -3259,7 +3259,8 @@ fn analyze_diff_skips_added_imports_but_keeps_a_repointed_import() -> Result<(),
         &[(7, "    return amount - 10")],
     )?;
     assert_eq!(lines, vec![8], "added imports carry no probe");
-    // An import that replaces an import re-points a name and stays analyzed.
+    // An import that replaces an import re-points a name and stays analyzed,
+    // alone or beside a behavioral line.
     let lines = probed_lines_for_python_rewrite(
         "repointed-import",
         source,
@@ -3267,6 +3268,19 @@ fn analyze_diff_skips_added_imports_but_keeps_a_repointed_import() -> Result<(),
         &[(7, "    from math import ceil as floor")],
     )?;
     assert_eq!(lines, vec![7]);
+    let lines = probed_lines_for_python_rewrite(
+        "repointed-import-in-run",
+        source,
+        &[
+            (7, "    from math import floor"),
+            (8, "    return floor(amount) - 10"),
+        ],
+        &[
+            (7, "    from math import ceil as floor"),
+            (8, "    return floor(amount) - 9"),
+        ],
+    )?;
+    assert_eq!(lines, vec![7, 8]);
     Ok(())
 }
 

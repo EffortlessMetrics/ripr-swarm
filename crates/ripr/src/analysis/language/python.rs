@@ -651,9 +651,19 @@ impl PythonAdapter {
                 .get(&changed.path)
                 .map(Vec::as_slice)
                 .unwrap_or_default();
+            // An import that replaces an import re-points a name, so it is
+            // behavior of its own; any other added import is not.
+            let is_added_import = |added: &crate::analysis::diff::ChangedLine| {
+                line_is_in_ranges(added.line, import_ranges)
+                    && changed
+                        .removed_lines
+                        .iter()
+                        .find(|removed| removed.new_side_line == added.line)
+                        .is_none_or(|removed| !is_python_import_line(&removed.text))
+            };
             let covered = python_quiet_lines_covered_by_run(&changed.added_lines, |added| {
                 line_is_in_ranges(added.line, new_docstring_ranges)
-                    || line_is_in_ranges(added.line, import_ranges)
+                    || is_added_import(added)
                     || is_python_no_behavior_line(&added.text)
                     || is_python_structural_line(&added.text)
             });
@@ -669,12 +679,8 @@ impl PythonAdapter {
                 // not the carrier of that code's change: the behavioral lines of
                 // the same added run are (#4216 for Rust). An added import is
                 // not a behavior probe of its own either (the Rust adapter
-                // ignores `use` lines); only an import that replaces an import
-                // re-points a name and stays analyzed.
-                if covered[added_index]
-                    || (line_is_in_ranges(added.line, import_ranges)
-                        && old_line.is_none_or(|removed| !is_python_import_line(&removed.text)))
-                {
+                // ignores `use` lines).
+                if covered[added_index] || is_added_import(added) {
                     continue;
                 }
                 let old_line_text = old_line.map(|removed| removed.text.as_str());
