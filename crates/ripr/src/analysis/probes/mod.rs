@@ -9,6 +9,7 @@ mod repo;
 
 use crate::analysis::diagnostic_origin::ParserByteSpan;
 use crate::domain::Probe;
+use std::collections::BTreeMap;
 
 pub(crate) use binding_predicate::{
     BindingPredicateResolution, BindingValueResolution, ChangedBindingPredicateUse,
@@ -60,6 +61,12 @@ impl SeededProbe {
             probe,
             binding_relation: Some(binding_relation),
             parser_span: None,
+        }
+    }
+
+    pub(crate) fn record_span(&self, parser_spans: &mut BTreeMap<String, ParserByteSpan>) {
+        if let Some(span) = self.parser_span {
+            parser_spans.insert(self.probe.id.0.clone(), span);
         }
     }
 }

@@ -402,7 +402,10 @@ fn crlf_file_covers_the_predicate() -> Result<(), String> {
         .find(|batch| !batch.diagnostics.is_empty())
         .ok_or_else(|| "no diagnostic batch".to_string())?;
     let selected = predicate_diagnostics(&batch.diagnostics, &edited)?;
-    assert_covers_producer_predicate(&edited, selected[0], &PositionEncodingKind::UTF16, false)?;
+    let diagnostic = selected
+        .first()
+        .ok_or_else(|| "predicate diagnostic missing".to_string())?;
+    assert_covers_producer_predicate(&edited, diagnostic, &PositionEncodingKind::UTF16, false)?;
     Ok(())
 }
 

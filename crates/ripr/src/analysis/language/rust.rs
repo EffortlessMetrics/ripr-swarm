@@ -1752,9 +1752,7 @@ impl RustAdapter {
             cancellation::checkpoint()?;
             let probes = probes::probes_for_file_with_relations(&options.root, changed, &index);
             for seeded in probes {
-                if let Some(span) = seeded.parser_span {
-                    parser_spans.insert(seeded.probe.id.0.clone(), span);
-                }
+                seeded.record_span(&mut parser_spans);
                 let probe = seeded.probe;
                 let binding_relation = seeded.binding_relation;
                 candidate_lines.insert((probe.location.file.clone(), probe.location.line));
@@ -1981,9 +1979,7 @@ impl RustAdapter {
         for path in &production_files {
             let probes = probes::probes_for_repo_file_seeded(&options.root, path, &index);
             for seeded in probes {
-                if let Some(span) = seeded.parser_span {
-                    parser_spans.insert(seeded.probe.id.0.clone(), span);
-                }
+                seeded.record_span(&mut parser_spans);
                 let probe = seeded.probe;
                 let related_test_candidate_index = related_test_candidate_index
                     .get_or_insert_with(|| classify::RelatedTestCandidateIndex::new(&index));

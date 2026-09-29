@@ -68,10 +68,9 @@ pub(crate) fn probes_for_repo_file_seeded(
             expected_sinks,
             required_oracles,
         };
-        let parser_span = (shape.start_line == shape.end_line && !shape.text.contains('\n'))
-            .then_some(ParserByteSpan {
-                start_byte: shape.start_byte,
-            });
+        let parser_span = (shape.start_line == shape.end_line)
+            .then(|| ParserByteSpan::same_line(&shape.text, shape.start_byte))
+            .flatten();
         probes.push(SeededProbe::maybe_with_span(probe, parser_span));
     }
 

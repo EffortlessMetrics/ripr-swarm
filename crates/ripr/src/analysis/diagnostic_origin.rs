@@ -28,6 +28,18 @@ pub(crate) struct ParserByteSpan {
     pub start_byte: usize,
 }
 
+impl ParserByteSpan {
+    /// Same-line parser geometry only. A newline means the producer owns a
+    /// changed full line, not an exact expression slice.
+    pub(crate) fn same_line(text: &str, start_byte: usize) -> Option<Self> {
+        if text.contains('\n') {
+            None
+        } else {
+            Some(Self { start_byte })
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum OriginKind {
     Exact,
@@ -181,10 +193,10 @@ fn origin_for_finding(
     if facts.is_none_or(|facts| facts.source != captured) {
         return Some(coarse_on_line(captured, finding.probe.location.line));
     }
-    match exact_origin(captured, span, finding) {
-        Some(origin) => Some(origin),
-        None => Some(coarse_on_line(captured, finding.probe.location.line)),
-    }
+    Some(
+        exact_origin(captured, span, finding)
+            .unwrap_or_else(|| coarse_on_line(captured, finding.probe.location.line)),
+    )
 }
 
 fn missing_input_origin() -> EncodedOrigin {
@@ -246,9 +258,6 @@ fn exact_origin(source: &str, span: ParserByteSpan, finding: &Finding) -> Option
 
 fn trimmed_expression_start(source: &str, start_byte: usize, expression: &str) -> Option<usize> {
     let rest = source.get(start_byte..)?;
-    if !source.is_char_boundary(start_byte) {
-        return None;
-    }
     let skipped = rest.len() - rest.trim_start().len();
     let exact_start = start_byte.checked_add(skipped)?;
     source.get(exact_start..exact_start.checked_add(expression.len())?)?;
@@ -471,39 +480,74 @@ mod tests {
         )
     }
 
-    fn covered<'a>(source: &'a str, origin: &EncodedOrigin) -> &'a str {
+    fn require_find(source: &str, needle: &str, label: &str) -> Result<usize, String> {
+        source
+            .find(needle)
+            .ok_or_else(|| format!("{label} {needle:?} missing from {source:?}"))
+    }
+
+    fn require_second(source: &str, needle: &str) -> Result<(usize, usize), String> {
+        let first = require_find(source, needle, "first")?;
+        let rest = source
+            .get(first.saturating_add(1)..)
+            .ok_or_else(|| format!("slice after first {needle:?} is not a scalar boundary"))?;
+        let second = rest
+            .find(needle)
+            .map(|offset| first.saturating_add(1).saturating_add(offset))
+            .ok_or_else(|| format!("second {needle:?} missing from {source:?}"))?;
+        Ok((first, second))
+    }
+
+    fn require_origin<'a>(
+        origins: &'a RustDiagnosticOrigins,
+        id: &str,
+    ) -> Result<&'a EncodedOrigin, String> {
+        origins
+            .get(id)
+            .ok_or_else(|| format!("missing origin {id}"))
+    }
+
+    fn covered<'a>(source: &'a str, origin: &EncodedOrigin) -> Result<&'a str, String> {
         let line = lsp_lines(source)
             .into_iter()
             .nth(origin.line as usize)
-            .expect("line");
-        let line_text = &source[line.start..line.end];
+            .ok_or_else(|| format!("missing line {}", origin.line))?;
+        let line_text = source
+            .get(line.start..line.end)
+            .ok_or_else(|| "line bytes are not a scalar slice".to_string())?;
         let start = origin.utf8.start as usize;
         let end = origin.utf8.end as usize;
-        &line_text[start..end]
+        line_text
+            .get(start..end)
+            .ok_or_else(|| format!("covered {start}..{end} splits a scalar"))
+    }
+
+    fn current_finding(id: &str, line: usize, expression: &str) -> Finding {
+        finding_on(
+            id,
+            "src/lib.rs",
+            line,
+            expression,
+            SourceCurrentness::CandidateCurrent,
+        )
     }
 
     #[test]
-    fn exact_origin_skips_indent_and_if_keyword() {
+    fn exact_origin_skips_indent_and_if_keyword() -> Result<(), String> {
         let source =
             "fn price() {\n    if montant_é > discount_threshold {\n        true\n    }\n}\n";
-        let start = source.find(PREDICATE).expect("predicate");
-        let finding = finding_on(
-            "probe:first",
-            "src/lib.rs",
-            2,
-            PREDICATE,
-            SourceCurrentness::CandidateCurrent,
-        );
+        let start = require_find(source, PREDICATE, "predicate")?;
+        let finding = current_finding("probe:first", 2, PREDICATE);
         let origins = origins_for(
             &finding,
             source,
             Some(ParserByteSpan { start_byte: start }),
             None,
         );
-        let origin = origins.get("probe:first").expect("origin");
+        let origin = require_origin(&origins, "probe:first")?;
         assert_eq!(origin.kind, OriginKind::Exact);
         assert_eq!(origin.line, 1);
-        assert_eq!(covered(source, origin), PREDICATE);
+        assert_eq!(covered(source, origin)?, PREDICATE);
         assert_eq!(origin.utf16.start, 7);
         assert_eq!(
             origin.utf16.end,
@@ -511,10 +555,11 @@ mod tests {
         );
         assert_eq!(origin.utf32.start, 7);
         assert_eq!(origin.utf8.start, "    if ".len() as u32);
+        Ok(())
     }
 
     #[test]
-    fn first_substring_on_the_line_is_not_the_producer_span() {
+    fn first_substring_on_the_line_is_not_the_producer_span() -> Result<(), String> {
         let source = concat!(
             "fn price() {\n",
             "    let _ = \"montant_é > discount_threshold\"; if montant_é > discount_threshold {\n",
@@ -522,19 +567,11 @@ mod tests {
             "    }\n",
             "}\n"
         );
-        let decoy = source.find(PREDICATE).expect("decoy");
-        let producer = source[decoy + 1..]
-            .find(PREDICATE)
-            .map(|offset| decoy + 1 + offset)
-            .expect("producer");
-        assert!(decoy < producer);
-        let finding = finding_on(
-            "probe:second",
-            "src/lib.rs",
-            2,
-            PREDICATE,
-            SourceCurrentness::CandidateCurrent,
-        );
+        let (decoy, producer) = require_second(source, PREDICATE)?;
+        if decoy >= producer {
+            return Err(format!("decoy {decoy} is not before producer {producer}"));
+        }
+        let finding = current_finding("probe:second", 2, PREDICATE);
         let origins = origins_for(
             &finding,
             source,
@@ -543,61 +580,140 @@ mod tests {
             }),
             None,
         );
-        let origin = origins.get("probe:second").expect("origin");
+        let origin = require_origin(&origins, "probe:second")?;
         assert_eq!(origin.kind, OriginKind::Exact);
-        assert_eq!(covered(source, origin), PREDICATE);
-        let line = source.lines().nth(1).expect("line");
-        let first_match = line.find(PREDICATE).expect("first match");
+        assert_eq!(covered(source, origin)?, PREDICATE);
+        let line = source
+            .lines()
+            .nth(1)
+            .ok_or_else(|| "missing predicate line".to_string())?;
+        let first_match = require_find(line, PREDICATE, "first match")?;
         assert_ne!(origin.utf8.start as usize, first_match);
-        assert_eq!(
-            origin.utf8.start as usize,
-            producer - (source.find('\n').expect("nl") + 1)
-        );
+        let newline = require_find(source, "\n", "newline")?;
+        assert_eq!(origin.utf8.start as usize, producer - (newline + 1));
+        Ok(())
     }
 
     #[test]
-    fn cached_facts_from_another_source_cannot_authorize_captured_input() {
+    fn cached_facts_from_another_source_cannot_authorize_captured_input() -> Result<(), String> {
         let captured = "fn a() {\n    if montant_é > discount_threshold { true }\n}\n";
         let cached = "fn b() {\n    if montant_é > discount_threshold { true }\n    if montant_é > discount_threshold { false }\n}\n";
-        let start = cached.rfind(PREDICATE).expect("b offset");
-        let finding = finding_on(
-            "probe:a",
-            "src/lib.rs",
-            2,
-            PREDICATE,
-            SourceCurrentness::CandidateCurrent,
-        );
+        let start = cached
+            .rfind(PREDICATE)
+            .ok_or_else(|| "cached predicate missing".to_string())?;
+        let finding = current_finding("probe:a", 2, PREDICATE);
         let origins = origins_for(
             &finding,
             captured,
             Some(ParserByteSpan { start_byte: start }),
             Some(cached),
         );
-        let origin = origins.get("probe:a").expect("origin");
+        let origin = require_origin(&origins, "probe:a")?;
         assert_eq!(origin.kind, OriginKind::CoarseZeroWidth);
         assert_eq!(origin.utf8.start, 0);
         assert_eq!(origin.utf8.end, 0);
         assert_eq!(origin.utf16.end, 0);
         assert_eq!(origin.utf32.end, 0);
+        Ok(())
     }
 
     #[test]
     fn candidate_current_without_parser_span_keeps_heuristic() {
         let source = "fn price() {\n    if montant_é > discount_threshold { true }\n}\n";
-        let finding = finding_on(
-            "probe:line",
-            "src/lib.rs",
-            2,
-            PREDICATE,
-            SourceCurrentness::CandidateCurrent,
-        );
+        let finding = current_finding("probe:line", 2, PREDICATE);
         let origins = origins_for(&finding, source, None, None);
         assert!(origins.get("probe:line").is_none());
         assert!(origins.is_empty());
     }
 
     #[test]
-    fn base_deleted_is_zero_width_on_the_current_line() {
+    fn lexical_fallback_facts_refuse_precision() -> Result<(), String> {
+        let source = "fn price() {\n    if montant_é > discount_threshold { true }\n}\n";
+        let start = require_find(source, PREDICATE, "predicate")?;
+        let finding = current_finding("probe:lex", 2, PREDICATE);
+        let mut index = index_with(source);
+        if let Some(facts) = index.files.get_mut(&PathBuf::from("src/lib.rs")) {
+            facts.used_lexical_fallback = true;
+        } else {
+            return Err("facts missing".to_string());
+        }
+        let mut spans = BTreeMap::new();
+        spans.insert(finding.id.clone(), ParserByteSpan { start_byte: start });
+        let loaded = vec![(PathBuf::from("src/lib.rs"), source.as_bytes().to_vec())];
+        let origins = origins_for_rust_findings(
+            std::slice::from_ref(&finding),
+            &OriginBuildContext {
+                root: Path::new("/workspace"),
+                loaded_files: &loaded,
+                index: &index,
+                parser_spans: &spans,
+            },
+        );
+        let origin = require_origin(&origins, "probe:lex")?;
+        assert_eq!(origin.kind, OriginKind::CoarseZeroWidth);
+        assert_eq!(origin.utf8.end, origin.utf8.start);
+        Ok(())
+    }
+
+    #[test]
+    fn expression_not_at_parser_start_stays_coarse() -> Result<(), String> {
+        let source = "fn price() {\n    if montant_é > discount_threshold { true }\n}\n";
+        let start = require_find(source, "if ", "if keyword")?;
+        let finding = current_finding("probe:mismatch", 2, PREDICATE);
+        let origins = origins_for(
+            &finding,
+            source,
+            Some(ParserByteSpan { start_byte: start }),
+            None,
+        );
+        let origin = require_origin(&origins, "probe:mismatch")?;
+        assert_eq!(origin.kind, OriginKind::CoarseZeroWidth);
+        Ok(())
+    }
+
+    #[test]
+    fn empty_expression_stays_coarse() -> Result<(), String> {
+        let source = "fn price() {\n    if montant_é > discount_threshold { true }\n}\n";
+        let start = require_find(source, PREDICATE, "predicate")?;
+        let finding = current_finding("probe:empty", 2, "");
+        let origins = origins_for(
+            &finding,
+            source,
+            Some(ParserByteSpan { start_byte: start }),
+            None,
+        );
+        let origin = require_origin(&origins, "probe:empty")?;
+        assert_eq!(origin.kind, OriginKind::CoarseZeroWidth);
+        Ok(())
+    }
+
+    #[test]
+    fn location_line_mismatch_stays_coarse() -> Result<(), String> {
+        let source = "fn price() {\n    if montant_é > discount_threshold { true }\n}\n";
+        let start = require_find(source, PREDICATE, "predicate")?;
+        let finding = current_finding("probe:line", 1, PREDICATE);
+        let origins = origins_for(
+            &finding,
+            source,
+            Some(ParserByteSpan { start_byte: start }),
+            None,
+        );
+        let origin = require_origin(&origins, "probe:line")?;
+        assert_eq!(origin.kind, OriginKind::CoarseZeroWidth);
+        Ok(())
+    }
+
+    #[test]
+    fn same_line_span_refuses_a_newline() {
+        assert_eq!(ParserByteSpan::same_line("a\nb", 0), None);
+        assert_eq!(
+            ParserByteSpan::same_line(PREDICATE, 4),
+            Some(ParserByteSpan { start_byte: 4 })
+        );
+    }
+
+    #[test]
+    fn base_deleted_is_zero_width_on_the_current_line() -> Result<(), String> {
         let source = "fn price() {\n    true\n}\n";
         let finding = finding_on(
             "probe:deleted",
@@ -607,118 +723,96 @@ mod tests {
             SourceCurrentness::BaseDeleted,
         );
         let origins = origins_for(&finding, source, None, None);
-        let origin = origins.get("probe:deleted").expect("origin");
+        let origin = require_origin(&origins, "probe:deleted")?;
         assert_eq!(origin.kind, OriginKind::CoarseZeroWidth);
         assert_eq!(origin.line, 1);
         assert_eq!(origin.utf8.end, origin.utf8.start);
         assert_eq!(origin.utf16.end, 0);
         assert_eq!(origin.utf32.end, 0);
+        Ok(())
     }
 
     #[test]
-    fn standalone_cr_refuses_precision() {
+    fn standalone_cr_refuses_precision() -> Result<(), String> {
         let source = "fn price() {\r    if montant_é > discount_threshold { true }\r}\r";
-        let start = source.find(PREDICATE).expect("predicate");
-        let finding = finding_on(
-            "probe:cr",
-            "src/lib.rs",
-            2,
-            PREDICATE,
-            SourceCurrentness::CandidateCurrent,
-        );
+        let start = require_find(source, PREDICATE, "predicate")?;
+        let finding = current_finding("probe:cr", 2, PREDICATE);
         let origins = origins_for(
             &finding,
             source,
             Some(ParserByteSpan { start_byte: start }),
             None,
         );
-        let origin = origins.get("probe:cr").expect("origin");
+        let origin = require_origin(&origins, "probe:cr")?;
         assert_eq!(origin.kind, OriginKind::CoarseZeroWidth);
         assert_eq!(origin.line, 0);
+        Ok(())
     }
 
     #[test]
-    fn crlf_admits_exact_geometry() {
+    fn crlf_admits_exact_geometry() -> Result<(), String> {
         let source = "fn price() {\r\n    if montant_é > discount_threshold {\r\n        true\r\n    }\r\n}\r\n";
-        let start = source.find(PREDICATE).expect("predicate");
-        let finding = finding_on(
-            "probe:crlf",
-            "src/lib.rs",
-            2,
-            PREDICATE,
-            SourceCurrentness::CandidateCurrent,
-        );
+        let start = require_find(source, PREDICATE, "predicate")?;
+        let finding = current_finding("probe:crlf", 2, PREDICATE);
         let origins = origins_for(
             &finding,
             source,
             Some(ParserByteSpan { start_byte: start }),
             None,
         );
-        let origin = origins.get("probe:crlf").expect("origin");
+        let origin = require_origin(&origins, "probe:crlf")?;
         assert_eq!(origin.kind, OriginKind::Exact);
         assert_eq!(origin.line, 1);
-        assert_eq!(covered(source, origin), PREDICATE);
+        assert_eq!(covered(source, origin)?, PREDICATE);
+        Ok(())
     }
 
     #[test]
-    fn mid_scalar_start_stays_coarse() {
+    fn mid_scalar_start_stays_coarse() -> Result<(), String> {
         let source = "fn price() {\n    if montant_é > discount_threshold { true }\n}\n";
-        let start = source.find("é").expect("accent") + 1;
-        assert!(!source.is_char_boundary(start));
-        let finding = finding_on(
-            "probe:mid",
-            "src/lib.rs",
-            2,
-            PREDICATE,
-            SourceCurrentness::CandidateCurrent,
-        );
+        let accent = require_find(source, "é", "accent")?;
+        let start = accent.saturating_add(1);
+        if source.is_char_boundary(start) {
+            return Err(format!("expected mid-scalar offset, got {start}"));
+        }
+        let finding = current_finding("probe:mid", 2, PREDICATE);
         let origins = origins_for(
             &finding,
             source,
             Some(ParserByteSpan { start_byte: start }),
             None,
         );
-        let origin = origins.get("probe:mid").expect("origin");
+        let origin = require_origin(&origins, "probe:mid")?;
         assert_eq!(origin.kind, OriginKind::CoarseZeroWidth);
+        Ok(())
     }
 
     #[test]
-    fn tab_cjk_astral_and_combining_prefixes_count_all_encodings() {
+    fn tab_cjk_astral_and_combining_prefixes_count_all_encodings() -> Result<(), String> {
         let prefix = "\tlet 日本語🎉e\u{0301} = 1; if ";
         let source = format!("fn price() {{\n{prefix}{PREDICATE} {{\n        true\n    }}\n}}\n");
-        let start = source.find(PREDICATE).expect("predicate");
-        let finding = finding_on(
-            "probe:prefix",
-            "src/lib.rs",
-            2,
-            PREDICATE,
-            SourceCurrentness::CandidateCurrent,
-        );
+        let start = require_find(&source, PREDICATE, "predicate")?;
+        let finding = current_finding("probe:prefix", 2, PREDICATE);
         let origins = origins_for(
             &finding,
             &source,
             Some(ParserByteSpan { start_byte: start }),
             None,
         );
-        let origin = origins.get("probe:prefix").expect("origin");
+        let origin = require_origin(&origins, "probe:prefix")?;
         assert_eq!(origin.kind, OriginKind::Exact);
-        assert_eq!(covered(&source, origin), PREDICATE);
+        assert_eq!(covered(&source, origin)?, PREDICATE);
         assert_eq!(origin.utf8.start, encoding_width(prefix, Encoding::Utf8));
         assert_eq!(origin.utf16.start, encoding_width(prefix, Encoding::Utf16));
         assert_eq!(origin.utf32.start, encoding_width(prefix, Encoding::Utf32));
         assert_ne!(origin.utf8.start, origin.utf16.start);
         assert_ne!(origin.utf16.start, origin.utf32.start);
+        Ok(())
     }
 
     #[test]
-    fn missing_loaded_source_uses_line_zero() {
-        let finding = finding_on(
-            "probe:missing",
-            "src/lib.rs",
-            2,
-            PREDICATE,
-            SourceCurrentness::CandidateCurrent,
-        );
+    fn missing_loaded_source_uses_line_zero() -> Result<(), String> {
+        let finding = current_finding("probe:missing", 2, PREDICATE);
         let mut spans = BTreeMap::new();
         spans.insert(finding.id.clone(), ParserByteSpan { start_byte: 4 });
         let index = RustIndex::default();
@@ -731,8 +825,9 @@ mod tests {
                 parser_spans: &spans,
             },
         );
-        let origin = origins.get("probe:missing").expect("origin");
+        let origin = require_origin(&origins, "probe:missing")?;
         assert_eq!(origin, &missing_input_origin());
+        Ok(())
     }
 
     #[test]

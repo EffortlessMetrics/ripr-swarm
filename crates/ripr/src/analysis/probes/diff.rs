@@ -319,12 +319,10 @@ fn parser_span_for_canonical_shape(
     canonical_text: &str,
     shape: &super::classify::ParserProbeShape<'_>,
 ) -> Option<ParserByteSpan> {
-    if canonical_text != shape.text || shape.text.contains('\n') {
+    if canonical_text != shape.text {
         return None;
     }
-    Some(ParserByteSpan {
-        start_byte: shape.start_byte,
-    })
+    ParserByteSpan::same_line(shape.text, shape.start_byte)
 }
 
 /// Scan `probes` in order; for any id that appears more than once, rewrite the
@@ -904,8 +902,40 @@ mod tests {
         );
     }
 
+    fn require_find(source: &str, needle: &str, label: &str) -> Result<usize, String> {
+        source
+            .find(needle)
+            .ok_or_else(|| format!("{label} {needle:?} missing from {source:?}"))
+    }
+
+    fn require_second(source: &str, needle: &str) -> Result<(usize, usize), String> {
+        let first = require_find(source, needle, "first")?;
+        let rest = source
+            .get(first.saturating_add(1)..)
+            .ok_or_else(|| format!("slice after first {needle:?} is not a scalar boundary"))?;
+        let second = rest
+            .find(needle)
+            .map(|offset| first.saturating_add(1).saturating_add(offset))
+            .ok_or_else(|| format!("second {needle:?} missing from {source:?}"))?;
+        Ok((first, second))
+    }
+
+    fn predicate_shape(
+        start_byte: usize,
+        text: &str,
+    ) -> super::super::classify::ParserProbeShape<'_> {
+        super::super::classify::ParserProbeShape {
+            family: ProbeFamily::Predicate,
+            start_line: 2,
+            start_byte,
+            text,
+            standalone_call: false,
+            unsafe_boundary: false,
+        }
+    }
+
     #[test]
-    fn canonical_parser_span_skips_string_decoy_on_the_same_line() {
+    fn canonical_parser_span_skips_string_decoy_on_the_same_line() -> Result<(), String> {
         const PREDICATE: &str = "montant_é > discount_threshold";
         let path = PathBuf::from("src/lib.rs");
         let source = concat!(
@@ -913,18 +943,21 @@ mod tests {
             "    let decoy = \"montant_é > discount_threshold\"; if montant_é > discount_threshold { false } else { true }\n",
             "}\n",
         );
-        let decoy = source.find(PREDICATE).expect("decoy");
-        let producer = source[decoy + 1..]
-            .find(PREDICATE)
-            .map(|offset| decoy + 1 + offset)
-            .expect("producer");
-        assert!(decoy < producer);
+        let (decoy, producer) = require_second(source, PREDICATE)?;
+        if decoy >= producer {
+            return Err(format!("decoy {decoy} is not before producer {producer}"));
+        }
+        let line = source
+            .lines()
+            .nth(1)
+            .ok_or_else(|| "missing predicate line".to_string())?
+            .to_string();
         let changed = ChangedFile {
             path: path.clone(),
             added_lines: vec![ChangedLine {
                 line: 2,
                 new_side_line: 2,
-                text: source.lines().nth(1).expect("line").to_string(),
+                text: line,
             }],
             removed_lines: vec![ChangedLine {
                 line: 2,
@@ -969,7 +1002,7 @@ mod tests {
         let predicate = seeded
             .iter()
             .find(|item| item.probe.family == ProbeFamily::Predicate)
-            .expect("predicate probe");
+            .ok_or_else(|| "predicate probe missing".to_string())?;
         assert_eq!(
             predicate.parser_span,
             Some(crate::analysis::diagnostic_origin::ParserByteSpan {
@@ -981,6 +1014,26 @@ mod tests {
             Some(decoy)
         );
         assert_eq!(predicate.probe.expression, PREDICATE);
+        Ok(())
+    }
+
+    #[test]
+    fn parser_span_is_dropped_when_canonical_text_differs_from_shape() {
+        let shape = predicate_shape(12, "montant_é > discount_threshold");
+        assert_eq!(
+            parser_span_for_canonical_shape("let _ = montant_é > discount_threshold;", &shape),
+            None
+        );
+        assert_eq!(
+            parser_span_for_canonical_shape(shape.text, &shape),
+            Some(ParserByteSpan { start_byte: 12 })
+        );
+    }
+
+    #[test]
+    fn parser_span_is_dropped_for_multiline_shape_text() {
+        let shape = predicate_shape(0, "montant_é >\ndiscount_threshold");
+        assert_eq!(parser_span_for_canonical_shape(shape.text, &shape), None);
     }
 
     #[test]

@@ -1615,11 +1615,14 @@ pub fn validate(value: i32) -> Result<i32, String> {
         );
         let decoy = source
             .find("montant_é > discount_threshold")
-            .expect("decoy");
-        let producer = source[decoy + 1..]
+            .ok_or("decoy missing")?;
+        let rest = source
+            .get(decoy.saturating_add(1)..)
+            .ok_or("slice after decoy is not a scalar boundary")?;
+        let producer = rest
             .find("montant_é > discount_threshold")
-            .map(|offset| decoy + 1 + offset)
-            .expect("producer");
+            .map(|offset| decoy.saturating_add(1).saturating_add(offset))
+            .ok_or("producer missing")?;
         assert!(
             predicates.iter().any(|shape| shape.start_byte == producer),
             "if-condition start_byte missing: decoy={decoy} producer={producer} shapes={predicates:?}"
@@ -1650,7 +1653,7 @@ pub fn validate(value: i32) -> Result<i32, String> {
             .collect();
         let producer = source
             .find("montant_é > discount_threshold")
-            .expect("predicate");
+            .ok_or("predicate missing")?;
         assert!(
             predicates.iter().any(|shape| shape.start_byte == producer),
             "producer={producer} shapes={predicates:?}"
