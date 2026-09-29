@@ -2202,14 +2202,32 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
         );
     }
 
-    if let Some(jsonl) = out_jsonl.as_ref()
-        && (output::path::same_output_leaf(jsonl, &out)
-            || output::path::same_output_leaf(jsonl, &out_md))
-    {
-        return Err(
-            "pr-ledger record --out-jsonl must not be the same path as --out or --out-md"
-                .to_string(),
-        );
+    if let Some(jsonl) = out_jsonl.as_ref() {
+        let mut forbidden = vec![&out, &out_md];
+        for input in [
+            gate.as_ref(),
+            baseline_delta.as_ref(),
+            zero_status.as_ref(),
+            pr_guidance.as_ref(),
+            gap_ledger.as_ref(),
+            recommendation_calibration.as_ref(),
+            agent_receipt.as_ref(),
+            coverage.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            forbidden.push(input);
+        }
+        if forbidden
+            .iter()
+            .any(|path| output::path::same_output_leaf(jsonl, path))
+        {
+            return Err(
+                "pr-ledger record --out-jsonl must not be the same path as --out, --out-md, or an evidence input"
+                    .to_string(),
+            );
+        }
     }
 
     Ok(PrEvidenceLedgerOptions {
@@ -5292,7 +5310,7 @@ mod tests {
                 "policy-history.json",
             ])),
             Err(
-                "policy history --out-jsonl must not be the same path as --out or --out-md"
+                "policy history --out-jsonl must not be the same path as --out, --out-md, or --current"
                     .to_string()
             )
         );
@@ -5306,9 +5324,33 @@ mod tests {
                 "policy-history.json",
             ])),
             Err(
-                "policy history --out-jsonl must not be the same path as --out or --out-md"
+                "policy history --out-jsonl must not be the same path as --out, --out-md, or --current"
                     .to_string()
             )
+        );
+        assert_eq!(
+            parse_policy_history_options(&args(&[
+                "--current",
+                "ops.json",
+                "--out-jsonl",
+                "ops.json",
+            ])),
+            Err(
+                "policy history --out-jsonl must not be the same path as --out, --out-md, or --current"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            parse_policy_history_options(&args(&[
+                "--current",
+                "ops.json",
+                "--history",
+                ".ripr/policy-history.jsonl",
+                "--out-jsonl",
+                ".ripr/policy-history.jsonl",
+            ]))
+            .map(|options| options.out_jsonl),
+            Ok(Some(PathBuf::from(".ripr/policy-history.jsonl")))
         );
     }
 
@@ -6296,7 +6338,7 @@ language = "rust"
                 "ledger.json",
             ])),
             Err(
-                "pr-ledger record --out-jsonl must not be the same path as --out or --out-md"
+                "pr-ledger record --out-jsonl must not be the same path as --out, --out-md, or an evidence input"
                     .to_string()
             )
         );
@@ -6316,9 +6358,45 @@ language = "rust"
                 "ledger.json",
             ])),
             Err(
-                "pr-ledger record --out-jsonl must not be the same path as --out or --out-md"
+                "pr-ledger record --out-jsonl must not be the same path as --out, --out-md, or an evidence input"
                     .to_string()
             )
+        );
+        assert_eq!(
+            parse_pr_evidence_ledger_options(&args(&[
+                "--pr-number",
+                "123",
+                "--base",
+                "base",
+                "--head",
+                "head",
+                "--gap-ledger",
+                "gap-ledger.json",
+                "--out-jsonl",
+                "gap-ledger.json",
+            ])),
+            Err(
+                "pr-ledger record --out-jsonl must not be the same path as --out, --out-md, or an evidence input"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            parse_pr_evidence_ledger_options(&args(&[
+                "--pr-number",
+                "123",
+                "--base",
+                "base",
+                "--head",
+                "head",
+                "--gap-ledger",
+                "gap-ledger.json",
+                "--history",
+                ".ripr/pr-evidence-ledger.jsonl",
+                "--out-jsonl",
+                ".ripr/pr-evidence-ledger.jsonl",
+            ]))
+            .map(|options| options.out_jsonl),
+            Ok(Some(PathBuf::from(".ripr/pr-evidence-ledger.jsonl")))
         );
     }
 

@@ -314,18 +314,21 @@ pub(crate) fn parse_policy_history_options(
         i += 1;
     }
 
+    let current = current.ok_or_else(|| "policy history requires --current <path>".to_string())?;
     if let Some(jsonl) = out_jsonl.as_ref()
         && (crate::output::path::same_output_leaf(jsonl, &out)
-            || crate::output::path::same_output_leaf(jsonl, &out_md))
+            || crate::output::path::same_output_leaf(jsonl, &out_md)
+            || crate::output::path::same_output_leaf(jsonl, &current))
     {
         return Err(
-            "policy history --out-jsonl must not be the same path as --out or --out-md".to_string(),
+            "policy history --out-jsonl must not be the same path as --out, --out-md, or --current"
+                .to_string(),
         );
     }
 
     Ok(PolicyHistoryOptions {
         root,
-        current: current.ok_or_else(|| "policy history requires --current <path>".to_string())?,
+        current,
         history,
         commit,
         pr_number,
