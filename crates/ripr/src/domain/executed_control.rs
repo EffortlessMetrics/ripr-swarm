@@ -1,4 +1,4 @@
-//! Executed-control obligation and result vocabulary (RIPR-SPEC-0182 / #4641).
+//! Executed-control obligation and result vocabulary (RIPR-SPEC-0183 / #4641).
 //!
 //! This module owns the closed contract that distinguishes an executed
 //! discriminating control from an ordinary positive test or a review argument.
