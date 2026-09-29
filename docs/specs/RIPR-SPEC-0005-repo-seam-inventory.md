@@ -61,7 +61,10 @@ predicate (`bindings.rs`, `schema.rs`, `generated.rs`, `*.gen.rs`,
 do not supply test-grip evidence, and are excluded from the corpus fingerprint
 so an edit there does not bust the inventory cache. Repo-exposure discloses
 the skip as `generated_rust_source_skipped` without changing `run_status` to a
-truncated scan. Header-generated files that only `ripr check` will skip after
+truncated scan. Because those patterns change the seam population, they are
+consumed config for the repo-exposure artifact input identity: a before/after
+pair that differs only in `generated_file_patterns` is not comparable.
+Header-generated files that only `ripr check` will skip after
 a later generated-source predicate land remain inventoried until that
 predicate exists on this trunk.
 
