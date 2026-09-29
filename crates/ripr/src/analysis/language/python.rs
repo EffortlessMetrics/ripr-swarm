@@ -639,25 +639,36 @@ impl PythonAdapter {
             // bounds above; a capped-out file degrades to empty ranges,
             // exactly the pre-existing unreadable-file path, and the file
             // itself is already named in the limitation set.
-            let old_docstring_ranges = workspace_read
+            let (old_docstring_ranges, old_import_ranges) = workspace_read
                 .sources
                 .get(&changed.path)
                 .and_then(|source| reconstruct_old_source(source, changed))
-                .map(|source| extract_source_facts(&changed.path, &source).docstring_line_ranges)
+                .map(|source| {
+                    let old_facts = extract_source_facts(&changed.path, &source);
+                    (
+                        old_facts.docstring_line_ranges,
+                        old_facts.import_line_ranges,
+                    )
+                })
                 .unwrap_or_default();
             let import_ranges = import_ranges_by_file
                 .get(&changed.path)
                 .map(Vec::as_slice)
                 .unwrap_or_default();
-            // An import that replaces an import re-points a name, so it is
-            // behavior of its own; any other added import is not.
+            // An import line that replaces an import line re-points a name
+            // (`from a import x` -> `from b import x`, or `old as x,` inside a
+            // parenthesized import), so it is behavior of its own; any other
+            // added import line is not.
             let is_added_import = |added: &crate::analysis::diff::ChangedLine| {
                 line_is_in_ranges(added.line, import_ranges)
                     && changed
                         .removed_lines
                         .iter()
                         .find(|removed| removed.new_side_line == added.line)
-                        .is_none_or(|removed| !is_python_import_line(&removed.text))
+                        .is_none_or(|removed| {
+                            !line_is_in_ranges(removed.line, &old_import_ranges)
+                                && !is_python_import_line(&removed.text)
+                        })
             };
             let covered = python_quiet_lines_covered_by_run(&changed.added_lines, |added| {
                 line_is_in_ranges(added.line, new_docstring_ranges)

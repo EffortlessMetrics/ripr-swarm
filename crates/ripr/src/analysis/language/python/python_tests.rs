@@ -3462,6 +3462,15 @@ fn analyze_diff_skips_added_imports_but_keeps_a_repointed_import() -> Result<(),
         ],
     )?;
     assert_eq!(lines, vec![7, 8]);
+    // A name re-pointed inside a parenthesized import is a continuation line
+    // that does not start with `import`; the old-side import range keeps it.
+    let lines = probed_lines_for_python_rewrite(
+        "repointed-parenthesized-import",
+        source,
+        &[(3, "    Decimal,")],
+        &[(3, "    Fraction as Decimal,")],
+    )?;
+    assert_eq!(lines, vec![3]);
     Ok(())
 }
 
