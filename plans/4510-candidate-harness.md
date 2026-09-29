@@ -235,4 +235,3 @@ Primary evidence: [530ce failed Rust gates](https://github.com/EffortlessMetrics
 The layout rationale is Cargo 1.95's
 [`find_root_iter` ancestor traversal](https://github.com/rust-lang/cargo/blob/rust-1.95.0/src/cargo/core/workspace.rs#L2265-L2284),
 which stops at `target/package`; this source rationale is not runtime proof.
-
