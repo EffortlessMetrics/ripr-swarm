@@ -1364,12 +1364,12 @@ mod tests {
     }
 
     #[test]
-    fn json_discloses_generated_rust_skip_without_changing_run_status() {
+    fn json_discloses_generated_rust_skip_without_changing_run_status() -> Result<(), String> {
         let skip = GeneratedRustSkip::from_paths(vec![
             PathBuf::from("src/bindings.rs"),
             PathBuf::from("src/schema.rs"),
         ])
-        .expect("generated skip");
+        .ok_or_else(|| "generated skip must be Some for nonempty paths".to_string())?;
         let mut bytes = Vec::new();
         super::write_repo_exposure_json_document(
             &[weakly_gripped_classified()],
@@ -1380,8 +1380,8 @@ mod tests {
             None,
             &mut bytes,
         )
-        .expect("write json");
-        let json = String::from_utf8(bytes).expect("utf8");
+        .map_err(|error| format!("write json: {error}"))?;
+        let json = String::from_utf8(bytes).map_err(|error| format!("utf8: {error}"))?;
         assert!(
             json.contains("\"run_status\": \"complete\""),
             "generated skip must not look like a truncated scan:\n{json}"
@@ -1413,6 +1413,7 @@ mod tests {
             md.contains("src/bindings.rs"),
             "markdown skip path missing in:\n{md}"
         );
+        Ok(())
     }
 
     #[test]

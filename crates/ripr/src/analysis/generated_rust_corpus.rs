@@ -110,11 +110,11 @@ mod tests {
     }
 
     #[test]
-    fn partition_applies_configured_generated_file_patterns() {
+    fn partition_applies_configured_generated_file_patterns() -> Result<(), String> {
         let config = crate::config::tests_only_parse(
             "[languages.rust]\ngenerated_file_patterns = [\"src/ffi.rs\"]\n",
         )
-        .expect("fixture config parses");
+        .map_err(|error| format!("fixture config parses: {error}"))?;
         let corpus = partition_analyzable_rust_corpus(
             Path::new("/tmp/unused-root"),
             paths(&["src/lib.rs", "src/ffi.rs"]),
@@ -136,5 +136,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["src/ffi.rs".to_string()]
         );
+        Ok(())
     }
 }
