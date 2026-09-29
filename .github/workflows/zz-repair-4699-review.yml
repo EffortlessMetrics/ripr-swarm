@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   repair:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     steps:
       - name: Check out candidate branch
@@ -334,12 +335,26 @@ fn server_archive_terminal_job_name_filter_accepts_direct_and_reusable_names(
           cargo +1.95.0 xtask check-release-targets
           git diff --check
 
-      - name: Commit and push repaired candidate
+      - name: Export validated workflow repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .repair-output
+          cp .github/workflows/server-archive-qualification.yml \
+            .repair-output/server-archive-qualification.yml
+          git checkout -- .github/workflows/server-archive-qualification.yml
+          git checkout -- .github/workflows/zz-repair-4699-review.yml
+          git diff --check
+
+      - name: Commit and push validated non-workflow repairs
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "fix(distribution): harden reusable terminal qualification"
+          git add \
+            .repair-output/server-archive-qualification.yml \
+            policy/workflow_allowlist.txt \
+            xtask/src/tests.rs
+          git commit -m "fix(distribution): prepare reusable terminal qualification repair"
           git push origin HEAD:feat/4521-final-native-payload
