@@ -510,6 +510,77 @@ fn import_alias_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
     })
 }
 
+/// Callee spellings with which `test` calls a free-function owner with module
+/// identity (#4567): the local bound by `from <owner module> import owner [as
+/// alias]` (including a package re-export), and `receiver.owner` for every
+/// receiver that reaches the owner's module by its dotted path
+/// ([`submodule_receivers`]), or a re-exporting package alias. A local that
+/// shadows the import is not a spelling. Methods have none.
+pub(super) fn owner_module_callees(test: &PythonTest, owner: &PythonOwner) -> Vec<String> {
+    if matches!(
+        owner.owner_kind,
+        Some(OwnerKind::Method | OwnerKind::ClassMethod)
+    ) || owner.is_module_owner()
+    {
+        return Vec::new();
+    }
+    let mut callees = Vec::new();
+    for import in &test.imports {
+        if test_binds_local(test, &import.alias) {
+            continue;
+        }
+        if import.imported == owner.name && import_source_module_matches_owner(import, owner) {
+            callees.push(import.alias.clone());
+        }
+        let reexporting_package =
+            import.source_module.is_empty() && owner.reexport_modules.contains(&import.imported);
+        let receivers = submodule_receivers(import, owner)
+            .into_iter()
+            .chain(reexporting_package.then(|| import.alias.clone()));
+        for receiver in receivers {
+            callees.push(format!("{receiver}.{}", owner.name));
+        }
+    }
+    callees.sort();
+    callees.dedup();
+    callees
+}
+
+/// Locals the test body binds exactly once to the result of an owner call
+/// through one of `callees` (`result = utils.sign(0)`), so an assertion on the
+/// local observes the owner's output (#4567).
+pub(super) fn owner_result_locals(test: &PythonTest, callees: &[String]) -> Vec<String> {
+    let mut locals: Vec<String> = test
+        .body_text
+        .lines()
+        .filter_map(|line| {
+            let (target, value) = line.trim().split_once('=')?;
+            let target = target.trim();
+            let value = value.trim_start();
+            (super::static_limits::is_simple_python_identifier(target)
+                && !value.starts_with('=')
+                && callees.iter().any(|callee| {
+                    value
+                        .strip_prefix(callee.as_str())
+                        .is_some_and(|rest| rest.trim_start().starts_with('('))
+                })
+                && assignment_count(&test.body_text, target) == 1
+                && !binds_other_than_assignment(test, target)
+                && !test.fixtures.iter().any(|fixture| fixture == target))
+            .then(|| target.to_string())
+        })
+        .collect();
+    locals.sort();
+    locals.dedup();
+    locals
+}
+
+/// Whether `text` calls `callee` as live code with an identifier boundary
+/// before it (`utils.sign(` but not `myutils.sign(`).
+pub(super) fn text_calls(text: &str, callee: &str) -> bool {
+    contains_call_name(text, callee)
+}
+
 /// Receivers that reach the owner's module through an import, by its full
 /// dotted module path (#4560). The import binds module path `P`
 /// (`import P [as A]`, or `from S import m [as A]` with `P = S.m`). When `P`
@@ -957,7 +1028,13 @@ fn test_binds_local(test: &PythonTest, name: &str) -> bool {
 /// Whether the test BODY binds `name` (every [`test_binds_local`] form except
 /// a parameter), so a parameter of that name no longer holds its argument.
 pub(super) fn test_body_binds_local(test: &PythonTest, name: &str) -> bool {
-    assignment_count(&test.body_text, name) > 0
+    assignment_count(&test.body_text, name) > 0 || binds_other_than_assignment(test, name)
+}
+
+/// Every binding form of [`test_body_binds_local`] except a plain `name =`
+/// assignment, plus an augmented assignment (`name += 1`).
+fn binds_other_than_assignment(test: &PythonTest, name: &str) -> bool {
+    augmented_assignment(&test.body_text, name)
         || walrus_binds(&test.body_text, name)
         || ["def ", "class ", "for ", "as "]
             .into_iter()
@@ -970,6 +1047,27 @@ pub(super) fn test_body_binds_local(test: &PythonTest, name: &str) -> bool {
                         && !python_text_hides_code(&test.body_text, idx)
                 })
             })
+}
+
+/// A line that starts with `name <op>=` (`total += 1`, `x //= 2`).
+fn augmented_assignment(body_text: &str, name: &str) -> bool {
+    body_text.lines().any(|line| {
+        let Some(rest) = line.trim_start().strip_prefix(name) else {
+            return false;
+        };
+        if rest.chars().next().is_some_and(is_python_identifier_char) {
+            return false;
+        }
+        let op_len = rest
+            .trim_start()
+            .find('=')
+            .filter(|len| (1..=3).contains(len));
+        op_len.is_some_and(|len| {
+            rest.trim_start()[..len]
+                .chars()
+                .all(|ch| "+-*/%@&|^<>".contains(ch))
+        })
+    })
 }
 
 /// `name :=` with identifier boundaries, outside comments and strings.

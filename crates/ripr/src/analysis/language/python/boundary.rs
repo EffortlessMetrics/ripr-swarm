@@ -40,8 +40,8 @@ use super::no_behavior::{
     call_arglists_with_offsets, call_segment_keyword_name, split_top_level_args,
 };
 use super::related_tests::{
-    PythonRelatedCandidate, import_source_module_matches_owner, owner_module_paths,
-    strongest_assertion, test_body_binds_local,
+    PythonRelatedCandidate, import_source_module_matches_owner, owner_module_callees,
+    owner_module_paths, strongest_assertion, test_body_binds_local,
 };
 use super::{PythonOwner, PythonTest};
 use crate::domain::{OracleStrength, OwnerKind, ValueContext, ValueFact};
@@ -527,8 +527,10 @@ fn strong_owner_call_rows(
     rows
 }
 
-/// The owner's own name plus any `from M import owner as alias` alias; a
-/// method is only called through its own attribute name.
+/// The owner's own name plus any `from M import owner as alias` alias and
+/// module-qualified spelling (`utils.sign`, #4567); a method is only called
+/// through its own attribute name. Module-qualified calls must bind here too,
+/// or a call the alignment credits would skip the boundary gate.
 fn owner_call_names(owner: &PythonOwner, test: &PythonTest, method_call: bool) -> Vec<String> {
     let mut names = vec![owner.name.clone()];
     if !method_call {
@@ -538,7 +540,14 @@ fn owner_call_names(owner: &PythonOwner, test: &PythonTest, method_call: bool) -
                 .filter(|import| import.imported == owner.name && import.alias != owner.name)
                 .map(|import| import.alias.clone()),
         );
+        names.extend(
+            owner_module_callees(test, owner)
+                .into_iter()
+                .filter(|callee| callee.contains('.')),
+        );
     }
+    names.sort();
+    names.dedup();
     names
 }
 

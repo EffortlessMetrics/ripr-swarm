@@ -264,7 +264,7 @@ pub(super) fn collect_tests_from_statements(
                     file: file.to_path_buf(),
                     line: line_for_range_start(source, function.range),
                     body_text: text_for_range(source, function.range),
-                    imports: imports.to_vec(),
+                    imports: test_imports(file, imports, &function.body),
                     decorators: decorator_names(&function.decorator_list),
                     fixtures: fixture_parameter_names(&function.args, framework),
                     parametrized: is_parametrized(&function.decorator_list),
@@ -291,7 +291,7 @@ pub(super) fn collect_tests_from_statements(
                     file: file.to_path_buf(),
                     line: line_for_range_start(source, function.range),
                     body_text: text_for_range(source, function.range),
-                    imports: imports.to_vec(),
+                    imports: test_imports(file, imports, &function.body),
                     decorators: decorator_names(&function.decorator_list),
                     fixtures: fixture_parameter_names(&function.args, framework),
                     parametrized: is_parametrized(&function.decorator_list),
@@ -328,6 +328,15 @@ pub(super) fn collect_tests_from_statements(
             _ => {}
         }
     }
+}
+
+/// Module imports plus the imports at the top level of the test body
+/// (`def test_x(): from pkg.utils import sign`), which bind the same way for
+/// the rest of the test (#4567).
+fn test_imports(file: &Path, module_imports: &[PythonImport], body: &[Stmt]) -> Vec<PythonImport> {
+    let mut imports = module_imports.to_vec();
+    imports.extend(collect_imports_from_statements(file, body));
+    imports
 }
 
 fn qualified_test_name(class_context: Option<&str>, name: &str) -> String {

@@ -512,7 +512,7 @@ fn patch_object_on_the_owner_is_a_mocked_module_limit() -> Result<(), String> {
         ),
         (
             "from src import subject\n\ndef test_bulk():\n    assert subject.bulk_discount(100) == 0.15\n",
-            ExposureClass::WeaklyExposed,
+            ExposureClass::Exposed,
         ),
     ];
     for (tests, expected) in cases {
@@ -525,6 +525,71 @@ fn patch_object_on_the_owner_is_a_mocked_module_limit() -> Result<(), String> {
         )?;
         assert_owner(&finding, "bulk_discount");
         assert_eq!(finding.class, expected, "{tests}");
+    }
+    Ok(())
+}
+
+/// #4567: an exact assertion on the owner's own output credits `exposed`
+/// whether the call goes through the owner's module, a result local bound
+/// once from the call, or a function-local import. Before the fix these read
+/// as "does not observe the changed owner's output" and stayed weak.
+#[test]
+fn module_qualified_and_result_local_owner_output_is_observed() -> Result<(), String> {
+    for tests in [
+        "from src import subject\n\ndef test_bulk():\n    assert subject.bulk_discount(100) == 0.15\n",
+        "import src.subject as s\n\ndef test_bulk():\n    assert s.bulk_discount(100) == 0.15\n",
+        "import src\n\ndef test_bulk():\n    assert src.subject.bulk_discount(100) == 0.15\n",
+        "from src.subject import bulk_discount\n\ndef test_bulk():\n    rate = bulk_discount(100)\n    assert rate == 0.15\n",
+        "from src import subject\n\ndef test_bulk():\n    rate = subject.bulk_discount(100)\n    assert rate == 0.15\n",
+        "def test_bulk():\n    from src.subject import bulk_discount\n    assert bulk_discount(100) == 0.15\n",
+    ] {
+        let finding = classify_case(
+            DISCOUNT_SOURCE,
+            tests,
+            2,
+            "    if quantity > 100:",
+            "    if quantity >= 100:",
+        )?;
+        assert_owner(&finding, "bulk_discount");
+        assert_eq!(finding.class, ExposureClass::Exposed, "{tests}");
+        assert!(
+            observed(&finding, "quantity == 100"),
+            "{tests}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+/// Discriminating negatives for #4567. The boundary gate still applies to a
+/// module-qualified call (off-boundary input stays weak and names the
+/// boundary), a result local that is rebound is not the owner's output, and a
+/// same-named function from another module carries no identity.
+#[test]
+fn module_call_credit_keeps_boundary_and_identity_guards() -> Result<(), String> {
+    let off_boundary = classify_case(
+        DISCOUNT_SOURCE,
+        "from src import subject\n\ndef test_bulk():\n    assert subject.bulk_discount(150) == 0.15\n",
+        2,
+        "    if quantity > 100:",
+        "    if quantity >= 100:",
+    )?;
+    assert_eq!(off_boundary.class, ExposureClass::WeaklyExposed);
+    assert!(
+        missing_boundary(&off_boundary, "quantity == 100").is_some(),
+        "{off_boundary:?}"
+    );
+    for tests in [
+        "from src.subject import bulk_discount\n\ndef test_bulk():\n    rate = bulk_discount(100)\n    rate += 0\n    assert rate == 0.15\n",
+        "from src import other\n\ndef test_bulk():\n    assert other.bulk_discount(100) == 0.15\n",
+    ] {
+        let finding = classify_case(
+            DISCOUNT_SOURCE,
+            tests,
+            2,
+            "    if quantity > 100:",
+            "    if quantity >= 100:",
+        )?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{tests}");
     }
     Ok(())
 }

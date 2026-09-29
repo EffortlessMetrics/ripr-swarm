@@ -33,6 +33,14 @@ are scoped or reviewed.
   (context manager or decorator) now gives the same `mocked_module`
   static limit as `patch(...)` and `monkeypatch.setattr(...)`. It was
   `weakly_exposed` although the test calls the mock, not the owner (#4565).
+- Python: an exact assertion on the owner's own output now counts as
+  observing it when the call goes through the owner's module
+  (`assert utils.sign(0) == 0`), through a result local
+  (`result = sign(0)` then `assert result == 0`), or through an import inside
+  the test function. These findings said the assertion "does not observe the
+  changed owner's output" and stayed `weakly_exposed` although the tests kill
+  the mutants. The comparison-boundary check still applies to these calls
+  (#4567).
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from

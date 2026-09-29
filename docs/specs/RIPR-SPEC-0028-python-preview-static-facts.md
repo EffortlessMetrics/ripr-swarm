@@ -404,6 +404,12 @@ read-out: the boolean the classifier uses is derived from the surfaced
   finding (no strong oracle, or a `<module>` owner with no usable token).
 - `alignment_reason` — a stable snake_case token explaining the value
   (e.g. `strong_oracle_observes_different_sink`).
+  `strong_oracle_observes_owner_call_through_module` (`direct`) credits a free
+  function whose strong oracle calls it through a module-identified spelling
+  (`utils.sign(0) == 0`, `pkg.utils.sign(...)`, a function-local import) or
+  asserts a local the same test bound once to such a call (`result =
+  utils.sign(0)`; #4567). Those calls also bind boundary activation, so the
+  relational-boundary gate still applies to them.
 
 These fields are advisory preview evidence; they do not change the
 classification and do not claim runtime maturity. The contract does not bump the
