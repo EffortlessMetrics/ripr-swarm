@@ -11,6 +11,14 @@ are scoped or reviewed.
 
 ### Fixed
 
+- TypeScript: a change inside a module-private helper now relates to tests
+  that call an exported function reaching it in the same module, including a
+  value a same-module factory built. unjs/defu tests call `defu(...)`, built
+  by `export const defu = createDefu()`, whose returned closure calls the
+  changed `_defu`; ripr reported `no_static_path` for the tested change. The
+  relation follows at most three same-module calls, respects parameter and
+  local shadowing, and reports such reach as `weakly_exposed`, naming the
+  exported callers, never `exposed` on its own.
 - LSP: the server now asks clients for `textDocument/didSave`. It advertised
   only the numeric full-sync kind, which under the LSP spec does not request
   save notifications, so a strictly conforming editor could save without ripr
