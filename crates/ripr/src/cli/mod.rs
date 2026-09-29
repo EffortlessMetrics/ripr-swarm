@@ -256,9 +256,14 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
         "ripr: attempt next command: {}",
         result.manifest.next_command
     );
-    // Without `--json`, stdout is the human summary, so it ends with the one
-    // command a reader of stdout alone needs next.
+    // Without `--json`, stdout is the human summary, written only now that
+    // the attempt exists, and it ends with the one command a reader of
+    // stdout alone needs next.
     if !options.json {
+        print!(
+            "{}",
+            commands::before_phase_stdout(&packet_text, &agent_packet.display().to_string(), false)
+        );
         println!(
             "Next, after the test edit: {}",
             result.manifest.next_command

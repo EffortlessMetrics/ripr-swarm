@@ -790,15 +790,16 @@ fn run_agent_repair_phase(
             let packet_path = root.join("target/ripr/workflow/agent-packet.json");
             write_text_file(&packet_path, &packet)?;
             eprintln!("ripr: wrote {}", packet_path.display());
-            // Stdout carries a short summary unless `--json` asks for the
-            // packet document. Agents capture stdout as often as people read
-            // it, and ~13 KB of JSON nobody asked for buried the one step
-            // that matters (F15-7). The packet file above is the same bytes
-            // either way.
-            print!(
-                "{}",
-                before_phase_stdout(&packet, "target/ripr/workflow/agent-packet.json", json)
-            );
+            // `--json` prints the packet document here, as before. Without it,
+            // stdout is a short summary printed only after the attempt is
+            // published (`cli::persist_before_repair_attempt`): agents capture
+            // stdout as often as people read it, and ~13 KB of JSON nobody
+            // asked for buried the one step that matters (F15-7), while a
+            // "Repair prepared" line ahead of a refused publication would
+            // point at an attempt that does not exist.
+            if json {
+                print!("{packet}");
+            }
             // "Complete" and the next step are printed once the attempt is
             // published (`cli::persist_before_repair_attempt`), so a refusal
             // there is never preceded by a completion line.
@@ -1166,7 +1167,14 @@ fn run_agent_repair_phase(
                     eprintln!("ripr: {line}");
                 }
             } else {
-                print!("{}", after_phase_human_stdout(&summary_lines));
+                print!(
+                    "{}",
+                    after_phase_human_stdout(
+                        &summary_lines,
+                        &root.join("target/ripr/reports/agent-receipt.json"),
+                        &verify_json,
+                    )
+                );
             }
             eprintln!(
                 "ripr: after phase complete. Receipt: {}",
@@ -1521,10 +1529,10 @@ fn before_phase_refusal(seam_id: &str, error: &str) -> String {
     )
 }
 
-/// What the before phase prints on stdout: the packet JSON for a pipe or
-/// file, a short summary for a terminal. A packet the summary cannot read
-/// falls back to the JSON, so nothing is hidden.
-fn before_phase_stdout(packet: &str, packet_path: &str, json: bool) -> String {
+/// What the before phase prints on stdout: the packet JSON with `--json`,
+/// otherwise a short summary. A packet the summary cannot read falls back to
+/// a line naming the packet file, so nothing is hidden.
+pub(in crate::cli) fn before_phase_stdout(packet: &str, packet_path: &str, json: bool) -> String {
     if json {
         return packet.to_string();
     }
@@ -1537,7 +1545,11 @@ fn before_phase_stdout(packet: &str, packet_path: &str, json: bool) -> String {
 /// owns, what was written, and the next step. With `--json` these lines are
 /// stderr narration instead; stdout is what a caller that reads only stdout
 /// keeps.
-fn after_phase_human_stdout(summary_lines: &[String]) -> String {
+fn after_phase_human_stdout(
+    summary_lines: &[String],
+    receipt_path: &Path,
+    verify_path: &Path,
+) -> String {
     let mut out = String::new();
     for line in summary_lines {
         let mut chars = line.chars();
@@ -1547,9 +1559,13 @@ fn after_phase_human_stdout(summary_lines: &[String]) -> String {
             out.push('\n');
         }
     }
-    out.push_str(
-        "  receipt: target/ripr/reports/agent-receipt.json\n  verify result (JSON): target/ripr/workflow/agent-verify.json; add --json to print the result document here\n",
-    );
+    // Root-resolved, like the verify phase: a caller outside --root must
+    // still find the files these lines name.
+    out.push_str(&format!(
+        "  receipt: {}\n  verify result (JSON): {}; add --json to print the result document here\n",
+        receipt_path.display(),
+        verify_path.display()
+    ));
     out
 }
 
@@ -2318,17 +2334,21 @@ mod before_phase_stdout_tests {
 
     #[test]
     fn after_phase_default_stdout_leads_with_the_movement_and_names_the_artifacts() {
-        let out = super::after_phase_human_stdout(&[
-            "result for seam `s`: weak -> exposed (weakly_gripped -> strongly_gripped, improved)."
-                .to_string(),
-            "next: Keep the focused test.".to_string(),
-        ]);
+        let out = super::after_phase_human_stdout(
+            &[
+                "result for seam `s`: weak -> exposed (weakly_gripped -> strongly_gripped, improved)."
+                    .to_string(),
+                "next: Keep the focused test.".to_string(),
+            ],
+            std::path::Path::new("/repo/target/ripr/reports/agent-receipt.json"),
+            std::path::Path::new("/repo/target/ripr/workflow/agent-verify.json"),
+        );
         assert_eq!(
             out,
             "Result for seam `s`: weak -> exposed (weakly_gripped -> strongly_gripped, improved).\n\
              Next: Keep the focused test.\n  \
-             receipt: target/ripr/reports/agent-receipt.json\n  \
-             verify result (JSON): target/ripr/workflow/agent-verify.json; add --json to print the result document here\n"
+             receipt: /repo/target/ripr/reports/agent-receipt.json\n  \
+             verify result (JSON): /repo/target/ripr/workflow/agent-verify.json; add --json to print the result document here\n"
         );
     }
 }

@@ -5149,6 +5149,80 @@ fn agent_repair_names_build_ignore_drift_without_redirect_blame()
     Ok(())
 }
 
+/// Without `--json`, each phase prints a short summary whose file paths
+/// resolve against `--root`, so a caller running from another directory can
+/// open them.
+#[test]
+fn agent_repair_default_stdout_is_a_summary_naming_root_resolved_files()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = built_repair_fixture("agent-repair-default-stdout")?;
+    let elsewhere = std::env::temp_dir();
+    let root_arg = root.display().to_string();
+    let bin = env!("CARGO_BIN_EXE_ripr");
+
+    let before = run_command(
+        bin,
+        Some(&elsewhere),
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            BOUNDARY_GAP_SEAM_ID,
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_success(&before);
+    let stdout = String::from_utf8_lossy(&before.stdout);
+    assert!(!stdout.trim_start().starts_with('{'), "{stdout}");
+    let packet = root.join("target/ripr/workflow/agent-packet.json");
+    assert!(
+        stdout.contains(&packet.display().to_string()),
+        "before summary must name the root-resolved packet:\n{stdout}"
+    );
+    assert!(stdout.contains("Next, after the test edit: "), "{stdout}");
+    let (attempt_id, _) = sole_repair_attempt(&root)?;
+
+    add_boundary_test(&root)?;
+    let after = run_command(
+        bin,
+        Some(&elsewhere),
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--phase",
+            "after",
+        ],
+    )?;
+    assert_success(&after);
+    let stdout = String::from_utf8_lossy(&after.stdout);
+    assert!(!stdout.trim_start().starts_with('{'), "{stdout}");
+    assert!(
+        stdout.contains(&format!(
+            "Result for seam `{BOUNDARY_GAP_SEAM_ID}`: weak -> exposed (weakly_gripped -> strongly_gripped, improved)"
+        )),
+        "{stdout}"
+    );
+    for artifact in [
+        "target/ripr/reports/agent-receipt.json",
+        "target/ripr/workflow/agent-verify.json",
+    ] {
+        assert!(
+            stdout.contains(&root.join(artifact).display().to_string()),
+            "after summary must name the root-resolved {artifact}:\n{stdout}"
+        );
+    }
+
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
 #[test]
 fn agent_repair_admits_cargo_build_output_and_unchanged_untracked_lockfile()
 -> Result<(), Box<dyn std::error::Error>> {
