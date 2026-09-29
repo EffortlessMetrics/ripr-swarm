@@ -127,6 +127,7 @@ where
     let mut external_packages = BTreeMap::new();
     let mut walks: BTreeMap<PathBuf, Option<PackageWalk>> = BTreeMap::new();
     let mut listing: Option<Option<WorkspaceListing>> = None;
+    let mut member_packages: Option<BTreeSet<PathBuf>> = None;
     let mut external_declarers: Option<(BTreeSet<PathBuf>, bool)> = None;
     let mut escaping: Option<Option<EscapingReach>> = None;
     for candidate in candidates {
@@ -211,9 +212,17 @@ where
                 continue;
             };
             match walk.find(workspace_root, &targets) {
-                Some(Origin::Production) => {
+                // Only a package the seam-cache discovery also knows (a
+                // workspace member outside skipped directories) is granted
+                // the file; any other reach just blocks the verdict.
+                Some(Origin::Production)
+                    if member_packages
+                        .get_or_insert_with(|| member_package_dirs(workspace_root))
+                        .contains(package_dir) =>
+                {
                     declaring_package.get_or_insert(package_dir.clone());
                 }
+                Some(Origin::Production) => declarers_prove_unreached = false,
                 // Reached only from a test, bench or example root: compiled,
                 // just not as production. No grant, and no orphan.
                 Some(Origin::Evidence) => declarers_prove_unreached = false,
@@ -333,14 +342,27 @@ fn ancestor_manifest_dirs(workspace_root: &Path, file: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Whether `dir/Cargo.toml` parses and declares no `[package]` (a virtual
-/// workspace manifest), so it compiles nothing. A missing or invalid
-/// manifest is not.
+/// Package directories the seam-cache manifest discovery reports.
+fn member_package_dirs(workspace_root: &Path) -> BTreeSet<PathBuf> {
+    crate::analysis::seam_cache::workspace_manifest_dir_prefixes(workspace_root)
+        .into_iter()
+        .map(|prefix| lexical(&normalize(&workspace_root.join(&prefix))))
+        .collect()
+}
+
+/// Whether `dir/Cargo.toml` is a virtual workspace manifest, which compiles
+/// nothing. A missing, invalid or legacy `[project]` manifest is not.
 fn is_workspace_only_manifest(workspace_root: &Path, dir: &Path) -> bool {
     let SourceRead::Text(text) = read_source(workspace_root, &dir.join("Cargo.toml")) else {
         return false;
     };
-    toml::from_str::<toml::Value>(&text).is_ok_and(|value| value.get("package").is_none())
+    // Cargo still builds a legacy `[project]` table, so only a manifest with
+    // `[workspace]` and neither table is workspace-only.
+    toml::from_str::<toml::Value>(&text).is_ok_and(|value| {
+        value.get("workspace").is_some()
+            && value.get("package").is_none()
+            && value.get("project").is_none()
+    })
 }
 
 /// What reaches files from outside the walks a verdict asks: every
@@ -444,10 +466,7 @@ fn external_root_declarers(
 ) -> (BTreeSet<PathBuf>, bool) {
     let package_dirs = match listing {
         Some(listing) => listing.manifest_dirs.clone(),
-        None => crate::analysis::seam_cache::workspace_manifest_dir_prefixes(workspace_root)
-            .into_iter()
-            .map(|prefix| lexical(&normalize(&workspace_root.join(&prefix))))
-            .collect(),
+        None => member_package_dirs(workspace_root).into_iter().collect(),
     };
     let mut declarers = BTreeSet::new();
     for package_dir in package_dirs {
@@ -1182,6 +1201,33 @@ mod tests {
             committed.module_graph_orphans.is_empty(),
             "{:?}",
             committed.module_graph_orphans
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn legacy_project_manifest_is_not_workspace_only() -> Result<(), String> {
+        // Delta review on #4556: Cargo still builds `[project]` below
+        // edition 2024, so a nested `legacy/Cargo.toml` using it is unknown,
+        // not a manifest that compiles nothing.
+        let root = fixture(
+            "legacy-project",
+            &[
+                ("Cargo.toml", MANIFEST),
+                ("src/lib.rs", ""),
+                (
+                    "legacy/Cargo.toml",
+                    "[project]\nname='legacy'\nversion='0.1.0'\n",
+                ),
+                ("legacy/src/lib.rs", "mod stray;\n"),
+                ("legacy/src/stray.rs", ""),
+            ],
+        )?;
+        let context = evidence_for(&root, &["legacy/src/stray.rs"]);
+        assert!(
+            context.module_graph_orphans.is_empty(),
+            "{:?}",
+            context.module_graph_orphans
         );
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
     }
