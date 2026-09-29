@@ -487,17 +487,16 @@ fn run_pipeline_for_diff_text(
             // configure nothing, so "the configured predicate" pointed at a
             // setting that did not exist while a hand-written `schema.rs`
             // or `gen/` module went unanalyzed.
+            let generated_sources = super::language::GeneratedRustSources::for_diff(
+                &options.root,
+                generated_file_patterns,
+                &analysis_changed_files,
+            );
             let skipped = analysis_changed_files
                 .iter()
                 .map(|file| file.path.as_path())
                 .filter(|path| route(path) == Some(LanguageId::Rust))
-                .filter(|path| {
-                    super::language::is_generated_rust_source(
-                        &options.root,
-                        path,
-                        generated_file_patterns,
-                    )
-                })
+                .filter(|path| generated_sources.contains(path))
                 .map(|path| path.to_string_lossy().replace('\\', "/"))
                 .collect::<Vec<_>>();
             let shown = skipped
@@ -946,7 +945,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
                     language: LanguageId::Rust.as_str().to_string(),
                     status: LanguageRunStatus::Partial,
                     reason: Some(format!(
-                        "{} generated Rust file(s) skipped from static analysis by the configured generated-file predicate",
+                        "{} generated or vendored Rust file(s) skipped from static analysis by the generated-file conventions, generator headers, `cargo vendor` crates or configured patterns",
                         result.skipped_files
                     )),
                 });
@@ -1835,6 +1834,55 @@ mod tests {
                     .contains("vendor/fakedep/src/lib.rs")
                 && limitation.recovery.detail.contains("src/pb/shop.v1.rs")
         }));
+        Ok(())
+    }
+
+    #[test]
+    fn repo_mode_counts_cargo_vendor_crates_as_a_partial_rust_run() -> Result<(), String> {
+        let root = temp_root("repo-vendored-skip")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub fn a() -> u32 { 1 }\n")?;
+        write(&root.join("vendor/dep/.cargo-checksum.json"), "{}")?;
+        write(
+            &root.join("vendor/dep/src/lib.rs"),
+            "pub fn b() -> u32 { 2 }\n",
+        )?;
+        let result = run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
+                include_unchanged_tests: false,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &[],
+        )?;
+        let rust_run = result
+            .language_runs
+            .iter()
+            .find(|run| run.language == "rust")
+            .ok_or_else(|| "a vendored skip must record the Rust run".to_string())?;
+        assert_eq!(rust_run.status, LanguageRunStatus::Partial);
+        assert!(
+            rust_run
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.starts_with("1 generated or vendored Rust file(s)")),
+            "{:?}",
+            rust_run.reason
+        );
         Ok(())
     }
 

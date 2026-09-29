@@ -15,7 +15,8 @@ are scoped or reviewed.
   Line numbers were found by rescanning the file from the start for each
   owner, so an untouched 1.3 MB JavaScript file with 30 000 functions added
   about 31 s to each TypeScript check (now 0.4 s in total), and a 1.7 MB
-  Python module took 4 min 46 s (now 2.5 s). Line numbers are unchanged.
+  Python module took 4 min 46 s (now 2.5 s). A TypeScript test file with
+  20 000 `it()` calls cost 25.8 s the same way. Line numbers are unchanged.
 - TypeScript: minified bundles (`*.min.js`, `*.min.mjs`, `*.min.cjs`) are
   skipped like `*.generated.*` files. A rebuilt `public/js/app.min.js`
   became a `no_static_path` finding whose JSON carried the 1.4 MB line
@@ -27,8 +28,10 @@ are scoped or reviewed.
   directory holding `.cargo-checksum.json`. A `cargo vendor` bump used to
   add hundreds of `no_static_path` findings, or fail the whole check with
   `diff_scope_oversized` once it passed 2000 lines. The skipped files are
-  named in the existing generated-code limitation; a hand-written
-  `src/vendor/` module stays analyzed.
+  named in the existing generated-code limitation, the header is read
+  from the committed file rather than uncommitted edits, and
+  repository-wide runs count the skipped files as a partial run. A
+  hand-written `src/vendor/` module stays analyzed.
 - TypeScript: a change inside a module-private helper now relates to tests
   that call an exported function reaching it in the same module, including a
   value a same-module factory built. unjs/defu tests call `defu(...)`, built
