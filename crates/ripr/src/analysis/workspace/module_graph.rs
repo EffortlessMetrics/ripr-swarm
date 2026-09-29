@@ -121,6 +121,9 @@ struct PackageWalk {
     /// could be a file's route does this; a package walk never does, so its
     /// verdicts rest on resolved edges alone.
     follow_unresolved_paths: bool,
+    /// One lazily explored route walk per entry of `unresolved_paths`, kept
+    /// so later asked-for files reuse what earlier ones explored.
+    route_walks: Vec<PackageWalk>,
 }
 
 /// One `mod` declaration with an unresolved `#[path]`, as a package walk met
@@ -293,8 +296,8 @@ where
             // recorded; one that spells a route to the file is named.
             let route = owners.iter().find_map(|dir| {
                 walks
-                    .get(dir)?
-                    .as_ref()?
+                    .get_mut(dir)?
+                    .as_mut()?
                     .unresolved_route_to(workspace_root, &targets)
             });
             if let Some((declaring_file, line)) = route {
@@ -652,6 +655,7 @@ impl PackageWalk {
             complete: true,
             unresolved_paths: Vec::new(),
             follow_unresolved_paths: false,
+            route_walks: Vec::new(),
         })
     }
 
@@ -670,6 +674,7 @@ impl PackageWalk {
             complete: true,
             unresolved_paths: Vec::new(),
             follow_unresolved_paths: false,
+            route_walks: Vec::new(),
         }
     }
 
@@ -678,17 +683,22 @@ impl PackageWalk {
     /// below one through further module edges. Returns the first such
     /// declaration's file and line.
     fn unresolved_route_to(
-        &self,
+        &mut self,
         workspace_root: &Path,
         targets: &[PathBuf],
     ) -> Option<(PathBuf, usize)> {
-        self.unresolved_paths.iter().find_map(|declaration| {
+        for declaration in self.unresolved_paths.iter().skip(self.route_walks.len()) {
             let mut route = Self::from_loaded_files(declaration.targets.clone());
             route.follow_unresolved_paths = true;
-            route
-                .find(workspace_root, targets)
-                .map(|_| (declaration.declaring_file.clone(), declaration.line))
-        })
+            self.route_walks.push(route);
+        }
+        let position = self
+            .route_walks
+            .iter_mut()
+            .position(|route| route.find(workspace_root, targets).is_some())?;
+        self.unresolved_paths
+            .get(position)
+            .map(|declaration| (declaration.declaring_file.clone(), declaration.line))
     }
 
     /// Where the walk reaches any spelling of the asked-for file (lexical
