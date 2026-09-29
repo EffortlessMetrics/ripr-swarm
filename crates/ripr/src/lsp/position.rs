@@ -79,7 +79,7 @@ pub(crate) fn expression_span_range(
     expression: &str,
     encoding: &PositionEncodingKind,
 ) -> Range {
-    expression_span_range_on_saved_line(line, column, expression, encoding, None)
+    finished_expression_span(line, column.saturating_sub(1) as u32, expression, encoding)
 }
 
 /// Build a [`Range`] covering an expression span, using `saved_line` to
@@ -96,10 +96,23 @@ pub(crate) fn expression_span_range_on_saved_line(
     encoding: &PositionEncodingKind,
     saved_line: Option<&str>,
 ) -> Range {
-    let start_character = match saved_line {
-        Some(source) => start_character_on_saved_line(source, expression, encoding),
-        None => column.saturating_sub(1) as u32,
-    };
+    match saved_line {
+        Some(source) => finished_expression_span(
+            line,
+            start_character_on_saved_line(source, expression, encoding),
+            expression,
+            encoding,
+        ),
+        None => expression_span_range(line, column, expression, encoding),
+    }
+}
+
+fn finished_expression_span(
+    line: u32,
+    start_character: u32,
+    expression: &str,
+    encoding: &PositionEncodingKind,
+) -> Range {
     let width = character_width(expression, encoding).min(MAX_LINE_SPAN_WIDTH);
     Range {
         start: Position {
