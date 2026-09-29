@@ -2065,18 +2065,6 @@ pub(crate) fn produce_authentic_chain_with_execution(
     ])
 }
 
-pub(crate) fn run_producer_check(
-    binary: &Path,
-    root: &Path,
-    artifact_name: &str,
-) -> Result<Value, String> {
-    run_producer_with_execution(
-        candidate_harness::CandidateExecution::Legacy(binary),
-        root,
-        artifact_name,
-    )
-}
-
 pub(crate) fn run_producer_with_execution(
     execution: candidate_harness::CandidateExecution<'_>,
     root: &Path,
