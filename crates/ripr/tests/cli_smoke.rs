@@ -16191,8 +16191,7 @@ fn agent_status_retains_an_earlier_attempt_outcome_after_a_later_finish()
     let first_report = repair_route_status(&root)?;
     let first_attempt = repair_route_attempt(&first_report, &first)?;
     assert_eq!(
-        first_attempt["disposition"],
-        "gap_open",
+        first_attempt["disposition"], "gap_open",
         "precondition: the first attempt's own receipt leaves its gap open"
     );
     let first_status = first_attempt["receipt"]["status"].clone();
@@ -16244,10 +16243,7 @@ fn agent_status_retains_an_earlier_attempt_outcome_after_a_later_finish()
         earlier["disposition"], "gap_open",
         "A must still report A's retained outcome after B finishes: {report:#}"
     );
-    assert_eq!(
-        earlier["receipt"]["issued_for_attempt"], true,
-        "{report:#}"
-    );
+    assert_eq!(earlier["receipt"]["issued_for_attempt"], true, "{report:#}");
     assert_eq!(earlier["receipt"]["status"], first_status, "{report:#}");
     assert_eq!(earlier["receipt"]["movement"], first_movement, "{report:#}");
     assert_eq!(
@@ -16306,10 +16302,7 @@ fn agent_status_retains_an_earlier_attempt_outcome_after_a_later_finish()
         !markdown.contains(&format!("receipt superseded by attempt `{second}`")),
         "{markdown}"
     );
-    assert!(
-        markdown.contains("gap still open"),
-        "{markdown}"
-    );
+    assert!(markdown.contains("gap still open"), "{markdown}");
     assert!(
         !markdown.contains("no receipt issued for this attempt"),
         "{markdown}"
@@ -16395,10 +16388,7 @@ fn agent_status_does_not_fall_back_to_another_attempt_when_local_receipt_is_unus
         earlier["receipt"]["issued_for_attempt"], false,
         "{missing:#}"
     );
-    assert_eq!(
-        earlier["receipt"]["unavailable"], true,
-        "{missing:#}"
-    );
+    assert_eq!(earlier["receipt"]["unavailable"], true, "{missing:#}");
     assert_ne!(
         earlier["receipt"]["movement"],
         repair_route_attempt(&missing, &second)?["receipt"]["movement"],
@@ -16412,10 +16402,7 @@ fn agent_status_does_not_fall_back_to_another_attempt_when_local_receipt_is_unus
         earlier["receipt"]["issued_for_attempt"], false,
         "{tampered:#}"
     );
-    assert_eq!(
-        earlier["receipt"]["unavailable"], true,
-        "{tampered:#}"
-    );
+    assert_eq!(earlier["receipt"]["unavailable"], true, "{tampered:#}");
 
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
