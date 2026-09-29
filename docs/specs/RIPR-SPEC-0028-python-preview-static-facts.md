@@ -253,7 +253,7 @@ values defined in RIPR-SPEC-0026:
   `@app.get(...)`, `@api.post(...)`, or `@router.api_route(...)` may be treated
   as static route metadata when the changed behavior itself is a supported
   repair shape)
-- `mocked_module` (e.g., `@patch(...)` or `monkeypatch.setattr(...)`
+- `mocked_module` (e.g., `@patch(...)`, `patch.object(...)` (#4565) or `monkeypatch.setattr(...)`
   observed at the related-test call site)
 - `opaque_custom_assertion_helper` (e.g., a related test observes the changed
   owner only through an `assert_*(...)` helper body the adapter does not

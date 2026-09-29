@@ -324,12 +324,18 @@ pub(super) fn is_simple_python_identifier(value: &str) -> bool {
         && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
+/// `patch.object` and `patch.multiple` substitute attributes the same way as
+/// `patch` and `monkeypatch.setattr`, so they are the same runtime
+/// substitution limit (#4565).
 pub(super) fn test_has_mocked_module(test: &PythonTest) -> bool {
-    test.decorators
-        .iter()
-        .any(|decorator| decorator == "patch" || decorator.ends_with(".patch"))
-        || test.body_text.contains("patch(")
+    test.decorators.iter().any(|decorator| {
+        ["patch", "patch.object", "patch.multiple"]
+            .iter()
+            .any(|form| decorator == form || decorator.ends_with(&format!(".{form}")))
+    }) || test.body_text.contains("patch(")
         || test.body_text.contains(".patch(")
+        || test.body_text.contains("patch.object(")
+        || test.body_text.contains("patch.multiple(")
         || test.body_text.contains("monkeypatch.setattr(")
         || test.body_text.contains("monkeypatch.setitem(")
         || test.body_text.contains("monkeypatch.delattr(")

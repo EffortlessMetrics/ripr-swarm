@@ -494,3 +494,37 @@ fn uncertain_parametrize_cases_stay_unresolved() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// #4565: `patch.object(module, "owner")` replaces the owner, so the call in
+/// the test hits the mock. It is the same runtime substitution limit as
+/// `monkeypatch.setattr`, in context-manager and decorator form; the same
+/// test without the patch is not limited.
+#[test]
+fn patch_object_on_the_owner_is_a_mocked_module_limit() -> Result<(), String> {
+    let cases = [
+        (
+            "from unittest import mock\nfrom src import subject\n\ndef test_bulk():\n    with mock.patch.object(subject, \"bulk_discount\", return_value=0.15):\n        assert subject.bulk_discount(100) == 0.15\n",
+            ExposureClass::StaticUnknown,
+        ),
+        (
+            "from unittest.mock import patch\nfrom src import subject\n\n@patch.object(subject, \"bulk_discount\", return_value=0.15)\ndef test_bulk(mocked):\n    assert subject.bulk_discount(100) == 0.15\n",
+            ExposureClass::StaticUnknown,
+        ),
+        (
+            "from src import subject\n\ndef test_bulk():\n    assert subject.bulk_discount(100) == 0.15\n",
+            ExposureClass::WeaklyExposed,
+        ),
+    ];
+    for (tests, expected) in cases {
+        let finding = classify_case(
+            DISCOUNT_SOURCE,
+            tests,
+            2,
+            "    if quantity > 100:",
+            "    if quantity >= 100:",
+        )?;
+        assert_owner(&finding, "bulk_discount");
+        assert_eq!(finding.class, expected, "{tests}");
+    }
+    Ok(())
+}

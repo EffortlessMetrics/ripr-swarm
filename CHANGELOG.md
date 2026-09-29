@@ -26,6 +26,10 @@ are scoped or reviewed.
   the same file (`class ZoneInfoGettzTest(GettzTest)`), and test methods on a
   mixin such a class inherits, are now collected. On dateutil a change killed
   by `ZoneInfoGettzTest.testZoneInfoNewInstance` was `no_static_path` (#4562).
+- Python: a related test that replaces the owner with `patch.object(...)`
+  (context manager or decorator) now gives the same `mocked_module`
+  static limit as `patch(...)` and `monkeypatch.setattr(...)`. It was
+  `weakly_exposed` although the test calls the mock, not the owner (#4565).
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from
