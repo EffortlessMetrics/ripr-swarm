@@ -9,4 +9,7 @@ pub use adapter::{
 pub(crate) use nesting::{parse_clean_source_file, rust_nesting_refusal};
 pub(crate) use ra::parser_oracles_for_function;
 pub(crate) use ra::rust_include_directives;
-pub(crate) use ra::{ModuleItemScopes, module_item_scopes};
+pub(crate) use ra::{
+    GovernedCfgTestModule, ModuleItemScopes, governed_cfg_test_modules, module_item_scopes,
+    production_owner_module_path,
+};
