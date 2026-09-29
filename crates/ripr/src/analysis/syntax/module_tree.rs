@@ -27,6 +27,10 @@
 //!
 //! An incomplete scan never proves a file unreachable; the consumer keeps its
 //! layout rule for that package.
+//!
+//! A top-level `mod name;` whose `#[path]` is unresolved still reports the
+//! literal targets it spells (`cfg_attr(unix, path = "unix.rs")`), so the
+//! consumer can name a changed file that only such a declaration reaches.
 
 use ra_ap_syntax::{
     AstNode, SyntaxKind,
@@ -35,7 +39,7 @@ use ra_ap_syntax::{
 use std::path::PathBuf;
 
 use super::nesting::parse_clean_source_file;
-use super::ra::{include_literal_path, path_target_from_attributes};
+use super::ra::{include_literal_path, parse_rust_string_literal, path_target_from_attributes};
 use crate::analysis::facts::ModulePathTarget;
 
 /// Std item-position macros whose expansion cannot declare a module.
@@ -95,6 +99,21 @@ pub(crate) enum RustModuleTreeEdge {
     Path(PathBuf),
     /// `include!("...")`, relative to the including file's directory.
     Include(PathBuf),
+    /// Out-of-line `mod name;` whose `#[path]` target is unresolved (a
+    /// `cfg_attr` path, duplicate or non-literal `#[path]`). `candidates`
+    /// are the literal `path = "..."` targets its attributes spell, relative
+    /// to the declaring file's directory; empty when there are none, or when
+    /// the declaration sits in an inline module. `default_applies` is true
+    /// when every path is conditional (`cfg_attr`): one that does not apply
+    /// leaves default resolution of `name`. `line` is the `mod` token's
+    /// 1-based line. Always accompanies an incomplete scan.
+    UnresolvedPath {
+        inline: Vec<String>,
+        name: String,
+        line: usize,
+        candidates: Vec<PathBuf>,
+        default_applies: bool,
+    },
 }
 
 /// The module-tree edges of one file and whether the scan saw every edge.
@@ -144,7 +163,35 @@ pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
                 scan.edges
                     .push(RustModuleTreeEdge::Path(PathBuf::from(path)));
             }
-            ModulePathTarget::Literal(_) | ModulePathTarget::Unknown => scan.complete = false,
+            ModulePathTarget::Literal(_) => scan.complete = false,
+            ModulePathTarget::Unknown => {
+                scan.complete = false;
+                let candidates = if inline.is_empty() {
+                    spelled_path_literals(&module)
+                } else {
+                    Vec::new()
+                };
+                let offset: usize = module
+                    .mod_token()
+                    .map(|token| token.text_range().start().into())
+                    .unwrap_or_else(|| module.syntax().text_range().start().into());
+                let line = text
+                    .get(..offset)
+                    .map_or(1, |prefix| prefix.matches('\n').count() + 1);
+                // A plain `#[path]` always applies, so default resolution
+                // is a route only when every path is inside `cfg_attr`.
+                let default_applies = !module.attrs().any(|attr| {
+                    attr.path()
+                        .is_some_and(|path| path.syntax().text() == "path")
+                });
+                scan.edges.push(RustModuleTreeEdge::UnresolvedPath {
+                    inline,
+                    name: name.text().trim_start_matches("r#").to_string(),
+                    line,
+                    candidates,
+                    default_applies,
+                });
+            }
         }
     }
     for macro_call in tree.syntax().descendants().filter_map(ast::MacroCall::cast) {
@@ -236,6 +283,34 @@ fn nests_unknown_macro_call(tokens: &ast::TokenTree) -> bool {
     })
 }
 
+/// Every `path = "<literal>"` a declaration's attributes spell, at any
+/// nesting (`#[path = ..]`, `cfg_attr(pred, path = ..)`, nested `cfg_attr`).
+/// A cfg predicate's own `key = "value"` pairs never use the `path` key.
+fn spelled_path_literals(module: &ast::Module) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    for attr in module.attrs() {
+        let tokens = attr
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| !token.kind().is_trivia())
+            .collect::<Vec<_>>();
+        for window in tokens.windows(3) {
+            if let [key, eq, value] = window
+                && key.kind() == SyntaxKind::IDENT
+                && key.text() == "path"
+                && eq.kind() == SyntaxKind::EQ
+                && value.kind() == SyntaxKind::STRING
+                && let Some(literal) = parse_rust_string_literal(value.text())
+                && !candidates.contains(&PathBuf::from(&literal))
+            {
+                candidates.push(PathBuf::from(literal));
+            }
+        }
+    }
+    candidates
+}
+
 /// The inline modules enclosing an out-of-line declaration, outermost first,
 /// or `None` when the declaration sits outside the item tree (a function body
 /// or other block).
@@ -325,6 +400,53 @@ mod tests {
             "}".repeat(300)
         );
         assert!(!rust_module_tree_scan(&deep).complete);
+    }
+
+    fn unresolved(
+        line: usize,
+        name: &str,
+        candidates: &[&str],
+        default_applies: bool,
+    ) -> RustModuleTreeEdge {
+        RustModuleTreeEdge::UnresolvedPath {
+            inline: Vec::new(),
+            name: name.to_string(),
+            line,
+            candidates: candidates.iter().map(PathBuf::from).collect(),
+            default_applies,
+        }
+    }
+
+    #[test]
+    fn unresolved_path_declarations_report_the_targets_they_spell() {
+        let scan = rust_module_tree_scan(
+            "#[cfg_attr(all(unix, feature = \"fast\"), path = \"unix.rs\")]\n\
+             #[cfg_attr(windows, cfg_attr(target_env = \"msvc\", path = r\"win/msvc.rs\"))]\n\
+             mod sys;\n\
+             #[path = \"a.rs\"]\n#[path = \"b.rs\"]\nmod twice;\n\
+             #[path = concat!(\"dyn\", \".rs\")]\nmod r#dynamic;\n\
+             mod outer { #[cfg_attr(unix, path = \"nested.rs\")] mod inner; }\n",
+        );
+        assert!(!scan.complete, "{scan:?}");
+        assert_eq!(
+            scan.edges,
+            vec![
+                // A cfg predicate's own `feature = "..."` is not a target.
+                unresolved(3, "sys", &["unix.rs", "win/msvc.rs"], true),
+                // A plain `#[path]` always applies: no default resolution.
+                unresolved(6, "twice", &["a.rs", "b.rs"], false),
+                unresolved(8, "dynamic", &[], false),
+                // Inside an inline module the directory rules differ, so no
+                // spelled target is reported; default resolution still is.
+                RustModuleTreeEdge::UnresolvedPath {
+                    inline: vec!["outer".to_string()],
+                    name: "inner".to_string(),
+                    line: 9,
+                    candidates: Vec::new(),
+                    default_applies: true,
+                },
+            ]
+        );
     }
 
     #[test]
