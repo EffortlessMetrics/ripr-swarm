@@ -11,6 +11,10 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Security: `ripr doctor` probes every language runtime (`node`, `bun`,
+  `pnpm`, `python3`, `pytest`) outside the checkout, as it already did for
+  `yarn`. Run inside it, pnpm fetched and ran the release a project's
+  `packageManager` named, and version managers read project files (#4742).
 - Security: ripr no longer runs `cargo` or `rustc` in a repository whose
   nearest `rust-toolchain.toml` selects a toolchain by `path`. rustup would
   execute that path, and `/proc/self/cwd/...` points it into the checkout, so
