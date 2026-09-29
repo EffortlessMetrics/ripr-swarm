@@ -11,6 +11,14 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `docs/OUTPUT_SCHEMA.md` now lists every finding enum value `ripr check
+  --format json` can emit: `static_limit_kind` gains
+  `wrapper_error_binding_unresolved` and
+  `rust_subprocess_binary_reach_unresolved`, and `stop_reason` gains
+  `transitive_reach_unresolved`. `cargo xtask check-output-contracts` now
+  derives each governed enum from its declaration and fails when the doc list
+  or `policy/output_contracts.txt` misses or invents a value, instead of
+  accepting any substring match (#4539).
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from
