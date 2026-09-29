@@ -100,6 +100,13 @@ the 128-KiB output cap terminates with a bounded operational error. The raw
 client harness waits for correlated replies before EOF, rather than assuming
 prewritten requests remain active after SDK shutdown.
 
+The CLI stdio invocation owns its process session. After the SDK service has
+terminated, it preserves the service result and shuts down its owned runtime
+without waiting for Tokio's non-cancellable blocking stdin read. This permits
+an operational error to reach process exit while the client retains stdin.
+It does not join that blocking worker or qualify repeated embedded sessions;
+the public argument-taking entry point adds no embedding lifecycle promise.
+
 The SDK maps resource-miss codes by negotiated version and preserves the
 adapter's message and data. Both lifecycles now use the bounded message
 `unknown resource; available: ripr://workspace/status` and the available URI
