@@ -1,6 +1,6 @@
 use super::owners_tests::{extract_owners, extract_tests};
 use super::source_facts::{PythonSourceFactKind, PythonSourceFacts};
-use super::source_utils::text_for_range;
+use super::source_utils::{SourceText, line_for_range_end, line_for_range_start, text_for_range};
 use super::*;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -1247,19 +1247,200 @@ fn text_for_range_clamps_out_of_bounds_offsets() {
     assert_eq!(text_for_range(source, partial), "abc");
 }
 
+/// The pre-#4495 per-call scan, kept here only as the equivalence oracle
+/// for the line-start index in `SourceText`.
+fn reference_line_for_offset(source: &str, offset: usize) -> usize {
+    let mut line: usize = 1;
+    for (idx, ch) in source.char_indices() {
+        if idx >= offset {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+        }
+    }
+    line
+}
+
 #[test]
 fn line_for_offset_counts_newlines() {
-    let source = "alpha\nbeta\ngamma";
+    let source = SourceText::new("alpha\nbeta\ngamma");
     // Offset 0 is line 1.
-    assert_eq!(line_for_offset(source, 0), 1);
+    assert_eq!(source.line_for_offset(0), 1);
     // Offset exactly on the newline stops before counting that newline.
-    assert_eq!(line_for_offset(source, 5), 1);
+    assert_eq!(source.line_for_offset(5), 1);
     // Offset immediately after the newline counts the next segment as line 2.
-    assert_eq!(line_for_offset(source, 6), 2);
+    assert_eq!(source.line_for_offset(6), 2);
     // Offset on the second segment is line 2.
-    assert_eq!(line_for_offset(source, 7), 2);
+    assert_eq!(source.line_for_offset(7), 2);
     // Offset past end stops at the last counted line.
-    assert_eq!(line_for_offset(source, 999), 3);
+    assert_eq!(source.line_for_offset(999), 3);
+}
+
+#[test]
+fn line_index_matches_reference_scan_on_edge_case_sources() {
+    use rustpython_parser::text_size::{TextRange, TextSize};
+    // Deterministic pseudo-random sources over newline, CR and multibyte
+    // characters, on top of the named edge cases.
+    let alphabet = ['a', '\n', '\r', ' ', '\u{e9}', '\u{20ac}', '\u{1f600}'];
+    let mut state: u64 = 0x5eed_1234_abcd_0001;
+    let mut generated = Vec::new();
+    for len in [1_usize, 2, 7, 31, 200] {
+        let mut text = String::new();
+        for _ in 0..len {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let pick = usize::try_from(state >> 33).unwrap_or_default() % alphabet.len();
+            text.push(alphabet[pick]);
+        }
+        generated.push(text);
+    }
+    let named = [
+        "",
+        "x",
+        "\n",
+        "\n\n\n",
+        "alpha\nbeta\ngamma",
+        "no trailing newline",
+        "trailing newline\n",
+        "crlf\r\nlines\r\n",
+        "\r\n\r\n",
+        "lone\rcarriage\rreturns",
+        "\u{e9}\n\u{fc}\u{20ac}\n\u{1f600}x\r\n",
+        "\u{1f600}\u{1f600}\n\u{1f600}",
+    ];
+    let mut compared = 0_usize;
+    let mut non_boundary = 0_usize;
+    for text in named
+        .iter()
+        .copied()
+        .chain(generated.iter().map(String::as_str))
+    {
+        let source = SourceText::new(text);
+        // Every offset through the end, past the end, and far past the end.
+        let offsets = (0..=text.len() + 3).chain([usize::MAX]);
+        for offset in offsets {
+            if offset < text.len() && !text.is_char_boundary(offset) {
+                non_boundary += 1;
+            }
+            assert_eq!(
+                source.line_for_offset(offset),
+                reference_line_for_offset(text, offset),
+                "offset {offset} in {text:?}"
+            );
+            compared += 1;
+        }
+        // The offset equal to the file length is the module owner's end.
+        let end = u32::try_from(text.len()).unwrap_or(u32::MAX);
+        let whole = TextRange::new(TextSize::from(0), TextSize::from(end));
+        assert_eq!(
+            line_for_range_start(&source, whole),
+            reference_line_for_offset(text, 0)
+        );
+        assert_eq!(
+            line_for_range_end(&source, whole),
+            reference_line_for_offset(text, text.len())
+        );
+    }
+    // The corpus really exercised multibyte interiors, not only boundaries.
+    assert!(non_boundary > 20, "non-boundary offsets: {non_boundary}");
+    assert!(compared > 500, "compared offsets: {compared}");
+}
+
+/// Four lines per function; each function yields owner and statement facts.
+fn generated_large_python_module(functions: usize) -> String {
+    let mut text = String::new();
+    for index in 0..functions {
+        text.push_str(&format!(
+            "def f{index}(x):\n    if x > {index}:\n        return x + {index}\n    return x - 1\n"
+        ));
+    }
+    text
+}
+
+#[test]
+fn source_fact_extraction_stays_linear_on_a_large_module() {
+    let functions = 5_000;
+    let source = generated_large_python_module(functions);
+    assert_eq!(source.lines().count(), 20_000);
+    let started = std::time::Instant::now();
+    let facts = extract_source_facts(Path::new("src/large.py"), &source);
+    let elapsed = started.elapsed();
+    // The fixture parsed and produced per-function facts with late lines.
+    assert!(facts.limitations.is_empty(), "{:?}", facts.limitations);
+    assert_eq!(
+        facts
+            .owners
+            .iter()
+            .filter(|owner| !owner.is_module_owner())
+            .count(),
+        functions
+    );
+    let last_start = facts
+        .owners
+        .iter()
+        .find(|owner| owner.name == "f4999")
+        .map(|owner| owner.start_line);
+    assert_eq!(last_start, Some(19_997));
+    assert!(
+        facts.facts.len() > functions * 4,
+        "facts: {}",
+        facts.facts.len()
+    );
+    // Generous bound. In a debug build on this fixture the per-lookup
+    // rescan took about 249s (quadratic: 15s at 5k lines, 62s at 10k) and
+    // the indexed path about 1.3s (#4495).
+    assert!(
+        elapsed < std::time::Duration::from_secs(20),
+        "extraction took {elapsed:?}"
+    );
+}
+
+/// Per-file scans that every owner or every constant used to repeat stay
+/// linear: the Typer receiver scan (once per owner) and the walrus-binding
+/// scan (once per module constant) each ran over the whole source.
+#[test]
+fn typer_receivers_and_constant_walrus_checks_stay_linear() {
+    let functions = 5_000;
+    let mut typer = String::from("import typer\napp = typer.Typer()\n");
+    for index in 0..functions {
+        typer.push_str(&format!("def f{index}(x):\n    return x + {index}\n"));
+    }
+    let constants = 20_000;
+    let mut constant_module = String::new();
+    for index in 0..constants {
+        constant_module.push_str(&format!("C{index} = {index}\n"));
+    }
+    constant_module.push_str("def f(x):\n    return x + C19999\n");
+
+    let started = std::time::Instant::now();
+    let typer_facts = extract_source_facts(Path::new("src/cli.py"), &typer);
+    let constant_facts = extract_source_facts(Path::new("src/limits.py"), &constant_module);
+    let elapsed = started.elapsed();
+
+    let last = typer_facts
+        .owners
+        .iter()
+        .find(|owner| owner.name == "f4999")
+        .ok_or("f4999 owner");
+    assert_eq!(
+        last.map(|owner| owner.cli_receiver_names.clone()),
+        Ok(vec!["app".to_string()])
+    );
+    let owner = constant_facts
+        .owners
+        .iter()
+        .find(|owner| owner.name == "f")
+        .ok_or("f owner");
+    assert_eq!(
+        owner.map(|owner| owner.module_constants.len()),
+        Ok(constants)
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(20),
+        "extraction took {elapsed:?}"
+    );
 }
 
 #[test]
@@ -3143,4 +3324,172 @@ fn sink_alignment_changed_sink_join_format() {
     assert_eq!(a.changed_sink.as_deref(), Some("price, rate"));
     // No related test -> no strong oracle -> unknown.
     assert_eq!(a.oracle_alignment, "unknown");
+}
+
+/// Runs the diff adapter over one production file with the given added and
+/// removed `(line, text)` pairs (removed lines are paired at the same new-side
+/// position) and returns the probed line numbers.
+fn probed_lines_for_python_rewrite(
+    tag: &str,
+    source: &str,
+    added: &[(usize, &str)],
+    removed: &[(usize, &str)],
+) -> Result<Vec<usize>, String> {
+    let root = unique_tempdir(tag)?;
+    let production_rel = PathBuf::from("src/pricing.py");
+    write_file(&root.join(&production_rel), source)?;
+    write_file(
+        &root.join("tests/test_pricing.py"),
+        "from src.pricing import apply_discount\n\ndef test_apply_discount():\n    assert apply_discount(100) == 90\n",
+    )?;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+    };
+    let line = |(line, text): &(usize, &str)| crate::analysis::diff::ChangedLine {
+        line: *line,
+        new_side_line: *line,
+        text: (*text).to_string(),
+    };
+    let changed_files = vec![ChangedFile {
+        path: production_rel,
+        added_lines: added.iter().map(line).collect(),
+        removed_lines: removed.iter().map(line).collect(),
+    }];
+    let result = PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+    let mut lines = result
+        .findings
+        .iter()
+        .map(|finding| finding.probe.location.line)
+        .collect::<Vec<_>>();
+    lines.sort_unstable();
+    Ok(lines)
+}
+
+#[test]
+fn analyze_diff_rewritten_block_probes_behavior_not_its_comment_or_bracket() -> Result<(), String> {
+    // requests 6404f345 shape: a three-line `if` is rewritten as comment +
+    // assignment + one-line `if`; git pairs the old `if` header with the comment.
+    let lines = probed_lines_for_python_rewrite(
+        "rewrite-comment",
+        "def apply_discount(amount):\n    # big orders get the discount\n    big = amount >= 100\n    if big and not isinstance(\n        amount, str\n    ):\n        return amount - 10\n    return amount\n",
+        &[
+            (2, "    # big orders get the discount"),
+            (3, "    big = amount >= 100"),
+            (4, "    if big and not isinstance("),
+            (5, "        amount, str"),
+            (6, "    ):"),
+        ],
+        &[
+            (2, "    if amount >= 100 and not isinstance("),
+            (3, "        amount, str"),
+            (4, "    ):"),
+        ],
+    )?;
+    assert_eq!(
+        lines,
+        vec![3, 4, 5],
+        "comment (2) and `):` (6) carry no probe"
+    );
+    Ok(())
+}
+
+#[test]
+fn analyze_diff_keeps_code_replaced_only_by_a_comment() -> Result<(), String> {
+    // Commenting code out removes behavior; with nothing else in the run the
+    // comment line stays the carrier of that change.
+    let lines = probed_lines_for_python_rewrite(
+        "commented-out",
+        "def apply_discount(amount):\n    # return amount - 10\n    return amount\n",
+        &[(2, "    # return amount - 10")],
+        &[(2, "    return amount - 10")],
+    )?;
+    assert_eq!(lines, vec![2]);
+    Ok(())
+}
+
+#[test]
+fn analyze_diff_skips_added_imports_but_keeps_a_repointed_import() -> Result<(), String> {
+    let source = "import typing\nfrom decimal import (\n    Decimal,\n)\n\ndef apply_discount(amount):\n    from math import floor\n    return floor(amount) - 10\n";
+    // Added imports (module level, multi-line, function-local) are not probes;
+    // the changed return is.
+    let lines = probed_lines_for_python_rewrite(
+        "added-imports",
+        source,
+        &[
+            (1, "import typing"),
+            (2, "from decimal import ("),
+            (3, "    Decimal,"),
+            (4, ")"),
+            (7, "    from math import floor"),
+            (8, "    return floor(amount) - 10"),
+        ],
+        &[(7, "    return amount - 10")],
+    )?;
+    assert_eq!(lines, vec![8], "added imports carry no probe");
+    // An import that replaces an import re-points a name and stays analyzed,
+    // alone or beside a behavioral line.
+    let lines = probed_lines_for_python_rewrite(
+        "repointed-import",
+        source,
+        &[(7, "    from math import floor")],
+        &[(7, "    from math import ceil as floor")],
+    )?;
+    assert_eq!(lines, vec![7]);
+    let lines = probed_lines_for_python_rewrite(
+        "repointed-import-in-run",
+        source,
+        &[
+            (7, "    from math import floor"),
+            (8, "    return floor(amount) - 10"),
+        ],
+        &[
+            (7, "    from math import ceil as floor"),
+            (8, "    return floor(amount) - 9"),
+        ],
+    )?;
+    assert_eq!(lines, vec![7, 8]);
+    // A name re-pointed inside a parenthesized import is a continuation line
+    // that does not start with `import`; the old-side import range keeps it.
+    let lines = probed_lines_for_python_rewrite(
+        "repointed-parenthesized-import",
+        source,
+        &[(3, "    Decimal,")],
+        &[(3, "    Fraction as Decimal,")],
+    )?;
+    assert_eq!(lines, vec![3]);
+    Ok(())
+}
+
+#[test]
+fn python_structural_lines_are_recognized() {
+    for structural in [
+        ")", "    ):", "],", "}", "else:", "  try:", "finally:", ") # done",
+    ] {
+        assert!(is_python_structural_line(structural), "{structural:?}");
+    }
+    for behavioral in [
+        "    return x",
+        "else if",
+        "elif x:",
+        "except ValueError:",
+        "pass",
+        "x,",
+        "])  + 1",
+    ] {
+        assert!(!is_python_structural_line(behavioral), "{behavioral:?}");
+    }
 }

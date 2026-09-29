@@ -2382,7 +2382,7 @@ pub(crate) fn classify_change(
 
 /// Like [`classify_change`], but carries the typed flag-ON alias-map load gap
 /// (#4106-B) so the `typescript_path_alias_unresolved` advice names the real
-/// fail-closed cause (missing / unparseable / JSONC / `extends` / unreadable
+/// fail-closed cause (missing / unparseable / `extends` / unreadable
 /// config) instead of telling the user to enable a flag that is already on.
 #[allow(
     clippy::too_many_arguments,
@@ -2447,14 +2447,13 @@ pub(crate) fn classify_change_with_alias_state(
         .iter()
         .map(|c| c.test.file.clone())
         .collect();
-    let named_limitations_from_alias: Vec<TypeScriptNamedLimitation> =
-        named_limitations_for_alias_unresolved(
-            owner,
-            all_tests,
-            |test| credited_test_files.contains(&test.file),
-            alias_map,
-            alias_unavailable,
-        );
+    let alias_gap: Option<TsAliasGapDisclosure> = alias_gap_for_unresolved_import(
+        owner,
+        all_tests,
+        |test| credited_test_files.contains(&test.file),
+        alias_map,
+        alias_unavailable,
+    );
     // Ghost relative import disclosure (#4104-C): when an uncredited test
     // name-calls the owner through a relative specifier that resolves to no
     // workspace file, the exclusion is correct but was silent — name it.
@@ -2491,6 +2490,15 @@ pub(crate) fn classify_change_with_alias_state(
     let has_oracle_eligible_relation = related_candidates
         .iter()
         .any(|candidate| candidate.relation.uses_oracle());
+    // Reach only through a same-module entry (an exported wrapper or factory
+    // product that calls the owner) is indirect: the entry's assertions see
+    // the owner's effect only after the entry's own code. Such reach stays
+    // `weakly_exposed`; `exposed` needs a relation that calls the owner.
+    let reach_only_through_module_entry = has_oracle_eligible_relation
+        && related_candidates
+            .iter()
+            .filter(|candidate| candidate.relation.uses_oracle())
+            .all(|candidate| candidate.relation == TypeScriptRelationKind::ModuleEntryCall);
     // Owner-call evidence is broader than trusted relation credit: a test
     // whose relation was denied by the #4102/#4103 gates still observes an
     // owner-name call, so its oracle classification and missing-discriminator
@@ -2557,7 +2565,13 @@ pub(crate) fn classify_change_with_alias_state(
             StageState::No,
             StageState::No,
             StageState::No,
-            vec![no_static_path_missing(owner)],
+            // #4550: an uncredited owner import through an unresolved
+            // alias is the more specific no-reach cause; name it instead of
+            // claiming no test references the owner.
+            vec![match &alias_gap {
+                Some(gap) => gap.no_static_path_missing(&owner.name),
+                None => no_static_path_missing(owner),
+            }],
         )
     } else if !has_oracle_eligible_relation {
         (
@@ -2568,6 +2582,20 @@ pub(crate) fn classify_change_with_alias_state(
             vec![format!(
                 "Only heuristic TypeScript test links were found for `{}`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.",
                 owner.name
+            )],
+        )
+    } else if reach_only_through_module_entry {
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Weak,
+            StageState::Weak,
+            vec![module_entry_reach_summary(
+                owner,
+                &related_candidates,
+                reexport_index,
+                alias_map,
+                workspace_root,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank() && observation_confirmed {
@@ -2737,9 +2765,10 @@ pub(crate) fn classify_change_with_alias_state(
         ExposureClass::Exposed => {
             "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.".to_string()
         }
-        ExposureClass::NoStaticPath => {
-            no_static_path_recommendation(owner)
-        }
+        ExposureClass::NoStaticPath => match &alias_gap {
+            Some(gap) => gap.no_static_path_recommendation(),
+            None => no_static_path_recommendation(owner),
+        },
         // Owner-call evidence with a named missing discriminator takes
         // precedence over the relation note: the oracle classification is
         // independent of relation credit, so the next step names the proof
@@ -2803,13 +2832,13 @@ pub(crate) fn classify_change_with_alias_state(
     }
     // Emit additive named limitation evidence lines (RIPR-SPEC-0085 §PR4/PR6).
     // These lines are ADDITIVE — they do not change any existing field value.
-    // `named_limitations_from_alias` fires on the always-on alias-gap disclosure
+    // `alias_gap` fires on the always-on alias-gap disclosure
     // (RIPR-SPEC-0099): non-relative name-matched imports that were not credited.
     for named_limit in named_limitations_from_static
         .iter()
         .chain(named_limitations_from_oracle.iter())
         .chain(named_limitations_from_ownership.iter())
-        .chain(named_limitations_from_alias.iter())
+        .chain(alias_gap.iter().map(|gap| &gap.limitation))
         .chain(named_limitations_from_spy.iter())
         .chain(named_limitations_from_relative_import.iter())
     {
@@ -2934,4 +2963,45 @@ pub(crate) fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
             "TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet is emitted.".to_string()
         }
     }
+}
+
+/// Missing-evidence line for an owner reached only through same-module
+/// entries: names the entries the related tests call.
+/// An entry is named when a related test passes the same relation gate for
+/// it, so a default or renamed import names the export it binds.
+fn module_entry_reach_summary(
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> String {
+    let called: Vec<String> = owner
+        .module_entries
+        .iter()
+        .filter(|entry| {
+            let entry_owner = module_entry_owner(owner, entry);
+            candidates.iter().any(|candidate| {
+                candidate.relation == TypeScriptRelationKind::ModuleEntryCall
+                    && owner_call_relation(
+                        candidate.test,
+                        &entry_owner,
+                        reexport_index,
+                        alias_map,
+                        workspace_root,
+                    )
+                    .is_some_and(TypeScriptRelationKind::uses_oracle)
+            })
+        })
+        .map(|entry| format!("`{}`", entry.name))
+        .collect();
+    let entries = if called.is_empty() {
+        "an exported caller".to_string()
+    } else {
+        called.join(", ")
+    };
+    format!(
+        "Related tests reach `{}` only through same-module callers ({}); static evidence cannot confirm the changed behavior reaches their assertions. Add a test whose exact-value assertion depends on the changed behavior of `{}`.",
+        owner.name, entries, owner.name
+    )
 }

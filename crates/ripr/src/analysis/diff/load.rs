@@ -1,4 +1,3 @@
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -21,6 +20,57 @@ pub struct LoadedDiff {
     pub effective_base: Option<String>,
 }
 
+/// Decode a supplied diff the same way the git-run path decodes its stdout
+/// (`run_git_diff_with_unified`). A diff carries the raw bytes of every
+/// changed file, so one Latin-1 or binary-ish text file in the change made
+/// `--diff` refuse the whole diff that `ripr check` itself accepts.
+///
+/// Hunk payloads decode lossily. Path identity must not: the git route pins
+/// `core.quotePath=true`, so non-UTF-8 path bytes arrive C-quoted, but a
+/// supplied diff made with `quotePath=false` carries them raw, and a lossy
+/// decode would merge distinct names onto one U+FFFD path (#3601). A
+/// file-header line that is not UTF-8 therefore fails closed, naming the
+/// regeneration command.
+fn decode_diff_text(source: &str, bytes: Vec<u8>) -> Result<String, String> {
+    let error = match String::from_utf8(bytes) {
+        Ok(text) => return Ok(text),
+        Err(error) => error,
+    };
+    let bytes = error.as_bytes();
+    let lines = bytes.split(|byte| *byte == b'\n').collect::<Vec<_>>();
+    let not_utf8 = |line: &[u8]| std::str::from_utf8(line).is_err();
+    // A `---`/`+++` pair is a file header in a plain unified diff too.
+    let raw_marker_pair = lines.windows(2).any(|pair| {
+        matches!(pair, [old, new] if old.starts_with(b"--- ")
+            && new.starts_with(b"+++ ")
+            && (not_utf8(old) || not_utf8(new)))
+    });
+    let raw_header = lines.iter().any(|line| {
+        not_utf8(line)
+            && DIFF_PATH_HEADER_PREFIXES
+                .iter()
+                .any(|prefix| line.starts_with(prefix))
+    });
+    if raw_marker_pair || raw_header {
+        return Err(format!(
+            "failed to read {source}: a file header names a path that is not UTF-8 and \
+             not C-quoted, so distinct paths cannot be told apart; regenerate the diff \
+             with `git -c core.quotePath=true diff ...`"
+        ));
+    }
+    Ok(String::from_utf8_lossy(bytes).into_owned())
+}
+
+/// Git file-header lines that carry a path. None can be a hunk line, which
+/// always starts with `+`, `-`, a space or a backslash.
+const DIFF_PATH_HEADER_PREFIXES: &[&[u8]] = &[
+    b"diff --git ",
+    b"rename from ",
+    b"rename to ",
+    b"copy from ",
+    b"copy to ",
+];
+
 pub fn load_diff(
     root: &Path,
     base: Option<&str>,
@@ -42,12 +92,12 @@ pub fn load_diff_with_effective_base(
             // looks like a silent hang, so the CLI adapters disclose the read
             // before dispatching here; the loader itself stays silent so
             // library callers never receive CLI-branded stderr text.
-            let mut buffer = String::new();
-            std::io::stdin()
-                .read_to_string(&mut buffer)
+            // #4480: stdin is bounded by the shared CLI input cap, so a
+            // producer that never closes the pipe cannot grow memory forever.
+            let buffer = crate::bounded_input::read_reader(std::io::stdin().lock())
                 .map_err(|err| format!("failed to read diff from stdin: {err}"))?;
             return Ok(LoadedDiff {
-                text: buffer,
+                text: decode_diff_text("diff from stdin", buffer)?,
                 effective_base: None,
             });
         }
@@ -61,10 +111,12 @@ pub fn load_diff_with_effective_base(
                 diff_file.display()
             ));
         }
-        let text = std::fs::read_to_string(diff_file)
+        // #4480: bounded, so `--diff /dev/zero` or a multi-GB log fails with
+        // the input limit instead of reading until memory is exhausted.
+        let bytes = crate::bounded_input::read(diff_file)
             .map_err(|err| format!("failed to read diff file {}: {err}", diff_file.display()))?;
         return Ok(LoadedDiff {
-            text,
+            text: decode_diff_text(&format!("diff file {}", diff_file.display()), bytes)?,
             effective_base: None,
         });
     }
@@ -169,18 +221,20 @@ pub fn resolve_effective_base(
             .map_err(|err| not_a_work_tree(root, git_timeout).unwrap_or(err));
     };
 
+    // No revision starts with `-`, and `git diff` would parse one as an option
+    // (`--output=<path>...HEAD` writes a file) if the probe below cannot run.
+    // The LSP takes this value from its client's settings.
+    if explicit.starts_with('-') {
+        return Err(format!(
+            "the base `{explicit}` starts with `-`, which no Git revision does (the analysis \
+             did not run). Pass `--base <ref>` for a ref this repository has."
+        ));
+    }
     let commit = format!("{explicit}^{{commit}}");
     match git_ref_output(root, &commit, git_timeout) {
         Some(output) if !output.status.success() => Err(not_a_work_tree(root, git_timeout)
             .unwrap_or_else(|| {
-                // `git fetch origin` never deepens a shallow clone, so an
-                // ancestor base like `HEAD~5` needs the unshallow repair.
-                let fetch = if is_shallow_repository(root, git_timeout) {
-                    "This is a shallow clone: fetch the missing history with `git fetch \
-                     --unshallow` (in GitHub Actions, set `fetch-depth: 0` on actions/checkout)"
-                } else {
-                    "Fetch the ref (for example `git fetch origin`)"
-                };
+                let fetch = missing_ref_repair(root, git_timeout);
                 format!(
                     "the base `{explicit}` does not resolve to a commit (the analysis did not \
                      run). {fetch} or pass `--base <ref>` for a ref this repository has."
@@ -460,7 +514,7 @@ pub fn resolve_base_commit(
     base: Option<&str>,
     git_timeout: Option<Duration>,
 ) -> Option<String> {
-    let base = base?;
+    let base = base.filter(|base| !base.starts_with('-'))?;
     let commit = format!("{base}^{{commit}}");
     let output = git_ref_output(root, &commit, git_timeout)?;
     if !output.status.success() {
@@ -470,16 +524,69 @@ pub fn resolve_base_commit(
     (!commit.is_empty()).then_some(commit)
 }
 
+/// Load `<base>...<head>` for the commands that name both revisions (`diff`,
+/// `review-comments`). Callers verify `base` through
+/// [`resolve_effective_base`] first; this verifies `head` the same way, so an
+/// unresolvable revision fails in ripr's own voice instead of git's
+/// `ambiguous argument` advice (#4538). The range then goes through the same
+/// pinned presentation as every analysis loader (#3850, #4086), including
+/// `--submodule=short`, so ambient `color.diff` or `diff.submodule` config
+/// cannot empty or widen the parsed change set.
 pub fn load_diff_range(root: &Path, base: &str, head: &str) -> Result<String, String> {
-    // CLI-only range path (#1921 migration scope note): no deadline is
-    // threaded here yet, so the invocation stays unbounded like the
-    // pre-#2303 behavior.
+    // No deadline on the public CLI/xtask range path (#1921 migration scope
+    // note): the invocation stays unbounded like the pre-#2303 behavior.
+    load_diff_range_with_deadline(root, base, head, None)
+}
+
+/// [`load_diff_range`] under a caller's cooperative git deadline.
+pub(crate) fn load_diff_range_with_deadline(
+    root: &Path,
+    base: &str,
+    head: &str,
+    git_timeout: Option<Duration>,
+) -> Result<String, String> {
+    verify_head_revision(root, head, git_timeout)?;
     run_git_diff(
         root,
         &format!("{base}...{head}"),
         &["--unified=0", "--no-ext-diff", "--submodule=short"],
-        None,
+        git_timeout,
     )
+}
+
+/// Fail with a named message when `head` does not resolve to a commit. Like
+/// the base probe in [`resolve_effective_base`], only a `rev-parse` that ran
+/// and reported the revision absent produces the message; a probe that could
+/// not run leaves the decision to `git diff`.
+fn verify_head_revision(
+    root: &Path,
+    head: &str,
+    git_timeout: Option<Duration>,
+) -> Result<(), String> {
+    let commit = format!("{head}^{{commit}}");
+    match git_ref_output(root, &commit, git_timeout) {
+        Some(output) if !output.status.success() => Err(not_a_work_tree(root, git_timeout)
+            .unwrap_or_else(|| {
+                format!(
+                    "the head `{head}` does not resolve to a commit (the analysis did not \
+                     run). {} or pass `--head <ref>` for a ref this repository has.",
+                    missing_ref_repair(root, git_timeout)
+                )
+            })),
+        _ => Ok(()),
+    }
+}
+
+/// The repair for a revision that does not resolve. `git fetch origin` never
+/// deepens a shallow clone, so an ancestor such as `HEAD~5` needs the
+/// unshallow repair there.
+fn missing_ref_repair(root: &Path, git_timeout: Option<Duration>) -> &'static str {
+    if is_shallow_repository(root, git_timeout) {
+        "This is a shallow clone: fetch the missing history with `git fetch \
+         --unshallow` (in GitHub Actions, set `fetch-depth: 0` on actions/checkout)"
+    } else {
+        "Fetch the ref (for example `git fetch origin`)"
+    }
 }
 
 /// PR-evidence range path (issue #3930): the same pinned presentation as
@@ -548,6 +655,7 @@ enum WorkingTreeProbe {
 
 fn working_tree_probe(root: &Path) -> WorkingTreeProbe {
     let result = Command::new("git")
+        .args(crate::git::UNTRUSTED_REPOSITORY_CONFIG)
         .args(["status", "--porcelain", "--", "."])
         .current_dir(root)
         .output();
@@ -714,6 +822,13 @@ fn run_git_diff_bytes(
     // decode distinct and the C-quoted parser form applies. ASCII-only
     // paths are unaffected, so existing fixtures and goldens see no
     // change.
+    // The range is the one caller-derived argument; one starting with `-`
+    // would be parsed as a diff option, so refuse it at the sink.
+    if range.starts_with('-') {
+        return Err(format!(
+            "refusing to diff `{range}`: a revision range cannot start with `-`"
+        ));
+    }
     let mut args: Vec<&str> = vec!["-c", "core.quotePath=true", "diff"];
     args.extend_from_slice(extra_args);
     // Analysis consumes source-coordinate patches, not human diff views.
@@ -773,18 +888,35 @@ fn run_git_diff_bytes(
 /// them was never fetched. Otherwise the two refs really are unrelated
 /// histories and only a different base helps.
 fn no_merge_base_hint(root: &Path, range: &str, git_timeout: Option<Duration>) -> String {
-    let base = range.split_once("...").map_or(range, |(base, _)| base);
+    let (base, head) = range.split_once("...").unwrap_or((range, "HEAD"));
+    format!(
+        ". {}",
+        no_merge_base_diagnosis(root, base, head, git_timeout).0
+    )
+}
+
+/// The cause and repair for a `<base>...<head>` range with no merge base, as
+/// one sentence, plus whether the repair is unshallowing. Shared with the
+/// first-pr range preflight (#4538) so both name the same cause.
+pub(crate) fn no_merge_base_diagnosis(
+    root: &Path,
+    base: &str,
+    head: &str,
+    git_timeout: Option<Duration>,
+) -> (String, bool) {
     if is_shallow_repository(root, git_timeout) {
-        format!(
-            ". This is a shallow clone, so `{base}` and HEAD share no fetched history \
+        let text = format!(
+            "This is a shallow clone, so `{base}` and `{head}` share no fetched history \
              (the analysis did not run). Fetch the full history with `git fetch --unshallow` \
              (in GitHub Actions, set `fetch-depth: 0` on actions/checkout), then re-run."
-        )
+        );
+        (text, true)
     } else {
-        format!(
-            ". `{base}` and HEAD share no commit (unrelated histories; the analysis did not \
-             run). Pass `--base <ref>` for a ref on HEAD's history."
-        )
+        let text = format!(
+            "`{base}` and `{head}` share no commit (unrelated histories; the analysis did \
+             not run). Pass `--base <ref>` for a ref on `{head}`'s history."
+        );
+        (text, false)
     }
 }
 
@@ -861,6 +993,56 @@ mod tests {
             !message.contains("os error"),
             "the OS error text must not stand in for the cause: {message}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn diff_file_with_non_utf8_content_loads_like_the_git_route() -> std::io::Result<()> {
+        // A Latin-1 line in an unrelated changed file used to refuse the
+        // whole `--diff` input ("stream did not contain valid UTF-8") that
+        // the git-run route decodes lossily.
+        let dir = unique_fixture_root("load-diff-non-utf8")?;
+        ignore_remove_dir_all(&dir);
+        fs::create_dir_all(&dir)?;
+        let diff_path = dir.join("change.diff");
+        fs::write(
+            &diff_path,
+            b"diff --git a/notes.txt b/notes.txt\n--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n-caf\xe9\n+caf\xe9s\ndiff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-fn a() -> bool { 1 > 0 }\n+fn a() -> bool { 1 >= 0 }\n",
+        )?;
+
+        let result = load_diff(&dir, None, Some(&diff_path), None);
+        ignore_remove_dir_all(&dir);
+        let text = result.map_err(std::io::Error::other)?;
+        assert!(text.contains("-caf\u{fffd}\n+caf\u{fffd}s\n"), "{text}");
+        let files = crate::analysis::diff::parse_unified_diff(&text);
+        let rust = files
+            .iter()
+            .find(|file| file.path == std::path::Path::new("src/lib.rs"))
+            .ok_or_else(|| std::io::Error::other("rust file missing from parsed diff"))?;
+        assert_eq!(rust.added_lines[0].text, "fn a() -> bool { 1 >= 0 }");
+        Ok(())
+    }
+
+    #[test]
+    fn diff_file_with_raw_non_utf8_path_fails_closed() -> std::io::Result<()> {
+        // `quotePath=false` emits raw path bytes; a lossy decode would merge
+        // `p_\xff.rs` and `p_\xfe.rs` onto one U+FFFD path (#3601).
+        let git_diff = b"diff --git a/src/p_\xff.rs b/src/p_\xff.rs\n--- a/src/p_\xff.rs\n+++ b/src/p_\xff.rs\n@@ -1 +1 @@\n-a\n+b\n".to_vec();
+        let plain_diff = b"--- src/p_\xfe.rs\n+++ src/p_\xfe.rs\n@@ -1 +1 @@\n-a\n+b\n".to_vec();
+        for bytes in [git_diff, plain_diff] {
+            let Err(message) = decode_diff_text("diff from stdin", bytes) else {
+                return Err(std::io::Error::other(
+                    "a raw non-UTF-8 path must fail closed",
+                ));
+            };
+            assert!(message.contains("core.quotePath=true"), "{message}");
+        }
+        // C-quoted paths are ASCII, so only the hunk payload decodes lossily.
+        let quoted =
+            b"diff --git \"a/src/p_\\377.rs\" \"b/src/p_\\377.rs\"\n@@ -1 +1 @@\n-caf\xe9\n+b\n"
+                .to_vec();
+        let text = decode_diff_text("diff from stdin", quoted).map_err(std::io::Error::other)?;
+        assert!(text.contains("-caf\u{fffd}"), "{text}");
         Ok(())
     }
 
@@ -1282,6 +1464,30 @@ mod tests {
         );
 
         ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn option_shaped_base_never_reaches_git_diff() -> std::io::Result<()> {
+        let dir = unique_fixture_root("option-shaped-base")?;
+        init_git_repo(&dir, "main")?;
+        fs::write(dir.join("lib.rs"), "fn a() {}\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-q", "-m", "init"])?;
+        let planted = dir.join("planted");
+        let base = format!("--output={}", planted.display());
+        // The sink: `git diff --output=<path>...HEAD` would create the file.
+        let sink = run_git_diff_bytes(&dir, &format!("{base}...HEAD"), &[], "0", None);
+        // The LSP settings path and the CLI path both refuse it before git.
+        let resolved = resolve_effective_base(&dir, Some(&base), None);
+        let identity = resolve_base_commit(&dir, Some(&base), None);
+        let planted_exists = planted.exists() || dir.join("planted...HEAD").exists();
+        ignore_remove_dir_all(&dir);
+        assert!(sink.is_err(), "an option-shaped range must be refused");
+        assert!(!planted_exists, "git diff must not write an --output file");
+        let err = resolved.expect_err("an option-shaped base must be refused");
+        assert!(err.contains("starts with `-`"), "{err}");
+        assert!(identity.is_none());
         Ok(())
     }
 

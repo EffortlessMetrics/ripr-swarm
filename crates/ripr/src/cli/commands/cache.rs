@@ -8,8 +8,7 @@ use std::path::{Component, Path, PathBuf};
 
 const CACHE_STATUS_SCHEMA_VERSION: &str = "0.1";
 
-const CACHE_USAGE: &str =
-    "Usage:\n  ripr cache status [--json]\n  ripr cache clear [--dry-run] [--force]";
+const CACHE_USAGE: &str = "Inspect or clear the disposable analysis cache.\n\nUsage:\n  ripr cache status [--json]\n  ripr cache clear [--dry-run] [--force]";
 /// Help body for `ripr cache status`. Also the flag source for unknown-argument
 /// suggestions, so `--json` has to appear as an option-list line, not only
 /// inside the usage brackets.
@@ -97,7 +96,8 @@ fn cache_dir_for_current_dir(
                 current_dir.display()
             )
         })?;
-        super::check::resolve_workspace_root(&current_dir)?.unwrap_or(current_dir)
+        super::check::resolve_project_root(&current_dir)?
+            .map_or(current_dir, |(root, _reason)| root)
     };
     Ok(cache_dir_for_root(&workspace_root, env_value))
 }
