@@ -101,7 +101,20 @@ Updated:
 ## Pending — python_same_stem_sibling_owner_not_related (9)
 
 Reason:
+RIPR-SPEC-0122: bounded human check output leads the exposure line with the plain word the summary uses (weak, no path, unknown) before the schema value
 RIPR-SPEC-0122: Python pytest verify commands now emit python -m pytest so a flat-layout package imports from the repository root; wording only, no exposure class change
+
+Command:
+`cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_same_stem_sibling_owner_not_related (10)
+
+Reason:
+RIPR-SPEC-0122: Hidden remainder names omitted preview-language identity (#4395); formatting-only, no class or JSON change.
 
 Command:
 `cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`
