@@ -3,6 +3,11 @@
 //! Stages a packet around the worktree-built `ripr` binary and invokes stdlib
 //! `run.py` with a PATH decoy and no Cargo on PATH. The consumer must still
 //! analyze an explicit subject root from a foreign cwd.
+//!
+//! The subject is the Rust `fixtures/boundary_gap` fixture so this journey
+//! stays valid under `--no-default-features --features lang-rust` (the
+//! merge-gate rust-only feature lane). A Python fixture would exit 2 from a
+//! rust-only payload.
 
 #![cfg(unix)]
 
@@ -150,21 +155,18 @@ fn host_platform() -> String {
 
 fn stage_boundary_subject(workspace: &Path, subject: &Path, diff: &Path) -> Result<(), String> {
     copy_file(
-        &workspace.join("fixtures/python_boundary_gap/input/src/discount.py"),
-        &subject.join("src/discount.py"),
+        &workspace.join("fixtures/boundary_gap/input/Cargo.toml"),
+        &subject.join("Cargo.toml"),
     )?;
     copy_file(
-        &workspace.join("fixtures/python_boundary_gap/input/tests/test_discount.py"),
-        &subject.join("tests/test_discount.py"),
+        &workspace.join("fixtures/boundary_gap/input/src/lib.rs"),
+        &subject.join("src/lib.rs"),
     )?;
     copy_file(
-        &workspace.join("fixtures/python_boundary_gap/input/ripr.toml"),
-        &subject.join("ripr.toml"),
+        &workspace.join("fixtures/boundary_gap/input/tests/pricing.rs"),
+        &subject.join("tests/pricing.rs"),
     )?;
-    copy_file(
-        &workspace.join("fixtures/python_boundary_gap/diff.patch"),
-        diff,
-    )
+    copy_file(&workspace.join("fixtures/boundary_gap/diff.patch"), diff)
 }
 
 fn stage_native_packet(

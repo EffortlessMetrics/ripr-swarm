@@ -97,9 +97,10 @@ A packet directory contains `manifest.json`, the native payload
   edges are discriminated without a payload launch. The matrix includes the
   producer kinds `partial_with_limitations`, `unsupported_input`, and
   `analysis_failed`, and rejects invented kinds.
-- Native packet: worktree `ripr` analyzes `python_boundary_gap` from a
-  foreign cwd with a PATH decoy and Cargo off PATH, producing a nonempty
-  findings list and `schema_version` `0.2`. A second native journey runs
+- Native packet: worktree `ripr` analyzes the Rust `boundary_gap` fixture
+  from a foreign cwd with a PATH decoy and Cargo off PATH, producing a
+  nonempty findings list and `schema_version` `0.2`. That subject stays
+  valid under `--features lang-rust` only. A second native journey runs
   `--operation pilot` and classifies `pilot-summary.json`.
 
 ## Non-Goals
@@ -117,7 +118,7 @@ A packet directory contains `manifest.json`, the native payload
   payload and records `classification=complete`.
 - Replacing the payload bytes without updating the manifest records
   `digest_mismatch` and does not launch.
-- The worktree binary inside a packet reports the `python_boundary_gap`
+- The worktree binary inside a packet reports the Rust `boundary_gap`
   finding while Cargo is absent from PATH.
 
 ## Test Mapping
