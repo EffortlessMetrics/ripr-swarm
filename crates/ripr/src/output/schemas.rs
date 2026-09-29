@@ -233,6 +233,142 @@ mod tests {
         Ok(&after_fence[..end])
     }
 
+    fn unique_const_str(source: &'static str, name: &str) -> Result<&'static str, String> {
+        let prefix = format!("const {name}: &str = \"");
+        let mut found = None;
+        for line in source.lines() {
+            let Some(rest) = line.trim().strip_prefix(prefix.as_str()) else {
+                continue;
+            };
+            let Some(value) = rest.strip_suffix("\";") else {
+                return Err(format!("{name} is not a `&str` literal: {}", line.trim()));
+            };
+            if found.is_some() {
+                return Err(format!("{name} is defined more than once"));
+            }
+            found = Some(value);
+        }
+        found.ok_or_else(|| format!("producer source is missing const {name}"))
+    }
+
+    fn unique_quoted_before_following_lines(
+        source: &'static str,
+        prefix: &str,
+        following: &[&str],
+    ) -> Result<&'static str, String> {
+        let lines: Vec<&str> = source.lines().collect();
+        let window = following.len() + 1;
+        if lines.len() < window {
+            return Err(format!(
+                "producer source is shorter than assignment {prefix:?} plus {following:?}"
+            ));
+        }
+        let mut found: Option<&str> = None;
+        for start in 0..=lines.len() - window {
+            let Some(rest) = lines[start].trim().strip_prefix(prefix) else {
+                continue;
+            };
+            let follows = following.iter().enumerate().all(|(offset, needle)| {
+                lines
+                    .get(start + 1 + offset)
+                    .is_some_and(|line| line.trim() == *needle)
+            });
+            if !follows {
+                continue;
+            }
+            let Some((value, _)) = rest.split_once('"') else {
+                return Err(format!(
+                    "producer assignment {prefix:?} is not a quoted literal: {}",
+                    lines[start].trim()
+                ));
+            };
+            if value.is_empty() {
+                return Err(format!(
+                    "producer assignment {prefix:?} has an empty version"
+                ));
+            }
+            match found {
+                Some(existing) if existing != value => {
+                    return Err(format!(
+                        "producer assignment {prefix:?} before {following:?} matched conflicting versions {existing:?} and {value:?}"
+                    ));
+                }
+                Some(_) => {}
+                None => found = Some(value),
+            }
+        }
+        found.ok_or_else(|| {
+            format!("producer source is missing {prefix:?} followed by {following:?}")
+        })
+    }
+
+    fn live_diff_report_schema_version() -> Result<&'static str, String> {
+        unique_quoted_before_following_lines(
+            include_str!("diff_report.rs"),
+            "schema_version: \"",
+            &["kind: \"ripr_diff\".to_string(),"],
+        )
+    }
+
+    fn live_targeted_rerun_schema_version() -> Result<&'static str, String> {
+        unique_quoted_before_following_lines(
+            include_str!("../cli/rerun.rs"),
+            "schema_version: \"",
+            &["state,", "selector,"],
+        )
+    }
+
+    fn live_repair_after_refusal_schema_version() -> Result<&'static str, String> {
+        unique_const_str(
+            include_str!("../cli/commands/agent.rs"),
+            "REPAIR_AFTER_REFUSAL_SCHEMA_VERSION",
+        )
+    }
+
+    fn live_swarm_queue_schema_version() -> Result<&'static str, String> {
+        unique_quoted_before_following_lines(
+            include_str!("agent_seam_packets.rs"),
+            "\"schema_version\": \"",
+            &["\"tool\": \"ripr\",", "\"report\": \"swarm-queue\","],
+        )
+    }
+
+    fn live_cache_status_schema_version() -> Result<&'static str, String> {
+        unique_const_str(
+            include_str!("../cli/commands/cache.rs"),
+            "CACHE_STATUS_SCHEMA_VERSION",
+        )
+    }
+
+    #[test]
+    fn producer_version_extraction_rejects_missing_and_conflicting_literals() -> Result<(), String>
+    {
+        if unique_quoted_before_following_lines(
+            "schema_version: \"0.1\",\nkind: \"other\",\n",
+            "schema_version: \"",
+            &["kind: \"ripr_diff\".to_string(),"],
+        )
+        .is_ok()
+        {
+            return Err("missing producer assignment must fail closed".into());
+        }
+        match unique_quoted_before_following_lines(
+            concat!(
+                "schema_version: \"0.1\",\n",
+                "kind: \"ripr_diff\".to_string(),\n",
+                "schema_version: \"0.2\",\n",
+                "kind: \"ripr_diff\".to_string(),\n",
+            ),
+            "schema_version: \"",
+            &["kind: \"ripr_diff\".to_string(),"],
+        ) {
+            Err(err) if err.contains("conflicting versions") => Ok(()),
+            other => Err(format!(
+                "conflicting producer literals must fail closed, got {other:?}"
+            )),
+        }
+    }
+
     #[test]
     fn command_version_table_names_live_public_outputs() -> Result<(), String> {
         let doc = output_schema_doc()?;
@@ -240,7 +376,7 @@ mod tests {
         let required_rows = [
             (
                 "`ripr diff --json`",
-                "0.1",
+                live_diff_report_schema_version()?,
                 "crates/ripr/src/output/diff_report.rs DiffReport.schema_version",
             ),
             (
@@ -250,7 +386,7 @@ mod tests {
             ),
             (
                 "`ripr rerun --json`",
-                "ripr-targeted-rerun-v1",
+                live_targeted_rerun_schema_version()?,
                 "crates/ripr/src/cli/rerun.rs TargetedRerunReport.schema_version",
             ),
             (
@@ -260,17 +396,17 @@ mod tests {
             ),
             (
                 "repair_after_refusal",
-                "0.2",
+                live_repair_after_refusal_schema_version()?,
                 "cli::commands::agent::REPAIR_AFTER_REFUSAL_SCHEMA_VERSION",
             ),
             (
                 "`ripr swarm queue --json`",
-                "0.2",
+                live_swarm_queue_schema_version()?,
                 "output::agent_seam_packets gap_record_queue_envelope_value",
             ),
             (
                 "`ripr cache status --json`",
-                "0.1",
+                live_cache_status_schema_version()?,
                 "cli::commands::cache::CACHE_STATUS_SCHEMA_VERSION",
             ),
         ];
@@ -292,13 +428,14 @@ mod tests {
     fn swarm_queue_example_matches_live_envelope_contract() -> Result<(), String> {
         let doc = output_schema_doc()?;
         let example = fenced_json_after(&doc, "The queue envelope is:")?;
+        let live_version = live_swarm_queue_schema_version()?;
         if example
             .get("schema_version")
             .and_then(serde_json::Value::as_str)
-            != Some("0.2")
+            != Some(live_version)
         {
             return Err(format!(
-                "swarm queue example must use live envelope version 0.2, got {:?}",
+                "swarm queue example must use live envelope version {live_version}, got {:?}",
                 example.get("schema_version")
             ));
         }
@@ -340,12 +477,15 @@ mod tests {
     fn rerun_example_nested_versions_match_live_cache_identity() -> Result<(), String> {
         let doc = output_schema_doc()?;
         let example = fenced_json_after(&doc, "targeted-rerun receipt shape:")?;
+        let live_version = live_targeted_rerun_schema_version()?;
         if example
             .get("schema_version")
             .and_then(serde_json::Value::as_str)
-            != Some("ripr-targeted-rerun-v1")
+            != Some(live_version)
         {
-            return Err("rerun example must keep top-level schema ripr-targeted-rerun-v1".into());
+            return Err(format!(
+                "rerun example must keep top-level schema {live_version}"
+            ));
         }
         let cache = example
             .get("cache")
