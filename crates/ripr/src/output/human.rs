@@ -457,9 +457,21 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
             all_no_path_count, related_tests_total
         )
     };
+    // Language bindings are tested from the other language, so when every
+    // finding names the cross-language limitation the same-language repair
+    // advice would contradict each finding's own next step.
+    let all_cross_language = output.findings.iter().all(|finding| {
+        finding.static_limit_kind
+            == Some(crate::domain::StaticLimitKind::CrossLanguageOracleVisibilityUnresolved)
+    });
+    let repair = if all_cross_language {
+        "verify the external-language tests that call these bindings"
+    } else {
+        "add co-located tests that observe the changed behavior"
+    };
     let note = format!(
-        "Note: ripr found no static test path for any of the {} changed expression(s) in this diff. {} This is not a coverage assessment. A test may already exercise these changes through macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if none does, add co-located tests that observe the changed behavior.",
-        all_no_path_count, scope_summary
+        "Note: ripr found no static test path for any of the {} changed expression(s) in this diff. {} This is not a coverage assessment. A test may already exercise these changes through macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if none does, {}.",
+        all_no_path_count, scope_summary, repair
     );
     out.push('\n');
     out.push_str(&wrap_human_prose(&note, "", "  "));

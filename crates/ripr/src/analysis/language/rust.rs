@@ -656,19 +656,32 @@ fn enforce_changed_rust_line_limit(
 /// an ABI qualifier on the `fn` keyword and is not captured in
 /// `FunctionFact.attrs`.
 fn owner_has_ffi_attr(owner_fn: &FunctionSummary) -> bool {
+    // PyO3's own attributes (`#[pyfunction]`, `#[pymethods]`, `#[pyclass]`,
+    // `#[pymodule]`) do not contain the crate name `pyo3` unless written
+    // path-qualified, so each is listed. A method is exposed through the
+    // attribute on its `impl` block (`#[pymethods] impl Ledger`,
+    // `#[wasm_bindgen] impl Counter`, `#[napi] impl Store`).
     const FFI_MARKERS: &[&str] = &[
         "no_mangle",
         "export_name",
         "wasm_bindgen",
         "napi",
         "pyo3",
+        "pyfunction",
+        "pymethods",
+        "pyclass",
+        "pymodule",
         "uniffi",
         "cxx",
     ];
-    owner_fn.attrs.iter().any(|attr| {
-        let lowered = attr.to_lowercase();
-        FFI_MARKERS.iter().any(|marker| lowered.contains(marker))
-    })
+    owner_fn
+        .attrs
+        .iter()
+        .chain(&owner_fn.impl_attrs)
+        .any(|attr| {
+            let lowered = attr.to_lowercase();
+            FFI_MARKERS.iter().any(|marker| lowered.contains(marker))
+        })
 }
 
 /// Resolve the probe's owner function from the index and check for FFI attrs.
@@ -681,11 +694,15 @@ fn cross_language_limit_kind(
     index: &rust_index::RustIndex,
     class: &ExposureClass,
 ) -> Option<StaticLimitKind> {
+    // `NoStaticPath` is included: an FFI owner tested only from the other
+    // language has no Rust test path by construction, and RIPR-SPEC-0062
+    // forbids flattening that to a bare `no_static_path`.
     let is_gap_class = matches!(
         class,
         ExposureClass::WeaklyExposed
             | ExposureClass::ReachableUnrevealed
             | ExposureClass::InfectionUnknown
+            | ExposureClass::NoStaticPath
     );
     if !is_gap_class {
         return None;
@@ -700,6 +717,26 @@ fn cross_language_limit_kind(
     } else {
         None
     }
+}
+
+/// Attach the cross-language limitation to an FFI-exposed owner's gap finding.
+/// A `no_static_path` finding's generic next step tells the reader to add a
+/// co-located Rust test, which is the wrong repair when the tests live in
+/// the other language, so it takes the limitation's own guidance instead.
+/// A `no_static_path` finding that already names a limitation keeps it: that
+/// limitation (a transitive or macro reach witness, for example) points at a
+/// Rust test the finding's evidence lines already describe.
+fn apply_cross_language_limit(finding: &mut Finding, probe: &Probe, index: &RustIndex) {
+    let Some(limit) = cross_language_limit_kind(probe, index, &finding.class) else {
+        return;
+    };
+    if finding.class == ExposureClass::NoStaticPath {
+        if finding.static_limit_kind.is_some() {
+            return;
+        }
+        finding.recommended_next_step = Some(limit.describe().to_string());
+    }
+    finding.static_limit_kind = Some(limit);
 }
 
 /// Extract the bare function name from a probe's owner SymbolId for the
@@ -1795,9 +1832,7 @@ impl RustAdapter {
                 // static_limit_kind with the cross-language limitation so
                 // downstream consumers know to verify the external oracle
                 // rather than acting on a Rust repair packet. (#910)
-                if let Some(limit) = cross_language_limit_kind(&probe, &index, &finding.class) {
-                    finding.static_limit_kind = Some(limit);
-                }
+                apply_cross_language_limit(&mut finding, &probe, &index);
                 findings.push(finding);
             }
         }
@@ -1984,9 +2019,7 @@ impl RustAdapter {
                 apply_rust_value_propagation_limit(&mut finding, &probe, &index);
                 apply_wrapper_error_binding_limit(&mut finding, &probe);
                 // Fail closed on cross-language seams (#910).
-                if let Some(limit) = cross_language_limit_kind(&probe, &index, &finding.class) {
-                    finding.static_limit_kind = Some(limit);
-                }
+                apply_cross_language_limit(&mut finding, &probe, &index);
                 findings.push(finding);
             }
         }
@@ -2011,7 +2044,7 @@ mod tests {
         PARTIAL_DIFF_FILE_BUDGET_ENV, PARTIAL_DIFF_LANGUAGE_TIER_VERSION,
         PARTIAL_DIFF_LINE_BUDGET_DEFAULT, PARTIAL_DIFF_LINE_BUDGET_ENV,
         PARTIAL_DIFF_SELECTION_VERSION, PartialDiffBudgets, PartialDiffScope,
-        PartialDiffStopReason, REPO_INDEX_FILE_LIMIT_ENV, RustAdapter,
+        PartialDiffStopReason, REPO_INDEX_FILE_LIMIT_ENV, RustAdapter, apply_cross_language_limit,
         apply_rust_macro_wrapped_assertion_limit, changed_rust_line_count,
         cross_language_limit_kind, diff_changed_rust_line_limit_from_env,
         diff_identity_from_changed_files, diff_index_file_limit_from_env,
@@ -4384,6 +4417,7 @@ let _ = (result, note, raw);"##,
             literals: vec![],
             source_role: FunctionSourceRole::Production,
             attrs: attrs.into_iter().map(|s| s.to_string()).collect(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
         }
@@ -4506,6 +4540,88 @@ let _ = (result, note, raw);"##,
         assert_eq!(
             result, None,
             "Exposed class must not receive cross-language static_limit_kind regardless of FFI"
+        );
+    }
+
+    #[test]
+    fn pyo3_binding_attrs_are_ffi_on_the_function_or_its_impl() {
+        // PyO3's attributes do not contain the string `pyo3`.
+        for attr in ["#[pyfunction]", "#[pyclass]", "#[pymodule]"] {
+            let owner = ffi_function("src/lib.rs", "fee", vec![attr]);
+            assert!(owner_has_ffi_attr(&owner), "{attr} must mark an FFI owner");
+        }
+        let mut method = ffi_function("src/lib.rs", "charge", vec![]);
+        assert!(!owner_has_ffi_attr(&method));
+        method.impl_attrs = vec!["#[pymethods]".to_string()];
+        assert!(
+            owner_has_ffi_attr(&method),
+            "a method is exposed through its impl block's binding attribute"
+        );
+        let mut plain_method = ffi_function("src/lib.rs", "charge", vec![]);
+        plain_method.impl_attrs = vec!["#[derive(Debug)]".to_string()];
+        assert!(!owner_has_ffi_attr(&plain_method));
+    }
+
+    #[test]
+    fn cross_language_limit_replaces_the_co_located_test_step_on_no_static_path() {
+        let index = RustIndex {
+            functions: vec![ffi_function("src/lib.rs", "inner", vec!["#[pyfunction]"])],
+            ..RustIndex::default()
+        };
+        let mut finding = no_path_finding_with_infection_summary("changed", Vec::new());
+        finding.recommended_next_step = Some("add a co-located test".to_string());
+        let probe = finding.probe.clone();
+        apply_cross_language_limit(&mut finding, &probe, &index);
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::CrossLanguageOracleVisibilityUnresolved)
+        );
+        assert_eq!(
+            finding.recommended_next_step.as_deref(),
+            Some(StaticLimitKind::CrossLanguageOracleVisibilityUnresolved.describe())
+        );
+
+        // A gap class that already has reach keeps its own next step.
+        let mut weak = no_path_finding_with_infection_summary("changed", Vec::new());
+        weak.class = ExposureClass::WeaklyExposed;
+        weak.recommended_next_step = Some("strengthen the assertion".to_string());
+        apply_cross_language_limit(&mut weak, &probe, &index);
+        assert_eq!(
+            weak.static_limit_kind,
+            Some(StaticLimitKind::CrossLanguageOracleVisibilityUnresolved)
+        );
+        assert_eq!(
+            weak.recommended_next_step.as_deref(),
+            Some("strengthen the assertion")
+        );
+
+        // A no_static_path finding that already names a Rust reach
+        // limitation keeps it and its next step.
+        let mut witnessed = no_path_finding_with_infection_summary("changed", Vec::new());
+        witnessed.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
+        witnessed.recommended_next_step = Some("open the witnessing test".to_string());
+        apply_cross_language_limit(&mut witnessed, &probe, &index);
+        assert_eq!(
+            witnessed.static_limit_kind,
+            Some(StaticLimitKind::RustTransitiveReachUnresolved)
+        );
+        assert_eq!(
+            witnessed.recommended_next_step.as_deref(),
+            Some("open the witnessing test")
+        );
+
+        // A pure-Rust owner is untouched.
+        let pure = RustIndex {
+            functions: vec![ffi_function("src/lib.rs", "inner", vec![])],
+            ..RustIndex::default()
+        };
+        let mut plain = no_path_finding_with_infection_summary("changed", Vec::new());
+        plain.recommended_next_step = Some("add a co-located test".to_string());
+        apply_cross_language_limit(&mut plain, &probe, &pure);
+        assert_eq!(plain.static_limit_kind, None);
+        assert_eq!(
+            plain.recommended_next_step.as_deref(),
+            Some("add a co-located test")
         );
     }
 
