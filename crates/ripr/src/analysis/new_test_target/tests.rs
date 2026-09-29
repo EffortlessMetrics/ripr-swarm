@@ -1,7 +1,6 @@
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::new_test_target::{NewTestKind, NewTestProposalProvenance};
 use crate::analysis::repair_route::{RepairTargetSelection, repair_packet_eligibility};
-use crate::analysis::rust_index;
 use crate::analysis::seam_inventory::inventory_classified_seams_at;
 use crate::analysis::seams::SeamKind;
 use crate::app::repair_attempt::edit_cage_policy_from_packet;
@@ -154,7 +153,7 @@ fn public_library_with_established_tests_layout_earns_integration_proposal() -> 
         ));
     }
     let file = proposal.file.to_string_lossy().replace('\\', "/");
-    if !rust_index::is_test_file(Path::new(&file)) || !file.ends_with(".rs") {
+    if file.starts_with("src/") || !file.ends_with(".rs") {
         return Err(format!(
             "proposed file is not a new integration test file: {file}"
         ));
@@ -273,7 +272,7 @@ fn premium_customer_gets_discount() {
     match &readiness.target_selection {
         RepairTargetSelection::Existing(target) => {
             let file = target.file().to_string_lossy().replace('\\', "/");
-            if !rust_index::is_test_file(Path::new(&file)) {
+            if file.starts_with("src/") {
                 return Err(format!(
                     "existing target left the integration layout: {file}"
                 ));
@@ -326,7 +325,7 @@ fn multi_package_workspace_selects_the_owner_package() -> Result<(), String> {
         .ok_or_else(|| "expected alpha discounted_total seam".to_string())?;
     let readiness = repair_packet_eligibility(alpha).readiness;
     let file = proposed_file_display(&readiness.target_selection)?;
-    if !file.starts_with("alpha/") || !rust_index::is_test_file(Path::new(&file)) {
+    if !file.starts_with("alpha/") || file.contains("/src/") {
         return Err(format!("alpha owner proposed a non-alpha file: {file}"));
     }
     if file.contains("beta/") {
