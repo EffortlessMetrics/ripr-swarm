@@ -94,7 +94,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
         ok &= report_doctor_core_check(&report, &format!("tool_{tool}"));
     }
 
-    print_doctor_start_here_guidance(&root);
+    print_doctor_start_here_guidance(&root, &report);
 
     if ok && report.status == output::doctor::DoctorStatus::Pass {
         println!("✓ doctor checks passed");
@@ -154,13 +154,16 @@ fn report_doctor_core_check(report: &output::doctor::DoctorReport, name: &str) -
     check.status != output::doctor::DoctorCheckStatus::Fail
 }
 
-fn print_doctor_start_here_guidance(root: &Path) {
-    // First-run honesty: name the packet only as present when it exists.
-    // An unconditional path reads as an existing artifact on a fresh
-    // workspace where `ripr first-pr` has never run (RIPR-SPEC-0051 names
-    // the path, not its existence). `is_file` (not `exists`) so a directory
-    // squatting the packet path cannot read as openable evidence.
-    // The safe next action follows the packet's existence, because `first-pr`
+fn print_doctor_start_here_guidance(root: &Path, report: &output::doctor::DoctorReport) {
+    // First-run honesty: name the packet as present only when it exists and
+    // was written by this ripr. An unconditional path reads as an existing
+    // artifact on a fresh workspace where `ripr first-pr` has never run
+    // (RIPR-SPEC-0051 names the path, not its existence). A packet without
+    // this ripr's `ripr_version` is stale_evidence after an upgrade: 0.10
+    // packets have no version field, so existence alone cannot be trusted
+    // (#4757). `is_file` (not `exists`) so a directory squatting the packet
+    // path cannot read as openable evidence.
+    // The safe next action follows the packet's freshness, because `first-pr`
     // composes the packet out of artifacts `ripr check` produces -- it runs no
     // analysis of its own (the boundary `help --all` states). Recommending it
     // on a fresh workspace dead-ends: measured, it returns `missing_artifacts`
@@ -168,12 +171,25 @@ fn print_doctor_start_here_guidance(root: &Path) {
     // command this same screen already prints three lines below. Two different
     // first commands on one screen, one of which bounces straight back to the
     // other, is not a route.
-    if root.join("target/ripr/reports/start-here.md").is_file() {
-        println!("- Start-here packet: target/ripr/reports/start-here.md (present; open it first)");
-        println!(
-            "- Safe next action: open that packet; `ripr first-pr --root {} --base <ref> --head HEAD` refreshes it",
-            root.display()
-        );
+    let md = root.join("target/ripr/reports/start-here.md");
+    if md.is_file() {
+        let json = root.join("target/ripr/reports/start-here.json");
+        let freshness = crate::output::first_pr::start_here_json_version_freshness(&json);
+        if let Some(detail) = crate::output::first_pr::start_here_version_stale_detail(&freshness) {
+            println!("- Start-here packet: target/ripr/reports/start-here.md ({detail})");
+            println!(
+                "- Safe next action: `ripr first-pr --root {} --base <ref> --head HEAD` refreshes it",
+                root.display()
+            );
+        } else {
+            println!(
+                "- Start-here packet: target/ripr/reports/start-here.md (present; open it first)"
+            );
+            println!(
+                "- Safe next action: open that packet; `ripr first-pr --root {} --base <ref> --head HEAD` refreshes it",
+                root.display()
+            );
+        }
     } else {
         println!(
             "- Start-here packet: target/ripr/reports/start-here.md (not yet generated; `ripr first-pr` composes it once analysis evidence exists)"
@@ -193,18 +209,27 @@ fn print_doctor_start_here_guidance(root: &Path) {
     // silently exclude the user's draft (the RIPR-SPEC-0112 dirty-worktree case).
     // Route them to the command that actually covers their edits instead of the
     // one that looks clean while ignoring them. Reuses the same helper as the
-    // check-time disclosure (reuse, don't fork).
-    if analysis::working_tree_has_tracked_changes(root) {
-        println!("- Recommended first command: ripr check --base HEAD --worktree");
-        println!(
-            "- Scope note: `--worktree` analyzes staged and unstaged tracked edits; untracked files remain out of scope until staged or supplied through `--diff`."
-        );
-    } else {
-        // No `--base origin/main`: this screen is read in whatever repository
-        // the user has, and that ref does not exist in one whose default
-        // branch is not `main`. Without a base, the loader resolves the
-        // repository's own default (`analysis::diff::load::resolve_default_base`).
-        println!("- Recommended first command: ripr check");
+    // check-time disclosure (reuse, don't fork). When git cannot run, both
+    // `ripr check` and `--worktree` fail the same way; name the `--diff` route
+    // instead and do not probe the worktree (#4735).
+    let first = output::doctor::DoctorFirstCommand::resolve(
+        output::doctor::git_tool_can_run(report),
+        || analysis::working_tree_has_tracked_changes(root),
+    );
+    println!("- Recommended first command: {}", first.command_line());
+    match first {
+        output::doctor::DoctorFirstCommand::Worktree => {
+            println!(
+                "- Scope note: `--worktree` analyzes staged and unstaged tracked edits; untracked files remain out of scope until staged or supplied through `--diff`."
+            );
+        }
+        output::doctor::DoctorFirstCommand::DefaultCheck => {
+            // No `--base origin/main`: this screen is read in whatever repository
+            // the user has, and that ref does not exist in one whose default
+            // branch is not `main`. Without a base, the loader resolves the
+            // repository's own default (`analysis::diff::load::resolve_default_base`).
+        }
+        output::doctor::DoctorFirstCommand::SavedDiff => {}
     }
 }
 
