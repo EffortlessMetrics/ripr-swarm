@@ -4,6 +4,7 @@
   "title": "RIPR Executed Control V1",
   "description": "Closed obligation/result vocabulary that distinguishes an executed discriminating control from an ordinary positive test or review argument. Domain validation owns satisfaction laws; this schema closes the wire shape.",
   "type": "object",
+  "required": ["schema_version"],
   "properties": {
     "schema_version": { "const": "1" }
   },
