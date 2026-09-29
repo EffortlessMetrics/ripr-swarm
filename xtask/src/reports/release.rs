@@ -1996,9 +1996,9 @@ pub(crate) fn produce_authentic_chain_with_execution(
 ) -> Result<Vec<String>, String> {
     let before_name = "before.repo-exposure.json";
     let after_name = "after.repo-exposure.json";
-    checkout_fixture_commit(root, before_commit)?;
+    execution.fixture_checkout(root, before_commit)?;
     let _before = run_producer_with_execution(execution, root, before_name)?;
-    checkout_fixture_commit(root, after_commit)?;
+    execution.fixture_checkout(root, after_commit)?;
     let _after = run_producer_with_execution(execution, root, after_name)?;
     validate_authentic_artifact(&root.join(before_name), before_commit, "before")?;
     validate_authentic_artifact(&root.join(after_name), after_commit, "after")?;

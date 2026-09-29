@@ -132,8 +132,6 @@ cleanup taxonomy, downstream packets, blind acceptance and #2769 aggregation
 remain out of scope. The source candidate and controls are committed; successor
 compilation and actual execution of the new controls remain NOT_RUN.
 
-## Later shared-harness scope (not the first PR)
-
 The qualified authentic baseline also takes its fixture bytes from the admitted
 source's retained committed blobs through the opaque installed candidate. It
 does not read the launch directory's fixture. Qualified fixture Git operations
@@ -144,6 +142,8 @@ configuration so a source workspace's forced TEMP cannot redirect builds.
 The external authentic fixture owns its existing Cargo target and temporary
 configuration. These corrections and the legal wrong-tree registry control are
 source changes; compilation and actual end-to-end execution remain NOT_RUN.
+
+## Later shared-harness scope (not the first PR)
 
 Private release submodule xtask/src/reports/release/candidate_harness.rs plus tests.rs, called from release.rs existing install path; candidate_registry existing grant accessor only as needed; run.rs narrow captured typed observation extension only if absent; release-server sha256_file and existing path/container helpers reused. One private CandidateProofPacket DTO/render projection exported through existing reports module for4505-4508. No new release-readiness command/qualification aggregate. No public crate/deps.
 
