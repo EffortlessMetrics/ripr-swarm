@@ -9,6 +9,7 @@ mod facts;
 pub(crate) mod harness_projection;
 mod language;
 pub(crate) mod new_test_target;
+pub(crate) mod path_glob;
 mod pipeline;
 mod probes;
 pub(crate) mod repair_route;
@@ -36,7 +37,8 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    load_diff, load_worktree_diff, parse_unified_diff, resolve_base_commit, resolve_effective_base,
+    load_diff, load_diff_range_with_deadline, load_worktree_diff, no_merge_base_diagnosis,
+    parse_unified_diff, resolve_base_commit, resolve_effective_base,
     working_tree_has_tracked_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
@@ -62,7 +64,7 @@ pub(crate) use seam_classification::SeamGripClassCounts;
 pub(crate) use seam_classification::classify_seam;
 pub(crate) use seam_inventory::{
     DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, DiffScopeEvidenceStages, ScopedClassifiedSeamInventory,
-    SeamLimitInfo, SeamLimitSource, apply_pilot_seam_budget,
+    SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError, apply_pilot_seam_budget,
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
