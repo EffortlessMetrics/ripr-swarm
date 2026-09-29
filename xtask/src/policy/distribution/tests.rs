@@ -3,11 +3,16 @@ use super::*;
 const CONTRACT_TEXT: &str = include_str!("../../../../policy/distribution.toml");
 const WORKSPACE_TEXT: &str = include_str!("../../../../Cargo.toml");
 const CRATE_TEXT: &str = include_str!("../../../../crates/ripr/Cargo.toml");
+const ROOT_APACHE_TEXT: &str = include_str!("../../../../LICENSE-APACHE");
+const ROOT_MIT_TEXT: &str = include_str!("../../../../LICENSE-MIT");
 const NPM_MANIFEST_TEXT: &str = include_str!("../../../../packaging/npm/launcher/package.json");
 const NPM_BIN_TEXT: &str = include_str!("../../../../packaging/npm/launcher/bin/ripr.cjs");
 const NPM_LIBRARY_TEXT: &str = include_str!("../../../../packaging/npm/launcher/lib/launcher.cjs");
 const NPM_TEST_TEXT: &str =
     include_str!("../../../../packaging/npm/launcher/test/launcher.test.cjs");
+const NPM_APACHE_TEXT: &str =
+    include_str!("../../../../packaging/npm/launcher/LICENSE-APACHE");
+const NPM_MIT_TEXT: &str = include_str!("../../../../packaging/npm/launcher/LICENSE-MIT");
 
 fn parsed_contract(text: &str) -> Result<DistributionContract, String> {
     parse_distribution_contract(CONTRACT_PATH, text)
@@ -43,6 +48,43 @@ fn valid_contract_matches_workspace_crate_and_npm_launcher() -> Result<(), Strin
     let violations = evaluated(CONTRACT_TEXT, WORKSPACE_TEXT, CRATE_TEXT, NPM_MANIFEST_TEXT)?;
     assert!(violations.is_empty(), "{violations:#?}");
     Ok(())
+}
+
+#[test]
+fn npm_license_copies_match_repository_notices() {
+    let mut violations = Vec::new();
+    npm_launcher::validate_license_copy(
+        LICENSE_APACHE_PATH,
+        ROOT_APACHE_TEXT,
+        npm_launcher::LICENSE_APACHE_PATH,
+        NPM_APACHE_TEXT,
+        &mut violations,
+    );
+    npm_launcher::validate_license_copy(
+        LICENSE_MIT_PATH,
+        ROOT_MIT_TEXT,
+        npm_launcher::LICENSE_MIT_PATH,
+        NPM_MIT_TEXT,
+        &mut violations,
+    );
+    assert!(violations.is_empty(), "{violations:#?}");
+}
+
+#[test]
+fn npm_license_copy_drift_is_rejected() {
+    let mut violations = Vec::new();
+    npm_launcher::validate_license_copy(
+        LICENSE_APACHE_PATH,
+        ROOT_APACHE_TEXT,
+        npm_launcher::LICENSE_APACHE_PATH,
+        &format!("{NPM_APACHE_TEXT}\nchanged\n"),
+        &mut violations,
+    );
+    assert!(violations.iter().any(|violation| {
+        violation.contains(npm_launcher::LICENSE_APACHE_PATH)
+            && violation.contains(LICENSE_APACHE_PATH)
+            && violation.contains("byte-identical")
+    }));
 }
 
 #[test]
@@ -172,9 +214,16 @@ fn npm_launcher_source_guards_reject_removed_safety_rails() -> Result<(), String
         npm_launcher::BIN_PATH,
         NPM_BIN_TEXT,
         npm_launcher::LIBRARY_PATH,
-        &NPM_LIBRARY_TEXT.replace("shell: false", "shell: true"),
+        &NPM_LIBRARY_TEXT
+            .replace("shell: false", "shell: true")
+            .replace(
+                "process.exitCode = signalExitCode",
+                "process.exitCode = 0",
+            ),
         npm_launcher::TEST_PATH,
-        &NPM_TEST_TEXT.replace("PATH-FALLBACK", "removed-control"),
+        &NPM_TEST_TEXT
+            .replace("PATH-FALLBACK", "removed-control")
+            .replace("RIPR_UNKNOWN_SIGNAL", "removed-signal-control"),
         &mut violations,
     );
     assert!(
@@ -186,6 +235,16 @@ fn npm_launcher_source_guards_reject_removed_safety_rails() -> Result<(), String
         violations
             .iter()
             .any(|violation| violation.contains("PATH-FALLBACK"))
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("signalExitCode"))
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("RIPR_UNKNOWN_SIGNAL"))
     );
     assert!(!contract.npm.install_scripts);
     Ok(())
