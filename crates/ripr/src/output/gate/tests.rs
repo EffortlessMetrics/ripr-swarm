@@ -473,6 +473,88 @@ fn gate_calibrated_mode_blocks_new_supported_candidate() -> Result<(), String> {
     Ok(())
 }
 
+// -- #4724 regression: a baseline must be a recognized baseline shape --
+
+#[test]
+fn given_baseline_of_unrecognized_kind_when_gate_evaluated_then_config_error() -> Result<(), String>
+{
+    let cases = [
+        ("empty-object.json", "{}", "no identity array found"),
+        ("array.json", "[]", "expected a JSON object"),
+        (
+            "other-kind.json",
+            r#"{"schema_version":"0.1","kind":"gap_ledger","entries":[]}"#,
+            "field `kind` is \"gap_ledger\"",
+        ),
+        (
+            "kind-without-entries.json",
+            r#"{"schema_version":"0.1","kind":"gate_baseline"}"#,
+            "requires an `entries` array",
+        ),
+        (
+            "no-identity-array.json",
+            r#"{"schema_version":"0.1","records":[{"seam_id":"8f7fa8644fd12280"}]}"#,
+            "no identity array found",
+        ),
+    ];
+    for mode in [GateMode::BaselineCheck, GateMode::CalibratedGate] {
+        for (name, contents, expected_defect) in cases {
+            let dir = temp_dir("gate-baseline-kind")?;
+            let baseline = write_temp_json(&dir, name, contents)?;
+            let mut input = fixture_input(mode)?;
+            input.baseline = Some(baseline);
+            let report = build_gate_decision_report(&input)?;
+            assert_eq!(
+                report.status,
+                "config_error",
+                "{} {name}: an unrecognized baseline must be config_error, got {:?}",
+                mode.as_str(),
+                report.status,
+            );
+            assert!(
+                report.config_errors.iter().any(|error| error.contains(name)
+                    && error.contains("is not a recognized gate baseline")
+                    && error.contains(expected_defect)),
+                "{} {name}: config_errors must name `{expected_defect}`, got {:?}",
+                mode.as_str(),
+                report.config_errors,
+            );
+            ignore_remove_dir_all(dir);
+        }
+    }
+
+    // Documented compatibility shapes stay accepted (docs/CI.md): a
+    // `gate_baseline` ledger, a hand-built `decisions` baseline, and a
+    // review-comments document whose ids are indexed.
+    for (name, contents) in [
+        (
+            "ledger.json",
+            r#"{"schema_version":"0.1","kind":"gate_baseline","entries":[]}"#,
+        ),
+        (
+            "decisions.json",
+            r#"{"schema_version":"0.1","decisions":[]}"#,
+        ),
+        (
+            "comments.json",
+            r#"{"schema_version":"0.1","tool":"ripr","status":"advisory","comments":[]}"#,
+        ),
+    ] {
+        let dir = temp_dir("gate-baseline-kind-ok")?;
+        let baseline = write_temp_json(&dir, name, contents)?;
+        let mut input = fixture_input(GateMode::BaselineCheck)?;
+        input.baseline = Some(baseline);
+        let report = build_gate_decision_report(&input)?;
+        assert!(
+            report.config_errors.is_empty(),
+            "{name}: a recognized baseline shape must not be a config error, got {:?}",
+            report.config_errors,
+        );
+        ignore_remove_dir_all(dir);
+    }
+    Ok(())
+}
+
 #[test]
 fn gate_calibrated_mode_uses_imported_mutation_support() -> Result<(), String> {
     let dir = temp_dir("gate-mutation-calibrated")?;
