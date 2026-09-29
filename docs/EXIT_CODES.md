@@ -103,7 +103,10 @@ enabled language runtimes stay visible but do not decide that profile's exit.
 In generated GitHub Actions workflows, ripr preserves the exit code:
 
 ```yaml
-ripr check --root . --mode draft --format json > check.json || check_status=$?
+ripr check \
+  --root . \
+  --base "origin/${{ github.base_ref }}" \
+  --format json > target/ripr/pr/check.json || check_status=$?
 ```
 
 The `|| check_status=$?` pattern captures the exit code without failing the
