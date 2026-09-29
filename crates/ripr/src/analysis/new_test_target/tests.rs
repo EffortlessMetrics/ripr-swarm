@@ -555,3 +555,165 @@ fn premium_customer_gets_discount() {
     );
     Ok(())
 }
+
+/// Negative: a retained `src/lib.rs` is not a Cargo library target when
+/// `autolib = false` and no explicit `[lib]` table exists. File presence
+/// alone must not earn a proposal.
+#[test]
+fn retained_lib_rs_with_autolib_false_and_no_explicit_lib_stays_missing() -> Result<(), String> {
+    let root = claim_root("autolib-off")?;
+    write_file(
+        &root.0,
+        "Cargo.toml",
+        "[package]\nname = \"pricing\"\nversion = \"0.1.0\"\nedition = \"2024\"\nautolib = false\n",
+    )?;
+    write_file(&root.0, "src/lib.rs", public_library_source())?;
+    write_file(&root.0, "tests/smoke.rs", unrelated_smoke_test())?;
+
+    let classified = inventory_classified_seams_at(&root.0)?;
+    let entry = boundary_entry(&classified)?;
+    let readiness = repair_packet_eligibility(entry).readiness;
+
+    if matches!(
+        readiness.target_selection,
+        RepairTargetSelection::Proposed(_)
+    ) {
+        return Err(format!(
+            "autolib=false without [lib] must not earn a proposal: {:?}",
+            readiness.target_selection
+        ));
+    }
+    if !matches!(readiness.target_selection, RepairTargetSelection::Missing) {
+        return Err(format!(
+            "expected Missing, got {:?}",
+            readiness.target_selection
+        ));
+    }
+    let missing = readiness.missing_evidence.join(" | ");
+    if !missing.contains("library") && !missing.contains("unresolved") {
+        return Err(format!(
+            "Missing must name the library-target blocker, got {missing:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// Positive: an explicit `[lib]` table still admits the package when
+/// `autolib = false`. Cargo keeps the declared library; only autodiscovery
+/// is suppressed.
+#[test]
+fn explicit_lib_under_autolib_false_still_earns_integration_proposal() -> Result<(), String> {
+    let root = claim_root("autolib-off-explicit-lib")?;
+    write_file(
+        &root.0,
+        "Cargo.toml",
+        "[package]\nname = \"pricing\"\nversion = \"0.1.0\"\nedition = \"2024\"\nautolib = false\n\n[lib]\npath = \"src/lib.rs\"\n",
+    )?;
+    write_file(&root.0, "src/lib.rs", public_library_source())?;
+    write_file(&root.0, "tests/smoke.rs", unrelated_smoke_test())?;
+
+    let classified = inventory_classified_seams_at(&root.0)?;
+    let entry = boundary_entry(&classified)?;
+    let readiness = repair_packet_eligibility(entry).readiness;
+
+    let file = proposed_file_display(&readiness.target_selection)?;
+    if file.starts_with("src/") || !file.ends_with(".rs") {
+        return Err(format!(
+            "explicit [lib] under autolib=false proposed a non-test file: {file}"
+        ));
+    }
+    if !readiness.is_repair_ready() {
+        return Err(format!(
+            "explicit [lib] under autolib=false was not ready: {readiness:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// Negative: a dangling leaf at every safe candidate is occupancy, not
+/// absence. `exists`/`try_exists` follow the link and would treat the
+/// path as free; no-follow metadata must refuse it.
+#[cfg(unix)]
+#[test]
+fn dangling_proposed_file_symlink_is_not_a_new_safe_target() -> Result<(), String> {
+    let root = claim_root("dangling-symlink")?;
+    write_ordinary_package(&root.0, "pricing", None)?;
+    dangling_symlink(&root.0, "tests/discounted_total.rs")?;
+    dangling_symlink(&root.0, "tests/discounted_total_boundary.rs")?;
+
+    let classified = inventory_classified_seams_at(&root.0)?;
+    let entry = boundary_entry(&classified)?;
+    let readiness = repair_packet_eligibility(entry).readiness;
+
+    if let RepairTargetSelection::Proposed(proposal) = &readiness.target_selection {
+        return Err(format!(
+            "dangling proposed-file symlink must not be admitted as {}: {:?}",
+            proposal.file.display(),
+            proposal.kind
+        ));
+    }
+    if !matches!(readiness.target_selection, RepairTargetSelection::Missing) {
+        return Err(format!(
+            "expected Missing after occupied candidate leaves, got {:?}",
+            readiness.target_selection
+        ));
+    }
+    let missing = readiness.missing_evidence.join(" | ");
+    if !missing.contains("collid") && !missing.contains("exist") && !missing.contains("path") {
+        return Err(format!(
+            "Missing must name the occupied-leaf blocker, got {missing:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// The first occupied dangling leaf is skipped; a genuinely absent
+/// second candidate may still earn a proposal.
+#[cfg(unix)]
+#[test]
+fn dangling_first_candidate_skips_to_a_free_boundary_file() -> Result<(), String> {
+    let root = claim_root("dangling-first")?;
+    write_ordinary_package(&root.0, "pricing", None)?;
+    dangling_symlink(&root.0, "tests/discounted_total.rs")?;
+
+    let classified = inventory_classified_seams_at(&root.0)?;
+    let entry = boundary_entry(&classified)?;
+    let readiness = repair_packet_eligibility(entry).readiness;
+    let file = proposed_file_display(&readiness.target_selection)?;
+    if file.ends_with("tests/discounted_total.rs") {
+        return Err(format!(
+            "first-candidate dangling symlink was treated as a new file: {file}"
+        ));
+    }
+    if !file.ends_with("tests/discounted_total_boundary.rs") {
+        return Err(format!("expected the free boundary candidate, got {file}"));
+    }
+    if leaf_is_present(&root.0.join(&file))? {
+        return Err(format!("second candidate was not a free leaf: {file}"));
+    }
+    if !readiness.is_repair_ready() {
+        return Err(format!(
+            "free second candidate was not ready: {readiness:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn dangling_symlink(root: &Path, relative: &str) -> Result<(), String> {
+    let path = root.join(relative);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("create {}: {error}", parent.display()))?;
+    }
+    std::os::unix::fs::symlink("ripr-4576-missing-target", &path)
+        .map_err(|error| format!("symlink {relative}: {error}"))
+}
+
+fn leaf_is_present(path: &Path) -> Result<bool, String> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("inspect {}: {error}", path.display())),
+    }
+}
