@@ -31,6 +31,7 @@ Issues = "https://github.com/EffortlessMetrics/ripr/issues"
 
 [tool.maturin]
 bindings = "bin"
+targets = [{ name = "ripr", kind = "bin" }]
 manifest-path = "../../crates/ripr/Cargo.toml"
 locked = true
 strip = true
