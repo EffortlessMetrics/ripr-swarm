@@ -1929,9 +1929,9 @@ fn limitations_for_absent_changed_files(
             )
             .with_path(&display)?
             .with_affected_items(1)?
-            .with_detail(format!(
-                "changed file `{display}` is absent from the working tree (sparse checkout or local delete); probes for this file were withheld"
-            ))
+            .with_detail(
+                "changed file is absent from the working tree (sparse checkout or local delete); probes for this file were withheld",
+            )
         })
         .collect()
 }
@@ -2129,10 +2129,11 @@ mod tests {
         diff_identity_from_changed_files, diff_index_file_limit_from_env,
         enforce_changed_rust_line_limit, enforce_repo_index_file_limit, is_binary_source_path,
         is_cargo_binary_invocation, is_generated_rust_file, is_generated_rust_file_with_patterns,
-        macro_reach_limit_kind, owner_has_ffi_attr, partial_diff_budgets_from_env,
-        partition_canonical_form, replace_witnessed_no_path_infection_summary,
-        repo_index_file_limit_from_env, select_partial_diff_partition,
-        select_partial_diff_partition_with_identity, sha256_hex, transitive_reach_limit_kind,
+        limitations_for_absent_changed_files, macro_reach_limit_kind, owner_has_ffi_attr,
+        partial_diff_budgets_from_env, partition_canonical_form,
+        replace_witnessed_no_path_infection_summary, repo_index_file_limit_from_env,
+        select_partial_diff_partition, select_partial_diff_partition_with_identity, sha256_hex,
+        transitive_reach_limit_kind,
     };
     use crate::analysis::cancellation;
     use crate::analysis::diff::{ChangedFile, ChangedLine};
@@ -2338,14 +2339,45 @@ mod tests {
         assert_eq!(limitation.affected_items, Some(1));
         let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
         assert!(
-            detail.contains("src/lib.rs") && detail.contains("absent from the working tree"),
-            "detail must name the dropped file, got {detail:?}"
+            detail.contains("absent from the working tree"),
+            "detail must name the limitation, got {detail:?}"
         );
         assert!(
             limitation.recovery.detail.contains("sparse checkout")
                 && limitation.recovery.detail.contains("Check out"),
             "recovery must tell the operator to restore the file: {}",
             limitation.recovery.detail
+        );
+        Ok(())
+    }
+
+    /// #4586: a deep absent path must still produce the typed limitation.
+    /// Embedding the path in `bounded_detail` would exceed 512 characters
+    /// and abort the run.
+    #[test]
+    fn absent_file_limitation_survives_a_detail_over_budget_path() -> Result<(), String> {
+        let deep = format!("src/{}missing.rs", "deep/".repeat(90));
+        assert!(
+            format!(
+                "changed file `{deep}` is absent from the working tree (sparse checkout or local delete); probes for this file were withheld"
+            )
+            .chars()
+            .count()
+                > crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS,
+            "fixture must exceed the detail budget when the path is interpolated"
+        );
+        let limitations = limitations_for_absent_changed_files(&[std::path::PathBuf::from(&deep)])?;
+        assert_eq!(limitations.len(), 1);
+        assert_eq!(limitations[0].path.as_deref(), Some(deep.as_str()));
+        let detail = limitations[0].bounded_detail.as_deref().unwrap_or_default();
+        assert!(
+            detail.chars().count() <= crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS,
+            "detail must stay bounded, got {} chars",
+            detail.chars().count()
+        );
+        assert!(
+            detail.contains("absent from the working tree"),
+            "detail must still name the limitation: {detail}"
         );
         Ok(())
     }

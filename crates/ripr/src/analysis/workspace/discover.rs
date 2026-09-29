@@ -58,7 +58,11 @@ fn worktree_contains_regular_source_file(root: &Path, relative: &Path) -> bool {
     let normalized = super::classify::normalize_path(relative);
     let root_norm = super::classify::normalize_path(root);
     for (prefix, suffix) in path_prefix_suffix_pairs(&normalized) {
-        if !root_ends_with_prefix(&root_norm, prefix) {
+        // A one-component prefix (`src`) matching only the root
+        // basename would map `src/lib.rs` onto a root-level `lib.rs`
+        // when `--root` itself is named `src`. Require a multi-segment
+        // crate/repo prefix, as in `crates/ripr/examples/sample`.
+        if !prefix.contains('/') || !root_ends_with_prefix(&root_norm, prefix) {
             continue;
         }
         if is_regular_file(&root.join(suffix)) {
@@ -341,6 +345,30 @@ mod tests {
                 PathBuf::from("crates/ripr/examples/sample/src/missing.rs"),
             ]
         );
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #4586: a `--root` whose last component is `src` must not treat a
+    /// root-level `lib.rs` as the missing nested `src/lib.rs`.
+    #[test]
+    fn single_component_root_basename_does_not_mask_nested_absent_file()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-absent-worktree-src-root-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        let crate_root = dir.join("src");
+        fs::create_dir_all(&crate_root)?;
+        fs::write(crate_root.join("lib.rs"), "pub fn one() -> i32 { 1 }\n")?;
+
+        let absent =
+            changed_source_files_absent_from_worktree(&crate_root, [Path::new("src/lib.rs")]);
+        assert_eq!(absent, vec![PathBuf::from("src/lib.rs")]);
 
         let _ = fs::remove_dir_all(&dir);
         Ok(())

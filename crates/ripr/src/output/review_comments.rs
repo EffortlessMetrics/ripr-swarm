@@ -1469,6 +1469,7 @@ fn push_analysis_scope_summary(lines: &mut Vec<String>, value: Option<&Value>) {
         let listed = absent
             .iter()
             .filter_map(Value::as_str)
+            .map(code_span)
             .collect::<Vec<_>>()
             .join(", ");
         lines.push(format!(
@@ -1586,6 +1587,34 @@ mod tests {
         );
         assert!(rendered.contains("  - state: `open`"), "{rendered}");
     }
+
+    /// #4586: an absent path with Markdown-active characters must stay inside
+    /// a code span so `@mention` / backticks cannot fire when posted.
+    #[test]
+    fn absent_changed_file_markdown_keeps_markup_inert() {
+        let scope = json!({
+            "scope": "diff_scoped_changed_files",
+            "run_status": "limited_diff_scope",
+            "production_files_considered": 0,
+            "classified_seams_considered": 0,
+            "absent_changed_files": ["src/@octocat/`tick`.rs"]
+        });
+        let mut lines = Vec::new();
+        push_analysis_scope_summary(&mut lines, Some(&scope));
+        let rendered = lines.join("\n");
+        assert!(
+            rendered.contains(&format!(
+                "dropped file(s): {}",
+                code_span("src/@octocat/`tick`.rs")
+            )),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("dropped file(s): src/@octocat/"),
+            "raw path must not appear outside a code span:\n{rendered}"
+        );
+    }
+
     use crate::analysis::ClassifiedSeam;
     use crate::analysis::canonical_gap::canonical_gap_identity;
     use crate::analysis::seams::{
