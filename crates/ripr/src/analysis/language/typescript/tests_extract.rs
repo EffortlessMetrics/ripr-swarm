@@ -1618,16 +1618,8 @@ fn title_argument(
         oxc_ast::ast::Argument::TemplateLiteral(template) if template.single_quasi().is_some() => {
             template.single_quasi().map(|quasi| quasi.to_string())
         }
-        // Computed titles are rare, so count this one line directly; the
-        // `&str` callers carry no line index, and `line_for_offset` exists
-        // only as a test oracle.
         _ => Some(computed_title(
-            1 + source
-                .as_bytes()
-                .iter()
-                .take(registration_start)
-                .filter(|&&byte| byte == b'\n')
-                .count(),
+            SourceText::new(source).line_for_offset(registration_start),
         )),
     }
 }
