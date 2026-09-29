@@ -2480,12 +2480,14 @@ mod tests {
             1,
             "one test must occupy one related_tests row, not one row per oracle: {named:?}"
         );
-        let combinations = related
-            .iter()
-            .find(|test| test.name == "combinations_inexact_size_hints")
-            .expect("combinations test listed");
-        assert_eq!(combinations.oracle_strength, OracleStrength::Strong);
-        assert_eq!(combinations.oracle_kind, OracleKind::ExactValue);
+        assert_eq!(
+            related
+                .iter()
+                .find(|test| test.name == "combinations_inexact_size_hints")
+                .map(|test| (test.oracle_strength, test.oracle_kind)),
+            Some((OracleStrength::Strong, OracleKind::ExactValue)),
+            "combinations test listed once with strongest oracle: {named:?}"
+        );
     }
 
     #[test]
