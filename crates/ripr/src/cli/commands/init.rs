@@ -5,6 +5,7 @@ use crate::cli::help;
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::unknown_argument;
 use crate::config::{CONFIG_FILE_NAME, generated_init_config};
+use crate::output;
 use crate::output::first_pr::{
     MANUAL_RECEIPT_LABEL, MANUAL_VERIFY_LABEL, RECEIPT_AFTER_VERIFY_LABEL,
     REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, VERIFY_AFTER_EDIT_LABEL,
@@ -200,14 +201,20 @@ fn apply_init_plan(plan: &[InitTarget]) -> Result<(), String> {
     for target in plan {
         match target.action {
             InitAction::LeaveUnchanged => {
-                println!("Left existing {} unchanged", target.path.display());
+                println!(
+                    "Left existing {} unchanged",
+                    output::path::human_path(&target.path)
+                );
             }
             InitAction::Create => {
                 write_init_target(target)?;
                 wrote_any = true;
             }
             InitAction::Overwrite => {
-                println!("Overwrote existing {}", target.path.display());
+                println!(
+                    "Overwrote existing {}",
+                    output::path::human_path(&target.path)
+                );
                 write_init_target(target)?;
                 wrote_any = true;
             }
@@ -263,7 +270,7 @@ fn write_init_target(target: &InitTarget) -> Result<(), String> {
     use std::io::Write;
     file.write_all(target.body.as_bytes())
         .map_err(|err| format!("write {} failed: {err}", target.path.display()))?;
-    println!("Wrote {}", target.path.display());
+    println!("Wrote {}", output::path::human_path(&target.path));
     Ok(())
 }
 
@@ -308,20 +315,29 @@ fn parse_init_ci(value: &str) -> Result<InitCi, String> {
 /// generated workflow. Previously this printed bodies only, so `--dry-run`
 /// never named its targets or said that nothing had been written.
 fn print_init_dry_run(plan: &[InitTarget]) {
-    println!("ripr init plan (dry run — nothing was written)");
+    print!("{}", render_init_dry_run(plan, cfg!(windows)));
+}
+
+/// The dry-run text, pure over the host separator rule so the Windows
+/// rendering is testable anywhere (#4378): a forward-slash `--root` argv
+/// prefix and the joined `\ripr.toml` suffix render as one slash path.
+fn render_init_dry_run(plan: &[InitTarget], windows: bool) -> String {
+    let path = |target: &InitTarget| {
+        output::path::human_path_text(&target.path.to_string_lossy(), windows)
+    };
+    let mut text = String::from("ripr init plan (dry run — nothing was written)\n");
     for target in plan {
-        println!("  {} {}", target.action.label(), target.path.display());
+        text.push_str(&format!("  {} {}\n", target.action.label(), path(target)));
     }
     for target in plan {
         if target.action == InitAction::LeaveUnchanged {
             continue;
         }
-        println!();
-        println!("# {}", target.path.display());
-        print!("{}", target.body);
+        text.push_str(&format!("\n# {}\n", path(target)));
+        text.push_str(&target.body);
     }
-    println!();
-    println!("Rerun without --dry-run to apply.");
+    text.push_str("\nRerun without --dry-run to apply.\n");
+    text
 }
 
 fn init_ci_workflow_path(root: &Path, ci: &InitCi) -> PathBuf {
@@ -376,6 +392,14 @@ env:
   #           pull-requests: write, which this workflow grants)
   RIPR_COMMENT_MODE: ${{ vars.RIPR_COMMENT_MODE || 'off' }}
 
+# One run per PR: a newer push cancels the older run. Only the newest head's
+# placements are valid, and two overlapping runs would each snapshot the
+# existing inline comments before either publishes, then both create the
+# same cards.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ripr:
     name: RIPR advisory reports
@@ -386,16 +410,28 @@ jobs:
     # blocking behaviour. See docs/CALIBRATED_GATE_POLICY.md.
     continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}
     steps:
+      # Analyze the PR head, not the default `refs/pull/N/merge` commit.
+      # Review comments and `::warning` annotations are placed on the PR
+      # head's lines; when the base branch has moved lines in a changed
+      # file, merge-commit line numbers point at the wrong line, and GitHub
+      # rejects the whole review when a line falls outside the PR diff.
+      # upload-sarif detects the head checkout and reports it as
+      # refs/pull/N/head. A manual run keeps the dispatched commit.
       - uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned to a commit SHA for the same reason as rust-cache below.
+      # dtolnay/rust-toolchain stable branch = 6bed0761d98439e5a578e2877258200ad565ba87.
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
 
-      # Cache the cargo registry, git checkouts, and dependency builds
-      # (#2008): an uncached `cargo install ripr --locked` recompiles for
-      # minutes on every PR. The install itself still runs (no stale-binary
-      # risk); the warm caches cut most of the compile.
+      # Cache the cargo registry, git checkouts, and installed binaries
+      # (#2008): an uncached `cargo install ripr` recompiles for minutes on
+      # every PR. The install below names an exact version, so a cached
+      # binary of that version is reused and any other version is rebuilt.
       # Pinned to a commit SHA (#2190 review): the generated workflow
       # grants pull-requests: write and security-events: write, so a
       # mutable third-party tag is a supply-chain risk in consumer repos.
@@ -404,8 +440,13 @@ jobs:
         with:
           shared-key: ripr-install
 
+      # Pinned to the ripr that generated this workflow. The steps below use
+      # that version's commands and flags; an unpinned install takes the
+      # newest crates.io release, whose CLI may not match. To upgrade,
+      # install the newer ripr and compare
+      # `ripr init --ci github --force --dry-run` with this file.
       - name: Install ripr
-        run: cargo install ripr --locked
+        run: cargo install ripr --version @RIPR_VERSION@ --locked
 
       - name: Generate RIPR pilot packet
         continue-on-error: true
@@ -543,7 +584,7 @@ jobs:
               | (.body // "") as $body
               | {
                   comment_id: .id,
-                  dedupe_key: ($body | capture("<!-- ripr:dedupe=(?<key>[^ ]+)").key),
+                  dedupe_key: ($body | capture("<!-- ripr:dedupe=(?<key>.*?)(?: presentation=[^ ]+)? -->").key),
                   path: .path,
                   line: (.line // .original_line),
                   side: (.side // "RIGHT"),
@@ -565,6 +606,8 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          RIPR_ACTOR: ${{ github.actor }}
+          RIPR_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           mkdir -p target/ripr/review
           comment_args=(
@@ -587,7 +630,15 @@ jobs:
           else
             comment_args+=(--no-token)
           fi
-          comment_args+=(--write-permission)
+          # GitHub gives Dependabot runs a read-only token whatever the
+          # permissions block says, so the plan must not claim write. Check
+          # the PR author too: a maintainer who reopens a Dependabot PR is the
+          # event actor, and the run can still carry the read-only token.
+          if [ "${RIPR_ACTOR:-}" = "dependabot[bot]" ] || [ "${RIPR_PR_AUTHOR:-}" = "dependabot[bot]" ]; then
+            comment_args+=(--no-write-permission)
+          else
+            comment_args+=(--write-permission)
+          fi
           ripr "${comment_args[@]}"
 
       - name: Publish RIPR inline comments
@@ -606,13 +657,14 @@ jobs:
           publishable="$(mktemp)"
           jq '
             def captured($regex; $flags): [capture($regex; $flags).value][0] // null;
+            def code_span_line($label): captured("\n" + $label + ":\n(?<value>(?<fence>`+)[^`\n](?:[^\n]*[^`\n])?\\k<fence>)(?:\n|$)"; "");
             def compact_body:
               .body as $full
               | ($full | captured("^### ripr gap: (?<value>[^\n]+)"; "") // "repairable gap") as $gap
               | ($full | captured("\nRepair:\n(?<value>[^\n]+)"; "") // "Follow the bounded repair route in the RIPR artifact.") as $repair
-              | ($full | captured("\nStart the repair:\n`(?<value>[^`]+)`"; "")) as $start
-              | ($full | captured("\nVerify:\n`(?<value>[^`]+)`"; "") // "ripr agent verify") as $verify
-              | (if $start then "Start the repair: `\($start)`" else "Verify: `\($verify)`" end) as $next
+              | ($full | code_span_line("Start the repair")) as $start
+              | ($full | code_span_line("Verify") // "`ripr agent verify`") as $verify
+              | (if $start then "Start the repair: \($start)" else "Verify: \($verify)" end) as $next
               | "**ripr: \($gap)** — \($repair)\n\n\($next)\n\n<details><summary>Full RIPR repair card</summary>\n\n\($full)\n\n</details>\n\n<!-- ripr:dedupe=\(.dedupe_key) presentation=compact-v1 -->";
             [
               .operations[]?
@@ -624,7 +676,7 @@ jobs:
 
           review_body="$(jq -r '
             (.summary.publishable // 0) as $inline
-            | ((.summary.summary_only // 0) + ([.skipped[]? | select(.skip_reason == "inline_comment_cap_reached")] | length)) as $additional
+            | ((.summary.summary_only // 0) + ([.skipped[]? | select(.skip_reason == "inline_comment_cap_reached" or .skip_reason == "comment_body_too_large")] | length)) as $additional
             | (.summary.suppressed // 0) as $suppressed
             | (if $inline == 1 then "" else "s" end) as $inline_suffix
             | (if $additional == 1 then "" else "s" end) as $additional_suffix
@@ -637,7 +689,7 @@ jobs:
 
           create_count="$(jq '[.[] | select(.operation == "create")] | length' "$publishable")"
           update_count="$(jq '[.[] | select(.operation == "update")] | length' "$publishable")"
-          additional_count="$(jq '(.summary.summary_only // 0) + ([.skipped[]? | select(.skip_reason == "inline_comment_cap_reached")] | length)' "$plan")"
+          additional_count="$(jq '(.summary.summary_only // 0) + ([.skipped[]? | select(.skip_reason == "inline_comment_cap_reached" or .skip_reason == "comment_body_too_large")] | length)' "$plan")"
           suppressed_count="$(jq '.summary.suppressed // 0' "$plan")"
 
           jq -c '.[] | select(.operation == "update")' "$publishable" \
@@ -953,11 +1005,13 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p target/ripr/reports
+          # Record the analyzed commit. On a PR, GITHUB_SHA names the merge
+          # commit, which this workflow does not check out.
           history_args=(
             policy history
             --root .
             --current target/ripr/reports/policy-operations.json
-            --commit "$GITHUB_SHA"
+            --commit "$(git rev-parse HEAD)"
             --out target/ripr/reports/policy-history.json
             --out-md target/ripr/reports/policy-history.md
           )
@@ -2606,6 +2660,7 @@ jobs:
           sarif_file: target/ripr/reports/ripr-seams.sarif
           category: ripr-seams
 "#
+    .replace("@RIPR_VERSION@", env!("CARGO_PKG_VERSION"))
     .replace(
         "@RIPR_REPAIR_AFTER_PHASE@",
         &format!("{REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}"),
@@ -2695,6 +2750,35 @@ mod tests {
     use crate::cli::commands_options::InitCi;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    /// #4378: on Windows `ripr init --dry-run --root <drive>:/Temp/demo`
+    /// printed `<drive>:/Temp/demo\ripr.toml`, two separator styles in one
+    /// path. The preview uses one convention per host and never rewrites a
+    /// Unix filename's backslash.
+    #[test]
+    fn dry_run_preview_uses_one_separator_convention_per_host() {
+        // `check-local-context` forbids drive-letter path literals, so the
+        // Windows shape is assembled from parts.
+        let root = format!("{}/Temp/demo", "F:");
+        let plan = vec![InitTarget {
+            path: PathBuf::from(format!(r"{root}\ripr.toml")),
+            action: InitAction::Create,
+            body: "[analysis]\n".to_string(),
+        }];
+        let windows = render_init_dry_run(&plan, true);
+        assert!(
+            windows.contains(&format!("  create         {root}/ripr.toml\n"))
+                && windows.contains(&format!("# {root}/ripr.toml\n")),
+            "{windows}"
+        );
+        assert!(!windows.contains('\\'), "{windows}");
+        let unix = render_init_dry_run(&plan, false);
+        assert!(unix.contains(&format!(r"# {root}\ripr.toml")), "{unix}");
+        assert!(
+            unix.ends_with("\nRerun without --dry-run to apply.\n"),
+            "{unix}"
+        );
+    }
+
     /// The workflow carries the shared proof-path labels (#3906) inside
     /// single-quoted shell strings, so none may hold a single quote, and
     /// every placeholder must be substituted.
@@ -2715,6 +2799,25 @@ mod tests {
         assert!(!workflow.contains("@RIPR_"), "unsubstituted placeholder");
         assert!(workflow.contains(&format!("='{MANUAL_VERIFY_LABEL}'")));
         assert!(workflow.contains(&format!("echo '- Receipt: {NO_RECEIPT_BEFORE_REPAIR}'")));
+    }
+
+    /// W5: an unpinned `cargo install ripr` installs whatever release is
+    /// latest, so CI could run an older ripr that lacks the commands this
+    /// workflow calls, or change behavior silently on a later release. The
+    /// install pins the generating binary's own version and keeps `--locked`.
+    #[test]
+    fn generated_workflow_pins_the_generating_ripr_version() {
+        let workflow = generated_github_actions_workflow();
+        let pinned = format!(
+            "run: cargo install ripr --version {} --locked",
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(workflow.contains(&pinned), "missing {pinned}");
+        let installs: Vec<&str> = workflow
+            .lines()
+            .filter(|line| line.contains("run: cargo install"))
+            .collect();
+        assert_eq!(installs.len(), 1, "{installs:?}");
     }
 
     /// The `cli_smoke` tests drive `ripr init` as a subprocess, so they prove

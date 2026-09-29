@@ -66,6 +66,12 @@ It keeps compatibility copies of packet, brief, verify, and receipt JSON under
 
 ## Ordinary path: `ripr agent repair`
 
+For Rust, ignore Cargo's entire `target/` directory before starting (for example
+`/target/` in `.gitignore`, or an equivalent Git exclude rule). The before phase
+checks the effective rule even with no build output and refuses before preparing
+workflow artifacts or an attempt if it is missing. This keeps the focused Cargo
+test's build output separate from the enforced test-only edit surface.
+
 For one named gap, the repair transaction writes the snapshot, packet, verify,
 and receipt artifacts above for you:
 
@@ -84,7 +90,9 @@ under `verify` with the status report embedded beside it under
 `agent_status` — so an orchestrator can `JSON.parse` stdout once and every
 stdout document's shape is identifiable from its `schema_version`; narration
 stays on stderr. When the after phase refuses after the verify render, stdout
-is the bare verify 0.3 document alone. For the
+is the bare verify 0.3 document alone; a typed refusal before it (diverged
+HEAD, drifted analysis inputs, no movement; exit `3`) prints the
+`repair_after_refusal` document with the cause and recovery. For the
 separately authorized `verify` phase of a trust-bound Python attempt, see
 [Repair attempt identity](REPAIR_ATTEMPT.md). The numbered steps below are the
 lower-level manual equivalent, kept for explicit control and debugging.
@@ -115,7 +123,7 @@ or receipt files, and prints one next command:
 | A seam whose attempt failed, went stale, or was prepared at a `HEAD` the current one does not descend from | `ripr agent repair --seam-id <seam-id> --phase before`, which starts a new attempt; for rewritten history the reason first names the `git reset --soft <prepared-head>` recovery that resumes the attempt |
 | A seam whose finished attempt's receipt shows grip `unchanged`, `changed`, or `regressed` | `ripr agent repair --seam-id <seam-id> --phase before`: the gap is still open, so start a new attempt and strengthen the test |
 | A finished attempt whose receipt is `invalid` or `incomplete`, or whose evidence was recorded at another `HEAD` | none; status is `warning` and the warning says which |
-| Every artifact present, and any finished attempt's receipt is `advisory` with grip `improved` at the current `HEAD` | none; status is `complete` |
+| Every artifact present, and any finished attempt's receipt is `advisory` with grip `improved` at the current `HEAD` | none; status is `complete`, and `test_run.status` is `not_recorded`: run the focused test yourself and keep it only if it passes |
 | Otherwise | the first missing artifact's command below |
 
 When picking would mean guessing (two waiting attempts, several open seams, an
@@ -160,17 +168,27 @@ The manifest names the selected seam, missing discriminator or observation,
 recommended test target when available, artifact paths, and exact commands for
 the rest of the loop.
 
-Every generated command string in this loop — including the `agent verify` and
-receipt commands — is a bash command line. RIPR quotes arguments with POSIX
-single quotes and appends `>` redirection, and `commands.md` fences the commands
-as `bash`. `workflow.json` states the same boundary in `command_shell`. Run the
-commands from bash; on Windows that means Git Bash. cmd.exe treats `'` as a
-literal character, and PowerShell rejects the `'\''` escape, so either shell will
-mis-pass or reject a quoted argument. WSL bash is not a drop-in substitute:
-generated paths keep their Windows drive-letter prefix, which WSL resolves as
-a relative path, so running there requires translating each path to `/mnt/c/...`
-and having `ripr` installed inside WSL. Emitting a shell-neutral argv form is
-tracked separately (#1617); a PowerShell variant is tracked in #2964.
+The legacy `command` strings in `workflow.json` use Bash quoting and
+redirection; `command_shell: "bash"` describes those display strings.
+`commands.md` includes a PowerShell form when a command needs a different one,
+including guarded BOM-free UTF-8 output writes. A command without a separate
+PowerShell form runs unchanged there unless the document explicitly says the
+form is unavailable. Use the emitted form for your shell; cmd.exe is not
+supported. WSL Bash is not a drop-in substitute for native Windows paths:
+drive-letter paths require translation to `/mnt/...` and a RIPR installation
+inside WSL.
+
+Some workflow command objects also carry a producer-owned `command_spec`.
+Currently these are the packet and brief regeneration steps when their output
+paths satisfy the root-relative validation contract; other steps remain
+legacy-string-only. Machine consumers should validate the spec and honor its
+`program`, `args`, `working_directory`, policies, and `execution_mode` rather
+than reconstruct argv from the display. A `shell_required` spec still needs
+shell handling for its redirection; its argv alone does not write the named
+artifact. A spec describes a route, not permission to execute it. See the
+[workflow output contract](OUTPUT_SCHEMA.md#agent-workflow-manifest) for the complete fields. For the
+ordinary focused-test loop, prefer the two-phase `ripr agent repair` path above
+to wiring these artifacts together manually.
 
 If the operator needs the full seam packet as well:
 

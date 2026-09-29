@@ -141,6 +141,14 @@ A different attempt for the same seam is a different transaction. Its packet, sn
 
 ### Build output between the phases
 
+Before preparing a Rust attempt, Git must ignore the entire `target/` directory
+(for example `/target/` in `.gitignore`, or an equivalent local/global exclude
+rule). The before phase checks the effective directory rule rather than counting
+existing ignored files, so a fresh repository with no build output works too.
+A missing rule, or a partial rule such as `target/debug/`, refuses before workflow
+preparation or durable attempt publication and names the needed rule. RIPR never
+adds or rewrites ignore rules itself. Add the rule, then rerun the before phase.
+
 Run the project tests between the phases. For a Rust repair, the retained cage policy declares Cargo's default build directory `target/` as `ignored_build_output`. The Git-ignored contents of that directory are build output from `cargo test` or `cargo build`, so they are not treated as edits. The cage still observes these paths:
 
 - tracked and untracked-but-not-ignored paths, including paths inside `target/`;
@@ -148,6 +156,12 @@ Run the project tests between the phases. For a Rust repair, the retained cage p
 - every other ignored path, such as an ignored `.env` or log file.
 
 Static analysis never reads `target/` as source. A Cargo target directory in a non-default location inside the repository (`CARGO_TARGET_DIR` or `build.target-dir`) is not declared, so writes there remain violations. Python attempts keep observing every ignored path.
+
+If effective ignore rules change after preparation, build-output paths can still
+be refused by the after phase. Recovery names the declared build directory and
+the ignore rule; it does not attribute those paths to redirected RIPR output.
+The failed attempt remains terminal. Restore the rule and prepare a new attempt
+while the gap exists, using the recovery sequence printed by the after phase.
 
 ### Cargo.lock between the phases
 
@@ -203,7 +217,7 @@ target/ripr/workflow/            # status input
 
 Those paths keep existing review and cockpit integrations working. Their evidence is admitted only after the exact attempt's retained before snapshot and packet have been resolved and validated.
 
-The after phase's stdout is exactly one JSON document, like every other agent command: the versioned `repair_after_result` envelope (`schema_version` `0.1`), which carries the agent verify 0.3 document — every existing field, including its own top-level `status` — unchanged under `verify`, with the status report embedded beside it under `agent_status`, so a caller can parse stdout once and every stdout document's shape is identifiable from its `schema_version`. Narration stays on stderr. When the after phase refuses after the verify render (for example the receipt is not receipt-ready), stdout is the bare verify 0.3 document alone — a pure verify document, still one document, honestly labeled.
+The after phase's stdout is exactly one JSON document, like every other agent command: the versioned `repair_after_result` envelope (`schema_version` `0.1`), which carries the agent verify 0.3 document — every existing field, including its own top-level `status` — unchanged under `verify`, with the status report embedded beside it under `agent_status`, so a caller can parse stdout once and every stdout document's shape is identifiable from its `schema_version`. Narration stays on stderr. When the after phase refuses after the verify render (for example the receipt is not receipt-ready), stdout is the bare verify 0.3 document alone — a pure verify document, still one document, honestly labeled. When it refuses with a named cause before any verify document exists (a diverged HEAD, drifted analysis inputs, or a no-movement verify refusal; exit code `3`), stdout is the typed `repair_after_refusal` document (`schema_version` `0.2`): `attempt_id`, the terse `error`, and the `narration` lines naming the cause and recovery that stderr also carries.
 
 ### Rerunning the receipt
 

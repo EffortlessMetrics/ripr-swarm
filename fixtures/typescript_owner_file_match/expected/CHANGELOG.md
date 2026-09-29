@@ -420,3 +420,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_owner_file_match (6)
+
+Reason:
+RIPR-SPEC-0122: omit zero-count languages, keep the empty-result caveat to empty runs, cut digest lines at word boundaries
+RIPR-SPEC-0087: additive typescript_boundary_input evidence line for a read-only parameter boundary; packet readiness unchanged
+
+Command:
+`cargo xtask goldens bless typescript_owner_file_match --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

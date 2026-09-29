@@ -13,6 +13,7 @@ use super::{
     sort, summary,
 };
 use crate::analysis::cancellation;
+use crate::analysis::committed_source;
 use crate::analysis_outcome::{
     AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
     AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
@@ -152,15 +153,77 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_generated_file_patterns(
         options.git_timeout,
     )?;
     cancellation::checkpoint()?;
-    let mut result = run_pipeline_for_diff_text(
-        options,
-        oracle_policy,
-        languages,
-        generated_file_patterns,
-        &loaded.text,
-    )?;
+    // A committed-history diff names lines as they exist at HEAD, so the
+    // adapters must read HEAD content for tracked files with uncommitted
+    // edits. `--diff` input (no effective base) keeps reading the tree.
+    let overlay = match loaded.effective_base {
+        Some(_) => committed_history_overlay(options)?,
+        None => None,
+    };
+    cancellation::checkpoint()?;
+    let mut result = committed_source::with_overlay(overlay.clone(), || {
+        run_pipeline_for_diff_text(
+            options,
+            oracle_policy,
+            languages,
+            generated_file_patterns,
+            &loaded.text,
+        )
+    })?;
+    if let Some(overlay) = overlay {
+        result.uncommitted_source_paths = overlay.dirty_source_paths();
+    }
     bind_effective_base(&mut result, loaded.effective_base)?;
     Ok(result)
+}
+
+/// Build the committed-content overlay for a committed-history diff and
+/// disclose the dirty paths it cannot place back into discovery.
+fn committed_history_overlay(
+    options: &AnalysisOptions,
+) -> Result<Option<std::sync::Arc<committed_source::CommittedSourceOverlay>>, String> {
+    let Some(overlay) = committed_source::probe(&options.root, options.git_timeout)? else {
+        return Ok(None);
+    };
+    if crate::is_verbose() {
+        let dirty = overlay.dirty_paths().collect::<Vec<_>>();
+        eprintln!(
+            "ripr: committed-history diff; reading HEAD content for {} tracked file(s) with uncommitted changes: {}",
+            dirty.len(),
+            dirty.join(", ")
+        );
+    }
+    if let Some(message) =
+        committed_paths_missing_disclosure(&overlay.committed_paths_missing_on_disk())
+    {
+        eprintln!("{message}");
+    }
+    Ok(Some(std::sync::Arc::new(overlay)))
+}
+
+/// Tracked files that exist at HEAD but were deleted from the working tree
+/// cannot be discovered by the working-tree walk; name them so the
+/// committed-history result is not read as covering them.
+fn committed_paths_missing_disclosure(paths: &[String]) -> Option<String> {
+    const MAX_NAMED_PATHS: usize = 3;
+    if paths.is_empty() {
+        return None;
+    }
+    let mut named = paths
+        .iter()
+        .take(MAX_NAMED_PATHS)
+        .cloned()
+        .collect::<Vec<_>>();
+    if paths.len() > MAX_NAMED_PATHS {
+        named.push(format!("{} more", paths.len() - MAX_NAMED_PATHS));
+    }
+    Some(format!(
+        "ripr: {} tracked file(s) exist at HEAD but are deleted in the working tree ({}); \
+         the committed-history analysis could not discover them. Restore them or commit the \
+         deletion, then re-run.",
+        paths.len(),
+        named.join(", ")
+    ))
 }
 
 pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_generated_file_patterns(
@@ -238,27 +301,99 @@ fn non_source_disclosure_message(changed_files: &[diff::ChangedFile]) -> Option<
     if changed_files.is_empty() || changed_files.iter().any(|file| route(&file.path).is_some()) {
         return None;
     }
+    const MAX_NAMED_PATHS: usize = 3;
     let non_source_count = changed_files.len();
-    let extensions: Vec<String> = changed_files
-        .iter()
-        .filter_map(|file| {
-            file.path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| format!(".{ext}"))
-        })
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    let ext_summary = if extensions.is_empty() {
-        "extensionless files".to_string()
+    let mut extensions = std::collections::BTreeSet::new();
+    let mut named_paths = std::collections::BTreeSet::new();
+    // #4376(b): a path ending in `.` (for example `src/lib.` from a
+    // truncated `+++ b/src/lib.rs` header) has an empty extension. Rendering
+    // it as `.` hid the parsed value; name the path instead, and never call
+    // the empty result correct for it — it is a malformed header, not a
+    // genuinely non-source file.
+    let mut truncated_paths = std::collections::BTreeSet::new();
+    for file in changed_files {
+        let display = file.path.to_string_lossy().replace('\\', "/");
+        match file.path.extension().and_then(|ext| ext.to_str()) {
+            Some("") => {
+                truncated_paths.insert(display.clone());
+                named_paths.insert(display);
+            }
+            Some(ext) => {
+                extensions.insert(format!(".{ext}"));
+            }
+            None => {
+                named_paths.insert(display);
+            }
+        }
+    }
+    let mut summary: Vec<String> = extensions.into_iter().collect();
+    let named_count = named_paths.len();
+    summary.extend(named_paths.into_iter().take(MAX_NAMED_PATHS));
+    if named_count > MAX_NAMED_PATHS {
+        summary.push(format!(
+            "{} more extensionless path(s)",
+            named_count - MAX_NAMED_PATHS
+        ));
+    }
+    let summary = summary.join(", ");
+    let verdict = if truncated_paths.is_empty() {
+        "The empty result is correct — ripr cannot analyze non-source files.".to_string()
     } else {
-        extensions.join(", ")
+        let listed = truncated_paths
+            .iter()
+            .take(MAX_NAMED_PATHS)
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "Path(s) ending in `.` with no extension ({listed}) usually mean a truncated \
+             `+++` header, so this empty result is not a clean pass — verify the diff input."
+        )
     };
     Some(format!(
-        "ripr: diff contained {non_source_count} non-source file(s) ({ext_summary}); \
-         no analyzable Rust, TypeScript, Python, or Perl files found. \
-         The empty result is correct — ripr cannot analyze non-source files."
+        "ripr: diff contained {non_source_count} non-source file(s) ({summary}); \
+         no analyzable Rust, TypeScript, Python, or Perl files found. {verdict}"
+    ))
+}
+
+/// #4376(a): the typed limitation for Rust changed files that the effective
+/// `[languages].enabled` set excluded. `None` when Rust is enabled or the diff
+/// has no Rust-routed file. The detail and recovery name the effective set so
+/// the user sees the configuration cause rather than a diff-validity guess.
+fn rust_excluded_by_config_limitation(
+    languages: &[LanguageId],
+    changed_files: &[diff::ChangedFile],
+) -> Result<Option<AnalysisLimitation>, String> {
+    if languages.contains(&LanguageId::Rust) {
+        return Ok(None);
+    }
+    let excluded = changed_files
+        .iter()
+        .filter(|file| route(&file.path) == Some(LanguageId::Rust))
+        .count();
+    if excluded == 0 {
+        return Ok(None);
+    }
+    let enabled = languages
+        .iter()
+        .map(|language| format!("\"{}\"", language.as_str()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok(Some(
+        AnalysisLimitation::new(
+            AnalysisLimitationKind::LanguageAdapterUnavailable,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::EnableLanguage,
+                format!(
+                    "The effective [languages].enabled set is [{enabled}], which excludes rust; add \"rust\" to [languages].enabled in ripr.toml and re-run the analysis."
+                ),
+            )?,
+        )
+        .with_affected_items(excluded as u64)?
+        .with_detail(format!(
+            "rust changed {excluded} file(s), but rust is not in the effective [languages].enabled set [{enabled}], so these files were not analyzed"
+        ))?,
     ))
 }
 
@@ -316,6 +451,21 @@ fn rename_disclosure_message(
     })
 }
 
+/// Whether a diff-parse limitation touches a file this run analyzes.
+///
+/// A conflict region or n-way hunk in a file no enabled adapter reads (a
+/// workflow `.yml`, a `.md`, or a preview language left disabled) removes
+/// nothing from the analysis, so it must not turn the whole run into
+/// `unsupported_input`. A diff that resolves conflict markers committed to
+/// `.github/workflows/*.yml` did exactly that. Limitations without a path
+/// (a malformed diff) always count.
+fn diff_limitation_in_scope(limitation: &AnalysisLimitation, languages: &[LanguageId]) -> bool {
+    let Some(path) = limitation.path.as_deref() else {
+        return true;
+    };
+    route(std::path::Path::new(path)).is_some_and(|language| languages.contains(&language))
+}
+
 fn run_pipeline_for_diff_text(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
@@ -325,7 +475,11 @@ fn run_pipeline_for_diff_text(
 ) -> Result<AnalysisResult, String> {
     let parsed_diff = diff::parse_unified_diff_bounded_with_metadata(diff_text)?;
     let changed_files = parsed_diff.changed_files;
-    let mut limitations = parsed_diff.limitations;
+    let mut limitations = parsed_diff
+        .limitations
+        .into_iter()
+        .filter(|limitation| diff_limitation_in_scope(limitation, languages))
+        .collect::<Vec<_>>();
     let mut harness_projections: Vec<crate::analysis::harness_projection::TestHarnessProjection> =
         Vec::new();
     let deleted_file_count = parsed_diff.deleted_file_count;
@@ -366,18 +520,60 @@ fn run_pipeline_for_diff_text(
         )?;
         cancellation::checkpoint()?;
         if result.skipped_files > 0 {
+            // Name the files and the rule that matched: most repositories
+            // configure nothing, so "the configured predicate" pointed at a
+            // setting that did not exist while a hand-written `schema.rs`
+            // or `gen/` module went unanalyzed.
+            let skipped = analysis_changed_files
+                .iter()
+                .map(|file| file.path.as_path())
+                .filter(|path| route(path) == Some(LanguageId::Rust))
+                .filter(|path| {
+                    super::language::is_generated_rust_file_with_patterns(
+                        path,
+                        generated_file_patterns,
+                    )
+                })
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+                .collect::<Vec<_>>();
+            let shown = skipped
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            let more = skipped.len().saturating_sub(3);
+            let listed = if more > 0 {
+                format!("{shown} and {more} more")
+            } else {
+                shown
+            };
+            // The recovery and detail texts are bounded; a long path must
+            // shorten the listing, never fail the analysis.
+            let listed = if listed.chars().count() > 160 {
+                format!("{}…", listed.chars().take(159).collect::<String>())
+            } else {
+                listed
+            };
             limitations.push(
                 AnalysisLimitation::new(
                     AnalysisLimitationKind::LanguageScopeUnsupported,
                     AnalysisStage::LanguageAdapter,
                     AnalysisRecovery::new(
                         AnalysisRecoveryKind::Retry,
-                        "Review the configured generated-file predicate and re-run the analysis.",
+                        format!(
+                            "Not analyzed as generated code: {listed}. ripr treats `gen/`, \
+                             `generated/` and `out/` directories and `generated.rs`, `schema.rs`, \
+                             `bindings.rs`, `*.gen.rs`, `*_generated.rs` and `generated_*` files, \
+                             plus `[languages.rust] generated_file_patterns`, as generated; if one of these \
+                             is hand-written, its changes stay outside this analysis."
+                        ),
                     )?,
                 )
                 .with_affected_items(result.skipped_files as u64)?
                 .with_detail(format!(
-                    "{} generated Rust file(s) were intentionally skipped by the configured generated-file predicate",
+                    "{} generated Rust file(s) were intentionally skipped by the generated-file \
+                     conventions or configured patterns: {listed}",
                     result.skipped_files
                 ))?,
             );
@@ -389,6 +585,14 @@ fn run_pipeline_for_diff_text(
         rust_changed_files += result.changed_files;
         candidate_line_count += result.candidate_line_count;
         changed_files_by_language.push((LanguageId::Rust, result.changed_files));
+    } else if let Some(limitation) =
+        rust_excluded_by_config_limitation(languages, &analysis_changed_files)?
+    {
+        // #4376(a): a config that leaves `rust` out of `[languages].enabled`
+        // must not present a Rust diff as a complete analysis. The preview
+        // advisory below covers only preview languages, so the reference
+        // adapter's exclusion is recorded here as a typed limitation.
+        limitations.push(limitation);
     }
     // When the Rust adapter returned a partial partition, preview adapters
     // analyze only the selected files; uninspected accounting lives on the
@@ -673,6 +877,7 @@ fn run_pipeline_for_diff_text(
         // The diff/worktree entry points overwrite this with the loader's
         // effective base (#3940); every other path involves no base.
         effective_base: None,
+        uncommitted_source_paths: Vec::new(),
     })
 }
 
@@ -863,6 +1068,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
         partial_scope: None,
         // Repo-scope analysis has no diff denominator and no base (#3940).
         effective_base: None,
+        uncommitted_source_paths: Vec::new(),
     })
 }
 
@@ -1243,6 +1449,163 @@ mod tests {
     }
 
     #[test]
+    fn non_source_disclosure_names_truncated_path_and_drops_correct_claim() -> Result<(), String> {
+        // #4376(b): `+++ b/src/lib.` parses to `src/lib.`, whose extension is
+        // empty. The disclosure must name the parsed path (not a bare `.`)
+        // and must not call the empty result correct.
+        let parsed = diff::parse_unified_diff(
+            "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.\n",
+        );
+        assert_eq!(
+            parsed
+                .iter()
+                .map(|file| file.path.clone())
+                .collect::<Vec<_>>(),
+            vec![PathBuf::from("src/lib.")],
+            "fixture precondition: the truncated header parses to `src/lib.`"
+        );
+        let message = non_source_disclosure_message(&parsed)
+            .ok_or_else(|| "a non-routed truncated path must still disclose".to_string())?;
+        if !message.contains("(src/lib.)") {
+            return Err(format!("disclosure must name the parsed path: {message}"));
+        }
+        if message.contains("(.)") {
+            return Err(format!("disclosure must not render a bare `.`: {message}"));
+        }
+        if message.contains("empty result is correct") {
+            return Err(format!(
+                "a truncated source header must not be called correct: {message}"
+            ));
+        }
+        if !message.contains("truncated") {
+            return Err(format!("disclosure must name the likely cause: {message}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn non_source_disclosure_names_extensionless_paths_and_keeps_correct_claim()
+    -> Result<(), String> {
+        // #4376(b) boundary: genuinely extensionless non-source files
+        // (LICENSE, Makefile) are named and keep the #2304 non-claim.
+        let files = vec![changed_file("LICENSE"), changed_file("docs/README.md")];
+        let message = non_source_disclosure_message(&files)
+            .ok_or_else(|| "a docs-only diff must disclose".to_string())?;
+        if !message.contains("LICENSE") || !message.contains(".md") {
+            return Err(format!(
+                "disclosure must name path and extension: {message}"
+            ));
+        }
+        if !message.contains("empty result is correct") {
+            return Err(format!("genuine non-source keeps the non-claim: {message}"));
+        }
+        Ok(())
+    }
+
+    fn sample_rust_diff_options(root: PathBuf) -> AnalysisOptions {
+        AnalysisOptions {
+            root,
+            base: None,
+            diff_file: None,
+            mode: AnalysisMode::Draft,
+            resolved_subject_identity: None,
+            include_unchanged_tests: false,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+        }
+    }
+
+    const SAMPLE_RUST_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,1 +1,1 @@\n-pub fn f(x: i32) -> bool { x > 1 }\n+pub fn f(x: i32) -> bool { x >= 1 }\n";
+
+    #[test]
+    fn config_excluded_rust_projects_a_typed_language_limitation() -> Result<(), String> {
+        // #4376(a): a valid Rust diff under `[languages] enabled = [...]`
+        // without rust must not project a complete analysis.
+        for (label, languages) in [
+            ("outcome-rust-excluded-ts", vec![LanguageId::TypeScript]),
+            ("outcome-rust-excluded-empty", Vec::new()),
+        ] {
+            let root = temp_root(label)?;
+            let result = run_pipeline_for_diff_text(
+                &sample_rust_diff_options(root),
+                &OraclePolicy::default(),
+                &languages,
+                &[],
+                SAMPLE_RUST_DIFF,
+            )?;
+            let outcome = result
+                .analysis_outcome
+                .ok_or_else(|| format!("{label}: outcome must be projected"))?;
+            assert_eq!(
+                outcome.counts.changed_file_count, 1,
+                "{label}: diff must parse"
+            );
+            assert_eq!(
+                outcome.kind,
+                AnalysisOutcomeKind::PartialWithLimitations,
+                "{label}"
+            );
+            let limitation = outcome
+                .limitations
+                .iter()
+                // A build without the typescript feature also reports that
+                // adapter as unavailable; select the rust exclusion itself.
+                .find(|limitation| {
+                    limitation.kind == AnalysisLimitationKind::LanguageAdapterUnavailable
+                        && limitation
+                            .bounded_detail
+                            .as_deref()
+                            .is_some_and(|detail| detail.starts_with("rust changed"))
+                })
+                .ok_or_else(|| format!("{label}: exclusion limitation missing"))?;
+            assert_eq!(limitation.affected_items, Some(1), "{label}");
+            let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+            assert!(
+                detail.contains("rust is not in the effective [languages].enabled set"),
+                "{label}: {detail}"
+            );
+            assert!(
+                limitation
+                    .recovery
+                    .detail
+                    .contains("add \"rust\" to [languages].enabled"),
+                "{label}: {}",
+                limitation.recovery.detail
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn enabled_rust_does_not_project_a_config_exclusion() -> Result<(), String> {
+        // #4376(a) negative control: with rust enabled, no exclusion.
+        let root = temp_root("outcome-rust-enabled")?;
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &[],
+            SAMPLE_RUST_DIFF,
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "outcome must be projected".to_string())?;
+        assert!(
+            !outcome
+                .limitations
+                .iter()
+                .any(|limitation| limitation.kind
+                    == AnalysisLimitationKind::LanguageAdapterUnavailable),
+            "rust enabled must not record an adapter exclusion"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn malformed_diff_yields_zero_changed_files() {
         // #2425: a non-diff text file must parse to zero changed files. The
         // pipeline's empty-diff disclosure depends on this: if the parser
@@ -1311,6 +1674,109 @@ mod tests {
     }
 
     #[test]
+    fn conflict_markers_in_unanalyzed_files_do_not_mark_the_run_unsupported() -> Result<(), String>
+    {
+        // clap's history resolves conflict markers committed to a workflow
+        // file. No adapter reads `.yml`, so the Rust change beside it must
+        // still analyze as a complete run; the same region in a `.rs` file
+        // keeps the fail-closed `unsupported_input` outcome.
+        let run = |path: &str| -> Result<AnalysisOutcomeKind, String> {
+            let root = temp_root("analysis-outcome-conflict-scope")?;
+            let diff = format!(
+                "diff --git a/{path} b/{path}\n\
+                 --- a/{path}\n\
+                 +++ b/{path}\n\
+                 @@ -1,5 +1,1 @@\n\
+                 -<<<<<<< ours\n\
+                 -on: push\n\
+                 -=======\n\
+                 -on: pull_request\n\
+                 ->>>>>>> theirs\n\
+                 +on: push\n\
+                 diff --git a/src/lib.rs b/src/lib.rs\n\
+                 --- /dev/null\n\
+                 +++ b/src/lib.rs\n\
+                 @@ -0,0 +1 @@\n\
+                 +pub fn value() -> u32 {{ 1 }}\n"
+            );
+            let result = run_pipeline_for_diff_text(
+                &AnalysisOptions {
+                    root,
+                    base: None,
+                    diff_file: None,
+                    mode: AnalysisMode::Draft,
+                    resolved_subject_identity: None,
+                    include_unchanged_tests: false,
+                    resolve_tsconfig_paths: false,
+                    perl_facts_path: None,
+                    git_timeout: None,
+                    git_candidate: None,
+                    production_like_targets: Default::default(),
+                    test_harnesses: Vec::new(),
+                },
+                &OraclePolicy::default(),
+                &[LanguageId::Rust],
+                &[],
+                &diff,
+            )?;
+            result
+                .analysis_outcome
+                .map(|outcome| outcome.kind)
+                .ok_or_else(|| "every run carries an analysis outcome".to_string())
+        };
+
+        let yaml = run(".github/workflows/pre-commit.yml")?;
+        assert!(
+            !matches!(
+                yaml,
+                AnalysisOutcomeKind::UnsupportedInput | AnalysisOutcomeKind::PartialWithLimitations
+            ),
+            "a conflict in an unanalyzed file must not limit the run, got {yaml:?}"
+        );
+        assert_eq!(
+            run("src/merge.rs")?,
+            AnalysisOutcomeKind::UnsupportedInput,
+            "a conflict in an analyzed Rust file stays fail-closed"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn long_generated_paths_shorten_the_listing_instead_of_failing() -> Result<(), String> {
+        // Recovery text is bounded; a deep generated path must not turn the
+        // disclosure into an analysis failure.
+        let root = temp_root("analysis-outcome-generated-long")?;
+        let deep = format!("src/{}/generated/values.rs", "nested".repeat(120));
+        let result = run_pipeline_for_diff_text(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
+                include_unchanged_tests: false,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &[],
+            &format!(
+                "diff --git a/{deep} b/{deep}\n--- /dev/null\n+++ b/{deep}\n@@ -0,0 +1 @@\n+pub fn v() -> u32 {{ 1 }}\n"
+            ),
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "generated skip must carry an analysis outcome".to_string())?;
+        assert_eq!(outcome.kind, AnalysisOutcomeKind::PartialWithLimitations);
+        Ok(())
+    }
+
+    #[test]
     fn configured_generated_skip_is_a_scope_limitation_not_a_producer_failure() -> Result<(), String>
     {
         let root = temp_root("analysis-outcome-generated-skip")?;
@@ -1344,10 +1810,18 @@ mod tests {
         assert_eq!(outcome.kind, AnalysisOutcomeKind::PartialWithLimitations);
         assert!(outcome.limitations.iter().any(|limitation| {
             limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+                && limitation.bounded_detail.as_deref().is_some_and(|detail| {
+                    detail.contains("intentionally skipped")
+                        && detail.contains("src/generated_values.rs")
+                })
                 && limitation
-                    .bounded_detail
-                    .as_deref()
-                    .is_some_and(|detail| detail.contains("intentionally skipped"))
+                    .recovery
+                    .detail
+                    .contains("src/generated_values.rs")
+                && !limitation
+                    .recovery
+                    .detail
+                    .contains("configured generated-file predicate")
         }));
         assert!(
             !result

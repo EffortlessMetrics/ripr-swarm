@@ -50,6 +50,13 @@ emits an explicit `static_limit_kind` instead of silently coercing to
 
 ## Inputs
 
+Source reads use a no-follow open followed by opened-handle regular-file
+validation. On supported Linux and macOS targets the open is nonblocking, so
+a file replaced with a FIFO between path inspection and open cannot wait for
+a writer. Windows opens the reparse point itself and validates the handle;
+other targets refuse the guarded open. The FIFO regression must bound its
+child process and verify that the intended child test actually executed.
+
 - TypeScript or JavaScript source files routed to this adapter.
 - Diff spans inside those files.
 - Repo configuration including `[languages] enabled` and any future
@@ -229,6 +236,13 @@ markers, generic parameter lists, and `this` parameters are ignored. Type
 syntax inside an expression (`as`, `satisfies`, generic call arguments) and
 multi-line signature fragments are not compared and keep their probe.
 
+The opening line of a new function, method, or arrow owner (an added line with
+no removed counterpart, starting an owner whose span holds another added,
+probe-eligible line) produces no probe: its behavior is carried by the body
+lines. A default value, destructuring default, parameter property, computed
+key, decorator, constructor, one-line body, or changed signature keeps its
+probe.
+
 A changed predicate is `exposed` only when a strong, family-matching
 assertion's observed expression (`expect(<expr>)`) calls the owner at the
 changed boundary: an argument carries the literal operand (`total >= 50` needs
@@ -276,6 +290,18 @@ boundary without changing the guards (#4104 E):
   initializers, repeated declarations, off-value constants, and constants
   imported from a module the adapter cannot resolve to the owner stay
   fail-closed.
+- **Boundary input evidence**: for a changed predicate with a named missing
+  discriminator `<param> == <operand>`, the adapter emits
+  `typescript_boundary_input: parameter=<param>;index=<i>;operand=<operand>;value=<v>`
+  only when, on the oxc token stream of the owner's module, `<param>` is the
+  owner's plain positional parameter at index `<i>` and every later
+  occurrence in the owner is a plain read (no write, update, redeclaration,
+  nested parameter, catch, loop, or destructuring binding; no `arguments`,
+  `eval`, `with`, or escaped identifier), and `<operand>` is a plain decimal
+  integer literal or an UPPER_CASE name bound exactly once, at the module top
+  level, by a non-`declare` `const` with an integer literal initializer, whose
+  every other occurrence in the module is a plain read. Anything else emits
+  nothing.
 
 When the adapter cannot classify, it emits one of the `static_limit_kind`
 values defined in RIPR-SPEC-0026:

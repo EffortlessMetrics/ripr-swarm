@@ -153,6 +153,12 @@ not expose receipt commands, edit-boundary authority, or agent packets, and
 remains advisory review context rather than verify, receipt, gate, badge, or
 RIPR Zero authority.
 
+GitHub Actions displays at most 10 annotations of each level (error, warning,
+notice) per step and drops the rest silently. Disclosure notices therefore lead
+the stream: the unannotated-denominator notice (suppressed or not-current
+findings) and, when any level exceeds 10, a notice naming how many annotations
+of that level were emitted. Per-finding annotations follow.
+
 `ripr check --format human` is the bounded default terminal surface. It prints
 header and summary counts, then one `Start here:` triage block with a closed
 state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or
@@ -724,6 +730,17 @@ The evidence-first fields are additive in schema `0.2`:
 - `flow_sinks`, `observed_values`, and `missing_discriminators` promote the
   nested activation evidence for consumers that want direct finding-level
   access.
+- `observed_values_total` — (optional, additive, no `schema_version` bump)
+  present only when the finding carries more observed values than
+  `MAX_OBSERVED_VALUES_PER_FINDING` (currently 32), and then set to the pre-cap
+  count. Both `observed_values` arrays and `assertion_texts` render the same
+  bounded projection: values from call arguments, table rows, builder calls,
+  enum variants and returns are kept ahead of bare assertion arguments, in
+  their original order. Absent means every value is rendered. The cap exists
+  because one finding can relate to thousands of tests; uncapped, a 505-line
+  diff on this repository produced a 187 MB report. It never affects
+  classification or missing discriminators, which use the full vector. SARIF
+  result and seam properties follow the same rule.
 - `related_tests_total` — number of related tests the analyzer matched for
   this finding (pre-cap, always the true count). The `related_tests` array is
   **capped** at `MAX_RELATED_TESTS_PER_FINDING_JSON` (currently 8) to bound
@@ -1288,6 +1305,24 @@ JSON fields:
   `target shape (not delegatable)` together with a stop condition forbidding
   reuse of the observed call input. A complete packet must not instruct a
   duplicate of a non-discriminating assertion.
+  Derived boundary input (#4215 follow-up): when the finding carries
+  `typescript_boundary_input: parameter=<p>;index=<i>;operand=<o>;value=<v>`
+  evidence, the analysis side has pinned the call input that hits the
+  boundary: the owner reads positional parameter `<p>` (a plain binding, never
+  written, redeclared, or shadowed after its signature) and `<o>` is a plain
+  decimal integer literal or an UPPER_CASE name bound exactly once, at the top
+  level of the owner's module, by an immutable `const <o> = <integer literal>`
+  whose every other occurrence is a plain read. For an equality discriminator
+  over exactly that parameter and operand, an observed input that does not
+  hit the boundary (or whose constant was unresolved on the text alone) is
+  replaced by the observed call with argument `<i>` set to `<v>`, for example
+  `expect(shipping(5000)).toBe(expected)` from the observed `shipping(1000)`;
+  the observed call stays as context in a stop condition, and the packet goes
+  through the shared validator as usual. Without that evidence the fail-closed
+  behavior above is unchanged: a `let`/`var` or reassigned binding, a
+  non-integer or computed initializer, an imported name, a shadowing binding
+  anywhere in the module, a written parameter, a `.length` receiver, or a
+  destructured/rest signature derives nothing.
 - `perl_preview_card` is an additive optional object for Perl preview findings
   that already have strict fact-packet evidence, canonical gap identity,
   related-test evidence, missing discriminator evidence, verify-command
@@ -1581,8 +1616,10 @@ ALL of the following are true:
    bare `ripr check` that resolved the default base (#3888).
 2. None of `--diff <file>`, `--worktree`, or `--candidate-tree` was supplied,
    and the format is not repo-scope.
-3. The working tree has at least one uncommitted change to a tracked source
-   file, as reported by `git status --porcelain`.
+3. At least one file a language adapter reads (a source or test file) has
+   uncommitted changes: staged or unstaged edits, or an untracked new file.
+   The run read those files as committed at `HEAD`, so the changes count
+   neither in the diff nor as test evidence.
 
 Absent (not emitted) when `false`. Does not bump `schema_version`.
 
@@ -1598,10 +1635,12 @@ Example:
 "unanalyzed_working_tree": true
 ```
 
-The field is absent when the worktree is clean, when `--diff <file>` or
+The field is absent when no source or test file has uncommitted changes (an
+edited README does not count), when `--diff <file>` or
 `--candidate-tree` was used, when a repo-scope format was requested, when `--worktree` was used to include staged and unstaged
-tracked edits in the analyzed diff, or when `git status --porcelain` cannot be
-run (fail-closed: no fabricated disclosure).
+tracked edits in the analyzed diff. When the committed-content probe cannot
+run, the check fails with the git step named instead of analyzing mixed
+content.
 
 ### `suppression_policy` and suppressed findings (top-level additive, #1441)
 
@@ -6806,6 +6845,29 @@ Field contract:
   parseable document. A consumer dispatching on `schema_version` therefore
   sees `0.1` only for the two-child envelope and `0.3` only for the pure
   verify document, whichever path produced it.
+- Typed refusals before the verify render (a diverged HEAD, drifted analysis
+  inputs, a no-movement verify refusal; exit code `3`) print the
+  `repair_after_refusal` document (`schema_version` `0.2`) instead, so every
+  exit-`3` path of the phase carries one parseable document and each
+  after-phase shape keeps its own `schema_version` (`0.1` envelope, `0.2`
+  refusal, `0.3` bare verify):
+
+  ```json
+  {
+    "schema_version": "0.2",
+    "kind": "repair_after_refusal",
+    "attempt_id": "<repair-attempt-id>",
+    "error": "repair attempt `<id>` cannot finish: HEAD <sha> does not descend from its before-phase head <sha>",
+    "narration": ["<named cause>", "<recovery>"]
+  }
+  ```
+
+  `error` is the terse final error; `narration` is the ordered cause and
+  recovery lines stderr carries (without the `ripr: ` prefix), the same lines
+  the attempt joins into `last_after_refusal.reason`. Operational failures after
+  attempt selection exit `2`; stdout is empty when the failure precedes the
+  verify render, and is the bare verify 0.3 document when it follows it (for
+  example a failed receipt publication).
 
 ## Agent Verify Execute
 
@@ -6877,13 +6939,16 @@ reach the child — not an empty environment block. The verify route invokes
 `git`, so a literally empty environment strips `PATH` and makes a passing
 observation unreachable on every real repository. Only a fixed platform floor
 crosses the boundary (`PATH`, Windows `SystemRoot`/`SystemDrive`/`windir`/
-`COMSPEC`/`PATHEXT`/`TEMP`/`TMP`, and `HOME`/`TMPDIR`/`LANG`/`LC_ALL`). The
-floor is disclosed by name in the response `preflight.environment_floor`;
-values are never emitted. Tokens and cloud credentials are dropped.
+`COMSPEC`/`PATHEXT`/`TEMP`/`TMP`/`USERPROFILE`/`HOMEDRIVE`/`HOMEPATH`, and
+`HOME`/`TMPDIR`/`LANG`/`LC_ALL`). The floor is disclosed by name in the
+response `preflight.environment_floor`; values are never emitted. Tokens and
+cloud credentials are dropped.
 
-Because `HOME` is in the floor, host global Git configuration can influence the
-child's Git behavior. "Clean" here means no ambient credential or application
-variables — not behavioural independence from host Git configuration. Disabling
+Because `HOME` (and, on Windows, `USERPROFILE`/`HOMEDRIVE`/`HOMEPATH`, which Git
+for Windows uses to find the home directory) is in the floor, host global Git
+configuration can influence the child's Git behavior on every platform.
+"Clean" here means no ambient credential or application variables — not
+behavioural independence from host Git configuration. Disabling
 global and system Git configuration for the child is a possible future
 tightening, not a current guarantee.
 
@@ -7173,6 +7238,23 @@ Success payload (200-level result object, no `protocol_version`,
   contract lands. `null` when the snapshot carries no generation identity.
 - `selected_count` / `omitted_count` / `total_count` — diagnostic-budget
   counts from the committed delivery selection.
+- `selected` — `[{canonical_id, document}]` for every delivered diagnostic
+  (already bounded by the workspace item budget). `canonical_id` is the
+  diagnostic's budget identity (its `diagnostic_id`, gap, finding or seam id);
+  the diagnostic's own `data` carries the ids `ripr.collectContext` takes.
+- `omitted` — `[{canonical_id, reason}]` for withheld diagnostics, at most
+  200 entries. `reason` is `profile_filtered`, `document_item_limit`,
+  `workspace_item_limit`, or `serialized_byte_limit`.
+- `omitted_truncated` — `true` when `omitted_count` exceeds the listed
+  `omitted` entries.
+- `hidden_gaps` — `[{finding_id, file, line, class}]`, at most 50: candidate
+  gaps (`weakly_exposed`, `reachable_unrevealed` or `no_static_path`, one entry
+  per canonical gap) that the `actionable` profile does not publish as
+  diagnostics because they have no bounded repair route (RIPR-SPEC-0069). The
+  `*_unknown` classes are missing evidence, not gaps, and are not listed. A new function no test calls is the common case. `file` is
+  root-relative; `finding_id` is a valid `ripr.collectContext` argument.
+  Always empty under the `full` profile, which publishes these findings.
+- `hidden_gap_count` — the full number of such canonical gaps.
 - `budget_identity` — the snapshot profile budget identity string.
 - `complete_evidence_identity` — the complete-evidence identity string.
 - `continuation_or_inspect_route` — the route string for continuing or
@@ -7367,7 +7449,11 @@ Field contract:
   "limited_diff_scope"`, changed files, changed owner count, changed production
   files, immediate caller files, total production-file counts, the classified
   seam count considered, and the `review_comments_diff_scope_only` limitation
-  route. This makes the report useful on large repos without representing the
+  route. When seams on changed lines and in changed owners fill every review
+  slot, the rest of the scope is skipped: `classified_seams_considered` counts
+  only the evaluated seams, the optional `unevaluated_seams` (present only
+  then) counts the skipped ones, a warning says the same, and the brief-cap
+  warning reads "at least N" because it counts evaluated seams only. This makes the report useful on large repos without representing the
   scoped review as full-repo evidence. Gap-ledger rendering emits `scope =
   "gap_ledger_artifact"` and `run_status = "artifact_scope"` with `basis =
   "supplied_gap_decision_ledger"`, ledger anchor files, the supplied GapRecord
@@ -7444,6 +7530,18 @@ Field contract:
   (`recommended_file`); eligibility does not require either.
 - `comments[].llm_guidance` - bounded handoff command and prompt for one
   focused test. It is not a request for free-form diff review.
+- Actionable working-set cards persist `llm_guidance.verify_command` to
+  `target/ripr/workflow/agent-verify.json` under the selected root. Their
+  optional `llm_guidance.analysis_outcome_command` writes
+  `target/ripr/workflow/analysis-outcome.json` beside it before the card's
+  receipt command runs, carrying the producing review's selected `--base`.
+  It does not rely on default branch discovery. These are Bash-style redirects,
+  anchored at `--root`;
+  before and after snapshots must already have been taken around the edit.
+  Markdown carries the same outcome, verify and receipt chain. The outcome
+  describes static completeness, not executed project tests. Limitation cards
+  do not gain these commands. Older cards and the deferred GapRecord/editor
+  route remain compatible; consumers must not invent a missing outcome step.
 - `comments[].llm_guidance.repair_command` - present only on an actionable
   working-set card whose seam passes the fail-closed repair-packet flip
   (`repair_packet_eligibility`, #3906): `ripr agent repair --root . --seam-id
@@ -7657,8 +7755,17 @@ Field contract:
 - `skipped[]` records capped, summary-only, suppressed, disabled, and
   already-current items.
 - `skip_reason` is `mode_off`, `summary_only`, `suppressed`,
-  `inline_comment_cap_reached`, `unchanged_tests`, `not_publishable`, or
-  `already_current`.
+  `inline_comment_cap_reached`, `comment_body_too_large`, `unchanged_tests`,
+  `not_publishable`, or `already_current`.
+- Each untrusted field of `operations[].body` is bounded before rendering:
+  1,000 characters for a code-span field (changed behavior, verify or repair
+  start command), 2,000 for prose (why this matters, repair, reason), and 200
+  for a title, each cut on a character boundary with a
+  ` ... [ripr elided N chars]` marker. A comment whose projected published
+  body (twice the plan body, plus the dedupe key and wrapper text) exceeds
+  60,000 UTF-8 bytes is recorded in `skipped[]` as `comment_body_too_large`
+  instead of an operation: GitHub rejects bodies over 65,536 characters and
+  the workflow posts all created comments in one review request.
 - `blocked[]` records hard safety blockers such as missing permissions,
   untrusted forks, missing PR context, unsafe events, missing dedupe keys, or
   malformed inputs.
@@ -8499,6 +8606,10 @@ Field contract:
   caller, generic evidence-vector position is not treated as seam identity,
   and path/line is not manufactured into an exact inspection selector. The
   `authority_boundary` is `static_ripr_evidence_only`.
+- `decisions[].repair_route.analysis_outcome_command` is optional and copied
+  unchanged from a review card. Older cards and GapRecord routes omit it. It
+  is not a route-completeness or repair-eligibility requirement; Markdown
+  places the supplied static-completeness step before verify and receipt.
 - `decisions[].repair_route.limitation` - `null` only when the route is
   complete. Otherwise it has kind `incomplete_repair_route`, a closed list of
   missing fields, and a bounded detail. A candidate that would otherwise be
@@ -10467,6 +10578,10 @@ Field contract:
   step, with verify and receipt labelled as the manual alternative (#3906).
   `top_repair_route.receipt_command` for a review card is read from the card
   root.
+- `top_repair_route.analysis_outcome_command` is optional and carried from
+  the selected review card, gate route or RIPR Zero route. Gate projections
+  also retain their supplied verify and receipt commands. Absent outcome
+  commands stay absent; ledger and delta routes do not derive one.
 - `history.*` - present only when prior ledger history or previous ledger
   summary is supplied.
 - `warnings[]` - missing inputs, unavailable coverage, unsupported schemas,
@@ -10918,6 +11033,12 @@ Field contract:
   recommendation. The after-phase step follows it, and verify and receipt are
   labelled as the manual alternative (`Manual verify without a repair attempt (needs before and after snapshots taken around the test edit)`); without a repair start they read `Verify after the test edit`
   and `Receipt after verify` (#3906). JSON fields are unchanged.
+- On that review-card route, `commands.analysis_outcome` also carries the
+  card's optional outcome command. First-PR projections carry it as
+  `selected.analysis_outcome_command`, with Markdown before verify. First-PR
+  keeps this step outside its editor-executable `commands` map because
+  `ripr check` is outside the current editor allowlist. No field is added when
+  the upstream card lacks it.
 - `evidence.*` records supporting artifact paths and static movement when
   supplied. Static movement is not runtime mutation confirmation.
 - `fallback` records the reason for non-actionable statuses and the next safe
@@ -12197,6 +12318,7 @@ JSON shape:
     "reason": "agent packet artifact is missing",
     "command": "ripr agent packet --root . --seam-id 67fc764ba37d77bd --json > target/ripr/workflow/agent-packet.json"
   },
+  "test_run": null,
   "warnings": []
 }
 ```
@@ -12262,8 +12384,9 @@ Field contract:
     when that is another attempt: the workflow keeps one receipt, so a later
     attempt's after phase replaced this attempt's receipt; otherwise `null`),
     and, when it is issued for this attempt, the receipt's `status`,
-    `movement`, `receipt_state`, `recommended_action`, and
-    `analysis_outcome_error`, plus `shows_gap_closed` (`true` only for an
+    `movement`, `receipt_state`, `recommended_action`,
+    `analysis_outcome_error`, and `verification_status` (the receipt's
+    `verification.status`), plus `shows_gap_closed` (`true` only for an
     `advisory` receipt with movement `improved`; it records improved static
     grip, not a runtime or mutation result). Unbound receipts leave these
     `null` and `shows_gap_closed` `false`.
@@ -12272,6 +12395,17 @@ Field contract:
     attempt manifest's `last_after_refusal`: the final error followed by the
     cause and recovery the after phase printed, such as the changed analysis
     inputs, bounded to 4096 bytes).
+- `test_run` - `null`, or `{status, test_changed, next_step}` when a repair
+  receipt issued for an attempt records `verification.status`
+  `verification_not_run`. `status` is `"not_recorded"`: the repair receipt
+  holds no test run. A trust-bound `--phase verify` run writes a separate
+  verification receipt that this field does not read. `test_changed` is the
+  receipt's `test_changed` (a path or test name, as `--test` gave it) or
+  `null`; `next_step` says to run the focused test with the project's test
+  command and keep it only if it passes. `status: "complete"` never means the test passed:
+  static movement `improved` survives a failing test, so a consumer that needs
+  a test result runs the test itself. The Markdown form prints the same as a
+  `Test run: none recorded.` line under `Seam:`.
 - `next_command` - selected in the order RIPR-SPEC-0011 documents (#3906): the
   one current awaiting repair attempt's recorded after command
   (`repair_attempt_after`; when that attempt recorded a refused after phase,

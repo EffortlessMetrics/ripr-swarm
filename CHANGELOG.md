@@ -9,6 +9,267 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Fixed
+
+- `ripr check` spends less time rescanning test files. The same-name-import
+  gate re-masked every related test file's source for every probe; one scan
+  per file now serves the whole run. On a ripr commit, a warm check went from
+  8.6 s to 6.6 s with byte-identical JSON.
+- LSP: the server now asks clients for `textDocument/didSave`. It advertised
+  only the numeric full-sync kind, which under the LSP spec does not request
+  save notifications, so a strictly conforming editor could save without ripr
+  re-analyzing. The capability is now the options form with `save: true`,
+  which the VS Code extension's compatibility check already accepts.
+- LSP: opening a second repository in the same Helix session no longer stops
+  ripr for the first. Helix adds the new repository as a workspace folder to
+  the running server, which made the folder set ambiguous and stopped
+  analysis for both. Editors without the VS Code integration now keep the
+  root they started with, are told which folder is not analyzed, and hover
+  on a file from that folder says it is outside the analyzed root. The VS
+  Code extension keeps its folder-picker behavior.
+- LSP: an editor that opens two workspace folders, or none, now hears why
+  ripr is silent. Before, the server stopped analysis and sent nothing: the
+  startup `ripr/analysisStatus` was dropped because the transport discards
+  custom notifications during `initialize`, and hover showed the generic
+  `ripr check` pointer. The server now publishes the startup status from
+  `initialized`, logs a warning naming the root state and folders, and shows
+  it with `window/showMessage` to clients without the VS Code integration,
+  at startup and when a later folder change stops analysis. Hover names the
+  blocked root, a file outside the analyzed root, an edited buffer whose
+  evidence is paused until the file is saved, or a file no refresh has
+  analyzed yet.
+- `ripr review-comments` no longer times out on a large diff. It evaluates
+  seams on changed lines and in changed owner functions first, and skips the
+  rest of the scope when those already fill the ten review slots; a warning
+  gives the skipped count. On one 11-file ripr change it went from 398 s, past
+  the 120 s default bound, to 18.5 s with the same comments. Agent brief and
+  review warnings now name the first ten hidden matching seams and count the
+  rest, so that report shrank from 1.7 MB to 34 KB.
+- Generated GitHub workflow (`ripr init --ci github`): it now checks out the
+  PR head instead of GitHub's `refs/pull/N/merge` commit, so review comments
+  and annotations land on the PR diff's lines after the base branch moves.
+  Before, they carried merge-commit line numbers. The install now pins the
+  generating ripr version; an unpinned `cargo install ripr` took the newest
+  crates.io release, whose CLI need not match the workflow's steps.
+- A repository's `ripr.toml` can no longer choose a program for ripr to run.
+  `[perl].executable` was spawned by `ripr check`, probed by `ripr doctor`, and
+  spawned by `ripr lsp` on file open or save, so a cloned repository could run
+  its own code (for example `executable = "sh"` plus a committed `ripr-facts`
+  script). ripr now ignores that key, says so on stderr or in the doctor
+  report, and uses the exporter on PATH unless the user sets
+  `RIPR_ALLOW_REPO_PERL_EXECUTABLE=1`. The VS Code extension already required
+  a trusted workspace to start the server.
+- Rust related tests are the ones that name or reach the changed code, not
+  every test that shares a word with it. A test name now relates only when it
+  contains a probe token as a whole word (`new` no longer matches `renews_`), a
+  test file only when its own stem spells the source stem as a word or it is a
+  test file inside a directory named for that stem, and neither a test-name
+  word nor an assertion-observed token counts when more than 16 tests and more
+  than 1% of the tests in the changed code's crate use it. Tests that match
+  only the old substring rules still relate when nothing else does, so the
+  finding keeps weak reach instead of reading `no_static_path`. On a 14-file
+  diff of ripr itself (246 findings), the longest related-test list on one
+  finding fell from 13,007 rows to 1,750, and the rows across all findings
+  from 246,958 to 50,751. No finding on that diff gained exposure. Six lost
+  `exposed` (three to `weakly_exposed`, three to `infection_unknown`) and
+  eight others moved to `infection_unknown`. For example, a predicate in `reach.rs` read
+  `exposed` from 1,608 related tests; it now relates 129 and reads
+  `infection_unknown`, because none of those supplies an input at its
+  boundary. The seam evidence behind `review-comments`, `agent` and repo
+  exposure uses a limit of 1% of the suite (at least 64 tests): past it, a
+  parent module relates only itself, the owner's own module and test-named
+  siblings; an asserted token that common within the seam's crate relates
+  nothing; and when several target tokens together pass the limit, the tests
+  asserting the most of them are kept. One `init.rs` seam had related 3,990
+  tests. On `review-comments` for one ripr commit, the run fell from 50 s to
+  17 s with identical comments.
+- Rust: a changed function that no test calls now reads `no_static_path`.
+  Before, a same-file test of a sibling function made it `weakly_exposed`
+  with "strong oracle found", and its unknown-shape lines said "escalate to
+  real mutation testing". This applies only when nothing in the workspace
+  names the function outside its own `fn` line: a caller, function pointer,
+  `use` alias, doctest or macro block that names it, a crate that includes a
+  README as docs, a trait-impl method, or a nearby test that invokes a
+  non-assertion macro keeps reach undecided.
+- Rust: a struct-field initializer is no longer `exposed` when no assertion
+  reads that field. On anyhow, a `Box` token in an unrelated downcast
+  assertion credited `ptr: NonNull::from(Box::leak(ptr))` with confidence 1.00
+  while its own evidence said nothing observes the field. An assertion that
+  reads the field on the function's result (`cfg.retries` after
+  `let cfg = default_config()`) still counts; the same field name on another
+  value does not.
+- Rust: the one-line signature of a new function whose body is added too is no
+  longer probed; it only repeated the body's findings.
+- `review-comments` observes its cooperative analysis budget during canonical
+  inventory and rejects cancelled evidence before classification. Git diff
+  discovery consumes the remaining budget; deadline cancellation records a
+  typed timeout while ordinary source failures retain their failure status.
+  Individual operations can still overrun a checkpoint interval (#1778).
+- Cold LLM-agent walks of 0.11 no longer dead-end on four routes. Passing a
+  `ripr check` finding ID (`probe:...`) to `ripr agent repair --seam-id` now
+  says it is not a seam ID and names `ripr pilot --root .`. After a repair,
+  the after phase and `ripr agent status` say the repair receipt records no
+  test run (`test_run.status: "not_recorded"`), because a failing test can
+  still show movement `improved`. The MCP
+  server's instructions and tool description say it does not analyze the diff
+  and name the CLI route that does; an unusable root and unknown tool or
+  resource names now carry a recovery.
+- `ripr check` analyzes Rust crate roots declared outside `src/`
+  (`[lib] path = "lib/foo.rs"`, `[[bin]] path = ...`). A change there used
+  to report zero candidate lines as a complete analysis, and Draft mode
+  dropped the package's tests, so a tested change read as
+  `no_static_path`.
+- Base-resolution failures name their cause and the next step. A shallow
+  CI checkout no longer stops at raw `fatal: ... no merge base`; it names
+  `git fetch --unshallow` and `fetch-depth: 0`. A repository with no
+  commits, or whose default branch is not `main`/`master`, is told which
+  `--base` would work. A branch that shares no history with HEAD is never
+  offered as that base.
+- A diff that touches conflict markers in a file no enabled adapter reads
+  (for example resolving markers committed to a workflow `.yml`) no longer
+  turns the whole run into `unsupported_input`.
+- `--root` at a workspace member scopes the diff to that member and reads
+  its paths relative to it. Repository-relative paths used to miss the
+  member's files, so a tested change read as `no_static_path`.
+- In diff analysis, the generated-code skip limitation names up to three
+  skipped files and lists the generated-code conventions and the
+  `[languages.rust] generated_file_patterns` setting.
+- `ripr check` on committed history (the default, or `--base <rev>`) now reads
+  the committed version of every tracked file you have edited but not
+  committed, tests included, and leaves out new files that are not committed,
+  git-ignored ones included.
+  Before, an uncommitted edit that shifted lines in a changed file could
+  attach findings to the wrong function or expression, and an uncommitted test
+  edit already moved the counts while the note said uncommitted changes were
+  not analyzed. The note naming `--worktree` now appears only when a source or
+  test file has uncommitted changes, not for an edited README or workflow.
+  Tracked files deleted from the working tree are named on stderr.
+- An empty `ripr check --diff` result now leads with its true cause. A config
+  whose `[languages].enabled` leaves out `rust` records a typed
+  `language_adapter_unavailable` limitation for the Rust files it skipped
+  (`partial_with_limitations`, naming the effective set) instead of claiming a
+  complete analysis, and the zero-findings stderr line names a disabled or
+  unavailable adapter instead of suggesting the diff may be invalid; that
+  diff-validity hint now appears only when nothing parsed. The non-source
+  disclosure names extensionless and `.`-ending paths and no longer calls the
+  empty result correct for a truncated `+++` header, and a directory passed as
+  `--diff` is reported as a directory rather than as the OS read error
+  ([#4376](https://github.com/EffortlessMetrics/ripr-swarm/issues/4376),
+  [#4395](https://github.com/EffortlessMetrics/ripr-swarm/issues/4395)).
+
+- First-hour output no longer strands the reader. `--format human-full` carries
+  each finding's `ripr explain` / `ripr context` commands, which the digest
+  sends readers there for
+  ([#4379](https://github.com/EffortlessMetrics/ripr-swarm/issues/4379)).
+  `--format github` prints a denominator notice when findings are suppressed by
+  policy or are base-side, so an all-suppressed run is no longer silent
+  ([#4393](https://github.com/EffortlessMetrics/ripr-swarm/issues/4393)).
+  `ripr cache status` points at `ripr cache clear` instead of repository-only
+  xtask, and corrupt cache warnings name the entry file
+  ([#4383](https://github.com/EffortlessMetrics/ripr-swarm/issues/4383)). The
+  digest's "Why weakly_exposed" line names the incomplete stage; unclassifiable
+  lines in a function no test reaches ask for a test first instead of real
+  mutation testing; zero-count languages and the empty-result caveat on
+  non-empty preview runs are dropped; digest lines no longer end mid-word or
+  inside an open code span; and a closed stdout pipe (`ripr doctor | head`)
+  ends quietly with exit `2` instead of an internal-error report.
+
+- `cargo xtask ripr-pr` timeout packets now give one host-shell-labeled retry
+  command that keeps base, head, and root arguments literal when copied, including
+  refs with shell syntax and roots with spaces (#4367).
+
+- `ripr receipt check --ledger` explains each cross-reference state after its
+  token. `receipt_ok` now says it only means the ledger still lists the
+  receipt's gap, not that the gap is closed, so it no longer reads as a fix
+  confirmation. The Python context witness's `fix_site` names the same
+  suggested test as `check`, `explain` and the repair card.
+
+- TypeScript preview boundary findings get a delegatable repair packet when
+  the boundary input is statically derivable: a changed `amount >= 5000` or
+  `amount >= DISCOUNT_THRESHOLD` (single immutable integer module `const`)
+  with tests only off the boundary now targets `expect(shipping(5000))` /
+  `expect(discountedTotal(10000))` instead of failing closed, `ripr check`'s
+  Start-here line names the packet's action, test file, and verify command,
+  and an exposed TypeScript finding no longer leaves the gap ledger empty
+  (first-pr no longer loops on "blocked" after the boundary test lands).
+  Rebindable (`let`/`var`), computed, imported, or shadowed constants,
+  written parameters, and comparisons with arithmetic, a sign, or a member
+  read on either side (`OFFSET + amount >= LIMIT`, `amount >= LIMIT + 1`)
+  still fail closed. So does a comparison that some calls may skip: the
+  changed line must be a top-level statement of the owner's own body that
+  opens with the comparison (`if (`, `return`, or `const|let|var NAME =`),
+  with no earlier `return`/`throw`/`break`/`continue`/`yield`, loop or
+  `await`, and the owner may not be a generator or a curried or returned
+  function.
+
+- `ripr pilot` on a Python-only change with a repair card now ends with the
+  card's route (`ripr first-pr` before the edit to name the receipt command,
+  the test edit, its verify command, then that receipt command) instead of
+  `ripr check --root .`, which only led back to pilot.
+
+- `ripr check`'s Start here prefers a Python preview finding that has a
+  repair card over one that has none, so it no longer reports "no repair card"
+  while `ripr pilot` and `ripr first-pr` route a card for the same diff.
+
+- `ripr check` now names the repair loop for a Rust top gap that has a repair
+  route: one `Repair loop:` line under the drill-in commands points to
+  `ripr pilot --root <root>`, which prints the `ripr agent repair` start.
+  Preview-language, static-limited, and route-less findings do not get it.
+
+- Actionable working-set review cards write the verify and analysis-outcome
+  artifacts consumed by their receipt command. Gate and onboarding projections
+  carry the complete optional command chain, preserving the selected base in
+  the analysis-outcome command even without a conventional default branch;
+  older cards and deferred
+  GapRecord routes remain compatible (#4307).
+
+- LSP `ripr.collectContext`, `ripr.collectEvidenceContext` and
+  `ripr.collectRepairPacket` no longer answer `null`. An unreadable argument
+  or an id missing from the current snapshot is a `-32602` InvalidParams
+  error naming the accepted shapes, and a repair packet with no source says
+  which artifacts are missing and names the CLI route. `ripr help lsp` lists
+  every server-executed command's arguments. `ripr/listActionableItems` adds
+  `selected` and `omitted` item lists, so its self-named continuation route
+  returns items rather than only counts, and a `hidden_gaps` list naming the
+  gaps the actionable profile never publishes because they have no repair
+  route, such as a new function no test calls.
+- LSP fallback diagnostics explain their static classification and point to
+  hover evidence without promising an unavailable clipboard action or repair
+  route. Missing-path guidance remains explicitly static (#4328).
+- TypeScript/JavaScript and Python preview adapters no longer probe the
+  declaration line of a new function whose body adds its own lines. The line
+  had no behavior of its own, so it either stayed `weakly_exposed` after a
+  correct test was added or, in Python, claimed unearned `exposed` credit
+  beside a weakly exposed body predicate. Changed signatures, default values,
+  and one-line bodies keep their probe.
+- Static discrimination keeps oracle strength and confirmation on the same
+  assertion. An unrelated exact assertion can no longer borrow a weaker
+  assertion's token match to promote a finding to `exposed`; equally strong
+  confirmed assertions retain their classification regardless of order
+  ([#4404](https://github.com/EffortlessMetrics/ripr-swarm/issues/4404)).
+- Diff-scoped SARIF (`ripr check --format sarif`) now renders the same
+  `artifactLocation.uri`, `fingerprints` and `partialFingerprints` whether
+  `--root` is `.`, `./` or the checkout's absolute path. An absolute root used
+  to leak the checkout path into the uri and change every fingerprint between
+  a local and a CI run. SARIF shares the path owner GitHub annotations already
+  used.
+- Server qualification builds the Linux server archives, which the editor
+  extension downloads, on Ubuntu 22.04 with `--locked`, and fails a Linux
+  binary that needs a glibc newer than 2.34 (RHEL 9), the floor the 0.11.0
+  release sync adds to `cargo xtask release-server-archive`. The 0.10.0 Linux archives were built on Ubuntu 24.04 and
+  failed on Ubuntu 22.04 and Debian 12 with `GLIBC_2.39 not found`.
+- `RIPR_GIT_TIMEOUT` with a non-numeric or out-of-range value now fails
+  closed (exit 2) naming the variable and the value, like `--git-timeout` and
+  the `RIPR_PARTIAL_*_BUDGET` overrides. It used to keep the default deadline
+  silently (#4374).
+- Python: a function a package re-exports from its `__init__.py` is now
+  related to tests that call it through the package. On humanize
+  (`import humanize`, `humanize.naturaldelta(...)`) and more-itertools
+  (`import more_itertools as mi`, `mi.one(...)` via `from .more import *`)
+  every changed line read `no_static_path` although mutating those lines
+  fails the projects' own tests. Renamed re-exports, `_private` names under a
+  star import, and names a declared `__all__` omits are not followed.
+
 ### Added
 
 - `ripr --version` now names the commit the binary was built from, as
@@ -304,6 +565,23 @@ are scoped or reviewed.
 
 ### Changed
 
+- The Python preview adapter now resolves a module-level named constant used
+  as a comparison threshold (`if amount >= DISCOUNT_THRESHOLD:` with
+  `DISCOUNT_THRESHOLD = 10_000`), matching the Rust and TypeScript adapters.
+  The boundary gets a repair card for `amount == DISCOUNT_THRESHOLD`, the
+  missing-discriminator reason names the constant's value, and a test that calls the owner with `10_000` or with
+  the imported constant now counts as observing the boundary. A name that can
+  be rebound (a second binding, `global`, walrus, star import, `exec`/`globals`/
+  `sys.modules`, a nested scope in the owner, a test-file attribute
+  assignment) or a non-literal value stays unresolved and gets no repair card
+  ([#4227](https://github.com/EffortlessMetrics/ripr-swarm/issues/4227)).
+  Two guided-route loops on that card are closed: `ripr agent status` after a
+  pilot run that produced only a Python repair card now names the
+  `ripr first-pr` route instead of sending the user back to `ripr pilot`, and
+  `ripr first-pr` on a Python or TypeScript root reports `stale_artifact` with
+  the refresh command when the named test or changed source was edited after
+  the gap ledger was written, instead of repeating the finished repair.
+
 - `ripr doctor` now separates installed-binary analysis readiness from the
   prerequisites for building RIPR from source. The default `analysis` profile
   reports a missing `cargo` or `rustc`, or a workspace `rustc` older than
@@ -550,6 +828,28 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Advisory report outputs refuse planted destination links and nonregular files
+  before truncation while preserving fresh writes and regular-file updates.
+  The shared index, outcome, calibration, and agent-receipt write path uses
+  no-follow acquisition; supported Unix FIFO outputs do not wait for a reader.
+  Review-comments receipts exclusively create staging files, refusing planted
+  temp paths without clobbering their targets (#4360). This is leaf acquisition
+  hardening, not ancestor-directory or hard-link confinement.
+
+- `ripr explain` and `ripr context` now reject an explicit `--base` combined
+  with `--diff` at parse time, in either flag order and before any pipeline
+  run, instead of silently analyzing the `--diff` input while appearing to
+  assert the base (the loader gave `--diff` precedence and never validated
+  `--base` beside it). Beside `--from`, both flags remain scope assertions
+  verified against the recording and are unaffected. Running a `--diff -`
+  command directly at a prompt (instead of piped) now prints a one-line
+  stderr disclosure before ripr blocks reading the diff from the attached
+  terminal, so the documented `git diff origin/main | ripr check --diff -`
+  right half no longer looks like a silent hang; the disclosure lives in the
+  CLI adapter and piped, redirected, or captured stdin — including library
+  calls into the analysis API — stay silent and byte-identical
+  ([#4319](https://github.com/EffortlessMetrics/ripr-swarm/issues/4319)).
+
 - Every flag `ripr` parses is now documented on a surface a reader scans,
   and mistyped flags can be suggested from anywhere the command's help
   documents them. An audit against the parsers found parsed-but-undocumented
@@ -714,6 +1014,46 @@ are scoped or reviewed.
   `..hidden`) stay ordinary local paths. This refuses the client-supplied
   read; it is not a claim that a client can disclose the bytes
   ([#4145](https://github.com/EffortlessMetrics/ripr-swarm/issues/4145)).
+
+- Local LSP file URIs now treat an empty authority and `localhost` as the
+  same local path. Workspace paths spelled as UNC shares or Windows
+  extended-length/device paths are refused when producing a local file URI,
+  instead of emitting a URI the server cannot read back. Workspaces on those
+  paths remain unsupported by this local-only URI path
+  ([#4060](https://github.com/EffortlessMetrics/ripr-swarm/issues/4060)).
+- TypeScript predicate-boundary evidence no longer credits assertions whose
+  boundary value is in an unread argument or nested expression, whose owner
+  name is shadowed, or whose expected value cannot discriminate the change.
+  These cases may move from `exposed` to a weaker class and regain guidance
+  to add a discriminating test; live boundary assertions retain their credit
+  ([#4102](https://github.com/EffortlessMetrics/ripr-swarm/issues/4102)).
+- TypeScript related-test discovery now recognizes supported optional-chain
+  calls, awaited dynamic imports, named default exports, and re-exports
+  through star or default-as barrels. Findings backed by those relations can
+  gain related-test evidence; a relation alone does not establish a
+  discriminating oracle
+  ([#4103](https://github.com/EffortlessMetrics/ripr-swarm/issues/4103)).
+- TypeScript owner-call relations no longer credit unanchored bare calls,
+  unrelated destructures, calls into supported mocked modules, or spies that
+  fabricate the owner's value. These cases retain weaker advisory evidence
+  where available instead of crediting observation of the changed behavior;
+  genuine anchored calls and call-through spies remain eligible
+  ([#4125](https://github.com/EffortlessMetrics/ripr-swarm/pull/4125)).
+- TypeScript and JavaScript preview repair, targeted rerun, and output paths
+  now recognize `.mts`, `.cts`, `.mjs`, and `.cjs` sources and tests through
+  the same extension authority used by analysis. These module forms no longer
+  disappear solely because a later consumer used the narrower extension list
+  ([#4116](https://github.com/EffortlessMetrics/ripr-swarm/issues/4116)).
+- Oversized diffs stop parsing when the distinct accepted file count exceeds
+  the configured limit, before reading the remaining file bodies. The error
+  reports an observed lower bound and no partial analysis result; this does
+  not cap the bytes of one large file or the already acquired diff text
+  ([#3858](https://github.com/EffortlessMetrics/ripr-swarm/issues/3858)).
+- Perl preview evidence preserves static observations when the producer
+  reports a missing test runner. Runner absence still blocks repair authority;
+  it does not by itself cap the static exposure class. This bounded consistency
+  repair does not complete the broader Perl fact-packet integration
+  ([#4059](https://github.com/EffortlessMetrics/ripr-swarm/pull/4059)).
 - `check-file-policy` builds test binaries before it lists `covered_by`
   subjects. A cold compile is no longer charged against the five-minute
   list cap, and a timeout is reported as an instrument failure rather than
@@ -1156,6 +1496,13 @@ are scoped or reviewed.
   [#4287](https://github.com/EffortlessMetrics/ripr-swarm/pull/4287)).
 
 ### Docs
+
+- The README and quickstart first run now define "discriminator" where it
+  first appears and state `ripr check`'s exit codes. They add a one-line
+  `cargo install --locked --git` development install and a short section on
+  running ripr from a coding agent, including keeping `target/` gitignored
+  between repair phases. A stale `ripr doctor` troubleshooting claim was removed
+  ([#4413](https://github.com/EffortlessMetrics/ripr-swarm/pull/4413)).
 
 - `docs/REPAIR_ATTEMPT.md` and `docs/COMMAND_HIERARCHY.md` now document
   the three-phase governed Python repair sequence: trust-selection flags
