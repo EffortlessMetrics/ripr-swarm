@@ -224,11 +224,7 @@ fn apply_suppression_policy(output: &mut CheckOutput, policy: &Path) -> Result<(
     let candidates: Vec<sup::CheckSuppressionCandidate> = output
         .findings
         .iter()
-        .map(|finding| sup::CheckSuppressionCandidate {
-            finding_id: finding.id.clone(),
-            path: sup::root_relative_finding_path(&output.root, &finding.probe.location.file),
-            class: finding.class.as_str().to_string(),
-        })
+        .map(|finding| sup::CheckSuppressionCandidate::for_finding(&output.root, finding, &entries))
         .collect();
     let (matched, warnings) = sup::apply_check_suppressions(&candidates, &entries, &today);
 

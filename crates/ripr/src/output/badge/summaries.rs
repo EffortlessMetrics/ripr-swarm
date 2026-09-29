@@ -13,7 +13,6 @@ use crate::output::evidence_record::evidence_record_for;
 use crate::output::gap_decision_ledger;
 use crate::output::suppressions::{
     CheckSuppressionCandidate, SuppressionEntry, apply_check_suppressions,
-    root_relative_finding_path,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -120,11 +119,11 @@ pub fn ripr_badge_summary_with_suppressions(
             ExposureClass::WeaklyExposed
             | ExposureClass::ReachableUnrevealed
             | ExposureClass::NoStaticPath => {
-                candidates.push(CheckSuppressionCandidate {
-                    finding_id: finding.id.clone(),
-                    path: root_relative_finding_path(&output.root, &finding.probe.location.file),
-                    class: finding.class.as_str().to_string(),
-                });
+                candidates.push(CheckSuppressionCandidate::for_finding(
+                    &output.root,
+                    finding,
+                    suppressions,
+                ));
             }
             ExposureClass::InfectionUnknown
             | ExposureClass::PropagationUnknown
