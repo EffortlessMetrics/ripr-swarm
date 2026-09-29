@@ -222,7 +222,9 @@ fn check_with_progress_and_origins_with_open_rust_paths(
     }
 
     let mut options = options_builder::analysis_options_from_input_and_config(&input, config);
-    options.open_rust_index_paths.clone_from(open_rust_index_paths);
+    options
+        .open_rust_index_paths
+        .clone_from(open_rust_index_paths);
 
     // Build the language list from config. When --perl-facts is provided,
     // automatically add Perl to the enabled list (the user explicitly opted in

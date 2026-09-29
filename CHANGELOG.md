@@ -42,6 +42,21 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Repo-seam `FieldConstruction` evidence now emits a compatible missing
+  `field_value` fact when a parser-backed direct owner-result binding is
+  observed only by a weak field oracle, and only after activation is already
+  known. Exact field equality stays already-gripped; wrappers, helper
+  transfer, shadows, sibling fields, token coincidence, unknown activation,
+  failed target authority, mutable field borrows, assertion-message-only
+  field mentions, assertion-local shadows, same-name local or imported
+  callees, and local callee bindings of the owner name stay non-ready.
+  A grouped nested-`super` import of the unique production owner completes
+  the route; the same spelling from another module and cfg-ambiguous
+  same-name owners stay non-ready. A leading `::` extern-prelude import is
+  not a local owner even when a same-named dependency crate exists.
+  A DirectOwnerCall related test that failed target admission stays missing
+  rather than falling through to a proposed new-test target; advisory related
+  observers do not block an independently admitted proposal (#1981).
 - Rust: a predicate probe no longer reads `exposed` when a boundary input
   comes from a test that asserts nothing and a discriminating oracle comes
   from a different test. `exposed` requires one test that both feeds a
@@ -54,6 +69,12 @@ are scoped or reviewed.
   `ripr check` on this repository printed 723 identical-shape lines before the
   one warning that mattered. A build now prints one line naming the count and
   the first reason; a single bad entry keeps its old message (#4888).
+- That same warning no longer stays silent on native Windows. A cache base
+  that is a regular file makes every Windows file-fact read report `NotFound`
+  — the same kind as an ordinary miss — so the count-and-reason line never
+  printed and the run looked cleanly cached. A once-per-build probe of the
+  cache base now emits `cache dir is not a directory: <path>` and the build
+  re-parses in memory; a missing or usable cache base stays silent (#4918).
 - An unchanged Rust test file that the reference parser refuses is no longer
   a silent related-test hole. If a classified owner consults that
   lexical-fallback file (the file contributed a related test, or it calls the
@@ -1710,6 +1731,20 @@ are scoped or reviewed.
   ranges, disclose incomplete analysis instead of reporting a complete result.
   File and piped input retain earlier changes as advisory evidence and carry
   the typed malformed-diff recovery route (#4375).
+- A diff stream truncated after a valid file header no longer reports
+  `no_changed_lines (analysis complete)`. When a file section parsed its
+  textual header but closed without a validated hunk body, `ripr check --diff`
+  now produces a typed incomplete outcome (`unsupported_input`) carrying a
+  `malformed_diff` limitation that names the exact evidence ("N file
+  section(s) parsed a header but no hunk body; the diff appears truncated"),
+  plus a stderr disclosure. The evidence is per-section, so a complete hunk
+  in one file does not mask a later truncated section, a valid hunkless
+  gitlink or binary section does not suppress truncation detection elsewhere,
+  and only validated body lines count as parsed hunks. A CI diff producer
+  dying mid-stream is therefore visible in the machine-readable outcome
+  instead of reading as a green empty result. Genuinely empty input stays
+  `no_scope` complete, and unparseable garbage keeps its existing
+  `unsupported_input` contract (#4375).
 
 ### Added
 

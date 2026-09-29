@@ -17076,7 +17076,8 @@ fn quarantine_workspace_diagnostics(
     );
     // This synthetic snapshot explicitly names the bytes it purports to have
     // consumed. Preparation must never mint that claim from a later disk read.
-    let mut rust_consumed_sources = crate::analysis::consumed_source::ConsumedRustSources::default();
+    let mut rust_consumed_sources =
+        crate::analysis::consumed_source::ConsumedRustSources::default();
     rust_consumed_sources.record(Path::new("src/a.rs"), Some(source_a.as_bytes()));
     rust_consumed_sources.record(Path::new("src/b.rs"), Some(QUARANTINE_TEXT_B.as_bytes()));
     let snapshot = AnalysisSnapshot {
@@ -17844,7 +17845,10 @@ async fn superseded_transaction_leaves_document_state_unadvanced() -> Result<(),
     // superseded: it never becomes latest_analysis. Document identities
     // must not advance with it.
     let transaction = backend
-        .prepare_refresh_transaction(quarantine_workspace_diagnostics(&fixture, QUARANTINE_TEXT_A_DIRTY))
+        .prepare_refresh_transaction(quarantine_workspace_diagnostics(
+            &fixture,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
         .ok_or_else(|| "expected prepared transaction".to_string())?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
