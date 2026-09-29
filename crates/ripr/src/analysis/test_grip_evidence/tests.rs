@@ -3456,6 +3456,7 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
         literals: Vec::new(),
         source_role: FunctionSourceRole::Production,
         attrs: Vec::new(),
+        impl_attrs: Vec::new(),
         nested_fn_names: Vec::new(),
         let_bindings: Vec::new(),
     };
@@ -12363,6 +12364,7 @@ fn closure_boundary_operand_route_ignores_comment_only_closure_pattern() {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
         };
@@ -13415,6 +13417,7 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                 literals: Vec::new(),
                 source_role: FunctionSourceRole::Production,
                 attrs: Vec::new(),
+                impl_attrs: Vec::new(),
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
             }, FunctionSummary {
@@ -13433,6 +13436,7 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                 literals: Vec::new(),
                 source_role: FunctionSourceRole::Production,
                 attrs: Vec::new(),
+                impl_attrs: Vec::new(),
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
             }],
@@ -16206,5 +16210,90 @@ fn duplicate_evidence_function_identity_invalidates_target() -> Result<(), Strin
             "duplicate evidence-function identity must not keep a repair packet".to_string(),
         );
     }
+    Ok(())
+}
+
+#[test]
+fn direct_collection_mutation_discriminates_actual_observer_not_sibling_collection()
+-> Result<(), String> {
+    let prod = PathBuf::from("src/rows.rs");
+    let prod_src = r#"
+pub fn record_effect(items: &mut Vec<u32>) {
+    items.push(5);
+}
+"#;
+    let tests = PathBuf::from("tests/rows_tests.rs");
+    let wrong_src = r#"
+#[test]
+fn observes_other() {
+    let mut items = Vec::new();
+    let other = vec![7u32];
+    record_effect(&mut items);
+    assert_eq!(other, vec![7u32]);
+}
+"#;
+    let actual_src = r#"
+#[test]
+fn observes_items() {
+    let mut items = Vec::new();
+    record_effect(&mut items);
+    assert_eq!(items, vec![5u32]);
+}
+"#;
+    let wrong_index = index_from_files(&[(prod.clone(), prod_src), (tests.clone(), wrong_src)])?;
+    let actual_index = index_from_files(&[(prod.clone(), prod_src), (tests.clone(), actual_src)])?;
+    let wrong_seams = inventory_seams_from_index(&[PathBuf::from("src/rows.rs")], &wrong_index);
+    let actual_seams = inventory_seams_from_index(&[PathBuf::from("src/rows.rs")], &actual_index);
+    let wrong_seam = wrong_seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::SideEffect)
+        .ok_or_else(|| {
+            format!(
+                "expected side_effect seam for wrong observer, got {:?}",
+                wrong_seams
+                    .iter()
+                    .map(|seam| seam.kind().as_str())
+                    .collect::<Vec<_>>()
+            )
+        })?;
+    let actual_seam = actual_seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::SideEffect)
+        .ok_or_else(|| {
+            format!(
+                "expected side_effect seam for actual observer, got {:?}",
+                actual_seams
+                    .iter()
+                    .map(|seam| seam.kind().as_str())
+                    .collect::<Vec<_>>()
+            )
+        })?;
+    assert_eq!(wrong_seam.expression(), actual_seam.expression());
+    let wrong = evidence_for_seam(wrong_seam, &wrong_index);
+    let actual = evidence_for_seam(actual_seam, &actual_index);
+    assert_ne!(
+        wrong.discriminate.state,
+        StageState::Yes,
+        "asserting collection B must not discriminate collection A: {:?}",
+        wrong.discriminate
+    );
+    assert_eq!(
+        actual.discriminate.state,
+        StageState::Yes,
+        "asserting the affected collection must retain discrimination: {:?}",
+        actual.discriminate
+    );
+    assert_eq!(
+        actual.propagate.state,
+        StageState::Yes,
+        "the actual observer must count as the collection sink: {:?}",
+        actual.propagate
+    );
+    assert_ne!(
+        wrong.propagate.state,
+        StageState::Yes,
+        "the sibling collection must not count as the collection sink: {:?}",
+        wrong.propagate
+    );
     Ok(())
 }

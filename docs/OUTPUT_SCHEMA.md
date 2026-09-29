@@ -69,6 +69,7 @@ records that distinction.
 | Published schema | Current version | Version owner and rationale |
 | --- | --- | --- |
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
+| `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
 | `schemas/ripr/gate-decision.schema.json` | `0.1` | `crates/ripr/src/output/gate.rs`; gate decision envelope |
 | `schemas/ripr/pr-evidence.schema.json` | `0.1` | `crates/ripr/src/app/pr_evidence.rs` (installed `ripr pr-evidence`) and `xtask/src/reports/pr_evidence.rs` (xtask compatibility); PR evidence envelope |
 | `schemas/ripr/repair-assurance.schema.json` | `1` | `crates/ripr/src/domain/verification_result.rs`; reserved assurance vocabulary and execution result |
@@ -83,13 +84,63 @@ records that distinction.
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
 
+## Executed-control packet (`executed_control_packet`, schema `1`)
+
+This is a repository-owned contract for acceptance items that require an
+**executed discriminating control**. It is not a GitHub client, merge gate, or
+mutation-testing engine. Human Markdown and machine JSON derive from the same
+packet. `passed` is not inferred from ordinary tests or review prose.
+
+Fields:
+
+- `schema_version` — `1`
+- `kind` — `executed_control_packet`, `executed_control_obligation`, or
+  `executed_control_result`
+- `source_identity` — repository identity bound by the packet
+- `obligation_id` / `owning_claim` — stable claim keys, not issue-body prose
+- `control_class` — `removed_guard`, `wrong_implementation`, or `named_mutation`
+- `intended_wrong_implementation` — the named wrong implementation or removed
+  guard
+- `required_execution_subject` — `command_or_instrument_id`,
+  `named_wrong_implementation`, and `required_head`
+- `expected_discriminating_outcome` — `fails_before_passes_after` or
+  `rejects_wrong_implementation`
+- `acceptable_evidence_forms` — `retained_artifact`, `bounded_log_commitment`,
+  `declared_substitute`
+- `permitted_substitute` — explicit substitute, or `null`; never inferred
+- `requiredness` — `required` or `advisory`
+- `invalidators` — `source_head_moved`, `control_contract_changed`,
+  `artifact_missing`, `command_identity_changed`
+- `offered_evidence_kind` — `executed_discriminating_control`,
+  `ordinary_positive_test`, `review_prose`,
+  `structural_discrimination_claim`, or `declared_substitute`
+- `observed_outcome` — including `failed_before_passed_after`,
+  `rejected_wrong_implementation`,
+  `command_succeeded_without_exercising_subject`, and `not_executed`
+- `state` — `passed`, `failed`, `not_run`, `not_proven`, `substituted`,
+  `instrument_failure`
+- `artifact` — logical id plus `sha256:` digest; machine paths are not identity
+- `obligation_digest` — digest of the obligation contract; a stale digest
+  cannot satisfy a moved implementation
+
+`passed` requires `offered_evidence_kind` `executed_discriminating_control`
+plus retained artifact identity, matching packet `source_identity`, and an
+artifact-backed form listed on the obligation. JSON and Markdown both reject
+invalid packets. #3858 / #4063 is documented as `not_proven` and must not be
+rewritten as `passed`. Closeout enforcement is a later slice.
+
+
 `ripr doctor --json` top-level `status` and `runtime_probes[].status` are
 `pass` or `fail`. The `profile` is `analysis` by default or `source-build`
 when requested. Schema `0.3` also adds top-level `ripr_version`, the running
 binary's package version, and `ripr_build_msrv`, the minimum rustc that can
 build that version from source. Each `checks[].status` is `pass`, `fail`, `advisory`, or `skipped`;
 `advisory` (added in schema `0.3`) reports an unavailable Cargo/rustc
-capability without failing installed-binary analysis. The source-build profile
+capability without failing installed-binary analysis. An additive
+`generated_workflow` advisory check appears when
+`.github/workflows/ripr.yml` installs ripr without a version (the 0.10
+template) or pins a version other than the running one; its `evidence` names
+the refresh command. The source-build profile
 fails on missing tools or rustc below RIPR's build MSRV, and reports its
 language `runtime_probes` with `required: false` because a language runtime is
 an analysis capability, not a build prerequisite. It does not establish
@@ -175,6 +226,12 @@ notice) per step and drops the rest silently. Disclosure notices therefore lead
 the stream: the unannotated-denominator notice (suppressed or not-current
 findings) and, when any level exceeds 10, a notice naming how many annotations
 of that level were emitted. Per-finding annotations follow.
+
+When the producer-owned `analysis_outcome` is not complete (for example
+`unsupported_input` or `partial_with_limitations`), the stream starts with a
+`ripr analysis incomplete` warning naming the outcome kind and each limitation
+with its recovery, and the clean `No static exposure findings found` notice is
+not printed.
 
 `ripr check --format human` is the bounded default terminal surface. It prints
 header and summary counts, then one `Start here:` triage block with a closed
@@ -1023,10 +1080,11 @@ The evidence-first fields are additive in schema `0.2`:
       the call site.
     - `typescript_target_unresolved` — fired (RIPR-SPEC-0085 §PR6) when a test
       in a different package references the owner by call name but is excluded by
-      the package-local ownership filter. The real producer is
+      the package-local ownership filter. A cross-package test whose import
+      resolves to the owner's own file is related, not excluded, and does not
+      fire it (#4552). The real producer is
       `static_limit.rs::named_limitations_for_unresolved_ownership`, which
-      confirms the cross-package exclusion by comparing candidates with vs.
-      without the package-local filter. Only emitted when `workspace_root` is
+      skips tests the relation layer admitted. Only emitted when `workspace_root` is
       `Some` (i.e. in production, not in unit tests without a workspace root).
     - `typescript_path_alias_unresolved` — fired (RIPR-SPEC-0099) when a related
       test imports a symbol name-matched to the owner from a NON-RELATIVE
@@ -1595,6 +1653,18 @@ subject and one dynamic-name limitation:
 
 An absent `test_harnesses` array means the repository has no harness
 registrations; it is never a claim that custom harnesses do not exist.
+
+### `source_subject` (top-level additive, #4544)
+
+When a gap ledger derived from this check output would name at least one
+workspace file, the JSON output carries a top-level `source_subject` with the
+content digests of exactly those files (each record's `anchor.file`,
+`repair_route.target_file`, and `repair_route.related_test` file), read by the
+same `ripr check` run. The shape is described under
+[Gap artifact source subject](#gap-artifact-source-subject). It is omitted
+when no such file is named or a named file cannot be read. `ripr reports
+gap-ledger --check-output` and `ripr first-pr --check-output` copy these
+digests into the ledger they write.
 
 ### `scope_disclosures` (top-level additive advisory, RIPR-SPEC-0083)
 
@@ -2521,6 +2591,16 @@ and `agent receipt` compare the stable producer/version, base, mode, and
 profile fields separately, and reject unchanged identities when the declared
 repository commits differ. `analysis.command` and `analysis.profile` state the
 producer operation used.
+
+A producer-generated snapshot also carries an additive top-level
+`source_subject` (#4544) with the content digests, read in the same analysis
+run, of every workspace file a seam entry names under a `file`, `path`,
+`source_file`, `target_file`, `target_test`, `related_test`, `test`, or
+`related_test_or_observer` key at any depth. The shape is described under
+[Gap artifact source subject](#gap-artifact-source-subject). It is omitted when
+no seam names a file or a named file cannot be read. `content_sha256` covers it
+like any other member. The gap ledger and `actionable-gaps.json` derived from
+this snapshot copy their stamps from it.
 
 ### Repo Exposure Summary JSON
 
@@ -4310,6 +4390,13 @@ otherwise it uses the category fallback route.
       ]
     }
   ],
+  "source_subject": {
+    "digest_algorithm": "sha256",
+    "files": [
+      { "path": "src/pricing.rs", "digest": "sha256:3f5a..." },
+      { "path": "tests/pricing.rs", "digest": "sha256:9c1e..." }
+    ]
+  },
   "must_not_infer": [
     "raw findings are supporting evidence, not user work",
     "do not infer actionability from raw static class",
@@ -4341,6 +4428,20 @@ readable, but its typed command collections are omitted until a producer-owned
 spec is available. LSP gap-artifact validation accepts the object form and
 compatibility array form, but rejects non-object `command_specs` containers,
 malformed specs, and role-mismatched specs before projection.
+
+`source_subject` records which source contents the packets were computed
+from, in the shape described under
+[Gap artifact source subject](#gap-artifact-source-subject). The xtask writer
+copies, from the repo-exposure snapshot's own `source_subject`, the digest of
+every file a packet names: `source_file`, `target_test`, `target_file`,
+`primary_anchor.file`, and `related_test_or_observer` whether it is a
+`path::test` string, an object (`file`, `path`, `related_test`, `test`, or
+`target_file`), or an array of those. When the snapshot has no stamp or its
+stamp omits one of those files, the report carries
+`source_subject_unavailable` with the reason instead of a stamp. `ripr lsp` rejects an `actionable-gaps.json`
+whose stamp is missing, incomplete, or no longer matches the workspace, and the
+repair-packet command answers with a `stale_subject` or `unverifiable_subject`
+sentinel instead of the packet.
 
 This producer-owned projection boundary is distinct from the explicit
 `agent verify-execute` surface below. GapRecord packet rendering does not
@@ -9639,7 +9740,8 @@ ripr policy history \
   --commit HEAD \
   --pr-number 123 \
   --out target/ripr/reports/policy-history.json \
-  --out-md target/ripr/reports/policy-history.md
+  --out-md target/ripr/reports/policy-history.md \
+  --out-jsonl .ripr/policy-history.jsonl
 ```
 
 The report writes:
@@ -9649,11 +9751,18 @@ target/ripr/reports/policy-history.json
 target/ripr/reports/policy-history.md
 ```
 
-This report is advisory policy trend evidence. It does not append to
-`.ripr/policy-history.jsonl`, execute gates, collect telemetry, mutate config,
-baselines, suppressions, workflows, branch protection, generated CI defaults,
-or source files, promote preview-language evidence, run analysis, generate
-tests, call providers, post comments, or run mutation testing.
+`--out-jsonl PATH` is the opt-in producer. Each run appends one compact JSON
+line matching `example_append_record` (the current snapshot object, not the
+full trend report). Generated CI never passes `--out-jsonl` and never
+auto-commits `.ripr/policy-history.jsonl`. Adopt the file by committing it
+yourself, or keep supplying it from an external store.
+
+This report is advisory policy trend evidence. The default write path does not
+append to `.ripr/policy-history.jsonl`. The command does not execute gates,
+collect telemetry, mutate config, baselines, suppressions, workflows, branch
+protection, generated CI defaults, or source files, promote preview-language
+evidence, run analysis, generate tests, call providers, post comments, or run
+mutation testing.
 
 JSON shape:
 
@@ -9756,7 +9865,7 @@ JSON shape:
       "status": "missing"
     }
   ],
-  "limits_note": "Read-only advisory policy history report. It reads explicit history inputs and never appends, mutates policy, or changes gate authority."
+  "limits_note": "Read-only advisory policy history report. It reads explicit history inputs and does not mutate policy or change gate authority. Default execution and generated CI do not append history; `--out-jsonl` is the opt-in producer."
 }
 ```
 
@@ -10403,7 +10512,8 @@ ripr pr-ledger record \
   --coverage target/ripr/reports/coverage-summary.json \
   --history .ripr/pr-evidence-ledger.jsonl \
   --out target/ripr/reports/pr-evidence-ledger.json \
-  --out-md target/ripr/reports/pr-evidence-ledger.md
+  --out-md target/ripr/reports/pr-evidence-ledger.md \
+  --out-jsonl .ripr/pr-evidence-ledger.jsonl
 ```
 
 The report writes:
@@ -10412,6 +10522,12 @@ The report writes:
 target/ripr/reports/pr-evidence-ledger.json
 target/ripr/reports/pr-evidence-ledger.md
 ```
+
+`--out-jsonl PATH` is the opt-in producer. Each run appends one compact JSON
+line: the same record object as `--out`, without pretty-print newlines.
+Generated CI reads `.ripr/pr-evidence-ledger.jsonl` when that file exists and
+never passes `--out-jsonl` or auto-commits the ledger. Adopt the file by
+committing it yourself, or keep supplying it from an external store.
 
 This report is advisory history. `ripr gate evaluate` remains the pass/fail
 authority for configured gate modes. Generated GitHub CI runs
@@ -11983,6 +12099,7 @@ JSON shape:
   "schema_version": "0.1",
   "tool": "ripr",
   "kind": "first_pr_start_here",
+  "ripr_version": "0.11.0",
   "status": "blocked",
   "posture": "advisory",
   "root": ".",
@@ -12045,6 +12162,10 @@ Field contract:
 
 - `schema_version` is `0.1` until the packet shape changes.
 - `kind` is always `first_pr_start_here`.
+- `ripr_version` is the producing `ripr` package version. It is additive on
+  schema `0.1`. `first-pr --check` and `doctor` treat a missing or different
+  value as `stale_evidence` and print the refresh command. A packet without
+  this field is a pre-0.11 artifact, not a contract-invalid document.
 - `status` is `actionable`, `blocked`, or `no_action`. It is reviewer context
   only, not gate authority.
 - `posture` is always `advisory`.
@@ -14076,6 +14197,38 @@ Field contract:
   packet and is `null` for a repo-wide envelope containing multiple seams.
   These commands are advisory handoff instructions and do not execute a test,
   approve a patch, or authorize a merge.
+  Compound recipes use Bash-style quoting, directory creation, and redirects,
+  consistent with the structured workflow's `command_shell: "bash"`; they do
+  not establish PowerShell recipe compatibility. Read the structured workflow
+  for its shell contract before executing commands.
+  Explicit standalone per-seam CLI `agent packet` binds these `next` commands,
+  including directory creation, to the selected repository root.
+  Its optional `next.analysis_outcome_command` writes the static outcome
+  consumed by the receipt, between the after snapshot and verify steps.
+  Portable bulk/check-format wrappers omit this additive field and retain
+  their repository-local recipe; they are not a complete foreign-CWD receipt
+  workflow. GapRecord and editor routes are unchanged. Static receipt
+  completeness does not establish project-test execution.
+  The standalone manual recipe assumes a fresh workflow without retained
+  durable repair attempts. Resume a matching awaiting attempt through its
+  published exact `--attempt` selector. If none is awaiting for the selected
+  seam, begin a fresh durable Before route and preserve the retained attempts.
+  The receipt validator retains its existing attempt binding and can refuse an
+  incompatible manual recipe.
+  Per-packet canonical/evidence receipt commands and portable bulk output are
+  outside this `packet.next` root-binding claim (#4000 remains open).
+  A packet emitted by `agent repair --phase before` instead sets the manual
+  snapshot, outcome, verify, and receipt fields to `null` and advertises
+  `next.repair_after_command`. This selected-root command resumes the existing
+  durable repair route after the permitted focused edit, including the edit
+  cage, outcome, verify, after verdict, and receipt. The command pins the exact
+  `--attempt` identity also published in the manifest and stderr. A retained
+  packet for a finished attempt refuses that attempt instead of selecting a
+  later awaiting attempt for the same seam. Explicit legacy seam selection
+  still refuses multiple awaiting attempts. Trust-bound Python
+  continuations retain the required explicit authorization placeholders;
+  rendering the command does not grant authorization. Packet bytes remain
+  unchanged after publication.
 
 The packet is the agent's work order: it names the seam, the missing
 discriminator, the oracle shape, and either a producer-backed assertion
@@ -14592,11 +14745,18 @@ Field contract:
   and `guidance_category`/`guidance`: the existing `typescript_diff_first`
   repair route for TypeScript and JavaScript, the `python_diff_first` repair
   route for Python, the unavailable-adapter notice for a language this binary
-  cannot analyze, otherwise `null`.
+  cannot analyze, otherwise `null`. `state` is `unanalyzed_only` when the
+  repository has no Rust source, no routed language, and source in languages no
+  ripr adapter reads (Go, Java, C, shell and others); the empty ranking is then
+  a non-claim, and no follow-up command applies. `unanalyzed_languages` —
+  additive, present only when such source exists — lists `{language,
+  file_count}` per language name.
 - `next` — advisory follow-up commands. Complete summaries include the public
   `ripr outcome` before/after receipt command, and `repair_command`: the
   `ripr agent repair --seam-id <id> --phase before` command for the top seam
   when its repair-packet eligibility flip holds, otherwise `null` (#3906).
+  When `language_routes.state` is `unanalyzed_only`, `after_snapshot_command`
+  and `outcome_command` are `null`: there is no seam to snapshot or measure.
   Partial summaries include a retry command with a larger explicit timeout.
 
 The Markdown sibling prints the same summary, puts the top recommendation first,
@@ -15923,6 +16083,13 @@ JSON shape:
     "receipt_unchanged_after_attempt_total": 1,
     "missing_output_contract_total": 1
   },
+  "source_subject": {
+    "digest_algorithm": "sha256",
+    "files": [
+      { "path": "src/pricing.rs", "digest": "sha256:3f5a..." },
+      { "path": "tests/pricing.rs", "digest": null }
+    ]
+  },
   "records": [
     {
       "gap_id": "gap:pr:pricing:threshold-boundary",
@@ -15990,6 +16157,73 @@ JSON shape:
 when records are present but violate projection-safety checks, and `blocked`
 when no records can be read. The summary counts are projection inputs only;
 they are not gate authority.
+
+`source_subject` records which source contents the ledger was computed from
+(see [Gap artifact source subject](#gap-artifact-source-subject)). The ledger
+covers every record's `anchor.file`, `repair_route.target_file`, and
+`repair_route.related_test` file. `ripr reports gap-ledger` and
+`ripr first-pr --check-output` never read those files: they copy each digest
+from the `source_subject` of their input (the check JSON, the repo-exposure
+snapshot, or, with `--records`, an earlier ledger), rebasing paths from the
+input's `root` onto the selected `--root`. When the input has no stamp, or its
+stamp is malformed, uses another algorithm, or omits a file the records name,
+the ledger carries no `source_subject` and instead a top-level
+`source_subject_unavailable` naming the reason
+(`input_source_subject_missing`, `input_source_subject_malformed`,
+`input_source_subject_unsupported_digest`, or
+`input_source_subject_incomplete`); `ripr lsp` then treats it as
+`unverifiable_subject`. Re-rendering an unstamped ledger with `--records`
+stays unstamped. A ledger rendered in memory by another report is not
+stamped.
+
+### Gap artifact source subject
+
+Line numbers in a gap artifact describe one version of the workspace files.
+To keep an editor from placing a gap computed for other file contents (another
+branch, an earlier commit, or a since-saved edit) at its old
+lines, `gap-decision-ledger.json` and `actionable-gaps.json` carry an additive
+top-level `source_subject`:
+
+- `digest_algorithm`: always `"sha256"`.
+- `files[]`: one entry per workspace file the artifact's records name, sorted
+  by `path`. `path` is repo-relative with `/` separators and no `.` or `..`
+  segments; a `path::test_name` selector contributes its file part, and a
+  string whose last segment has no extension (a bare test or observer name) is
+  not a file. An absolute path counts when it lies under the root, which is
+  resolved to an absolute path first. `digest` is `"sha256:<hex>"` of the file
+  bytes, or `null` when the file did not exist.
+
+Only the analysis producers read files to stamp: `ripr check` JSON and
+`repo-exposure-json` hash the files their output names in the same run,
+after the analysis reads them, so an edit saved between the analysis read
+and the stamp is the one window a stamp cannot see. The artifacts derived
+from them (`gap-decision-ledger.json`, `actionable-gaps.json`) copy those
+digests and never hash the workspace, so a file edited after the analysis
+makes the derived artifact stale rather than stamping the new bytes as the
+analyzed ones.
+
+`ripr lsp` recomputes each digest from the current workspace before it
+projects any record from the artifact, and applies the result to the whole
+artifact:
+
+- every digest matches: the artifact is current and projects as before;
+- a stamped file changed, was deleted, or now exists where `null` was
+  stamped: the artifact is rejected as `stale_subject`, the run status becomes
+  `stale`, and the `cache` and `gap_ledger` component outcomes carry kind
+  `stale_subject`, the changed path, and the regeneration route;
+- the stamp is missing (an artifact from an older build), malformed, uses
+  another algorithm, or omits a file the records name: the artifact is
+  rejected as `unverifiable_subject` (reasons `source_subject_missing`,
+  `source_subject_malformed`, `source_subject_unsupported_digest`,
+  `source_subject_incomplete`, or `source_subject_unreadable`), the run status
+  becomes `cache_limited`, and nothing from it is projected.
+
+Rejected artifacts publish no gap diagnostics, and the repair-packet and
+gap-context commands return a `not_actionable_or_incomplete` sentinel whose
+`reason` starts with the rejection kind. Regenerate the ledger with
+`ripr reports gap-ledger` and `actionable-gaps.json` with
+`cargo xtask lane1-evidence-audit`. The stamp identifies file contents only; it
+does not make an artifact computed from an older check output current.
 
 ## Mutation Calibration Reports
 
@@ -16495,7 +16729,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.11",
+    "schema_version": "1.12",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -16506,7 +16740,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.17",
+      "schema_version": "1.18",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
@@ -16649,7 +16883,9 @@ matching-record index and do not hide other current scopes. The overall result
 is `limited` only when no current scope resolves. Missing, root-mismatched, or
 otherwise unresolved selectors emit `state: "limited"`, an empty `seams` array,
 and a named `limitation` such as `canonical_gap_unresolved` or
-`stale_gap_ledger`. They never fall back to an unrelated workspace scan.
+`stale_gap_ledger`. They never fall back to an unrelated workspace scan. A
+`--gap-ledger` that cannot be read or parsed is not a limitation: the command
+exits 2 without a report, as it does for an unreadable `--changed-test`.
 
 Both selectors reuse valid file facts but recompute the selected evidence. A
 `canonical_gap_id` is domain-supplied and nullable; it is never derived from a
