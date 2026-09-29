@@ -9429,6 +9429,17 @@ fn init_that_cannot_finish_writing_keeps_the_previous_config() -> Result<(), Str
         !config_path.exists(),
         "a cut-short init left a truncated ripr.toml"
     );
+    let staged: Vec<String> = std::fs::read_dir(&workspace)
+        .map_err(|e| format!("read workspace: {e}"))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".tmp"))
+        .collect();
+    assert_eq!(
+        staged,
+        Vec::<String>::new(),
+        "a failed init left its staging file"
+    );
     assert_success(&run_ripr(&["init", "--root", &root]));
 
     ignore_remove_dir_all(&workspace);
@@ -9439,8 +9450,20 @@ fn init_that_cannot_finish_writing_keeps_the_previous_config() -> Result<(), Str
 #[test]
 fn init_force_replaces_a_symlinked_config_without_writing_its_target() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
+    use std::os::unix::fs::PermissionsExt as _;
     let target = workspace.join("elsewhere.toml");
     std::fs::write(&target, "keep\n").map_err(|e| format!("seed target: {e}"))?;
+    // A distinctive mode on the link target: the replacement must not take it
+    // on, because the rename replaces the link, not the file it points at.
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o604))
+        .map_err(|e| format!("chmod target: {e}"))?;
+    let fresh_probe = workspace.join("mode-probe");
+    std::fs::write(&fresh_probe, "").map_err(|e| format!("write probe: {e}"))?;
+    let default_mode = std::fs::metadata(&fresh_probe)
+        .map_err(|e| format!("stat probe: {e}"))?
+        .permissions()
+        .mode()
+        & 0o777;
     let config_path = workspace.join("ripr.toml");
     std::os::unix::fs::symlink(&target, &config_path).map_err(|e| format!("symlink: {e}"))?;
 
@@ -9456,6 +9479,11 @@ fn init_force_replaces_a_symlinked_config_without_writing_its_target() -> Result
     assert!(
         metadata.file_type().is_file(),
         "ripr.toml must be a regular file"
+    );
+    assert_eq!(
+        metadata.permissions().mode() & 0o777,
+        default_mode,
+        "the replacement inherited the symlink target's permissions"
     );
     let config = std::fs::read_to_string(&config_path).map_err(|e| format!("read: {e}"))?;
     assert!(config.contains("mode = \"draft\""));

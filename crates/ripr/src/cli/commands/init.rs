@@ -273,29 +273,48 @@ fn write_init_target(target: &InitTarget) -> Result<(), String> {
         // itself, so a pre-placed symlink is not followed (#2101).
         return crate::atomic_file::write(&target.path, target.body.as_bytes(), "ripr init");
     }
-    // Use create_new to prevent a symlink-following write race where a
-    // symlink is placed at the path between the exists() check in
-    // init_plan and the write. create_new fails if the path already
-    // exists, including symlinks. (#1948)
-    //
-    // Write through the create_new handle: reopening the path after
-    // creation would leave a swap window where a planted symlink is
-    // followed (#2101 review, CWE-367).
+    // A new file is staged and fsynced beside the destination, then
+    // hard-linked into place (#4883). The link fails if anything, including
+    // a planted or dangling symlink, appeared at the path after planning
+    // (#1948, #2101), and a failed write never leaves a partial config at the
+    // destination for a rerun to refuse.
+    use crate::atomic_file::CreateNewError;
+    match crate::atomic_file::create_new(&target.path, target.body.as_bytes()) {
+        Ok(()) => {}
+        // A filesystem without hard links: write the destination directly.
+        Err(CreateNewError::Link(err)) if err.kind() != std::io::ErrorKind::AlreadyExists => {
+            write_new_file_in_place(&target.path, target.body.as_bytes())?;
+        }
+        Err(CreateNewError::Staging(err) | CreateNewError::Link(err)) => {
+            return Err(format!("write {} failed: {err}", target.path.display()));
+        }
+    }
+    println!("Wrote {}", output::path::human_path(&target.path));
+    Ok(())
+}
+
+/// Direct `create_new` write, for filesystems where the staged hard link is
+/// unavailable. Writing through the `create_new` handle avoids a swap window
+/// where a planted symlink is followed (#2101 review, CWE-367).
+fn write_new_file_in_place(path: &std::path::Path, body: &[u8]) -> Result<(), String> {
+    use std::io::Write;
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(&target.path)
-        .map_err(|err| format!("write {} failed: {err}", target.path.display()))?;
-    use std::io::Write;
-    if let Err(err) = file.write_all(target.body.as_bytes()) {
-        // This run created the file, so a cut-short write removes it rather
-        // than leave a truncated config that a rerun refuses to replace and
-        // that may still parse (#4883).
+        .open(path)
+        .map_err(|err| format!("write {} failed: {err}", path.display()))?;
+    if let Err(err) = file.write_all(body).and_then(|()| file.sync_all()) {
+        // Remove the file this call created rather than leave a truncated
+        // config (#4883). Unlike the staged path, this unlinks by name.
         drop(file);
-        let _ = std::fs::remove_file(&target.path);
-        return Err(format!("write {} failed: {err}", target.path.display()));
+        return Err(match std::fs::remove_file(path) {
+            Ok(()) => format!("write {} failed: {err}", path.display()),
+            Err(cleanup) => format!(
+                "write {} failed: {err}; removing the partial file also failed: {cleanup}",
+                path.display()
+            ),
+        });
     }
-    println!("Wrote {}", output::path::human_path(&target.path));
     Ok(())
 }
 

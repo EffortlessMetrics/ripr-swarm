@@ -29,8 +29,10 @@ are scoped or reviewed.
   writing the new one. A full disk or a file-size limit mid-write used to leave
   a truncated fragment in its place (a rerun then refused to replace it, and
   the fragment could still parse), after printing `Overwrote existing`. The
-  config is now replaced atomically and the message prints only after it
-  succeeds; a plain `ripr init` removes a file it could not finish writing
+  config is now replaced atomically, the replacement no longer takes on the
+  permissions of a symlink's target, and the message prints only after it
+  succeeds. A plain `ripr init` stages and fsyncs the new file, then links it
+  into place only if nothing appeared there, so a failed write leaves no file
   (#4883).
 - Changes in languages ripr does not analyze (Go, Java, C, C++, shell and
   others) are no longer called non-source files. A Go-only diff reported
