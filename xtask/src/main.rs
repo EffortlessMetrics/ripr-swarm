@@ -35,6 +35,7 @@ mod evidence_quality;
 mod fixture_contracts;
 mod no_panic;
 mod output_enum_contracts;
+mod package_qualification;
 mod policy;
 mod product_gate_plan;
 mod public_api_surface;
