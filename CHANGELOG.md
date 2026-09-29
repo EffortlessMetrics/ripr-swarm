@@ -55,6 +55,11 @@ are scoped or reviewed.
   root they started with, are told which folder is not analyzed, and hover
   on a file from that folder says it is outside the analyzed root. The VS
   Code extension keeps its folder-picker behavior.
+- `ripr agent brief --json`: `before_snapshot_command` now creates
+  `target/ripr/workflow` before redirecting into it, so the first loop command
+  works in a fresh checkout. When the requested scope matches nothing and no
+  other agent-actionable seam is visible, the warning says so instead of
+  claiming it is showing all repo-actionable seams (#4592).
 - LSP: an editor that opens two workspace folders, or none, now hears why
   ripr is silent. Before, the server stopped analysis and sent nothing: the
   startup `ripr/analysisStatus` was dropped because the transport discards
@@ -312,6 +317,16 @@ are scoped or reviewed.
   unrelated. (ufo's own `withBase` tests are still missed: they
   register from a `for` loop with computed titles, which test extraction does
   not index and discloses as partial.)
+- TypeScript: tests declared inside a `for`, `for...of` or `for...in` loop
+  or a `.forEach` callback are now extracted, including tests with a
+  template-literal or other computed title. Before, a suite written like
+  unjs/ufo (``for (const t of tests) { test(`${t.input}`, ...) }``) left the
+  owners it calls reading `no_static_path`. A computed title is named
+  `<computed title, line N>` under its `describe`; the test relates to an
+  owner only when its own body calls it. A loop is walked only when it is
+  known to run at least once (a non-empty literal, or a `const` bound to
+  one), and a loop variable or `describe` parameter that reuses an imported
+  owner's name shadows it.
 
 - Python pytest verify commands now run as `python -m pytest path::node`
   instead of bare `pytest path::node`. `-m` puts the repository root on
@@ -346,6 +361,18 @@ are scoped or reviewed.
   the `Agent review packet` block already did. The stored artifacts keep
   their bound root; only the summary rendering rewrites the checkout path, and
   only where it is a whole path token.
+- `ripr review-comments` now reads its diff the way `ripr check` does. It ran
+  its own `git diff`, so `color.diff=always` in the repository's git config
+  produced zero guidance with exit 0, and `diff.submodule=diff` put guidance
+  on files inside a submodule. A base or head that does not resolve, and a
+  shallow clone with no merge base, now get the same named cause and repair
+  as `check` instead of git's `ambiguous argument` advice. `ripr first-pr`
+  names the shallow clone behind a missing merge base and offers
+  `git fetch --unshallow` as its next command (#4538).
+- A symlink in the diff no longer counts as changed source. Git shows a
+  symlink as a one-line file holding its target path, so `ripr check` built a
+  probe from that path and `ripr review-comments` annotated unchanged lines of
+  the file the link points at, under the link's name (#4577).
 
 - LSP: `ripr.collectRepairPacket` and `ripr.collectContext` now reject a
   `gap_id` that is present but not a string (such as `42` or `true`) with an
@@ -360,11 +387,19 @@ are scoped or reviewed.
   facts or classified evidence. File-fact, full/compact classified, shard and
   corpus-fingerprint generations cold-recompute once; checksums do not
   authenticate writers able to recompute them (#4382).
-- `ripr agent brief --json`: `before_snapshot_command` now creates
-  `target/ripr/workflow` before redirecting into it, so the first loop command
-  works in a fresh checkout. When the requested scope matches nothing and no
-  other agent-actionable seam is visible, the warning says so instead of
-  claiming it is showing all repo-actionable seams (#4592).
+- `docs/OUTPUT_SCHEMA.md` now lists every finding enum value `ripr check
+  --format json` can emit: `static_limit_kind` gains
+  `wrapper_error_binding_unresolved` and
+  `rust_subprocess_binary_reach_unresolved`, and `stop_reason` gains
+  `transitive_reach_unresolved`. `cargo xtask check-output-contracts` now
+  derives each governed enum from its declaration and fails when the doc list
+  or `policy/output_contracts.txt` misses or invents a value, instead of
+  accepting any substring match (#4539).
+
+- LSP code lenses now offer the registered saved-workspace refresh command with an
+  explicit action label, avoiding unsupported empty-command clicks in standard clients.
+  Cached related-test advisories remain static; clicking does not run tests or repair code
+  (#4357).
 
 ### Added
 
