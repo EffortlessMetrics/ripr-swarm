@@ -23,7 +23,7 @@ use crate::output::path::display_path;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Guidance disclosure emitted when a predominantly TypeScript/JavaScript
 /// workspace is scanned in repo-exposure mode and contributes zero seams.
@@ -86,6 +86,73 @@ impl PythonRepoExposureGuidance {
          result is not a clean Python result (named limitation).";
 }
 
+/// Disclosure when repo exposure skipped generated Rust that `ripr check`
+/// already leaves out of scope.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GeneratedRustSkip {
+    pub(crate) paths: Vec<PathBuf>,
+}
+
+impl GeneratedRustSkip {
+    pub(crate) const CATEGORY: &'static str = "generated_rust_source_skipped";
+
+    pub(crate) fn from_paths(paths: Vec<PathBuf>) -> Option<Self> {
+        if paths.is_empty() {
+            None
+        } else {
+            Some(Self { paths })
+        }
+    }
+
+    fn listed_paths(&self) -> String {
+        bounded_generated_path_listing(&self.paths)
+    }
+
+    pub(crate) fn repair_route(&self) -> String {
+        let listed = self.listed_paths();
+        format!(
+            "Not analyzed as generated code: {listed}. ripr treats `gen/`, \
+             `generated/` and `out/` directories and `generated.rs`, `schema.rs`, \
+             `bindings.rs`, `*.gen.rs`, `*_generated.rs` and `generated_*` files, \
+             plus `[languages.rust] generated_file_patterns`, as generated; if one of these \
+             is hand-written, its changes stay outside this analysis."
+        )
+    }
+
+    fn detail(&self) -> String {
+        format!(
+            "{} generated Rust file(s) were intentionally skipped by the generated-file \
+             conventions or configured patterns: {}",
+            self.paths.len(),
+            self.listed_paths()
+        )
+    }
+}
+
+fn bounded_generated_path_listing(paths: &[PathBuf]) -> String {
+    let normalized: Vec<String> = paths
+        .iter()
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .collect();
+    let shown = normalized
+        .iter()
+        .take(3)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = normalized.len().saturating_sub(3);
+    let listed = if more > 0 {
+        format!("{shown} and {more} more")
+    } else {
+        shown
+    };
+    if listed.chars().count() > 160 {
+        format!("{}…", listed.chars().take(159).collect::<String>())
+    } else {
+        listed
+    }
+}
+
 pub(crate) const REPO_EXPOSURE_SCHEMA_VERSION: &str = "0.3";
 pub(crate) const REPO_EXPOSURE_SUMMARY_SCHEMA_VERSION: &str = "0.1";
 
@@ -105,12 +172,29 @@ pub(crate) fn render_repo_exposure_json(
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
 ) -> String {
+    render_repo_exposure_json_with_generated_skip(
+        classified,
+        limit_info,
+        ts_guidance,
+        python_guidance,
+        None,
+    )
+}
+
+pub(crate) fn render_repo_exposure_json_with_generated_skip(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<&SeamLimitInfo>,
+    ts_guidance: Option<&TsFullRepoGuidance>,
+    python_guidance: Option<&PythonRepoExposureGuidance>,
+    generated_skip: Option<&GeneratedRustSkip>,
+) -> String {
     let mut bytes = Vec::new();
     if write_repo_exposure_json(
         classified,
         limit_info,
         ts_guidance,
         python_guidance,
+        generated_skip,
         &mut bytes,
     )
     .is_err()
@@ -134,6 +218,7 @@ pub(crate) fn write_repo_exposure_json<W: io::Write>(
     limit_info: Option<&SeamLimitInfo>,
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
+    generated_skip: Option<&GeneratedRustSkip>,
     out: &mut W,
 ) -> io::Result<()> {
     write_repo_exposure_json_document(
@@ -141,6 +226,7 @@ pub(crate) fn write_repo_exposure_json<W: io::Write>(
         limit_info,
         ts_guidance,
         python_guidance,
+        generated_skip,
         None,
         out,
     )
@@ -155,6 +241,7 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
     limit_info: Option<&SeamLimitInfo>,
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
+    generated_skip: Option<&GeneratedRustSkip>,
     context: &RepoExposureArtifactContext,
     out: &mut W,
 ) -> Result<(), String> {
@@ -165,6 +252,7 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         limit_info,
         ts_guidance,
         python_guidance,
+        generated_skip,
         Some(&placeholder),
         &mut hasher,
     )
@@ -177,6 +265,7 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         limit_info,
         ts_guidance,
         python_guidance,
+        generated_skip,
         Some(&metadata),
         out,
     )
@@ -190,6 +279,7 @@ pub(crate) fn render_repo_exposure_json_with_context(
     limit_info: Option<&SeamLimitInfo>,
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
+    generated_skip: Option<&GeneratedRustSkip>,
     context: &RepoExposureArtifactContext,
 ) -> Result<String, String> {
     let mut bytes = Vec::new();
@@ -198,6 +288,7 @@ pub(crate) fn render_repo_exposure_json_with_context(
         limit_info,
         ts_guidance,
         python_guidance,
+        generated_skip,
         context,
         &mut bytes,
     )?;
@@ -209,6 +300,7 @@ fn write_repo_exposure_json_document<W: io::Write>(
     limit_info: Option<&SeamLimitInfo>,
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
+    generated_skip: Option<&GeneratedRustSkip>,
     artifact: Option<&serde_json::Value>,
     out: &mut W,
 ) -> io::Result<()> {
@@ -234,8 +326,12 @@ fn write_repo_exposure_json_document<W: io::Write>(
     //     not change run_status (the Rust scan itself completed normally).
     //   - "python_diff_first" is the same kind of additive entry for a
     //     Python workspace with zero seams. It does not render Python findings.
-    let has_limitations =
-        limit_info.is_some() || ts_guidance.is_some() || python_guidance.is_some();
+    //   - "generated_rust_source_skipped" names generated Rust files that
+    //     `ripr check` also skips. It does not change run_status.
+    let has_limitations = limit_info.is_some()
+        || ts_guidance.is_some()
+        || python_guidance.is_some()
+        || generated_skip.is_some();
     match limit_info {
         None => {
             writeln!(out, "  \"run_status\": \"complete\",")?;
@@ -372,6 +468,47 @@ fn write_repo_exposure_json_document<W: io::Write>(
                 "      \"repair_route\": \"{}\"",
                 json_escape(PythonRepoExposureGuidance::REPAIR_ROUTE)
             )?;
+            writeln!(out, "    }}")?;
+            first = false;
+        }
+        if let Some(skip) = generated_skip {
+            if !first {
+                writeln!(out, "    ,")?;
+            }
+            writeln!(out, "    {{")?;
+            writeln!(
+                out,
+                "      \"category\": \"{}\",",
+                GeneratedRustSkip::CATEGORY
+            )?;
+            writeln!(out, "      \"skipped_file_count\": {},", skip.paths.len())?;
+            writeln!(out, "      \"skipped_files\": [")?;
+            for (idx, path) in skip.paths.iter().take(3).enumerate() {
+                let trailing = if idx + 1 == skip.paths.len().min(3) {
+                    ""
+                } else {
+                    ","
+                };
+                writeln!(
+                    out,
+                    "        \"{}\"{trailing}",
+                    json_escape(&path.to_string_lossy().replace('\\', "/"))
+                )?;
+            }
+            writeln!(out, "      ],")?;
+            if skip.paths.len() > 3 {
+                writeln!(
+                    out,
+                    "      \"skipped_files_omitted\": {},",
+                    skip.paths.len() - 3
+                )?;
+            }
+            writeln!(
+                out,
+                "      \"repair_route\": \"{}\",",
+                json_escape(&skip.repair_route())
+            )?;
+            writeln!(out, "      \"detail\": \"{}\"", json_escape(&skip.detail()))?;
             writeln!(out, "    }}")?;
         }
         writeln!(out, "  ],")?;
@@ -753,6 +890,22 @@ pub(crate) fn render_repo_exposure_md(
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
 ) -> String {
+    render_repo_exposure_md_with_generated_skip(
+        classified,
+        limit_info,
+        ts_guidance,
+        python_guidance,
+        None,
+    )
+}
+
+pub(crate) fn render_repo_exposure_md_with_generated_skip(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<&SeamLimitInfo>,
+    ts_guidance: Option<&TsFullRepoGuidance>,
+    python_guidance: Option<&PythonRepoExposureGuidance>,
+    generated_skip: Option<&GeneratedRustSkip>,
+) -> String {
     let metrics = ExposureMetrics::from(classified);
     let mut out = String::new();
     out.push_str("# ripr repo exposure report\n\n");
@@ -777,8 +930,10 @@ pub(crate) fn render_repo_exposure_md(
         ));
     }
 
-    let has_limitations =
-        limit_info.is_some() || ts_guidance.is_some() || python_guidance.is_some();
+    let has_limitations = limit_info.is_some()
+        || ts_guidance.is_some()
+        || python_guidance.is_some()
+        || generated_skip.is_some();
     if has_limitations {
         out.push_str("\n## Limitations\n\n");
         // Seam-limit disclosure: emit only when a real cap fired.
@@ -821,6 +976,15 @@ pub(crate) fn render_repo_exposure_md(
                  and no gate or badge authority.\n",
             );
         }
+        if let Some(skip) = generated_skip {
+            out.push_str(&format!(
+                "**{}** (skipped_file_count: {})\n\n",
+                GeneratedRustSkip::CATEGORY,
+                skip.paths.len(),
+            ));
+            out.push_str(&skip.repair_route());
+            out.push('\n');
+        }
     }
 
     if classified.is_empty() {
@@ -831,7 +995,7 @@ pub(crate) fn render_repo_exposure_md(
         // An empty report must still name a next step (an empty directory
         // used to end here with nothing to do). Language guidance above
         // already names its own next step.
-        if ts_guidance.is_none() && python_guidance.is_none() {
+        if ts_guidance.is_none() && python_guidance.is_none() && generated_skip.is_none() {
             out.push_str(REPO_EXPOSURE_EMPTY_NEXT_STEP);
         }
         return out;
@@ -1196,6 +1360,58 @@ mod tests {
         assert!(
             json.contains("\"control\": \"RIPR_REPO_EXPOSURE_SEAM_LIMIT\""),
             "control missing in:\n{json}"
+        );
+    }
+
+    #[test]
+    fn json_discloses_generated_rust_skip_without_changing_run_status() {
+        let skip = GeneratedRustSkip::from_paths(vec![
+            PathBuf::from("src/bindings.rs"),
+            PathBuf::from("src/schema.rs"),
+        ])
+        .expect("generated skip");
+        let mut bytes = Vec::new();
+        super::write_repo_exposure_json_document(
+            &[weakly_gripped_classified()],
+            None,
+            None,
+            None,
+            Some(&skip),
+            None,
+            &mut bytes,
+        )
+        .expect("write json");
+        let json = String::from_utf8(bytes).expect("utf8");
+        assert!(
+            json.contains("\"run_status\": \"complete\""),
+            "generated skip must not look like a truncated scan:\n{json}"
+        );
+        assert!(
+            json.contains("\"category\": \"generated_rust_source_skipped\""),
+            "category missing in:\n{json}"
+        );
+        assert!(
+            json.contains("src/bindings.rs") && json.contains("src/schema.rs"),
+            "skipped paths missing in:\n{json}"
+        );
+        assert!(
+            !json.contains("src/lib.rs"),
+            "hand-written files must not be listed as skipped:\n{json}"
+        );
+        let md = render_repo_exposure_md_with_generated_skip(
+            &[weakly_gripped_classified()],
+            None,
+            None,
+            None,
+            Some(&skip),
+        );
+        assert!(
+            md.contains("generated_rust_source_skipped"),
+            "markdown skip category missing in:\n{md}"
+        );
+        assert!(
+            md.contains("src/bindings.rs"),
+            "markdown skip path missing in:\n{md}"
         );
     }
 

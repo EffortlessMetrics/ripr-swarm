@@ -17,6 +17,7 @@
 //! Both contracts are pinned by tests in this file.
 
 use super::classify::exact_error_variant;
+use super::generated_rust_corpus::{AnalyzableRustCorpus, discover_analyzable_rust_corpus};
 use super::rust_index::{
     self, PROBE_SHAPE_CALL_DELETION, PROBE_SHAPE_ERROR_PATH, PROBE_SHAPE_FIELD_CONSTRUCTION,
     PROBE_SHAPE_MATCH_ARM, PROBE_SHAPE_PREDICATE, PROBE_SHAPE_RETURN_VALUE,
@@ -71,7 +72,7 @@ pub(crate) fn inventory_seams_at_with_config(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<Vec<RepoSeam>, String> {
-    let rust_files = workspace::discover_rust_files(root)?;
+    let rust_files = discover_analyzable_rust_corpus(root, config)?.analyzable;
     // Producer-owned source role (#3283).
     let mut context =
         workspace::context_for_files(root, rust_files.iter().map(|path| path.as_path()));
@@ -157,19 +158,36 @@ impl From<&SeamLimitInfo> for CachedSeamLimitInfo {
 /// failures never fail the analysis.
 #[cfg(test)]
 pub(crate) fn inventory_classified_seams_at(root: &Path) -> Result<Vec<ClassifiedSeam>, String> {
-    inventory_classified_seams_at_with_config(root, &RiprConfig::default())
-        .map(|(classified, _)| classified)
+    inventory_classified_seams_report_at_with_config(root, &RiprConfig::default())
+        .map(|report| report.classified)
+}
+
+/// Classified inventory plus the generated-Rust files this run skipped so
+/// repo-exposure can disclose them without a second corpus walk.
+#[derive(Clone, Debug)]
+pub(crate) struct ClassifiedSeamsReport {
+    pub(crate) classified: Vec<ClassifiedSeam>,
+    pub(crate) limit_info: Option<SeamLimitInfo>,
+    pub(crate) skipped_generated: Vec<PathBuf>,
 }
 
 pub(crate) fn inventory_classified_seams_at_with_config(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<(Vec<ClassifiedSeam>, Option<SeamLimitInfo>), String> {
+    let report = inventory_classified_seams_report_at_with_config(root, config)?;
+    Ok((report.classified, report.limit_info))
+}
+
+pub(crate) fn inventory_classified_seams_report_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+) -> Result<ClassifiedSeamsReport, String> {
     let total_started = Instant::now();
     let cache = RepoSeamFactCache::at(root);
     let store_limit = classified_seam_cache_store_limit()?;
     let collect_started = Instant::now();
-    let (rust_files, fingerprint) = match scan_corpus_fingerprint(root) {
+    let corpus = match scan_corpus_fingerprint(root, config) {
         Ok(scan) => scan,
         Err(err) => {
             trace_latency_phase(
@@ -181,6 +199,9 @@ pub(crate) fn inventory_classified_seams_at_with_config(
             return Err(err);
         }
     };
+    let rust_files = corpus.analyzable;
+    let fingerprint = corpus.fingerprint;
+    let skipped_generated = corpus.skipped_generated;
     let inputs = workspace_key_inputs(root, config);
 
     // Stat-only fast path (issue #2108): when the corpus fingerprint store
@@ -207,8 +228,13 @@ pub(crate) fn inventory_classified_seams_at_with_config(
                 }
                 // Preserve the run_status from the original run: a capped run
                 // stored its SeamLimitInfo in the envelope; a complete run
-                // stored None.
-                return Ok((cached, cached_limit_info.map(SeamLimitInfo::from)));
+                // stored None. Skipped generated paths come from this walk so
+                // a warm hit still discloses files added after the cache write.
+                return Ok(ClassifiedSeamsReport {
+                    classified: cached,
+                    limit_info: cached_limit_info.map(SeamLimitInfo::from),
+                    skipped_generated,
+                });
             }
             CacheLoad::Miss => {
                 trace_latency_phase("cache_load", "miss", cache_started.elapsed());
@@ -259,7 +285,11 @@ pub(crate) fn inventory_classified_seams_at_with_config(
             }
             // Preserve the run_status from the original run: a capped run stored
             // its SeamLimitInfo in the envelope; a complete run stored None.
-            return Ok((cached, cached_limit_info.map(SeamLimitInfo::from)));
+            return Ok(ClassifiedSeamsReport {
+                classified: cached,
+                limit_info: cached_limit_info.map(SeamLimitInfo::from),
+                skipped_generated,
+            });
         }
         CacheLoad::Miss => {
             trace_latency_phase("cache_load", "miss", cache_started.elapsed());
@@ -314,7 +344,11 @@ pub(crate) fn inventory_classified_seams_at_with_config(
     };
     trace_latency_phase("cache_store", &store_status, store_started.elapsed());
     trace_latency_phase("total", "computed", total_started.elapsed());
-    Ok((classified, limit_info))
+    Ok(ClassifiedSeamsReport {
+        classified,
+        limit_info,
+        skipped_generated,
+    })
 }
 
 /// Return the workspace cache identity used by the full classified inventory.
@@ -326,16 +360,18 @@ pub(crate) fn workspace_cache_key_at_with_config(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<super::seam_cache::RepoSeamCacheKey, String> {
-    let (rust_files, fingerprint) = scan_corpus_fingerprint(root)?;
+    let corpus = scan_corpus_fingerprint(root, config)?;
     let inputs = workspace_key_inputs(root, config);
     // Fingerprint fast path (issue #2108): a stored mapping yields the
     // byte-identical key without reading any file contents.
-    if let Some(key) = fingerprint_cached_workspace_key(root, &inputs, fingerprint.as_deref()) {
+    if let Some(key) =
+        fingerprint_cached_workspace_key(root, &inputs, corpus.fingerprint.as_deref())
+    {
         return Ok(key);
     }
-    let state = collect_workspace_state_from_files(root, config, rust_files)?;
+    let state = collect_workspace_state_from_files(root, config, corpus.analyzable)?;
     let key = state.cache_key();
-    store_corpus_fingerprint_mapping(&state, fingerprint, &key);
+    store_corpus_fingerprint_mapping(&state, corpus.fingerprint, &key);
     Ok(key)
 }
 
@@ -430,10 +466,10 @@ pub(crate) fn inventory_classified_seams_uncached_with_config(
     config: &RiprConfig,
 ) -> Result<Vec<ClassifiedSeam>, String> {
     let discover_started = Instant::now();
-    let rust_files = match workspace::discover_rust_files(root) {
-        Ok(files) => {
+    let rust_files = match discover_analyzable_rust_corpus(root, config) {
+        Ok(corpus) => {
             trace_latency_phase("discover_rust_files", "ok", discover_started.elapsed());
-            files
+            corpus.analyzable
         }
         Err(err) => {
             trace_latency_phase("discover_rust_files", "error", discover_started.elapsed());
@@ -519,7 +555,9 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
     let total_started = Instant::now();
     let store_limit = compact_classified_seam_cache_store_limit()?;
     let cache = RepoSeamFactCache::at_compact_classified(root);
-    let (rust_files, fingerprint) = scan_corpus_fingerprint(root)?;
+    let corpus = scan_corpus_fingerprint(root, config)?;
+    let rust_files = corpus.analyzable;
+    let fingerprint = corpus.fingerprint;
     let inputs = workspace_key_inputs(root, config);
 
     // Stat-only fast path (issue #2108): rebuild the byte-identical cache
@@ -617,7 +655,7 @@ fn inventory_seam_grip_class_counts_uncached_with_config(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<SeamGripClassCounts, String> {
-    let rust_files = workspace::discover_rust_files(root)?;
+    let rust_files = discover_analyzable_rust_corpus(root, config)?.analyzable;
     // Producer-owned source role (#3283).
     let mut context =
         workspace::context_for_files(root, rust_files.iter().map(|path| path.as_path()));
@@ -1041,8 +1079,9 @@ fn try_no_impact_fast_path(
     // Discovery walks directories and stats files; it reads no file
     // contents. A discovery failure matches the full path's failure,
     // so propagate it rather than declining into an identical error.
-    let (rust_files, fingerprint) = scan_corpus_fingerprint(root)?;
-    let Some(fingerprint) = fingerprint else {
+    let corpus = scan_corpus_fingerprint(root, config)?;
+    let rust_files = corpus.analyzable;
+    let Some(fingerprint) = corpus.fingerprint else {
         // No stat field on this platform witnesses every content write
         // (issue #3848), so no signature is reusable evidence here.
         return Ok(NoImpactOutcome::Declined(
@@ -1718,16 +1757,18 @@ where
 /// bytes when building cached file facts so file discovery and file
 /// reads are not repeated after a classified-seam cache miss.
 ///
-/// Hashes the **same Rust file set fed to `build_index`** — production
-/// seam sources *and* test evidence sources. `ClassifiedSeam` carries
-/// `TestGripEvidence` derived from test files, so a test-only edit must
-/// invalidate the cache; filtering to production-only here would let
-/// stale grip evidence survive a test rewrite.
+/// Hashes the **same analyzable Rust file set fed to `build_index`** —
+/// production seam sources *and* test evidence sources, after the generated
+/// skip `ripr check` uses. `ClassifiedSeam` carries `TestGripEvidence`
+/// derived from test files, so a test-only edit must invalidate the cache;
+/// filtering to production-only here would let stale grip evidence survive a
+/// test rewrite. Generated files are excluded from this hash so an edit there
+/// does not bust the inventory cache.
 fn collect_workspace_state(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<OwnedWorkspaceState, String> {
-    let rust_files = workspace::discover_rust_files(root)?;
+    let rust_files = discover_analyzable_rust_corpus(root, config)?.analyzable;
     collect_workspace_state_from_files(root, config, rust_files)
 }
 
@@ -1755,16 +1796,19 @@ fn collect_workspace_state_from_files(
     })
 }
 
-/// Discover the corpus and compute its stat-only fingerprint in one pass
-/// (issue #2108). The fingerprint is `None` when any file cannot be
-/// stat'd, and on any platform where [`corpus_fingerprint`] refuses to
-/// sign because no field of the stat tuple is a content-change witness
-/// (issue #3848); callers then fall back to the always-correct content
-/// read.
-fn scan_corpus_fingerprint(root: &Path) -> Result<(Vec<PathBuf>, Option<String>), String> {
-    let rust_files = workspace::discover_rust_files(root)?;
-    let fingerprint = corpus_fingerprint(root, &rust_files);
-    Ok((rust_files, fingerprint))
+/// Discover the analyzable corpus and compute its stat-only fingerprint
+/// in one pass (issue #2108, #4788). Generated Rust that `ripr check`
+/// skips is excluded from both the file set and the fingerprint so the
+/// exclusion policy is part of cache identity. The fingerprint is `None`
+/// when any file cannot be stat'd, and on any platform where
+/// [`corpus_fingerprint`] refuses to sign because no field of the stat
+/// tuple is a content-change witness (issue #3848); callers then fall
+/// back to the always-correct content read.
+fn scan_corpus_fingerprint(
+    root: &Path,
+    config: &RiprConfig,
+) -> Result<AnalyzableRustCorpus, String> {
+    discover_analyzable_rust_corpus(root, config)
 }
 
 /// Cache-key inputs other than the corpus content hash, in owned form so
@@ -3717,7 +3761,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         config: &RiprConfig,
         changed: &[&str],
     ) -> Result<Option<NoImpactFallbackReason>, String> {
-        let (rust_files, _) = scan_corpus_fingerprint(root)?;
+        let rust_files = scan_corpus_fingerprint(root, config)?.analyzable;
         let context =
             production_role_context(root, config, rust_files.iter().map(PathBuf::as_path));
         let changed_files: Vec<PathBuf> = changed.iter().map(PathBuf::from).collect();
@@ -4486,7 +4530,9 @@ marker = "libtest_mimic::Trial"
             &root.join("src/foo.rs"),
             "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
         )?;
-        let (rust_files, pre_fingerprint) = scan_corpus_fingerprint(&root)?;
+        let corpus = scan_corpus_fingerprint(&root, &RiprConfig::default())?;
+        let rust_files = corpus.analyzable;
+        let pre_fingerprint = corpus.fingerprint;
         let state = collect_workspace_state_from_files(&root, &RiprConfig::default(), rust_files)?;
         let key = state.cache_key();
 
@@ -5339,12 +5385,13 @@ fn surcharge_total_case() { assert_eq!(surcharge_total(50), 55); }
             ],
         )?;
 
-        let classified = inventory_classified_seams_at(&root)?;
-        if classified.is_empty() {
+        let report =
+            inventory_classified_seams_report_at_with_config(&root, &RiprConfig::default())?;
+        if report.classified.is_empty() {
             return Err("classified inventory must still see src/lib.rs".into());
         }
         require_hand_written_and_no_generated(
-            &classified_files(&classified),
+            &classified_files(&report.classified),
             "src/lib.rs",
             &[
                 "src/bindings.rs",
@@ -5358,6 +5405,33 @@ fn surcharge_total_case() { assert_eq!(surcharge_total(50), 55); }
                 "src/out/model.rs",
             ],
         )?;
+        let skipped: BTreeSet<String> = report
+            .skipped_generated
+            .iter()
+            .map(|path| path.to_string_lossy().replace('\\', "/"))
+            .collect();
+        for expected in [
+            "src/bindings.rs",
+            "src/schema.rs",
+            "src/generated.rs",
+            "src/model.gen.rs",
+            "src/model_generated.rs",
+            "src/generated_model.rs",
+            "src/gen/model.rs",
+            "src/generated/model.rs",
+            "src/out/model.rs",
+        ] {
+            if !skipped.contains(expected) {
+                return Err(format!(
+                    "classified report must thread skipped generated path {expected}, got {skipped:?}"
+                ));
+            }
+        }
+        if skipped.contains("src/lib.rs") {
+            return Err(format!(
+                "hand-written src/lib.rs must not be listed as skipped, got {skipped:?}"
+            ));
+        }
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
@@ -5443,13 +5517,8 @@ fn surcharge_total_case() { assert_eq!(surcharge_total(50), 55); }
             ));
         }
 
-        let configured_files =
-            inventoried_files(&inventory_seams_at_with_config(&root, &config)?);
-        require_hand_written_and_no_generated(
-            &configured_files,
-            "src/lib.rs",
-            &["src/ffi.rs"],
-        )?;
+        let configured_files = inventoried_files(&inventory_seams_at_with_config(&root, &config)?);
+        require_hand_written_and_no_generated(&configured_files, "src/lib.rs", &["src/ffi.rs"])?;
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
@@ -5460,7 +5529,7 @@ fn surcharge_total_case() { assert_eq!(surcharge_total(50), 55); }
         let root = make_tempdir("generated-cache-identity")?;
         write_predicate_file(&root, "src/lib.rs")?;
         write_predicate_file(&root, "src/bindings.rs")?;
-        let before = workspace_cache_key_at_with_config(&root, &RiprConfig::default())?;
+        let before = collect_workspace_state(&root, &RiprConfig::default())?.cache_key();
 
         write_file(
             &root.join("src/bindings.rs"),
@@ -5470,7 +5539,7 @@ fn surcharge_total_case() { assert_eq!(surcharge_total(50), 55); }
                 "}\n",
             ),
         )?;
-        let after_generated = workspace_cache_key_at_with_config(&root, &RiprConfig::default())?;
+        let after_generated = collect_workspace_state(&root, &RiprConfig::default())?.cache_key();
         if after_generated.files_content_hash != before.files_content_hash {
             return Err(
                 "editing a generated Rust file that check skips must not change the inventory cache identity"
@@ -5486,7 +5555,8 @@ fn surcharge_total_case() { assert_eq!(surcharge_total(50), 55); }
                 "}\n",
             ),
         )?;
-        let after_hand_written = workspace_cache_key_at_with_config(&root, &RiprConfig::default())?;
+        let after_hand_written =
+            collect_workspace_state(&root, &RiprConfig::default())?.cache_key();
         if after_hand_written.files_content_hash == before.files_content_hash {
             return Err(
                 "editing a hand-written production file must still change the inventory cache identity"
