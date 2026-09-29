@@ -3,7 +3,7 @@ id = "ripr.slice.intervention-study-preregistration.v1"
 generation = 1
 
 source_issue = "issue:4649"
-design_reference = "RIPR-SPEC-0184#behavior"
+design_reference = "RIPR-SPEC-0185#behavior"
 change_class = "spec_or_contract_change"
 
 claim_boundary = """
@@ -54,7 +54,7 @@ forbidden_seams = [
 ]
 
 [[requirement_delta]]
-requirement_id = "RIPR-SPEC-0184#behavior"
+requirement_id = "RIPR-SPEC-0185#behavior"
 requirement_generation = 1
 
 [implementation_claim]

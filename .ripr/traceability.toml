@@ -9873,9 +9873,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0184"
+id = "RIPR-SPEC-0185"
 name = "Matched RIPR intervention-study preregistration"
-spec = "docs/specs/RIPR-SPEC-0184-matched-ripr-intervention-study-preregistration.md"
+spec = "docs/specs/RIPR-SPEC-0185-matched-ripr-intervention-study-preregistration.md"
 tests = [
   "crates/ripr/src/domain/intervention_study.rs::tests::example_preregistration_satisfies_study_laws",
   "crates/ripr/src/domain/intervention_study.rs::tests::assignment_after_outcome_is_rejected",
