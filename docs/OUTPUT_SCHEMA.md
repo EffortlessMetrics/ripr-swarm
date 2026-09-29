@@ -1338,6 +1338,17 @@ JSON fields:
   non-integer or computed initializer, an imported name, a shadowing binding
   anywhere in the module, a written parameter, a `.length` receiver, or a
   destructured/rest signature derives nothing.
+  Parameter-pair boundary (#4759): when the discriminator compares two owner
+  parameters (`amount == threshold`), the finding may instead carry
+  `typescript_boundary_parameters: parameter=<p>;index=<i>;operand=<o>;operand_index=<j>`,
+  emitted under the same read-only and runs-on-every-call rules for both
+  parameters. The observed call's integer-literal arguments at `<i>` and
+  `<j>` then decide the verdict: a hit keeps the observed shape, and a missed
+  equality boundary becomes the observed call with the receiver's argument
+  set to the boundary's (`expect(discount(100, 100)).toBe(expected)` from
+  `discount(50, 100)`). Without the evidence, or when either argument is not
+  an integer literal, a plain-identifier boundary fails closed with the
+  boundary placeholder instead of reusing the observed input.
 - `perl_preview_card` is an additive optional object for Perl preview findings
   that already have strict fact-packet evidence, canonical gap identity,
   related-test evidence, missing discriminator evidence, verify-command
