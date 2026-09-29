@@ -91,7 +91,7 @@ const UNANALYZED_SOURCE_LANGUAGES: &[(&str, &str)] = &[
     ("cs", "C#"),
     ("fs", "F#"),
     ("swift", "Swift"),
-    ("m", "Objective-C"),
+    ("m", "Objective-C or MATLAB"),
     ("mm", "Objective-C"),
     ("rb", "Ruby"),
     ("php", "PHP"),
