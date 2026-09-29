@@ -332,7 +332,7 @@ fn dunder_method_relation(
     owner: &PythonOwner,
     class: &str,
 ) -> Option<PythonRelationKind> {
-    if !test_references_module_symbol(test, owner, class) {
+    if !test_references_owner_class(test, owner, class) {
         return None;
     }
     let body = &test.body_text;
@@ -371,34 +371,77 @@ fn dunder_method_relation(
     None
 }
 
-/// Whether the test calls the owner module's `class`: the bare name (not
-/// rebound by the test), a renamed import from the owner module, or a member
-/// of an imported owner module (`mod.Class(`).
+/// Whether the test references the owner's `class` through an import that
+/// reaches the owner's module: the bare name imported from it, a renamed
+/// import (`from pkg.cache import Cache as C`), or a member of an imported
+/// owner module (`cache.Cache`). A bare `Cache` with no such import, or one
+/// imported from another module, is a different class.
+fn test_references_owner_class(test: &PythonTest, owner: &PythonOwner, class: &str) -> bool {
+    test_uses_owner_class(
+        test,
+        owner,
+        class,
+        contains_name_reference,
+        contains_member_reference,
+    )
+}
+
+/// Whether the test calls the owner's `class` (see
+/// [`test_references_owner_class`] for which spellings reach it).
 fn test_constructs_class(test: &PythonTest, owner: &PythonOwner, class: &str) -> bool {
+    test_uses_owner_class(
+        test,
+        owner,
+        class,
+        contains_call_name,
+        contains_attribute_call,
+    )
+}
+
+fn test_uses_owner_class(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    class: &str,
+    uses_name: fn(&str, &str) -> bool,
+    uses_member: fn(&str, &str, &str) -> bool,
+) -> bool {
     let body = &test.body_text;
-    if !test_binds_local(test, class) && contains_call_name(body, class) {
-        return true;
-    }
     test.imports.iter().any(|import| {
-        if import.imported == class
-            && import.alias != class
-            && import_source_module_matches_owner(import, owner)
-        {
-            return !test_binds_local(test, &import.alias)
-                && contains_call_name(body, &import.alias);
+        if imports_owner_class(import, owner, class) {
+            return !test_binds_local(test, &import.alias) && uses_name(body, &import.alias);
         }
         imports_owner_module(import, owner)
             && !test_binds_local(test, &import.alias)
-            && contains_attribute_call(body, &import.alias, class)
+            && uses_member(body, &import.alias, class)
     })
 }
 
-/// `import <owner module>`, including a package whose `__init__.py` holds the
-/// owner (`import cachetools` for `src/cachetools/__init__.py`).
+/// `from M import <class>` where `M` is the owner's module or a package that
+/// contains it (`from attr import Attribute` for `src/attr/_make.py`: packages
+/// re-export their submodules' classes). Method owners carry no resolved
+/// re-export set, so the package prefix stands in for it.
+fn imports_owner_class(import: &PythonImport, owner: &PythonOwner, class: &str) -> bool {
+    import.imported == class && module_contains_owner(&import.source_module, owner)
+}
+
+/// `import <owner module>` or `from <package> import <owner module>`,
+/// including a package that contains the owner (`import cachetools` for
+/// `src/cachetools/__init__.py`, `import attr` for `src/attr/_make.py`).
 fn imports_owner_module(import: &PythonImport, owner: &PythonOwner) -> bool {
     imported_module_matches_owner(import, owner)
-        || (import.source_module.is_empty()
-            && owner_module_paths(&owner.file).contains(&import.imported))
+        || (import.source_module.is_empty() && module_contains_owner(&import.imported, owner))
+}
+
+/// Whether dotted `module` is one of the owner's module paths or a package
+/// above it. Empty never matches.
+fn module_contains_owner(module: &str, owner: &PythonOwner) -> bool {
+    !module.is_empty()
+        && owner_module_paths(&owner.file).iter().any(|path| {
+            path == module
+                || path
+                    .strip_prefix(module)
+                    .is_some_and(|rest| rest.starts_with('.'))
+        })
 }
 
 /// Whether the test's module imports the dunder owner's class or the owner
@@ -411,8 +454,7 @@ pub(super) fn test_imports_owner_class_or_module(
     class: &str,
 ) -> bool {
     test.imports.iter().any(|import| {
-        imports_owner_module(import, owner)
-            || (import.imported == class && import_source_module_matches_owner(import, owner))
+        imports_owner_module(import, owner) || imports_owner_class(import, owner, class)
     })
 }
 

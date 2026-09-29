@@ -163,10 +163,6 @@ pub(super) fn is_annotation_only_def_change(old_line: &str, new_line: &str) -> b
     }
 }
 
-/// Whether `line` is a complete one-line `def` header with no default values:
-/// a header alone, carrying no behavior of its own. Fails closed on a one-line
-/// `def f(x): return x` (the synthesized body does not parse), a multi-line
-/// header, and any parameter default (a default value is runtime behavior).
 /// Whether `line` (1-based) sits inside the multi-line `def` header that
 /// starts at or after `owner_start_line` in `source`, and its text only names
 /// parameters or opens/closes the header: `self,`, `key: int,`, `*args,`,
@@ -242,7 +238,10 @@ fn is_inert_annotation(annotation: &str) -> bool {
 }
 
 /// The 1-based `(def line, header end line)` of the first `def` at or after
-/// `owner_start_line` when its header spans more than one line.
+/// `owner_start_line` when its header spans more than one line. The header
+/// ends on the first line whose brackets balance; if that line does not end
+/// in `:` (comments aside) the shape is not understood and there is no span,
+/// so a span never reaches into the body.
 fn multi_line_def_header_span(source: &str, owner_start_line: usize) -> Option<(usize, usize)> {
     let lines: Vec<&str> = source.lines().collect();
     let first = owner_start_line.checked_sub(1)?;
@@ -252,21 +251,26 @@ fn multi_line_def_header_span(source: &str, owner_start_line: usize) -> Option<(
     })?;
     let mut depth: i32 = 0;
     for (index, text) in lines.iter().enumerate().skip(def_index).take(256) {
-        for ch in text.chars() {
+        let code = text.split_once('#').map_or(*text, |(code, _)| code);
+        for ch in code.chars() {
             match ch {
-                '#' => break,
                 '(' | '[' | '{' => depth += 1,
                 ')' | ']' | '}' => depth -= 1,
                 _ => {}
             }
         }
-        if depth <= 0 && text.trim_end().ends_with(':') {
-            return (index > def_index).then_some((def_index + 1, index + 1));
+        if depth <= 0 {
+            return (index > def_index && code.trim_end().ends_with(':'))
+                .then_some((def_index + 1, index + 1));
         }
     }
     None
 }
 
+/// Whether `line` is a complete one-line `def` header with no default values:
+/// a header alone, carrying no behavior of its own. Fails closed on a one-line
+/// `def f(x): return x` (the synthesized body does not parse), a multi-line
+/// header, and any parameter default (a default value is runtime behavior).
 pub(super) fn is_new_def_header_without_defaults(line: &str) -> bool {
     def_signature_skeleton(line).is_some_and(|(_, _, _, _, params, _, _)| {
         params.iter().all(|(_, default)| default.is_none())

@@ -5119,6 +5119,49 @@ fn dunder_owner_relates_by_owner_class_not_by_shared_dunder_name() -> Result<(),
 }
 
 #[test]
+fn dunder_owner_needs_its_class_imported_from_the_owner_package() -> Result<(), String> {
+    let owners = extract_owners(
+        Path::new("src/pkg/cache.py"),
+        "class Cache:\n    def __init__(self, n):\n        self.n = n\n",
+    );
+    let init = flat_owner(&owners, "Cache.__init__")?;
+    // A same-named class from another module, or a bare name with no import,
+    // is not the owner's class.
+    let foreign = extract_tests(
+        Path::new("tests/test_other.py"),
+        "from other.cache import Cache\n\n\ndef test_other_cache():\n    assert Cache(3).n == 3\n",
+    );
+    let unimported = extract_tests(
+        Path::new("tests/test_bare.py"),
+        "def test_bare_cache():\n    assert Cache(3).n == 3\n",
+    );
+    assert_eq!((foreign.len(), unimported.len()), (1, 1));
+    assert!(candidate_relations(init, &foreign).is_empty());
+    assert!(candidate_relations(init, &unimported).is_empty());
+    // The owner's package re-exports its submodules' classes.
+    let package = extract_tests(
+        Path::new("tests/test_pkg.py"),
+        "import pkg\nfrom pkg import Cache\n\n\ndef test_package_import():\n    assert Cache(3).n == 3\n\n\ndef test_package_member():\n    assert pkg.Cache(3).n == 3\n",
+    );
+    assert_eq!(package.len(), 2);
+    assert_eq!(
+        candidate_relations(init, &package),
+        vec![
+            ("test_package_import".to_string(), "constructor_call"),
+            ("test_package_member".to_string(), "constructor_call"),
+        ]
+    );
+    // `pkgx` is not a package above `pkg.cache`.
+    let prefix = extract_tests(
+        Path::new("tests/test_prefix.py"),
+        "from pk import Cache\n\n\ndef test_prefix():\n    assert Cache(3).n == 3\n",
+    );
+    assert_eq!(prefix.len(), 1);
+    assert!(candidate_relations(init, &prefix).is_empty());
+    Ok(())
+}
+
+#[test]
 fn unbound_dunder_owner_is_a_dynamic_dispatch_limit_not_no_static_path() -> Result<(), String> {
     // cachetools 39b31bc: `Cache.__setitem__` is exercised by `cache[key] = v`
     // on `self.Cache(...)` from a unittest mixin; the suite kills the mutants
@@ -5194,6 +5237,22 @@ fn structural_lines_of_a_multi_line_def_header_carry_no_behavior() {
     assert!(!is_structural_def_header_text("    value: make_type(),"));
     assert!(!is_structural_def_header_text("    value,  # was key"));
     assert!(!is_structural_def_header_text("    ) -> build():"));
+
+    // A header closed by `):  # note` still ends there: the call's argument
+    // lines in the body are not header lines.
+    let commented = "def pick(\n    a,\n    b,\n):  # note\n    return combine(\n        b,\n        a,\n    )\n";
+    assert!(is_structural_def_header_line(commented, 1, 2));
+    assert!(is_structural_def_header_line(commented, 1, 3));
+    for line in [6, 7, 8] {
+        assert!(
+            !is_structural_def_header_line(commented, 1, line),
+            "line {line} is in the body"
+        );
+    }
+    // A one-line header with a trailing comment is not a multi-line header.
+    let one_line = "def pick(a, b):  # note\n    return combine(\n        b,\n    )\n";
+    assert!(!is_structural_def_header_line(one_line, 1, 3));
+    assert!(!is_structural_def_header_line(one_line, 1, 4));
 }
 
 #[test]
