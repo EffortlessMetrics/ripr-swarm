@@ -59,3 +59,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_pyo3_cross_language_limit (6)
+
+Reason:
+RIPR-SPEC-0062: binding note offers adding other-language tests instead of presuming they exist
+
+Command:
+`cargo xtask goldens bless rust_pyo3_cross_language_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

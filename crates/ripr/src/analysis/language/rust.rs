@@ -651,37 +651,111 @@ fn enforce_changed_rust_line_limit(
 /// attribute that indicates its surface may be exercised by an external-language
 /// test oracle rather than a Rust test.
 ///
-/// The markers checked are the standard attribute substrings used by the major
+/// The markers checked are the attribute path segments used by the major
 /// Rust FFI and binding crates. `extern "C"` is intentionally excluded: it is
 /// an ABI qualifier on the `fn` keyword and is not captured in
 /// `FunctionFact.attrs`.
 fn owner_has_ffi_attr(owner_fn: &FunctionSummary) -> bool {
-    // PyO3's own attributes (`#[pyfunction]`, `#[pymethods]`, `#[pyclass]`,
-    // `#[pymodule]`) do not contain the crate name `pyo3` unless written
-    // path-qualified, so each is listed. A method is exposed through the
-    // attribute on its `impl` block (`#[pymethods] impl Ledger`,
-    // `#[wasm_bindgen] impl Counter`, `#[napi] impl Store`).
-    const FFI_MARKERS: &[&str] = &[
-        "no_mangle",
-        "export_name",
-        "wasm_bindgen",
-        "napi",
-        "pyo3",
-        "pyfunction",
-        "pymethods",
-        "pyclass",
-        "pymodule",
-        "uniffi",
-        "cxx",
-    ];
     owner_fn
         .attrs
         .iter()
         .chain(&owner_fn.impl_attrs)
-        .any(|attr| {
-            let lowered = attr.to_lowercase();
-            FFI_MARKERS.iter().any(|marker| lowered.contains(marker))
-        })
+        .any(|attr| attr_is_ffi_binding(attr))
+}
+
+/// PyO3's own attributes (`#[pyfunction]`, `#[pymethods]`, `#[pyclass]`,
+/// `#[pymodule]`) do not contain the crate name `pyo3` unless written
+/// path-qualified, so each is listed. A method is exposed through the
+/// attribute on its `impl` block (`#[pymethods] impl Ledger`,
+/// `#[wasm_bindgen] impl Counter`, `#[napi] impl Store`).
+const FFI_ATTR_MARKERS: &[&str] = &[
+    "no_mangle",
+    "export_name",
+    "wasm_bindgen",
+    "napi",
+    "pyo3",
+    "pyfunction",
+    "pymethods",
+    "pyclass",
+    "pymodule",
+    "uniffi",
+    "cxx",
+];
+
+/// Match the attribute's parsed path, not its text: `#[doc = "pyfunction
+/// helper"]` or `#[my_pyfunction_like]` must not credit a binding. Only the
+/// wrappers that carry another attribute as an argument are opened:
+/// `#[unsafe(no_mangle)]` (Rust 2024) and `#[cfg_attr(pred, attr, ...)]`,
+/// whose predicate is skipped.
+fn attr_is_ffi_binding(attr: &str) -> bool {
+    let body = attr.trim();
+    let body = body
+        .strip_prefix("#![")
+        .or_else(|| body.strip_prefix("#["))
+        .and_then(|rest| rest.strip_suffix(']'))
+        .unwrap_or(body);
+    attr_body_is_ffi_binding(body)
+}
+
+fn attr_body_is_ffi_binding(body: &str) -> bool {
+    let body = body.trim();
+    let path_end = body.find(['(', '=', '[', '{']).unwrap_or(body.len());
+    let path = body[..path_end].trim();
+    let segments: Vec<&str> = path.split("::").map(str::trim).collect();
+    if segments
+        .iter()
+        .any(|segment| FFI_ATTR_MARKERS.contains(&segment.to_lowercase().as_str()))
+    {
+        return true;
+    }
+    let args = body[path_end..]
+        .trim()
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'));
+    let Some(args) = args else {
+        return false;
+    };
+    match path {
+        "unsafe" => attr_body_is_ffi_binding(args),
+        "cfg_attr" => split_top_level_args(args)
+            .into_iter()
+            .skip(1)
+            .any(attr_body_is_ffi_binding),
+        _ => false,
+    }
+}
+
+/// Split attribute arguments on commas outside nested delimiters and string
+/// literals.
+fn split_top_level_args(args: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut start = 0;
+    for (index, ch) in args.char_indices() {
+        if in_string {
+            match ch {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&args[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&args[start..]);
+    parts
 }
 
 /// Resolve the probe's owner function from the index and check for FFI attrs.
@@ -2045,7 +2119,7 @@ mod tests {
         PARTIAL_DIFF_LINE_BUDGET_DEFAULT, PARTIAL_DIFF_LINE_BUDGET_ENV,
         PARTIAL_DIFF_SELECTION_VERSION, PartialDiffBudgets, PartialDiffScope,
         PartialDiffStopReason, REPO_INDEX_FILE_LIMIT_ENV, RustAdapter, apply_cross_language_limit,
-        apply_rust_macro_wrapped_assertion_limit, changed_rust_line_count,
+        apply_rust_macro_wrapped_assertion_limit, attr_is_ffi_binding, changed_rust_line_count,
         cross_language_limit_kind, diff_changed_rust_line_limit_from_env,
         diff_identity_from_changed_files, diff_index_file_limit_from_env,
         enforce_changed_rust_line_limit, enforce_repo_index_file_limit, is_binary_source_path,
@@ -4454,6 +4528,35 @@ let _ = (result, note, raw);"##,
     fn owner_with_no_attrs_is_not_ffi() {
         let owner = ffi_function("src/lib.rs", "pure_fn", vec![]);
         assert!(!owner_has_ffi_attr(&owner));
+    }
+
+    #[test]
+    fn ffi_attr_matches_the_parsed_path_not_the_attribute_text() {
+        for attr in [
+            "#[unsafe(no_mangle)]",
+            "#[export_name = \"fee\"]",
+            "#[wasm_bindgen::prelude::wasm_bindgen(js_name = fee)]",
+            "#[pyo3::pyfunction]",
+            "#[cfg_attr(feature = \"python\", pyfunction)]",
+            "#[cfg_attr(feature = \"python\", pyo3::pymethods)]",
+            "#[uniffi::export]",
+        ] {
+            assert!(attr_is_ffi_binding(attr), "{attr} must mark an FFI owner");
+        }
+        for attr in [
+            "#[doc = \"pyfunction helper\"]",
+            "/// exported with no_mangle",
+            "#[my_pyfunction_like]",
+            "#[cfg_attr(feature = \"pyfunction\", derive(Debug))]",
+            "#[cfg(feature = \"napi\")]",
+            "#[allow(clippy::pyfunction)]",
+            "#[unsafe(link_section = \".napi\")]",
+        ] {
+            assert!(
+                !attr_is_ffi_binding(attr),
+                "{attr} must not mark an FFI owner"
+            );
+        }
     }
 
     #[test]

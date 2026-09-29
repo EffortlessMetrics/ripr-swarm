@@ -501,15 +501,20 @@ fn static_seam_record_from_check_finding(finding: &Value) -> Option<StaticSeamRe
 /// packet, so without this fallback it would drop out of the after snapshot
 /// and read as removed instead of closed (#4690). The packet derives the id
 /// from the finding id alone (`typescript_canonical_gap_id`), so deriving it
-/// here yields the same id on both sides of a comparison.
+/// here yields the same id on both sides of a comparison. An
+/// unsupported-syntax diagnostic names no analyzed behavior, so it is never
+/// promoted to a comparable gap.
 fn typescript_finding_gap_id(finding: &Value) -> Option<String> {
     if finding.get("language").and_then(Value::as_str) != Some("typescript") {
+        return None;
+    }
+    if finding.get("static_limit_kind").and_then(Value::as_str) == Some("unsupported_syntax") {
         return None;
     }
     let id = finding
         .get("id")
         .and_then(Value::as_str)
-        .filter(|id| id.starts_with("probe:"))?;
+        .filter(|id| id.starts_with("probe:") && !id.contains("_unsupported_syntax:"))?;
     Some(crate::output::typescript_packet_projection::typescript_canonical_gap_id(id))
 }
 
@@ -2027,6 +2032,28 @@ mod tests {
             assert_eq!(movement.gap_movement, "closed");
         }
         Ok(())
+    }
+
+    #[test]
+    fn typescript_unsupported_syntax_diagnostic_is_not_a_comparable_gap() {
+        let diagnostic = serde_json::json!({
+            "id": "probe:src_price.ts:typescript_preview_unsupported_syntax:abcd1234",
+            "classification": "static_unknown",
+            "static_limit_kind": "unsupported_syntax",
+            "language": "typescript"
+        });
+        assert_eq!(typescript_finding_gap_id(&diagnostic), None);
+        let mut unlabeled = diagnostic.clone();
+        unlabeled["static_limit_kind"] = Value::Null;
+        assert_eq!(typescript_finding_gap_id(&unlabeled), None);
+        let predicate = serde_json::json!({
+            "id": "probe:src_price.ts:typescript_preview:abcd1234",
+            "language": "typescript"
+        });
+        assert_eq!(
+            typescript_finding_gap_id(&predicate).as_deref(),
+            Some("gap:typescript:typescript_preview:abcd1234")
+        );
     }
 
     #[test]

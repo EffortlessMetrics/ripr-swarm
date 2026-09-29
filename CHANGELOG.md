@@ -213,8 +213,8 @@ are scoped or reviewed.
   which the VS Code extension's compatibility check already accepts.
 - Rust: a changed PyO3 binding with no Rust test now reads `no_static_path`
   with the `cross_language_oracle_visibility_unresolved` limitation, and its
-  next step says to verify the external-language tests instead of adding a
-  co-located Rust test. Before, `#[pyfunction]`, `#[pymethods]`, `#[pyclass]`
+  next step says to add or check tests in the binding's other language
+  instead of adding a co-located Rust test. Before, `#[pyfunction]`, `#[pymethods]`, `#[pyclass]`
   and `#[pymodule]` were not recognized as bindings because they do not
   contain the string `pyo3`, and a method was never checked for a binding
   attribute on its `impl` block, so the finding read as a plain missing Rust
@@ -222,7 +222,10 @@ are scoped or reviewed.
   binding owner (`#[no_mangle]`, `#[wasm_bindgen]`, `#[napi]`, `uniffi`,
   `cxx`) with no Rust test now carries it too, unless the finding already
   names a Rust reach limitation. Methods under `#[wasm_bindgen]` and `#[napi]`
-  `impl` blocks are recognized the same way.
+  `impl` blocks are recognized the same way. Bindings are matched on the
+  attribute's path (including `#[unsafe(no_mangle)]` and `#[cfg_attr(..,
+  pyfunction)]`), so a doc comment or unrelated attribute that mentions a
+  binding name does not count.
 - LSP: opening a second repository in the same Helix session no longer stops
   ripr for the first. Helix adds the new repository as a workspace folder to
   the running server, which made the folder set ambiguous and stopped
