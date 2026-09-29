@@ -327,11 +327,24 @@ fn node_callees<'n>(
             .unwrap_or_default(),
         None => node.call_texts.iter().collect(),
     };
-    names
-        .iter()
-        .copied()
-        .filter(|name| texts.iter().any(|text| text_calls_top_level(text, name)))
-        .collect()
+    // Tokenize each text once and confirm only top-level names it mentions,
+    // so a module with many declarations is not rescanned once per name.
+    let mut callees = BTreeSet::new();
+    for text in texts {
+        for token in text
+            .text
+            .split(|ch: char| !is_javascript_identifier_char(ch))
+            .filter(|token| !token.is_empty())
+            .collect::<BTreeSet<_>>()
+        {
+            if let Some(&name) = names.get(token)
+                && text_calls_top_level(text, name)
+            {
+                callees.insert(name);
+            }
+        }
+    }
+    callees
 }
 
 /// A bare call to `name` the function text does not rebind: a parameter or a
