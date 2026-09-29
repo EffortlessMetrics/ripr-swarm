@@ -11,6 +11,22 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Rust: a test that asserts through a helper in its own file no longer reads
+  as "no assertion". With `fn check(x, want) { assert_eq!(gate(x), want) }`
+  in a `#[cfg(test)]` module and a test that only calls `check(10, false)`,
+  a changed `gate` was `reachable_unrevealed`. The test now carries the
+  helper's owner call and assertion, one hop, only for a uniquely named
+  same-file helper called directly and not shadowed. (#4574)
+- Rust: rstest `#[case(..)]` rows now count as inputs to the owner. The
+  parameter parser read `#[case] x: u32` as a malformed name and bound no
+  case values, so a test passing the boundary value through a case row was
+  reported as never reaching the boundary. Case columns map to the
+  `#[case]` parameters only; a `mut` or `let`-rebound parameter binds
+  nothing. (#4601)
+- Rust: a changed line with no resolved owner, such as a line inside a
+  `macro_rules!` template, is no longer `no_static_path` just because the
+  only related tests are same-file neighbours. With no owner name, nothing
+  can rule reach out, so it stays weak. (#4613)
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from
