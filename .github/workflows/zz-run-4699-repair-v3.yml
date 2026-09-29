@@ -28,6 +28,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          grep -n -A8 -B3 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c' xtask/src/tests.rs
           ruby -ryaml -e '
             doc = YAML.load_file(ARGV[0])
             steps = doc.fetch("jobs").fetch("repair").fetch("steps")
