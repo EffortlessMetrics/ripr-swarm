@@ -129,6 +129,30 @@ pub(crate) fn parser_oracles_for_function(
     Some(oracles)
 }
 
+/// Line spans (first, last) of every inline `mod name { .. }` in `text`,
+/// nested ones included. `None` when the file does not parse cleanly, so a
+/// caller that needs module scope fails closed.
+pub(crate) fn inline_module_line_spans(text: &str) -> Option<Vec<(usize, usize)>> {
+    let parse = parse_clean_source_file(text)?;
+    let line_index = LineIndex::new(text);
+    Some(
+        parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::Module::cast)
+            .filter(|module| module.item_list().is_some())
+            .map(|module| {
+                let range = module.syntax().text_range();
+                (
+                    line_index.line(range.start()),
+                    line_index.line_for_range_end(range.end()),
+                )
+            })
+            .collect(),
+    )
+}
+
 fn include_literal_path(expression: &str) -> Option<PathBuf> {
     let (_, arguments) = expression.split_once('!')?;
     let arguments = arguments.trim();

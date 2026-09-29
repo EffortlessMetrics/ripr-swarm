@@ -19,7 +19,11 @@
 //! test's facts in one bounded direction:
 //!
 //! - the helper is a non-test, evidence-role (`CfgTestModule`) function in
-//!   the test's own file, and its name is defined exactly once there;
+//!   the test's own file, its name is defined exactly once there, and it
+//!   sits in the test's own innermost inline module. A same-module item
+//!   cannot coexist with a same-named `use` import and wins over a glob, so
+//!   the call resolves to it; a helper in a sibling or parent module
+//!   (`use super::*`) is not credited;
 //! - the test calls it as a direct free function (`check(..)`, not
 //!   `self.check(..)` or `path::check(..)`), and neither a nested `fn` nor
 //!   a `let` binding in the test shadows the name;
@@ -37,17 +41,22 @@
 //! evidence the helper body really contains.
 
 use super::{FunctionFact, FunctionSourceRole, RustIndex, TestFact};
-use crate::analysis::syntax::parser_oracles_for_function;
+use crate::analysis::syntax::{inline_module_line_spans, parser_oracles_for_function};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
     let mut helpers_by_file: BTreeMap<PathBuf, BTreeMap<String, Vec<&FunctionFact>>> =
         BTreeMap::new();
+    let mut modules_by_file: BTreeMap<PathBuf, Vec<(usize, usize)>> = BTreeMap::new();
     for (file, facts) in &index.files {
         if facts.used_lexical_fallback {
             continue;
         }
+        let Some(modules) = inline_module_line_spans(&facts.source) else {
+            continue;
+        };
+        modules_by_file.insert(file.clone(), modules);
         let names = helpers_by_file.entry(file.clone()).or_default();
         for function in &facts.functions {
             names
@@ -59,9 +68,13 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
 
     let mut widened: BTreeMap<(PathBuf, usize, String), TestFact> = BTreeMap::new();
     for test in &index.tests {
-        let Some(functions_by_name) = helpers_by_file.get(&test.file) else {
+        let (Some(functions_by_name), Some(modules)) = (
+            helpers_by_file.get(&test.file),
+            modules_by_file.get(&test.file),
+        ) else {
             continue;
         };
+        let test_module = innermost_module(modules, test.start_line);
         let mut credited = test.clone();
         let mut credited_helpers: Vec<&str> = Vec::new();
         for call in &test.calls {
@@ -71,7 +84,10 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
             let Some(helper) = unique_assertion_helper(functions_by_name, &call.name) else {
                 continue;
             };
-            if !is_direct_call_site(&call.text, &call.name) || test_shadows(test, &call.name) {
+            if innermost_module(modules, helper.start_line) != test_module
+                || !is_direct_call_site(&call.text, &call.name)
+                || test_shadows(test, &call.name)
+            {
                 continue;
             }
             // Parser-backed oracles only, as for ordinary tests: a
@@ -124,6 +140,16 @@ fn unique_assertion_helper<'facts>(
         [helper] if helper.source_role == FunctionSourceRole::CfgTestModule => Some(helper),
         _ => None,
     }
+}
+
+/// The smallest inline module span holding `line`, or `None` for the
+/// file's top level.
+fn innermost_module(modules: &[(usize, usize)], line: usize) -> Option<(usize, usize)> {
+    modules
+        .iter()
+        .filter(|(first, last)| (*first..=*last).contains(&line))
+        .min_by_key(|(first, last)| last - first)
+        .copied()
 }
 
 /// A nested `fn` item or a `let` binding with the helper's name means the

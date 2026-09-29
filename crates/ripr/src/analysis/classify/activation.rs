@@ -2298,9 +2298,13 @@ mod tests {
             "fn score_boundary(#[case] amount: i32) {\n    for amount in [amount + 5] {\n        assert!(score(amount));\n    }\n}",
             "fn score_boundary(#[case] amount: i32) {\n    if let Some(amount) = Some(amount + 5) {\n        assert!(score(amount));\n    }\n}",
             "fn score_boundary(#[case] amount: i32) {\n    let run = |amount: i32| score(amount);\n    assert!(run(amount + 5));\n    assert!(score(amount));\n}",
+            "fn score_boundary(#[case] amount: i32) {\n    fn far(amount: i32) -> bool { score(amount) }\n    assert!(far(amount + 100));\n}",
         ] {
             let mut test = test_with_body_call(body, 12, "assert!(score(amount));");
             test.attrs = vec!["#[rstest]".to_string(), "#[case(10)]".to_string()];
+            if body.contains("fn far") {
+                test.nested_fn_names = vec!["far".to_string()];
+            }
             let activation = boundary_activation(&test);
 
             assert!(

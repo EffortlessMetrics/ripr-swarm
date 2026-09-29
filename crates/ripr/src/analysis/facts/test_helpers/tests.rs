@@ -173,3 +173,40 @@ fn credited_helper_calls_stay_out_of_the_test_body_calls() -> Result<(), Box<dyn
     assert!(!body_calls.contains(&"gate"), "{body_calls:?}");
     Ok(())
 }
+
+#[test]
+fn helper_outside_the_test_module_is_not_credited() -> Result<(), Box<dyn Error>> {
+    // Review of #4715: a test in `mod smoke` calling `check` resolves to
+    // its own import, not to the unique `check` in sibling `mod strict`;
+    // a parent-module helper (`use super::*`) is not credited either.
+    for (shape, source) in [
+        (
+            "sibling module with an import",
+            format!(
+                "{GATE}pub mod testutil;\n\n#[cfg(test)]\nmod strict {{\n    fn check(x: u32, want: bool) {{\n        assert_eq!(super::gate(x), want);\n    }}\n}}\n\n#[cfg(test)]\nmod smoke {{\n    use crate::testutil::check;\n\n    #[test]\n    fn boundary() {{\n        check(10, false);\n    }}\n}}\n"
+            ),
+        ),
+        (
+            "parent module",
+            format!(
+                "{GATE}#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    fn check(x: u32, want: bool) {{\n        assert_eq!(gate(x), want);\n    }}\n\n    mod inner {{\n        use super::*;\n\n        #[test]\n        fn boundary() {{\n            check(10, false);\n        }}\n    }}\n}}\n"
+            ),
+        ),
+    ] {
+        let index = index_for(&source)?;
+
+        let test = test_named(&index, "boundary")?;
+
+        assert!(
+            test.calls.iter().all(|call| call.name != "gate"),
+            "{shape}: premise and result: no helper call is credited: {:?}",
+            test.calls
+        );
+        assert!(
+            test.assertions.is_empty(),
+            "{shape}: no helper assertion is credited: {:?}",
+            assertion_texts(test)
+        );
+    }
+    Ok(())
+}

@@ -1434,8 +1434,13 @@ fn extract_rstest_case_params(test: &TestSummary) -> (Vec<Vec<String>>, Vec<FnPa
 /// promote a finding to `exposed`). Fails closed to no values when the
 /// parameter is `mut` or anything in the body may rebind the name before
 /// the owner call: a `let` (simple or pattern), a `for`, `if let` or
-/// `while let` binding, a closure parameter or a match arm.
+/// `while let` binding, a closure parameter or a match arm. A nested
+/// `fn` item also binds nothing: an owner call inside it reads that fn's
+/// own parameters, which the case rows do not bind.
 pub(crate) fn test_case_bound_literals(test: &TestSummary, ident: &str) -> Vec<String> {
+    if !test.nested_fn_names.is_empty() {
+        return Vec::new();
+    }
     let cleaned = strip_comments_and_strings(&test.body);
     let rebound = find_all(&cleaned, "let ").into_iter().any(|start| {
         let after_let = &cleaned[start + 4..];
