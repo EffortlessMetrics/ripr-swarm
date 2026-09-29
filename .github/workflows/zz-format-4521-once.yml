@@ -1,0 +1,185 @@
+name: Repair final payload qualification branch once
+
+on:
+  push:
+    branches:
+      - feat/4521-final-native-payload
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: feat/4521-final-native-payload
+          fetch-depth: 0
+
+      - name: Repair qualification workflow
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/server-archive-qualification.yml')
+          text = path.read_text()
+
+          old_assembly = '''          for directory in payload-identities/ripr-final-native-payload-*; do
+            test -d "${directory}"
+            identity="${directory}/payload-identity.json"
+            producer="${directory}/producer-build.json"
+            test -f "${identity}"
+            test -f "${directory}/payload-identity.md"
+            test -f "${producer}"
+            jq --arg identity_sha256 "$(sha256sum "${identity}" | awk '{print $1}')" '. + {identity_sha256: $identity_sha256}' "${identity}" >> payload-identities.ndjson
+            jq --arg producer_build_sha256 "$(sha256sum "${producer}" | awk '{print $1}')" '. + {producer_build_sha256: $producer_build_sha256}' "${producer}" >> producer-builds.ndjson
+          done
+          '''
+          new_assembly = '''          for directory in payload-identities/ripr-final-native-payload-*; do
+            test -d "${directory}"
+            mapfile -t identities < <(find "${directory}" -type f -name payload-identity.json -print)
+            mapfile -t markdowns < <(find "${directory}" -type f -name payload-identity.md -print)
+            mapfile -t producers < <(find "${directory}" -type f -name producer-build.json -print)
+            test "${#identities[@]}" -eq 1
+            test "${#markdowns[@]}" -eq 1
+            test "${#producers[@]}" -eq 1
+            identity="${identities[0]}"
+            producer="${producers[0]}"
+            jq --arg identity_sha256 "$(sha256sum "${identity}" | awk '{print $1}')" '. + {identity_sha256: $identity_sha256}' "${identity}" >> payload-identities.ndjson
+            jq --arg producer_build_sha256 "$(sha256sum "${producer}" | awk '{print $1}')" '. + {producer_build_sha256: $producer_build_sha256}' "${producer}" >> producer-builds.ndjson
+          done
+          '''
+          if old_assembly not in text:
+              raise SystemExit('payload identity assembly block not found')
+          text = text.replace(old_assembly, new_assembly, 1)
+
+          start = text.index('      - name: Verify aggregate checksums and write receipt\n')
+          end = text.index('\n      - name: Upload qualification manifest and receipt\n', start)
+          replacement = '''      - name: Verify aggregate checksums and identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -c SHA256SUMS)
+          version="${QUALIFICATION_VERSION#v}"
+          candidate_sha="${CANDIDATE_SHA,,}"
+          candidate_tree="$(git rev-parse 'HEAD^{tree}')"
+          jq -e \\
+            --arg sha "${candidate_sha}" \\
+            --arg tree "${candidate_tree}" \\
+            --arg version "${version}" \\
+            --arg lock "$(sha256sum Cargo.lock | cut -d ' ' -f 1)" \\
+            --arg qualification "$(sha256sum .github/workflows/server-archive-qualification.yml | cut -d ' ' -f 1)" \\
+            --arg rehearsal "$(sha256sum .github/workflows/release-server-binaries.yml | cut -d ' ' -f 1)" \\
+            --slurpfile manifest "dist/ripr-server-manifest-v${version}.json" \\
+            --slurpfile payloads payload-identities.json \\
+            --slurpfile producers producer-builds.json \\
+            'length == 5 and
+             ([.[].target] == ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]) and
+             ($payloads[0] | length == 5) and ($producers[0] | length == 5) and
+             all(.[ ];
+               . as $build |
+               ($payloads[0][] | select(.target == $build.target)) as $payload |
+               ($producers[0][] | select(.target == $build.target)) as $producer |
+               .candidate_sha == $sha and .candidate_tree == $tree and .version == $version and
+               .cargo_lock_sha256 == $lock and
+               .qualification_workflow_sha256 == $qualification and
+               .rehearsal_workflow_sha256 == $rehearsal and
+               (.rustc_verbose_version | length > 0) and
+               (.cargo_verbose_version | length > 0) and
+               (.archive_sha256 == $manifest[0].assets[.target].sha256) and
+               (.payload_identity_sha256 == $payload.identity_sha256) and
+               (.producer_build_sha256 == $producer.producer_build_sha256) and
+               (.payload_aggregate_sha256 == $payload.payload_aggregate_sha256) and
+               (.producer_executable_sha256 == $producer.executable_sha256) and
+               (.payload_file_count == ($payload.files | length)) and
+               (.selected_features == $payload.selected_features) and
+               (.selected_features == $producer.features) and
+               (.native_runtime_evidence == $payload.native_runtime_evidence) and
+               ($payload.version == $version) and ($producer.version == $version) and
+               ($payload.source.commit_sha == $sha) and ($producer.source_commit == $sha) and
+               ($payload.source.tree_sha == $tree) and ($producer.source_tree == $tree) and
+               ($payload.cargo_lock_sha256 == $lock) and ($producer.cargo_lock_sha256 == $lock) and
+               ($payload.native_runtime_evidence.state == "unqualified") and
+               ($payload.native_runtime_evidence.source == "EffortlessMetrics/ripr-swarm#4489") and
+               (.archive_file == ("ripr-server-v" + $version + "-" + .target +
+                 (if .target == "x86_64-pc-windows-msvc" then ".zip" else ".tar.gz" end))))' \\
+            build-identities.json >/dev/null
+
+      - name: Write aggregate qualification receipt
+        shell: bash
+        env:
+          RULESET_MODE: ${{ needs.verify-candidate.outputs.ruleset_mode }}
+          RULESET_SOURCE_URL: ${{ needs.verify-candidate.outputs.ruleset_source_url }}
+          RULESET_RESPONSE_SHA256: ${{ needs.verify-candidate.outputs.ruleset_response_sha256 }}
+          RULESET_ID: ${{ needs.verify-candidate.outputs.ruleset_id }}
+        run: |
+          set -euo pipefail
+          version="${QUALIFICATION_VERSION#v}"
+          candidate_sha="${CANDIDATE_SHA,,}"
+          candidate_tree="$(git rev-parse 'HEAD^{tree}')"
+          manifest_sha256="$(sha256sum "dist/ripr-server-manifest-v${version}.json" | cut -d ' ' -f 1)"
+          checksums_sha256="$(sha256sum dist/SHA256SUMS | cut -d ' ' -f 1)"
+          jq -n \\
+            --arg candidate_sha "${candidate_sha}" \\
+            --arg candidate_tag "${CANDIDATE_TAG}" \\
+            --arg version "${version}" \\
+            --arg repository "${REPOSITORY}" \\
+            --arg ruleset_mode "${RULESET_MODE}" \\
+            --arg ruleset_source_url "${RULESET_SOURCE_URL}" \\
+            --arg ruleset_response_sha256 "${RULESET_RESPONSE_SHA256}" \\
+            --arg ruleset_id "${RULESET_ID}" \\
+            --arg manifest_sha256 "${manifest_sha256}" \\
+            --arg checksums_sha256 "${checksums_sha256}" \\
+            --slurpfile build_identities build-identities.json \\
+            --slurpfile payload_identities payload-identities.json \\
+            --slurpfile producer_builds producer-builds.json \\
+            --argjson targets '["x86_64-pc-windows-msvc","x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-apple-darwin","aarch64-apple-darwin"]' \\
+            '{schema_version: 3, status: "qualified_payload_and_archive_shape", candidate_sha: $candidate_sha, candidate_tag: $candidate_tag, version: $version, targets: $targets, execution: {selected: 5, executed: 5, failed: 0, not_run: 0}, build_identities: $build_identities[0], payload_identities: $payload_identities[0], producer_builds: $producer_builds[0], manifest_sha256: $manifest_sha256, sha256sums_sha256: $checksums_sha256, ruleset: {mode: $ruleset_mode, source_url: $ruleset_source_url, response_sha256: $ruleset_response_sha256, repository: $repository, id: $ruleset_id}, actions_artifacts_only: true, release_assets_created: false, repository_contents_written: false, secrets_required: false, limitations: ["Actions artifact retention is not a public release", "Manifest URLs are prospective and were not fetched", "Native runtime compatibility remains unqualified under EffortlessMetrics/ripr-swarm#4489"]}' \\
+            > dist/server-archive-qualification-receipt.json
+          cp payload-identities.json dist/final-native-payload-identities.json
+          cp producer-builds.json dist/final-native-producer-builds.json
+          {
+            echo "# Server archive qualification receipt"
+            echo
+            echo "- candidate SHA: ${candidate_sha}"
+            echo "- candidate tree: ${candidate_tree}"
+            echo "- candidate tag: ${CANDIDATE_TAG:-none supplied}"
+            echo "- version: ${version}"
+            echo "- targets selected/executed/failed/not run: 5/5/0/0"
+            echo "- per-target build inputs, producer receipts, payload identities and archive digests: recorded in JSON receipt"
+            echo "- extracted archives: rehashed through the production payload verifier"
+            echo "- manifest SHA256: ${manifest_sha256}"
+            echo "- SHA256SUMS SHA256: ${checksums_sha256}"
+            echo "- ruleset mode: ${RULESET_MODE}"
+            echo "- ruleset source: ${RULESET_SOURCE_URL}"
+            echo "- ruleset response SHA256: ${RULESET_RESPONSE_SHA256}"
+            echo "- ruleset ID: ${RULESET_ID}"
+            echo "- aggregate SHA256SUMS: verified"
+            echo "- native runtime compatibility: unqualified under EffortlessMetrics/ripr-swarm#4489"
+            echo "- GitHub Release assets: not created"
+            echo "- repository contents writes: none"
+            echo "- secrets: not required"
+          } > dist/server-archive-qualification-receipt.md
+'''
+          text = text[:start] + replacement + text[end:]
+
+          count = text.count('toolchain: stable')
+          if count == 0:
+              raise SystemExit('no stable toolchain declarations found')
+          text = text.replace('toolchain: stable', 'toolchain: 1.95.0')
+          path.write_text(text)
+          print(f'updated {path}; pinned {count} toolchain declaration(s)')
+          PY
+
+      - name: Commit repairs
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/server-archive-qualification.yml
+          git commit -m "fix(distribution): harden qualification workflow"
+          git push origin HEAD:feat/4521-final-native-payload
