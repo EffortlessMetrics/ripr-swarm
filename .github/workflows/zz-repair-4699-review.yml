@@ -38,6 +38,10 @@ jobs:
                   raise SystemExit(f"{path}: expected one replacement, found {count}: {old[:120]!r}")
               path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
+          workflow_repository_expr = "$" + "{{ job.workflow_repository }}"
+          workflow_sha_expr = "$" + "{{ job.workflow_sha }}"
+          github_sha_expr = "$" + "{{ github.sha }}"
+
           workflow = Path(".github/workflows/server-archive-qualification.yml")
           replace_once(
               workflow,
@@ -49,11 +53,31 @@ jobs:
               "execution: {selected: 5, executed: 5, failed: 0, not_run: 0}, build_identities:",
               "execution: {selected: 5, executed: 5, failed: 0, not_run: 0}, archive_readback_verified: true, build_identities:",
           )
-          replace_once(
-              workflow,
-              "      - name: Fetch receipt instrument without credentials\n        shell: bash\n        run: |\n          set -euo pipefail\n          git init \"${GITHUB_WORKSPACE}\"\n          git -C \"${GITHUB_WORKSPACE}\" remote add origin \"https://github.com/EffortlessMetrics/ripr-swarm.git\"\n          git -C \"${GITHUB_WORKSPACE}\" -c credential.helper= -c http.extraheader= fetch --no-tags --depth=1 origin \"${GITHUB_SHA}\"\n          git -C \"${GITHUB_WORKSPACE}\" checkout --detach FETCH_HEAD",
-              "      - name: Fetch receipt instrument without credentials\n        shell: bash\n        env:\n          RECEIPT_INSTRUMENT_REPOSITORY: ${{ job.workflow_repository }}\n          RECEIPT_INSTRUMENT_SHA: ${{ job.workflow_sha }}\n        run: |\n          set -euo pipefail\n          test \"${RECEIPT_INSTRUMENT_REPOSITORY}\" = \"EffortlessMetrics/ripr-swarm\"\n          [[ \"${RECEIPT_INSTRUMENT_SHA}\" =~ ^[0-9a-fA-F]{40}$ ]]\n          git init \"${GITHUB_WORKSPACE}\"\n          git -C \"${GITHUB_WORKSPACE}\" remote add origin \"https://github.com/EffortlessMetrics/ripr-swarm.git\"\n          git -C \"${GITHUB_WORKSPACE}\" -c credential.helper= -c http.extraheader= fetch --no-tags --depth=1 origin \"${RECEIPT_INSTRUMENT_SHA}\"\n          git -C \"${GITHUB_WORKSPACE}\" checkout --detach FETCH_HEAD",
-          )
+          old_instrument = """      - name: Fetch receipt instrument without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init "${GITHUB_WORKSPACE}"
+          git -C "${GITHUB_WORKSPACE}" remote add origin "https://github.com/EffortlessMetrics/ripr-swarm.git"
+          git -C "${GITHUB_WORKSPACE}" -c credential.helper= -c http.extraheader= fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
+          git -C "${GITHUB_WORKSPACE}" checkout --detach FETCH_HEAD"""
+          new_instrument = """      - name: Fetch receipt instrument without credentials
+        shell: bash
+        env:
+          RECEIPT_INSTRUMENT_REPOSITORY: __WORKFLOW_REPOSITORY__
+          RECEIPT_INSTRUMENT_SHA: __WORKFLOW_SHA__
+        run: |
+          set -euo pipefail
+          test "${RECEIPT_INSTRUMENT_REPOSITORY}" = "EffortlessMetrics/ripr-swarm"
+          [[ "${RECEIPT_INSTRUMENT_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]
+          git init "${GITHUB_WORKSPACE}"
+          git -C "${GITHUB_WORKSPACE}" remote add origin "https://github.com/EffortlessMetrics/ripr-swarm.git"
+          git -C "${GITHUB_WORKSPACE}" -c credential.helper= -c http.extraheader= fetch --no-tags --depth=1 origin "${RECEIPT_INSTRUMENT_SHA}"
+          git -C "${GITHUB_WORKSPACE}" checkout --detach FETCH_HEAD"""
+          new_instrument = new_instrument.replace(
+              "__WORKFLOW_REPOSITORY__", workflow_repository_expr
+          ).replace("__WORKFLOW_SHA__", workflow_sha_expr)
+          replace_once(workflow, old_instrument, new_instrument)
           replace_once(
               workflow,
               "conclusion=\"$(jq -r --arg name \"build and qualify ${target}\" '[.jobs[] | select(.name == $name)] | if length == 1 then .[0].conclusion // \"unknown\" elif length == 0 then \"missing\" else \"duplicate\" end' \"${response}\")\"",
@@ -61,16 +85,61 @@ jobs:
           )
 
           tests = Path("xtask/src/tests.rs")
-          replace_once(
-              tests,
-              '            "release_assets_created: false",\n',
-              '            "release_assets_created: false",\n            "archive_readback_verified = $true",\n            "archive_readback_verified: true",\n            "RECEIPT_INSTRUMENT_REPOSITORY: ${{ job.workflow_repository }}",\n            "RECEIPT_INSTRUMENT_SHA: ${{ job.workflow_sha }}",\n            "fetch --no-tags --depth=1 origin \\\"${RECEIPT_INSTRUMENT_SHA}\\\"",\n            "select(.name == $suffix or (.name | endswith(\\\" / \\\" + $suffix)))",\n',
+          marker_anchor = (
+              '            "--arg repository \\"${REPOSITORY}\\"",\n'
+              '            "release_assets_created: false",\n'
           )
-          replace_once(
-              tests,
-              '        (\n            "token credential",\n            workflow.replacen("ruleset_mode", "GH_TOKEN", 1),\n        ),\n',
-              '        (\n            "caller SHA receipt instrument",\n            workflow.replacen(\n                "RECEIPT_INSTRUMENT_SHA: ${{ job.workflow_sha }}",\n                "RECEIPT_INSTRUMENT_SHA: ${{ github.sha }}",\n                1,\n            ),\n        ),\n        (\n            "exact-only matrix job lookup",\n            workflow.replacen(\n                "select(.name == $suffix or (.name | endswith(\\\" / \\\" + $suffix)))",\n                "select(.name == $suffix)",\n                1,\n            ),\n        ),\n        (\n            "implicit archive readback",\n            workflow.replacen(\n                "archive_readback_verified: true",\n                "archive_shape_verified: true",\n                1,\n            ),\n        ),\n        (\n            "token credential",\n            workflow.replacen("ruleset_mode", "GH_TOKEN", 1),\n        ),\n',
-          )
+          marker_insert = marker_anchor + """            "archive_readback_verified = $true",
+            "archive_readback_verified: true",
+            "RECEIPT_INSTRUMENT_REPOSITORY: __WORKFLOW_REPOSITORY__",
+            "RECEIPT_INSTRUMENT_SHA: __WORKFLOW_SHA__",
+            "fetch --no-tags --depth=1 origin \\\"${RECEIPT_INSTRUMENT_SHA}\\\"",
+            "select(.name == $suffix or (.name | endswith(\\\" / \\\" + $suffix)))",
+"""
+          marker_insert = marker_insert.replace(
+              "__WORKFLOW_REPOSITORY__", workflow_repository_expr
+          ).replace("__WORKFLOW_SHA__", workflow_sha_expr)
+          replace_once(tests, marker_anchor, marker_insert)
+
+          negative_anchor = """        (
+            "token credential",
+            workflow.replacen("ruleset_mode", "GH_TOKEN", 1),
+        ),
+"""
+          negative_insert = """        (
+            "caller SHA receipt instrument",
+            workflow.replacen(
+                "RECEIPT_INSTRUMENT_SHA: __WORKFLOW_SHA__",
+                "RECEIPT_INSTRUMENT_SHA: __GITHUB_SHA__",
+                1,
+            ),
+        ),
+        (
+            "exact-only matrix job lookup",
+            workflow.replacen(
+                "select(.name == $suffix or (.name | endswith(\\\" / \\\" + $suffix)))",
+                "select(.name == $suffix)",
+                1,
+            ),
+        ),
+        (
+            "implicit archive readback",
+            workflow.replacen(
+                "archive_readback_verified: true",
+                "archive_shape_verified: true",
+                1,
+            ),
+        ),
+        (
+            "token credential",
+            workflow.replacen("ruleset_mode", "GH_TOKEN", 1),
+        ),
+"""
+          negative_insert = negative_insert.replace(
+              "__WORKFLOW_SHA__", workflow_sha_expr
+          ).replace("__GITHUB_SHA__", github_sha_expr)
+          replace_once(tests, negative_anchor, negative_insert)
+
           new_test = r'''
           #[test]
           fn server_archive_terminal_job_name_filter_accepts_direct_and_reusable_names(
