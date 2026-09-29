@@ -29,10 +29,36 @@ are scoped or reviewed.
   derived tuple slice, and computes each related test's value facts once
   per owner instead of once per probe; a ripr commit went
   from 11.1 s to 8.1 s.
+- Python: a changed dunder method now relates to the tests that use its class.
+  `LowerBound.__init__` relates to tests that construct `LowerBound(...)`,
+  instead of tests that define their own helper class with `def __init__`.
+  Other dunders such as `__setitem__` relate, uncertain, to tests that build
+  an instance. When tests import the class but reach it in a shape ripr cannot
+  bind (a unittest mixin's `self.Cache`), the finding is `static_unknown` with
+  the `dynamic_dispatch` limit rather than `no_static_path`. A `def name(`
+  header in a test is no longer read as a call of `name`. Replays of
+  packaging and cachetools bug fixes moved 25 false `no_static_path` or
+  wrongly related findings; each flagged line's mutants were killed by the
+  project's own suite.
+- Rust: the bounded transitive-reach walk behind `no_static_path` disclosures
+  now follows every function sharing a callee's name. It followed only the
+  first one indexed, so jiter's `decode_to_tape`, reached through one of two
+  `decode` impls, and indexmap's `get_disjoint_mut` helpers read a silent
+  `no_static_path` with no named limitation. Classification is unchanged;
+  those findings now name the unresolved path and a test to inspect.
+- Python: a reflowed multi-line function signature no longer produces a probe
+  per parameter line. `self,`, `key,`, `*args,` and the closing `):` carry no
+  behavior of their own; four of cachetools c0fdf6a's thirteen probes were
+  these lines. Parameter defaults keep their probe.
 - Security: Rust source discovery skips symlinked `.rs` entries, as the
   Python and TypeScript readers already did. A cloned repository or pull
   request that committed `src/zero.rs -> /dev/zero` made `ripr check` read
   until it ran out of memory (#4751).
+- Rust findings now list the related tests that call the changed owner before
+  tests matched only by a weak name token, as RIPR-SPEC-0021 already required.
+  On `tokio-rs/bytes` the "Related tests appear to reach" line quoted
+  `bytes_mut_unsplit_empty_self` ahead of the test that pins `try_get_int`'s
+  return value.
 - Security: ripr's git calls pass `-c core.fsmonitor=false`, so a
   repository's own `core.fsmonitor` program (reachable from an extracted
   archive or a planted nested repository) does not run on `git status`
@@ -163,6 +189,17 @@ are scoped or reviewed.
   properties of `module.exports = { ... }` are now owners that `require()`
   tests relate to; non-function values and computed keys still produce none,
   and an export name assigned twice in one file produces no owner. (#4545)
+- TypeScript/JavaScript preview: a test that imports `tsc` build output
+  (`import { looksLikeNumber } from '../build/lib/string-utils.js'`) now
+  relates to the TypeScript source (`lib/string-utils.ts`) through the root
+  `tsconfig.json`'s own `compilerOptions.outDir` and `rootDir`. The import
+  named the excluded, unindexed build tree, so a change to the source reported
+  `no_static_path`. The mapping needs the root `tsconfig.json` to set both
+  `outDir` and `rootDir` itself; it applies only when nothing exists at the
+  imported path (a built tree keeps the import on the build file) and
+  exactly one source file exists at the mapped path. It does not follow
+  `extends` and does not need `resolve_tsconfig_paths`.
+  (#4551)
 - TypeScript/JavaScript preview: mocha, `node:test` and Vitest suites written
   with `context`, `suite` or `specify`, with an options object before the
   callback (`it(name, { timeout }, fn)`), or with a `describe` title that is
@@ -1171,6 +1208,10 @@ are scoped or reviewed.
   report `field_assignment_value_unresolved` instead of an ineffective repair
   route.
 
+- LSP: receipt status for an actionable gap with no recorded attempt now
+  reports `not_available`. It used to report the first entry of
+  `swarm-attempt-ledger.json`, which is another gap's latest attempt outcome.
+  With no actionable gap it still reports the ledger's latest entry.
 - Rust literal match-arm observation is now bound to the input that
   selects the changed arm. A test asserting a sibling arm's result, a
   diagnostic-only call, an ambiguous owner, a conditional input, or an
@@ -1322,6 +1363,14 @@ are scoped or reviewed.
 - `ripr help pr-ledger` now shows `[--label LABEL]...` in the
   `pr-ledger record` usage line. The option was accepted and listed under
   Record options but missing from the synopsis (#4391).
+- Editors: the language server no longer drops the first-useful-action
+  report that the generated CI workflow and `ripr reports first-action`
+  write. Its verify command now saves its output where the receipt reads it
+  (`> <root>/target/ripr/workflow/agent-verify.json`), and the server refused
+  any command containing `>`, so it reported `cache_limited` with a
+  `run ripr check` recovery that could not help. One trailing redirect into
+  the workspace's `target/ripr/` is accepted; every other redirect is still
+  refused.
 
 ### Added
 
