@@ -268,6 +268,30 @@ fn planted_executable_hash_cannot_turn_the_row_green() -> Result<(), String> {
 }
 
 #[test]
+fn passed_row_with_empty_steps_cannot_parse() -> Result<(), String> {
+    let mut value = valid_receipt_value();
+    value["rows"][0]["steps"] = json!([]);
+    let error = require_err(parse_value(&value), "empty steps must fail parse")?;
+    if error.contains("steps must be nonempty") {
+        Ok(())
+    } else {
+        Err(error)
+    }
+}
+
+#[test]
+fn passed_row_with_substituted_package_hash_cannot_parse() -> Result<(), String> {
+    let mut value = valid_receipt_value();
+    value["rows"][0]["package_hash"] = json!(OTHER_HASH);
+    let error = require_err(parse_value(&value), "row package hash must match")?;
+    if error.contains("package_hash does not match package.hash") {
+        Ok(())
+    } else {
+        Err(error)
+    }
+}
+
+#[test]
 fn missing_required_row_fails_the_aggregate() -> Result<(), String> {
     let mut value = valid_receipt_value();
     value["required_rows"] = json!([
@@ -322,6 +346,37 @@ fn not_run_required_row_fails_the_aggregate() -> Result<(), String> {
         "{:#?}",
         gate.failures
     );
+    Ok(())
+}
+
+#[test]
+fn planted_hash_on_a_not_run_required_row_still_fails_as_not_run() -> Result<(), String> {
+    let mut value = valid_receipt_value();
+    value["rows"][0]["status"] = json!("not_run");
+    value["rows"][0]["subject_count"] = json!(0);
+    value["rows"][0]["executed_payload_hash"] = json!(OTHER_HASH);
+    value["rows"][0]["steps"] = json!([]);
+    let gate = evaluate_value(&value)?;
+    assert_eq!(gate.verdict, GateVerdict::Failed);
+    if !gate
+        .failures
+        .iter()
+        .any(|failure| failure.contains("not_run"))
+    {
+        return Err(format!(
+            "expected not_run failure, got {:#?}",
+            gate.failures
+        ));
+    }
+    if gate
+        .failures
+        .iter()
+        .any(|failure| failure.contains("executed a different payload"))
+    {
+        return Err(
+            "a not_run row must fail as not_run, not as a planted-payload pass check".to_string(),
+        );
+    }
     Ok(())
 }
 
@@ -429,6 +484,40 @@ fn declared_full_matrix_cannot_pass_with_a_partial_required_set() -> Result<(), 
         "{:#?}",
         gate.failures
     );
+    Ok(())
+}
+
+#[test]
+fn declared_full_matrix_without_an_explicit_target_list_fails_closed() -> Result<(), String> {
+    let mut value = valid_receipt_value();
+    value["selection_scope"] = json!("declared_full_matrix");
+    let receipt = parse_value(&value)?;
+    let gate = evaluate(&GateInput {
+        receipt: &receipt,
+        expected: &ExpectedIdentity::default(),
+        full_matrix_targets: &[],
+    });
+    assert_eq!(gate.verdict, GateVerdict::Failed);
+    if !gate
+        .failures
+        .iter()
+        .any(|failure| failure.contains("complete channel/target matrix"))
+    {
+        return Err(format!(
+            "missing matrix-coverage failure: {:#?}",
+            gate.failures
+        ));
+    }
+    if !gate
+        .failures
+        .iter()
+        .any(|failure| failure.contains("without an explicit target matrix"))
+    {
+        return Err(format!(
+            "missing empty-matrix failure: {:#?}",
+            gate.failures
+        ));
+    }
     Ok(())
 }
 
