@@ -3,7 +3,7 @@ use super::related_tests::*;
 use super::*;
 use crate::analysis::facts::{FunctionSourceRole, WorkspaceRootAuthority, build_index};
 use crate::analysis::repair_route::{
-    RepairRouteState, is_safe_for_repair_packet, repair_packet_eligibility, repair_route_readiness,
+    RepairRouteState, is_safe_for_repair_packet, repair_packet_eligibility,
 };
 use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
 use crate::analysis::seam_classification::ClassifiedSeam;
@@ -14040,7 +14040,7 @@ fn required_field(seam: &RepoSeam) -> Result<String, String> {
 
 fn route_must_be_ready(case: &ConstructorFieldCase) -> Result<(), String> {
     let eligibility = repair_packet_eligibility(&case.classified);
-    let readiness = repair_route_readiness(&case.classified);
+    let readiness = &eligibility.readiness;
     let related = case
         .classified
         .evidence
@@ -15354,7 +15354,8 @@ fn lower_body_preserves_storage() {
 "#,
         "storage",
     )?;
-    let readiness = repair_route_readiness(&case.classified);
+    let eligibility = repair_packet_eligibility(&case.classified);
+    let readiness = &eligibility.readiness;
     if case.classified.class != SeamGripClass::StronglyGripped
         || case.classified.evidence.discriminate.state != StageState::Yes
         || readiness.state != RepairRouteState::AlreadyGripped
@@ -15365,7 +15366,7 @@ fn lower_body_preserves_storage() {
             case.classified.class,
             case.classified.evidence.discriminate.state,
             readiness.state,
-            repair_packet_eligibility(&case.classified).eligible()
+            eligibility.eligible()
         ));
     }
     Ok(())
