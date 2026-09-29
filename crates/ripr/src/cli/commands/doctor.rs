@@ -93,7 +93,10 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
         ok &= report_doctor_core_check(&report, &format!("tool_{tool}"));
     }
 
-    print_doctor_start_here_guidance(&root);
+    let git_runs = report.checks.iter().any(|check| {
+        check.name == "tool_git" && check.status == output::doctor::DoctorCheckStatus::Pass
+    });
+    print_doctor_start_here_guidance(&root, git_runs);
 
     if ok && report.status == output::doctor::DoctorStatus::Pass {
         println!("✓ doctor checks passed");
@@ -150,7 +153,7 @@ fn report_doctor_core_check(report: &output::doctor::DoctorReport, name: &str) -
     check.status != output::doctor::DoctorCheckStatus::Fail
 }
 
-fn print_doctor_start_here_guidance(root: &Path) {
+fn print_doctor_start_here_guidance(root: &Path, git_runs: bool) {
     // First-run honesty: name the packet only as present when it exists.
     // An unconditional path reads as an existing artifact on a fresh
     // workspace where `ripr first-pr` has never run (RIPR-SPEC-0051 names
@@ -184,6 +187,15 @@ fn print_doctor_start_here_guidance(root: &Path) {
     println!(
         "- Proof rail: verify command, receipt command, and receipt path are advisory static movement evidence"
     );
+    // Without a runnable git, every git-backed command below fails the same
+    // way (#4735); a saved diff is the route that still works.
+    if !git_runs {
+        println!("- Recommended first command: ripr check --diff PATH");
+        println!(
+            "- Scope note: git could not run here, so supply the change as a saved unified diff (`git diff <base>...HEAD > change.patch` where Git is available, or `--diff -` to read stdin)."
+        );
+        return;
+    }
     // First-run honesty: when the working tree has uncommitted changes,
     // a committed-history `ripr check` analyzes committed history only and would
     // silently exclude the user's draft (the RIPR-SPEC-0112 dirty-worktree case).

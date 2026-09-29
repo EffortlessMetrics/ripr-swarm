@@ -76,6 +76,12 @@ are scoped or reviewed.
   bare count. Rust-only remainder stays the count line. (#4395)
 - `docs/CONFIGURATION.md` no longer groups Python with opt-in TypeScript and
   JavaScript; Python preview is marker-auto when no `ripr.toml` exists. (#4395)
+- Without Git on PATH (slim and distroless images), `ripr check` says
+  `git was not found on PATH` and names `--diff PATH` / `--diff -`, which
+  need no Git, instead of printing the git argv with `os error 2`.
+  `ripr doctor` names the same fix on its `! git` line and recommends
+  `ripr check --diff PATH` instead of a `ripr check` that fails the same way
+  (#4735).
 - TypeScript: a change inside a module-private helper now relates to tests
   that call an exported function reaching it in the same module, including a
   value a same-module factory built. unjs/defu tests call `defu(...)`, built

@@ -687,6 +687,8 @@ fn evaluate_doctor_core_with_probe_for_profile(
                         &name,
                         analysis_advisory_toolchain_evidence(tool, &evidence),
                     );
+                } else if tool == "git" && status == DoctorStatus::Fail {
+                    report.add_check(&name, status, Some(git_unavailable_evidence(&evidence)));
                 } else {
                     report.add_check(&name, status, Some(evidence));
                 }
@@ -808,6 +810,15 @@ fn doctor_tool_check_for_root(tool: &str, root: &Path) -> (DoctorStatus, String)
 /// probe runs. Other tools keep the caller's directory.
 fn doctor_tool_probe_dir<'a>(tool: &str, root: &'a Path) -> Option<&'a Path> {
     RUST_TOOLCHAIN_TOOLS.contains(&tool).then_some(root)
+}
+
+/// Evidence for a git probe that failed, with its fix (#4735): the doctor
+/// footer promises every `!` line names one. `--diff` is the route that
+/// needs no Git in the analyzing environment.
+fn git_unavailable_evidence(evidence: &str) -> String {
+    format!(
+        "{evidence}; install Git or add it to PATH, or analyze a saved diff with `ripr check --diff PATH`"
+    )
 }
 
 /// Evidence for an unavailable Cargo/rustc capability under the analysis

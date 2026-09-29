@@ -18273,3 +18273,78 @@ fn doctor_probes_language_runtimes_outside_the_checkout() -> Result<(), String> 
     ignore_remove_dir_all(&workspace);
     result
 }
+/// #4735: without git on PATH (slim or distroless images), `check` names
+/// the missing program and the `--diff` route instead of dumping the git
+/// argv, `doctor` names the fix and recommends that route, and the route
+/// itself analyzes the saved diff with no git at all.
+#[cfg(unix)]
+#[test]
+fn missing_git_names_the_cause_and_the_diff_route() -> Result<(), String> {
+    let workspace = unique_external_workspace("missing-git")?;
+    let empty_path = workspace.join("empty-path");
+    std::fs::create_dir_all(workspace.join("src")).map_err(|e| format!("create src: {e}"))?;
+    std::fs::create_dir_all(&empty_path).map_err(|e| format!("create empty PATH dir: {e}"))?;
+    std::fs::write(
+        workspace.join("Cargo.toml"),
+        "[package]\nname = \"missing-git\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|e| format!("write Cargo.toml: {e}"))?;
+    std::fs::write(
+        workspace.join("src/lib.rs"),
+        "pub fn over(total: u32) -> bool {\n    total > 100\n}\n",
+    )
+    .map_err(|e| format!("write lib.rs: {e}"))?;
+    let patch = workspace.join("change.patch");
+    std::fs::write(
+        &patch,
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2 +2 @@\n-    total >= 100\n+    total > 100\n",
+    )
+    .map_err(|e| format!("write patch: {e}"))?;
+    let root = workspace
+        .to_str()
+        .ok_or("workspace path is not valid UTF-8")?;
+    let run = |args: &[&str]| {
+        probe_command(env!("CARGO_BIN_EXE_ripr"))
+            .args(args)
+            .env("PATH", &empty_path)
+            .output()
+            .map_err(|e| format!("spawn ripr: {e}"))
+    };
+
+    let check = run(&["check", "--root", root, "--base", "main"])?;
+    let stderr = String::from_utf8_lossy(&check.stderr);
+    if check.status.code() != Some(2)
+        || !stderr.contains("failed to run git: git was not found on PATH")
+        || !stderr.contains("`--diff PATH`")
+    {
+        return Err(format!(
+            "check without git: {:?}; stderr: {stderr}",
+            check.status.code()
+        ));
+    }
+
+    let doctor = run(&["doctor", "--root", root])?;
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    if !stdout.contains("! git not available; install Git or add it to PATH")
+        || !stdout.contains("- Recommended first command: ripr check --diff PATH")
+    {
+        return Err(format!("doctor without git: {stdout}"));
+    }
+
+    let saved = run(&[
+        "check",
+        "--root",
+        root,
+        "--diff",
+        patch.to_str().ok_or("patch path is not valid UTF-8")?,
+    ])?;
+    let _ = std::fs::remove_dir_all(&workspace);
+    if saved.status.code() != Some(0) {
+        return Err(format!(
+            "--diff without git should analyze: {:?}; stderr: {}",
+            saved.status.code(),
+            String::from_utf8_lossy(&saved.stderr)
+        ));
+    }
+    Ok(())
+}

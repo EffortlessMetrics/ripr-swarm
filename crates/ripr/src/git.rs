@@ -173,9 +173,30 @@ impl SpawnSite {
             .and_then(|dir| windows_overlong_working_directory(is_windows, dir))
         {
             Some(units) => windows_path_limit_message(&self.program, units, err, describe),
+            None if self.program_not_found(err) => format!(
+                "failed to run {program}: {program}{PROGRAM_NOT_FOUND_ON_PATH} ({err}; {describe})",
+                program = self.program
+            ),
             None => format!("failed to run {describe}: {err}"),
         }
     }
+
+    /// `NotFound` names the program only when the working directory is
+    /// usable: a spawn into a missing directory fails with the same kind on
+    /// Unix, and that case keeps the invalid-root text its callers pin.
+    fn program_not_found(&self, err: &std::io::Error) -> bool {
+        err.kind() == std::io::ErrorKind::NotFound
+            && self.working_directory.as_deref().is_none_or(Path::is_dir)
+    }
+}
+
+/// The spawn-failure phrase for a program missing from PATH (#4735). Leads
+/// the message so slim-container users see the cause before the argv.
+const PROGRAM_NOT_FOUND_ON_PATH: &str = " was not found on PATH; install it or add it to PATH";
+
+/// True when `error` is the spawn failure of a program missing from PATH.
+pub(crate) fn is_program_not_found(error: &str) -> bool {
+    error.contains(PROGRAM_NOT_FOUND_ON_PATH)
 }
 
 /// The remedy leads so it survives the LSP's 240-character client bound
@@ -833,6 +854,36 @@ mod tests {
                 output.status
             )),
         }
+    }
+
+    /// #4735: a program missing from PATH is named ahead of the argv, while
+    /// a spawn into a missing directory keeps the invalid-root text.
+    #[test]
+    fn spawn_failure_names_a_program_missing_from_path() {
+        let err = std::io::Error::from(std::io::ErrorKind::NotFound);
+        let describe = "git -C . [\"diff\"]";
+        for working_directory in [None, Some(std::env::temp_dir())] {
+            let site = SpawnSite {
+                program: "git".to_string(),
+                working_directory,
+            };
+            let message = site.failure_message_on(false, describe, &err);
+            assert_eq!(
+                message,
+                format!(
+                    "failed to run git: git was not found on PATH; install it or add it to PATH \
+                     ({err}; {describe})"
+                )
+            );
+            assert!(is_program_not_found(&message));
+        }
+        let missing_root = SpawnSite {
+            program: "git".to_string(),
+            working_directory: Some(std::env::temp_dir().join("ripr-4735-no-such-root")),
+        };
+        let message = missing_root.failure_message_on(false, describe, &err);
+        assert_eq!(message, format!("failed to run {describe}: {err}"));
+        assert!(!is_program_not_found(&message));
     }
 
     #[test]

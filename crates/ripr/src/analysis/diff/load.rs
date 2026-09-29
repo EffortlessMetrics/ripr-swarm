@@ -864,6 +864,12 @@ fn run_git_diff_bytes(
         {
             return Err(err);
         }
+        Err(err) if crate::git::is_program_not_found(&err) => {
+            return Err(format!(
+                "failed to run git diff: {err}. Without Git, analyze a saved diff with \
+                 `--diff PATH` (or `--diff -` to read it from stdin)"
+            ));
+        }
         Err(err) => return Err(format!("failed to run git diff: {err}")),
     };
     if !output.status.success() {
