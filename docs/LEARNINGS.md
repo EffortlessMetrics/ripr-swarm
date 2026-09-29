@@ -18,6 +18,11 @@ parity corpus:
   collapses exact-vs-broad, sibling-field, and missing-observer contradictions
   into `explained_scope_difference`. Only partial index, stale/wrong input,
   preview language, and named cross-language limits explain a difference.
+- Scope tokens cannot explain an owner, family, discriminator, or sink
+  mismatch. A partial-index witness paired with the wrong identity is a
+  `contradiction`, not an explained scope difference.
+- Stage `source_identities` belong in the digest. Clearing one without
+  rewriting the digest must make the row `not_comparable`.
 
 Pin both with the #4790 corpus. Later slices (#4792–#4794) migrate authority;
 they must not delete these controls.

@@ -1189,3 +1189,76 @@ fn relation_identity_is_reason_and_oracle_not_test_name() {
     );
     assert_eq!(left.semantic_digest, right.semantic_digest);
 }
+
+#[test]
+fn corrupting_a_stage_source_identity_makes_the_row_not_comparable() {
+    let present = from_finding(
+        &FindingSpec::default()
+            .related(
+                "rejects_zero",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+                Some(RelationReason::DirectOwnerCall),
+            )
+            .build(),
+    );
+    assert!(!present.reach.source_identities.is_empty());
+    let mut corrupted = present.clone();
+    corrupted.reach.source_identities.pop();
+    assert!(!corrupted.digest_matches());
+    assert_eq!(
+        compare_pair("source-identity", &present, &corrupted).disposition,
+        ParityDisposition::NotComparable
+    );
+}
+
+#[test]
+fn same_path_public_class_drift_is_a_contradiction() {
+    let weakly = from_finding(&FindingSpec::default().build());
+    let exposed = from_finding(
+        &FindingSpec {
+            class: ExposureClass::Exposed,
+            ..FindingSpec::default()
+        }
+        .build(),
+    );
+    assert_eq!(weakly.path, exposed.path);
+    assert_ne!(weakly.public_class, exposed.public_class);
+    assert_eq!(
+        compare_pair("class-drift", &weakly, &exposed).disposition,
+        ParityDisposition::Contradiction
+    );
+}
+
+#[test]
+fn scope_tokens_cannot_explain_an_identity_mismatch() {
+    let mut partial = from_finding_with_input(
+        &FindingSpec::default().build(),
+        AdapterInput {
+            subject_set: SubjectSet::PartialIndex,
+            currentness: InputCurrentness::Current,
+        },
+    );
+    let complete = from_classified_seam(&boundary_related_seam());
+    partial.required_discriminator.identity = "other::discriminator".to_string();
+    partial = partial.finalize();
+    assert_eq!(
+        compare_pair("identity-vs-scope", &partial, &complete).disposition,
+        ParityDisposition::Contradiction
+    );
+}
+
+#[test]
+fn unmatched_repo_witness_stays_in_repo_columns() {
+    let repo = from_classified_seam(&boundary_related_seam());
+    let report = pair_by_portable_id(&[], std::slice::from_ref(&repo));
+    assert_eq!(report.rows.len(), 1);
+    let row = &report.rows[0];
+    assert_eq!(row.disposition, ParityDisposition::NotComparable);
+    assert!(row.public_class_diff.is_empty());
+    assert_eq!(row.public_class_repo, repo.public_class);
+    assert!(row.diff_semantic_digest.is_empty());
+    assert_eq!(row.repo_semantic_digest, repo.semantic_digest);
+    assert_eq!(row.diff_target, "absent");
+    assert_eq!(row.repo_target, repo.selected_target.kind());
+}

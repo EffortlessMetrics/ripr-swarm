@@ -191,6 +191,7 @@ impl BehaviorEvidenceWitnessV1 {
         append_field(&mut canonical, &self.expression.normalized);
         append_field(&mut canonical, &self.required_discriminator.identity);
         append_field(&mut canonical, &self.expected_sink);
+        append_field(&mut canonical, &self.public_class);
         append_relations(&mut canonical, "established", &self.established_relations);
         append_relations(&mut canonical, "candidate", &self.candidate_relations);
         append_stage(&mut canonical, "reach", &self.reach);
@@ -226,6 +227,10 @@ fn append_stage(canonical: &mut Vec<u8>, label: &str, stage: &StageWitness) {
         canonical,
         stage.first_unresolved_edge.as_deref().unwrap_or(""),
     );
+    append_field(canonical, &stage.source_identities.len().to_string());
+    for identity in &stage.source_identities {
+        append_field(canonical, identity);
+    }
     append_field(canonical, &stage.established_facts.len().to_string());
     for fact in &stage.established_facts {
         append_field(canonical, fact);

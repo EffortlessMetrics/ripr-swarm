@@ -175,7 +175,7 @@ pub(crate) fn pair_by_portable_id(
                 rows.push(compare_pair(&case_id, left, matches[0]));
             }
             _ => {
-                rows.push(unmatched_row(&case_id, left, None));
+                rows.push(unmatched_row(&case_id, left, UnmatchedSide::Diff));
             }
         }
     }
@@ -184,43 +184,89 @@ pub(crate) fn pair_by_portable_id(
             rows.push(unmatched_row(
                 &format!("join:unmatched:{}", right.portable_item_id),
                 right,
-                None,
+                UnmatchedSide::Repo,
             ));
         }
     }
     ParityReport::from_rows(rows)
 }
 
+#[derive(Clone, Copy)]
+enum UnmatchedSide {
+    Diff,
+    Repo,
+}
+
 fn unmatched_row(
     case_id: &str,
     witness: &BehaviorEvidenceWitnessV1,
-    other: Option<&BehaviorEvidenceWitnessV1>,
+    side: UnmatchedSide,
 ) -> ParityRow {
-    let empty = other;
     let absent = super::StageWitness::absent("absent");
+    let scope = scope_tokens(witness).join(",");
+    let (diff_scope, repo_scope, reach, activation, propagation, observation, discrimination) =
+        match side {
+            UnmatchedSide::Diff => (
+                scope,
+                String::new(),
+                stage_pair(&witness.reach, &absent),
+                stage_pair(&witness.activation, &absent),
+                stage_pair(&witness.propagation, &absent),
+                stage_pair(&witness.observation, &absent),
+                stage_pair(&witness.discrimination, &absent),
+            ),
+            UnmatchedSide::Repo => (
+                String::new(),
+                scope,
+                stage_pair(&absent, &witness.reach),
+                stage_pair(&absent, &witness.activation),
+                stage_pair(&absent, &witness.propagation),
+                stage_pair(&absent, &witness.observation),
+                stage_pair(&absent, &witness.discrimination),
+            ),
+        };
+    let (diff_target, repo_target, public_class_diff, public_class_repo, diff_digest, repo_digest) =
+        match side {
+            UnmatchedSide::Diff => (
+                witness.selected_target.kind().to_string(),
+                "absent".to_string(),
+                witness.public_class.clone(),
+                String::new(),
+                witness.semantic_digest.clone(),
+                String::new(),
+            ),
+            UnmatchedSide::Repo => (
+                "absent".to_string(),
+                witness.selected_target.kind().to_string(),
+                String::new(),
+                witness.public_class.clone(),
+                String::new(),
+                witness.semantic_digest.clone(),
+            ),
+        };
     ParityRow {
         case_id: case_id.to_string(),
         portable_item_id: witness.portable_item_id.clone(),
         owner: witness.owner.identity.clone(),
         family: witness.family.clone(),
-        diff_scope: scope_tokens(witness).join(","),
-        repo_scope: empty.map(scope_tokens).unwrap_or_default().join(","),
+        diff_scope,
+        repo_scope,
         candidate_relation_identities: relation_identities(&witness.candidate_relations),
         established_relation_identities: relation_identities(&witness.established_relations),
-        reach: stage_pair(&witness.reach, &absent),
-        activation: stage_pair(&witness.activation, &absent),
-        propagation: stage_pair(&witness.propagation, &absent),
-        observation: stage_pair(&witness.observation, &absent),
-        discrimination: stage_pair(&witness.discrimination, &absent),
+        reach,
+        activation,
+        propagation,
+        observation,
+        discrimination,
         required_discriminator: witness.required_discriminator.identity.clone(),
-        diff_target: witness.selected_target.kind().to_string(),
-        repo_target: "absent".to_string(),
+        diff_target,
+        repo_target,
         limitations: witness.limitations.clone(),
         non_claims: witness.non_claims.clone(),
-        public_class_diff: witness.public_class.clone(),
-        public_class_repo: String::new(),
-        diff_semantic_digest: witness.semantic_digest.clone(),
-        repo_semantic_digest: String::new(),
+        public_class_diff,
+        public_class_repo,
+        diff_semantic_digest: diff_digest,
+        repo_semantic_digest: repo_digest,
         disposition: ParityDisposition::NotComparable,
     }
 }
@@ -243,6 +289,9 @@ fn disposition_for(
             return ParityDisposition::ExplainedScopeDifference;
         }
         return ParityDisposition::NotComparable;
+    }
+    if !identity_cores_equal(left, right) {
+        return ParityDisposition::Contradiction;
     }
     if cores_equal(left, right) {
         if explaining_scope_tokens(left) == explaining_scope_tokens(right) {
@@ -289,12 +338,27 @@ const SCOPE_LIMITATIONS: [&str; 8] = [
     "cross_language_limit",
 ];
 
-fn cores_equal(left: &BehaviorEvidenceWitnessV1, right: &BehaviorEvidenceWitnessV1) -> bool {
+fn identity_cores_equal(
+    left: &BehaviorEvidenceWitnessV1,
+    right: &BehaviorEvidenceWitnessV1,
+) -> bool {
     left.family == right.family
         && left.owner.identity == right.owner.identity
         && left.expression.normalized == right.expression.normalized
         && left.required_discriminator.identity == right.required_discriminator.identity
         && left.expected_sink == right.expected_sink
+}
+
+fn same_path_public_classes_match(
+    left: &BehaviorEvidenceWitnessV1,
+    right: &BehaviorEvidenceWitnessV1,
+) -> bool {
+    left.path != right.path || left.public_class == right.public_class
+}
+
+fn cores_equal(left: &BehaviorEvidenceWitnessV1, right: &BehaviorEvidenceWitnessV1) -> bool {
+    identity_cores_equal(left, right)
+        && same_path_public_classes_match(left, right)
         && relation_identities(&left.established_relations)
             == relation_identities(&right.established_relations)
         && relation_identities(&left.candidate_relations)
@@ -315,6 +379,7 @@ fn relation_identities(relations: &[RelationWitness]) -> Vec<String> {
 
 fn stage_cores_equal(left: &StageWitness, right: &StageWitness) -> bool {
     left.state == right.state
+        && left.source_identities == right.source_identities
         && left.established_facts == right.established_facts
         && left.candidate_facts == right.candidate_facts
         && left.first_unresolved_edge == right.first_unresolved_edge
