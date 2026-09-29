@@ -104,7 +104,14 @@ fn admitted(index: &RustIndex, pin: &OwnerReturnPin) -> Vec<(String, bool)> {
     );
     test.assertions
         .iter()
-        .map(|assertion| (assertion.text.clone(), pin.admits(test, assertion, index)))
+        .map(|assertion| {
+            let admitted = pin.admits(test, assertion, index, &|file, name| {
+                index.files.get(file).is_some_and(|facts| {
+                    file_imports_foreign_callee_name(&facts.source, name, &index.package_names)
+                })
+            });
+            (assertion.text.clone(), admitted)
+        })
         .collect()
 }
 
@@ -410,9 +417,13 @@ fn return_path_gate_needs_the_changed_tail_on_the_pinned_path() {
             "fn f(x: i32) -> Result<i32, E> {\n    g(x)?;\n    Err(E::Late)\n}",
             "Err(E::Late)",
         ),
-        // A macro may hide a `return`.
+        // A macro may hide a `return`, however it is spaced.
         (
             "fn f(x: i32) -> Result<i32, E> {\n    ensure!(x > 0);\n    Ok(x * 2)\n}",
+            "Ok(x * 2)",
+        ),
+        (
+            "fn f(x: i32) -> Result<i32, E> {\n    ensure !(x > 0, E);\n    Ok(x * 2)\n}",
             "Ok(x * 2)",
         ),
     ] {
@@ -475,4 +486,177 @@ fn item_container_stops_at_the_nearest_item() {
             has_body: false,
         })
     );
+}
+
+#[test]
+fn a_tail_that_skips_its_changed_part_on_some_inputs_is_not_established() {
+    // `scaled(None)` returns 0 without running the changed closure, so a
+    // pin on it observes nothing of the change.
+    for (body, changed) in [
+        (
+            "fn f(x: Option<i32>) -> i32 {\n    x.map_or(0, |v| v * 3)\n}",
+            "x.map_or(0, |v| v * 3)",
+        ),
+        (
+            "fn f(x: Option<i32>) -> i32 {\n    x.unwrap_or(LIMIT * 2)\n}",
+            "x.unwrap_or(LIMIT * 2)",
+        ),
+        (
+            "fn f(x: Option<i32>) -> Option<i32> {\n    Option::map(x, triple)\n}",
+            "Option::map(x, triple)",
+        ),
+        (
+            "fn f(a: i32, b: i32) -> bool {\n    a > 0 && check(b)\n}",
+            "a > 0 && check(b)",
+        ),
+        (
+            "fn f(c: bool, a: i32) -> Result<i32, E> {\n    Ok(if c { a * 3 } else { 0 })\n}",
+            "Ok(if c { a * 3 } else { 0 })",
+        ),
+    ] {
+        assert!(gate(body, changed).is_none(), "{body}");
+    }
+    // Control: an unconditional tail with a `map` in its name is not a
+    // combinator.
+    assert!(matches!(
+        gate("fn f(x: i32) -> i32 {\n    remap(x) * 3\n}", "remap(x) * 3"),
+        Some(ReturnPathGate::Any)
+    ));
+}
+
+const WEIGHT_LIB: &str = "pub fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
+
+fn weight_admitted(tests: &str) -> Vec<String> {
+    let index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    let pin = establish(&index, "weight", "x * 3");
+    assert!(pin.is_some(), "the free owner must establish a pin");
+    let Some(pin) = pin else {
+        return Vec::new();
+    };
+    admitted_texts(&index, &pin)
+}
+
+#[test]
+fn only_a_plain_assert_eq_against_an_owner_free_value_pins() {
+    let tests = "use demo::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), weight(2) + weight(2));\n    assert_eq!(weight(2), 2 * weight(1));\n    debug_assert_eq!(weight(4), 12);\n    assert_eq!(weight(4), 12);\n}\n";
+    assert_eq!(
+        weight_admitted(tests),
+        vec!["assert_eq!(weight(4), 12);".to_string()]
+    );
+    // A `#[should_panic]` test passes exactly when the values differ.
+    let tests = "use demo::weight;\n\n#[test]\n#[should_panic]\nfn weighs() {\n    assert_eq!(weight(4), 13);\n}\n";
+    assert!(weight_admitted(tests).is_empty());
+}
+
+#[test]
+fn an_assertion_outside_the_test_body_is_not_its_pin() {
+    // A harness trial's `body` is only its registration; an assertion the
+    // index attributes to it from a helper does not see the helper's
+    // bindings.
+    let tests = "use demo::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    let pin = establish(&index, "weight", "x * 3");
+    assert!(pin.is_some());
+    let Some(pin) = pin else { return };
+    let test = &index.tests[0];
+    assert_eq!(test.assertions.len(), 1);
+    let no_foreign_import = |_: &Path, _: &str| false;
+    assert!(pin.admits(test, &test.assertions[0], &index, &no_foreign_import));
+    let mut helper_assertion = test.assertions[0].clone();
+    helper_assertion.line = test.end_line + 3;
+    assert!(!pin.admits(test, &helper_assertion, &index, &no_foreign_import));
+}
+
+#[test]
+fn a_bare_call_through_any_other_binding_of_the_name_is_not_a_pin() {
+    let control =
+        "use demo::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    assert_eq!(weight_admitted(control).len(), 1);
+    for tests in [
+        // A `for` pattern.
+        "use demo::weight;\n\n#[test]\nfn weighs() {\n    for weight in [heavy] {\n        assert_eq!(weight(4), 12);\n    }\n}\n",
+        // A closure parameter.
+        "use demo::weight;\n\n#[test]\nfn weighs() {\n    let check = |weight: fn(u32) -> u32| assert_eq!(weight(4), 12);\n    check(heavy);\n}\n",
+        // The test's own parameter.
+        "use demo::weight;\n\n#[test]\nfn weighs(weight: fn(u32) -> u32) {\n    assert_eq!(weight(4), 12);\n}\n",
+        // A workspace item renamed to the owner's name.
+        "use demo::legacy::triple as weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n",
+        // A macro that binds a pattern.
+        "use demo::weight;\n\n#[test]\nfn weighs() {\n    let_assert!(Ok(weight) = pick());\n    assert_eq!(weight(4), 12);\n}\n",
+    ] {
+        assert!(weight_admitted(tests).is_empty(), "{tests}");
+    }
+}
+
+const COUNTER_LIB: &str = "pub struct Counter {\n    n: usize,\n}\n\nimpl Counter {\n    pub fn new() -> Self {\n        Counter { n: 0 }\n    }\n\n    pub fn try_new(n: usize) -> Result<Self, String> {\n        Ok(Counter { n })\n    }\n\n    pub fn count(&self) -> usize {\n        self.n + 1\n    }\n\n    pub fn tally(&self) -> usize {\n        self.n + 1\n    }\n}\n";
+
+fn counter_admitted(owner_name: &str, prelude: &str, binding: &str) -> usize {
+    let tests = format!(
+        "{prelude}use demo::Counter;\n\n#[test]\nfn counts() {{\n    {binding}\n    assert_eq!(c.{owner_name}(), 1);\n}}\n"
+    );
+    let index = index(&[(LIB, COUNTER_LIB), (TESTS, &tests)]);
+    let pin = establish(&index, owner_name, "self.n + 1");
+    assert!(pin.is_some(), "{owner_name} must establish a pin");
+    let Some(pin) = pin else { return 0 };
+    admitted_texts(&index, &pin).len()
+}
+
+#[test]
+fn a_by_value_prelude_method_name_may_take_the_call_first() {
+    // `Iterator::count(self)` is tried at the receiver type itself, before
+    // the inherent `count(&self)` at `&Counter`, whenever `Counter` is an
+    // iterator; ripr cannot see that, so the name never pins.
+    assert_eq!(counter_admitted("count", "", "let c = Counter::new();"), 0);
+    assert_eq!(counter_admitted("tally", "", "let c = Counter::new();"), 1);
+}
+
+#[test]
+fn a_constructor_binds_its_type_only_when_its_signature_returns_it() {
+    for (binding, admitted) in [
+        ("let c = Counter::new();", 1),
+        ("let c = Counter::new().unwrap();", 0),
+        ("let c = Counter::try_new(0);", 0),
+        ("let c = Counter::try_new(0)?;", 1),
+        ("let c = Counter::try_new(0).unwrap();", 1),
+        ("let c = Counter::try_new(0).expect(\"valid\");", 1),
+        ("let c = Counter::try_from(0);", 0),
+        ("let c = Counter::try_from(0).unwrap();", 1),
+        ("let c = Counter::from(0);", 1),
+        // Not an inherent definition ripr can read.
+        ("let c = Counter::from_bytes(b\"0\");", 0),
+        ("let c = Counter { n: 0 };", 1),
+    ] {
+        assert_eq!(
+            counter_admitted("tally", "", binding),
+            admitted,
+            "{binding}"
+        );
+    }
+}
+
+#[test]
+fn a_receiver_name_bound_or_typed_elsewhere_is_not_established() {
+    for (prelude, binding) in [
+        // A macro binds the receiver.
+        (
+            "",
+            "let c = Counter::new();\n    let_assert!(Ok(c) = pick());",
+        ),
+        // The test file aliases or renames the type name.
+        (
+            "type Counter = Vec<usize>;\n",
+            "let c: Counter = Vec::new();",
+        ),
+        ("use other::Tally as Counter;\n", "let c = Counter::new();"),
+    ] {
+        assert_eq!(counter_admitted("tally", prelude, binding), 0, "{binding}");
+    }
+    // The test's parameter binds the receiver even when a nested `let`
+    // types another binding of the same name.
+    let tests = "use demo::Counter;\n\n#[test]\nfn counts(c: Vec<usize>) {\n    {\n        let c = Counter::new();\n        drop(c);\n    }\n    assert_eq!(c.tally(), 1);\n}\n";
+    let index = index(&[(LIB, COUNTER_LIB), (TESTS, tests)]);
+    let pin = establish(&index, "tally", "self.n + 1");
+    assert!(pin.is_some());
+    let Some(pin) = pin else { return };
+    assert!(admitted_texts(&index, &pin).is_empty());
 }

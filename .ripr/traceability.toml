@@ -9566,6 +9566,13 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::return_path_gate_needs_the_changed_tail_on_the_pinned_path",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::lexical_fallback_owner_is_not_established",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::item_container_stops_at_the_nearest_item",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_tail_that_skips_its_changed_part_on_some_inputs_is_not_established",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::only_a_plain_assert_eq_against_an_owner_free_value_pins",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_assertion_outside_the_test_body_is_not_its_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bare_call_through_any_other_binding_of_the_name_is_not_a_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_by_value_prelude_method_name_may_take_the_call_first",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_constructor_binds_its_type_only_when_its_signature_returns_it",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_receiver_name_bound_or_typed_elsewhere_is_not_established",
 ]
 fixtures = [
   "fixtures/owner_return_pin_trait_method",

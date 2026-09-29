@@ -123,9 +123,13 @@ impl ClassifiedProbeEvidence {
                 })
             },
             &|test, assertion| {
-                owner_return_pin
-                    .as_ref()
-                    .is_some_and(|pin| pin.admits(test, assertion, context.index))
+                owner_return_pin.as_ref().is_some_and(|pin| {
+                    pin.admits(test, assertion, context.index, &|file, name| {
+                        context.index.files.get(file).is_some_and(|facts| {
+                            context.test_file_imports_foreign_callee_name(file, &facts.source, name)
+                        })
+                    })
+                })
             },
         );
 
