@@ -2750,15 +2750,11 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             ));
         }
         let cache_file = &entries[0];
-        let bytes = std::fs::read(cache_file)
-            .map_err(|err| format!("read {}: {err}", cache_file.display()))?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| format!("parse compact cache: {err}"))?;
-        envelope["classified_seams"] = serde_json::Value::Array(Vec::new());
-        let rewritten =
-            serde_json::to_vec(&envelope).map_err(|err| format!("encode compact cache: {err}"))?;
-        std::fs::write(cache_file, rewritten)
-            .map_err(|err| format!("rewrite {}: {err}", cache_file.display()))?;
+        // Reseed through the digest-consistent reseal path (#4382): a
+        // hand-edited entry would now be rejected as payload corruption
+        // instead of proving read-through.
+        crate::analysis::seam_cache::reseal_classified_seams_entry(cache_file, &[])
+            .map_err(|err| format!("reseed compact cache: {err}"))?;
 
         let warm =
             inventory_compact_classified_seams_at_with_config(&root, &RiprConfig::default())?;
@@ -2843,7 +2839,9 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         // Replace the cache file's `classified_seams` with `[]`
         // without changing the key fields. If the warm path returns
         // `[]`, the cache was read; if it returns the cold result,
-        // the cache was bypassed.
+        // the cache was bypassed. The reseal path keeps the payload
+        // digest bound (#4382), so the reseeded entry still counts as a
+        // legitimate cache entry rather than corruption.
         let entries = list_cache_entries(&root)?;
         if entries.len() != 1 {
             return Err(format!(
@@ -2852,15 +2850,8 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             ));
         }
         let cache_file = &entries[0];
-        let bytes = std::fs::read(cache_file)
-            .map_err(|err| format!("read {}: {err}", cache_file.display()))?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| format!("parse cache: {err}"))?;
-        envelope["classified_seams"] = serde_json::Value::Array(Vec::new());
-        let rewritten =
-            serde_json::to_vec(&envelope).map_err(|err| format!("encode cache: {err}"))?;
-        std::fs::write(cache_file, rewritten)
-            .map_err(|err| format!("rewrite {}: {err}", cache_file.display()))?;
+        crate::analysis::seam_cache::reseal_classified_seams_entry(cache_file, &[])
+            .map_err(|err| format!("reseed cache: {err}"))?;
 
         let warm = inventory_classified_seams_at(&root)?;
         if !warm.is_empty() {
@@ -2910,7 +2901,9 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
 
         // Doctor the cache entry so a hit is observable: if the warm path
         // returns `[]`, it read the cache; if it recomputes, it returns
-        // the real (non-empty) classification.
+        // the real (non-empty) classification. The reseal keeps the
+        // payload digest bound (#4382), so the doctored entry is rejected
+        // by key invalidation below, not by payload corruption.
         let entries = list_cache_entries(&root)?;
         if entries.len() != 1 {
             return Err(format!(
@@ -2919,15 +2912,8 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             ));
         }
         let cache_file = &entries[0];
-        let bytes = std::fs::read(cache_file)
-            .map_err(|err| format!("read {}: {err}", cache_file.display()))?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| format!("parse cache: {err}"))?;
-        envelope["classified_seams"] = serde_json::Value::Array(Vec::new());
-        let rewritten =
-            serde_json::to_vec(&envelope).map_err(|err| format!("encode cache: {err}"))?;
-        std::fs::write(cache_file, rewritten)
-            .map_err(|err| format!("rewrite {}: {err}", cache_file.display()))?;
+        crate::analysis::seam_cache::reseal_classified_seams_entry(cache_file, &[])
+            .map_err(|err| format!("reseed cache: {err}"))?;
 
         // Swap the bytes for same-length different content and restore the
         // original mtime, keeping the (path, mtime, size) signature intact.
@@ -2991,7 +2977,10 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         }
         let cold_key = workspace_cache_key_at_with_config(&root, &RiprConfig::default())?;
 
-        // Doctor the cache entry so serving it would be observable.
+        // Doctor the cache entry so serving it would be observable. The
+        // reseal keeps the payload digest bound (#4382), so the doctored
+        // entry is rejected by fingerprint invalidation below, not by
+        // payload corruption.
         let entries = list_cache_entries(&root)?;
         if entries.len() != 1 {
             return Err(format!(
@@ -3000,15 +2989,8 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             ));
         }
         let cache_file = &entries[0];
-        let bytes = std::fs::read(cache_file)
-            .map_err(|err| format!("read {}: {err}", cache_file.display()))?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| format!("parse cache: {err}"))?;
-        envelope["classified_seams"] = serde_json::Value::Array(Vec::new());
-        let rewritten =
-            serde_json::to_vec(&envelope).map_err(|err| format!("encode cache: {err}"))?;
-        std::fs::write(cache_file, rewritten)
-            .map_err(|err| format!("rewrite {}: {err}", cache_file.display()))?;
+        crate::analysis::seam_cache::reseal_classified_seams_entry(cache_file, &[])
+            .map_err(|err| format!("reseed cache: {err}"))?;
 
         // Same-size rewrite with the mtime explicitly restored — what
         // `rsync -a` / `cp --preserve=timestamps` do. On unix the ctime
@@ -3823,7 +3805,10 @@ marker = "libtest_mimic::Trial"
         }
         let cold_key = workspace_cache_key_at_with_config(&root, &RiprConfig::default())?;
 
-        // Doctor the old entry so serving it would be observable.
+        // Doctor the old entry so serving it would be observable. The
+        // reseal keeps the payload digest bound (#4382), so the doctored
+        // entry is rejected by key invalidation below, not by payload
+        // corruption.
         let entries = list_cache_entries(&root)?;
         if entries.len() != 1 {
             return Err(format!(
@@ -3832,15 +3817,8 @@ marker = "libtest_mimic::Trial"
             ));
         }
         let cache_file = &entries[0];
-        let bytes = std::fs::read(cache_file)
-            .map_err(|err| format!("read {}: {err}", cache_file.display()))?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| format!("parse cache: {err}"))?;
-        envelope["classified_seams"] = serde_json::Value::Array(Vec::new());
-        let rewritten =
-            serde_json::to_vec(&envelope).map_err(|err| format!("encode cache: {err}"))?;
-        std::fs::write(cache_file, rewritten)
-            .map_err(|err| format!("rewrite {}: {err}", cache_file.display()))?;
+        crate::analysis::seam_cache::reseal_classified_seams_entry(cache_file, &[])
+            .map_err(|err| format!("reseed cache: {err}"))?;
 
         // Change the content and force a distinct mtime so the new
         // signature cannot collide with the old one through mtime
@@ -4099,7 +4077,10 @@ marker = "libtest_mimic::Trial"
 
         // Poison the cached envelope's payload. If the next run reads
         // this file (i.e. the test edit did *not* change the key), it
-        // will return [] and we'll see it.
+        // will return [] and we'll see it. The reseal keeps the payload
+        // digest bound (#4382): a hand-edited entry would be rejected as
+        // corruption regardless of the key, which would weaken this
+        // test's discrimination.
         let entries = list_cache_entries(&root)?;
         if entries.len() != 1 {
             return Err(format!(
@@ -4108,15 +4089,8 @@ marker = "libtest_mimic::Trial"
             ));
         }
         let cache_file = &entries[0];
-        let bytes = std::fs::read(cache_file)
-            .map_err(|err| format!("read {}: {err}", cache_file.display()))?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| format!("parse cache: {err}"))?;
-        envelope["classified_seams"] = serde_json::Value::Array(Vec::new());
-        let rewritten =
-            serde_json::to_vec(&envelope).map_err(|err| format!("encode cache: {err}"))?;
-        std::fs::write(cache_file, rewritten)
-            .map_err(|err| format!("rewrite {}: {err}", cache_file.display()))?;
+        crate::analysis::seam_cache::reseal_classified_seams_entry(cache_file, &[])
+            .map_err(|err| format!("reseed cache: {err}"))?;
 
         // Edit only the test file — production untouched, no .ripr/*
         // files involved. This must change the cache key so the

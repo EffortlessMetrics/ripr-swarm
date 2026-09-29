@@ -205,7 +205,11 @@ plus shard files, with cache-store trace status such as
 `sharded_ok_seams_135812_shards_7_limit_20000`. Warm loads stitch the shards
 only when the manifest and every shard match the current cache key; missing or
 corrupt shards are ignored as cache corruption and the run recomputes instead
-of using partial evidence. `cargo xtask cache report` summarizes sharded
+of using partial evidence. Every cache envelope also binds a SHA-256 digest of
+its payload and re-verifies it on load (#4382): a payload edited after the
+entry was written is ignored as corruption with a typed reason and rebuilt,
+while entries written before digest binding load as plain misses and rebuild
+once with a digest. `cargo xtask cache report` summarizes sharded
 families, largest shard sets, and orphan or incomplete shard sets. The
 `cargo xtask cache gc --dry-run` command still sees sharded entries because
 every shard lives under the cache base directory.

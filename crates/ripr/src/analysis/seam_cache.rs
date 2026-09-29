@@ -1172,17 +1172,25 @@ impl RepoSeamFactCache {
         };
         match codec::decode(&bytes) {
             Ok(envelope) => {
-                if envelope.matches_key(key) {
-                    CacheLoad::Hit((
-                        envelope.classified_seams,
-                        envelope.seam_limit_info,
-                        envelope.lexical_fallback_files,
-                    ))
-                } else {
+                if !envelope.matches_key(key) {
                     // Key collision is unlikely (16-char FNV file
                     // names + 12 fields hashed in), but possible. Treat
                     // as miss without failing analysis.
-                    CacheLoad::Miss
+                    return CacheLoad::Miss;
+                }
+                // A pre-digest legacy entry is a plain miss (one-time
+                // transparent rebuild, #4382); a present-but-mismatched
+                // digest is corruption exactly like an undecodable entry.
+                match envelope.payload_digest_status() {
+                    PayloadDigestStatus::Valid => CacheLoad::Hit((
+                        envelope.classified_seams,
+                        envelope.seam_limit_info,
+                        envelope.lexical_fallback_files,
+                    )),
+                    PayloadDigestStatus::LegacyMissing => CacheLoad::Miss,
+                    PayloadDigestStatus::Mismatch { reason } => {
+                        CacheLoad::CorruptIgnored { reason }
+                    }
                 }
             }
             Err(reason) => CacheLoad::CorruptIgnored { reason },
@@ -1264,7 +1272,7 @@ impl RepoSeamFactCache {
             seams.to_vec(),
             limit_info.cloned(),
             lexical_fallback_files.to_vec(),
-        );
+        )?;
         let bytes = codec::encode(&envelope)?;
         let path = self.entry_path(key);
         crate::atomic_file::write_cache(&path, &bytes, "cache")?;
@@ -1301,6 +1309,17 @@ impl RepoSeamFactCache {
         };
         if !manifest.matches_key(key) {
             return CacheLoad::Miss;
+        }
+        // A pre-digest legacy manifest is a plain miss (one-time
+        // transparent rebuild, #4382); a present-but-mismatched digest
+        // means the manifest's served payload (shard list, limit info,
+        // fallback files) was edited after it was written.
+        match manifest.payload_digest_status() {
+            PayloadDigestStatus::Valid => {}
+            PayloadDigestStatus::LegacyMissing => return CacheLoad::Miss,
+            PayloadDigestStatus::Mismatch { reason } => {
+                return CacheLoad::CorruptIgnored { reason };
+            }
         }
         if manifest.shards.is_empty() && manifest.total_seams != 0 {
             return CacheLoad::CorruptIgnored {
@@ -1349,6 +1368,19 @@ impl RepoSeamFactCache {
                 return CacheLoad::CorruptIgnored {
                     reason: format!("sharded cache key mismatch in {}", shard.file),
                 };
+            }
+            // A pre-digest legacy shard is a plain miss (one-time
+            // transparent rebuild of the whole set, #4382); a
+            // present-but-mismatched digest is corruption exactly like an
+            // undecodable shard.
+            match envelope.payload_digest_status() {
+                PayloadDigestStatus::Valid => {}
+                PayloadDigestStatus::LegacyMissing => return CacheLoad::Miss,
+                PayloadDigestStatus::Mismatch { reason } => {
+                    return CacheLoad::CorruptIgnored {
+                        reason: format!("{reason} in {}", shard.file),
+                    };
+                }
             }
             if envelope.sharded_cache_schema_version != manifest.sharded_cache_schema_version
                 || envelope.shard_index != shard.index
@@ -1401,7 +1433,7 @@ impl RepoSeamFactCache {
         for (index, chunk) in seams.chunks(store_limit).enumerate() {
             let file = format!("shard-{index:05}.json");
             let envelope =
-                ShardedCacheEnvelope::new(key.clone(), index, shard_count, chunk.to_vec());
+                ShardedCacheEnvelope::new(key.clone(), index, shard_count, chunk.to_vec())?;
             let bytes = codec::encode_shard(&envelope)?;
             let path = self.sharded_entry_dir(key).join(&file);
             crate::atomic_file::write_cache(&path, &bytes, "sharded cache file")?;
@@ -1418,7 +1450,7 @@ impl RepoSeamFactCache {
             shard_refs,
             limit_info.cloned(),
             lexical_fallback_files.to_vec(),
-        );
+        )?;
         let bytes = codec::encode_sharded_manifest(&manifest)?;
         let manifest_path = self.sharded_manifest_path(key);
         crate::atomic_file::write_cache(&manifest_path, &bytes, "sharded cache manifest")?;
@@ -1589,10 +1621,18 @@ impl RepoFileFactCache {
         };
         match codec::decode_file_facts(&bytes) {
             Ok(envelope) => {
-                if envelope.matches_key(key) {
-                    CacheLoad::Hit(envelope.file_facts)
-                } else {
-                    CacheLoad::Miss
+                if !envelope.matches_key(key) {
+                    return CacheLoad::Miss;
+                }
+                // A pre-digest legacy entry is a plain miss (one-time
+                // transparent rebuild, #4382); a present-but-mismatched
+                // digest is corruption exactly like an undecodable entry.
+                match envelope.payload_digest_status() {
+                    PayloadDigestStatus::Valid => CacheLoad::Hit(envelope.file_facts),
+                    PayloadDigestStatus::LegacyMissing => CacheLoad::Miss,
+                    PayloadDigestStatus::Mismatch { reason } => {
+                        CacheLoad::CorruptIgnored { reason }
+                    }
                 }
             }
             Err(reason) => CacheLoad::CorruptIgnored { reason },
@@ -1601,7 +1641,10 @@ impl RepoFileFactCache {
 
     /// Snapshot paths with valid cached envelopes before a build starts. The
     /// caller uses this set for O(1) miss attribution and deliberately does not
-    /// observe entries created during the same build.
+    /// observe entries created during the same build. Entries that cannot
+    /// produce a hit — corrupt, key-stale, or pre-digest legacy (#4382) —
+    /// are excluded so a digest-rollout rebuild is not misattributed as a
+    /// content invalidation.
     pub(crate) fn known_file_paths(&self) -> HashSet<PathBuf> {
         let mut paths = HashSet::new();
         let Ok(entries) = std::fs::read_dir(&self.dir) else {
@@ -1615,7 +1658,9 @@ impl RepoFileFactCache {
             let Ok(bytes) = std::fs::read(path) else {
                 continue;
             };
-            if let Ok(envelope) = codec::decode_file_facts(&bytes) {
+            if let Ok(envelope) = codec::decode_file_facts(&bytes)
+                && matches!(envelope.payload_digest_status(), PayloadDigestStatus::Valid)
+            {
                 paths.insert(envelope.file_path);
             }
         }
@@ -1631,7 +1676,13 @@ impl RepoFileFactCache {
             stage: FileFactStoreStage::CreateDir,
             message: format!("create file fact cache dir failed: {err}"),
         })?;
-        let envelope = FileFactCacheEnvelope::new(key.clone(), facts.clone());
+        let envelope =
+            FileFactCacheEnvelope::new(key.clone(), facts.clone()).map_err(|message| {
+                FileFactStoreError {
+                    stage: FileFactStoreStage::Encode,
+                    message,
+                }
+            })?;
         let bytes = codec::encode_file_facts(&envelope).map_err(|message| FileFactStoreError {
             stage: FileFactStoreStage::Encode,
             message,
@@ -1709,6 +1760,72 @@ impl RepoSeamCountCache {
     }
 }
 
+/// SHA-256 hex digest over the compact JSON serialization of an envelope
+/// payload (#4382). The write side and the load side both serialize the
+/// typed payload (struct field order and `Vec` order are deterministic and
+/// no payload type uses `HashMap`/`serde_json::Value`), so the digest is
+/// reproducible without keeping the raw entry bytes.
+fn payload_digest<T: serde::Serialize>(payload: &T) -> Result<String, String> {
+    let bytes = serde_json::to_vec(payload)
+        .map_err(|err| format!("serialize payload for digest failed: {err}"))?;
+    Ok(sha256_hex(&bytes))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(bytes);
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        hex.push(HEX[(byte >> 4) as usize] as char);
+        hex.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    hex
+}
+
+/// Status of the store-time payload digest carried by a decoded envelope
+/// (#4382). The digest binds the served payload into the envelope so a
+/// valid-JSON payload edit (entity rename, sync-tool damage, buggy
+/// producer) can no longer be served as evidence the way key-consistent
+/// tampering could.
+enum PayloadDigestStatus {
+    /// Entry written before digests existed: never served. The caller
+    /// reports a plain miss and the transparent rebuild writes a fresh
+    /// digest — a disclosed one-time invalidation, not corruption.
+    LegacyMissing,
+    /// Digest present and the deserialized payload recomputes to it.
+    Valid,
+    /// Digest present but the payload recomputes to a different digest:
+    /// the payload bytes changed after the entry was written. `reason`
+    /// names the cause for the typed corruption stderr; callers degrade
+    /// exactly like an undecodable entry and rebuild transparently.
+    Mismatch { reason: String },
+}
+
+fn payload_digest_status<T: serde::Serialize>(
+    stored: Option<&String>,
+    payload: &T,
+) -> PayloadDigestStatus {
+    let Some(stored) = stored else {
+        return PayloadDigestStatus::LegacyMissing;
+    };
+    let computed = match payload_digest(payload) {
+        Ok(computed) => computed,
+        Err(reason) => {
+            return PayloadDigestStatus::Mismatch {
+                reason: format!("payload digest recompute failed: {reason}"),
+            };
+        }
+    };
+    if stored != &computed {
+        return PayloadDigestStatus::Mismatch {
+            reason: format!(
+                "payload digest mismatch: envelope records {stored}, payload recomputes {computed}"
+            ),
+        };
+    }
+    PayloadDigestStatus::Valid
+}
+
 /// On-disk shape. The key is embedded so callers can verify on read
 /// even though the filename already encodes a hash of the same fields.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -1724,6 +1841,13 @@ struct CacheEnvelope {
     workspace_manifests_hash: String,
     lockfile_hash: String,
     toolchain_hash: String,
+    /// SHA-256 over the serialized served payload (`classified_seams`,
+    /// `seam_limit_info`, `lexical_fallback_files`), bound at store time
+    /// and re-verified at load time (#4382). `#[serde(default)]` keeps
+    /// pre-digest entries decodable; load treats a missing digest as a
+    /// miss so the entry is rebuilt with one instead of served.
+    #[serde(default)]
+    payload_sha256: Option<String>,
     classified_seams: Vec<ClassifiedSeam>,
     /// `None` means this is a complete run (all seams were analyzed).
     /// `Some(...)` means the run was capped; the renderer uses this to
@@ -1760,18 +1884,31 @@ struct FileFactCacheEnvelope {
     analyzer_version: String,
     file_path: PathBuf,
     content_hash: String,
+    /// SHA-256 over the serialized `file_facts` payload, bound at store
+    /// time and re-verified at load time (#4382). `#[serde(default)]`
+    /// keeps pre-digest entries decodable; load treats a missing digest
+    /// as a miss so the entry is rebuilt with one instead of served.
+    #[serde(default)]
+    payload_sha256: Option<String>,
     file_facts: FileFacts,
 }
 
 impl FileFactCacheEnvelope {
-    fn new(key: RepoFileFactCacheKey, file_facts: FileFacts) -> Self {
-        Self {
+    fn new(key: RepoFileFactCacheKey, file_facts: FileFacts) -> Result<Self, String> {
+        let payload_sha256 = payload_digest(&file_facts)?;
+        Ok(Self {
             file_fact_cache_schema_version: key.schema_version,
             analyzer_version: key.analyzer_version,
             file_path: key.file_path,
             content_hash: key.content_hash,
+            payload_sha256: Some(payload_sha256),
             file_facts,
-        }
+        })
+    }
+
+    /// Re-compute the served-payload digest bound at store time (#4382).
+    fn payload_digest_status(&self) -> PayloadDigestStatus {
+        payload_digest_status(self.payload_sha256.as_ref(), &self.file_facts)
     }
 
     fn matches_key(&self, key: &RepoFileFactCacheKey) -> bool {
@@ -1824,7 +1961,7 @@ impl CacheEnvelope {
         key: RepoSeamCacheKey,
         classified_seams: Vec<ClassifiedSeam>,
         seam_limit_info: Option<CachedSeamLimitInfo>,
-    ) -> Self {
+    ) -> Result<Self, String> {
         Self::new_with_fallback(key, classified_seams, seam_limit_info, Vec::new())
     }
 
@@ -1833,8 +1970,10 @@ impl CacheEnvelope {
         classified_seams: Vec<ClassifiedSeam>,
         seam_limit_info: Option<CachedSeamLimitInfo>,
         lexical_fallback_files: Vec<PathBuf>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, String> {
+        let payload_sha256 =
+            payload_digest(&(&classified_seams, &seam_limit_info, &lexical_fallback_files))?;
+        Ok(Self {
             schema_version: key.schema_version,
             analyzer_version: key.analyzer_version,
             workspace_root_hash: key.workspace_root_hash,
@@ -1846,10 +1985,23 @@ impl CacheEnvelope {
             workspace_manifests_hash: key.workspace_manifests_hash,
             lockfile_hash: key.lockfile_hash,
             toolchain_hash: key.toolchain_hash,
+            payload_sha256: Some(payload_sha256),
             classified_seams,
             seam_limit_info,
             lexical_fallback_files,
-        }
+        })
+    }
+
+    /// Re-compute the served-payload digest bound at store time (#4382).
+    fn payload_digest_status(&self) -> PayloadDigestStatus {
+        payload_digest_status(
+            self.payload_sha256.as_ref(),
+            &(
+                &self.classified_seams,
+                &self.seam_limit_info,
+                &self.lexical_fallback_files,
+            ),
+        )
     }
 
     fn matches_key(&self, key: &RepoSeamCacheKey) -> bool {
@@ -1881,6 +2033,11 @@ struct ShardedCacheManifest {
     workspace_manifests_hash: String,
     lockfile_hash: String,
     toolchain_hash: String,
+    /// See `CacheEnvelope::payload_sha256`: binds the manifest-served
+    /// payload (shard list, limit info, fallback files) at store time and
+    /// is re-verified at load time (#4382).
+    #[serde(default)]
+    payload_sha256: Option<String>,
     total_seams: usize,
     shard_count: usize,
     shards: Vec<ShardedCacheShardRef>,
@@ -1913,6 +2070,11 @@ struct ShardedCacheEnvelope {
     workspace_manifests_hash: String,
     lockfile_hash: String,
     toolchain_hash: String,
+    /// See `CacheEnvelope::payload_sha256`: binds this shard's
+    /// `classified_seams` payload at store time and is re-verified at load
+    /// time (#4382).
+    #[serde(default)]
+    payload_sha256: Option<String>,
     shard_index: usize,
     shard_count: usize,
     classified_seams: Vec<ClassifiedSeam>,
@@ -1926,8 +2088,9 @@ impl ShardedCacheManifest {
         shards: Vec<ShardedCacheShardRef>,
         seam_limit_info: Option<CachedSeamLimitInfo>,
         lexical_fallback_files: Vec<PathBuf>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, String> {
+        let payload_sha256 = payload_digest(&(&shards, &seam_limit_info, &lexical_fallback_files))?;
+        Ok(Self {
             sharded_cache_schema_version: SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION.to_string(),
             schema_version: key.schema_version,
             analyzer_version: key.analyzer_version,
@@ -1940,12 +2103,28 @@ impl ShardedCacheManifest {
             workspace_manifests_hash: key.workspace_manifests_hash,
             lockfile_hash: key.lockfile_hash,
             toolchain_hash: key.toolchain_hash,
+            payload_sha256: Some(payload_sha256),
             total_seams,
             shard_count,
             shards,
             seam_limit_info,
             lexical_fallback_files,
-        }
+        })
+    }
+
+    /// Re-compute the manifest-served-payload digest bound at store time
+    /// (#4382). `total_seams`/`shard_count` stay outside the digest: the
+    /// shard loop already cross-checks them against the digest-bound shard
+    /// list and the loaded shard files.
+    fn payload_digest_status(&self) -> PayloadDigestStatus {
+        payload_digest_status(
+            self.payload_sha256.as_ref(),
+            &(
+                &self.shards,
+                &self.seam_limit_info,
+                &self.lexical_fallback_files,
+            ),
+        )
     }
 
     fn matches_key(&self, key: &RepoSeamCacheKey) -> bool {
@@ -1970,8 +2149,9 @@ impl ShardedCacheEnvelope {
         shard_index: usize,
         shard_count: usize,
         classified_seams: Vec<ClassifiedSeam>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, String> {
+        let payload_sha256 = payload_digest(&classified_seams)?;
+        Ok(Self {
             sharded_cache_schema_version: SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION.to_string(),
             schema_version: key.schema_version,
             analyzer_version: key.analyzer_version,
@@ -1984,10 +2164,16 @@ impl ShardedCacheEnvelope {
             workspace_manifests_hash: key.workspace_manifests_hash,
             lockfile_hash: key.lockfile_hash,
             toolchain_hash: key.toolchain_hash,
+            payload_sha256: Some(payload_sha256),
             shard_index,
             shard_count,
             classified_seams,
-        }
+        })
+    }
+
+    /// Re-compute this shard's payload digest bound at store time (#4382).
+    fn payload_digest_status(&self) -> PayloadDigestStatus {
+        payload_digest_status(self.payload_sha256.as_ref(), &self.classified_seams)
     }
 
     fn matches_key(&self, key: &RepoSeamCacheKey) -> bool {
@@ -2004,6 +2190,30 @@ impl ShardedCacheEnvelope {
             && self.lockfile_hash == key.lockfile_hash
             && self.toolchain_hash == key.toolchain_hash
     }
+}
+
+/// Test-only reseal for cache read-through and invalidation tests: replace
+/// an entry's `classified_seams` payload and re-bind its digest exactly as
+/// the store path would for the new payload (#4382). Tests seed a
+/// distinguishable cached payload this way instead of hand-editing entry
+/// bytes, which load-side digest verification now (correctly) rejects as
+/// corruption — a hand-edited entry could no longer prove anything about
+/// key invalidation or read-through.
+#[cfg(test)]
+pub(crate) fn reseal_classified_seams_entry(
+    entry: &Path,
+    seams: &[ClassifiedSeam],
+) -> Result<(), String> {
+    let bytes = std::fs::read(entry).map_err(|err| format!("read entry: {err}"))?;
+    let mut envelope: CacheEnvelope = codec::decode(&bytes)?;
+    envelope.classified_seams = seams.to_vec();
+    envelope.payload_sha256 = Some(payload_digest(&(
+        &envelope.classified_seams,
+        &envelope.seam_limit_info,
+        &envelope.lexical_fallback_files,
+    ))?);
+    let resealed = codec::encode(&envelope)?;
+    std::fs::write(entry, resealed).map_err(|err| format!("write entry: {err}"))
 }
 
 /// Codec module — the only place serialization format is decided.
@@ -5215,7 +5425,8 @@ mod tests {
             .map_err(|err| format!("store under key_a: {err}"))?;
         // Write key_a's envelope under key_b's filename — simulates a
         // hash collision or stale entry.
-        let envelope = CacheEnvelope::new(key_a.clone(), vec![sample_classified()], None);
+        let envelope = CacheEnvelope::new(key_a.clone(), vec![sample_classified()], None)
+            .map_err(|err| format!("construct envelope: {err}"))?;
         std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir: {err}"))?;
         let bytes = codec::encode(&envelope)?;
         std::fs::write(cache.entry_path(&key_b), bytes)
@@ -5247,6 +5458,20 @@ mod tests {
         cache
             .store_file_facts(&key, &facts)
             .map_err(|err| format!("store file facts should succeed: {err}"))?;
+
+        // Fresh entries bind a SHA-256 payload digest (#4382): present in
+        // the on-disk envelope and exactly 64 hex chars.
+        let entry_bytes = std::fs::read(cache.entry_path(&key))
+            .map_err(|err| format!("read fresh entry: {err}"))?;
+        let value: serde_json::Value = serde_json::from_slice(&entry_bytes)
+            .map_err(|err| format!("decode fresh entry: {err}"))?;
+        let digest = value
+            .get("payload_sha256")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("fresh file fact entry must carry a payload_sha256 digest")?;
+        if digest.len() != 64 || !digest.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(format!("payload digest must be 64 hex chars, got {digest}"));
+        }
 
         let result = match cache.load_file_facts(&key) {
             CacheLoad::Hit(loaded) => {
@@ -6089,6 +6314,446 @@ mod tests {
             "fingerprint-rebuilt key must be byte-identical to the computed key"
         );
         assert_eq!(fresh_key.filename(), rebuilt_key.filename());
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    // ---- Payload digest binding (#4382) --------------------------------
+    //
+    // The digest binds the served payload into the envelope at store time;
+    // these tests pin the load-side contract: a key-consistent payload edit
+    // degrades exactly like an undecodable entry (typed digest-mismatch
+    // reason, transparent rebuild), a fresh entry round-trips as a Hit,
+    // and a pre-digest legacy entry is a plain one-time miss.
+
+    /// Rewrite an on-disk cache entry without its `payload_sha256` field —
+    /// the byte shape of an entry written before digest binding existed.
+    fn strip_payload_digest(entry: &Path) -> Result<(), String> {
+        let text = std::fs::read_to_string(entry)
+            .map_err(|err| format!("read entry for legacy strip: {err}"))?;
+        let mut value: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|err| format!("decode entry for legacy strip: {err}"))?;
+        let Some(object) = value.as_object_mut() else {
+            return Err("cache entry must decode to a JSON object".to_string());
+        };
+        if object.remove("payload_sha256").is_none() {
+            return Err("entry unexpectedly carried no payload_sha256".to_string());
+        }
+        let bytes = serde_json::to_vec_pretty(&value)
+            .map_err(|err| format!("re-encode legacy entry: {err}"))?;
+        std::fs::write(entry, bytes).map_err(|err| format!("write legacy entry: {err}"))
+    }
+
+    fn require_digest_mismatch_reason(reason: &str) -> Result<(), String> {
+        if reason.contains("payload digest mismatch") && reason.contains("envelope records") {
+            Ok(())
+        } else {
+            Err(format!(
+                "corrupt reason must name the digest-mismatch cause, got {reason}"
+            ))
+        }
+    }
+
+    #[test]
+    fn given_file_fact_payload_edited_when_loading_then_digest_mismatch_degrades_to_rebuild()
+    -> Result<(), String> {
+        let dir = isolated_dir("file-facts-digest-tamper");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoFileFactCache::at_dir(dir.clone());
+        let path = PathBuf::from("src/lib.rs");
+        let key = RepoFileFactCacheKey::new(&path, b"pub fn apply_fee(fee: u32) -> u32 { fee }\n");
+        let facts = FileFacts {
+            path: path.clone(),
+            source: "pub fn apply_fee(fee: u32) -> u32 { fee }\n#[test]\nfn test_apply_fee_reduces_amount() {}\n".to_string(),
+            ..FileFacts::default()
+        };
+
+        cache
+            .store_file_facts(&key, &facts)
+            .map_err(|err| format!("cold store should succeed: {err}"))?;
+        let entry = cache.entry_path(&key);
+
+        // The issue's exact tamper: edit payload entity names while all
+        // four key fields (schema version, analyzer version, file path,
+        // content hash) stay intact. Valid JSON, matching key — the exact
+        // shape that used to be served verbatim as evidence.
+        let honest =
+            std::fs::read_to_string(&entry).map_err(|err| format!("read stored entry: {err}"))?;
+        let tampered = honest.replace(
+            "test_apply_fee_reduces_amount",
+            "test_TOTALLY_FABRICATED_NAME",
+        );
+        if tampered == honest {
+            return Err("tamper must have replaced the fabricated test name".to_string());
+        }
+        std::fs::write(&entry, tampered).map_err(|err| format!("write tampered entry: {err}"))?;
+
+        match cache.load_file_facts(&key) {
+            CacheLoad::CorruptIgnored { reason } => require_digest_mismatch_reason(&reason)?,
+            other => {
+                return Err(format!(
+                    "key-consistent payload edit must degrade to CorruptIgnored, got {other:?}"
+                ));
+            }
+        }
+
+        // The rebuild is transparent: a fresh store serves honest evidence
+        // again and never surfaces the fabricated name.
+        cache
+            .store_file_facts(&key, &facts)
+            .map_err(|err| format!("rebuild store should succeed: {err}"))?;
+        match cache.load_file_facts(&key) {
+            CacheLoad::Hit(loaded) => {
+                if !loaded.source.contains("test_apply_fee_reduces_amount") {
+                    return Err(format!(
+                        "rebuilt entry must serve honest evidence, got source {:?}",
+                        loaded.source
+                    ));
+                }
+                if loaded.source.contains("test_TOTALLY_FABRICATED_NAME") {
+                    return Err("rebuilt entry must not retain the fabricated name".to_string());
+                }
+            }
+            other => return Err(format!("rebuilt entry must load as Hit, got {other:?}")),
+        }
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn given_legacy_file_fact_entry_without_digest_when_loading_then_miss_and_rebuild_serves()
+    -> Result<(), String> {
+        let dir = isolated_dir("file-facts-legacy-no-digest");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoFileFactCache::at_dir(dir.clone());
+        let path = PathBuf::from("src/lib.rs");
+        let key = RepoFileFactCacheKey::new(&path, b"pub fn cached() {}\n");
+        let facts = FileFacts {
+            path: path.clone(),
+            source: "pub fn cached() {}\n".to_string(),
+            ..FileFacts::default()
+        };
+
+        cache
+            .store_file_facts(&key, &facts)
+            .map_err(|err| format!("seed store should succeed: {err}"))?;
+        strip_payload_digest(&cache.entry_path(&key))?;
+
+        // A pre-digest legacy entry is never served: a plain miss with no
+        // corruption claim (one-time transparent rebuild, disclosed in the
+        // digest rollout).
+        match cache.load_file_facts(&key) {
+            CacheLoad::Miss => {}
+            other => {
+                return Err(format!(
+                    "legacy entry without digest must load as Miss, got {other:?}"
+                ));
+            }
+        }
+
+        cache
+            .store_file_facts(&key, &facts)
+            .map_err(|err| format!("rebuild store should succeed: {err}"))?;
+        match cache.load_file_facts(&key) {
+            CacheLoad::Hit(_) => {}
+            other => {
+                return Err(format!(
+                    "rebuild with a fresh digest must load as Hit, got {other:?}"
+                ));
+            }
+        }
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn given_classified_seam_payload_edited_when_loading_then_digest_mismatch_degrades_to_rebuild()
+    -> Result<(), String> {
+        let dir = isolated_dir("seam-digest-tamper");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoSeamFactCache::at_dir(dir.clone());
+        let key = empty_state().cache_key();
+        let seams = vec![sample_classified()];
+
+        cache
+            .store_classified_seams_with_limit(
+                &key,
+                &seams,
+                None,
+                CLASSIFIED_SEAM_CACHE_STORE_LIMIT,
+            )
+            .map_err(|err| format!("store should succeed: {err}"))?;
+        let entry = cache.entry_path(&key);
+
+        // Key fields are hashes and stay intact; only the served payload
+        // (the seam expression) is edited.
+        let honest =
+            std::fs::read_to_string(&entry).map_err(|err| format!("read stored entry: {err}"))?;
+        let tampered = honest.replace("x > 5", "x > 999999");
+        if tampered == honest {
+            return Err("tamper must have replaced the seam expression".to_string());
+        }
+        std::fs::write(&entry, tampered).map_err(|err| format!("write tampered entry: {err}"))?;
+
+        match cache.load_classified_seams(&key) {
+            CacheLoad::CorruptIgnored { reason } => require_digest_mismatch_reason(&reason)?,
+            other => {
+                return Err(format!(
+                    "key-consistent seam payload edit must degrade to CorruptIgnored, got {other:?}"
+                ));
+            }
+        }
+
+        cache
+            .store_classified_seams_with_limit(
+                &key,
+                &seams,
+                None,
+                CLASSIFIED_SEAM_CACHE_STORE_LIMIT,
+            )
+            .map_err(|err| format!("rebuild store should succeed: {err}"))?;
+        match cache.load_classified_seams(&key) {
+            CacheLoad::Hit((loaded, _)) => {
+                if loaded.len() != 1 || loaded[0].seam.expression() != "x > 5" {
+                    return Err(format!(
+                        "rebuilt seam entry must serve the honest expression, got {loaded:?}"
+                    ));
+                }
+            }
+            other => {
+                return Err(format!(
+                    "rebuilt seam entry must load as Hit, got {other:?}"
+                ));
+            }
+        }
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn given_legacy_classified_seam_entry_without_digest_when_loading_then_miss_and_rebuild_serves()
+    -> Result<(), String> {
+        let dir = isolated_dir("seam-legacy-no-digest");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoSeamFactCache::at_dir(dir.clone());
+        let key = empty_state().cache_key();
+
+        cache
+            .store_classified_seams_with_limit(
+                &key,
+                &[sample_classified()],
+                None,
+                CLASSIFIED_SEAM_CACHE_STORE_LIMIT,
+            )
+            .map_err(|err| format!("seed store should succeed: {err}"))?;
+        strip_payload_digest(&cache.entry_path(&key))?;
+
+        match cache.load_classified_seams(&key) {
+            CacheLoad::Miss => {}
+            other => {
+                return Err(format!(
+                    "legacy seam entry without digest must load as Miss, got {other:?}"
+                ));
+            }
+        }
+
+        cache
+            .store_classified_seams_with_limit(
+                &key,
+                &[sample_classified()],
+                None,
+                CLASSIFIED_SEAM_CACHE_STORE_LIMIT,
+            )
+            .map_err(|err| format!("rebuild store should succeed: {err}"))?;
+        match cache.load_classified_seams(&key) {
+            CacheLoad::Hit(_) => {}
+            other => {
+                return Err(format!(
+                    "rebuild with a fresh digest must load as Hit, got {other:?}"
+                ));
+            }
+        }
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn given_sharded_seam_payload_edited_when_loading_then_digest_mismatch_names_the_shard()
+    -> Result<(), String> {
+        let dir = isolated_dir("sharded-digest-tamper");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoSeamFactCache::at_dir(dir.clone());
+        let key = empty_state().cache_key();
+        let seams = vec![sample_classified(); 2];
+
+        cache
+            .store_classified_seams_with_limit(&key, &seams, None, 1)
+            .map_err(|err| format!("small limit should shard the entry: {err}"))?;
+        let shard = cache.sharded_entry_dir(&key).join("shard-00000.json");
+
+        let honest =
+            std::fs::read_to_string(&shard).map_err(|err| format!("read stored shard: {err}"))?;
+        let tampered = honest.replace("x > 5", "x > 999999");
+        if tampered == honest {
+            return Err("tamper must have replaced the shard expression".to_string());
+        }
+        std::fs::write(&shard, tampered).map_err(|err| format!("write tampered shard: {err}"))?;
+
+        match cache.load_classified_seams(&key) {
+            CacheLoad::CorruptIgnored { reason } => {
+                require_digest_mismatch_reason(&reason)?;
+                if !reason.contains("shard-00000.json") {
+                    return Err(format!(
+                        "shard digest-mismatch reason must name the offending shard, got {reason}"
+                    ));
+                }
+            }
+            other => {
+                return Err(format!(
+                    "sharded payload edit must degrade to CorruptIgnored, got {other:?}"
+                ));
+            }
+        }
+
+        cache
+            .store_classified_seams_with_limit(&key, &seams, None, 1)
+            .map_err(|err| format!("rebuild store should succeed: {err}"))?;
+        match cache.load_classified_seams(&key) {
+            CacheLoad::Hit((loaded, _)) if loaded.len() == 2 => {}
+            other => {
+                return Err(format!(
+                    "rebuilt sharded entry must load as Hit with both seams, got {other:?}"
+                ));
+            }
+        }
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn given_sharded_manifest_payload_edited_when_loading_then_digest_mismatch_names_the_manifest()
+    -> Result<(), String> {
+        let dir = isolated_dir("sharded-manifest-digest-tamper");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoSeamFactCache::at_dir(dir.clone());
+        let key = empty_state().cache_key();
+        let fallback = PathBuf::from("src/fallback.rs");
+
+        let seams = vec![sample_classified(), sample_classified()];
+        cache
+            .store_classified_seams_with_limit_and_fallback(
+                &key,
+                &seams,
+                None,
+                std::slice::from_ref(&fallback),
+                1,
+            )
+            .map_err(|err| format!("small limit should shard the entry: {err}"))?;
+
+        // Edit only the manifest's served payload (the fallback file list);
+        // shard files and key fields stay intact.
+        let manifest = cache.sharded_manifest_path(&key);
+        let honest = std::fs::read_to_string(&manifest)
+            .map_err(|err| format!("read stored manifest: {err}"))?;
+        let tampered = honest.replace("src/fallback.rs", "src/fabricated.rs");
+        if tampered == honest {
+            return Err("tamper must have replaced the manifest fallback file".to_string());
+        }
+        std::fs::write(&manifest, tampered)
+            .map_err(|err| format!("write tampered manifest: {err}"))?;
+
+        match cache.load_classified_seams(&key) {
+            CacheLoad::CorruptIgnored { reason } => require_digest_mismatch_reason(&reason)?,
+            other => {
+                return Err(format!(
+                    "manifest payload edit must degrade to CorruptIgnored, got {other:?}"
+                ));
+            }
+        }
+
+        cache
+            .store_classified_seams_with_limit_and_fallback(
+                &key,
+                &seams,
+                None,
+                std::slice::from_ref(&fallback),
+                1,
+            )
+            .map_err(|err| format!("rebuild store should succeed: {err}"))?;
+        match cache.load_classified_seams_with_fallback(&key) {
+            CacheLoad::Hit((loaded, _, fallback_files)) => {
+                if loaded.len() != 2 {
+                    return Err(format!(
+                        "rebuilt entry must keep both seams, got {}",
+                        loaded.len()
+                    ));
+                }
+                if fallback_files != vec![fallback.clone()] {
+                    return Err(format!(
+                        "rebuilt manifest must serve the honest fallback list, got {fallback_files:?}"
+                    ));
+                }
+            }
+            other => {
+                return Err(format!(
+                    "rebuilt sharded entry must load as Hit, got {other:?}"
+                ));
+            }
+        }
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn given_legacy_sharded_shards_without_digest_when_loading_then_miss_and_rebuild_serves()
+    -> Result<(), String> {
+        let dir = isolated_dir("sharded-legacy-no-digest");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoSeamFactCache::at_dir(dir.clone());
+        let key = empty_state().cache_key();
+
+        let seams = vec![sample_classified(), sample_classified()];
+        cache
+            .store_classified_seams_with_limit(&key, &seams, None, 1)
+            .map_err(|err| format!("seed store should shard: {err}"))?;
+        for index in 0..2 {
+            strip_payload_digest(
+                &cache
+                    .sharded_entry_dir(&key)
+                    .join(format!("shard-{index:05}.json")),
+            )?;
+        }
+
+        // The manifest still carries its digest, so the load reaches the
+        // shards; a pre-digest shard is a plain miss (one-time transparent
+        // rebuild), never a corruption claim.
+        match cache.load_classified_seams(&key) {
+            CacheLoad::Miss => {}
+            other => {
+                return Err(format!(
+                    "legacy sharded entry without shard digests must load as Miss, got {other:?}"
+                ));
+            }
+        }
+
+        cache
+            .store_classified_seams_with_limit(&key, &seams, None, 1)
+            .map_err(|err| format!("rebuild store should succeed: {err}"))?;
+        match cache.load_classified_seams(&key) {
+            CacheLoad::Hit((loaded, _)) if loaded.len() == 2 => {}
+            other => {
+                return Err(format!(
+                    "rebuilt sharded entry must load as Hit, got {other:?}"
+                ));
+            }
+        }
 
         ignore_remove_dir_all(&dir);
         Ok(())
