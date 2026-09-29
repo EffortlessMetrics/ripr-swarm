@@ -393,7 +393,12 @@ impl RiprConfig {
                 producer: perl.producer,
                 executable: perl.executable.map(PathBuf::from),
                 timeout_ms: perl.timeout_ms.unwrap_or(30_000),
-                cache_dir: perl.cache_dir.map(PathBuf::from),
+                // Repository config: ripr creates, writes and renames files
+                // here, so it must not name a directory outside the checkout.
+                cache_dir: perl
+                    .cache_dir
+                    .map(|path| parse_relative_path("perl.cache_dir", &path))
+                    .transpose()?,
             };
         }
         Ok(config)
