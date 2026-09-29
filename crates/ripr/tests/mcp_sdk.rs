@@ -157,20 +157,22 @@ async fn sdk_session(
         .map_err(|_| "SDK session exceeded its owned deadline".to_string())
         .and_then(|result| result);
     let mut forced_cleanup = false;
-    let status = match tokio::time::timeout(Duration::from_secs(3), child.wait()).await {
-        Ok(status) => status.map_err(|error| format!("reap SDK peer: {error}"))?,
-        Err(_) => {
-            child
-                .kill()
-                .await
-                .map_err(|error| format!("kill SDK peer: {error}"))?;
-            forced_cleanup = true;
-            child
-                .wait()
-                .await
-                .map_err(|error| format!("reap killed SDK peer: {error}"))?
+    let cleanup = async {
+        match tokio::time::timeout(Duration::from_secs(3), child.wait()).await {
+            Ok(status) => status.map_err(|error| format!("reap SDK peer: {error}")),
+            Err(_) => {
+                forced_cleanup = true;
+                child
+                    .start_kill()
+                    .map_err(|error| format!("request SDK peer termination: {error}"))?;
+                tokio::time::timeout(Duration::from_secs(3), child.wait())
+                    .await
+                    .map_err(|_| "killed SDK peer exceeded its reap deadline".to_string())?
+                    .map_err(|error| format!("reap killed SDK peer: {error}"))
+            }
         }
-    };
+    }
+    .await;
     let stderr = match tokio::time::timeout(Duration::from_secs(2), &mut stderr_reader).await {
         Ok(result) => result.map_err(|error| format!("join SDK stderr reader: {error}"))??,
         Err(_) => {
@@ -179,6 +181,7 @@ async fn sdk_session(
             return Err("SDK stderr reader exceeded its owned deadline".into());
         }
     };
+    let status = cleanup?;
     operation?;
     if forced_cleanup {
         return Err("SDK peer required forced cleanup after transport close".into());
