@@ -14809,6 +14809,65 @@ fn execute_command_collect_repair_packet_absent_or_valid_gap_id_returns_packet()
     })
 }
 
+/// A requested `gap_id` that `actionable-gaps.json` does not hold must not be
+/// answered with that report's first packet (another gap's repair
+/// instructions). An id held only by the gap ledger reaches the ledger, and
+/// an id held by neither gets the sentinel naming it.
+#[test]
+fn execute_command_collect_repair_packet_unknown_gap_id_never_returns_another_gap()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("repair-packet-unknown-gap-id")?;
+        write_actionable_gaps_report(root.path(), &complete_actionable_gaps_report())?;
+        write_gap_decision_ledger(root.path())?;
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let run = |gap_id: &'static str| {
+            backend.execute_command(ExecuteCommandParams {
+                command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+                arguments: vec![serde_json::json!({ "gap_id": gap_id })],
+                work_done_progress_params: Default::default(),
+            })
+        };
+
+        let ledger_only = run("gap:rust:pricing:threshold-boundary")
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected the ledger packet".to_string())?;
+        assert_eq!(
+            ledger_only["canonical_gap_id"], "gap:rust:pricing:threshold-boundary",
+            "an id only the ledger holds must reach the ledger: {ledger_only}"
+        );
+
+        let unknown = run("gap:rust:absent")
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected the no-packet sentinel".to_string())?;
+        assert_eq!(
+            unknown["status"], "not_actionable_or_incomplete",
+            "{unknown}"
+        );
+        assert!(
+            unknown["canonical_gap_id"].is_null(),
+            "an unknown id must not carry another gap's packet: {unknown}"
+        );
+        let reason = unknown["reason"]
+            .as_str()
+            .ok_or_else(|| format!("sentinel must carry a string reason: {unknown}"))?;
+        assert!(
+            reason.contains("no repair packet for gap `gap:rust:absent`"),
+            "the sentinel must name the requested gap: {reason}"
+        );
+        Ok(())
+    })
+}
+
 #[test]
 fn execute_command_collect_repair_packet_complete_gap_returns_full_packet() -> Result<(), String> {
     // A well-formed actionable-gaps.json with a complete packet must emit the

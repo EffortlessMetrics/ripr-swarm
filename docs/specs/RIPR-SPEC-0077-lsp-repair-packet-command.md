@@ -58,7 +58,10 @@ verification step.
    `gap_id` is absent, `null`, empty or blank, the top actionable gap is
    used. A `gap_id` that is present but not a string (a number, boolean,
    array or object) is rejected with InvalidParams naming `gap_id`; it never
-   falls back to the top gap.
+   falls back to the top gap. A string `gap_id` that
+   `actionable-gaps.json` does not hold is looked up in the gap ledger, and
+   when neither holds it the result is the sentinel naming that gap, never
+   another gap's packet.
 2. Reads `target/ripr/reports/actionable-gaps.json` (preferred) or
    falls back to `target/ripr/reports/gap-decision-ledger.json`.
 3. Validates that the packet is complete: `canonical_gap_id`,
@@ -149,6 +152,7 @@ Not-actionable / incomplete sentinel:
 - `crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_registered_in_capabilities`
 - `crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_rejects_malformed_gap_id`
 - `crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_absent_or_valid_gap_id_returns_packet`
+- `crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_unknown_gap_id_never_returns_another_gap`
 
 ## Implementation Mapping
 

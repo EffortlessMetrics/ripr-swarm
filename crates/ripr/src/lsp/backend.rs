@@ -7094,15 +7094,15 @@ fn collect_repair_packet_from_actionable_gaps(path: &Path, gap_id: Option<&str>)
         Err(_) => return Some(repair_packet_sentinel(MALFORMED_ACTIONABLE_GAPS_REASON)),
     };
     let packets = report.get("packets").and_then(|v| v.as_array())?;
+    // A requested gap must match exactly. Answering an unknown id with the
+    // first packet handed out another gap's repair instructions; `None` lets
+    // the caller try the ledger, then say which gap has no packet.
     let packet = if let Some(id) = gap_id {
-        packets
-            .iter()
-            .find(|p| {
-                p.get("canonical_gap_id")
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|cid| cid == id)
-            })
-            .or_else(|| packets.first())?
+        packets.iter().find(|p| {
+            p.get("canonical_gap_id")
+                .and_then(|v| v.as_str())
+                .is_some_and(|cid| cid == id)
+        })?
     } else {
         packets
             .iter()

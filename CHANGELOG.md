@@ -309,7 +309,9 @@ are scoped or reviewed.
   error naming `gap_id`. The repair command used to return the top gap's
   packet instead of the one asked for, and the context command blamed another
   field. An absent, `null`, empty or blank `gap_id` still means "not given"
-  (the top packet), as RIPR-SPEC-0077 specifies.
+  (the top packet), as RIPR-SPEC-0077 specifies. A `gap_id` that
+  `actionable-gaps.json` does not hold no longer gets that report's first
+  packet: the gap ledger is tried, then a status packet naming the gap.
 
 ### Added
 
