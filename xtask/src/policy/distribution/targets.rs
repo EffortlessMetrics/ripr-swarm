@@ -89,10 +89,7 @@ pub(super) fn validate_targets(
             .insert(target.rust_target.as_str(), target)
             .is_some()
         {
-            violations.push(format!(
-                "{path}: duplicate target `{}`",
-                target.rust_target
-            ));
+            violations.push(format!("{path}: duplicate target `{}`", target.rust_target));
         }
         if !npm_packages.insert(target.npm_package.as_str()) {
             violations.push(format!(
@@ -116,10 +113,7 @@ pub(super) fn validate_targets(
 
     for expected in EXPECTED_TARGETS {
         let Some(actual) = by_rust_target.get(expected.rust_target) else {
-            violations.push(format!(
-                "{path}: missing target `{}`",
-                expected.rust_target
-            ));
+            violations.push(format!("{path}: missing target `{}`", expected.rust_target));
             continue;
         };
         check_field(
