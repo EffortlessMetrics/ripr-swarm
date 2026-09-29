@@ -3,6 +3,16 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-09-29: Git invocation timeout is a typed CoreError, not a Display prefix (#4859)
+
+Timeout control flow must match `CoreError::is_git_invocation_timeout`, never
+`starts_with("git_invocation_timeout")` or the retired `is_git_invocation_timeout(&str)`
+helper. A lookalike `CoreError::Message` whose Display begins with that token is
+not a timeout; wrapping a real timeout with `with_context` must keep the kind
+even when Display no longer starts with the prefix. Public/LSP projection still
+uses the #2811 `git_invocation_timeout` kind string. Do not migrate cancellation
+or `diff_scope_oversized` in the same change (#4860, #4861).
+
 ## 2026-09-29: Default output-dir create failures must name the relocate flag (#4774)
 
 `ripr pilot` and `ripr first-pr` create `target/ripr/pilot` and

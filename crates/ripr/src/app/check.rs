@@ -5,6 +5,7 @@ use crate::analysis::{
     run_worktree_analysis_with_oracle_policy_and_generated_file_patterns,
 };
 use crate::config::RiprConfig;
+use crate::core_error::CoreError;
 use crate::domain::LanguageId;
 use crate::domain::Summary;
 use std::path::{Path, PathBuf};
@@ -37,13 +38,23 @@ pub fn check_workspace_with_config(
     input: CheckInput,
     config: &RiprConfig,
 ) -> Result<CheckOutput, String> {
-    run_check(input, config, AnalysisMode::Diff)
+    run_check(input, config, AnalysisMode::Diff).map_err(Into::into)
 }
 
 pub fn check_workspace_worktree_with_config(
     input: CheckInput,
     config: &RiprConfig,
 ) -> Result<CheckOutput, String> {
+    check_workspace_worktree_core(input, config).map_err(Into::into)
+}
+
+/// Crate-internal worktree check that preserves typed git-timeout meaning
+/// (#4859). Public [`check_workspace_worktree_with_config`] stringifies at
+/// the library boundary; LSP refresh matches the typed kind before that.
+pub(crate) fn check_workspace_worktree_core(
+    input: CheckInput,
+    config: &RiprConfig,
+) -> Result<CheckOutput, CoreError> {
     run_check(input, config, AnalysisMode::Worktree)
 }
 
@@ -65,7 +76,7 @@ pub fn check_workspace_repo_with_config(
     input: CheckInput,
     config: &RiprConfig,
 ) -> Result<CheckOutput, String> {
-    run_check(input, config, AnalysisMode::Repo)
+    run_check(input, config, AnalysisMode::Repo).map_err(Into::into)
 }
 
 /// Build a minimal [`CheckOutput`] for repo seam-driven rendering.
@@ -109,7 +120,7 @@ fn run_check(
     mut input: CheckInput,
     config: &RiprConfig,
     mode: AnalysisMode,
-) -> Result<CheckOutput, String> {
+) -> Result<CheckOutput, CoreError> {
     // Immutable Git candidate subjects (#3237 / #3276): bind-and-validate
     // only in this build. Validate first, before any subprocess or diff
     // acquisition, so a subject input can never fall through to worktree

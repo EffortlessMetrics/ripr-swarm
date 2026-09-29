@@ -36,7 +36,7 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    load_diff, load_diff_range_with_deadline, load_worktree_diff, no_merge_base_diagnosis,
+    load_diff, load_diff_range_with_deadline_core, load_worktree_diff, no_merge_base_diagnosis,
     parse_unified_diff, resolve_base_commit, resolve_effective_base,
     working_tree_has_tracked_changes,
 };
@@ -411,6 +411,7 @@ fn top_typescript_readiness_blocker(
 }
 
 use crate::config::OraclePolicy;
+use crate::core_error::CoreError;
 use crate::domain::{Finding, Summary};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -723,13 +724,14 @@ fn reject_git_candidate_subject(options: &AnalysisOptions) -> Result<(), String>
 pub fn run_analysis(options: &AnalysisOptions) -> Result<AnalysisResult, String> {
     reject_git_candidate_subject(options)?;
     run_analysis_with_oracle_policy(options, &OraclePolicy::default(), DEFAULT_LANGUAGES)
+        .map_err(Into::into)
 }
 
 pub(crate) fn run_analysis_with_oracle_policy(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
-) -> Result<AnalysisResult, String> {
+) -> Result<AnalysisResult, CoreError> {
     pipeline::run_diff_pipeline_with_oracle_policy(options, oracle_policy, languages)
 }
 
@@ -738,7 +740,7 @@ pub(crate) fn run_analysis_with_oracle_policy_and_generated_file_patterns(
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
     generated_file_patterns: &[String],
-) -> Result<AnalysisResult, String> {
+) -> Result<AnalysisResult, CoreError> {
     pipeline::run_diff_pipeline_with_oracle_policy_and_generated_file_patterns(
         options,
         oracle_policy,
@@ -752,7 +754,7 @@ pub(crate) fn run_worktree_analysis_with_oracle_policy_and_generated_file_patter
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
     generated_file_patterns: &[String],
-) -> Result<AnalysisResult, String> {
+) -> Result<AnalysisResult, CoreError> {
     pipeline::run_worktree_pipeline_with_oracle_policy_and_generated_file_patterns(
         options,
         oracle_policy,

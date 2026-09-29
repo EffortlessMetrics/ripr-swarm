@@ -20,6 +20,7 @@ use crate::analysis_outcome::{
     AnalysisStage,
 };
 use crate::config::OraclePolicy;
+use crate::core_error::CoreError;
 use crate::domain::Finding;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -39,7 +40,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
-) -> Result<AnalysisResult, String> {
+) -> Result<AnalysisResult, CoreError> {
     run_diff_pipeline_with_oracle_policy_and_generated_file_patterns(
         options,
         oracle_policy,
@@ -53,7 +54,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_generated_file_patterns(
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
     generated_file_patterns: &[String],
-) -> Result<AnalysisResult, String> {
+) -> Result<AnalysisResult, CoreError> {
     // Immutable Git candidate subject (#3237 / #3277): resolve the
     // bound identity through object plumbing, derive the exact
     // base→candidate diff, and analyze the materialized candidate root.
@@ -109,7 +110,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_generated_file_patterns(
         rebase_finding_paths_to_repository(&mut result, &resolved.root, &options.root);
         return Ok(result);
     }
-    let loaded = diff::load_diff_with_effective_base(
+    let loaded = diff::load_diff_with_effective_base_core(
         &options.root,
         options.base.as_deref(),
         options.diff_file.as_ref(),
@@ -194,9 +195,11 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_generated_file_patter
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
     generated_file_patterns: &[String],
-) -> Result<AnalysisResult, String> {
+) -> Result<AnalysisResult, CoreError> {
     if options.diff_file.is_some() {
-        return Err("worktree diff mode cannot be combined with --diff".to_string());
+        return Err("worktree diff mode cannot be combined with --diff"
+            .to_string()
+            .into());
     }
     // #3237/#3277: the immutable subject's contract is exact-tree diff
     // semantics. Worktree mode analyzes the live tree by definition, so
@@ -208,9 +211,10 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_generated_file_patter
             detail: "git candidate subjects are diff-semantics inputs; worktree mode cannot execute them"
                 .to_string(),
         }
-        .to_string());
+        .to_string()
+        .into());
     }
-    let loaded = diff::load_worktree_diff_with_effective_base(
+    let loaded = diff::load_worktree_diff_with_effective_base_core(
         &options.root,
         options.base.as_deref(),
         options.git_timeout,
