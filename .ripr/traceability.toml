@@ -582,6 +582,9 @@ name = "repository configuration"
 spec = "docs/specs/RIPR-SPEC-0007-repository-configuration.md"
 tests = [
   "crates/ripr/src/config.rs::tests::missing_config_uses_behavior_preserving_defaults",
+  "xtask/src/tests.rs::public_docs_state_python_marker_auto_when_no_ripr_toml",
+  "xtask/src/tests.rs::python_marker_auto_docs_accept_required_phrases",
+  "xtask/src/tests.rs::python_marker_auto_docs_reject_opt_in_python_lumping",
   "crates/ripr/src/config.rs::tests::config_file_sets_core_operational_defaults",
   "crates/ripr/src/config.rs::tests::explicit_cli_mode_wins_over_config_mode",
   "crates/ripr/src/config.rs::tests::config_mode_applies_when_cli_mode_is_not_explicit",
@@ -636,6 +639,8 @@ code = [
 ]
 outputs = [
   "docs/CONFIGURATION.md",
+  "README.md",
+  "docs/status/SUPPORT_TIERS.md",
   "docs/OUTPUT_SCHEMA.md",
   "docs/EXIT_CODES.md",
   "docs/CAPABILITY_MATRIX.md",
@@ -7748,6 +7753,11 @@ tests = [
   "crates/ripr/src/output/human/sections.rs::classification_hint_tests::reachable_unrevealed_hint_agrees_with_a_reaching_test",
   "crates/ripr/src/output/human.rs::tests::render_replaces_hidden_block_with_more_when_nothing_is_omitted",
   "crates/ripr/src/output/human.rs::tests::render_keeps_hidden_block_when_findings_are_omitted",
+  "crates/ripr/src/output/human.rs::tests::hidden_line_names_omitted_preview_language_identity",
+  "crates/ripr/src/output/human.rs::tests::hidden_line_stays_count_only_when_omitted_findings_are_labeled_rust",
+  "crates/ripr/src/output/human.rs::tests::hidden_line_names_preview_identity_when_all_omitted_findings_are_preview",
+  "crates/ripr/src/output/human.rs::tests::hidden_line_hedges_unlabeled_preview_omitted_findings",
+  "crates/ripr/src/output/human.rs::tests::hidden_line_counts_each_omitted_preview_language",
   "crates/ripr/src/output/human.rs::tests::bounded_human_output_does_not_select_exposed_over_non_exposed_repair",
   "crates/ripr/src/output/human.rs::tests::bounded_human_output_reports_missing_scope_as_start_here_state",
   "crates/ripr/src/output/human.rs::tests::bounded_human_output_keeps_preview_language_in_preview_limited_state",
@@ -7815,6 +7825,7 @@ tests = [
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_recomputes_only_directly_called_owner_seams",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_selects_one_test_node_within_a_file",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_rejects_unknown_test_node",
+  "crates/ripr/src/cli/rerun.rs::tests::unresolved_changed_test_selectors_are_named_limitations",
   "crates/ripr/src/cli/rerun.rs::tests::rerun_requires_one_selector",
   "crates/ripr/src/cli/rerun.rs::tests::rerun_gap_requires_explicit_ledger",
   "crates/ripr/src/cli/rerun.rs::tests::rerun_cache_disclosure_names_reuse_and_fallbacks",
@@ -9460,6 +9471,43 @@ outputs = [
 metrics = [
   "typescript_parse_aborts",
   "typescript_parse_refusal_disclosure_parity",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0178"
+name = "Rust repair-trust route-yield ladder"
+spec = "docs/specs/RIPR-SPEC-0178-rust-repair-trust-route-yield-ladder.md"
+tests = [
+  "xtask/src/reports/rust_repair_trust.rs::tests::empty_observations_keep_route_yield_and_repair_success_unmeasurable",
+  "xtask/src/reports/rust_repair_trust.rs::tests::three_observations_without_a_complete_route_are_zero_of_three_not_attempts",
+  "xtask/src/reports/rust_repair_trust.rs::tests::three_observations_do_not_inherit_exclusion_rows_as_the_route_denominator",
+  "xtask/src/reports/rust_repair_trust.rs::tests::live_corpus_counts_unique_observations_not_attempts_for_route_yield",
+  "xtask/src/reports/rust_repair_trust.rs::tests::one_complete_route_without_edit_authorization_is_not_an_attempt",
+  "xtask/src/reports/rust_repair_trust.rs::tests::failed_focused_test_and_improved_static_evidence_stay_separate",
+  "xtask/src/reports/rust_repair_trust.rs::tests::cli_and_editor_observations_of_one_opportunity_do_not_inflate_route_yield",
+  "xtask/src/reports/rust_repair_trust.rs::tests::analyzer_rerun_keeps_distinct_cohorts_and_the_original_result",
+  "xtask/src/reports/rust_repair_trust.rs::tests::timeout_before_item_discovery_does_not_mint_a_gap_id",
+  "xtask/src/reports/rust_repair_trust.rs::tests::legacy_static_limitation_is_not_relabelled_into_a_precise_stop",
+  "xtask/src/reports/rust_repair_trust.rs::tests::packet_ready_rejected_by_canonical_eligibility_is_not_a_complete_route",
+  "xtask/src/reports/rust_repair_trust.rs::tests::duplicate_ids_and_hand_edited_totals_cannot_enter_trusted_success_counts",
+  "xtask/src/reports/rust_repair_trust.rs::tests::timeout_reason_normalizes_exactly_and_does_not_require_a_gap",
+]
+fixtures = [
+  "metrics/rust-repair-trust/corpus.json",
+]
+code = [
+  "xtask/src/reports/rust_repair_trust.rs",
+  "schemas/ripr/rust-repair-trust-corpus.schema.json",
+]
+outputs = [
+  "docs/dogfood/RUST_REPAIR_ATTEMPTS.md",
+  "docs/status/RUST_ROUTE_QUALITY.md",
+  "docs/OUTPUT_SCHEMA.md",
+]
+metrics = [
+  "rust_repair_trust_route_yield_numerator",
+  "rust_repair_trust_route_yield_denominator",
+  "rust_repair_trust_repair_success_status",
 ]
 
 [[behavior]]
