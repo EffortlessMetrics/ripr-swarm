@@ -140,7 +140,7 @@ pub(crate) fn weak_oracle_recommendation(
 #[cfg(test)]
 pub(crate) fn collect_expect_assertions_in_statements(
     statements: &oxc_allocator::Vec<'_, Statement<'_>>,
-    source: &str,
+    source: &SourceText<'_>,
     receiver: Option<&str>,
 ) -> Vec<TypeScriptAssertion> {
     collect_assertions_in_statements_with_bindings(
@@ -156,7 +156,7 @@ pub(crate) fn collect_expect_assertions_in_statements(
 /// assertion-library `bindings` (#4547).
 pub(crate) fn collect_assertions_in_statements_with_bindings(
     statements: &oxc_allocator::Vec<'_, Statement<'_>>,
-    source: &str,
+    source: &SourceText<'_>,
     receiver: Option<&str>,
     bindings: &TypeScriptAssertionBindings,
 ) -> Vec<TypeScriptAssertion> {
@@ -182,7 +182,7 @@ pub(crate) struct AssertionContext<'a> {
 /// binding.
 fn assertion_from_expression_any(
     expr: &Expression<'_>,
-    source: &str,
+    source: &SourceText<'_>,
     context: &AssertionContext<'_>,
 ) -> Option<TypeScriptAssertion> {
     chai_expect_assertion_from_expression(expr, source, context.bindings)
@@ -197,7 +197,7 @@ fn assertion_from_expression_any(
 
 pub(crate) fn collect_expect_assertions_in_statement(
     stmt: &Statement<'_>,
-    source: &str,
+    source: &SourceText<'_>,
     context: &AssertionContext<'_>,
     out: &mut Vec<TypeScriptAssertion>,
 ) {
@@ -281,7 +281,7 @@ pub(crate) fn collect_expect_assertions_in_statement(
 
 pub(crate) fn collect_expect_assertions_from_statement_vec(
     statements: &oxc_allocator::Vec<'_, Statement<'_>>,
-    source: &str,
+    source: &SourceText<'_>,
     context: &AssertionContext<'_>,
     out: &mut Vec<TypeScriptAssertion>,
 ) {
@@ -297,7 +297,7 @@ pub(crate) fn collect_expect_assertions_from_statement_vec(
 /// property name.
 pub(crate) fn expect_assertion_from_expression(
     expr: &Expression<'_>,
-    source: &str,
+    source: &SourceText<'_>,
 ) -> Option<TypeScriptAssertion> {
     let expr = match expr {
         Expression::AwaitExpression(await_expr) => &await_expr.argument,
@@ -344,7 +344,7 @@ pub(crate) fn expect_assertion_from_expression(
     Some(TypeScriptAssertion {
         matcher: matcher.to_string(),
         argument_count: outer_call.arguments.len(),
-        line: line_for_offset(source, outer_call.span.start as usize),
+        line: source.line_for_offset(outer_call.span.start as usize),
         oracle_kind,
         oracle_strength,
         mock_payload,
@@ -364,7 +364,7 @@ pub(crate) fn expect_assertion_from_expression(
 /// is NOT matched, and an unrecognized method returns `None`.
 pub(crate) fn ava_assertion_from_expression(
     expr: &Expression<'_>,
-    source: &str,
+    source: &SourceText<'_>,
     receiver: &str,
 ) -> Option<TypeScriptAssertion> {
     let expr = match expr {
@@ -411,7 +411,7 @@ pub(crate) fn ava_assertion_from_expression(
     Some(TypeScriptAssertion {
         matcher: method.to_string(),
         argument_count: call.arguments.len(),
-        line: line_for_offset(source, call.span.start as usize),
+        line: source.line_for_offset(call.span.start as usize),
         oracle_kind,
         oracle_strength,
         mock_payload: None,
@@ -718,7 +718,7 @@ fn assert_method_is_recognized(method: &str, flavor: AssertFlavor) -> bool {
 /// so a same-named local helper is not credited.
 pub(crate) fn module_assert_assertion_from_expression(
     expr: &Expression<'_>,
-    source: &str,
+    source: &SourceText<'_>,
     bindings: &TypeScriptAssertionBindings,
 ) -> Option<TypeScriptAssertion> {
     if bindings.is_empty() {
@@ -772,7 +772,7 @@ pub(crate) fn module_assert_assertion_from_expression(
     Some(TypeScriptAssertion {
         matcher: method.to_string(),
         argument_count: call.arguments.len(),
-        line: line_for_offset(source, call.span.start as usize),
+        line: source.line_for_offset(call.span.start as usize),
         oracle_kind,
         oracle_strength,
         mock_payload: None,
@@ -839,7 +839,7 @@ fn oracle_for_chai_terminal(
 /// Any chain word or terminal outside the recognised table fails closed.
 pub(crate) fn chai_expect_assertion_from_expression(
     expr: &Expression<'_>,
-    source: &str,
+    source: &SourceText<'_>,
     bindings: &TypeScriptAssertionBindings,
 ) -> Option<TypeScriptAssertion> {
     if bindings.chai_expects.is_empty() && bindings.chai_modules.is_empty() {
@@ -912,7 +912,7 @@ pub(crate) fn chai_expect_assertion_from_expression(
     Some(TypeScriptAssertion {
         matcher: terminal.to_string(),
         argument_count: terminal_call.map_or(0, |call| call.arguments.len()),
-        line: line_for_offset(source, span_start as usize),
+        line: source.line_for_offset(span_start as usize),
         oracle_kind,
         oracle_strength,
         mock_payload: None,

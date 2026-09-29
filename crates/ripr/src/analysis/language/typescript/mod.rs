@@ -55,6 +55,9 @@ mod bun_bridge;
 mod classifier;
 mod discovery;
 #[cfg(test)]
+mod line_index_tests;
+mod module_entries;
+#[cfg(test)]
 mod new_declaration_tests;
 mod oracle;
 mod owners;
@@ -85,6 +88,7 @@ pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use classifier::*;
 pub(crate) use discovery::*;
+pub(crate) use module_entries::*;
 pub(crate) use oracle::*;
 pub(crate) use owners::*;
 pub(crate) use package::*;

@@ -110,7 +110,10 @@ Usage: ripr check [OPTIONS]
 
 Options:
   --root PATH              Workspace root. Defaults to current directory, then
-                           walks up to a Cargo.toml containing [workspace].
+                           walks up to a Cargo.toml containing [workspace];
+                           without one, to the nearest Cargo.toml or the git
+                           top level. The walk never leaves the git
+                           repository. A moved root is disclosed on stderr.
   --base REV               Base revision for git diff. When omitted, ripr uses
                            the local origin/HEAD ref, then origin/main,
                            origin/master, main, and master in order; when none
@@ -248,7 +251,7 @@ Examples:
 "#;
 pub(super) const DIFF_HELP: &str = r#"Analyze the changed surface first and report full-repo context as an explicit bounded state.
 
-Usage: ripr diff [--root PATH] [--base REV] [--head REV] [--mode MODE] [--format human|json] [--json]
+Usage: ripr diff [--root PATH] [--base REV] [--head REV] [--mode MODE] [--format FORMAT] [--json]
 
 Options:
   --root PATH              Workspace root. Defaults to current directory.
@@ -377,7 +380,7 @@ First-run diagnosis (printed automatically):
 
 Start-here next step:
   - open `target/ripr/reports/start-here.md` first when it exists
-  - when it does not, run the recommended first command: `ripr first-pr` and
+  - when it does not, run `ripr check` first: `ripr first-pr` and
     `ripr start-here` compose that packet from analysis evidence and run no
     analysis of their own, so on a fresh workspace they report
     `missing_artifacts`

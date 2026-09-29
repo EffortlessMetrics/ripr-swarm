@@ -215,6 +215,7 @@ test.only("discount boundary", () => {
         params: Vec::new(),
         exported_as_default: false,
         class_default_export: false,
+        module_entries: Vec::new(),
         arity: None,
         source_text: None,
         imports: Vec::new(),
@@ -335,7 +336,7 @@ test("adds", () => {
 }
 
 /// A `describe` whose title is not a string literal still has its body
-/// walked; it is named by its bounded source text (#4548).
+/// walked (#4548); it is named by the computed-title placeholder (#4593).
 #[test]
 fn walks_describe_with_non_literal_title() {
     let source = r#"
@@ -353,8 +354,17 @@ describe(`${label} suite`, () => {
     let tests = extract_tests(Path::new("test/div.test.ts"), source);
 
     let names: Vec<&str> = tests.iter().map(|test| test.name.as_str()).collect();
-    assert_eq!(names, vec!["Div.name renders", "`${label} suite` formats"]);
-    assert_eq!(tests[0].describe_names, vec!["Div.name".to_string()]);
+    assert_eq!(
+        names,
+        vec![
+            "<computed title, line 2> renders",
+            "<computed title, line 7> formats"
+        ]
+    );
+    assert_eq!(
+        tests[0].describe_names,
+        vec!["<computed title, line 2>".to_string()]
+    );
     assert!(
         detect_partial_test_extraction(Path::new("test/div.test.ts"), source, &tests).is_none(),
         "tests inside a non-literal describe are extracted, not dropped"

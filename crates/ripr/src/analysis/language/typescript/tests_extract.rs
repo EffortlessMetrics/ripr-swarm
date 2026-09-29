@@ -62,10 +62,12 @@ pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
             ),
             ..TestScope::default()
         };
+        // One line index per source; every test and assertion line is a
+        // binary search against it rather than a rescan from byte 0.
         collect_tests_from_statements(
             &ret.program.body,
             file,
-            source,
+            &SourceText::new(source),
             &mocks,
             &imports,
             &mut scope,
@@ -589,9 +591,9 @@ fn string_value(expression: &Expression<'_>) -> Option<String> {
 }
 
 pub(crate) fn collect_tests_from_statements(
-    statements: &oxc_allocator::Vec<'_, Statement<'_>>,
+    statements: &[Statement<'_>],
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     mocks: &[String],
     imports: &[TypeScriptImport],
     scope: &mut TestScope,
@@ -603,8 +605,12 @@ pub(crate) fn collect_tests_from_statements(
     // counts, as it does at runtime.
     let mut level = Vec::new();
     let mut sites = Vec::new();
+    let mut iterables = Vec::new();
     let mut returned = false;
     for stmt in statements {
+        if !returned {
+            collect_const_iterables(stmt, &mut iterables);
+        }
         let start = level.len();
         collect_scope_bindings(stmt, source, &mut level, &mut sites);
         // After a possible early `return`, a binding may never run.
@@ -645,6 +651,7 @@ pub(crate) fn collect_tests_from_statements(
         }
     }
     scope.levels.push(level);
+    scope.iterables.push(iterables);
     for stmt in statements {
         if let Some(span) = name_literal_span(stmt) {
             scope.names.push(span);
@@ -658,9 +665,27 @@ pub(crate) fn collect_tests_from_statements(
                     .map(|name| (name, ScopeValue::Other, Phase::Declaration))
                     .collect(),
             );
+            scope.iterables.push(Vec::new());
             scope.describe_names.push(describe_name);
             collect_tests_from_statements(body, file, source, mocks, imports, scope, tests);
             scope.describe_names.pop();
+            scope.iterables.pop();
+            scope.levels.pop();
+            continue;
+        }
+        if let Some((loop_bindings, body)) = loop_body_from_statement(stmt, scope) {
+            // A `for`/`for...of`/`for...in` or `.forEach` callback body
+            // registers its tests once per iteration; its loop variables or
+            // callback parameters shadow every enclosing binding.
+            scope.levels.push(
+                loop_bindings
+                    .into_iter()
+                    .map(|name| (name, ScopeValue::Other, Phase::Declaration))
+                    .collect(),
+            );
+            scope.iterables.push(Vec::new());
+            collect_tests_from_statements(body, file, source, mocks, imports, scope, tests);
+            scope.iterables.pop();
             scope.levels.pop();
             continue;
         }
@@ -695,6 +720,7 @@ pub(crate) fn collect_tests_from_statements(
             tests.push(test);
         }
     }
+    scope.iterables.pop();
     scope.levels.pop();
 }
 
@@ -708,6 +734,10 @@ pub(crate) struct TestScope {
     describe_names: Vec<String>,
     /// Name bindings of the file and each enclosing describe, outermost first.
     levels: Vec<Vec<ScopeEntry>>,
+    /// Per entry of `levels`: the `const` names that level binds to a
+    /// non-empty array or object literal, so a loop over one of them is
+    /// known to register its tests at least once.
+    iterables: Vec<Vec<(String, IterableLiteral)>>,
     /// Source offsets of every declaration and hook write the walk recorded.
     sites: Vec<usize>,
     /// Spans of string literals passed first to a call statement: describe
@@ -802,6 +832,9 @@ impl TestScope {
                 resolved.push(TypeScriptScopeBinding {
                     name: name.to_string(),
                     constructed_by,
+                    // `levels` is the test's own parameters, then the
+                    // enclosing levels innermost first; the last is the file.
+                    file_level: depth > 0 && depth == levels.len() - 1,
                 });
             }
         }
@@ -1377,19 +1410,7 @@ pub(crate) fn describe_body_from_statement<'a>(
     {
         return None;
     }
-    let title = call.arguments.first()?;
-    let name = match string_argument(title) {
-        Some(name) => name,
-        None if function_body_statements_from_argument(title).is_some()
-            || matches!(title, oxc_ast::ast::Argument::SpreadElement(_)) =>
-        {
-            return None;
-        }
-        None => {
-            let span = title.span();
-            snippet_for_span(source, span.start as usize, span.end as usize)
-        }
-    };
+    let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
     let body = function_body_statements_from_argument(
         call.arguments.get(declaration_callback_index(call))?,
     )?;
@@ -1399,7 +1420,7 @@ pub(crate) fn describe_body_from_statement<'a>(
 pub(crate) fn test_from_statement(
     stmt: &Statement<'_>,
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     describe_stack: &[String],
     bindings: &TypeScriptAssertionBindings,
 ) -> Option<TypeScriptTest> {
@@ -1415,7 +1436,7 @@ pub(crate) fn test_from_statement(
         local_name: name,
         describe_names: describe_stack.to_vec(),
         file: file.to_path_buf(),
-        line: line_for_offset(source, call.span.start as usize),
+        line: source.line_for_offset(call.span.start as usize),
         body_text: source[call.span.start as usize..call.span.end as usize].to_string(),
         assertions,
         // Populated by `extract_tests` (the only public extractor) once
@@ -1428,7 +1449,7 @@ pub(crate) fn test_from_statement(
 
 pub(crate) fn test_name_and_assertions_from_call(
     call: &oxc_ast::ast::CallExpression<'_>,
-    source: &str,
+    source: &SourceText<'_>,
     bindings: &TypeScriptAssertionBindings,
 ) -> Option<(String, Vec<TypeScriptAssertion>)> {
     if !call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
@@ -1437,7 +1458,7 @@ pub(crate) fn test_name_and_assertions_from_call(
         return None;
     }
 
-    let name = string_argument(call.arguments.first()?)?;
+    let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
     let callback = call.arguments.get(declaration_callback_index(call))?;
     // A first parameter named like an imported assertion binding
     // (`const assert = require('node:assert')` + `it('x', function (assert)
@@ -1580,10 +1601,300 @@ fn is_active_declaration_modifier(name: &str) -> bool {
     matches!(name, "only" | "concurrent" | "sequential")
 }
 
-pub(crate) fn string_argument(arg: &oxc_ast::ast::Argument<'_>) -> Option<String> {
+/// The title of a `describe`/`test`/`it` registration. A string literal or a
+/// template without substitutions keeps its text. Any other expression (a
+/// template with substitutions, a concatenation, an identifier) is a
+/// computed title: it is named by a stable placeholder and the line of the
+/// registration, so the name is deterministic and never guessed from the
+/// runtime value. A spread argument is not a title.
+fn title_argument(
+    arg: &oxc_ast::ast::Argument<'_>,
+    source: &str,
+    registration_start: usize,
+) -> Option<String> {
     match arg {
         oxc_ast::ast::Argument::StringLiteral(literal) => Some(literal.value.to_string()),
+        oxc_ast::ast::Argument::SpreadElement(_) => None,
+        oxc_ast::ast::Argument::TemplateLiteral(template) if template.single_quasi().is_some() => {
+            template.single_quasi().map(|quasi| quasi.to_string())
+        }
+        // Computed titles are rare, so count this one line directly; the
+        // `&str` callers carry no line index, and `line_for_offset` exists
+        // only as a test oracle.
+        _ => Some(computed_title(
+            1 + source
+                .as_bytes()
+                .iter()
+                .take(registration_start)
+                .filter(|&&byte| byte == b'\n')
+                .count(),
+        )),
+    }
+}
+
+/// Placeholder name of a registration whose title is computed at runtime.
+fn computed_title(line: usize) -> String {
+    format!("<computed title, line {line}>")
+}
+
+/// The body of a loop that registers tests once per iteration, with the
+/// names its header binds: `for (const t of tests) { ... }`,
+/// `for (const key in table) { ... }`, `for (let i = 0; i < 3; i++) { ... }`
+/// and `tests.forEach((t) => { ... })`. A loop is walked only when it is
+/// known to run at least once: its iterable is a non-empty array or object
+/// literal, `Object.entries`/`keys`/`values` of one, or a `const` in scope
+/// bound to one; a counted `for` needs literal bounds. Tests registered by
+/// a loop that may run zero times would be credited without existing, so
+/// every other loop is left unwalked (and stays disclosed as partial), as is
+/// a `for...of`/`for...in` whose target is not a declaration.
+fn loop_body_from_statement<'a>(
+    stmt: &'a Statement<'a>,
+    scope: &TestScope,
+) -> Option<(Vec<String>, &'a [Statement<'a>])> {
+    let (bindings, body) = match stmt {
+        Statement::ForOfStatement(for_of) => {
+            if !iterates_nonempty(&for_of.right, scope) {
+                return None;
+            }
+            (for_left_bindings(&for_of.left)?, &for_of.body)
+        }
+        Statement::ForInStatement(for_in) => {
+            if !enumerates_nonempty(&for_in.right, scope) {
+                return None;
+            }
+            (for_left_bindings(&for_in.left)?, &for_in.body)
+        }
+        Statement::ForStatement(for_stmt) => {
+            let Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) =
+                &for_stmt.init
+            else {
+                return None;
+            };
+            if !counted_loop_runs(declaration, for_stmt.test.as_ref()) {
+                return None;
+            }
+            (declaration_binding_names(declaration), &for_stmt.body)
+        }
+        Statement::ExpressionStatement(expr_stmt) => {
+            let Expression::CallExpression(call) = &expr_stmt.expression else {
+                return None;
+            };
+            let Expression::StaticMemberExpression(member) = &call.callee else {
+                return None;
+            };
+            if member.property.name.as_str() != "forEach"
+                || !iterates_nonempty(&member.object, scope)
+            {
+                return None;
+            }
+            let callback = call.arguments.first()?;
+            let body = function_body_statements_from_argument(callback)?;
+            let bindings = argument_parameter_names(callback);
+            if binds_registration_api(&bindings) {
+                return None;
+            }
+            return Some((bindings, body.as_slice()));
+        }
+        _ => return None,
+    };
+    if binds_registration_api(&bindings) {
+        return None;
+    }
+    let body = match body {
+        Statement::BlockStatement(block) => block.body.as_slice(),
+        single => std::slice::from_ref(single),
+    };
+    Some((bindings, body))
+}
+
+/// A loop variable or callback parameter named `test`, `it` or `describe`
+/// shadows the runner API inside the body, so a `test(...)` there is not a
+/// registration; such a loop is not walked.
+fn binds_registration_api(bindings: &[String]) -> bool {
+    bindings.iter().any(|name| {
+        TestDeclarationRoot::Test.matches_identifier(name)
+            || TestDeclarationRoot::Describe.matches_identifier(name)
+    })
+}
+
+fn for_left_bindings(left: &oxc_ast::ast::ForStatementLeft<'_>) -> Option<Vec<String>> {
+    match left {
+        oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) => {
+            Some(declaration_binding_names(declaration))
+        }
         _ => None,
+    }
+}
+
+fn declaration_binding_names(declaration: &oxc_ast::ast::VariableDeclaration<'_>) -> Vec<String> {
+    declaration
+        .declarations
+        .iter()
+        .flat_map(|declarator| declarator.id.get_binding_identifiers())
+        .map(|identifier| identifier.name.to_string())
+        .collect()
+}
+
+/// A literal a `const` is bound to, when it has at least one element or
+/// property that is not a spread.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum IterableLiteral {
+    Array,
+    Object,
+}
+
+/// Record `const name = <non-empty array or object literal>` declarations.
+fn collect_const_iterables(stmt: &Statement<'_>, out: &mut Vec<(String, IterableLiteral)>) {
+    let Statement::VariableDeclaration(declaration) = stmt else {
+        return;
+    };
+    if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const {
+        return;
+    }
+    for declarator in &declaration.declarations {
+        if let (BindingPattern::BindingIdentifier(identifier), Some(init)) =
+            (&declarator.id, &declarator.init)
+            && let Some(kind) = nonempty_literal(init)
+        {
+            out.push((identifier.name.to_string(), kind));
+        }
+    }
+}
+
+/// Strip parentheses and TypeScript-only wrappers (`as`, `satisfies`, `!`,
+/// `<T>x`), which do not change the runtime value.
+fn runtime_expression<'a, 'b>(expression: &'b Expression<'a>) -> &'b Expression<'a> {
+    match expression {
+        Expression::ParenthesizedExpression(inner) => runtime_expression(&inner.expression),
+        Expression::TSAsExpression(inner) => runtime_expression(&inner.expression),
+        Expression::TSSatisfiesExpression(inner) => runtime_expression(&inner.expression),
+        Expression::TSNonNullExpression(inner) => runtime_expression(&inner.expression),
+        Expression::TSTypeAssertion(inner) => runtime_expression(&inner.expression),
+        other => other,
+    }
+}
+
+fn nonempty_literal(expression: &Expression<'_>) -> Option<IterableLiteral> {
+    match runtime_expression(expression) {
+        Expression::ArrayExpression(array)
+            if array.elements.iter().any(|element| {
+                !matches!(
+                    element,
+                    oxc_ast::ast::ArrayExpressionElement::SpreadElement(_)
+                )
+            }) =>
+        {
+            Some(IterableLiteral::Array)
+        }
+        Expression::ObjectExpression(object)
+            if object.properties.iter().any(|property| {
+                matches!(
+                    property,
+                    oxc_ast::ast::ObjectPropertyKind::ObjectProperty(_)
+                )
+            }) =>
+        {
+            Some(IterableLiteral::Object)
+        }
+        _ => None,
+    }
+}
+
+/// The literal `expression` is known to evaluate to: a literal itself, or an
+/// identifier whose innermost binding in scope is a single `const`
+/// declaration of one (a hook write, a parameter, a loop variable or any
+/// second binding of the name at that level makes it unknown).
+fn known_literal(expression: &Expression<'_>, scope: &TestScope) -> Option<IterableLiteral> {
+    let expression = runtime_expression(expression);
+    if let Some(kind) = nonempty_literal(expression) {
+        return Some(kind);
+    }
+    let Expression::Identifier(identifier) = expression else {
+        return None;
+    };
+    let name = identifier.name.as_str();
+    let depth = scope
+        .levels
+        .iter()
+        .rposition(|level| level.iter().any(|(bound, _, _)| bound == name))?;
+    let writes = scope
+        .levels
+        .get(depth)?
+        .iter()
+        .filter(|(bound, _, _)| bound == name);
+    if writes.count() != 1 {
+        return None;
+    }
+    scope
+        .iterables
+        .get(depth)?
+        .iter()
+        .find(|(bound, _)| bound == name)
+        .map(|(_, kind)| *kind)
+}
+
+/// `for...of` / `.forEach` over a value known to yield at least one item: a
+/// non-empty array, or `Object.entries`/`keys`/`values` of a non-empty
+/// object or array.
+fn iterates_nonempty(expression: &Expression<'_>, scope: &TestScope) -> bool {
+    if known_literal(expression, scope) == Some(IterableLiteral::Array) {
+        return true;
+    }
+    let Expression::CallExpression(call) = runtime_expression(expression) else {
+        return false;
+    };
+    let Expression::StaticMemberExpression(member) = &call.callee else {
+        return false;
+    };
+    let is_object_enumeration = matches!(&member.object, Expression::Identifier(object) if object.name == "Object")
+        && matches!(member.property.name.as_str(), "entries" | "keys" | "values");
+    is_object_enumeration
+        && call.arguments.len() == 1
+        && call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+            .is_some_and(|argument| known_literal(argument, scope).is_some())
+}
+
+/// `for...in` over a value known to have at least one enumerable key.
+fn enumerates_nonempty(expression: &Expression<'_>, scope: &TestScope) -> bool {
+    known_literal(expression, scope).is_some()
+}
+
+/// `for (let i = <a>; i < <b> | i <= <b>; ...)` with numeric literal bounds
+/// that admit the first iteration.
+fn counted_loop_runs(
+    declaration: &oxc_ast::ast::VariableDeclaration<'_>,
+    test: Option<&Expression<'_>>,
+) -> bool {
+    let [declarator] = declaration.declarations.as_slice() else {
+        return false;
+    };
+    let (BindingPattern::BindingIdentifier(counter), Some(init)) =
+        (&declarator.id, &declarator.init)
+    else {
+        return false;
+    };
+    let Expression::NumericLiteral(start) = runtime_expression(init) else {
+        return false;
+    };
+    let Some(Expression::BinaryExpression(comparison)) = test.map(runtime_expression) else {
+        return false;
+    };
+    let (Expression::Identifier(left), Expression::NumericLiteral(bound)) = (
+        runtime_expression(&comparison.left),
+        runtime_expression(&comparison.right),
+    ) else {
+        return false;
+    };
+    if left.name != counter.name {
+        return false;
+    }
+    match comparison.operator {
+        oxc_ast::ast::BinaryOperator::LessThan => start.value < bound.value,
+        oxc_ast::ast::BinaryOperator::LessEqualThan => start.value <= bound.value,
+        _ => false,
     }
 }
 
@@ -1620,14 +1931,18 @@ pub(crate) fn qualified_test_name(describe_stack: &[String], name: &str) -> Stri
 /// Detected shapes (bounded preview slice — extracting these shapes is a
 /// separate backlog item; this lane only discloses them):
 ///
-/// - `` it(`title ${x}`, fn) `` / `` test(`title`, fn) `` — template-literal
-///   titles (`string_argument` accepts `StringLiteral` only).
 /// - `` test.each`table`('name', fn) `` / `` it.each`table`('name', fn) `` —
 ///   tagged-template `.each` (the tagged template sits in callee position, so
 ///   the extractor's identifier/member callee check never recognizes it).
-/// - `it(...)` / `test(...)` calls nested inside loop, callback, or other
-///   non-`describe` bodies — `collect_tests_from_statements` recurses only into
-///   active `describe(...)` / `context(...)` / `suite(...)` bodies.
+/// - `it(...)` / `test(...)` calls nested inside a body the extractor does not
+///   walk: an `if`/`while`/`try` block, a helper function, or a callback other
+///   than `describe(...)` (or `context(...)` / `suite(...)`) and `.forEach(...)`,
+///   or a loop not known to run at least once. `for`, `for...of` and
+///   `for...in` bodies and `.forEach` callbacks over a known non-empty value
+///   are walked (with computed titles named by placeholder), so their
+///   registrations are extracted.
+///   Such a call reports `template-literal title` when its title is a
+///   template literal.
 ///
 /// Returns `None` for a fully extracted file (the negative control contract):
 /// every test-shaped call at a position the extractor visits carries a string
@@ -1646,8 +1961,9 @@ pub(crate) fn detect_partial_test_extraction(
             // Parse-error disclosure owns this case; do not double-report.
             return None;
         }
+        let source = SourceText::new(source);
         let mut finder = UnextractedTestFinder {
-            source,
+            source: &source,
             extracted_starts: &extracted_starts,
             gap: None,
         };
@@ -1695,7 +2011,7 @@ fn extracted_span_starts(source: &str, extracted: &[TypeScriptTest]) -> Vec<usiz
 /// (statement containers, call arguments, function bodies). Array-element and
 /// object-property subtrees are out of scope for this disclosure slice.
 struct UnextractedTestFinder<'a> {
-    source: &'a str,
+    source: &'a SourceText<'a>,
     extracted_starts: &'a [usize],
     gap: Option<(usize, &'static str, String)>,
 }
@@ -1900,7 +2216,7 @@ impl UnextractedTestFinder<'_> {
                 && tagged_template_tag_is_test_each(&tagged.tag)
             {
                 self.gap = Some((
-                    line_for_offset(self.source, call.span.start as usize),
+                    self.source.line_for_offset(call.span.start as usize),
                     "tagged-template .each",
                     snippet_for_span(
                         self.source,
@@ -1919,7 +2235,7 @@ impl UnextractedTestFinder<'_> {
                     _ => "test/it call in loop/callback/nested body",
                 };
                 self.gap = Some((
-                    line_for_offset(self.source, call.span.start as usize),
+                    self.source.line_for_offset(call.span.start as usize),
                     shape,
                     snippet_for_span(
                         self.source,
@@ -2008,7 +2324,7 @@ impl UnextractedTestFinder<'_> {
         if statement_position && self.gap.is_none() && tagged_template_tag_is_test_each(&tagged.tag)
         {
             self.gap = Some((
-                line_for_offset(self.source, tagged.span.start as usize),
+                self.source.line_for_offset(tagged.span.start as usize),
                 "tagged-template .each",
                 snippet_for_span(
                     self.source,
