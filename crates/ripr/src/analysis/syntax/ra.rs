@@ -585,10 +585,10 @@ fn function_impl_context(function: &ast::Fn) -> FunctionImplContext {
             return FunctionImplContext::Unknown;
         }
         if let Some(impl_block) = ast::Impl::cast(ancestor) {
-            return impl_self_type_name(&impl_block).map_or(
-                FunctionImplContext::Unknown,
-                |self_type| FunctionImplContext::Impl { self_type },
-            );
+            return impl_self_type_name(&impl_block)
+                .map_or(FunctionImplContext::Unknown, |self_type| {
+                    FunctionImplContext::Impl { self_type }
+                });
         }
     }
     FunctionImplContext::Free

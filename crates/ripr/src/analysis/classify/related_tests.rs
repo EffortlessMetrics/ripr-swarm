@@ -1,11 +1,11 @@
 use super::super::rust_index::{
     FunctionSummary, RustIndex, TestSummary, extract_identifier_tokens,
 };
-use crate::analysis::facts::FunctionImplContext;
 use crate::analysis::extract::{
     ShadowAuthority, fact_body_defines_callee_fn, fact_body_let_shadow_line,
     mask_comments_and_strings, test_body_defines_callee_fn, test_body_let_shadow_line,
 };
+use crate::analysis::facts::FunctionImplContext;
 use crate::analysis::seam_cache::PathDependencySection;
 use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphStatus};
 use crate::domain::{Probe, RelationConfidence, RelationReason};
@@ -950,6 +950,16 @@ fn relation_rank(reason: RelationReason) -> u8 {
     }
 }
 
+/// Every same-named definition the ambiguity scan found (#2972, #4558).
+struct SameNameDefinitions<'s> {
+    /// Nearest-manifest identities of the attributable definitions.
+    manifests: &'s BTreeSet<String>,
+    /// A definition no discovered manifest covers.
+    unattributed: bool,
+    /// The definitions themselves, owner included.
+    definitions: &'s [&'s FunctionSummary],
+}
+
 /// #2972: whether one captured, callable path-dependency declaration lets
 /// an ambiguous-name cross-crate call be attributed to the owner's
 /// package. Under-emit is the contract for relation credit, so every
@@ -988,16 +998,9 @@ fn relation_rank(reason: RelationReason) -> u8 {
 ///   lists). Aliased (`as`) and glob (`*`) imports prove nothing and are
 ///   refused; another dependency supplying the same name defeats the
 ///   admit (#2972 review round 3).
-/// Every same-named definition the ambiguity scan found (#2972, #4558).
-struct SameNameDefinitions<'s> {
-    /// Nearest-manifest identities of the attributable definitions.
-    manifests: &'s BTreeSet<String>,
-    /// A definition no discovered manifest covers.
-    unattributed: bool,
-    /// The definitions themselves, owner included.
-    definitions: &'s [&'s FunctionSummary],
-}
-
+/// - a type-path call `T::name(` (#4558) is admitted before the shadow
+///   checks when `T` is the owner's impl self type and is imported from
+///   the owner's crate: see `type_path_call_admits_owner`.
 fn dependency_edge_admits_owner_call(
     context: &DependencyEdgeContext<'_>,
     owner: &FunctionSummary,
@@ -1128,7 +1131,10 @@ fn type_path_call_admits_owner(
     };
     let owner_name = owner.name.as_str();
     let competitor = same_name_definitions.iter().any(|definition| {
-        definition.id != owner.id && definition.impl_context.may_be_target_of_type_path(self_type)
+        definition.id != owner.id
+            && definition
+                .impl_context
+                .may_be_target_of_type_path(self_type)
     });
     if competitor {
         return false;
@@ -3876,7 +3882,8 @@ fn crate_c_score_test() {
     #[test]
     fn type_path_call_imported_from_owner_crate_admits_across_crates() {
         let owner = impl_method("crates/crate_a/src/metadata.rs", "LevelFilter", "current");
-        let body = "use crate_a::LevelFilter; assert_eq!(LevelFilter::current(), LevelFilter::DEBUG)";
+        let body =
+            "use crate_a::LevelFilter; assert_eq!(LevelFilter::current(), LevelFilter::DEBUG)";
         let index = level_filter_index(body, Vec::new());
         assert_eq!(
             level_filter_related(&index, &owner),
@@ -3896,7 +3903,11 @@ fn crate_c_score_test() {
         let owner = impl_method("crates/crate_a/src/metadata.rs", "LevelFilter", "current");
         let imported = "use crate_a::LevelFilter; LevelFilter::current()";
         let rows: Vec<(&str, &str, Vec<FunctionSummary>)> = vec![
-            ("no import of the type", "LevelFilter::current()", Vec::new()),
+            (
+                "no import of the type",
+                "LevelFilter::current()",
+                Vec::new(),
+            ),
             (
                 "renamed import",
                 "use crate_a::Other as LevelFilter; LevelFilter::current()",
