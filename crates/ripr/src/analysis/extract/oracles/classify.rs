@@ -104,10 +104,7 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
 /// This is syntactic evidence, not integer type inference or call resolution.
 fn is_scalar_integer_relation(condition: &str) -> bool {
     let mut expression = condition.trim();
-    while let Some(inner) = expression
-        .strip_prefix('(')
-        .and_then(|_| super::arguments::parenthesized_contents(expression))
-    {
+    while let Some(inner) = super::arguments::parenthesized_contents(expression) {
         expression = inner.trim();
     }
     let mut comparator = None;

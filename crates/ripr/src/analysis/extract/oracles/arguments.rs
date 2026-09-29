@@ -30,9 +30,12 @@ pub(super) fn outer_assertion_condition(line: &str) -> Option<String> {
     split_top_level_commas(&contents).into_iter().next()
 }
 
-pub(super) fn parenthesized_contents(text: &str) -> Option<String> {
+pub(super) fn parenthesized_contents(text: &str) -> Option<&str> {
     let contents = delimited_contents_at(text, 0)?;
-    (contents.len() + 2 == text.len()).then_some(contents)
+    if contents.len() + 2 != text.len() {
+        return None;
+    }
+    text.get(1..text.len() - 1)
 }
 
 fn macro_invocation_arguments(line: &str, macro_name: &str) -> Option<Vec<String>> {
