@@ -17970,6 +17970,7 @@ where
     let mut notifications = Vec::new();
     let mut log_seen = false;
     let mut status_seen = false;
+    let mut observed_run_statuses = std::collections::BTreeSet::new();
     tokio::time::timeout(Duration::from_mins(1), async {
         while !(log_seen && status_seen) {
             let message = read_lsp_message(reader).await?;
@@ -17995,7 +17996,11 @@ where
                     notifications.push(message);
                 }
                 Some("ripr/analysisStatus") => {
-                    if message["params"]["run_status"].as_str() == Some(expected_run_status) {
+                    let run_status = message["params"]["run_status"]
+                        .as_str()
+                        .unwrap_or("<missing>");
+                    observed_run_statuses.insert(run_status.to_string());
+                    if run_status == expected_run_status {
                         status_seen = true;
                     }
                     notifications.push(message);
@@ -18009,7 +18014,7 @@ where
     .await
     .map_err(|_elapsed| {
         format!(
-            "timed out waiting for refresh completion log and run_status {expected_run_status:?} (log_seen={log_seen}, status_seen={status_seen})"
+            "timed out waiting for refresh completion log and run_status {expected_run_status:?} (log_seen={log_seen}, status_seen={status_seen}, observed_run_statuses={observed_run_statuses:?})"
         )
     })??;
     Ok(notifications)
