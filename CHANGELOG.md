@@ -44,8 +44,8 @@ are scoped or reviewed.
   and `no_behavioral_candidates`. `exports.NAME` / `module.exports.NAME`
   functions and arrows, `module.exports = function ...`, and function
   properties of `module.exports = { ... }` are now owners that `require()`
-  tests relate to; non-function values and computed keys still produce none.
-  (#4545)
+  tests relate to; non-function values and computed keys still produce none,
+  and an export name assigned twice in one file produces no owner. (#4545)
 - TypeScript/JavaScript preview: mocha, `node:test` and Vitest suites written
   with `context`, `suite` or `specify`, with an options object before the
   callback (`it(name, { timeout }, fn)`), or with a `describe` title that is

@@ -160,3 +160,18 @@ fn require_of_unrelated_module_does_not_credit_commonjs_export() -> Result<(), S
     assert_ne!(class, ExposureClass::Exposed);
     Ok(())
 }
+
+/// Negative (#4638 review): `module.exports = { f: fn }` followed by
+/// `module.exports.f = ...` defines `f` twice; only one value is live and the
+/// syntax walk cannot tell which, so neither becomes an owner (fail-closed).
+/// A distinct export in the same file is kept (positive control).
+#[test]
+fn reassigned_commonjs_export_yields_no_owner() {
+    assert_eq!(
+        owner_names(
+            "src/k.js",
+            "module.exports = {\n  f: function (x) {\n    return x > 1;\n  },\n  g: (x) => x + 1,\n};\nmodule.exports.f = function (x) {\n  return x > 2;\n};\nexports.f = (x) => x > 3;\n",
+        ),
+        vec![("g".to_string(), false)]
+    );
+}

@@ -14,11 +14,17 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
             return Vec::new();
         }
         let imports = extract_imports_from_statements(&ret.program.body);
+        // `(owner, is a CommonJS assignment export)`, in source order.
         let mut owners = Vec::new();
         for stmt in &ret.program.body {
-            owners.extend(owners_from_statement(stmt, file, source, &imports));
+            let commonjs = matches!(stmt, Statement::ExpressionStatement(_));
+            owners.extend(
+                owners_from_statement(stmt, file, source, &imports)
+                    .into_iter()
+                    .map(|owner| (owner, commonjs)),
+            );
         }
-        owners
+        without_reassigned_commonjs_exports(owners)
     }) else {
         return Vec::new();
     };
@@ -174,6 +180,34 @@ fn owners_from_commonjs_export(
             .collect(),
         _ => Vec::new(),
     }
+}
+
+/// Drop every CommonJS export owner whose name another CommonJS export in
+/// the same file also defines (#4638 review). `module.exports = { f: fn }`
+/// followed by `module.exports.f = ...` leaves only the last value live, but
+/// which one runs depends on statement order and control flow the syntax
+/// walk does not model; crediting the dead one would report an exposure for
+/// code no test reaches. Fail-closed: no owner for a reassigned export.
+fn without_reassigned_commonjs_exports(
+    owners: Vec<(TypeScriptOwner, bool)>,
+) -> Vec<TypeScriptOwner> {
+    let commonjs_names: Vec<String> = owners
+        .iter()
+        .filter(|(_, commonjs)| *commonjs)
+        .map(|(owner, _)| owner.name.clone())
+        .collect();
+    owners
+        .into_iter()
+        .filter(|(owner, commonjs)| {
+            !*commonjs
+                || commonjs_names
+                    .iter()
+                    .filter(|name| **name == owner.name)
+                    .count()
+                    == 1
+        })
+        .map(|(owner, _)| owner)
+        .collect()
 }
 
 /// `module.exports` as a static member expression on the bare `module`

@@ -101,7 +101,9 @@ Owners the adapter must recognise:
   default-export owner, `NAME` or `default`), and static-identifier function
   properties of `module.exports = { ... }`; non-function values, computed or
   string-literal keys, compound or chained assignments, and nested
-  assignments yield no owner
+  assignments yield no owner; a name that more than one CommonJS export in
+  the same file defines (`module.exports = { f }` then
+  `module.exports.f = ...`) yields no owner for any of them
 - React-ish component functions when obvious (named PascalCase function
   declarations or PascalCase arrow consts returning JSX)
 - module-scope `const` initializers that participate in changed behavior
