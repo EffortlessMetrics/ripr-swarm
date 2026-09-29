@@ -2474,12 +2474,15 @@ mod tests {
 
     #[test]
     fn doctor_first_command_prefers_saved_diff_when_git_cannot_run() {
+        let mut probed = false;
         assert_eq!(
-            DoctorFirstCommand::resolve(false, || panic!(
-                "a gitless doctor must not probe the worktree"
-            )),
+            DoctorFirstCommand::resolve(false, || {
+                probed = true;
+                false
+            }),
             DoctorFirstCommand::SavedDiff
         );
+        assert!(!probed, "a gitless doctor must not probe the worktree");
         assert_eq!(
             DoctorFirstCommand::resolve(true, || true),
             DoctorFirstCommand::Worktree
