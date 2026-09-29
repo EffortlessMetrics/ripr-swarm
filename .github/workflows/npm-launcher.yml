@@ -31,6 +31,9 @@ jobs:
     name: script-free launcher contract
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: packaging/npm/launcher
     steps:
       - uses: actions/checkout@v6
 
@@ -39,7 +42,7 @@ jobs:
           node-version: 24
 
       - name: Test launcher
-        run: npm test --prefix packaging/npm/launcher
+        run: npm test
 
       - name: Verify package contents
-        run: npm --prefix packaging/npm/launcher pack --dry-run --json --ignore-scripts
+        run: npm pack --dry-run --json --ignore-scripts
