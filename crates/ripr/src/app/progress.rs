@@ -361,11 +361,12 @@ mod tests {
         );
         let events = recorder.events();
         assert_eq!(events[0].stage, AnalysisProgressStage::LoadingInput);
+        assert!(stages(&events).contains(&AnalysisProgressStage::Analyzing));
         assert_eq!(
             events.last().map(|event| event.stage),
             Some(AnalysisProgressStage::Failed)
         );
-        assert!(!stages(&events).contains(&AnalysisProgressStage::Analyzing));
+        assert!(!stages(&events).contains(&AnalysisProgressStage::BuildingOutput));
         assert!(!stages(&events).contains(&AnalysisProgressStage::Completed));
         assert_eq!(terminal_count(&events), 1);
         Ok(())
