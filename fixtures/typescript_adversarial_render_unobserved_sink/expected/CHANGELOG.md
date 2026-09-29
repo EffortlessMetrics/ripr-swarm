@@ -239,7 +239,7 @@ Updated:
 ## Pending — typescript_adversarial_render_unobserved_sink (9)
 
 Reason:
-RIPR-SPEC-0122: the analysis outcome and state lines lead with plain words; the id stays in parentheses
+RIPR-SPEC-0027: a returned ternary is a predicate probe on its condition, not a return_value probe
 
 Command:
 `cargo xtask goldens bless typescript_adversarial_render_unobserved_sink --reason "..."`

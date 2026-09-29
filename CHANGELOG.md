@@ -32,6 +32,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Direct collection StateWrite (`items.push(...)` on a passed identifier)
+  now binds the affected collection through the existing propagation
+  witness. Asserting a different collection, the return value, a callee-name
+  string, or an unrelated mock no longer confirms that effect; asserting the
+  actual collection retains discrimination. Return, error, and field
+  direct-sink behavior is unchanged
+  ([#4575](https://github.com/EffortlessMetrics/ripr-swarm/issues/4575)).
 - `ripr doctor` and `ripr first-pr --check` treat a start-here packet written
   by another ripr version, or with no `ripr_version`, as stale evidence and
   print the refresh command instead of trusting it after an upgrade (#4757).
@@ -50,6 +57,18 @@ are scoped or reviewed.
   `ripr first-pr` reports no gap to assign there instead of a wrong-root
   loop through `--root` and `ripr doctor`, and `ripr init` warns that the
   configuration will report those changes as not analyzed.
+- A partial (`limited_partial_scope`) run now tells JSON, LSP and VS Code
+  users which budget stopped it. The JSON `analysis_scope.continuation`
+  string, the LSP top limitation and the `diff_scope_oversized` recovery
+  said "raise RIPR_PARTIAL_DIFF_FILE_BUDGET and/or
+  RIPR_PARTIAL_DIFF_LINE_BUDGET". Every partial surface, human output
+  included, now names the smallest values that admit the next file, stopping
+  budget first (for example "raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least
+  65, then re-run"). The human output said "raise ... above 40", and a value
+  just above the old budget could select the same partition again. The LSP
+  message and the recovery detail no longer say "at least 0 changed line(s)"
+  when every changed file ripr's language adapters read was selected, and
+  the VS Code next step no longer points only at the file budget.
 - `ripr check` is faster on large repositories, with byte-identical JSON on
   12 real commits of tokio, vite, Django and ripr. TypeScript test selection
   walked the directory tree for `package.json` twice per owner and test;
@@ -83,6 +102,12 @@ are scoped or reviewed.
   Python and TypeScript readers already did. A cloned repository or pull
   request that committed `src/zero.rs -> /dev/zero` made `ripr check` read
   until it ran out of memory (#4751).
+- TypeScript: a changed condition in `return total > 100 ? total * 0.9 : total`
+  is now a predicate boundary on `total == 100`, as it is for Python's
+  conditional expression and for the `if` form. The line was read as a
+  returned value, so any exact assertion such as
+  `expect(discount(500)).toBe(450)` made a `>=` to `>` change read `exposed`
+  with "no repair to make", although 500 takes the discount either way.
 - Rust findings now list the related tests that call the changed owner before
   tests matched only by a weak name token, as RIPR-SPEC-0021 already required.
   On `tokio-rs/bytes` the "Related tests appear to reach" line quoted
@@ -629,6 +654,11 @@ are scoped or reviewed.
   one), and a loop variable or `describe` parameter that reuses an imported
   owner's name shadows it.
 
+- Explicit per-seam agent packets bind their `packet.next` commands and
+  artifact paths to the selected root. Prepared repair packets advertise the
+  exact published attempt's after-phase continuation instead of an incompatible
+  manual receipt recipe; standalone packets include the outcome producer needed by receipts
+  (#4000).
 - Python pytest verify commands now run as `python -m pytest path::node`
   instead of bare `pytest path::node`. `-m` puts the repository root on
   `sys.path`, so a flat-layout package such as `pricing/__init__.py` imports
@@ -1459,6 +1489,19 @@ are scoped or reviewed.
   heading in a code span, as the owner line already did. A file name holding
   Markdown link brackets or `*` rendered as a link or emphasis in that heading
   (#4605).
+- Rust diff analysis follows the module tree (#4435). A changed file under
+  `src/`, or beside a declared `[lib]` root outside `src/`, no longer seeds
+  findings when no `mod`, `#[path]` or `include!` from any Cargo target names
+  it, since rustc never compiles it; the run reports a limitation naming the
+  file instead. The out-of-line modules of an external root (`[lib] path =
+  "../shared/lib.rs"`) now seed, and the tests of every package declaring
+  that root stay in the Draft scope. A declared `[lib] path` replaces
+  `src/lib.rs` as the library root. The orphan rule applies only when every
+  Rust file in the workspace resolves statically; a macro call other than
+  std's (at item level or inside a function), a `cfg_if!`-wrapped
+  declaration, a dynamic `#[path]` or a parse error anywhere keeps the
+  previous layout rule, since such a file could reach the orphan. The editor
+  partition uses the same evidence.
 - Each repair attempt keeps its own result. The after phase copies the
   receipt and the verify document into the attempt's artifacts directory and
   records them in `attempt.json` as `terminal_artifacts`, bound by path,
@@ -1514,6 +1557,10 @@ are scoped or reviewed.
   `[lsp] seam_diagnostics = false`, honored by the 0.10 extension, applies
   again instead of being overridden by the extension's default
   ([#4717](https://github.com/EffortlessMetrics/ripr-swarm/issues/4717)).
+- `ripr doctor --root DIR` run from another directory now recommends
+  `ripr check --root DIR ...`. It printed `ripr check`, which analyzes the
+  current directory rather than the one doctor diagnosed
+  ([#4890](https://github.com/EffortlessMetrics/ripr-swarm/issues/4890)).
 - `ripr agent repair` no longer prints 9 to 13 KB of JSON to stdout unasked.
   By default each phase prints a short human summary that names the seam, the
   movement and where the full packet, receipt and verify documents were
