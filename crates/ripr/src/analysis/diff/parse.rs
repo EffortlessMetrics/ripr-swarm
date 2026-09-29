@@ -65,6 +65,15 @@ pub(crate) struct ParsedDiff {
     pub(crate) renamed_file_count: usize,
     pub(crate) pure_rename_file_count: usize,
     pub(crate) pure_rename_paths: Vec<PathBuf>,
+    /// File sections opened by a registered textual `+++ ` marker (#4375):
+    /// the header evidence for the truncated-stream gate. Rename and
+    /// gitlink metadata sections do not count, because git emits those
+    /// without hunks on valid input.
+    pub(crate) textual_file_headers: usize,
+    /// Hunks whose body produced at least one parsed line (#4375). Zero
+    /// together with a positive `textual_file_headers` means the stream
+    /// ended between a file header and any hunk body.
+    pub(crate) hunks_parsed: usize,
     /// Typed record of diff regions this parser deliberately refused to read as
     /// ordinary source (#2828). An empty vector means the parser read the whole
     /// input; it never means "no such region existed but we said nothing".
@@ -160,6 +169,20 @@ mod parser_state {
         conflict_region: Option<ConflictSide>,
         combined_hunks: BTreeMap<Option<PathBuf>, u64>,
         conflict_regions: BTreeMap<Option<PathBuf>, u64>,
+        /// File sections whose textual `+++ ` marker registered a changed
+        /// file (#4375). A truncated stream parses the header block and
+        /// stops before any hunk, so this count is the header evidence the
+        /// truncation gate reads. Rename/submodule metadata registration
+        /// does not count: git emits those without hunks on valid input.
+        textual_file_headers: usize,
+        /// Hunks that entered a body and parsed at least one line (#4375).
+        /// A hunk header alone is not a parsed hunk: the stream can end
+        /// between the `@@` header and its first body line.
+        hunks_parsed: usize,
+        /// Whether the hunk opened by the most recent `@@` header has seen
+        /// its first body line; `hunks_parsed` increments on the false ->
+        /// true transition.
+        current_hunk_has_body: bool,
     }
 
     impl ParserState {
@@ -190,6 +213,16 @@ mod parser_state {
 
         pub(super) fn pure_rename_paths(&self) -> Vec<PathBuf> {
             self.pure_rename_paths.clone()
+        }
+
+        /// File sections opened by a registered textual `+++ ` marker (#4375).
+        pub(super) fn textual_file_headers(&self) -> usize {
+            self.textual_file_headers
+        }
+
+        /// Hunks whose body produced at least one parsed line (#4375).
+        pub(super) fn hunks_parsed(&self) -> usize {
+            self.hunks_parsed
         }
 
         /// Advance line coordinates for a line the parser deliberately skipped,
@@ -428,6 +461,11 @@ mod parser_state {
             }
             if self.current_path.is_none() || self.saw_old_path_marker {
                 self.current_path = Some(path.clone());
+                // #4375: this is the one registration site that proves a
+                // textual file section opened and a hunk body was expected
+                // next. Rename and gitlink metadata register elsewhere, so
+                // hunkless-but-valid git sections never increment here.
+                self.textual_file_headers = self.textual_file_headers.saturating_add(1);
                 files.entry(path.clone()).or_insert_with(|| ChangedFile {
                     path,
                     ..ChangedFile::default()
@@ -479,6 +517,11 @@ mod parser_state {
             }
             self.saw_old_path_marker = false;
             self.conflict_region = None;
+            // #4375: a new `@@` header starts a hunk whose body has not been
+            // read. `hunks_parsed` only increments when a body line follows,
+            // so a stream that ends between the header and its body stays
+            // distinguishable from a hunk that parsed.
+            self.current_hunk_has_body = false;
 
             // An n-way hunk header (`@@@` for a two-parent merge, `@@@@` for an
             // octopus) carries one prefix column per parent, so its body cannot
@@ -561,6 +604,13 @@ mod parser_state {
             let Some(file) = files.get_mut(&path) else {
                 return;
             };
+
+            // #4375: this hunk produced its first parseable body line. A
+            // header that never reached this point did not parse a hunk.
+            if !self.current_hunk_has_body {
+                self.current_hunk_has_body = true;
+                self.hunks_parsed = self.hunks_parsed.saturating_add(1);
+            }
 
             // Unresolved conflict markers describe two rival source states, not
             // one changed program. Emitting their lines as ordinary changes
@@ -970,6 +1020,69 @@ deleted file mode 100644
             parse_unified_diff_with_metadata(traversal).deleted_file_count,
             0
         );
+    }
+
+    #[test]
+    fn metadata_counts_textual_headers_and_parsed_hunks_for_truncated_streams() {
+        // #4375: the truncated-stream evidence. The issue repro — a valid
+        // header block plus a valid `@@` hunk header, then EOF before any
+        // hunk body line — must be countable as "header parsed, 0 hunks" so
+        // the pipeline can distinguish it from an empty input and from
+        // garbage. A hunk header alone is not a parsed hunk.
+        let truncated = "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,7 +1,7 @@\n";
+        let parsed = parse_unified_diff_with_metadata(truncated);
+        assert_eq!(parsed.textual_file_headers, 1);
+        assert_eq!(parsed.hunks_parsed, 0);
+        assert_eq!(parsed.changed_files.len(), 1);
+        assert!(parsed.changed_files[0].added_lines.is_empty());
+        assert!(parsed.changed_files[0].removed_lines.is_empty());
+
+        // The same header truncated before any `@@` header at all.
+        let header_only = "diff --git a/x b/x\n--- a/x\n+++ b/x\n";
+        let parsed = parse_unified_diff_with_metadata(header_only);
+        assert_eq!(parsed.textual_file_headers, 1);
+        assert_eq!(parsed.hunks_parsed, 0);
+
+        // The complete counterpart parses its hunk body.
+        let complete = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n";
+        let parsed = parse_unified_diff_with_metadata(complete);
+        assert_eq!(parsed.textual_file_headers, 1);
+        assert_eq!(parsed.hunks_parsed, 1);
+
+        // Two files, two hunks.
+        let two = "diff --git a/src/a.rs b/src/a.rs\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1,1 +1,1 @@\n-a\n+b\ndiff --git a/src/b.rs b/src/b.rs\n--- a/src/b.rs\n+++ b/src/b.rs\n@@ -5,1 +5,2 @@\n-old\n+new\n+extra\n";
+        let parsed = parse_unified_diff_with_metadata(two);
+        assert_eq!(parsed.textual_file_headers, 2);
+        assert_eq!(parsed.hunks_parsed, 2);
+
+        // Garbage and empty inputs carry no header evidence, so the existing
+        // malformed_diff and no_scope arms stay authoritative for them.
+        let parsed = parse_unified_diff_with_metadata("this is not a diff\n");
+        assert_eq!(parsed.textual_file_headers, 0);
+        assert_eq!(parsed.hunks_parsed, 0);
+        let parsed = parse_unified_diff_with_metadata("");
+        assert_eq!(parsed.textual_file_headers, 0);
+        assert_eq!(parsed.hunks_parsed, 0);
+    }
+
+    #[test]
+    fn metadata_keeps_hunkless_git_sections_out_of_truncation_evidence() {
+        // #4375 controls: valid git sections that legitimately carry no hunk
+        // must not read as truncated evidence. A pure rename registers the
+        // new path without any textual `+++ ` marker; a submodule gitlink
+        // addition registers through one but is a submodule section, which
+        // the pipeline's gate excludes by count.
+        let pure_rename = "diff --git a/src/old.rs b/src/new.rs\nsimilarity index 100%\nrename from src/old.rs\nrename to src/new.rs\n";
+        let parsed = parse_unified_diff_with_metadata(pure_rename);
+        assert_eq!(parsed.textual_file_headers, 0);
+        assert_eq!(parsed.hunks_parsed, 0);
+        assert_eq!(parsed.pure_rename_file_count, 1);
+
+        let gitlink = "diff --git a/vendor/new b/vendor/new\nnew file mode 160000\nindex 0000000..2222222\n--- /dev/null\n+++ b/vendor/new\n";
+        let parsed = parse_unified_diff_with_metadata(gitlink);
+        assert_eq!(parsed.textual_file_headers, 1);
+        assert_eq!(parsed.hunks_parsed, 0);
+        assert_eq!(parsed.submodule_file_count, 1);
     }
 
     #[test]

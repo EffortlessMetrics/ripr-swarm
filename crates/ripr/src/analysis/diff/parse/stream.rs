@@ -104,6 +104,8 @@ fn parse_lines<'a, E>(
         renamed_file_count: state.renamed_file_count(),
         pure_rename_file_count: state.pure_rename_file_count(),
         pure_rename_paths: state.pure_rename_paths(),
+        textual_file_headers: state.textual_file_headers(),
+        hunks_parsed: state.hunks_parsed(),
         limitations: state.limitations(),
     })
 }
