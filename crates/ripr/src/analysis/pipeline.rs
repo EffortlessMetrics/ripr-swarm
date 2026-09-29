@@ -841,21 +841,7 @@ fn run_pipeline_for_diff_text(
 
     limitations.extend(limitations_from_language_runs(&language_runs)?);
     if let Some(scope) = &partial_scope {
-        limitations.push(
-            AnalysisLimitation::new(
-                AnalysisLimitationKind::DiffScopeOversized,
-                AnalysisStage::AnalysisPipeline,
-                AnalysisRecovery::new(
-                    AnalysisRecoveryKind::IncreaseConfiguredLimit,
-                    "Raise RIPR_PARTIAL_DIFF_FILE_BUDGET and/or RIPR_PARTIAL_DIFF_LINE_BUDGET, then re-run the analysis.",
-                )?,
-            )
-            .with_affected_items(scope.uninspected_changed_lines_lower_bound.max(1) as u64)?
-            .with_detail(format!(
-                "The run analyzed {} changed line(s) and left at least {} changed line(s) outside the selected partition.",
-                scope.selected_changed_lines, scope.uninspected_changed_lines_lower_bound
-            ))?,
-        );
+        limitations.push(partial_scope_limitation(scope)?);
     }
 
     let changed_line_count = changed_files
@@ -1476,6 +1462,33 @@ fn rebase_finding_paths_to_repository(
     }
 }
 
+/// The analysis-outcome limitation for a `limited_partial_scope` run. Its
+/// recovery shares the widen wording of the human, JSON and LSP surfaces, and
+/// its detail never claims "at least 0" uninspected lines when every changed
+/// file was selected.
+fn partial_scope_limitation(scope: &PartialDiffScope) -> Result<AnalysisLimitation, String> {
+    AnalysisLimitation::new(
+        AnalysisLimitationKind::DiffScopeOversized,
+        AnalysisStage::AnalysisPipeline,
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::IncreaseConfiguredLimit,
+            format!("To widen the analyzed partition, {}.", scope.widen_instruction()),
+        )?,
+    )
+    .with_affected_items(scope.uninspected_changed_lines_lower_bound.max(1) as u64)?
+    .with_detail(if scope.has_known_uninspected_scope() {
+        format!(
+            "The run analyzed {} changed line(s) and left at least {} changed line(s) outside the selected partition.",
+            scope.selected_changed_lines, scope.uninspected_changed_lines_lower_bound
+        )
+    } else {
+        format!(
+            "The run analyzed {} changed line(s); every changed file ripr's language adapters read was selected, but the budget was exceeded, so the result stays partial.",
+            scope.selected_changed_lines
+        )
+    })
+}
+
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
@@ -1833,6 +1846,80 @@ mod tests {
             message.contains("(Go)") && message.contains("not a clean pass"),
             "{message}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn changed_rust_file_read_by_lexical_fallback_is_a_partial_outcome() -> Result<(), String> {
+        // #4722: a changed file the Rust parser refuses loses its probe
+        // shapes and its own tests. The run must disclose a typed producer
+        // limitation naming the file, so downstream gates fail closed, and
+        // the parsing control must stay complete.
+        for (label, source, degraded, recovery) in [
+            (
+                "lexical-fallback-changed",
+                &b"pub fn f(x: i32) -> bool { x >= 1 }\npub fn broken( {\n"[..],
+                true,
+                "parses as Rust",
+            ),
+            (
+                // Parses cleanly but is Latin-1: the recovery is re-encoding.
+                "lexical-fallback-not-utf8",
+                &b"// caf\xe9\npub fn f(x: i32) -> bool { x >= 1 }\n"[..],
+                true,
+                "UTF-8",
+            ),
+            (
+                "lexical-fallback-control",
+                &b"pub fn f(x: i32) -> bool { x >= 1 }\n"[..],
+                false,
+                "",
+            ),
+        ] {
+            let root = temp_root(label)?;
+            write(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            fs::create_dir_all(root.join("src"))
+                .map_err(|err| format!("{label}: create src: {err}"))?;
+            fs::write(root.join("src/lib.rs"), source)
+                .map_err(|err| format!("{label}: write src/lib.rs: {err}"))?;
+            let result = run_pipeline_for_diff_text(
+                &sample_rust_diff_options(root),
+                &OraclePolicy::default(),
+                &[LanguageId::Rust],
+                &[],
+                SAMPLE_RUST_DIFF,
+            )?;
+            let outcome = result
+                .analysis_outcome
+                .ok_or_else(|| format!("{label}: outcome must be projected"))?;
+            assert_eq!(
+                outcome.counts.changed_file_count, 1,
+                "{label}: diff must parse"
+            );
+            let fallback = outcome.limitations.iter().find(|limitation| {
+                limitation.kind == AnalysisLimitationKind::ProducerFailure
+                    && limitation.path.as_deref() == Some("src/lib.rs")
+            });
+            if degraded {
+                assert_eq!(
+                    outcome.kind,
+                    AnalysisOutcomeKind::PartialWithLimitations,
+                    "{label}"
+                );
+                let limitation =
+                    fallback.ok_or_else(|| format!("{label}: fallback limitation missing"))?;
+                let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+                assert!(detail.contains("lexical fallback"), "{label}: {detail}");
+                let action = &limitation.recovery.detail;
+                assert!(action.contains(recovery), "{label}: {action}");
+            } else {
+                assert!(fallback.is_none(), "{label}: {:?}", outcome.limitations);
+                assert!(outcome.kind.is_complete(), "{label}: {:?}", outcome.kind);
+            }
+        }
         Ok(())
     }
 
@@ -3661,6 +3748,59 @@ index 0000000..1111111 100644
                 .iter()
                 .any(|finding| finding.language == Some(crate::domain::LanguageId::Python)),
             "findings from the analyzed files must survive the partial disclosure"
+        );
+        Ok(())
+    }
+
+    fn partial_scope(
+        stop_reason: super::super::language::PartialDiffStopReason,
+        uninspected_lines: usize,
+    ) -> PartialDiffScope {
+        PartialDiffScope {
+            run_status: PartialDiffScope::RUN_STATUS.to_string(),
+            diff_identity: "sha256:diff".to_string(),
+            file_budget: 3,
+            line_budget: 50,
+            budget_disclosures: Vec::new(),
+            selected_files: vec!["src/lib.rs".to_string()],
+            selected_changed_lines: 70,
+            uninspected_files_lower_bound: usize::from(uninspected_lines > 0),
+            uninspected_changed_lines_lower_bound: uninspected_lines,
+            stop_reason,
+            next_file_changed_lines: (uninspected_lines > 0).then_some(uninspected_lines),
+            partition_identity: "sha256:partition".to_string(),
+        }
+    }
+
+    #[test]
+    fn partial_scope_limitation_names_the_stopping_budget_first() -> Result<(), String> {
+        use super::super::language::PartialDiffStopReason;
+
+        let limitation =
+            partial_scope_limitation(&partial_scope(PartialDiffStopReason::LineBudget, 9))?;
+        assert_eq!(limitation.kind, AnalysisLimitationKind::DiffScopeOversized);
+        assert_eq!(
+            limitation.recovery.detail,
+            "To widen the analyzed partition, raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 79, then \
+             re-run."
+        );
+        assert_eq!(
+            limitation.bounded_detail.as_deref(),
+            Some(
+                "The run analyzed 70 changed line(s) and left at least 9 changed line(s) outside \
+                 the selected partition."
+            )
+        );
+
+        let first_file = partial_scope_limitation(&partial_scope(
+            PartialDiffStopReason::LineBudgetExceededOnFirstFile,
+            0,
+        ))?;
+        let detail = first_file.bounded_detail.as_deref().unwrap_or_default();
+        assert!(!detail.contains("at least 0"), "{detail}");
+        assert!(
+            detail.contains("every changed file ripr's language adapters read was selected"),
+            "{detail}"
         );
         Ok(())
     }
