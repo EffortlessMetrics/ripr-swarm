@@ -19,16 +19,32 @@
 //!   nor a parameter (`item.on_hand`, a computed `len(items)`, a comprehension
 //!   local) is unresolved and never counts as observed, so this fails closed.
 //!
+//! A module-scope constant (`DISCOUNT_THRESHOLD = 10_000`) that nothing in the
+//! module can rebind resolves to its literal, like a literal operand; a test
+//! argument that names the constant imported from the owner's module binds to
+//! the same value (#4227, `module_constants.rs`).
+//!
+//! A parametrized test's call (`sign(x)` under `@pytest.mark.parametrize("x",
+//! [5, -3])`) expands into one call per statically certain case, binding the
+//! case's literal argvalue (#4559, `parametrize.rs`). Without the expansion the
+//! call binds nothing and a boundary no case reaches would keep `exposed`.
+//!
 //! When no strong call binds a literal argument (`Formatter()({...})`,
 //! `reserve(item, qty)` with test locals), the rule cannot see the inputs in
 //! either direction; the verdict stays with the existing oracle rules and the
 //! finding carries a named `boundary_activation: unresolved` limitation.
 
 use super::discriminators::{is_literal_python_model_field_value, python_string_literal_value};
+use super::module_constants::PythonModuleConstant;
 use super::no_behavior::{
-    call_arglists_with_offsets, call_segment_keyword_name, split_top_level_args,
+    call_arglists_with_offsets, call_segment_keyword_name, matching_call_paren,
+    split_top_level_args,
 };
-use super::related_tests::{PythonRelatedCandidate, strongest_assertion};
+use super::related_tests::{
+    PythonRelatedCandidate, import_source_module_matches_owner, is_python_identifier_char,
+    owner_module_callees, owner_module_paths, python_text_hides_code, strongest_assertion,
+    test_body_binds_local,
+};
 use super::{PythonOwner, PythonTest};
 use crate::domain::{OracleStrength, OwnerKind, ValueContext, ValueFact};
 use std::collections::BTreeMap;
@@ -83,7 +99,22 @@ pub(super) fn python_boundary_evidence(
         .as_ref()
         .map(|(left, right)| format!("{left} == {right}"));
 
-    let rows = strong_owner_call_rows(owner, related_candidates);
+    // A related test file that assigns the constant's attribute
+    // (`pricing.DISCOUNT_THRESHOLD = 5`) can change it at runtime.
+    let constants: Vec<PythonModuleConstant> = owner
+        .module_constants
+        .iter()
+        .filter(|constant| {
+            !related_candidates.iter().any(|candidate| {
+                candidate
+                    .test
+                    .constant_rebinding
+                    .assigns_attribute(&constant.name)
+            })
+        })
+        .cloned()
+        .collect();
+    let rows = strong_owner_call_rows(owner, &constants, related_candidates);
     let mut observed_values: Vec<ValueFact> = rows
         .iter()
         .flat_map(|row| {
@@ -133,8 +164,8 @@ pub(super) fn python_boundary_evidence(
     let mut left_values = Vec::new();
     let mut right_values = Vec::new();
     for row in &rows {
-        let left_value = resolve_operand(&left, row);
-        let right_value = resolve_operand(&right, row);
+        let left_value = resolve_operand(&left, row, &constants);
+        let right_value = resolve_operand(&right, row, &constants);
         if let (Some(left_value), Some(right_value)) = (&left_value, &right_value)
             && literals_equal(left_value, right_value)
         {
@@ -144,8 +175,8 @@ pub(super) fn python_boundary_evidence(
                 text: format!(
                     "{} | {}; {}",
                     row.text,
-                    operand_provenance(&left, left_value),
-                    operand_provenance(&right, right_value)
+                    operand_provenance(&left, left_value, &constants),
+                    operand_provenance(&right, right_value, &constants)
                 ),
                 value: format!("{left} == {right}"),
                 context: ValueContext::FunctionArgument,
@@ -169,7 +200,9 @@ pub(super) fn python_boundary_evidence(
     // so no repair card asks for a test that may already exist.
     let unresolved_operand = [(&left, &left_values), (&right, &right_values)]
         .into_iter()
-        .any(|(operand, values)| literal_value(operand).is_none() && values.is_empty());
+        .any(|(operand, values)| {
+            static_operand(operand, &constants).is_none() && values.is_empty()
+        });
     let discriminator = if observed || !unresolved_operand {
         discriminator
     } else {
@@ -178,17 +211,22 @@ pub(super) fn python_boundary_evidence(
     let reason = if observed {
         format!("A strong related test call places {left} equal to {right}")
     } else {
-        // A literal operand is its own value; only operands that vary with the
-        // test input are listed.
+        // A literal operand is its own value and a module constant names its
+        // one value; only operands that vary with the test input are listed.
         let observed_lists = [(&left, left_values), (&right, right_values)]
             .into_iter()
-            .filter(|(operand, _)| literal_value(operand).is_none())
+            .filter(|(operand, _)| static_operand(operand, &constants).is_none())
             .map(|(operand, values)| {
                 format!("observed {operand} values: {}", list_or_unresolved(values))
             })
             .collect::<Vec<_>>();
+        let constants = [&left, &right]
+            .into_iter()
+            .filter_map(|operand| module_constant(operand, &constants))
+            .map(|constant| format!(" (module constant {})", constant_provenance(constant)))
+            .collect::<String>();
         format!(
-            "No strong related test call places {left} equal to {right}; {}",
+            "No strong related test call places {left} equal to {right}{constants}; {}",
             observed_lists.join("; ")
         )
     };
@@ -204,12 +242,36 @@ pub(super) fn python_boundary_evidence(
     })
 }
 
-fn operand_provenance(operand: &str, value: &str) -> String {
+fn operand_provenance(operand: &str, value: &str, constants: &[PythonModuleConstant]) -> String {
     if literal_value(operand).is_some() {
         format!("literal operand {operand}")
+    } else if let Some(constant) = module_constant(operand, constants) {
+        format!("module constant {}", constant_provenance(constant))
     } else {
         format!("{operand} = {value}")
     }
+}
+
+fn constant_provenance(constant: &PythonModuleConstant) -> String {
+    format!(
+        "{} = {} at line {}",
+        constant.name, constant.value, constant.line
+    )
+}
+
+/// The module constant a comparison operand names, when the owner sees one.
+fn module_constant<'a>(
+    operand: &str,
+    constants: &'a [PythonModuleConstant],
+) -> Option<&'a PythonModuleConstant> {
+    constants.iter().find(|constant| constant.name == operand)
+}
+
+/// An operand's value independent of any test call: its own literal, or the
+/// literal of the module constant it names.
+fn static_operand(operand: &str, constants: &[PythonModuleConstant]) -> Option<String> {
+    literal_value(operand)
+        .or_else(|| module_constant(operand, constants).map(|constant| constant.value.clone()))
 }
 
 fn list_or_unresolved(mut values: Vec<String>) -> String {
@@ -226,6 +288,9 @@ fn list_or_unresolved(mut values: Vec<String>) -> String {
 /// (`if`/`elif`/`while`) and trailing `:` stripped, or the condition between
 /// ` if ` and ` else ` of a conditional expression.
 fn predicate_condition(line_text: &str) -> String {
+    if let Some(condition) = python_return_comparison(line_text) {
+        return condition.to_string();
+    }
     let text = line_text.trim().trim_end_matches(':').trim();
     for prefix in ["if ", "elif ", "while "] {
         if let Some(stripped) = text.strip_prefix(prefix) {
@@ -238,6 +303,22 @@ fn predicate_condition(line_text: &str) -> String {
         return condition.trim().to_string();
     }
     text.to_string()
+}
+
+/// The comparison of a `return <a> <op> <b>` line whose returned expression
+/// is exactly one relational comparison between simple operands. The
+/// returned bool changes only at the boundary, so the line is a predicate:
+/// an exact oracle on an input far from `a == b` (`is_large(500) == True`)
+/// returns the same value before and after a `>=` -> `>` change.
+pub(super) fn python_return_comparison(line_text: &str) -> Option<&str> {
+    let expression = line_text.trim().strip_prefix("return ")?.trim();
+    let [(start, len)] = relational_operators(expression)[..] else {
+        return None;
+    };
+    let (left, right) = simple_comparison_operands(expression, start, len)?;
+    let whole_sides =
+        expression.get(..start)?.trim() == left && expression.get(start + len..)?.trim() == right;
+    whole_sides.then_some(expression)
 }
 
 /// Byte offset and length of every relational comparison operator outside
@@ -386,6 +467,9 @@ fn starts_with_keyword(text: &str, keyword: &str) -> bool {
         .is_some_and(|after| after.is_empty() || after.starts_with(char::is_whitespace))
 }
 
+/// Owner parameters paired with the parametrize argname their argument names.
+type CaseArguments = Vec<(String, String)>;
+
 /// A literal binding for one owner parameter in one test call.
 #[derive(Clone, Debug)]
 struct Binding {
@@ -406,6 +490,7 @@ struct CallRow {
 /// parameters to literal arguments (or literal defaults when omitted).
 fn strong_owner_call_rows(
     owner: &PythonOwner,
+    constants: &[PythonModuleConstant],
     related_candidates: &[PythonRelatedCandidate<'_>],
 ) -> Vec<CallRow> {
     let (method_call, skip) = match owner.owner_kind {
@@ -437,13 +522,25 @@ fn strong_owner_call_rows(
             for (offset, arglist) in
                 call_arglists_with_offsets(&candidate.test.body_text, &name, method_call)
             {
-                if let Some(bindings) = bind_call_arguments(owner, skip, arglist) {
-                    rows.push(CallRow {
-                        line: candidate.test.line
-                            + candidate.test.body_text[..offset].matches('\n').count(),
-                        text: call_line_text(&candidate.test.body_text, offset),
+                let Some((bindings, case_arguments)) =
+                    bind_call_arguments(owner, constants, candidate.test, skip, arglist)
+                else {
+                    continue;
+                };
+                let line =
+                    candidate.test.line + candidate.test.body_text[..offset].matches('\n').count();
+                let text = call_line_text(&candidate.test.body_text, offset);
+                match (&candidate.test.parametrize, case_arguments.is_empty()) {
+                    (Some(parametrize), false) => {
+                        rows.extend(parametrize.cases.iter().map(|case| {
+                            parametrize_case_row(line, &text, &bindings, &case_arguments, case)
+                        }));
+                    }
+                    _ => rows.push(CallRow {
+                        line,
+                        text,
                         bindings,
-                    });
+                    }),
                 }
             }
         }
@@ -451,8 +548,10 @@ fn strong_owner_call_rows(
     rows
 }
 
-/// The owner's own name plus any `from M import owner as alias` alias; a
-/// method is only called through its own attribute name.
+/// The owner's own name plus any `from M import owner as alias` alias and
+/// module-qualified spelling (`utils.sign`, #4567); a method is only called
+/// through its own attribute name. Module-qualified calls must bind here too,
+/// or a call the alignment credits would skip the boundary gate.
 fn owner_call_names(owner: &PythonOwner, test: &PythonTest, method_call: bool) -> Vec<String> {
     let mut names = vec![owner.name.clone()];
     if !method_call {
@@ -462,7 +561,14 @@ fn owner_call_names(owner: &PythonOwner, test: &PythonTest, method_call: bool) -
                 .filter(|import| import.imported == owner.name && import.alias != owner.name)
                 .map(|import| import.alias.clone()),
         );
+        names.extend(
+            owner_module_callees(test, owner)
+                .into_iter()
+                .filter(|callee| callee.contains('.')),
+        );
     }
+    names.sort();
+    names.dedup();
     names
 }
 
@@ -477,13 +583,22 @@ fn call_line_text(body: &str, offset: usize) -> String {
 /// Bind a call's literal arguments to owner parameters. Positional arguments
 /// bind in declaration order after `skip` implicit receivers; keyword
 /// arguments bind by name; an omitted parameter with a literal default binds
-/// to that default. Returns None for a `*args` / `**kwargs` unpack, whose
-/// binding is undecidable. Non-literal arguments stay unbound (unresolved).
+/// to that default. An argument naming an owner-module constant the test
+/// imports binds to that constant's literal. Returns None for a `*args` /
+/// `**kwargs` unpack, whose binding is undecidable. Other non-literal
+/// arguments stay unbound (unresolved).
+///
+/// The second value pairs each owner parameter whose argument is a bare
+/// parametrize argname of the test (`sign(x)` under `parametrize("x", ...)`)
+/// with that argname, for per-case expansion (#4559). An argname the test body
+/// rebinds is not paired.
 fn bind_call_arguments(
     owner: &PythonOwner,
+    constants: &[PythonModuleConstant],
+    test: &PythonTest,
     skip: usize,
     arglist: &str,
-) -> Option<BTreeMap<String, Binding>> {
+) -> Option<(BTreeMap<String, Binding>, CaseArguments)> {
     let positional: Vec<&str> = owner
         .parameters
         .iter()
@@ -493,6 +608,7 @@ fn bind_call_arguments(
         .collect();
     let mut bound_names = Vec::new();
     let mut bindings = BTreeMap::new();
+    let mut case_arguments = Vec::new();
     let mut position = 0usize;
     for segment in split_top_level_args(arglist) {
         let segment = segment.trim();
@@ -520,7 +636,9 @@ fn bind_call_arguments(
             continue;
         };
         bound_names.push(name.clone());
-        if let Some(value) = literal_value(value) {
+        if let Some(value) =
+            literal_value(value).or_else(|| imported_constant_value(owner, constants, test, value))
+        {
             bindings.insert(
                 name,
                 Binding {
@@ -528,6 +646,14 @@ fn bind_call_arguments(
                     from_default: false,
                 },
             );
+        } else if test
+            .parametrize
+            .as_ref()
+            .is_some_and(|parametrize| parametrize.binds(value))
+            && !test_body_binds_local(test, value)
+            && !case_name_may_be_rebound(&test.body_text, value)
+        {
+            case_arguments.push((name, value.to_string()));
         }
     }
     for parameter in owner.parameters.iter().skip(skip) {
@@ -544,18 +670,94 @@ fn bind_call_arguments(
             );
         }
     }
-    Some(bindings)
+    Some((bindings, case_arguments))
 }
 
-/// A comparison operand's value in one call row: its own literal value, or the
-/// literal bound to the owner parameter it names. Anything else is unresolved.
-fn resolve_operand(operand: &str, row: &CallRow) -> Option<String> {
-    literal_value(operand).or_else(|| row.bindings.get(operand).map(|b| b.value.clone()))
+/// One call row per parametrize case: each paired owner parameter binds the
+/// case's argvalue when it is a literal and stays unresolved otherwise.
+fn parametrize_case_row(
+    line: usize,
+    text: &str,
+    bindings: &BTreeMap<String, Binding>,
+    case_arguments: &[(String, String)],
+    case: &BTreeMap<String, String>,
+) -> CallRow {
+    let mut bindings = bindings.clone();
+    let mut shown = Vec::new();
+    for (parameter, argname) in case_arguments {
+        let Some(value) = case.get(argname) else {
+            continue;
+        };
+        shown.push(format!("{argname}={value}"));
+        if let Some(value) = literal_value(value) {
+            bindings.insert(
+                parameter.clone(),
+                Binding {
+                    value,
+                    from_default: false,
+                },
+            );
+        }
+    }
+    CallRow {
+        line,
+        text: format!("{text} [parametrize {}]", shown.join(", ")),
+        bindings,
+    }
+}
+
+/// The literal of an owner-module constant that a test-call argument names
+/// through the test's own import of it: `DISCOUNT_THRESHOLD` or an alias after
+/// `from pricing import DISCOUNT_THRESHOLD [as T]`, or `pricing.DISCOUNT_THRESHOLD`
+/// after `import pricing` / `from pkg import pricing`. The argument is then the
+/// boundary value by identity. A name the test did not import from the
+/// owner's module, or that the test or its module rebinds, stays unresolved.
+fn imported_constant_value(
+    owner: &PythonOwner,
+    constants: &[PythonModuleConstant],
+    test: &PythonTest,
+    argument: &str,
+) -> Option<String> {
+    let owner_modules = owner_module_paths(&owner.file);
+    let constant = constants.iter().find(|constant| {
+        test.imports.iter().any(|import| {
+            if test.constant_rebinding.rebinds(&import.alias) {
+                return false;
+            }
+            if import.alias == argument {
+                return import.imported == constant.name
+                    && import_source_module_matches_owner(import, owner, &test.file);
+            }
+            let module = if import.source_module.is_empty() {
+                import.imported.clone()
+            } else {
+                format!("{}.{}", import.source_module, import.imported)
+            };
+            argument
+                .strip_prefix(import.alias.as_str())
+                .and_then(|rest| rest.strip_prefix('.'))
+                .is_some_and(|name| name == constant.name)
+                && owner_modules.contains(&module)
+        })
+    })?;
+    Some(constant.value.clone())
+}
+
+/// A comparison operand's value in one call row: its own literal, the literal
+/// of the module constant it names, or the literal bound to the owner parameter
+/// it names. Anything else is unresolved.
+fn resolve_operand(
+    operand: &str,
+    row: &CallRow,
+    constants: &[PythonModuleConstant],
+) -> Option<String> {
+    static_operand(operand, constants)
+        .or_else(|| row.bindings.get(operand).map(|b| b.value.clone()))
 }
 
 /// The canonical text of a scalar Python literal (number with `_` separators
 /// removed, string, `True`/`False`/`None`), or None for anything else.
-fn literal_value(text: &str) -> Option<String> {
+pub(super) fn literal_value(text: &str) -> Option<String> {
     let text = text.trim();
     let without_separators: String = text.chars().filter(|ch| *ch != '_').collect();
     let numeric = !without_separators.is_empty()
@@ -621,4 +823,55 @@ fn canonical_decimal(text: &str) -> Option<String> {
     } else {
         magnitude
     })
+}
+
+/// Whether a parametrize argname may name something other than the case
+/// value where the owner call reads it, beyond the statement bindings the
+/// recorded cases already exclude (`parametrize.rs`, #4612 review): a
+/// `lambda` may shadow it with a parameter, and a comprehension's `for`
+/// target may name it. Textual and fail-closed: any live `lambda`, or any
+/// live `for ... in` whose target (across lines) mentions the name, counts.
+fn case_name_may_be_rebound(test_text: &str, name: &str) -> bool {
+    let Some(body) = test_body_after_header(test_text) else {
+        return true;
+    };
+    let live_words = |word: &str| -> Vec<usize> {
+        body.match_indices(word)
+            .map(|(idx, _)| idx)
+            .filter(|&idx| {
+                let end = idx + word.len();
+                !body[..idx]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|ch| ch == '.' || is_python_identifier_char(ch))
+                    && !body[end..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_python_identifier_char)
+                    && !python_text_hides_code(body, idx)
+            })
+            .collect()
+    };
+    if !live_words("lambda").is_empty() {
+        return true;
+    }
+    let mentions = live_words(name);
+    live_words("for").into_iter().any(|for_idx| {
+        let target_start = for_idx + "for".len();
+        let target_end = body[target_start..]
+            .find(" in ")
+            .map_or(body.len(), |offset| target_start + offset);
+        mentions
+            .iter()
+            .any(|&idx| idx > target_start && idx < target_end)
+    })
+}
+
+/// The test function's text after its `def ...(...):` header.
+fn test_body_after_header(text: &str) -> Option<&str> {
+    let def = text.find("def ")?;
+    let open = def + text[def..].find('(')?;
+    let close = matching_call_paren(text, open)?;
+    let colon = close + text[close..].find(':')?;
+    text.get(colon + 1..)
 }

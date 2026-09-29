@@ -4,12 +4,14 @@ use crate::domain::Finding;
 use std::collections::BTreeSet;
 
 /// RIPR-SPEC-0112 disclosure. Committed-history diffs (an explicit `--base`
-/// or the resolved default base) exclude staged and unstaged tracked edits;
-/// `--worktree` (RIPR-SPEC-0116) is the remedy that actually includes them.
-/// Committing works too, but staging alone does not change a `--base` diff.
-const UNANALYZED_WORKING_TREE_NOTE: &str = "\nNote: uncommitted changes to tracked source were not analyzed. \
-`ripr check` compares committed history only; add `--worktree` to include staged \
-and unstaged tracked edits (for example `ripr check --worktree`).\n";
+/// or the resolved default base) read every source and test file as committed
+/// at `HEAD`, so uncommitted edits and new files count neither in the diff nor
+/// as test evidence. `--worktree` (RIPR-SPEC-0116) is the remedy that includes
+/// them. Committing works too, but staging alone does not change a `--base`
+/// diff.
+const UNANALYZED_WORKING_TREE_NOTE: &str = "\nNote: uncommitted source and test changes were not analyzed; \
+`ripr check` reads each file as committed at HEAD; add `--worktree` to include staged and \
+unstaged edits (for example `ripr check --worktree`).\n";
 
 /// Render the bounded triage report in the default human-readable CLI format.
 pub fn render(output: &CheckOutput) -> String {
@@ -38,7 +40,7 @@ fn render_no_scope_note(output: &CheckOutput) -> String {
         )
     } else {
         "\nNote: no analysis scope was provided — `ripr check` is diff-first. \
-         Run `ripr check --base origin/main` to analyze your changes, or \
+         Run `ripr check --base BASE` with BASE set to an existing ref to analyze your changes, or \
          `ripr check --root . --format repo-exposure-md` for a full-repo scan. \
          An empty result here does NOT mean your changed behavior is covered.\n"
             .to_string()
@@ -83,7 +85,24 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     out
 }
 
+/// Full human form without the per-finding `Drill in:` block: the drill-in
+/// commands need the CLI's root and scope, which only
+/// [`render_full_with_config_and_navigation`] receives. Library callers of
+/// `ripr::render_check` keep this legacy all-findings form byte-for-byte
+/// (`human_full_preserves_legacy_all_findings_output`).
 pub(crate) fn render_full_with_config(output: &CheckOutput, config: &RiprConfig) -> String {
+    render_full_with_config_and_navigation(output, config, None)
+}
+
+/// Full human form. With `navigation`, every rendered finding carries its own
+/// `ripr explain` / `ripr context` drill-in pair, so rerunning with
+/// `--format human-full` as the digest suggests never loses the commands the
+/// digest printed (#4379).
+pub(crate) fn render_full_with_config_and_navigation(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    navigation: Option<&FindingNavigation>,
+) -> String {
     let mut out = render_header_summary(output);
 
     render_analysis_outcome_disclosure(&mut out, output);
@@ -126,6 +145,11 @@ pub(crate) fn render_full_with_config(output: &CheckOutput, config: &RiprConfig)
             continue;
         }
         out.push_str(&render_finding_with_config(finding, config));
+        if let Some(navigation) = navigation {
+            out.push_str("Drill in:\n");
+            out.push_str(&format!("  {}\n", navigation.explain_command(&finding.id)));
+            out.push_str(&format!("  {}\n", navigation.context_command(&finding.id)));
+        }
         out.push('\n');
     }
     render_all_no_path_disclosure(&mut out, output);
@@ -169,14 +193,15 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput) {
     let Some(outcome) = &output.analysis_outcome else {
         return;
     };
-    let kind = outcome.kind.as_str();
     out.push_str(&format!(
-        "Analysis outcome: {kind} ({}).\n",
+        "Analysis outcome: {} ({}; {}).\n",
+        outcome.kind.plain_label(),
         if outcome.kind.is_complete() {
             "analysis complete"
         } else {
             "analysis incomplete"
-        }
+        },
+        outcome.kind.as_str()
     ));
     if outcome.limitations.is_empty() {
         out.push_str(&format!(
@@ -189,24 +214,42 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput) {
         ));
         return;
     }
-    out.push_str(
-        "  Zero findings is not a clean result because the analyzed scope is incomplete.\n",
-    );
-    for limitation in &outcome.limitations {
+    // The "zero findings" hedge only makes sense when there are zero findings;
+    // a partial run with findings gets the scope caveat instead.
+    if output.findings.is_empty() {
+        out.push_str(
+            "  Zero findings is not a clean result because the analyzed scope is incomplete.\n",
+        );
+    } else {
         out.push_str(&format!(
-            "  Limitation: {} at {}",
+            "  The {} finding(s) below cover only the analyzed scope; behavior outside it has no finding.\n",
+            output.findings.len()
+        ));
+    }
+    for limitation in &outcome.limitations {
+        // Plain words lead; the schema tokens follow in parentheses so the
+        // line still greps against JSON and docs (#4323).
+        out.push_str(&format!(
+            "  Limitation: {} during {} ({} at {})",
+            limitation.kind.plain_label(),
+            limitation.producer_stage.plain_label(),
             limitation.kind.as_str(),
             limitation.producer_stage.as_str()
         ));
         if let Some(path) = &limitation.path {
-            out.push_str(&format!(" ({path})"));
+            out.push_str(&format!("; file: {path}"));
         }
         if let Some(count) = limitation.affected_items {
             out.push_str(&format!("; affected items: {count}"));
         }
+        let recovery = limitation.recovery.kind;
+        let recovery_label = if recovery.plain_label() == recovery.as_str() {
+            recovery.as_str().to_string()
+        } else {
+            format!("{} ({})", recovery.plain_label(), recovery.as_str())
+        };
         out.push_str(&format!(
-            "; recovery: {} — {}.\n",
-            limitation.recovery.kind.as_str(),
+            "; recovery: {recovery_label} — {}.\n",
             // The recovery detail is often a full sentence; the line supplies
             // its own terminal period.
             limitation.recovery.detail.trim_end_matches('.')
@@ -227,8 +270,11 @@ fn render_language_file_breakdown(out: &mut String, output: &CheckOutput) {
     if !has_non_rust {
         return;
     }
+    // Zero-count languages add nothing and read as noise ("rust: 0" on a
+    // pure-Python change).
     let parts = counts
         .iter()
+        .filter(|count| count.files > 0)
         .map(|count| format!("{}: {}", count.language, count.files))
         .collect::<Vec<_>>()
         .join(", ");
@@ -271,26 +317,51 @@ fn render_suppression_policy_block(out: &mut String, output: &CheckOutput) {
 
 /// Emit the `limited_partial_scope` run-state disclosure (RIPR-PROP-0019,
 /// #1999). The partial result must never be presented as complete: the block
-/// names the exact selected partition, the lower-bound uninspected scope, the
-/// stop reason, gate ineligibility, and the only continuation route (raising
-/// the explicit budget overrides).
+/// names the budget that stopped the run with its effective size, the
+/// findings produced before the stop, the exact selected partition, the
+/// lower-bound uninspected scope (never a bare "at least 0"), the stop
+/// reason, gate ineligibility, and the only continuation route (raising the
+/// named budget override).
 fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
     let Some(scope) = &output.partial_scope else {
         return;
     };
+    let budget_env = scope.stop_reason.budget_env();
+    let budget = scope.stopping_budget();
+    let stopped_at = match scope.stop_reason {
+        crate::analysis::PartialDiffStopReason::FileBudget => {
+            format!("the file budget of {budget} changed file(s) ({budget_env}={budget})")
+        }
+        crate::analysis::PartialDiffStopReason::LineBudget => {
+            format!("the line budget of {budget} changed line(s) ({budget_env}={budget})")
+        }
+        crate::analysis::PartialDiffStopReason::LineBudgetExceededOnFirstFile => format!(
+            "the line budget of {budget} changed line(s) ({budget_env}={budget}); \
+             the first selected file alone exceeded it and was analyzed whole"
+        ),
+    };
     out.push_str(&format!(
-        "Partial scope: run state {} — analyzed {} changed file(s) ({} changed line(s)) of the diff; \
-         stop reason: {}.\n",
+        "Partial scope: run state {} — analysis stopped at {stopped_at}; \
+         analyzed {} changed file(s) ({} changed line(s)) of the diff; stop reason: {}.\n",
         scope.run_status,
         scope.selected_files.len(),
         scope.selected_changed_lines,
         scope.stop_reason.as_str(),
     ));
-    out.push_str(&format!(
-        "  NOT inspected: at least {} changed file(s) and at least {} changed line(s); \
-         the uninspected scope may contain additional findings.\n",
-        scope.uninspected_files_lower_bound, scope.uninspected_changed_lines_lower_bound,
-    ));
+    let found = output.findings.len();
+    if scope.has_known_uninspected_scope() {
+        out.push_str(&format!(
+            "  Found {found} finding(s) before stopping. NOT inspected: at least {} changed file(s) \
+             and at least {} changed line(s); more findings may exist beyond the budget.\n",
+            scope.uninspected_files_lower_bound, scope.uninspected_changed_lines_lower_bound,
+        ));
+    } else {
+        out.push_str(&format!(
+            "  Found {found} finding(s) before stopping. Every changed file ripr's language \
+             adapters read was selected, but the budget was exceeded, so this result stays \
+             partial and is not a complete-scope claim.\n",
+        ));
+    }
     for file in &scope.selected_files {
         // Paths come from the diff text: a crafted filename with control
         // bytes could forge report lines or emit terminal escape sequences.
@@ -306,9 +377,14 @@ fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
          (gate_eligibility: {}).\n",
         crate::analysis::PartialDiffScope::GATE_ELIGIBILITY,
     ));
+    // RIPR-PROP-0019 decision 6: raising the explicit overrides is the only
+    // continuation route; the budget has no off switch (zero is rejected).
+    // The widen wording is shared with JSON, LSP and the analysis outcome.
     out.push_str(&format!(
-        "  {}\n  partition_identity: {}\n\n",
-        crate::analysis::PartialDiffScope::CONTINUATION_DISCLOSURE,
+        "  To widen the analyzed partition, {}. Overrides above the analysis-cost limit are \
+         clamped, the budget cannot be switched off, and named partition continuation is not \
+         available.\n  partition_identity: {}\n\n",
+        scope.widen_instruction(),
         scope.partition_identity,
     ));
 }
@@ -389,9 +465,28 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
             all_no_path_count, related_tests_total
         )
     };
+    // Language bindings are tested from the other language, so when every
+    // finding names the cross-language limitation the same-language repair
+    // advice would contradict each finding's own next step. ripr has no
+    // evidence that such tests exist yet, so the advice covers adding them.
+    let cross_language_count = output
+        .findings
+        .iter()
+        .filter(|finding| {
+            finding.static_limit_kind
+                == Some(crate::domain::StaticLimitKind::CrossLanguageOracleVisibilityUnresolved)
+        })
+        .count();
+    let repair = if cross_language_count == output.findings.len() {
+        "add or check tests in the bindings' other language that observe the changed behavior"
+    } else if cross_language_count > 0 {
+        "add co-located tests that observe the changed behavior, or, for a language binding, tests in the binding's other language"
+    } else {
+        "add co-located tests that observe the changed behavior"
+    };
     let note = format!(
-        "Note: ripr found no static test path for any of the {} changed expression(s) in this diff. {} This is not a coverage assessment. A test may already exercise these changes through macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if none does, add co-located tests that observe the changed behavior.",
-        all_no_path_count, scope_summary
+        "Note: ripr found no static test path for any of the {} changed expression(s) in this diff. {} This is not a coverage assessment. A test may already exercise these changes through macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if none does, {}.",
+        all_no_path_count, scope_summary, repair
     );
     out.push('\n');
     out.push_str(&wrap_human_prose(&note, "", "  "));
@@ -454,15 +549,21 @@ pub(super) fn wrap_human_prose(
 ///   the adapter is a single edit.
 fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
     for advisory in &output.preview_language_advisories {
-        let language = language_display_name(&advisory.language);
+        let (language, file_language) = advisory_language_names(advisory);
         let file_label = if advisory.file_count == 1 {
-            format!("{language} file")
+            format!("{file_language} file")
         } else {
-            format!("{language} files")
+            format!("{file_language} files")
         };
         if advisory.analyzed(&output.language_runs) {
+            // The empty-result caveat only applies when there is no finding.
+            let caveat = if output.findings.is_empty() {
+                "An empty result here is NOT a clean Rust-grade result."
+            } else {
+                "Treat its findings as advisory, not Rust-grade."
+            };
             out.push_str(&format!(
-                "\nNote: {} {} analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.\n",
+                "\nNote: {} {} analyzed under preview support — preview evidence is advisory and may be incomplete. {caveat}\n",
                 advisory.file_count, file_label,
             ));
         } else if let Some(recovery) = advisory.unavailable_adapter_recovery() {
@@ -479,14 +580,22 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
                 "\nNote: this diff contains {} {}. The {} adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.\n\nTo enable, add to ripr.toml:\n\n[languages]\nenabled = [\"rust\", \"{language_lowercase}\"]\n",
                 advisory.file_count, file_label, language,
             ));
+            if advisory.language == "typescript" && advisory.javascript_file_count > 0 {
+                out.push_str("\n(\"typescript\" enables the adapter for JavaScript files too.)\n");
+            }
             if let Some(prerequisite) = crate::domain::LanguageId::from_wire(&advisory.language)
                 .and_then(crate::domain::LanguageId::enable_prerequisite)
             {
                 out.push_str(&format!("\n{prerequisite}.\n"));
             }
         } else if let Some(run) = advisory.non_success_run(&output.language_runs) {
+            let verb = if advisory.file_count == 1 {
+                "was"
+            } else {
+                "were"
+            };
             out.push_str(&format!(
-                "\nNote: the {language} preview adapter did not complete successfully ({}), so {} {} were not analyzed — this is NOT a clean Rust-grade result.\n",
+                "\nNote: the {language} preview adapter did not complete successfully ({}), so {} {} {verb} not analyzed — this is NOT a clean Rust-grade result.\n",
                 run.status.as_str(), advisory.file_count, file_label,
             ));
         } else {
@@ -523,6 +632,25 @@ fn render_language_runs(out: &mut String, output: &CheckOutput) {
                 run.status.as_str(),
             )),
         }
+    }
+}
+
+/// Prose names for a preview advisory: the adapter it ran under and the kind
+/// of files it counted. The TypeScript adapter also analyzes JavaScript, so a
+/// JavaScript-only diff is "JavaScript files" under the "TypeScript/JavaScript"
+/// adapter, and a mixed one is "TypeScript/JavaScript files" (#4555).
+fn advisory_language_names(
+    advisory: &crate::analysis::PreviewLanguageAdvisory,
+) -> (String, String) {
+    let language = language_display_name(&advisory.language);
+    if advisory.language != "typescript" || advisory.javascript_file_count == 0 {
+        return (language.clone(), language);
+    }
+    let family = "TypeScript/JavaScript".to_string();
+    if advisory.javascript_file_count >= advisory.file_count {
+        (family, "JavaScript".to_string())
+    } else {
+        (family.clone(), family)
     }
 }
 
@@ -619,6 +747,68 @@ mod tests {
         assert!(!rendered.contains("Next:"));
     }
 
+    fn partial_outcome_output(findings: Vec<Finding>) -> Result<CheckOutput, String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+            AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
+        };
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::CombinedHunkUnsupported,
+            AnalysisStage::DiffParse,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::UseTwoWayDiff,
+                "Re-run against a two-way diff of the merge result.",
+            )?,
+        );
+        let outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::PartialWithLimitations,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 2,
+                finding_count: u64::try_from(findings.len()).unwrap_or(u64::MAX),
+                ..AnalysisOutcomeCounts::default()
+            },
+            vec![limitation],
+        )?;
+        Ok(CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary::default(),
+            findings,
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+            analysis_outcome: Some(outcome),
+            partial_scope: None,
+        })
+    }
+
+    #[test]
+    fn partial_outcome_with_findings_does_not_claim_zero_findings() -> Result<(), String> {
+        let rendered = render(&partial_outcome_output(vec![sample_finding()])?);
+        assert!(rendered.contains("analysis incomplete"));
+        assert!(
+            !rendered.contains("Zero findings is not a clean result"),
+            "{rendered}"
+        );
+        assert!(rendered.contains(
+            "  The 1 finding(s) below cover only the analyzed scope; behavior outside it has no finding.\n"
+        ));
+
+        let empty = render(&partial_outcome_output(Vec::new())?);
+        assert!(empty.contains("Zero findings is not a clean result"));
+        assert!(!empty.contains("finding(s) below cover only"));
+        Ok(())
+    }
+
     #[test]
     fn bounded_human_output_suggests_explain_and_context_for_top_finding() {
         let finding = sample_finding();
@@ -651,6 +841,93 @@ mod tests {
         assert!(rendered.contains("Next: drill into the top finding:"));
         assert!(rendered.contains(&format!("  ripr explain {finding_id}\n")));
         assert!(rendered.contains(&format!("  ripr context --at {finding_id}\n")));
+    }
+
+    /// A Python preview finding; `carded` controls whether the Python repair
+    /// card authority (`python_repair_card`) can build a card for it.
+    fn python_preview_finding(line: usize, carded: bool) -> Finding {
+        let mut finding = sample_finding();
+        finding.id = format!("probe:pricing___init__.py:python_preview:{line}");
+        finding.probe.location = SourceLocation::new("pricing/__init__.py", line, 5);
+        finding.language = Some(LanguageId::Python);
+        finding.language_status = Some(LanguageStatus::Preview);
+        finding.confidence = 0.4;
+        finding.canonical_gap = Some(FindingCanonicalGap {
+            id: format!(
+                "gap:python:pricing/__init__.py:owner{line}:predicate_boundary:predicate:x"
+            ),
+            language: "python".to_string(),
+            file: "pricing/__init__.py".to_string(),
+            owner: format!("owner{line}"),
+            behavior_kind: "predicate_boundary".to_string(),
+            probe_kind: "predicate".to_string(),
+            normalized_discriminator: "x".to_string(),
+        });
+        if carded {
+            finding.evidence = vec![
+                "suggested_test_file: tests/test_pricing.py".to_string(),
+                "suggested_test_name: test_small_order_pays_shipping".to_string(),
+                "suggested_verify_command: pytest tests/test_pricing.py::test_small_order_pays_shipping".to_string(),
+                "suggested_verify_command_confidence: high".to_string(),
+            ];
+        } else {
+            finding.activation.missing_discriminators.clear();
+        }
+        finding
+    }
+
+    /// rc rehearsal (py-pricing): Start here picked the card-less constant
+    /// finding at line 5 over the carded literal finding at line 11, so check
+    /// said "no ripr command routes this" while pilot had a card. A Python
+    /// finding with a repair card now outranks one without; classification
+    /// stays the same.
+    #[test]
+    fn start_here_prefers_a_python_finding_with_a_repair_card() {
+        let uncarded = python_preview_finding(5, false);
+        let carded = python_preview_finding(11, true);
+        assert!(crate::output::python_repair_card::python_repair_card(&uncarded).is_none());
+        assert!(crate::output::python_repair_card::python_repair_card(&carded).is_some());
+        for findings in [
+            vec![uncarded.clone(), carded.clone()],
+            vec![carded.clone(), uncarded.clone()],
+        ] {
+            let output = CheckOutput {
+                harness_projections: Vec::new(),
+                schema_version: "0.1".to_string(),
+                tool: "ripr".to_string(),
+                mode: Mode::Draft,
+                root: PathBuf::from("repo"),
+                base: None,
+                summary: Summary {
+                    probes: 2,
+                    findings: 2,
+                    weakly_exposed: 2,
+                    ..Summary::default()
+                },
+                findings,
+                preview_language_advisories: Vec::new(),
+                language_runs: Vec::new(),
+                no_scope_provided: false,
+                unanalyzed_working_tree: false,
+                suppression: None,
+                analysis_outcome: None,
+                partial_scope: None,
+            };
+            let rendered = render(&output);
+            assert!(
+                rendered.contains("State: preview language, advisory only (preview_limited)"),
+                "{rendered}"
+            );
+            assert!(
+                rendered.contains("  File: pricing/__init__.py:11\n"),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("has no repair card"), "{rendered}");
+            assert!(
+                rendered.contains("apply the next step below to the suggested test"),
+                "{rendered}"
+            );
+        }
     }
 
     /// #2567: nothing was omitted, so the render must not advertise a hidden
@@ -726,8 +1003,160 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains("\nHidden:\n"));
-        assert!(rendered.contains("2 lower-priority finding(s) omitted"));
+        // #4395(b): unlabeled Rust-only remainder stays the count line with
+        // no invented language or preview identity.
+        assert!(
+            rendered.contains("  2 lower-priority finding(s) omitted from default human output.\n")
+        );
+        assert!(!rendered.contains("preview"));
         assert!(!rendered.contains("More:"));
+    }
+
+    /// #4395(b): mixed-repo remainder must name the omitted preview-language
+    /// identity. Ranking still selects the Rust gap; the Hidden line is how
+    /// a reader learns the omitted finding was Python preview.
+    #[test]
+    fn hidden_line_names_omitted_preview_language_identity() {
+        let mut rust = sample_finding();
+        rust.id = "rust-gap".to_string();
+        rust.language = Some(LanguageId::Rust);
+        rust.language_status = Some(LanguageStatus::Stable);
+        rust.probe.location = SourceLocation::new("src/lib.rs", 4, 1);
+
+        let mut python = sample_finding();
+        python.id = "python-preview-gap".to_string();
+        python.language = Some(LanguageId::Python);
+        python.language_status = Some(LanguageStatus::Preview);
+        python.probe.location = SourceLocation::new("src/margin.py", 2, 1);
+        python.recommended_next_step = Some("Add a Python preview assertion.".to_string());
+
+        let rendered = render(&bounded_output_with_findings(vec![rust, python]));
+
+        assert!(rendered.contains("State: a test gap to inspect or repair (top_gap)"));
+        assert!(rendered.contains("File: src/lib.rs:4"));
+        assert!(!rendered.contains("File: src/margin.py:2"));
+        assert!(
+            rendered.contains(
+                "  1 lower-priority finding(s) omitted from default human output (Python preview: 1).\n"
+            ),
+            "Hidden line must name omitted Python preview identity; got:\n{rendered}"
+        );
+    }
+
+    /// #4395(b): labeled Rust-only remainder must stay byte-identical to the
+    /// count line. Adding identity for every omitted Rust finding would churn
+    /// the default human surface without answering the mixed-repo question.
+    #[test]
+    fn hidden_line_stays_count_only_when_omitted_findings_are_labeled_rust() {
+        let mut findings = Vec::new();
+        for index in 0..3 {
+            let mut finding = sample_finding();
+            finding.id = format!("rust-{index}");
+            finding.language = Some(LanguageId::Rust);
+            finding.language_status = Some(LanguageStatus::Stable);
+            finding.probe.location = SourceLocation::new(format!("src/f{index}.rs"), 1, 1);
+            findings.push(finding);
+        }
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        assert!(
+            rendered.contains("  2 lower-priority finding(s) omitted from default human output.\n")
+        );
+        assert!(
+            !rendered.contains("Rust:"),
+            "Rust-only Hidden line must not grow a language breakdown; got:\n{rendered}"
+        );
+        assert!(!rendered.contains("preview"));
+    }
+
+    /// #4395(b): when every omitted finding is preview, name that language
+    /// even if Start here is already `preview_limited`.
+    #[test]
+    fn hidden_line_names_preview_identity_when_all_omitted_findings_are_preview() {
+        let mut findings = Vec::new();
+        for index in 0..3 {
+            let mut finding = sample_finding();
+            finding.id = format!("python-{index}");
+            finding.language = Some(LanguageId::Python);
+            finding.language_status = Some(LanguageStatus::Preview);
+            finding.probe.location = SourceLocation::new(format!("src/f{index}.py"), 1, 1);
+            findings.push(finding);
+        }
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
+        assert!(
+            rendered.contains(
+                "  2 lower-priority finding(s) omitted from default human output (Python preview: 2).\n"
+            ),
+            "preview-only remainder must still name Python preview identity; got:\n{rendered}"
+        );
+    }
+
+    /// #4395(b): preview status without a language id must not invent a
+    /// language name. The count line still warns that omitted findings may
+    /// include preview-language evidence.
+    #[test]
+    fn hidden_line_hedges_unlabeled_preview_omitted_findings() {
+        let mut selected = sample_finding();
+        selected.id = "rust-selected".to_string();
+        selected.language = Some(LanguageId::Rust);
+        selected.probe.location = SourceLocation::new("src/lib.rs", 1, 1);
+
+        let mut omitted = sample_finding();
+        omitted.id = "unlabeled-preview".to_string();
+        omitted.language = None;
+        omitted.language_status = Some(LanguageStatus::Preview);
+        omitted.probe.location = SourceLocation::new("src/unknown.py", 1, 1);
+
+        let rendered = render(&bounded_output_with_findings(vec![selected, omitted]));
+
+        assert!(
+            rendered.contains(
+                "  1 lower-priority finding(s) omitted from default human output (preview-language: 1).\n"
+            ),
+            "unlabeled preview remainder must not invent a language; got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("Python preview"),
+            "unlabeled preview must not be credited as Python; got:\n{rendered}"
+        );
+    }
+
+    /// #4395(b): two preview languages in the omitted set are counted
+    /// separately. Token coincidence on one language name must not hide the
+    /// other.
+    #[test]
+    fn hidden_line_counts_each_omitted_preview_language() {
+        let mut rust = sample_finding();
+        rust.id = "rust-gap".to_string();
+        rust.language = Some(LanguageId::Rust);
+        rust.probe.location = SourceLocation::new("src/lib.rs", 1, 1);
+
+        let mut python = sample_finding();
+        python.id = "python-gap".to_string();
+        python.language = Some(LanguageId::Python);
+        python.language_status = Some(LanguageStatus::Preview);
+        python.probe.location = SourceLocation::new("src/a.py", 1, 1);
+
+        let mut typescript = sample_finding();
+        typescript.id = "ts-gap".to_string();
+        typescript.language = Some(LanguageId::TypeScript);
+        typescript.language_status = Some(LanguageStatus::Preview);
+        typescript.probe.location = SourceLocation::new("src/a.ts", 1, 1);
+
+        let rendered = render(&bounded_output_with_findings(vec![
+            rust, python, typescript,
+        ]));
+
+        assert!(
+            rendered.contains(
+                "  2 lower-priority finding(s) omitted from default human output (TypeScript preview: 1, Python preview: 1).\n"
+            ),
+            "each omitted preview language must appear with its own count; got:\n{rendered}"
+        );
     }
 
     /// #2103: a Rust-only run emits no per-language breakdown line, so
@@ -808,6 +1237,15 @@ mod tests {
             rendered.contains("Changed file(s) by language: python: 5, rust: 1."),
             "expected per-language breakdown line; got:\n{rendered}"
         );
+
+        let mut python_only = output;
+        python_only.summary.changed_rust_files = 0;
+        python_only.summary.changed_files_by_language[1].files = 0;
+        let rendered = render(&python_only);
+        assert!(
+            rendered.contains("Changed file(s) by language: python: 5.\n"),
+            "zero-count languages are omitted; got:\n{rendered}"
+        );
     }
 
     #[test]
@@ -846,7 +1284,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains("Start here:"));
-        assert!(rendered.contains("State: top_gap"));
+        assert!(rendered.contains("State: a test gap to inspect or repair (top_gap)"));
         assert!(rendered.contains("599 lower-priority finding(s) omitted"));
         assert!(rendered.contains("--format human-full"));
         assert!(rendered.lines().count() < 150);
@@ -895,9 +1333,9 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: top_gap"));
+        assert!(rendered.contains("State: a test gap to inspect or repair (top_gap)"));
         assert!(rendered.contains("File: src/actionable.rs:9"));
-        assert!(rendered.contains("Static exposure: reachable_unrevealed"));
+        assert!(rendered.contains("Static exposure: unrevealed (reachable_unrevealed, "));
         assert!(!rendered.contains("File: src/exposed.rs:1"));
     }
 
@@ -924,7 +1362,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains("Start here:"));
-        assert!(rendered.contains("State: missing_scope"));
+        assert!(rendered.contains("State: nothing in scope (missing_scope)"));
         assert!(rendered.contains("provide an analysis scope"));
         assert!(rendered.contains("No diff-derived static exposure probes found."));
     }
@@ -963,9 +1401,9 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: preview_limited"));
+        assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
         assert!(rendered.contains("preview-language evidence is advisory"));
-        assert!(!rendered.contains("State: top_gap"));
+        assert!(!rendered.contains("State: a test gap to inspect or repair (top_gap)"));
     }
 
     // #2273: an `exposed` finding can carry an observation rationale (not a
@@ -1019,7 +1457,7 @@ mod tests {
             &crate::config::RiprConfig::default(),
         );
         if !digest.contains(
-            "Why propagation_unknown: the path from the changed behavior to an observable sink is not statically clear",
+            "Why unknown: the path from the changed behavior to an observable sink is not statically clear",
         ) {
             return Err(format!("honest why-hint missing:
 {digest}"));
@@ -1165,21 +1603,149 @@ mod tests {
         assert!(!digest.contains("  Language:"), "digest:\n{digest}");
     }
 
-    // #2273: the preview_limited safe next action distinguishes a
-    // complete-but-advisory repair packet (shared validator authority) from
-    // one with missing fields.
+    // #2273 / #4216: the preview_limited safe next action distinguishes a
+    // complete-but-advisory repair packet (shared validator authority) from a
+    // packet the validator kept closed. A closed packet gets a terminal line
+    // that quotes the validator's `why_not_actionable` verbatim and names the
+    // manual step, never "complete the missing repair-packet fields", which
+    // the operator cannot supply.
     #[test]
-    fn preview_limited_safe_action_keeps_missing_fields_line_for_incomplete_packet() {
+    fn preview_limited_safe_action_names_terminal_manual_step_for_closed_packet()
+    -> Result<(), String> {
         let finding = typescript_preview_finding(false);
+        let why = crate::output::preview_actionability::preview_actionability_for(&finding)
+            .filter(|actionability| !actionability.repair_packet_ready)
+            .ok_or_else(|| "fixture must project a closed packet".to_string())?
+            .why_not_actionable;
         let output = single_finding_output(finding);
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: preview_limited"));
-        assert!(rendered.contains(
-            "  Safe next action: preview-language evidence is advisory; complete the missing repair-packet fields before acting.\n"
-        ));
+        assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
+        let expected = format!(
+            "  Safe next action: this TypeScript preview finding's repair packet is not ready ({}); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`.\n",
+            super::sections::one_line(&why)
+        );
+        assert!(rendered.contains(&expected), "{rendered}");
+        assert!(!rendered.contains("complete the missing repair-packet fields"));
         assert!(!rendered.contains("the repair packet is complete but remains advisory"));
+        Ok(())
+    }
+
+    // #4216 review: an unknown-class closed packet (for example a Bun-bridge
+    // cross-language visibility limit: StaticUnknown, no static_limit_kind,
+    // missing fields present) is not a known weak test, so the manual step is
+    // the Python static-limit check, not a test edit. A long validator reason
+    // is bounded; the routing and manual-step parts stay whole.
+    #[test]
+    fn preview_limited_closed_packet_unknown_class_asks_for_manual_check() {
+        for class in [
+            ExposureClass::StaticUnknown,
+            ExposureClass::InfectionUnknown,
+            ExposureClass::PropagationUnknown,
+        ] {
+            let mut finding = typescript_preview_finding(false);
+            finding.class = class.clone();
+            finding
+                .evidence
+                .retain(|line| !line.starts_with("why_not_actionable: "));
+            finding.evidence.push(format!(
+                "why_not_actionable: Bun bridge visibility limit {}",
+                "x".repeat(400)
+            ));
+            let output = single_finding_output(finding);
+
+            let rendered = render(&output);
+
+            let line = rendered
+                .lines()
+                .find(|line| line.starts_with("  Safe next action:"))
+                .unwrap_or_default();
+            assert!(
+                line.ends_with(
+                    "…); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`."
+                ),
+                "{class:?}: {line}"
+            );
+            assert!(!line.contains("add or strengthen a test"), "{line}");
+            assert!(
+                !line.contains(&"x".repeat(200)),
+                "reason must be bounded: {line}"
+            );
+        }
+    }
+
+    // #4216: a long generic preamble must not crowd out the validator's
+    // specific cause under the line budget; the cause is what the user acts on.
+    #[test]
+    fn preview_limited_closed_packet_shows_validator_cause_over_preamble() {
+        let mut finding = typescript_preview_finding(false);
+        finding
+            .evidence
+            .retain(|line| !line.starts_with("why_not_actionable: "));
+        finding.evidence.push(format!(
+            "why_not_actionable: generic preamble {}; validator: boundary constant `DISCOUNT_THRESHOLD` is unresolved",
+            "p".repeat(300)
+        ));
+        let output = single_finding_output(finding);
+
+        let rendered = render(&output);
+
+        let line = rendered
+            .lines()
+            .find(|line| line.starts_with("  Safe next action:"))
+            .unwrap_or_default();
+        assert!(
+            line.contains("(boundary constant `DISCOUNT_THRESHOLD` is unresolved)"),
+            "{line}"
+        );
+        assert!(!line.contains("generic preamble"), "{line}");
+
+        // The fixed eligibility phrase after `validator: ` is dropped too, so
+        // the remedy survives the line budget.
+        let mut finding = typescript_preview_finding(false);
+        finding
+            .evidence
+            .retain(|line| !line.starts_with("why_not_actionable: "));
+        finding.evidence.push(
+            "why_not_actionable: generic preamble; validator: is not agent-packet eligible: observed call input `login('alice')` does not reach the missing discriminator `user.length == 3`; derive an input that hits the boundary"
+                .to_string(),
+        );
+        let rendered = render(&single_finding_output(finding));
+        let line = rendered
+            .lines()
+            .find(|line| line.starts_with("  Safe next action:"))
+            .unwrap_or_default();
+        assert!(
+            line.contains("(observed call input `login('alice')` does not reach"),
+            "{line}"
+        );
+        assert!(
+            line.contains("derive an input that hits the boundary"),
+            "{line}"
+        );
+        assert!(!line.contains("is not agent-packet eligible"), "{line}");
+    }
+
+    // #4216: an exposed TypeScript preview finding has nothing to repair; its
+    // safe action matches the Python exposed wording, not the packet lines.
+    #[test]
+    fn preview_limited_safe_action_says_no_repair_for_exposed_typescript() {
+        let mut finding = typescript_preview_finding(false);
+        finding.class = ExposureClass::Exposed;
+        let output = single_finding_output(finding);
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("State: preview language, advisory only (preview_limited)"),
+            "{rendered}"
+        );
+        assert!(rendered.contains(
+            "  Safe next action: preview-language evidence is advisory; a related test appears to observe this change, so there is no repair to make; verify independently before relying on it.\n"
+        ), "{rendered}");
+        assert!(!rendered.contains("complete the missing repair-packet fields"));
+        assert!(!rendered.contains("repair packet is not ready"));
     }
 
     #[test]
@@ -1189,10 +1755,16 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: preview_limited"));
-        assert!(rendered.contains(
-            "  Safe next action: preview-language evidence is advisory; the repair packet is complete but remains advisory, so verify independently before acting.\n"
-        ));
+        assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
+        // The complete packet names its own action, test file, and verify
+        // command instead of a bare "verify independently" with no route.
+        assert!(
+            rendered.contains(
+                "  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/discount.test.ts`, add a focused assertion for the missing discriminator `amount == threshold`, shaped like `expect(result).toBe(expected)`; run `jest tests/discount.test.ts`, then rerun `ripr check`.\n"
+            ),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("verify independently before acting"));
         assert!(!rendered.contains("complete the missing repair-packet fields before acting"));
     }
 
@@ -1211,7 +1783,7 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: preview_limited"));
+        assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
         assert!(rendered.contains(
             "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation, not by missing fields; resolve the limitation and rerun preview evidence before acting.\n"
         ));
@@ -1220,11 +1792,11 @@ mod tests {
     }
 
     // Guard against over-crediting the limitation arm: the same blocked
-    // packet WITHOUT a structured static-limit kind keeps the generic
-    // missing-fields line (e.g. a strong-oracle preview finding whose packet
-    // simply lacks projected contract fields).
+    // packet WITHOUT a structured static-limit kind is not framed as a named
+    // limitation; it gets the terminal closed-packet line (e.g. a strong-oracle
+    // preview finding whose packet simply lacks projected contract fields).
     #[test]
-    fn preview_limited_safe_action_keeps_missing_fields_line_without_static_limit_kind() {
+    fn preview_limited_safe_action_uses_closed_packet_line_without_static_limit_kind() {
         let mut finding = typescript_preview_finding(false);
         finding
             .evidence
@@ -1233,11 +1805,39 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: preview_limited"));
-        assert!(rendered.contains(
-            "  Safe next action: preview-language evidence is advisory; complete the missing repair-packet fields before acting.\n"
-        ));
+        assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
+        assert!(
+            rendered.contains(
+                "  Safe next action: this TypeScript preview finding's repair packet is not ready ("
+            ),
+            "{rendered}"
+        );
         assert!(!rendered.contains("blocked by the named static limitation"));
+        assert!(!rendered.contains("complete the missing repair-packet fields"));
+    }
+
+    // #4216 row 1: a Python preview finding that no test reaches has no
+    // repair card and no test to strengthen; the safe action says so and
+    // names the manual step, never "complete the missing fields".
+    #[test]
+    fn preview_limited_python_no_static_path_names_untested_code() {
+        let mut finding = unknown_finding();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.language = Some(LanguageId::Python);
+        finding.language_status = Some(LanguageStatus::Preview);
+        finding.probe.location = SourceLocation::new("pricing/__init__.py", 11, 1);
+        let output = single_finding_output(finding);
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("State: preview language, advisory only (preview_limited)"),
+            "{rendered}"
+        );
+        assert!(rendered.contains(
+            "  Safe next action: this Python preview finding has no repair card (no Python test reaches this code), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add a test that calls it by hand, then rerun `ripr check`.\n"
+        ), "{rendered}");
+        assert!(!rendered.contains("complete the missing repair-packet fields"));
     }
 
     fn single_finding_output(finding: Finding) -> CheckOutput {
@@ -1363,9 +1963,15 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: top_gap"));
+        assert!(rendered.contains("State: a test gap to inspect or repair (top_gap)"));
         assert!(rendered.contains("File: src/stable.rs:10"));
         assert!(!rendered.contains("File: src/preview.ts:1"));
+        assert!(
+            rendered.contains(
+                "  1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).\n"
+            ),
+            "stable-over-preview ranking still omits the preview finding; Hidden must name it; got:\n{rendered}"
+        );
     }
 
     #[test]
@@ -1405,6 +2011,24 @@ mod tests {
         assert_eq!(rendered.matches("Changed\n").count(), 2);
         assert_eq!(rendered.matches("Probe\n").count(), 2);
         assert!(!rendered.contains("lower-priority finding(s) omitted"));
+        assert!(!rendered.contains("Drill in:"));
+
+        // #4379: the digest sends readers to human-full, so human-full must
+        // carry every finding's drill-in pair, not lose them.
+        let navigation = crate::app::FindingNavigation::legacy();
+        let navigated = super::render_full_with_config_and_navigation(
+            &output,
+            &crate::config::RiprConfig::default(),
+            Some(&navigation),
+        );
+        for id in ["first", "second"] {
+            assert!(
+                navigated.contains(&format!(
+                    "Drill in:\n  ripr explain {id}\n  ripr context --at {id}\n"
+                )),
+                "human-full must carry the drill-in pair for {id}: {navigated}"
+            );
+        }
     }
 
     #[test]
@@ -1493,7 +2117,7 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: no_actionable_gap"));
+        assert!(rendered.contains("State: no gap selected for repair (no_actionable_gap)"));
         assert!(rendered.contains("all findings are suppressed by policy"));
         assert!(!rendered.contains("inspect the named static limitation"));
         assert!(!rendered.contains("Next: drill into the top finding:"));
@@ -1527,6 +2151,7 @@ mod tests {
                 uninspected_files_lower_bound: 3,
                 uninspected_changed_lines_lower_bound: 180,
                 stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
+                next_file_changed_lines: Some(60),
                 partition_identity: "c".repeat(64),
             }),
         };
@@ -1566,6 +2191,124 @@ mod tests {
         Ok(())
     }
 
+    /// A partial-scope report whose scope record has the shape the real
+    /// selector produces for `stop_reason` (pinned against the selector by
+    /// `analysis::language::rust::tests::partial_stop_reason_shapes_match_the_human_disclosure_fixtures`).
+    fn partial_scope_output(
+        stop_reason: crate::analysis::PartialDiffStopReason,
+        uninspected_files: usize,
+        uninspected_lines: usize,
+    ) -> CheckOutput {
+        use crate::analysis::PartialDiffStopReason;
+        // file_budget 1 / line_budget 40: a file-budget stop selected one
+        // 30-line file; a line-budget stop (file budget 7) selected 35 lines
+        // and the next file would overshoot; a first-file stop selected one
+        // 60-line file alone.
+        let (file_budget, selected_changed_lines, next_file_changed_lines) = match stop_reason {
+            PartialDiffStopReason::FileBudget => (1, 30, Some(30)),
+            PartialDiffStopReason::LineBudget => (7, 35, Some(30)),
+            PartialDiffStopReason::LineBudgetExceededOnFirstFile => (7, 60, None),
+        };
+        CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary::default(),
+            findings: vec![sample_finding()],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: Some(crate::analysis::PartialDiffScope {
+                run_status: crate::analysis::PartialDiffScope::RUN_STATUS.to_string(),
+                diff_identity: "sha256:abc".to_string(),
+                file_budget,
+                line_budget: 40,
+                budget_disclosures: Vec::new(),
+                selected_files: vec!["src/a.rs".to_string()],
+                selected_changed_lines,
+                uninspected_files_lower_bound: uninspected_files,
+                uninspected_changed_lines_lower_bound: uninspected_lines,
+                stop_reason,
+                next_file_changed_lines,
+                partition_identity: "c".repeat(64),
+            }),
+        }
+    }
+
+    #[test]
+    fn partial_scope_names_stopping_budget_size_finding_count_and_override() -> Result<(), String> {
+        use crate::analysis::PartialDiffStopReason;
+        let cases = [
+            (
+                PartialDiffStopReason::FileBudget,
+                3,
+                90,
+                vec![
+                    "analysis stopped at the file budget of 1 changed file(s) \
+                     (RIPR_PARTIAL_DIFF_FILE_BUDGET=1)",
+                    "Found 1 finding(s) before stopping.",
+                    "NOT inspected: at least 3 changed file(s) and at least 90 changed line(s); \
+                     more findings may exist beyond the budget.",
+                    "raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2 and \
+                     RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 60, then re-run.",
+                ],
+            ),
+            (
+                PartialDiffStopReason::LineBudget,
+                2,
+                30,
+                vec![
+                    "analysis stopped at the line budget of 40 changed line(s) \
+                     (RIPR_PARTIAL_DIFF_LINE_BUDGET=40)",
+                    "Found 1 finding(s) before stopping.",
+                    "more findings may exist beyond the budget.",
+                    "raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 65, then re-run.",
+                ],
+            ),
+            (
+                PartialDiffStopReason::LineBudgetExceededOnFirstFile,
+                0,
+                0,
+                vec![
+                    "analysis stopped at the line budget of 40 changed line(s) \
+                     (RIPR_PARTIAL_DIFF_LINE_BUDGET=40); the first selected file alone exceeded \
+                     it and was analyzed whole",
+                    "Found 1 finding(s) before stopping.",
+                    "Every changed file ripr's language adapters read was selected",
+                    "this result stays partial and is not a complete-scope claim",
+                    "raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 60, then re-run.",
+                ],
+            ),
+        ];
+        for (stop_reason, files, lines, needles) in cases {
+            let output = partial_scope_output(stop_reason, files, lines);
+            for rendered in [
+                super::render_bounded_with_config(&output, &crate::config::RiprConfig::default()),
+                super::render_full_with_config(&output, &crate::config::RiprConfig::default()),
+            ] {
+                for needle in &needles {
+                    if !rendered.contains(needle) {
+                        return Err(format!(
+                            "{stop_reason:?}: partial disclosure missing `{needle}` in:\n{rendered}"
+                        ));
+                    }
+                }
+                if rendered.contains("at least 0") {
+                    return Err(format!(
+                        "{stop_reason:?}: `at least 0` printed as a count in:\n{rendered}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn human_output_escapes_control_bytes_in_selected_paths() -> Result<(), String> {
         // A crafted diff filename with control bytes must not reach the
@@ -1597,6 +2340,7 @@ mod tests {
                 uninspected_files_lower_bound: 1,
                 uninspected_changed_lines_lower_bound: 1,
                 stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
+                next_file_changed_lines: Some(60),
                 partition_identity: "c".repeat(64),
             }),
         };
@@ -2041,6 +2785,87 @@ mod tests {
         assert!(output.contains("  - static_probe_unknown"));
     }
 
+    /// #4323: a stop reason renders its gloss beside the token, the way the
+    /// `Static limitation` section already does, so the reader learns why.
+    #[test]
+    fn human_output_glosses_stop_reasons() {
+        let output = render_finding(&unknown_finding());
+
+        assert!(
+            output.contains(
+                "  - static_probe_unknown \u{2014} ripr could not model this change well enough to classify it\n"
+            ),
+            "{output}"
+        );
+    }
+
+    /// #4323 review: guidance just under the budget must count the label, so
+    /// the rendered line never runs past 180 characters.
+    #[test]
+    fn digest_next_step_line_counts_its_label_against_the_budget() {
+        let mut finding = sample_finding();
+        let guidance = format!("{} remedy.", "word ".repeat(34));
+        assert!(
+            (170..=180).contains(&guidance.chars().count()),
+            "{guidance}"
+        );
+        finding.recommended_next_step = Some(guidance);
+
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+        );
+
+        assert!(
+            digest.lines().all(|line| line.chars().count() <= 180),
+            "no digest line exceeds the budget; got:\n{digest}"
+        );
+        assert!(digest.contains("remedy."), "{digest}");
+    }
+
+    /// #4323: the default no-path guidance is ~330 characters and ends with
+    /// the remedy. The digest used to cut it at 180 characters, so the
+    /// imperative ("add a co-located test ...") never rendered.
+    #[test]
+    fn digest_next_step_keeps_the_remedy_clause() {
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.recommended_next_step = Some(crate::domain::NO_STATIC_PATH_NEXT_STEP.to_string());
+
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+        );
+        // The field is its first line plus the four-space continuation lines.
+        let mut lines = digest
+            .lines()
+            .skip_while(|line| !line.starts_with("  Next step: "));
+        let mut next_step = lines
+            .next()
+            .map(|line| line.trim_start_matches("  Next step: ").to_string())
+            .unwrap_or_default();
+        for line in lines.take_while(|line| line.starts_with("    ")) {
+            next_step.push(' ');
+            next_step.push_str(line.trim());
+        }
+        let flattened = next_step.split_whitespace().collect::<Vec<_>>().join(" ");
+
+        assert!(
+            flattened.ends_with(
+                "add a co-located test that reaches and observes the changed behavior so a discriminator exists."
+            ),
+            "digest must keep the remedy; got:\n{digest}"
+        );
+        assert!(
+            !next_step.contains('\u{2026}'),
+            "digest must not truncate; got:\n{digest}"
+        );
+        assert!(
+            digest.lines().all(|line| line.chars().count() <= 180),
+            "wrapped lines stay within the display budget; got:\n{digest}"
+        );
+    }
+
     // RIPR-SPEC-0115: a transitive-reach witness line in `evidence` (recognized
     // by the shared prefix) renders as a concrete "Where to look" pointer.
     #[test]
@@ -2185,6 +3010,56 @@ mod tests {
         finding.language_status = Some(LanguageStatus::Preview);
     }
 
+    #[test]
+    fn discriminator_line_never_says_yes_for_a_non_exposed_finding() {
+        // CLI parity with the editor hover (#4419): a strong related oracle
+        // on a weakly_exposed finding must not read as "discriminator yes".
+        use crate::output::discriminator_line::discriminator_evidence_line;
+        let mut finding = sample_finding();
+        finding.ripr.reveal.discriminate =
+            stage(StageState::Yes, Confidence::High, "Strong oracle found");
+        assert_eq!(
+            discriminator_evidence_line(&finding),
+            "discriminator missing: `enabled == false`; related oracle: Strong oracle found"
+        );
+        finding.activation.missing_discriminators.clear();
+        assert_eq!(
+            discriminator_evidence_line(&finding),
+            "discriminator not established (weakly_exposed); related oracle: Strong oracle found"
+        );
+        finding.class = ExposureClass::Exposed;
+        assert_eq!(
+            discriminator_evidence_line(&finding),
+            "discriminator yes: Strong oracle found"
+        );
+    }
+
+    fn bounded_output_with_findings(findings: Vec<Finding>) -> CheckOutput {
+        let count = findings.len();
+        CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: count,
+                findings: count,
+                weakly_exposed: count,
+                ..Summary::default()
+            },
+            findings,
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        }
+    }
+
     fn sample_finding() -> Finding {
         Finding {
             id: "probe:sample.rs:7:predicate".to_string(),
@@ -2327,6 +3202,7 @@ mod tests {
                 language: "typescript".to_string(),
                 file_count: 2,
                 sample_paths: vec!["src/discount.ts".to_string(), "src/pricing.ts".to_string()],
+                javascript_file_count: 0,
                 enabled: true,
             }],
             language_runs: Vec::new(),
@@ -2368,6 +3244,7 @@ mod tests {
                 language: "python".to_string(),
                 file_count: 3,
                 sample_paths: vec!["app/main.py".to_string()],
+                javascript_file_count: 0,
                 enabled: true,
             }],
             language_runs: Vec::new(),
@@ -2387,6 +3264,20 @@ mod tests {
         assert!(
             rendered.contains("NOT a clean Rust-grade result"),
             "expected honesty note; got:\n{rendered}"
+        );
+
+        // With a finding the result is not empty, so the empty-result caveat
+        // would be false; the note keeps the advisory framing instead.
+        let with_finding = CheckOutput {
+            findings: vec![sample_finding()],
+            ..output
+        };
+        let rendered = render(&with_finding);
+        assert!(
+            rendered.contains("3 Python files analyzed under preview support")
+                && rendered.contains("Treat its findings as advisory, not Rust-grade.")
+                && !rendered.contains("An empty result here"),
+            "non-empty run must not carry the empty-result caveat; got:\n{rendered}"
         );
     }
 
@@ -2438,6 +3329,7 @@ mod tests {
                 language: "typescript".to_string(),
                 file_count: 7,
                 sample_paths: vec!["src/lib.ts".to_string()],
+                javascript_file_count: 0,
                 enabled: true,
             }],
             language_runs: Vec::new(),
@@ -2474,6 +3366,7 @@ mod tests {
                 language: "perl".to_string(),
                 file_count: 1,
                 sample_paths: vec!["lib/Pricing.pm".to_string()],
+                javascript_file_count: 0,
                 enabled: false,
             }],
             language_runs: Vec::new(),
@@ -2558,6 +3451,7 @@ mod tests {
                 language: "python".to_string(),
                 file_count: 3,
                 sample_paths: vec!["app/models.py".to_string()],
+                javascript_file_count: 0,
                 enabled: false,
             }],
             language_runs: Vec::new(),
@@ -2571,13 +3465,27 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains(r#"enabled = ["rust", "python"]"#),
-            "expected python-specific copy-paste TOML block; got:\n{rendered}"
-        );
-        assert!(
             !rendered.contains(r#"enabled = ["rust", "typescript"]"#),
             "python advisory must not mention typescript; got:\n{rendered}"
         );
+        if cfg!(feature = "lang-python") {
+            assert!(
+                rendered.contains(r#"enabled = ["rust", "python"]"#),
+                "expected python-specific copy-paste TOML block; got:\n{rendered}"
+            );
+        } else {
+            // Adapter NOT compiled in: config load rejects `python`, so the
+            // note names the rebuild instead of a TOML edit (#4252).
+            assert!(
+                rendered.contains("The Python adapter is not compiled into this ripr binary")
+                    && rendered.contains("rebuild ripr with Cargo feature `lang-python`"),
+                "expected not-compiled Python disclosure; got:\n{rendered}"
+            );
+            assert!(
+                !rendered.contains(r#"enabled = ["rust", "python"]"#),
+                "must not advise a ripr.toml edit this binary rejects; got:\n{rendered}"
+            );
+        }
     }
 
     #[test]
@@ -2649,9 +3557,10 @@ mod tests {
             "expected no-scope guidance; got:\n{rendered}"
         );
         assert!(
-            rendered.contains("`ripr check --base origin/main`"),
+            rendered.contains("`ripr check --base BASE`"),
             "expected --base guidance; got:\n{rendered}"
         );
+        assert!(!rendered.contains("--base origin/main"));
         assert!(
             rendered.contains("does NOT mean your changed behavior is covered"),
             "expected honesty note; got:\n{rendered}"
@@ -2826,6 +3735,73 @@ mod tests {
                 "analyzed: 1 changed Rust file(s), 2 changed expression(s), and 0 statically linked related"
             ),
             "expected scope-count disclosure; got:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn all_no_path_disclosure_for_bindings_does_not_presume_external_tests_exist() {
+        let cross_language = || {
+            let mut finding = unknown_finding();
+            finding.static_limit_kind =
+                Some(crate::domain::StaticLimitKind::CrossLanguageOracleVisibilityUnresolved);
+            finding
+        };
+        let output_with = |findings: Vec<Finding>| CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.2".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                changed_rust_files: 1,
+                probes: 2,
+                findings: 2,
+                no_static_path: 2,
+                ..Summary::default()
+            },
+            findings,
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+        let flat = |output: &CheckOutput| {
+            render(output)
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+
+        let bindings = flat(&output_with(vec![cross_language(), cross_language()]));
+        assert!(
+            bindings.contains(
+                "if none does, add or check tests in the bindings' other language that observe the changed behavior."
+            ),
+            "got:\n{bindings}"
+        );
+        assert!(
+            !bindings.contains("add co-located tests"),
+            "got:\n{bindings}"
+        );
+
+        // A mixed diff names both repairs, so neither finding's own next
+        // step is contradicted.
+        let mixed = flat(&output_with(vec![cross_language(), unknown_finding()]));
+        assert!(
+            mixed.contains(
+                "if none does, add co-located tests that observe the changed behavior, or, for a language binding, tests in the binding's other language."
+            ),
+            "got:\n{mixed}"
+        );
+
+        let plain = flat(&output_with(vec![unknown_finding(), unknown_finding()]));
+        assert!(
+            plain.contains("if none does, add co-located tests that observe the changed behavior."),
+            "got:\n{plain}"
         );
     }
 
@@ -3145,6 +4121,7 @@ mod tests {
             language: language.to_string(),
             file_count,
             sample_paths: Vec::new(),
+            javascript_file_count: 0,
             enabled,
         };
         let output = CheckOutput {
@@ -3172,11 +4149,18 @@ mod tests {
 
         let rendered = render(&output);
 
+        // The not-enabled TypeScript note names the adapter either way; its
+        // wording depends on whether this binary can analyze TypeScript.
+        let not_enabled = if cfg!(feature = "lang-typescript") {
+            "Note: this diff contains 1 TypeScript file. The TypeScript adapter is preview"
+        } else {
+            "Note: this diff contains 1 TypeScript file. The TypeScript adapter is not compiled into this ripr binary"
+        };
         for expected in [
             "Note: 1 TypeScript file analyzed under preview support",
             "Note: 1 Python file analyzed under preview support",
             "Note: 2 JavaScript files analyzed under preview support",
-            "Note: this diff contains 1 TypeScript file. The TypeScript adapter is preview",
+            not_enabled,
         ] {
             assert!(
                 rendered.contains(expected),
@@ -3187,6 +4171,91 @@ mod tests {
             assert!(
                 !rendered.contains(forbidden),
                 "must not render `{forbidden}`; got:\n{rendered}"
+            );
+        }
+    }
+
+    /// #4555: the TypeScript adapter also analyzes JavaScript, so a
+    /// JavaScript-only advisory says "JavaScript file", a mixed one says
+    /// "TypeScript/JavaScript files", and the not-enabled note keeps the
+    /// `"typescript"` config value with a gloss that it covers JavaScript.
+    #[test]
+    fn typescript_advisory_names_javascript_and_mixed_files() {
+        let advisory = |file_count: usize, javascript_file_count: usize, enabled: bool| {
+            PreviewLanguageAdvisory {
+                language: "typescript".to_string(),
+                file_count,
+                sample_paths: Vec::new(),
+                javascript_file_count,
+                enabled,
+            }
+        };
+        let render_one = |advisory: PreviewLanguageAdvisory| {
+            render(&CheckOutput {
+                harness_projections: Vec::new(),
+                schema_version: "0.1".to_string(),
+                tool: "ripr".to_string(),
+                mode: Mode::Draft,
+                root: PathBuf::from("repo"),
+                base: None,
+                summary: Summary::default(),
+                findings: vec![],
+                preview_language_advisories: vec![advisory],
+                language_runs: Vec::new(),
+                no_scope_provided: false,
+                unanalyzed_working_tree: false,
+                suppression: None,
+                analysis_outcome: None,
+                partial_scope: None,
+            })
+        };
+
+        let javascript_only = render_one(advisory(1, 1, true));
+        assert!(
+            javascript_only.contains("Note: 1 JavaScript file analyzed under preview support"),
+            "{javascript_only}"
+        );
+        let mixed = render_one(advisory(3, 1, true));
+        assert!(
+            mixed.contains("Note: 3 TypeScript/JavaScript files analyzed under preview support"),
+            "{mixed}"
+        );
+        let typescript_only = render_one(advisory(2, 0, true));
+        assert!(
+            typescript_only.contains("Note: 2 TypeScript files analyzed under preview support"),
+            "{typescript_only}"
+        );
+
+        let not_enabled = render_one(advisory(1, 1, false));
+        let expected = if cfg!(feature = "lang-typescript") {
+            "Note: this diff contains 1 JavaScript file. The TypeScript/JavaScript adapter is preview"
+        } else {
+            "Note: this diff contains 1 JavaScript file. The TypeScript/JavaScript adapter is not compiled into this ripr binary"
+        };
+        assert!(not_enabled.contains(expected), "{not_enabled}");
+        if cfg!(feature = "lang-typescript") {
+            assert!(
+                not_enabled.contains("enabled = [\"rust\", \"typescript\"]"),
+                "{not_enabled}"
+            );
+            assert!(
+                not_enabled
+                    .contains("(\"typescript\" enables the adapter for JavaScript files too.)"),
+                "{not_enabled}"
+            );
+        }
+        // A TypeScript-only diff counts TypeScript files and gets no
+        // JavaScript gloss. The adapter name itself says
+        // "TypeScript/JavaScript" in every build.
+        let typescript_not_enabled = render_one(advisory(1, 0, false));
+        assert!(
+            typescript_not_enabled.contains("Note: this diff contains 1 TypeScript file."),
+            "{typescript_not_enabled}"
+        );
+        for forbidden in ["JavaScript file.", "enables the adapter for JavaScript"] {
+            assert!(
+                !typescript_not_enabled.contains(forbidden),
+                "TypeScript-only note must not render `{forbidden}`:\n{typescript_not_enabled}"
             );
         }
     }

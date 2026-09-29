@@ -178,3 +178,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_observer (3)
+
+Reason:
+RIPR-SPEC-0122: exposed findings default to info severity
+
+Command:
+`cargo xtask goldens bless match_arm_observer --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_observer (4)
+
+Reason:
+RIPR-SPEC-0122: the analysis outcome and state lines lead with plain words; the id stays in parentheses
+
+Command:
+`cargo xtask goldens bless match_arm_observer --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

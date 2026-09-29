@@ -381,8 +381,8 @@ kind = "judged_panel_metadata"
 owner = "ripr/evidence-quality"
 surface = "repo"
 classification = "metadata"
-reason = "Selected, unjudged Rust behavior-panel denominator; null labels remain non-results."
-covered_by = ["cargo xtask check-file-policy", "cargo xtask rust-judged-panel check"]
+reason = "Selected Rust behavior-panel denominator, including rolling production-quiet observation and the #4795 calibration scorecard; null labels and not_run remain non-results."
+covered_by = ["cargo xtask check-file-policy", "cargo xtask rust-judged-panel check", "cargo test -p xtask --locked --offline rust_judged_panel::rolling_observation", "cargo test -p xtask --locked --offline rust_judged_panel::calibration"]
 
 [[allow]]
 glob = "metrics/rust-judged-behavior-panel/subjects/**"
@@ -490,6 +490,33 @@ surface = "editor"
 classification = "config"
 reason = "VS Code TypeScript compiler config."
 covered_by = ["cd editors/vscode && npm run compile"]
+
+[[allow]]
+glob = "editors/zed/Cargo.toml"
+kind = "editor_extension_manifest"
+owner = "lsp/editor"
+surface = "editor"
+classification = "config"
+reason = "Zed extension crate manifest; Zed compiles the crate to wasm32-wasip2 outside the repository workspace (#4460)."
+covered_by = ["cd editors/zed && cargo build --locked --release --target wasm32-wasip2"]
+
+[[allow]]
+glob = "editors/zed/extension.toml"
+kind = "editor_extension_manifest"
+owner = "lsp/editor"
+surface = "editor"
+classification = "config"
+reason = "Zed extension manifest registering the ripr language server (#4460)."
+covered_by = ["cd editors/zed && cargo test --locked"]
+
+[[allow]]
+glob = "editors/zed/rust-toolchain.toml"
+kind = "rust_toolchain_pin"
+owner = "lsp/editor"
+surface = "editor"
+classification = "config"
+reason = "Names the wasm32-wasip2 target so rustup installs it when Zed builds the extension under the repository's 1.95.0 pin (#4460)."
+covered_by = ["cd editors/zed && cargo build --locked --release --target wasm32-wasip2"]
 
 # ---------------------------------------------------------------------------
 # Fixtures

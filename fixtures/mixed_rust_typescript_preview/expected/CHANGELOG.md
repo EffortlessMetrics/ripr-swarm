@@ -407,3 +407,89 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — mixed_rust_typescript_preview (4)
+
+Reason:
+RIPR-SPEC-0027: the #4103 relation-anchor gate holds tests that only token-call the owner (no import/declaration anchor, mock/spy-only observation, or off-position boundary literal) at weakly_exposed with the missing anchor disclosed, instead of exposed; the fixture's assertion shape is one of the audited anchor-gate classes and its evidence lines are unchanged
+
+Command:
+`cargo xtask goldens bless mixed_rust_typescript_preview --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — mixed_rust_typescript_preview (5)
+
+Reason:
+RIPR-SPEC-0027: oracle classification is independent of relation credit - the unanchored bare owner call still classifies its exact-value assertion (exact_value/strong) and the recommendation names the missing proof; exposure stays weakly_exposed under the #4103 anchor gate
+
+Command:
+`cargo xtask goldens bless mixed_rust_typescript_preview --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — mixed_rust_typescript_preview (6)
+
+Reason:
+RIPR-SPEC-0122: human-full carries per-finding drill-in commands (#4379); digest why-line names the incomplete stage; unreached static_unknown asks for a test first
+
+Command:
+`cargo xtask goldens bless mixed_rust_typescript_preview --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — mixed_rust_typescript_preview (7)
+
+Reason:
+RIPR-SPEC-0122: omit zero-count languages, keep the empty-result caveat to empty runs, cut digest lines at word boundaries
+
+Command:
+`cargo xtask goldens bless mixed_rust_typescript_preview --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — mixed_rust_typescript_preview (8)
+
+Reason:
+RIPR-SPEC-0122: discriminator evidence line no longer says yes on findings that are not exposed
+
+Command:
+`cargo xtask goldens bless mixed_rust_typescript_preview --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — mixed_rust_typescript_preview (9)
+
+Reason:
+RIPR-SPEC-0046 RIPR-SPEC-0047: check JSON now carries a top-level source_subject stamp with the analysis-time content digests of the files a derived gap ledger names (#4544); no finding, classification, or human output changed.
+RIPR-SPEC-0122: bounded human check output leads the exposure line with the plain word the summary uses (weak, no path, unknown) before the schema value
+RIPR-SPEC-0122: Hidden remainder names omitted preview-language identity (#4395); formatting-only, no class or JSON change.
+
+Command:
+`cargo xtask goldens bless mixed_rust_typescript_preview --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — mixed_rust_typescript_preview (10)
+
+Reason:
+RIPR-SPEC-0122: the analysis outcome and state lines lead with plain words; the id stays in parentheses
+
+Command:
+`cargo xtask goldens bless mixed_rust_typescript_preview --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -26,9 +26,131 @@
 //! IncompleteEvidence`]). A lane that reported success while its own evidence was
 //! absent would be the exact false-confidence condition it exists to prevent,
 //! and a `0` in a status file is not on its own evidence that anything ran.
+//!
+//! # Release-seam controls must be observed
+//!
+//! A handful of tests are the only native Windows proof for a release seam
+//! (#3922): Job Object process ownership, poisoned LSP initialize terminality,
+//! the stat-only cache refusal, and the real-binary CLI, cache, PowerShell and
+//! LSP journeys under spaced, non-ASCII and beyond-`MAX_PATH` roots. Their
+//! names are listed in [`RELEASE_SEAM_CONTROLS`] and every run reports each
+//! one's observation. A control that *fails* stays advisory like any other
+//! test. A control that is *absent* from a usable run is an evidence failure:
+//! the seam would otherwise read as covered by a green lane that never executed
+//! its only native proof.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
 use std::path::Path;
+
+/// One named native-Windows control for a release seam (#3922).
+pub(crate) struct SeamControl {
+    /// The seam row this control proves.
+    pub(crate) seam: &'static str,
+    /// The issue that owns the seam's implementation.
+    pub(crate) issue: &'static str,
+    /// The test name exactly as libtest prints it.
+    pub(crate) test: &'static str,
+    /// Repository-relative source file that defines the test, so a rename is
+    /// caught by an ordinary (non-Windows) test run rather than only by the
+    /// Windows lane refusing its evidence.
+    pub(crate) source: &'static str,
+}
+
+/// Tests that are the native Windows proof for a release seam. Most are
+/// `#[cfg(windows)]` or `#[cfg(not(unix))]`, so no other lane executes them.
+pub(crate) const RELEASE_SEAM_CONTROLS: &[SeamControl] = &[
+    SeamControl {
+        seam: "process",
+        issue: "#3803",
+        test: "process_owner::tests::owner_drop_terminates_a_still_running_child",
+        source: "crates/ripr/src/process_owner.rs",
+    },
+    SeamControl {
+        seam: "process",
+        issue: "#3803",
+        test: "process_owner::tests::terminate_tree_kills_pipe_inheriting_descendants",
+        source: "crates/ripr/src/process_owner.rs",
+    },
+    SeamControl {
+        seam: "process",
+        issue: "#3803",
+        test: "process_owner::tests::terminate_tree_leaves_unrelated_processes_alive",
+        source: "crates/ripr/src/process_owner.rs",
+    },
+    SeamControl {
+        seam: "process",
+        issue: "#3803",
+        test: "process_owner::tests::owner_drop_kills_descendants_after_the_primary_exits",
+        source: "crates/ripr/src/process_owner.rs",
+    },
+    SeamControl {
+        seam: "process",
+        issue: "#3803",
+        test: "process_owner::tests::terminate_tree_after_primary_exit_kills_descendants",
+        source: "crates/ripr/src/process_owner.rs",
+    },
+    SeamControl {
+        seam: "process",
+        issue: "#3096",
+        test: "run::tests::capture_output_with_timeout_terminates_pipe_inheriting_descendants",
+        source: "xtask/src/run.rs",
+    },
+    SeamControl {
+        seam: "lsp",
+        issue: "#3802",
+        test: "lsp::tests::initialize_surfaces_poisoned_client_features_store_as_a_session_failure",
+        source: "crates/ripr/src/lsp/tests.rs",
+    },
+    SeamControl {
+        seam: "lsp",
+        issue: "#3802",
+        test: "lsp::tests::poisoned_initialize_failure_commit_survives_a_wedged_client_channel",
+        source: "crates/ripr/src/lsp/tests.rs",
+    },
+    SeamControl {
+        seam: "cache",
+        issue: "#3848",
+        test: "analysis::seam_cache::tests::corpus_fingerprint_is_none_without_a_content_change_witness",
+        source: "crates/ripr/src/analysis/seam_cache.rs",
+    },
+    SeamControl {
+        seam: "paths",
+        issue: "#3922",
+        test: "spaced_root_check_and_file_fact_cache_round_trip",
+        source: "crates/ripr/tests/native_path_roots.rs",
+    },
+    SeamControl {
+        seam: "paths",
+        issue: "#3922",
+        test: "unicode_root_check_and_file_fact_cache_round_trip",
+        source: "crates/ripr/tests/native_path_roots.rs",
+    },
+    SeamControl {
+        seam: "paths",
+        issue: "#3922",
+        test: "long_root_check_round_trips_or_names_the_windows_path_limit",
+        source: "crates/ripr/tests/native_path_roots.rs",
+    },
+    SeamControl {
+        seam: "paths",
+        issue: "#3922",
+        test: "powershell_launch_passes_a_quoted_unicode_root_to_ripr",
+        source: "crates/ripr/tests/native_path_roots.rs",
+    },
+    SeamControl {
+        seam: "paths",
+        issue: "#3922",
+        test: "refresh_publishes_diagnostics_under_a_spaced_unicode_root",
+        source: "crates/ripr/tests/lsp_lifecycle.rs",
+    },
+    SeamControl {
+        seam: "paths",
+        issue: "#3922",
+        test: "refresh_under_a_root_beyond_max_path_publishes_or_names_the_windows_path_limit",
+        source: "crates/ripr/tests/lsp_lifecycle.rs",
+    },
+];
 
 /// What one run observed about one test.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,6 +217,8 @@ pub(crate) struct RunOutcome {
     pub(crate) passed: BTreeSet<String>,
     pub(crate) targets: Vec<String>,
     pub(crate) results: Vec<String>,
+    /// First explanatory line of each failed test's captured libtest block.
+    pub(crate) reasons: BTreeMap<String, String>,
 }
 
 impl RunOutcome {
@@ -106,6 +230,7 @@ impl RunOutcome {
             passed: BTreeSet::new(),
             targets: Vec::new(),
             results: Vec::new(),
+            reasons: BTreeMap::new(),
         }
     }
 
@@ -274,6 +399,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             unusable.push(format!("{label} is {}", outcome.state.label()));
         }
     }
+    unusable.extend(unobserved_controls(&first, &second, RELEASE_SEAM_CONTROLS));
     if unusable.is_empty() {
         Ok(())
     } else {
@@ -282,6 +408,173 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             unusable.join("; ")
         ))
     }
+}
+
+const NESTED_ALIAS_TEST: &str = "analysis::test_grip_evidence::tests::nested_test_module_alias_ancestry_resolves_through_production_path";
+
+#[derive(Debug, PartialEq, Eq)]
+enum IsolatedObservation {
+    Pass { status: i32, result: String },
+    TestFailure { status: i32, result: String },
+    EvidenceFailure(String),
+}
+
+fn exact_isolated_result(result: &str, passed: bool) -> bool {
+    let prefix = if passed {
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; "
+    } else {
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; "
+    };
+    let Some(rest) = result.strip_prefix(prefix) else {
+        return false;
+    };
+    let Some((filtered, duration)) = rest.split_once(" filtered out; finished in ") else {
+        return false;
+    };
+    if filtered.is_empty() || !filtered.bytes().all(|byte| byte.is_ascii_digit()) {
+        return false;
+    }
+    let Some(seconds) = duration.strip_suffix('s') else {
+        return false;
+    };
+    filtered.parse::<u64>().is_ok()
+        && seconds
+            .parse::<f64>()
+            .is_ok_and(|value| value.is_finite() && value >= 0.0)
+}
+
+fn classify_isolated(log: Option<&str>, raw_status: Option<&str>) -> IsolatedObservation {
+    let Some(log) = log else {
+        return IsolatedObservation::EvidenceFailure("log missing or unreadable".to_string());
+    };
+    let Some(raw_status) = raw_status else {
+        return IsolatedObservation::EvidenceFailure("status missing or unreadable".to_string());
+    };
+    let Ok(status) = raw_status.trim().parse::<i32>() else {
+        return IsolatedObservation::EvidenceFailure(format!(
+            "invalid cargo exit status {:?}",
+            raw_status.trim()
+        ));
+    };
+    let rows = log
+        .lines()
+        .filter_map(|line| test_result_line(strip_ansi(line).trim()))
+        .collect::<Vec<_>>();
+    let outcome = parse_log(log);
+    if rows.len() != 1
+        || rows
+            .first()
+            .is_none_or(|(name, _)| name.as_str() != NESTED_ALIAS_TEST)
+    {
+        return IsolatedObservation::EvidenceFailure(format!(
+            "expected exactly one named test row, found {} total test row(s)",
+            rows.len()
+        ));
+    }
+    if outcome.targets.len() != 1 || outcome.results.len() != 1 {
+        return IsolatedObservation::EvidenceFailure(format!(
+            "expected one test target and one result total, found {} target(s) and {} result(s)",
+            outcome.targets.len(),
+            outcome.results.len()
+        ));
+    }
+    let Some((_, row_failed)) = rows.first() else {
+        return IsolatedObservation::EvidenceFailure("named test row missing".to_string());
+    };
+    let Some(result) = outcome.results.first().cloned() else {
+        return IsolatedObservation::EvidenceFailure("result total missing".to_string());
+    };
+    if status == 0 && !*row_failed && exact_isolated_result(&result, true) {
+        IsolatedObservation::Pass { status, result }
+    } else if status != 0 && *row_failed && exact_isolated_result(&result, false) {
+        IsolatedObservation::TestFailure { status, result }
+    } else {
+        IsolatedObservation::EvidenceFailure(format!(
+            "cargo exit {status}, named row failed={}, result {result:?} disagree",
+            row_failed
+        ))
+    }
+}
+
+/// Summarize three explicitly requested native Windows named-test repetitions.
+/// Unlike the broad advisory verdict, any failed named repetition fails this
+/// opt-in proof. Every run is reported before the command returns its status.
+pub(crate) fn run_isolated(args: &[String]) -> Result<(), String> {
+    let [flag, directory] = args else {
+        return Err("windows-advisory-isolated-summary requires --dir <path>".to_string());
+    };
+    if flag != "--dir" || directory.is_empty() || directory.starts_with('-') {
+        return Err("windows-advisory-isolated-summary requires --dir <path>".to_string());
+    }
+    let directory = Path::new(directory);
+    println!("### Nested-alias isolated native Windows repeats (#4377)\n");
+    let mut failed = false;
+    for run in 1..=3 {
+        let log_path = directory.join(format!("nested-alias-isolated-{run}.log"));
+        let status_path = directory.join(format!("nested-alias-isolated-{run}.status"));
+        let log = std::fs::read_to_string(&log_path);
+        let status = std::fs::read_to_string(&status_path);
+        let verdict = match (&log, &status) {
+            (Ok(log), Ok(status)) => classify_isolated(Some(log), Some(status)),
+            (Err(error), _) => IsolatedObservation::EvidenceFailure(format!(
+                "read {}: {error}",
+                log_path.display()
+            )),
+            (_, Err(error)) => IsolatedObservation::EvidenceFailure(format!(
+                "read {}: {error}",
+                status_path.display()
+            )),
+        };
+        match verdict {
+            IsolatedObservation::Pass { status, result } => {
+                println!("- run {run}: PASS (cargo exit {status}; {result})");
+            }
+            IsolatedObservation::TestFailure { status, result } => {
+                failed = true;
+                println!("- run {run}: TEST_FAIL (cargo exit {status}; {result})");
+            }
+            IsolatedObservation::EvidenceFailure(reason) => {
+                failed = true;
+                println!("- run {run}: EVIDENCE_FAILURE ({reason})");
+            }
+        }
+    }
+    std::io::stdout()
+        .flush()
+        .map_err(|error| format!("flush isolated Windows verdict: {error}"))?;
+    if failed {
+        Err(
+            "nested-alias isolated repetitions did not all pass; see the verdict and raw logs"
+                .to_string(),
+        )
+    } else {
+        Ok(())
+    }
+}
+
+/// Every usable run must have observed every release-seam control, passing or
+/// failing. An unusable run is already refused on its own, so it is not
+/// reported a second time per control.
+fn unobserved_controls(
+    first: &RunOutcome,
+    second: &RunOutcome,
+    controls: &[SeamControl],
+) -> Vec<String> {
+    let mut missing = Vec::new();
+    for (label, outcome) in [("run 1", first), ("run 2", second)] {
+        if !outcome.state.is_usable() {
+            continue;
+        }
+        for control in controls {
+            if outcome.observe(control.test) == TestObservation::NotObserved {
+                missing.push(format!(
+                    "{label} did not observe {} control `{}` ({}, defined in {})",
+                    control.seam, control.test, control.issue, control.source
+                ));
+            }
+        }
+    }
+    missing
 }
 
 fn load_run(log: &Path, status: &Path) -> RunOutcome {
@@ -373,9 +666,27 @@ fn strip_ansi(line: &str) -> String {
 
 pub(crate) fn parse_log(text: &str) -> RunOutcome {
     let mut outcome = RunOutcome::missing(RunState::StatusMissing);
+    let mut block: Option<FailureBlock> = None;
     for raw_line in text.lines() {
         let line = strip_ansi(raw_line);
         let trimmed = line.trim();
+        if let Some(name) = failure_block_header(trimmed) {
+            close_failure_block(&mut outcome, block.take());
+            block = Some(FailureBlock::new(name));
+            continue;
+        }
+        // A block ends at the next libtest section or cargo target line, so an
+        // aborted harness cannot swallow the targets that follow it.
+        if trimmed == "failures:"
+            || trimmed.starts_with("test result:")
+            || running_target(trimmed).is_some()
+        {
+            close_failure_block(&mut outcome, block.take());
+        }
+        if let Some(open) = block.as_mut() {
+            open.push(trimmed);
+            continue;
+        }
         if let Some((name, failed)) = test_result_line(trimmed) {
             if failed {
                 outcome.failed.insert(name);
@@ -390,7 +701,100 @@ pub(crate) fn parse_log(text: &str) -> RunOutcome {
             outcome.results.push(trimmed.to_string());
         }
     }
+    close_failure_block(&mut outcome, block.take());
     outcome
+}
+
+/// Longest failure reason carried into the verdict. The reason exists so a
+/// truncated job log still says *why* a test failed; a full panic payload
+/// (some tests print whole JSON documents) would bury the verdict instead.
+const MAX_REASON_CHARS: usize = 240;
+
+/// One libtest `---- name stdout ----` block from the `failures:` section.
+struct FailureBlock {
+    name: String,
+    error: Option<String>,
+    panic: Option<String>,
+    awaiting_panic_message: bool,
+    first_line: Option<String>,
+}
+
+impl FailureBlock {
+    fn new(name: String) -> Self {
+        Self {
+            name,
+            error: None,
+            panic: None,
+            awaiting_panic_message: false,
+            first_line: None,
+        }
+    }
+
+    /// Keep the most explanatory line: a returned `Error:` first, then a
+    /// panic location with its message, then whatever the test printed first.
+    fn push(&mut self, line: &str) {
+        if line.is_empty() {
+            return;
+        }
+        if self.awaiting_panic_message {
+            self.awaiting_panic_message = false;
+            if let Some(location) = self.panic.as_mut() {
+                location.push(' ');
+                location.push_str(line);
+            }
+            return;
+        }
+        if self.error.is_none() && line.starts_with("Error: ") {
+            self.error = Some(line.to_string());
+        } else if self.panic.is_none()
+            && let Some((_, location)) = line.split_once(" panicked at ")
+        {
+            self.panic = Some(format!("panicked at {location}"));
+            self.awaiting_panic_message = true;
+        } else if self.first_line.is_none() {
+            self.first_line = Some(line.to_string());
+        }
+    }
+
+    fn reason(self) -> Option<String> {
+        let reason = self.error.or(self.panic).or(self.first_line)?;
+        if reason.chars().count() <= MAX_REASON_CHARS {
+            return Some(reason);
+        }
+        let mut cut: String = reason.chars().take(MAX_REASON_CHARS).collect();
+        cut.push('…');
+        Some(cut)
+    }
+}
+
+/// `---- some::test stdout ----` -> the test name.
+fn failure_block_header(line: &str) -> Option<String> {
+    let name = line
+        .strip_prefix("---- ")?
+        .strip_suffix(" stdout ----")?
+        .trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+fn close_failure_block(outcome: &mut RunOutcome, block: Option<FailureBlock>) {
+    let Some(block) = block else {
+        return;
+    };
+    let name = block.name.clone();
+    if let Some(reason) = block.reason() {
+        outcome.reasons.entry(name).or_insert(reason);
+    }
+}
+
+fn observation_label(outcome: &RunOutcome, name: &str) -> &'static str {
+    if !outcome.state.is_usable() {
+        return "no_evidence";
+    }
+    match outcome.observe(name) {
+        TestObservation::Failed => "FAILED",
+        TestObservation::ObservedPass => "pass",
+        TestObservation::NotObserved => "not_observed",
+    }
 }
 
 /// `test some::path ... FAILED` / `... ok` -> (name, failed).
@@ -429,6 +833,36 @@ fn running_target(line: &str) -> Option<String> {
     let (path, _binary) = rest.split_once(" (")?;
     let path = path.trim();
     (!path.is_empty()).then(|| path.replace('\\', "/"))
+}
+
+/// Why each reported test failed, per run, so the verdict stays readable
+/// when the job log is truncated or its artifacts are unreachable. A failed
+/// test with no captured block is said to have none, never left blank.
+fn render_failure_reasons(
+    out: &mut String,
+    first: &RunOutcome,
+    second: &RunOutcome,
+    verdicts: &BTreeMap<&'static str, Vec<String>>,
+) {
+    let reported: BTreeSet<&String> = verdicts.values().flatten().collect();
+    if reported.is_empty() {
+        return;
+    }
+    out.push_str("### Failure reasons\n\n");
+    for name in reported {
+        out.push_str(&format!("- `{name}`\n"));
+        for (label, outcome) in [("Run 1", first), ("Run 2", second)] {
+            if !outcome.failed.contains(name) {
+                continue;
+            }
+            let reason = outcome
+                .reasons
+                .get(name)
+                .map_or("no failure block captured", String::as_str);
+            out.push_str(&format!("  - {label}: {}\n", reason.replace('`', "'")));
+        }
+    }
+    out.push('\n');
 }
 
 fn render(first: &RunOutcome, second: &RunOutcome) -> String {
@@ -501,6 +935,23 @@ fn render(first: &RunOutcome, second: &RunOutcome) -> String {
         out.push('\n');
     }
 
+    render_failure_reasons(&mut out, first, second, &verdicts);
+
+    out.push_str("### Release-seam controls (#3922)\n\n");
+    out.push_str("Native Windows proof for release seams. A failure here is advisory like any test; an unobserved control fails this lane.\n\n");
+    out.push_str("| Seam | Issue | Control | Run 1 | Run 2 |\n|---|---|---|---|---|\n");
+    for control in RELEASE_SEAM_CONTROLS {
+        out.push_str(&format!(
+            "| {} | {} | `{}` | {} | {} |\n",
+            control.seam,
+            control.issue,
+            control.test,
+            observation_label(first, control.test),
+            observation_label(second, control.test)
+        ));
+    }
+    out.push('\n');
+
     out.push_str("### Targets reached\n\n");
     out.push_str("Recorded because a compile or harness failure can still stop a run before later targets. With `--no-fail-fast` an ordinary test failure no longer hides them.\n\n");
     for (label, outcome) in [("Run 1", first), ("Run 2", second)] {
@@ -552,6 +1003,132 @@ mod tests {
 
     use super::*;
 
+    fn isolated_log(row: &str, result: &str) -> String {
+        format!(
+            "Running unittests src/lib.rs (target/debug/deps/ripr-test.exe)\ntest {NESTED_ALIAS_TEST} ... {row}\n{result}\n"
+        )
+    }
+
+    fn expect_isolated_evidence_failure(
+        observed: IsolatedObservation,
+        label: &str,
+    ) -> Result<(), String> {
+        if matches!(&observed, IsolatedObservation::EvidenceFailure(_)) {
+            Ok(())
+        } else {
+            Err(format!(
+                "{label}: expected evidence failure, got {observed:?}"
+            ))
+        }
+    }
+
+    #[test]
+    fn isolated_summary_accepts_one_exact_named_pass_and_reports_named_failure()
+    -> Result<(), String> {
+        let pass = isolated_log(
+            "ok",
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6032 filtered out; finished in 0.01s",
+        );
+        let expected_pass = IsolatedObservation::Pass {
+            status: 0,
+            result: "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6032 filtered out; finished in 0.01s"
+                .to_string(),
+        };
+        let actual_pass = classify_isolated(Some(&pass), Some("0\n"));
+        if actual_pass != expected_pass {
+            return Err(format!(
+                "exact named pass: expected {expected_pass:?}, got {actual_pass:?}"
+            ));
+        }
+        let fail = isolated_log(
+            "FAILED",
+            "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 6032 filtered out; finished in 0.01s",
+        );
+        let actual_fail = classify_isolated(Some(&fail), Some("101\n"));
+        if !matches!(
+            &actual_fail,
+            IsolatedObservation::TestFailure { status: 101, .. }
+        ) {
+            return Err(format!(
+                "named test failure should be distinct: {actual_fail:?}"
+            ));
+        }
+        expect_isolated_evidence_failure(
+            classify_isolated(Some(&fail), Some("0")),
+            "failed row with zero exit",
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn isolated_summary_refuses_missing_or_fake_observations() -> Result<(), String> {
+        let pass = isolated_log(
+            "ok",
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6032 filtered out; finished in 0.01s",
+        );
+        for (label, log, status) in [
+            ("missing log", None, Some("0")),
+            ("missing status", Some(pass.as_str()), None),
+            ("invalid status", Some(pass.as_str()), Some("not-an-exit")),
+            (
+                "pass row with nonzero exit",
+                Some(pass.as_str()),
+                Some("101"),
+            ),
+        ] {
+            expect_isolated_evidence_failure(classify_isolated(log, status), label)?;
+        }
+        let wrong_total = isolated_log(
+            "ok",
+            "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 6032 filtered out; finished in 0.01s",
+        );
+        let duplicate_result = format!(
+            "{pass}test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6032 filtered out; finished in 0.01s\n"
+        );
+        let duplicate_row = pass.replace(
+            "test result:",
+            &format!("test {NESTED_ALIAS_TEST} ... ok\ntest result:"),
+        );
+        let extra_test = pass.replace("test result:", "test unrelated::test ... ok\ntest result:");
+        let no_target = pass.replacen(
+            "Running unittests src/lib.rs (target/debug/deps/ripr-test.exe)\n",
+            "",
+            1,
+        );
+        let truncated_total = isolated_log("ok", "test result: ok. 1 passed; 0 failed;");
+        let missing_counts = isolated_log(
+            "ok",
+            "test result: ok. 1 passed; 0 failed; 6032 filtered out; finished in 0.01s",
+        );
+        let nonnumeric_filtered = isolated_log(
+            "ok",
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; many filtered out; finished in 0.01s",
+        );
+        let missing_duration = isolated_log(
+            "ok",
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6032 filtered out",
+        );
+        let nonnumeric_duration = isolated_log(
+            "ok",
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6032 filtered out; finished in later",
+        );
+        for (label, log) in [
+            ("wrong total", wrong_total),
+            ("duplicate result", duplicate_result),
+            ("duplicate named row", duplicate_row),
+            ("extra test", extra_test),
+            ("missing target", no_target),
+            ("truncated total", truncated_total),
+            ("missing counts", missing_counts),
+            ("nonnumeric filtered", nonnumeric_filtered),
+            ("missing duration", missing_duration),
+            ("nonnumeric duration", nonnumeric_duration),
+        ] {
+            expect_isolated_evidence_failure(classify_isolated(Some(&log), Some("0")), label)?;
+        }
+        Ok(())
+    }
+
     /// Real bytes from a Windows lane run (#2393): cargo's `Running` lines are
     /// ANSI-coloured because CI sets `CARGO_TERM_COLOR: always`, libtest's are
     /// not. Copied verbatim, because synthetic uncoloured fixtures hid a parser
@@ -573,7 +1150,123 @@ mod tests {
             passed: passed.iter().map(|name| (*name).to_string()).collect(),
             targets: vec!["src/lib.rs".to_string()],
             results: vec!["test result: FAILED. 1 passed; 1 failed".to_string()],
+            reasons: BTreeMap::new(),
         }
+    }
+
+    /// Real failure-section shapes from a Windows lane run: a returned
+    /// `Error:`, a panic with its message on the next line, and a block whose
+    /// only content is printed output.
+    const FAILURE_SECTION_LOG: &str = concat!(
+        "\u{1b}[1m\u{1b}[92m     Running\u{1b}[0m unittests src\\lib.rs (target\\debug\\deps\\ripr-1.exe)\n",
+        "test a::returns_error ... FAILED\n",
+        "test b::panics ... FAILED\n",
+        "test c::prints_only ... FAILED\n",
+        "test d::passes ... ok\n",
+        "\n",
+        "failures:\n",
+        "\n",
+        "---- a::returns_error stdout ----\n",
+        "some progress output\n",
+        "Error: \"descendant PID marker: marker not written\"\n",
+        "---- b::panics stdout ----\n",
+        "\n",
+        "thread 'b::panics' (5684) panicked at crates\\ripr\\src\\b.rs:263:5:\n",
+        "expected command to succeed\n",
+        "stdout:\n",
+        "{\n",
+        "---- c::prints_only stdout ----\n",
+        "only this line\n",
+        "\n",
+        "failures:\n",
+        "    a::returns_error\n",
+        "\n",
+        "test result: FAILED. 1 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s\n",
+    );
+
+    #[test]
+    fn failure_blocks_yield_the_most_explanatory_reason() {
+        let outcome = parse_log(FAILURE_SECTION_LOG);
+        assert_eq!(
+            outcome.reasons.get("a::returns_error").map(String::as_str),
+            Some("Error: \"descendant PID marker: marker not written\""),
+        );
+        assert_eq!(
+            outcome.reasons.get("b::panics").map(String::as_str),
+            Some("panicked at crates\\ripr\\src\\b.rs:263:5: expected command to succeed"),
+        );
+        assert_eq!(
+            outcome.reasons.get("c::prints_only").map(String::as_str),
+            Some("only this line"),
+        );
+        assert!(!outcome.reasons.contains_key("d::passes"));
+        assert_eq!(outcome.failed.len(), 3);
+        assert_eq!(outcome.results.len(), 1);
+    }
+
+    #[test]
+    fn an_unterminated_failure_block_does_not_swallow_later_targets() {
+        let log = concat!(
+            "     Running unittests src\\lib.rs (target\\debug\\deps\\ripr-1.exe)\n",
+            "test a::aborts ... FAILED\n",
+            "failures:\n",
+            "---- a::aborts stdout ----\n",
+            "Error: \"harness aborted\"\n",
+            "     Running tests\\later.rs (target\\debug\\deps\\later-2.exe)\n",
+            "test later::ok ... ok\n",
+            "test result: ok. 1 passed; 0 failed\n",
+        );
+        let outcome = parse_log(log);
+        assert_eq!(outcome.targets, vec!["src/lib.rs", "tests/later.rs"]);
+        assert!(outcome.passed.contains("later::ok"));
+        assert_eq!(
+            outcome.reasons.get("a::aborts").map(String::as_str),
+            Some("Error: \"harness aborted\""),
+        );
+    }
+
+    #[test]
+    fn a_long_reason_is_truncated_to_the_bound() {
+        let long = format!("Error: \"{}\"", "x".repeat(MAX_REASON_CHARS * 2));
+        let log = format!("test a::long ... FAILED\nfailures:\n---- a::long stdout ----\n{long}\n");
+        let reason = parse_log(&log)
+            .reasons
+            .remove("a::long")
+            .unwrap_or_default();
+        assert_eq!(reason.chars().count(), MAX_REASON_CHARS + 1);
+        assert!(reason.ends_with('…'), "{reason}");
+    }
+
+    #[test]
+    fn the_verdict_names_each_failure_reason_per_run() {
+        let mut first = outcome(
+            RunState::NonZeroWithObservedTestFailures,
+            &["seam::flaky", "seam::silent"],
+            &[],
+        );
+        first.reasons.insert(
+            "seam::flaky".to_string(),
+            "Error: \"marker `x` missing\"".to_string(),
+        );
+        let second = outcome(
+            RunState::NonZeroWithObservedTestFailures,
+            &["seam::silent"],
+            &["seam::flaky"],
+        );
+        let rendered = render(&first, &second);
+        assert!(rendered.contains("### Failure reasons"), "{rendered}");
+        assert!(
+            rendered.contains("- `seam::flaky`\n  - Run 1: Error: \"marker 'x' missing\"\n"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "- `seam::silent`\n  - Run 1: no failure block captured\n  - Run 2: no failure block captured\n"
+            ),
+            "{rendered}"
+        );
+        let clean = outcome(RunState::CompletedClean, &[], &["seam::flaky"]);
+        assert!(!render(&clean, &clean).contains("### Failure reasons"));
     }
 
     #[test]
@@ -737,6 +1430,114 @@ mod tests {
         );
     }
 
+    fn control(test: &'static str) -> SeamControl {
+        SeamControl {
+            seam: "process",
+            issue: "#3803",
+            test,
+            source: "crates/ripr/src/process_owner.rs",
+        }
+    }
+
+    /// #3922: an absent release-seam control is an evidence failure in each
+    /// usable run, while a failing control stays advisory.
+    #[test]
+    fn an_unobserved_release_seam_control_is_an_evidence_failure() {
+        let controls = [control("seam::observed"), control("seam::absent")];
+        let first = outcome(
+            RunState::NonZeroWithObservedTestFailures,
+            &["seam::observed"],
+            &["seam::absent"],
+        );
+        let second = outcome(RunState::CompletedClean, &[], &["seam::observed"]);
+
+        let missing = unobserved_controls(&first, &second, &controls);
+        assert_eq!(
+            missing,
+            vec![
+                "run 2 did not observe process control `seam::absent` \
+                 (#3803, defined in crates/ripr/src/process_owner.rs)"
+                    .to_string()
+            ],
+            "a failed control is observed; only the run that never reported one is refused"
+        );
+
+        let both = outcome(
+            RunState::CompletedClean,
+            &[],
+            &["seam::observed", "seam::absent"],
+        );
+        assert!(unobserved_controls(&both, &both, &controls).is_empty());
+    }
+
+    /// An unusable run is refused once for itself, not again per control.
+    #[test]
+    fn an_unusable_run_is_not_double_reported_per_control() {
+        let controls = [control("seam::absent")];
+        let missing = RunOutcome::missing(RunState::LogMissing);
+        let clean = outcome(RunState::CompletedClean, &[], &["seam::absent"]);
+        assert!(unobserved_controls(&missing, &clean, &controls).is_empty());
+    }
+
+    #[test]
+    fn the_verdict_reports_each_release_seam_control_per_run() -> Result<(), String> {
+        let [first_control, second_control, ..] = RELEASE_SEAM_CONTROLS else {
+            return Err("the lane must watch at least two release-seam controls".to_string());
+        };
+        let first = outcome(
+            RunState::NonZeroWithObservedTestFailures,
+            &[first_control.test],
+            &[],
+        );
+        let second = outcome(RunState::CompletedClean, &[], &[first_control.test]);
+        let rendered = render(&first, &second);
+        assert!(
+            rendered.contains(&format!(
+                "| {} | {} | `{}` | FAILED | pass |",
+                first_control.seam, first_control.issue, first_control.test
+            )),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(&format!(
+                "`{}` | not_observed | not_observed |",
+                second_control.test
+            )),
+            "{rendered}"
+        );
+        let unusable = RunOutcome::missing(RunState::StatusMissing);
+        assert!(
+            render(&unusable, &second)
+                .contains(&format!("`{}` | no_evidence | pass |", first_control.test))
+        );
+        Ok(())
+    }
+
+    /// Every control names a test that exists where it says, so a rename breaks
+    /// here on any platform instead of only on the Windows lane.
+    #[test]
+    fn every_release_seam_control_names_a_defined_test() -> Result<(), String> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut names = BTreeSet::new();
+        for control in RELEASE_SEAM_CONTROLS {
+            assert!(
+                names.insert(control.test),
+                "duplicate control {}",
+                control.test
+            );
+            let source = std::fs::read_to_string(root.join(control.source))
+                .map_err(|err| format!("read {}: {err}", control.source))?;
+            let leaf = control.test.rsplit("::").next().unwrap_or(control.test);
+            assert!(
+                source.contains(&format!("fn {leaf}(")),
+                "{} does not define `{leaf}` for control {}",
+                control.source,
+                control.test
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn run_state_labels_are_stable_wire_strings() {
         assert_eq!(RunState::CompletedClean.label(), "completed_clean");
@@ -814,6 +1615,7 @@ mod tests {
                 passed: BTreeSet::new(),
                 targets: Vec::new(),
                 results: Vec::new(),
+                reasons: BTreeMap::new(),
             },
             &outcome,
         );

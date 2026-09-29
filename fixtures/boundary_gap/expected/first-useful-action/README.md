@@ -26,7 +26,20 @@ Files:
   canonical placeholder-hash algorithm. The verify artifact and receipt bind
   the exact normalized snapshot bytes and their empty evidence delta. They intentionally
   remain weak/unchanged when the canonical boundary-gap journey advances to
-  improved evidence.
+  improved evidence. Because the receipt is portable-normalized, it carries no
+  complete analysis outcome, so `ripr first-action` fails closed on it with
+  `missing_required_artifact` rather than routing `unchanged` movement, and
+  hands off to `ripr agent status`, which names the command for each missing
+  workflow artifact (the persisted verify file and its sibling analysis
+  outcome) that a complete receipt needs.
+  The `unchanged_after_attempt` route itself is exercised by a live
+  verify/receipt chain in the `cli_smoke` test
+  `first_action_routes_live_unchanged_receipt_to_revise_focused_test`.
+- `<case>/inputs/` holds the committed artifacts a case renders from when the
+  report names a `target/ripr/...` input path (`stale`, `baseline-only`,
+  `no-actionable-seam`). `cargo xtask dogfood` copies each input to the path
+  the report names, runs `ripr first-action`, and compares the produced JSON
+  and Markdown byte for byte to the goldens here.
 
 The corpus intentionally covers:
 
@@ -44,7 +57,8 @@ The corpus intentionally covers:
 - suppressed item;
 - no actionable seam;
 - already-improved receipt state;
-- unchanged-after-attempt receipt state.
+- unchanged-after-attempt receipt that is not promotable, so the route fails
+  closed.
 
 Case directories:
 
@@ -75,7 +89,7 @@ receipts:
 - `unchanged-after-attempt/`
 - `no-actionable-seam/`
 
-Those dogfood checks prove that the documented first useful action routes stay
-reviewable from checked artifacts. They remain advisory and do not rerun hidden
+Each of those cases renders through the shipped `ripr first-action` route, so
+a router change that alters any byte of these goldens fails the gate. They remain advisory and do not rerun hidden
 analysis, edit source, generate tests, call providers, run mutation testing,
 invent policy, or change CI blocking.

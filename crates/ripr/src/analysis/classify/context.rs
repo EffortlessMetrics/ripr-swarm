@@ -1,5 +1,7 @@
 use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
+use super::activation::TestValueFacts;
 use super::helper_transfer::HelperChain;
+use super::reveal::FileUseStatements;
 use crate::domain::{Probe, RelationReason};
 
 pub(in crate::analysis) struct ProbeContext<'a> {
@@ -23,6 +25,12 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// resolution inside the evidence stages.
     pub index: &'a RustIndex,
     pub workspace_complete: bool,
+    /// Run-scoped per-file `use` scan, attached by the classifier; `None`
+    /// (unit-test contexts) scans on every query.
+    pub file_use_statements: Option<&'a FileUseStatements>,
+    /// Run-scoped per-(test, owner) value facts, attached by the
+    /// classifier; `None` (unit-test contexts) computes them per probe.
+    pub test_value_facts: Option<&'a TestValueFacts>,
 }
 
 impl<'a> ProbeContext<'a> {
@@ -42,7 +50,27 @@ impl<'a> ProbeContext<'a> {
             helper_chain: None,
             index,
             workspace_complete,
+            file_use_statements: None,
+            test_value_facts: None,
         }
+    }
+
+    /// Share one classification run's per-file `use` scan across probes.
+    pub(in crate::analysis) fn with_file_use_statements(
+        mut self,
+        file_use_statements: &'a FileUseStatements,
+    ) -> Self {
+        self.file_use_statements = Some(file_use_statements);
+        self
+    }
+
+    /// Share one classification run's per-test value facts across probes.
+    pub(in crate::analysis) fn with_test_value_facts(
+        mut self,
+        test_value_facts: &'a TestValueFacts,
+    ) -> Self {
+        self.test_value_facts = Some(test_value_facts);
+        self
     }
 
     /// Attach the #3296 helper-transfer chain (computed once by the
@@ -53,6 +81,24 @@ impl<'a> ProbeContext<'a> {
     ) -> Self {
         self.helper_chain = helper_chain;
         self
+    }
+
+    /// Whether the related test file `file` (indexed source `source`)
+    /// imports `callee` from a foreign path; see
+    /// `use_statements_import_foreign_callee_name`. Uses the run-scoped scan when
+    /// the classifier attached one.
+    pub(in crate::analysis) fn test_file_imports_foreign_callee_name(
+        &self,
+        file: &std::path::Path,
+        source: &str,
+        callee: &str,
+    ) -> bool {
+        let names = &self.index.package_names;
+        match self.file_use_statements {
+            Some(memo) => memo.imports_foreign_callee_name(file, source, callee, names),
+            None => FileUseStatements::default()
+                .imports_foreign_callee_name(file, source, callee, names),
+        }
     }
 
     /// Borrow just the `TestSummary` references for callers that don't need

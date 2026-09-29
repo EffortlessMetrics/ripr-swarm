@@ -78,6 +78,12 @@ pub(super) struct ActionSelected {
     pub(super) canonical_gap_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) repair_route: Option<String>,
+    /// The changed expression the selected evidence names, when it names one
+    /// (F60-12). `why` explains the selection and is not the changed
+    /// behavior, so the one-screen line and the generated CI summary
+    /// (`.selected.changed_behavior // .why`) read this instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) changed_behavior: Option<String>,
 }
 
 impl ActionSelected {
@@ -110,6 +116,10 @@ pub(super) struct ActionCommands {
     pub(super) repair: Option<String>,
     pub(super) context_packet: Option<String>,
     pub(super) after_snapshot: Option<String>,
+    /// Writes `analysis-outcome.json` beside the persisted verify file, which
+    /// `agent receipt` needs for a complete, promotable receipt (#4304).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) analysis_outcome: Option<String>,
     pub(super) verify: Option<String>,
     pub(super) receipt: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

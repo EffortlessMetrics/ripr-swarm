@@ -1,6 +1,7 @@
 //! Owner extraction for the TypeScript preview adapter.
 
 use super::*;
+use oxc_ast::ast::{AssignmentOperator, AssignmentTarget, PropertyKind, StaticMemberExpression};
 
 pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> {
     // Parse (and walk) on the dedicated large-stack worker behind the
@@ -13,9 +14,28 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
             return Vec::new();
         }
         let imports = extract_imports_from_statements(&ret.program.body);
+        // One line index per source; every owner line below is a binary
+        // search against it rather than a rescan from byte 0.
+        let source = &SourceText::new(source);
+        // `(owner, is a CommonJS assignment export)`, in source order.
         let mut owners = Vec::new();
         for stmt in &ret.program.body {
-            owners.extend(owners_from_statement(stmt, file, source, &imports));
+            let commonjs = matches!(stmt, Statement::ExpressionStatement(_));
+            owners.extend(
+                owners_from_statement(stmt, file, source, &imports)
+                    .into_iter()
+                    .map(|owner| (owner, commonjs)),
+            );
+        }
+        let mut owners = without_reassigned_commonjs_exports(owners);
+        let entries = module_entries_by_owner(&ret.program.body, source);
+        for owner in &mut owners {
+            if owner.class_name.is_none()
+                && owner.owner_kind != OwnerKind::ModuleFunction
+                && let Some(owner_entries) = entries.get(&owner.name)
+            {
+                owner.module_entries = owner_entries.clone();
+            }
         }
         owners
     }) else {
@@ -27,7 +47,7 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
 pub(crate) fn owners_from_statement(
     stmt: &Statement<'_>,
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     imports: &[TypeScriptImport],
 ) -> Vec<TypeScriptOwner> {
     if let Statement::FunctionDeclaration(func) = stmt
@@ -57,13 +77,196 @@ pub(crate) fn owners_from_statement(
     if let Statement::ExportDefaultDeclaration(export) = stmt {
         return owners_from_default_export(&export.declaration, file, source, imports);
     }
+    if let Statement::ExpressionStatement(expression) = stmt {
+        return owners_from_commonjs_export(&expression.expression, file, source, imports);
+    }
     owners_from_statement_declaration(stmt, file, source, imports)
+}
+
+/// Owners carved from a top-level CommonJS assignment export (#4545):
+///
+/// - `exports.NAME = function ... / arrow` and
+///   `module.exports.NAME = function ... / arrow` yield an owner named by the
+///   static property `NAME`;
+/// - `module.exports = function NAME(...) ... / arrow` yields the module's
+///   default-export owner (named by the function id, else `default`), the
+///   CommonJS mirror of `export default function`;
+/// - `module.exports = { NAME() {}, NAME: function () {}, NAME: () => ... }`
+///   yields one owner per static-identifier key whose value is a function.
+///
+/// Anything else — a non-function value, a computed or string-literal
+/// property, a compound operator, a chained assignment, a getter/setter or
+/// spread entry — yields no owner (fail-closed: no invented owner).
+fn owners_from_commonjs_export(
+    expression: &Expression<'_>,
+    file: &Path,
+    source: &SourceText<'_>,
+    imports: &[TypeScriptImport],
+) -> Vec<TypeScriptOwner> {
+    let Expression::AssignmentExpression(assign) = expression else {
+        return Vec::new();
+    };
+    if assign.operator != AssignmentOperator::Assign {
+        return Vec::new();
+    }
+    let AssignmentTarget::StaticMemberExpression(target) = &assign.left else {
+        return Vec::new();
+    };
+    let property = target.property.name.as_str();
+    let named_export_object = match &target.object {
+        // `exports.NAME = ...`
+        Expression::Identifier(object) => object.name == "exports",
+        // `module.exports.NAME = ...`
+        Expression::StaticMemberExpression(object) => is_module_exports(object),
+        _ => false,
+    };
+    if named_export_object {
+        return commonjs_function_owner(
+            &assign.right,
+            property,
+            assign.span.start,
+            file,
+            source,
+            imports,
+        )
+        .into_iter()
+        .collect();
+    }
+    if !is_module_exports(target) {
+        return Vec::new();
+    }
+    // `module.exports = ...`
+    match &assign.right {
+        Expression::FunctionExpression(func) => {
+            let name = func
+                .id
+                .as_ref()
+                .map(|id| id.name.as_str())
+                .unwrap_or("default");
+            commonjs_function_owner(
+                &assign.right,
+                name,
+                assign.span.start,
+                file,
+                source,
+                imports,
+            )
+            .map(|mut owner| {
+                owner.exported_as_default = true;
+                vec![owner]
+            })
+            .unwrap_or_default()
+        }
+        Expression::ArrowFunctionExpression(_) => commonjs_function_owner(
+            &assign.right,
+            "default",
+            assign.span.start,
+            file,
+            source,
+            imports,
+        )
+        .map(|mut owner| {
+            owner.exported_as_default = true;
+            vec![owner]
+        })
+        .unwrap_or_default(),
+        Expression::ObjectExpression(object) => object
+            .properties
+            .iter()
+            .filter_map(|property| {
+                let ObjectPropertyKind::ObjectProperty(property) = property else {
+                    return None;
+                };
+                if property.computed || property.kind != PropertyKind::Init {
+                    return None;
+                }
+                let name = property_key_name(&property.key)?;
+                commonjs_function_owner(
+                    &property.value,
+                    &name,
+                    property.span.start,
+                    file,
+                    source,
+                    imports,
+                )
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Drop every CommonJS export owner whose name another CommonJS export in
+/// the same file also defines (#4638 review). `module.exports = { f: fn }`
+/// followed by `module.exports.f = ...` leaves only the last value live, but
+/// which one runs depends on statement order and control flow the syntax
+/// walk does not model; crediting the dead one would report an exposure for
+/// code no test reaches. Fail-closed: no owner for a reassigned export.
+fn without_reassigned_commonjs_exports(
+    owners: Vec<(TypeScriptOwner, bool)>,
+) -> Vec<TypeScriptOwner> {
+    let commonjs_names: Vec<String> = owners
+        .iter()
+        .filter(|(_, commonjs)| *commonjs)
+        .map(|(owner, _)| owner.name.clone())
+        .collect();
+    owners
+        .into_iter()
+        .filter(|(owner, commonjs)| {
+            !*commonjs
+                || commonjs_names
+                    .iter()
+                    .filter(|name| **name == owner.name)
+                    .count()
+                    == 1
+        })
+        .map(|(owner, _)| owner)
+        .collect()
+}
+
+/// `module.exports` as a static member expression on the bare `module`
+/// identifier.
+fn is_module_exports(member: &StaticMemberExpression<'_>) -> bool {
+    member.property.name == "exports"
+        && matches!(&member.object, Expression::Identifier(object) if object.name == "module")
+}
+
+/// A function owner for a CommonJS export value: `function ...` or an arrow;
+/// any other value yields `None`.
+fn commonjs_function_owner(
+    value: &Expression<'_>,
+    name: &str,
+    owner_start: u32,
+    file: &Path,
+    source: &SourceText<'_>,
+    imports: &[TypeScriptImport],
+) -> Option<TypeScriptOwner> {
+    match value {
+        Expression::FunctionExpression(func) => Some(owner_from_function(
+            file,
+            source,
+            name,
+            func,
+            function_owner_kind(file, source, name, func.span.start, func.span.end),
+            false,
+            imports,
+        )),
+        Expression::ArrowFunctionExpression(arrow) => Some(owner_from_arrow(
+            file,
+            source,
+            name,
+            arrow,
+            owner_start,
+            false,
+            imports,
+        )),
+        _ => None,
+    }
 }
 
 pub(crate) fn owners_from_statement_declaration(
     stmt: &Statement<'_>,
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     imports: &[TypeScriptImport],
 ) -> Vec<TypeScriptOwner> {
     match stmt {
@@ -78,7 +281,7 @@ pub(crate) fn owners_from_statement_declaration(
 pub(crate) fn owners_from_declaration(
     decl: &Declaration<'_>,
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     imports: &[TypeScriptImport],
 ) -> Vec<TypeScriptOwner> {
     match decl {
@@ -114,7 +317,7 @@ pub(crate) fn owners_from_declaration(
 pub(crate) fn owners_from_default_export(
     decl: &ExportDefaultDeclarationKind<'_>,
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     imports: &[TypeScriptImport],
 ) -> Vec<TypeScriptOwner> {
     let mut owners = match decl {
@@ -175,7 +378,7 @@ pub(crate) fn owners_from_default_export(
 pub(crate) fn owners_from_variable_declaration(
     decl: &VariableDeclaration<'_>,
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     imports: &[TypeScriptImport],
 ) -> Vec<TypeScriptOwner> {
     decl.declarations
@@ -187,7 +390,7 @@ pub(crate) fn owners_from_variable_declaration(
 pub(crate) fn owner_from_variable_declarator(
     declarator: &VariableDeclarator<'_>,
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     imports: &[TypeScriptImport],
 ) -> Option<TypeScriptOwner> {
     let name = binding_identifier_name(&declarator.id)?;
@@ -214,8 +417,8 @@ pub(crate) fn owner_from_variable_declarator(
         _ => Some(TypeScriptOwner {
             name: name.to_string(),
             file: file.to_path_buf(),
-            start_line: line_for_offset(source, declarator.span.start as usize),
-            end_line: line_for_offset(source, declarator.span.end as usize),
+            start_line: source.line_for_offset(declarator.span.start as usize),
+            end_line: source.line_for_offset(declarator.span.end as usize),
             owner_kind: OwnerKind::ModuleFunction,
             class_name: None,
             decorated: false,
@@ -223,9 +426,12 @@ pub(crate) fn owner_from_variable_declarator(
             imports: imports.to_vec(),
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
-            // Non-function initializers carry no resolvable signature facts.
+            module_entries: Vec::new(),
+            // Non-function initializers carry no resolvable signature facts:
+            // no fixed positional signature the boundary witness could
+            // arity-check against.
+            params: Vec::new(),
             arity: None,
-            parameters: Vec::new(),
             source_text: None,
         }),
     }
@@ -253,19 +459,19 @@ fn parameter_facts(params: &FormalParameters<'_>) -> (Option<usize>, Vec<String>
 
 pub(crate) fn owner_from_function(
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     name: &str,
     func: &Function<'_>,
     owner_kind: OwnerKind,
     decorated: bool,
     imports: &[TypeScriptImport],
 ) -> TypeScriptOwner {
-    let (arity, parameters) = parameter_facts(&func.params);
+    let (arity, params) = parameter_facts(&func.params);
     TypeScriptOwner {
         name: name.to_string(),
         file: file.to_path_buf(),
-        start_line: line_for_offset(source, func.span.start as usize),
-        end_line: line_for_offset(source, func.span.end as usize),
+        start_line: source.line_for_offset(func.span.start as usize),
+        end_line: source.line_for_offset(func.span.end as usize),
         owner_kind,
         class_name: None,
         decorated,
@@ -273,27 +479,28 @@ pub(crate) fn owner_from_function(
         imports: imports.to_vec(),
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
+        module_entries: Vec::new(),
+        params,
         arity,
-        parameters,
         source_text: Some(source[func.span.start as usize..func.span.end as usize].to_string()),
     }
 }
 
 pub(crate) fn owner_from_arrow(
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     name: &str,
     arrow: &ArrowFunctionExpression<'_>,
     owner_start: u32,
     decorated: bool,
     imports: &[TypeScriptImport],
 ) -> TypeScriptOwner {
-    let (arity, parameters) = parameter_facts(&arrow.params);
+    let (arity, params) = parameter_facts(&arrow.params);
     TypeScriptOwner {
         name: name.to_string(),
         file: file.to_path_buf(),
-        start_line: line_for_offset(source, owner_start as usize),
-        end_line: line_for_offset(source, arrow.span.end as usize),
+        start_line: source.line_for_offset(owner_start as usize),
+        end_line: source.line_for_offset(arrow.span.end as usize),
         owner_kind: arrow_owner_kind(file, source, name, arrow.span.start, arrow.span.end),
         class_name: None,
         decorated,
@@ -301,8 +508,9 @@ pub(crate) fn owner_from_arrow(
         imports: imports.to_vec(),
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
+        module_entries: Vec::new(),
+        params,
         arity,
-        parameters,
         source_text: Some(source[arrow.span.start as usize..arrow.span.end as usize].to_string()),
     }
 }
@@ -310,7 +518,7 @@ pub(crate) fn owner_from_arrow(
 pub(crate) fn owners_from_class(
     class: &Class<'_>,
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     imports: &[TypeScriptImport],
 ) -> Vec<TypeScriptOwner> {
     let mut owners = Vec::new();
@@ -339,7 +547,7 @@ pub(crate) fn owners_from_class(
 pub(crate) fn owner_from_method(
     method: &MethodDefinition<'_>,
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     class_decorated: bool,
     class_name: Option<&str>,
     imports: &[TypeScriptImport],
@@ -348,12 +556,12 @@ pub(crate) fn owner_from_method(
         return None;
     }
     let name = property_key_name(&method.key)?;
-    let (arity, parameters) = parameter_facts(&method.value.params);
+    let (arity, params) = parameter_facts(&method.value.params);
     Some(TypeScriptOwner {
         name,
         file: file.to_path_buf(),
-        start_line: line_for_offset(source, method.span.start as usize),
-        end_line: line_for_offset(source, method.span.end as usize),
+        start_line: source.line_for_offset(method.span.start as usize),
+        end_line: source.line_for_offset(method.span.end as usize),
         owner_kind: if method.r#static {
             OwnerKind::ClassMethod
         } else {
@@ -370,8 +578,9 @@ pub(crate) fn owner_from_method(
             oxc_ast::ast::MethodDefinitionKind::Method => TypeScriptMethodKind::Ordinary,
         },
         class_default_export: false,
+        module_entries: Vec::new(),
+        params,
         arity,
-        parameters,
         source_text: Some(source[method.span.start as usize..method.span.end as usize].to_string()),
     })
 }
@@ -707,7 +916,7 @@ pub(crate) fn detect_owner_extraction_gap(
             // Parse-error disclosure owns this case; do not double-report.
             return None;
         }
-        find_owner_extraction_gap(&ret.program.body, source, &changed)
+        find_owner_extraction_gap(&ret.program.body, &SourceText::new(source), &changed)
     }) else {
         return None;
     };
@@ -719,11 +928,48 @@ pub(crate) fn detect_owner_extraction_gap(
     })
 }
 
+/// 1-based inclusive line ranges of top-level ambient declarations
+/// (`declare function`, `export declare const`, `declare module 'x' { ... }`,
+/// `declare global { ... }`), read from the syntax tree. They are type-only
+/// and erased at compile time, so a changed line inside one has no runtime
+/// behavior to probe. A file that does not parse yields no ranges, so its
+/// lines stay probed.
+pub(crate) fn ambient_declaration_lines(file: &Path, source: &str) -> Vec<(usize, usize)> {
+    parse_on_worker(file, source, |file, source, allocator| {
+        let ret = Parser::new(allocator, source, source_type_for(file)).parse();
+        if !ret.errors.is_empty() {
+            return Vec::new();
+        }
+        let source = SourceText::new(source);
+        ret.program
+            .body
+            .iter()
+            .filter(|stmt| match stmt {
+                Statement::ExportNamedDeclaration(export) => export
+                    .declaration
+                    .as_ref()
+                    .is_some_and(|declaration| declaration.declare()),
+                _ => stmt
+                    .as_declaration()
+                    .is_some_and(|declaration| declaration.declare()),
+            })
+            .map(|stmt| {
+                let span = stmt.span();
+                (
+                    source.line_for_offset(span.start as usize),
+                    source.line_for_offset(span.end as usize),
+                )
+            })
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
 /// Walk top-level statements for unsupported owner shapes intersecting a
 /// changed line. Returns `(sample_line, shape, (span_start, span_end))`.
 fn find_owner_extraction_gap(
     statements: &oxc_allocator::Vec<'_, Statement<'_>>,
-    source: &str,
+    source: &SourceText<'_>,
     changed: &std::collections::HashSet<usize>,
 ) -> Option<(usize, &'static str, (usize, usize))> {
     for stmt in statements {
@@ -784,17 +1030,109 @@ fn find_owner_extraction_gap(
                     return Some(gap);
                 }
             }
+            Statement::ExpressionStatement(statement) => {
+                if let Some(gap) =
+                    expression_statement_function_gap(&statement.expression, source, changed)
+                {
+                    return Some(gap);
+                }
+            }
             _ => {}
         }
     }
     None
 }
 
+/// A function value carried by a top-level expression statement that the
+/// extractor never turns into an owner (#4754):
+///
+/// - `res.send = function send() {...}` / `Foo.prototype.bar = () => ...`
+///   (a member-assigned function on an object other than the CommonJS
+///   `exports` / `module.exports` targets, which are export shapes);
+/// - a function inside a top-level call: an IIFE (`(function () {...})()`,
+///   `(function () {...}.call(this))`, `!function () {...}()`) or a wrapper
+///   argument (`define([...], function () {...})`).
+fn expression_statement_function_gap(
+    expression: &Expression<'_>,
+    source: &SourceText<'_>,
+    changed: &std::collections::HashSet<usize>,
+) -> Option<(usize, &'static str, (usize, usize))> {
+    let hit = |function: &Expression<'_>, shape: &'static str| {
+        let span = function.span();
+        span_hits_changed_line(span, source, changed)
+            .map(|line| (line, shape, (span.start as usize, span.end as usize)))
+    };
+    match expression.without_parentheses() {
+        Expression::AssignmentExpression(assign) => {
+            let oxc_ast::ast::AssignmentTarget::StaticMemberExpression(target) = &assign.left
+            else {
+                return None;
+            };
+            if is_commonjs_export_target(target) {
+                return None;
+            }
+            let value = assign.right.without_parentheses();
+            is_function_value(value)
+                .then(|| hit(value, "member-assigned function"))
+                .flatten()
+        }
+        Expression::UnaryExpression(unary) => {
+            expression_statement_function_gap(&unary.argument, source, changed)
+        }
+        Expression::CallExpression(call) => {
+            let callee = match call.callee.without_parentheses() {
+                // `(function () {...}).call(this)` / `.apply(...)`
+                Expression::StaticMemberExpression(member)
+                    if matches!(member.property.name.as_str(), "call" | "apply") =>
+                {
+                    member.object.without_parentheses()
+                }
+                callee => callee,
+            };
+            if is_function_value(callee)
+                && let Some(gap) = hit(callee, "function inside a top-level call")
+            {
+                return Some(gap);
+            }
+            call.arguments
+                .iter()
+                .filter_map(|argument| argument.as_expression())
+                .map(Expression::without_parentheses)
+                .filter(|argument| is_function_value(argument))
+                .find_map(|argument| hit(argument, "function inside a top-level call"))
+        }
+        _ => None,
+    }
+}
+
+fn is_function_value(expression: &Expression<'_>) -> bool {
+    matches!(
+        expression,
+        Expression::FunctionExpression(_) | Expression::ArrowFunctionExpression(_)
+    )
+}
+
+/// `exports.NAME`, `module.exports`, or `module.exports.NAME`: CommonJS
+/// export targets, owned as export shapes rather than disclosed here.
+fn is_commonjs_export_target(target: &oxc_ast::ast::StaticMemberExpression<'_>) -> bool {
+    match target.object.without_parentheses() {
+        Expression::Identifier(object) => {
+            object.name == "exports"
+                || (object.name == "module" && target.property.name == "exports")
+        }
+        Expression::StaticMemberExpression(object) => {
+            object.property.name == "exports"
+                && matches!(&object.object, Expression::Identifier(module) if module.name == "module")
+        }
+        _ => false,
+    }
+}
+
 /// Scan class body elements for the unsupported member shapes the extractor
 /// skips, returning the first one that intersects a changed line.
 fn unsupported_class_element_gap(
     class: &Class<'_>,
-    source: &str,
+    source: &SourceText<'_>,
     changed: &std::collections::HashSet<usize>,
 ) -> Option<(usize, &'static str, (usize, usize))> {
     for element in &class.body.body {
@@ -835,11 +1173,11 @@ fn unsupported_class_element_gap(
 /// First changed line inside `span`'s line range, if any.
 fn span_hits_changed_line(
     span: impl GetSpan,
-    source: &str,
+    source: &SourceText<'_>,
     changed: &std::collections::HashSet<usize>,
 ) -> Option<usize> {
     let span = span.span();
-    let start_line = line_for_offset(source, span.start as usize);
-    let end_line = line_for_offset(source, span.end as usize);
+    let start_line = source.line_for_offset(span.start as usize);
+    let end_line = source.line_for_offset(span.end as usize);
     (start_line..=end_line).find(|line| changed.contains(line))
 }

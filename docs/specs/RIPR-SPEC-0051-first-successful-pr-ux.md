@@ -101,6 +101,13 @@ The packet must answer these reviewer questions in stable, user-facing terms:
 The Markdown packet is the human first screen. The JSON packet is the stable
 machine-readable form consumed by generated CI, LSP orchestration, and agents.
 
+The JSON packet records `ripr_version` as the producing package version. That
+field is additive on schema `0.1`. `ripr first-pr --check` and `ripr doctor`
+treat a packet whose `ripr_version` is missing or different from the running
+binary as `stale_evidence` and name the `ripr first-pr` refresh command. They
+must not present that packet as current first-screen evidence. A packet without
+the field is a pre-0.11 artifact, not a contract-invalid document.
+
 ### Selection rules
 
 The packet should select at most one top item for the first screen:
@@ -342,6 +349,13 @@ Stale or wrong-root artifact:
 - Given a stale or wrong-root gap ledger, the packet suppresses repair
   interruption and shows a refresh or rerun command.
 
+Version-mismatched start-here packet:
+
+- Given a start-here packet written without `ripr_version` or with a different
+  producing version, `ripr first-pr --check` and `ripr doctor` report
+  `stale_evidence` and the `ripr first-pr` refresh command rather than treating
+  the packet as current first-screen evidence.
+
 Static limitation only:
 
 - Given report-only static limitation evidence with no bounded repair route,
@@ -380,7 +394,10 @@ Follow-up implementation should add or update:
 - agent packet tests for pasteable task, context, repair, verification, stop
   conditions, and "do not do" sections;
 - dogfood receipt checks for detect gap, repair, verify, movement, and
-  no-action states.
+  no-action states;
+- a foreign-working-directory replay proving every generated artifact command
+  reads and writes the selected root when pasted elsewhere (#3948, #4287):
+  `crates/ripr/tests/generated_review_workflow.rs::generated_first_pr_artifact_commands_run_from_a_foreign_working_directory`.
 
 This spec PR does not add production code or output fields.
 

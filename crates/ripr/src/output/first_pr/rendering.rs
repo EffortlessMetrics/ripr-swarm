@@ -1,6 +1,7 @@
 use super::{
-    ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, STATIC_EVIDENCE_BOUNDARY,
-    string_path,
+    ProofPathLabels, RECEIPT_BOUNDARY_LABEL, RECEIPT_BOUNDARY_STEP, RECEIPT_STATUS_LABEL,
+    REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, STATIC_EVIDENCE_BOUNDARY,
+    STATIC_RECHECK_LABEL, receipt_status_step, string_path,
 };
 use crate::agent::loop_commands::display_path;
 use crate::output::markdown::{PowershellForm, powershell_command, powershell_form};
@@ -119,6 +120,16 @@ pub(super) fn start_here_cli_summary(
             }
             if let Some(command) = string_path(selected, &["receipt_command"]) {
                 out.push_str(&format!("{}: `{command}`\n", labels.receipt));
+                if let Some(step) = receipt_status_step(&command) {
+                    out.push_str(&format!("{RECEIPT_STATUS_LABEL}: {step}\n"));
+                }
+            }
+            if let Some(command) = string_path(selected, &["static_recheck_command"]) {
+                out.push_str(&format!("{STATIC_RECHECK_LABEL}: `{command}`\n"));
+                push_recovery_powershell_variant(&mut out, STATIC_RECHECK_LABEL, &command);
+                out.push_str(&format!(
+                    "{RECEIPT_BOUNDARY_LABEL}: {RECEIPT_BOUNDARY_STEP}\n"
+                ));
             }
             out.push_str(&format!(
                 "Receipt path: `{}`\n",
@@ -136,6 +147,19 @@ pub(super) fn start_here_cli_summary(
             if let Some(command) = string_path(selected, &["regeneration_command"]) {
                 out.push_str(&format!("Regeneration command: `{command}`\n"));
                 push_recovery_powershell_variant(&mut out, "Regeneration command", &command);
+            }
+            if let Some(also_missing) = selected.get("also_missing").and_then(Value::as_array) {
+                for artifact in also_missing {
+                    let label = string_path(artifact, &["label"])
+                        .unwrap_or_else(|| "Required artifact".to_string());
+                    let path =
+                        string_path(artifact, &["path"]).unwrap_or_else(|| "unknown".to_string());
+                    out.push_str(&format!("Also missing: {label} at `{path}`\n"));
+                    if let Some(command) = string_path(artifact, &["regeneration_command"]) {
+                        out.push_str(&format!("Then run: `{command}`\n"));
+                        push_recovery_powershell_variant(&mut out, "Then run", &command);
+                    }
+                }
             }
             out.push_str("Receipt path: `not_applicable`\n");
         }
@@ -340,11 +364,32 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
             "- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n"
         ));
     }
+    if let Some(command) = selected
+        .get("analysis_outcome_command")
+        .and_then(Value::as_str)
+    {
+        out.push_str(&format!(
+            "- Analysis outcome for the receipt: `{command}`\n"
+        ));
+    }
     if let Some(command) = selected.get("verify_command").and_then(Value::as_str) {
         out.push_str(&format!("- {}: `{command}`\n", labels.verify));
     }
     if let Some(command) = selected.get("receipt_command").and_then(Value::as_str) {
         out.push_str(&format!("- {}: `{command}`\n", labels.receipt));
+        if let Some(step) = receipt_status_step(command) {
+            out.push_str(&format!("- {RECEIPT_STATUS_LABEL}: {step}\n"));
+        }
+    }
+    if let Some(command) = selected
+        .get("static_recheck_command")
+        .and_then(Value::as_str)
+    {
+        out.push_str(&format!("- {STATIC_RECHECK_LABEL}: `{command}`\n"));
+        push_recovery_powershell_variant(out, &format!("- {STATIC_RECHECK_LABEL}"), command);
+        out.push_str(&format!(
+            "- {RECEIPT_BOUNDARY_LABEL}: {RECEIPT_BOUNDARY_STEP}\n"
+        ));
     }
     if let Some(path) = selected.get("receipt_path").and_then(Value::as_str) {
         out.push_str(&format!("- Receipt path: `{path}`\n"));
@@ -399,6 +444,12 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
         out.push_str(&format!(
             "{REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n\n"
         ));
+    }
+    if let Some(command) = selected
+        .get("analysis_outcome_command")
+        .and_then(Value::as_str)
+    {
+        push_shell_command_pair(out, "Analysis outcome for the receipt", command, true);
     }
     if let Some(command) = selected.get("verify_command").and_then(Value::as_str) {
         push_shell_command_pair(out, labels.verify, command, true);
@@ -535,6 +586,20 @@ fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
     if let Some(command) = selected.get("regeneration_command").and_then(Value::as_str) {
         out.push_str(&format!("- Regeneration command: `{command}`\n"));
         push_recovery_powershell_variant(out, "- Regeneration command", command);
+    }
+    if let Some(also_missing) = selected.get("also_missing").and_then(Value::as_array) {
+        for artifact in also_missing {
+            let label = artifact
+                .get("label")
+                .and_then(Value::as_str)
+                .unwrap_or("required artifact");
+            let path = artifact.get("path").and_then(Value::as_str).unwrap_or("");
+            out.push_str(&format!("- Also missing: {label} at `{path}`\n"));
+            if let Some(command) = artifact.get("regeneration_command").and_then(Value::as_str) {
+                out.push_str(&format!("- Then run: `{command}`\n"));
+                push_recovery_powershell_variant(out, "- Then run", command);
+            }
+        }
     }
 }
 

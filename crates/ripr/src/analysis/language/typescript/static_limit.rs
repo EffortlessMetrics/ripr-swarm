@@ -13,6 +13,9 @@
 //! - `typescript_test_extraction_partial` — LANDED in partial test-extraction disclosure
 //!   (template-literal titles, tagged-template `.each`, tests generated in
 //!   loops/callbacks; detection only — extracting these shapes is follow-up)
+//! - `typescript_spy_fabricated_observer` — LANDED in spy-oracle fabrication
+//!   disclosure (#4103 shape 4: `vi.spyOn(module, name).mockReturnValue(...)`;
+//!   the fabricated value is observed, not the changed sink)
 
 use super::*;
 
@@ -184,7 +187,7 @@ pub(crate) fn named_limitations_for_relative_import_unresolved(
             continue;
         }
         for import in &test.imports_in_file {
-            if !import.source.starts_with("./") && !import.source.starts_with("../") {
+            if !is_relative_specifier(&import.source) {
                 continue;
             }
             let name_matches = match &import.imported {
@@ -254,8 +257,15 @@ fn relative_import_resolves_to_workspace_file(
     let extensions = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"];
     let mut candidates: Vec<PathBuf> = vec![base.clone()];
     for ext in extensions {
-        candidates.push(PathBuf::from(format!("{base_str}{ext}")));
-        candidates.push(PathBuf::from(format!("{base_str}/index{ext}")));
+        if base_str.is_empty() {
+            // `require('..')` from `test/`: the workspace root directory
+            // itself, whose only file candidates are its `index` files. An
+            // empty base must never become a rooted `/index.js` probe.
+            candidates.push(PathBuf::from(format!("index{ext}")));
+        } else {
+            candidates.push(PathBuf::from(format!("{base_str}{ext}")));
+            candidates.push(PathBuf::from(format!("{base_str}/index{ext}")));
+        }
     }
     // TypeScript's JS-extension rewrite (moduleResolution node16/bundler):
     // an ESM-style `./util.js` specifier may resolve to the `util.ts` /
@@ -294,10 +304,9 @@ fn relative_import_resolves_to_workspace_file(
 /// Real producers:
 ///
 /// 1. **Cross-package exclusion**: a test in a *different* package references
-///    the owner by call name (`contains_call_name`) or via an import.  The
-///    test would have produced an `ImportedOwnerCall` or `DirectOwnerCall`
-///    relation, but the package-local filter discarded it.  We detect this by
-///    comparing candidates with vs. without the package-local filter.
+///    the owner by call name (`contains_call_name`) or via an import, and the
+///    relation layer did not admit it (`related`). A cross-package test whose
+///    import resolves to the owner's file is admitted (#4552) and skipped.
 ///
 /// 2. **Direct-call with no resolvable import**: `contains_call_name` is true
 ///    in a test outside the owner's file, but no import in that test resolves
@@ -310,18 +319,28 @@ pub(crate) fn named_limitations_for_unresolved_ownership(
     owner: &TypeScriptOwner,
     all_tests: &[TypeScriptTest],
     workspace_root: &Path,
+    related: &[TypeScriptRelatedCandidate<'_>],
 ) -> Vec<TypeScriptNamedLimitation> {
     let mut limitations: Vec<TypeScriptNamedLimitation> = Vec::new();
     let mut saw_target_unresolved = false;
 
+    let package_scope = OwnerPackageScope::new(&owner.file, workspace_root);
     for test in all_tests {
         if saw_target_unresolved {
             break;
         }
+        // A cross-package test the relation layer already admitted through an
+        // import anchored to the owner's file (#4552) is resolved ownership.
+        if related
+            .iter()
+            .any(|candidate| std::ptr::eq(candidate.test, test))
+        {
+            continue;
+        }
         // Only consider tests that are NOT in the same package — cross-package
         // ones are the real producer.  Within-package tests are handled by the
         // normal candidate logic.
-        if same_package_root(&owner.file, &test.file, workspace_root) {
+        if package_scope.contains(&test.file) {
             continue;
         }
         // Check whether this cross-package test actually references the owner
@@ -392,31 +411,25 @@ pub(crate) fn named_limitations_for_unresolved_ownership(
 ///
 /// `alias_unavailable` carries the typed flag-ON load gap (#4106-B): when the
 /// flag is on and the map is None, the advice names the REAL cause (missing
-/// config / unparseable JSON / JSONC comments / unsupported `extends` /
+/// config / unparseable JSON(C) / unsupported `extends` /
 /// unreadable config) instead of telling the user to enable a flag that is
 /// already enabled. A None map with a None gap means the flag is off — the
 /// only case where "enable the flag" advice is honest.
-pub(crate) fn named_limitations_for_alias_unresolved(
+pub(crate) fn alias_gap_for_unresolved_import(
     owner: &TypeScriptOwner,
     all_tests: &[TypeScriptTest],
     owner_was_credited: impl Fn(&TypeScriptTest) -> bool,
     alias_map: Option<&TsAliasMap>,
     alias_unavailable: Option<&TsAliasMapLoadGap>,
-) -> Vec<TypeScriptNamedLimitation> {
-    let mut limitations: Vec<TypeScriptNamedLimitation> = Vec::new();
-    let mut saw = false;
-
+) -> Option<TsAliasGapDisclosure> {
     for test in all_tests {
-        if saw {
-            break;
-        }
         if owner_was_credited(test) {
             // Already credited — no gap to disclose.
             continue;
         }
         for import in &test.imports_in_file {
             // Only non-relative specifiers are candidates for alias gap.
-            if import.source.starts_with("./") || import.source.starts_with("../") {
+            if is_relative_specifier(&import.source) {
                 continue;
             }
             // Name-matched: the imported symbol must match the owner's name.
@@ -451,7 +464,27 @@ pub(crate) fn named_limitations_for_alias_unresolved(
             // cause; an absent map is either flag-off (the only honest "enable
             // the flag" case) or a typed flag-ON load gap naming the real
             // config problem.
-            let (cause_text, recovery_hint) = match (alias_map, alias_unavailable) {
+            // A map that carries only workspace package names (#4554) has no
+            // tsconfig of its own: its advice is the flag-off / load-gap one.
+            // A specifier naming a workspace package (#4769) failed in its
+            // own manifest; tsconfig advice would send the user elsewhere.
+            let package_dir =
+                alias_map.and_then(|map| map.workspace_package_dir_for(&import.source));
+            let tsconfig_map = alias_map.filter(|map| map.has_tsconfig());
+            let (cause_text, recovery_hint) = match (tsconfig_map, alias_unavailable) {
+                _ if package_dir.is_some() => {
+                    let manifest = package_dir
+                        .map(|dir| normalized_path(&dir.join("package.json")))
+                        .unwrap_or_default();
+                    (
+                        format!(
+                            "the specifier names a workspace package whose {manifest} does not map it to exactly one source file in the workspace"
+                        ),
+                        format!(
+                            "add a condition such as `source` to that export in {manifest} pointing at the source file, or import the file by relative path"
+                        ),
+                    )
+                }
                 (Some(map), _) => {
                     let (cause, hint) = map.unresolve_cause_for(&import.source).parts();
                     (cause.to_string(), hint.to_string())
@@ -463,7 +496,12 @@ pub(crate) fn named_limitations_for_alias_unresolved(
                 }
             };
             let sample_source = format!("{}:{}", normalized_path(&test.file), test.line);
-            limitations.push(TypeScriptNamedLimitation {
+            let imported = import
+                .imported
+                .as_deref()
+                .unwrap_or(&owner.name)
+                .to_string();
+            let limitation = TypeScriptNamedLimitation {
                 name: "typescript_path_alias_unresolved",
                 sample_source,
                 why_not_actionable: format!(
@@ -472,14 +510,90 @@ pub(crate) fn named_limitations_for_alias_unresolved(
                      could not resolve the specifier to a unique workspace file \
                      because {cause_text}; {recovery_hint}",
                     test.name,
-                    import.imported.as_deref().unwrap_or(&owner.name),
+                    imported,
                     import.source,
                     owner.name,
                     normalized_path(&owner.file),
                 ),
                 repair_route: "analysis/typescript-tsconfig-path-alias-resolution",
+            };
+            return Some(TsAliasGapDisclosure {
+                limitation,
+                test_name: test.name.clone(),
+                imported,
+                specifier: import.source.clone(),
+                cause: cause_text,
+                recovery_hint,
             });
-            saw = true;
+        }
+    }
+    None
+}
+
+/// The first uncredited, name-matched, non-relative owner import the adapter
+/// could not resolve (#4550), with the same typed cause and recovery hint the
+/// `typescript_path_alias_unresolved` limitation carries.
+///
+/// The classifier uses it for the limitation's evidence lines and, when no
+/// test reaches the owner, to name the unresolved import in the no-reach
+/// `missing` summary and next step instead of claiming no test references
+/// the owner. It never changes the exposure class.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TsAliasGapDisclosure {
+    pub(crate) limitation: TypeScriptNamedLimitation,
+    test_name: String,
+    imported: String,
+    specifier: String,
+    cause: String,
+    recovery_hint: String,
+}
+
+impl TsAliasGapDisclosure {
+    /// No-reach `missing` summary naming the importing test, the specifier
+    /// and the typed cause.
+    pub(crate) fn no_static_path_missing(&self, owner_name: &str) -> String {
+        format!(
+            "Test `{}` imports `{}` through non-relative specifier `{}`, which ripr did not resolve to a workspace file because {}; no resolved test references `{}(`.",
+            self.test_name, self.imported, self.specifier, self.cause, owner_name
+        )
+    }
+
+    /// No-reach next step: the typed recovery first, then the ordinary
+    /// add-a-test route for the case where the import is not the owner.
+    pub(crate) fn no_static_path_recommendation(&self) -> String {
+        format!(
+            "TypeScript preview advisory: test `{}` imports `{}` through `{}`, which ripr did not resolve; {}. If that import does not target the changed owner, add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual`.",
+            self.test_name, self.imported, self.specifier, self.recovery_hint
+        )
+    }
+}
+
+/// Collect `typescript_spy_fabricated_observer` limitations from tests that
+/// spy on the owner and fabricate its return value (#4103 shape 4).
+///
+/// Real producer: `related_tests::test_spies_owner_with_fabrication` detects
+/// `vi.spyOn(module, 'ownerName')` / `jest.spyOn(...)` combined with a
+/// `.mockReturnValue(...)`/`.mockImplementation(...)` family call in the same
+/// test body. Assertions on the spied name observe the fabricated value, not
+/// the changed sink, so the finding must not present the test as an owner
+/// observer; the relation gate already refuses the trusted relation, and this
+/// limitation names why.
+pub(crate) fn named_limitations_for_spy_fabrication(
+    owner: &TypeScriptOwner,
+    all_tests: &[TypeScriptTest],
+) -> Vec<TypeScriptNamedLimitation> {
+    let mut limitations: Vec<TypeScriptNamedLimitation> = Vec::new();
+    for test in all_tests {
+        if test_spies_owner_with_fabrication(test, &owner.name) {
+            limitations.push(TypeScriptNamedLimitation {
+                name: "typescript_spy_fabricated_observer",
+                sample_source: format!("{}:{}", normalized_path(&test.file), test.line),
+                why_not_actionable: format!(
+                    "test `{}` replaces `{}` via vi.spyOn/jest.spyOn with a fabricated return value; the observed value does not flow from the changed sink",
+                    test.name, owner.name
+                ),
+                repair_route: "analysis/typescript-spy-oracle-resolution",
+            });
             break;
         }
     }
@@ -489,15 +603,77 @@ pub(crate) fn named_limitations_for_alias_unresolved(
 /// Check whether an import source (relative path) resolves to the same module
 /// path as the owner file, given the test file's location.
 ///
-/// Unlike `import_source_matches_owner` in `related_tests.rs`, this helper is
-/// a pure string computation — it does not need to be in the same module.
+/// Use the related-test module identity authority even for this advisory
+/// cross-package reference gate; two independent suffix lists could silently
+/// disagree on whether the test names this owner.
 fn import_source_matches_owner_text(
     import: &TypeScriptImport,
     test_file: &Path,
     owner: &TypeScriptOwner,
 ) -> bool {
-    normalized_relative_import_module_standalone(test_file, &import.source)
-        .is_some_and(|module| module == normalized_module_path_standalone(&owner.file))
+    super::related_tests::import_source_matches_owner(import, test_file, owner, None, None)
+}
+
+#[cfg(test)]
+mod module_identity_tests {
+    use super::*;
+
+    fn owner(file: &str) -> TypeScriptOwner {
+        TypeScriptOwner {
+            name: "cart".into(),
+            file: file.into(),
+            start_line: 1,
+            end_line: 2,
+            owner_kind: OwnerKind::Function,
+            class_name: None,
+            decorated: false,
+            exported_as_default: false,
+            imports: Vec::new(),
+            method_kind: TypeScriptMethodKind::Ordinary,
+            class_default_export: false,
+            module_entries: Vec::new(),
+            arity: None,
+            params: Vec::new(),
+            source_text: None,
+        }
+    }
+
+    /// The static-limit cross-package reference gate must use the same
+    /// module identity as related-test credit. Before delegation, this gate
+    /// compared normalized_relative_import_module with normalized_module_path;
+    /// that was equivalent to the shared owner with both optional authorities
+    /// absent. These positive and negative rows retain its observable behavior.
+    #[test]
+    fn unresolved_ownership_reference_matches_routed_module_identity() {
+        for (source, owner_file, expected) in [
+            ("../src/cart.mjs", "src/cart.mts", true),
+            ("../src/cart.cjs", "src/cart.cts", true),
+            ("../src/cart.jsx", "src/cart.tsx", true),
+            ("../src/cart.js", "src/cart.ts", true),
+            ("../src/cart.v2", "src/cart.v2.ts", true),
+            ("../src/./cart.mjs", "src/cart.mts", true),
+            ("../src\\cart.cjs", "src/cart.cts", true),
+            ("../src/basket.mjs", "src/cart.mts", false),
+            ("../src/cart.mtsx", "src/cart.mts", false),
+            ("@app/cart", "src/cart.ts", false),
+        ] {
+            let import = TypeScriptImport {
+                source: source.into(),
+                imported: Some("cart".into()),
+                local: "cart".into(),
+                namespace: false,
+            };
+            assert_eq!(
+                import_source_matches_owner_text(
+                    &import,
+                    Path::new("tests/cart.test.ts"),
+                    &owner(owner_file),
+                ),
+                expected,
+                "{source} must have the expected relationship to {owner_file}"
+            );
+        }
+    }
 }
 
 fn import_references_owner_by_name(
@@ -511,41 +687,6 @@ fn import_references_owner_by_name(
         import.imported.as_deref() == Some(owner.name.as_str())
             && contains_call_name(body_text, &import.local)
     }
-}
-
-fn normalized_relative_import_module_standalone(test_file: &Path, source: &str) -> Option<String> {
-    if !source.starts_with("./") && !source.starts_with("../") {
-        return None;
-    }
-    let mut parts = normalized_path(test_file.parent().unwrap_or_else(|| Path::new("")))
-        .split('/')
-        .filter(|part| !part.is_empty() && *part != ".")
-        .map(ToString::to_string)
-        .collect::<Vec<_>>();
-    let normalized_source = source.replace('\\', "/");
-    for part in normalized_source.split('/') {
-        match part {
-            "" | "." => {}
-            ".." => {
-                parts.pop();
-            }
-            _ => parts.push(part.to_string()),
-        }
-    }
-    Some(strip_ts_extension(&parts.join("/")))
-}
-
-fn normalized_module_path_standalone(path: &Path) -> String {
-    strip_ts_extension(&normalized_path(path))
-}
-
-fn strip_ts_extension(path: &str) -> String {
-    for suffix in [".tsx", ".mts", ".cts", ".ts", ".jsx", ".mjs", ".cjs", ".js"] {
-        if let Some(stripped) = path.strip_suffix(suffix) {
-            return stripped.to_string();
-        }
-    }
-    path.to_string()
 }
 
 fn contains_member_call_name(body_text: &str, object_name: &str, method_name: &str) -> bool {
@@ -767,6 +908,16 @@ pub(crate) struct TypeScriptStaticLimit {
     pub(crate) repair_route: String,
 }
 
+/// A mock path in backticks, or the unresolved marker in words: the marker
+/// is not a module path (#4294).
+fn display_mock_path(path: &str) -> String {
+    if path == UNRESOLVED_MOCK_SPECIFIER {
+        "an unresolved specifier".to_string()
+    } else {
+        format!("`{path}`")
+    }
+}
+
 pub(crate) fn static_limit_for_change(
     line_text: &str,
     owner: &TypeScriptOwner,
@@ -812,14 +963,14 @@ pub(crate) fn static_limit_for_change(
     if !mock_paths.is_empty() {
         let preview: String = mock_paths
             .iter()
-            .map(|path| format!("`{path}`"))
+            .map(|path| display_mock_path(path))
             .collect::<Vec<_>>()
             .join(", ");
         return Some(TypeScriptStaticLimit {
             kind: StaticLimitKind::MockedModule,
             evidence: mock_paths
                 .iter()
-                .map(|path| format!("static_limit mocked_module: `{path}`"))
+                .map(|path| format!("static_limit mocked_module: {}", display_mock_path(path)))
                 .collect(),
             missing: format!(
                 "Static limit `mocked_module`: related test file mocks {preview} via `vi.mock(...)` / `jest.mock(...)`. The TypeScript preview adapter does not resolve mocked module semantics, so the substitution under test is opaque to static evidence. Repair route: add mock-shape support or validate the real substitution under test before issuing a repair packet."

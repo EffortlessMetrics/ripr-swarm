@@ -142,3 +142,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_missing_discriminator_evidence (13)
+
+Reason:
+RIPR-SPEC-0122: bounded human check output leads the exposure line with the plain word the summary uses (weak, no path, unknown) before the schema value
+
+Command:
+`cargo xtask goldens bless rust_missing_discriminator_evidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — rust_missing_discriminator_evidence (14)
+
+Reason:
+RIPR-SPEC-0122: the analysis outcome and state lines lead with plain words; the id stays in parentheses
+
+Command:
+`cargo xtask goldens bless rust_missing_discriminator_evidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

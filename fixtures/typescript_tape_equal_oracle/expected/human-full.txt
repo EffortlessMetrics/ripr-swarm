@@ -4,12 +4,12 @@ root: fixtures/typescript_tape_equal_oracle/input
 
 Summary: 1 probe(s), 1 exposed, 0 weak, 0 unrevealed, 0 no path, 0 unknown
 
-Changed file(s) by language: rust: 0, typescript: 1.
+Changed file(s) by language: typescript: 1.
 
-Analysis outcome: complete_with_findings (analysis complete).
+Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
 
-WARNING src/score.ts:2
+INFO src/score.ts:2
 
 Changed
   after:      return total - penalty + 0;
@@ -35,7 +35,7 @@ Preview actionability
   raw evidence: src/score.ts:2 (typescript_preview_probe) source=probe:src_score.ts:typescript_preview:af44236d owner=score
 
 Static exposure
-  exposed (warning, confidence 0.60)
+  exposed (info, confidence 0.60)
 
 Evidence
   - reach yes: 1 related test(s) found for owner `score`
@@ -73,6 +73,9 @@ TypeScript repair packet (advisory)
 
 Next step
   TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
+Drill in:
+  ripr explain --root fixtures/typescript_tape_equal_oracle/input --diff fixtures/typescript_tape_equal_oracle/diff.patch --mode fast probe:src_score.ts:typescript_preview:af44236d
+  ripr context --root fixtures/typescript_tape_equal_oracle/input --diff fixtures/typescript_tape_equal_oracle/diff.patch --mode fast --at probe:src_score.ts:typescript_preview:af44236d
 
 
-Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
