@@ -39,6 +39,13 @@ are scoped or reviewed.
   call's result. Otherwise the finding stays at most `weakly_exposed` and
   names `same_test_pairing_missing`. `assert_eq!(gate(10), true)` stays
   `exposed` (#4828).
+- An unchanged Rust test file that the reference parser refuses is no longer
+  a silent related-test hole. If a classified owner consults that
+  lexical-fallback file (the file contributed a related test, or it calls the
+  owner but lexical extraction dropped the test), `ripr check` records
+  `rust_lexical_test_index_partial` and the outcome is
+  `partial_with_limitations`. An unused nightly-syntax test file in the same
+  crate does not make the run partial (#4775).
 - Direct collection StateWrite (`items.push(...)` on a passed identifier)
   now binds the affected collection through the existing propagation
   witness. Asserting a different collection, the return value, a callee-name
@@ -49,8 +56,8 @@ are scoped or reviewed.
 - `ripr doctor` and `ripr first-pr --check` treat a start-here packet written
   by another ripr version, or with no `ripr_version`, as stale evidence and
   print the refresh command instead of trusting it after an upgrade (#4757).
-- Changes in languages ripr does not analyze (Go, Java, C, C++, shell and
-  others) are no longer called non-source files. A Go-only diff reported
+- Changes in languages ripr does not analyze (Go, Java, C, C++ and others)
+  are no longer called non-source files. A Go-only diff reported
   `no_behavioral_candidates (analysis complete)` and said the empty result was
   correct; a Rust + Go diff reported only the Rust half, as a complete
   analysis. Both now report `partial_with_limitations` with a
@@ -63,7 +70,10 @@ are scoped or reviewed.
   `null`), and `ripr doctor` lists them, in mixed workspaces too (#4750).
   `ripr first-pr` reports no gap to assign there instead of a wrong-root
   loop through `--root` and `ripr doctor`, and `ripr init` warns that the
-  configuration will report those changes as not analyzed.
+  configuration will report those changes as not analyzed. Shell and
+  PowerShell scripts are named on stderr as not analyzed but do not make an
+  otherwise complete analysis partial, so a Rust PR that touches a CI script
+  keeps its complete outcome; a diff of only scripts stays partial.
 - A partial (`limited_partial_scope`) run now tells JSON, LSP and VS Code
   users which budget stopped it. The JSON `analysis_scope.continuation`
   string, the LSP top limitation and the `diff_scope_oversized` recovery
@@ -1496,6 +1506,19 @@ are scoped or reviewed.
   heading in a code span, as the owner line already did. A file name holding
   Markdown link brackets or `*` rendered as a link or emphasis in that heading
   (#4605).
+- Rust diff analysis follows the module tree (#4435). A changed file under
+  `src/`, or beside a declared `[lib]` root outside `src/`, no longer seeds
+  findings when no `mod`, `#[path]` or `include!` from any Cargo target names
+  it, since rustc never compiles it; the run reports a limitation naming the
+  file instead. The out-of-line modules of an external root (`[lib] path =
+  "../shared/lib.rs"`) now seed, and the tests of every package declaring
+  that root stay in the Draft scope. A declared `[lib] path` replaces
+  `src/lib.rs` as the library root. The orphan rule applies only when every
+  Rust file in the workspace resolves statically; a macro call other than
+  std's (at item level or inside a function), a `cfg_if!`-wrapped
+  declaration, a dynamic `#[path]` or a parse error anywhere keeps the
+  previous layout rule, since such a file could reach the orphan. The editor
+  partition uses the same evidence.
 - Each repair attempt keeps its own result. The after phase copies the
   receipt and the verify document into the attempt's artifacts directory and
   records them in `attempt.json` as `terminal_artifacts`, bound by path,

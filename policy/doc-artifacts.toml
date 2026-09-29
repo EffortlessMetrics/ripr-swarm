@@ -932,7 +932,14 @@ standalone_reason = "Issue #4804 records the governed identity registry: one che
 [[artifact]]
 id = "RIPR-SPEC-0183"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0183-same-test-boundary-oracle-pairing.md"
+path = "docs/specs/RIPR-SPEC-0183-executed-control-obligation.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #4641 records the executed-control obligation/result contract: one closed vocabulary, validator, and bounded projection that distinguishes executed discriminating controls from ordinary tests and review prose, without live GitHub inspection, merge enforcement, or historical audit."
+[[artifact]]
+id = "RIPR-SPEC-0184"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0184-same-test-boundary-oracle-pairing.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Honesty fix: a predicate probe does not read exposed unless one test both feeds a boundary input to the owner and holds a discriminating oracle on that call's result; a split names same_test_pairing_missing and stays at most weakly_exposed; the same-call control stays exposed; no schema bump; fixture-backed by split_test_boundary_oracle (#4828)."
