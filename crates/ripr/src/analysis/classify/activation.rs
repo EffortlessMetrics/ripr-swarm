@@ -107,10 +107,14 @@ struct ParameterValue {
 /// or owner that is not an element of that index, or a query against
 /// another index, is computed fresh and never cached, so a key can only
 /// ever name the same fact values.
+/// A related test's slot in `RustIndex::tests` and its owner's slot in
+/// `RustIndex::functions` (`None` for an ownerless probe).
+type TestOwnerSlot = (usize, Option<usize>);
+
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct TestValueFacts {
     index_identity: std::cell::Cell<Option<(usize, usize)>>,
-    by_slot: std::cell::RefCell<std::collections::BTreeMap<(usize, Option<usize>), Vec<ValueFact>>>,
+    by_slot: std::cell::RefCell<std::collections::BTreeMap<TestOwnerSlot, Vec<ValueFact>>>,
 }
 
 impl TestValueFacts {
@@ -137,7 +141,7 @@ impl TestValueFacts {
         index: &crate::analysis::rust_index::RustIndex,
         test: &TestSummary,
         owner_fn: Option<&FunctionSummary>,
-    ) -> Option<(usize, Option<usize>)> {
+    ) -> Option<TestOwnerSlot> {
         let identity = (
             index.tests.as_ptr() as usize,
             index.functions.as_ptr() as usize,
