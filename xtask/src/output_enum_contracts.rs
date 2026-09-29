@@ -19,15 +19,20 @@ pub(crate) struct GovernedEnum {
     pub(crate) doc_list: &'static str,
     pub(crate) enum_name: &'static str,
     pub(crate) source_path: &'static str,
+    /// For an `as_str` that delegates instead of spelling literals, the field
+    /// prefix (for example `label: `) that carries each emitted literal in
+    /// the same file.
+    pub(crate) delegated_label: Option<&'static str>,
 }
 
 pub(crate) const GOVERNED_ENUMS: &[GovernedEnum] = &[
-    governed(
-        "exposure_class",
-        "classification",
-        "ExposureClass",
-        "crates/ripr/src/domain/classification.rs",
-    ),
+    GovernedEnum {
+        kind: "exposure_class",
+        doc_list: "classification",
+        enum_name: "ExposureClass",
+        source_path: "crates/ripr/src/domain/classification.rs",
+        delegated_label: Some("label: "),
+    },
     governed(
         "probe_family",
         "family",
@@ -101,6 +106,7 @@ const fn governed(
         doc_list,
         enum_name,
         source_path,
+        delegated_label: None,
     }
 }
 
@@ -115,7 +121,7 @@ pub(crate) fn check_enum_completeness(
     let doc_lists = documented_enum_lists(output_schema_doc);
     for governed in GOVERNED_ENUMS {
         let source = read_source(governed.source_path)?;
-        let wire = match enum_wire_values(&source, governed.enum_name) {
+        let wire = match enum_wire_values(&source, governed.enum_name, governed.delegated_label) {
             Ok(wire) => wire,
             Err(err) => {
                 violations.push(format!("{}: {err}", governed.source_path));
@@ -131,7 +137,14 @@ pub(crate) fn check_enum_completeness(
             &format!("policy/output_contracts.txt `{}` rows", governed.kind),
             violations,
         );
-        match doc_lists.get(governed.doc_list) {
+        if doc_lists.repeated.contains(governed.doc_list) {
+            violations.push(format!(
+                "docs/OUTPUT_SCHEMA.md `## Enums` has more than one `{}` values list",
+                governed.doc_list
+            ));
+            continue;
+        }
+        match doc_lists.lists.get(governed.doc_list) {
             Some(documented) => compare(
                 &wire,
                 documented,
@@ -174,7 +187,11 @@ fn compare(
 /// form both `#[serde(rename_all = "snake_case")]` and the hand-written
 /// `as_str` tables produce. When the enum's `as_str` spells its values out as
 /// literals, those literals must agree, so a typo there cannot hide.
-pub(crate) fn enum_wire_values(source: &str, enum_name: &str) -> Result<BTreeSet<String>, String> {
+pub(crate) fn enum_wire_values(
+    source: &str,
+    enum_name: &str,
+    delegated_label: Option<&str>,
+) -> Result<BTreeSet<String>, String> {
     let body = braced_body_after(source, &format!("pub enum {enum_name} "))
         .ok_or_else(|| format!("cannot find `pub enum {enum_name}`"))?;
     let mut wire = BTreeSet::new();
@@ -195,24 +212,42 @@ pub(crate) fn enum_wire_values(source: &str, enum_name: &str) -> Result<BTreeSet
         return Err(format!("`{enum_name}` has no variants"));
     }
 
-    if let Some(as_str) = braced_body_after(source, &format!("impl {enum_name} "))
+    // Fail closed: the emitted strings must be readable, either as literals
+    // in `as_str` or, for a delegating `as_str`, behind the declared field
+    // prefix. Variant names alone would let a drifted label through.
+    let as_str = braced_body_after(source, &format!("impl {enum_name} "))
         .and_then(|impl_body| braced_body_after(impl_body, "fn as_str("))
-    {
-        let literals = snake_literals(as_str);
-        if !literals.is_empty() && literals != wire {
-            return Err(format!(
-                "`{enum_name}::as_str` literals {literals:?} differ from its variant names {wire:?}"
-            ));
-        }
+        .ok_or_else(|| format!("cannot find `{enum_name}::as_str`"))?;
+    let literals = match delegated_label {
+        Some(prefix) => labelled_literals(source, prefix),
+        None => snake_literals(as_str),
+    };
+    if literals.is_empty() {
+        return Err(format!(
+            "`{enum_name}::as_str` emits no literal this check can read; declare its label field"
+        ));
+    }
+    if literals != wire {
+        return Err(format!(
+            "`{enum_name}::as_str` literals {literals:?} differ from its variant names {wire:?}"
+        ));
     }
     Ok(wire)
 }
 
 /// Every `` `values` `` list under `## Enums`, keyed by the list's field name.
-pub(crate) fn documented_enum_lists(doc: &str) -> BTreeMap<String, BTreeSet<String>> {
+pub(crate) struct DocumentedEnumLists {
+    pub(crate) lists: BTreeMap<String, BTreeSet<String>>,
+    /// Field names with more than one list; merging them would let a second
+    /// list hide a value missing from the first.
+    pub(crate) repeated: BTreeSet<String>,
+}
+
+pub(crate) fn documented_enum_lists(doc: &str) -> DocumentedEnumLists {
     let mut lists = BTreeMap::new();
+    let mut repeated = BTreeSet::new();
     let Some(start) = doc.find("\n## Enums\n") else {
-        return lists;
+        return DocumentedEnumLists { lists, repeated };
     };
     let section = &doc[start + 1..];
     let section = section[3..]
@@ -226,7 +261,9 @@ pub(crate) fn documented_enum_lists(doc: &str) -> BTreeMap<String, BTreeSet<Stri
             && tail.trim_start().starts_with("values")
         {
             current = Some(name.to_string());
-            lists.entry(name.to_string()).or_insert_with(BTreeSet::new);
+            if lists.insert(name.to_string(), BTreeSet::new()).is_some() {
+                repeated.insert(name.to_string());
+            }
             continue;
         }
         if let (Some(name), Some(item)) = (&current, line.strip_prefix("- `"))
@@ -236,7 +273,7 @@ pub(crate) fn documented_enum_lists(doc: &str) -> BTreeMap<String, BTreeSet<Stri
             set.insert(value.to_string());
         }
     }
-    lists
+    DocumentedEnumLists { lists, repeated }
 }
 
 /// Text between the `{` following `marker` and its matching `}`.
@@ -257,6 +294,14 @@ fn braced_body_after<'a>(text: &'a str, marker: &str) -> Option<&'a str> {
         }
     }
     None
+}
+
+fn labelled_literals(text: &str, prefix: &str) -> BTreeSet<String> {
+    text.split(prefix)
+        .skip(1)
+        .filter_map(|rest| rest.strip_prefix('"')?.split_once('"'))
+        .map(|(literal, _)| literal.to_string())
+        .collect()
 }
 
 fn snake_literals(text: &str) -> BTreeSet<String> {
@@ -320,7 +365,7 @@ impl Sink {
     #[test]
     fn wire_values_come_from_variant_names() -> Result<(), String> {
         assert_eq!(
-            enum_wire_values(SOURCE, "Sink")?,
+            enum_wire_values(SOURCE, "Sink", None)?,
             set(&["return_value", "state_write"])
         );
         Ok(())
@@ -329,14 +374,63 @@ impl Sink {
     #[test]
     fn as_str_literal_that_disagrees_with_its_variant_is_reported() {
         let drifted = SOURCE.replace("\"state_write\"", "\"state_writes\"");
-        let err = enum_wire_values(&drifted, "Sink").err().unwrap_or_default();
+        let err = enum_wire_values(&drifted, "Sink", None)
+            .err()
+            .unwrap_or_default();
         assert!(err.contains("state_writes"), "{err}");
+    }
+
+    const DELEGATED: &str = r#"
+pub enum Class {
+    Exposed,
+    WeaklyExposed,
+}
+
+impl Class {
+    pub fn as_str(&self) -> &'static str {
+        profile::for_class(self).label
+    }
+}
+
+mod profile {
+    fn for_class(class: &Class) -> Profile {
+        match class {
+            Class::Exposed => Profile { label: "exposed", severity: "info" },
+            Class::WeaklyExposed => Profile { label: "weakly_exposed", severity: "warning" },
+        }
+    }
+}
+"#;
+
+    #[test]
+    fn delegated_as_str_reads_its_labels_and_fails_closed_without_them() -> Result<(), String> {
+        assert_eq!(
+            enum_wire_values(DELEGATED, "Class", Some("label: "))?,
+            set(&["exposed", "weakly_exposed"])
+        );
+        let drifted = DELEGATED.replace("label: \"exposed\"", "label: \"exposedd\"");
+        let err = enum_wire_values(&drifted, "Class", Some("label: "))
+            .err()
+            .unwrap_or_default();
+        assert!(err.contains("exposedd"), "{err}");
+        let err = enum_wire_values(DELEGATED, "Class", None)
+            .err()
+            .unwrap_or_default();
+        assert!(err.contains("emits no literal"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_repeated_documented_list_is_reported_not_merged() {
+        let doc = "\n## Enums\n\n`delta` values:\n\n- `value`\n\n`delta` values:\n\n- `effect`\n";
+        let lists = documented_enum_lists(doc);
+        assert!(lists.repeated.contains("delta"));
     }
 
     #[test]
     fn documented_lists_split_by_heading_and_stop_at_next_section() {
         let doc = "## Enums\n\n`delta` values:\n\n- `value`\n- `effect`\n\nReserved `flow_sink` values:\n\n- `return_value` -- prose with `rust_value` inside\n\n## Badge Output\n\n- `outside`\n";
-        let lists = documented_enum_lists(&format!("intro\n{doc}"));
+        let lists = documented_enum_lists(&format!("intro\n{doc}")).lists;
         assert_eq!(lists.get("delta"), Some(&set(&["value", "effect"])));
         assert_eq!(lists.get("flow_sink"), Some(&set(&["return_value"])));
         assert_eq!(lists.len(), 2);
@@ -348,8 +442,9 @@ impl Sink {
         let doc = "\n## Enums\n\n`flow_sink` values:\n\n- `rust_state_write`\n- `return_value`\n";
         let mut violations = Vec::new();
         compare(
-            &enum_wire_values(SOURCE, "Sink")?,
+            &enum_wire_values(SOURCE, "Sink", None)?,
             documented_enum_lists(doc)
+                .lists
                 .get("flow_sink")
                 .ok_or("flow_sink list")?,
             "source",
