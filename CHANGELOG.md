@@ -21,7 +21,9 @@ are scoped or reviewed.
   (#4744).
 - Security: `[perl].cache_dir` must be a repository-relative path without
   `..`. An absolute or escaping value is now a config error instead of a
-  directory ripr creates and writes outside the checkout (#4745).
+  directory ripr creates and writes outside the checkout. The cache directory
+  now resolves under the analyzed root rather than the working directory, so
+  `--root <checkout>` cannot place it elsewhere either (#4745).
 - Security: `ripr doctor` probes every language runtime (`node`, `bun`,
   `pnpm`, `python3`, `pytest`) outside the checkout, as it already did for
   `yarn`. Run inside it, pnpm fetched and ran the release a project's
