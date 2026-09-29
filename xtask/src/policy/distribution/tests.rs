@@ -8,6 +8,8 @@ const PYTHON_README_TEXT: &str = include_str!("../../../../packaging/python/READ
 const PYTHON_LICENSE_MIT_TEXT: &str = include_str!("../../../../packaging/python/LICENSE-MIT");
 const PYTHON_LICENSE_APACHE_TEXT: &str =
     include_str!("../../../../packaging/python/LICENSE-APACHE");
+const PYTHON_QUALIFICATION_WORKFLOW_TEXT: &str =
+    include_str!("../../../../.github/workflows/python-wheel-qualification.yml");
 const ROOT_LICENSE_MIT_TEXT: &str = include_str!("../../../../LICENSE-MIT");
 const ROOT_LICENSE_APACHE_TEXT: &str = include_str!("../../../../LICENSE-APACHE");
 
@@ -61,7 +63,7 @@ fn valid_contract_matches_workspace_and_crate() -> Result<(), String> {
 #[test]
 fn valid_python_adapter_matches_distribution_contract() -> Result<(), String> {
     let contract = parsed_contract(CONTRACT_TEXT)?;
-    let violations = python::validate_python_adapter(
+    let mut violations = python::validate_python_adapter(
         &contract,
         python_sources(
             PYTHON_MANIFEST_TEXT,
@@ -70,6 +72,14 @@ fn valid_python_adapter_matches_distribution_contract() -> Result<(), String> {
             PYTHON_LICENSE_APACHE_TEXT,
         ),
     );
+    violations.extend(python_guidance::validate_package_readme_commands(
+        PYTHON_README_PATH,
+        PYTHON_README_TEXT,
+    ));
+    violations.extend(python_guidance::validate_qualification_workflow(
+        PYTHON_QUALIFICATION_WORKFLOW_PATH,
+        PYTHON_QUALIFICATION_WORKFLOW_TEXT,
+    ));
     assert!(violations.is_empty(), "{violations:#?}");
     Ok(())
 }
@@ -220,7 +230,7 @@ fn python_adapter_rejects_unsafe_guidance_and_license_drift() -> Result<(), Stri
     let contract = parsed_contract(CONTRACT_TEXT)?;
     let mutated_readme = format!("{PYTHON_README_TEXT}\n```console\npip install ripr\n```\n");
     let mutated_license = format!("{PYTHON_LICENSE_MIT_TEXT}\nchanged\n");
-    let violations = python::validate_python_adapter(
+    let mut violations = python::validate_python_adapter(
         &contract,
         python_sources(
             PYTHON_MANIFEST_TEXT,
@@ -229,10 +239,102 @@ fn python_adapter_rejects_unsafe_guidance_and_license_drift() -> Result<(), Stri
             PYTHON_LICENSE_APACHE_TEXT,
         ),
     );
+    violations.extend(python_guidance::validate_package_readme_commands(
+        PYTHON_README_PATH,
+        &mutated_readme,
+    ));
     assert!(has_violation(&violations, "unrelated `pip install ripr`"));
+    assert!(has_violation(
+        &violations,
+        "selects unrelated PyPI distribution `ripr`"
+    ));
     assert!(has_violation(
         &violations,
         "packaged license must be byte-identical"
     ));
     Ok(())
+}
+
+#[test]
+fn python_guidance_rejects_unsafe_install_command_variants() {
+    for command in [
+        "pip install --upgrade ripr",
+        "python -m pip install ripr==1.0",
+        "python3.12 -m pip install 'ripr[cli]'",
+        "pipx install ripr>=1",
+        "uv tool install ripr~=1.0",
+        "uvx ripr --version",
+        "uvx --python 3.12 ripr check",
+        "uvx --from ripr ripr check",
+    ] {
+        let readme = format!("{PYTHON_README_TEXT}\n```console\n{command}\n```\n");
+        let violations = python_guidance::validate_package_readme_commands(
+            PYTHON_README_PATH,
+            &readme,
+        );
+        assert!(
+            has_violation(&violations, "selects unrelated PyPI distribution `ripr`"),
+            "accepted unsafe command `{command}`: {violations:#?}"
+        );
+    }
+}
+
+#[test]
+fn python_guidance_accepts_explicit_ripr_rs_commands() {
+    let readme = format!(
+        "{PYTHON_README_TEXT}\n```console\npip install --upgrade ripr-rs\nuv tool install ripr-rs\nuvx --from ripr-rs ripr check\n```\n"
+    );
+    let violations =
+        python_guidance::validate_package_readme_commands(PYTHON_README_PATH, &readme);
+    assert!(violations.is_empty(), "{violations:#?}");
+}
+
+#[test]
+fn python_qualification_keeps_native_and_pep440_versions_distinct() {
+    let violations = python_guidance::validate_qualification_workflow(
+        PYTHON_QUALIFICATION_WORKFLOW_PATH,
+        PYTHON_QUALIFICATION_WORKFLOW_TEXT,
+    );
+    assert!(violations.is_empty(), "{violations:#?}");
+
+    let mutated = PYTHON_QUALIFICATION_WORKFLOW_TEXT
+        .replace(
+            "ripr-rs==${RIPR_PYTHON_VERSION}",
+            "ripr-rs==${RIPR_NATIVE_VERSION}",
+        )
+        .replace("\"0.11.0-rc.1\": \"0.11.0rc1\",", "");
+    let violations = python_guidance::validate_qualification_workflow(
+        PYTHON_QUALIFICATION_WORKFLOW_PATH,
+        &mutated,
+    );
+    assert!(has_violation(
+        &violations,
+        "missing release-candidate mapping control"
+    ));
+    assert!(has_violation(
+        &violations,
+        "native SemVer used as a Python installer requirement"
+    ));
+}
+
+#[test]
+fn python_qualification_requires_record_integrity_negative_control() {
+    let mutated = PYTHON_QUALIFICATION_WORKFLOW_TEXT
+        .replace(
+            "mutated .data/scripts/ripr without updating RECORD",
+            "payload mutation control removed",
+        )
+        .replace("RECORD digest mismatch", "integrity error removed");
+    let violations = python_guidance::validate_qualification_workflow(
+        PYTHON_QUALIFICATION_WORKFLOW_PATH,
+        &mutated,
+    );
+    assert!(has_violation(
+        &violations,
+        "missing stale RECORD negative control"
+    ));
+    assert!(has_violation(
+        &violations,
+        "missing RECORD digest rejection"
+    ));
 }

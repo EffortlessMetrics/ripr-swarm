@@ -1,6 +1,7 @@
 mod contract;
 mod crate_targets;
 mod python;
+mod python_guidance;
 mod targets;
 mod version;
 mod workflow;
@@ -22,6 +23,8 @@ const PYTHON_MANIFEST_PATH: &str = "packaging/python/pyproject.toml";
 const PYTHON_README_PATH: &str = "packaging/python/README.md";
 const PYTHON_LICENSE_MIT_PATH: &str = "packaging/python/LICENSE-MIT";
 const PYTHON_LICENSE_APACHE_PATH: &str = "packaging/python/LICENSE-APACHE";
+const PYTHON_QUALIFICATION_WORKFLOW_PATH: &str =
+    ".github/workflows/python-wheel-qualification.yml";
 const ROOT_LICENSE_MIT_PATH: &str = "LICENSE-MIT";
 const ROOT_LICENSE_APACHE_PATH: &str = "LICENSE-APACHE";
 
@@ -48,6 +51,7 @@ pub(crate) fn check_distribution_contract() -> Result<(), String> {
             "Update policy/distribution.toml as the package identity and target authority; do not hand-edit divergent adapter copies.",
             "Keep the Cargo workspace version as the sole product version source and use the tested SemVer-to-PEP-440 mapping for Python metadata.",
             "Keep packaging/python/pyproject.toml in Maturin bin mode with dynamic Cargo-derived versioning, locked inputs, the exact release features, and no compatibility claim before #4489 qualifies it.",
+            "Keep the Python qualification workflow explicit about native SemVer versus PEP 440 and retain both missing-executable and stale-RECORD negative controls.",
             "Add or remove a target only with its exact Rust target, executable, archive, wheel family, npm package, os/cpu/libc metadata, and qualification owner.",
             "Leave compatibility_state = \"unqualified\" until #4489 records the measured native compatibility floor; a tag family is not compatibility proof.",
         ],
@@ -85,6 +89,8 @@ pub(crate) fn check_distribution_contract() -> Result<(), String> {
     let python_readme = read_required_file(PYTHON_README_PATH, &mut violations);
     let python_license_mit = read_required_file(PYTHON_LICENSE_MIT_PATH, &mut violations);
     let python_license_apache = read_required_file(PYTHON_LICENSE_APACHE_PATH, &mut violations);
+    let python_qualification_workflow =
+        read_required_file(PYTHON_QUALIFICATION_WORKFLOW_PATH, &mut violations);
     let root_license_mit = read_required_file(ROOT_LICENSE_MIT_PATH, &mut violations);
     let root_license_apache = read_required_file(ROOT_LICENSE_APACHE_PATH, &mut violations);
 
@@ -121,6 +127,17 @@ pub(crate) fn check_distribution_contract() -> Result<(), String> {
                 root_apache_path: ROOT_LICENSE_APACHE_PATH,
                 root_apache_text: root_license_apache,
             },
+        ));
+        violations.extend(python_guidance::validate_package_readme_commands(
+            PYTHON_README_PATH,
+            python_readme,
+        ));
+    }
+
+    if let Some(workflow_text) = python_qualification_workflow.as_deref() {
+        violations.extend(python_guidance::validate_qualification_workflow(
+            PYTHON_QUALIFICATION_WORKFLOW_PATH,
+            workflow_text,
         ));
     }
 
