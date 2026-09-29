@@ -4,6 +4,8 @@
 //! registry, then apply one targeted edit, so each reported rule is
 //! attributable to that edit. The numbered controls follow the issue.
 
+mod source_fixture;
+
 use std::collections::BTreeSet;
 use std::path::Path;
 

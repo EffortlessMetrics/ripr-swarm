@@ -2323,6 +2323,78 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn qualification_args_accept_complete_explicit_subject() -> Result<(), String> {
+        let parsed = parse_release_negative_args(&args(&[
+            "--version", "0.11.0",
+            "--controller-root", "controller with spaces",
+            "--candidate-source-root", "candidate source é",
+            "--candidate-artifact", "docs/release-candidates/fixture-pin.json",
+        ]))?;
+        if parsed.version != "0.11.0" {
+            return Err("qualification inputs changed the requested release".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn qualification_args_reject_partial_or_ambiguous_subject() -> Result<(), String> {
+        for extra in [
+            vec!["--controller-root", "controller"],
+            vec!["--candidate-source-root", "source"],
+            vec!["--candidate-artifact", "docs/release-candidates/pin.json"],
+            vec!["--controller-root", "controller", "--candidate-source-root", "source"],
+            vec!["--version", "0.12.0"],
+        ] {
+            let mut argv = args(&["--version", "0.11.0"]);
+            argv.extend(args(&extra));
+            if parse_release_negative_args(&argv).is_ok() {
+                return Err(format!("ambiguous qualification argv must reject: {argv:?}"));
+            }
+        }
+        for flag in ["--controller-root", "--candidate-source-root", "--candidate-artifact"] {
+            let mut argv = args(&[
+                "--version", "0.11.0", "--controller-root", "controller",
+                "--candidate-source-root", "source", "--candidate-artifact",
+                "docs/release-candidates/pin.json",
+            ]);
+            argv.extend(args(&[flag, "duplicate"]));
+            if parse_release_negative_args(&argv).is_ok() {
+                return Err(format!("duplicate qualification flag must reject: {argv:?}"));
+            }
+        }
+        for flag in ["--version", "--controller-root", "--candidate-source-root", "--candidate-artifact"] {
+            let mut argv = args(&["--version", "0.11.0"]);
+            argv.push(flag.to_string());
+            if parse_release_negative_args(&argv).is_ok() {
+                return Err(format!("missing option value must reject: {argv:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn qualification_args_reject_unsafe_artifact_and_blank_roots() -> Result<(), String> {
+        for (controller, source, artifact) in [
+            (" ", "source", "docs/release-candidates/pin.json"),
+            ("controller", " ", "docs/release-candidates/pin.json"),
+            ("controller", "source", " "),
+            ("controller", "source", "../pin.json"),
+            ("controller", "source", "/pin.json"),
+            ("controller", "source", "docs/../pin.json"),
+            ("controller", "source", "docs\\..\\pin.json"),
+        ] {
+            let argv = args(&[
+                "--version", "0.11.0", "--controller-root", controller,
+                "--candidate-source-root", source, "--candidate-artifact", artifact,
+            ]);
+            if parse_release_negative_args(&argv).is_ok() {
+                return Err(format!("unsafe qualification argv must reject: {argv:?}"));
+            }
+        }
+        Ok(())
+    }
+
     fn sample_artifact() -> String {
         format!(
             r#"{{"schema_version":"0.3","artifact":{{"content_sha256":"{CONTENT_PLACEHOLDER}"}},"scope":"repo"}}"#
