@@ -33,6 +33,12 @@ are scoped or reviewed.
 - Identity: `cargo xtask check-identity-registry` enforces one governed
   identifier catalog and generated `docs/identity` table. Vocabulary and
   compatibility map only; it does not migrate consumers (#4804).
+- CLI: `ripr check` projects producer-owned analysis stages and throttled
+  heartbeats onto stderr (`ripr progress: <stage> [<scope>]`) without changing
+  JSON, SARIF, or other machine stdout. A TTY stays silent under 250ms, then
+  reveals the active stage and heartbeats; producer `completed` is held until
+  the command actually succeeds. Unknown totals stay unknown; `--quiet`
+  suppresses the stream. This does not make analysis faster (#4810).
 
 ### Fixed
 
@@ -43,6 +49,11 @@ are scoped or reviewed.
   call's result. Otherwise the finding stays at most `weakly_exposed` and
   names `same_test_pairing_missing`. `assert_eq!(gate(10), true)` stays
   `exposed` (#4828).
+- An unusable cache directory no longer prints one `repo file fact cache entry
+  ignored` line per source file. With `RIPR_CACHE_DIR` pointing at a file,
+  `ripr check` on this repository printed 723 identical-shape lines before the
+  one warning that mattered. A build now prints one line naming the count and
+  the first reason; a single bad entry keeps its old message (#4888).
 - An unchanged Rust test file that the reference parser refuses is no longer
   a silent related-test hole. If a classified owner consults that
   lexical-fallback file (the file contributed a related test, or it calls the
@@ -1645,6 +1656,22 @@ are scoped or reviewed.
   from the committed file rather than uncommitted edits, and
   repository-wide runs count the skipped files as a partial run. A
   hand-written `src/vendor/` module stays analyzed.
+- `ripr agent repair` no longer prints 9 to 13 KB of JSON to stdout unasked.
+  By default each phase prints a short human summary that names the seam, the
+  movement and where the full packet, receipt and verify documents were
+  written. `--json` prints the packet (before phase), the envelope (after
+  phase) or the verification receipt (verify phase) on stdout as before,
+  matching `ripr agent status --json`. `ripr check`'s default output now
+  leads its `Analysis outcome:` and `State:` lines with plain words and keeps
+  the id in parentheses, for example `Analysis outcome: findings below
+  (analysis complete; complete_with_findings).` and `State: a test gap to
+  inspect or repair (top_gap)`.
+- `ripr check`'s `Limitation:` lines lead with plain words and keep the
+  schema tokens in parentheses, for example `Limitation: some changed files
+  were not analyzed during language analysis (language_scope_unsupported at
+  language_adapter); file: src/broken.ts; ...; recovery: enable the language
+  (enable_language) — ...`. Before, the kind, stage and recovery were bare
+  snake_case tokens (#4323).
 
 ### Added
 

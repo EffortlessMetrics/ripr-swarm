@@ -1,4 +1,4 @@
-# RIPR-SPEC-0185: Same-test pairing for boundary-class probes
+# RIPR-SPEC-0186: Same-test pairing for boundary-class probes
 
 Status: proposed
 
