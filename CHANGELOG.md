@@ -365,7 +365,9 @@ are scoped or reviewed.
   root stayed the subdirectory, the diff fell outside it, and the JSON reported
   `analysis_complete: true` with no findings. The implicit root now walks up to
   the nearest `Cargo.toml`, or to the git top level when there is none, and
-  says so on stderr. `ripr cache` resolves the same root (#4610).
+  says so on stderr. The walk stops at the git top level, so a `[workspace]` in
+  an enclosing repository no longer claims a nested one. `ripr cache` resolves
+  the same root (#4610).
 
 ### Added
 

@@ -81,18 +81,23 @@ pub(super) fn resolve_workspace_root(start: &Path) -> Result<Option<PathBuf>, St
     })?;
 
     for ancestor in start.ancestors() {
-        let manifest = ancestor.join("Cargo.toml");
-        let Ok(contents) = std::fs::read_to_string(&manifest) else {
-            continue;
-        };
-        let Ok(document) = toml::from_str::<toml::Value>(&contents) else {
-            continue;
-        };
-        if document.get("workspace").is_some_and(toml::Value::is_table) {
+        if manifest_declares_workspace(&ancestor.join("Cargo.toml")) {
             return Ok(Some(ancestor.to_path_buf()));
+        }
+        // A git top level bounds the walk: a workspace in an enclosing
+        // repository never claims a nested, independent repository.
+        if ancestor.join(".git").exists() {
+            break;
         }
     }
     Ok(None)
+}
+
+fn manifest_declares_workspace(manifest: &Path) -> bool {
+    std::fs::read_to_string(manifest)
+        .ok()
+        .and_then(|contents| toml::from_str::<toml::Value>(&contents).ok())
+        .is_some_and(|document| document.get("workspace").is_some_and(toml::Value::is_table))
 }
 
 /// Why an implicit run moved away from the current directory.
@@ -1265,6 +1270,32 @@ mod tests {
             resolved?,
             Some((expected?, ImplicitRootReason::GitTopLevel)),
             "the walk must stop at the git top level"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn enclosing_workspace_does_not_claim_a_nested_repository() -> Result<(), String> {
+        let outer = outside_workspace_fixture("project-root-nested-repo")?;
+        let inner = outer.join("vendor/tool");
+        let nested = inner.join("src");
+        std::fs::create_dir_all(&nested).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(inner.join(".git")).map_err(|error| error.to_string())?;
+        std::fs::write(outer.join("Cargo.toml"), "[workspace]\nmembers = []\n")
+            .map_err(|error| error.to_string())?;
+        std::fs::write(
+            inner.join("Cargo.toml"),
+            "[package]\nname = \"tool\"\nversion = \"0.1.0\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+
+        let resolved = resolve_project_root(&nested);
+        let expected = std::fs::canonicalize(&inner).map_err(|error| error.to_string());
+        std::fs::remove_dir_all(&outer).map_err(|error| error.to_string())?;
+        assert_eq!(
+            resolved?,
+            Some((expected?, ImplicitRootReason::Package)),
+            "an enclosing workspace must not cross the nested repository's git boundary"
         );
         Ok(())
     }
