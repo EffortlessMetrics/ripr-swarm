@@ -31,3 +31,17 @@ A meaningful4603preliminary subclaim is closed public-input/event/intervention d
 ## Owning baseline
 Immutable basis: 3911480a34c6ce2224932f8494576636c73e1732, tree34485dd11f02b27ac91b8ff0a85a463f5d6e4108. Native admission is NOT_RUN. This plan-only edit precedes tests-first implementation; no accepted subject/installed handle exists yet.
 
+## Baseline versus implementation oracles
+
+The six selected existing tests characterize inherited behavior only. The package test supplies digest strings, version output and doctor JSON to private validators; it does not install a package or attribute an executable to a source producer. The archive test covers traversal components. Registry controls cover required identity fields and template refusal through the existing resolver, rather than live ref or package attribution. The two timeout controls execute real children, including the platform-specific descendant cleanup path. None constructs an accepted installed-candidate handle.
+
+Before implementation acceptance, add controls through the real admission and row APIs:
+
+- Bind a registry-authorized immutable source SHA/tree and retained manifest bytes to the actual package producer, validated archive inventory and actual installed executable. A matching version or unequal workspace/executable digest is insufficient.
+- Independently reject changed or foreign manifest/package/executable bytes, moved source ref, wrong tree and ambient-PATH or workspace binary substitution before invoking a semantic row. Revalidate the subject before each row.
+- Exercise selected-root, foreign-CWD and decoy-root writes, stale artifact consumption and portable input identity through owned fixture roots and before/after inventories.
+- Observe bounded stdout/stderr, timeout, cancellation and cleanup failure through the existing process owner. Retained resources and missing termination/reap evidence remain non-green.
+- Require nonzero selected/executed required subjects, explicit skipped/failed counts and deterministic JSON/Markdown parity. A packet with altered output identities or strengthened human wording must reject.
+
+Tests must call validated constructors and the actual retained producer/consumer path. They must not create trusted handles from supplied digest strings, pre-mark rows passed, or use test-only acceptance as production authority. Observe intended behavioral rejection only after test compilation succeeds; compile or instrument failure is NOT_ESTABLISHED. Native baseline and new controls remain NOT_RUN until the shared lease is granted.
+
