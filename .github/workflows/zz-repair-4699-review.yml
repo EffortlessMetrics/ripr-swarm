@@ -247,69 +247,8 @@ jobs:
           block = block.replace(token_fixture, extra_fixtures, 1)
 
           test_text = test_text[:function_start] + block + test_text[next_test:]
-          new_test = r'''
-#[test]
-fn server_archive_terminal_job_name_filter_accepts_direct_and_reusable_names(
-) -> Result<(), String> {
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .ok_or_else(|| "xtask manifest should have a repository parent".to_string())?;
-    let workflow = fs::read_to_string(
-        repo_root.join(".github/workflows/server-archive-qualification.yml"),
-    )
-    .map_err(|error| format!("failed to read qualification workflow: {error}"))?;
-    let marker = r#"conclusion="$(jq -r --arg suffix "build and qualify ${target}" '"#;
-    let filter_start = workflow
-        .find(marker)
-        .map(|offset| offset + marker.len())
-        .ok_or_else(|| "terminal job-name jq marker is missing".to_string())?;
-    let terminator = r#"' "${response}")""#;
-    let filter_end = workflow[filter_start..]
-        .find(terminator)
-        .ok_or_else(|| "terminal job-name jq terminator is missing".to_string())?;
-    let filter = workflow[filter_start..filter_start + filter_end].trim();
-    let root = temp_dir("server-terminal-job-names");
-    let fixture = root.join("workflow-jobs.json");
-    let suffix = "build and qualify x86_64-unknown-linux-gnu";
-    let run = |names: &[&str]| -> Result<String, String> {
-        let jobs = names
-            .iter()
-            .map(|name| serde_json::json!({"name": name, "conclusion": "success"}))
-            .collect::<Vec<_>>();
-        fs::write(
-            &fixture,
-            serde_json::to_vec(&serde_json::json!({"jobs": jobs}))
-                .map_err(|error| format!("serialize workflow-jobs fixture: {error}"))?,
-        )
-        .map_err(|error| format!("write {}: {error}", fixture.display()))?;
-        let output = std::process::Command::new("jq")
-            .args(["-r", "--arg", "suffix", suffix, filter])
-            .arg(&fixture)
-            .output()
-            .map_err(|error| format!("run terminal job-name jq filter: {error}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "terminal job-name jq filter failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        String::from_utf8(output.stdout)
-            .map(|value| value.trim().to_string())
-            .map_err(|error| format!("terminal job-name jq output was not UTF-8: {error}"))
-    };
-
-    let rehearse = format!("rehearse / {suffix}");
-    let qualify = format!("qualify / {suffix}");
-    assert_eq!(run(&[suffix])?, "success");
-    assert_eq!(run(&[&rehearse])?, "success");
-    assert_eq!(run(&[&qualify])?, "success");
-    assert_eq!(run(&[])?, "missing");
-    assert_eq!(run(&[suffix, &rehearse])?, "duplicate");
-    ignore_remove_dir_all(&root);
-    Ok(())
-}
-
-'''
+          import base64
+          new_test = base64.b64decode("CiNbdGVzdF0KZm4gc2VydmVyX2FyY2hpdmVfdGVybWluYWxfam9iX25hbWVfZmlsdGVyX2FjY2VwdHNfZGlyZWN0X2FuZF9yZXVzYWJsZV9uYW1lcygKKSAtPiBSZXN1bHQ8KCksIFN0cmluZz4gewogICAgbGV0IHJlcG9fcm9vdCA9IFBhdGg6Om5ldyhlbnYhKCJDQVJHT19NQU5JRkVTVF9ESVIiKSkKICAgICAgICAucGFyZW50KCkKICAgICAgICAub2tfb3JfZWxzZSh8fCAieHRhc2sgbWFuaWZlc3Qgc2hvdWxkIGhhdmUgYSByZXBvc2l0b3J5IHBhcmVudCIudG9fc3RyaW5nKCkpPzsKICAgIGxldCB3b3JrZmxvdyA9IGZzOjpyZWFkX3RvX3N0cmluZygKICAgICAgICByZXBvX3Jvb3Quam9pbigiLmdpdGh1Yi93b3JrZmxvd3Mvc2VydmVyLWFyY2hpdmUtcXVhbGlmaWNhdGlvbi55bWwiKSwKICAgICkKICAgIC5tYXBfZXJyKHxlcnJvcnwgZm9ybWF0ISgiZmFpbGVkIHRvIHJlYWQgcXVhbGlmaWNhdGlvbiB3b3JrZmxvdzoge2Vycm9yfSIpKT87CiAgICBsZXQgbWFya2VyID0gciMiY29uY2x1c2lvbj0iJChqcSAtciAtLWFyZyBzdWZmaXggImJ1aWxkIGFuZCBxdWFsaWZ5ICR7dGFyZ2V0fSIgJyIjOwogICAgbGV0IGZpbHRlcl9zdGFydCA9IHdvcmtmbG93CiAgICAgICAgLmZpbmQobWFya2VyKQogICAgICAgIC5tYXAofG9mZnNldHwgb2Zmc2V0ICsgbWFya2VyLmxlbigpKQogICAgICAgIC5va19vcl9lbHNlKHx8ICJ0ZXJtaW5hbCBqb2ItbmFtZSBqcSBtYXJrZXIgaXMgbWlzc2luZyIudG9fc3RyaW5nKCkpPzsKICAgIGxldCB0ZXJtaW5hdG9yID0gciMiJyAiJHtyZXNwb25zZX0iKSIiIzsKICAgIGxldCBmaWx0ZXJfZW5kID0gd29ya2Zsb3dbZmlsdGVyX3N0YXJ0Li5dCiAgICAgICAgLmZpbmQodGVybWluYXRvcikKICAgICAgICAub2tfb3JfZWxzZSh8fCAidGVybWluYWwgam9iLW5hbWUganEgdGVybWluYXRvciBpcyBtaXNzaW5nIi50b19zdHJpbmcoKSk/OwogICAgbGV0IGZpbHRlciA9IHdvcmtmbG93W2ZpbHRlcl9zdGFydC4uZmlsdGVyX3N0YXJ0ICsgZmlsdGVyX2VuZF0udHJpbSgpOwogICAgbGV0IHJvb3QgPSB0ZW1wX2Rpcigic2VydmVyLXRlcm1pbmFsLWpvYi1uYW1lcyIpOwogICAgbGV0IGZpeHR1cmUgPSByb290LmpvaW4oIndvcmtmbG93LWpvYnMuanNvbiIpOwogICAgbGV0IHN1ZmZpeCA9ICJidWlsZCBhbmQgcXVhbGlmeSB4ODZfNjQtdW5rbm93bi1saW51eC1nbnUiOwogICAgbGV0IHJ1biA9IHxuYW1lczogJlsmc3RyXXwgLT4gUmVzdWx0PFN0cmluZywgU3RyaW5nPiB7CiAgICAgICAgbGV0IGpvYnMgPSBuYW1lcwogICAgICAgICAgICAuaXRlcigpCiAgICAgICAgICAgIC5tYXAofG5hbWV8IHNlcmRlX2pzb246Ompzb24hKHsibmFtZSI6IG5hbWUsICJjb25jbHVzaW9uIjogInN1Y2Nlc3MifSkpCiAgICAgICAgICAgIC5jb2xsZWN0Ojo8VmVjPF8+PigpOwogICAgICAgIGZzOjp3cml0ZSgKICAgICAgICAgICAgJmZpeHR1cmUsCiAgICAgICAgICAgIHNlcmRlX2pzb246OnRvX3ZlYygmc2VyZGVfanNvbjo6anNvbiEoeyJqb2JzIjogam9ic30pKQogICAgICAgICAgICAgICAgLm1hcF9lcnIofGVycm9yfCBmb3JtYXQhKCJzZXJpYWxpemUgd29ya2Zsb3ctam9icyBmaXh0dXJlOiB7ZXJyb3J9IikpPywKICAgICAgICApCiAgICAgICAgLm1hcF9lcnIofGVycm9yfCBmb3JtYXQhKCJ3cml0ZSB7fToge2Vycm9yfSIsIGZpeHR1cmUuZGlzcGxheSgpKSk/OwogICAgICAgIGxldCBvdXRwdXQgPSBzdGQ6OnByb2Nlc3M6OkNvbW1hbmQ6Om5ldygianEiKQogICAgICAgICAgICAuYXJncyhbIi1yIiwgIi0tYXJnIiwgInN1ZmZpeCIsIHN1ZmZpeCwgZmlsdGVyXSkKICAgICAgICAgICAgLmFyZygmZml4dHVyZSkKICAgICAgICAgICAgLm91dHB1dCgpCiAgICAgICAgICAgIC5tYXBfZXJyKHxlcnJvcnwgZm9ybWF0ISgicnVuIHRlcm1pbmFsIGpvYi1uYW1lIGpxIGZpbHRlcjoge2Vycm9yfSIpKT87CiAgICAgICAgaWYgIW91dHB1dC5zdGF0dXMuc3VjY2VzcygpIHsKICAgICAgICAgICAgcmV0dXJuIEVycihmb3JtYXQhKAogICAgICAgICAgICAgICAgInRlcm1pbmFsIGpvYi1uYW1lIGpxIGZpbHRlciBmYWlsZWQ6IHt9IiwKICAgICAgICAgICAgICAgIFN0cmluZzo6ZnJvbV91dGY4X2xvc3N5KCZvdXRwdXQuc3RkZXJyKQogICAgICAgICAgICApKTsKICAgICAgICB9CiAgICAgICAgU3RyaW5nOjpmcm9tX3V0Zjgob3V0cHV0LnN0ZG91dCkKICAgICAgICAgICAgLm1hcCh8dmFsdWV8IHZhbHVlLnRyaW0oKS50b19zdHJpbmcoKSkKICAgICAgICAgICAgLm1hcF9lcnIofGVycm9yfCBmb3JtYXQhKCJ0ZXJtaW5hbCBqb2ItbmFtZSBqcSBvdXRwdXQgd2FzIG5vdCBVVEYtODoge2Vycm9yfSIpKQogICAgfTsKCiAgICBsZXQgcmVoZWFyc2UgPSBmb3JtYXQhKCJyZWhlYXJzZSAvIHtzdWZmaXh9Iik7CiAgICBsZXQgcXVhbGlmeSA9IGZvcm1hdCEoInF1YWxpZnkgLyB7c3VmZml4fSIpOwogICAgYXNzZXJ0X2VxIShydW4oJltzdWZmaXhdKT8sICJzdWNjZXNzIik7CiAgICBhc3NlcnRfZXEhKHJ1bigmWyZyZWhlYXJzZV0pPywgInN1Y2Nlc3MiKTsKICAgIGFzc2VydF9lcSEocnVuKCZbJnF1YWxpZnldKT8sICJzdWNjZXNzIik7CiAgICBhc3NlcnRfZXEhKHJ1bigmW10pPywgIm1pc3NpbmciKTsKICAgIGFzc2VydF9lcSEocnVuKCZbc3VmZml4LCAmcmVoZWFyc2VdKT8sICJkdXBsaWNhdGUiKTsKICAgIGlnbm9yZV9yZW1vdmVfZGlyX2FsbCgmcm9vdCk7CiAgICBPaygoKSkKfQoK").decode("utf-8")
           insertion_marker = (
               "#[test]\n"
               "fn server_archive_ruleset_shape_fixtures_are_strict_and_discriminating()"
