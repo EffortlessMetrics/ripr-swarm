@@ -101,10 +101,10 @@ async fn completed_saved_analysis_keeps_consumed_a_when_disk_and_buffer_become_b
                 "findings_count": produced.findings.len(),
                 "probes_first_eight": probes,
                 "base": produced.base,
-                "mode": produced.mode,
+                "mode": produced.mode.as_str(),
                 "seams_deferred": produced.seams_deferred,
-                "partial_scope": produced.partial_scope,
-                "component_outcomes": produced.component_outcomes,
+                "partial_scope": format!("{:?}", produced.partial_scope),
+                "component_outcomes": format!("{:?}", produced.component_outcomes),
                 "out_of_scope_test_file_findings": produced.out_of_scope_test_file_findings,
                 "analysis_outcome": produced.analysis_outcome.as_ref().map(|outcome| {
                     serde_json::json!({"kind": outcome.kind, "counts": outcome.counts, "limitations": outcome.limitations})
