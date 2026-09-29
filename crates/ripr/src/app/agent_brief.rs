@@ -278,11 +278,14 @@ pub(crate) fn select_agent_brief_seams<'a>(
     if direct.candidates.is_empty() && direct.allow_fallback {
         direct.candidates = fallback_candidates(classified, policy);
         // Say "showing" only when the fallback has something to show; an
-        // empty brief under that warning reads as a filtering bug.
+        // empty brief under that warning reads as a filtering bug. The empty
+        // case names only what the brief saw: seams configured `off` or past
+        // the inventory limit are not evidence that none exist.
         warnings.push(if direct.candidates.is_empty() {
             format!(
-                "No seams matched the requested scope (source: {}), and the repository \
-                 has no agent-actionable seams to show instead.",
+                "No seams matched the requested scope (source: {}), and no other \
+                 agent-actionable seam in the analyzed inventory is visible under the \
+                 current config.",
                 working_set.source.as_str()
             )
         } else {
@@ -1578,8 +1581,9 @@ mod tests {
         assert_eq!(
             selection.warnings,
             vec![
-                "No seams matched the requested scope (source: base), and the repository \
-                 has no agent-actionable seams to show instead."
+                "No seams matched the requested scope (source: base), and no other \
+                 agent-actionable seam in the analyzed inventory is visible under the \
+                 current config."
             ]
         );
     }

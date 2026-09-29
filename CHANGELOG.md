@@ -13,9 +13,9 @@ are scoped or reviewed.
 
 - `ripr agent brief --json`: `before_snapshot_command` now creates
   `target/ripr/workflow` before redirecting into it, so the first loop command
-  works in a fresh checkout. When the requested scope matches nothing and the
-  repository has no agent-actionable seam either, the warning says so instead
-  of claiming it is showing all repo-actionable seams (#4592).
+  works in a fresh checkout. When the requested scope matches nothing and no
+  other agent-actionable seam is visible, the warning says so instead of
+  claiming it is showing all repo-actionable seams (#4592).
 - LSP: a request whose method starts with `$/` and that ripr does not handle
   now gets a `-32601` method-not-found error, as the LSP spec requires. It got
   no response at all, so a client that sent one waited on it forever.
