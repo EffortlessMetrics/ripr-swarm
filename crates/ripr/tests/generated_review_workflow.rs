@@ -43,11 +43,9 @@ fn generated_workflow_batches_compact_review_comments() -> Result<(), Box<dyn Er
     assert!(workflow.contains("presentation=compact-v1"));
     // #3906: a card that carries the repair start leads the compact comment
     // with it; only cards without one fall back to the Verify line.
-    assert!(
-        workflow.contains(r#"captured("\nStart the repair:\n`(?<value>[^`]+)`"; "")) as $start"#)
-    );
+    assert!(workflow.contains(r#"($full | code_span_line("Start the repair")) as $start"#));
     assert!(workflow.contains(
-        r#"(if $start then "Start the repair: `\($start)`" else "Verify: `\($verify)`" end) as $next"#
+        r#"(if $start then "Start the repair: \($start)" else "Verify: \($verify)" end) as $next"#
     ));
     assert!(workflow.contains("__ripr_legacy_presentation__"));
     assert!(workflow.contains("__ripr_compact_presentation_unreadable__"));
@@ -314,6 +312,22 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
         assert!(
             !packet.contains(stale),
             "the review packet must not print `{stale}` before a repair:\n{packet}"
+        );
+    }
+
+    // The PR review summary and Recommended next test blocks print commands
+    // a reader copies on another machine, so they never name this runner's
+    // checkout. `generated_summary_prints_repository_relative_commands`
+    // holds the rewrite to artifacts that do carry the checkout path.
+    for heading in ["### PR review summary\n", "### Recommended next test\n"] {
+        let block = summary
+            .split(heading)
+            .nth(1)
+            .and_then(|rest| rest.split("\n### ").next())
+            .ok_or_else(|| format!("summary has no {heading:?} block"))?;
+        assert!(
+            !block.contains(root_text),
+            "{heading:?} prints the runner checkout path:\n{block}"
         );
     }
 
@@ -2157,6 +2171,267 @@ fn generated_annotation_script_preserves_path_and_message_bytes() -> Result<(), 
     assert_eq!(absent.3, "no repair field");
     assert!(!absent.3.contains("Start the repair"));
     Ok(())
+}
+
+/// #4468: the generated publish step's `compact_body` jq must lift the
+/// Start/Verify code span whatever its fence length. A command holding a
+/// backtick is rendered with a longer fence (`output::markdown::code_span`);
+/// the old single-backtick pattern missed it and fell back to a default
+/// verify line. A body skipped as `comment_body_too_large` must count as an
+/// additional recommendation in the review summary.
+#[cfg(unix)]
+#[test]
+fn generated_compact_body_lifts_code_spans_of_any_fence_length() -> Result<(), Box<dyn Error>> {
+    let tools = run_sh(
+        "command -v bash >/dev/null && command -v jq >/dev/null",
+        std::env::temp_dir().as_path(),
+    )?;
+    if !tools.status.success() {
+        eprintln!(
+            "skipping generated_compact_body_lifts_code_spans_of_any_fence_length: bash or jq missing"
+        );
+        return Ok(());
+    }
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-compact-body-fence-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root)?;
+    let output = run_ripr_init(&root)?;
+    if !output.status.success() {
+        let _ = fs::remove_dir_all(&root);
+        return Err("ripr init failed".into());
+    }
+    let workflow = fs::read_to_string(root.join(".github/workflows/ripr.yml"))?;
+    let compact = jq_program_between(
+        &workflow,
+        "publishable=\"$(mktemp)\"\n          jq '",
+        "' \"$plan\" > \"$publishable\"",
+    )?;
+    let summary = jq_program_between(&workflow, "review_body=\"$(jq -r '", "' \"$plan\")\"")?;
+    let additional = jq_program_between(&workflow, "additional_count=\"$(jq '", "' \"$plan\")\"")?;
+
+    let verify_body = "### ripr gap: missing boundary assertion\n\nChanged behavior:\n``a` b``\n\nWhy this matters:\nw\n\nRepair:\nAdd one.\n\nVerify:\n`` ripr agent verify `x` ``";
+    let start_body = "### ripr gap: weak oracle\n\nWhy this matters:\nw\n\nRepair:\nAdd one.\n\nStart the repair:\n```ripr agent repair ``x`` --phase before```\n\nIt prints the `--attempt ... --phase after` command that verifies the new test.";
+    let plain_body = "### ripr gap: weak oracle\n\nWhy this matters:\nw\n\nRepair:\nAdd one.\n\nVerify:\n`ripr agent verify`";
+    let operation = |key: &str, body: &str| {
+        format!(
+            r#"{{"operation":"create","safe_to_publish":true,"dedupe_key":{},"placement":{{"path":"src/lib.rs","line":1}},"body":{}}}"#,
+            json_string(key),
+            json_string(body)
+        )
+    };
+    let plan = format!(
+        r#"{{"summary":{{"publishable":3,"summary_only":0,"suppressed":0}},"operations":[{},{},{}],"skipped":[{{"skip_reason":"comment_body_too_large"}},{{"skip_reason":"inline_comment_cap_reached"}}]}}"#,
+        operation("ripr:verify", verify_body),
+        operation("ripr:start", start_body),
+        operation("ripr:plain", plain_body)
+    );
+    let plan_path = root.join("plan.json");
+    fs::write(&plan_path, plan)?;
+    for (name, program) in [
+        ("compact.jq", &compact),
+        ("summary.jq", &summary),
+        ("additional.jq", &additional),
+    ] {
+        fs::write(root.join(name), program)?;
+    }
+    let ran = run_sh(
+        "jq -c '.[] | .published_body' -r < <(jq -f compact.jq plan.json) && echo '---' && jq -r -f summary.jq plan.json && echo '---' && jq -f additional.jq plan.json",
+        &root,
+    )?;
+    let stdout = String::from_utf8_lossy(&ran.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&ran.stderr).to_string();
+    let _ = fs::remove_dir_all(&root);
+    assert!(ran.status.success(), "jq failed: {stderr}\n{stdout}");
+
+    assert!(
+        stdout.contains("**ripr: missing boundary assertion** — Add one.\n\nVerify: `` ripr agent verify `x` ``\n\n<details>"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("**ripr: weak oracle** — Add one.\n\nStart the repair: ```ripr agent repair ``x`` --phase before```\n\n<details>"),
+        "{stdout}"
+    );
+    // Ordinary single-backtick spans keep their previous compact form.
+    assert!(
+        stdout.contains(
+            "**ripr: weak oracle** — Add one.\n\nVerify: `ripr agent verify`\n\n<details>"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("2 additional recommendations remain"),
+        "{stdout}"
+    );
+    assert!(stdout.trim_end().ends_with("---\n2"), "{stdout}");
+    Ok(())
+}
+
+/// Text of one inline jq program in the generated workflow, between the
+/// shell text that opens and closes its single-quoted argument.
+#[cfg(unix)]
+fn jq_program_between(workflow: &str, open: &str, close: &str) -> Result<String, String> {
+    let start = workflow
+        .find(open)
+        .ok_or_else(|| format!("missing jq program opening {open:?}"))?
+        + open.len();
+    let rest = &workflow[start..];
+    let end = rest
+        .find(close)
+        .ok_or_else(|| format!("missing jq program closing {close:?}"))?;
+    Ok(rest[..end].to_string())
+}
+
+/// The CI summary's PR review summary and Recommended next test blocks,
+/// collapsed full reports included, print commands a reader copies on
+/// another machine. When `ripr agent start` bound them to the runner's
+/// absolute checkout (#3999), the summary names the repository root `.`
+/// instead, like the Agent review packet block; a sibling path that only
+/// shares the checkout's prefix is left alone.
+#[cfg(unix)]
+#[test]
+fn generated_summary_prints_repository_relative_commands() -> Result<(), Box<dyn Error>> {
+    let tools = run_sh(
+        "command -v bash >/dev/null && command -v jq >/dev/null && command -v awk >/dev/null",
+        std::env::temp_dir().as_path(),
+    )?;
+    if !tools.status.success() {
+        if std::env::var_os("GITHUB_ACTIONS").is_some() {
+            return Err("bash, jq or awk is missing under GitHub Actions".into());
+        }
+        eprintln!(
+            "skipping generated_summary_prints_repository_relative_commands: bash, jq or awk missing"
+        );
+        return Ok(());
+    }
+
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let root = std::env::temp_dir()
+        .join(format!(
+            "ripr-summary-relative-{}-{nonce}",
+            std::process::id()
+        ))
+        .join("my repo");
+    fs::create_dir_all(root.join("target/ripr/reports"))?;
+    let root = root.canonicalize()?;
+    let output = run_ripr_init(&root)?;
+    if !output.status.success() {
+        return Err(format!(
+            "ripr init failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    let workflow = fs::read_to_string(root.join(".github/workflows/ripr.yml"))?;
+    let script = summary_run_script(&workflow)?;
+
+    let checkout = root.to_str().ok_or("non-utf8 temp path")?;
+    let sibling = format!("{checkout}-other/notes.md");
+    let verify = format!(
+        "ripr agent verify --root '{checkout}' --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > '{checkout}/target/ripr/workflow/agent-verify.json'"
+    );
+    let receipt = format!(
+        "ripr agent receipt --root '{checkout}' --verify-json target/ripr/workflow/agent-verify.json --seam-id s1 --json"
+    );
+    let agent = format!("ripr agent brief --root '{checkout}' --seam-id s1 --json");
+    fs::write(
+        root.join("target/ripr/reports/pr-review-front-panel.json"),
+        serde_json::json!({
+            "status": "ready",
+            "top_issue": {"verify_command": verify, "agent_command": agent},
+        })
+        .to_string(),
+    )?;
+    fs::write(
+        root.join("target/ripr/reports/pr-review-front-panel.md"),
+        format!("- Verify after the test edit: `{verify}`\n- Notes: `{sibling}`\n"),
+    )?;
+    fs::write(
+        root.join("target/ripr/reports/first-useful-action.json"),
+        serde_json::json!({
+            "status": "ready",
+            "commands": {"verify": verify, "receipt": receipt},
+        })
+        .to_string(),
+    )?;
+    fs::write(
+        root.join("target/ripr/reports/first-useful-action.md"),
+        format!("- Verify after the test edit: `{verify}`\n- Receipt after verify: `{receipt}`\n"),
+    )?;
+
+    let summary_path = root.join("step-summary.md");
+    let summary_text = summary_path.to_str().ok_or("non-utf8 temp path")?;
+    let run = run_sh(
+        &format!("export GITHUB_STEP_SUMMARY='{summary_text}'\n{script}"),
+        &root,
+    )?;
+    assert!(
+        run.status.success(),
+        "summary step failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let summary = fs::read_to_string(&summary_path)?;
+    let relative_verify = "ripr agent verify --root '.' --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > './target/ripr/workflow/agent-verify.json'";
+    for heading in ["### PR review summary\n", "### Recommended next test\n"] {
+        let block = summary
+            .split(heading)
+            .nth(1)
+            .and_then(|rest| rest.split("\n### ").next())
+            .ok_or_else(|| format!("summary has no {heading:?} block:\n{summary}"))?;
+        let without_sibling = block.replace(&sibling, "");
+        assert!(
+            !without_sibling.contains(checkout),
+            "{heading:?} prints the runner checkout path:\n{block}"
+        );
+        // The at-a-glance line and the collapsed full report both rewrite.
+        assert_eq!(
+            block.matches(relative_verify).count(),
+            2,
+            "{heading:?} must print verify at the repository root twice:\n{block}"
+        );
+    }
+    assert!(
+        summary.contains("ripr agent receipt --root '.' --verify-json"),
+        "{summary}"
+    );
+    assert!(
+        summary.contains("ripr agent brief --root '.' --seam-id s1 --json"),
+        "{summary}"
+    );
+    assert!(
+        summary.contains(&format!("- Notes: `{sibling}`")),
+        "a path that only shares the checkout prefix must stay as written:\n{summary}"
+    );
+
+    if let Some(parent) = root.parent() {
+        fs::remove_dir_all(parent)?;
+    }
+    Ok(())
+}
+
+/// Unix-only like its callers (see `annotation_run_script`).
+#[cfg(unix)]
+fn summary_run_script(workflow: &str) -> Result<String, String> {
+    let marker = "- name: Add RIPR advisory summary";
+    let start = workflow.find(marker).ok_or("missing summary step")?;
+    let rest = &workflow[start..];
+    let run_marker = "\n        run: |\n";
+    let run_at = rest.find(run_marker).ok_or("missing summary run")?;
+    let body = &rest[run_at + run_marker.len()..];
+    let end = body
+        .find("\n      - name:")
+        .ok_or("summary step does not end")?;
+    let script = body[..end].trim_end();
+    if !script.contains("repo_relative()") {
+        return Err("summary script has no repo_relative rewrite".to_string());
+    }
+    Ok(script
+        .lines()
+        .map(|line| line.strip_prefix("          ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n"))
 }
 
 /// Unix-only like its callers: the shell-backed tests that use this

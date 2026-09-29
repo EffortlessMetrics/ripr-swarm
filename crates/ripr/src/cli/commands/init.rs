@@ -664,13 +664,14 @@ jobs:
           publishable="$(mktemp)"
           jq '
             def captured($regex; $flags): [capture($regex; $flags).value][0] // null;
+            def code_span_line($label): captured("\n" + $label + ":\n(?<value>(?<fence>`+)[^`\n](?:[^\n]*[^`\n])?\\k<fence>)(?:\n|$)"; "");
             def compact_body:
               .body as $full
               | ($full | captured("^### ripr gap: (?<value>[^\n]+)"; "") // "repairable gap") as $gap
               | ($full | captured("\nRepair:\n(?<value>[^\n]+)"; "") // "Follow the bounded repair route in the RIPR artifact.") as $repair
-              | ($full | captured("\nStart the repair:\n`(?<value>[^`]+)`"; "")) as $start
-              | ($full | captured("\nVerify:\n`(?<value>[^`]+)`"; "") // "ripr agent verify") as $verify
-              | (if $start then "Start the repair: `\($start)`" else "Verify: `\($verify)`" end) as $next
+              | ($full | code_span_line("Start the repair")) as $start
+              | ($full | code_span_line("Verify") // "`ripr agent verify`") as $verify
+              | (if $start then "Start the repair: \($start)" else "Verify: \($verify)" end) as $next
               | "**ripr: \($gap)** — \($repair)\n\n\($next)\n\n<details><summary>Full RIPR repair card</summary>\n\n\($full)\n\n</details>\n\n<!-- ripr:dedupe=\(.dedupe_key) presentation=compact-v1 -->";
             [
               .operations[]?
@@ -682,7 +683,7 @@ jobs:
 
           review_body="$(jq -r '
             (.summary.publishable // 0) as $inline
-            | ((.summary.summary_only // 0) + ([.skipped[]? | select(.skip_reason == "inline_comment_cap_reached")] | length)) as $additional
+            | ((.summary.summary_only // 0) + ([.skipped[]? | select(.skip_reason == "inline_comment_cap_reached" or .skip_reason == "comment_body_too_large")] | length)) as $additional
             | (.summary.suppressed // 0) as $suppressed
             | (if $inline == 1 then "" else "s" end) as $inline_suffix
             | (if $additional == 1 then "" else "s" end) as $additional_suffix
@@ -695,7 +696,7 @@ jobs:
 
           create_count="$(jq '[.[] | select(.operation == "create")] | length' "$publishable")"
           update_count="$(jq '[.[] | select(.operation == "update")] | length' "$publishable")"
-          additional_count="$(jq '(.summary.summary_only // 0) + ([.skipped[]? | select(.skip_reason == "inline_comment_cap_reached")] | length)' "$plan")"
+          additional_count="$(jq '(.summary.summary_only // 0) + ([.skipped[]? | select(.skip_reason == "inline_comment_cap_reached" or .skip_reason == "comment_body_too_large")] | length)' "$plan")"
           suppressed_count="$(jq '.summary.suppressed // 0' "$plan")"
 
           jq -c '.[] | select(.operation == "update")' "$publishable" \
@@ -1376,6 +1377,31 @@ jobs:
             markdown_inline() {
               printf '%s' "$1" | tr '\r\n' '  ' | sed 's/`/\\`/g'
             }
+            # Artifacts bind commands to this runner's absolute checkout
+            # (#3999), but a summary reader copies them on another machine.
+            # Rewrite the checkout path, where it is a whole path token, to
+            # the repository root `.`, like the Agent review packet block.
+            repo_relative() {
+              RIPR_CHECKOUT_PHYSICAL="$(pwd -P)" RIPR_CHECKOUT_LOGICAL="$PWD" awk '
+                function rel(s, root,   out, i, pre, rest, before, after) {
+                  out = ""
+                  while (root != "" && (i = index(s, root)) > 0) {
+                    pre = substr(s, 1, i - 1)
+                    rest = substr(s, i + length(root))
+                    before = substr(pre, length(pre), 1)
+                    after = substr(rest, 1, 1)
+                    if ((before == "" || before ~ /[ \047"`=(]/) && (after == "" || after ~ /[\/ \047"`):]/)) {
+                      out = out pre "."
+                    } else {
+                      out = out pre root
+                    }
+                    s = rest
+                  }
+                  return out s
+                }
+                { print rel(rel($0, ENVIRON["RIPR_CHECKOUT_PHYSICAL"]), ENVIRON["RIPR_CHECKOUT_LOGICAL"]) }
+              '
+            }
 
             echo '## RIPR advisory summary'
             echo
@@ -1698,10 +1724,10 @@ jobs:
                 panel_missing="$(markdown_inline "$panel_missing")"
                 panel_related="$(markdown_inline "$panel_related")"
                 panel_suggested="$(markdown_inline "$panel_suggested")"
-                panel_verify="$(markdown_inline "$panel_verify")"
-                panel_agent="$(markdown_inline "$panel_agent")"
-                panel_repair="$(markdown_inline "$panel_repair")"
-                panel_receipt="$(markdown_inline "$panel_receipt")"
+                panel_verify="$(markdown_inline "$(printf '%s\n' "$panel_verify" | repo_relative)")"
+                panel_agent="$(markdown_inline "$(printf '%s\n' "$panel_agent" | repo_relative)")"
+                panel_repair="$(markdown_inline "$(printf '%s\n' "$panel_repair" | repo_relative)")"
+                panel_receipt="$(markdown_inline "$(printf '%s\n' "$panel_receipt" | repo_relative)")"
                 panel_gate_mode="$(markdown_inline "$panel_gate_mode")"
                 panel_gate_decision="$(markdown_inline "$panel_gate_decision")"
                 panel_warning_count="$(markdown_inline "$panel_warning_count")"
@@ -1741,7 +1767,7 @@ jobs:
               if [ -f target/ripr/reports/pr-review-front-panel.md ]; then
                 echo '<details><summary>Full report: target/ripr/reports/pr-review-front-panel.md</summary>'
                 echo
-                cat target/ripr/reports/pr-review-front-panel.md
+                repo_relative < target/ripr/reports/pr-review-front-panel.md
                 echo
                 echo '</details>'
               fi
@@ -1771,9 +1797,9 @@ jobs:
                 action_why="$(markdown_inline "$action_why")"
                 action_seam="$(markdown_inline "$action_seam")"
                 action_target="$(markdown_inline "$action_target")"
-                action_repair="$(markdown_inline "$action_repair")"
-                action_verify="$(markdown_inline "$action_verify")"
-                action_receipt="$(markdown_inline "$action_receipt")"
+                action_repair="$(markdown_inline "$(printf '%s\n' "$action_repair" | repo_relative)")"
+                action_verify="$(markdown_inline "$(printf '%s\n' "$action_verify" | repo_relative)")"
+                action_receipt="$(markdown_inline "$(printf '%s\n' "$action_receipt" | repo_relative)")"
                 action_fallback="$(markdown_inline "$action_fallback")"
                 action_warning_count="$(markdown_inline "$action_warning_count")"
                 echo '#### Recommended next test at a glance'
@@ -1806,7 +1832,7 @@ jobs:
               if [ -f target/ripr/reports/first-useful-action.md ]; then
                 echo '<details><summary>Full report: target/ripr/reports/first-useful-action.md</summary>'
                 echo
-                cat target/ripr/reports/first-useful-action.md
+                repo_relative < target/ripr/reports/first-useful-action.md
                 echo
                 echo '</details>'
               fi
@@ -2824,6 +2850,25 @@ mod tests {
         assert!(!workflow.contains("@RIPR_"), "unsubstituted placeholder");
         assert!(workflow.contains(&format!("='{MANUAL_VERIFY_LABEL}'")));
         assert!(workflow.contains(&format!("echo '- Receipt: {NO_RECEIPT_BEFORE_REPAIR}'")));
+    }
+
+    /// W5: an unpinned `cargo install ripr` installs whatever release is
+    /// latest, so CI could run an older ripr that lacks the commands this
+    /// workflow calls, or change behavior silently on a later release. The
+    /// install pins the generating binary's own version and keeps `--locked`.
+    #[test]
+    fn generated_workflow_pins_the_generating_ripr_version() {
+        let workflow = generated_github_actions_workflow();
+        let pinned = format!(
+            "run: cargo install ripr --version {} --locked",
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(workflow.contains(&pinned), "missing {pinned}");
+        let installs: Vec<&str> = workflow
+            .lines()
+            .filter(|line| line.contains("run: cargo install"))
+            .collect();
+        assert_eq!(installs.len(), 1, "{installs:?}");
     }
 
     /// The `cli_smoke` tests drive `ripr init` as a subprocess, so they prove
