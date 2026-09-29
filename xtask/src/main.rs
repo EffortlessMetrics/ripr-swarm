@@ -33,6 +33,10 @@ mod evidence_audit;
 mod evidence_promotion;
 mod evidence_quality;
 mod fixture_contracts;
+// #4544: one definition of the gap `source_subject` contract, shared with the
+// ripr crate's LSP validator without widening ripr's public API.
+#[path = "../../crates/ripr/src/output/gap_source_subject/shared.rs"]
+mod gap_source_subject_shared;
 mod no_panic;
 mod output_enum_contracts;
 mod policy;
@@ -165,8 +169,9 @@ pub(crate) use evidence_audit::{
     lane1_runtime_status_limited_input, lane1_runtime_status_priority,
     lane1_runtime_status_push_markdown, lane1_runtime_status_with_input_path,
     lane1_static_limitation_backlog_sample_json, repo_exposure_latency_trace_json,
-    static_limitation_backlog_packet_non_claims, static_limitation_repair_route,
-    static_limitation_unlock_condition, static_limitation_why_not_actionable,
+    stamp_actionable_gaps_source_subject, static_limitation_backlog_packet_non_claims,
+    static_limitation_repair_route, static_limitation_unlock_condition,
+    static_limitation_why_not_actionable,
 };
 #[cfg(test)]
 pub(crate) use evidence_promotion::{
@@ -253,7 +258,7 @@ use policy::{
     check_droid_review_config, check_executable_files, check_file_policy, check_local_context,
     check_network_policy, check_no_panic_family, check_positioning_language, check_process_policy,
     check_product_copy, check_proof_packs, check_release_targets, check_static_language,
-    check_workflows,
+    check_workflows, qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -13079,18 +13084,21 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// authority may be consumed only by this inventoried set; new consumers
     /// extend the inventory here with a reason so role consumers stay
     /// reviewable.
-    const IS_TEST_FILE_CONSUMERS: [&str; 7] = [
+    const IS_TEST_FILE_CONSUMERS: [&str; 8] = [
         "crates/ripr/src/analysis/classify/owner_shape.rs",
         "crates/ripr/src/analysis/test_grip_evidence.rs",
         "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
         "crates/ripr/src/analysis/source_role_corpus.rs",
         "crates/ripr/src/analysis/mod.rs",
-        "crates/ripr/src/analysis/language/rust.rs",
+        "crates/ripr/src/analysis/language/rust/mod.rs",
         // #4775: consulted unchanged lexical-fallback files that live under
         // `tests/**` are test evidence even when the lexical scanner extracted
         // no TestFact. The layout authority stays `is_test_file`; this module
         // does not re-derive role from names or cfg strings.
         "crates/ripr/src/analysis/language/rust/lexical_test_grip.rs",
+        // InlineUnit admission refuses tests/** owners as InlineUnitOutOfScope
+        // rather than inventing a second path heuristic (#4784).
+        "crates/ripr/src/analysis/new_test_target.rs",
     ];
 
     let files = tracked_files()?;
