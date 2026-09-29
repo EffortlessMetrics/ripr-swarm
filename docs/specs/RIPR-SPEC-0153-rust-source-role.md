@@ -290,7 +290,7 @@ recursive member globs), the fail-closed probe boundary, and the
 manifest-sourced `harness` flag.
 `analysis/facts/harness_registry` pins the conflict limitations and the
 degraded per-function behavior for misdeclared targets, and
-`analysis/language/rust.rs` pins the diff-path seeding flip alongside
+`analysis/language/rust/mod.rs` pins the diff-path seeding flip alongside
 diff seeding
 (bench gap regression, declared-target confirmation with a probeable
 helper, opt-in restore). `config/tests.rs` pins parsing, identity
@@ -302,7 +302,7 @@ rejection, and cfg-variant equivalence against `facts::build_index`.
 `analysis/syntax/module_tree.rs` pins the per-file edge scan and every
 construct that makes it incomplete; `analysis/workspace/module_graph.rs`
 pins the package walk and each false-orphan path the #4556 reviews
-found; `analysis/language/rust.rs` pins the diff-level module-tree
+found; `analysis/language/rust/mod.rs` pins the diff-level module-tree
 seeding and `lsp/diagnostics.rs` the matching editor partition.
 `cargo xtask check-rust-source-role-authority` structurally rejects
 consumer-side role re-derivation and inventories the approved
@@ -340,7 +340,7 @@ verbatim scan instead of a second lexical authority.
 - `analysis/syntax/module_tree.rs` and
   `analysis/workspace/module_graph.rs` — module-tree edges and the
   target-root walk behind the orphan and external-root evidence (#4435).
-- `analysis/language/rust.rs` — diff seeding and repo production set.
+- `analysis/language/rust/mod.rs` — diff seeding and repo production set.
 - `analysis/seam_inventory.rs` — inventory and count production sets.
 - `config.rs` + `config/model.rs` — the opt-in, its identity role, and
   the consumed-config list.
