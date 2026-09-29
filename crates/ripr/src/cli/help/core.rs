@@ -209,7 +209,7 @@ Progress:
   throttled `still active after <elapsed class>` heartbeats. Non-TTY
   / CI output is newline-delimited with no control sequences. A TTY
   may reuse one line and stays silent for sub-threshold flashes.
-  Machine formats (json, sarif, markdown) keep stdout byte-clean;
+  Machine formats (json, sarif, github) keep stdout byte-clean;
   they do not disable stderr progress. Unknown totals never become a
   percentage or ETA. Progress does not mean analysis is faster or
   that the command will succeed. `--quiet` turns this stream off.

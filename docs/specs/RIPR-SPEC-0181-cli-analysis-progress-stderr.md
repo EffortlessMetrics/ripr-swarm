@@ -56,7 +56,7 @@ second stage vocabulary.
    minimum-duration threshold.
 4. Heartbeats repeat only the current producer stage, start after 2s, repeat
    every 2s, and stop after 16 lines for that run.
-5. JSON, SARIF, Markdown, and other machine stdout formats remain
+5. JSON, SARIF, GitHub annotations, and other machine stdout formats remain
    byte-identical whether progress is emitted or `--quiet` is set. Machine
    formats do not implicitly disable stderr progress.
 6. `--quiet` suppresses every non-error progress record and heartbeat.
@@ -98,7 +98,8 @@ second stage vocabulary.
    `analyzing` then `completed` on stderr.
 2. Adding `--quiet` keeps stdout bytes identical and drops progress from
    stderr.
-3. `--format sarif` with and without `--quiet` produce identical stdout.
+3. `--format sarif` and `--format github` with and without `--quiet` produce
+   identical stdout.
 4. `--diff` pointing at a missing file exits non-zero, projects
    `ripr progress: failed [diff]`, and never `completed`.
 5. A TTY run that finishes under 250ms emits no stage spray.
@@ -122,9 +123,11 @@ second stage vocabulary.
 - `crates/ripr/src/cli/progress.rs::tests::rendering_failure_is_isolated`
 - `crates/ripr/src/cli/progress.rs::tests::heartbeat_is_throttled_and_bounded`
 - `crates/ripr/src/cli/progress.rs::tests::unsafe_constructed_lines_are_rejected`
+- `crates/ripr/src/cli/help.rs::tests::check_help_mentions_repo_badge_formats_and_examples`
 - `crates/ripr/tests/cli_progress.rs::check_json_stdout_parses_while_progress_stays_on_stderr`
 - `crates/ripr/tests/cli_progress.rs::check_quiet_keeps_json_stdout_byte_identical_and_drops_progress`
 - `crates/ripr/tests/cli_progress.rs::check_sarif_stdout_is_unchanged_by_progress`
+- `crates/ripr/tests/cli_progress.rs::check_github_stdout_is_unchanged_by_progress`
 - `crates/ripr/tests/cli_progress.rs::check_markdown_stdout_is_unchanged_by_progress`
 - `crates/ripr/tests/cli_progress.rs::check_worktree_projects_worktree_scope_on_stderr`
 - `crates/ripr/tests/cli_progress.rs::check_progress_failure_emits_failed_not_completed`

@@ -523,6 +523,8 @@ mod tests {
         assert!(CHECK_HELP.contains("ripr progress:"));
         assert!(CHECK_HELP.contains("percentage or ETA"));
         assert!(CHECK_HELP.contains("does not mean analysis is faster"));
+        assert!(CHECK_HELP.contains("json, sarif, github"));
+        assert!(!CHECK_HELP.contains("json, sarif, markdown"));
         assert!(DIFF_HELP.contains("Usage: ripr diff"));
         assert!(DIFF_HELP.contains("full-repo-limited"));
     }

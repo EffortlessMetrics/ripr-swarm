@@ -13,7 +13,7 @@ The CLI has two intentional output conventions:
   diagnostics go to stderr, so scripts can capture stdout without filtering
   status text. `ripr check` also writes bounded producer-owned analysis
   stages to stderr (`ripr progress: <stage> [<scope>]`). That stream is not
-  part of the JSON/SARIF/Markdown stdout contract, carries no percentage or
+  part of the JSON/SARIF/GitHub stdout contract, carries no percentage or
   ETA when totals are unknown, and is suppressed by `--quiet`. It does not
   mean analysis is faster or that the command will succeed.
 - The gate-family commands write reviewed artifacts to the paths shown by their
