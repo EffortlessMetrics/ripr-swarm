@@ -4,7 +4,7 @@ root: fixtures/typescript_static_limit_taxonomy/input
 
 Summary: 4 probe(s), 0 exposed, 3 weak, 0 unrevealed, 1 no path, 0 unknown
 
-Changed file(s) by language: javascript: 2, rust: 0, typescript: 2.
+Changed file(s) by language: javascript: 2, typescript: 2.
 
 Analysis outcome: complete_with_findings (analysis complete).
   Counts: 4 changed file(s), 8 changed line(s), 4 candidate line(s), 4 probe(s), 4 finding(s).
@@ -15,12 +15,12 @@ Start here:
   File: src/dispatch.ts:2
   Language: typescript
   Language status: preview
-  Static exposure: weakly_exposed (warning, confidence 0.40)
-  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
+  Static exposure: weak (weakly_exposed, warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: actions[key]();
   Missing discriminator: Only heuristic TypeScript test links were found for `dispatch`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
   Related test: tests/dispatch.test.ts:1 dispatch smoke
-  Next step: TypeScript preview advisory: static limit `dynamic_dispatch`; Repair route: inspect the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before is…
+  Next step: TypeScript preview advisory: static limit `dynamic_dispatch`; Repair route: inspect the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before…
   Evidence:
     - reach weak: 1 related test(s) found for owner `dispatch`
     - infection unknown: TypeScript preview adapter does not yet model infection.
@@ -31,9 +31,9 @@ Next: drill into the top finding:
   ripr context --root fixtures/typescript_static_limit_taxonomy/input --diff fixtures/typescript_static_limit_taxonomy/diff.patch --mode fast --at probe:src_dispatch.ts:typescript_preview:dd0f8848
 
 Hidden:
-  3 lower-priority finding(s) omitted from default human output.
+  3 lower-priority finding(s) omitted from default human output (TypeScript preview: 1, JavaScript preview: 2).
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
 
-Note: 4 TypeScript files analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
+Note: 4 TypeScript files analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

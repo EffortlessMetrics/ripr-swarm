@@ -192,10 +192,10 @@ pub(crate) fn render_agent_seam_packets_json_with_causal_and_outcome(
     if let Some(info) = limit_info {
         let repair_route = match info.source {
             SeamLimitSource::Default => {
-                "Set RIPR_PILOT_SEAM_BUDGET=0 to render packets for all seams, or use `ripr check --diff` to scope the run."
+                "Set RIPR_PILOT_SEAM_BUDGET=0 to render packets for all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
             }
             SeamLimitSource::Configured => {
-                "Remove or raise RIPR_PILOT_SEAM_BUDGET to render packets for more seams, or use `ripr check --diff`."
+                "Remove or raise RIPR_PILOT_SEAM_BUDGET to render packets for more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
             }
         };
         out.push_str("  \"limitations\": [\n");
@@ -1136,7 +1136,7 @@ pub(crate) fn targeted_test_brief_for_classified_seam(entry: &ClassifiedSeam) ->
         seam.display_line()
     ));
     out.push_str(&format!("- {}\n", seam.kind().as_str()));
-    out.push_str(&format!("- {}\n", entry.class.as_str()));
+    out.push_str(&format!("- {}\n", entry.class.human_label()));
     out.push_str(&format!("- owner: {}\n", seam.owner()));
 
     out.push_str("\nWhy it matters:\n");
@@ -5313,7 +5313,7 @@ mod tests {
             "Target seam:",
             "- src/pricing.rs:88",
             "- predicate_boundary",
-            "- weakly_gripped",
+            "- weak, weakly_gripped",
             "- owner: pricing::discounted_total",
             "Why it matters:",
             "- Related test evidence: below_threshold_has_no_discount uses strong exact_value oracle.",

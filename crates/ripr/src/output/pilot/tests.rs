@@ -346,6 +346,9 @@ fn pilot_summary_md_spells_out_first_screen_recommendation() {
         "## What Was Inspected",
         "## Top Recommendation",
         "- Inspected seam:",
+        "(weak, weakly_gripped)",
+        " weak (`weakly_gripped`) src/pricing.rs:88 ",
+        "- weak, weakly_gripped\n",
         "- Why it matters: missing discriminator: input that hits the boundary: amount >= discount_threshold",
         "- Focused test: none: this seam has no test target that `ripr agent repair` can use (for example, the only tests are in another crate, or static evidence names no exact discriminator), so it will not start a repair attempt here",
         "Target seam:",
@@ -496,7 +499,7 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
     // (`ripr agent repair --seam-id <id>`) is reachable from the screen alone.
     assert!(
         terminal.contains(&format!(
-            "inspected seam: {seam_id} src/pricing.rs:88 predicate_boundary in pricing::discounted_total (weakly_gripped)"
+            "inspected seam: {seam_id} src/pricing.rs:88 predicate_boundary in pricing::discounted_total (weak, weakly_gripped)"
         )),
         "the terminal seam line must lead with the seam id:\n{terminal}"
     );
@@ -1326,5 +1329,74 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         assert!(md.ends_with("No follow-up command applies: this ripr binary cannot analyze the languages listed above.\n"), "{md}");
         assert!(!md.contains("```bash"), "{md}");
     }
+    Ok(())
+}
+
+/// rc rehearsal (py-pricing): with no Rust seam, a Python repair card was
+/// the top recommendation but the closing block said `ripr check`, which only
+/// leads back to pilot. The closing block now names the card's route:
+/// `ripr first-pr` before the edit (it names the receipt command, and stops
+/// selecting the gap once the edit closes it), the test edit, the card's
+/// verify command, and the receipt command. A card that carries its own
+/// receipt command skips first-pr.
+#[test]
+fn pilot_terminal_next_follows_the_python_repair_card_route() -> Result<(), String> {
+    use crate::domain::LanguageId;
+
+    let artifacts = pilot_artifacts();
+    let python = python_first_use();
+    let files = discovered_files(&[(LanguageId::Python, "pricing/__init__.py")]);
+    let routes =
+        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &files);
+    let first_pr = format!(
+        "ripr first-pr --root {}",
+        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root("."))
+    );
+    for language_routes in [None, Some(&routes)] {
+        let context = PilotSummaryContext {
+            language_routes,
+            ..pilot_context_with_python(&artifacts, &python)
+        };
+        let terminal = render_pilot_terminal(&[], context);
+        let expected = format!(
+            "Next, in order:\n  1. {first_pr} (names this gap's receipt command; run any regeneration command it prints first)\n  2. strengthen test_calculate_discount_above_threshold in tests/test_pricing.py (test files only): Assert the owner result or effect at the boundary `amount == threshold`.\n  3. pytest tests/test_pricing.py::test_calculate_discount_above_threshold\n  4. run the receipt command step 1 printed\n"
+        );
+        assert!(terminal.ends_with(&expected), "{terminal}");
+        assert!(
+            !terminal.contains("Next, analyze the changed code"),
+            "{terminal}"
+        );
+        assert!(!terminal.contains("ripr outcome --before"), "{terminal}");
+        let md = render_pilot_summary_md(&[], context);
+        let next = md
+            .split("## Next Commands")
+            .nth(1)
+            .ok_or_else(|| format!("missing Next Commands: {md}"))?;
+        assert!(
+            next.contains(&format!(
+                "```bash\n{first_pr}\npytest tests/test_pricing.py::test_calculate_discount_above_threshold\n```"
+            )),
+            "{next}"
+        );
+        assert!(!next.contains("ripr check --root"), "{next}");
+    }
+
+    // A card that carries its own receipt command uses it directly.
+    let mut carded = python_first_use();
+    if let Some(card) = carded.top_repair_card.as_mut() {
+        card.receipt_command = Some("ripr receipt write --gap g --status not_run".to_string());
+    }
+    let context = pilot_context_with_python(&artifacts, &carded);
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.ends_with("  2. pytest tests/test_pricing.py::test_calculate_discount_above_threshold\n  3. ripr receipt write --gap g --status not_run\n"),
+        "{terminal}"
+    );
+    assert!(!terminal.contains("ripr first-pr --root"), "{terminal}");
+    let md = render_pilot_summary_md(&[], context);
+    assert!(
+        md.contains("```bash\npytest tests/test_pricing.py::test_calculate_discount_above_threshold\nripr receipt write --gap g --status not_run\n```"),
+        "{md}"
+    );
     Ok(())
 }

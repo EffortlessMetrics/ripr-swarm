@@ -22,7 +22,8 @@ use crate::app::pr_evidence::PR_EVIDENCE_HELP;
 use crate::app::pr_summary::PR_SUMMARY_HELP;
 use crate::app::ripr_plus::PLUS_HELP;
 use crate::cli::commands::{
-    CACHE_CLEAR_HELP, CACHE_STATUS_HELP, RECEIPT_CHECK_HELP, RECEIPT_WRITE_HELP,
+    CACHE_CLEAR_HELP, CACHE_STATUS_HELP, FEEDBACK_EXPORT_HELP, FEEDBACK_RECORD_HELP,
+    RECEIPT_CHECK_HELP, RECEIPT_WRITE_HELP,
 };
 use crate::output::first_pr::FIRST_PR_HELP;
 
@@ -63,6 +64,8 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "doctor",
     "evidence-health",
     "explain",
+    "feedback export",
+    "feedback record",
     "first-action",
     "first-pr",
     "gate",
@@ -129,6 +132,8 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         "doctor" => DOCTOR_HELP,
         "evidence-health" => EVIDENCE_HEALTH_HELP,
         "explain" => EXPLAIN_HELP,
+        "feedback export" => FEEDBACK_EXPORT_HELP,
+        "feedback record" => FEEDBACK_RECORD_HELP,
         "first-action" => FIRST_ACTION_HELP,
         "first-pr" => FIRST_PR_HELP,
         "gate" => GATE_HELP,
@@ -335,26 +340,42 @@ pub(super) fn print_rerun_help() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn review_comments_help_discloses_cooperative_budget_boundary() -> Result<(), String> {
+        let text = super::help_text_for("review-comments").ok_or("missing review-comments help")?;
+        for required in [
+            "default 120000ms",
+            "safe boundaries",
+            "Non-preemptible operations can overrun",
+            "outer orchestration wrapper for a hard process bound",
+        ] {
+            if !text.contains(required) {
+                return Err(format!("review-comments help omitted {required:?}"));
+            }
+        }
+        Ok(())
+    }
     use super::{
         AGENT_BRIEF_HELP, AGENT_HELP, AGENT_PACKET_HELP, AGENT_RECEIPT_HELP,
         AGENT_REVIEW_SUMMARY_HELP, AGENT_START_HELP, AGENT_STATUS_HELP, AGENT_VERIFY_HELP,
         ANNOTATIONS_HELP, ASSISTANT_LOOP_HELP, BASELINE_HELP, CACHE_CLEAR_HELP, CACHE_STATUS_HELP,
         CALIBRATE_HELP, CHECK_HELP, CONFIG_HELP, CONTEXT_HELP, COVERAGE_GRIP_HELP, DIFF_HELP,
-        DOCTOR_HELP, EVIDENCE_HEALTH_HELP, EXPLAIN_HELP, FIRST_ACTION_HELP, FIRST_PR_HELP,
-        GATE_HELP, HELP, HELP_ALL, IMPACTED_EVIDENCE_HELP, INIT_HELP, LSP_HELP, OUTCOME_HELP,
-        PILOT_HELP, PLUS_HELP, POLICY_HELP, PR_COMMENTS_HELP, PR_EVIDENCE_HELP, PR_LEDGER_HELP,
-        PR_REVIEW_HELP, PR_SUMMARY_HELP, REPORTS_HELP, RERUN_HELP, REVIEW_COMMENTS_HELP,
-        SWARM_HELP, SWARM_INGEST_HELP, SWARM_QUEUE_HELP, ZERO_HELP, print_agent_brief_help,
-        print_agent_help, print_agent_packet_help, print_agent_receipt_help,
-        print_agent_repair_help, print_agent_review_summary_help, print_agent_start_help,
-        print_agent_status_help, print_agent_verify_help, print_assistant_loop_help,
-        print_baseline_help, print_calibrate_help, print_check_help, print_config_help,
-        print_context_help, print_coverage_grip_help, print_diff_help, print_doctor_help,
-        print_evidence_health_help, print_explain_help, print_first_action_help, print_gate_help,
-        print_help, print_help_all, print_init_help, print_lsp_help, print_outcome_help,
-        print_pilot_help, print_policy_help, print_pr_comments_help, print_pr_ledger_help,
-        print_pr_review_help, print_reports_help, print_rerun_help, print_review_comments_help,
-        print_swarm_help, print_swarm_ingest_help, print_swarm_queue_help, print_zero_help,
+        DOCTOR_HELP, EVIDENCE_HEALTH_HELP, EXPLAIN_HELP, FEEDBACK_EXPORT_HELP,
+        FEEDBACK_RECORD_HELP, FIRST_ACTION_HELP, FIRST_PR_HELP, GATE_HELP, HELP, HELP_ALL,
+        IMPACTED_EVIDENCE_HELP, INIT_HELP, LSP_HELP, OUTCOME_HELP, PILOT_HELP, PLUS_HELP,
+        POLICY_HELP, PR_COMMENTS_HELP, PR_EVIDENCE_HELP, PR_LEDGER_HELP, PR_REVIEW_HELP,
+        PR_SUMMARY_HELP, REPORTS_HELP, RERUN_HELP, REVIEW_COMMENTS_HELP, SWARM_HELP,
+        SWARM_INGEST_HELP, SWARM_QUEUE_HELP, ZERO_HELP, print_agent_brief_help, print_agent_help,
+        print_agent_packet_help, print_agent_receipt_help, print_agent_repair_help,
+        print_agent_review_summary_help, print_agent_start_help, print_agent_status_help,
+        print_agent_verify_help, print_assistant_loop_help, print_baseline_help,
+        print_calibrate_help, print_check_help, print_config_help, print_context_help,
+        print_coverage_grip_help, print_diff_help, print_doctor_help, print_evidence_health_help,
+        print_explain_help, print_first_action_help, print_gate_help, print_help, print_help_all,
+        print_init_help, print_lsp_help, print_outcome_help, print_pilot_help, print_policy_help,
+        print_pr_comments_help, print_pr_ledger_help, print_pr_review_help, print_reports_help,
+        print_rerun_help, print_review_comments_help, print_swarm_help, print_swarm_ingest_help,
+        print_swarm_queue_help, print_zero_help,
     };
     use crate::cli::command::KNOWN_COMMANDS;
 
@@ -395,6 +416,8 @@ mod tests {
         assert!(HELP_ALL.contains("ripr calibrate"));
         assert!(HELP_ALL.contains("ripr receipt write"));
         assert!(HELP_ALL.contains("ripr receipt check"));
+        assert!(HELP_ALL.contains("ripr feedback record"));
+        assert!(HELP_ALL.contains("ripr feedback export"));
         assert!(HELP_ALL.contains("ripr agent start"));
         assert!(HELP_ALL.contains("ripr agent brief"));
         assert!(HELP_ALL.contains("ripr agent packet"));
@@ -673,6 +696,8 @@ mod tests {
         assert!(LSP_HELP.starts_with("Start the experimental ripr LSP server"));
         assert!(LSP_HELP.contains("--stdio"));
         assert!(LSP_HELP.contains("--version"));
+        assert!(LSP_HELP.contains("ripr.collectContext           one object"));
+        assert!(LSP_HELP.contains("InvalidParams"));
         // Pin: cache status/clear help lives beside the parser and is imported
         // here. Drop CACHE_STATUS_HELP / CACHE_CLEAR_HELP from this test module
         // import list and this test fails to compile.
@@ -712,6 +737,14 @@ mod tests {
             Some(IMPACTED_EVIDENCE_HELP)
         );
         assert_eq!(super::help_text_for("plus"), Some(PLUS_HELP));
+        assert_eq!(
+            super::help_text_for("feedback record"),
+            Some(FEEDBACK_RECORD_HELP)
+        );
+        assert_eq!(
+            super::help_text_for("feedback export"),
+            Some(FEEDBACK_EXPORT_HELP)
+        );
         for (name, help_text, flag) in [
             ("first-pr", FIRST_PR_HELP, "--gap-ledger"),
             ("pr-summary", PR_SUMMARY_HELP, "--baseline"),
@@ -793,6 +826,7 @@ mod tests {
     const BASELINE_PARSER_RS: &str = include_str!("commands/baseline.rs");
     const CACHE_PARSER_RS: &str = include_str!("commands/cache.rs");
     const RECEIPT_PARSER_RS: &str = include_str!("commands/receipt.rs");
+    const FEEDBACK_PARSER_RS: &str = include_str!("commands/feedback.rs");
     const POLICY_PARSE_RS: &str = include_str!("commands/policy/parse.rs");
     const SWARM_QUEUE_PARSER_RS: &str = include_str!("commands/swarm/queue.rs");
     const SWARM_INGEST_PARSER_RS: &str = include_str!("commands/swarm/ingest.rs");
@@ -920,6 +954,16 @@ mod tests {
             &["parse_evidence_health_options"],
         ),
         ("explain", CLI_COMMANDS_RS, &["explain"]),
+        (
+            "feedback export",
+            FEEDBACK_PARSER_RS,
+            &["parse_export_options"],
+        ),
+        (
+            "feedback record",
+            FEEDBACK_PARSER_RS,
+            &["parse_record_options"],
+        ),
         (
             "first-action",
             CLI_COMMANDS_RS,

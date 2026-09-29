@@ -1,7 +1,10 @@
+use super::module_constants::{
+    PythonModuleConstant, constants_visible_in_function, python_test_rebinding,
+};
 #[cfg(test)]
 use super::source_facts::extract_source_facts;
 use super::source_utils::{
-    line_for_range_end, line_for_range_start, normalized_path, text_for_range,
+    SourceText, line_for_range_end, line_for_range_start, normalized_path, text_for_range,
 };
 use super::static_limits::{collect_static_cli_receiver_names, is_static_route_decorator};
 use super::{
@@ -22,10 +25,11 @@ pub(super) fn extract_owners(file: &Path, source: &str) -> Vec<PythonOwner> {
 
 pub(super) fn collect_owners_from_statements(
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     statements: &[Stmt],
     class_context: Option<&str>,
     imports: &[PythonImport],
+    module_constants: &[PythonModuleConstant],
     out: &mut Vec<PythonOwner>,
 ) {
     for stmt in statements {
@@ -37,11 +41,13 @@ pub(super) fn collect_owners_from_statements(
                         source,
                         class_context,
                         imports,
+                        module_constants,
                     },
                     function.name.as_str(),
                     function.range,
                     &function.decorator_list,
                     &function.args,
+                    &function.body,
                     false,
                 ));
             }
@@ -52,11 +58,13 @@ pub(super) fn collect_owners_from_statements(
                         source,
                         class_context,
                         imports,
+                        module_constants,
                     },
                     function.name.as_str(),
                     function.range,
                     &function.decorator_list,
                     &function.args,
+                    &function.body,
                     true,
                 ));
             }
@@ -67,6 +75,7 @@ pub(super) fn collect_owners_from_statements(
                     &class.body,
                     Some(class.name.as_str()),
                     imports,
+                    module_constants,
                     out,
                 );
                 out.push(owner_from_class(
@@ -75,6 +84,7 @@ pub(super) fn collect_owners_from_statements(
                         source,
                         class_context,
                         imports,
+                        module_constants,
                     },
                     class.name.as_str(),
                     class.range,
@@ -89,9 +99,10 @@ pub(super) fn collect_owners_from_statements(
 #[derive(Clone, Copy)]
 struct PythonOwnerContext<'a> {
     file: &'a Path,
-    source: &'a str,
+    source: &'a SourceText<'a>,
     class_context: Option<&'a str>,
     imports: &'a [PythonImport],
+    module_constants: &'a [PythonModuleConstant],
 }
 
 fn owner_from_function(
@@ -100,6 +111,7 @@ fn owner_from_function(
     range: TextRange,
     decorators: &[Expr],
     args: &ast::Arguments,
+    body: &[Stmt],
     is_async: bool,
 ) -> PythonOwner {
     let decorator_names = decorator_names(decorators);
@@ -136,6 +148,13 @@ fn owner_from_function(
         route_paths,
         dynamic_route_decorators,
         parameters: function_parameters(context.source, args),
+        reexport_modules: Vec::new(),
+        module_constants: constants_visible_in_function(
+            context.module_constants,
+            args,
+            body,
+            &text_for_range(context.source, range),
+        ),
     }
 }
 
@@ -181,12 +200,14 @@ fn owner_from_class(
         route_paths: collect_static_route_paths(context.source, decorators),
         dynamic_route_decorators: collect_dynamic_route_decorators(context.source, decorators),
         parameters: Vec::new(),
+        reexport_modules: Vec::new(),
+        module_constants: Vec::new(),
     }
 }
 
 pub(super) fn module_owner(
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     range: TextRange,
     imports: &[PythonImport],
 ) -> PythonOwner {
@@ -203,6 +224,8 @@ pub(super) fn module_owner(
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
+        reexport_modules: Vec::new(),
+        module_constants: Vec::new(),
     }
 }
 
@@ -216,7 +239,7 @@ pub(super) fn extract_tests(file: &Path, source: &str) -> Vec<PythonTest> {
 /// Custom collection prefixes and hooks are not resolved here.
 pub(super) fn collect_tests_from_statements(
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     statements: &[Stmt],
     class_context: Option<&str>,
     in_unittest_class: bool,
@@ -244,6 +267,11 @@ pub(super) fn collect_tests_from_statements(
                     parametrized: is_parametrized(&function.decorator_list),
                     framework,
                     assertions: collect_assertions_from_statements(&function.body, source),
+                    constant_rebinding: python_test_rebinding(
+                        &function.args,
+                        &function.body,
+                        &text_for_range(source, function.range),
+                    ),
                 });
             }
             Stmt::AsyncFunctionDef(function) if function.name.as_str().starts_with("test") => {
@@ -265,6 +293,11 @@ pub(super) fn collect_tests_from_statements(
                     parametrized: is_parametrized(&function.decorator_list),
                     framework,
                     assertions: collect_assertions_from_statements(&function.body, source),
+                    constant_rebinding: python_test_rebinding(
+                        &function.args,
+                        &function.body,
+                        &text_for_range(source, function.range),
+                    ),
                 });
             }
             Stmt::ClassDef(class) => {

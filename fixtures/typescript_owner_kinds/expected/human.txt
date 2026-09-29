@@ -4,7 +4,7 @@ root: fixtures/typescript_owner_kinds/input
 
 Summary: 4 probe(s), 1 exposed, 3 weak, 0 unrevealed, 0 no path, 0 unknown
 
-Changed file(s) by language: rust: 0, typescript: 1.
+Changed file(s) by language: typescript: 1.
 
 Analysis outcome: complete_with_findings (analysis complete).
   Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 4 probe(s), 4 finding(s).
@@ -15,12 +15,12 @@ Start here:
   File: src/owners.ts:7
   Language: typescript
   Language status: preview
-  Static exposure: weakly_exposed (warning, confidence 0.40)
-  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
+  Static exposure: weak (weakly_exposed, warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return this.items.length + 1;
-  Missing discriminator: Related test reaches `total` with a smoke-only oracle; replace or augment the truthiness check with an exact-value assertion for the changed discriminator before routing a repair p…
+  Missing discriminator: Related test reaches `total` with a smoke-only oracle; replace or augment the truthiness check with an exact-value assertion for the changed discriminator before routing a repair…
   Related test: tests/owners.test.ts:7 cart total smoke
-  Next step: TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `return value == this.items.length + 1`; no actiona…
+  Next step: TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `return value == this.items.length + 1`; no…
   Evidence:
     - reach yes: 1 related test(s) found for owner `total`
     - infection unknown: TypeScript preview adapter does not yet model infection.
@@ -31,9 +31,9 @@ Next: drill into the top finding:
   ripr context --root fixtures/typescript_owner_kinds/input --diff fixtures/typescript_owner_kinds/diff.patch --mode fast --at probe:src_owners.ts:typescript_preview:bd728bcd
 
 Hidden:
-  3 lower-priority finding(s) omitted from default human output.
+  3 lower-priority finding(s) omitted from default human output (TypeScript preview: 3).
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
 
-Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

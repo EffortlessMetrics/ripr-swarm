@@ -24,6 +24,205 @@ pub(crate) fn markdown_text(value: &str) -> String {
     value.replace('\\', "\\\\")
 }
 
+/// Render `text` as one CommonMark inline code span, delimiters included.
+///
+/// Untrusted text (paths, changed expressions, owner and test names) reaches
+/// PR comments and step summaries through code spans. A backslash does not
+/// escape a backtick inside a code span, so a lone backtick in the text used
+/// to close a single-backtick span early and let `@mention` or raw HTML after
+/// it render live. Here the delimiter is a backtick run one longer than the
+/// longest run inside the text, so no run inside can close the span. Line
+/// endings become spaces so the span stays on one line and a blank line
+/// cannot end the paragraph. One space pads each side when the text starts or
+/// ends with a backtick, or when it starts and ends with a space (CommonMark
+/// strips exactly one such space pair). Empty text renders as `` ` ` ``.
+///
+/// Ordinary text without backticks renders as `` `text` ``, byte-identical to
+/// the plain `format!("`{text}`")` it replaces. The result is for block and
+/// list contexts; a GFM table cell additionally needs `|` escaped as `\|`.
+pub(crate) fn code_span(text: &str) -> String {
+    let text = one_line(text);
+    if text.is_empty() {
+        return "` `".to_string();
+    }
+    let mut longest_run = 0usize;
+    let mut run = 0usize;
+    for ch in text.chars() {
+        if ch == '`' {
+            run += 1;
+            longest_run = longest_run.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    let fence = "`".repeat(longest_run + 1);
+    let edge_backtick = text.starts_with('`') || text.ends_with('`');
+    let stripped_space_pair =
+        text.starts_with(' ') && text.ends_with(' ') && text.chars().any(|ch| ch != ' ');
+    let pad = if edge_backtick || stripped_space_pair {
+        " "
+    } else {
+        ""
+    };
+    format!("{fence}{pad}{text}{pad}{fence}")
+}
+
+/// Content of `text` when the whole of it is exactly one inline code span as
+/// [`code_span`] renders it, else `None`. It inverts [`code_span`] for text
+/// without line endings, so a renderer reading a section back from a posted
+/// comment body recovers the original value, backticks included.
+pub(crate) fn code_span_content(text: &str) -> Option<String> {
+    let fence_len = text.chars().take_while(|ch| *ch == '`').count();
+    if fence_len == 0 || text.len() < fence_len * 2 {
+        return None;
+    }
+    // Backticks are one byte each, so byte offsets from the fence length are
+    // exact; `get` refuses a split inside a multi-byte character.
+    let fence = text.get(..fence_len)?;
+    let inner = text.get(fence_len..text.len() - fence_len)?;
+    let closing = text.get(text.len() - fence_len..)?;
+    if closing != fence || inner.is_empty() || inner.ends_with('`') {
+        return None;
+    }
+    // A run of exactly `fence_len` backticks inside would close the span early.
+    let mut run = 0usize;
+    for ch in inner.chars().chain(std::iter::once(' ')) {
+        if ch == '`' {
+            run += 1;
+        } else {
+            if run == fence_len {
+                return None;
+            }
+            run = 0;
+        }
+    }
+    let content = match inner
+        .strip_prefix(' ')
+        .and_then(|rest| rest.strip_suffix(' '))
+    {
+        Some(stripped) if inner.chars().any(|ch| ch != ' ') => stripped,
+        _ => inner,
+    };
+    Some(content.to_string())
+}
+
+/// [`code_span`] for a GFM table cell: every `|` becomes `\|`, so a pipe in
+/// the text cannot split the cell. GFM unescapes `\|` inside the cell before
+/// it parses the code span, so the span still shows a bare `|`.
+pub(crate) fn table_code_span(text: &str) -> String {
+    code_span(text).replace('|', "\\|")
+}
+
+/// Untrusted prose for a Markdown block (a comment section or a paragraph):
+/// neutralises `@mention` and raw HTML outside code spans. See [`neutralize`].
+pub(crate) fn prose(text: &str) -> String {
+    neutralize(text, false)
+}
+
+/// Untrusted prose on one line (a list item or a heading): line endings
+/// become spaces so the text cannot start a new block, then [`prose`].
+pub(crate) fn inline_prose(text: &str) -> String {
+    neutralize(&one_line(text), false)
+}
+
+/// [`inline_prose`] that also renders `*`, `_`, `[` and `]` literally outside
+/// code spans, for free text that must not turn into emphasis or a link.
+pub(crate) fn inline_prose_literal(text: &str) -> String {
+    neutralize(&one_line(text), true)
+}
+
+/// [`inline_prose`] for a GFM table cell: `|` also becomes `\|`.
+pub(crate) fn table_cell_text(text: &str) -> String {
+    inline_prose(text).replace('|', "\\|")
+}
+
+fn one_line(text: &str) -> String {
+    text.replace("\r\n", " ").replace(['\r', '\n'], " ")
+}
+
+/// Neutralise untrusted prose outside code spans (#4468).
+///
+/// `@` followed by a username character gains a word joiner (U+2060), so
+/// GitHub renders the text but does not notify the named user or team, and
+/// `<` becomes `&lt;`, so no raw HTML or autolink renders. A code span, as
+/// CommonMark reads it, is copied unchanged: its content is already literal,
+/// and ripr renders its own spans through [`code_span`]. A backslash escape
+/// is copied as a pair, so an escaped backtick opens no span; `\@` is not a
+/// pair, since the escaped `@` still renders as a mention. The result is
+/// idempotent, so text read back from a posted body can be rendered again.
+fn neutralize(text: &str, literal_markup: bool) -> String {
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut out = String::with_capacity(text.len());
+    let mut index = 0usize;
+    while let Some(&ch) = chars.get(index) {
+        match ch {
+            '\\' => match chars.get(index + 1) {
+                Some(&next) if next.is_ascii_punctuation() && next != '@' => {
+                    out.push(ch);
+                    out.push(next);
+                    index += 2;
+                }
+                _ => {
+                    out.push(ch);
+                    index += 1;
+                }
+            },
+            '`' => {
+                let run = backtick_run(&chars, index);
+                let end = closing_backtick_run(&chars, index + run, run).unwrap_or(index + run);
+                out.extend(chars.get(index..end).unwrap_or_default());
+                index = end;
+            }
+            '<' => {
+                out.push_str("&lt;");
+                index += 1;
+            }
+            '@' => {
+                out.push('@');
+                if chars
+                    .get(index + 1)
+                    .is_some_and(|next| next.is_ascii_alphanumeric() || *next == '-')
+                {
+                    out.push('\u{2060}');
+                }
+                index += 1;
+            }
+            '*' | '_' | '[' | ']' if literal_markup => {
+                out.push('\\');
+                out.push(ch);
+                index += 1;
+            }
+            _ => {
+                out.push(ch);
+                index += 1;
+            }
+        }
+    }
+    out
+}
+
+fn backtick_run(chars: &[char], start: usize) -> usize {
+    chars
+        .iter()
+        .skip(start)
+        .take_while(|ch| **ch == '`')
+        .count()
+}
+
+/// End (exclusive) of the first run of exactly `len` backticks at or after
+/// `from`, which closes a code span opened by a run of `len`.
+fn closing_backtick_run(chars: &[char], from: usize, len: usize) -> Option<usize> {
+    let mut index = from;
+    while index < chars.len() {
+        let run = backtick_run(chars, index);
+        if run == len {
+            return Some(index + run);
+        }
+        index += run.max(1);
+    }
+    None
+}
+
 /// One-line disclosure emitted in place of a PowerShell variant when the bash
 /// command is unsupported or compound and no honest translation exists
 /// (#2628). Standalone emitters append the sentence period; emitters that
@@ -55,6 +254,28 @@ pub(crate) fn powershell_form(command: &str) -> PowershellForm {
         Some(line) => PowershellForm::Translated(line),
     }
 }
+
+/// Statement that makes PowerShell decode the captured producer stdout as
+/// UTF-8. PowerShell decodes native stdout with `[Console]::OutputEncoding`,
+/// which is the OEM code page (437, 850, ...) in Windows PowerShell 5.1 and
+/// in pwsh without the UTF-8 system locale, so a non-ASCII byte such as the
+/// `—` in check JSON was re-encoded as `ΓÇö` before the BOM-free write and
+/// broke `agent verify` content commitments. The setter fails without an
+/// attached console; the `catch` keeps the command running in that case,
+/// where there is also no console code page to misdecode through.
+const POWERSHELL_UTF8_STDOUT: &str =
+    "try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; ";
+
+/// Saves the session's console encoding before [`POWERSHELL_UTF8_STDOUT`]
+/// so the capture can restore it: the setting is process-wide, and a pasted
+/// line must not leave later native tools in a long-lived session decoding
+/// their OEM output as UTF-8.
+const POWERSHELL_SAVE_ENCODING: &str = "$riprEncoding = [Console]::OutputEncoding; ";
+
+/// Restores the saved encoding in a `finally`, so a throwing capture
+/// restores it too.
+const POWERSHELL_RESTORE_ENCODING: &str =
+    " finally { try { [Console]::OutputEncoding = $riprEncoding } catch {} }";
 
 /// Translate a bash-rendered advisory command into its PowerShell form.
 ///
@@ -99,6 +320,11 @@ pub(crate) fn powershell_form(command: &str) -> PowershellForm {
 ///   commitment was computed over; the write then preserves them with
 ///   BOM-free UTF-8. A producer emitting raw CR bytes would need a
 ///   different transport — none exists on main.
+/// - Capture decodes stdout as UTF-8 ([`POWERSHELL_UTF8_STDOUT`]), and the
+///   write target resolves against the PowerShell location: .NET resolves a
+///   relative path against the process directory, which `Set-Location` does
+///   not move, so `cd repo` followed by the pasted line wrote the artifact
+///   into the directory PowerShell started in.
 ///
 /// cmd.exe has no translation: it has no quoting form that keeps an argv token
 /// literal, so a generated command is deliberately not offered for it. This
@@ -126,7 +352,7 @@ pub(crate) fn powershell_command(command: &str) -> Option<String> {
         }
         let output = powershell_literal(target);
         return Some(format!(
-            "$ripr = (({invocation}) | Out-String); if ($LASTEXITCODE -eq 0) {{ [System.IO.File]::WriteAllText({output}, $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) }} else {{ throw \"ripr exited with code $LASTEXITCODE\" }}"
+            "{POWERSHELL_SAVE_ENCODING}{POWERSHELL_UTF8_STDOUT}try {{ $ripr = (({invocation}) | Out-String) }}{POWERSHELL_RESTORE_ENCODING}; if ($LASTEXITCODE -eq 0) {{ [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath({output}), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) }} else {{ throw \"ripr exited with code $LASTEXITCODE\" }}"
         ));
     }
     Some(invoke_quoted_program(&command))
@@ -328,6 +554,136 @@ fn powershell_literal(value: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Every case must read back unchanged, and its span must hold no
+    /// backtick run as long as its fence (else the span closes early).
+    fn assert_code_span(text: &str, expected: &str) {
+        let rendered = code_span(text);
+        assert_eq!(rendered, expected, "code span for {text:?}");
+        let fence_len = rendered.chars().take_while(|ch| *ch == '`').count();
+        let inner = rendered
+            .get(fence_len..rendered.len() - fence_len)
+            .unwrap_or_default();
+        let mut run = 0usize;
+        for ch in inner.chars().chain(std::iter::once(' ')) {
+            if ch == '`' {
+                run += 1;
+            } else {
+                assert_ne!(run, fence_len, "inner run closes {rendered:?}");
+                run = 0;
+            }
+        }
+        let one_line = text.replace("\r\n", " ").replace(['\r', '\n'], " ");
+        let expected_content = if one_line.is_empty() {
+            " ".to_string()
+        } else {
+            one_line
+        };
+        assert_eq!(
+            code_span_content(&rendered),
+            Some(expected_content),
+            "round trip for {text:?}"
+        );
+    }
+
+    #[test]
+    fn code_span_keeps_plain_text_byte_identical() {
+        assert_code_span(
+            "amount >= discount_threshold",
+            "`amount >= discount_threshold`",
+        );
+        assert_code_span("src/lib.rs:12", "`src/lib.rs:12`");
+        assert_code_span("a | b", "`a | b`");
+    }
+
+    #[test]
+    fn code_span_single_backtick_cannot_close_the_span() {
+        assert_code_span(
+            "\"x` @octocat <img src=x onerror=alert(1)> | y\" (equality boundary)",
+            "``\"x` @octocat <img src=x onerror=alert(1)> | y\" (equality boundary)``",
+        );
+    }
+
+    #[test]
+    fn code_span_double_backtick_run_gets_a_longer_fence() {
+        assert_code_span("a``b @octocat", "```a``b @octocat```");
+        assert_code_span("a`b``c```d", "````a`b``c```d````");
+    }
+
+    #[test]
+    fn code_span_pads_text_that_starts_or_ends_with_a_backtick() {
+        assert_code_span("`x", "`` `x ``");
+        assert_code_span("x`", "`` x` ``");
+        assert_code_span("`", "`` ` ``");
+        assert_code_span("``x``", "``` ``x`` ```");
+    }
+
+    #[test]
+    fn code_span_replaces_line_endings_with_spaces() {
+        assert_code_span("a\nb\r\nc\rd", "`a b c d`");
+        assert_code_span("x\n\n@octocat <img>", "`x  @octocat <img>`");
+    }
+
+    #[test]
+    fn code_span_preserves_an_edge_space_pair_and_empty_text() {
+        assert_code_span(" a ", "`  a  `");
+        assert_code_span("", "` `");
+        assert_eq!(code_span_content("plain"), None);
+        assert_eq!(code_span_content("`a` and `b`"), None);
+        assert_eq!(code_span_content("``a`"), None);
+        assert_eq!(code_span_content("`é"), None);
+    }
+
+    #[test]
+    fn table_code_span_escapes_pipes_after_choosing_the_fence() {
+        assert_eq!(table_code_span("a | b"), "`a \\| b`");
+        assert_eq!(table_code_span("x`|@y"), "``x`\\|@y``");
+        assert_eq!(table_code_span("plain"), "`plain`");
+    }
+
+    #[test]
+    fn prose_neutralises_mentions_and_raw_html() {
+        assert_eq!(prose("ping @octocat now"), "ping @\u{2060}octocat now");
+        assert_eq!(prose("@org/team"), "@\u{2060}org/team");
+        assert_eq!(prose("<script>x</script>"), "&lt;script>x&lt;/script>");
+        // `@` without a username character after it stays as written.
+        assert_eq!(prose("a @ b, a@"), "a @ b, a@");
+        assert_eq!(prose("line\n@octocat"), "line\n@\u{2060}octocat");
+        // An escaped `@` still renders as a mention, so it is neutralised.
+        assert_eq!(prose("\\@octocat"), "\\@\u{2060}octocat");
+    }
+
+    #[test]
+    fn prose_leaves_text_inside_code_spans_untouched() {
+        let span = code_span("a` @octocat <img>");
+        let text = format!("Add an assertion for {span} and tell @octocat <b>");
+        assert_eq!(
+            prose(&text),
+            format!("Add an assertion for {span} and tell @\u{2060}octocat &lt;b>")
+        );
+        // An unclosed backtick run is literal text, so what follows it is not
+        // protected by it.
+        assert_eq!(prose("a ` @octocat"), "a ` @\u{2060}octocat");
+        assert_eq!(prose("``x` @octocat"), "``x` @\u{2060}octocat");
+        // An escaped backtick opens no span.
+        assert_eq!(prose("\\`@octocat`"), "\\`@\u{2060}octocat`");
+    }
+
+    #[test]
+    fn prose_is_idempotent() {
+        let once = prose("@octocat <img> `@x` \\@y");
+        assert_eq!(prose(&once), once);
+    }
+
+    #[test]
+    fn inline_and_table_prose_stay_on_one_line_and_in_one_cell() {
+        assert_eq!(inline_prose("a\r\n# b\n@c"), "a # b @\u{2060}c");
+        assert_eq!(table_cell_text("a | @b\n<i>"), "a \\| @\u{2060}b &lt;i>");
+        assert_eq!(
+            inline_prose_literal("*a* [l](u) `*k*` snake_case"),
+            "\\*a\\* \\[l\\](u) `*k*` snake\\_case"
+        );
+    }
+
     #[test]
     fn markdown_text_escapes_backslashes() {
         assert_eq!(markdown_text("a\\b"), "a\\\\b");
@@ -353,7 +709,7 @@ mod tests {
         );
         assert_eq!(
             powershell_command("ripr check --root 'café' > 'résumé.json'"),
-            Some("$ripr = ((ripr check --root 'café') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('résumé.json', $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$riprEncoding = [Console]::OutputEncoding; try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; try { $ripr = ((ripr check --root 'café') | Out-String) } finally { try { [Console]::OutputEncoding = $riprEncoding } catch {} }; if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('résumé.json'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
@@ -373,7 +729,7 @@ mod tests {
     fn powershell_command_finds_real_redirect_after_double_quoted_argument() {
         assert_eq!(
             powershell_command("ripr check --root \"café > owner's repo\" > 'résumé.json'"),
-            Some("$ripr = ((ripr check --root \"café > owner's repo\") | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('résumé.json', $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$riprEncoding = [Console]::OutputEncoding; try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; try { $ripr = ((ripr check --root \"café > owner's repo\") | Out-String) } finally { try { [Console]::OutputEncoding = $riprEncoding } catch {} }; if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('résumé.json'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
@@ -381,7 +737,7 @@ mod tests {
     fn powershell_command_keeps_double_quote_literal_inside_single_quotes() {
         assert_eq!(
             powershell_command("cargo test 'a \" > b' > evidence.txt"),
-            Some("$ripr = ((cargo test 'a \" > b') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('evidence.txt', $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$riprEncoding = [Console]::OutputEncoding; try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; try { $ripr = ((cargo test 'a \" > b') | Out-String) } finally { try { [Console]::OutputEncoding = $riprEncoding } catch {} }; if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('evidence.txt'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
@@ -433,7 +789,7 @@ mod tests {
         );
         assert_eq!(
             powershell_command("'my tools\\recorder.exe' --gap > 'out\\after.json'"),
-            Some("$ripr = ((& 'my tools\\recorder.exe' --gap) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('out\\after.json', $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$riprEncoding = [Console]::OutputEncoding; try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; try { $ripr = ((& 'my tools\\recorder.exe' --gap) | Out-String) } finally { try { [Console]::OutputEncoding = $riprEncoding } catch {} }; if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('out\\after.json'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
         assert_eq!(
             powershell_command("cargo test --gap"),
@@ -458,7 +814,7 @@ mod tests {
             powershell_command(
                 "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json"
             ),
-            Some("$ripr = ((ripr check --root . --mode draft --format repo-exposure-json) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/pilot/after.repo-exposure.json', $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$riprEncoding = [Console]::OutputEncoding; try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; try { $ripr = ((ripr check --root . --mode draft --format repo-exposure-json) | Out-String) } finally { try { [Console]::OutputEncoding = $riprEncoding } catch {} }; if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('target/ripr/pilot/after.repo-exposure.json'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
@@ -473,7 +829,7 @@ mod tests {
         assert_eq!(powershell_command("ripr check --root . > it's.json"), None);
         assert_eq!(
             powershell_command("ripr check --root . > 'it'\\''s.json'"),
-            Some("$ripr = ((ripr check --root .) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('it''s.json', $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$riprEncoding = [Console]::OutputEncoding; try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; try { $ripr = ((ripr check --root .) | Out-String) } finally { try { [Console]::OutputEncoding = $riprEncoding } catch {} }; if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('it''s.json'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
@@ -542,7 +898,7 @@ mod tests {
         // branch throws with the invocation's exit status instead of exiting.
         assert!(
             line.contains(
-                "if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/workflow/agent-packet.json', $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) }"
+                "if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('target/ripr/workflow/agent-packet.json'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) }"
             ),
             "write must be guarded by the success branch:\n{line}"
         );
@@ -665,7 +1021,7 @@ mod tests {
     fn powershell_command_keeps_redirect_after_quoted_newline() {
         assert_eq!(
             powershell_command("ripr check --root 'café\nrepo' > 'résumé.json'"),
-            Some("$ripr = ((ripr check --root 'café\nrepo') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('résumé.json', $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
+            Some("$riprEncoding = [Console]::OutputEncoding; try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; try { $ripr = ((ripr check --root 'café\nrepo') | Out-String) } finally { try { [Console]::OutputEncoding = $riprEncoding } catch {} }; if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('résumé.json'), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
@@ -693,7 +1049,7 @@ fn main() -> ExitCode {
             fs::write(&record, &out).unwrap();
         }
     }
-    println!("RECORDER_OK");
+    println!("RECORDER_OK café —");
     let code: u8 = env::var("RIPR_EXIT_CODE")
         .ok()
         .and_then(|value| value.parse().ok())
@@ -701,6 +1057,11 @@ fn main() -> ExitCode {
     ExitCode::from(code)
 }
 "#;
+
+    /// Exact stdout of [`NATIVE_PROOF_RECORDER`]: UTF-8 with non-ASCII text,
+    /// LF-terminated as `println!` writes it.
+    #[cfg(windows)]
+    const RECORDER_STDOUT: &[u8] = "RECORDER_OK café —\n".as_bytes();
 
     /// Removes a native-proof root when the case ends, pass or fail, so
     /// repeated runs do not accumulate compiled recorders under the temp dir.
@@ -902,10 +1263,100 @@ fn main() -> ExitCode {
         }
         // Byte-exact: `Out-String` ends the captured line with CRLF, so this
         // fails if the `.Replace` LF normalization is dropped or altered.
-        if artifact_bytes != b"RECORDER_OK\n" {
+        if artifact_bytes != RECORDER_STDOUT {
             return Err(format!(
-                "artifact bytes {artifact_bytes:?} are not exactly RECORDER_OK LF"
+                "artifact bytes {artifact_bytes:?} are not exactly the recorder's UTF-8 stdout"
             ));
+        }
+
+        // Encoding control: under the OEM console code page Windows
+        // PowerShell 5.1 defaults to, the non-ASCII stdout bytes still reach
+        // the artifact unchanged. The same line without the UTF-8 capture
+        // statement must garble them, which proves this instrument can see
+        // the misdecode rather than passing on a UTF-8 host.
+        let oem = "[Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding(437); ";
+        // The trailing probe prints the session's encoding after the line,
+        // so the capture must also have restored code page 437.
+        let probe = "; [Console]::OutputEncoding.CodePage";
+        let oem_output = run_pwsh_line(
+            &format!("{oem}{redirect_line}{probe}"),
+            &root,
+            &redirect_record,
+            "0",
+        )?;
+        if !oem_output.status.success() {
+            return Err(format!(
+                "translated redirect under code page 437 failed: {}",
+                String::from_utf8_lossy(&oem_output.stderr)
+            ));
+        }
+        if String::from_utf8_lossy(&oem_output.stdout).trim() != "437" {
+            return Err(format!(
+                "the capture left the session encoding changed: {:?}",
+                String::from_utf8_lossy(&oem_output.stdout)
+            ));
+        }
+        // A failing invocation throws inside the capture; `finally` must
+        // still restore the session encoding.
+        let failed_restore = run_pwsh_line(
+            &format!("{oem}try {{ {redirect_line} }} catch {{}}{probe}"),
+            &root,
+            &redirect_record,
+            "1",
+        )?;
+        if String::from_utf8_lossy(&failed_restore.stdout).trim() != "437" {
+            return Err(format!(
+                "a failing capture left the session encoding changed: {:?}",
+                String::from_utf8_lossy(&failed_restore.stdout)
+            ));
+        }
+        let oem_bytes = std::fs::read(&artifact)
+            .map_err(|error| format!("failed to read code page 437 artifact: {error}"))?;
+        if oem_bytes != RECORDER_STDOUT {
+            return Err(format!(
+                "code page 437 capture changed the artifact bytes to {oem_bytes:?}"
+            ));
+        }
+        let unguarded = format!(
+            "{oem}{}",
+            redirect_line.replacen(POWERSHELL_UTF8_STDOUT, "", 1)
+        );
+        run_pwsh_line(&unguarded, &root, &redirect_record, "0")?;
+        let garbled = std::fs::read(&artifact)
+            .map_err(|error| format!("failed to read unguarded artifact: {error}"))?;
+        if garbled == RECORDER_STDOUT {
+            return Err(
+                "control failed: without the UTF-8 capture statement code page 437 still \
+                 produced exact bytes, so this host cannot observe the misdecode"
+                    .to_string(),
+            );
+        }
+
+        // Location control: a relative target lands under the PowerShell
+        // location after `Set-Location`, not under the directory pwsh
+        // started in, which `Set-Location` does not move.
+        let elsewhere = root.join("started-here");
+        std::fs::create_dir_all(&elsewhere)
+            .map_err(|error| format!("failed to stage start directory: {error}"))?;
+        let relative_line = powershell_command(&format!("{bash} > relative.json"))
+            .ok_or_else(|| "relative redirect must translate".to_string())?;
+        let root_literal = root
+            .to_str()
+            .ok_or_else(|| "native proof root is not UTF-8".to_string())?
+            .replace('\'', "''");
+        let located = format!("Set-Location -LiteralPath '{root_literal}'; {relative_line}");
+        let located_output = run_pwsh_line(&located, &elsewhere, &redirect_record, "0")?;
+        if !located_output.status.success() {
+            return Err(format!(
+                "relative redirect after Set-Location failed: {}",
+                String::from_utf8_lossy(&located_output.stderr)
+            ));
+        }
+        if !root.join("relative.json").is_file() || elsewhere.join("relative.json").exists() {
+            return Err(
+                "relative artifact target did not resolve against the PowerShell location"
+                    .to_string(),
+            );
         }
 
         // Failure control: a nonzero invocation throws without publishing

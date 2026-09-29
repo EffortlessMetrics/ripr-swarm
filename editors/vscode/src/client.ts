@@ -10,7 +10,7 @@ import {
   Trace
 } from 'vscode-languageclient/node';
 import { getConfig, RiprConfig } from './config';
-import { requestedServerVersion, resolveServer, ResolveFailure, ResolvedServer } from './serverResolver';
+import { missingServerRemedy, requestedServerVersion, resolveServer, ResolveFailure, ResolvedServer } from './serverResolver';
 import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue } from './packetJson';
 import { riprDocumentSelectorsForWorkspace, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
 import type { WorkspaceRootPickItem } from './workspaceHelpers';
@@ -473,7 +473,7 @@ export class RiprClientController {
         kind: 'workspaceAmbiguous',
         summary: 'Select one workspace folder before using ripr repair actions.',
         detail: workspaceRootStateDetail(this.workspaceRootState),
-        nextStep: 'Run ripr: Select Workspace Root, or open a Rust or enabled preview-language file from one workspace folder, then run ripr: Restart Server.'
+        nextStep: 'Run ripr: Select Workspace Root, or open a file from one workspace folder.'
       });
       this.output.appendLine('ripr multi-root workspace is ambiguous; select a workspace folder before starting the server.');
       // Fire and forget (#2180 review): awaiting the warning would block
@@ -517,7 +517,7 @@ export class RiprClientController {
         kind: 'serverUnavailable',
         summary: 'ripr server is not available.',
         detail: server.detail,
-        nextStep: 'Set ripr.server.path, enable ripr.server.autoDownload, install with cargo install ripr, then retry.'
+        nextStep: `${missingServerRemedy(config.autoDownload)} Then run ripr: Restart Server.`
       });
       await this.showMissingServerMessage(server.message, server.detail);
       return;
@@ -542,8 +542,16 @@ export class RiprClientController {
       }
     };
 
+    const workspaceRoot = this.workspaceRoot;
     const clientOptions: LanguageClientOptions = {
-      documentSelector: riprDocumentSelectorsForWorkspace(this.workspaceRoot),
+      documentSelector: riprDocumentSelectorsForWorkspace(workspaceRoot),
+      // Bind the session to the one folder this controller selected. Without
+      // it the client reports every workspace folder in initialize, and the
+      // server resolves a multi-root window as ambiguous even after
+      // ripr: Select Workspace Root picked a folder.
+      workspaceFolder: this.runtime.workspaceFolders().find((folder) =>
+        sameWorkspaceRoot(folder.uri.fsPath, workspaceRoot)
+      ),
       initializationOptions: {
         baseRef: config.baseRef,
         checkMode: config.checkMode,
@@ -753,6 +761,27 @@ export class RiprClientController {
     const config = this.runtime.getConfig();
     this.client.setTrace(traceFromConfig(config.traceServer));
     this.output.appendLine(`ripr server trace set to '${config.traceServer}' without a restart.`);
+  }
+
+  /**
+   * Whether the controller stopped only because a multi-root window had no
+   * selected folder. Opening a file from one folder resolves that, so the
+   * extension starts again instead of waiting for ripr: Restart Server.
+   */
+  awaitingWorkspaceRoot(): boolean {
+    return this.client === undefined && this.status.kind === 'workspaceAmbiguous';
+  }
+
+  /**
+   * Whether a workspace-folder change removed the folder the running session
+   * is bound to. The session is locked to one folder, so the server never
+   * sees the removal; the extension restarts to re-resolve the root.
+   */
+  sessionRootRemoved(removed: readonly vscode.WorkspaceFolder[]): boolean {
+    const root = this.workspaceRoot;
+    return this.client !== undefined
+      && root !== undefined
+      && removed.some((folder) => sameWorkspaceRoot(folder.uri.fsPath, root));
   }
 
   /**
@@ -1473,11 +1502,14 @@ export class RiprClientController {
       return;
     }
     if (message.startsWith('ripr analysis refresh failed')) {
+      const baseRefFailure = isUnresolvableBaseRefFailure(message);
       this.updateStatus({
         kind: 'analysisFailed',
         summary: 'ripr analysis refresh failed.',
         detail: message,
-        nextStep: 'Open ripr: Show Output, fix the reported issue, then run ripr: Restart Server.'
+        nextStep: baseRefFailure
+          ? 'Set ripr.baseRef to a ref this repository has (for example main), then run ripr: Refresh Diagnostics.'
+          : 'Open ripr: Show Output, fix the reported issue, then run ripr: Refresh Diagnostics.'
       });
     }
   }
@@ -1516,9 +1548,12 @@ export class RiprClientController {
     const failureMessage = typeof failure?.message === 'string'
       ? failure.message
       : 'The last analysis attempt failed.';
-    const retry = typeof status.retry_command === 'string'
-      ? status.retry_command
-      : 'ripr: Restart Server';
+    const retry = status.retry_command === 'ripr.refresh'
+      || status.retry_command === 'ripr.refreshDiagnostics'
+      ? 'ripr: Refresh Diagnostics'
+      : typeof status.retry_command === 'string' && status.retry_command.trim()
+        ? status.retry_command
+        : 'ripr: Refresh Diagnostics';
     const retained = status.snapshot_id ? ' The last completed snapshot remains available but is stale.' : '';
     switch (status.state) {
       case 'queued':
@@ -1542,7 +1577,9 @@ export class RiprClientController {
           kind: 'analysisFailed',
           summary: 'ripr analysis failed; last-known-good evidence is retained.',
           detail: `${analysisStatusDetail(status)}\n${failureMessage}${retained}`,
-          nextStep: `Run ${retry} to retry the saved-workspace analysis.`
+          nextStep: isUnresolvableBaseRefFailure(failureMessage)
+            ? 'Set ripr.baseRef to a ref this repository has (for example main), then run ripr: Refresh Diagnostics.'
+            : `Run ${retry} to retry the saved-workspace analysis.`
         });
         return;
       case 'cancelled':
@@ -1798,7 +1835,7 @@ export class RiprClientController {
     }
     if (!resolvedPath) {
       this.runtime.showInformationMessage(
-        'No report yet — run `cargo xtask ripr-pr-summary` to generate one.'
+        'No report yet. Run `ripr pr-summary` in this workspace to generate one.'
       );
       return;
     }
@@ -2055,7 +2092,7 @@ export class RiprClientController {
       : summary;
     const separator = cause.endsWith('.') ? '' : '.';
     const selection = await this.runtime.showErrorMessage(
-      `ripr server is not available: ${cause}${separator} Enable automatic download, install with \`cargo install ripr\`, or set \`ripr.server.path\` (\`ripr.server.downloadBaseUrl\` for a mirror).`,
+      `ripr server is not available: ${cause}${separator} ${missingServerRemedy(this.runtime.getConfig().autoDownload)}`,
       'Open Settings',
       'Copy Diagnostic',
       'Copy Install Command',
@@ -2740,7 +2777,7 @@ function actionableGapQueueStatusLines(
     case 'missing':
       return [
         `Actionable gap queue: missing; ${queue.relativePath} was not found.`,
-        'Next safe queue action: run cargo xtask evidence-quality-audit or refresh saved-workspace evidence.'
+        'Next safe queue action: none required. The queue is optional repository evidence; ripr diagnostics, hover and code actions work without it.'
       ];
     case 'malformed':
       return [
@@ -2872,7 +2909,7 @@ function actionableGapQueueAllowsCurrentRepairPacket(queue: RiprActionableGapQue
 function actionableGapQueueSuppressedMessage(queue: RiprActionableGapQueueStatus): string {
   switch (queue.state) {
     case 'missing':
-      return 'ripr actionable gap queue is missing; run cargo xtask evidence-quality-audit or refresh saved-workspace evidence.';
+      return 'ripr actionable gap queue is not generated for this workspace; use the ripr diagnostic hover and code actions for the current finding.';
     case 'malformed':
       return 'ripr actionable gap queue is malformed; repair packet actions are suppressed.';
     case 'unsupportedSchema':
@@ -2955,7 +2992,7 @@ function actionableGapQueueAllowsRepoGapMap(queue: RiprActionableGapQueueStatus)
 function actionableGapQueueRepoMapSuppressedMessage(queue: RiprActionableGapQueueStatus): string {
   switch (queue.state) {
     case 'missing':
-      return 'ripr actionable gap queue is missing; run cargo xtask evidence-quality-audit before copying a repo gap map.';
+      return 'ripr actionable gap queue is not generated for this workspace, so there is no repo gap map to copy.';
     case 'malformed':
       return 'ripr actionable gap queue is malformed; repo gap map is suppressed.';
     case 'unsupportedSchema':
@@ -3025,7 +3062,7 @@ function repoGapMap(
   lines.push('');
   lines.push('Safe next commands');
   lines.push('- Refresh saved-workspace evidence before acting on stale queue state.');
-  lines.push('- Run cargo xtask evidence-quality-audit to regenerate actionable-gaps artifacts.');
+  lines.push('- Regenerate actionable-gaps artifacts with the tooling that produced them.');
   lines.push('- Use ripr: Copy Current Repair Packet only for a validated top actionable gap.');
   lines.push('');
   lines.push('Non-claims');
@@ -3051,7 +3088,7 @@ function firstPrPacketStatusLines(
   if (status.kind === 'stale' && firstPrPacketCanBecomeStale(packet.state)) {
     return [
       `First PR packet: stale; ${packet.relativePath} exists, but editor evidence is stale.`,
-      'Refresh saved-workspace evidence and rerun cargo xtask first-pr before inspecting or copying first-pr packet content.',
+      'Refresh saved-workspace evidence and rerun ripr first-pr --root . before inspecting or copying first-pr packet content.',
       'First PR packet is advisory only; it does not prove runtime adequacy, mutation coverage, policy eligibility, or gate status.'
     ];
   }
@@ -3059,7 +3096,7 @@ function firstPrPacketStatusLines(
     case 'missing':
       return [
         `First PR packet: missing; ${packet.relativePath} was not found.`,
-        'Next safe first-pr action: run cargo xtask first-pr for the current workspace after verify/receipt artifacts exist.'
+        'Next safe first-pr action: run ripr first-pr --root . for the current workspace after verify/receipt artifacts exist.'
       ];
     case 'unreadable':
       return [
@@ -3248,6 +3285,10 @@ function serverLogMessage(params: unknown): string | undefined {
   }
   const message = (params as { message?: unknown }).message;
   return typeof message === 'string' ? message : undefined;
+}
+
+function isUnresolvableBaseRefFailure(message: string): boolean {
+  return /the base `[^`]+` does not resolve to a commit/.test(message);
 }
 
 interface RiprAnalysisStatusPayload {
@@ -3717,7 +3758,7 @@ export async function readActionableGapQueueStatus(
       relativePath: ACTIONABLE_GAP_QUEUE_RELATIVE_PATH,
       path: filePath,
       state: 'missing',
-      detail: 'actionable-gaps queue missing; run cargo xtask evidence-quality-audit'
+      detail: 'actionable-gaps queue not generated; optional repository evidence'
     };
   }
   return validateActionableGapQueue(raw, workspaceRoot, filePath, await workspaceRedirectRoots(workspaceRoot));
@@ -4021,7 +4062,7 @@ export async function readFirstPrPacketStatus(
     path: setupFilePath(workspaceRoot, RIPR_FIRST_PR_PACKET_ARTIFACTS[0].jsonRelativePath),
     markdownPath: setupFilePath(workspaceRoot, RIPR_FIRST_PR_PACKET_ARTIFACTS[0].markdownRelativePath),
     state: 'missing',
-    detail: 'first-pr start-here packet missing; run cargo xtask first-pr for the current workspace'
+    detail: 'first-pr start-here packet missing; run ripr first-pr --root . for the current workspace'
   };
 }
 
@@ -4345,13 +4386,13 @@ interface AgentLoopCommandContract {
   // with `shell_arg` quoting), without the redirect; `undefined` when the
   // payload cannot have produced one. Equality leaves no room for an extra
   // token such as `$(cmd)` (#4225).
-  expectedBody?: (target: RiprAgentLoopCommandTarget) => string | undefined;
+  expectedBody?: (target: RiprAgentLoopCommandTarget, commandRoot: string) => string | undefined;
   // Labels the payload does not pin down are checked by prefix and substrings.
   startsWith?: string;
   includes?: string[];
   // The command ends in `> <targetArtifact>`. Since #3938 the server anchors
   // that redirect at the resolved `--root`, so the tail is checked by
-  // `redirectTargetMatches` rather than as fixed text.
+  // the exact selected-root tail for fixed LSP actions.
   redirectsToTargetArtifact?: boolean;
 }
 
@@ -4362,16 +4403,16 @@ const AGENT_LOOP_COMMAND_CONTRACTS: Record<string, AgentLoopCommandContract> = {
   // target/ripr/repair-attempts.
   agent_repair: {
     targetArtifact: 'target/ripr/repair-attempts',
-    expectedBody: withSeamId((seamId) => `ripr agent repair --root . --seam-id ${seamId} --phase before`)
+    expectedBody: withSeamId((seamId, commandRoot) => `ripr agent repair --root ${commandRoot} --seam-id ${seamId} --phase before`)
   },
   agent_packet: {
     targetArtifact: 'target/ripr/agent/agent-packet.json',
-    expectedBody: withSeamId((seamId) => `ripr agent packet --root . --seam-id ${seamId} --json`),
+    expectedBody: withSeamId((seamId, commandRoot) => `ripr agent packet --root ${commandRoot} --seam-id ${seamId} --json`),
     redirectsToTargetArtifact: true
   },
   agent_brief: {
     targetArtifact: 'target/ripr/agent/agent-brief.json',
-    expectedBody: withSeamId((seamId) => `ripr agent brief --root . --seam-id ${seamId} --json`),
+    expectedBody: withSeamId((seamId, commandRoot) => `ripr agent brief --root ${commandRoot} --seam-id ${seamId} --json`),
     redirectsToTargetArtifact: true
   },
   after_snapshot: {
@@ -4381,13 +4422,13 @@ const AGENT_LOOP_COMMAND_CONTRACTS: Record<string, AgentLoopCommandContract> = {
   },
   agent_verify: {
     targetArtifact: 'target/ripr/agent/agent-verify.json',
-    expectedBody: () => 'ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json',
+    expectedBody: (_target, commandRoot) => `ripr agent verify --root ${commandRoot} --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json`,
     redirectsToTargetArtifact: true
   },
   agent_receipt: {
     targetArtifact: 'target/ripr/agent/agent-receipt.json',
-    expectedBody: withSeamId((seamId) =>
-      `ripr agent receipt --root . --verify-json target/ripr/agent/agent-verify.json --seam-id ${seamId} --json --out target/ripr/agent/agent-receipt.json`
+    expectedBody: withSeamId((seamId, commandRoot) =>
+      `ripr agent receipt --root ${commandRoot} --verify-json target/ripr/agent/agent-verify.json --seam-id ${seamId} --json --out target/ripr/agent/agent-receipt.json`
     )
   },
   gap_verify: {
@@ -4401,15 +4442,15 @@ const AGENT_LOOP_COMMAND_CONTRACTS: Record<string, AgentLoopCommandContract> = {
 };
 
 function withSeamId(
-  render: (seamId: string) => string
-): (target: RiprAgentLoopCommandTarget) => string | undefined {
-  return (target) =>
-    boundedPayloadString(target.seam_id) ? render(serverShellArg(target.seam_id)) : undefined;
+  render: (seamId: string, commandRoot: string) => string
+): (target: RiprAgentLoopCommandTarget, commandRoot: string) => string | undefined {
+  return (target, commandRoot) =>
+    boundedPayloadString(target.seam_id) ? render(serverShellArg(target.seam_id), commandRoot) : undefined;
 }
 
 // `check_repo_exposure_command_with_base`: `--base` appears exactly when the
 // payload names one.
-function afterSnapshotBody(target: RiprAgentLoopCommandTarget): string | undefined {
+function afterSnapshotBody(target: RiprAgentLoopCommandTarget, commandRoot: string): string | undefined {
   const mode = target.mode;
   if (typeof mode !== 'string' || !['instant', 'draft', 'fast', 'deep', 'ready'].includes(mode)) {
     return undefined;
@@ -4421,7 +4462,7 @@ function afterSnapshotBody(target: RiprAgentLoopCommandTarget): string | undefin
     }
     base = ` --base ${serverShellArg(target.base)}`;
   }
-  return `ripr check --root .${base} --mode ${mode} --format repo-exposure-json`;
+  return `ripr check --root ${commandRoot}${base} --mode ${mode} --format repo-exposure-json`;
 }
 
 export function validatedAgentLoopCommand(
@@ -4447,6 +4488,43 @@ export function validatedAgentLoopCommand(
   ) {
     return undefined;
   }
+  if (contract.expectedBody) {
+    // LSP copy actions bind the selected absolute root in the command, even
+    // though the payload keeps its portable root role (`"."`). Compare the
+    // entire server-rendered body and, when present, its redirect against the
+    // SAME selected spelling. An absolute command with a relative or other-root
+    // redirect is never equivalent (#4396).
+    for (const root of redirectRoots) {
+      if (!path.isAbsolute(root) || (process.platform !== 'win32' && root.includes('\\'))) {
+        continue;
+      }
+      const displayRoot = path.normalize(root).replace(/\\/g, '/');
+      // Apostrophe/backslash quoting is not portable across supported shells;
+      // likewise refuse characters that can end or alter a quoted span.
+      if (/[\r\n\0`\\"'\u2018-\u201f]/.test(displayRoot)) {
+        continue;
+      }
+      const commandRoot = serverShellArg(displayRoot);
+      let body = command;
+      if (contract.redirectsToTargetArtifact && contract.targetArtifact !== undefined) {
+        const expectedTail = serverShellArg(
+          `${displayRoot.replace(/\/$/, '')}/${contract.targetArtifact}`
+        );
+        if (!command.endsWith(` > ${expectedTail}`)) {
+          continue;
+        }
+        body = command.slice(0, -` > ${expectedTail}`.length);
+      }
+      if (
+        body === contract.expectedBody(target, commandRoot) &&
+        !hasUnsafeShellMetacharacter(body.replace(`--root ${commandRoot}`, '--root .'))
+      ) {
+        return command;
+      }
+    }
+    return undefined;
+  }
+  // Gap commands retain their separate, legacy prefix contract.
   let body = command;
   if (contract.redirectsToTargetArtifact && contract.targetArtifact !== undefined) {
     const redirectAt = command.lastIndexOf(' > ');
@@ -4462,13 +4540,8 @@ export function validatedAgentLoopCommand(
     }
     body = command.slice(0, redirectAt);
   }
-  // The redirect tail is owned by `redirectTargetMatches`, which lets a
-  // quoted workspace path keep its `&` or `$`; everything before it is not.
   if (hasUnsafeShellMetacharacter(body)) {
     return undefined;
-  }
-  if (contract.expectedBody) {
-    return body === contract.expectedBody(target) ? command : undefined;
   }
   // One redirect only: a `>` here would truncate some other file.
   if (
@@ -4482,9 +4555,8 @@ export function validatedAgentLoopCommand(
 }
 
 /**
- * Roots a `--root .` redirect may be anchored at: the cwd of the server or
- * CLI that rendered it, which is the workspace root. That cwd is read back
- * from the OS, which resolves symlinks, so the real path is accepted too.
+ * Selected workspace spellings accepted for a bound command and redirect.
+ * The server may render the real path when the workspace folder is a symlink.
  */
 async function workspaceRedirectRoots(workspaceRoot: string | undefined): Promise<string[]> {
   if (!workspaceRoot) {

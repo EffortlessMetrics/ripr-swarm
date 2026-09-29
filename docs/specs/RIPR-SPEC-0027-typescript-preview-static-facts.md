@@ -50,6 +50,13 @@ emits an explicit `static_limit_kind` instead of silently coercing to
 
 ## Inputs
 
+Source reads use a no-follow open followed by opened-handle regular-file
+validation. On supported Linux and macOS targets the open is nonblocking, so
+a file replaced with a FIFO between path inspection and open cannot wait for
+a writer. Windows opens the reparse point itself and validates the handle;
+other targets refuse the guarded open. The FIFO regression must bound its
+child process and verify that the intended child test actually executed.
+
 - TypeScript or JavaScript source files routed to this adapter.
 - Diff spans inside those files.
 - Repo configuration including `[languages] enabled` and any future
@@ -106,6 +113,26 @@ Test discovery:
   `describe` for hierarchical naming
 - Jest/Vitest `test.each`, `it.each`, and table-driven variants when
   syntactically identifiable
+- `test(...)`, `it(...)`, and `describe(...)` registered inside a `for`,
+  `for...of`, or `for...in` loop body or a `.forEach(...)` callback, at file
+  or `describe` level. The body is extracted once and relates to owners
+  exactly as an ordinary test body does; the loop variables and callback
+  parameters shadow every enclosing binding of the same name, including an
+  imported owner or class name, so a call through a shadowing binding is not
+  an owner call. A loop is walked only when it is known to run at least
+  once: its iterable is a non-empty array or object literal,
+  `Object.entries`/`keys`/`values` of one, or a `const` whose innermost
+  binding in scope is a single declaration of one; a counted `for` needs a
+  literal start and bound that admit the first iteration. A test inside any
+  other loop (an empty, reassignable, imported or parameter iterable, a
+  non-literal bound) could be credited without existing, so that loop is not
+  walked and stays disclosed as `typescript_test_extraction_partial`, as does
+  a `for...of`/`for...in` whose target is not a declaration.
+- a computed title (a template literal with substitutions, a concatenation,
+  an identifier) is never evaluated: the test is named by the enclosing
+  `describe` names, the placeholder `<computed title, line N>`, and the line
+  of the registration. A string literal or a substitution-free template keeps
+  its text.
 - top-level `expect(...)` calls when paired with a `test`/`it` block
 - exported test files matched by configured patterns (default:
   `*.test.ts`, `*.test.tsx`, `*.spec.ts`, `*.spec.tsx`, and the
@@ -174,9 +201,30 @@ the test constructs a local receiver with `new ClassName(...)` or a named import
 alias for that class and then calls `receiver.method(...)`. Static class-method
 owners may use a bounded direct class member relation only when the test calls
 `ClassName.method(...)` through the same-file class name or an unshadowed named
-import alias. Factory returns, dependency injection, mocked modules, prototype
-aliases, namespace chains, and dynamic property access remain advisory or
-unsupported.
+import alias. Dependency injection, mocked modules, prototype aliases,
+namespace chains, and dynamic property access remain advisory or unsupported.
+
+A top-level function owner may also relate through a same-module entry: an
+exported name of the owner's module whose code reaches the owner within three
+call edges. An edge is a bare call to a top-level declaration name, and only
+when every mention of that name in the enclosing function is a bare call: a
+parameter (plain, destructured, or of a nested callback), a local
+declaration, an assignment or a value use may rebind it, so no edge is
+recorded. A function's own edges exclude the functions it directly returns.
+A value built by a same-module factory (`export const defu = createDefu()`,
+with `as`/`satisfies`/non-null/parentheses stripped) calls what the factory's
+directly returned function calls, checked against the factory's whole text so
+a captured factory parameter or local shadows too; calling the factory itself
+does not reach them, and a factory imported from another module is not
+followed. Named, listed (`export { local as name }`) and default exports,
+including an anonymous default function or arrow, count; type-only exports and
+re-exports from other modules do not. The test's call of
+the entry must pass every identity gate a direct or imported owner call does.
+The relation is `helper_owner_call` with `medium` confidence and is admitted
+only when no owner-call, import-call, receiver, class-method, module-observer,
+or re-export relation exists, so it never mixes with a relation that calls the
+owner. Reach only through entries is at most `weakly_exposed`, and the
+missing-evidence line names the entries the related tests call.
 
 A test is related to an owner only when the test references the owner. When
 no owner-call, import-call, receiver, class-method, module-observer, or
@@ -188,8 +236,8 @@ local declaration; a named-import local of the owner; or a namespace member
 `ns.owner` whose import resolves to the owner module. Such a link stays
 `weakly_exposed` with `actionability_category = ambiguous_related_test`. A
 test that only names the owner in its title, its `describe(...)` title, or its
-file stem, or that only calls a sibling owner from the same module, is not
-related: when no test references the owner, the finding is `no_static_path`
+file stem, or that only calls a sibling owner from the same module that is not
+a same-module entry reaching the owner, is not related: when no test references the owner, the finding is `no_static_path`
 with reach `no` and the missing reference named (`No test references
 \`owner(\``).
 
@@ -228,6 +276,13 @@ parameter and return types are emitted as runtime metadata. Return types, parame
 markers, generic parameter lists, and `this` parameters are ignored. Type
 syntax inside an expression (`as`, `satisfies`, generic call arguments) and
 multi-line signature fragments are not compared and keep their probe.
+
+The opening line of a new function, method, or arrow owner (an added line with
+no removed counterpart, starting an owner whose span holds another added,
+probe-eligible line) produces no probe: its behavior is carried by the body
+lines. A default value, destructuring default, parameter property, computed
+key, decorator, constructor, one-line body, or changed signature keeps its
+probe.
 
 A changed predicate is `exposed` only when a strong, family-matching
 assertion's observed expression (`expect(<expr>)`) calls the owner at the
@@ -276,6 +331,18 @@ boundary without changing the guards (#4104 E):
   initializers, repeated declarations, off-value constants, and constants
   imported from a module the adapter cannot resolve to the owner stay
   fail-closed.
+- **Boundary input evidence**: for a changed predicate with a named missing
+  discriminator `<param> == <operand>`, the adapter emits
+  `typescript_boundary_input: parameter=<param>;index=<i>;operand=<operand>;value=<v>`
+  only when, on the oxc token stream of the owner's module, `<param>` is the
+  owner's plain positional parameter at index `<i>` and every later
+  occurrence in the owner is a plain read (no write, update, redeclaration,
+  nested parameter, catch, loop, or destructuring binding; no `arguments`,
+  `eval`, `with`, or escaped identifier), and `<operand>` is a plain decimal
+  integer literal or an UPPER_CASE name bound exactly once, at the module top
+  level, by a non-`declare` `const` with an integer literal initializer, whose
+  every other occurrence in the module is a plain read. Anything else emits
+  nothing.
 
 When the adapter cannot classify, it emits one of the `static_limit_kind`
 values defined in RIPR-SPEC-0026:

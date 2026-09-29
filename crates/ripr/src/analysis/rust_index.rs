@@ -75,8 +75,48 @@ fn escaped_path_display(path: &Path) -> String {
 }
 
 /// Returns a stable disclosure when indexed Rust files used lexical fallback.
+/// A file the Rust nesting budget refused also gets its typed
+/// `rust_nesting_budget` reason, recomputed from the indexed source.
 pub(crate) fn lexical_fallback_disclosure(index: &RustIndex) -> Option<String> {
-    lexical_fallback_disclosure_for_files(&lexical_fallback_files(index))
+    let files = lexical_fallback_files(index);
+    let disclosure = lexical_fallback_disclosure_for_files(&files)?;
+    Some(with_nesting_budget_reasons(
+        disclosure,
+        files.iter().filter_map(|path| {
+            let facts = index.files.values().find(|facts| &facts.path == path)?;
+            Some((
+                path.as_path(),
+                super::syntax::rust_nesting_refusal(&facts.source)?,
+            ))
+        }),
+    ))
+}
+
+/// Same disclosure for a classified-seam cache hit, which stores only the
+/// fallback paths. Each fallback file is re-read under `root` so a warm run
+/// names the same `rust_nesting_budget` reasons as the cold run.
+pub(crate) fn lexical_fallback_disclosure_at(root: &Path, files: &[PathBuf]) -> Option<String> {
+    let disclosure = lexical_fallback_disclosure_for_files(files)?;
+    Some(with_nesting_budget_reasons(
+        disclosure,
+        files.iter().filter_map(|path| {
+            let source = std::fs::read_to_string(root.join(path)).ok()?;
+            Some((
+                path.as_path(),
+                super::syntax::rust_nesting_refusal(&source)?,
+            ))
+        }),
+    ))
+}
+
+fn with_nesting_budget_reasons<'a>(
+    mut disclosure: String,
+    reasons: impl Iterator<Item = (&'a Path, String)>,
+) -> String {
+    for (path, reason) in reasons {
+        disclosure.push_str(&format!("\nripr: {}: {reason}", escaped_path_display(path)));
+    }
+    disclosure
 }
 
 pub(crate) fn compilation_unit_path(index: &RustIndex, file: &Path) -> PathBuf {
@@ -106,6 +146,13 @@ pub(crate) fn include_resolution_disclosure(index: &RustIndex) -> Option<String>
     ))
 }
 
+/// Concrete next step appended when a file has more than one claiming parent
+/// module (`rust_module_ambiguous_parent`).
+const MODULE_AMBIGUOUS_PARENT_NEXT_STEP: &str = "To resolve rust_module_ambiguous_parent, give each listed file one owner: declare it from a single parent `mod` item (drop duplicate `#[path]` declarations and keep only one of `<name>.rs` or `<name>/mod.rs`); a shared `tests/<name>/mod.rs` helper needs the same `mod <name>;` declaration, with the same `#[cfg(test)]` gating, in every integration test.";
+
+/// Closing sentence of [`module_composition_disclosure`] (#4378).
+const MODULE_COMPOSITION_ORIENTATION: &str = "This is an analysis-limit note about indexed context, not a finding: no action is needed unless evidence you expected from a listed file is missing.";
+
 /// Returns a stable disclosure when Rust module composition failed closed
 /// (#3533): a file whose composed context chain could not be resolved
 /// (ambiguous ownership, cycle or depth bound, context conflict), or a
@@ -113,6 +160,10 @@ pub(crate) fn include_resolution_disclosure(index: &RustIndex) -> Option<String>
 /// conditionally introduced `#[path]`). Without this, module-side stop
 /// reasons were invisible outside the per-file provenance while include-side
 /// limitations were disclosed.
+///
+/// The index can span the whole workspace (`--mode deep|ready`), so the named
+/// files are often ones the analyzed diff never touched. The closing sentence
+/// orients a first-time reader without narrowing what is disclosed (#4378).
 pub(crate) fn module_composition_disclosure(index: &RustIndex) -> Option<String> {
     let mut details = BTreeSet::new();
     let mut count = 0usize;
@@ -139,8 +190,16 @@ pub(crate) fn module_composition_disclosure(index: &RustIndex) -> Option<String>
     if count == 0 {
         return None;
     }
+    let next_step = if details
+        .iter()
+        .any(|detail| detail.ends_with(":rust_module_ambiguous_parent"))
+    {
+        format!(" {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}")
+    } else {
+        String::new()
+    };
     Some(format!(
-        "ripr: {count} Rust module composition limitation(s): {}; affected module contexts remain fail-closed.",
+        "ripr: {count} Rust module composition limitation(s): {}; affected module contexts remain fail-closed. {MODULE_COMPOSITION_ORIENTATION}{next_step}",
         details.into_iter().collect::<Vec<_>>().join(", ")
     ))
 }
@@ -163,7 +222,7 @@ fn apply_oracle_policy_to_assertions(assertions: &mut [OracleFact], policy: &Ora
 }
 
 #[cfg(test)]
-fn summarize_file(path: PathBuf, text: String) -> FileFacts {
+pub(in crate::analysis) fn summarize_file(path: PathBuf, text: String) -> FileFacts {
     match RaRustSyntaxAdapter.summarize_file(&path, &text) {
         Ok(facts) => facts,
         Err(_) => {
@@ -1033,6 +1092,24 @@ fn feature_gated_test() {}
             "composed-chain stop reasons are named: {disclosure}"
         );
         assert!(!disclosure.contains("src/plain.rs"));
+        // #4378: a whole-workspace index names files outside the diff, so the
+        // line tells a first-time reader it is not a finding to act on.
+        assert!(
+            disclosure.contains(
+                "affected module contexts remain fail-closed. This is an analysis-limit note about indexed context, not a finding: no action is needed unless evidence you expected from a listed file is missing."
+            ),
+            "the disclosure closes with one orienting sentence: {disclosure}"
+        );
+
+        // An ambiguous parent names a concrete next step.
+        assert!(
+            disclosure.ends_with(MODULE_AMBIGUOUS_PARENT_NEXT_STEP),
+            "ambiguous parents name a next step: {disclosure}"
+        );
+        // Without an ambiguous parent, no ambiguity next step is printed.
+        index.files.remove(Path::new("src/shared.rs"));
+        let unresolved_only = module_composition_disclosure(&index).ok_or_else(no_disclosure)?;
+        assert!(!unresolved_only.contains("rust_module_ambiguous_parent"));
 
         // No limitations: no disclosure.
         let clean = RustIndex::default();

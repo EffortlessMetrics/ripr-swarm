@@ -251,3 +251,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_reexport_two_hop_limit (6)
+
+Reason:
+RIPR-SPEC-0122: omit zero-count languages, keep the empty-result caveat to empty runs, cut digest lines at word boundaries
+
+Command:
+`cargo xtask goldens bless typescript_reexport_two_hop_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_reexport_two_hop_limit (7)
+
+Reason:
+RIPR-SPEC-0095 bounded re-export chains: the two-hop named chain (index.ts to errors.ts to util.ts) is within MAX_REEXPORT_HOPS (4) and ends at the owner's own export, so the test is credited (re_export_chain_followed, medium) and the finding flips from no_static_path to exposed; test comment and title drop the single-hop limitation wording
+
+Command:
+`cargo xtask goldens bless typescript_reexport_two_hop_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_reexport_two_hop_limit (8)
+
+Reason:
+RIPR-SPEC-0122: exposed findings default to info severity (#4429, merged from main)
+
+Command:
+`cargo xtask goldens bless typescript_reexport_two_hop_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
