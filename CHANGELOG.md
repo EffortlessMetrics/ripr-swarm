@@ -11,6 +11,16 @@ are scoped or reviewed.
 
 ### Fixed
 
+- A diff stream truncated after a valid file header no longer reports
+  `no_changed_lines (analysis complete)`. When at least one textual file
+  header parsed but zero hunk bodies did, `ripr check --diff` now produces a
+  typed incomplete outcome (`unsupported_input`) carrying a `malformed_diff`
+  limitation that names the exact evidence ("N file header(s) parsed, 0
+  hunks; the diff appears truncated"), plus a stderr disclosure. A CI diff
+  producer dying mid-stream is therefore visible in the machine-readable
+  outcome instead of reading as a green empty result. Genuinely empty input
+  stays `no_scope` complete, and unparseable garbage keeps its existing
+  `unsupported_input` contract (#4375).
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from
