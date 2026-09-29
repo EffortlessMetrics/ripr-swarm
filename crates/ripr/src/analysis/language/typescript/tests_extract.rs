@@ -1463,7 +1463,59 @@ fn call_callee_is_active_declaration(
     call: &oxc_ast::ast::CallExpression<'_>,
     root: TestDeclarationRoot,
 ) -> bool {
-    expression_is_active_declaration(&call.callee, root)
+    expression_is_active_declaration(&call.callee, root) && declaration_options_are_active(call)
+}
+
+/// Whether a registration's options object leaves it running. `node:test`
+/// and Vitest accept `{ skip, todo }` (and Vitest `{ fails }`, which inverts
+/// the verdict) in the options object, which registers exactly what `.skip` /
+/// `.todo` / `.fails` register: no running discriminator. The options object
+/// sits before the callback (`it(name, opts, fn)`) or, in legacy Vitest,
+/// after it (`it(name, fn, opts)`); both positions are checked.
+///
+/// Fail-closed (#4638 review): a `skip` / `todo` / `fails` key whose value is
+/// anything but literal `false` / `undefined`, a spread, a computed key, or a
+/// method/accessor makes the registration inactive — it is then handled
+/// exactly like `.skip` (no test, no describe walk, not a dropped
+/// registration).
+fn declaration_options_are_active(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
+    call.arguments
+        .iter()
+        .skip(1)
+        .take(2)
+        .all(|argument| match argument {
+            oxc_ast::ast::Argument::ObjectExpression(options) => options
+                .properties
+                .iter()
+                .all(declaration_option_property_is_active),
+            _ => true,
+        })
+}
+
+fn declaration_option_property_is_active(property: &ObjectPropertyKind<'_>) -> bool {
+    let ObjectPropertyKind::ObjectProperty(property) = property else {
+        // `{ ...opts }` may carry `skip: true`.
+        return false;
+    };
+    if property.computed {
+        return false;
+    }
+    let key = match &property.key {
+        PropertyKey::StaticIdentifier(ident) => ident.name.as_str(),
+        PropertyKey::StringLiteral(literal) => literal.value.as_str(),
+        _ => return false,
+    };
+    if !matches!(key, "skip" | "todo" | "fails") {
+        return true;
+    }
+    if property.method || property.kind != oxc_ast::ast::PropertyKind::Init {
+        return false;
+    }
+    match &property.value {
+        Expression::BooleanLiteral(literal) => !literal.value,
+        Expression::Identifier(ident) => !property.shorthand && ident.name == "undefined",
+        _ => false,
+    }
 }
 
 fn call_callee_is_active_each_declaration(
@@ -1478,6 +1530,7 @@ fn call_callee_is_active_each_declaration(
     };
     member.property.name.as_str() == "each"
         && expression_is_active_declaration(&member.object, root)
+        && declaration_options_are_active(call)
 }
 
 fn expression_is_active_declaration(

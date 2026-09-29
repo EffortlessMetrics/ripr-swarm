@@ -397,3 +397,106 @@ describe.skip("skipped with options", { timeout: 5 }, () => {
 
     assert!(tests.is_empty(), "{tests:?}");
 }
+
+/// Negative (#4638 review): a `node:test` / Vitest options object that skips,
+/// marks todo, or inverts (`fails`) the registration registers no running
+/// discriminator — exactly like `.skip` / `.todo` / `.fails`. Neither the
+/// test nor a skipped describe's body is extracted, and a skipped
+/// registration is not reported as a dropped test.
+#[test]
+fn options_object_skip_todo_fails_registrations_stay_uncredited() {
+    let source = r#"
+test("skipped", { skip: true }, () => {
+    assert.strictEqual(isAdult(18), true);
+});
+it("todo", { todo: true }, () => {
+    assert.strictEqual(isAdult(18), true);
+});
+it("skip reason", { skip: "flaky" }, (t) => {
+    t.is(isAdult(18), true);
+});
+test("fails", { fails: true }, () => {
+    expect(isAdult(18)).toBe(true);
+});
+test("dynamic skip", { skip: process.env.CI }, () => {
+    expect(isAdult(18)).toBe(true);
+});
+test("spread options", { ...options }, () => {
+    expect(isAdult(18)).toBe(true);
+});
+test("computed key", { [key]: true }, () => {
+    expect(isAdult(18)).toBe(true);
+});
+test("shorthand", { skip }, () => {
+    expect(isAdult(18)).toBe(true);
+});
+test("legacy trailing options", () => {
+    expect(isAdult(18)).toBe(true);
+}, { skip: true });
+test.each([[18]])("each skipped %i", { skip: true }, (age) => {
+    expect(isAdult(age)).toBe(true);
+});
+describe("skipped suite", { skip: "flaky" }, () => {
+    it("nested", () => {
+        expect(isAdult(18)).toBe(true);
+    });
+});
+"#;
+    let file = Path::new("test/calc.test.js");
+    let tests = extract_tests(file, source);
+
+    assert!(tests.is_empty(), "{tests:?}");
+    // The top-level skipped registrations are not "dropped" (a `.skip` call
+    // is not reported either).
+    let top_level_only = source
+        .split("describe(\"skipped suite\"")
+        .next()
+        .unwrap_or_default();
+    assert!(
+        detect_partial_test_extraction(file, top_level_only, &[]).is_none(),
+        "options-skipped registrations are not dropped registrations"
+    );
+    // A describe skipped through its options object discloses exactly what
+    // `describe.skip` discloses for the same body.
+    let skipped_by_options = r#"
+describe("skipped suite", { skip: true }, () => {
+    it("nested", () => {
+        expect(isAdult(18)).toBe(true);
+    });
+});
+"#;
+    let skipped_by_modifier = r#"
+describe.skip("skipped suite", () => {
+    it("nested", () => {
+        expect(isAdult(18)).toBe(true);
+    });
+});
+"#;
+    assert_eq!(
+        detect_partial_test_extraction(file, skipped_by_options, &[]).map(|gap| gap.shape),
+        detect_partial_test_extraction(file, skipped_by_modifier, &[]).map(|gap| gap.shape),
+    );
+}
+
+/// Positive control (#4638 review): options that leave the registration
+/// running (`skip: false`, `todo: undefined`, `only`, `timeout`) keep it
+/// extracted.
+#[test]
+fn options_object_with_inactive_skip_values_stays_extracted() {
+    let source = r#"
+describe("suite", { skip: false, concurrency: 1 }, () => {
+    it("runs", { todo: undefined, timeout: 50 }, () => {
+        expect(isAdult(18)).toBe(true);
+    });
+    test("focused", { only: true, fails: false }, () => {
+        expect(isAdult(18)).toBe(true);
+    });
+});
+"#;
+    let file = Path::new("test/calc.test.js");
+    let tests = extract_tests(file, source);
+
+    let names: Vec<&str> = tests.iter().map(|test| test.name.as_str()).collect();
+    assert_eq!(names, vec!["suite runs", "suite focused"]);
+    assert!(detect_partial_test_extraction(file, source, &tests).is_none());
+}
