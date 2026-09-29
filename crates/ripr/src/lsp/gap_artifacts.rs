@@ -1973,6 +1973,34 @@ mod tests {
     }
 
     #[test]
+    fn first_useful_action_with_the_producers_verify_redirect_validates() -> Result<(), String> {
+        // The first-useful-action producer (#4306) writes this exact verify
+        // string; before #4758 the whole artifact was rejected as
+        // `malformed_command_payload`.
+        let workspace = root();
+        let mut artifact = first_action();
+        artifact["root"] = json!(workspace.to_string_lossy());
+        artifact["commands"]["verify"] = json!(crate::agent::loop_commands::agent_verify_command(
+            &workspace.to_string_lossy(),
+            crate::agent::loop_commands::WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+            crate::agent::loop_commands::WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+            Some(crate::agent::loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT),
+        ));
+        let validated = validate_gap_artifact(&artifact, &context(&[LanguageId::Rust]))
+            .map_err(|err| format!("{err:?}"))?;
+        assert_eq!(validated.kind, GapArtifactKind::FirstUsefulAction);
+        assert!(validated.verify_commands[0].contains(" > "));
+
+        artifact["commands"]["verify"] =
+            json!("ripr agent verify --root . --json > /elsewhere/target/ripr/v.json");
+        assert!(matches!(
+            validate_gap_artifact(&artifact, &context(&[LanguageId::Rust])),
+            Err(GapArtifactRejection::MalformedCommandPayload(_))
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn actionable_gaps_report_validates_read_only_queue_inputs() -> Result<(), String> {
         let artifact = actionable_gaps_report();
         let validated = validate_gap_artifact(&artifact, &context(&[LanguageId::Rust]))
