@@ -23,6 +23,11 @@ are scoped or reviewed.
   command never runs, and `docs/CONFIGURATION.md`'s claim that `context`
   accepts `--format`. A test now fails when a public guide passes a flag
   that its command's help does not list (#4573).
+- MCP: a client that opens with `server/discover` (protocol `2026-07-28`)
+  now receives the same instructions as an `initialize` client, including the
+  CLI route that analyzes the diff. Before, only `initialize` carried them.
+  Workspace status no longer says a `ripr.toml` is detected when the root has
+  none; that limitation now appears only when one was found.
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from
