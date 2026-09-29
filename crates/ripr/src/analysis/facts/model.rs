@@ -139,7 +139,13 @@ impl WorkspaceRootAuthority {
                     && crate::analysis::committed_source::read_source_bytes(&self.root, path)
                         .ok()
                         .flatten()
-                        .is_some_and(|bytes| source_digest(&bytes) == authority.source_digest)
+                        .is_some_and(|bytes| {
+                            // `source_digest` hashes the indexed text, so the
+                            // re-read bytes go through the same decode (BOM
+                            // dropped, non-UTF-8 lossy) before comparing.
+                            let indexed = super::build::rust_source_text(&bytes);
+                            source_digest(indexed.text.as_bytes()) == authority.source_digest
+                        })
                     && matches!(
                         resolve_package_identity(&self.root, path),
                         PackageIdentity::Known(ref identity)

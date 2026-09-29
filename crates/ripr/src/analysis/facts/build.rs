@@ -741,6 +741,7 @@ pub fn check(x: i32) -> bool {
         let file = PathBuf::from("src/lib.rs");
         let source = b"pub fn b(x: u32) -> u32 { if x >= 5 { 1 } else { 0 } }\n";
         let with_bom = [(file.clone(), [UTF8_BOM, source.as_slice()].concat())];
+        fs::write(fixture.root.join(&file), &with_bom[0].1)?;
 
         let index = build_loaded(&fixture, &with_bom)?.index;
         let facts = index
@@ -757,6 +758,14 @@ pub fn check(x: i32) -> bool {
         assert_eq!(owner.start_line, 1);
         assert!(!facts.probe_shapes.is_empty());
         assert!(index.non_utf8_sources.is_empty());
+
+        // The currentness authority re-reads the on-disk bytes (BOM included)
+        // through the same decode, so the file's evidence stays admissible.
+        let authority = index
+            .workspace_authority
+            .as_ref()
+            .ok_or("missing workspace authority")?;
+        assert!(authority.validates_target(&file, &file, &facts.source));
 
         // The same bytes without the mark index to the same facts.
         let fixture = CacheInventoryFixture::new("index_no_bom")?;

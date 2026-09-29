@@ -24,12 +24,53 @@ pub struct LoadedDiff {
 /// Decode a supplied diff the same way the git-run path decodes its stdout
 /// (`run_git_diff_with_unified`). A diff carries the raw bytes of every
 /// changed file, so one Latin-1 or binary-ish text file in the change made
-/// `--diff` refuse the whole diff that `ripr check` itself accepts. Paths stay
-/// distinct because git C-quotes non-UTF-8 path bytes by default.
-pub(crate) fn decode_diff_text(bytes: Vec<u8>) -> String {
-    String::from_utf8(bytes)
-        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
+/// `--diff` refuse the whole diff that `ripr check` itself accepts.
+///
+/// Hunk payloads decode lossily. Path identity must not: the git route pins
+/// `core.quotePath=true`, so non-UTF-8 path bytes arrive C-quoted, but a
+/// supplied diff made with `quotePath=false` carries them raw, and a lossy
+/// decode would merge distinct names onto one U+FFFD path (#3601). A
+/// file-header line that is not UTF-8 therefore fails closed, naming the
+/// regeneration command.
+fn decode_diff_text(source: &str, bytes: Vec<u8>) -> Result<String, String> {
+    let error = match String::from_utf8(bytes) {
+        Ok(text) => return Ok(text),
+        Err(error) => error,
+    };
+    let bytes = error.as_bytes();
+    let lines = bytes.split(|byte| *byte == b'\n').collect::<Vec<_>>();
+    let not_utf8 = |line: &[u8]| std::str::from_utf8(line).is_err();
+    // A `---`/`+++` pair is a file header in a plain unified diff too.
+    let raw_marker_pair = lines.windows(2).any(|pair| {
+        matches!(pair, [old, new] if old.starts_with(b"--- ")
+            && new.starts_with(b"+++ ")
+            && (not_utf8(old) || not_utf8(new)))
+    });
+    let raw_header = lines.iter().any(|line| {
+        not_utf8(line)
+            && DIFF_PATH_HEADER_PREFIXES
+                .iter()
+                .any(|prefix| line.starts_with(prefix))
+    });
+    if raw_marker_pair || raw_header {
+        return Err(format!(
+            "failed to read {source}: a file header names a path that is not UTF-8 and \
+             not C-quoted, so distinct paths cannot be told apart; regenerate the diff \
+             with `git -c core.quotePath=true diff ...`"
+        ));
+    }
+    Ok(String::from_utf8_lossy(bytes).into_owned())
 }
+
+/// Git file-header lines that carry a path. None can be a hunk line, which
+/// always starts with `+`, `-`, a space or a backslash.
+const DIFF_PATH_HEADER_PREFIXES: &[&[u8]] = &[
+    b"diff --git ",
+    b"rename from ",
+    b"rename to ",
+    b"copy from ",
+    b"copy to ",
+];
 
 pub fn load_diff(
     root: &Path,
@@ -57,7 +98,7 @@ pub fn load_diff_with_effective_base(
                 .read_to_end(&mut buffer)
                 .map_err(|err| format!("failed to read diff from stdin: {err}"))?;
             return Ok(LoadedDiff {
-                text: decode_diff_text(buffer),
+                text: decode_diff_text("diff from stdin", buffer)?,
                 effective_base: None,
             });
         }
@@ -74,7 +115,7 @@ pub fn load_diff_with_effective_base(
         let bytes = std::fs::read(diff_file)
             .map_err(|err| format!("failed to read diff file {}: {err}", diff_file.display()))?;
         return Ok(LoadedDiff {
-            text: decode_diff_text(bytes),
+            text: decode_diff_text(&format!("diff file {}", diff_file.display()), bytes)?,
             effective_base: None,
         });
     }
@@ -898,6 +939,29 @@ mod tests {
             .find(|file| file.path == std::path::Path::new("src/lib.rs"))
             .ok_or_else(|| std::io::Error::other("rust file missing from parsed diff"))?;
         assert_eq!(rust.added_lines[0].text, "fn a() -> bool { 1 >= 0 }");
+        Ok(())
+    }
+
+    #[test]
+    fn diff_file_with_raw_non_utf8_path_fails_closed() -> std::io::Result<()> {
+        // `quotePath=false` emits raw path bytes; a lossy decode would merge
+        // `p_\xff.rs` and `p_\xfe.rs` onto one U+FFFD path (#3601).
+        let git_diff = b"diff --git a/src/p_\xff.rs b/src/p_\xff.rs\n--- a/src/p_\xff.rs\n+++ b/src/p_\xff.rs\n@@ -1 +1 @@\n-a\n+b\n".to_vec();
+        let plain_diff = b"--- src/p_\xfe.rs\n+++ src/p_\xfe.rs\n@@ -1 +1 @@\n-a\n+b\n".to_vec();
+        for bytes in [git_diff, plain_diff] {
+            let Err(message) = decode_diff_text("diff from stdin", bytes) else {
+                return Err(std::io::Error::other(
+                    "a raw non-UTF-8 path must fail closed",
+                ));
+            };
+            assert!(message.contains("core.quotePath=true"), "{message}");
+        }
+        // C-quoted paths are ASCII, so only the hunk payload decodes lossily.
+        let quoted =
+            b"diff --git \"a/src/p_\\377.rs\" \"b/src/p_\\377.rs\"\n@@ -1 +1 @@\n-caf\xe9\n+b\n"
+                .to_vec();
+        let text = decode_diff_text("diff from stdin", quoted).map_err(std::io::Error::other)?;
+        assert!(text.contains("-caf\u{fffd}"), "{text}");
         Ok(())
     }
 
