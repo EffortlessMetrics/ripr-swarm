@@ -14150,6 +14150,38 @@ Field contract:
   packet and is `null` for a repo-wide envelope containing multiple seams.
   These commands are advisory handoff instructions and do not execute a test,
   approve a patch, or authorize a merge.
+  Compound recipes use Bash-style quoting, directory creation, and redirects,
+  consistent with the structured workflow's `command_shell: "bash"`; they do
+  not establish PowerShell recipe compatibility. Read the structured workflow
+  for its shell contract before executing commands.
+  Explicit standalone per-seam CLI `agent packet` binds these `next` commands,
+  including directory creation, to the selected repository root.
+  Its optional `next.analysis_outcome_command` writes the static outcome
+  consumed by the receipt, between the after snapshot and verify steps.
+  Portable bulk/check-format wrappers omit this additive field and retain
+  their repository-local recipe; they are not a complete foreign-CWD receipt
+  workflow. GapRecord and editor routes are unchanged. Static receipt
+  completeness does not establish project-test execution.
+  The standalone manual recipe assumes a fresh workflow without retained
+  durable repair attempts. Resume a matching awaiting attempt through its
+  published exact `--attempt` selector. If none is awaiting for the selected
+  seam, begin a fresh durable Before route and preserve the retained attempts.
+  The receipt validator retains its existing attempt binding and can refuse an
+  incompatible manual recipe.
+  Per-packet canonical/evidence receipt commands and portable bulk output are
+  outside this `packet.next` root-binding claim (#4000 remains open).
+  A packet emitted by `agent repair --phase before` instead sets the manual
+  snapshot, outcome, verify, and receipt fields to `null` and advertises
+  `next.repair_after_command`. This selected-root command resumes the existing
+  durable repair route after the permitted focused edit, including the edit
+  cage, outcome, verify, after verdict, and receipt. The command pins the exact
+  `--attempt` identity also published in the manifest and stderr. A retained
+  packet for a finished attempt refuses that attempt instead of selecting a
+  later awaiting attempt for the same seam. Explicit legacy seam selection
+  still refuses multiple awaiting attempts. Trust-bound Python
+  continuations retain the required explicit authorization placeholders;
+  rendering the command does not grant authorization. Packet bytes remain
+  unchanged after publication.
 
 The packet is the agent's work order: it names the seam, the missing
 discriminator, the oracle shape, and either a producer-backed assertion
@@ -16650,7 +16682,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.11",
+    "schema_version": "1.12",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -16661,7 +16693,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.17",
+      "schema_version": "1.18",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
