@@ -514,12 +514,22 @@ fn push_declaration_export_names(declaration: &Declaration<'_>, names: &mut Vec<
 /// does NOT perform full `PackageDiscovery`. It is used only for the
 /// package-local ownership filter.
 pub(crate) fn package_root_for_file_path(file: &Path, workspace_root: &Path) -> Option<PathBuf> {
+    package_root_for_dir(&file_parent_dir(file, workspace_root)?, workspace_root)
+}
+
+/// The directory `package_root_for_file_path` starts its walk from; `None`
+/// when the file has no parent.
+fn file_parent_dir(file: &Path, workspace_root: &Path) -> Option<PathBuf> {
     let absolute_file = if file.is_absolute() {
         file.to_path_buf()
     } else {
         workspace_root.join(file)
     };
-    let start = absolute_file.parent()?;
+    absolute_file.parent().map(Path::to_path_buf)
+}
+
+/// The walk behind `package_root_for_file_path`, from the file's directory.
+fn package_root_for_dir(start: &Path, workspace_root: &Path) -> Option<PathBuf> {
     let mut current = start.to_path_buf();
     loop {
         if current.join("package.json").is_file() {
@@ -547,6 +557,49 @@ pub(crate) fn package_root_for_file_path(file: &Path, workspace_root: &Path) -> 
     None
 }
 
+/// `same_package_root` for one owner file against many test files. The
+/// owner's root is resolved once and each test directory's root at most
+/// once, instead of two filesystem walks per test: an owner is checked
+/// against every test in the workspace, and those walks were ~64% of a
+/// `ripr check` on a vite commit. Answers match `same_package_root` as long
+/// as no `package.json` appears or disappears while the scope lives.
+pub(crate) struct OwnerPackageScope<'r> {
+    workspace_root: &'r Path,
+    owner_package: Option<PathBuf>,
+    package_by_dir: std::cell::RefCell<std::collections::BTreeMap<PathBuf, Option<PathBuf>>>,
+}
+
+impl<'r> OwnerPackageScope<'r> {
+    pub(crate) fn new(owner_file: &Path, workspace_root: &'r Path) -> Self {
+        Self {
+            workspace_root,
+            owner_package: package_root_for_file_path(owner_file, workspace_root),
+            package_by_dir: std::cell::RefCell::default(),
+        }
+    }
+
+    /// `same_package_root(owner_file, test_file, workspace_root)`.
+    pub(crate) fn contains(&self, test_file: &Path) -> bool {
+        let Some(owner_package) = &self.owner_package else {
+            return true;
+        };
+        let Some(dir) = file_parent_dir(test_file, self.workspace_root) else {
+            return true;
+        };
+        if let Some(test_package) = self.package_by_dir.borrow().get(&dir) {
+            return test_package
+                .as_ref()
+                .is_none_or(|test| test == owner_package);
+        }
+        let test_package = package_root_for_dir(&dir, self.workspace_root);
+        let same = test_package
+            .as_ref()
+            .is_none_or(|test| test == owner_package);
+        self.package_by_dir.borrow_mut().insert(dir, test_package);
+        same
+    }
+}
+
 /// Return `true` when `owner_file` and `test_file` both resolve to the same
 /// package root under `workspace_root`, or when either file's package root
 /// cannot be determined (fail-open: preserve existing behaviour when no
@@ -555,6 +608,7 @@ pub(crate) fn package_root_for_file_path(file: &Path, workspace_root: &Path) -> 
 /// A cross-package candidate is one where the owner lives in
 /// `packages/a/` and the test lives in `packages/b/`.  Such a candidate
 /// MUST NOT be selected as an owned relation.
+#[cfg(test)]
 pub(crate) fn same_package_root(
     owner_file: &Path,
     test_file: &Path,
@@ -596,6 +650,12 @@ pub(crate) fn related_test_candidates<'a>(
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
 ) -> Vec<TypeScriptRelatedCandidate<'a>> {
+    let package_scope = workspace_root.map(|root| OwnerPackageScope::new(&owner.file, root));
+    let in_owner_package = |test: &&TypeScriptTest| {
+        package_scope
+            .as_ref()
+            .is_none_or(|scope| scope.contains(&test.file))
+    };
     let mut candidates: Vec<TypeScriptRelatedCandidate<'a>> = all_tests
         .iter()
         .filter_map(|test| {
@@ -608,11 +668,7 @@ pub(crate) fn related_test_candidates<'a>(
     if candidates.is_empty() && !owner.module_entries.is_empty() {
         candidates = all_tests
             .iter()
-            .filter(|test| {
-                workspace_root
-                    .map(|root| same_package_root(&owner.file, &test.file, root))
-                    .unwrap_or(true)
-            })
+            .filter(in_owner_package)
             .filter(|test| {
                 module_entry_relation(test, owner, reexport_index, alias_map, workspace_root)
             })
@@ -625,11 +681,7 @@ pub(crate) fn related_test_candidates<'a>(
     if candidates.is_empty() {
         candidates = all_tests
             .iter()
-            .filter(|test| {
-                workspace_root
-                    .map(|root| same_package_root(&owner.file, &test.file, root))
-                    .unwrap_or(true)
-            })
+            .filter(in_owner_package)
             .filter_map(|test| {
                 heuristic_relation(test, owner, alias_map, workspace_root)
                     .map(|relation| TypeScriptRelatedCandidate { test, relation })
@@ -912,7 +964,9 @@ pub(crate) fn receiver_owner_call_relation(
         // package must construct the class through a same-file or resolved
         // import binding, or a same-named class there would lend it its
         // oracle (#4552 review).
-        if workspace_root.is_some_and(|root| !same_package_root(&owner.file, &test.file, root)) {
+        if workspace_root
+            .is_some_and(|root| !OwnerPackageScope::new(&owner.file, root).contains(&test.file))
+        {
             return constructor_names_for_method_owner(test, owner, alias_map, workspace_root)
                 .iter()
                 .any(|candidate| contains_new_expression_call(&test.body_text, candidate));
