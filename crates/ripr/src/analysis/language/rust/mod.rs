@@ -677,6 +677,24 @@ fn owner_name_from_id(
     }
 }
 
+/// Shared post-classify application of the extracted probe and oracle owners.
+/// `apply_rust_no_static_path_limit` stays at each pipeline because it is
+/// mixed reach/index work owned by later RA slices.
+fn apply_probe_and_oracle_limits(
+    finding: &mut Finding,
+    probe: &Probe,
+    index: &RustIndex,
+    binding_relation: Option<&crate::analysis::probes::ChangedBindingPredicateUse>,
+) {
+    oracles::apply_rust_macro_wrapped_assertion_limit(finding, index);
+    probes::apply_rust_value_propagation_limit(finding, probe, index);
+    oracles::apply_wrapper_error_binding_limit(finding, probe);
+    probes::attach_changed_binding_predicate_evidence(finding, binding_relation);
+    if let Some(limit) = oracles::cross_language_limit_kind(probe, index, &finding.class) {
+        finding.static_limit_kind = Some(limit);
+    }
+}
+
 fn apply_rust_no_static_path_limit(finding: &mut Finding, probe: &Probe, index: &RustIndex) {
     if !(finding.class == ExposureClass::NoStaticPath
         && finding.related_tests.is_empty()
@@ -1172,24 +1190,21 @@ impl RustAdapter {
                 // already been established and no recognized oracle observes
                 // the seam. This is an oracle limitation, not macro expansion
                 // or promotion.
-                oracles::apply_rust_macro_wrapped_assertion_limit(&mut finding, &index);
-                probes::apply_rust_value_propagation_limit(&mut finding, &probe, &index);
-                oracles::apply_wrapper_error_binding_limit(&mut finding, &probe);
                 // #3294: a retargeted changed-binding probe keeps its
                 // predicate-shaped classification, but the finding still
                 // discloses the operand-value limitation it inherited from the
                 // changed initializer.
-                probes::attach_changed_binding_predicate_evidence(&mut finding, &binding_relation);
                 // Fail closed on cross-language seams: when the probe owner
                 // carries an FFI/binding attribute, replace any Rust-gap
                 // static_limit_kind with the cross-language limitation so
                 // downstream consumers know to verify the external oracle
                 // rather than acting on a Rust repair packet. (#910)
-                if let Some(limit) =
-                    oracles::cross_language_limit_kind(&probe, &index, &finding.class)
-                {
-                    finding.static_limit_kind = Some(limit);
-                }
+                apply_probe_and_oracle_limits(
+                    &mut finding,
+                    &probe,
+                    &index,
+                    binding_relation.as_ref(),
+                );
                 findings.push(finding);
             }
         }
@@ -1372,15 +1387,7 @@ impl RustAdapter {
                 // RIPR-SPEC-0114 + 0115 + 0117: no_static_path limitation
                 // disclosure for repo-mode (same logic as diff-mode).
                 apply_rust_no_static_path_limit(&mut finding, &probe, &index);
-                oracles::apply_rust_macro_wrapped_assertion_limit(&mut finding, &index);
-                probes::apply_rust_value_propagation_limit(&mut finding, &probe, &index);
-                oracles::apply_wrapper_error_binding_limit(&mut finding, &probe);
-                // Fail closed on cross-language seams (#910).
-                if let Some(limit) =
-                    oracles::cross_language_limit_kind(&probe, &index, &finding.class)
-                {
-                    finding.static_limit_kind = Some(limit);
-                }
+                apply_probe_and_oracle_limits(&mut finding, &probe, &index, None);
                 findings.push(finding);
             }
         }
@@ -1405,7 +1412,8 @@ mod tests {
         PARTIAL_DIFF_FILE_BUDGET_ENV, PARTIAL_DIFF_LANGUAGE_TIER_VERSION,
         PARTIAL_DIFF_LINE_BUDGET_DEFAULT, PARTIAL_DIFF_LINE_BUDGET_ENV,
         PARTIAL_DIFF_SELECTION_VERSION, PartialDiffBudgets, PartialDiffScope,
-        PartialDiffStopReason, REPO_INDEX_FILE_LIMIT_ENV, RustAdapter, changed_rust_line_count,
+        PartialDiffStopReason, REPO_INDEX_FILE_LIMIT_ENV, RustAdapter,
+        apply_probe_and_oracle_limits, changed_rust_line_count,
         diff_changed_rust_line_limit_from_env, diff_identity_from_changed_files,
         diff_index_file_limit_from_env, enforce_changed_rust_line_limit,
         enforce_repo_index_file_limit, is_binary_source_path, is_cargo_binary_invocation,
@@ -1417,14 +1425,14 @@ mod tests {
     };
     use crate::analysis::cancellation;
     use crate::analysis::diff::{ChangedFile, ChangedLine};
-    use crate::analysis::facts::{RustIndex, TestFact};
+    use crate::analysis::facts::{FunctionSourceRole, FunctionSummary, RustIndex, TestFact};
     use crate::analysis::language::{LanguageAdapter, LanguageId};
     use crate::analysis::{AnalysisMode, AnalysisOptions, diff};
     use crate::config::OraclePolicy;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, Probe, ProbeFamily,
-        ProbeId, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState,
-        StaticLimitKind, SymbolId,
+        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, OracleKind,
+        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, StaticLimitKind, SymbolId,
     };
     use std::env::VarError;
     use std::fs;
@@ -4545,5 +4553,68 @@ fn absent_delimiter_boundary_returns_head() {
         assert!(masked.contains("keep();"));
         assert!(!masked.contains("hidden"));
         assert_eq!(masked.len(), source.len());
+    }
+
+    #[test]
+    fn probe_and_oracle_limit_sequence_lets_ffi_replace_wrapper_error() {
+        let mut finding = no_path_finding_with_infection_summary("stage", Vec::new());
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.probe.family = ProbeFamily::ErrorPath;
+        finding.probe.expression = "try_parse(raw).map_err(Into::into)".to_string();
+        finding.probe.owner = Some(SymbolId("src/lib.rs::exported_fn".to_string()));
+        finding.related_tests = vec![RelatedTest {
+            name: "covers".to_string(),
+            file: PathBuf::from("tests/it.rs"),
+            line: 4,
+            oracle: None,
+            oracle_kind: OracleKind::Unknown,
+            oracle_strength: OracleStrength::None,
+            relation_reason: None,
+            relation_confidence: None,
+        }];
+
+        let rust_owner = FunctionSummary {
+            id: SymbolId("src/lib.rs::exported_fn".to_string()),
+            name: "exported_fn".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 5,
+            body: "pub fn exported_fn(raw: &str) -> Result<(), Box<dyn std::error::Error>> { try_parse(raw).map_err(Into::into) }".to_string(),
+            calls: vec![],
+            returns: vec![],
+            literals: vec![],
+            source_role: FunctionSourceRole::Production,
+            attrs: vec![],
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        };
+        let rust_index = RustIndex {
+            functions: vec![rust_owner.clone()],
+            ..RustIndex::default()
+        };
+        let probe = finding.probe.clone();
+        apply_probe_and_oracle_limits(&mut finding, &probe, &rust_index, None);
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::WrapperErrorBindingUnresolved),
+            "without FFI attrs the wrapper-error owner must win"
+        );
+
+        let mut ffi_finding = finding.clone();
+        ffi_finding.static_limit_kind = None;
+        ffi_finding.evidence.clear();
+        let mut ffi_owner = rust_owner;
+        ffi_owner.attrs = vec!["#[no_mangle]".to_string()];
+        let ffi_index = RustIndex {
+            functions: vec![ffi_owner],
+            ..RustIndex::default()
+        };
+        let probe = ffi_finding.probe.clone();
+        apply_probe_and_oracle_limits(&mut ffi_finding, &probe, &ffi_index, None);
+        assert_eq!(
+            ffi_finding.static_limit_kind,
+            Some(StaticLimitKind::CrossLanguageOracleVisibilityUnresolved),
+            "cross-language must replace a Rust-gap wrapper-error limitation"
+        );
     }
 }

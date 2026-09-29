@@ -76,15 +76,15 @@ pub(super) fn apply_rust_value_propagation_limit(
     );
 }
 
-/// probe's finding. The probe is predicate-shaped and classifies through
-/// the normal predicate path; this only discloses the causal link (which
-/// binding and initializer fed the predicate) and the operand-value
-/// limitation. It never changes the class, adds a stop reason, or
-/// prescribes a repair — the operand values stay unresolved until a
-/// later slice evaluates them.
+/// Disclose a changed-binding predicate relation on the probe's finding.
+/// The probe is predicate-shaped and classifies through the normal
+/// predicate path; this only discloses the causal link (which binding and
+/// initializer fed the predicate) and the operand-value limitation. It
+/// never changes the class, adds a stop reason, or prescribes a repair —
+/// the operand values stay unresolved until a later slice evaluates them.
 pub(super) fn attach_changed_binding_predicate_evidence(
     finding: &mut Finding,
-    relation: &Option<ChangedBindingPredicateUse>,
+    relation: Option<&ChangedBindingPredicateUse>,
 ) {
     let Some(relation) = relation else {
         return;
@@ -344,8 +344,19 @@ fn rust_raw_string_literal_end(bytes: &[u8], start: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::{
+        apply_rust_value_propagation_limit, attach_changed_binding_predicate_evidence,
         changed_let_binding, find_value_propagation_predicate, mask_rust_comments_and_strings,
     };
+    use crate::analysis::facts::{FunctionSourceRole, FunctionSummary, RustIndex};
+    use crate::analysis::probes::{
+        BindingValueResolution, ChangedBindingPredicateUse, PredicateOperandSide,
+    };
+    use crate::domain::{
+        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, OracleKind,
+        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, StaticLimitKind, StopReason, SymbolId,
+    };
+    use std::path::PathBuf;
 
     #[test]
     fn changed_let_binding_accepts_simple_mut_and_trailing_semicolon() {
@@ -476,5 +487,189 @@ mod tests {
     fn value_propagation_predicate_rejects_map_or_else_shape() {
         let rhs = mask_rust_comments_and_strings("input.find(delim).map_or_else(|| 0, |idx| idx)");
         assert!(!rhs.contains(".map_or("));
+    }
+
+    fn stage(state: StageState) -> StageEvidence {
+        StageEvidence::new(state, Confidence::Medium, "stage")
+    }
+
+    fn static_unknown_finding(expression: &str, owner: &str) -> Finding {
+        Finding {
+            id: "probe:src_lib.rs:binding:test".to_string(),
+            canonical_gap: None,
+            probe: Probe {
+                id: ProbeId("probe:src_lib.rs:binding:test".to_string()),
+                location: SourceLocation::new("src/lib.rs", 2, 1),
+                owner: Some(SymbolId(owner.to_string())),
+                family: ProbeFamily::Predicate,
+                delta: DeltaKind::Value,
+                before: None,
+                after: Some(expression.to_string()),
+                expression: expression.to_string(),
+                expected_sinks: Vec::new(),
+                required_oracles: Vec::new(),
+            },
+            class: ExposureClass::StaticUnknown,
+            ripr: RiprEvidence {
+                reach: stage(StageState::Yes),
+                infect: stage(StageState::Unknown),
+                propagate: stage(StageState::Unknown),
+                reveal: RevealEvidence {
+                    observe: stage(StageState::No),
+                    discriminate: stage(StageState::No),
+                },
+            },
+            confidence: 0.4,
+            evidence: Vec::new(),
+            missing: Vec::new(),
+            flow_sinks: Vec::new(),
+            activation: ActivationEvidence::default(),
+            stop_reasons: Vec::new(),
+            related_tests: vec![RelatedTest {
+                name: "covers_split".to_string(),
+                file: PathBuf::from("tests/it.rs"),
+                line: 4,
+                oracle: None,
+                oracle_kind: OracleKind::Unknown,
+                oracle_strength: OracleStrength::None,
+                relation_reason: None,
+                relation_confidence: None,
+            }],
+            recommended_next_step: None,
+            language: None,
+            language_status: None,
+            owner_kind: None,
+            static_limit_kind: None,
+            changed_sink: None,
+            observed_sink: None,
+            oracle_alignment: None,
+            alignment_reason: None,
+            source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
+        }
+    }
+
+    fn owner_function(id: &str, name: &str, body: &str) -> FunctionSummary {
+        FunctionSummary {
+            id: SymbolId(id.to_string()),
+            name: name.to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 8,
+            body: body.to_string(),
+            calls: vec![],
+            returns: vec![],
+            literals: vec![],
+            source_role: FunctionSourceRole::Production,
+            attrs: vec![],
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn value_propagation_limit_names_map_or_find_equality_and_does_not_fire_on_map_or_else() {
+        let expression = "let end = input.rfind(delim).map_or(0, |idx| idx);";
+        let body = concat!(
+            "    let end = input.rfind(delim).map_or(0, |idx| idx);\n",
+            "    if end == start { return 1; }\n",
+        );
+        let index = RustIndex {
+            functions: vec![owner_function("src/lib.rs::split", "split", body)],
+            ..RustIndex::default()
+        };
+
+        let mut named = static_unknown_finding(expression, "src/lib.rs::split");
+        let probe = named.probe.clone();
+        apply_rust_value_propagation_limit(&mut named, &probe, &index);
+        assert_eq!(
+            named.static_limit_kind,
+            Some(StaticLimitKind::RustValuePropagationUnresolved)
+        );
+        assert!(
+            named
+                .stop_reasons
+                .contains(&StopReason::PropagationEvidenceUnknown)
+        );
+        assert!(named.evidence.iter().any(|line| {
+            line.contains("limitation_last_established_edge: changed binding `end`")
+        }));
+        assert_eq!(named.class, ExposureClass::StaticUnknown);
+
+        let mut map_or_else = static_unknown_finding(
+            "let end = input.find(delim).map_or_else(|| 0, |idx| idx);",
+            "src/lib.rs::split",
+        );
+        let probe = map_or_else.probe.clone();
+        apply_rust_value_propagation_limit(&mut map_or_else, &probe, &index);
+        assert_eq!(map_or_else.static_limit_kind, None);
+        assert!(map_or_else.evidence.is_empty());
+    }
+
+    #[test]
+    fn value_propagation_limit_stays_fail_closed_without_tests_or_when_already_named() {
+        let expression = "let end = input.rfind(delim).map_or(0, |idx| idx);";
+        let body = concat!(
+            "    let end = input.rfind(delim).map_or(0, |idx| idx);\n",
+            "    if end == start { return 1; }\n",
+        );
+        let index = RustIndex {
+            functions: vec![owner_function("src/lib.rs::split", "split", body)],
+            ..RustIndex::default()
+        };
+
+        let mut no_tests = static_unknown_finding(expression, "src/lib.rs::split");
+        no_tests.related_tests.clear();
+        let probe = no_tests.probe.clone();
+        apply_rust_value_propagation_limit(&mut no_tests, &probe, &index);
+        assert_eq!(no_tests.static_limit_kind, None);
+
+        let mut already_named = static_unknown_finding(expression, "src/lib.rs::split");
+        already_named.static_limit_kind =
+            Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
+        let probe = already_named.probe.clone();
+        apply_rust_value_propagation_limit(&mut already_named, &probe, &index);
+        assert_eq!(
+            already_named.static_limit_kind,
+            Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved)
+        );
+        assert!(already_named.evidence.is_empty());
+    }
+
+    #[test]
+    fn changed_binding_predicate_evidence_is_disclosure_only() {
+        let mut finding = static_unknown_finding(
+            "let end = input.rfind(delim).map_or(0, |idx| idx);",
+            "src/lib.rs::split",
+        );
+        finding.probe.before = Some("input.find(delim).map_or(0, |idx| idx)".to_string());
+        finding.class = ExposureClass::WeaklyExposed;
+        attach_changed_binding_predicate_evidence(&mut finding, None);
+        assert!(finding.evidence.is_empty());
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+        assert_eq!(finding.static_limit_kind, None);
+
+        let relation = ChangedBindingPredicateUse {
+            binding: "end".to_string(),
+            initializer: "input.rfind(delim).map_or(0, |idx| idx)".to_string(),
+            predicate_expression: "end == start".to_string(),
+            predicate_line: 4,
+            operand_side: PredicateOperandSide::Left,
+            value_resolution: BindingValueResolution::Unresolved {
+                earliest_operation: "rfind".to_string(),
+            },
+        };
+        attach_changed_binding_predicate_evidence(&mut finding, Some(&relation));
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+        assert_eq!(finding.static_limit_kind, None);
+        assert!(finding.stop_reasons.is_empty());
+        assert!(finding.evidence.iter().any(|line| {
+            line == "binding_predicate_relation: changed binding `end` initializer `input.find(delim).map_or(0, |idx| idx)` -> `input.rfind(delim).map_or(0, |idx| idx)` flows into predicate operand at line 4"
+        }));
+        assert!(finding.evidence.iter().any(|line| {
+            line.contains("binding_predicate_value_unresolved: operand value of `end` unresolved at earliest initializer operation `rfind`")
+        }));
+        assert!(finding.evidence.iter().any(|line| {
+            line == "binding_predicate_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+        }));
     }
 }

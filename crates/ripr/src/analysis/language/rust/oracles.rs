@@ -250,17 +250,13 @@ fn is_known_rust_assertion_macro(macro_name: &str) -> bool {
         || compact.contains("snapshot")
 }
 
+fn rust_source_pointer(path: &std::path::Path, line: usize) -> String {
+    format!("{}:{}", path.display().to_string().replace('\\', "/"), line)
+}
+
 fn rust_macro_assertion_witness_pointer(witness: &RustMacroAssertionWitness) -> String {
-    let test_location = format!(
-        "{}:{}",
-        witness.test_file.display().to_string().replace('\\', "/"),
-        witness.test_line
-    );
-    let macro_location = format!(
-        "{}:{}",
-        witness.test_file.display().to_string().replace('\\', "/"),
-        witness.macro_line
-    );
+    let test_location = rust_source_pointer(&witness.test_file, witness.test_line);
+    let macro_location = rust_source_pointer(&witness.test_file, witness.macro_line);
     format!(
         "{}`{}` ({}) reaches the changed owner, then invokes assertion-like macro `{}!` at {}. ripr does not classify that macro as an oracle.",
         crate::domain::TRANSITIVE_REACH_WITNESS_PREFIX,
@@ -274,16 +270,8 @@ fn rust_macro_assertion_witness_pointer(witness: &RustMacroAssertionWitness) -> 
 fn rust_macro_assertion_limitation_detail_lines(
     witness: &RustMacroAssertionWitness,
 ) -> [String; 4] {
-    let test_location = format!(
-        "{}:{}",
-        witness.test_file.display().to_string().replace('\\', "/"),
-        witness.test_line
-    );
-    let macro_location = format!(
-        "{}:{}",
-        witness.test_file.display().to_string().replace('\\', "/"),
-        witness.macro_line
-    );
+    let test_location = rust_source_pointer(&witness.test_file, witness.test_line);
+    let macro_location = rust_source_pointer(&witness.test_file, witness.macro_line);
     [
         format!(
             "{}test `{}` ({}) -> assertion macro `{}!` at {}",
@@ -474,6 +462,14 @@ mod tests {
                 "{name} must not be named as an unresolved assertion-like macro"
             );
         }
+        // Documented over-credit: any compact name containing "snapshot" is
+        // treated as known, so a custom `assert_*snapshot*` macro is not
+        // named as unresolved. Pin that rather than silently tightening the
+        // matcher in this extraction slice.
+        assert!(is_known_rust_assertion_macro("assert_custom_snapshot"));
+        assert!(!is_unresolved_assertion_like_macro(
+            "assert_custom_snapshot"
+        ));
     }
 
     #[test]
@@ -599,6 +595,18 @@ let _ = (result, note, raw);"##,
             Some(StaticLimitKind::WrapperErrorBindingUnresolved)
         );
 
+        let mut returned =
+            reachable_unrevealed_finding_with_related_test("wraps", "tests/it.rs", 4);
+        returned.class = ExposureClass::WeaklyExposed;
+        returned.probe.family = ProbeFamily::ReturnValue;
+        returned.probe.expression = "try_parse(raw).map_err(Into::into)".to_string();
+        let probe = returned.probe.clone();
+        apply_wrapper_error_binding_limit(&mut returned, &probe);
+        assert_eq!(
+            returned.static_limit_kind,
+            Some(StaticLimitKind::WrapperErrorBindingUnresolved)
+        );
+
         let mut predicate =
             reachable_unrevealed_finding_with_related_test("wraps", "tests/it.rs", 4);
         predicate.class = ExposureClass::WeaklyExposed;
@@ -607,6 +615,20 @@ let _ = (result, note, raw);"##,
         let probe = predicate.probe.clone();
         apply_wrapper_error_binding_limit(&mut predicate, &probe);
         assert_eq!(predicate.static_limit_kind, None);
+
+        let mut already_named =
+            reachable_unrevealed_finding_with_related_test("wraps", "tests/it.rs", 4);
+        already_named.class = ExposureClass::WeaklyExposed;
+        already_named.probe.family = ProbeFamily::ErrorPath;
+        already_named.probe.expression = "try_parse(raw).map_err(Into::into)".to_string();
+        already_named.static_limit_kind =
+            Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
+        let probe = already_named.probe.clone();
+        apply_wrapper_error_binding_limit(&mut already_named, &probe);
+        assert_eq!(
+            already_named.static_limit_kind,
+            Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved)
+        );
     }
 
     #[test]

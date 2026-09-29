@@ -9,7 +9,7 @@ mod repo;
 
 pub(crate) use binding_predicate::{
     BindingPredicateResolution, BindingValueResolution, ChangedBindingPredicateUse,
-    resolve_changed_binding_uses,
+    PredicateOperandSide, resolve_changed_binding_uses,
 };
 pub(crate) use classify::parser_expression_for_probe;
 pub(crate) use diff::probes_for_file_with_relations;
