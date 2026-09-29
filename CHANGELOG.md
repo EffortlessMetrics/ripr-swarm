@@ -23,6 +23,14 @@ are scoped or reviewed.
   hide a redundant full rescan or duplicate diagnostic publication. The
   historical 2s/10s/30s figures remain proposals, not gates.
 
+### Changed
+
+- Git invocation timeout is a crate-internal typed `CoreError` variant. Semantic
+  consumers match the variant (including through structured context) instead of
+  the `git_invocation_timeout` Display prefix. Public wording, LSP
+  `git_invocation_timeout` kind (#2811), exit mapping, and process cleanup are
+  unchanged.
+
 ### Fixed
 
 - Changes in languages ripr does not analyze (Go, Java, C, C++, shell and

@@ -8309,8 +8309,15 @@ tests = [
   "crates/ripr/src/lsp/config.rs::tests::validated_pulled_options_rejects_wrong_typed_git_timeout_ms",
   "crates/ripr/src/lsp/config.rs::tests::session_value_sources_disclose_git_timeout_ms_origin",
   "crates/ripr/src/lsp/config.rs::tests::effective_settings_eq_compares_git_timeout",
+  "crates/ripr/src/core_error.rs::tests::display_parity_matches_the_public_timeout_wording",
+  "crates/ripr/src/core_error.rs::tests::lookalike_message_is_not_a_timeout",
+  "crates/ripr/src/core_error.rs::tests::wrapped_timeout_keeps_its_kind_without_a_prefix_match",
+  "crates/ripr/src/core_error.rs::tests::source_chain_is_inspectable_without_command_output",
+  "crates/ripr/src/core_error.rs::tests::ordinary_git_failure_stays_a_message_even_with_timeout_words_in_stderr",
+  "crates/ripr/src/core_error.rs::tests::prefix_matching_display_is_not_the_semantic_oracle",
   "crates/ripr/src/lsp/diagnostics.rs::git_timeout_error_converts_to_a_committed_limited_snapshot",
   "crates/ripr/src/lsp/diagnostics.rs::non_timeout_analysis_errors_are_not_converted",
+  "crates/ripr/src/lsp/diagnostics.rs::wrapped_timeout_still_converts_to_the_named_kind",
   "crates/ripr/src/lsp/git_inputs.rs::tests::timed_out_probe_fails_closed_as_unresolved",
   "crates/ripr/src/analysis/diff/load.rs::tests::zero_deadline_diff_load_fails_with_the_named_timeout_error",
   "crates/ripr/src/analysis/diff/load.rs::tests::zero_deadline_base_probes_fail_closed_instead_of_hanging",
@@ -8334,6 +8341,7 @@ code = [
   "crates/ripr/src/lsp/state.rs",
   "crates/ripr/src/lsp/backend.rs",
   "crates/ripr/src/git.rs",
+  "crates/ripr/src/core_error.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0136-lsp-configuration-pull.md",

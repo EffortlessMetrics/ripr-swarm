@@ -16,8 +16,9 @@ use crate::analysis::inventory_classified_seams_at_with_config;
 use crate::analysis::seams::SeamGripClass;
 use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_fields};
-use crate::app::check_workspace_worktree_with_config;
+use crate::app::check_workspace_worktree_core;
 use crate::config::{ConfigSeverity, LspDiagnosticProfile, SeverityConfig};
+use crate::core_error::CoreError;
 #[cfg(test)]
 use crate::domain::RelatedTest;
 use crate::domain::{DiagnosticWitness, ExposureClass, Finding, LanguageId, LanguageStatus};
@@ -731,14 +732,14 @@ pub(super) fn workspace_diagnostics_with_config(
     // client has persisted, through the same canonical path as
     // `ripr check --worktree`. Document quarantine remains the independent
     // authority that prevents unsaved buffers from being served as current.
-    let output = match check_workspace_worktree_with_config(input, config.repo_config()) {
+    let output = match check_workspace_worktree_core(input, config.repo_config()) {
         Ok(output) => output,
-        // #2303: a git invocation that exceeded the configured cooperative
-        // deadline commits a limited snapshot (zero findings, one typed
-        // failed `diff` outcome) instead of dropping the refresh with no
-        // snapshot. ONLY the named timeout error converts; every other
+        // #2303 / #4859: a git invocation that exceeded the configured
+        // cooperative deadline commits a limited snapshot (zero findings,
+        // one typed failed `diff` outcome) instead of dropping the refresh
+        // with no snapshot. ONLY the typed timeout converts; every other
         // analysis failure keeps the pre-#2303 no-snapshot path.
-        Err(err) if crate::git::is_git_invocation_timeout(&err) => {
+        Err(err) if err.is_git_invocation_timeout() => {
             return Ok(git_timeout_limited_diagnostics(
                 root,
                 config,
@@ -752,15 +753,17 @@ pub(super) fn workspace_diagnostics_with_config(
         // refresh with no snapshot, so the editor user sees the limitation
         // in-surface. ONLY the named guard error converts; the CLI keeps the
         // non-zero exit and unchanged error text.
-        Err(err) if crate::analysis::is_diff_scope_oversized(&err) => {
+        Err(err) if crate::analysis::is_diff_scope_oversized(&err.to_string()) => {
             return Ok(oversized_diff_limited_diagnostics(
                 root,
                 config,
                 defer_seam_inventory,
-                err,
+                err.into(),
             ));
         }
-        Err(err) => return Err(format!("workspace analysis failed: {err}")),
+        Err(err) => {
+            return Err(err.with_context("workspace analysis failed").into());
+        }
     };
     let root = output.root;
     let base = output.base;
@@ -1103,11 +1106,15 @@ fn git_timeout_limited_diagnostics(
     root: &Path,
     config: &LspAnalysisConfig,
     defer_seam_inventory: bool,
-    message: String,
+    error: CoreError,
 ) -> WorkspaceDiagnostics {
+    let kind = error
+        .git_invocation_timeout_kind()
+        .unwrap_or(crate::git::GIT_INVOCATION_TIMEOUT_PREFIX);
+    let message = error.to_string();
     let component_outcomes = vec![ComponentOutcome::failed(
         AnalysisComponent::Diff,
-        crate::git::GIT_INVOCATION_TIMEOUT_PREFIX,
+        kind,
         message,
         false,
         "retry ripr.refreshDiagnostics",
@@ -1525,11 +1532,13 @@ fn git_timeout_error_converts_to_a_committed_limited_snapshot() -> Result<(), St
     // replacement for the pre-#2303 no-snapshot path. Pure conversion: no
     // hung git required.
     let config = LspAnalysisConfig::default();
-    let message = "git_invocation_timeout: git -C /workspace [\"diff\", \"--unified=0\", \
-                   \"origin/main...HEAD\"] exceeded the 30000ms deadline (process terminated)"
-        .to_string();
+    let error = CoreError::git_invocation_timeout(
+        "git -C /workspace [\"diff\", \"--unified=0\", \"origin/main...HEAD\"]",
+        30000,
+        true,
+    );
     let diagnostics =
-        git_timeout_limited_diagnostics(Path::new("/workspace"), &config, false, message);
+        git_timeout_limited_diagnostics(Path::new("/workspace"), &config, false, error);
 
     if !diagnostics.snapshot.findings.is_empty() {
         return Err("a timed-out diff load must commit zero findings".to_string());
@@ -1607,22 +1616,59 @@ fn git_timeout_error_converts_to_a_committed_limited_snapshot() -> Result<(), St
 #[cfg(test)]
 #[test]
 fn non_timeout_analysis_errors_are_not_converted() -> Result<(), String> {
-    // #2303: the conversion guard matches ONLY the named timeout prefix; an
-    // ordinary analysis failure (missing base ref, parse error) keeps the
-    // pre-#2303 no-snapshot `Err` path.
+    // #2303 / #4859: the conversion guard matches ONLY the typed timeout
+    // variant; a lookalike Display prefix, wrapped Message, or ordinary
+    // analysis failure keeps the pre-#2303 no-snapshot `Err` path.
     for lookalike in [
-        "workspace analysis failed: git diff failed: fatal: ambiguous argument",
-        "agit_invocation_timeout: forged prefix must not match",
-        "could not resolve a default base (no origin/main, origin/master, or local main/master found)",
+        CoreError::message("workspace analysis failed: git diff failed: fatal: ambiguous argument"),
+        CoreError::message("agit_invocation_timeout: forged prefix must not match"),
+        CoreError::message("git_invocation_timeout: forged prefix must not match"),
+        CoreError::message(
+            "could not resolve a default base (no origin/main, origin/master, or local main/master found)",
+        ),
     ] {
-        if crate::git::is_git_invocation_timeout(lookalike) {
+        if lookalike.is_git_invocation_timeout() {
             return Err(format!("non-timeout error matched the guard: {lookalike}"));
         }
     }
-    if !crate::git::is_git_invocation_timeout(
-        "git_invocation_timeout: git -C /x [\"diff\"] exceeded the 1ms deadline (process terminated)",
-    ) {
+    let named = CoreError::git_invocation_timeout("git -C /x [\"diff\"]", 1, true);
+    if !named.is_git_invocation_timeout() {
         return Err("the named timeout error must match the guard".to_string());
+    }
+    let wrapped = named.clone().with_context("workspace analysis failed");
+    if !wrapped.is_git_invocation_timeout() {
+        return Err("wrapping a typed timeout must not lose the kind".to_string());
+    }
+    if wrapped
+        .to_string()
+        .starts_with(crate::core_error::GIT_INVOCATION_TIMEOUT_KIND)
+    {
+        return Err(
+            "wrapped Display must not start with the legacy prefix; prefix matching would miss it"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn wrapped_timeout_still_converts_to_the_named_kind() -> Result<(), String> {
+    // Control 4: structured context around a real timeout must not lose
+    // the #2811 kind. Prefix matching on Display would miss this case.
+    let config = LspAnalysisConfig::default();
+    let error = CoreError::git_invocation_timeout("git -C /workspace [\"diff\"]", 30000, true)
+        .with_context("workspace analysis failed");
+    let diagnostics =
+        git_timeout_limited_diagnostics(Path::new("/workspace"), &config, false, error);
+    let Some(outcome) = diagnostics.snapshot.component_outcomes.first() else {
+        return Err("expected the failed diff outcome".to_string());
+    };
+    if outcome.kind != Some("git_invocation_timeout") {
+        return Err(format!(
+            "wrapped timeout must still project git_invocation_timeout, got {:?}",
+            outcome.kind
+        ));
     }
     Ok(())
 }

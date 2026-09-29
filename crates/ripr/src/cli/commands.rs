@@ -13,6 +13,7 @@ use crate::cli::suggest::unknown_argument;
 #[cfg(test)]
 use crate::config::CONFIG_FILE_NAME;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
+use crate::core_error::CoreError;
 use crate::output;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -1301,14 +1302,14 @@ fn assistant_loop_health(args: &[String]) -> Result<(), String> {
 
 fn review_comments_with_diff_loader(
     args: &[String],
-    load_diff: impl Fn(&Path, &str, &str) -> Result<String, String>,
+    load_diff: impl Fn(&Path, &str, &str) -> Result<String, CoreError>,
 ) -> Result<(), String> {
     review_comments_with_diff_loader_at(args, load_diff, Instant::now)
 }
 
 fn review_comments_with_diff_loader_at(
     args: &[String],
-    load_diff: impl Fn(&Path, &str, &str) -> Result<String, String>,
+    load_diff: impl Fn(&Path, &str, &str) -> Result<String, CoreError>,
     now: impl Fn() -> Instant + Send + Sync + 'static,
 ) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -1456,14 +1457,19 @@ fn review_comments_with_diff_loader_at(
         load_diff(&input.root, &options.base, &options.head)
     })
     .map_err(|error| {
-        if crate::git::is_git_invocation_timeout(&error)
-            || (analysis::cancellation::is_cancellation_error(&error)
+        if error.is_git_invocation_timeout()
+            || (analysis::cancellation::is_cancellation_error(&error.to_string())
                 && cancellation.abort_kind()
                     == Some(analysis::cancellation::AnalysisAbortKind::DeadlineExceeded))
         {
             record_review_comments_timeout(&mut receipt, &receipt_path, "diff_discovery")
         } else {
-            record_review_comments_error(&mut receipt, &receipt_path, "diff_discovery", error)
+            record_review_comments_error(
+                &mut receipt,
+                &receipt_path,
+                "diff_discovery",
+                error.into(),
+            )
         }
     })?;
     if analysis::working_tree_has_tracked_changes(&input.root) {
@@ -3277,13 +3283,13 @@ fn parse_outcome_format(value: &str) -> Result<OutcomeFormat, String> {
 /// and head are verified like `ripr check` verifies its base, and the range
 /// uses the pinned diff presentation, so ambient `color.diff` or
 /// `diff.submodule` config cannot empty or widen the changed-line set.
-fn load_review_comments_diff(root: &Path, base: &str, head: &str) -> Result<String, String> {
+fn load_review_comments_diff(root: &Path, base: &str, head: &str) -> Result<String, CoreError> {
     let base = analysis::resolve_effective_base(
         root,
         Some(base),
         analysis::cancellation::remaining_budget(),
     )?;
-    analysis::load_diff_range_with_deadline(
+    analysis::load_diff_range_with_deadline_core(
         root,
         &base,
         head,
@@ -6847,17 +6853,19 @@ language = "rust"
             return Err("an unresolvable base must fail".to_string());
         };
         assert!(
-            err.contains("the base `no-such-base` does not resolve to a commit")
-                && !err.contains("ambiguous argument"),
+            err.to_string()
+                .contains("the base `no-such-base` does not resolve to a commit")
+                && !err.to_string().contains("ambiguous argument"),
             "base failure must be named by ripr, got: {err}"
         );
         let Err(err) = load_review_comments_diff(&root, "HEAD~1", "no-such-head") else {
             return Err("an unresolvable head must fail".to_string());
         };
         assert!(
-            err.contains("the head `no-such-head` does not resolve to a commit")
-                && err.contains("--head <ref>")
-                && !err.contains("ambiguous argument"),
+            err.to_string()
+                .contains("the head `no-such-head` does not resolve to a commit")
+                && err.to_string().contains("--head <ref>")
+                && !err.to_string().contains("ambiguous argument"),
             "head failure must be named by ripr, got: {err}"
         );
         remove_fixture_tree(&root)
@@ -6874,7 +6882,7 @@ language = "rust"
             &args(&[
                 "--root", &root_arg, "--base", "main", "--head", "HEAD", "--out", &out_arg,
             ]),
-            |_root, _base, _head| Err("synthetic diff failure".to_string()),
+            |_root, _base, _head| Err("synthetic diff failure".into()),
         );
 
         assert_eq!(result, Err("synthetic diff failure".to_string()));
@@ -7151,7 +7159,7 @@ language = "rust"
                 "--out",
                 &out.display().to_string(),
             ]),
-            |_root, _base, _head| Err("gap-ledger path should not load git diff".to_string()),
+            |_root, _base, _head| Err("gap-ledger path should not load git diff".into()),
         )?;
 
         let rendered_json = std::fs::read_to_string(&out)
@@ -7199,7 +7207,7 @@ language = "rust"
                 "--out",
                 &out.display().to_string(),
             ]),
-            |_root, _base, _head| Err("gap-ledger path should not load git diff".to_string()),
+            |_root, _base, _head| Err("gap-ledger path should not load git diff".into()),
         ) {
             Ok(()) => return Err("missing gap ledger should fail before diff loading".to_string()),
             Err(err) => err,
@@ -7233,7 +7241,7 @@ language = "rust"
                 "--out",
                 &out.display().to_string(),
             ]),
-            |_root, _base, _head| Err("gap-ledger path should not load git diff".to_string()),
+            |_root, _base, _head| Err("gap-ledger path should not load git diff".into()),
         ) {
             Ok(()) => {
                 return Err("malformed gap ledger should fail before diff loading".to_string());
@@ -9830,7 +9838,7 @@ language = "rust"
                 "--out",
                 &out.display().to_string(),
             ]),
-            |_, _, _| Err("source failure before the next deadline observation".to_string()),
+            |_, _, _| Err("source failure before the next deadline observation".into()),
             move || {
                 if owned_calls.fetch_add(1, Ordering::SeqCst) == 0 {
                     started
@@ -9950,7 +9958,7 @@ language = "rust"
                 "--out",
                 &out.display().to_string(),
             ]),
-            |_root, _base, _head| Err("diff loader must not run".to_string()),
+            |_root, _base, _head| Err("diff loader must not run".into()),
             move || {
                 let call = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 if call == 0 {

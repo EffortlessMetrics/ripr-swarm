@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+use crate::core_error::CoreError;
+
 #[cfg(test)]
 mod contract_tests;
 
@@ -77,15 +79,42 @@ pub fn load_diff(
     diff_file: Option<&PathBuf>,
     git_timeout: Option<Duration>,
 ) -> Result<String, String> {
-    load_diff_with_effective_base(root, base, diff_file, git_timeout).map(|loaded| loaded.text)
+    load_diff_core(root, base, diff_file, git_timeout).map_err(Into::into)
 }
 
+pub(crate) fn load_diff_core(
+    root: &Path,
+    base: Option<&str>,
+    diff_file: Option<&PathBuf>,
+    git_timeout: Option<Duration>,
+) -> Result<String, CoreError> {
+    load_diff_with_effective_base_core(root, base, diff_file, git_timeout).map(|loaded| loaded.text)
+}
+
+/// String compatibility wrapper around [`load_diff_with_effective_base_core`].
+/// Production analysis uses the typed core; tests pin Display parity here.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "public String boundary for LoadedDiff; production analysis uses load_diff_with_effective_base_core"
+    )
+)]
 pub fn load_diff_with_effective_base(
     root: &Path,
     base: Option<&str>,
     diff_file: Option<&PathBuf>,
     git_timeout: Option<Duration>,
 ) -> Result<LoadedDiff, String> {
+    load_diff_with_effective_base_core(root, base, diff_file, git_timeout).map_err(Into::into)
+}
+
+pub(crate) fn load_diff_with_effective_base_core(
+    root: &Path,
+    base: Option<&str>,
+    diff_file: Option<&PathBuf>,
+    git_timeout: Option<Duration>,
+) -> Result<LoadedDiff, CoreError> {
     if let Some(diff_file) = diff_file {
         if diff_file == std::path::Path::new("-") {
             // #4319: this read blocks until EOF. On an attached terminal that
@@ -109,7 +138,8 @@ pub fn load_diff_with_effective_base(
             return Err(format!(
                 "failed to read diff file {}: the path is a directory, not a unified diff file; pass a diff file path, or `-` to read the diff from stdin",
                 diff_file.display()
-            ));
+            )
+            .into());
         }
         // #4480: bounded, so `--diff /dev/zero` or a multi-GB log fails with
         // the input limit instead of reading until memory is exhausted.
@@ -129,7 +159,8 @@ pub fn load_diff_with_effective_base(
         return Err(format!(
             "repository root {} does not exist or is not a directory",
             root.display()
-        ));
+        )
+        .into());
     }
 
     warn_if_git_operation_in_progress(root, git_timeout);
@@ -158,14 +189,39 @@ pub fn load_worktree_diff(
     base: Option<&str>,
     git_timeout: Option<Duration>,
 ) -> Result<String, String> {
-    load_worktree_diff_with_effective_base(root, base, git_timeout).map(|loaded| loaded.text)
+    load_worktree_diff_core(root, base, git_timeout).map_err(Into::into)
 }
 
+pub(crate) fn load_worktree_diff_core(
+    root: &Path,
+    base: Option<&str>,
+    git_timeout: Option<Duration>,
+) -> Result<String, CoreError> {
+    load_worktree_diff_with_effective_base_core(root, base, git_timeout).map(|loaded| loaded.text)
+}
+
+/// String compatibility wrapper around [`load_worktree_diff_with_effective_base_core`].
+/// Production analysis uses the typed core; tests pin Display parity here.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "public String boundary for LoadedDiff; production analysis uses load_worktree_diff_with_effective_base_core"
+    )
+)]
 pub fn load_worktree_diff_with_effective_base(
     root: &Path,
     base: Option<&str>,
     git_timeout: Option<Duration>,
 ) -> Result<LoadedDiff, String> {
+    load_worktree_diff_with_effective_base_core(root, base, git_timeout).map_err(Into::into)
+}
+
+pub(crate) fn load_worktree_diff_with_effective_base_core(
+    root: &Path,
+    base: Option<&str>,
+    git_timeout: Option<Duration>,
+) -> Result<LoadedDiff, CoreError> {
     warn_if_git_operation_in_progress(root, git_timeout);
 
     let base = resolve_effective_base(root, base, git_timeout)?;
@@ -563,6 +619,15 @@ pub(crate) fn load_diff_range_with_deadline(
     head: &str,
     git_timeout: Option<Duration>,
 ) -> Result<String, String> {
+    load_diff_range_with_deadline_core(root, base, head, git_timeout).map_err(Into::into)
+}
+
+pub(crate) fn load_diff_range_with_deadline_core(
+    root: &Path,
+    base: &str,
+    head: &str,
+    git_timeout: Option<Duration>,
+) -> Result<String, CoreError> {
     verify_head_revision(root, head, git_timeout)?;
     run_git_diff(
         root,
@@ -780,7 +845,7 @@ fn run_git_diff(
     range: &str,
     extra_args: &[&str],
     git_timeout: Option<Duration>,
-) -> Result<String, String> {
+) -> Result<String, CoreError> {
     // Analysis loaders consume source-coordinate patches: zero context
     // lines stay the assembly default.
     //
@@ -803,7 +868,7 @@ fn run_git_diff_with_unified(
     extra_args: &[&str],
     unified: &str,
     git_timeout: Option<Duration>,
-) -> Result<String, String> {
+) -> Result<String, CoreError> {
     // Analysis decodes lossy (unchanged): coordinates come from the
     // C-quoted path contract above, and hunk bodies are parsed, not
     // recorded as evidence.
@@ -823,7 +888,7 @@ fn run_git_diff_bytes(
     extra_args: &[&str],
     unified: &str,
     git_timeout: Option<Duration>,
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, CoreError> {
     // Delegate the spawn to the shared git authority (#1921, #2303), which
     // spawns with `current_dir(root)`. A missing root never reaches the
     // spawn: `load_diff_with_effective_base` rejects non-directories up
@@ -843,9 +908,9 @@ fn run_git_diff_bytes(
     // The range is the one caller-derived argument; one starting with `-`
     // would be parsed as a diff option, so refuse it at the sink.
     if range.starts_with('-') {
-        return Err(format!(
-            "refusing to diff `{range}`: a revision range cannot start with `-`"
-        ));
+        return Err(
+            format!("refusing to diff `{range}`: a revision range cannot start with `-`").into(),
+        );
     }
     let mut args: Vec<&str> = vec!["-c", "core.quotePath=true", "diff"];
     args.extend_from_slice(extra_args);
@@ -877,12 +942,14 @@ fn run_git_diff_bytes(
     let output = match crate::git::run_git_output_with_deadline(root, &args, git_timeout) {
         Ok(output) => output,
         Err(err)
-            if crate::git::is_git_invocation_timeout(&err)
-                || crate::analysis::cancellation::is_cancellation_error(&err) =>
+            if err.is_git_invocation_timeout()
+                || crate::analysis::cancellation::is_cancellation_error(&err.to_string()) =>
         {
             return Err(err);
         }
-        Err(err) => return Err(format!("failed to run git diff: {err}")),
+        Err(err) => {
+            return Err(CoreError::message(format!("failed to run git diff: {err}")));
+        }
     };
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -892,7 +959,7 @@ fn run_git_diff_bytes(
         } else {
             String::new()
         };
-        return Err(format!("git diff failed: {stderr}{hint}"));
+        return Err(format!("git diff failed: {stderr}{hint}").into());
     }
 
     Ok(output.stdout)
@@ -2188,17 +2255,29 @@ mod tests {
     #[test]
     fn zero_deadline_diff_load_fails_with_the_named_timeout_error() -> std::io::Result<()> {
         // #2303: a deadline that cannot be met fails before spawning with the
-        // named, matchable `git_invocation_timeout` error — the string the
+        // named, matchable typed `git_invocation_timeout` error — the kind the
         // LSP refresh path converts into a committed limited snapshot.
         let dir = unique_fixture_root("load-diff-zero-deadline")?;
         ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
 
-        let result = load_diff(&dir, Some("HEAD"), None, Some(Duration::ZERO));
-        let err = result.expect_err("a zero deadline must fail the diff load");
+        let public = load_diff(&dir, Some("HEAD"), None, Some(Duration::ZERO))
+            .expect_err("a zero deadline must fail the diff load");
+        let err = load_diff_core(&dir, Some("HEAD"), None, Some(Duration::ZERO))
+            .expect_err("a zero deadline must fail the typed diff load");
+        assert_eq!(
+            err.to_string(),
+            public,
+            "public Display must stay byte-identical"
+        );
         assert!(
-            crate::git::is_git_invocation_timeout(&err),
-            "expected the named git_invocation_timeout error, got: {err}"
+            err.is_git_invocation_timeout(),
+            "expected the typed git_invocation_timeout error, got: {err}"
+        );
+        let lookalike = CoreError::message(err.to_string());
+        assert!(
+            !lookalike.is_git_invocation_timeout(),
+            "re-wrapping the Display as Message must not recover the typed kind"
         );
 
         ignore_remove_dir_all(&dir);

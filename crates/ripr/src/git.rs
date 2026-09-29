@@ -6,20 +6,22 @@
 //! unified and the process-policy allowlist has a single canonical entry
 //! point.
 //!
-//! #2303: every entry point accepts an optional cooperative deadline. When a
-//! deadline is set, the child is polled on a short interval; a git invocation
-//! that exceeds the deadline is terminated and reaped, and the caller gets a
-//! named, matchable error with the [`GIT_INVOCATION_TIMEOUT_PREFIX`] prefix.
-//! The poll loop also checks cooperative analysis cancellation each tick, so
-//! a hung git invocation honors an LSP refresh supersede instead of pinning
-//! the refresh worker. `None` keeps the invocation unbounded (the CLI
-//! behavior — byte-identical to the pre-#2303 path).
+//! #2303 / #4859: every entry point accepts an optional cooperative deadline.
+//! When a deadline is set, the child is polled on a short interval; a git
+//! invocation that exceeds the deadline is terminated and reaped, and the
+//! caller gets a typed [`crate::core_error::CoreError::GitInvocationTimeout`].
+//! Display keeps the public `git_invocation_timeout:` wording. The poll loop
+//! also checks cooperative analysis cancellation each tick, so a hung git
+//! invocation honors an LSP refresh supersede instead of pinning the refresh
+//! worker. `None` keeps the invocation unbounded (the CLI behavior —
+//! byte-identical to the pre-#2303 path).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use crate::core_error::CoreError;
 use crate::process_owner::OwnedProcess;
 
 /// Grace period for draining stdout/stderr after a timed process-tree kill.
@@ -29,16 +31,11 @@ use crate::process_owner::OwnedProcess;
 /// LSP worker indefinitely while still allowing normal output to finish.
 const POST_KILL_DRAIN_GRACE: Duration = Duration::from_secs(5);
 
-/// Named, matchable prefix for git invocation timeout errors (#2303). The
-/// LSP refresh path matches this prefix to convert a diff-load timeout into
-/// a committed limited snapshot instead of a dropped refresh.
-pub(crate) const GIT_INVOCATION_TIMEOUT_PREFIX: &str = "git_invocation_timeout";
-
-/// True when `error` is the named git invocation timeout error (#2303).
-/// Matchable in the style of `analysis::cancellation::is_cancellation_error`.
-pub(crate) fn is_git_invocation_timeout(error: &str) -> bool {
-    error.starts_with(GIT_INVOCATION_TIMEOUT_PREFIX)
-}
+/// Public Display / LSP kind token for git invocation timeout (#2303 / #2811).
+/// Semantic consumers match [`CoreError::is_git_invocation_timeout`]; this
+/// constant is the rendered/projection spelling, not a production matcher.
+pub(crate) const GIT_INVOCATION_TIMEOUT_PREFIX: &str =
+    crate::core_error::GIT_INVOCATION_TIMEOUT_KIND;
 
 /// Poll interval for the deadline/cancellation wait loop.
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -52,28 +49,28 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// stdout: <first 500 chars>
 /// stderr: <trimmed>
 /// ```
-pub(crate) fn run_git(root: &Path, args: &[&str]) -> Result<String, String> {
+pub(crate) fn run_git(root: &Path, args: &[&str]) -> Result<String, CoreError> {
     let output = run_git_output_with_deadline(root, args, None)?;
     if output.status.success() {
         String::from_utf8(output.stdout)
             .map(|value| value.trim().to_string())
             .map_err(|err| {
-                format!(
+                CoreError::message(format!(
                     "git -C {} {:?} produced non-UTF-8 output: {err}",
                     root.display(),
                     args
-                )
+                ))
             })
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(format!(
+        Err(CoreError::message(format!(
             "git -C {} {:?} failed\nstdout: {}\nstderr: {}",
             root.display(),
             args,
             stdout.trim(),
             stderr.trim()
-        ))
+        )))
     }
 }
 
@@ -91,15 +88,15 @@ fn trimmed_stdout(output: &std::process::Output) -> Result<String, String> {
 ///
 /// `Err` is reserved for invocation-level failures: spawn failure, wait
 /// failure, cooperative cancellation, a zero deadline (rejected before
-/// spawning), or deadline expiry (named [`GIT_INVOCATION_TIMEOUT_PREFIX`]
-/// error, child terminated and reaped). A non-zero exit status is `Ok` so
+/// spawning), or deadline expiry (typed [`CoreError::GitInvocationTimeout`],
+/// child terminated and reaped). A non-zero exit status is `Ok` so
 /// callers that probe (`rev-parse --verify --quiet`, `symbolic-ref --quiet`)
 /// keep their own status handling.
 pub(crate) fn run_git_output_with_deadline(
     root: &Path,
     args: &[&str],
     timeout: Option<Duration>,
-) -> Result<Output, String> {
+) -> Result<Output, CoreError> {
     let describe = format!("git -C {} {:?}", root.display(), args);
     let command = git_command(root, args);
     // `current_dir(root)`, not `git -C <root>`: for a missing/unusable root
@@ -238,9 +235,11 @@ pub(crate) fn run_git_output_with_deadline_and_limit(
     args: &[&str],
     timeout: Duration,
     max_output_bytes: usize,
-) -> Result<Output, String> {
+) -> Result<Output, CoreError> {
     if max_output_bytes == 0 {
-        return Err("git output limit must be greater than zero".to_string());
+        return Err(CoreError::message(
+            "git output limit must be greater than zero",
+        ));
     }
     let describe = format!("git -C {} {:?}", root.display(), args);
     collect_output_with_deadline_and_limit(
@@ -257,9 +256,11 @@ pub(crate) fn run_git_output_with_deadline_and_limit_isolated(
     args: &[&str],
     timeout: Duration,
     max_output_bytes: usize,
-) -> Result<Output, String> {
+) -> Result<Output, CoreError> {
     if max_output_bytes == 0 {
-        return Err("git output limit must be greater than zero".to_string());
+        return Err(CoreError::message(
+            "git output limit must be greater than zero",
+        ));
     }
     let describe = format!("isolated git -C {} {:?}", root.display(), args);
     let mut command = git_command(root, args);
@@ -285,7 +286,7 @@ pub(crate) fn collect_output_with_deadline_and_limit(
     timeout: Duration,
     max_output_bytes: usize,
     describe: &str,
-) -> Result<Output, String> {
+) -> Result<Output, CoreError> {
     collect_output_with_optional_deadline_and_limit(
         command,
         Some(timeout),
@@ -302,9 +303,11 @@ pub(crate) fn run_git_output_with_optional_deadline_and_limit(
     args: &[&str],
     timeout: Option<Duration>,
     max_output_bytes: usize,
-) -> Result<Output, String> {
+) -> Result<Output, CoreError> {
     if max_output_bytes == 0 {
-        return Err("git output limit must be greater than zero".to_string());
+        return Err(CoreError::message(
+            "git output limit must be greater than zero",
+        ));
     }
     let describe = format!("git -C {} {:?}", root.display(), args);
     collect_output_with_optional_deadline_and_limit(
@@ -320,11 +323,9 @@ fn collect_output_with_optional_deadline_and_limit(
     timeout: Option<Duration>,
     max_output_bytes: usize,
     describe: &str,
-) -> Result<Output, String> {
+) -> Result<Output, CoreError> {
     if timeout.is_some_and(|timeout| timeout.is_zero()) {
-        return Err(format!(
-            "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} was given a zero deadline (not spawned)"
-        ));
+        return Err(CoreError::git_invocation_timeout(describe, 0, false));
     }
     command
         .stdin(Stdio::null())
@@ -353,17 +354,23 @@ fn collect_output_with_optional_deadline_and_limit(
     let stderr = stderr_result?;
 
     match wait {
-        ChildWait::Exited(_) if stdout.exceeded || stderr.exceeded => Err(format!(
-            "git_output_limit_exceeded: {describe} exceeded the {max_output_bytes}-byte per-stream capture limit"
-        )),
+        ChildWait::Exited(_) if stdout.exceeded || stderr.exceeded => {
+            Err(CoreError::message(format!(
+                "git_output_limit_exceeded: {describe} exceeded the {max_output_bytes}-byte per-stream capture limit"
+            )))
+        }
         ChildWait::Exited(status) => Ok(Output {
             status,
             stdout: stdout.bytes,
             stderr: stderr.bytes,
         }),
-        ChildWait::TimedOut(message) | ChildWait::Cancelled(message) => Err(message),
-        ChildWait::WaitFailed(err) => Err(format!("failed while waiting on {describe}: {err}")),
-        ChildWait::CleanupFailed(message) => Err(message),
+        ChildWait::TimedOut(error) => Err(error),
+        ChildWait::Cancelled(message) | ChildWait::CleanupFailed(message) => {
+            Err(CoreError::message(message))
+        }
+        ChildWait::WaitFailed(err) => Err(CoreError::message(format!(
+            "failed while waiting on {describe}: {err}"
+        ))),
     }
 }
 
@@ -474,13 +481,11 @@ fn collect_output_with_deadline(
     mut command: Command,
     timeout: Option<Duration>,
     describe: &str,
-) -> Result<Output, String> {
+) -> Result<Output, CoreError> {
     if let Some(deadline) = timeout
         && deadline.is_zero()
     {
-        return Err(format!(
-            "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} was given a zero deadline (not spawned)"
-        ));
+        return Err(CoreError::git_invocation_timeout(describe, 0, false));
     }
     command
         .stdin(Stdio::null())
@@ -508,9 +513,13 @@ fn collect_output_with_deadline(
             stdout,
             stderr,
         }),
-        ChildWait::TimedOut(message) | ChildWait::Cancelled(message) => Err(message),
-        ChildWait::WaitFailed(err) => Err(format!("failed while waiting on {describe}: {err}")),
-        ChildWait::CleanupFailed(message) => Err(message),
+        ChildWait::TimedOut(error) => Err(error),
+        ChildWait::Cancelled(message) | ChildWait::CleanupFailed(message) => {
+            Err(CoreError::message(message))
+        }
+        ChildWait::WaitFailed(err) => Err(CoreError::message(format!(
+            "failed while waiting on {describe}: {err}"
+        ))),
     }
 }
 
@@ -525,7 +534,7 @@ fn collect_output_with_deadline(
 /// outcome instead of implying that termination completed.
 pub(crate) enum ChildWait {
     Exited(std::process::ExitStatus),
-    TimedOut(String),
+    TimedOut(CoreError),
     Cancelled(String),
     WaitFailed(String),
     CleanupFailed(String),
@@ -538,10 +547,10 @@ impl ChildWait {
     fn summary(&self) -> String {
         match self {
             Self::Exited(status) => format!("child exited with {status}"),
-            Self::TimedOut(message)
-            | Self::Cancelled(message)
-            | Self::WaitFailed(message)
-            | Self::CleanupFailed(message) => message.clone(),
+            Self::TimedOut(error) => error.to_string(),
+            Self::Cancelled(message) | Self::WaitFailed(message) | Self::CleanupFailed(message) => {
+                message.clone()
+            }
         }
     }
 }
@@ -582,8 +591,8 @@ pub(crate) fn poll_child(
                     return terminate_then_classify(
                         describe,
                         "timeout",
-                        ChildWait::TimedOut(format!(
-                            "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} exceeded the {timeout_ms}ms deadline (process terminated)"
+                        ChildWait::TimedOut(CoreError::git_invocation_timeout(
+                            describe, timeout_ms, true,
                         )),
                         || child.terminate_tree(),
                     );
@@ -1010,9 +1019,13 @@ mod tests {
             poll_child(child, Some(Duration::from_millis(50)), "hang-reap-proof")
         };
         let arm_ok = match (&wait, cancelled) {
-            (ChildWait::TimedOut(message), false) => message.contains("exceeded the 50ms deadline"),
+            (ChildWait::TimedOut(error), false) => {
+                error.is_git_invocation_timeout()
+                    && error.to_string().contains("exceeded the 50ms deadline")
+            }
             (ChildWait::Cancelled(message), true) => {
-                is_cancellation_error(message) && !is_git_invocation_timeout(message)
+                is_cancellation_error(message)
+                    && !CoreError::message(message).is_git_invocation_timeout()
             }
             _ => false,
         };
@@ -1033,8 +1046,10 @@ mod tests {
                 "hung child wait took the wrong arm for cancelled={cancelled}: {}",
                 match wait {
                     ChildWait::Exited(status) => format!("exited: {status}"),
-                    ChildWait::TimedOut(message) | ChildWait::Cancelled(message) => message,
-                    ChildWait::WaitFailed(error) | ChildWait::CleanupFailed(error) => error,
+                    ChildWait::TimedOut(error) => error.to_string(),
+                    ChildWait::Cancelled(message)
+                    | ChildWait::WaitFailed(message)
+                    | ChildWait::CleanupFailed(message) => message,
                 }
             ));
         }
@@ -1057,7 +1072,7 @@ mod tests {
         let wait = terminate_then_classify(
             "stub child",
             "timeout",
-            ChildWait::TimedOut("stub: exceeded the deadline".to_string()),
+            ChildWait::TimedOut(CoreError::message("stub: exceeded the deadline")),
             || Err("incomplete tree cleanup: refused termination request".to_string()),
         );
         let ChildWait::CleanupFailed(message) = &wait else {
@@ -1123,7 +1138,7 @@ mod tests {
             Err(msg) => msg,
             Ok(_) => return Err("expected error for nonexistent git ref".to_string()),
         };
-        if !err.contains("failed") {
+        if !err.to_string().contains("failed") {
             return Err(format!("error should contain 'failed': {err}"));
         }
         Ok(())
@@ -1142,10 +1157,10 @@ mod tests {
             Err(err) => err,
             Ok(_) => return Err("a hung invocation must fail, not collect output".to_string()),
         };
-        if !is_git_invocation_timeout(&err) {
+        if !err.is_git_invocation_timeout() {
             return Err(format!("expected the named timeout error, got: {err}"));
         }
-        if !err.contains("exceeded the 50ms deadline") {
+        if !err.to_string().contains("exceeded the 50ms deadline") {
             return Err(format!(
                 "timeout error should name the deadline, got: {err}"
             ));
@@ -1271,10 +1286,10 @@ mod tests {
                 return Err("a descendant-holding invocation must fail with a timeout".to_string());
             }
         };
-        if !is_git_invocation_timeout(&err) {
+        if !err.is_git_invocation_timeout() {
             return Err(format!("expected the named timeout error, got: {err}"));
         }
-        if !err.contains("exceeded the 20000ms deadline") {
+        if !err.to_string().contains("exceeded the 20000ms deadline") {
             return Err(format!(
                 "timeout error should name the deadline, got: {err}"
             ));
@@ -1327,10 +1342,10 @@ mod tests {
             Err(err) => err,
             Ok(_) => return Err("a zero deadline must fail before spawning".to_string()),
         };
-        if !is_git_invocation_timeout(&err) {
+        if !err.is_git_invocation_timeout() {
             return Err(format!("expected the named timeout error, got: {err}"));
         }
-        if !err.contains("zero deadline (not spawned)") {
+        if !err.to_string().contains("zero deadline (not spawned)") {
             return Err(format!(
                 "zero-deadline error should say pre-spawn, got: {err}"
             ));
@@ -1356,10 +1371,10 @@ mod tests {
             Err(err) => err,
             Ok(_) => return Err("a cancelled invocation must fail".to_string()),
         };
-        if !is_cancellation_error(&err) {
+        if !is_cancellation_error(&err.to_string()) {
             return Err(format!("expected the cancellation error, got: {err}"));
         }
-        if is_git_invocation_timeout(&err) {
+        if err.is_git_invocation_timeout() {
             return Err(format!(
                 "cancellation must win over the deadline, got: {err}"
             ));
@@ -1499,7 +1514,7 @@ mod tests {
             run_git_output_with_deadline_and_limit(missing, &["status"], Duration::from_secs(1), 0)
                 .err()
                 .ok_or_else(|| "zero output limit unexpectedly spawned Git".to_string())?;
-        if error != "git output limit must be greater than zero" {
+        if error.to_string() != "git output limit must be greater than zero" {
             return Err(format!("unexpected zero-limit error: {error}"));
         }
         Ok(())
@@ -1516,7 +1531,7 @@ mod tests {
         )
         .err()
         .ok_or_else(|| "one-byte Git output limit unexpectedly succeeded".to_string())?;
-        if !error.starts_with("git_output_limit_exceeded:") {
+        if !error.to_string().starts_with("git_output_limit_exceeded:") {
             return Err(format!("unexpected output-limit error: {error}"));
         }
         Ok(())
