@@ -860,6 +860,7 @@ fn run_git_diff_bytes(
         Ok(output) => output,
         Err(err)
             if crate::git::is_git_invocation_timeout(&err)
+                || crate::git::is_git_not_found_on_path(&err)
                 || crate::analysis::cancellation::is_cancellation_error(&err) =>
         {
             return Err(err);
