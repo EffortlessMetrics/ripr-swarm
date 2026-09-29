@@ -161,7 +161,19 @@ fn git_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         "candidate source Git identity",
     )?;
     if output.timed_out || !output.status.is_some_and(|status| status.success()) {
-        return Err("candidate source Git identity command failed or timed out".to_string());
+        let stderr_prefix = output
+            .stderr
+            .get(..output.stderr.len().min(4096))
+            .unwrap_or_default();
+        return Err(format!(
+            "candidate source Git identity command failed or timed out: args={args:?}, root={root:?}, timed_out={}, status={:?}, duration={:?}, stdout_bytes={}, stderr_bytes={}, stderr_prefix={}",
+            output.timed_out,
+            output.status,
+            output.duration,
+            output.stdout.len(),
+            output.stderr.len(),
+            String::from_utf8_lossy(stderr_prefix).escape_debug()
+        ));
     }
     Ok(output.stdout)
 }
