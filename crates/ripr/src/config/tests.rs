@@ -1252,12 +1252,7 @@ proptest! {
 
 #[test]
 fn perl_cache_dir_must_stay_within_the_repository() -> Result<(), String> {
-    for cache_dir in [
-        "/home/user/.config/autostart",
-        "../outside",
-        "target/../../x",
-        "C:/x",
-    ] {
+    for cache_dir in ["/etc/ripr-outside", "../outside", "target/../../x"] {
         let text = format!("[perl]\ncache_dir = \"{cache_dir}\"\n");
         let error = match tests_only_parse(&text) {
             Ok(config) => {

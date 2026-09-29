@@ -2094,7 +2094,7 @@ fn generated_cleanup_step_removes_checked_in_ripr_artifacts() -> Result<(), Box<
     );
     assert!(
         remaining.is_empty(),
-        "forged inputs survived: {remaining:?}"
+        "forged inputs remained: {remaining:?}"
     );
     assert!(kept, "cleanup removed unrelated target output");
     Ok(())
