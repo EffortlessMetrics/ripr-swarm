@@ -21,11 +21,6 @@ are scoped or reviewed.
 
 ### Fixed
 
-- Two-way diff hunks with missing or excess body lines, or invalid numeric
-  ranges, disclose incomplete analysis instead of reporting a complete result.
-  File and piped input retain earlier changes as advisory evidence and carry
-  the typed malformed-diff recovery route (#4375).
-
 - `ripr check` is faster on large repositories, with byte-identical JSON on
   12 real commits of tokio, vite, Django and ripr. TypeScript test selection
   walked the directory tree for `package.json` twice per owner and test;
@@ -1306,6 +1301,11 @@ are scoped or reviewed.
   become misses and are recomputed. A `ripr check` artifact from another
   build of the same version is refused for reuse, and the `analyzer_version`
   in a targeted-rerun input fingerprint carries the same build identity.
+
+- Two-way diff hunks with missing or excess body lines, or invalid numeric
+  ranges, disclose incomplete analysis instead of reporting a complete result.
+  File and piped input retain earlier changes as advisory evidence and carry
+  the typed malformed-diff recovery route (#4375).
 
 ### Added
 
