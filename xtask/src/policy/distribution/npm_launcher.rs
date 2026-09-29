@@ -74,19 +74,43 @@ pub(super) fn validate_launcher(
     let manifest: LauncherManifest = match serde_json::from_str(text) {
         Ok(manifest) => manifest,
         Err(err) => {
-            violations.push(format!("{path}: invalid npm launcher package manifest: {err}"));
+            violations.push(format!(
+                "{path}: invalid npm launcher package manifest: {err}"
+            ));
             return;
         }
     };
 
-    check_equal(path, "name", &manifest.name, &contract.npm.launcher, violations);
-    check_equal(path, "version", &manifest.version, workspace_version, violations);
-    check_equal(path, "license", &manifest.license, "MIT OR Apache-2.0", violations);
+    check_equal(
+        path,
+        "name",
+        &manifest.name,
+        &contract.npm.launcher,
+        violations,
+    );
+    check_equal(
+        path,
+        "version",
+        &manifest.version,
+        workspace_version,
+        violations,
+    );
+    check_equal(
+        path,
+        "license",
+        &manifest.license,
+        "MIT OR Apache-2.0",
+        violations,
+    );
     check_equal(path, "type", &manifest.module_type, "commonjs", violations);
     check_equal(
         path,
         "bin.ripr",
-        manifest.bin.get("ripr").map(String::as_str).unwrap_or_default(),
+        manifest
+            .bin
+            .get("ripr")
+            .map(String::as_str)
+            .unwrap_or_default(),
         "bin/ripr.cjs",
         violations,
     );
@@ -97,7 +121,11 @@ pub(super) fn validate_launcher(
         ));
     }
 
-    let actual_files = manifest.files.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    let actual_files = manifest
+        .files
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
     let expected_files = EXPECTED_FILES.iter().copied().collect::<BTreeSet<_>>();
     if actual_files.len() != manifest.files.len() {
         violations.push(format!("{path}: files contains duplicate entries"));
@@ -112,7 +140,11 @@ pub(super) fn validate_launcher(
     check_equal(
         path,
         "engines.node",
-        manifest.engines.get("node").map(String::as_str).unwrap_or_default(),
+        manifest
+            .engines
+            .get("node")
+            .map(String::as_str)
+            .unwrap_or_default(),
         ">=20",
         violations,
     );
@@ -197,14 +229,28 @@ pub(super) fn validate_launcher_sources(
     violations: &mut Vec<String>,
 ) {
     if !bin_text.starts_with("#!/usr/bin/env node\n") {
-        violations.push(format!("{bin_path}: launcher bin must use the Node env shebang"));
+        violations.push(format!(
+            "{bin_path}: launcher bin must use the Node env shebang"
+        ));
     }
     for (needle, explanation) in [
         ("shell: false", "spawn must disable shell interpretation"),
-        ("stdio: \"inherit\"", "native stdio must be inherited without wrapper output"),
-        ("createRequire", "native packages must resolve relative to the launcher"),
-        ("realpathSync", "native package/executable confinement must use real paths"),
-        ("optional dependencies enabled", "missing-payload recovery must be actionable"),
+        (
+            "stdio: \"inherit\"",
+            "native stdio must be inherited without wrapper output",
+        ),
+        (
+            "createRequire",
+            "native packages must resolve relative to the launcher",
+        ),
+        (
+            "realpathSync",
+            "native package/executable confinement must use real paths",
+        ),
+        (
+            "optional dependencies enabled",
+            "missing-payload recovery must be actionable",
+        ),
     ] {
         if !library_text.contains(needle) {
             violations.push(format!("{library_path}: {explanation}; missing `{needle}`"));
