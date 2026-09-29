@@ -16,6 +16,7 @@ State: actionable
 - Focused proof intent: Add a focused boundary assertion in `tests/pricing.rs`: `assert_eq!(discount(100, 100), 90)`.
 - Verify after the test edit: `cargo xtask fixtures boundary_gap`
 - Receipt after verify: `ripr receipt write --gap gap:rust:pricing:discount:threshold-boundary --verify-command 'cargo xtask fixtures boundary_gap' --status not_run --out target/ripr/receipts/gap-pr-pricing-threshold-boundary.targeted-test-outcome.json`
+- Receipt status: the command records `--status not_run` as printed; after the verify command runs, change it to `--status passed` if verify exited 0 or `--status failed` if it did not.
 - Receipt path: `target/ripr/receipts/gap-pr-pricing-threshold-boundary.targeted-test-outcome.json`
 - Boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.
 
@@ -43,10 +44,10 @@ Receipt after verify:
 It runs unchanged in Bash and PowerShell; cmd.exe is not supported.
 
 Agent packet command:
-`ripr agent packet --root fixtures/first_successful_pr/boundary-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:pricing:threshold-boundary --json > <cwd>/fixtures/first_successful_pr/boundary-gap/target/ripr/workflow/agent-packet.json`
+`ripr agent packet --root <cwd>/fixtures/first_successful_pr/boundary-gap --gap-ledger <cwd>/fixtures/first_successful_pr/boundary-gap/inputs/reports/gap-decision-ledger.json --gap-id gap:pr:pricing:threshold-boundary --json > <cwd>/fixtures/first_successful_pr/boundary-gap/target/ripr/workflow/agent-packet.json`
 
 Agent packet command (PowerShell):
-`$ripr = ((ripr agent packet --root fixtures/first_successful_pr/boundary-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:pricing:threshold-boundary --json) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('<cwd>/fixtures/first_successful_pr/boundary-gap/target/ripr/workflow/agent-packet.json', $ripr.Replace("`r`n", "`n"), [System.Text.UTF8Encoding]::new($false)) } else { throw "ripr exited with code $LASTEXITCODE" }`
+`$riprEncoding = [Console]::OutputEncoding; try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; try { $ripr = ((ripr agent packet --root <cwd>/fixtures/first_successful_pr/boundary-gap --gap-ledger <cwd>/fixtures/first_successful_pr/boundary-gap/inputs/reports/gap-decision-ledger.json --gap-id gap:pr:pricing:threshold-boundary --json) | Out-String) } finally { try { [Console]::OutputEncoding = $riprEncoding } catch {} }; if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('<cwd>/fixtures/first_successful_pr/boundary-gap/target/ripr/workflow/agent-packet.json'), $ripr.Replace("`r`n", "`n"), [System.Text.UTF8Encoding]::new($false)) } else { throw "ripr exited with code $LASTEXITCODE" }`
 
 The first form is written for Bash; cmd.exe is not supported.
 

@@ -13,9 +13,11 @@ use std::path::{Component, Path, PathBuf};
 
 mod model;
 mod python;
+mod toolchain_file;
 #[cfg(feature = "lang-typescript")]
 mod typescript;
 
+pub(crate) use model::PERL_EXECUTABLE_OPT_IN_ENV;
 use model::{BunUbProfileConfig, FindingSeverityConfig, ProfilesConfig, SeamSeverityConfig};
 pub use model::{
     CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION, CheckInputExplicit, ConfigIdentityRole, ConfigSeverity,
@@ -31,6 +33,7 @@ pub(crate) use python::{
     is_python_excluded_dir_everywhere, python_project_marker_name, python_source_dir_marker_name,
     source_dir_contains_detectable_python,
 };
+pub(crate) use toolchain_file::{repository_toolchain_path_pin, toolchain_path_pin_refusal};
 #[cfg(feature = "lang-typescript")]
 pub(crate) use typescript::{
     is_detectable_excluded_typescript_path, is_detectable_generated_typescript_path,
@@ -56,7 +59,7 @@ broad_error_strength = "weak"
 
 [severity.findings]
 # Valid severities: info, warning, note.
-exposed = "warning"
+exposed = "info"
 weakly_exposed = "warning"
 reachable_unrevealed = "warning"
 no_static_path = "warning"
@@ -135,7 +138,7 @@ enabled = ["rust"]
 #
 # [perl]
 # producer = "perl-ripr-facts"  # canonical managed exporter; "perllsp"/"perl-lsp" are compatibility wrappers
-# executable = "perl"      # Perl binary path
+# executable = "perl-ripr-facts"  # Exporter path; honored only when RIPR_ALLOW_REPO_PERL_EXECUTABLE=1
 # timeout_ms = 30000       # Per-invocation timeout
 # cache_dir = "target/ripr/perl-facts"  # Fact cache location
 "#;
@@ -181,7 +184,7 @@ pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
     let Some(path) = discover_config_path(root) else {
         return default_config_for_root(root);
     };
-    let text = std::fs::read_to_string(&path)
+    let text = crate::bounded_input::read_to_string(&path)
         .map_err(|err| format!("read {} failed: {err}", path.display()))?;
     let mut config = parse_config(&text).map_err(|err| format!("{}: {err}", path.display()))?;
     config.source_path = Some(path);
@@ -210,10 +213,15 @@ pub(crate) fn generated_init_config() -> &'static str {
 }
 
 pub(crate) fn config_fingerprint(source_text: &str) -> String {
+    bytes_fingerprint(source_text.as_bytes())
+}
+
+/// [`config_fingerprint`] over raw bytes, for inputs that need not be UTF-8.
+pub(crate) fn bytes_fingerprint(bytes: &[u8]) -> String {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;
     let mut hash = FNV_OFFSET;
-    for byte in source_text.as_bytes() {
+    for byte in bytes {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(FNV_PRIME);
     }
@@ -239,15 +247,15 @@ pub(crate) fn check_artifact_config_identity_hash(config: &RiprConfig) -> String
 /// The exact `ripr.toml` fields the repo-exposure producer (the seam
 /// inventory in `crates/ripr/src/analysis/seam_inventory.rs`) consumes
 /// semantically. Verified against the producer: the seam walker is Rust-only
-/// and reads only the oracle-strength policy (via
-/// `rust_index::apply_oracle_policy`); it does not read `languages.enabled`,
-/// `rust.generated_file_patterns`, or any typescript/perl field, so those
-/// SPEC-0140 finding-affecting fields must NOT move the repo-exposure input
-/// identity (#2823 — two runs differing only in an unconsumed setting stay
-/// comparable). Closed set: when the producer starts consuming another config
-/// field, add it here in the same PR; do not widen the filter to whole
-/// sections.
-pub(crate) const REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS: [&str; 5] = [
+/// and reads the oracle-strength policy (via `rust_index::apply_oracle_policy`),
+/// production-like / harness opt-ins, and `[languages.rust]
+/// generated_file_patterns` (#4788). It does not read `languages.enabled`
+/// or any typescript/perl field, so those SPEC-0140 finding-affecting
+/// fields must NOT move the repo-exposure input identity (#2823 — two runs
+/// differing only in an unconsumed setting stay comparable). Closed set:
+/// when the producer starts consuming another config field, add it here in
+/// the same PR; do not widen the filter to whole sections.
+pub(crate) const REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS: [&str; 6] = [
     "oracles.broad_error_strength",
     "oracles.mock_expectation_strength",
     "oracles.snapshot_strength",
@@ -258,6 +266,9 @@ pub(crate) const REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS: [&str; 5] = [
     // which functions are executable tests in the repo seam inventory
     // (#3532).
     "analysis.test_harnesses",
+    // Generated-file patterns change which Rust files become seams and
+    // which paths appear in `generated_rust_source_skipped` (#4788).
+    "languages.rust.generated_file_patterns",
 ];
 
 /// Canonical config identity for the repo-exposure artifact input identity
@@ -390,7 +401,12 @@ impl RiprConfig {
                 producer: perl.producer,
                 executable: perl.executable.map(PathBuf::from),
                 timeout_ms: perl.timeout_ms.unwrap_or(30_000),
-                cache_dir: perl.cache_dir.map(PathBuf::from),
+                // Repository config: ripr creates, writes and renames files
+                // here, so it must not name a directory outside the checkout.
+                cache_dir: perl
+                    .cache_dir
+                    .map(|path| parse_relative_path("perl.cache_dir", &path))
+                    .transpose()?,
             };
         }
         Ok(config)

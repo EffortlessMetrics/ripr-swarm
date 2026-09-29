@@ -96,8 +96,10 @@ The disclosure fires when ALL of the following are true:
 3. None of `--diff <file>`, `--worktree`, or `--candidate-tree` was provided,
    and the format is not repo-scope (none of those is a committed-history
    diff of the live repository).
-4. The working tree has at least one uncommitted change to a tracked source
-   file, as detected by `git status --porcelain` returning non-empty output.
+4. The committed-content probe found at least one uncommitted change to a file
+   a language adapter reads: a tracked source or test file with staged or
+   unstaged edits, or an untracked file with an adapter-routed extension. A
+   README, workflow or other file no adapter reads does not count.
 
 The disclosure fires independent of whether `findings.is_empty()` — an
 unanalyzed working tree is worth disclosing whether or not the committed diff
@@ -111,17 +113,22 @@ The guidance does NOT fire when:
 - `ripr check --worktree` was given (the edits are in the analyzed diff).
 - `ripr check --candidate-tree <tree>` was given (exact trees; no live worktree).
 - A repo-scope format was requested (it reads the live files).
-- The worktree is clean (nothing uncommitted) — a clean result is honest.
-- `git status --porcelain` cannot be run (fail-closed: no fabricated disclosure).
+- No source or test file has uncommitted changes — a clean result is honest.
 
-### Working-tree detection
+### Committed content
 
-`working_tree_has_tracked_changes(root: &Path) -> bool` runs
-`git -C <root> status --porcelain` and returns `true` if stdout is non-empty.
-The function lives in `crates/ripr/src/analysis/diff/load.rs`, alongside the
-other git subprocess helpers (`run_git_diff`, `git_symbolic_ref_quiet`,
-`git_ref_exists`). Fail-closed: if git cannot be run or returns a non-zero
-exit code, the function returns `false` and no disclosure is fabricated.
+A committed-history run reads every source and test file as committed at
+`HEAD` (`crates/ripr/src/analysis/committed_source.rs`). The diff pipeline
+runs `git status --porcelain -z --untracked-files=all -- .` once, loads the
+`HEAD` blob for each changed path, and treats paths with no `HEAD` content
+(staged or untracked new files) as absent. The same bytes serve the diff's
+line numbers and the test evidence, so an uncommitted test edit cannot move
+the result while the note says it was not analyzed. The note's trigger is the
+adapter-routed subset of that dirty set (`AnalysisResult`
+`uncommitted_source_paths`). If the probe cannot establish committed content,
+the run fails closed with the failing git step named rather than mixing
+committed diff lines with working-tree bytes. Tracked files deleted from the
+working tree are named on stderr, since discovery cannot find them.
 
 ### Human output
 
@@ -130,17 +137,17 @@ When `unanalyzed_working_tree` is true, the following note is appended:
 In the empty-findings branch (after "No diff-derived static exposure probes found."):
 
 ```
-Note: uncommitted changes to tracked source were not analyzed. `ripr check`
-compares committed history only; add `--worktree` to include staged and
-unstaged tracked edits (for example `ripr check --worktree`).
+Note: uncommitted source and test changes were not analyzed; `ripr check`
+reads each file as committed at HEAD; add `--worktree` to include staged and
+unstaged edits (for example `ripr check --worktree`).
 ```
 
 In the non-empty-findings branch (after the all-no-path-disclosure):
 
 ```
-Note: uncommitted changes to tracked source were not analyzed. `ripr check`
-compares committed history only; add `--worktree` to include staged and
-unstaged tracked edits (for example `ripr check --worktree`).
+Note: uncommitted source and test changes were not analyzed; `ripr check`
+reads each file as committed at HEAD; add `--worktree` to include staged and
+unstaged edits (for example `ripr check --worktree`).
 ```
 
 The note does not change the exit code or pass/fail status.
@@ -191,6 +198,10 @@ required per the additive field policy in [`docs/OUTPUT_SCHEMA.md`](../OUTPUT_SC
    With a clean tracked worktree (untracked files only) → no disclosure.
 5. **File diff mode**: `ripr check --diff change.diff` → no disclosure; file
    diff is not a live worktree query.
+6. **Edited diff file**: `ripr check --base main` where `src/pricing.rs` is in
+   the committed diff and also edited on disk → stderr names `src/pricing.rs`
+   with `--worktree`; an edited file outside the committed diff, or an edited
+   non-source file in it, is not named.
 
 ## Required Evidence
 
@@ -211,6 +222,7 @@ required per the additive field policy in [`docs/OUTPUT_SCHEMA.md`](../OUTPUT_SC
 | --- | --- | --- |
 | Human text `Note:` line | None | Additive; absent when worktree is clean or --diff was used; does not change exit code |
 | JSON `"unanalyzed_working_tree": true` | Additive field | Absent when false; no schema version bump |
+| Stderr `ripr: warning:` edited-diff-file line | None | Only with a resolved base and an edited source file in the committed diff |
 
 ## Test Mapping
 
@@ -218,6 +230,7 @@ required per the additive field policy in [`docs/OUTPUT_SCHEMA.md`](../OUTPUT_SC
 - `crates/ripr/tests/cli_smoke.rs::check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure`
 - `crates/ripr/tests/cli_smoke.rs::check_default_base_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure`
 - `crates/ripr/tests/cli_smoke.rs::check_default_base_with_clean_worktree_keeps_no_scope_note_only`
+- `crates/ripr/tests/cli_smoke.rs::check_base_names_diff_files_with_uncommitted_edits`
 
 ## Implementation Mapping
 
