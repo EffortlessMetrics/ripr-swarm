@@ -185,7 +185,7 @@ impl ScalarIndex {
         let mut i = start_i.saturating_add(1);
         while i <= end_i {
             let abs = match encoding {
-                Encoding::Utf8 => u32::try_from(*self.offsets.get(i)?)?,
+                Encoding::Utf8 => u32::try_from(*self.offsets.get(i)?).ok()?,
                 Encoding::Utf16 => *self.utf16.get(i)?,
                 Encoding::Utf32 => *self.utf32.get(i)?,
             };
