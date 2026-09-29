@@ -97,6 +97,9 @@ fn parse_lines<'a, E>(
         state.consume_hunk_line(raw, &mut files);
     }
 
+    // #4375: end of stream closes the final open file section, so a section
+    // truncated at EOF counts exactly like one closed by a later boundary.
+    state.close_file_section_accounting();
     Ok(ParsedDiff {
         changed_files: files.into_values().collect(),
         deleted_file_count: state.deleted_file_count(),
@@ -104,8 +107,7 @@ fn parse_lines<'a, E>(
         renamed_file_count: state.renamed_file_count(),
         pure_rename_file_count: state.pure_rename_file_count(),
         pure_rename_paths: state.pure_rename_paths(),
-        textual_file_headers: state.textual_file_headers(),
-        hunks_parsed: state.hunks_parsed(),
+        truncated_file_sections: state.truncated_file_sections(),
         limitations: state.limitations(),
     })
 }

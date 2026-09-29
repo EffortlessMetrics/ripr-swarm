@@ -7034,6 +7034,11 @@ name = "typed analysis outcome projection"
 spec = "docs/specs/RIPR-SPEC-0147-analysis-outcome-projection.md"
 tests = [
   "crates/ripr/src/analysis/pipeline.rs::tests::diff_pipeline_projects_parser_limitation_and_distinguishes_complete_zero",
+  "crates/ripr/src/analysis/pipeline.rs::tests::truncated_diff_after_file_header_projects_incomplete_outcome",
+  "crates/ripr/src/analysis/pipeline.rs::tests::truncated_section_after_complete_hunk_projects_incomplete_outcome",
+  "crates/ripr/src/analysis/pipeline.rs::tests::truncated_source_section_after_gitlink_section_projects_incomplete_outcome",
+  "crates/ripr/src/analysis/pipeline.rs::tests::malformed_line_after_hunk_header_projects_incomplete_outcome",
+  "crates/ripr/src/analysis/pipeline.rs::tests::truncated_section_survives_beside_adapter_limitations",
   "crates/ripr/src/output/json/mod.rs::tests::typed_incomplete_outcome_matches_human_and_json_projection",
   "crates/ripr/src/output/gate/tests.rs::tests::gate_fails_closed_on_typed_incomplete_analysis_outcome",
   "crates/ripr/src/output/gate/tests.rs::tests::check_output_gap_ledger_preserves_incomplete_outcome_for_gate_consumers",
