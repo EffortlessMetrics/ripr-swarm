@@ -53,6 +53,8 @@ mod bun_bridge;
 mod classifier;
 mod discovery;
 #[cfg(test)]
+mod line_index_tests;
+#[cfg(test)]
 mod new_declaration_tests;
 mod oracle;
 mod owners;
