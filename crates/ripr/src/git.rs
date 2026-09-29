@@ -195,10 +195,23 @@ pub(crate) fn dubious_ownership_message(
         .split_once(" at '")
         .and_then(|(_, rest)| rest.strip_suffix('\''))
         .map_or_else(|| root.display().to_string(), str::to_string);
+    // Only a path made of shell-inert characters is rendered inside a
+    // command to paste: a space splits the `--add` value, and `$()` or a
+    // quote would run or break in the user's shell (#4606 review). Any other
+    // path names the setting instead of a command.
+    let repair = if repository
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '\\' | '.' | '_' | '-' | ':'))
+    {
+        format!("run `git config --global --add safe.directory {repository}`")
+    } else {
+        "add that exact path to Git's `safe.directory` setting (`git config --global --add \
+         safe.directory <path>`, quoted for your shell)"
+            .to_string()
+    };
     Some(format!(
         "Git refuses the repository at `{repository}` because another user owns it{outcome}. \
-         If you trust it, run `git config --global --add safe.directory {repository}` and \
-         retry."
+         If you trust it, {repair} and retry."
     ))
 }
 
@@ -713,6 +726,19 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
         ) || !message.contains("git config --global --add safe.directory /srv/repo")
         {
             return Err(format!("expected Git's path and the repair, got {message}"));
+        }
+        // A path with shell syntax is never rendered inside a pasteable
+        // command (#4606 review): a space splits the value and `$()` runs.
+        for path in ["/tmp/ripr repo", "/tmp/$(touch x)", "/tmp/it's"] {
+            let stderr = format!("fatal: detected dubious ownership in repository at '{path}'\n");
+            let message = dubious_ownership_message(Path::new("sub"), stderr.as_bytes(), "")
+                .ok_or("the refusal must be recognized")?;
+            if message.contains(&format!("safe.directory {path}"))
+                || !message.contains(&format!("repository at `{path}`"))
+                || !message.contains("quoted for your shell")
+            {
+                return Err(format!("unsafe path must not be pasteable: {message}"));
+            }
         }
         if dubious_ownership_message(
             Path::new("sub"),
