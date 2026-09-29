@@ -227,3 +227,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_substring_sink_alignment (7)
+
+Reason:
+RIPR-SPEC-0028: #4567 oracle local wraps the owner call so the fixture keeps testing substring token coincidence; classification and alignment unchanged
+
+Command:
+`cargo xtask goldens bless python_substring_sink_alignment --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

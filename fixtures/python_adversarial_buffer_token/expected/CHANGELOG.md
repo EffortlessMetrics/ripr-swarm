@@ -268,3 +268,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_buffer_token (8)
+
+Reason:
+RIPR-SPEC-0028: #4567 oracle local wraps the owner call so the fixture keeps testing substring token coincidence; classification and alignment unchanged
+
+Command:
+`cargo xtask goldens bless python_adversarial_buffer_token --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
