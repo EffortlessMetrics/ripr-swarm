@@ -201,6 +201,8 @@ struct PythonParameter {
     default: Option<String>,
     /// Keyword-only parameters (after `*` / `*args`) never bind positionally.
     keyword_only: bool,
+    /// Positional-only parameters (before `/`) never bind by keyword.
+    positional_only: bool,
 }
 
 impl PythonOwner {

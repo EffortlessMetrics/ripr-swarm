@@ -1,10 +1,9 @@
+use super::PythonOwner;
 use super::related_tests::{
-    PythonRelatedCandidate, dunder_method_class, line_prefix_looks_like_comment_or_string,
-    strongest_assertion,
+    PythonRelatedCandidate, line_prefix_looks_like_comment_or_string, strongest_assertion,
 };
 use super::source_facts::parse_module_result;
 use super::static_limits::is_simple_python_identifier;
-use super::{PythonOwner, PythonTest};
 use crate::analysis::diff::ChangedLine;
 use crate::domain::{OracleStrength, OwnerKind};
 use rustpython_parser::ast::{Expr, Mod, Ranged, Stmt};
@@ -469,6 +468,10 @@ pub(super) struct ChangedDefaultParam {
     /// Whether a positional argument at `index` can bind this parameter. False for
     /// a keyword-only parameter, which a positional argument can never reach.
     pub(super) positionally_bindable: bool,
+    /// Whether a keyword argument can bind this parameter. False for a
+    /// positional-only parameter: `f(a=5)` against `def f(a=1, /, **kw)` puts
+    /// `a` in `kw` and leaves the default in place.
+    pub(super) keyword_bindable: bool,
 }
 
 /// The parameters whose default VALUE changed between two `def` headers, when the
@@ -509,6 +512,7 @@ pub(super) fn changed_default_value_params(
                     name: new_param.0.clone(),
                     index,
                     positionally_bindable: index < positional_capacity,
+                    keyword_bindable: index >= new_pos,
                 });
             }
             (Some(_), Some(_)) | (None, None) => {}
@@ -528,7 +532,7 @@ pub(super) struct CallArgShape {
 
 impl CallArgShape {
     fn binds(&self, param: &ChangedDefaultParam) -> bool {
-        if self.keywords.iter().any(|name| name == &param.name) {
+        if param.keyword_bindable && self.keywords.iter().any(|name| name == &param.name) {
             return true;
         }
         param.positionally_bindable && param.index < self.positional_count
@@ -768,11 +772,13 @@ pub(super) fn call_arglists_with_offsets<'a>(
 /// A one-line header compares the old and new signatures. A parameter line
 /// inside a multi-line header (`multi_line_header_line`) carries its own
 /// defaults: whether the line is new or its value changed, the defaults on it
-/// are what an omitting call reaches (attrs 862696a `alias_is_default=None,`,
-/// which every `Attribute(...)` call in the suite passes). Owners are free
-/// functions, called by name, and constructor dunders, called through their
-/// class. Other methods are called through receivers this scanner does not
-/// resolve, so they fail open.
+/// are what an omitting call reaches. Each name on the line must be a declared
+/// parameter of the owner with a default, which rejects a keyword inside a
+/// nested default call (`retry=dict(\n    total=3,`) and gives the parameter
+/// its real position and binding kind. Scoped to free-function owners: a
+/// method, constructor included, is also reached through receivers,
+/// subclasses and factories (`cls(...)`) this scanner does not see, so
+/// methods fail open.
 pub(super) fn changed_default_overridden_params(
     old_line_text: Option<&str>,
     new_line_text: &str,
@@ -780,27 +786,17 @@ pub(super) fn changed_default_overridden_params(
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
 ) -> Option<Vec<String>> {
-    let constructor = constructor_call_name(owner);
-    if constructor.is_none()
-        && matches!(
-            owner.owner_kind,
-            Some(OwnerKind::Method | OwnerKind::ClassMethod)
-        )
-    {
+    if matches!(
+        owner.owner_kind,
+        Some(OwnerKind::Method | OwnerKind::ClassMethod)
+    ) {
         return None;
     }
-    let mut changed = if multi_line_header_line {
-        header_param_line_defaults(new_line_text)?
+    let changed = if multi_line_header_line {
+        declared_line_defaults(owner, new_line_text)?
     } else {
         changed_default_value_params(old_line_text?, new_line_text)?
     };
-    if constructor.is_some() {
-        // `Class(a)` binds `a` to the parameter after `self`/`cls`; only a
-        // keyword argument is counted as a binding, which never over-counts.
-        for param in &mut changed {
-            param.positionally_bindable = false;
-        }
-    }
     let mut saw_strong = false;
     for candidate in related_candidates {
         if !candidate.relation.uses_oracle() {
@@ -813,10 +809,7 @@ pub(super) fn changed_default_overridden_params(
             continue;
         }
         saw_strong = true;
-        let arglists = match constructor {
-            Some(class) => constructor_call_arglists(candidate.test, class),
-            None => free_function_call_arglists(&candidate.test.body_text, &owner.name),
-        };
+        let arglists = free_function_call_arglists(&candidate.test.body_text, &owner.name);
         if arglists.is_empty() {
             // A strong related test that reaches the owner without a direct
             // `owner(...)` call (an alias, wrapper, or indirection this scanner does
@@ -839,44 +832,34 @@ pub(super) fn changed_default_overridden_params(
     Some(changed.into_iter().map(|param| param.name).collect())
 }
 
-/// The name a test calls to run `owner`: the class for a constructor dunder
-/// (`Attribute` for `Attribute.__init__`), otherwise the owner's own name.
-pub(super) fn owner_call_display_name(owner: &PythonOwner) -> &str {
-    constructor_call_name(owner).unwrap_or(&owner.name)
-}
-
-/// The class a test calls to run a constructor dunder (`__init__`, `__new__`),
-/// innermost segment of a nested class; None for any other owner.
-fn constructor_call_name(owner: &PythonOwner) -> Option<&str> {
-    if !matches!(owner.name.as_str(), "__init__" | "__new__") {
-        return None;
-    }
-    let class = dunder_method_class(owner)?;
-    Some(class.rsplit('.').next().unwrap_or(class))
-}
-
-/// Every call in `test` that constructs `class`: `Class(...)`,
-/// `module.Class(...)`, and `Alias(...)` for `from m import Class as Alias`.
-fn constructor_call_arglists<'a>(test: &'a PythonTest, class: &str) -> Vec<&'a str> {
-    let body = test.body_text.as_str();
-    let mut arglists: Vec<(usize, &str)> = call_arglists_with_offsets(body, class, false);
-    arglists.extend(call_arglists_with_offsets(body, class, true));
-    for import in &test.imports {
-        if import.imported == class && import.alias != class && !import.alias.is_empty() {
-            arglists.extend(call_arglists_with_offsets(body, &import.alias, false));
-        }
-    }
-    arglists.sort_by_key(|(offset, _)| *offset);
-    arglists.dedup_by_key(|(offset, _)| *offset);
-    arglists.into_iter().map(|(_, arglist)| arglist).collect()
+/// The defaults on one multi-line header line, each bound to the owner's
+/// declared parameter of that name. None when any name is not a declared
+/// parameter with a default.
+fn declared_line_defaults(owner: &PythonOwner, text: &str) -> Option<Vec<ChangedDefaultParam>> {
+    header_param_line_defaults(text)?
+        .into_iter()
+        .map(|name| {
+            let (index, declared) = owner
+                .parameters
+                .iter()
+                .enumerate()
+                .find(|(_, declared)| declared.name == name)?;
+            declared.default.as_ref()?;
+            Some(ChangedDefaultParam {
+                name,
+                index,
+                positionally_bindable: !declared.keyword_only,
+                keyword_bindable: !declared.positional_only,
+            })
+        })
+        .collect()
 }
 
 /// The parameters with a default on one line of a multi-line `def` header
 /// (`alias_is_default=None,`, `key: str = "k", *, strict=False,`, or a
-/// closing `limit=10) -> int:`). Keyword-bindable only: the line alone does
-/// not give a parameter's position. None when the line holds no default or
-/// is not a plain parameter list (a comment, a nested call spanning lines).
-pub(super) fn header_param_line_defaults(text: &str) -> Option<Vec<ChangedDefaultParam>> {
+/// closing `limit=10) -> int:`). None when the line holds no default or is
+/// not a plain parameter list (a comment, a nested call spanning lines).
+pub(super) fn header_param_line_defaults(text: &str) -> Option<Vec<String>> {
     let trimmed = text.trim();
     if trimmed.contains('#') {
         return None;
@@ -918,11 +901,7 @@ pub(super) fn header_param_line_defaults(text: &str) -> Option<Vec<ChangedDefaul
             return None;
         }
         if default.is_some_and(|default| !default.is_empty()) {
-            defaults.push(ChangedDefaultParam {
-                name: name.to_string(),
-                index: 0,
-                positionally_bindable: false,
-            });
+            defaults.push(name.to_string());
         }
     }
     (!defaults.is_empty()).then_some(defaults)

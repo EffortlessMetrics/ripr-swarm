@@ -5385,14 +5385,7 @@ fn module_owner_needs_a_local_imported_from_the_owner_module() -> Result<(), Str
 
 #[test]
 fn header_param_line_defaults_reads_defaults_on_one_header_line() {
-    let names = |text: &str| {
-        super::no_behavior::header_param_line_defaults(text).map(|params| {
-            params
-                .into_iter()
-                .map(|param| param.name)
-                .collect::<Vec<_>>()
-        })
-    };
+    let names = super::no_behavior::header_param_line_defaults;
     assert_eq!(
         names("        alias_is_default=None,"),
         Some(vec!["alias_is_default".to_string()])
@@ -5468,6 +5461,14 @@ fn multi_line_header_default_bound_by_every_call_is_not_exposed() -> Result<(), 
         finding.activation.missing_discriminators
     );
 
+    // A positional argument at the declared position binds it too.
+    let positional = extract_tests(
+        Path::new("tests/test_render.py"),
+        "from src.render import render\n\n\ndef test_render_quiet():\n    assert render(\"Sam\", False) == \"Sam\"\n",
+    );
+    let finding = classify_multi_line_header_line(file, source, 1, 3, &positional)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+
     let omitting = extract_tests(
         Path::new("tests/test_render.py"),
         "from src.render import render\n\n\ndef test_render_default():\n    assert render(\"Sam\") == \"[debug] Sam\"\n",
@@ -5482,41 +5483,66 @@ fn multi_line_header_default_bound_by_every_call_is_not_exposed() -> Result<(), 
 }
 
 #[test]
-fn constructor_default_bound_by_every_construction_is_not_exposed() -> Result<(), String> {
+fn constructor_default_fails_open_because_constructions_hide_behind_subclasses()
+-> Result<(), String> {
+    // Every visible `Widget(...)` passes `label`, but `Small(size=3)` builds
+    // a subclass through the same `__init__` and reaches the default. The
+    // scanner cannot see such constructions (subclasses, `cls(...)`
+    // factories), so a constructor never downgrades on binding evidence.
     let file = Path::new("src/widget.py");
     let source = "class Widget:\n    def __init__(\n        self,\n        size,\n        label=None,\n    ):\n        self.label = label or str(size)\n";
-    let binding = extract_tests(
+    let tests = extract_tests(
         Path::new("tests/test_widget.py"),
-        "from src.widget import Widget\nfrom src.widget import Widget as W\n\n\ndef test_label():\n    assert Widget(size=1, label=\"x\").label == \"x\"\n\n\ndef test_aliased():\n    assert W(2, label=\"y\").label == \"y\"\n",
+        "from src.widget import Widget\n\n\nclass Small(Widget):\n    pass\n\n\ndef test_label():\n    assert Widget(size=1, label=\"x\").label == \"x\"\n    assert Small(size=3).label == \"3\"\n",
     );
-    assert_eq!(binding.len(), 2);
-    let finding = classify_multi_line_header_line(file, source, 2, 5, &binding)?;
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert!(
-        finding
-            .activation
-            .missing_discriminators
-            .iter()
-            .any(|fact| fact.value == "call `Widget` without `label`"),
-        "a constructor is called through its class: {:?}",
-        finding.activation.missing_discriminators
-    );
+    assert_eq!(tests.len(), 1);
+    let finding = classify_multi_line_header_line(file, source, 2, 5, &tests)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
 
-    // One construction through an alias omits `label`, so the default runs.
-    let omitting = extract_tests(
-        Path::new("tests/test_widget.py"),
-        "from src.widget import Widget\nfrom src.widget import Widget as W\n\n\ndef test_label():\n    assert Widget(size=1, label=\"x\").label == \"x\"\n\n\ndef test_aliased():\n    assert W(2).label == \"2\"\n",
+#[test]
+fn multi_line_header_default_reads_only_declared_parameters() -> Result<(), String> {
+    // `total=3,` sits inside the default call of `retry`; it is not a
+    // parameter of `request`, so a call binding `total=` (into `**kwargs`)
+    // says nothing about `retry`'s default.
+    let file = Path::new("src/client.py");
+    let source = "def request(\n    url,\n    retry=dict(\n        total=3,\n    ),\n    **kwargs,\n):\n    return (url, retry, kwargs)\n";
+    let tests = extract_tests(
+        Path::new("tests/test_client.py"),
+        "from src.client import request\n\n\ndef test_request():\n    assert request(\"u\", total=1) == (\"u\", {\"total\": 3}, {\"total\": 1})\n",
     );
-    let finding = classify_multi_line_header_line(file, source, 2, 5, &omitting)?;
+    assert_eq!(tests.len(), 1);
+    let finding = classify_multi_line_header_line(file, source, 1, 4, &tests)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn positional_only_default_is_not_bound_by_a_keyword() -> Result<(), String> {
+    // `f(a=5)` against `def f(a=1, /, **kw)` puts `a` in `kw`; the default
+    // of the positional-only `a` still runs.
+    let file = Path::new("src/pos.py");
+    let source = "def f(\n    a=1, /,\n    **kw,\n):\n    return (a, kw)\n";
+    let tests = extract_tests(
+        Path::new("tests/test_pos.py"),
+        "from src.pos import f\n\n\ndef test_f():\n    assert f(a=5) == (1, {\"a\": 5})\n",
+    );
+    assert_eq!(tests.len(), 1);
+    let finding = classify_multi_line_header_line(file, source, 1, 2, &tests)?;
     assert_eq!(finding.class, ExposureClass::Exposed);
 
-    // A positional argument is never counted as binding a constructor
-    // parameter (the implicit `self` shifts positions), so this fails open.
-    let positional = extract_tests(
-        Path::new("tests/test_widget.py"),
-        "from src.widget import Widget\n\n\ndef test_label():\n    assert Widget(1, \"x\").label == \"x\"\n",
-    );
-    let finding = classify_multi_line_header_line(file, source, 2, 5, &positional)?;
+    // The one-line guard follows the same rule.
+    let owners = extract_owners(file, "def f(a=2, /, **kw):\n    return (a, kw)\n");
+    let finding = classify_change_with_old(
+        file,
+        1,
+        "def f(a=2, /, **kw):",
+        Some("def f(a=1, /, **kw):"),
+        &owners,
+        &tests,
+    )
+    .ok_or("a default-value change should classify")?;
     assert_eq!(finding.class, ExposureClass::Exposed);
     Ok(())
 }

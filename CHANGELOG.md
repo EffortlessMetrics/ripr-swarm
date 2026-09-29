@@ -22,12 +22,10 @@ are scoped or reviewed.
 ### Fixed
 
 - Python: a parameter default on its own line inside a multi-line `def`
-  header, or on a constructor `__init__`/`__new__`, is no longer credited
-  `exposed` when every strong related call passes that parameter. It reads
-  `weakly_exposed` and names the call to add, one that omits the
-  parameter. Constructor calls are found through the class, a module member
-  or an import alias; positional constructor arguments never count as a
-  binding.
+  header is no longer credited `exposed` when every strong related call
+  passes that parameter by keyword or position. It reads `weakly_exposed`
+  and names the call to add, one that omits the parameter. A keyword never
+  counts as binding a positional-only parameter, in one-line headers too.
 - Python: a dunder method of a nested class (`Outer.Inner.__init__`) relates
   to tests that build `Outer.Inner(...)` from an imported `Outer`. A dunder
   with no related test whose tests import anything from its package (a

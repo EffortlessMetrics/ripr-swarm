@@ -3,7 +3,7 @@ use super::discriminators::python_missing_discriminators;
 use super::no_behavior::{
     changed_default_overridden_params, format_param_name_list, is_annotation_only_def_change,
     is_annotation_only_var_change, is_new_def_header_without_defaults, is_python_no_behavior_line,
-    is_structural_def_header_text, owner_call_display_name,
+    is_structural_def_header_text,
 };
 use super::probe_shape::{
     canonical_python_gap_for, classify_probe_shape, python_flow_sink_for,
@@ -299,7 +299,7 @@ pub(super) fn classify_change_with_context(
                 "A strong Python oracle reaches `{}`, but every related call passes {} explicitly, so the changed default value is never exercised; static evidence cannot confirm the changed default is discriminated. Add a test that calls `{}` without {} to exercise the changed default.",
                 owner.name,
                 format_param_name_list(params),
-                owner_call_display_name(owner),
+                owner.name,
                 format_param_name_list(params),
             )],
         )
@@ -474,7 +474,7 @@ pub(super) fn classify_change_with_context(
             vec![MissingDiscriminatorFact {
                 value: format!(
                     "call `{}` without {}",
-                    owner_call_display_name(owner),
+                    owner.name,
                     format_param_name_list(params)
                 ),
                 reason: format!(

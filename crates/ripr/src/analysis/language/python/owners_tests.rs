@@ -171,19 +171,25 @@ fn owner_from_function(
 /// Declared parameters in binding order: positional-only, then regular, then
 /// keyword-only. `*args` / `**kwargs` are not bindable names and are omitted.
 fn function_parameters(source: &str, args: &ast::Arguments) -> Vec<PythonParameter> {
-    let parameter = |arg: &ast::ArgWithDefault, keyword_only: bool| PythonParameter {
-        name: arg.def.arg.to_string(),
-        default: arg
-            .default
-            .as_ref()
-            .map(|default| text_for_range(source, default.range()).trim().to_string()),
-        keyword_only,
-    };
+    let parameter =
+        |arg: &ast::ArgWithDefault, keyword_only: bool, positional_only: bool| PythonParameter {
+            name: arg.def.arg.to_string(),
+            default: arg
+                .default
+                .as_ref()
+                .map(|default| text_for_range(source, default.range()).trim().to_string()),
+            keyword_only,
+            positional_only,
+        };
     args.posonlyargs
         .iter()
-        .chain(args.args.iter())
-        .map(|arg| parameter(arg, false))
-        .chain(args.kwonlyargs.iter().map(|arg| parameter(arg, true)))
+        .map(|arg| parameter(arg, false, true))
+        .chain(args.args.iter().map(|arg| parameter(arg, false, false)))
+        .chain(
+            args.kwonlyargs
+                .iter()
+                .map(|arg| parameter(arg, true, false)),
+        )
         .collect()
 }
 

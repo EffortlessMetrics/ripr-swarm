@@ -214,11 +214,13 @@ comments, strings, and docstrings:
   a decorator) to the owner class. A nested class (`Outer.Inner`) is reached
   through its outermost class, `Outer.Inner(...)` after importing `Outer`;
 - a changed or new default on a parameter line inside a multi-line `def`
-  header is read like a one-line header change: when every strong related
-  call binds that parameter by keyword, the default is never reached and the
-  line is not credited `exposed`. Constructor dunders are called through
-  their class (`Class(...)`, `module.Class(...)`, or an import alias), and a
-  positional constructor argument never counts as a binding;
+  header is read like a one-line header change: each name on the line must
+  be a declared parameter of the owner with a default, and when every strong
+  related call binds that parameter the default is never reached and the
+  line is not credited `exposed`. A keyword argument never binds a
+  positional-only parameter. Methods, constructors included, fail open:
+  subclasses and `cls(...)` factories construct through receivers the
+  adapter does not see;
 - module-level owner: a local bound by an import of, or from, the owner
   module.
 
