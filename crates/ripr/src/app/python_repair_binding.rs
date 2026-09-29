@@ -1781,7 +1781,9 @@ mod tests {
         // This is deterministic construction proof, not selection admission.
         // The packet bytes are a committed producer snapshot, not a digest
         // placeholder. Neither call creates or publishes a durable attempt.
-        let packet = include_bytes!("../../../../fixtures/boundary_gap/expected/editor-agent-loop/agent-packet.json");
+        let packet = include_bytes!(
+            "../../../../fixtures/boundary_gap/expected/editor-agent-loop/agent-packet.json"
+        );
         serde_json::from_slice::<Value>(packet)
             .map_err(|error| format!("producer packet fixture is invalid: {error}"))?;
         let packet_sha256 = sha256_hex(packet);
@@ -1798,22 +1800,31 @@ mod tests {
             ignored_build_output: None,
             untracked_build_lockfile: None,
         };
-        let render = || render_record(&root, RecordIdentity {
-            seam_id: "identical-seam",
-            repository_head: &verified.head,
-            phase: "prepare",
-            durable_attempt_id: None,
-            binding_artifact_sha256: None,
-            verified: &verified,
-            authority: AUTHORITY_IDENTITY,
-            packet_sha256: &packet_sha256,
-            before_snapshot_sha256: &before_snapshot_sha256,
-            policy: &policy,
-        }, None);
+        let render = || {
+            render_record(
+                &root,
+                RecordIdentity {
+                    seam_id: "identical-seam",
+                    repository_head: &verified.head,
+                    phase: "prepare",
+                    durable_attempt_id: None,
+                    binding_artifact_sha256: None,
+                    verified: &verified,
+                    authority: AUTHORITY_IDENTITY,
+                    packet_sha256: &packet_sha256,
+                    before_snapshot_sha256: &before_snapshot_sha256,
+                    policy: &policy,
+                },
+                None,
+            )
+        };
         let first = render()?;
         let second = render()?;
-        if first.pointer("/input/packet_sha256").and_then(Value::as_str)
-            != Some(packet_sha256.as_str()) {
+        if first
+            .pointer("/input/packet_sha256")
+            .and_then(Value::as_str)
+            != Some(packet_sha256.as_str())
+        {
             return Err("record lost the identical producer packet digest".to_string());
         }
         let first_bytes = serde_json::to_vec(&first).map_err(|error| error.to_string())?;

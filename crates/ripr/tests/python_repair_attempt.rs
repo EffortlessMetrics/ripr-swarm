@@ -1561,8 +1561,13 @@ fn distinct_prepared_attempts_bind_their_exact_packet_inputs() -> Result<(), Str
     if first_id == second_id {
         return Err("two preparations collided on one durable attempt identity".to_string());
     }
-    let packet_path = |id: &str| fixture.root.join("target/ripr/repair-attempts")
-        .join(id).join("artifacts/agent-packet.json");
+    let packet_path = |id: &str| {
+        fixture
+            .root
+            .join("target/ripr/repair-attempts")
+            .join(id)
+            .join("artifacts/agent-packet.json")
+    };
     let first_packet = std::fs::read(packet_path(first_id))
         .map_err(|error| format!("read first sealed packet: {error}"))?;
     let second_packet = std::fs::read(packet_path(second_id))
@@ -1574,57 +1579,95 @@ fn distinct_prepared_attempts_bind_their_exact_packet_inputs() -> Result<(), Str
     for (id, bytes) in [(first_id, &first_packet), (second_id, &second_packet)] {
         let packet: Value = serde_json::from_slice(bytes)
             .map_err(|error| format!("parse sealed packet: {error}"))?;
-        let command = packet.pointer("/next/repair_after_command")
-            .and_then(Value::as_str).ok_or("sealed packet lost continuation")?;
+        let command = packet
+            .pointer("/next/repair_after_command")
+            .and_then(Value::as_str)
+            .ok_or("sealed packet lost continuation")?;
         let manifest = attempt_manifest(&fixture, id)?;
         if !command.contains(&format!(" --attempt {id} "))
-            || manifest.get("next_command").and_then(Value::as_str) != Some(command) {
-            return Err("sealed packet continuation does not identify its own manifest".to_string());
+            || manifest.get("next_command").and_then(Value::as_str) != Some(command)
+        {
+            return Err(
+                "sealed packet continuation does not identify its own manifest".to_string(),
+            );
         }
         let mut record = prepare_record(&fixture, id)?;
         let digest = sha256_hex(bytes);
-        if record.pointer("/input/packet_sha256").and_then(Value::as_str) != Some(digest.as_str()) {
+        if record
+            .pointer("/input/packet_sha256")
+            .and_then(Value::as_str)
+            != Some(digest.as_str())
+        {
             return Err("binding does not pin its own sealed packet bytes".to_string());
         }
         // Only this explicitly different accepted input may differ. Every
         // other field remains compared, including any unexpected nonce.
-        record.get_mut("input").and_then(Value::as_object_mut)
-            .ok_or("binding input is not an object")?.remove("packet_sha256")
+        record
+            .get_mut("input")
+            .and_then(Value::as_object_mut)
+            .ok_or("binding input is not an object")?
+            .remove("packet_sha256")
             .ok_or("binding input lost packet digest")?;
         records.push(record);
     }
     if records.first() != records.get(1) {
         return Err("equal non-packet inputs produced different binding fields".to_string());
     }
-    let second_manifest = std::fs::read(fixture.root.join("target/ripr/repair-attempts")
-        .join(second_id).join("attempt.json"))
-        .map_err(|error| format!("read second manifest: {error}"))?;
+    let second_manifest = std::fs::read(
+        fixture
+            .root
+            .join("target/ripr/repair-attempts")
+            .join(second_id)
+            .join("attempt.json"),
+    )
+    .map_err(|error| format!("read second manifest: {error}"))?;
     let second_binding = std::fs::read(binding_artifact_path(&fixture, second_id)?)
         .map_err(|error| format!("read second binding: {error}"))?;
     let first_binding = std::fs::read(binding_artifact_path(&fixture, first_id)?)
         .map_err(|error| format!("read first binding before refusal: {error}"))?;
-    let authored_before = [PRODUCTION_FILE, TARGET_TEST_FILE].into_iter()
-        .map(|path| std::fs::read(fixture.root.join(path)).map(|bytes| (path, bytes))
-            .map_err(|error| format!("read {path} before refusal: {error}")))
+    let authored_before = [PRODUCTION_FILE, TARGET_TEST_FILE]
+        .into_iter()
+        .map(|path| {
+            std::fs::read(fixture.root.join(path))
+                .map(|bytes| (path, bytes))
+                .map_err(|error| format!("read {path} before refusal: {error}"))
+        })
         .collect::<Result<Vec<_>, _>>()?;
     // Do not reseal: an actual B packet cannot replace A's committed packet.
     // The attempt artifact seal may refuse before Python binding validation.
     std::fs::write(packet_path(first_id), &second_packet)
         .map_err(|error| format!("substitute foreign-attempt packet: {error}"))?;
     let refused = run_apply(&fixture, first_id, Some(AUTHORITY))?;
-    require_failure(&refused, "apply A with B's sealed packet", "artifact binding failed")?;
+    require_failure(
+        &refused,
+        "apply A with B's sealed packet",
+        "artifact binding failed",
+    )?;
     for (path, before) in authored_before {
         if std::fs::read(fixture.root.join(path)).map_err(|error| error.to_string())? != before {
             return Err(format!("refusing the substituted packet changed {path}"));
         }
     }
-    if std::fs::read(binding_artifact_path(&fixture, first_id)?).map_err(|error| error.to_string())? != first_binding {
+    if std::fs::read(binding_artifact_path(&fixture, first_id)?)
+        .map_err(|error| error.to_string())?
+        != first_binding
+    {
         return Err("refusing the substituted packet changed A's retained binding".to_string());
     }
     if std::fs::read(packet_path(second_id)).map_err(|error| error.to_string())? != second_packet
-        || std::fs::read(binding_artifact_path(&fixture, second_id)?).map_err(|error| error.to_string())? != second_binding
-        || std::fs::read(fixture.root.join("target/ripr/repair-attempts")
-            .join(second_id).join("attempt.json")).map_err(|error| error.to_string())? != second_manifest {
+        || std::fs::read(binding_artifact_path(&fixture, second_id)?)
+            .map_err(|error| error.to_string())?
+            != second_binding
+        || std::fs::read(
+            fixture
+                .root
+                .join("target/ripr/repair-attempts")
+                .join(second_id)
+                .join("attempt.json"),
+        )
+        .map_err(|error| error.to_string())?
+            != second_manifest
+    {
         return Err("refusing the substituted packet changed the second attempt".to_string());
     }
     Ok(())
