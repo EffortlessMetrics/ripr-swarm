@@ -1969,6 +1969,8 @@ fn check_suppression_policy_rejects_unsupported_formats() -> Result<(), String> 
 
 const SMOKE_PR_GUIDANCE_JSON: &str = r#"{
   "schema_version": "0.1",
+  "tool": "ripr",
+  "status": "advisory",
   "summary": {"unchanged_tests": true},
   "comments": [],
   "summary_only": [],
@@ -2714,6 +2716,10 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
     let report: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&json_path)?)?;
     assert_eq!(json_pointer_str(&report, "/schema_version")?, "0.1");
     assert_eq!(json_pointer_str(&report, "/kind")?, "first_pr_start_here");
+    assert_eq!(
+        json_pointer_str(&report, "/ripr_version")?,
+        env!("CARGO_PKG_VERSION")
+    );
     assert_eq!(json_pointer_str(&report, "/status")?, "actionable");
     assert_eq!(json_pointer_str(&report, "/selected/state")?, "top_gap");
     assert_eq!(
@@ -7889,6 +7895,99 @@ fn doctor_reports_missing_config_defaults() -> Result<(), String> {
 #[test]
 fn doctor_reports_present_start_here_packet() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
+    write_start_here_packet(&workspace, Some(env!("CARGO_PKG_VERSION")))?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Start-here packet: target/ripr/reports/start-here.md"));
+    assert!(stdout.contains("(present; open it first)"));
+    assert!(!stdout.contains("not yet generated"));
+    assert!(!stdout.contains("stale_evidence"));
+    // With a packet on disk `first-pr` has something to refresh, so naming it
+    // here is a real route rather than a dead end.
+    assert!(stdout.contains("Safe next action: open that packet"));
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn doctor_reports_version_mismatched_start_here_packet_as_stale() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let recorded = if env!("CARGO_PKG_VERSION") == "0.10.0" {
+        "0.9.0"
+    } else {
+        "0.10.0"
+    };
+    write_start_here_packet(&workspace, Some(recorded))?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("stale_evidence"), "{stdout}");
+    assert!(stdout.contains(recorded), "{stdout}");
+    assert!(stdout.contains(env!("CARGO_PKG_VERSION")), "{stdout}");
+    assert!(!stdout.contains("(present; open it first)"), "{stdout}");
+    assert!(
+        stdout.contains("Safe next action: `ripr first-pr --root ")
+            && stdout.contains("--base <ref> --head HEAD` refreshes it"),
+        "{stdout}"
+    );
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn doctor_reports_start_here_packet_missing_version_as_stale() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    write_start_here_packet(&workspace, None)?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("stale_evidence"), "{stdout}");
+    assert!(stdout.contains("missing ripr_version"), "{stdout}");
+    assert!(!stdout.contains("(present; open it first)"), "{stdout}");
+    assert!(
+        stdout.contains("Safe next action: `ripr first-pr --root ")
+            && stdout.contains("refreshes it"),
+        "{stdout}"
+    );
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+fn write_start_here_packet(workspace: &Path, ripr_version: Option<&str>) -> Result<(), String> {
+    let reports = workspace.join("target/ripr/reports");
+    std::fs::create_dir_all(&reports).map_err(|e| format!("create reports dir: {e}"))?;
+    std::fs::write(reports.join("start-here.md"), "# start here\n")
+        .map_err(|e| format!("write start-here.md: {e}"))?;
+    let mut packet = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "kind": "first_pr_start_here"
+    });
+    if let Some(version) = ripr_version {
+        packet["ripr_version"] = serde_json::Value::String(version.to_string());
+    }
+    std::fs::write(
+        reports.join("start-here.json"),
+        serde_json::to_string_pretty(&packet)
+            .map_err(|e| format!("serialize start-here.json: {e}"))?,
+    )
+    .map_err(|e| format!("write start-here.json: {e}"))?;
+    Ok(())
+}
+
+#[test]
+fn doctor_reports_markdown_only_start_here_packet_as_stale() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
     let reports = workspace.join("target/ripr/reports");
     std::fs::create_dir_all(&reports).map_err(|e| format!("create reports dir: {e}"))?;
     std::fs::write(reports.join("start-here.md"), "# start here\n")
@@ -7898,12 +7997,12 @@ fn doctor_reports_present_start_here_packet() -> Result<(), String> {
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Start-here packet: target/ripr/reports/start-here.md"));
-    assert!(stdout.contains("(present; open it first)"));
-    assert!(!stdout.contains("not yet generated"));
-    // With a packet on disk `first-pr` has something to refresh, so naming it
-    // here is a real route rather than a dead end.
-    assert!(stdout.contains("Safe next action: open that packet"));
+    assert!(stdout.contains("stale_evidence"), "{stdout}");
+    assert!(
+        stdout.contains("start-here.json is missing or unreadable"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("(present; open it first)"), "{stdout}");
 
     ignore_remove_dir_all(&workspace);
     Ok(())
@@ -18593,4 +18692,31 @@ fn doctor_probes_language_runtimes_outside_the_checkout() -> Result<(), String> 
         });
     ignore_remove_dir_all(&workspace);
     result
+}
+
+/// docs/EXIT_CODES.md: a reader that closes stdout early gets a quiet exit 2
+/// (#4728). The reader closes before ripr writes anything, so the JSON write
+/// always meets the closed pipe.
+#[test]
+fn check_json_into_closed_stdout_exits_two_quietly() -> Result<(), std::io::Error> {
+    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample");
+    let mut child = probe_command(env!("CARGO_BIN_EXE_ripr"))
+        .args(["check", "--root"])
+        .arg(&sample)
+        .arg("--diff")
+        .arg(sample.join("example.diff"))
+        .args(["--format", "json"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    drop(child.stdout.take());
+    let output = child.wait_with_output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "stderr: {stderr}");
+    assert!(
+        !stderr.contains("stdout failed") && !stderr.contains("Broken pipe"),
+        "a closed reader must not produce an error report: {stderr}"
+    );
+    Ok(())
 }

@@ -10,6 +10,7 @@ mod feedback;
 mod finding_test_evidence;
 mod fix_instruction;
 mod git_candidate;
+mod identity;
 mod intervention_study;
 mod language;
 mod probe;
@@ -54,6 +55,11 @@ pub use fix_instruction::{FixInstructionState, FixInstructionSummary};
 pub use git_candidate::{
     GitCandidateBase, GitCandidateDiffSemantics, GitCandidateSubject, GitCandidateSubjectError,
     GitHashFormat, GitObjectId, GitTreeish,
+};
+pub use identity::{
+    GOVERNED_IDENTITY_SURFACES, IDENTITY_REGISTRY_JSON_PATH, IDENTITY_REGISTRY_MARKDOWN_PATH,
+    REQUIRED_TAXONOMY_KINDS, identity_field_disposition, identity_registry_canonical_json,
+    identity_registry_markdown, identity_registry_violations,
 };
 #[cfg(test)]
 pub(crate) use intervention_study::example_preregistered_study;
