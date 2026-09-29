@@ -54,8 +54,12 @@ pub(super) fn validate_archive_workflow(
 fn parse_archive_workflow_targets(path: &str, text: &str) -> Result<Vec<WorkflowTarget>, String> {
     let build = bounded_section(text, "\n  build:\n", "\n  manifest:\n")
         .ok_or_else(|| format!("{path}: missing build job bounded by build/manifest jobs"))?;
-    let matrix = bounded_section(build, "\n      matrix:\n        include:\n", "\n    steps:\n")
-        .ok_or_else(|| format!("{path}: missing build.strategy.matrix.include section"))?;
+    let matrix = bounded_section(
+        build,
+        "\n      matrix:\n        include:\n",
+        "\n    steps:\n",
+    )
+    .ok_or_else(|| format!("{path}: missing build.strategy.matrix.include section"))?;
 
     let mut targets = Vec::new();
     let mut current_target = None;
@@ -78,13 +82,7 @@ fn parse_archive_workflow_targets(path: &str, text: &str) -> Result<Vec<Workflow
             archive = Some(unquote(value));
         }
     }
-    finish_target(
-        path,
-        &mut targets,
-        current_target,
-        executable,
-        archive,
-    )?;
+    finish_target(path, &mut targets, current_target, executable, archive)?;
     if targets.is_empty() {
         return Err(format!(
             "{path}: build.strategy.matrix.include contains no target rows"

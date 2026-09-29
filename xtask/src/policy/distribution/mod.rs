@@ -14,8 +14,7 @@ pub(crate) use version::pep440_version;
 pub(crate) const CONTRACT_PATH: &str = "policy/distribution.toml";
 const WORKSPACE_MANIFEST_PATH: &str = "Cargo.toml";
 const CRATE_MANIFEST_PATH: &str = "crates/ripr/Cargo.toml";
-const SERVER_ARCHIVE_WORKFLOW_PATH: &str =
-    ".github/workflows/server-archive-qualification.yml";
+const SERVER_ARCHIVE_WORKFLOW_PATH: &str = ".github/workflows/server-archive-qualification.yml";
 const SERVER_ARCHIVE_WORKFLOW_TEXT: &str =
     include_str!("../../../../.github/workflows/server-archive-qualification.yml");
 

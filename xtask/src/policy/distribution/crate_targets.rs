@@ -86,9 +86,11 @@ mod tests {
                 .iter()
                 .any(|violation| violation.contains("package.autobins must be false"))
         );
-        assert!(violations.iter().any(|violation| {
-            violation.contains("must declare exactly one [[bin]], found 2")
-        }));
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("must declare exactly one [[bin]], found 2")
+            })
+        );
         Ok(())
     }
 }
