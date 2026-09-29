@@ -2874,6 +2874,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
         };
@@ -2923,6 +2924,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             literals: Vec::new(),
             source_role: FunctionSourceRole::TestAttribute,
             attrs: vec!["#[test]".to_string()],
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
         };
@@ -4994,6 +4996,7 @@ pub fn check_b(x: i32) -> bool { x < 0 }
                     discriminate: stage(StageState::Unknown),
                     observed_values: Vec::new(),
                     missing_discriminators: Vec::new(),
+                    new_test_target: None,
                 },
                 class: SeamGripClass::Ungripped,
             }
@@ -5061,6 +5064,7 @@ pub fn check_b(x: i32) -> bool { x < 0 }
                     discriminate: stage(StageState::Unknown),
                     observed_values: Vec::new(),
                     missing_discriminators: Vec::new(),
+                    new_test_target: None,
                 },
                 class: SeamGripClass::Ungripped,
             }

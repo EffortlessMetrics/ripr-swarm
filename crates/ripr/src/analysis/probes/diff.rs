@@ -869,6 +869,7 @@ mod tests {
                         literals: vec![],
                         source_role: FunctionSourceRole::Production,
                         attrs: vec![],
+                        impl_attrs: Vec::new(),
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
                     }],
@@ -953,6 +954,7 @@ mod tests {
                         literals: vec![],
                         source_role: FunctionSourceRole::Production,
                         attrs: vec![],
+                        impl_attrs: Vec::new(),
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
                     }],
@@ -1022,6 +1024,67 @@ mod tests {
             return Err(format!(
                 "isolated field edit borrowed unchanged outer shape: {probe:?}"
             ));
+        }
+        Ok(())
+    }
+
+    /// R3 (OSS replay, tokio-rs/bytes 7930d93): the emitted probes, not only
+    /// the lexical classifier, keep a macro-argument arrow out of
+    /// `match_arm` on both diff sides, while real arms and `macro_rules!`
+    /// rule arms keep it.
+    #[test]
+    fn probes_for_file_keeps_macro_argument_arrows_out_of_match_arm() -> Result<(), String> {
+        let path = PathBuf::from("src/buf_impl.rs");
+        let line = |number: usize, text: &str| ChangedLine {
+            line: number,
+            new_side_line: number,
+            text: text.to_string(),
+        };
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![
+                line(20, "Some(v) => v + 1,"),
+                line(30, "buf_try_get_impl!(le => self, i64, 8);"),
+            ],
+            removed_lines: vec![
+                line(40, "buf_try_get_impl!(be => self, i64, 8);"),
+                line(50, "macro_rules! choose { ($v:expr) => { $v } }"),
+            ],
+        };
+        let index = RustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path,
+                    ..FileFacts::default()
+                },
+            )]),
+            ..RustIndex::default()
+        };
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        let families_at = |number: usize| -> Vec<ProbeFamily> {
+            probes
+                .iter()
+                .filter(|probe| probe.location.line == number)
+                .map(|probe| probe.family.clone())
+                .collect()
+        };
+        for number in [30, 40] {
+            let families = families_at(number);
+            if families.is_empty() || families.contains(&ProbeFamily::MatchArm) {
+                return Err(format!(
+                    "macro call on line {number} must probe without match_arm: {families:?}"
+                ));
+            }
+        }
+        for number in [20, 50] {
+            let families = families_at(number);
+            if !families.contains(&ProbeFamily::MatchArm) {
+                return Err(format!(
+                    "arm on line {number} must keep match_arm: {families:?}"
+                ));
+            }
         }
         Ok(())
     }
@@ -1096,6 +1159,7 @@ mod tests {
                         literals: vec![],
                         source_role,
                         attrs: vec![],
+                        impl_attrs: Vec::new(),
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
                     }],
@@ -1508,6 +1572,7 @@ mod tests {
                         literals: vec![],
                         source_role: FunctionSourceRole::Production,
                         attrs: vec![],
+                        impl_attrs: Vec::new(),
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
                     }],
@@ -1781,6 +1846,7 @@ mod tests {
                         literals: vec![],
                         source_role: FunctionSourceRole::Production,
                         attrs: vec![],
+                        impl_attrs: Vec::new(),
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
                     }],
@@ -1852,6 +1918,7 @@ mod tests {
                         literals: vec![],
                         source_role: FunctionSourceRole::Production,
                         attrs: vec![],
+                        impl_attrs: Vec::new(),
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
                     }],
@@ -1913,6 +1980,7 @@ mod tests {
                         literals: vec![],
                         source_role: FunctionSourceRole::Production,
                         attrs: vec![],
+                        impl_attrs: Vec::new(),
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
                     }],
