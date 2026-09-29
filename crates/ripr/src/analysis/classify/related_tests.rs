@@ -1008,9 +1008,6 @@ fn dependency_edge_admits_owner_call(
     same_name: &SameNameDefinitions<'_>,
 ) -> bool {
     let owner_name = owner.name.as_str();
-    if body_binds_owner_name(&test.body, owner_name) {
-        return false;
-    }
     if context.adjacency.status() != PathDependencyGraphStatus::Complete {
         return false;
     }
@@ -1057,7 +1054,11 @@ fn dependency_edge_admits_owner_call(
         .map(|facts| strip_comments_and_strings(&facts.source))
         .unwrap_or_else(|| stripped_body.clone());
     let file_level_imports = file_level_use_text(&stripped_file);
+    // A `let` binding of the owner name cannot shadow `T::name(`, so the
+    // type-path rule runs before the bare-call binding guard (#4558 review).
     if type_path_call_admits_owner(
+        context,
+        &owner_manifest,
         owner,
         test,
         &callable_dependency_names,
@@ -1065,6 +1066,9 @@ fn dependency_edge_admits_owner_call(
         same_name.definitions,
     ) {
         return true;
+    }
+    if body_binds_owner_name(&test.body, owner_name) {
+        return false;
     }
     if same_name.unattributed {
         return false;
@@ -1120,6 +1124,8 @@ fn dependency_edge_admits_owner_call(
 /// `T::name` call could reach. Renamed (`as`) and glob imports never
 /// count, and neither does a type alias spelling.
 fn type_path_call_admits_owner(
+    context: &DependencyEdgeContext<'_>,
+    owner_manifest: &str,
     owner: &FunctionSummary,
     test: &TestSummary,
     callable_dependency_names: &BTreeSet<String>,
@@ -1140,17 +1146,90 @@ fn type_path_call_admits_owner(
         return false;
     }
     let type_path = format!("{self_type}::{owner_name}");
+    // The captured call's text is the raw source line: mask comments and
+    // strings so a quoted `T::name()` beside a real `other.name()` call on
+    // the same line is not read as the call (#4558 review).
     let captured = |path: &str| {
         test.calls.iter().any(|call| {
-            call.name == owner_name && super::helper_transfer::is_direct_call_site(&call.text, path)
+            call.name == owner_name
+                && super::helper_transfer::is_direct_call_site(
+                    &mask_comments_and_strings(&call.text),
+                    path,
+                )
         })
     };
     let imported_type_call = captured(&type_path);
-    callable_dependency_names.iter().any(|dependency_name| {
+    let spelled_through_dependency = callable_dependency_names.iter().any(|dependency_name| {
         captured(&format!("{dependency_name}::{type_path}"))
             || (imported_type_call
                 && imports_owner_from_dependency(file_level_imports, dependency_name, self_type))
+    });
+    spelled_through_dependency
+        && !owner_crate_imports_type_name(context, owner_manifest, &owner.file, self_type)
+}
+
+/// Whether any library source of the owner's crate brings a type named
+/// `self_type` in from another crate, or glob-imports another crate: then
+/// `dep::...::T` may name that type rather than the owner's, and nothing
+/// here resolves which (#4558 review). `crate::`, `self::` and `super::`
+/// paths stay inside the crate and never count. Library source is the
+/// crate's `src/` tree when the owner lives there, else every file of the
+/// crate. Over-refusal (an unrelated glob) only withholds the relation.
+fn owner_crate_imports_type_name(
+    context: &DependencyEdgeContext<'_>,
+    owner_manifest: &str,
+    owner_file: &Path,
+    self_type: &str,
+) -> bool {
+    let crate_dir = owner_manifest.strip_suffix("Cargo.toml").unwrap_or("");
+    let src_dir = format!("{crate_dir}src/");
+    let owner_in_src = normalize_path(owner_file).starts_with(&src_dir);
+    context.index.files.iter().any(|(file, facts)| {
+        let normalized = normalize_path(file);
+        let in_owner_crate = nearest_manifest_identity(context.manifest_dir_prefixes, file)
+            .as_deref()
+            == Some(owner_manifest);
+        in_owner_crate
+            && (!owner_in_src || normalized.starts_with(&src_dir))
+            && imports_type_name_from_another_crate(
+                &strip_comments_and_strings(&facts.source),
+                self_type,
+            )
     })
+}
+
+/// Whether a `use` statement in `stripped` source names `type_name` as a
+/// whole word, or ends in a glob, through a path whose first segment is
+/// not `crate`, `self` or `super`.
+fn imports_type_name_from_another_crate(stripped: &str, type_name: &str) -> bool {
+    let is_ident_byte = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let bytes = stripped.as_bytes();
+    let mut search_from = 0usize;
+    while let Some(relative) = stripped[search_from..].find("use ") {
+        let at = search_from + relative;
+        search_from = at + 4;
+        if at > 0 && bytes.get(at - 1).is_some_and(|byte| is_ident_byte(*byte)) {
+            continue;
+        }
+        let rest = &stripped[at + 4..];
+        let statement = rest.split(';').next().unwrap_or(rest);
+        let path = statement.trim_start();
+        let local_root = [
+            "crate::", "self::", "super::", "crate::{", "self::{", "super::{",
+        ]
+        .iter()
+        .any(|root| path.starts_with(root));
+        if local_root {
+            continue;
+        }
+        let names_type = statement
+            .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .any(|word| word == type_name);
+        if names_type || statement.contains('*') {
+            return true;
+        }
+    }
+    false
 }
 
 /// Whether `text` invokes the owner through the dependency's declared name,
@@ -3895,6 +3974,62 @@ fn crate_c_score_test() {
             level_filter_related(&index, &owner),
             vec![RelationReason::DirectOwnerCall]
         );
+        // A `let current` binding cannot shadow `LevelFilter::current()`.
+        let index = level_filter_index(
+            "use crate_a::LevelFilter; let current = LevelFilter::current(); assert_eq!(current, LevelFilter::DEBUG)",
+            Vec::new(),
+        );
+        assert_eq!(
+            level_filter_related(&index, &owner),
+            vec![RelationReason::DirectOwnerCall]
+        );
+        // The owner's crate re-exporting its own type through `self::` keeps
+        // the identity.
+        let mut index = level_filter_index(body, Vec::new());
+        with_source(
+            &mut index,
+            "crates/crate_a/src/lib.rs",
+            "pub use self::metadata::{Level, LevelFilter};\nuse crate::metadata::*;\n",
+        );
+        assert_eq!(
+            level_filter_related(&index, &owner),
+            vec![RelationReason::DirectOwnerCall]
+        );
+    }
+
+    fn with_source(index: &mut RustIndex, file: &str, source: &str) {
+        index.files.insert(
+            PathBuf::from(file),
+            FileFacts {
+                source: source.to_string(),
+                ..FileFacts::default()
+            },
+        );
+    }
+
+    /// #4558 review: the owner's crate brings a same-named type in from
+    /// another crate (or globs one in), so `crate_a::...::LevelFilter` may
+    /// not be the owner's type; and a quoted type path beside a real
+    /// same-named call is not the call.
+    #[test]
+    fn type_path_call_refuses_foreign_type_names_and_quoted_paths() {
+        let owner = impl_method("crates/crate_a/src/metadata.rs", "LevelFilter", "current");
+        let body = "use crate_a::other::LevelFilter; LevelFilter::current()";
+        for source in [
+            "pub use external::LevelFilter;\n",
+            "pub use external::filter::{Directive, LevelFilter as LevelFilter};\n",
+            "pub use external::*;\n",
+        ] {
+            let mut index = level_filter_index(body, Vec::new());
+            with_source(&mut index, "crates/crate_a/src/other.rs", source);
+            assert!(
+                level_filter_related(&index, &owner).is_empty(),
+                "{source}: must not relate"
+            );
+        }
+        let quoted = "use crate_a::LevelFilter; assert_eq!(other.current(), \"LevelFilter::current()\")";
+        let index = level_filter_index(quoted, Vec::new());
+        assert!(level_filter_related(&index, &owner).is_empty());
     }
 
     /// #4558 fail-closed rows: each keeps the call from reaching the owner.
