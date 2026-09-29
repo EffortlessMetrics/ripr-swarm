@@ -260,7 +260,8 @@ impl TsAliasMap {
     /// Resolve a non-relative specifier to a canonical workspace-relative path.
     ///
     /// Returns `None` (fail-closed) unless ALL of the following hold:
-    /// 1. `specifier` is non-relative (does not start with `./` or `../`).
+    /// 1. `specifier` is non-relative (not `.` / `..` and does not start
+    ///    with `./` or `../`).
     /// 2. An exact key or a unique longest-prefix single-`*` key matches.
     /// 3. The matched value array has exactly one entry.
     /// 4. The value template has at most one `*`.
@@ -268,7 +269,7 @@ impl TsAliasMap {
     ///    EXACTLY ONE existing workspace file (.ts/.tsx/.js/.jsx/.mts/.cts/
     ///    .mjs/.cjs).
     pub(crate) fn resolve(&self, specifier: &str) -> Option<PathBuf> {
-        if specifier.starts_with("./") || specifier.starts_with("../") {
+        if super::paths::is_relative_specifier(specifier) {
             return None; // relative paths are handled by the normal resolver
         }
         if self.is_empty() {
@@ -876,6 +877,24 @@ mod tests {
         let map = load_alias_map(&root).ok_or("should parse")?;
         assert!(map.resolve("./owner").is_none());
         assert!(map.resolve("../owner").is_none());
+        Ok(())
+    }
+
+    /// `.` / `..` are relative specifiers (#4546, #4638 review): even a
+    /// `paths` key spelled `..` never routes them through alias resolution.
+    #[test]
+    fn bare_dot_specifiers_are_relative_not_aliases() -> Result<(), String> {
+        let root = temp_dir("relative-dots");
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"..":["src/calc"],".":["src/calc"],"@calc":["src/calc"]}}}"#,
+        );
+        write(&root, "src/calc.ts", "export const calc = 1;\n");
+        let map = load_alias_map(&root).ok_or("should parse")?;
+        assert!(map.resolve("@calc").is_some(), "control alias must resolve");
+        assert!(map.resolve("..").is_none());
+        assert!(map.resolve(".").is_none());
         Ok(())
     }
 

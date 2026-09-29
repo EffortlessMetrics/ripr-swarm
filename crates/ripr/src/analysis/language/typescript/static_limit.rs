@@ -187,7 +187,7 @@ pub(crate) fn named_limitations_for_relative_import_unresolved(
             continue;
         }
         for import in &test.imports_in_file {
-            if !import.source.starts_with("./") && !import.source.starts_with("../") {
+            if !is_relative_specifier(&import.source) {
                 continue;
             }
             let name_matches = match &import.imported {
@@ -257,8 +257,15 @@ fn relative_import_resolves_to_workspace_file(
     let extensions = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"];
     let mut candidates: Vec<PathBuf> = vec![base.clone()];
     for ext in extensions {
-        candidates.push(PathBuf::from(format!("{base_str}{ext}")));
-        candidates.push(PathBuf::from(format!("{base_str}/index{ext}")));
+        if base_str.is_empty() {
+            // `require('..')` from `test/`: the workspace root directory
+            // itself, whose only file candidates are its `index` files. An
+            // empty base must never become a rooted `/index.js` probe.
+            candidates.push(PathBuf::from(format!("index{ext}")));
+        } else {
+            candidates.push(PathBuf::from(format!("{base_str}{ext}")));
+            candidates.push(PathBuf::from(format!("{base_str}/index{ext}")));
+        }
     }
     // TypeScript's JS-extension rewrite (moduleResolution node16/bundler):
     // an ESM-style `./util.js` specifier may resolve to the `util.ts` /
@@ -413,7 +420,7 @@ pub(crate) fn alias_gap_for_unresolved_import(
         }
         for import in &test.imports_in_file {
             // Only non-relative specifiers are candidates for alias gap.
-            if import.source.starts_with("./") || import.source.starts_with("../") {
+            if is_relative_specifier(&import.source) {
                 continue;
             }
             // Name-matched: the imported symbol must match the owner's name.

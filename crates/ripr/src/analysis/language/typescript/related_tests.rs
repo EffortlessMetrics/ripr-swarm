@@ -2006,7 +2006,7 @@ pub(crate) fn normalized_relative_import_module(
 ) -> Option<String> {
     // `.` and `..` name the current / parent directory module
     // (`require('..')`, #4546) exactly like `./` and `../` prefixes do.
-    if source == "." || source == ".." || source.starts_with("./") || source.starts_with("../") {
+    if is_relative_specifier(source) {
         // Standard relative resolution.
         let mut parts = normalized_path(test_file.parent().unwrap_or_else(|| Path::new("")))
             .split('/')

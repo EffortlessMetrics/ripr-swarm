@@ -174,3 +174,48 @@ fn require_of_other_directory_does_not_relate_to_root_index_owner() -> Result<()
     assert_ne!(class, ExposureClass::Exposed);
     Ok(())
 }
+
+/// `..` is relative at every site (#4638 review): a destructured
+/// `require('..')` that resolves to no file (no root `index`, no
+/// `package.json`) gets the relative-import-unresolved disclosure, never the
+/// "alias resolution is not enabled" advice meant for bare aliases.
+#[test]
+fn unresolved_parent_directory_require_is_disclosed_as_relative_not_alias() -> Result<(), String> {
+    let root = ts_unique_tempdir("dir-unresolved-parent")?;
+    ts_write_file(
+        &root.join("src/calc.js"),
+        "exports.isAdult = function (age) {\n  return age >= 18;\n};\n",
+    )?;
+    ts_write_file(
+        &root.join("test/calc.test.js"),
+        "const { isAdult } = require('..');\n\ntest('adult', () => {\n  expect(isAdult(18)).toBe(true);\n});\n",
+    )?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/calc.js",
+            &[(2, "  return age >= 18;")],
+        )],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let finding = result?
+        .findings
+        .into_iter()
+        .next()
+        .ok_or("expected a finding for `isAdult`")?;
+    let rendered = format!("{finding:?}");
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("typescript_relative_import_unresolved")),
+        "`require('..')` must be disclosed as an unresolved relative import: {:?}",
+        finding.evidence
+    );
+    assert!(
+        !rendered.contains("alias resolution is not enabled"),
+        "a relative specifier must not get alias advice: {rendered}"
+    );
+    Ok(())
+}
