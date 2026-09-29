@@ -15247,16 +15247,16 @@ fn unresolved_workspace_package_import_names_the_manifest() -> Result<(), String
             namespace: false,
         }],
     };
-    let limitations = super::static_limit::named_limitations_for_alias_unresolved(
+    let Some(gap) = super::static_limit::alias_gap_for_unresolved_import(
         &owner,
         std::slice::from_ref(&test),
         |_| false,
         Some(&map),
         None,
-    );
-    let [limitation] = limitations.as_slice() else {
-        return Err(format!("expected one limitation, got {limitations:?}"));
+    ) else {
+        return Err("expected a workspace package import gap".into());
     };
+    let limitation = &gap.limitation;
     assert!(
         limitation.why_not_actionable.contains("package.json")
             && !limitation
@@ -15268,16 +15268,16 @@ fn unresolved_workspace_package_import_names_the_manifest() -> Result<(), String
     // An unrelated bare specifier keeps the tsconfig advice.
     let mut other = test;
     other.imports_in_file[0].source = "@elsewhere/lib".into();
-    let limitations = super::static_limit::named_limitations_for_alias_unresolved(
+    let Some(gap) = super::static_limit::alias_gap_for_unresolved_import(
         &owner,
         std::slice::from_ref(&other),
         |_| false,
         Some(&map),
         None,
-    );
-    let [limitation] = limitations.as_slice() else {
-        return Err(format!("expected one limitation, got {limitations:?}"));
+    ) else {
+        return Err("expected an unrelated bare specifier gap".into());
     };
+    let limitation = &gap.limitation;
     assert!(
         limitation
             .why_not_actionable
