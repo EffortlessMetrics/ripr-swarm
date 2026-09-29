@@ -11,6 +11,15 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr check` is faster on large repositories, with byte-identical JSON on
+  12 real commits of tokio, vite, Django and ripr. Python source-fact
+  extraction found each fact's line by scanning the file from the start;
+  a Django commit went from 6.7 s to 1.7 s. TypeScript test selection
+  walked the directory tree for `package.json` twice per owner and test;
+  a vite commit went from 7.4 s to 3.9 s. Rust classification stopped
+  reparsing the owner's file per probe and computing each related test's
+  value facts again for every probe in the same owner; a ripr commit went
+  from 10.8 s to 7.4 s.
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from
