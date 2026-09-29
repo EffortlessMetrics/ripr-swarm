@@ -143,9 +143,10 @@ fn perl_static_limit_missing_runner_keeps_observation() -> Result<(), String> {
     let evidence = json["findings"][0]["evidence"]
         .as_array()
         .ok_or_else(|| "rendered Perl finding lacks evidence".to_string())?;
-    assert!(evidence.iter().any(|line| line
-        .as_str()
-        .is_some_and(|text| text.starts_with("perl_missing_test_runner:"))));
+    assert!(evidence.iter().any(|line| {
+        line.as_str()
+            .is_some_and(|text| text.starts_with("perl_missing_test_runner:"))
+    }));
     Ok(())
 }
 
