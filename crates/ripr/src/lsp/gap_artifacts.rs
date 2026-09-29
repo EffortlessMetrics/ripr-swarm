@@ -1,6 +1,7 @@
 use crate::domain::{CommandSpec, LanguageId, LanguageStatus, StaticLimitKind};
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
 use crate::output::gap_decision_ledger::DEFAULT_GAP_DECISION_LEDGER_OUT;
+use crate::output::gap_source_subject::{self, SourceSubjectCheck};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::io::ErrorKind;
@@ -61,6 +62,12 @@ pub(super) enum GapArtifactRejection {
     MissingIdentity,
     OutOfWorkspacePath(String),
     StaleArtifact,
+    /// A file the artifact's records name no longer has the content the
+    /// artifact was computed from (#4544). Carries the repo-relative path.
+    StaleSubject(String),
+    /// The artifact carries no usable `source_subject` stamp, so it cannot be
+    /// matched to the current workspace (#4544). Carries the reason code.
+    UnverifiableSubject(&'static str),
     UnavailableLanguage(String),
     UnsupportedSchema(String),
     UnsupportedStaticLimitKind(String),
@@ -164,6 +171,8 @@ impl GapArtifactRejection {
             Self::MissingIdentity => "missing_identity",
             Self::OutOfWorkspacePath(_) => "out_of_workspace_path",
             Self::StaleArtifact => "stale_artifact",
+            Self::StaleSubject(_) => "stale_subject",
+            Self::UnverifiableSubject(_) => "unverifiable_subject",
             Self::UnavailableLanguage(_) => "unavailable_language",
             Self::UnsupportedSchema(_) => "unsupported_schema",
             Self::UnsupportedStaticLimitKind(_) => "unsupported_static_limit_kind",
@@ -265,7 +274,65 @@ pub(super) fn validate_gap_artifact(
     {
         return Err(GapArtifactRejection::MissingIdentity);
     }
+    validate_source_subject(artifact, kind, context.root)?;
     Ok(validation)
+}
+
+/// Extracts the files one record or packet makes claims about.
+type SubjectPathsFn = fn(&Path, &Value) -> BTreeSet<String>;
+
+/// #4544: an editor-consumed gap artifact names files and lines, so it is
+/// only current while those files keep the content it was computed from.
+/// Recompute the stamped digests from the workspace; a changed, deleted, or
+/// newly created file is `stale_subject`, and a missing, malformed, or
+/// incomplete stamp is `unverifiable_subject`. Either rejects the whole
+/// artifact so no record from it is projected at its old lines.
+pub(super) fn validate_source_subject(
+    artifact: &Value,
+    kind: GapArtifactKind,
+    root: &Path,
+) -> Result<(), GapArtifactRejection> {
+    let (items, subject_paths): (&[Value], SubjectPathsFn) = match kind {
+        GapArtifactKind::GapDecisionLedger => (
+            artifact
+                .get("records")
+                .or_else(|| artifact.get("gap_records"))
+                .and_then(Value::as_array)
+                .map_or(&[], Vec::as_slice),
+            gap_source_subject::gap_record_subject_paths,
+        ),
+        GapArtifactKind::ActionableGaps => (
+            artifact
+                .get("packets")
+                .and_then(Value::as_array)
+                .map_or(&[], Vec::as_slice),
+            gap_source_subject::actionable_packet_subject_paths,
+        ),
+        GapArtifactKind::EvidenceRecord
+        | GapArtifactKind::FirstUsefulAction
+        | GapArtifactKind::AgentReceipt => return Ok(()),
+    };
+    let required = items
+        .iter()
+        .flat_map(|item| subject_paths(root, item))
+        .collect::<BTreeSet<_>>();
+    source_subject_result(gap_source_subject::check_source_subject(
+        root,
+        artifact.get("source_subject"),
+        &required,
+    ))
+}
+
+/// Map a stamp comparison onto the shared typed rejection vocabulary so the
+/// command-time packet readers disclose the same reason codes.
+pub(super) fn source_subject_result(check: SourceSubjectCheck) -> Result<(), GapArtifactRejection> {
+    match check {
+        SourceSubjectCheck::Current => Ok(()),
+        SourceSubjectCheck::Stale(path) => Err(GapArtifactRejection::StaleSubject(path)),
+        SourceSubjectCheck::Unverifiable(reason) => {
+            Err(GapArtifactRejection::UnverifiableSubject(reason))
+        }
+    }
 }
 
 fn validate_first_useful_action(
@@ -1645,6 +1712,10 @@ mod tests {
     }
 
     fn actionable_gaps_report() -> Value {
+        stamped(unstamped_actionable_gaps_report())
+    }
+
+    fn unstamped_actionable_gaps_report() -> Value {
         let raw_finding = json!({
             "file": "src/pricing.rs",
             "line": 42,
@@ -1720,6 +1791,16 @@ mod tests {
         })
     }
 
+    /// Attach the producer's `source_subject` stamp (#4544). Fixture files are
+    /// absent under the fixture roots, so the stamp records `null` digests
+    /// and stays current until a test creates, edits, or deletes one.
+    fn stamped(artifact: Value) -> Value {
+        crate::output::gap_source_subject::with_source_subject_for_test(
+            Path::new("/workspace"),
+            artifact,
+        )
+    }
+
     fn temp_root(label: &str) -> Result<PathBuf, String> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1732,6 +1813,10 @@ mod tests {
     }
 
     fn preview_gap_ledger() -> Value {
+        stamped(unstamped_preview_gap_ledger())
+    }
+
+    fn unstamped_preview_gap_ledger() -> Value {
         json!({
             "schema_version": "0.1",
             "tool": "ripr",
@@ -1851,6 +1936,14 @@ mod tests {
                 "out_of_workspace_path",
             ),
             (GapArtifactRejection::StaleArtifact, "stale_artifact"),
+            (
+                GapArtifactRejection::StaleSubject("src/lib.rs".to_string()),
+                "stale_subject",
+            ),
+            (
+                GapArtifactRejection::UnverifiableSubject("source_subject_missing"),
+                "unverifiable_subject",
+            ),
             (
                 GapArtifactRejection::UnavailableLanguage("python".to_string()),
                 "unavailable_language",
@@ -2084,7 +2177,7 @@ mod tests {
 
     #[test]
     fn actionable_gaps_report_allows_empty_no_action_queue() -> Result<(), String> {
-        let artifact = json!({
+        let artifact = stamped(json!({
             "schema_version": "0.1",
             "tool": "ripr",
             "report": "actionable-gaps",
@@ -2098,7 +2191,7 @@ mod tests {
             },
             "run_limitations": [],
             "packets": []
-        });
+        }));
 
         let validated = validate_gap_artifact(&artifact, &context(&[LanguageId::Rust]))
             .map_err(|err| format!("{err:?}"))?;
@@ -2635,7 +2728,7 @@ mod tests {
     #[test]
     fn gap_ledger_summary_reports_no_action_only_when_all_records_are_no_action()
     -> Result<(), String> {
-        let artifact = json!({
+        let artifact = stamped(json!({
             "schema_version": "0.1",
             "tool": "ripr",
             "kind": "gap_decision_ledger",
@@ -2662,7 +2755,7 @@ mod tests {
                     }
                 }
             ]
-        });
+        }));
 
         let validated = validate_gap_artifact(&artifact, &context(&[LanguageId::Rust]))
             .map_err(|err| format!("{err:?}"))?;
@@ -2958,6 +3051,88 @@ mod tests {
         assert!(looks_like_command_payload(
             "python -m unittest tests.test_pricing.TestDiscount.test_boundary"
         ));
+    }
+
+    /// #4544: the shared validator recomputes the `source_subject` digests.
+    /// Unchanged files validate; an edited anchor, a deleted file, and a
+    /// missing stamp are typed rejections for both editor-consumed kinds.
+    #[test]
+    fn source_subject_gates_ledger_and_actionable_gaps_validation() -> Result<(), String> {
+        let root = temp_root("source-subject")?;
+        let result = (|| {
+            fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+            fs::create_dir_all(root.join("tests")).map_err(|err| err.to_string())?;
+            fs::write(root.join("src/pricing.rs"), "pub fn price() {}\n")
+                .map_err(|err| err.to_string())?;
+            fs::write(root.join("tests/pricing.rs"), "#[test]\nfn t() {}\n")
+                .map_err(|err| err.to_string())?;
+            let context = GapArtifactValidationContext {
+                root: &root,
+                enabled_languages: &[LanguageId::Rust, LanguageId::Python],
+            };
+            let stamp = |artifact: Value| {
+                crate::output::gap_source_subject::with_source_subject_for_test(&root, artifact)
+            };
+            let mut ledger = unstamped_preview_gap_ledger();
+            ledger["records"][0]["anchor"] = json!({"file": "src/pricing.rs", "line": 1});
+            ledger["records"][0]["repair_route"]["target_file"] = json!("tests/pricing.rs");
+            ledger["records"][0]["repair_route"]["related_test"] = json!("tests/pricing.rs::t");
+            let ledger = stamp(ledger);
+            let actionable = stamp(unstamped_actionable_gaps_report());
+            for artifact in [&ledger, &actionable] {
+                validate_gap_artifact(artifact, &context)
+                    .map_err(|err| format!("current artifact rejected: {err:?}"))?;
+            }
+
+            fs::write(root.join("src/pricing.rs"), "pub fn price() -> u8 { 1 }\n")
+                .map_err(|err| err.to_string())?;
+            for artifact in [&ledger, &actionable] {
+                assert_eq!(
+                    validate_gap_artifact(artifact, &context),
+                    Err(GapArtifactRejection::StaleSubject(
+                        "src/pricing.rs".to_string()
+                    ))
+                );
+            }
+            fs::write(root.join("src/pricing.rs"), "pub fn price() {}\n")
+                .map_err(|err| err.to_string())?;
+
+            fs::remove_file(root.join("tests/pricing.rs")).map_err(|err| err.to_string())?;
+            for artifact in [&ledger, &actionable] {
+                assert_eq!(
+                    validate_gap_artifact(artifact, &context),
+                    Err(GapArtifactRejection::StaleSubject(
+                        "tests/pricing.rs".to_string()
+                    ))
+                );
+            }
+
+            for artifact in [
+                unstamped_preview_gap_ledger(),
+                unstamped_actionable_gaps_report(),
+            ] {
+                assert_eq!(
+                    validate_gap_artifact(&artifact, &context),
+                    Err(GapArtifactRejection::UnverifiableSubject(
+                        "source_subject_missing"
+                    ))
+                );
+            }
+
+            // A stamp that omits a file the records name vouches for only part
+            // of the claim, so it cannot make the artifact current.
+            let mut partial = ledger.clone();
+            partial["source_subject"]["files"] = json!([]);
+            assert_eq!(
+                validate_gap_artifact(&partial, &context),
+                Err(GapArtifactRejection::UnverifiableSubject(
+                    "source_subject_incomplete"
+                ))
+            );
+            Ok(())
+        })();
+        fs::remove_dir_all(&root).map_err(|err| format!("remove {}: {err}", root.display()))?;
+        result
     }
 
     #[test]

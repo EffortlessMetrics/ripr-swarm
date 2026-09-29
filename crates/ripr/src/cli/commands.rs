@@ -699,7 +699,12 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
         records_path,
         records_json: read_optional_text_for_report(options.source.label(), options.source.path()),
     };
-    let report = output::gap_decision_ledger::build_gap_decision_ledger_report(input);
+    let selected_root = PathBuf::from(&input.root);
+    let mut report = output::gap_decision_ledger::build_gap_decision_ledger_report(input);
+    output::gap_decision_ledger::stamp_gap_decision_ledger_source_subject(
+        &mut report,
+        &selected_root,
+    )?;
     let rendered_json = output::gap_decision_ledger::render_gap_decision_ledger_json(&report)?;
     let rendered_md = output::gap_decision_ledger::render_gap_decision_ledger_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
@@ -4274,6 +4279,107 @@ mod tests {
         assert!(markdown.contains("gate candidates=`1`"));
 
         std::fs::remove_dir_all(&dir).map_err(|err| format!("remove gap ledger dir: {err}"))?;
+        Ok(())
+    }
+
+    /// #4544: the written ledger carries the content digests of the files its
+    /// records name, read from `--root`, so an editor can tell whether the
+    /// workspace still holds the contents the ledger was computed from.
+    #[test]
+    fn reports_gap_ledger_stamps_the_source_subject_from_the_selected_root() -> Result<(), String> {
+        use crate::output::gap_source_subject::{SourceSubjectCheck, check_source_subject};
+        let dir = unique_command_test_dir("gap-ledger-source-subject");
+        std::fs::create_dir_all(dir.join("src")).map_err(|err| format!("create src: {err}"))?;
+        std::fs::write(dir.join("src/pricing.rs"), "abc\n")
+            .map_err(|err| format!("write anchor: {err}"))?;
+        let records = dir.join("records.json");
+        std::fs::write(
+            &records,
+            serde_json::json!({"records": [{
+                "gap_id": "gap:pr:pricing",
+                "canonical_gap_id": "gap:rust:pricing",
+                "kind": "MissingBoundaryAssertion",
+                "language": "rust",
+                "language_status": "stable",
+                "gap_state": "actionable",
+                "repair_route": {
+                    "route_kind": "AddBoundaryAssertion",
+                    "related_test": "tests/pricing.rs::discount_threshold"
+                },
+                "anchor": {"file": "src/pricing.rs", "line": 1}
+            }]})
+            .to_string(),
+        )
+        .map_err(|err| format!("write records: {err}"))?;
+        let out = dir.join("gap-decision-ledger.json");
+        let out_md = dir.join("gap-decision-ledger.md");
+        let root = dir.display().to_string();
+
+        reports(&args(&[
+            "gap-ledger",
+            "--root",
+            &root,
+            "--records",
+            &records.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]))?;
+
+        let ledger: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&out).map_err(|err| format!("read ledger: {err}"))?,
+        )
+        .map_err(|err| format!("parse ledger: {err}"))?;
+        assert_eq!(
+            ledger["source_subject"],
+            serde_json::json!({
+                "digest_algorithm": "sha256",
+                "files": [
+                    {
+                        "path": "src/pricing.rs",
+                        "digest": "sha256:edeaaff3f1774ad2888673770c6d64097e391bc362d7d6fb34982ddf0efd18cb"
+                    },
+                    {"path": "tests/pricing.rs", "digest": null}
+                ]
+            })
+        );
+        let required = std::collections::BTreeSet::from([
+            "src/pricing.rs".to_string(),
+            "tests/pricing.rs".to_string(),
+        ]);
+        assert_eq!(
+            check_source_subject(&dir, ledger.get("source_subject"), &required),
+            SourceSubjectCheck::Current
+        );
+        std::fs::write(dir.join("src/pricing.rs"), "abd\n")
+            .map_err(|err| format!("edit anchor: {err}"))?;
+        assert_eq!(
+            check_source_subject(&dir, ledger.get("source_subject"), &required),
+            SourceSubjectCheck::Stale("src/pricing.rs".to_string())
+        );
+
+        // Re-rendering the written ledger keeps its original stamp rather
+        // than vouching for the edited file.
+        let rerendered = dir.join("rerendered.json");
+        reports(&args(&[
+            "gap-ledger",
+            "--root",
+            &root,
+            "--records",
+            &out.display().to_string(),
+            "--out",
+            &rerendered.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]))?;
+        let rerendered: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&rerendered).map_err(|err| format!("read ledger: {err}"))?,
+        )
+        .map_err(|err| format!("parse ledger: {err}"))?;
+        assert_eq!(rerendered["source_subject"], ledger["source_subject"]);
+
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
         Ok(())
     }
 

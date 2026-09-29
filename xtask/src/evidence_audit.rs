@@ -11,6 +11,7 @@
 //! `dogfood.rs`, and `tests.rs`) compile unchanged.
 
 use super::*;
+use sha2::{Digest, Sha256};
 
 const LANE1_EVIDENCE_AUDIT_SCHEMA_VERSION: &str = "0.1";
 pub(crate) const LANE1_EVIDENCE_AUDIT_TOP_LIMIT: usize = 10;
@@ -436,7 +437,10 @@ pub(crate) fn lane1_evidence_audit_report_impl() -> Result<(), String> {
     )?;
     write_report(
         "actionable-gaps.json",
-        &lane1_actionable_gap_packets_json(&report)?,
+        &stamp_actionable_gaps_source_subject(
+            &lane1_actionable_gap_packets_json(&report)?,
+            Path::new("."),
+        )?,
     )?;
     write_report(
         "actionable-gaps.md",
@@ -6797,4 +6801,129 @@ fn audit_push_group_table(out: &mut String, groups: &[Lane1EvidenceAuditGroup]) 
 
 pub(crate) fn audit_markdown_cell(value: &str) -> String {
     value.replace('\n', " ").replace('|', "\\|")
+}
+
+/// Stamp an actionable-gaps report with the content digests of the files its
+/// packets anchor on (#4544), in the `source_subject` shape the ripr LSP
+/// validator (`lsp::gap_artifacts`) recomputes: `digest_algorithm = "sha256"`
+/// and one `{path, digest}` entry per repo-relative file, sorted, with
+/// `digest = "sha256:<hex>"` or `null` for an absent file. The packet fields
+/// match `output::gap_source_subject::actionable_packet_subject_paths`; the
+/// validator rejects a stamp that omits one, so the two cannot drift silently.
+pub(crate) fn stamp_actionable_gaps_source_subject(
+    report_json: &str,
+    root: &Path,
+) -> Result<String, String> {
+    let mut report: Value = serde_json::from_str(report_json)
+        .map_err(|err| format!("parse actionable-gaps report failed: {err}"))?;
+    let mut paths = BTreeSet::new();
+    for packet in report
+        .get("packets")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice)
+    {
+        for field in [
+            &["source_file"][..],
+            &["primary_anchor", "file"][..],
+            &["related_test_or_observer", "file"][..],
+        ] {
+            let raw = field
+                .iter()
+                .try_fold(packet, |value, key| value.get(*key))
+                .and_then(Value::as_str);
+            if let Some(path) = raw.and_then(|raw| source_subject_relative_path(root, raw)) {
+                paths.insert(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    for path in paths {
+        let digest = match fs::read(root.join(&path)) {
+            Ok(bytes) => Value::String(format!("sha256:{:x}", Sha256::digest(bytes))),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Value::Null,
+            Err(err) => return Err(format!("read source subject file {path} failed: {err}")),
+        };
+        files.push(serde_json::json!({ "path": path, "digest": digest }));
+    }
+    if let Some(object) = report.as_object_mut() {
+        object.insert(
+            "source_subject".to_string(),
+            serde_json::json!({ "digest_algorithm": "sha256", "files": files }),
+        );
+    }
+    serde_json::to_string_pretty(&report).map_err(|err| err.to_string())
+}
+
+/// Repo-relative spelling of a packet path, matching
+/// `output::gap_source_subject::subject_relative_path` in the ripr crate.
+fn source_subject_relative_path(root: &Path, raw: &str) -> Option<String> {
+    let file = raw.split_once("::").map_or(raw, |(file, _)| file).trim();
+    if file.is_empty() || file.contains('\n') || file.contains('\r') {
+        return None;
+    }
+    let normalized = file.replace('\\', "/");
+    let path = Path::new(&normalized);
+    let relative = if path.is_absolute() {
+        path.strip_prefix(root).ok()?.to_path_buf()
+    } else {
+        path.to_path_buf()
+    };
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        match component {
+            std::path::Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => return None,
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+#[cfg(test)]
+mod source_subject_tests {
+    use super::*;
+
+    #[test]
+    fn actionable_gaps_source_subject_stamps_packet_files() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "xtask-actionable-gaps-subject-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|err| err.to_string())?
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+        fs::write(root.join("src/pricing.rs"), "abc\n").map_err(|err| err.to_string())?;
+        let report = serde_json::json!({
+            "report": "actionable-gaps",
+            "packets": [{
+                "source_file": "src/pricing.rs",
+                "primary_anchor": {"file": "./src/pricing.rs", "line": 1},
+                "related_test_or_observer": {"file": "tests/pricing.rs::t"}
+            }]
+        });
+        let stamped: Value = serde_json::from_str(&stamp_actionable_gaps_source_subject(
+            &report.to_string(),
+            &root,
+        )?)
+        .map_err(|err| err.to_string())?;
+        fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
+        assert_eq!(
+            stamped["source_subject"],
+            serde_json::json!({
+                "digest_algorithm": "sha256",
+                "files": [
+                    {
+                        "path": "src/pricing.rs",
+                        "digest": "sha256:edeaaff3f1774ad2888673770c6d64097e391bc362d7d6fb34982ddf0efd18cb"
+                    },
+                    {"path": "tests/pricing.rs", "digest": null}
+                ]
+            })
+        );
+        Ok(())
+    }
 }

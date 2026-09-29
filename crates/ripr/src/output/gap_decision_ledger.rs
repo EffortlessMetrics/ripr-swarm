@@ -1,6 +1,7 @@
 use crate::agent::command_specs::{command_display_is_nonblank, command_displays_are_complete};
 use crate::agent::loop_commands::shell_arg;
 use crate::domain::{CommandRole, CommandSpec};
+use crate::output::gap_source_subject::{self, GapSourceSubject};
 use crate::output::receipt_write::receipt_write_command;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -51,6 +52,9 @@ pub(crate) struct GapDecisionLedgerReport {
     inputs: GapDecisionLedgerInputs,
     summary: GapDecisionLedgerSummary,
     analysis_outcome: Option<Value>,
+    /// Content digests of the workspace files the records name (#4544).
+    /// `None` until a writer stamps the report for its selected root.
+    source_subject: Option<GapSourceSubject>,
     records: Vec<GapRecord>,
     warnings: Vec<String>,
     limits: Vec<String>,
@@ -413,11 +417,24 @@ pub(crate) fn build_gap_decision_ledger_report(
 ) -> GapDecisionLedgerReport {
     let mut warnings = Vec::new();
     let mut analysis_outcome = None;
+    let mut source_subject = None;
     let mut records = match input.records_json {
         Ok(contents) => {
-            analysis_outcome = serde_json::from_str::<Value>(&contents)
-                .ok()
+            let source_value = serde_json::from_str::<Value>(&contents).ok();
+            analysis_outcome = source_value
+                .as_ref()
                 .and_then(|value| value.get("analysis_outcome").cloned());
+            // #4544: re-rendering an earlier ledger keeps the stamp taken when
+            // its records were computed; restamping now would vouch for them
+            // against files they were never compared with.
+            if input.source_kind == GapDecisionLedgerSourceKind::Records {
+                source_subject = source_value
+                    .as_ref()
+                    .and_then(|value| value.get("source_subject"))
+                    .and_then(|stamp| {
+                        serde_json::from_value::<GapSourceSubject>(stamp.clone()).ok()
+                    });
+            }
             match parse_gap_decision_source(input.source_kind, &contents) {
                 Ok(records) => records,
                 Err(err) => {
@@ -468,6 +485,7 @@ pub(crate) fn build_gap_decision_ledger_report(
         },
         summary,
         analysis_outcome,
+        source_subject,
         records,
         warnings,
         limits: vec![
@@ -498,6 +516,8 @@ pub(crate) fn render_gap_decision_ledger_json(
         summary: &'a GapDecisionLedgerSummary,
         #[serde(skip_serializing_if = "Option::is_none")]
         analysis_outcome: Option<&'a Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_subject: Option<&'a GapSourceSubject>,
         records: &'a [Value],
         warnings: &'a [String],
         limits: &'a [String],
@@ -513,11 +533,35 @@ pub(crate) fn render_gap_decision_ledger_json(
         inputs: &report.inputs,
         summary: &report.summary,
         analysis_outcome: report.analysis_outcome.as_ref(),
+        source_subject: report.source_subject.as_ref(),
         records: &records,
         warnings: &report.warnings,
         limits: &report.limits,
     })
     .map_err(|err| format!("serialize gap decision ledger JSON failed: {err}"))
+}
+
+/// Stamp the ledger with the content digests of every workspace file its
+/// records name, read from `root` (#4544). Editor consumers compare the stamp
+/// with the current workspace so a ledger computed for other file contents is
+/// disclosed as stale instead of being projected at its old lines. A stamp
+/// carried over from a re-rendered ledger is kept.
+pub(crate) fn stamp_gap_decision_ledger_source_subject(
+    report: &mut GapDecisionLedgerReport,
+    root: &Path,
+) -> Result<(), String> {
+    if report.source_subject.is_some() {
+        return Ok(());
+    }
+    let mut paths = BTreeSet::new();
+    for record in &report.records {
+        paths.extend(gap_source_subject::gap_record_subject_paths(
+            root,
+            &gap_record_json_value(record)?,
+        ));
+    }
+    report.source_subject = Some(gap_source_subject::stamp_source_subject(root, &paths)?);
+    Ok(())
 }
 
 fn gap_record_json_value(record: &GapRecord) -> Result<Value, String> {

@@ -11,6 +11,17 @@ are scoped or reviewed.
 
 ### Fixed
 
+- LSP: after `git checkout`, an edit, or a commit, `ripr lsp` no longer shows
+  gap diagnostics from `gap-decision-ledger.json` or `actionable-gaps.json`
+  that were computed for other file contents. Before, it placed the old
+  branch's gaps at their old lines on the new files and presented them as
+  current. Both reports now carry a `source_subject` stamp with a SHA-256
+  digest of each file their gaps name; the server recomputes those digests and
+  withholds a report whose files changed (`stale_subject`) or that has no
+  usable stamp (`unverifiable_subject`, which includes reports written by
+  earlier builds). The status surfaces and the repair-packet command name the
+  change and the regeneration command (`ripr reports gap-ledger`, or
+  `cargo xtask lane1-evidence-audit` for `actionable-gaps.json`).
 - MCP: a client that opens with `server/discover` (protocol `2026-07-28`)
   now receives the same instructions as an `initialize` client, including the
   CLI route that analyzes the diff. Before, only `initialize` carried them.
