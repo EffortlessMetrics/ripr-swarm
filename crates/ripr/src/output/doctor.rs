@@ -884,7 +884,10 @@ fn doctor_tool_run_result(
 /// toolchain files); otherwise the first nonempty line.
 fn doctor_exit_failure_evidence(tool: &str, output: &std::process::Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let mut lines = stderr.lines().map(str::trim).filter(|line| !line.is_empty());
+    let mut lines = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
     let first = lines.clone().next();
     match lines.find(|line| line.starts_with("error:")).or(first) {
         Some(line) => format!("{tool} --version failed ({}): {line}", output.status),
