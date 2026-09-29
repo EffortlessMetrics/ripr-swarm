@@ -145,6 +145,9 @@ pub(crate) struct ModuleItemScopes {
     pub(crate) item_fns: BTreeMap<(usize, String), Option<(usize, usize)>>,
     /// Fns whose body holds a `use` item, which may shadow a module item.
     pub(crate) fns_with_local_use: std::collections::BTreeSet<(usize, String)>,
+    /// Fns whose code may not run when called: an `async fn` (the call
+    /// only builds a future) or a body holding a closure or `async` block.
+    pub(crate) fns_with_deferred_code: std::collections::BTreeSet<(usize, String)>,
     /// Names each fn calls as a parsed single-segment free function
     /// (`check(..)`), outside macro arguments, strings and comments.
     pub(crate) direct_calls: BTreeMap<(usize, String), std::collections::BTreeSet<String>>,
@@ -213,6 +216,15 @@ pub(crate) fn module_item_scopes(text: &str) -> Option<ModuleItemScopes> {
                 .any(|node| ast::Use::can_cast(node.kind()))
             {
                 scopes.fns_with_local_use.insert(key.clone());
+            }
+            if function.async_token().is_some()
+                || body.syntax().descendants().any(|node| {
+                    ast::ClosureExpr::can_cast(node.kind())
+                        || ast::BlockExpr::cast(node)
+                            .is_some_and(|block| block.async_token().is_some())
+                })
+            {
+                scopes.fns_with_deferred_code.insert(key.clone());
             }
             let called = body
                 .syntax()

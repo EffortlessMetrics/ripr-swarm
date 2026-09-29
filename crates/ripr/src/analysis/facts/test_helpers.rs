@@ -33,8 +33,9 @@
 //!   binding, or any named item such as `const`, `static`, nested `fn` or
 //!   tuple `struct`);
 //! - the helper has no `cfg`/`cfg_attr` attribute anywhere (a disabled
-//!   helper can stand beside a macro-defined real one), no `use` item or
-//!   nested `fn` in its body, binds no name it also calls (a `let`
+//!   helper can stand beside a macro-defined real one), it is not `async`
+//!   and holds no closure or `async` block (an assertion there may never
+//!   run), no `use` item or nested `fn` in its body, binds no name it also calls (a `let`
 //!   closure over the owner's name), and does not share a line with the
 //!   test;
 //! - one hop: the helper's calls and parser-backed assertions are added
@@ -187,7 +188,9 @@ fn calls_directly(scopes: &ModuleItemScopes, test_key: &(usize, String), name: &
 
 /// A helper whose assertion is the one that runs: no `cfg`/`cfg_attr`
 /// attribute anywhere in it (a cfg-disabled helper can stand beside a
-/// macro-defined real one), no `use` item or nested `fn` in its body, and
+/// macro-defined real one), not `async` and no closure or `async` block in
+/// its body (their assertions may never run), no `use` item or nested `fn`
+/// in its body, and
 /// no name it binds (a `let` closure, a parameter) that it also calls,
 /// since any of these can shadow the owner the credited call names.
 fn helper_body_is_plain(
@@ -197,6 +200,7 @@ fn helper_body_is_plain(
 ) -> bool {
     !scopes.fns_with_cfg.contains(helper_key)
         && !scopes.fns_with_local_use.contains(helper_key)
+        && !scopes.fns_with_deferred_code.contains(helper_key)
         && helper.nested_fn_names.is_empty()
         && scopes
             .bound_names

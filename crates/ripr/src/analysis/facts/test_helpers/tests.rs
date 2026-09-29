@@ -170,6 +170,21 @@ fn helpers_that_cannot_be_resolved_to_one_cfg_test_function_grant_nothing()
             "        check(10, false);\n",
         ),
         (
+            "async helper",
+            "    async fn check(x: u32, want: bool) {\n        assert_eq!(gate(x), want);\n    }\n",
+            "        let _ = check(10, false);\n",
+        ),
+        (
+            "helper returning an uncalled closure",
+            "    fn check(x: u32, want: bool) -> impl Fn() {\n        move || assert_eq!(gate(x), want)\n    }\n",
+            "        let _ = check(10, false);\n",
+        ),
+        (
+            "async block in the helper body",
+            "    fn check(x: u32, want: bool) {\n        let _ = async move { assert_eq!(gate(x), want) };\n    }\n",
+            "        check(10, false);\n",
+        ),
+        (
             "use item in the helper body",
             "    fn check(x: u32, want: bool) {\n        use crate::other::gate;\n        assert_eq!(gate(x), want);\n    }\n",
             "        check(10, false);\n",
