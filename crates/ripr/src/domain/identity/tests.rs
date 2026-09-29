@@ -621,14 +621,14 @@ fn truncated_surface_suffix_does_not_inherit_a_disposition() {
 fn checkout_prefixed_surface_still_matches_the_registered_path() {
     assert_eq!(
         identity_field_disposition(
-            "/workspace/crates/ripr/src/lsp/action_contract.rs",
+            "/abs/checkout/crates/ripr/src/lsp/action_contract.rs",
             "action_id"
         ),
         Some("ActionId")
     );
     assert_eq!(
         identity_field_disposition(
-            "C:\\workspace\\schemas/ripr/ripr-agent-success.schema.json",
+            "checkout\\schemas/ripr/ripr-agent-success.schema.json",
             "snapshot_id"
         ),
         Some("AnalysisAttemptId")
