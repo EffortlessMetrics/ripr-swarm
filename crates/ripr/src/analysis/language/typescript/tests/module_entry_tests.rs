@@ -107,11 +107,19 @@ fn factory_product_call_relates_to_private_helper() -> Result<(), String> {
 
 #[test]
 fn default_import_of_factory_product_relates() -> Result<(), String> {
-    assert_entry_related(
-        "default-import",
-        MERGE,
-        "import { it, expect } from 'vitest';\nimport combine from '../src/merge';\n\nit('merges', () => {\n  expect(combine({ a: 1 }, { b: 2 })).toEqual({ a: 1, b: 2 });\n});\n",
-    )
+    let test = "import { it, expect } from 'vitest';\nimport combine from '../src/merge';\n\nit('merges', () => {\n  expect(combine({ a: 1 }, { b: 2 })).toEqual({ a: 1, b: 2 });\n});\n";
+    assert_entry_related("default-import", MERGE, test)?;
+    // The summary names the export the default import binds.
+    let finding = merge_finding("default-import-summary", MERGE, test)?;
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("(`default`)")),
+        "missing: {:?}",
+        finding.missing
+    );
+    Ok(())
 }
 
 #[test]

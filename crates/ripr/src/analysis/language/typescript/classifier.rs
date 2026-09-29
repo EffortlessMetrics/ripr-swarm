@@ -2585,7 +2585,13 @@ pub(crate) fn classify_change_with_alias_state(
             StageState::Yes,
             StageState::Weak,
             StageState::Weak,
-            vec![module_entry_reach_summary(owner, &related_candidates)],
+            vec![module_entry_reach_summary(
+                owner,
+                &related_candidates,
+                reexport_index,
+                alias_map,
+                workspace_root,
+            )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank() && observation_confirmed {
         (
@@ -2955,17 +2961,30 @@ pub(crate) fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
 
 /// Missing-evidence line for an owner reached only through same-module
 /// entries: names the entries the related tests call.
+/// An entry is named when a related test passes the same relation gate for
+/// it, so a default or renamed import names the export it binds.
 fn module_entry_reach_summary(
     owner: &TypeScriptOwner,
     candidates: &[TypeScriptRelatedCandidate<'_>],
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
 ) -> String {
     let called: Vec<String> = owner
         .module_entries
         .iter()
         .filter(|entry| {
+            let entry_owner = module_entry_owner(owner, entry);
             candidates.iter().any(|candidate| {
                 candidate.relation == TypeScriptRelationKind::ModuleEntryCall
-                    && contains_call_name(&candidate.test.body_text, &entry.name)
+                    && owner_call_relation(
+                        candidate.test,
+                        &entry_owner,
+                        reexport_index,
+                        alias_map,
+                        workspace_root,
+                    )
+                    .is_some_and(TypeScriptRelationKind::uses_oracle)
             })
         })
         .map(|entry| format!("`{}`", entry.name))
