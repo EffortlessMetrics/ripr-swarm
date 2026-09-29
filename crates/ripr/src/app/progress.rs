@@ -57,6 +57,7 @@ impl AnalysisProgressEvent {
         }
     }
 
+    #[cfg(test)]
     fn is_terminal(self) -> bool {
         matches!(
             self.stage,
@@ -143,7 +144,8 @@ fn elapsed_ms(started: Instant) -> u64 {
 mod tests {
     use super::*;
     use crate::analysis::cancellation::{self, AnalysisAbortKind, AnalysisCancellationToken};
-    use crate::app::{CheckInput, Mode, OutputFormat, check_with_progress};
+    use crate::app::check::check_with_progress;
+    use crate::app::{CheckInput, Mode, OutputFormat};
     use crate::config::RiprConfig;
     use std::path::PathBuf;
     use std::sync::Mutex;

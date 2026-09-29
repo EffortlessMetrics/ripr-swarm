@@ -1,7 +1,7 @@
-use super::progress::ProgressRun;
-use super::{
-    AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage, CheckInput, CheckOutput,
+use super::progress::{
+    AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage, ProgressRun,
 };
+use super::{CheckInput, CheckOutput};
 use crate::analysis::{
     AnalysisResult, run_analysis_with_oracle_policy_and_generated_file_patterns,
     run_repo_analysis_with_oracle_policy_and_generated_file_patterns,
