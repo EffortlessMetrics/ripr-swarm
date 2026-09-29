@@ -9,7 +9,6 @@ mod eval_sweep;
 mod eval_sweep_check;
 mod eval_sweep_refresh;
 mod eval_sweep_report;
-mod final_native_payload;
 mod first_pr;
 mod fixtures;
 mod impacted_evidence;
