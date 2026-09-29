@@ -78,10 +78,10 @@ pub(crate) mod workflow_escape;
 // keeps the catalog compile-checked outside #[cfg(test)] while live producers
 // continue to own serialization. Optimized binary retention is not claimed.
 const _: usize = schemas::AGENT_ARTIFACT_SCHEMAS.len();
-const _: [fn(&crate::domain::ExecutedControlPacketV1) -> Result<String, String>; 2] = [
-    executed_control::render_packet_json,
-    executed_control::render_packet_markdown,
-];
+const _: fn(&crate::domain::ExecutedControlPacketV1) -> Result<String, String> =
+    executed_control::render_packet_json;
+const _: fn(&crate::domain::ExecutedControlPacketV1) -> Result<String, String> =
+    executed_control::render_packet_markdown;
 
 #[cfg(test)]
 pub(crate) mod test_support {
