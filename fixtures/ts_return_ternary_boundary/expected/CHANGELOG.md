@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_return_ternary_boundary (3)
+
+Reason:
+RIPR-SPEC-0027: re-bless after main added source_subject to check output; classification unchanged
+
+Command:
+`cargo xtask goldens bless ts_return_ternary_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
