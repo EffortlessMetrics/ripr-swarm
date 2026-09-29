@@ -1,6 +1,8 @@
 mod contract;
+mod crate_targets;
 mod targets;
 mod version;
+mod workflow;
 
 use std::fs;
 
@@ -12,6 +14,10 @@ pub(crate) use version::pep440_version;
 pub(crate) const CONTRACT_PATH: &str = "policy/distribution.toml";
 const WORKSPACE_MANIFEST_PATH: &str = "Cargo.toml";
 const CRATE_MANIFEST_PATH: &str = "crates/ripr/Cargo.toml";
+const SERVER_ARCHIVE_WORKFLOW_PATH: &str =
+    ".github/workflows/server-archive-qualification.yml";
+const SERVER_ARCHIVE_WORKFLOW_TEXT: &str =
+    include_str!("../../../../.github/workflows/server-archive-qualification.yml");
 
 pub(crate) fn load_distribution_contract() -> Result<DistributionContract, String> {
     let text = fs::read_to_string(CONTRACT_PATH)
@@ -94,6 +100,12 @@ fn evaluate_contract(
     let mut violations = Vec::new();
     contract::validate_contract_identity(contract_path, contract, &mut violations);
     targets::validate_targets(contract_path, &contract.target, &mut violations);
+    workflow::validate_archive_workflow(
+        SERVER_ARCHIVE_WORKFLOW_PATH,
+        SERVER_ARCHIVE_WORKFLOW_TEXT,
+        &contract.target,
+        &mut violations,
+    );
 
     match contract::parse_workspace_version(workspace_path, workspace_text) {
         Ok(version) => {
@@ -107,6 +119,12 @@ fn evaluate_contract(
     }
 
     contract::validate_crate_manifest(crate_path, crate_text, &contract.product, &mut violations);
+    crate_targets::validate_single_binary(
+        crate_path,
+        crate_text,
+        &contract.product,
+        &mut violations,
+    );
     violations
 }
 
