@@ -166,6 +166,7 @@ const MAX_RELATED_TESTS_PER_SEAM_JSON: usize = 8;
 const MAX_TOP_FILES_SUMMARY_JSON: usize = 25;
 
 /// Render the repo exposure JSON.
+#[cfg(test)]
 pub(crate) fn render_repo_exposure_json(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
@@ -884,6 +885,7 @@ to see what the root can analyze.\n";
 /// Render the repo exposure Markdown report. The output uses the
 /// static seam evidence vocabulary only — no runtime-mutation outcome
 /// words per RIPR-SPEC-0005 § Static-Language Boundaries.
+#[cfg(test)]
 pub(crate) fn render_repo_exposure_md(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
