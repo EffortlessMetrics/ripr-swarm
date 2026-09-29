@@ -8,9 +8,9 @@ change_class = "spec_or_contract_change"
 
 claim_boundary = """
 Projects producer-owned check analysis stages and throttled heartbeats onto
-CLI stderr without changing machine stdout. Carries the closed
+CLI stderr without changing machine stdout. Consumes the closed
 loading_input/analyzing/building_output/completed|cancelled|failed contract
-as the required substrate because PR #4193 has not landed. Does not map LSP
+from PR #4829 rather than inventing a rival producer. Does not map LSP
 work-done progress, close #2608, absorb #4811, invent percentages or a
 second stage vocabulary, or claim faster analysis.
 """

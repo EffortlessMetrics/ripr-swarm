@@ -169,3 +169,83 @@ fn check_help_does_not_spray_progress() -> Result<(), String> {
     assert!(stdout.contains("percentage or ETA"));
     Ok(())
 }
+
+#[test]
+fn check_markdown_stdout_is_unchanged_by_progress() -> Result<(), String> {
+    let loud = run_check(&["--format", "markdown"])?;
+    let quiet = run_check(&["--format", "markdown", "--quiet"])?;
+    assert!(loud.status.success(), "{}", stderr_text(&loud));
+    assert!(quiet.status.success(), "{}", stderr_text(&quiet));
+    assert_eq!(loud.stdout, quiet.stdout);
+    let stdout = String::from_utf8_lossy(&loud.stdout);
+    assert!(!stdout.contains("ripr progress:"));
+    assert!(stderr_text(&loud).contains("ripr progress: loading_input [diff]"));
+    Ok(())
+}
+
+#[test]
+fn check_worktree_projects_worktree_scope_on_stderr() -> Result<(), String> {
+    let root = sample_root();
+    let output = ripr()
+        .args([
+            "check",
+            "--root",
+            root.as_str(),
+            "--worktree",
+            "--format",
+            "json",
+        ])
+        .output()
+        .map_err(|error| format!("run worktree check: {error}"))?;
+    assert!(
+        output.status.success(),
+        "worktree check failed: {}",
+        stderr_text(&output)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = stderr_text(&output);
+    assert!(!stdout.contains("ripr progress:"));
+    assert!(
+        stderr.contains("ripr progress: loading_input [worktree]"),
+        "missing worktree scope on stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("[diff]"),
+        "worktree run must not project the diff scope: {stderr}"
+    );
+    Ok(())
+}
+
+#[test]
+fn check_quiet_failure_keeps_errors_and_drops_progress() -> Result<(), String> {
+    let root = sample_root();
+    let missing = workspace_root().join("target/ripr/absent-progress.diff");
+    let missing_arg = missing.display().to_string();
+    let output = ripr()
+        .args([
+            "check",
+            "--root",
+            root.as_str(),
+            "--diff",
+            missing_arg.as_str(),
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .map_err(|error| format!("run quiet failing check: {error}"))?;
+    assert!(
+        !output.status.success(),
+        "missing diff must fail under --quiet"
+    );
+    let stderr = stderr_text(&output);
+    assert!(
+        !stderr.contains("ripr progress:"),
+        "--quiet must suppress progress on failure: {stderr}"
+    );
+    assert!(
+        !stderr.trim().is_empty(),
+        "--quiet must still report the command error"
+    );
+    Ok(())
+}

@@ -611,18 +611,21 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     let progress_sink = progress
         .as_ref()
         .map(|sink| sink as &dyn crate::app::AnalysisProgressSink);
+    let progress_scope = if format.is_repo_scope() {
+        app::AnalysisProgressScope::Repo
+    } else if worktree_explicitly_provided {
+        app::AnalysisProgressScope::Worktree
+    } else {
+        app::AnalysisProgressScope::Diff
+    };
     let output_result = if format.is_repo_seam_inventory() {
         // Repo seam-driven formats do not consume legacy repo `Findings`,
         // so skip `run_repo_analysis` and let `render_check` drive the
         // seam walker directly from `output.root`. The synthesized
         // `CheckOutput` carries only the fields these renderers read.
         Ok(app::repo_seam_inventory_input(input))
-    } else if format.is_repo_scope() {
-        app::check_workspace_repo_with_config_and_progress(input, &config, progress_sink)
-    } else if worktree_explicitly_provided {
-        app::check_workspace_worktree_with_config_and_progress(input, &config, progress_sink)
     } else {
-        app::check_workspace_with_config_and_progress(input, &config, progress_sink)
+        app::check_with_progress(input, &config, progress_scope, progress_sink)
     };
     let mut output = match output_result {
         Ok(output) => output,

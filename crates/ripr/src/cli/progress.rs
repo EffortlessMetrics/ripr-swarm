@@ -58,17 +58,53 @@ pub(crate) fn elapsed_class(elapsed: Duration) -> Option<&'static str> {
         .map(|(_, label)| *label)
 }
 
+pub(crate) const fn stage_token(stage: AnalysisProgressStage) -> &'static str {
+    match stage {
+        AnalysisProgressStage::LoadingInput => "loading_input",
+        AnalysisProgressStage::Analyzing => "analyzing",
+        AnalysisProgressStage::BuildingOutput => "building_output",
+        AnalysisProgressStage::Completed => "completed",
+        AnalysisProgressStage::Cancelled => "cancelled",
+        AnalysisProgressStage::Failed => "failed",
+    }
+}
+
+pub(crate) const fn scope_token(scope: AnalysisProgressScope) -> &'static str {
+    match scope {
+        AnalysisProgressScope::Diff => "diff",
+        AnalysisProgressScope::Worktree => "worktree",
+        AnalysisProgressScope::Repo => "repo",
+    }
+}
+
+pub(crate) const fn stage_is_terminal(stage: AnalysisProgressStage) -> bool {
+    matches!(
+        stage,
+        AnalysisProgressStage::Completed
+            | AnalysisProgressStage::Cancelled
+            | AnalysisProgressStage::Failed
+    )
+}
+
+pub(crate) const fn stage_is_success_terminal(stage: AnalysisProgressStage) -> bool {
+    matches!(stage, AnalysisProgressStage::Completed)
+}
+
 pub(crate) fn format_stage_line(
     stage: AnalysisProgressStage,
     scope: AnalysisProgressScope,
 ) -> String {
-    format!("ripr progress: {} [{}]", stage.token(), scope.token())
+    format!(
+        "ripr progress: {} [{}]",
+        stage_token(stage),
+        scope_token(scope)
+    )
 }
 
 pub(crate) fn format_heartbeat_line(stage: AnalysisProgressStage, class: &str) -> String {
     format!(
         "ripr progress: {} still active after {class}",
-        stage.token()
+        stage_token(stage)
     )
 }
 
@@ -196,10 +232,10 @@ impl CliProgressSink {
         }
         projection.current_stage = Some(event.stage);
 
-        if event.stage.is_terminal() {
+        if stage_is_terminal(event.stage) {
             projection.terminal = true;
             let too_short = projection.tty
-                && event.stage.is_success_terminal()
+                && stage_is_success_terminal(event.stage)
                 && now.duration_since(projection.started) < projection.policy.min_visible;
             if too_short {
                 Self::finish_in_place(&mut projection);
@@ -232,7 +268,7 @@ impl CliProgressSink {
         let Some(stage) = projection.current_stage else {
             return;
         };
-        if stage.is_terminal() {
+        if stage_is_terminal(stage) {
             return;
         }
         let now = Instant::now();
@@ -289,7 +325,7 @@ impl CliProgressSink {
 impl AnalysisProgressSink for CliProgressSink {
     fn emit(&self, event: AnalysisProgressEvent) {
         self.emit_event(event);
-        if event.stage.is_terminal() {
+        if stage_is_terminal(event.stage) {
             self.stop_heartbeat();
         } else {
             self.start_heartbeat_thread();
@@ -526,5 +562,77 @@ mod tests {
         assert_eq!(elapsed_class(Duration::from_millis(4999)), Some("2s"));
         assert_eq!(elapsed_class(Duration::from_secs(5)), Some("5s"));
         assert_eq!(elapsed_class(Duration::from_secs(90)), Some("1m"));
+    }
+
+    #[test]
+    fn projection_tokens_cover_the_closed_producer_vocabulary() {
+        assert_eq!(
+            stage_token(AnalysisProgressStage::LoadingInput),
+            "loading_input"
+        );
+        assert_eq!(stage_token(AnalysisProgressStage::Analyzing), "analyzing");
+        assert_eq!(
+            stage_token(AnalysisProgressStage::BuildingOutput),
+            "building_output"
+        );
+        assert_eq!(stage_token(AnalysisProgressStage::Completed), "completed");
+        assert_eq!(stage_token(AnalysisProgressStage::Cancelled), "cancelled");
+        assert_eq!(stage_token(AnalysisProgressStage::Failed), "failed");
+        assert_eq!(scope_token(AnalysisProgressScope::Diff), "diff");
+        assert_eq!(scope_token(AnalysisProgressScope::Worktree), "worktree");
+        assert_eq!(scope_token(AnalysisProgressScope::Repo), "repo");
+        assert!(!stage_is_terminal(AnalysisProgressStage::Analyzing));
+        assert!(stage_is_terminal(AnalysisProgressStage::Cancelled));
+        assert!(stage_is_success_terminal(AnalysisProgressStage::Completed));
+        assert!(!stage_is_success_terminal(AnalysisProgressStage::Failed));
+        assert!(!stage_is_success_terminal(AnalysisProgressStage::Cancelled));
+        assert_eq!(
+            format_stage_line(
+                AnalysisProgressStage::Analyzing,
+                AnalysisProgressScope::Worktree
+            ),
+            "ripr progress: analyzing [worktree]"
+        );
+        assert_eq!(
+            format_stage_line(
+                AnalysisProgressStage::Completed,
+                AnalysisProgressScope::Repo
+            ),
+            "ripr progress: completed [repo]"
+        );
+    }
+
+    #[test]
+    fn cancelled_terminal_never_emits_completed() {
+        let buffer = Buffer::new();
+        let sink = CliProgressSink::with_writer(Box::new(buffer.clone()), false, non_tty_policy());
+        sink.emit(event(AnalysisProgressStage::Analyzing));
+        sink.emit(event(AnalysisProgressStage::Cancelled));
+        sink.emit(event(AnalysisProgressStage::Completed));
+        let text = buffer.text();
+        assert!(text.contains("ripr progress: cancelled [diff]"));
+        assert!(!text.contains("completed"));
+        assert_eq!(text.matches("ripr progress: cancelled").count(), 1);
+    }
+
+    #[test]
+    fn tty_short_failure_still_projects_failed() {
+        let buffer = Buffer::new();
+        let policy = ProgressPolicy {
+            min_visible: Duration::from_secs(30),
+            first_heartbeat: Duration::from_secs(30),
+            heartbeat_every: Duration::from_secs(30),
+            max_heartbeats: 1,
+        };
+        let sink = CliProgressSink::with_writer(Box::new(buffer.clone()), true, policy);
+        sink.emit(event(AnalysisProgressStage::LoadingInput));
+        sink.emit(event(AnalysisProgressStage::Failed));
+        drop(sink);
+        let text = buffer.text();
+        assert!(
+            text.contains("failed"),
+            "non-success terminals must remain visible on a short TTY run: {text}"
+        );
+        assert!(!text.contains("completed"));
     }
 }

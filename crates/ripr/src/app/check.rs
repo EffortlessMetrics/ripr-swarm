@@ -40,32 +40,14 @@ pub fn check_workspace_with_config(
     input: CheckInput,
     config: &RiprConfig,
 ) -> Result<CheckOutput, String> {
-    check_workspace_with_config_and_progress(input, config, None)
-}
-
-/// Run a diff check while observing producer-owned progress boundaries.
-pub(crate) fn check_workspace_with_config_and_progress(
-    input: CheckInput,
-    config: &RiprConfig,
-    sink: Option<&dyn AnalysisProgressSink>,
-) -> Result<CheckOutput, String> {
-    run_check(input, config, AnalysisMode::Diff, sink)
+    check_with_progress(input, config, AnalysisProgressScope::Diff, None)
 }
 
 pub fn check_workspace_worktree_with_config(
     input: CheckInput,
     config: &RiprConfig,
 ) -> Result<CheckOutput, String> {
-    check_workspace_worktree_with_config_and_progress(input, config, None)
-}
-
-/// Run a worktree check while observing producer-owned progress boundaries.
-pub(crate) fn check_workspace_worktree_with_config_and_progress(
-    input: CheckInput,
-    config: &RiprConfig,
-    sink: Option<&dyn AnalysisProgressSink>,
-) -> Result<CheckOutput, String> {
-    run_check(input, config, AnalysisMode::Worktree, sink)
+    check_with_progress(input, config, AnalysisProgressScope::Worktree, None)
 }
 
 /// Runs the repo-baseline static exposure analysis for a workspace. This
@@ -86,66 +68,16 @@ pub fn check_workspace_repo_with_config(
     input: CheckInput,
     config: &RiprConfig,
 ) -> Result<CheckOutput, String> {
-    check_workspace_repo_with_config_and_progress(input, config, None)
+    check_with_progress(input, config, AnalysisProgressScope::Repo, None)
 }
 
-/// Run a repo check while observing producer-owned progress boundaries.
-pub(crate) fn check_workspace_repo_with_config_and_progress(
-    input: CheckInput,
-    config: &RiprConfig,
-    sink: Option<&dyn AnalysisProgressSink>,
-) -> Result<CheckOutput, String> {
-    run_check(input, config, AnalysisMode::Repo, sink)
-}
-
-/// Build a minimal [`CheckOutput`] for repo seam-driven rendering.
-///
-/// The seam inventory, repo exposure, agent packet, SARIF seam, and
-/// seam-native badge renderers read only `output.root` plus auxiliary
-/// disk artifacts as needed, so this avoids running `run_repo_analysis`
-/// to compute legacy `Findings` those formats discard. The rest of the
-/// fields are populated for schema-consistency only.
-///
-/// This helper performs no analysis, so a [`crate::GitCandidateSubject`]
-/// on the input is not consumed or validated here (#3276): callers reach
-/// the subject's fail-closed boundary only through the `check_workspace*`
-/// entry points.
-pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
-    output_builder::check_output_from_analysis(
-        input,
-        AnalysisResult {
-            harness_projections: Vec::new(),
-            analysis_outcome: None,
-            summary: Summary::default(),
-            findings: Vec::new(),
-            preview_language_advisories: Vec::new(),
-            language_runs: Vec::new(),
-            partial_scope: None,
-            // No analysis ran, so no loader chose a base (#3940).
-            effective_base: None,
-            uncommitted_source_paths: Vec::new(),
-        },
-    )
-}
-
-#[derive(Debug)]
-enum AnalysisMode {
-    Diff,
-    Worktree,
-    Repo,
-}
-
-fn run_check(
+/// Run a check while observing producer-owned progress boundaries.
+pub(crate) fn check_with_progress(
     mut input: CheckInput,
     config: &RiprConfig,
-    mode: AnalysisMode,
+    scope: AnalysisProgressScope,
     sink: Option<&dyn AnalysisProgressSink>,
 ) -> Result<CheckOutput, String> {
-    let scope = match mode {
-        AnalysisMode::Diff => AnalysisProgressScope::Diff,
-        AnalysisMode::Worktree => AnalysisProgressScope::Worktree,
-        AnalysisMode::Repo => AnalysisProgressScope::Repo,
-    };
     let mut progress = ProgressRun::new(sink, scope);
     progress.emit(AnalysisProgressStage::LoadingInput);
     // Immutable Git candidate subjects (#3237 / #3276): bind-and-validate
@@ -202,18 +134,18 @@ fn run_check(
                 .collect::<Vec<_>>()
                 .join(", ")
         );
-        eprintln!("ripr: mode = {:?}", mode);
+        eprintln!("ripr: mode = {:?}", scope);
     }
 
     progress.emit(AnalysisProgressStage::Analyzing);
-    let analysis = match mode {
-        AnalysisMode::Diff => run_analysis_with_oracle_policy_and_generated_file_patterns(
+    let analysis = match scope {
+        AnalysisProgressScope::Diff => run_analysis_with_oracle_policy_and_generated_file_patterns(
             &options,
             config.oracles(),
             &languages,
             config.languages().generated_file_patterns(),
         )?,
-        AnalysisMode::Worktree => {
+        AnalysisProgressScope::Worktree => {
             run_worktree_analysis_with_oracle_policy_and_generated_file_patterns(
                 &options,
                 config.oracles(),
@@ -221,12 +153,14 @@ fn run_check(
                 config.languages().generated_file_patterns(),
             )?
         }
-        AnalysisMode::Repo => run_repo_analysis_with_oracle_policy_and_generated_file_patterns(
-            &options,
-            config.oracles(),
-            &languages,
-            config.languages().generated_file_patterns(),
-        )?,
+        AnalysisProgressScope::Repo => {
+            run_repo_analysis_with_oracle_policy_and_generated_file_patterns(
+                &options,
+                config.oracles(),
+                &languages,
+                config.languages().generated_file_patterns(),
+            )?
+        }
     };
 
     if crate::is_verbose() {
@@ -243,6 +177,36 @@ fn run_check(
     }
     progress.complete();
     Ok(output)
+}
+
+/// Build a minimal [`CheckOutput`] for repo seam-driven rendering.
+///
+/// The seam inventory, repo exposure, agent packet, SARIF seam, and
+/// seam-native badge renderers read only `output.root` plus auxiliary
+/// disk artifacts as needed, so this avoids running `run_repo_analysis`
+/// to compute legacy `Findings` those formats discard. The rest of the
+/// fields are populated for schema-consistency only.
+///
+/// This helper performs no analysis, so a [`crate::GitCandidateSubject`]
+/// on the input is not consumed or validated here (#3276): callers reach
+/// the subject's fail-closed boundary only through the `check_workspace*`
+/// entry points.
+pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
+    output_builder::check_output_from_analysis(
+        input,
+        AnalysisResult {
+            harness_projections: Vec::new(),
+            analysis_outcome: None,
+            summary: Summary::default(),
+            findings: Vec::new(),
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            partial_scope: None,
+            // No analysis ran, so no loader chose a base (#3940).
+            effective_base: None,
+            uncommitted_source_paths: Vec::new(),
+        },
+    )
 }
 
 /// Applies an explicit `--suppression-policy` file to check findings (#1441).
