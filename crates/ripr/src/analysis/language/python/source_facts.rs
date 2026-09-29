@@ -302,7 +302,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
 /// Collects the line spans of `import` and `from ... import` statements in
 /// every scope, including function-local and `if TYPE_CHECKING:` imports.
 fn collect_import_line_ranges(
-    source: &str,
+    source: &SourceText<'_>,
     statements: &[Stmt],
     out: &mut Vec<RangeInclusive<usize>>,
 ) {
