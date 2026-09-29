@@ -8,6 +8,8 @@ pub(super) const MANIFEST_PATH: &str = "packaging/npm/launcher/package.json";
 pub(super) const BIN_PATH: &str = "packaging/npm/launcher/bin/ripr.cjs";
 pub(super) const LIBRARY_PATH: &str = "packaging/npm/launcher/lib/launcher.cjs";
 pub(super) const TEST_PATH: &str = "packaging/npm/launcher/test/launcher.test.cjs";
+pub(super) const LICENSE_APACHE_PATH: &str = "packaging/npm/launcher/LICENSE-APACHE";
+pub(super) const LICENSE_MIT_PATH: &str = "packaging/npm/launcher/LICENSE-MIT";
 
 const EXPECTED_FILES: &[&str] = &[
     "LICENSE-APACHE",
@@ -219,6 +221,20 @@ pub(super) fn validate_launcher(
     }
 }
 
+pub(super) fn validate_license_copy(
+    root_path: &str,
+    root_text: &str,
+    package_path: &str,
+    package_text: &str,
+    violations: &mut Vec<String>,
+) {
+    if package_text != root_text {
+        violations.push(format!(
+            "{package_path}: license copy must be byte-identical to {root_path}"
+        ));
+    }
+}
+
 pub(super) fn validate_launcher_sources(
     bin_path: &str,
     bin_text: &str,
@@ -251,16 +267,22 @@ pub(super) fn validate_launcher_sources(
             "optional dependencies enabled",
             "missing-payload recovery must be actionable",
         ),
+        (
+            "process.exitCode = signalExitCode",
+            "a consumed child signal must still produce a nonzero launcher exit",
+        ),
     ] {
         if !library_text.contains(needle) {
             violations.push(format!("{library_path}: {explanation}; missing `{needle}`"));
         }
     }
     for forbidden in ["curl ", "wget ", "https.get", "execSync(", "shell: true"] {
-        if bin_text.contains(forbidden) || library_text.contains(forbidden) {
-            violations.push(format!(
-                "{library_path}: launcher cannot download, shell out, or enable shell interpolation; found `{forbidden}`"
-            ));
+        for (path, text) in [(bin_path, bin_text), (library_path, library_text)] {
+            if text.contains(forbidden) {
+                violations.push(format!(
+                    "{path}: launcher cannot download, shell out, or enable shell interpolation; found `{forbidden}`"
+                ));
+            }
         }
     }
     for required_test in [
@@ -268,6 +290,7 @@ pub(super) fn validate_launcher_sources(
         "native_executable_symlink",
         "native_executable_not_executable",
         "PATH-FALLBACK",
+        "RIPR_UNKNOWN_SIGNAL",
         "npm package contents are explicit",
     ] {
         if !test_text.contains(required_test) {
