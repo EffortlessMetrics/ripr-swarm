@@ -2,7 +2,12 @@ use serde_json::{Value, json};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+#[path = "support/mcp_stdio_observation.rs"]
+mod process_observation;
+use process_observation::Observation;
 
 fn workspace_root() -> Result<PathBuf, String> {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -21,6 +26,9 @@ fn run_mcp_with_input_custody(
     chunks: &[&[u8]],
     hold_input_until_exit: bool,
 ) -> Result<Output, String> {
+    let (executable, executable_sha256) =
+        Observation::executable_custody(Path::new(env!("CARGO_BIN_EXE_ripr")))?;
+    let launched = Instant::now();
     let mut child = Command::new(env!("CARGO_BIN_EXE_ripr"))
         .args(["mcp", "--stdio", "--root"])
         .arg(root)
@@ -29,6 +37,14 @@ fn run_mcp_with_input_custody(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("spawn ripr mcp: {error}"))?;
+    let observation = Arc::new(Observation::new(
+        launched,
+        executable,
+        executable_sha256,
+        child.id(),
+        hold_input_until_exit,
+    ));
+    observation.record("child_spawn_returned", None, None);
     let Some(mut stdin) = child.stdin.take() else {
         return Err("spawned MCP process did not expose stdin".to_string());
     };
@@ -48,6 +64,7 @@ fn run_mcp_with_input_custody(
         .stderr
         .take()
         .ok_or_else(|| "spawned MCP process did not expose stderr".to_string())?;
+    let stdout_observation = observation.clone();
     let stdout_reader = std::thread::spawn(move || {
         use std::io::BufRead;
         let mut reader = std::io::BufReader::new(&mut stdout_pipe);
@@ -55,8 +72,16 @@ fn run_mcp_with_input_custody(
         loop {
             let mut frame = Vec::new();
             match reader.read_until(b'\n', &mut frame) {
-                Ok(0) | Err(_) => break,
+                Ok(0) => {
+                    stdout_observation.record("stdout_eof", None, None);
+                    break;
+                }
+                Err(error) => {
+                    stdout_observation.record("stdout_read_failed", None, Some(error.kind()));
+                    break;
+                }
                 Ok(_) => {
+                    stdout_observation.record("stdout_line_read", None, None);
                     if let Ok(value) = serde_json::from_slice::<Value>(&frame) {
                         let _ = response_sender.send(value.get("id").cloned());
                     }
@@ -68,51 +93,114 @@ fn run_mcp_with_input_custody(
     });
     // SDK EOF terminates service work. Keep stdin alive until each actual
     // response arrives; closing a prewritten script is not a reply oracle.
+    let input_observation = observation.clone();
     let writer = std::thread::spawn(move || {
+        input_observation.record("input_writer_started", None, None);
         let mut write_script = || {
             let mut pending = Vec::new();
             let mut sent = 0_usize;
+            let mut input_line = 0_usize;
             for chunk in &stdin_chunks {
                 for byte in chunk {
                     pending.push(*byte);
                     if *byte != b'\n' {
                         continue;
                     }
-                    if stdin
-                        .write_all(pending.get(sent..).unwrap_or_default())
-                        .is_err()
-                        || stdin.flush().is_err()
-                    {
+                    input_line = input_line.saturating_add(1);
+                    if let Err(error) = stdin.write_all(pending.get(sent..).unwrap_or_default()) {
+                        input_observation.record(
+                            "input_line_write_failed",
+                            Some(input_line),
+                            Some(error.kind()),
+                        );
                         return;
                     }
+                    input_observation.record("input_line_written", Some(input_line), None);
+                    if let Err(error) = stdin.flush() {
+                        input_observation.record(
+                            "input_line_flush_failed",
+                            Some(input_line),
+                            Some(error.kind()),
+                        );
+                        return;
+                    }
+                    input_observation.record("input_line_flushed", Some(input_line), None);
                     if let Ok(request) = serde_json::from_slice::<Value>(&pending)
                         && let Some(id) = request.get("id")
                     {
+                        input_observation.record(
+                            "matching_reply_wait_started",
+                            Some(input_line),
+                            None,
+                        );
                         match response_receiver.recv_timeout(Duration::from_secs(10)) {
-                            Ok(Some(response_id)) if &response_id == id => {}
-                            _ => return,
+                            Ok(Some(response_id)) if &response_id == id => {
+                                input_observation.record(
+                                    "matching_reply_received",
+                                    Some(input_line),
+                                    None,
+                                );
+                            }
+                            Ok(_) => {
+                                input_observation.record(
+                                    "reply_id_did_not_match",
+                                    Some(input_line),
+                                    None,
+                                );
+                                return;
+                            }
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                                input_observation.record(
+                                    "matching_reply_timeout",
+                                    Some(input_line),
+                                    None,
+                                );
+                                return;
+                            }
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                                input_observation.record(
+                                    "reply_channel_closed",
+                                    Some(input_line),
+                                    None,
+                                );
+                                return;
+                            }
                         }
                     }
                     pending.clear();
                     sent = 0;
                 }
-                if stdin
-                    .write_all(pending.get(sent..).unwrap_or_default())
-                    .is_err()
-                    || stdin.flush().is_err()
-                {
+                if let Err(error) = stdin.write_all(pending.get(sent..).unwrap_or_default()) {
+                    input_observation.record(
+                        "input_fragment_write_failed",
+                        None,
+                        Some(error.kind()),
+                    );
                     return;
                 }
+                input_observation.record("input_fragment_written", None, None);
+                if let Err(error) = stdin.flush() {
+                    input_observation.record(
+                        "input_fragment_flush_failed",
+                        None,
+                        Some(error.kind()),
+                    );
+                    return;
+                }
+                input_observation.record("input_fragment_flushed", None, None);
                 sent = pending.len();
             }
+            input_observation.record("input_script_completed", None, None);
         };
         write_script();
         if hold_input_until_exit {
             // Only the parent's observed child exit or owned timeout cleanup
             // releases this pipe. Reply timeout cannot supply a helpful EOF.
+            input_observation.record("input_retained_until_parent_release", None, None);
             let _ = input_retention.recv();
         }
         drop(stdin);
+        input_observation.record("stdin_released", None, None);
     });
     let stderr_reader = std::thread::spawn(move || {
         let mut buffer = Vec::new();
@@ -121,6 +209,7 @@ fn run_mcp_with_input_custody(
     });
 
     let deadline = Instant::now() + Duration::from_secs(10);
+    observation.record("owned_deadline_started", None, None);
     let mut status = None;
     let mut timed_out = false;
     loop {
@@ -129,6 +218,7 @@ fn run_mcp_with_input_custody(
             .map_err(|error| format!("poll ripr mcp: {error}"))?
         {
             Some(exit) => {
+                observation.record("child_exit_observed", None, None);
                 status = Some(exit);
                 break;
             }
@@ -136,12 +226,14 @@ fn run_mcp_with_input_custody(
                 std::thread::sleep(Duration::from_millis(25));
             }
             None => {
+                observation.record("owned_deadline_reached", None, None);
                 child
                     .kill()
                     .map_err(|error| format!("kill hung ripr mcp: {error}"))?;
                 child
                     .wait()
                     .map_err(|error| format!("reap hung ripr mcp: {error}"))?;
+                observation.record("child_terminated_and_reaped", None, None);
                 timed_out = true;
                 break;
             }
@@ -155,13 +247,16 @@ fn run_mcp_with_input_custody(
     let stderr = stderr_reader
         .join()
         .map_err(|_join_error| "stderr reader panicked")?;
+    let custody = observation.finish(timed_out, status.as_ref().and_then(|exit| exit.code()));
     if timed_out {
         return Err(format!(
-            "ripr mcp exceeded its owned process deadline\nstdout:\n{}\nstderr:\n{}",
+            "ripr mcp exceeded its owned process deadline\nstdout:\n{}\nstderr:\n{}\nprocess observation:\n{}",
             String::from_utf8_lossy(&stdout),
-            String::from_utf8_lossy(&stderr)
+            String::from_utf8_lossy(&stderr),
+            custody.unwrap_or_else(|error| format!("observation retention failed: {error}"))
         ));
     }
+    let _retained_custody = custody?;
     let status = status.ok_or("ripr mcp status was not collected")?;
     Ok(Output {
         status,
