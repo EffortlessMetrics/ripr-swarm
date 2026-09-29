@@ -240,12 +240,16 @@ pub(crate) struct CachedSeamLimitInfo {
 /// constant; an undeclared or ambiguous constant routes to the
 /// unresolved-operand limitation. Old classified entries would keep
 /// serving the unclosable `weakly_gripped` gap for warm workspaces.
-/// `1.14` -> `1.15`: an `assert_eq!` that pins the owner's whole return
+/// `1.14` -> `1.15`: the Rust nesting budget refuses over-deep sources
+/// before parsing, so those files move to lexical fallback with a typed
+/// `rust_nesting_budget` reason. Old classified entries would serve
+/// parser-backed classification for files the current parser path refuses.
+/// `1.15` -> `1.16`: an `assert_eq!` that pins the owner's whole return
 /// value through a call naming the owner confirms a changed `return_value`
 /// expression (#4478), so return-value probes can move from
 /// `weakly_exposed` to `exposed`. Old classified entries would keep serving
 /// the unconfirmed discriminator for warm workspaces.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.15";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.16";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -290,9 +294,11 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.15";
 /// cache.
 /// `0.19` -> `0.20`: named-constant boundary resolution — same semantic
 /// transition as the outer classified-seam cache.
-/// `0.20` -> `0.21`: owner-return pins (#4478) — same semantic transition
+/// `0.20` -> `0.21`: Rust nesting budget refusal — same semantic
+/// transition as the outer classified-seam cache.
+/// `0.21` -> `0.22`: owner-return pins (#4478) — same semantic transition
 /// as the outer classified-seam cache.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.21";
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.22";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -343,9 +349,11 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.21";
 /// cache.
 /// `0.20` -> `0.21`: named-constant boundary resolution — same semantic
 /// transition as the outer classified-seam cache.
-/// `0.21` -> `0.22`: owner-return pins (#4478) — same semantic transition
+/// `0.21` -> `0.22`: Rust nesting budget refusal — same semantic
+/// transition as the outer classified-seam cache.
+/// `0.22` -> `0.23`: owner-return pins (#4478) — same semantic transition
 /// as the outer classified-seam cache.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.22";
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.23";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -436,11 +444,6 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// parser-backed files WITHOUT the fact fields, and on those files the
 /// flag law reads empty facts as real "no shadow", so the pre-extension
 /// envelope could silently retire the lexical scanners' defeats.
-/// `1.8` -> `1.9`: `FunctionFact` gains the parser's item container
-/// (`item`: free, local, inherent, trait impl or trait, with the `self`
-/// receiver and body flags, #4478). A warm pre-bump hit would deserialize
-/// every function as `Unknown`, silently retiring the owner-return pin on
-/// parser-backed files.
 ///
 /// Still no bump for #3603/#3608/#3636 themselves: per-file parser
 /// facts are unchanged by the harness registry — it applies
@@ -448,7 +451,17 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// build against the current manifests, and the #3636 reachability
 /// authority runs inside that re-application — so a warm hit cannot
 /// bypass either validation or reachability classification.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.9";
+///
+/// `1.8` -> `1.9`: the Rust nesting budget refuses over-deep sources before
+/// parsing. A warm pre-bump hit would serve parser-backed facts for a file
+/// the current parser path refuses, and the parse sites that re-read that
+/// source would then disagree with the facts' `used_lexical_fallback` flag.
+/// `1.9` -> `1.10`: `FunctionFact` gains the parser's item container
+/// (`item`: free, local, inherent, trait impl or trait, with the `self`
+/// receiver and body flags, #4478). A warm pre-bump hit would deserialize
+/// every function as `Unknown`, silently retiring the owner-return pin on
+/// parser-backed files.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.10";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3199,7 +3212,11 @@ mod tests {
         // parser-backed files without the fact fields, and the flag law
         // reads empty facts on those files as real "no shadow" — silently
         // retiring the lexical scanners' defeats.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.9");
+        // 1.8 -> 1.9: the Rust nesting budget moves over-deep sources to
+        // lexical fallback, so a warm pre-bump parser-backed hit must miss.
+        // 1.9 -> 1.10: `FunctionFact` gains the parser's item container
+        // (#4478); a warm pre-bump hit would read every owner as `Unknown`.
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.10");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -3232,7 +3249,12 @@ mod tests {
         // 1.13 -> 1.14: a predicate boundary naming a same-file integer
         // `const` resolves through the shared named-constant lookup, so a
         // warm pre-bump hit would keep an unclosable boundary gap open.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.15");
+        // 1.14 -> 1.15: the Rust nesting budget moves over-deep sources to
+        // lexical fallback, so classified seams derived from their old
+        // parser-backed facts must miss.
+        // 1.15 -> 1.16: owner-return pins (#4478) confirm return-value
+        // probes the token rule left unconfirmed.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.16");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3244,8 +3266,12 @@ mod tests {
         // classified-seam cache.
         // 0.20 (sharded) / 0.21 (compact): named-constant boundary
         // resolution — same semantic transition as the outer cache.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.21");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.22");
+        // 0.21 (sharded) / 0.22 (compact): Rust nesting budget refusal —
+        // same semantic transition as the outer cache.
+        // 0.22 (sharded) / 0.23 (compact): owner-return pins (#4478) —
+        // same semantic transition as the outer cache.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.22");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.23");
     }
 
     #[test]
