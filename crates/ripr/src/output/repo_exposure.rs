@@ -1515,7 +1515,7 @@ mod tests {
             None,
         );
         let heading = top_gap_heading(&md);
-        let expected = format!("### {}:{} {}", code_span(path), 2, "predicate_boundary",);
+        let expected = format!("### {}:{} {}", code_span(path), 2, "predicate_boundary");
         assert_eq!(
             heading, expected,
             "odd path must use the owner-line code-span fence:\n{md}"
