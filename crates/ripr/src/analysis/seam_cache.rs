@@ -249,10 +249,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// parsing and a non-UTF-8 source is indexed on lexical fallback instead of
 /// aborting. Old classified entries would keep the ownerless line-1 findings
 /// a BOM produced.
-/// `1.17` -> `1.18`: parser facts record each function's impl context
+/// `1.17` -> `1.18`: full classified evidence may carry a producer-owned
+/// Integration new-test proposal (#4576). A warm main `1.17` hit would hide
+/// a now-admitted `Proposed` target.
+/// `1.18` -> `1.19`: parser facts record each function's impl context
 /// (#4558), which relates sibling-crate `Type::method()` calls. Old
 /// classified entries would keep the refused relation.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.18";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.19";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -302,9 +305,13 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.18";
 /// 0.21 -> 0.22: typed semantic-body integrity (#4382); unsigned generations cold-recompute.
 /// `0.22` -> `0.23`: BOM and non-UTF-8 Rust source decoding — same semantic
 /// transition as the outer classified-seam cache.
-/// `0.23` -> `0.24`: function impl context (#4558) — same semantic
+/// `0.23` -> `0.24`: full classified evidence may carry a producer-owned
+/// Integration new-test proposal (#4576) — same semantic transition as
+/// the outer classified-seam cache. Compact evidence stays empty, so the
+/// compact generation remains main's `0.24`.
+/// `0.24` -> `0.25`: function impl context (#4558) — same semantic
 /// transition as the outer classified-seam cache.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.24";
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.25";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -471,10 +478,13 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// parsing. A warm pre-bump hit for a BOM file would serve facts parsed with
 /// the stray `U+FEFF`, where an item on line 1 has no owner.
 ///
-/// `1.11` -> `1.12`: `FunctionFact.impl_context` (#4558). A warm pre-bump
+/// `1.11` -> `1.12`: `FunctionFact.impl_attrs` (the enclosing `impl` block's
+/// attributes). A warm pre-bump hit would deserialize it empty, so a
+/// `#[pymethods]` method would silently lose its cross-language limitation.
+/// `1.12` -> `1.13`: `FunctionFact.impl_context` (#4558). A warm pre-bump
 /// hit would deserialize every function as `Unknown`, so a type-path call
 /// could never relate until the file changed.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.12";
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.13";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3398,7 +3408,9 @@ mod tests {
         // retiring the lexical scanners' defeats.
         // 1.8 -> 1.9: the Rust nesting budget moves over-deep sources to
         // lexical fallback, so a warm pre-bump parser-backed hit must miss.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.12");
+        // 1.11 -> 1.12: impl_attrs carries the cross-language FFI marker.
+        // 1.12 -> 1.13: impl_context records the function's impl self type (#4558).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.13");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -3434,7 +3446,14 @@ mod tests {
         // 1.14 -> 1.15: the Rust nesting budget moves over-deep sources to
         // lexical fallback, so classified seams derived from their old
         // parser-backed facts must miss.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.18");
+        // 1.15 -> 1.16: typed semantic-body integrity (#4382).
+        // 1.16 -> 1.17: BOM / non-UTF-8 Rust source decoding (#4597).
+        // 1.17 -> 1.18: full classified evidence may carry a producer-owned
+        // Integration new-test proposal (#4576); a warm main 1.17 hit would
+        // hide Proposed targets.
+        // 1.18 -> 1.19: function impl context (#4558) relates sibling-crate
+        // `Type::method()` calls.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.19");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3448,7 +3467,13 @@ mod tests {
         // resolution — same semantic transition as the outer cache.
         // 0.21 (sharded) / 0.22 (compact): Rust nesting budget refusal —
         // same semantic transition as the outer cache.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.24");
+        // 0.22 (sharded) / 0.23 (compact): typed semantic-body integrity
+        // (#4382).
+        // 0.23 (sharded) / 0.24 (compact): BOM / non-UTF-8 decoding (#4597).
+        // 0.24 (sharded) / 0.24 (compact): #4576 Integration proposals
+        // persist on full classified evidence only; compact stays empty.
+        // 0.25 (sharded) / 0.25 (compact): function impl context (#4558).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.25");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.25");
     }
 
@@ -3534,6 +3559,7 @@ mod tests {
             discriminate: StageEvidence::new(StageState::No, Confidence::Low, "discriminate"),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            new_test_target: None,
         };
         ClassifiedSeam {
             seam,

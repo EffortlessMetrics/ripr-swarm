@@ -447,6 +447,33 @@ fork or otherwise untrusted PR:
   GitHub-hosted only
 ```
 
+Label events are not an implicit full-gate refresh:
+
+```text
+opened / reopened / synchronize / push to main / workflow_dispatch:
+  launch the required Rust or docs gate (unchanged)
+
+labeled full-ci:
+  launch the required gate with advisory reports and success artifacts
+
+labeled windows-ci, coverage, release-check, or any other non-full-ci label:
+  do not launch rust-gates; post Ripr Rust Small Ignored Label Event;
+  leave the previous exact-head Ripr Rust Small Result in place
+
+unlabeled (including windows-ci or full-ci removal):
+  do not start Routed Rust Small; the previous exact-head result remains
+```
+
+`windows-ci` continues to opt into `.github/workflows/windows-advisory.yml` only.
+Removing that label does not imply Windows proof and must not spend a required
+Rust run. `full-ci` unlabeled does not re-run the gate to turn advisories off;
+the next opened/synchronize/reopened proof observes the current labels.
+`cancel-in-progress` stays synchronize-only. Unrelated `labeled` events use a
+distinct `Routed Rust Small-<pr>-label-ignore` concurrency group so they cannot
+replace a pending synchronize proof. An ignored labeled run is cheap, does not
+post the protected result context, and cannot manufacture a green required
+check for untested or previously failed code.
+
 The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
 when available. It selects a self-hosted runner only when the runner is idle and
 has both the host label (`CX43`, `CPX42`, or `CX53`) and the `em-ci-rust-1.95`
@@ -647,6 +674,7 @@ cargo xtask check-workspace-shape
 cargo xtask check-architecture
 cargo xtask check-public-api
 cargo xtask check-output-contracts
+cargo xtask check-identity-registry
 cargo xtask check-doc-index
 cargo xtask check-readme-state
 cargo xtask markdown-links
@@ -878,7 +906,11 @@ does not have yet, so its install step fails and no ripr step runs. Generate the
 committed workflow with a released `ripr`. To upgrade, install
 the newer `ripr` and compare its `ripr init --ci github --force --dry-run`
 output with the committed file (`--force` lets the dry run plan over the
-existing file; nothing is written). On pull requests the workflow checks out the PR head
+existing file; nothing is written). With `--ci`, `--force` replaces only the
+workflow: an existing `ripr.toml` is left unchanged, so refreshing CI keeps the
+repository's settings (`ripr init --force` without `--ci` resets the config).
+`ripr doctor` flags a workflow that installs ripr unpinned or at another
+version. On pull requests the workflow checks out the PR head
 commit, not GitHub's `refs/pull/N/merge` commit, so annotation and review
 comment lines match the lines in the PR diff after the base branch moves. A
 newer push cancels the older run of the same PR. Dependabot runs get a
@@ -1400,10 +1432,13 @@ Recommended acknowledgement workflow:
 3. When the gate reports a policy-eligible gap, review the job summary,
    `target/ripr/reports/gate-decision.md`, and the PR guidance packet.
 4. If the finding is acceptable for this PR, add `ripr-waive`.
-5. Let the labeled PR workflow rerun. The next gate decision should say
+5. The generated workflow triggers on `labeled` and `unlabeled` pull-request
+   events, so adding the label reruns it. The next gate decision should say
    `Decision: acknowledged`, list `ripr-waive`, and keep the candidate visible.
-6. If a focused test is added instead, remove `ripr-waive` and rerun the gate so
-   the receipt records the current evidence without an acknowledgement label.
+6. If a focused test is added instead, remove `ripr-waive`; the `unlabeled`
+   event reruns the gate so the receipt records the current evidence without an
+   acknowledgement label. Any label change reruns the job, and the workflow's
+   concurrency group cancels the superseded run.
 
 The expected acknowledged summary looks like:
 
@@ -1568,8 +1603,11 @@ ledger shape. For compatibility with existing fixtures and reviewed hand-built
 baselines, it also accepts identities from `decisions`, `comments`,
 `summary_only`, and `suppressed` arrays when those fields are present in the
 baseline file. For each entry, it indexes `seam_id`, `id`, and `dedupe_key`
-when present. Keep the baseline small and reviewable; do not check in an
-uninspected copy of every PR guidance artifact.
+when present. A baseline file with none of those arrays, a JSON array, or a
+`kind` other than `gate_baseline` (or a `gate_baseline` without `entries`) is
+rejected as a `config_error` instead of acting as an empty baseline. Keep the
+baseline small and reviewable; do not check in an uninspected copy of every PR
+guidance artifact.
 
 Baseline review checklist:
 
