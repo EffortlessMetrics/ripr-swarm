@@ -3415,6 +3415,7 @@ index 0000000..1111111 100644
             uninspected_files_lower_bound: usize::from(uninspected_lines > 0),
             uninspected_changed_lines_lower_bound: uninspected_lines,
             stop_reason,
+            next_file_changed_lines: (uninspected_lines > 0).then_some(uninspected_lines),
             partition_identity: "sha256:partition".to_string(),
         }
     }
@@ -3428,8 +3429,8 @@ index 0000000..1111111 100644
         assert_eq!(limitation.kind, AnalysisLimitationKind::DiffScopeOversized);
         assert_eq!(
             limitation.recovery.detail,
-            "To widen the analyzed partition, raise RIPR_PARTIAL_DIFF_LINE_BUDGET above 50 and \
-             re-run; the next file may also need RIPR_PARTIAL_DIFF_FILE_BUDGET above 3."
+            "To widen the analyzed partition, raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 79, then \
+             re-run."
         );
         assert_eq!(
             limitation.bounded_detail.as_deref(),

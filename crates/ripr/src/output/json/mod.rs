@@ -285,6 +285,7 @@ mod tests {
             uninspected_files_lower_bound: 2,
             uninspected_changed_lines_lower_bound: 120,
             stop_reason: crate::analysis::PartialDiffStopReason::LineBudget,
+            next_file_changed_lines: Some(50),
             partition_identity: "b".repeat(64),
         }
     }
@@ -376,9 +377,8 @@ mod tests {
         assert_eq!(
             scope["continuation"].as_str(),
             Some(
-                "partial result: raise RIPR_PARTIAL_DIFF_LINE_BUDGET above 100 and re-run; the \
-                 next file may also need RIPR_PARTIAL_DIFF_FILE_BUDGET above 2; named partition \
-                 continuation is not available"
+                "partial result: raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 110, then re-run; \
+                 named partition continuation is not available"
             ),
             "continuation must lead with the budget that stopped selection: {scope}"
         );
