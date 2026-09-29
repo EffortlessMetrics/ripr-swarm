@@ -71,7 +71,7 @@ impl<'a> ProbeContext<'a> {
 
     /// Whether the related test file `file` (indexed source `source`)
     /// imports `callee` from a foreign path; see
-    /// `file_imports_foreign_callee_name`. Uses the run-scoped scan when
+    /// `use_statements_import_foreign_callee_name`. Uses the run-scoped scan when
     /// the classifier attached one.
     pub(in crate::analysis) fn test_file_imports_foreign_callee_name(
         &self,
