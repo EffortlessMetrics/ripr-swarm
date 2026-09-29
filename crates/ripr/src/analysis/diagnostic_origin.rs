@@ -16,8 +16,8 @@ use crate::domain::Finding;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// Matches [`crate::lsp::position::MAX_LINE_SPAN_WIDTH`]. Analysis cannot
-/// import the LSP adapter; position tests pin the two constants together.
+/// Matches the LSP adapter's `MAX_LINE_SPAN_WIDTH`. This module cannot
+/// import that adapter; position tests pin the two constants together.
 pub(crate) const ORIGIN_MAX_SPAN_WIDTH: u32 = 120;
 
 /// Parser-owned start inside the captured source. End is derived from the
