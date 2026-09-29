@@ -7,13 +7,14 @@
 //! field name never manufactures activation.
 
 use super::record_field_name;
+use super::related_tests::call_text_contains_named_call;
 use super::related_tests::context::{CompactGripContext, CompactTest};
-use super::related_tests::{call_text_contains_named_call, strip_comments_and_strings};
 use crate::analysis::seams::{RepoSeam, RequiredDiscriminator, SeamKind};
+use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::syntax::ra::LineIndex;
 use crate::domain::{MissingDiscriminatorFact, OracleKind, OracleStrength, StageState};
 use ra_ap_syntax::ast::{self, HasName};
-use ra_ap_syntax::{AstNode, SourceFile};
+use ra_ap_syntax::{AstNode, SourceFile, SyntaxNode};
 
 pub(super) fn missing_field_value_facts(
     seam: &RepoSeam,
@@ -93,13 +94,15 @@ fn owner_result_field_observation(
         indexed.test.start_line,
         &lines,
     )?;
+    if owner_callee_is_ambiguous(&function, owner_name) {
+        return None;
+    }
     let bindings = direct_owner_result_bindings(&function, owner_name, &lines);
     if bindings.is_empty() {
         return None;
     }
     let mut kind = None;
     for oracle in &indexed.test.assertions {
-        let oracle_text = strip_comments_and_strings(&oracle.text);
         for binding in &bindings {
             if oracle.line <= binding.line {
                 continue;
@@ -107,7 +110,7 @@ fn owner_result_field_observation(
             if binding_invalidated_before(&function, binding, oracle.line, &lines) {
                 continue;
             }
-            if !reads_binding_field(&oracle_text, &binding.name, field_name) {
+            if !oracle_observes_binding_field(&oracle.text, &binding.name, field_name) {
                 continue;
             }
             match observation_from_oracle(oracle.kind.clone(), oracle.strength.clone()) {
@@ -148,6 +151,120 @@ fn unique_test_fn(
         });
     let function = matches.next()?;
     matches.next().is_none().then_some(function)
+}
+
+fn owner_callee_is_ambiguous(function: &ast::Fn, owner_name: &str) -> bool {
+    nested_owner_fn(function, owner_name)
+        || sibling_owner_fn(function, owner_name)
+        || foreign_owner_import(function, owner_name)
+}
+
+fn nested_owner_fn(function: &ast::Fn, owner_name: &str) -> bool {
+    function
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .any(|nested| {
+            nested.syntax().text_range() != function.syntax().text_range()
+                && nested.name().is_some_and(|name| name.text() == owner_name)
+        })
+}
+
+fn sibling_owner_fn(function: &ast::Fn, owner_name: &str) -> bool {
+    let Some(container) = enclosing_item_container(function) else {
+        return false;
+    };
+    if ast::SourceFile::can_cast(container.kind()) {
+        return false;
+    }
+    item_children(&container)
+        .into_iter()
+        .filter_map(ast::Fn::cast)
+        .any(|sibling| {
+            sibling.syntax().text_range() != function.syntax().text_range()
+                && sibling.name().is_some_and(|name| name.text() == owner_name)
+        })
+}
+
+fn foreign_owner_import(function: &ast::Fn, owner_name: &str) -> bool {
+    let container_uses = enclosing_item_container(function)
+        .into_iter()
+        .flat_map(|container| {
+            item_children(&container)
+                .into_iter()
+                .filter_map(ast::Use::cast)
+        });
+    let nested_uses = function.syntax().descendants().filter_map(ast::Use::cast);
+    container_uses
+        .chain(nested_uses)
+        .any(|item| use_binds_foreign_owner(&item, owner_name))
+}
+
+fn enclosing_item_container(function: &ast::Fn) -> Option<SyntaxNode> {
+    function
+        .syntax()
+        .ancestors()
+        .find(|node| ast::Module::can_cast(node.kind()) || ast::SourceFile::can_cast(node.kind()))
+}
+
+fn item_children(container: &SyntaxNode) -> Vec<SyntaxNode> {
+    ast::Module::cast(container.clone())
+        .and_then(|module| module.item_list())
+        .map(|list| list.syntax().children().collect())
+        .unwrap_or_else(|| container.children().collect())
+}
+
+fn use_binds_foreign_owner(item: &ast::Use, owner_name: &str) -> bool {
+    item.use_tree()
+        .is_some_and(|tree| use_tree_binds_foreign_owner(&tree, "", owner_name))
+}
+
+fn use_tree_binds_foreign_owner(tree: &ast::UseTree, prefix: &str, owner_name: &str) -> bool {
+    if tree.star_token().is_some() {
+        return false;
+    }
+    let path_text = tree.path().map(|path| {
+        path.syntax()
+            .text()
+            .to_string()
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>()
+    });
+    if let Some(list) = tree.use_tree_list() {
+        let child_prefix = match (&path_text, prefix.is_empty()) {
+            (Some(path), false) => format!("{prefix}::{path}"),
+            (Some(path), true) => path.clone(),
+            (None, _) => prefix.to_string(),
+        };
+        return list
+            .use_trees()
+            .any(|nested| use_tree_binds_foreign_owner(&nested, &child_prefix, owner_name));
+    }
+    let local_name = tree
+        .rename()
+        .and_then(|rename| rename.name())
+        .map(|name| name.text().to_string())
+        .or_else(|| {
+            path_text
+                .as_ref()
+                .and_then(|path| path.rsplit("::").next())
+                .map(ToString::to_string)
+        });
+    if local_name.as_deref() != Some(owner_name) {
+        return false;
+    }
+    let full = match (&path_text, prefix.is_empty()) {
+        (Some(path), false) => format!("{prefix}::{path}"),
+        (Some(path), true) => path.clone(),
+        (None, false) => prefix.to_string(),
+        (None, true) => owner_name.to_string(),
+    };
+    !super_owner_path(&full, owner_name)
+}
+
+fn super_owner_path(path: &str, owner_name: &str) -> bool {
+    path == owner_name || path == format!("super::{owner_name}")
 }
 
 fn direct_owner_result_bindings(
@@ -255,8 +372,7 @@ fn binding_invalidated_before(
                     .unwrap_or(""),
             )
             && let Some(lhs) = bin.lhs()
-            && (path_is_binding(&lhs, &binding.name)
-                || field_receiver_is_binding(&lhs, &binding.name))
+            && binding_escape(&lhs, &binding.name)
         {
             return true;
         }
@@ -264,7 +380,7 @@ fn binding_invalidated_before(
             && reference.mut_token().is_some()
             && reference
                 .expr()
-                .is_some_and(|expr| path_is_binding(&expr, &binding.name))
+                .is_some_and(|expr| binding_escape(&expr, &binding.name))
         {
             return true;
         }
@@ -279,6 +395,15 @@ fn is_assignment_op(token: &str) -> bool {
     )
 }
 
+fn binding_escape(expression: &ast::Expr, binding: &str) -> bool {
+    if path_is_binding(expression, binding) || field_receiver_is_binding(expression, binding) {
+        return true;
+    }
+    ast::ParenExpr::cast(expression.syntax().clone())
+        .and_then(|paren| paren.expr())
+        .is_some_and(|inner| binding_escape(&inner, binding))
+}
+
 fn path_is_binding(expression: &ast::Expr, binding: &str) -> bool {
     direct_name(expression).as_deref() == Some(binding)
 }
@@ -289,16 +414,79 @@ fn field_receiver_is_binding(expression: &ast::Expr, binding: &str) -> bool {
         .is_some_and(|receiver| path_is_binding(&receiver, binding))
 }
 
-fn reads_binding_field(code: &str, binding: &str, field: &str) -> bool {
-    let pattern = format!("{binding}.{field}");
-    code.match_indices(&pattern).any(|(start, matched)| {
-        let before = code[..start].chars().next_back();
-        if before.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric()) {
-            return false;
+fn oracle_observes_binding_field(oracle_text: &str, binding: &str, field: &str) -> bool {
+    let Some(source) = discriminating_oracle_source(oracle_text) else {
+        return false;
+    };
+    let wrapped = format!("fn __ripr_owner_result_probe() {{ {source}\n}}");
+    let Some(parse) = parse_clean_source_file(&wrapped) else {
+        return false;
+    };
+    probe_reads_binding_field(&parse.tree(), binding, field)
+}
+
+fn discriminating_oracle_source(oracle_text: &str) -> Option<String> {
+    let text = oracle_text.trim().trim_end_matches(';').trim();
+    let (macro_name, open) = assertion_macro_open(text)?;
+    let inner = super::delimited_contents_at(text, open)?;
+    let mut args = super::split_top_level_commas(&inner).into_iter();
+    match macro_name {
+        "assert" => args.next().filter(|arg| !arg.is_empty()),
+        "assert_eq" | "assert_ne" => {
+            let left = args.next().filter(|arg| !arg.is_empty())?;
+            let right = args.next().filter(|arg| !arg.is_empty())?;
+            Some(format!("({left}, {right})"))
         }
-        let after = code[start + matched.len()..].chars().next();
-        after.is_none_or(|ch| ch != '_' && !ch.is_ascii_alphanumeric())
-    })
+        _ => None,
+    }
+}
+
+fn assertion_macro_open(text: &str) -> Option<(&'static str, usize)> {
+    ["assert_eq!", "assert_ne!", "assert!"]
+        .into_iter()
+        .find_map(|macro_name| {
+            text.match_indices(macro_name).find_map(|(index, _)| {
+                let prefix_ok = index == 0
+                    || !text[..index]
+                        .chars()
+                        .next_back()
+                        .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+                let suffix_start = index + macro_name.len();
+                let open_offset = text[suffix_start..]
+                    .char_indices()
+                    .find_map(|(offset, ch)| (!ch.is_whitespace()).then_some((offset, ch)))?;
+                if !prefix_ok || open_offset.1 != '(' {
+                    return None;
+                }
+                let name = macro_name.trim_end_matches('!');
+                Some((name, suffix_start + open_offset.0))
+            })
+        })
+}
+
+fn probe_reads_binding_field(probe: &SourceFile, binding: &str, field: &str) -> bool {
+    probe
+        .syntax()
+        .descendants()
+        .filter_map(ast::FieldExpr::cast)
+        .any(|expr| {
+            expr.name_ref().is_some_and(|name| name.text() == field)
+                && expr
+                    .expr()
+                    .is_some_and(|receiver| path_is_binding(&receiver, binding))
+                && !ident_pat_shadows_before(probe, binding, expr.syntax().text_range().start())
+        })
+}
+
+fn ident_pat_shadows_before(probe: &SourceFile, binding: &str, at: ra_ap_syntax::TextSize) -> bool {
+    probe
+        .syntax()
+        .descendants()
+        .filter_map(ast::IdentPat::cast)
+        .any(|pattern| {
+            pattern.name().is_some_and(|name| name.text() == binding)
+                && pattern.syntax().text_range().start() < at
+        })
 }
 
 fn observation_from_oracle(

@@ -187,7 +187,12 @@ binding's initializer must *be* a captured call of the exact owner (a bare
 identifier callee), not a wrapper, method, qualified path, helper-transfer, or
 an expression that merely contains the call. Credit a later field read only in
 the same supported function scope and only before shadow, reassignment, field
-overwrite, or mutable escape. Exact owner-result field equality stays
+overwrite, or mutable escape — including a mutable borrow of the observed
+field. The field must appear in the assertion's parser-backed condition or
+compared operands, not only in a message or format argument, and not on an
+assertion-local shadow of the binding. A same-name function defined or
+imported in the test's module is not the production owner. Exact owner-result
+field equality stays
 already-gripped and must not grow a missing fact. A name-related or
 proximity-related test with unknown owner activation must not receive a missing
 fact that would reclassify the seam as weakly gripped. Helper-transfer and
@@ -263,8 +268,9 @@ against fixture repos.
   owner-result field observation completes the producer-owned missing
   `field_value` fact after known activation; exact field equality stays
   already-gripped; wrapper, helper-transfer, shadow, reassignment, sibling
-  field, token coincidence, unknown activation, and failed target authority
-  stay non-ready.
+  field, token coincidence, unknown activation, failed target authority,
+  mutable field borrow, assertion-message-only field credit, assertion-local
+  shadow, and same-name local or imported callees stay non-ready.
 - `analysis/related-test-ranking-v2-stabilization`: tests that direct owner
 calls outrank weaker relationship signals, strong oracles outrank smoke-only
 oracles inside the same relation, activation-value overlap breaks remaining

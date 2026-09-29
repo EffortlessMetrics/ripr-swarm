@@ -15686,6 +15686,181 @@ mod tests {
 }
 
 #[test]
+fn mutable_field_borrow_before_observation_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+fn overwrite(slot: &mut usize) {
+    *slot = 0;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_mutable_field_borrow() {
+        let mut unchanged = diagnostic_refresh_plan(8, 0);
+        overwrite(&mut unchanged.suppressed_payload_bytes);
+        assert!(unchanged.suppressed_payload_bytes > 0);
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "mutable borrow of the observed field")
+}
+
+#[test]
+fn assertion_message_only_field_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_message_only_field() {
+        let unchanged = diagnostic_refresh_plan(8, 0);
+        let unrelated = 1usize;
+        assert!(unrelated > 0, "field: {}", unchanged.suppressed_payload_bytes);
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "field named only in an assertion message")
+}
+
+#[test]
+fn assertion_condition_field_with_message_stays_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_condition_and_message() {
+        let unchanged = diagnostic_refresh_plan(8, 0);
+        assert!(
+            unchanged.suppressed_payload_bytes > 0,
+            "field: {}",
+            unchanged.suppressed_payload_bytes
+        );
+    }
+}
+"#,
+    )?;
+    route_must_be_ready(&case)
+}
+
+#[test]
+fn assertion_local_shadow_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+pub fn other_plan() -> DiagnosticRefreshPlan {
+    DiagnosticRefreshPlan {
+        suppressed_payload_bytes: 8,
+        published_payload_bytes: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_assertion_local_shadow() {
+        let unchanged = diagnostic_refresh_plan(8, 0);
+        assert!({
+            let unchanged = other_plan();
+            unchanged.suppressed_payload_bytes > 0
+        });
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "assertion-local shadow of the owner-result binding")
+}
+
+#[test]
+fn local_same_name_constructor_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn diagnostic_refresh_plan(suppressed: usize, published: usize) -> DiagnosticRefreshPlan {
+        DiagnosticRefreshPlan {
+            suppressed_payload_bytes: suppressed,
+            published_payload_bytes: published,
+        }
+    }
+
+    #[test]
+    fn diagnostic_refresh_plan_local_constructor() {
+        let unchanged = diagnostic_refresh_plan(8, 0);
+        assert!(unchanged.suppressed_payload_bytes > 0);
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "same-name constructor defined in the test module")
+}
+
+#[test]
+fn nested_same_name_constructor_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_nested_constructor() {
+        fn diagnostic_refresh_plan(suppressed: usize, published: usize) -> DiagnosticRefreshPlan {
+            DiagnosticRefreshPlan {
+                suppressed_payload_bytes: suppressed,
+                published_payload_bytes: published,
+            }
+        }
+        let unchanged = diagnostic_refresh_plan(8, 0);
+        assert!(unchanged.suppressed_payload_bytes > 0);
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "same-name constructor nested in the test function")
+}
+
+#[test]
+fn imported_same_name_callee_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+mod other {
+    pub fn diagnostic_refresh_plan(suppressed: usize, published: usize) -> super::DiagnosticRefreshPlan {
+        super::DiagnosticRefreshPlan {
+            suppressed_payload_bytes: suppressed,
+            published_payload_bytes: published,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::other::diagnostic_refresh_plan;
+
+    #[test]
+    fn diagnostic_refresh_plan_imported_callee() {
+        let unchanged = diagnostic_refresh_plan(8, 0);
+        assert!(unchanged.suppressed_payload_bytes > 0);
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "same-name callee imported from another module")
+}
+
+#[test]
 fn method_same_name_callee_without_resolution_stays_non_ready() -> Result<(), String> {
     let case = refresh_plan_case(
         r#"

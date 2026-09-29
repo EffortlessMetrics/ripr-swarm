@@ -12,6 +12,11 @@ fact only after activation is already `Yes`; nonempty `missing_discriminators`
 classifies `WeaklyGripped` before `ActivationUnknown`, so an unconditional
 field fact would invent actionability. Keep helper-transfer and qualified or
 method callees as named limitations until a later producer can resolve them.
+A same-name local or imported callee, a mutable borrow of the observed field,
+an assertion-message-only field mention, and an assertion-local shadow of the
+owner-result binding are also not owner-result observations: credit only a
+parser-backed discriminating condition or compared operands, and fail closed
+when the bare callee identity is ambiguous.
 
 ## 2026-09-16: Parallel-build test flakes are shared-state mechanisms (#3742)
 

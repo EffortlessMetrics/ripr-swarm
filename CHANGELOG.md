@@ -16,7 +16,9 @@ are scoped or reviewed.
   observed only by a weak field oracle, and only after activation is already
   known. Exact field equality stays already-gripped; wrappers, helper
   transfer, shadows, sibling fields, token coincidence, unknown activation,
-  and failed target authority stay non-ready (#1981).
+  failed target authority, mutable field borrows, assertion-message-only
+  field mentions, assertion-local shadows, and same-name local or imported
+  callees stay non-ready (#1981).
 
 - Security: Rust source discovery skips symlinked `.rs` entries, as the
   Python and TypeScript readers already did. A cloned repository or pull
