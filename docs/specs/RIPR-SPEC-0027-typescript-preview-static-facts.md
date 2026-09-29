@@ -124,7 +124,11 @@ Test discovery:
   `xcontext` register nothing (#4548)
 - an options object between the title and the callback
   (`it(name, { timeout }, fn)`, `describe(name, { concurrency }, fn)`); a
-  trailing timeout (`test(name, fn, 5000)`) keeps argument 1 as the callback
+  trailing timeout (`test(name, fn, 5000)`) keeps argument 1 as the callback;
+  an options object (before or after the callback) whose `skip` / `todo` /
+  `fails` key holds anything but literal `false` / `undefined`, or that
+  holds a spread, computed key, or method, registers nothing, exactly like
+  `.skip`
 - a `describe` / `context` / `suite` whose title is not a string literal
   (`describe(Div.name, fn)`, a template literal): its body is walked and the
   suite is named by its bounded single-line source text
@@ -157,13 +161,23 @@ Assertions / oracles the adapter must recognise:
 - assertion libraries reached through a binding the test file imports from
   `assert`, `node:assert`, `assert/strict`, `node:assert/strict`, or `chai`
   (ESM import, top-level `require(...)`, or `require('chai').expect`; #4547):
-  `assert.strictEqual` / `deepStrictEqual` / `equal` / `deepEqual` →
-  exact-value oracle; `notStrictEqual` / `notDeepStrictEqual` / `notEqual` /
-  `notDeepEqual` / `match` / `doesNotMatch` → relational; `ok`, chai `isTrue`
-  / `isFalse` / `isOk` / `isNotOk`, and the bare callable `assert(value)` →
-  smoke; `throws` / `rejects` / `doesNotThrow` / `doesNotReject` → broad
-  error-path oracle. A named method import (`strictEqual(a, b)`) maps the
-  same way. chai `expect(x).to.equal(y)` / `.to.eql(y)` /
+  `assert.strictEqual` / `deepStrictEqual` → exact-value oracle; `equal` /
+  `deepEqual` → exact-value only in strict mode (bound from `assert/strict`,
+  `node:assert/strict`, or the `strict` export) and relational under legacy
+  `node:assert`, whose `==` comparison is loose; chai `assert.equal` (loose
+  `==`) → relational and chai `assert.deepEqual` (strict deep equality) →
+  exact-value; `notStrictEqual` / `notDeepStrictEqual` / `notEqual` /
+  `notDeepEqual` / `match`, `node:assert` `doesNotMatch`, and chai `notMatch`
+  / `include` / `notInclude` / `lengthOf` → relational; `ok`, chai `isTrue` /
+  `isFalse` / `isOk` / `isNotOk` / `isNull` / `isUndefined` / `isDefined`,
+  and the bare callable `assert(value)` → smoke; `throws` / `doesNotThrow`
+  and `node:assert` `rejects` / `doesNotReject` → broad error-path oracle. A
+  method the bound API does not have (a chai-only method on `node:assert`, or
+  the reverse) is not credited. A named method import (`strictEqual(a, b)`)
+  maps the same way as the module it comes from. A binding re-declared in the
+  test body, as a test or describe callback parameter, or in an enclosing
+  describe body is shadowed and not credited. chai
+  `expect(x).to.equal(y)` / `.to.eql(y)` /
   `.to.deep.equal(y)` → exact-value (relational under `.not`);
   `.to.be.true` / `.false` / `.ok` / `.null` / `.undefined` → smoke;
   `.to.throw(...)` → broad error; `.include` / `.contain` / `.match` /

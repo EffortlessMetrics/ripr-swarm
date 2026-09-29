@@ -37,6 +37,7 @@ are scoped or reviewed.
   code the test calls. A directory now resolves through its `package.json`
   `main`, else its `index` file; a sibling file module still wins, and a
   root-escaping or unresolvable `main` keeps the specifier unresolved.
+  (#4546)
 - TypeScript/JavaScript preview: a change inside a CommonJS export such as
   `exports.thrice = function thrice(x) { ... }` now maps to an owner. These
   assignments produced no owner, so the changed line yielded zero candidates
@@ -44,22 +45,28 @@ are scoped or reviewed.
   functions and arrows, `module.exports = function ...`, and function
   properties of `module.exports = { ... }` are now owners that `require()`
   tests relate to; non-function values and computed keys still produce none.
+  (#4545)
 - TypeScript/JavaScript preview: mocha, `node:test` and Vitest suites written
   with `context`, `suite` or `specify`, with an options object before the
   callback (`it(name, { timeout }, fn)`), or with a `describe` title that is
   not a string literal (`describe(Div.name, fn)`) were skipped, so their tests
   were never related to the code they cover. These forms are now walked like
-  `describe` / `it`; `.skip`, `xit` and `xcontext` stay uncredited, and
-  `test(name, fn, timeout)` is unchanged (#4548).
+  `describe` / `it`; `.skip`, `xit` and `xcontext` stay uncredited, as does
+  a registration whose options object skips it (`{ skip: true }`,
+  `{ todo: true }`, Vitest `{ fails: true }`), and `test(name, fn, timeout)`
+  is unchanged (#4548).
 - TypeScript/JavaScript preview: tests that assert with `node:assert` or
   chai now count as oracles. `assert.strictEqual(charset('text/html'),
   'UTF-8')` in a mocha suite was read as an `unknown` oracle, and ripr
   suggested adding `toBe`. Assertions made through an imported `assert`,
   `node:assert`, `assert/strict` or chai binding now map to exact-value,
   relational, smoke or broad-error evidence, including bare named imports
-  (`strictEqual(a, b)`) and chai `expect(x).to.equal(y)` chains. A local
-  helper named `assert` is still not credited, and Jest/Vitest `expect` is
-  unchanged (#4547).
+  (`strictEqual(a, b)`) and chai `expect(x).to.equal(y)` chains. Loose
+  `==` equality (legacy `node:assert` `equal` / `deepEqual`, chai
+  `assert.equal`) counts as relational, not exact-value. A local helper
+  named `assert`, or an imported binding re-declared in the test or its
+  suite, is still not credited, and Jest/Vitest `expect` is unchanged
+  (#4547).
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from

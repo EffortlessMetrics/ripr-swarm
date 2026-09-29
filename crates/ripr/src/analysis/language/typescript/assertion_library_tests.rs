@@ -200,10 +200,12 @@ it('totals', function () {
 "#,
     );
     assert_eq!(assertions.len(), 3, "{assertions:?}");
+    // chai's `assert.equal` is loose `==` (#4638 review): relational, not an
+    // exact value. Its `deepEqual` is strict deep equality.
     assert_oracle(
         &assertions[0],
-        OracleKind::ExactValue,
-        OracleStrength::Strong,
+        OracleKind::RelationalCheck,
+        OracleStrength::Weak,
         "assert.equal(...)",
     );
     assert_oracle(
@@ -515,5 +517,79 @@ describe.each([[1]])('describe parameters', (assert, strictEqual, expect) => {
     assert!(
         tests.iter().all(|test| test.assertions.is_empty()),
         "{tests:?}"
+    );
+}
+
+/// Loose equality is not an exact-value oracle (#4638 review): legacy
+/// `node:assert` `equal` / `deepEqual` compare with `==` and stay relational,
+/// while the same methods bound from `node:assert/strict`, `assert/strict` or
+/// the `strict` export are strict and pin the exact value. `strictEqual` /
+/// `deepStrictEqual` stay exact everywhere.
+#[test]
+fn loose_equality_is_graded_by_assert_api() {
+    let grades = |source: &str| -> Vec<(String, OracleKind, OracleStrength)> {
+        only_assertions("test/calc.test.mjs", source)
+            .into_iter()
+            .map(|assertion| {
+                (
+                    assertion_oracle_text(&assertion),
+                    assertion.oracle_kind,
+                    assertion.oracle_strength,
+                )
+            })
+            .collect()
+    };
+    let legacy = grades(
+        r#"
+import assert from 'node:assert'
+import { equal, deepEqual as same, strictEqual } from 'assert'
+
+it('adds', () => {
+  assert.equal(add(1, 2), 3)
+  assert.deepEqual(pair(), [1, 2])
+  equal(add(1, 2), 3)
+  same(pair(), [1, 2])
+  strictEqual(add(1, 2), 3)
+  assert.deepStrictEqual(pair(), [1, 2])
+})
+"#,
+    );
+    let relational = (OracleKind::RelationalCheck, OracleStrength::Weak);
+    let exact = (OracleKind::ExactValue, OracleStrength::Strong);
+    let expected: Vec<(String, OracleKind, OracleStrength)> = [
+        ("assert.equal(...)", relational.clone()),
+        ("assert.deepEqual(...)", relational.clone()),
+        ("equal(...)", relational.clone()),
+        ("same(...)", relational),
+        ("strictEqual(...)", exact.clone()),
+        ("assert.deepStrictEqual(...)", exact.clone()),
+    ]
+    .into_iter()
+    .map(|(text, (kind, strength))| (text.to_string(), kind, strength))
+    .collect();
+    assert_eq!(legacy, expected);
+
+    let strict = grades(
+        r#"
+import assert from 'node:assert/strict'
+import { equal } from 'assert/strict'
+import { strict as strictAssert } from 'node:assert'
+const legacyStrict = require('assert').strict
+
+it('adds', () => {
+  assert.equal(add(1, 2), 3)
+  assert.deepEqual(pair(), [1, 2])
+  equal(add(1, 2), 3)
+  strictAssert.equal(add(1, 2), 3)
+  legacyStrict.deepEqual(pair(), [1, 2])
+})
+"#,
+    );
+    assert_eq!(strict.len(), 5, "{strict:?}");
+    assert!(
+        strict
+            .iter()
+            .all(|(_, kind, strength)| (kind.clone(), strength.clone()) == exact),
+        "{strict:?}"
     );
 }

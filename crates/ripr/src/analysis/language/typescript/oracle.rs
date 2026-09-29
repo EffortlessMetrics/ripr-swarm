@@ -435,6 +435,20 @@ const NODE_ASSERT_MODULES: [&str; 4] = [
 /// The chai module specifier.
 const CHAI_MODULE: &str = "chai";
 
+/// Which assertion API a binding reaches; it decides how an equality method
+/// is graded (#4638 review).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AssertFlavor {
+    /// `node:assert/strict`, `assert/strict`, or the `strict` export: `equal`
+    /// / `deepEqual` are the strict (`Object.is` / deep-strict) comparisons.
+    NodeStrict,
+    /// Legacy `node:assert`: `equal` / `deepEqual` compare with loose `==`.
+    NodeLegacy,
+    /// chai's TDD `assert`: `equal` is loose `==`, `deepEqual` is strict deep
+    /// equality.
+    Chai,
+}
+
 /// Module-level bindings through which a test file reaches an assertion
 /// library that is not a test-callback receiver (#4547): `node:assert` (and
 /// its `/strict` variant) and chai's `assert` / `expect`.
@@ -444,12 +458,13 @@ const CHAI_MODULE: &str = "chai";
 /// `assert` / `strictEqual` helper is never credited as an oracle.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct TypeScriptAssertionBindings {
-    /// Identifiers bound to an assert object (`assert.strictEqual(...)`), and
-    /// whether the binding is itself the callable `assert(value)`.
-    assert_objects: Vec<(String, bool)>,
+    /// Identifiers bound to an assert object (`assert.strictEqual(...)`),
+    /// whether the binding is itself the callable `assert(value)`, and the
+    /// API it reaches.
+    assert_objects: Vec<(String, bool, AssertFlavor)>,
     /// Identifiers bound to a single assert method (`strictEqual`), with the
-    /// method they name.
-    assert_methods: Vec<(String, String)>,
+    /// method they name and the API it comes from.
+    assert_methods: Vec<(String, String, AssertFlavor)>,
     /// Identifiers bound to chai's `expect`.
     chai_expects: Vec<String>,
     /// Identifiers bound to the chai module (`chai.expect`, `chai.assert`).
@@ -502,21 +517,32 @@ impl TypeScriptAssertionBindings {
     fn bind(&mut self, module: &str, imported: Option<&str>, namespace: bool, local: &str) {
         let local = local.to_string();
         if NODE_ASSERT_MODULES.contains(&module) {
+            let flavor = if module.ends_with("/strict") {
+                AssertFlavor::NodeStrict
+            } else {
+                AssertFlavor::NodeLegacy
+            };
             match imported {
                 // `import * as assert from 'node:assert'` — an object, not callable.
-                None => self.assert_objects.push((local, false)),
-                // Default export / whole-module `require` / `strict` are the
-                // callable `assert` function.
-                Some("default" | "strict") => self.assert_objects.push((local, true)),
-                Some(method) if !namespace && assert_method_is_recognized(method) => {
-                    self.assert_methods.push((local, method.to_string()));
+                None => self.assert_objects.push((local, false, flavor)),
+                // Default export / whole-module `require` are the callable
+                // `assert` function of the module.
+                Some("default") => self.assert_objects.push((local, true, flavor)),
+                // The `strict` export is strict mode from either module.
+                Some("strict") => {
+                    self.assert_objects
+                        .push((local, true, AssertFlavor::NodeStrict));
+                }
+                Some(method) if !namespace && assert_method_is_recognized(method, flavor) => {
+                    self.assert_methods
+                        .push((local, method.to_string(), flavor));
                 }
                 Some(_) => {}
             }
         } else if module == CHAI_MODULE {
             match imported {
                 None | Some("default") => self.chai_modules.push(local),
-                Some("assert") => self.assert_objects.push((local, true)),
+                Some("assert") => self.assert_objects.push((local, true, AssertFlavor::Chai)),
                 Some("expect") => self.chai_expects.push(local),
                 Some(_) => {}
             }
@@ -533,13 +559,13 @@ impl TypeScriptAssertionBindings {
             assert_objects: self
                 .assert_objects
                 .iter()
-                .filter(|(local, _)| !is_shadowed(local))
+                .filter(|(local, _, _)| !is_shadowed(local))
                 .cloned()
                 .collect(),
             assert_methods: self
                 .assert_methods
                 .iter()
-                .filter(|(local, _)| !is_shadowed(local))
+                .filter(|(local, _, _)| !is_shadowed(local))
                 .cloned()
                 .collect(),
             chai_expects: self
@@ -564,27 +590,27 @@ impl TypeScriptAssertionBindings {
             && self.chai_modules.is_empty()
     }
 
-    fn assert_object(&self, name: &str) -> Option<bool> {
+    fn assert_object(&self, name: &str) -> Option<(bool, AssertFlavor)> {
         self.assert_objects
             .iter()
-            .find(|(local, _)| local == name)
-            .map(|(_, callable)| *callable)
+            .find(|(local, _, _)| local == name)
+            .map(|(_, callable, flavor)| (*callable, *flavor))
     }
 
-    fn assert_method(&self, name: &str) -> Option<&str> {
+    fn assert_method(&self, name: &str) -> Option<(&str, AssertFlavor)> {
         self.assert_methods
             .iter()
-            .find(|(local, _)| local == name)
-            .map(|(_, method)| method.as_str())
+            .find(|(local, _, _)| local == name)
+            .map(|(_, method, flavor)| (method.as_str(), *flavor))
     }
 
-    /// The rendered receiver text when `expression` is an assert object:
-    /// `assert` or `chai.assert`.
-    fn assert_object_text(&self, expression: &Expression<'_>) -> Option<String> {
+    /// The rendered receiver text and API when `expression` is an assert
+    /// object: `assert` or `chai.assert`.
+    fn assert_object_text(&self, expression: &Expression<'_>) -> Option<(String, AssertFlavor)> {
         match expression {
             Expression::Identifier(ident) => self
                 .assert_object(ident.name.as_str())
-                .map(|_| ident.name.to_string()),
+                .map(|(_, flavor)| (ident.name.to_string(), flavor)),
             Expression::StaticMemberExpression(member)
                 if member.property.name.as_str() == "assert" =>
             {
@@ -594,7 +620,7 @@ impl TypeScriptAssertionBindings {
                 self.chai_modules
                     .iter()
                     .any(|local| local == module.name.as_str())
-                    .then(|| format!("{}.assert", module.name))
+                    .then(|| (format!("{}.assert", module.name), AssertFlavor::Chai))
             }
             _ => None,
         }
@@ -626,30 +652,49 @@ impl TypeScriptAssertionBindings {
 }
 
 /// Map a `node:assert` / chai `assert` method to an oracle kind + strength
-/// (#4547). Positive (deep/strict) equality pins the exact value; negated
-/// equality and pattern/containment checks stay relational; truthiness and
-/// error assertions stay smoke / broad. Unknown methods return `Unknown`
-/// (fail-closed) and are not credited.
-pub(crate) fn oracle_for_assert_method(method: &str) -> (OracleKind, OracleStrength) {
+/// (#4547). Positive strict equality pins the exact value; loose (`==`)
+/// equality, negated equality and pattern/containment checks stay
+/// relational; truthiness and error assertions stay smoke / broad. Unknown
+/// methods — including a method the binding's API does not have — return
+/// `Unknown` (fail-closed) and are not credited.
+///
+/// `equal` / `deepEqual` depend on the API (#4638 review): strict under
+/// `node:assert/strict`, loose `==` under legacy `node:assert`; chai's
+/// `equal` is loose while its `deepEqual` is strict deep equality.
+pub(crate) fn oracle_for_assert_method(
+    method: &str,
+    flavor: AssertFlavor,
+) -> (OracleKind, OracleStrength) {
+    let exact = (OracleKind::ExactValue, OracleStrength::Strong);
+    let relational = (OracleKind::RelationalCheck, OracleStrength::Weak);
+    let smoke = (OracleKind::SmokeOnly, OracleStrength::Smoke);
+    let broad_error = (OracleKind::BroadError, OracleStrength::Weak);
+    let chai = flavor == AssertFlavor::Chai;
     match method {
-        "strictEqual" | "deepStrictEqual" | "equal" | "deepEqual" => {
-            (OracleKind::ExactValue, OracleStrength::Strong)
+        "strictEqual" | "deepStrictEqual" => exact,
+        "equal" if flavor == AssertFlavor::NodeStrict => exact,
+        "deepEqual" if flavor != AssertFlavor::NodeLegacy => exact,
+        "equal" | "deepEqual" | "notStrictEqual" | "notDeepStrictEqual" | "notEqual"
+        | "notDeepEqual" | "match" => relational,
+        "doesNotMatch" if !chai => relational,
+        "notMatch" | "include" | "notInclude" | "lengthOf" if chai => relational,
+        "ok" => smoke,
+        "isTrue" | "isFalse" | "isOk" | "isNotOk" | "isNull" | "isUndefined" | "isDefined"
+            if chai =>
+        {
+            smoke
         }
-        "notStrictEqual" | "notDeepStrictEqual" | "notEqual" | "notDeepEqual" | "match"
-        | "doesNotMatch" | "include" | "notInclude" | "lengthOf" => {
-            (OracleKind::RelationalCheck, OracleStrength::Weak)
-        }
-        "ok" | "isTrue" | "isFalse" | "isOk" | "isNotOk" | "isNull" | "isUndefined"
-        | "isDefined" => (OracleKind::SmokeOnly, OracleStrength::Smoke),
-        "throws" | "rejects" | "doesNotThrow" | "doesNotReject" => {
-            (OracleKind::BroadError, OracleStrength::Weak)
-        }
+        "throws" | "doesNotThrow" => broad_error,
+        "rejects" | "doesNotReject" if !chai => broad_error,
         _ => (OracleKind::Unknown, OracleStrength::Unknown),
     }
 }
 
-fn assert_method_is_recognized(method: &str) -> bool {
-    !matches!(oracle_for_assert_method(method).0, OracleKind::Unknown)
+fn assert_method_is_recognized(method: &str, flavor: AssertFlavor) -> bool {
+    !matches!(
+        oracle_for_assert_method(method, flavor).0,
+        OracleKind::Unknown
+    )
 }
 
 /// Match a `node:assert` / chai `assert` call made through an imported
@@ -673,23 +718,25 @@ pub(crate) fn module_assert_assertion_from_expression(
     let Expression::CallExpression(call) = expr else {
         return None;
     };
-    let (method, callee_text) = match &call.callee {
+    let (method, flavor, callee_text) = match &call.callee {
         Expression::Identifier(ident) => {
             let name = ident.name.as_str();
-            if bindings.assert_object(name) == Some(true) {
-                ("ok", name.to_string())
-            } else {
-                (bindings.assert_method(name)?, name.to_string())
+            match bindings.assert_object(name) {
+                Some((true, flavor)) => ("ok", flavor, name.to_string()),
+                _ => {
+                    let (method, flavor) = bindings.assert_method(name)?;
+                    (method, flavor, name.to_string())
+                }
             }
         }
         Expression::StaticMemberExpression(member) => {
-            let receiver = bindings.assert_object_text(&member.object)?;
+            let (receiver, flavor) = bindings.assert_object_text(&member.object)?;
             let method = member.property.name.as_str();
-            (method, format!("{receiver}.{method}"))
+            (method, flavor, format!("{receiver}.{method}"))
         }
         _ => return None,
     };
-    let (oracle_kind, oracle_strength) = oracle_for_assert_method(method);
+    let (oracle_kind, oracle_strength) = oracle_for_assert_method(method, flavor);
     if matches!(oracle_kind, OracleKind::Unknown) {
         return None;
     }
