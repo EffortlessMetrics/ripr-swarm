@@ -59,3 +59,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — tail_comparison_boundary (6)
+
+Reason:
+RIPR-SPEC-0178 (#4478): the test's assert_eq pins the free owner's whole return value on its unconditional tail, so the return_value discriminator is confirmed
+
+Command:
+`cargo xtask goldens bless tail_comparison_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

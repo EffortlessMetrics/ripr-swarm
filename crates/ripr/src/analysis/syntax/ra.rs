@@ -10,6 +10,8 @@ use super::super::extract::PROBE_SHAPE_UNSAFE_BOUNDARY;
 use super::super::extract::ShadowAuthority;
 use super::super::extract::extract_pattern_words;
 use super::super::facts::FileFacts;
+use super::super::facts::FunctionContainer;
+use super::super::facts::FunctionItemFact;
 use super::super::facts::FunctionSourceRole;
 use super::super::facts::LetBindingFact;
 use super::super::facts::ModuleDeclarationFact;
@@ -265,6 +267,7 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
             attrs: attrs.clone(),
             nested_fn_names: nested_fn_names.clone(),
             let_bindings: let_bindings.clone(),
+            item: function_item_fact(&function),
         };
 
         if has_test_attribute {
@@ -567,6 +570,51 @@ fn parser_symbol_id(path: &Path, function: &ast::Fn, name: &str) -> SymbolId {
 
     segments.push(name.to_string());
     SymbolId(segments.join("::"))
+}
+
+/// Where `function` is declared (#4478): the nearest enclosing item that
+/// decides which call syntax can name it. The walk stops at the first `fn`,
+/// `impl` or `trait` ancestor, so a helper `fn` nested in a method body is
+/// `Local`, not a method of the `impl`.
+fn function_item_fact(function: &ast::Fn) -> FunctionItemFact {
+    let container = function
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .find_map(|node| {
+            if ast::Fn::can_cast(node.kind()) {
+                return Some(FunctionContainer::Local);
+            }
+            if let Some(impl_block) = ast::Impl::cast(node.clone()) {
+                let self_ty = impl_block
+                    .self_ty()
+                    .map(|ty| compact_syntax_text(ty.syntax().text().to_string()));
+                return Some(match (impl_block.trait_(), self_ty) {
+                    (_, None) => FunctionContainer::Unknown,
+                    (None, Some(self_ty)) => FunctionContainer::Inherent { self_ty },
+                    (Some(trait_ty), Some(self_ty)) => FunctionContainer::TraitImpl {
+                        trait_path: compact_syntax_text(trait_ty.syntax().text().to_string()),
+                        self_ty,
+                    },
+                });
+            }
+            let trait_item = ast::Trait::cast(node)?;
+            Some(match trait_item.name() {
+                Some(name) => FunctionContainer::Trait {
+                    trait_name: name.text().to_string(),
+                },
+                None => FunctionContainer::Unknown,
+            })
+        })
+        .unwrap_or(FunctionContainer::Free);
+    let has_self_param = function
+        .param_list()
+        .is_some_and(|params| params.self_param().is_some());
+    FunctionItemFact {
+        container,
+        has_self_param,
+        has_body: function.body().is_some(),
+    }
 }
 
 fn impl_owner_segment(impl_block: &ast::Impl) -> String {

@@ -680,6 +680,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
         };
         let flow_sinks = super::super::local_flow_sinks(probe, Some(&owner));
         current_path_witness(probe, &flow_sinks)

@@ -202,3 +202,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — infect_wildcard_discard (3)
+
+Reason:
+RIPR-SPEC-0178 (#4478): the test's assert_eq pins the free owner's whole return value on its unconditional tail, so the return_value discriminator is confirmed
+
+Command:
+`cargo xtask goldens bless infect_wildcard_discard --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

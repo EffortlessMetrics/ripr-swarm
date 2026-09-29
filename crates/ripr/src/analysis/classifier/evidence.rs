@@ -1,8 +1,8 @@
 use crate::analysis::classify::{
-    ProbeContext, PropagationWitnessV1, activation_evidence, classify, confidence_score,
-    current_path_witness, file_imports_foreign_callee_name, infection_evidence, local_flow_sinks,
-    owner_may_be_reached_unseen, package_prefix, propagation_evidence_with_witness, reach_evidence,
-    reveal_evidence_with_expression,
+    OwnerReturnPin, ProbeContext, PropagationWitnessV1, activation_evidence, classify,
+    confidence_score, current_path_witness, file_imports_foreign_callee_name, infection_evidence,
+    local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
+    propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
 };
 use crate::domain::*;
 use std::cell::RefCell;
@@ -73,6 +73,11 @@ impl ClassifiedProbeEvidence {
         // tests spread over a few files; without the memo every test re-masked
         // and re-scanned its whole file source (profiled: ~80% of a 60 s
         // `ripr check` on a 505-line diff of this repository).
+        // #4478: the owner-side half of the owner-return pin, established
+        // once per probe; `None` keeps every assertion on the token rule.
+        let owner_return_pin = context
+            .owner_fn
+            .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
         let import_defeats_by_file = FileDefeatMemo::default();
         let package_defeats_by_file = FileDefeatMemo::default();
         let (observe, discriminate, related_tests) = reveal_evidence_with_expression(
@@ -120,6 +125,11 @@ impl ClassifiedProbeEvidence {
                                 == Some(test_package.as_str())
                     })
                 })
+            },
+            &|test, assertion| {
+                owner_return_pin
+                    .as_ref()
+                    .is_some_and(|pin| pin.admits(test, assertion, context.index))
             },
         );
 
@@ -350,6 +360,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
         }
     }
 
@@ -390,6 +401,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
         };
         let context = ProbeContext::new(
             &probe,
@@ -539,6 +551,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
         };
         let index = RustIndex::default();
         let context = ProbeContext::new(&probe, Some(&owner), Vec::new(), false, &index, true);
@@ -583,6 +596,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
         };
         let index = RustIndex::default();
         let context = ProbeContext::new(&probe, Some(&owner), Vec::new(), false, &index, true);

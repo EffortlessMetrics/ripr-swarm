@@ -2125,6 +2125,7 @@ mod tests {
             attrs: vec![],
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
         }
     }
 

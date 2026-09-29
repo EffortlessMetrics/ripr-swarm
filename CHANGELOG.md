@@ -11,6 +11,20 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Rust: a test that pins the changed owner's whole return value now
+  confirms a changed `return_value` expression, including through a method
+  call. `assert_eq!(a.try_get_int(3), Ok(-1))` on the tokio-rs/bytes
+  7930d93 change to `Buf::try_get_int` now reads `exposed`; before, it read
+  `weakly_exposed` with "Discriminator unconfirmed". The call must name the
+  owner, and ripr fails closed when it cannot tell: a bare `name(..)` counts
+  only for a module-level function; a method call counts only when the
+  test binds the receiver to a type that dispatches to the owner, the trait
+  is imported, and no other method of that name exists in the workspace.
+  The changed expression must also be the owner's tail, and when the owner
+  can exit early through `?` or `return`, the pinned value must be the
+  changed `Ok(..)` or `Some(..)`, so an `Err(..)` pin on that owner does
+  not count (RIPR-SPEC-0178). `use ::crate_name::..` imports now read as
+  the named crate.
 - LSP: the server now asks clients for `textDocument/didSave`. It advertised
   only the numeric full-sync kind, which under the LSP spec does not request
   save notifications, so a strictly conforming editor could save without ripr

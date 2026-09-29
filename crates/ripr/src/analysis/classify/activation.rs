@@ -1992,6 +1992,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
         };
         let test = TestSummary {
             name: "absent_delimiter_boundary".to_string(),
@@ -3138,6 +3139,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
         }
     }
 

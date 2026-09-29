@@ -4372,6 +4372,7 @@ let _ = (result, note, raw);"##,
             attrs: attrs.into_iter().map(|s| s.to_string()).collect(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
         }
     }
 

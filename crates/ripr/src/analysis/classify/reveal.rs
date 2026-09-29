@@ -16,6 +16,7 @@ fn reveal_evidence(
         related_tests,
         &|_, _| false,
         &|_, _| false,
+        &|_, _| false,
     )
 }
 
@@ -25,6 +26,7 @@ pub(in crate::analysis) fn reveal_evidence_with_expression(
     related_tests: &[(&TestSummary, RelationReason)],
     same_name_import_defeats: &dyn Fn(&TestSummary, &str) -> bool,
     cross_package_name_defeats: &dyn Fn(&TestSummary, &str) -> bool,
+    owner_return_pin: &dyn Fn(&TestSummary, &OracleFact) -> bool,
 ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
     if related_tests.is_empty() {
         return (
@@ -48,6 +50,7 @@ pub(in crate::analysis) fn reveal_evidence_with_expression(
         related_tests,
         same_name_import_defeats,
         cross_package_name_defeats,
+        owner_return_pin,
     );
     let related = finalize_related_tests(analysis.related);
     let observe = build_observe_evidence(analysis.matched_any);
@@ -206,6 +209,7 @@ fn analyze_related_assertions(
     related_tests: &[(&TestSummary, RelationReason)],
     same_name_import_defeats: &dyn Fn(&TestSummary, &str) -> bool,
     cross_package_name_defeats: &dyn Fn(&TestSummary, &str) -> bool,
+    owner_return_pin: &dyn Fn(&TestSummary, &OracleFact) -> bool,
 ) -> RevealAssertionAnalysis {
     let probe_tokens = if is_effect_family(&probe.family) {
         effect_target_tokens(analysis_expression)
@@ -336,12 +340,24 @@ fn analyze_related_assertions(
             .owner_callee
             .is_some_and(|callee| cross_package_name_defeats(test, callee));
         for assertion in &test.assertions {
+            // #4478: whether this `assert_eq!` pins the owner's whole return
+            // value through a call that names the owner. The owner-side and
+            // test-side identity gates live in `owner_pin`; the family and
+            // oracle-kind gates are checked first so the closure only runs
+            // for return-value exact pins.
+            let owner_pinned = matches!(probe.family, ProbeFamily::ReturnValue)
+                && matches!(
+                    assertion.kind,
+                    OracleKind::ExactValue | OracleKind::WholeObjectEquality
+                )
+                && owner_return_pin(test, assertion);
             let (matched, has_token_match) = assertion_matches_probe_detail_with_literals(
                 &match_context,
                 assertion,
                 test.assertions.len(),
                 import_defeats_owner,
                 cross_package_defeats_owner,
+                owner_pinned,
             );
             if matched {
                 let observation_confirmed = !confirm_required
@@ -954,7 +970,7 @@ fn matching_parenthesis(text: &str, opening: usize) -> Option<usize> {
     None
 }
 
-fn assertion_comparison_operands(text: &str) -> Option<[&str; 2]> {
+pub(super) fn assertion_comparison_operands(text: &str) -> Option<[&str; 2]> {
     let spans = string_span_ranges(text);
     for macro_name in ["assert_eq!", "assert_ne!"] {
         let mut search_from = 0usize;
@@ -1107,6 +1123,7 @@ fn assertion_matches_probe_detail_with_literals(
     assertion_count: usize,
     import_defeats_owner: bool,
     cross_package_defeats_owner: bool,
+    owner_pinned: bool,
 ) -> (bool, bool) {
     let RevealMatchContext {
         probe_tokens,
@@ -1186,6 +1203,18 @@ fn assertion_matches_probe_detail_with_literals(
                 || error_construction_variant.is_some()
                 || assertion.ok_value_observed == Some(true))
     });
+    // #4478: an `assert_eq!` whose operand is a call naming the owner pins
+    // the owner's whole return value, which a changed `return_value`
+    // expression flows into when the owner's return paths make it the
+    // value's source (`owner_pin` decides that and the call's identity).
+    // Same defeats as the guarded-match shortcut above: no foreign
+    // same-name import, no same-named function in the test's own package,
+    // and the exact variant when the changed expression constructs one.
+    let owner_return_pinned = owner_pinned
+        && !import_defeats_owner
+        && !cross_package_defeats_owner
+        && error_construction_variant
+            .is_none_or(|variant| contains_as_whole_word(&assertion.text, variant));
     // For MatchArm probes, restrict the confirmation check to variant-only
     // tokens (post-`::`). The qualifier ("Mode" in "Mode::Frozen") is shared
     // across all arms and therefore cannot confirm this specific arm.
@@ -1221,7 +1250,7 @@ fn assertion_matches_probe_detail_with_literals(
         // the same error type would otherwise clear the unverified flag.
         producer_owned_result
     } else {
-        token_match || effect_literal_match || producer_owned_result
+        token_match || effect_literal_match || producer_owned_result || owner_return_pinned
     };
     // Fail-closed: if error_construction_variant is None (no parseable variant
     // in the probe), fall through to the standard token_match + family_match
@@ -1240,6 +1269,7 @@ fn assertion_matches_probe_detail_with_literals(
         || effect_literal_match
         || family_match
         || producer_owned_result
+        || owner_return_pinned
         || assertion_count == 1;
     (matched, has_token_match)
 }
@@ -1273,6 +1303,7 @@ fn assertion_matches_probe_detail(
         },
         assertion,
         assertion_count,
+        false,
         false,
         false,
     )
@@ -1384,7 +1415,10 @@ fn is_ident_byte(byte: u8) -> bool {
 /// empty segment (a brace-rooted `use {..};`) signals no path prefix.
 fn use_statement_first_segment(statement: &str) -> Option<&str> {
     let rest = statement.trim_start().strip_prefix("use")?;
+    // `use ::name::..` roots the path at the extern crate `name`, the same
+    // crate `use name::..` names.
     let rest = rest.trim_start();
+    let rest = rest.strip_prefix("::").map_or(rest, str::trim_start);
     let end = rest
         .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
         .unwrap_or(rest.len());
@@ -1399,14 +1433,55 @@ fn use_statement_binds_name(statement: &str, callee: &str) -> bool {
     let Some(rest) = statement.trim_start().strip_prefix("use") else {
         return false;
     };
-    use_items_bind(rest.trim_start(), callee)
+    use_items_bind(rest.trim_start(), callee, ImportMatch::Binding)
+}
+
+/// What a `use` item is matched on: the name it binds in the importing
+/// scope, or the item it imports (`use p::Buf as _;` imports `Buf` without
+/// binding the name, which still brings a trait's methods into scope).
+#[derive(Clone, Copy)]
+enum ImportMatch {
+    Binding,
+    Item,
+}
+
+/// Whether `source` imports the item `name` through a `use` path rooted in
+/// this workspace (`crate`, `self`, `super`, or a workspace package), at
+/// any depth (#4478). Glob imports are not read: they prove nothing about
+/// which items they bring in.
+pub(in crate::analysis) fn file_imports_own_item(
+    source: &str,
+    name: &str,
+    crate_names: &std::collections::BTreeSet<String>,
+) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(source);
+    all_use_statements(&masked).iter().any(|statement| {
+        let statement = statement.trim();
+        let statement = statement.strip_suffix(';').unwrap_or(statement).trim_end();
+        let Some(first_segment) = use_statement_first_segment(statement) else {
+            return false;
+        };
+        let own = first_segment == "crate"
+            || first_segment == "self"
+            || first_segment == "super"
+            || crate_names.iter().any(|crate_name| {
+                crate_name == first_segment || crate_identifier(crate_name) == first_segment
+            });
+        own && statement
+            .trim_start()
+            .strip_prefix("use")
+            .is_some_and(|rest| use_items_bind(rest.trim_start(), name, ImportMatch::Item))
+    })
 }
 
 /// Whether one comma-separated `use` item group binds `callee`. An item is
 /// a `::`-separated path that may end in a brace list; the binding of a
 /// brace-less item is its terminal segment (respecting `as` renames), and
 /// brace-list items recurse.
-fn use_items_bind(items: &str, callee: &str) -> bool {
+fn use_items_bind(items: &str, callee: &str, mode: ImportMatch) -> bool {
     for item in split_top_level_commas(items) {
         let item = item.trim();
         if item.is_empty() {
@@ -1414,13 +1489,13 @@ fn use_items_bind(items: &str, callee: &str) -> bool {
         }
         match item.find('{') {
             None => {
-                if braceless_item_binds(item, callee) {
+                if braceless_item_binds(item, callee, mode) {
                     return true;
                 }
             }
             Some(open) => {
                 if let Some(close) = matching_brace_close(item, open)
-                    && use_items_bind(&item[open + 1..close], callee)
+                    && use_items_bind(&item[open + 1..close], callee, mode)
                 {
                     return true;
                 }
@@ -1432,11 +1507,11 @@ fn use_items_bind(items: &str, callee: &str) -> bool {
 
 /// The binding name of a brace-less import item: its terminal `::`
 /// segment, with `callee as alias` renames resolving to the alias.
-fn braceless_item_binds(item: &str, callee: &str) -> bool {
+fn braceless_item_binds(item: &str, callee: &str, mode: ImportMatch) -> bool {
     let terminal = item.rsplit("::").next().unwrap_or(item).trim();
     let mut parts = terminal.split_whitespace();
     let name = parts.next().unwrap_or("");
-    if parts.next() == Some("as") {
+    if matches!(mode, ImportMatch::Binding) && parts.next() == Some("as") {
         return parts.next() == Some(callee);
     }
     name == callee && name != "*" && name != "self"
@@ -2446,6 +2521,7 @@ mod tests {
                 2,
                 import_defeats_owner,
                 cross_package_defeats_owner,
+                false,
             );
             assert_eq!(
                 has_token, expected,
@@ -3679,6 +3755,7 @@ return Err(\"typed pin\".into());
             &[(&test, RelationReason::DirectOwnerCall)],
             &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
             &|_, _| false,
+            &|_, _| false,
         );
 
         assert_eq!(
@@ -3723,6 +3800,7 @@ return Err(\"typed pin\".into());
             &[(&test, RelationReason::DirectOwnerCall)],
             &|_, callee| file_imports_foreign_callee_name(without_import, callee, &own_crate_names),
             &|_, _| false,
+            &|_, _| false,
         );
         assert_eq!(
             discriminate.state,
@@ -3737,6 +3815,7 @@ return Err(\"typed pin\".into());
             &|_, callee| {
                 file_imports_foreign_callee_name(own_crate_import, callee, &own_crate_names)
             },
+            &|_, _| false,
             &|_, _| false,
         );
         assert_eq!(
@@ -3771,6 +3850,7 @@ return Err(\"typed pin\".into());
             &probe.expression,
             &[(&test, RelationReason::DirectOwnerCall)],
             &|_, callee| file_imports_foreign_callee_name(aliased_import, callee, &crate_names),
+            &|_, _| false,
             &|_, _| false,
         );
         assert_eq!(
@@ -3807,6 +3887,7 @@ return Err(\"typed pin\".into());
             &probe.expression,
             &[(&test, RelationReason::DirectOwnerCall)],
             &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
+            &|_, _| false,
             &|_, _| false,
         );
 
@@ -3914,6 +3995,7 @@ return Err(\"typed pin\".into());
             &[(&test, RelationReason::DirectOwnerCall)],
             &|_, _| false,
             &|_, _| true,
+            &|_, _| false,
         );
         assert_eq!(
             defeated.state,
@@ -3930,6 +4012,7 @@ return Err(\"typed pin\".into());
             &probe,
             &probe.expression,
             &[(&test, RelationReason::DirectOwnerCall)],
+            &|_, _| false,
             &|_, _| false,
             &|_, _| false,
         );
@@ -4511,6 +4594,7 @@ return Err(\"typed pin\".into());
             &probe,
             "Err(ParseError::SiblingVariant)",
             &[(&test, RelationReason::DirectOwnerCall)],
+            &|_, _| false,
             &|_, _| false,
             &|_, _| false,
         );

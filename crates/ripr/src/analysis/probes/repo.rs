@@ -105,6 +105,7 @@ mod tests {
                         attrs: vec![],
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
+                        item: Default::default(),
                     }],
                     probe_shapes: vec![
                         ProbeShapeFact {
@@ -181,6 +182,7 @@ mod tests {
                         attrs: vec![],
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
+                        item: Default::default(),
                     }],
                     probe_shapes: vec![ProbeShapeFact {
                         start_line: 2,

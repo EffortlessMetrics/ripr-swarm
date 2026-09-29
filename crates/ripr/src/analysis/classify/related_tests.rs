@@ -3640,6 +3640,7 @@ fn crate_c_score_test() {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
         }
     }
 
