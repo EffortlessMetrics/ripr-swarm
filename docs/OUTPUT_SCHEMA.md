@@ -16487,7 +16487,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.16",
+      "schema_version": "1.17",
       "analyzer_version": "0.11.0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
