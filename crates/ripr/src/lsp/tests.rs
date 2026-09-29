@@ -12543,6 +12543,7 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
                 reason: "observed values skip equality boundary".to_string(),
                 flow_sink: None,
             }],
+            new_test_target: None,
         },
         class: SeamGripClass::WeaklyGripped,
     }
@@ -12579,6 +12580,7 @@ fn sample_side_effect_seam_without_related_tests() -> crate::analysis::Classifie
             discriminate: StageEvidence::new(StageState::No, Confidence::Low, "no discriminator"),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            new_test_target: None,
         },
         class: SeamGripClass::Ungripped,
     }
@@ -13767,11 +13769,16 @@ fn execute_command_context_commands_reject_unreadable_arguments_with_shapes() ->
     runtime.block_on(async {
         let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
         let backend = service.inner();
-        let cases: [(&str, Vec<serde_json::Value>, &str); 6] = [
+        let cases: [(&str, Vec<serde_json::Value>, &str); 8] = [
             (COLLECT_CONTEXT_COMMAND, vec![], "expects one object"),
             (
                 COLLECT_CONTEXT_COMMAND,
                 vec![serde_json::json!("probe:src/lib.rs:1:predicate")],
+                "expects one object",
+            ),
+            (
+                COLLECT_CONTEXT_COMMAND,
+                vec![serde_json::Value::Null],
                 "expects one object",
             ),
             (
@@ -13787,6 +13794,11 @@ fn execute_command_context_commands_reject_unreadable_arguments_with_shapes() ->
             (
                 COLLECT_EVIDENCE_CONTEXT_COMMAND,
                 vec![],
+                "expects one object",
+            ),
+            (
+                COLLECT_EVIDENCE_CONTEXT_COMMAND,
+                vec![serde_json::json!("not-an-object")],
                 "expects one object",
             ),
             (
