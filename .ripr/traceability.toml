@@ -6784,6 +6784,7 @@ fixtures = [
   "fixtures/evidence-promotion-honesty-corpus/reports/perl_sink_aligned_positive_control.json",
   "fixtures/evidence-promotion-honesty-corpus/reports/perl_direct_owner_advisory_positive.json",
   "fixtures/typescript_adversarial_owner_module_mock",
+  "fixtures/typescript_adversarial_mocked_barrel",
 ]
 code = [
   "xtask/src/main.rs",

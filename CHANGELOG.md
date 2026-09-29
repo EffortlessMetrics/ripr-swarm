@@ -274,9 +274,10 @@ are scoped or reviewed.
   of that name exists, and `export *` / `export { N } from` chains are
   followed for up to 4 hops inside the repository. A star hop forwards a name
   only when the target module exports it; a name two star sources export, a
-  cycle, a longer chain, or a test-local redeclaration of the imported name
-  gives no credit, and a test that imports only another name from the same
-  barrel stays unrelated. (ufo's own `withBase` tests are still missed: they
+  cycle, a longer chain, a test-local or `describe`-scoped redeclaration of
+  the imported name, or a mock of any module on the chain gives no credit,
+  and a test that imports only another name from the same barrel stays
+  unrelated. (ufo's own `withBase` tests are still missed: they
   register from a `for` loop with computed titles, which test extraction does
   not index and discloses as partial.)
 

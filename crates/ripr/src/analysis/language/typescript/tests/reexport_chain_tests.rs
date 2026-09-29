@@ -291,3 +291,45 @@ fn describe_scoped_shadow_of_barrel_import_does_not_credit() -> Result<(), Strin
     assert!(related.is_empty(), "a describe-scoped shadow: {related:?}");
     Ok(())
 }
+
+const TWO_HOP_FILES: [(&str, &str); 3] = [
+    ("src/utils.ts", UTILS),
+    ("src/base/index.ts", "export * from \"../utils\";\n"),
+    ("src/index.ts", "export { withoutBase } from \"./base\";\n"),
+];
+
+fn mocked_barrel_test(mock_specifier: &str) -> String {
+    format!(
+        "import {{ vi, expect, test }} from \"vitest\";\nimport {{ withoutBase }} from \"../src\";\nvi.mock(\"{mock_specifier}\", () => ({{ withoutBase: vi.fn(() => \"/b\") }}));\ntest(\"mocked\", () => {{\n  expect(withoutBase(\"/a/b\", \"/a\")).toBe(\"/b\");\n}});\n"
+    )
+}
+
+#[test]
+fn mocked_import_barrel_does_not_credit() -> Result<(), String> {
+    let test = mocked_barrel_test("../src");
+    let related = related_through_barrel(&TWO_HOP_FILES, "src/utils.ts", "withoutBase", &test)?;
+    assert!(
+        related.is_empty(),
+        "the imported barrel is mocked: {related:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn mocked_intermediate_barrel_does_not_credit() -> Result<(), String> {
+    let test = mocked_barrel_test("../src/base");
+    let related = related_through_barrel(&TWO_HOP_FILES, "src/utils.ts", "withoutBase", &test)?;
+    assert!(
+        related.is_empty(),
+        "a hop on the chain is mocked: {related:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn mock_of_a_module_off_the_chain_keeps_the_credit() -> Result<(), String> {
+    let test = mocked_barrel_test("../src/url");
+    let related = related_through_barrel(&TWO_HOP_FILES, "src/utils.ts", "withoutBase", &test)?;
+    assert_credited(&related, "an unrelated mock");
+    Ok(())
+}

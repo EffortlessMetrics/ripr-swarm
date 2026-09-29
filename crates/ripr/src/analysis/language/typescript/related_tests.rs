@@ -211,8 +211,14 @@ impl ReExportIndex {
         name: &str,
         hops: usize,
         stack: &mut Vec<(String, String)>,
+        mocked: &dyn Fn(&str) -> bool,
     ) -> ExportResolution {
         let module = self.canonical_module(module);
+        if mocked(&module) {
+            // A mocked barrel or intermediate module replaces every binding
+            // it forwards, so the chain no longer reaches the owner.
+            return ExportResolution::Unknown;
+        }
         let frame = (module.clone(), name.to_string());
         if stack.contains(&frame) {
             // A re-export cycle contributes no binding (ECMAScript
@@ -220,7 +226,7 @@ impl ReExportIndex {
             return ExportResolution::NotFound;
         }
         stack.push(frame);
-        let resolution = self.resolve_export_frame(&module, name, hops, stack);
+        let resolution = self.resolve_export_frame(&module, name, hops, stack, mocked);
         stack.pop();
         resolution
     }
@@ -231,6 +237,7 @@ impl ReExportIndex {
         name: &str,
         hops: usize,
         stack: &mut Vec<(String, String)>,
+        mocked: &dyn Fn(&str) -> bool,
     ) -> ExportResolution {
         if let Some((original, source)) = self.entries.get(&(module.to_string(), name.to_string()))
         {
@@ -241,7 +248,7 @@ impl ReExportIndex {
             if hops >= MAX_REEXPORT_HOPS {
                 return ExportResolution::Unknown;
             }
-            return match self.resolve_export(source, original, hops + 1, stack) {
+            return match self.resolve_export(source, original, hops + 1, stack, mocked) {
                 // An explicit `export { N } from './A'` asserts that A
                 // exports N; when A records no deeper fact for it, A's own
                 // binding is the named target.
@@ -277,7 +284,7 @@ impl ReExportIndex {
         star_sources.sort();
         let mut found: Option<(String, String)> = None;
         for star_source in star_sources {
-            match self.resolve_export(star_source, name, hops + 1, stack) {
+            match self.resolve_export(star_source, name, hops + 1, stack, mocked) {
                 ExportResolution::NotFound => {}
                 ExportResolution::Unknown => return ExportResolution::Unknown,
                 ExportResolution::Found(target_module, target_name) => {
@@ -300,13 +307,13 @@ impl ReExportIndex {
         }
     }
 
-    /// Return whether a test in `test_file` importing `imported_name` from
-    /// `import_source` reaches `owner` through the bounded re-export chain
-    /// (or through a directory specifier that resolves to the owner's
-    /// `index` module).
+    /// Return whether `test` importing `imported_name` from `import_source`
+    /// reaches `owner` through the bounded re-export chain (or through a
+    /// directory specifier that resolves to the owner's `index` module). A
+    /// mock of any module on the chain breaks it.
     fn resolve_to_owner(
         &self,
-        test_file: &Path,
+        test: &TypeScriptTest,
         import_source: &str,
         imported_name: &str,
         owner: &TypeScriptOwner,
@@ -315,7 +322,7 @@ impl ReExportIndex {
     ) -> bool {
         // Resolve the import source to a normalized module path.
         let Some(import_module) =
-            normalized_relative_import_module(test_file, import_source, alias_map, workspace_root)
+            normalized_relative_import_module(&test.file, import_source, alias_map, workspace_root)
         else {
             return false;
         };
@@ -332,9 +339,31 @@ impl ReExportIndex {
             };
             return source_module == &owner_module && original_name == &owner.name;
         }
+        if test
+            .mocks_in_file
+            .iter()
+            .any(|source| source == UNRESOLVED_MOCK_SPECIFIER)
+        {
+            return false;
+        }
+        let mocked_modules: Vec<String> = test
+            .mocks_in_file
+            .iter()
+            .filter_map(|source| {
+                normalized_relative_import_module(&test.file, source, alias_map, workspace_root)
+            })
+            .map(|module| self.canonical_module(&module))
+            .collect();
+        let mocked = |module: &str| {
+            mocked_modules.iter().any(|mocked| mocked == module)
+                || test
+                    .mocks_in_file
+                    .iter()
+                    .any(|source| root_relative_mock_names_module(source, module))
+        };
         let mut stack = Vec::new();
         let ExportResolution::Found(target_module, target_name) =
-            self.resolve_export(&import_module, imported_name, 0, &mut stack)
+            self.resolve_export(&import_module, imported_name, 0, &mut stack, &mocked)
         else {
             return false;
         };
@@ -755,7 +784,7 @@ pub(crate) fn owner_call_relation(
             return false;
         }
         reexport_index.resolve_to_owner(
-            &test.file,
+            test,
             &import.source,
             imported_name,
             owner,
