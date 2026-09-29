@@ -1,0 +1,67 @@
+name: Repair final-payload workflow policy once
+
+on:
+  push:
+    branches:
+      - feat/4521-final-native-payload
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out candidate branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: feat/4521-final-native-payload
+          fetch-depth: 0
+
+      - name: Repair workflow policy findings
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one replacement, found {count}")
+              file.write_text(text.replace(old, new), encoding="utf-8")
+
+          replace_once(
+              ".github/workflows/server-archive-qualification.yml",
+              '"Native runtime compatibility remains unqualified under issue #4489"',
+              '"Native runtime compatibility remains unqualified under EffortlessMetrics/ripr-swarm#4489"',
+          )
+          replace_once(
+              "policy/workflow_allowlist.txt",
+              ".github/workflows/server-archive-qualification.yml|82|Exact measured largest run block after preserving curl transport status, bounded rate-limit tokens, response digests, and strict public ruleset shape diagnostics; credential-free, artifact-only qualification delegates packaging and manifest generation to Rust xtask commands.",
+              ".github/workflows/server-archive-qualification.yml|89|Exact measured largest run block retains ruleset diagnostics plus five-target producer, payload-identity, archive-readback, and receipt-v3 aggregation; credential-free qualification delegates payload and archive construction to Rust xtask commands.",
+          )
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt
+
+      - name: Validate repaired candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.95.0 fmt --all --check
+          cargo +1.95.0 xtask check-workflows
+          cargo +1.95.0 test -p xtask release_server_archive_prepares_package_before_format_validation -- --nocapture
+
+      - name: Commit repair and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/zz-repair-4699-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/server-archive-qualification.yml policy/workflow_allowlist.txt
+          git commit -m "fix(distribution): align payload workflow policy"
+          git push origin HEAD:feat/4521-final-native-payload
