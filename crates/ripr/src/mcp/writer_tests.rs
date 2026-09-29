@@ -5,7 +5,9 @@ use tokio::io::AsyncReadExt;
 fn readable_giant_id_cannot_escape_the_output_cap() -> Result<(), String> {
     let message = ServerJsonRpcMessage::error(
         ErrorData::internal_error("failure", None),
-        Some("\n".repeat(70 * 1024).into()),
+        Some(rmcp::model::RequestId::String(
+            "\n".repeat(70 * 1024).into(),
+        )),
     );
     let error = encode_message(&message)
         .err()
@@ -24,7 +26,7 @@ async fn cancelled_partial_write_resumes_without_repeating_bytes() -> Result<(),
     };
     let message = ServerJsonRpcMessage::error(
         ErrorData::internal_error("partial write witness", None),
-        Some(9.into()),
+        Some(rmcp::model::RequestId::Number(9)),
     );
     let expected = encode_message(&message).map_err(|error| error.to_string())?;
     let (sink, mut source) = tokio::io::duplex(2);

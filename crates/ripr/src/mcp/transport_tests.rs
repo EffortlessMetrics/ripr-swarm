@@ -32,7 +32,9 @@ async fn fatal_output_limit_wakes_receive_while_input_remains_open() -> Result<(
     };
     let sending = transport.send(ServerJsonRpcMessage::error(
         ErrorData::internal_error("bounded refusal", None),
-        Some("\n".repeat(70 * 1024).into()),
+        Some(rmcp::model::RequestId::String(
+            "\n".repeat(70 * 1024).into(),
+        )),
     ));
     let mut receiving = Box::pin(transport.receive());
     poll_fn(|context| match receiving.as_mut().poll(context) {
@@ -275,7 +277,7 @@ async fn oversized_response_fallback_keeps_the_known_request_id() -> Result<(), 
             "large response",
             Some(json!({ "blob": "x".repeat(super::super::MAX_RESPONSE_BYTES + 1) })),
         ),
-        Some(7.into()),
+        Some(rmcp::model::RequestId::Number(7)),
     );
     let mut output =
         super::super::writer::encode_message(&response).map_err(|error| error.to_string())?;
