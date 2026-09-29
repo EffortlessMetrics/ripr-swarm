@@ -781,7 +781,7 @@ fn strip_root(workspace_root: &Path, targets: &BTreeSet<PathBuf>) -> BTreeSet<Pa
 /// The nearest ancestor directory of `file` that holds a `Cargo.toml`,
 /// bounded by the workspace root so a manifest above the analyzed
 /// workspace is never consulted.
-fn nearest_manifest_dir(workspace_root: &Path, file: &Path) -> Option<PathBuf> {
+pub(super) fn nearest_manifest_dir(workspace_root: &Path, file: &Path) -> Option<PathBuf> {
     file.ancestors()
         .skip(1)
         .take_while(|dir| dir.starts_with(workspace_root))

@@ -32,7 +32,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use super::cargo_targets::{
-    collect_explicit_paths, declared_targets_from_manifest, lexical, normalize, owning_package_dir,
+    collect_explicit_paths, declared_targets_from_manifest, lexical, nearest_manifest_dir,
+    normalize, owning_package_dir,
 };
 use super::source_role::SourceRoleContext;
 use crate::analysis::syntax::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
@@ -112,29 +113,57 @@ where
     let mut external_packages = BTreeMap::new();
     let mut walks: BTreeMap<PathBuf, Option<PackageWalk>> = BTreeMap::new();
     let mut external_declarers: Option<BTreeSet<PathBuf>> = None;
-    let mut escaping_targets: Option<Option<BTreeSet<PathBuf>>> = None;
+    let mut escaping: Option<Option<EscapingReach>> = None;
     for candidate in candidates {
         if candidate.extension().and_then(|ext| ext.to_str()) != Some("rs") {
             continue;
         }
         let relative = normalize(candidate);
         let anchored = lexical(&normalize(&workspace_root.join(&relative)));
-        let owner = owning_package_dir(workspace_root, &workspace_root.join(&relative))
-            .map(|dir| lexical(&normalize(&dir)));
-        let mut owner_proves_unreached = false;
-        if let Some(walk) = owner.and_then(|dir| {
-            walks
+        // A symlinked module directory reaches the file under another
+        // spelling, so the walk also matches the canonical path.
+        let mut targets = vec![anchored.clone()];
+        if let Ok(canonical) = std::fs::canonicalize(&anchored)
+            && canonical != anchored
+        {
+            targets.push(canonical);
+        }
+        // The layout owner (nearest `src`/`tests`/`benches`/`examples`
+        // parent) and the nearest manifest differ for a package nested in
+        // such a directory (`tests/harness/Cargo.toml`); both are asked.
+        let absolute = workspace_root.join(&relative);
+        let owners = [
+            owning_package_dir(workspace_root, &absolute),
+            nearest_manifest_dir(workspace_root, &absolute),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|dir| lexical(&normalize(&dir)))
+        .collect::<BTreeSet<_>>();
+        let mut owner_proves_unreached = !owners.is_empty();
+        let mut owner_reaches_production = false;
+        for dir in &owners {
+            let Some(walk) = walks
                 .entry(dir.clone())
-                .or_insert_with(|| PackageWalk::new(workspace_root, &dir))
+                .or_insert_with(|| PackageWalk::new(workspace_root, dir))
                 .as_mut()
-        }) {
-            match walk.find(workspace_root, &anchored) {
-                Some(Origin::Production) => continue,
+            else {
+                owner_proves_unreached = false;
+                continue;
+            };
+            match walk.find(workspace_root, &targets) {
+                Some(Origin::Production) => {
+                    owner_reaches_production = true;
+                    break;
+                }
                 // Compiled from a test root: never an orphan, but an external
                 // root may still reach it as production.
-                Some(Origin::Evidence) => {}
-                None => owner_proves_unreached = walk.proves_unreached(),
+                Some(Origin::Evidence) => owner_proves_unreached = false,
+                None => owner_proves_unreached &= walk.proves_unreached(),
             }
+        }
+        if owner_reaches_production {
+            continue;
         }
 
         // A package whose production root sits outside its own directory
@@ -146,18 +175,18 @@ where
             .clone();
         let mut declarers_prove_unreached = true;
         let mut declaring_package = None;
-        for package_dir in declarers {
+        for package_dir in &declarers {
             let Some(walk) = walks
                 .entry(package_dir.clone())
-                .or_insert_with(|| PackageWalk::new(workspace_root, &package_dir))
+                .or_insert_with(|| PackageWalk::new(workspace_root, package_dir))
                 .as_mut()
             else {
                 declarers_prove_unreached = false;
                 continue;
             };
-            match walk.find(workspace_root, &anchored) {
+            match walk.find(workspace_root, &targets) {
                 Some(Origin::Production) => {
-                    declaring_package.get_or_insert(package_dir);
+                    declaring_package.get_or_insert(package_dir.clone());
                 }
                 // Reached only from a test, bench or example root: compiled,
                 // just not as production. No grant, and no orphan.
@@ -172,10 +201,10 @@ where
             context.declared_production_sources.insert(relative);
         } else if owner_proves_unreached
             && declarers_prove_unreached
-            && escaping_targets
-                .get_or_insert_with(|| escaping_edge_targets(workspace_root))
-                .as_ref()
-                .is_some_and(|targets| !targets.contains(&anchored))
+            && escaping
+                .get_or_insert_with(|| EscapingReach::scan(workspace_root))
+                .as_mut()
+                .is_some_and(|reach| reach.proves_unreached(workspace_root, &targets))
         {
             context.module_graph_orphans.insert(relative);
         }
@@ -183,43 +212,116 @@ where
     external_packages
 }
 
-/// Every `#[path]` and `include!` target named anywhere in the workspace,
-/// anchored and lexically resolved, or `None` when some file that spells one
-/// cannot be scanned completely.
+/// Directories the escaping scan never enters: VCS metadata and build
+/// output hold no Cargo-compiled sources.
+const ESCAPING_SCAN_SKIPPED_DIRS: [&str; 3] = [".git", "target", "node_modules"];
+
+/// Directory entries the escaping scan may visit before it gives up.
+const MAX_ESCAPING_SCAN_ENTRIES: usize = 200_000;
+
+/// What reaches files from outside the walks a verdict asks: every
+/// `#[path]` and `include!` edge declared anywhere in the workspace, walked
+/// with its own `mod` children, and every symlink, which gives a file a
+/// second spelling some package may compile it under.
 ///
-/// A package's own walk never sees another package reaching into it
-/// (`#[path = "../../b/src/proto.rs"]` in crate `a`, or a build script that
-/// `include!`s a sibling's source), so an orphan verdict also requires that
-/// no such edge names the file. Only files whose text spells `path` or
-/// `include` are parsed; this runs once, and only when an orphan verdict is
-/// about to be recorded.
-fn escaping_edge_targets(workspace_root: &Path) -> Option<BTreeSet<PathBuf>> {
-    let mut targets = BTreeSet::new();
-    for relative in super::discover_rust_files(workspace_root).ok()? {
-        let file = lexical(&normalize(&workspace_root.join(&relative)));
-        let source = match read_source(workspace_root, &file) {
-            SourceRead::Text(source) => source,
-            SourceRead::Absent => continue,
-            SourceRead::Unreadable => return None,
-        };
-        if !source.contains("path") && !source.contains("include") {
-            continue;
-        }
-        let scan = rust_module_tree_scan(&source);
-        let directory = file.parent().map(Path::to_path_buf).unwrap_or_default();
-        for edge in &scan.edges {
-            if let RustModuleTreeEdge::Path(target) | RustModuleTreeEdge::Include(target) = edge {
-                targets.insert(lexical(&directory.join(target)));
+/// A package's walk never sees another package reaching into it
+/// (`#[path = "../../b/src/proto/mod.rs"]` in crate `a`, a build script that
+/// `include!`s a sibling's source, or `a/src/shared -> ../../common/src/shared`),
+/// so an orphan verdict also requires that none of these reaches the file.
+/// This is built once, and only when an orphan verdict is about to be
+/// recorded.
+#[derive(Debug)]
+struct EscapingReach {
+    /// A walk seeded with every `#[path]`/`include!` target.
+    walk: PackageWalk,
+    /// Canonical targets of every symlink in the workspace.
+    symlink_targets: Vec<PathBuf>,
+}
+
+impl EscapingReach {
+    /// Scans the workspace, or `None` when some file that could spell an
+    /// escaping edge cannot be scanned completely, or the scan is cut short.
+    fn scan(workspace_root: &Path) -> Option<Self> {
+        let mut files = Vec::new();
+        let mut symlink_targets = Vec::new();
+        let mut pending = vec![lexical(&normalize(workspace_root))];
+        let mut visited_entries = 0usize;
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(&dir).ok()? {
+                crate::analysis::cancellation::checkpoint().ok()?;
+                visited_entries += 1;
+                if visited_entries > MAX_ESCAPING_SCAN_ENTRIES {
+                    return None;
+                }
+                let entry = entry.ok()?;
+                let path = entry.path();
+                let file_type = entry.file_type().ok()?;
+                if file_type.is_symlink() {
+                    // A dangling link aliases nothing.
+                    if let Ok(target) = std::fs::canonicalize(&path) {
+                        symlink_targets.push(target);
+                    }
+                } else if file_type.is_dir() {
+                    let name = entry.file_name();
+                    if !ESCAPING_SCAN_SKIPPED_DIRS
+                        .iter()
+                        .any(|skipped| name == std::ffi::OsStr::new(skipped))
+                    {
+                        pending.push(path);
+                    }
+                } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                    files.push(lexical(&normalize(&path)));
+                }
             }
         }
-        // An incomplete scan that could hide such an edge leaves every
-        // verdict unknown. Default-only declarations cannot leave their
-        // own package, so they never matter here.
-        if !scan.complete && (source.contains("#[path") || source.contains("include!")) {
-            return None;
+        let mut roots = Vec::new();
+        for file in files {
+            let source = match read_source(workspace_root, &file) {
+                SourceRead::Text(source) => source,
+                SourceRead::Absent => continue,
+                SourceRead::Unreadable => return None,
+            };
+            if !source.contains("path") && !source.contains("include") {
+                continue;
+            }
+            let scan = rust_module_tree_scan(&source);
+            let directory = file.parent().map(Path::to_path_buf).unwrap_or_default();
+            for edge in &scan.edges {
+                if let RustModuleTreeEdge::Path(target) | RustModuleTreeEdge::Include(target) = edge
+                {
+                    roots.push(lexical(&directory.join(target)));
+                }
+            }
+            // An incomplete scan that could hide such an edge leaves every
+            // verdict unknown: any `path =` (plain or inside `cfg_attr`,
+            // with any spacing) or `include!`. Default-only declarations
+            // cannot leave their own package, so they never matter here.
+            if !scan.complete {
+                let compact = source
+                    .chars()
+                    .filter(|character| !character.is_whitespace())
+                    .collect::<String>();
+                if compact.contains("path=") || compact.contains("include!") {
+                    return None;
+                }
+            }
         }
+        Some(Self {
+            walk: PackageWalk::from_loaded_files(roots),
+            symlink_targets,
+        })
     }
-    Some(targets)
+
+    /// Whether nothing outside the asked walks reaches any of `targets`.
+    fn proves_unreached(&mut self, workspace_root: &Path, targets: &[PathBuf]) -> bool {
+        let aliased = targets.iter().any(|target| {
+            let canonical = std::fs::canonicalize(target).unwrap_or_else(|_| target.clone());
+            self.symlink_targets
+                .iter()
+                .any(|link| canonical.starts_with(link))
+        });
+        !aliased && self.walk.find(workspace_root, targets).is_none() && self.walk.complete
+    }
 }
 
 /// Workspace-relative package root prefix of an anchored package directory.
@@ -353,13 +455,34 @@ impl PackageWalk {
         })
     }
 
-    /// Where the walk reaches `target`, exploring only as far as needed.
-    fn find(&mut self, workspace_root: &Path, target: &Path) -> Option<Origin> {
+    /// A walk from files loaded through `#[path]` or `include!`, outside any
+    /// one package's target roots.
+    fn from_loaded_files(files: Vec<PathBuf>) -> Self {
+        Self {
+            queue: files
+                .into_iter()
+                .map(|file| (file, ChildAnchor::Both))
+                .collect(),
+            evidence_roots: None,
+            phase: Origin::Production,
+            visited: BTreeSet::new(),
+            reached: BTreeMap::new(),
+            production_roots: BTreeSet::new(),
+            production_root_read: false,
+            scans: BTreeMap::new(),
+            complete: true,
+        }
+    }
+
+    /// Where the walk reaches any spelling of the asked-for file (lexical
+    /// first, then canonical), exploring only as far as needed.
+    fn find(&mut self, workspace_root: &Path, targets: &[PathBuf]) -> Option<Origin> {
+        let direction = targets.first()?.clone();
         loop {
-            if let Some(origin) = self.reached.get(target) {
+            if let Some(origin) = targets.iter().find_map(|target| self.reached.get(target)) {
                 return Some(*origin);
             }
-            if !self.step(workspace_root, target) {
+            if !self.step(workspace_root, &direction) {
                 return None;
             }
         }
@@ -431,6 +554,11 @@ impl PackageWalk {
             self.production_root_read = true;
         }
         self.reached.entry(file.clone()).or_insert(self.phase);
+        if let Ok(canonical) = std::fs::canonicalize(&file)
+            && canonical != file
+        {
+            self.reached.entry(canonical).or_insert(self.phase);
+        }
         let directory = file.parent().map(Path::to_path_buf).unwrap_or_default();
         for edge in edges {
             match edge {
@@ -664,6 +792,116 @@ mod tests {
         )?;
         let context = evidence_for(&root, &["src/orphan.rs", "loose/src/orphan.rs"]);
         assert!(context.module_graph_orphans.is_empty());
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn another_packages_path_target_blocks_its_children_and_cfg_attr_paths() -> Result<(), String> {
+        // Exact-head review on #4556: crate `a` compiles `b/src/proto/mod.rs`
+        // through `#[path]`, so its child `inner.rs` is compiled too; and a
+        // `cfg_attr` path cannot be resolved, so it blocks every verdict.
+        // `b/src/stray.rs` sits outside the reached directory and stays an
+        // orphan while only the plain `#[path]` exists.
+        let root = fixture(
+            "path-children",
+            &[
+                ("a/Cargo.toml", MANIFEST),
+                (
+                    "a/src/lib.rs",
+                    "#[path = \"../../b/src/proto/mod.rs\"]\nmod proto;\n",
+                ),
+                ("b/Cargo.toml", MANIFEST),
+                ("b/src/lib.rs", ""),
+                ("b/src/proto/mod.rs", "pub mod inner;\n"),
+                ("b/src/proto/inner.rs", ""),
+                ("b/src/stray.rs", ""),
+            ],
+        )?;
+        let context = evidence_for(&root, &["b/src/proto/inner.rs", "b/src/stray.rs"]);
+        assert_eq!(
+            context.module_graph_orphans,
+            BTreeSet::from([PathBuf::from("b/src/stray.rs")])
+        );
+        std::fs::write(
+            root.join("a/src/lib.rs"),
+            "#[cfg_attr(unix, path = \"../../b/src/stray.rs\")]\nmod plat;\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let context = evidence_for(&root, &["b/src/stray.rs"]);
+        assert!(
+            context.module_graph_orphans.is_empty(),
+            "an unresolved `cfg_attr` path must block the verdict: {:?}",
+            context.module_graph_orphans
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn package_nested_in_a_tests_directory_is_asked_too() -> Result<(), String> {
+        // Exact-head review on #4556: the layout owner of
+        // `tests/harness/helpers.rs` is the root package, but the nearest
+        // manifest's `[lib]` compiles it.
+        let root = fixture(
+            "nested-harness",
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname='root'\nversion='0.1.0'\nedition='2021'\n[workspace]\nmembers=['tests/harness']\n",
+                ),
+                ("src/lib.rs", ""),
+                (
+                    "tests/harness/Cargo.toml",
+                    "[package]\nname='harness'\nversion='0.1.0'\nedition='2021'\n[lib]\npath='lib.rs'\n",
+                ),
+                ("tests/harness/lib.rs", "pub mod helpers;\n"),
+                ("tests/harness/helpers.rs", ""),
+                ("tests/harness/stray.rs", ""),
+            ],
+        )?;
+        let context = evidence_for(
+            &root,
+            &["tests/harness/helpers.rs", "tests/harness/stray.rs"],
+        );
+        assert_eq!(
+            context.module_graph_orphans,
+            BTreeSet::from([PathBuf::from("tests/harness/stray.rs")])
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walk_matches_modules_reached_through_a_symlinked_directory() -> Result<(), String> {
+        // Exact-head review on #4556: `a/src/shared` links to
+        // `common/src/shared`, so `a` compiles `common/src/shared/x.rs`
+        // under another spelling.
+        let root = fixture(
+            "symlinked",
+            &[
+                ("Cargo.toml", "[workspace]\nmembers=['a','common']\n"),
+                ("a/Cargo.toml", MANIFEST),
+                ("a/src/lib.rs", "mod shared;\n"),
+                ("common/Cargo.toml", MANIFEST),
+                ("common/src/lib.rs", ""),
+                ("common/src/shared/mod.rs", "pub mod x;\n"),
+                ("common/src/shared/x.rs", ""),
+            ],
+        )?;
+        let unlinked = evidence_for(&root, &["common/src/shared/x.rs"]);
+        assert!(
+            unlinked
+                .module_graph_orphans
+                .contains(Path::new("common/src/shared/x.rs")),
+            "fixture control: without the link no target compiles the file"
+        );
+        std::os::unix::fs::symlink(root.join("common/src/shared"), root.join("a/src/shared"))
+            .map_err(|error| error.to_string())?;
+        let context = evidence_for(&root, &["common/src/shared/x.rs"]);
+        assert!(
+            context.module_graph_orphans.is_empty(),
+            "{:?}",
+            context.module_graph_orphans
+        );
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
     }
 

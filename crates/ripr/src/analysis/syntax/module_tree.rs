@@ -19,8 +19,8 @@
 //!   `macro_rules!`), where edges only exist after expansion;
 //! - any other item-position macro call (a dependency's macro can expand to
 //!   `mod name;`), except std's `thread_local!` and `compile_error!`;
-//! - a non-literal `include!`, except the generated-code shape that names
-//!   `OUT_DIR`, which includes build output rather than a source file.
+//! - a non-literal `include!`, including the generated-code shape that
+//!   names `OUT_DIR` (build output can declare `#[path]` modules).
 //!
 //! An incomplete scan never proves a file unreachable; the consumer keeps its
 //! layout rule for that package.
@@ -135,7 +135,8 @@ pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
         let expression = text.get(start..end).unwrap_or_default();
         match include_literal_path(expression) {
             Some(target) => scan.edges.push(RustModuleTreeEdge::Include(target)),
-            None if expression.contains("OUT_DIR") => {}
+            // Includes build output (`OUT_DIR`) or a computed path. Generated
+            // code can declare `#[path]` modules, so either is unknown.
             None => scan.complete = false,
         }
     }
@@ -197,8 +198,7 @@ mod tests {
              #[path = \"odd/place.rs\"]\nmod placed;\n\
              pub mod outer { pub mod inner { mod leaf; } }\n\
              mod inline_only { fn f() {} }\n\
-             include!(\"fragment.rs\");\n\
-             include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\"));\n",
+             include!(\"fragment.rs\");\n",
         );
         assert!(scan.complete, "{scan:?}");
         assert_eq!(
@@ -224,6 +224,7 @@ mod tests {
             "cfg_if::cfg_if! { if #[cfg(unix)] { mod unix; } }\n",
             "macro_rules! declare { ($name:ident) => { mod $name; }; }\n",
             "include!(concat!(\"frag\", \".rs\"));\n",
+            "include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\"));\n",
             "decl::declare_mod!(generated);\n",
             "cfg_if::cfg_if! { if #[cfg(unix)] { include!(\"unix.rs\"); } }\n",
             "mod outer { lazy_static::lazy_static! { static ref X: u8 = 1; } }\n",
