@@ -1,4 +1,4 @@
-# RIPR-SPEC-0181: Executed-control obligation and result contract
+# RIPR-SPEC-0182: Executed-control obligation and result contract
 
 Status: proposed
 

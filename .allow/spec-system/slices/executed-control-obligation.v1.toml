@@ -3,7 +3,7 @@ id = "ripr.slice.executed-control-obligation.v1"
 generation = 1
 
 source_issue = "issue:4641"
-design_reference = "RIPR-SPEC-0181#behavior"
+design_reference = "RIPR-SPEC-0182#behavior"
 change_class = "spec_or_contract_change"
 
 claim_boundary = """
@@ -49,7 +49,7 @@ forbidden_seams = [
 ]
 
 [[requirement_delta]]
-requirement_id = "RIPR-SPEC-0181#behavior"
+requirement_id = "RIPR-SPEC-0182#behavior"
 requirement_generation = 1
 
 [implementation_claim]
