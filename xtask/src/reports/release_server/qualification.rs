@@ -123,9 +123,7 @@ pub(crate) fn write_terminal_receipt(
     Ok(receipt)
 }
 
-fn read_target_rows(
-    rows_dir: &Path,
-) -> Result<(Vec<TargetExecutionRow>, Vec<String>), String> {
+fn read_target_rows(rows_dir: &Path) -> Result<(Vec<TargetExecutionRow>, Vec<String>), String> {
     if !rows_dir.exists() {
         return Ok((Vec::new(), Vec::new()));
     }
@@ -167,7 +165,9 @@ fn collect_json_files(directory: &Path, output: &mut Vec<PathBuf>) -> Result<(),
         }
         if metadata.is_dir() {
             collect_json_files(&path, output)?;
-        } else if metadata.is_file() && path.extension().and_then(|value| value.to_str()) == Some("json") {
+        } else if metadata.is_file()
+            && path.extension().and_then(|value| value.to_str()) == Some("json")
+        {
             output.push(path);
         }
     }
@@ -342,9 +342,15 @@ mod tests {
     use super::*;
 
     fn targets() -> Vec<String> {
-        ["linux-aarch64", "linux-x64", "macos-aarch64", "macos-x64", "windows-x64"]
-            .map(str::to_string)
-            .to_vec()
+        [
+            "linux-aarch64",
+            "linux-x64",
+            "macos-aarch64",
+            "macos-x64",
+            "windows-x64",
+        ]
+        .map(str::to_string)
+        .to_vec()
     }
 
     fn success_rows() -> Vec<TargetExecutionRow> {
@@ -438,7 +444,17 @@ mod tests {
             "success",
         );
         assert!(!receipt.qualification_claims_allowed);
-        assert!(receipt.errors.iter().any(|error| error.contains("duplicate")));
-        assert!(receipt.errors.iter().any(|error| error.contains("unexpected")));
+        assert!(
+            receipt
+                .errors
+                .iter()
+                .any(|error| error.contains("duplicate"))
+        );
+        assert!(
+            receipt
+                .errors
+                .iter()
+                .any(|error| error.contains("unexpected"))
+        );
     }
 }
