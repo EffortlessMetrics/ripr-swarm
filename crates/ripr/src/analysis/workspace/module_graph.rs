@@ -22,6 +22,12 @@
 //! orphan verdict additionally needs every Rust file in the workspace to scan
 //! completely, since another package can reach into this one through
 //! `#[path]`, `include!` or a macro that expands to either.
+//!
+//! Not modeled, as in rust-analyzer's module discovery without expansion: an
+//! attribute or derive macro, or a statement-position macro call, that emits
+//! a `#[path]` module; a package outside the workspace root whose target
+//! path points into it; and case-insensitive path matching. Each would need
+//! a file-level edge no Rust source in the workspace spells.
 //! Roots are over-collected on purpose (every autodiscovered and declared
 //! target, whatever `autobins`/`autotests` say): an extra root can only
 //! reach more files, which keeps a verdict of "unreached" conservative.
@@ -120,7 +126,8 @@ where
 {
     let mut external_packages = BTreeMap::new();
     let mut walks: BTreeMap<PathBuf, Option<PackageWalk>> = BTreeMap::new();
-    let mut external_declarers: Option<BTreeSet<PathBuf>> = None;
+    let mut listing: Option<Option<WorkspaceListing>> = None;
+    let mut external_declarers: Option<(BTreeSet<PathBuf>, bool)> = None;
     let mut escaping: Option<Option<EscapingReach>> = None;
     for candidate in candidates {
         if candidate.extension().and_then(|ext| ext.to_str()) != Some("rs") {
@@ -139,6 +146,9 @@ where
         // The layout owner (nearest `src`/`tests`/`benches`/`examples`
         // parent) and the nearest manifest differ for a package nested in
         // such a directory (`tests/harness/Cargo.toml`); both are asked.
+        // Every ancestor package is asked too: its root may reach the file
+        // through plain `mod` edges across a nested manifest
+        // (`mod inner;` beside `inner/Cargo.toml`).
         let absolute = workspace_root.join(&relative);
         let owners = [
             owning_package_dir(workspace_root, &absolute),
@@ -146,9 +156,11 @@ where
         ]
         .into_iter()
         .flatten()
+        .chain(ancestor_manifest_dirs(workspace_root, &absolute))
         .map(|dir| lexical(&normalize(&dir)))
         .collect::<BTreeSet<_>>();
-        let mut owner_proves_unreached = !owners.is_empty();
+        let mut owner_proves_unreached = true;
+        let mut owner_walked = false;
         let mut owner_reaches_production = false;
         for dir in &owners {
             let Some(walk) = walks
@@ -156,9 +168,12 @@ where
                 .or_insert_with(|| PackageWalk::new(workspace_root, dir))
                 .as_mut()
             else {
-                owner_proves_unreached = false;
+                // A workspace-only manifest compiles nothing; anything else
+                // without a readable package is unknown.
+                owner_proves_unreached &= is_workspace_only_manifest(workspace_root, dir);
                 continue;
             };
+            owner_walked = true;
             match walk.find(workspace_root, &targets) {
                 Some(Origin::Production) => {
                     owner_reaches_production = true;
@@ -173,15 +188,18 @@ where
         if owner_reaches_production {
             continue;
         }
+        // Only a package walk can prove a file unreached.
+        owner_proves_unreached &= owner_walked;
 
         // A package whose production root sits outside its own directory
         // can reach a file no layout or owning manifest attributes to it:
         // below the root's directory, or anywhere through `#[path]` and
         // `include!`. Such packages are rare, so each one is asked.
-        let declarers = external_declarers
-            .get_or_insert_with(|| external_root_declarers(workspace_root))
+        let listing = listing.get_or_insert_with(|| list_workspace(workspace_root));
+        let (declarers, declarers_listed) = external_declarers
+            .get_or_insert_with(|| external_root_declarers(workspace_root, listing.as_ref()))
             .clone();
-        let mut declarers_prove_unreached = true;
+        let mut declarers_prove_unreached = declarers_listed;
         let mut declaring_package = None;
         for package_dir in &declarers {
             let Some(walk) = walks
@@ -210,7 +228,11 @@ where
         } else if owner_proves_unreached
             && declarers_prove_unreached
             && escaping
-                .get_or_insert_with(|| EscapingReach::scan(workspace_root))
+                .get_or_insert_with(|| {
+                    listing
+                        .as_ref()
+                        .and_then(|listing| EscapingReach::scan(workspace_root, listing))
+                })
                 .as_mut()
                 .is_some_and(|reach| reach.proves_unreached(workspace_root, &targets))
         {
@@ -237,6 +259,90 @@ fn escaping_scan_skips(dir: &Path) -> bool {
 /// Directory entries the escaping scan may visit before it gives up.
 const MAX_ESCAPING_SCAN_ENTRIES: usize = 200_000;
 
+/// Every Rust file, package manifest and symlink under the workspace root.
+#[derive(Debug)]
+struct WorkspaceListing {
+    rust_files: Vec<PathBuf>,
+    manifest_dirs: Vec<PathBuf>,
+    /// Canonical targets of every symlink in the workspace.
+    symlink_targets: Vec<PathBuf>,
+}
+
+/// Lists the workspace, or `None` when the listing is cut short or cannot
+/// describe the tree the analysis reads: under a committed-source overlay,
+/// a Rust file or manifest that exists only at `HEAD` is missing from the
+/// working-tree listing.
+fn list_workspace(workspace_root: &Path) -> Option<WorkspaceListing> {
+    if crate::analysis::committed_source::committed_paths_missing_on_disk(workspace_root)
+        .iter()
+        .any(|path| path.ends_with(".rs") || path.ends_with("Cargo.toml"))
+    {
+        return None;
+    }
+    let mut listing = WorkspaceListing {
+        rust_files: Vec::new(),
+        manifest_dirs: Vec::new(),
+        symlink_targets: Vec::new(),
+    };
+    let mut pending = vec![lexical(&normalize(workspace_root))];
+    let mut visited_entries = 0usize;
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).ok()? {
+            crate::analysis::cancellation::checkpoint().ok()?;
+            visited_entries += 1;
+            if visited_entries > MAX_ESCAPING_SCAN_ENTRIES {
+                return None;
+            }
+            let entry = entry.ok()?;
+            let path = entry.path();
+            let file_type = entry.file_type().ok()?;
+            if file_type.is_symlink() {
+                // A dangling link aliases nothing.
+                if let Ok(target) = std::fs::canonicalize(&path) {
+                    listing.symlink_targets.push(target);
+                }
+            } else if file_type.is_dir() {
+                if !escaping_scan_skips(&path) {
+                    pending.push(path);
+                }
+            } else if path.file_name().is_some_and(|name| name == "Cargo.toml") {
+                listing.manifest_dirs.push(lexical(&normalize(&dir)));
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                listing.rust_files.push(lexical(&normalize(&path)));
+            }
+        }
+    }
+    Some(listing)
+}
+
+/// Directories between `file` and the workspace root (inclusive) that hold
+/// a `Cargo.toml`, on disk or at `HEAD`.
+fn ancestor_manifest_dirs(workspace_root: &Path, file: &Path) -> Vec<PathBuf> {
+    let root = lexical(&normalize(workspace_root));
+    let file = lexical(&normalize(file));
+    file.ancestors()
+        .skip(1)
+        .take_while(|dir| dir.starts_with(&root))
+        .filter(|dir| {
+            !matches!(
+                read_source(workspace_root, &dir.join("Cargo.toml")),
+                SourceRead::Absent
+            )
+        })
+        .map(Path::to_path_buf)
+        .collect()
+}
+
+/// Whether `dir/Cargo.toml` parses and declares no `[package]` (a virtual
+/// workspace manifest), so it compiles nothing. A missing or invalid
+/// manifest is not.
+fn is_workspace_only_manifest(workspace_root: &Path, dir: &Path) -> bool {
+    let SourceRead::Text(text) = read_source(workspace_root, &dir.join("Cargo.toml")) else {
+        return false;
+    };
+    toml::from_str::<toml::Value>(&text).is_ok_and(|value| value.get("package").is_none())
+}
+
 /// What reaches files from outside the walks a verdict asks: every
 /// `#[path]` and `include!` edge declared anywhere in the workspace, walked
 /// with its own `mod` children, and every symlink, which gives a file a
@@ -257,52 +363,13 @@ struct EscapingReach {
 }
 
 impl EscapingReach {
-    /// Scans the workspace, or `None` when any Rust file in it cannot be
-    /// scanned completely, or the scan is cut short. Files a symlinked
-    /// directory reaches are not listed; the symlink alias covers them.
-    /// Under a committed-source overlay, files deleted from the working tree
-    /// are scanned from `HEAD`.
-    fn scan(workspace_root: &Path) -> Option<Self> {
-        let mut files = Vec::new();
-        let mut symlink_targets = Vec::new();
-        let mut pending = vec![lexical(&normalize(workspace_root))];
-        let mut visited_entries = 0usize;
-        while let Some(dir) = pending.pop() {
-            for entry in std::fs::read_dir(&dir).ok()? {
-                crate::analysis::cancellation::checkpoint().ok()?;
-                visited_entries += 1;
-                if visited_entries > MAX_ESCAPING_SCAN_ENTRIES {
-                    return None;
-                }
-                let entry = entry.ok()?;
-                let path = entry.path();
-                let file_type = entry.file_type().ok()?;
-                if file_type.is_symlink() {
-                    // A dangling link aliases nothing.
-                    if let Ok(target) = std::fs::canonicalize(&path) {
-                        symlink_targets.push(target);
-                    }
-                } else if file_type.is_dir() {
-                    if !escaping_scan_skips(&path) {
-                        pending.push(path);
-                    }
-                } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
-                    files.push(lexical(&normalize(&path)));
-                }
-            }
-        }
-        // A committed-history run reads `HEAD`: a file deleted from the
-        // working tree still belongs to the committed tree.
-        for relative in
-            crate::analysis::committed_source::committed_paths_missing_on_disk(workspace_root)
-        {
-            if relative.ends_with(".rs") {
-                files.push(lexical(&normalize(&workspace_root.join(relative))));
-            }
-        }
+    /// Scans every listed Rust file, or `None` when any of them cannot be
+    /// scanned completely. Files a symlinked directory reaches are not
+    /// listed; the symlink alias covers them.
+    fn scan(workspace_root: &Path, listing: &WorkspaceListing) -> Option<Self> {
         let mut roots = Vec::new();
-        for file in files {
-            let source = match read_source(workspace_root, &file) {
+        for file in &listing.rust_files {
+            let source = match read_source(workspace_root, file) {
                 SourceRead::Text(source) => source,
                 SourceRead::Absent => continue,
                 SourceRead::Unreadable => return None,
@@ -334,7 +401,7 @@ impl EscapingReach {
         }
         Some(Self {
             walk: PackageWalk::from_loaded_files(roots),
-            symlink_targets,
+            symlink_targets: listing.symlink_targets.clone(),
         })
     }
 
@@ -366,10 +433,24 @@ fn package_prefix(workspace_root: &Path, package_dir: &Path) -> Option<String> {
 
 /// Every package in the workspace with a target path (library, binary,
 /// test, bench, example or build script) outside its own directory.
-fn external_root_declarers(workspace_root: &Path) -> BTreeSet<PathBuf> {
+///
+/// Packages come from the full workspace listing, so a package under a
+/// directory other discovery skips (`fixtures/`) is still asked. Without a
+/// listing the seam-cache manifest discovery supplies the grants, and the
+/// second value is false: that set may be missing a declarer.
+fn external_root_declarers(
+    workspace_root: &Path,
+    listing: Option<&WorkspaceListing>,
+) -> (BTreeSet<PathBuf>, bool) {
+    let package_dirs = match listing {
+        Some(listing) => listing.manifest_dirs.clone(),
+        None => crate::analysis::seam_cache::workspace_manifest_dir_prefixes(workspace_root)
+            .into_iter()
+            .map(|prefix| lexical(&normalize(&workspace_root.join(&prefix))))
+            .collect(),
+    };
     let mut declarers = BTreeSet::new();
-    for prefix in crate::analysis::seam_cache::workspace_manifest_dir_prefixes(workspace_root) {
-        let package_dir = lexical(&normalize(&workspace_root.join(&prefix)));
+    for package_dir in package_dirs {
         let Some((manifest_text, manifest)) = read_manifest(workspace_root, &package_dir) else {
             continue;
         };
@@ -381,7 +462,7 @@ fn external_root_declarers(workspace_root: &Path) -> BTreeSet<PathBuf> {
             declarers.insert(package_dir);
         }
     }
-    declarers
+    (declarers, listing.is_some())
 }
 
 /// The package manifest text and its parsed value, or `None` for a missing,
@@ -1033,6 +1114,69 @@ mod tests {
         let committed = crate::analysis::committed_source::with_overlay(
             Some(std::sync::Arc::new(overlay)),
             || evidence_for(&root, &["b/src/reached.rs"]),
+        );
+        assert!(
+            committed.module_graph_orphans.is_empty(),
+            "{:?}",
+            committed.module_graph_orphans
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn declarers_in_skipped_dirs_ancestors_and_head_only_manifests_are_asked() -> Result<(), String>
+    {
+        // Third review on #4556. `fixtures/x` compiles `b/src/shared.rs`
+        // from its `[lib]`; the root package compiles `inner/mod.rs` across
+        // `inner/Cargo.toml`. `stray.rs` and `b/src/stray.rs` stay orphans.
+        let root = fixture(
+            "declarer-shapes",
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname='root'\nversion='0.1.0'\nedition='2021'\n[lib]\npath='lib.rs'\n[workspace]\nmembers=['b','fixtures/x','inner']\n",
+                ),
+                ("lib.rs", "mod inner;\n"),
+                ("stray.rs", ""),
+                (
+                    "inner/Cargo.toml",
+                    "[package]\nname='inner'\nversion='0.1.0'\nedition='2021'\n[lib]\npath='own.rs'\n",
+                ),
+                ("inner/own.rs", ""),
+                ("inner/mod.rs", ""),
+                ("b/Cargo.toml", MANIFEST),
+                ("b/src/lib.rs", ""),
+                ("b/src/shared.rs", ""),
+                ("b/src/stray.rs", ""),
+                (
+                    "fixtures/x/Cargo.toml",
+                    "[package]\nname='x'\nversion='0.1.0'\nedition='2021'\n[lib]\npath='../../b/src/shared.rs'\n",
+                ),
+            ],
+        )?;
+        let candidates = [
+            "inner/mod.rs",
+            "stray.rs",
+            "b/src/shared.rs",
+            "b/src/stray.rs",
+        ];
+        let context = evidence_for(&root, &candidates);
+        assert_eq!(
+            context.module_graph_orphans,
+            BTreeSet::from([PathBuf::from("b/src/stray.rs"), PathBuf::from("stray.rs")])
+        );
+        // A manifest that exists only at `HEAD` is invisible to the listing,
+        // so no verdict is issued.
+        let overlay = crate::analysis::committed_source::CommittedSourceOverlay::from_entries(
+            &root,
+            [(
+                "c/Cargo.toml",
+                Some(b"[package]\nname='c'\nversion='0.1.0'\nedition='2021'\n".as_slice()),
+            )],
+        );
+        let committed = crate::analysis::committed_source::with_overlay(
+            Some(std::sync::Arc::new(overlay)),
+            || evidence_for(&root, &candidates),
         );
         assert!(
             committed.module_graph_orphans.is_empty(),
