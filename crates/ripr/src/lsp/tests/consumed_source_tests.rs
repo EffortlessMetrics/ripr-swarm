@@ -180,7 +180,7 @@ async fn completed_saved_analysis_keeps_consumed_a_when_disk_and_buffer_become_b
         backend.did_open(quarantine_open_params(&uri, SOURCE_A)),
     )
     .await
-    .map_err(|_| "actual didOpen exceeded setup deadline".to_string())?;
+    .map_err(|_barrier_error| "actual didOpen exceeded setup deadline".to_string())?;
     let prior = backend
         .latest_analysis_snapshot()
         .ok_or_else(|| "SETUP: didOpen did not establish a prior actual snapshot".to_string())?;
@@ -193,9 +193,9 @@ async fn completed_saved_analysis_keeps_consumed_a_when_disk_and_buffer_become_b
     };
     let (witness, release) = backend.install_consumed_source_barrier_for_test(config)?;
     let controller = async {
-        let (generation, produced) = witness
-            .await
-            .map_err(|_| "actual producer did not reach preparation barrier".to_string())?;
+        let (generation, produced) = witness.await.map_err(|_barrier_error| {
+            "actual producer did not reach preparation barrier".to_string()
+        })?;
         if produced.root != root.path()
             || produced.findings.is_empty()
             || !produced.findings.iter().any(|finding| {
@@ -269,7 +269,7 @@ async fn completed_saved_analysis_keeps_consumed_a_when_disk_and_buffer_become_b
         );
         release
             .send(())
-            .map_err(|_| "refresh dropped barrier release".to_string())?;
+            .map_err(|_barrier_error| "refresh dropped barrier release".to_string())?;
         let signature = producer_probe_signature(&produced)?;
         let id = produced.refresh.snapshot_id.ok_or_else(|| {
             "SETUP: actual A producer has no refresh snapshot identity".to_string()
@@ -291,7 +291,7 @@ async fn completed_saved_analysis_keeps_consumed_a_when_disk_and_buffer_become_b
         )
     })
     .await
-    .map_err(|_| "actual A-to-B refresh exceeded test deadline".to_string())?;
+    .map_err(|_barrier_error| "actual A-to-B refresh exceeded test deadline".to_string())?;
     let (produced_id, produced_signature, actual_b_digest) = produced_id?;
     let committed = backend
         .latest_analysis_snapshot()
@@ -356,7 +356,7 @@ async fn completed_saved_analysis_keeps_consumed_a_when_disk_and_buffer_become_b
         backend.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::ExplicitRefresh),
     )
     .await
-    .map_err(|_| "actual B recovery refresh exceeded test deadline".to_string())?;
+    .map_err(|_barrier_error| "actual B recovery refresh exceeded test deadline".to_string())?;
     let recovered = backend
         .latest_analysis_snapshot()
         .ok_or_else(|| "SETUP: B recovery produced no committed snapshot".to_string())?;

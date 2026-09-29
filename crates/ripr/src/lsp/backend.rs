@@ -178,6 +178,12 @@ pub(super) struct Backend {
 }
 
 #[cfg(test)]
+type ConsumedSourceBarrierChannels = (
+    tokio::sync::oneshot::Receiver<(u64, AnalysisSnapshot)>,
+    tokio::sync::oneshot::Sender<()>,
+);
+
+#[cfg(test)]
 struct ConsumedSourceBarrier {
     reached: tokio::sync::oneshot::Sender<(u64, AnalysisSnapshot)>,
     release: tokio::sync::oneshot::Receiver<()>,
@@ -848,20 +854,14 @@ impl Backend {
     pub(super) fn install_consumed_source_barrier_for_test(
         &self,
         config: LspAnalysisConfig,
-    ) -> Result<
-        (
-            tokio::sync::oneshot::Receiver<(u64, AnalysisSnapshot)>,
-            tokio::sync::oneshot::Sender<()>,
-        ),
-        String,
-    > {
+    ) -> Result<ConsumedSourceBarrierChannels, String> {
         self.set_analysis_config(config);
         let (reached, witness) = tokio::sync::oneshot::channel();
         let (release, released) = tokio::sync::oneshot::channel();
         let mut slot = self
             .consumed_source_barrier
             .lock()
-            .map_err(|_| "consumed-source barrier lock poisoned".to_string())?;
+            .map_err(|_poisoned_barrier| "consumed-source barrier lock poisoned".to_string())?;
         if slot.is_some() {
             return Err("consumed-source barrier already installed".to_string());
         }
