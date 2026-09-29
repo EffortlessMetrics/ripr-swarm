@@ -13,7 +13,7 @@ use super::related_tests::{
     verify_command_for_test,
 };
 use super::sink_alignment::{SinkAlignment, classify_sink_alignment_with_old};
-use super::static_limits::static_limit_for_change;
+use super::static_limits::{implicit_dunder_dispatch_limit, static_limit_for_change};
 use super::{
     PythonOracleShape, PythonOwner, PythonTest, fingerprint_probe_id, normalize_expression,
     owner_for_changed_line, python_recommended_next_step, python_weak_missing_summary,
@@ -137,7 +137,8 @@ pub(super) fn classify_change_with_context(
     let related = find_related_tests(owner, all_tests);
     let alignment =
         classify_sink_alignment_with_old(owner, line_text, old_line_text, &related, all_tests);
-    let static_limit = static_limit_for_change(line_text, owner, &related_candidates);
+    let static_limit = static_limit_for_change(line_text, owner, &related_candidates)
+        .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates));
     let (family, delta) = classify_probe_shape(line_text);
     let has_oracle_eligible_relation = related_candidates
         .iter()

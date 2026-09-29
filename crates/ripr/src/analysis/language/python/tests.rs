@@ -5070,6 +5070,135 @@ fn method_owners_need_an_attribute_reference_and_dunders_a_class_reference() -> 
 }
 
 #[test]
+fn dunder_owner_relates_by_owner_class_not_by_shared_dunder_name() -> Result<(), String> {
+    // packaging 55cbf1b: `LowerBound.__init__` was related to tests that define
+    // their own helper class with `def __init__` (and `super().__init__`),
+    // while the tests that construct `LowerBound(None, True)` were missed.
+    let owners = extract_owners(
+        Path::new("src/packaging/_ranges.py"),
+        "class LowerBound:\n    def __init__(self, version, inclusive):\n        if version is None:\n            inclusive = False\n        self.inclusive = inclusive\n\n    def __eq__(self, other):\n        return self.inclusive == other.inclusive\n",
+    );
+    let init = flat_owner(&owners, "LowerBound.__init__")?;
+    let eq = flat_owner(&owners, "LowerBound.__eq__")?;
+    let tests = extract_tests(
+        Path::new("tests/test_ranges.py"),
+        "from packaging._ranges import LowerBound\n\n\ndef test_lower_spellings_are_one_bound():\n    bound = LowerBound(None, True)\n    assert bound.inclusive is False\n\n\ndef test_helper_class_defines_its_own_init():\n    class LibcVersion:\n        def __init__(self, value):\n            self.value = value\n\n    class Child(LibcVersion):\n        def __init__(self):\n            super().__init__(1)\n\n    assert Child().value == 1\n",
+    );
+    assert_eq!(tests.len(), 2, "fixture must parse both tests");
+    assert_eq!(
+        candidate_relations(init, &tests),
+        vec![(
+            "test_lower_spellings_are_one_bound".to_string(),
+            "constructor_call"
+        )],
+        "constructing the owner class calls `__init__`; a test-local `__init__` does not"
+    );
+    assert_eq!(
+        candidate_relations(eq, &tests),
+        vec![(
+            "test_lower_spellings_are_one_bound".to_string(),
+            "dunder_protocol"
+        )],
+        "other dunders run through syntax on an instance the test built: related, but uncertain"
+    );
+
+    // A class reached through a module alias and a renamed import both count.
+    let aliased = extract_tests(
+        Path::new("tests/test_bounds.py"),
+        "import packaging._ranges as r\nfrom packaging._ranges import LowerBound as LB\n\n\ndef test_module_member():\n    assert r.LowerBound(None, True).inclusive is False\n\n\ndef test_renamed():\n    assert LB(None, True).inclusive is False\n",
+    );
+    assert_eq!(aliased.len(), 2);
+    assert_eq!(
+        candidate_relations(init, &aliased),
+        vec![
+            ("test_module_member".to_string(), "constructor_call"),
+            ("test_renamed".to_string(), "constructor_call"),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn unbound_dunder_owner_is_a_dynamic_dispatch_limit_not_no_static_path() -> Result<(), String> {
+    // cachetools 39b31bc: `Cache.__setitem__` is exercised by `cache[key] = v`
+    // on `self.Cache(...)` from a unittest mixin; the suite kills the mutants
+    // while ripr said `no_static_path`.
+    let owner_file = Path::new("src/cachetools/__init__.py");
+    let owner_source =
+        "class Cache:\n    def __setitem__(self, key, value):\n        self.data[key] = value\n";
+    let owners = extract_owners(owner_file, owner_source);
+    let setitem = flat_owner(&owners, "Cache.__setitem__")?;
+    let mixin_tests = extract_tests(
+        Path::new("tests/test_cache.py"),
+        "import cachetools\n\n\nclass TestCache:\n    Cache = cachetools.Cache\n\n    def test_insert(self):\n        cache = self.Cache(maxsize=2)\n        cache[1] = 1\n        assert cache[1] == 1\n",
+    );
+    assert_eq!(mixin_tests.len(), 1, "fixture must parse the mixin test");
+    assert!(candidate_relations(setitem, &mixin_tests).is_empty());
+    let finding = classify_change(
+        owner_file,
+        3,
+        "        self.data[key] = value",
+        &owners,
+        &mixin_tests,
+    )
+    .ok_or("the changed line must produce a finding")?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("dynamic_dispatch") && line.contains("Cache.__setitem__")),
+        "the limit must name the dunder owner: {:?}",
+        finding.missing
+    );
+
+    // Control: no test imports the class or its module, so the owner is
+    // genuinely unreached and keeps `no_static_path`.
+    let unrelated_tests = extract_tests(
+        Path::new("tests/test_other.py"),
+        "import json\n\n\ndef test_dumps():\n    assert json.dumps(1) == \"1\"\n",
+    );
+    assert_eq!(unrelated_tests.len(), 1);
+    let finding = classify_change(
+        owner_file,
+        3,
+        "        self.data[key] = value",
+        &owners,
+        &unrelated_tests,
+    )
+    .ok_or("the changed line must produce a finding")?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    Ok(())
+}
+
+#[test]
+fn a_def_or_class_header_is_not_a_call_of_that_name() -> Result<(), String> {
+    let owners = extract_owners(
+        Path::new("src/pricing.py"),
+        "def loyalty_price(total):\n    return total - 10\n",
+    );
+    let loyalty = flat_owner(&owners, "loyalty_price")?;
+    let tests = extract_tests(
+        Path::new("tests/test_pricing.py"),
+        "def test_local_stub():\n    def loyalty_price(total):\n        return total\n\n    assert loyalty_price is not None\n\n\ndef test_async_local_stub():\n    async def loyalty_price(total):\n        return total\n\n    assert loyalty_price is not None\n\n\ndef test_local_class():\n    class loyalty_price(dict):\n        pass\n\n    assert loyalty_price is not None\n",
+    );
+    assert_eq!(tests.len(), 3, "fixture must parse all three tests");
+    assert!(
+        tests
+            .iter()
+            .all(|test| !body_calls_owner(&test.body_text, loyalty)),
+        "`def loyalty_price(` / `class loyalty_price(` define a local; they do not call the owner"
+    );
+    let control = extract_tests(
+        Path::new("tests/test_pricing.py"),
+        "from pricing import loyalty_price\n\n\ndef test_call():\n    assert loyalty_price(20) == 10\n",
+    );
+    assert_eq!(control.len(), 1);
+    assert!(body_calls_owner(&control[0].body_text, loyalty));
+    Ok(())
+}
+
+#[test]
 fn module_owner_needs_a_local_imported_from_the_owner_module() -> Result<(), String> {
     let owners = extract_owners(Path::new("src/constants.py"), "BASE_DISCOUNT = 12\n");
     let module = flat_owner(&owners, "<module>")?;
