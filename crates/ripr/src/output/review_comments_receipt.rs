@@ -9,6 +9,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 pub(crate) const REVIEW_COMMENTS_RECEIPT_SCHEMA_VERSION: &str = "0.1";
 
@@ -194,13 +195,23 @@ fn reusable_cache_identity(root: &str, base: &str, head: &str) -> String {
     format!("sha256:{:x}", hasher.finalize())
 }
 
+/// Cooperative deadline for receipt revision resolution (#2303, #4363). The
+/// receipt flow must not block past the deadline on a hung git; an unresolved
+/// revision degrades to the raw revision string exactly as any other
+/// `rev-parse` failure always has.
+const RECEIPT_REVISION_DEADLINE: Duration = Duration::from_mins(1);
+
 fn resolve_revision(root: &Path, revision: &str) -> String {
     let object = format!("{revision}^{{commit}}");
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["rev-parse", "--verify", &object])
-        .output();
+    // `current_dir(root)` in the shared helper is equivalent to the previous
+    // `git -C root` form for every root git could resolve; a missing root now
+    // fails the spawn instead of exiting non-zero, which lands in the same
+    // silent fallback.
+    let output = crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--verify", &object],
+        Some(RECEIPT_REVISION_DEADLINE),
+    );
     output
         .ok()
         .filter(|output| output.status.success())
