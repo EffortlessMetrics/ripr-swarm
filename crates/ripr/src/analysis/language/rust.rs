@@ -1861,17 +1861,26 @@ fn lexical_fallback_limitations<'a>(
             continue;
         };
         let portable = path.to_string_lossy().replace('\\', "/");
-        let reason =
-            crate::analysis::syntax::rust_nesting_refusal(&facts.source).unwrap_or_else(|| {
-                "the Rust parser reported syntax errors, so the file was read lexically".to_string()
-            });
+        // A file that is not UTF-8 always takes lexical fallback; its fix is
+        // re-encoding, not syntax, so name that cause and recovery instead.
+        let (reason, recovery) = if index.non_utf8_sources.contains(&facts.path) {
+            (
+                crate::analysis::facts::RUST_SOURCE_NOT_UTF8_REASON.to_string(),
+                "Save the file as UTF-8, then re-run the analysis.",
+            )
+        } else {
+            (
+                crate::analysis::syntax::rust_nesting_refusal(&facts.source).unwrap_or_else(|| {
+                    "the Rust parser reported syntax errors, so the file was read lexically"
+                        .to_string()
+                }),
+                "Fix the file so it parses as Rust, then re-run the analysis.",
+            )
+        };
         let limitation = AnalysisLimitation::new(
             AnalysisLimitationKind::ProducerFailure,
             AnalysisStage::LanguageAdapter,
-            AnalysisRecovery::new(
-                AnalysisRecoveryKind::InspectFailure,
-                "Fix the file so it parses as Rust, then re-run the analysis.",
-            )?,
+            AnalysisRecovery::new(AnalysisRecoveryKind::InspectFailure, recovery)?,
         )
         .with_detail(
             format!(

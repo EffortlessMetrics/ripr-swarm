@@ -1634,16 +1634,25 @@ mod tests {
         // shapes and its own tests. The run must disclose a typed producer
         // limitation naming the file, so downstream gates fail closed, and
         // the parsing control must stay complete.
-        for (label, source, degraded) in [
+        for (label, source, degraded, recovery) in [
             (
                 "lexical-fallback-changed",
-                "pub fn f(x: i32) -> bool { x >= 1 }\npub fn broken( {\n",
+                &b"pub fn f(x: i32) -> bool { x >= 1 }\npub fn broken( {\n"[..],
                 true,
+                "parses as Rust",
+            ),
+            (
+                // Parses cleanly but is Latin-1: the recovery is re-encoding.
+                "lexical-fallback-not-utf8",
+                &b"// caf\xe9\npub fn f(x: i32) -> bool { x >= 1 }\n"[..],
+                true,
+                "UTF-8",
             ),
             (
                 "lexical-fallback-control",
-                "pub fn f(x: i32) -> bool { x >= 1 }\n",
+                &b"pub fn f(x: i32) -> bool { x >= 1 }\n"[..],
                 false,
+                "",
             ),
         ] {
             let root = temp_root(label)?;
@@ -1651,7 +1660,10 @@ mod tests {
                 &root.join("Cargo.toml"),
                 "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
             )?;
-            write(&root.join("src/lib.rs"), source)?;
+            fs::create_dir_all(root.join("src"))
+                .map_err(|err| format!("{label}: create src: {err}"))?;
+            fs::write(root.join("src/lib.rs"), source)
+                .map_err(|err| format!("{label}: write src/lib.rs: {err}"))?;
             let result = run_pipeline_for_diff_text(
                 &sample_rust_diff_options(root),
                 &OraclePolicy::default(),
@@ -1680,6 +1692,8 @@ mod tests {
                     fallback.ok_or_else(|| format!("{label}: fallback limitation missing"))?;
                 let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
                 assert!(detail.contains("lexical fallback"), "{label}: {detail}");
+                let action = &limitation.recovery.detail;
+                assert!(action.contains(recovery), "{label}: {action}");
             } else {
                 assert!(fallback.is_none(), "{label}: {:?}", outcome.limitations);
                 assert!(outcome.kind.is_complete(), "{label}: {:?}", outcome.kind);
