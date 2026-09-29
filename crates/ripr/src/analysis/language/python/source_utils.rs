@@ -12,6 +12,9 @@ pub(super) struct SourceText<'a> {
     text: &'a str,
     /// Byte offsets of every `\n`, in ascending order.
     newline_offsets: Vec<usize>,
+    /// `typer.Typer()` receiver names, scanned once on first use; every
+    /// owner in the file asks for them.
+    cli_receiver_names: std::cell::OnceCell<Vec<String>>,
 }
 
 impl<'a> SourceText<'a> {
@@ -24,6 +27,7 @@ impl<'a> SourceText<'a> {
         Self {
             text,
             newline_offsets,
+            cli_receiver_names: std::cell::OnceCell::new(),
         }
     }
 
@@ -39,6 +43,12 @@ impl<'a> SourceText<'a> {
         1 + self
             .newline_offsets
             .partition_point(|&newline| newline < offset)
+    }
+
+    /// The file's `NAME = typer.Typer(...)` receivers, computed by `scan` on
+    /// the first call and reused after.
+    pub(super) fn cli_receiver_names(&self, scan: impl FnOnce(&str) -> Vec<String>) -> &[String] {
+        self.cli_receiver_names.get_or_init(|| scan(self.text))
     }
 }
 

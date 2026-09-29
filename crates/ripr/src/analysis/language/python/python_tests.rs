@@ -1396,6 +1396,52 @@ fn source_fact_extraction_stays_linear_on_a_large_module() {
     );
 }
 
+/// Per-file scans that every owner or every constant used to repeat stay
+/// linear: the Typer receiver scan (once per owner) and the walrus-binding
+/// scan (once per module constant) each ran over the whole source.
+#[test]
+fn typer_receivers_and_constant_walrus_checks_stay_linear() {
+    let functions = 5_000;
+    let mut typer = String::from("import typer\napp = typer.Typer()\n");
+    for index in 0..functions {
+        typer.push_str(&format!("def f{index}(x):\n    return x + {index}\n"));
+    }
+    let constants = 20_000;
+    let mut constant_module = String::new();
+    for index in 0..constants {
+        constant_module.push_str(&format!("C{index} = {index}\n"));
+    }
+    constant_module.push_str("def f(x):\n    return x + C19999\n");
+
+    let started = std::time::Instant::now();
+    let typer_facts = extract_source_facts(Path::new("src/cli.py"), &typer);
+    let constant_facts = extract_source_facts(Path::new("src/limits.py"), &constant_module);
+    let elapsed = started.elapsed();
+
+    let last = typer_facts
+        .owners
+        .iter()
+        .find(|owner| owner.name == "f4999")
+        .ok_or("f4999 owner");
+    assert_eq!(
+        last.map(|owner| owner.cli_receiver_names.clone()),
+        Ok(vec!["app".to_string()])
+    );
+    let owner = constant_facts
+        .owners
+        .iter()
+        .find(|owner| owner.name == "f")
+        .ok_or("f owner");
+    assert_eq!(
+        owner.map(|owner| owner.module_constants.len()),
+        Ok(constants)
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(20),
+        "extraction took {elapsed:?}"
+    );
+}
+
 #[test]
 fn looks_like_call_expression_handles_trailing_semicolons_and_whitespace() {
     assert!(looks_like_call_expression("notify(event);"));
