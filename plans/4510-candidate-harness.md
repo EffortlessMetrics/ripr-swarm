@@ -211,3 +211,28 @@ Before implementation acceptance, add controls through the real admission and ro
 - Require nonzero selected/executed required subjects, explicit skipped/failed counts and deterministic JSON/Markdown parity. A packet with altered output identities or strengthened human wording must reject.
 
 Tests must call validated constructors and the actual retained producer/consumer path. They must not create trusted handles from supplied digest strings, pre-mark rows passed, or use test-only acceptance as production authority. Observe intended behavioral rejection only after test compilation succeeds; compile or instrument failure is NOT_ESTABLISHED. The characterization baseline is recorded above; new admission controls remain NOT_RUN.
+
+### Attributed installation below a controller workspace
+
+The 530ce required hosted run failed in the real package/install custody control:
+Cargo discovered the controller's ancestor workspace from the extracted package
+and refused installation. This is an observed defect, not a completed topology
+qualification. The test-first correction places a valid package plus workspace
+manifest and library under the owned fixture ancestor; selected source remains
+standalone and all archive, installed-executable, foreign-CWD, and mutation
+custody controls remain intact.
+
+The proposed byte-preserving repair places extraction beneath the owned
+`target/package` boundary used by Cargo 1.95's workspace ancestor traversal.
+Cargo 1.95 matches this repository's MSRV. Actual installation must discriminate
+this layout from the current refusal before the layout is accepted. Do not
+rewrite attributed package manifests, mutate the controller workspace, or add
+global exclusions. Existing full inventory byte revalidation before/after
+installation remains the equality owner. Native topology proof and current
+report-control GREEN are not run yet; historical failures remain retained.
+
+Primary evidence: [530ce failed Rust gates](https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/36576232132/job/109432584947).
+The layout rationale is Cargo 1.95's
+[`find_root_iter` ancestor traversal](https://github.com/rust-lang/cargo/blob/rust-1.95.0/src/cargo/core/workspace.rs#L2265-L2284),
+which stops at `target/package`; this source rationale is not runtime proof.
+

@@ -466,6 +466,19 @@ fn real_package_install_custody_rejects_ignored_foreign_and_changed_bytes() -> R
         AdmittedSource, AttributedArchive, CandidateExecution, QualificationInput,
     };
     let fixture = create_source_fixture()?;
+    // A valid ancestor Cargo workspace must not capture the attributed install input.
+    // The selected source remains its own standalone workspace; archive bytes stay exact.
+    fs::write(
+        fixture.guard.root.join("Cargo.toml"),
+        "[package]\nname='controller-workspace-fixture'\nversion='0.1.0'\nedition='2024'\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    fs::create_dir(fixture.guard.root.join("src")).map_err(|error| error.to_string())?;
+    fs::write(
+        fixture.guard.root.join("src/lib.rs"),
+        "pub fn controller_fixture() {}\n",
+    )
+    .map_err(|error| error.to_string())?;
     let input = QualificationInput::new(
         fixture.controller.clone(),
         fixture.source.clone(),
