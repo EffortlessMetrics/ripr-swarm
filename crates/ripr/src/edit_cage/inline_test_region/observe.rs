@@ -1,0 +1,172 @@
+//! Parser-backed observation of one existing inline cfg-test module.
+//!
+//! Cfg recognition is the shared [`crate::analysis::cfg_predicates`]
+//! authority. Unsupported forms (out-of-line, unparseable, ambiguous,
+//! nested-without-unique-name) fail closed.
+
+use std::ops::Range;
+
+use ra_ap_syntax::ast::{self, HasAttrs, HasModuleItem, HasName};
+use ra_ap_syntax::{AstNode, SyntaxNode};
+
+use super::{InlineTestRegionError, InlineTestRegionRejectReason, digest_bytes};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ObservedInlineTestRegion {
+    pub(crate) module_path: String,
+    pub(crate) cfg_basis_digest: String,
+    pub(crate) header_anchor_digest: String,
+    pub(crate) header_range: Range<usize>,
+    pub(crate) body_range: Range<usize>,
+}
+
+pub(crate) fn observe_inline_test_region(
+    source: &str,
+    module_name: &str,
+) -> Result<ObservedInlineTestRegion, InlineTestRegionError> {
+    let Some(parse) = crate::analysis::parse_clean_source_file(source) else {
+        return Err(InlineTestRegionError::Unsupported {
+            reason: InlineTestRegionRejectReason::Unparseable,
+        });
+    };
+    let mut matches = Vec::new();
+    for module in parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Module::cast)
+    {
+        let Some(observed) = observe_module(source, &module) else {
+            continue;
+        };
+        if observed.module_path.rsplit("::").next() == Some(module_name) {
+            matches.push(observed);
+        }
+    }
+    match matches.len() {
+        1 => Ok(matches.remove(0)),
+        0 => Err(InlineTestRegionError::Unsupported {
+            reason: InlineTestRegionRejectReason::MissingRegion,
+        }),
+        _ => Err(InlineTestRegionError::Unsupported {
+            reason: InlineTestRegionRejectReason::AmbiguousRegion,
+        }),
+    }
+}
+
+fn observe_module(source: &str, module: &ast::Module) -> Option<ObservedInlineTestRegion> {
+    let list = module.item_list()?;
+    module.name()?;
+    let attributes: Vec<String> = module
+        .attrs()
+        .map(|attr| attr.syntax().text().to_string())
+        .collect();
+    if !crate::analysis::cfg_predicates::attributes_require_test(attributes.iter()) {
+        return None;
+    }
+    let open = list.l_curly_token()?;
+    let close = list.r_curly_token()?;
+    let body_start = usize::from(open.text_range().end());
+    let body_end = usize::from(close.text_range().start());
+    if body_end < body_start || body_end > source.len() {
+        return None;
+    }
+    let header_start = usize::from(module.syntax().text_range().start());
+    let header_end = body_start;
+    let header = source.get(header_start..header_end)?;
+    Some(ObservedInlineTestRegion {
+        module_path: module_path(module.syntax()),
+        cfg_basis_digest: digest_bytes(attributes.join("\n").as_bytes()),
+        header_anchor_digest: digest_bytes(header.as_bytes()),
+        header_range: header_start..header_end,
+        body_range: body_start..body_end,
+    })
+}
+
+fn module_path(node: &SyntaxNode) -> String {
+    let mut names = Vec::new();
+    let mut current = Some(node.clone());
+    while let Some(node) = current {
+        if let Some(module) = ast::Module::cast(node.clone())
+            && let Some(name) = module.name()
+        {
+            names.push(name.text().to_string());
+        }
+        current = node.parent();
+    }
+    names.reverse();
+    if names.is_empty() {
+        "unknown".to_string()
+    } else {
+        names.join("::")
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ObservedItemKind {
+    Fn,
+    Use,
+    NestedModule,
+    Other,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ObservedItem {
+    pub(crate) kind: ObservedItemKind,
+    pub(crate) text: String,
+}
+
+pub(crate) fn named_module_items(
+    source: &str,
+    expected_module_path: &str,
+) -> Result<Vec<ObservedItem>, InlineTestRegionError> {
+    let Some(parse) = crate::analysis::parse_clean_source_file(source) else {
+        return Err(InlineTestRegionError::Unsupported {
+            reason: InlineTestRegionRejectReason::Unparseable,
+        });
+    };
+    let mut matches = Vec::new();
+    for module in parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Module::cast)
+    {
+        if module_path(module.syntax()) != expected_module_path {
+            continue;
+        }
+        let Some(list) = module.item_list() else {
+            continue;
+        };
+        matches.push(
+            list.items()
+                .map(|item| ObservedItem {
+                    kind: item_kind(&item),
+                    text: item.syntax().text().to_string(),
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+    match matches.len() {
+        1 => Ok(matches.remove(0)),
+        0 => Err(InlineTestRegionError::Unsupported {
+            reason: InlineTestRegionRejectReason::MissingRegion,
+        }),
+        _ => Err(InlineTestRegionError::Unsupported {
+            reason: InlineTestRegionRejectReason::AmbiguousRegion,
+        }),
+    }
+}
+
+fn item_kind(item: &ast::Item) -> ObservedItemKind {
+    let node = item.syntax();
+    if ast::Fn::cast(node.clone()).is_some() {
+        ObservedItemKind::Fn
+    } else if ast::Use::cast(node.clone()).is_some() {
+        ObservedItemKind::Use
+    } else if ast::Module::cast(node.clone()).is_some() {
+        ObservedItemKind::NestedModule
+    } else {
+        ObservedItemKind::Other
+    }
+}

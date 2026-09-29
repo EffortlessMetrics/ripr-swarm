@@ -908,3 +908,11 @@ path = "docs/specs/RIPR-SPEC-0179-local-usefulness-feedback-receipts.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Issue #4585 records local result-bound usefulness feedback receipts: an explicit CLI writes ignored JSON receipts for useful/incorrect/unclear/expensive/intentional-no-action judgments bound to an immutable snapshot, joins them onto existing route-quality rows, and changes no diagnostic, classification, baseline, suppression, gate, or gap-closure state."
+
+[[artifact]]
+id = "RIPR-SPEC-0180"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0180-inline-test-module-region-cage.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #4783 records the producer-neutral inline test-module region cage: an external before/after edit of a production Rust file is admitted only as a pure insertion into one exact existing test-required inline module, without granting whole-file production permission or InlineUnit producer admission."
