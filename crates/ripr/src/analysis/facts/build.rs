@@ -1232,16 +1232,42 @@ pub fn check(x: i32) -> bool {
         let root = temp_dir("index_cached_error_order")?;
         fs::create_dir_all(root.join("src"))?;
 
+        // Non-UTF-8 bytes no longer fail the build (#4582), so both adapters
+        // fail here and name the file they were given.
+        struct PathNamingFailure;
+        impl RustSyntaxAdapter for PathNamingFailure {
+            fn summarize_file(
+                &self,
+                path: &Path,
+                _text: &str,
+            ) -> Result<super::super::FileFacts, String> {
+                Err(format!("synthetic failure for {}", path.display()))
+            }
+
+            fn changed_nodes(
+                &self,
+                _facts: &super::super::FileFacts,
+                _ranges: &[TextRange],
+            ) -> Vec<SyntaxNodeFact> {
+                Vec::new()
+            }
+        }
+
         let files = [
-            (PathBuf::from("src/z_invalid.rs"), vec![0xff, 0xfe]),
-            (PathBuf::from("src/a_invalid.rs"), vec![0xff, 0xfe]),
+            (PathBuf::from("src/z_failing.rs"), b"fn z() {}".to_vec()),
+            (PathBuf::from("src/a_failing.rs"), b"fn a() {}".to_vec()),
         ];
-        let result = build_index_from_loaded_files_with_cache(&root, &files);
+        let result = build_index_from_loaded_files_with_cache_and_adapters(
+            &root,
+            &files,
+            &PathNamingFailure,
+            &PathNamingFailure,
+        );
         let Err(error) = result else {
-            return Err("expected invalid UTF-8 inputs to fail the cached build".into());
+            return Err("expected failing adapters to fail the cached build".into());
         };
         assert!(
-            error.contains("z_invalid.rs"),
+            error.contains("z_failing.rs"),
             "first error in input order must win: {error}"
         );
         Ok(())
