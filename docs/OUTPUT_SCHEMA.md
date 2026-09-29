@@ -16512,8 +16512,12 @@ targeted-rerun receipt shape:
 For a changed-test selector, `selector.kind` is `changed_test`. `changed_test`
 names the repository-relative parsed test file and may append
 `::<test_node>` to select one test function within that file. An unknown or
-ambiguous node is a named limitation. Without a node, all parsed tests in the
-file participate. The report returns only seams owned by uniquely resolved
+ambiguous node is a named limitation: `state: "limited"`, an empty `seams`
+array, exit 0, and `limitation.kind` `changed_test_unresolved` (no parsed test
+matches the file or node), `changed_test_owner_unresolved` (the selected tests
+call no production owner ripr resolves), or `changed_test_owner_ambiguous`
+(two production functions share a called name). Without a node, all parsed
+tests in the file participate. The report returns only seams owned by uniquely resolved
 functions directly called from the selected test scope.
 
 For a gap selector, `selector.kind` is `canonical_gap`, with
