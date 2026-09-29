@@ -1032,7 +1032,7 @@ The evidence-first fields are additive in schema `0.2`:
       test imports a symbol name-matched to the owner from a NON-RELATIVE
       specifier (`@/...`, `#...`, bare package name) that the adapter could not
       resolve to a unique workspace file, so no credit was given. The real
-      producer is `static_limit.rs::named_limitations_for_alias_unresolved`;
+      producer is `static_limit.rs::alias_gap_for_unresolved_import`;
       it requires all three conditions (non-relative import, imported name
       matches the owner name, and the import did not credit the owner) and is
       classification-neutral (additive disclosure only).
@@ -16593,7 +16593,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.10",
+    "schema_version": "1.11",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -16604,7 +16604,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.16",
+      "schema_version": "1.17",
       "analyzer_version": "0.11.0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
