@@ -49,6 +49,7 @@ map is:
 | `ripr agent status` | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
 | `ripr receipt write/check` | `schema_version` | `0.1` |
+| `ripr feedback record/export` | `schema_version` | `0.1` |
 | badge JSON | `schema_version` | `0.8` |
 | `ripr cache status --json` | `schema_version` | `0.1` |
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
@@ -1763,6 +1764,10 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 
 - `rust_value_propagation_unresolved` -- (RIPR-SPEC-0150, additive) A changed Rust value-producing binding reaches a same-owner equality predicate through a bounded `map_or` shape that ripr cannot fully resolve. Classification stays `static_unknown`; this is a named limitation, not a propagation, coverage, or repair claim.
 
+- `rust_subprocess_binary_reach_unresolved` -- (additive) An integration test invokes a Cargo-built binary, but ripr does not yet map that binary target back to the changed owner. Classification stays `no_static_path`; this is a named limitation, not a subprocess reach or receipt claim.
+
+- `wrapper_error_binding_unresolved` -- (additive, #3700) A wrapper error conversion (`callee(..).map_err(..)`) takes its error-variant identity from the converted callee, and ripr cannot establish that the boxed conversion preserves that variant. The seam stays below `exposed`; this is a named limitation, not a coverage or repair claim.
+
 Reserved `flow_sink` values:
 
 - `return_value`
@@ -1842,6 +1847,7 @@ while `call_effect` remains the fallback for other observable calls.
 - `async_boundary_opaque`
 - `no_changed_rust_line`
 - `macro_reach_unresolved`
+- `transitive_reach_unresolved`
 - `infection_evidence_unknown`
 - `propagation_evidence_unknown`
 - `static_probe_unknown`
@@ -12383,19 +12389,27 @@ Field contract:
   the restart reason repeats the after phase's recovery (`git reset --soft
   <prepared-head>`, then the attempt's after command).
   - `receipt` - `null` unless the attempt is `ready_to_finish`. Otherwise an
-    object read from `target/ripr/reports/agent-receipt.json`: `path`,
+    object read from the attempt-local terminal receipt when that attempt
+    retained one, else from `target/ripr/reports/agent-receipt.json` for a
+    legacy manifest: `path` (the exact artifact that was read),
     `issued_for_attempt` (whether that receipt's `repair_attempt` binding
     matches this attempt's after verdict: attempt ID, after `HEAD`, delta and
-    packet digests), `superseded_by` (the attempt ID the receipt is bound to
-    when that is another attempt: the workflow keeps one receipt, so a later
-    attempt's after phase replaced this attempt's receipt; otherwise `null`),
+    packet digests), `unavailable` (true when this attempt declared terminal
+    retention but the local result is missing, digest-mismatched, path-escaped,
+    or mis-bound; status does not then reconstruct the outcome from another
+    attempt's compatibility file), `unavailable_reason`,
+    `superseded_by` (the attempt ID the compatibility receipt is bound to
+    when that is another attempt and this attempt has no retained local
+    result; otherwise `null`),
     and, when it is issued for this attempt, the receipt's `status`,
     `movement`, `receipt_state`, `recommended_action`,
     `analysis_outcome_error`, and `verification_status` (the receipt's
     `verification.status`), plus `shows_gap_closed` (`true` only for an
     `advisory` receipt with movement `improved`; it records improved static
     grip, not a runtime or mutation result). Unbound receipts leave these
-    `null` and `shows_gap_closed` `false`.
+    `null` and `shows_gap_closed` `false`. An old result can remain
+    historically valid while `head_current` is false for today's HEAD;
+    retained history is not current proof.
   - `last_after_refusal` - `null`, or `{reason, recorded_unix_ms}` when the
     attempt's most recent after phase refused after selecting the attempt (the
     attempt manifest's `last_after_refusal`: the final error followed by the
@@ -12445,10 +12459,11 @@ Field contract:
   receipt reports static grip improved at the recorded head), and
   `repair_receipt_unconfirmed` names a `ready_to_finish` attempt whose receipt
   does not report improved grip (an `invalid` or `incomplete` receipt, a
-  movement that is neither `improved` nor open, no receipt issued for it, or a
-  receipt superseded by a later attempt's, in which case the message names
-  that attempt and the new-attempt command for the seam if its gap is still
-  open). Hash mismatch warnings remain a
+  movement that is neither `improved` nor open, no receipt issued for it, a
+  declared attempt-local receipt that is unavailable, or a legacy receipt
+  superseded by a later attempt's compatibility file, in which case the
+  message names that attempt and the new-attempt command for the seam if its
+  gap is still open). Hash mismatch warnings remain a
   later reviewer-summary/status enhancement now that receipt provenance records
   artifact SHA-256 values.
 
@@ -16843,6 +16858,71 @@ Do not remove fields, rename fields, or change enum meanings without bumping the
 schema version.
 
 Do not emit mutation-runtime terms such as `killed` or `survived` in static JSON.
+
+## Usefulness feedback receipts
+
+`ripr feedback record` writes one local ignored JSON receipt under
+`target/ripr/feedback/`. `ripr feedback export` joins stored receipts onto
+existing route-quality rows. Recording is explicit; analyze, hover, and packet
+paths never record feedback implicitly. Neither command changes diagnostics,
+classification, baselines, suppressions, gates, or gap closure. Neither command
+makes a network, process, editor, LSP, or MCP write. Identity is snapshot plus
+optional canonical item; file/line is rejected.
+
+Receipt JSON (`schema_version` `0.1`, `kind` `usefulness_feedback_receipt`):
+
+```json
+{
+  "schema_version": "0.1",
+  "kind": "usefulness_feedback_receipt",
+  "status": "created",
+  "tool": "ripr",
+  "feedback_id": "fb-…",
+  "idempotency_key": "key",
+  "snapshot_id": "snap-1",
+  "canonical_item": null,
+  "route_digest": "add_missing_test",
+  "attempt_id": null,
+  "receipt_id": null,
+  "actor_kind": "human",
+  "review_status": "unreviewed",
+  "review_actor_kind": null,
+  "reason": "useful_limitation",
+  "judgment": "useful",
+  "note": null,
+  "reference_state": "current",
+  "recorded_at": "unix_ms:1",
+  "policy_effects": {
+    "diagnostics": "unchanged",
+    "classification": "unchanged",
+    "baseline": "unchanged",
+    "suppressions": "unchanged",
+    "gates": "unchanged",
+    "gap_closure": "unchanged"
+  },
+  "must_not_infer": [
+    "helpful feedback does not establish correctness",
+    "a negative opinion does not automatically establish a false positive",
+    "agent feedback is not human-approved until a human review actor is recorded",
+    "recording this receipt changes no diagnostic, classification, baseline, suppression, gate, or gap-closure state"
+  ]
+}
+```
+
+`status` is `created` or `already_recorded`. A same-key different payload is a
+conflict, not a second record. `actor_kind` is independent of `review_status`.
+`judgment` is one of `useful`, `incorrect`, `unclear`, `expensive`, or
+`intentional_no_action`. `reference_state` is `current`, `historical`, or
+`mismatched`.
+
+Join JSON (`schema_version` `0.1`, `kind` `usefulness_feedback_join`) keeps
+objective route-quality counts (`repair_kind_attempted`,
+`repair_kind_improved`) separate from subjective usefulness counts. It reports
+denominators for receipts, reviewed/human/unreviewed/agent, unmatched,
+historical, mismatched, and missing-feedback rows. `reviewed_human_useful_rate`
+is a number only when `reviewed_human_total` is nonzero; otherwise it is `null`.
+Unreviewed, stale, unmatched, and missing-feedback states are counts, not
+success percentages. The join does not invent a second attempt ledger.
 
 ## Historical 0.11 candidate execution-scope report
 
