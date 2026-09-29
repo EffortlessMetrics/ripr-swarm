@@ -270,5 +270,5 @@ collect_workspace_status → run_status: "full" (or "limited"/"stale" per existi
   (or limited/stale/cache_limited per existing rules) — never `"seams_deferred"`.
 
 The saved-edit sequence that measures this interactive/full distinction is
-[RIPR-SPEC-0178](RIPR-SPEC-0178-lsp-saved-edit-sequence.md). That sequence
+[RIPR-SPEC-0180](RIPR-SPEC-0180-lsp-saved-edit-sequence.md). That sequence
 reuses `seams_deferred` and does not replace this spec.

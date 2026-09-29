@@ -1,4 +1,4 @@
-# RIPR-SPEC-0178: LSP saved-edit sequence harness
+# RIPR-SPEC-0180: LSP saved-edit sequence harness
 
 Status: proposed
 

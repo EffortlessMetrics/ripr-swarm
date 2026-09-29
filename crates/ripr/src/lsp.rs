@@ -9,6 +9,7 @@ mod config;
 pub mod diagnostic_budget;
 mod diagnostic_catalog;
 mod diagnostics;
+mod dollar_requests;
 mod gap_artifacts;
 mod git_inputs;
 mod hover;
@@ -98,7 +99,7 @@ where
 
     Server::new(stdin, stdout, socket)
         .concurrency_level(bounds.request_concurrency)
-        .serve(service)
+        .serve(dollar_requests::AnswerDollarRequests(service))
         .await;
     Ok(())
 }

@@ -897,7 +897,21 @@ standalone_reason = "Issue #4101 records the TypeScript parse-depth budget contr
 [[artifact]]
 id = "RIPR-SPEC-0178"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0178-lsp-saved-edit-sequence.md"
+path = "docs/specs/RIPR-SPEC-0178-rust-repair-trust-route-yield-ladder.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #4570 records the Rust repair-trust route-yield ladder: the existing corpus validator/report derives selected-opportunity, complete-route, and eligible-attempt stages from typed observations so three unrouted observations report 0/3 route yield and not_measurable repair success, without a second corpus, attempt lifecycle, or support promotion."
+[[artifact]]
+id = "RIPR-SPEC-0179"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0179-local-usefulness-feedback-receipts.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #4585 records local result-bound usefulness feedback receipts: an explicit CLI writes ignored JSON receipts for useful/incorrect/unclear/expensive/intentional-no-action judgments bound to an immutable snapshot, joins them onto existing route-quality rows, and changes no diagnostic, classification, baseline, suppression, gate, or gap-closure state."
+[[artifact]]
+id = "RIPR-SPEC-0180"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0180-lsp-saved-edit-sequence.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Issue #1578 records the saved-edit sequence harness: a repeatable cold-start through explicit-full refresh sequence reuses landed cache, scheduler, and delivery metrics; a stale cached answer cannot satisfy a speed target; a fast run cannot hide redundant full rescans or duplicate diagnostics; and historical 2s/10s/30s figures remain proposals rather than gates."

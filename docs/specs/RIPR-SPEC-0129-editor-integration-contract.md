@@ -39,6 +39,9 @@ Consumes:
   so every conforming client sends `textDocument/didSave` (saved content is
   the analysis input; the bare numeric kind does not request save
   notifications)
+- `MethodNotFound` (`-32601`, method named in `data`) for any unhandled
+  request whose method starts with `$/`; unhandled `$/` notifications stay
+  silent (LSP 3.17 "$ Notifications and Requests", #4456)
 - `textDocument/publishDiagnostics` (push) or `textDocument/diagnostic` (pull)
 - `textDocument/hover`
 - `textDocument/codeAction` (kind strings are metadata visible to every
@@ -247,6 +250,9 @@ qualified as static analysis results; diagnostic codes and data remain stable.
 - `tests/lsp_lifecycle.rs::initialize_advertises_full_sync_with_save_notifications`
   verifies over the real wire that the document-sync advertisement requests
   `didSave`.
+- `tests/lsp_lifecycle.rs::dollar_request_is_answered_method_not_found`
+  verifies over the real wire that a `$/` request gets `-32601` naming the
+  method, while the same `$/` notification gets no response.
 - `tests.rs` code-action tests verify the negotiated client-command filter
   (#1776): an unenhanced client receives only server-executed commands, a
   client advertising a subset keeps exactly that subset, and every emitted
@@ -287,8 +293,12 @@ qualified as static analysis results; diagnostic codes and data remain stable.
 - `tests.rs::capabilities_advertise_code_lens_provider` plus
   `code_lens_refresh_is_not_attempted_for_unsupported_clients` and
   `code_lens_refresh_tracks_semantic_view_changes_for_supported_clients`
-  verify the advisory codeLens surface (display-only, `resolve_provider:
-  false`) and its refresh negotiation.
+  verify the cached advisory codeLens surface and its refresh negotiation.
+  `lens.rs::tests::code_lens_wire_advertises_an_honest_registered_refresh` and
+  `tests.rs::framed_code_lens_refresh_follows_semantic_lens_view_changes` verify
+  that clicking invokes the registered `ripr.refresh` saved-workspace action;
+  `resolve_provider: false` means no deferred lens resolution, not an inert
+  command. The action does not run tests or apply repairs (SPEC-0100).
 - `tests.rs` hover tests (`hover_response_keeps_current_guidance_text`,
   `hover_for_position_uses_latest_matching_diagnostic`,
   `hover_for_position_shows_snapshot_age_and_refresh_duration`,
