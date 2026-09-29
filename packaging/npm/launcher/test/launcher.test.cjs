@@ -207,6 +207,11 @@ test("spawns an absolute executable with literal argv, inherited stdio, cwd, env
   assert.equal(call.options.env, env);
 });
 
+test("maps child signals to a nonzero conventional exit code", () => {
+  assert.equal(launcher.signalExitCode("SIGTERM"), 128 + os.constants.signals.SIGTERM);
+  assert.equal(launcher.signalExitCode("RIPR_UNKNOWN_SIGNAL"), 1);
+});
+
 test("runs a real synthetic executable and preserves argv, cwd, env, stdout, stderr, and exit status", () => {
   const fixture = nativeFixture();
   const script = path.join(fixture.root, "probe.cjs");
@@ -264,7 +269,12 @@ test("source bin missing-package failure never falls back to PATH or writes stdo
 
 test("npm package contents are explicit and exclude tests and build residue", () => {
   const root = path.join(__dirname, "..");
-  const result = spawnSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+  const npmCli = process.env.npm_execpath;
+  const command = npmCli ? process.execPath : "npm";
+  const args = npmCli
+    ? [npmCli, "pack", "--dry-run", "--json", "--ignore-scripts"]
+    : ["pack", "--dry-run", "--json", "--ignore-scripts"];
+  const result = spawnSync(command, args, {
     cwd: root,
     encoding: "utf8",
   });
