@@ -166,9 +166,12 @@ mod tests {
     }
 
     #[test]
-    fn malformed_kind_fails_closed() {
+    fn malformed_kind_fails_closed() -> Result<(), String> {
         let value = serde_json::json!({"kind": "gate-decision", "schema_version": "0.1"});
-        let error = rendered_receipt_from_value(&value).expect_err("wrong kind");
+        let error = rendered_receipt_from_value(&value)
+            .err()
+            .ok_or_else(|| "wrong kind".to_string())?;
         assert!(error.contains("usefulness_feedback_receipt"));
+        Ok(())
     }
 }

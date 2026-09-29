@@ -505,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_is_required_and_file_line_is_not_identity() {
+    fn snapshot_is_required_and_file_line_is_not_identity() -> Result<(), String> {
         let missing = ResultIdentity {
             snapshot_id: String::new(),
             canonical_item: None,
@@ -513,20 +513,25 @@ mod tests {
             attempt_id: None,
             receipt_id: None,
         };
-        let error = missing.validate().expect_err("empty snapshot must fail");
+        let error = missing
+            .validate()
+            .err()
+            .ok_or_else(|| "empty snapshot must fail".to_string())?;
         assert!(error.contains("--snapshot"));
         assert!(error.contains("file and line"));
+        Ok(())
     }
 
     #[test]
-    fn useful_limitation_may_omit_canonical_item() {
+    fn useful_limitation_may_omit_canonical_item() -> Result<(), String> {
         identity("snap-1", None)
             .validate()
-            .expect("limitation without a gap id is a valid identity");
+            .map_err(|error| format!("limitation without a gap id is a valid identity: {error}"))?;
+        Ok(())
     }
 
     #[test]
-    fn other_requires_a_note_and_explicit_judgment() {
+    fn other_requires_a_note_and_explicit_judgment() -> Result<(), String> {
         let mut payload = FeedbackPayload {
             identity: identity("snap-1", None),
             actor_kind: ActorKind::Human,
@@ -536,19 +541,28 @@ mod tests {
             judgment_override: None,
             note: None,
         };
-        let error = payload.validate().expect_err("other without note");
+        let error = payload
+            .validate()
+            .err()
+            .ok_or_else(|| "other without note".to_string())?;
         assert!(error.contains("other"));
         assert!(error.contains("--note"));
         payload.note = Some("custom operator judgment".to_string());
-        let error = payload.validate().expect_err("other without judgment");
+        let error = payload
+            .validate()
+            .err()
+            .ok_or_else(|| "other without judgment".to_string())?;
         assert!(error.contains("--judgment"));
         payload.judgment_override = Some(FeedbackJudgment::Expensive);
-        payload.validate().expect("other with note and judgment");
+        payload
+            .validate()
+            .map_err(|error| format!("other with note and judgment: {error}"))?;
         assert_eq!(payload.judgment(), FeedbackJudgment::Expensive);
+        Ok(())
     }
 
     #[test]
-    fn closed_reason_rejects_a_mismatched_judgment() {
+    fn closed_reason_rejects_a_mismatched_judgment() -> Result<(), String> {
         let payload = FeedbackPayload {
             identity: identity("snap-1", None),
             actor_kind: ActorKind::Human,
@@ -558,9 +572,13 @@ mod tests {
             judgment_override: Some(FeedbackJudgment::Incorrect),
             note: None,
         };
-        let error = payload.validate().expect_err("mismatched judgment");
+        let error = payload
+            .validate()
+            .err()
+            .ok_or_else(|| "mismatched judgment".to_string())?;
         assert!(error.contains("--judgment"));
         assert!(error.contains("other"));
+        Ok(())
     }
 
     #[test]
@@ -572,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn reviewed_feedback_requires_a_review_actor() {
+    fn reviewed_feedback_requires_a_review_actor() -> Result<(), String> {
         let payload = FeedbackPayload {
             identity: identity("snap-1", Some("gap:example")),
             actor_kind: ActorKind::Agent,
@@ -582,8 +600,12 @@ mod tests {
             judgment_override: None,
             note: None,
         };
-        let error = payload.validate().expect_err("reviewed without actor");
+        let error = payload
+            .validate()
+            .err()
+            .ok_or_else(|| "reviewed without actor".to_string())?;
         assert!(error.contains("--review-actor"));
+        Ok(())
     }
 
     #[test]

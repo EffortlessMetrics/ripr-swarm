@@ -681,7 +681,9 @@ mod tests {
             FeedbackReason::WrongDiscriminator,
         );
         second.note = None;
-        let error = record(&root.path, second, "shared").expect_err("conflict");
+        let error = record(&root.path, second, "shared")
+            .err()
+            .ok_or_else(|| "conflict".to_string())?;
         assert!(error.contains("idempotency conflict"));
         Ok(())
     }
@@ -872,7 +874,9 @@ mod tests {
         let mut secret = payload("snap-1", None, FeedbackReason::Other);
         secret.judgment_override = Some(FeedbackJudgment::Unclear);
         secret.note = Some("token ghp_notarealsecretvalue".to_string());
-        let error = record(&root.path, secret, "secret").expect_err("secret note");
+        let error = record(&root.path, secret, "secret")
+            .err()
+            .ok_or_else(|| "secret note".to_string())?;
         assert!(error.contains("secret pattern"));
 
         let escaped = record_feedback(&RecordFeedbackOptions {
@@ -882,7 +886,8 @@ mod tests {
             recorded_at: Some("unix_ms:1".to_string()),
             live_identity: None,
         })
-        .expect_err("escaped key");
+        .err()
+        .ok_or_else(|| "escaped key".to_string())?;
         assert!(
             escaped.contains("idempotency-key") || escaped.contains("escaped"),
             "{escaped}"
@@ -895,7 +900,9 @@ mod tests {
         let root = TempRoot::new("oversize")?;
         let mut payload = payload("snap-1", None, FeedbackReason::UnclearExplanation);
         payload.note = Some("n".repeat(FEEDBACK_NOTE_MAX_BYTES + 1));
-        let error = record(&root.path, payload, "big").expect_err("oversize");
+        let error = record(&root.path, payload, "big")
+            .err()
+            .ok_or_else(|| "oversize".to_string())?;
         assert!(error.contains("exceeds"));
         Ok(())
     }
@@ -927,7 +934,9 @@ mod tests {
         fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
         fs::write(directory.join("bad.json"), "{\"kind\":\"gate-decision\"}\n")
             .map_err(|error| error.to_string())?;
-        let error = load_feedback_receipts(&root.path).expect_err("malformed");
+        let error = load_feedback_receipts(&root.path)
+            .err()
+            .ok_or_else(|| "malformed".to_string())?;
         assert!(error.contains("usefulness_feedback_receipt"));
         Ok(())
     }

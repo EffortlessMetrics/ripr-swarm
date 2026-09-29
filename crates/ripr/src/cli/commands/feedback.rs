@@ -403,7 +403,8 @@ mod tests {
             "--reason",
             "useful_actionable",
         ]))
-        .expect_err("file/line");
+        .err()
+        .ok_or_else(|| "file/line".to_string())?;
         assert!(file_line.contains("not file/line"));
 
         let mismatch = run_feedback(&args(&[
@@ -419,7 +420,8 @@ mod tests {
             "--actor",
             "human",
         ]))
-        .expect_err("conflict");
+        .err()
+        .ok_or_else(|| "conflict".to_string())?;
         assert!(mismatch.contains("idempotency conflict"));
         let _ = fs::remove_dir_all(&root);
         Ok(())
@@ -478,7 +480,8 @@ mod tests {
             "--note",
             "custom",
         ]))
-        .expect_err("other needs judgment");
+        .err()
+        .ok_or_else(|| "other needs judgment".to_string())?;
         assert!(missing_judgment.contains("--judgment"));
 
         let mismatch = run_feedback(&args(&[
@@ -492,7 +495,8 @@ mod tests {
             "--judgment",
             "incorrect",
         ]))
-        .expect_err("class mismatch");
+        .err()
+        .ok_or_else(|| "class mismatch".to_string())?;
         assert!(mismatch.contains("--judgment"));
         let _ = fs::remove_dir_all(&root);
         Ok(())
