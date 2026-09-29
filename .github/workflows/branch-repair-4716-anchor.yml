@@ -29,40 +29,37 @@ jobs:
 
           helper = Path('.github/workflows/branch-repair-4716-final.yml')
           text = helper.read_text(encoding='utf-8')
-          label = '    "signal source guards",\n)\n'
-          label_pos = text.find(label)
+          label_pos = text.find('"signal source guards"')
           if label_pos < 0:
               raise SystemExit('signal source guard helper label not found')
-          start = text.rfind('replace_once(\n', 0, label_pos)
-          if start < 0:
-              raise SystemExit('signal source guard helper call start not found')
-          text = text[:start] + text[label_pos + len(label):]
+          start = text.rfind('replace_once(', 0, label_pos)
+          end = text.find('\n)', label_pos)
+          if start < 0 or end < 0:
+              raise SystemExit('signal source guard helper call bounds not found')
+          text = text[:start] + text[end + 2:]
           helper.write_text(text, encoding='utf-8')
 
           source = Path('xtask/src/policy/distribution/npm_launcher.rs')
           rust = source.read_text(encoding='utf-8')
-          old = '''        (
-              "process.exitCode = signalExitCode",
-              "a consumed child signal must still produce a nonzero launcher exit",
-          ),
-          '''
-          new = '''        (
-              "process.exitCode = signalExitCode",
-              "a consumed child signal must still produce a nonzero launcher exit",
-          ),
-          (
-              "SIGNALS_TO_OBSERVE",
-              "terminal process-group signals must be observed without duplicate forwarding",
-          ),
-          (
-              "const effectiveSignal = signal || receivedSignal",
-              "the first observed termination signal must survive a graceful child exit",
-          ),
-          '''
-          if new not in rust:
-              if rust.count(old) != 1:
-                  raise SystemExit(f'source guard anchor count={rust.count(old)}')
-              rust = rust.replace(old, new, 1)
+          if '"SIGNALS_TO_OBSERVE"' not in rust:
+              marker = '"a consumed child signal must still produce a nonzero launcher exit",'
+              marker_pos = rust.find(marker)
+              if marker_pos < 0:
+                  raise SystemExit('source guard explanation not found')
+              close = rust.find('        ),', marker_pos)
+              if close < 0:
+                  raise SystemExit('source guard entry close not found')
+              close += len('        ),')
+              insertion = '''
+              (
+                  "SIGNALS_TO_OBSERVE",
+                  "terminal process-group signals must be observed without duplicate forwarding",
+              ),
+              (
+                  "const effectiveSignal = signal || receivedSignal",
+                  "the first observed termination signal must survive a graceful child exit",
+              ),'''
+              rust = rust[:close] + insertion + rust[close:]
               source.write_text(rust, encoding='utf-8')
           PY
 
