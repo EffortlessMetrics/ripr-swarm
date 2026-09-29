@@ -64,11 +64,17 @@ A packet directory contains `manifest.json`, the native payload
    compiler.
 4. Requires an explicit subject root and writable output directory.
 5. Honors `--foreign-cwd` so analysis still binds the explicit root.
-6. Allowlists only `check` and `pilot`.
+6. Allowlists only `check` and `pilot`. `pilot` launches with `--out {out_dir}`
+   and classifies `pilot-summary.json`, not terminal stdout. The launched argv
+   verb must match the allowlisted operation. `--diff` is valid only for
+   `check`.
 7. Classifies digest mismatch, missing executable, incompatible payload,
    timeout, malformed or partial product JSON, zero required subjects,
    subject-tree drift, unwritable output, launch failure, and complete
-   results as distinct receipt classes.
+   results as distinct receipt classes. Product `analysis_outcome` kinds are
+   the producer-owned set; invented kinds fail closed. `--subject-digest`
+   is rechecked after launch; a subject-tree file cap is
+   `environment_unavailable`, not drift.
 8. Writes `packet-consumption-receipt.json` that keeps packet, payload, and
    subject identity separate.
 9. Validates existing product JSON by `schema_version` and projects counts
@@ -85,12 +91,16 @@ A packet directory contains `manifest.json`, the native payload
   malformed JSON, empty stdout, typed product limitation, incomplete
   analysis outcome, zero subjects (required vs allowed), timeout,
   nonzero payload exit, unknown operation, unwritable output, subject-tree
-  drift.
+  drift, argv-template verb mismatch, pilot `--diff` rejection, post-launch
+  subject digest, subject-file cap, and output-artifact symlink.
 - Classification matrix imports `classify_product_json` so product-class
-  edges are discriminated without a payload launch.
+  edges are discriminated without a payload launch. The matrix includes the
+  producer kinds `partial_with_limitations`, `unsupported_input`, and
+  `analysis_failed`, and rejects invented kinds.
 - Native packet: worktree `ripr` analyzes `python_boundary_gap` from a
   foreign cwd with a PATH decoy and Cargo off PATH, producing a nonempty
-  findings list and `schema_version` `0.2`.
+  findings list and `schema_version` `0.2`. A second native journey runs
+  `--operation pilot` and classifies `pilot-summary.json`.
 
 ## Non-Goals
 
@@ -135,8 +145,17 @@ A packet directory contains `manifest.json`, the native payload
 - `xtask/src/portable_consumer.rs::tests::unknown_operation_fails_closed`
 - `xtask/src/portable_consumer.rs::tests::unwritable_output_fails_closed`
 - `xtask/src/portable_consumer.rs::tests::subject_digest_drift_fails_closed`
+- `xtask/src/portable_consumer.rs::tests::arm64_machine_names_match_rust_aarch64`
+- `xtask/src/portable_consumer.rs::tests::pilot_reads_the_summary_artifact_not_terminal_stdout`
+- `xtask/src/portable_consumer.rs::tests::missing_pilot_summary_is_partial_product_output`
+- `xtask/src/portable_consumer.rs::tests::argv_template_must_start_with_the_allowlisted_operation`
+- `xtask/src/portable_consumer.rs::tests::pilot_rejects_diff_before_launch`
+- `xtask/src/portable_consumer.rs::tests::subject_file_cap_is_environment_unavailable_not_drift`
+- `xtask/src/portable_consumer.rs::tests::subject_digest_is_rechecked_after_launch`
+- `xtask/src/portable_consumer.rs::tests::existing_output_symlink_is_unwritable`
 - `xtask/src/portable_consumer.rs::tests::packet_digest_matches_the_producer_formula`
 - `crates/ripr/tests/portable_consumer_packet.rs::native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback`
+- `crates/ripr/tests/portable_consumer_packet.rs::native_packet_pilot_consumes_the_summary_artifact`
 
 ## Implementation Mapping
 
