@@ -8105,6 +8105,41 @@ fn doctor_names_workspace_build_first_on_path() -> Result<(), String> {
 }
 
 #[test]
+fn doctor_json_reports_an_unpinned_generated_workflow_as_advisory() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let workflows = workspace.join(".github/workflows");
+    std::fs::create_dir_all(&workflows).map_err(|err| format!("create workflows: {err}"))?;
+    // The install step `ripr 0.10.0 init --ci github` wrote.
+    std::fs::write(
+        workflows.join("ripr.yml"),
+        "      - name: Install ripr\n        run: cargo install ripr --locked\n",
+    )
+    .map_err(|err| format!("write workflow: {err}"))?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root, "--json"]);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|err| format!("doctor JSON did not parse: {err}"))?;
+    std::fs::remove_dir_all(workspace).map_err(|err| format!("remove workspace: {err}"))?;
+
+    let check = report["checks"]
+        .as_array()
+        .and_then(|checks| {
+            checks
+                .iter()
+                .find(|check| check["name"] == "generated_workflow")
+        })
+        .ok_or_else(|| format!("doctor JSON must report the stale workflow: {report}"))?;
+    assert_eq!(check["status"], "advisory");
+    assert!(
+        check["evidence"].as_str().is_some_and(|evidence| evidence
+            .contains("installs ripr without a version")
+            && evidence.contains("ripr init --ci github --force")),
+        "{check}"
+    );
+    Ok(())
+}
+
+#[test]
 fn doctor_json_reports_current_schema() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
     let root = workspace.display().to_string();
@@ -17977,6 +18012,82 @@ fn check_rejects_invalid_ripr_git_timeout_env() -> Result<(), String> {
         }
     }
     ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+/// A report write cut short by the process dying (here the file-size limit
+/// terminates it, the same outcome as Ctrl-C or a cancelled CI step mid-write) must
+/// leave the previous complete report in place, not a truncated one (#4542).
+#[cfg(unix)]
+#[test]
+fn interrupted_report_write_keeps_the_previous_complete_report()
+-> Result<(), Box<dyn std::error::Error>> {
+    let workspace = unique_temp_workspace("interrupted-report-write");
+    std::fs::create_dir_all(&workspace)?;
+    let fixture = workspace_root().join("fixtures/boundary_gap");
+    let fixture_input = fixture.join("input").to_string_lossy().into_owned();
+    let check = run_ripr(&[
+        "check",
+        "--root",
+        &fixture_input,
+        "--diff",
+        &fixture.join("diff.patch").to_string_lossy(),
+        "--format",
+        "json",
+    ]);
+    assert_success(&check);
+    let check_path = workspace.join("check.json");
+    std::fs::write(&check_path, &check.stdout)?;
+    let ledger_path = workspace.join("gap-ledger.json");
+    let ledger_args = [
+        "reports".to_string(),
+        "gap-ledger".to_string(),
+        "--check-output".to_string(),
+        check_path.to_string_lossy().into_owned(),
+        "--root".to_string(),
+        fixture_input.clone(),
+        "--out".to_string(),
+        ledger_path.to_string_lossy().into_owned(),
+        "--out-md".to_string(),
+        workspace
+            .join("gap-ledger.md")
+            .to_string_lossy()
+            .into_owned(),
+    ];
+    let ledger_arg_refs: Vec<&str> = ledger_args.iter().map(String::as_str).collect();
+    assert_success(&run_ripr(&ledger_arg_refs));
+    let complete = std::fs::read(&ledger_path)?;
+    assert!(
+        complete.len() > 1024,
+        "the fixture ledger must exceed the 1 KiB limit below to exercise a cut-short write, got {} bytes",
+        complete.len()
+    );
+    serde_json::from_slice::<serde_json::Value>(&complete)?;
+
+    // `ulimit -f 1` caps any file this process writes at 1 KiB.
+    let mut limited = vec![
+        "-c",
+        "ulimit -f 1 && exec \"$0\" \"$@\"",
+        env!("CARGO_BIN_EXE_ripr"),
+    ];
+    limited.extend(ledger_arg_refs.iter().copied());
+    let interrupted = run_command("sh", None, &limited)?;
+    assert!(
+        !interrupted.status.success(),
+        "the size-limited write must not succeed: {interrupted:?}"
+    );
+    let after = std::fs::read(&ledger_path)?;
+    assert_eq!(
+        after.len(),
+        complete.len(),
+        "an interrupted write replaced the previous report with {} bytes",
+        after.len()
+    );
+    assert_eq!(
+        after, complete,
+        "an interrupted write changed the previous report"
+    );
+    let _ = std::fs::remove_dir_all(&workspace);
     Ok(())
 }
 

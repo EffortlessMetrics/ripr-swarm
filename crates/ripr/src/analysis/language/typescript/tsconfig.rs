@@ -74,6 +74,12 @@ pub(crate) struct TsAliasMap {
     /// The template may itself contain a `*`; the captured group from the
     /// specifier replaces that `*` in the template.
     glob_entries: Vec<GlobEntry>,
+    /// `true` when the entries above came from a loaded tsconfig/jsconfig.
+    /// A map built only to carry `packages` has no tsconfig, so its
+    /// unresolved advice stays the flag-off / load-gap advice.
+    tsconfig_loaded: bool,
+    /// In-workspace package names (#4554), consulted after `paths`.
+    packages: super::workspace_packages::WorkspacePackages,
 }
 
 #[derive(Debug, Clone)]
@@ -145,7 +151,7 @@ impl TsAliasUnresolveCause {
 /// The flag-ON fail-closed paths used to collapse into the generic
 /// "no alias map was available — enable the flag" advice, which told the
 /// user to enable a flag that was already enabled and left the real cause
-/// (unparseable JSON / JSONC comments / unsupported `extends` / missing
+/// (unparseable JSON(C) / unsupported `extends` / missing
 /// config / unreadable config) indistinguishable from an opt-out. This
 /// typed gap names the actual cause so the `typescript_path_alias_unresolved`
 /// advice is actionable.
@@ -153,15 +159,13 @@ impl TsAliasUnresolveCause {
 pub(crate) enum TsAliasMapLoadGap {
     /// Neither `tsconfig.json` nor `jsconfig.json` exists at the root.
     ConfigMissing,
-    /// A config file exists but the strict JSON parser rejected it.
+    /// A config file exists but could not be parsed as JSONC (JSON plus the
+    /// `//` / `/* */` comments and trailing commas `tsc` accepts, #4549).
     /// `config` records which file was loaded (`tsconfig.json` or the
     /// `jsconfig.json` fallback) so the advice names the real file;
-    /// `jsonc_comments` records whether comment syntax (which `tsc` accepts
-    /// but this strict parser does not) was detected outside string
-    /// literals; `detail` carries the bounded parser message.
+    /// `detail` carries the bounded parser message.
     ConfigUnparseable {
         config: &'static str,
-        jsonc_comments: bool,
         detail: String,
     },
     /// The config uses `extends`/`references`, which single-hop resolution
@@ -191,29 +195,11 @@ impl TsAliasMapLoadGap {
                 "add a tsconfig.json with compilerOptions.baseUrl and compilerOptions.paths for credit"
                     .to_string(),
             ),
-            Self::ConfigUnparseable {
-                config,
-                jsonc_comments: true,
-                detail,
-            } => (
+            Self::ConfigUnparseable { config, detail } => (
                 format!(
-                    "the {config} at the workspace root could not be parsed as strict JSON ({detail}); the file contains comment syntax (JSONC), which the strict parser rejects"
+                    "the {config} at the workspace root could not be parsed as JSON with comments ({detail})"
                 ),
-                format!(
-                    "rewrite {config} as strict JSON without comments for credit (tsc itself accepts JSONC; this adapter currently does not)"
-                ),
-            ),
-            Self::ConfigUnparseable {
-                config,
-                jsonc_comments: false,
-                detail,
-            } => (
-                format!(
-                    "the {config} at the workspace root could not be parsed as strict JSON ({detail})"
-                ),
-                format!(
-                    "fix the {config} JSON syntax for credit (JSONC comments and trailing commas are not supported)"
-                ),
+                format!("fix the {config} syntax for credit"),
             ),
             Self::ExtendsUnsupported { config } => (
                 format!(
@@ -242,6 +228,44 @@ impl TsAliasMapLoadGap {
 }
 
 impl TsAliasMap {
+    /// A map that resolves only in-workspace package names: the tsconfig
+    /// alias flag is off or its config did not load (#4554).
+    pub(crate) fn workspace_packages_only(
+        root: &Path,
+        packages: super::workspace_packages::WorkspacePackages,
+    ) -> Self {
+        Self {
+            root: root.to_path_buf(),
+            base_url: ".".to_string(),
+            packages,
+            ..Self::default()
+        }
+    }
+
+    /// Adds in-workspace package-name resolution after `paths` (#4554).
+    pub(crate) fn with_workspace_packages(
+        mut self,
+        packages: super::workspace_packages::WorkspacePackages,
+    ) -> Self {
+        self.packages = packages;
+        self
+    }
+
+    /// The workspace package directory a bare specifier names, when no
+    /// `paths` key owns it (#4769): an unresolved import of it is a package
+    /// manifest question, not a tsconfig one.
+    pub(crate) fn workspace_package_dir_for(&self, specifier: &str) -> Option<&Path> {
+        if self.tsconfig_loaded && self.paths_key_matches(specifier) {
+            return None;
+        }
+        self.packages.package_dir_for(specifier)
+    }
+
+    /// `true` when the map's `paths` entries came from a loaded config.
+    pub(crate) fn has_tsconfig(&self) -> bool {
+        self.tsconfig_loaded
+    }
+
     /// `true` when this map has no entries (opt-out / parse-failure path).
     pub(crate) fn is_empty(&self) -> bool {
         self.literal_entries.is_empty() && self.glob_entries.is_empty()
@@ -265,12 +289,7 @@ impl TsAliasMap {
         if self.is_empty() {
             return TsAliasUnresolveCause::NoPatterns;
         }
-        if self.literal_entries.contains_key(specifier)
-            || self
-                .glob_entries
-                .iter()
-                .any(|entry| match_glob(specifier, &entry.prefix, &entry.suffix).is_some())
-        {
+        if self.paths_key_matches(specifier) {
             // A key owned this specifier; the candidate itself failed.
             return TsAliasUnresolveCause::CandidateUnresolved;
         }
@@ -280,17 +299,41 @@ impl TsAliasMap {
     /// Resolve a non-relative specifier to a canonical workspace-relative path.
     ///
     /// Returns `None` (fail-closed) unless ALL of the following hold:
-    /// 1. `specifier` is non-relative (does not start with `./` or `../`).
+    /// 1. `specifier` is non-relative (not `.` / `..` and does not start
+    ///    with `./` or `../`).
     /// 2. An exact key or a unique longest-prefix single-`*` key matches.
     /// 3. The matched value array has exactly one entry.
     /// 4. The value template has at most one `*`.
     /// 5. After substituting the captured `*`, the candidate path resolves to
     ///    EXACTLY ONE existing workspace file (.ts/.tsx/.js/.jsx/.mts/.cts/
     ///    .mjs/.cjs).
+    ///
+    /// A specifier no `paths` key matches falls back to an in-workspace
+    /// package name (`workspace_packages.rs`, #4554), as the compiler falls
+    /// back to module resolution. A specifier a key does match never falls
+    /// back: the compiler uses that key's substitutions, so when this map
+    /// cannot pick one (several entries, a tie, two files) the import stays
+    /// unresolved rather than crediting the package's own entry.
     pub(crate) fn resolve(&self, specifier: &str) -> Option<PathBuf> {
-        if specifier.starts_with("./") || specifier.starts_with("../") {
+        if super::paths::is_relative_specifier(specifier) {
             return None; // relative paths are handled by the normal resolver
         }
+        if self.tsconfig_loaded && self.paths_key_matches(specifier) {
+            return self.resolve_paths(specifier);
+        }
+        self.packages.resolve(specifier)
+    }
+
+    /// Whether a `paths` key (exact or single-`*` pattern) owns `specifier`.
+    fn paths_key_matches(&self, specifier: &str) -> bool {
+        self.literal_entries.contains_key(specifier)
+            || self
+                .glob_entries
+                .iter()
+                .any(|entry| match_glob(specifier, &entry.prefix, &entry.suffix).is_some())
+    }
+
+    fn resolve_paths(&self, specifier: &str) -> Option<PathBuf> {
         if self.is_empty() {
             return None;
         }
@@ -417,14 +460,12 @@ pub(crate) fn load_alias_map_with_read_error(
                 Ok(map) => (Some(map), None, None),
                 Err(blocker) => {
                     let gap = match blocker {
-                        TsAliasMapBlocker::Unparseable {
-                            jsonc_comments,
-                            detail,
-                        } => TsAliasMapLoadGap::ConfigUnparseable {
-                            config: filename,
-                            jsonc_comments,
-                            detail,
-                        },
+                        TsAliasMapBlocker::Unparseable { detail } => {
+                            TsAliasMapLoadGap::ConfigUnparseable {
+                                config: filename,
+                                detail,
+                            }
+                        }
                         TsAliasMapBlocker::ExtendsUnsupported => {
                             TsAliasMapLoadGap::ExtendsUnsupported { config: filename }
                         }
@@ -449,18 +490,21 @@ pub(crate) fn load_alias_map_with_read_error(
 /// read successfully. Internal to `parse_alias_map`; surfaced to callers as
 /// a `TsAliasMapLoadGap`.
 enum TsAliasMapBlocker {
-    Unparseable {
-        jsonc_comments: bool,
-        detail: String,
-    },
+    Unparseable { detail: String },
     ExtendsUnsupported,
     IncompleteConfig,
 }
 
 fn parse_alias_map(root: &Path, text: &str) -> Result<TsAliasMap, TsAliasMapBlocker> {
-    let raw: RawTsConfig = serde_json::from_str(text).map_err(|err| {
+    // `tsc` reads tsconfig.json / jsconfig.json as JSONC (#4549): strip
+    // comments and trailing commas first, then parse strictly. A lexical
+    // failure (unterminated block comment or string) and a strict-parse
+    // failure of the normalized text both fail closed as `Unparseable`.
+    let normalized = strip_jsonc(text).map_err(|detail| TsAliasMapBlocker::Unparseable {
+        detail: detail.to_string(),
+    })?;
+    let raw: RawTsConfig = serde_json::from_str(&normalized).map_err(|err| {
         TsAliasMapBlocker::Unparseable {
-            jsonc_comments: text_has_jsonc_comment(text),
             // Bound the parser message: it can quote long input spans.
             detail: err.to_string().chars().take(160).collect(),
         }
@@ -523,44 +567,232 @@ fn parse_alias_map(root: &Path, text: &str) -> Result<TsAliasMap, TsAliasMapBloc
         base_url_absolute,
         literal_entries,
         glob_entries,
+        tsconfig_loaded: true,
+        packages: Default::default(),
     })
+}
+
+// ── Build-output (outDir) mapping (#4551) ─────────────────────────────────────
+
+/// Maps a relative import that names `tsc` build output back to its
+/// TypeScript source, from the root `tsconfig.json`'s own
+/// `compilerOptions.outDir` / `compilerOptions.rootDir` (#4551).
+///
+/// Tests of a compiled package often import the emitted file
+/// (`import { f } from '../build/lib/x.js'`). The build tree is excluded
+/// from the workspace walk, so without this mapping the import names an
+/// unindexed module and a change to `lib/x.ts` reads as `no_static_path`.
+///
+/// Independent of `[typescript] resolve_tsconfig_paths`: that opt-in governs
+/// non-relative `paths` aliases, whose templates can redirect arbitrary
+/// specifiers. This mapping only rewrites a RELATIVE import whose target
+/// does not exist, and only onto a source file that does exist, following
+/// the fixed `tsc` emit layout (`<rootDir>/<p>.ts` → `<outDir>/<p>.js`).
+///
+/// `extends` is not followed, but the root file's own `outDir`/`rootDir`
+/// are still read when it is present: `tsc` lets the extending file's own
+/// `compilerOptions` override the extended ones, so the root file's values
+/// are the effective ones. A root file without its own `outDir` and
+/// `rootDir` yields no mapping: an inherited value is a miss, never a guess,
+/// and an unset `rootDir` is inferred by `tsc` from its inputs, which this
+/// reader does not model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TsOutDirMap {
+    /// Workspace-relative `outDir`, `/`-separated, never empty.
+    out_dir: String,
+    /// Workspace-relative `rootDir`, `/`-separated; empty for the root.
+    root_dir: String,
+}
+
+impl TsOutDirMap {
+    /// Whether the workspace-relative path `joined` lies under `outDir`.
+    pub(crate) fn contains(&self, joined: &str) -> bool {
+        joined
+            .strip_prefix(self.out_dir.as_str())
+            .is_some_and(|rest| rest.starts_with('/'))
+    }
+
+    /// Source module (workspace-relative, extension stripped) for the
+    /// workspace-relative import target `joined`, when `joined` lies under
+    /// `outDir` and exactly one TypeScript source file exists at the mapped
+    /// path. The caller checks that nothing exists at `joined` itself.
+    pub(crate) fn source_module_for(&self, root: &Path, joined: &str) -> Option<String> {
+        let rest = joined
+            .strip_prefix(self.out_dir.as_str())?
+            .strip_prefix('/')?;
+        let (stem, extensions): (&str, &[&str]) = if let Some(stem) = rest.strip_suffix(".mjs") {
+            (stem, &["mts"])
+        } else if let Some(stem) = rest.strip_suffix(".cjs") {
+            (stem, &["cts"])
+        } else if let Some(stem) = rest.strip_suffix(".jsx") {
+            (stem, &["tsx"])
+        } else if let Some(stem) = rest.strip_suffix(".js") {
+            (stem, &["ts", "tsx"])
+        } else if [".ts", ".tsx", ".mts", ".cts"]
+            .iter()
+            .any(|extension| rest.ends_with(extension))
+        {
+            // `tsc` never emits TypeScript sources into outDir.
+            return None;
+        } else {
+            (rest, &["ts", "tsx"])
+        };
+        if stem.is_empty() || stem.ends_with('/') {
+            return None;
+        }
+        let module = if self.root_dir.is_empty() {
+            stem.to_string()
+        } else {
+            format!("{}/{stem}", self.root_dir)
+        };
+        let mut found = extensions.iter().filter(|extension| {
+            std::fs::symlink_metadata(root.join(format!("{module}.{extension}")))
+                .is_ok_and(|metadata| metadata.file_type().is_file())
+        });
+        // Exactly one source file: `x.ts` and `x.tsx` both present is
+        // ambiguous and fails closed.
+        match (found.next(), found.next()) {
+            (Some(_), None) => Some(module),
+            _ => None,
+        }
+    }
+}
+
+/// Load the root `tsconfig.json` outDir mapping. `None` (no mapping) when
+/// the file is absent, unreadable, not JSONC, lacks its own
+/// `compilerOptions.outDir` or `compilerOptions.rootDir`, or names an
+/// absolute, root-escaping or
+/// root-identical `outDir`, or an absolute or root-escaping `rootDir`.
+pub(crate) fn load_out_dir_map(root: &Path) -> Option<TsOutDirMap> {
+    let text = read_config_capped(&root.join("tsconfig.json")).ok()?;
+    parse_out_dir_map(&text)
+}
+
+fn parse_out_dir_map(text: &str) -> Option<TsOutDirMap> {
+    let normalized = strip_jsonc(text).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&normalized).ok()?;
+    let options = value.get("compilerOptions")?;
+    let out_dir = normalize_config_dir(options.get("outDir")?.as_str()?)?;
+    if out_dir.is_empty() {
+        return None;
+    }
+    // `rootDir` must be the root file's own: without it `tsc` infers the
+    // common directory of the included inputs (or inherits one through
+    // `extends`), and guessing the workspace root would map `dist/index.js`
+    // onto a root-level `index.ts` that never produced it (#4800 review).
+    let root_dir = normalize_config_dir(options.get("rootDir")?.as_str()?)?;
+    Some(TsOutDirMap { out_dir, root_dir })
+}
+
+/// Workspace-relative, `/`-separated form of a config directory (`./build`,
+/// `build/` → `build`; `.` → empty). `None` for an absolute, drive/UNC or
+/// `..`-bearing path.
+fn normalize_config_dir(raw: &str) -> Option<String> {
+    let raw = raw.replace('\\', "/");
+    if raw.starts_with('/') || raw.contains(':') || !is_safe_relative(Path::new(&raw)) {
+        return None;
+    }
+    let parts: Vec<&str> = raw
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect();
+    if parts.contains(&"..") {
+        return None;
+    }
+    Some(parts.join("/"))
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// `true` when `text` contains `//` or `/*` outside string literals — the
-/// JSONC comment syntax `tsc` accepts but the strict parser rejects. A
-/// conservative scanner: string state tracks backslash escapes; anything
-/// the scanner is unsure about stays `false` (the plain unparseable wording
-/// covers it).
-fn text_has_jsonc_comment(text: &str) -> bool {
-    let mut in_string = false;
-    let mut escaped = false;
+/// Normalize JSONC (the dialect `tsc` accepts for tsconfig.json /
+/// jsconfig.json) to strict JSON: remove `//` line comments, `/* */` block
+/// comments, and trailing commas before `}` / `]`, all outside string
+/// literals. String contents (including `//`, `/*`, `*/`, escaped quotes)
+/// are copied verbatim. Removed comments become whitespace (line comments
+/// keep their newline) so parser error positions stay meaningful.
+///
+/// Fails closed on an unterminated block comment or string literal; the
+/// caller reports that as an unparseable config. Everything else is left
+/// for the strict parser to accept or reject.
+///
+/// A leading UTF-8 byte-order mark is dropped (`tsc` accepts one, and editors
+/// on Windows write it; #4638 review): the strict parser rejects it.
+fn strip_jsonc(text: &str) -> Result<String, &'static str> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut out = String::with_capacity(text.len());
+    // Byte offset in `out` of a comma seen since the last significant
+    // token; dropped if the next significant character closes a container.
+    let mut pending_comma: Option<usize> = None;
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
-        if in_string {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            match ch {
-                '\\' => escaped = true,
-                '"' => in_string = false,
-                _ => {}
-            }
-            continue;
-        }
         match ch {
-            '"' => in_string = true,
-            '/' => {
-                if matches!(chars.peek(), Some('/') | Some('*')) {
-                    return true;
+            '"' => {
+                pending_comma = None;
+                out.push(ch);
+                let mut escaped = false;
+                let mut closed = false;
+                for inner in chars.by_ref() {
+                    out.push(inner);
+                    if escaped {
+                        escaped = false;
+                    } else if inner == '\\' {
+                        escaped = true;
+                    } else if inner == '"' {
+                        closed = true;
+                        break;
+                    }
+                }
+                if !closed {
+                    return Err("unterminated string literal");
                 }
             }
-            _ => {}
+            '/' if chars.peek() == Some(&'/') => {
+                // Line comment: skip to (but keep) the newline.
+                for inner in chars.by_ref() {
+                    if inner == '\n' {
+                        out.push('\n');
+                        break;
+                    }
+                }
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut prev_star = false;
+                let mut closed = false;
+                for inner in chars.by_ref() {
+                    if prev_star && inner == '/' {
+                        closed = true;
+                        break;
+                    }
+                    prev_star = inner == '*';
+                    if inner == '\n' {
+                        out.push('\n');
+                    }
+                }
+                if !closed {
+                    return Err("unterminated block comment");
+                }
+                out.push(' ');
+            }
+            ',' => {
+                pending_comma = Some(out.len());
+                out.push(ch);
+            }
+            '}' | ']' => {
+                if let Some(pos) = pending_comma.take() {
+                    out.replace_range(pos..pos + 1, " ");
+                }
+                out.push(ch);
+            }
+            _ => {
+                if !ch.is_whitespace() {
+                    pending_comma = None;
+                }
+                out.push(ch);
+            }
         }
     }
-    false
+    Ok(out)
 }
 
 /// `true` only when every component of `p` is a normal name or `.` — no
@@ -595,6 +827,8 @@ fn match_glob(specifier: &str, prefix: &str, suffix: &str) -> Option<String> {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
+#[cfg(test)]
+mod out_dir_tests;
 #[cfg(test)]
 mod precedence_tests;
 
@@ -846,6 +1080,24 @@ mod tests {
         Ok(())
     }
 
+    /// `.` / `..` are relative specifiers (#4546, #4638 review): even a
+    /// `paths` key spelled `..` never routes them through alias resolution.
+    #[test]
+    fn bare_dot_specifiers_are_relative_not_aliases() -> Result<(), String> {
+        let root = temp_dir("relative-dots");
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"..":["src/calc"],".":["src/calc"],"@calc":["src/calc"]}}}"#,
+        );
+        write(&root, "src/calc.ts", "export const calc = 1;\n");
+        let map = load_alias_map(&root).ok_or("should parse")?;
+        assert!(map.resolve("@calc").is_some(), "control alias must resolve");
+        assert!(map.resolve("..").is_none());
+        assert!(map.resolve(".").is_none());
+        Ok(())
+    }
+
     #[test]
     fn empty_map_returns_none() {
         let map = TsAliasMap::default();
@@ -975,6 +1227,145 @@ mod tests {
             .ok_or("relative baseUrl must still resolve")?;
         let resolved_str = resolved.to_string_lossy().replace('\\', "/");
         assert_eq!(resolved_str, "src/owner.ts");
+        Ok(())
+    }
+
+    // ── JSONC (#4549) ─────────────────────────────────────────────────────
+
+    /// `tsc --init`-shaped config: line comments, a block comment, and
+    /// trailing commas. The alias must resolve exactly as the strict
+    /// equivalent does.
+    #[test]
+    fn jsonc_tsconfig_with_comments_and_trailing_commas_resolves() -> Result<(), String> {
+        let root = temp_dir("jsonc-resolves");
+        write(
+            &root,
+            "tsconfig.json",
+            "{\n  // Visit https://aka.ms/tsconfig to read more\n  /* Language and Environment */\n  \"compilerOptions\": {\n    \"target\": \"es2016\", /* Set the JS language version. */\n    \"baseUrl\": \".\", // anchor\n    \"paths\": {\n      \"@/*\": [\"src/*\",],\n    },\n  },\n}\n",
+        );
+        write(&root, "src/owner.ts", "export function owner() {}");
+        let (map, err, gap) = load_alias_map_with_read_error(&root);
+        assert!(err.is_none(), "no read error expected");
+        assert!(
+            gap.is_none(),
+            "JSONC config must not produce a gap: {gap:?}"
+        );
+        let map = map.ok_or("JSONC config should parse")?;
+        let resolved = map.resolve("@/owner").ok_or("should resolve")?;
+        assert_eq!(
+            resolved.to_string_lossy().replace('\\', "/"),
+            "src/owner.ts"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn strip_jsonc_drops_leading_byte_order_mark() -> Result<(), String> {
+        let out = strip_jsonc("\u{feff}{ // bom\n \"a\": 1, }")?;
+        let value: serde_json::Value = serde_json::from_str(&out).map_err(|e| e.to_string())?;
+        assert_eq!(value, serde_json::json!({ "a": 1 }));
+        // Only a LEADING mark is dropped; one inside a string is content.
+        let inner = strip_jsonc("{ \"a\": \"\u{feff}x\" }")?;
+        assert!(inner.contains('\u{feff}'));
+        Ok(())
+    }
+
+    #[test]
+    fn bom_prefixed_tsconfig_resolves_aliases() -> Result<(), String> {
+        let root = temp_dir("bom");
+        write(
+            &root,
+            "tsconfig.json",
+            "\u{feff}{\"compilerOptions\":{\"baseUrl\":\".\",\"paths\":{\"@calc\":[\"src/calc\"]}}}",
+        );
+        write(&root, "src/calc.ts", "export const calc = 1;\n");
+        let map = load_alias_map(&root).ok_or("a BOM-prefixed tsconfig must parse")?;
+        assert!(map.resolve("@calc").is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn strip_jsonc_removes_line_and_block_comments() -> Result<(), String> {
+        let out = strip_jsonc("{ // line\n \"a\": /* block\n spans */ 1 }")?;
+        let value: serde_json::Value = serde_json::from_str(&out).map_err(|e| e.to_string())?;
+        assert_eq!(value, serde_json::json!({ "a": 1 }));
+        Ok(())
+    }
+
+    #[test]
+    fn strip_jsonc_removes_trailing_commas_before_close() -> Result<(), String> {
+        let out = strip_jsonc("{ \"a\": [1, 2, /* c */ ], \"b\": {\"c\": 3,\n // x\n },\n}")?;
+        let value: serde_json::Value = serde_json::from_str(&out).map_err(|e| e.to_string())?;
+        assert_eq!(value, serde_json::json!({ "a": [1, 2], "b": { "c": 3 } }));
+        Ok(())
+    }
+
+    /// Comment-looking and comma-looking text inside string literals is data,
+    /// including after an escaped quote.
+    #[test]
+    fn strip_jsonc_preserves_string_contents() -> Result<(), String> {
+        let text = r#"{"@/*": ["src/*"], "u": "http://x/*y*/", "q": "a\"// b,}", "e": "c\\"}"#;
+        let out = strip_jsonc(text)?;
+        assert_eq!(out, text, "no byte outside a comment may change");
+        let value: serde_json::Value = serde_json::from_str(&out).map_err(|e| e.to_string())?;
+        assert_eq!(value["u"], "http://x/*y*/");
+        assert_eq!(value["q"], "a\"// b,}");
+        assert_eq!(value["e"], "c\\");
+        Ok(())
+    }
+
+    /// Lexical damage fails closed instead of guessing where the comment or
+    /// string was meant to end.
+    #[test]
+    fn strip_jsonc_fails_closed_on_unterminated_comment_or_string() {
+        assert_eq!(
+            strip_jsonc("{ \"a\": 1 /* never closed }"),
+            Err("unterminated block comment")
+        );
+        assert_eq!(strip_jsonc("{ /*/ }"), Err("unterminated block comment"));
+        assert_eq!(
+            strip_jsonc("{ \"a\": \"open }"),
+            Err("unterminated string literal")
+        );
+    }
+
+    /// An unterminated block comment in tsconfig.json yields the typed
+    /// unparseable gap and still blocks the jsconfig.json fallback.
+    #[test]
+    fn unterminated_block_comment_fails_closed_as_unparseable() {
+        let root = temp_dir("jsonc-unterminated");
+        write(
+            &root,
+            "tsconfig.json",
+            "{ /* open\n \"compilerOptions\": {\"baseUrl\":\".\",\"paths\":{\"@/*\":[\"src/*\"]}} }",
+        );
+        write(
+            &root,
+            "jsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        );
+        let (map, err, gap) = load_alias_map_with_read_error(&root);
+        assert!(map.is_none() && err.is_none());
+        assert_eq!(
+            gap,
+            Some(TsAliasMapLoadGap::ConfigUnparseable {
+                config: "tsconfig.json",
+                detail: "unterminated block comment".to_string(),
+            })
+        );
+    }
+
+    /// Lone commas that are not trailing (`[,1]`, `{,}` with content, `,,`)
+    /// are not "fixed" — they still reach the strict parser and fail.
+    #[test]
+    fn strip_jsonc_leaves_non_trailing_comma_errors_for_the_parser() -> Result<(), String> {
+        for bad in ["[,1]", "[1,,2]", "{\"a\":1,,}"] {
+            let out = strip_jsonc(bad)?;
+            assert!(
+                serde_json::from_str::<serde_json::Value>(&out).is_err(),
+                "{bad:?} must stay malformed after normalization, got {out:?}"
+            );
+        }
         Ok(())
     }
 }
