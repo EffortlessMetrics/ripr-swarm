@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import { createHash } from 'crypto';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
@@ -769,6 +770,9 @@ suite('Extension Smoke', () => {
       // Keep the preview journey on the same host/session as the trusted Rust
       // journey so state leakage remains observable across the sequence.
       await editAndSaveDocumentThenWaitForAnalysis(document, 60000);
+      // The server withholds a ledger whose source_subject does not match the
+      // files on disk (#4544), so stamp it after the save changed pricing.ts.
+      await writeEditorGapSmokeLedger();
       await vscode.commands.executeCommand('ripr.refreshDiagnostics');
       await vscode.commands.executeCommand('ripr.showStatus');
 
@@ -5220,13 +5224,26 @@ async function writeEditorGapSmokeFiles(): Promise<void> {
       ''
     ].join('\n')
   );
+}
+
+// Every file the ledger record names, stamped with its current digest the way
+// a real producer stamps the files its analysis read.
+const EDITOR_GAP_SMOKE_SUBJECT_FILES = ['src/pricing.ts', 'tests/pricing.test.ts'];
+
+async function writeEditorGapSmokeLedger(): Promise<void> {
+  const files = await Promise.all(
+    EDITOR_GAP_SMOKE_SUBJECT_FILES.map(async (relativePath) => ({
+      path: relativePath,
+      digest: `sha256:${createHash('sha256').update(await fs.readFile(workspaceFilePath(relativePath))).digest('hex')}`
+    }))
+  );
   await writeWorkspaceFile(
     'target/ripr/reports/gap-decision-ledger.json',
-    JSON.stringify(editorGapSmokeLedger(), null, 2)
+    JSON.stringify({ ...editorGapSmokeLedger(), source_subject: { digest_algorithm: 'sha256', files } }, null, 2)
   );
 }
 
-function editorGapSmokeLedger(): unknown {
+function editorGapSmokeLedger(): Record<string, unknown> {
   return {
     schema_version: '0.1',
     tool: 'ripr',
