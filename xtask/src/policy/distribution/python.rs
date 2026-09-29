@@ -139,6 +139,12 @@ pub(super) fn validate_python_adapter(
         &contract.python.binding,
         &mut violations,
     );
+    check_single_maturin_target(
+        sources.manifest_path,
+        &value,
+        &contract.product.binary,
+        &mut violations,
+    );
     check_string(
         sources.manifest_path,
         &value,
@@ -194,6 +200,55 @@ pub(super) fn validate_python_adapter(
     );
 
     violations
+}
+
+fn check_single_maturin_target(
+    path: &str,
+    value: &Value,
+    expected_name: &str,
+    violations: &mut Vec<String>,
+) {
+    let field_path = &["tool", "maturin", "targets"];
+    let Some(targets) = value_at(value, field_path).and_then(Value::as_array) else {
+        violations.push(format!(
+            "{path}: {} must select exactly one Cargo target",
+            field_path.join(".")
+        ));
+        return;
+    };
+    if targets.len() != 1 {
+        violations.push(format!(
+            "{path}: {} must contain exactly one target, got {}",
+            field_path.join("."),
+            targets.len()
+        ));
+        return;
+    }
+    let target = &targets[0];
+    let name = target.get("name").and_then(Value::as_str);
+    let kind = target.get("kind").and_then(Value::as_str);
+    if name != Some(expected_name) || kind != Some("bin") {
+        violations.push(format!(
+            "{path}: {} must be [{{ name = `{expected_name}`, kind = `bin` }}], got name={name:?} kind={kind:?}",
+            field_path.join(".")
+        ));
+    }
+    let extra_fields = target
+        .as_table()
+        .map(|table| {
+            table
+                .keys()
+                .filter(|key| key.as_str() != "name" && key.as_str() != "kind")
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !extra_fields.is_empty() {
+        violations.push(format!(
+            "{path}: {} target contains unsupported fields {extra_fields:?}",
+            field_path.join(".")
+        ));
+    }
 }
 
 fn validate_package_readme(path: &str, text: &str, violations: &mut Vec<String>) {
