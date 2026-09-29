@@ -59,4 +59,4 @@ return. The companion `rust_same_method_owner_type_positive` pins the inverse
   the receiver is another impl type or unresolved.
 - Absorb #4478 (method-call confirmation pin), #4486 (proximity-only oracle),
   or #3727 (CallFact receiver fields).
-- Use mutation-runtime outcome vocabulary (`killed`, `survived`).
+- Use mutation-runtime outcome vocabulary.
