@@ -11,6 +11,15 @@ are scoped or reviewed.
 
 ### Fixed
 
+- TypeScript and Python: one large file no longer slows every check.
+  Line numbers were found by rescanning the file from the start for each
+  owner, so an untouched 1.3 MB JavaScript file with 30 000 functions added
+  about 31 s to each TypeScript check (now 0.4 s in total), and a 1.7 MB
+  Python module took 4 min 46 s (now 2.5 s). Line numbers are unchanged.
+- TypeScript: minified bundles (`*.min.js`, `*.min.mjs`, `*.min.cjs`) are
+  skipped like `*.generated.*` files. A rebuilt `public/js/app.min.js`
+  became a `no_static_path` finding whose JSON carried the 1.4 MB line
+  twice.
 - Rust: checked-in generated code and `cargo vendor` crates no longer turn
   into findings. A file whose first five lines carry an `@generated`
   (prost, tonic, Diesel), rust-bindgen, or `Code generated ... DO NOT EDIT`

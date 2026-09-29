@@ -4943,6 +4943,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         "build/out.js",
         "coverage/report.ts",
         "src/client.generated.ts",
+        "public/js/app.min.js",
     ] {
         let path = root.join(rel);
         let parent = path
@@ -4980,6 +4981,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         "build/out.js",
         "coverage/report.ts",
         "src/client.generated.ts",
+        "public/js/app.min.js",
     ]
     .into_iter()
     .map(|path| ChangedFile {
@@ -5011,7 +5013,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
             .file
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.contains(".generated."))
+            .is_some_and(|name| name.contains(".generated.") || name.ends_with(".min.js"))
     });
     if excluded_finding {
         return Err(format!(
