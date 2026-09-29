@@ -1135,6 +1135,7 @@ fixtures = [
 code = [
   "crates/ripr/src/app/annotations.rs",
   "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/review_comments.rs",
   "crates/ripr/src/cli/command.rs",
   "crates/ripr/src/cli/help.rs",
   "crates/ripr/src/analysis/seam_inventory.rs",
@@ -3793,6 +3794,7 @@ code = [
   "crates/ripr/src/output/gap_decision_ledger.rs",
   "crates/ripr/src/output/mod.rs",
   "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/review_comments.rs",
   "crates/ripr/src/cli/help.rs",
   "crates/ripr/src/output/first_useful_action.rs",
   "crates/ripr/src/output/pr_evidence_ledger.rs",
@@ -5272,7 +5274,8 @@ code = [
   "crates/ripr/src/output/review_comments.rs",
   "crates/ripr/src/output/evidence_record.rs",
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs",
-  "crates/ripr/src/cli/commands.rs"
+  "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/review_comments.rs"
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0068-pr-review-card-use-case.md",
