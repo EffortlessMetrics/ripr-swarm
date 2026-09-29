@@ -255,6 +255,18 @@ fn render_agent_seam_packets_json_with_root(
         .collect();
 
     out.push_str(&format!("  \"packets_total\": {},\n", actionable.len()));
+    // #4379: portable and standalone documents write the workflow snapshot
+    // family in their `next` block, so their embedded records verify that
+    // family. A prepared packet's `next` block advertises no independent
+    // verify route — the after phase verifies against the attempt's retained
+    // before snapshot, not the repository-global path another attempt can
+    // overwrite — so its embedded records keep every verify projection null.
+    let embedded_verify_command = match context {
+        PacketCommandContext::Prepared { .. } => None,
+        PacketCommandContext::Portable | PacketCommandContext::Standalone { .. } => {
+            Some(workflow_snapshot_verify_command())
+        }
+    };
     out.push_str("  \"packets\": [");
     for (idx, entry) in actionable.iter().enumerate() {
         if idx == 0 {
@@ -265,6 +277,7 @@ fn render_agent_seam_packets_json_with_root(
             entry,
             canonical_gaps.get(entry.seam.id()),
             causal_projection,
+            embedded_verify_command.as_deref(),
         );
         if idx + 1 != actionable.len() {
             out.push_str(",\n");
@@ -2039,6 +2052,7 @@ fn push_packet_json(
     entry: &ClassifiedSeam,
     canonical_gap: Option<&CanonicalGapIdentity>,
     causal_projection: Option<&CausalDeltaArtifact>,
+    verify_command: Option<&str>,
 ) {
     let seam = &entry.seam;
     let evidence = &entry.evidence;
@@ -2325,15 +2339,19 @@ fn push_packet_json(
             out.push_str(&format!("      \"{}\": {},\n", key, value));
         }
     }
-    // #4379: this document's own `next` block writes the workflow snapshot
-    // family, so the embedded record's verify specs must read that family —
-    // not the editor pilot family, whose snapshots nothing here produces.
-    // An orchestrator following the typed spec would otherwise verify against
-    // snapshots that were never written.
+    // #4379: the embedded record verifies only the snapshot family this
+    // document actually binds to. Portable and standalone documents write the
+    // workflow family in their `next` block, so their records verify that
+    // family — not the editor pilot family, whose snapshots nothing here
+    // produces. Prepared documents name no independent verify route (their
+    // after phase verifies the attempt's retained before snapshot), so their
+    // records keep every verify projection null: an orchestrator following the
+    // typed spec can never verify against a snapshot another attempt can
+    // overwrite.
     let evidence_record = evidence_record_json_value(&evidence_record_with_verify_command(
         entry,
         canonical_gap,
-        &workflow_snapshot_verify_command(),
+        verify_command,
     ));
     out.push_str("      \"evidence_record\": ");
     out.push_str(&evidence_record.to_string());
@@ -6284,6 +6302,58 @@ mod tests {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// A prepared packet's after phase verifies against the attempt's
+    /// retained before snapshot, so the packet advertises no independent
+    /// verify route: its embedded record keeps every verify projection null
+    /// and names no snapshot-family path, while `repair_after_command` stays
+    /// the only continuation (#4379). Naming the repository-global workflow
+    /// snapshot instead would let an orchestrator verify against a baseline
+    /// another attempt can overwrite.
+    #[test]
+    fn prepared_packet_evidence_record_names_no_independent_verify_route() -> Result<(), String> {
+        let entry = weakly_gripped_classified();
+        let rendered = render_agent_seam_packet_json_with_context(
+            &entry,
+            PacketCommandContext::Prepared {
+                root: "/selected root",
+                attempt_id: "repair-attempt-selected",
+                authorization_suffix: None,
+            },
+        );
+        let value: serde_json::Value =
+            serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+        let record = value
+            .pointer("/packets/0/evidence_record")
+            .ok_or_else(|| format!("missing packet evidence_record in: {rendered}"))?;
+        for pointer in [
+            "/recommendation/verify_command",
+            "/canonical_item/verify_command",
+            "/canonical_item/command_specs/verify",
+        ] {
+            assert_eq!(
+                record.pointer(pointer),
+                Some(&serde_json::Value::Null),
+                "{pointer} must stay null for a prepared packet: {record}"
+            );
+        }
+        for snapshot in [
+            WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+            WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+            "target/ripr/pilot/repo-exposure.json",
+            "target/ripr/pilot/after.repo-exposure.json",
+        ] {
+            assert!(
+                !record.to_string().contains(snapshot),
+                "prepared record must not name the snapshot {snapshot}: {record}"
+            );
+        }
+        assert!(
+            value.pointer("/next/repair_after_command").is_some(),
+            "prepared packet must still carry its repair continuation: {rendered}"
+        );
         Ok(())
     }
 

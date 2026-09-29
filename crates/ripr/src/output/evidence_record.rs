@@ -323,21 +323,25 @@ pub(crate) fn evidence_record_for(
     entry: &ClassifiedSeam,
     canonical_gap: Option<&CanonicalGapIdentity>,
 ) -> EvidenceRecord {
-    evidence_record_with_verify_command(entry, canonical_gap, VERIFY_COMMAND)
+    evidence_record_with_verify_command(entry, canonical_gap, Some(VERIFY_COMMAND))
 }
 
 /// [`evidence_record_for`] with the verify step bound to a specific snapshot
 /// family. A producer whose document writes the snapshots its verify step
 /// reads passes that family (the agent seam packet passes
 /// [`workflow_snapshot_verify_command`], #4379); the default stays the editor
-/// pilot family. The command flows into every verify projection —
-/// `recommendation.verify_command`, `canonical_item.verify_command`, and the
-/// parsed `canonical_item.command_specs.verify` — so the three cannot
-/// disagree.
+/// pilot family. A producer whose document advertises no independent verify
+/// route passes [`None`]: every verify projection then stays null even for an
+/// actionable record (the prepared repair packet, whose after phase verifies
+/// against the attempt's retained before snapshot rather than any path the
+/// document itself names, #4379). The command flows into every verify
+/// projection — `recommendation.verify_command`,
+/// `canonical_item.verify_command`, and the parsed
+/// `canonical_item.command_specs.verify` — so the three cannot disagree.
 pub(crate) fn evidence_record_with_verify_command(
     entry: &ClassifiedSeam,
     canonical_gap: Option<&CanonicalGapIdentity>,
-    verify_command: &str,
+    verify_command: Option<&str>,
 ) -> EvidenceRecord {
     let missing_records = missing_discriminator_records_for(entry);
     let recommended_test = recommended_test_for(entry);
@@ -913,7 +917,7 @@ fn recommendation_for(
     missing_records: &[crate::output::agent_seam_packets::MissingRecord],
     actionability: &EvidenceRecordActionability,
     recommended_test: &RecommendedTest,
-    verify_command: &str,
+    verify_command: Option<&str>,
 ) -> EvidenceRecordRecommendation {
     let actionable = actionability.has_concrete_guidance;
     let static_limited = actionability.class == "static_limitation";
@@ -929,7 +933,13 @@ fn recommendation_for(
     let assertion_shape = actionable
         .then(|| assertion_shape_record(assertion_shape_for_entry(entry)))
         .flatten();
-    let verify_command = actionable.then(|| verify_command.to_string());
+    // Fail-closed: a producer that names no verify route (None) keeps every
+    // verify projection null, and actionability alone never manufactures one.
+    let verify_command = if actionable {
+        verify_command.map(str::to_string)
+    } else {
+        None
+    };
     let nearest_test_to_imitate =
         nearest_strong_test_to_imitate(entry.seam.kind(), &entry.evidence)
             .or_else(|| entry.evidence.related_tests.first())
@@ -2746,7 +2756,9 @@ mod tests {
         let entry = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
         let workflow = workflow_snapshot_verify_command();
         let json = evidence_record_json_value(&evidence_record_with_verify_command(
-            &entry, None, &workflow,
+            &entry,
+            None,
+            Some(&workflow),
         ));
 
         assert_eq!(
@@ -2798,11 +2810,35 @@ mod tests {
         let json = evidence_record_json_value(&evidence_record_with_verify_command(
             &limited,
             None,
-            &workflow_snapshot_verify_command(),
+            Some(&workflow_snapshot_verify_command()),
         ));
 
         assert_eq!(json["recommendation"]["verify_command"], Value::Null);
         assert_eq!(json["canonical_item"]["verify_command"], Value::Null);
+    }
+
+    /// A producer whose document advertises no independent verify route
+    /// (the prepared repair packet: its after phase verifies against the
+    /// attempt's retained before snapshot) passes [`None`]; an actionable
+    /// record must still keep every verify projection null, so following the
+    /// typed spec can never verify against a snapshot family the document
+    /// does not bind to this attempt (fail-closed, #4379).
+    #[test]
+    fn verify_command_none_keeps_every_verify_projection_null_for_actionable_records() {
+        let entry = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
+        let json =
+            evidence_record_json_value(&evidence_record_with_verify_command(&entry, None, None));
+
+        assert_eq!(
+            json["actionability"]["has_concrete_guidance"],
+            Value::Bool(true)
+        );
+        assert_eq!(json["recommendation"]["verify_command"], Value::Null);
+        assert_eq!(json["canonical_item"]["verify_command"], Value::Null);
+        assert_eq!(
+            json["canonical_item"]["command_specs"]["verify"]["human_display"],
+            Value::Null
+        );
     }
 
     #[test]
