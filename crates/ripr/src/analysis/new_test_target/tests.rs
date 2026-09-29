@@ -186,7 +186,7 @@ fn admit_from_source(file: &str, source: &str) -> NewTestTargetAdmission {
 }
 
 #[test]
-fn governed_cfg_test_modules_skip_nested_and_fn_local_modules() {
+fn governed_cfg_test_modules_skip_nested_and_fn_local_modules() -> Result<(), String> {
     let source = r#"
 fn discounted_total(amount: i32, threshold: i32) -> i32 {
     #[cfg(test)]
@@ -205,19 +205,23 @@ mod tests {
     }
 }
 "#;
-    let modules = governed_cfg_test_modules(source).expect("parser-valid source");
-    assert_eq!(
-        modules
-            .iter()
-            .map(|module| (module.name.as_str(), module.parent_modules.as_slice()))
-            .collect::<Vec<_>>(),
-        vec![("tests", [].as_slice())],
-        "fn-nested and cfg-test-nested modules must not compete as anchors: {modules:?}"
-    );
+    let modules = governed_cfg_test_modules(source)
+        .ok_or_else(|| "parser-valid source should yield governed modules".to_string())?;
+    if modules
+        .iter()
+        .map(|module| (module.name.as_str(), module.parent_modules.as_slice()))
+        .collect::<Vec<_>>()
+        != vec![("tests", [].as_slice())]
+    {
+        return Err(format!(
+            "fn-nested and cfg-test-nested modules must not compete as anchors: {modules:?}"
+        ));
+    }
+    Ok(())
 }
 
 #[test]
-fn cfg_all_test_still_counts_as_one_governed_module() {
+fn cfg_all_test_still_counts_as_one_governed_module() -> Result<(), String> {
     let source = r#"
 fn discounted_total(amount: i32, threshold: i32) -> i32 { amount }
 
@@ -226,14 +230,19 @@ mod unit {
     use super::*;
 }
 "#;
-    let modules = governed_cfg_test_modules(source).expect("parser-valid source");
-    assert_eq!(modules.len(), 1);
-    assert_eq!(modules[0].name, "unit");
-    assert!(modules[0].is_inline);
+    let modules = governed_cfg_test_modules(source)
+        .ok_or_else(|| "parser-valid source should yield governed modules".to_string())?;
+    if modules.len() != 1 {
+        return Err(format!("expected one module, got {modules:?}"));
+    }
+    if modules[0].name != "unit" || !modules[0].is_inline {
+        return Err(format!("expected inline unit module, got {modules:?}"));
+    }
+    Ok(())
 }
 
 #[test]
-fn production_owner_module_path_excludes_cfg_test_modules() {
+fn production_owner_module_path_excludes_cfg_test_modules() -> Result<(), String> {
     let source = r#"
 mod inner {
     fn discounted_total(amount: i32, threshold: i32) -> i32 { amount }
@@ -244,8 +253,12 @@ mod inner {
     }
 }
 "#;
-    let path = production_owner_module_path(source, 3).expect("owner line 3");
-    assert_eq!(path, vec!["inner".to_string()]);
+    let path = production_owner_module_path(source, 3)
+        .ok_or_else(|| "owner on line 3 should resolve".to_string())?;
+    if path != ["inner".to_string()] {
+        return Err(format!("expected [inner], got {path:?}"));
+    }
+    Ok(())
 }
 
 /// Positive: a same-file private owner plus one exact inline cfg(test) module
