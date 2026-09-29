@@ -80,16 +80,16 @@ fn for_of_test_with_template_title_is_extracted_with_placeholder_name() {
 #[test]
 fn for_each_for_and_for_in_bodies_are_extracted() {
     let file = Path::new("test/url.test.ts");
-    let source = "import { it, expect } from 'vitest';\nimport { withBase } from '../src/url';\n\ncases.forEach((c) => it(c.name, () => {\n  expect(withBase(c.input, '/')).toBe(c.out);\n}));\n\nfor (let i = 0; i < 2; i++) {\n  it('indexed ' + i, () => {\n    expect(withBase(String(i), '/')).toBe('/' + i);\n  });\n}\n\nfor (const key in table) it(`key ${key}`, () => {\n  expect(withBase(key, '/')).toBe(table[key]);\n});\n\nfor (const row of rows) {\n  describe(`row ${row.id}`, () => {\n    it('keeps the base', () => {\n      expect(withBase(row.input, '/')).toBe(row.out);\n    });\n  });\n}\n";
+    let source = "import { it, expect } from 'vitest';\nimport { withBase } from '../src/url';\nconst cases = [{ name: 'a', input: 'a', out: '/a' }];\nconst table = { a: '/a' };\nconst rows = [{ id: 1, input: 'a', out: '/a' }];\ncases.forEach((c) => it(c.name, () => {\n  expect(withBase(c.input, '/')).toBe(c.out);\n}));\n\nfor (let i = 0; i < 2; i++) {\n  it('indexed ' + i, () => {\n    expect(withBase(String(i), '/')).toBe('/' + i);\n  });\n}\n\nfor (const key in table) it(`key ${key}`, () => {\n  expect(withBase(key, '/')).toBe(table[key]);\n});\n\nfor (const row of rows) {\n  describe(`row ${row.id}`, () => {\n    it('keeps the base', () => {\n      expect(withBase(row.input, '/')).toBe(row.out);\n    });\n  });\n}\n";
     let tests = extract_tests(file, source);
     let names: Vec<&str> = tests.iter().map(|test| test.name.as_str()).collect();
     assert_eq!(
         names,
         vec![
-            "<computed title, line 4>",
-            "<computed title, line 9>",
-            "<computed title, line 14>",
-            "<computed title, line 19> keeps the base",
+            "<computed title, line 6>",
+            "<computed title, line 11>",
+            "<computed title, line 16>",
+            "<computed title, line 21> keeps the base",
         ]
     );
     assert!(
@@ -178,6 +178,77 @@ fn loop_variable_shadows_an_enclosing_receiver() -> Result<(), String> {
         finding.class,
         ExposureClass::NoStaticPath,
         "the loop's `cart` is not a Cart, evidence: {:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn loops_not_known_to_run_are_not_walked() {
+    // Each iterable may be empty at runtime: an empty `const`, a `let` that
+    // may be reassigned, an import, a describe parameter, a `const` shadowed
+    // by a loop variable, and a counted loop with a non-literal bound. A test
+    // registered inside would be credited without existing.
+    let file = Path::new("test/url.test.ts");
+    let source = "import { it, expect } from 'vitest';\nimport { withBase } from '../src/url';\nimport { imported } from './cases';\nconst empty = [];\nlet mutable = [{ input: 'a' }];\nconst outer = [{ input: 'a' }];\nfor (const c of empty) {\n  it('empty const', () => {\n    expect(withBase(c.input, '/')).toBe('/a');\n  });\n}\nfor (const c of mutable) {\n  it('let binding', () => {\n    expect(withBase(c.input, '/')).toBe('/a');\n  });\n}\nimported.forEach((c) => it('imported', () => {\n  expect(withBase(c.input, '/')).toBe('/a');\n}));\ndescribe.each([[[]]])('param %s', (param) => {\n  for (const c of param) {\n    it('parameter', () => {\n      expect(withBase(c.input, '/')).toBe('/a');\n    });\n  }\n});\nfor (const outer of [[]]) {\n  for (const c of outer) {\n    it('shadowed const', () => {\n      expect(withBase(c.input, '/')).toBe('/a');\n    });\n  }\n}\nfor (let i = 0; i < n; i++) {\n  it('counted', () => {\n    expect(withBase(String(i), '/')).toBe('/0');\n  });\n}\n";
+    let tests = extract_tests(file, source);
+    assert!(tests.is_empty(), "got {tests:?}");
+    assert!(
+        detect_partial_test_extraction(file, source, &tests).is_some(),
+        "the skipped registrations stay disclosed"
+    );
+}
+
+#[test]
+fn loops_over_known_nonempty_values_are_walked() {
+    // The ufo shapes: a describe-level `const tests = [...]` array, an
+    // object enumerated by `for...in`, and `Object.entries` of a
+    // file-level `const` behind a TypeScript `as const` wrapper.
+    let file = Path::new("test/url.test.ts");
+    let source = "import { it, expect, describe } from 'vitest';\nimport { withBase } from '../src/url';\nconst table = { a: '/a' } as const;\ndescribe('withBase', () => {\n  const tests = [{ input: 'a', out: '/a' }];\n  for (const t of tests) {\n    it(JSON.stringify(t), () => {\n      expect(withBase(t.input, '/')).toBe(t.out);\n    });\n  }\n  for (const input in table) {\n    it(input, () => {\n      expect(withBase(input, '/')).toBe('/a');\n    });\n  }\n  for (const [input, out] of Object.entries(table)) {\n    it(input, () => {\n      expect(withBase(input, '/')).toBe(out);\n    });\n  }\n});\n";
+    let tests = extract_tests(file, source);
+    assert_eq!(tests.len(), 3, "got {tests:?}");
+    assert!(detect_partial_test_extraction(file, source, &tests).is_none());
+}
+
+#[test]
+fn loop_variable_shadowing_the_imported_owner_is_not_exposed() -> Result<(), String> {
+    // Inside the loop `withBase` is the loop's own binding, not the import,
+    // so the strong `toBe` oracle observes a fake. End to end, the changed
+    // owner must not read `exposed`.
+    let source = "import { it, expect } from 'vitest';\nimport { withBase } from '../src/url';\nfor (const withBase of [(input: string, base: string) => 'fake']) {\n  it('fake', () => {\n    expect(withBase('a', '/')).toBe('fake');\n  });\n}\n";
+    let finding = with_base_finding("loop-shadow", source)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a loop-variable shadow is not an owner call: {:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn describe_parameter_shadowing_the_imported_owner_is_not_exposed() -> Result<(), String> {
+    let source = "import { describe, it, expect } from 'vitest';\nimport { withBase } from '../src/url';\ndescribe.each([[() => 'fake']])('case', (withBase) => {\n  it('fake', () => {\n    expect(withBase('a', '/')).toBe('fake');\n  });\n});\n";
+    let finding = with_base_finding("describe-param-shadow", source)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn zero_iteration_loop_does_not_expose_the_owner() -> Result<(), String> {
+    // `rows` is empty, so no test registers at runtime.
+    let source = "import { it, expect } from 'vitest';\nimport { withBase } from '../src/url';\nconst rows = [];\nfor (const row of rows) {\n  it('checks', () => {\n    expect(withBase('a', '/')).toBe('/a');\n  });\n}\n";
+    let finding = with_base_finding("zero-iteration", source)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
         finding.evidence
     );
     Ok(())

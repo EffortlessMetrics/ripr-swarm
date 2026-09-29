@@ -117,10 +117,17 @@ Test discovery:
   `for...of`, or `for...in` loop body or a `.forEach(...)` callback, at file
   or `describe` level. The body is extracted once and relates to owners
   exactly as an ordinary test body does; the loop variables and callback
-  parameters shadow every enclosing binding of the same name. A loop over a
-  literally empty array, or a `for...of`/`for...in` whose target is not a
-  declaration, is not walked and stays disclosed as
-  `typescript_test_extraction_partial`.
+  parameters shadow every enclosing binding of the same name, including an
+  imported owner or class name, so a call through a shadowing binding is not
+  an owner call. A loop is walked only when it is known to run at least
+  once: its iterable is a non-empty array or object literal,
+  `Object.entries`/`keys`/`values` of one, or a `const` whose innermost
+  binding in scope is a single declaration of one; a counted `for` needs a
+  literal start and bound that admit the first iteration. A test inside any
+  other loop (an empty, reassignable, imported or parameter iterable, a
+  non-literal bound) could be credited without existing, so that loop is not
+  walked and stays disclosed as `typescript_test_extraction_partial`, as does
+  a `for...of`/`for...in` whose target is not a declaration.
 - a computed title (a template literal with substitutions, a concatenation,
   an identifier) is never evaluated: the test is named by the enclosing
   `describe` names, the placeholder `<computed title, line N>`, and the line
