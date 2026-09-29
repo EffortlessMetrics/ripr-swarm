@@ -149,7 +149,8 @@ pub(crate) struct ModuleItemScopes {
     pub(crate) fns_with_cfg: std::collections::BTreeSet<(usize, String)>,
     /// Names each fn binds inside itself: every identifier pattern
     /// (parameters, `let`, `for`, `if let`, closure and match bindings)
-    /// and every named item in its body (`const`, `static`, nested `fn`).
+    /// and every named node in its body (`const`, `static`, nested `fn`,
+    /// tuple `struct`, enum variant, macro, and so on).
     pub(crate) bound_names: BTreeMap<(usize, String), std::collections::BTreeSet<String>>,
 }
 
@@ -194,13 +195,8 @@ pub(crate) fn module_item_scopes(text: &str) -> Option<ModuleItemScopes> {
             .descendants()
             .filter(|node| node != function.syntax())
             .filter_map(|node| {
-                if let Some(pattern) = ast::IdentPat::cast(node.clone()) {
-                    return pattern.name().map(|name| name.text().to_string());
-                }
-                ast::Const::cast(node.clone())
-                    .and_then(|item| item.name())
-                    .or_else(|| ast::Static::cast(node.clone()).and_then(|item| item.name()))
-                    .or_else(|| ast::Fn::cast(node).and_then(|item| item.name()))
+                ast::AnyHasName::cast(node)
+                    .and_then(|named| named.name())
                     .map(|name| name.text().to_string())
             })
             .collect();

@@ -25,15 +25,18 @@
 //!   `use` import and wins over a glob, so the call resolves to it. A
 //!   helper in a sibling or parent module (`use super::*`), or nested in
 //!   another fn's body, is not credited, and neither is any helper for a
-//!   test whose body holds a `use` item;
+//!   test whose body holds a `use` item or any `cfg`/`cfg_attr` attribute;
 //! - the parsed test body calls it as a single-segment free function
 //!   (`check(..)`, not `self.check(..)`, `path::check(..)`, or the text
 //!   `check(` in a string or comment), and the test binds no name equal
 //!   to it anywhere (parameter, `let`, `for`, `if let`, closure or match
-//!   binding, `const`, `static` or nested `fn`);
+//!   binding, or any named item such as `const`, `static`, nested `fn` or
+//!   tuple `struct`);
 //! - the helper has no `cfg`/`cfg_attr` attribute anywhere (a disabled
 //!   helper can stand beside a macro-defined real one), no `use` item or
-//!   nested `fn` in its body, and it does not share a line with the test;
+//!   nested `fn` in its body, binds no name it also calls (a `let`
+//!   closure over the owner's name), and does not share a line with the
+//!   test;
 //! - one hop: the helper's calls and parser-backed assertions are added
 //!   with the helper's own line numbers; the assertions of helpers the
 //!   helper calls are not followed.
@@ -84,7 +87,9 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
         let test_key = (test.start_line, test.name.clone());
         // A `use` in the test body may import a same-named function over
         // the module's helper.
-        if scopes.fns_with_local_use.contains(&test_key) {
+        // A cfg attribute in the test may disable the call being credited.
+        if scopes.fns_with_local_use.contains(&test_key) || scopes.fns_with_cfg.contains(&test_key)
+        {
             continue;
         }
         let Some(test_module) = scopes.item_fns.get(&test_key) else {
@@ -182,8 +187,9 @@ fn calls_directly(scopes: &ModuleItemScopes, test_key: &(usize, String), name: &
 
 /// A helper whose assertion is the one that runs: no `cfg`/`cfg_attr`
 /// attribute anywhere in it (a cfg-disabled helper can stand beside a
-/// macro-defined real one), and no `use` item or nested `fn` in its body
-/// that could shadow the owner.
+/// macro-defined real one), no `use` item or nested `fn` in its body, and
+/// no name it binds (a `let` closure, a parameter) that it also calls,
+/// since any of these can shadow the owner the credited call names.
 fn helper_body_is_plain(
     scopes: &ModuleItemScopes,
     helper_key: &(usize, String),
@@ -192,6 +198,10 @@ fn helper_body_is_plain(
     !scopes.fns_with_cfg.contains(helper_key)
         && !scopes.fns_with_local_use.contains(helper_key)
         && helper.nested_fn_names.is_empty()
+        && scopes
+            .bound_names
+            .get(helper_key)
+            .is_some_and(|bound| !helper.calls.iter().any(|call| bound.contains(&call.name)))
 }
 
 /// Credited calls must sit outside the test's line span, which is what
