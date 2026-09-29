@@ -1,6 +1,6 @@
 //! Byte-stable JSON and Markdown projections of the identity registry.
 //!
-//! Domain must not import `serde_json`; these renderers emit canonical text.
+//! Domain emitters write canonical text; they do not import a JSON crate.
 
 use super::invariants::sort_records;
 use super::record::{AdjacentField, IdentityRecord};
