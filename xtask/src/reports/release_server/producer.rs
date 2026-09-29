@@ -87,7 +87,8 @@ pub(crate) fn build_release_executable(
         .join(target)
         .join("release")
         .join(executable);
-    let artifact = select_binary_artifact(&output, &expected_executable, &contract.product.features)?;
+    let artifact =
+        select_binary_artifact(&output, &expected_executable, &contract.product.features)?;
     let executable_version_line = run_output_owned(
         &artifact.executable.to_string_lossy(),
         &["--version".to_string()],
@@ -473,11 +474,7 @@ mod tests {
             return Err(format!("unexpected stale-version error: {stale}"));
         }
         let dirty = require_error(
-            validate_version_line(
-                &format!("ripr 0.11.0 ({commit}-dirty)"),
-                "0.11.0",
-                &commit,
-            ),
+            validate_version_line(&format!("ripr 0.11.0 ({commit}-dirty)"), "0.11.0", &commit),
             "dirty binary version",
         )?;
         if !dirty.contains("identity mismatch") {
