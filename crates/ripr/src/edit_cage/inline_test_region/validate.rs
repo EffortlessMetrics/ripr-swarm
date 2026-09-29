@@ -60,7 +60,12 @@ pub(crate) fn validate_inline_test_region_edit(
         return InlineTestRegionVerdict::rejected(InlineTestRegionRejectReason::WrongModule, None);
     }
 
-    let before_prefix = &before[..body.start];
+    let Some(before_prefix) = before.get(..body.start) else {
+        return InlineTestRegionVerdict::rejected(
+            InlineTestRegionRejectReason::StaleModuleAnchor,
+            Some(body),
+        );
+    };
     let after_prefix = after.get(..after_region.body_range.start).unwrap_or("");
     if after_prefix != before_prefix {
         let range = first_changed_range(before, after);
