@@ -1486,7 +1486,7 @@ fn check_human_output_reports_sample_findings() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Summary: 4 probe(s)"));
     assert!(stdout.contains("Start here:"));
-    assert!(stdout.contains("Static exposure: weakly_exposed"));
+    assert!(stdout.contains("Static exposure: weak (weakly_exposed, "));
     assert!(stdout.contains("Evidence:"));
     assert!(stdout.contains("Missing discriminator:"));
     assert!(stdout.contains("Next step:"));
@@ -4613,7 +4613,7 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     assert_success(&after);
     let after_stderr = String::from_utf8_lossy(&after.stderr);
     assert!(
-        after_stderr.contains("ripr: result for seam `67fc764ba37d77bd`: weakly_gripped -> "),
+        after_stderr.contains("ripr: result for seam `67fc764ba37d77bd`: weak -> "),
         "after phase must name the seam's movement:\n{after_stderr}"
     );
     assert!(
@@ -5164,7 +5164,7 @@ fn agent_repair_admits_cargo_build_output_and_unchanged_untracked_lockfile()
     let after_stderr = String::from_utf8_lossy(&after.stderr);
     assert!(
         after_stderr.contains(&format!(
-            "result for seam `{BOUNDARY_GAP_SEAM_ID}`: weakly_gripped -> strongly_gripped (improved)"
+            "result for seam `{BOUNDARY_GAP_SEAM_ID}`: weak -> exposed (weakly_gripped -> strongly_gripped, improved)"
         )),
         "after phase must report the movement:\n{after_stderr}"
     );
@@ -5487,7 +5487,7 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
     let stderr = String::from_utf8_lossy(&after.stderr);
     assert!(
         stderr.contains(&format!(
-            "result for seam `{BOUNDARY_GAP_SEAM_ID}`: weakly_gripped -> strongly_gripped (improved)"
+            "result for seam `{BOUNDARY_GAP_SEAM_ID}`: weak -> exposed (weakly_gripped -> strongly_gripped, improved)"
         )),
         "{stderr}"
     );
@@ -5847,7 +5847,7 @@ fn agent_repair_admits_a_focused_test_committed_between_the_phases()
     let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
     assert_success(&after);
     let stderr = String::from_utf8_lossy(&after.stderr);
-    assert!(stderr.contains("(improved)"), "{stderr}");
+    assert!(stderr.contains(", improved)"), "{stderr}");
     assert!(stderr.contains(INCLUDE_RECEIPT_LINE), "{stderr}");
     assert!(!stderr.contains("is stale"), "{stderr}");
     let (_, manifest) = sole_repair_attempt(&root)?;
@@ -15616,7 +15616,7 @@ fn agent_repair_after_a_failing_test_says_the_test_was_not_run()
 
     let stderr = String::from_utf8_lossy(&after.stderr);
     assert!(
-        stderr.contains("(improved)"),
+        stderr.contains(", improved)"),
         "precondition: static movement improved:\n{stderr}"
     );
     assert!(
@@ -18326,4 +18326,135 @@ fn outcome_artifacts_from_endless_device_are_refused_at_input_limit() -> Result<
         "the refusal must name the artifact path:\n{stderr}"
     );
     Ok(())
+}
+
+/// A cloned repository's `rust-toolchain.toml` can name a toolchain `path`,
+/// and `/proc/self/cwd` makes that path point into the checkout, so rustup's
+/// `cargo` proxy would run the repository's own program. `ripr doctor` must
+/// not spawn the toolchain there.
+#[cfg(target_os = "linux")]
+#[test]
+fn doctor_does_not_run_a_repository_selected_toolchain_path() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let root = unique_temp_workspace("toolchain-path-pin");
+    let marker = root.join("repository-toolchain-ran");
+    let setup = (|| -> std::io::Result<()> {
+        std::fs::create_dir_all(root.join("tc/bin"))?;
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"pinned\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn f() {}\n")?;
+        std::fs::write(
+            root.join("rust-toolchain.toml"),
+            "[toolchain]\npath = \"/proc/self/cwd/tc\"\n",
+        )?;
+        for tool in ["cargo", "rustc"] {
+            let script = root.join("tc/bin").join(tool);
+            std::fs::write(
+                &script,
+                format!(
+                    "#!/bin/sh\ntouch '{}'\necho '{tool} 9.9.9'\n",
+                    marker.display()
+                ),
+            )?;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))?;
+        }
+        Ok(())
+    })();
+    let result = setup
+        .map_err(|err| format!("fixture: {err}"))
+        .and_then(|()| {
+            // The fixture only discriminates where `cargo` is a rustup proxy.
+            let proxy = probe_command("cargo")
+                .arg("--version")
+                .current_dir(&root)
+                .env_remove("RUSTUP_TOOLCHAIN")
+                .output();
+            if !marker.exists() {
+                println!("skipped: `cargo` here is not a rustup proxy ({proxy:?})");
+                return Ok(());
+            }
+            std::fs::remove_file(&marker).map_err(|err| format!("reset marker: {err}"))?;
+            let output = probe_command(env!("CARGO_BIN_EXE_ripr"))
+                .arg("doctor")
+                .current_dir(&root)
+                .env_remove("RUSTUP_TOOLCHAIN")
+                .output()
+                .map_err(|err| format!("spawn ripr doctor: {err}"))?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if marker.exists() {
+                return Err(format!(
+                    "ripr doctor ran the repository's toolchain program: {stdout}"
+                ));
+            }
+            if !stdout.contains("selects a toolchain by `path`") {
+                return Err(format!(
+                    "doctor must name the refused toolchain file: {stdout}"
+                ));
+            }
+            Ok(())
+        });
+    ignore_remove_dir_all(&root);
+    result
+}
+
+/// pnpm fetches and runs the release a project's `packageManager` names, and
+/// version managers read project files, so doctor probes language runtimes
+/// outside the checkout.
+#[cfg(unix)]
+#[test]
+fn doctor_probes_language_runtimes_outside_the_checkout() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let workspace = unique_temp_workspace("runtime-probe-dir");
+    let root = workspace.join("checkout");
+    let bin = workspace.join("bin");
+    let setup = (|| -> std::io::Result<()> {
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::create_dir_all(&bin)?;
+        std::fs::write(
+            root.join("package.json"),
+            "{\"name\":\"x\",\"packageManager\":\"pnpm@8.15.0\"}\n",
+        )?;
+        std::fs::write(root.join("pnpm-lock.yaml"), "")?;
+        std::fs::write(
+            root.join("src/a.ts"),
+            "export const f = (a: number) => a > 1;\n",
+        )?;
+        std::fs::write(
+            root.join("ripr.toml"),
+            "[languages]\nenabled = [\"typescript\"]\n",
+        )?;
+        let shim = bin.join("pnpm");
+        std::fs::write(
+            &shim,
+            "#!/bin/sh\ncase \"$PWD\" in *checkout*) echo 9.9.9-in-checkout ;; *) echo 9.9.9-isolated ;; esac\n",
+        )?;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))?;
+        Ok(())
+    })();
+    let result = setup
+        .map_err(|err| format!("fixture: {err}"))
+        .and_then(|()| {
+            let path = std::env::var_os("PATH").unwrap_or_default();
+            let mut dirs = vec![bin.clone()];
+            dirs.extend(std::env::split_paths(&path));
+            let path = std::env::join_paths(dirs).map_err(|err| format!("PATH: {err}"))?;
+            let output = probe_command(env!("CARGO_BIN_EXE_ripr"))
+                .arg("doctor")
+                .current_dir(&root)
+                .env("PATH", path)
+                .output()
+                .map_err(|err| format!("spawn ripr doctor: {err}"))?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if !stdout.contains("9.9.9-isolated") || stdout.contains("in-checkout") {
+                return Err(format!(
+                    "pnpm must be probed outside the checkout: {stdout}"
+                ));
+            }
+            Ok(())
+        });
+    ignore_remove_dir_all(&workspace);
+    result
 }
