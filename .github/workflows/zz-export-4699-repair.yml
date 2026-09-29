@@ -43,20 +43,22 @@ jobs:
           if direct_identity in text:
               start = text.index(loop_start)
               end = text.index('          done\n', start) + len('          done\n')
-              replacement = '''          for directory in payload-identities/ripr-final-native-payload-*; do
-            test -d "${directory}"
-            mapfile -t identities < <(find "${directory}" -type f -name payload-identity.json -print)
-            mapfile -t markdowns < <(find "${directory}" -type f -name payload-identity.md -print)
-            mapfile -t producers < <(find "${directory}" -type f -name producer-build.json -print)
-            test "${#identities[@]}" -eq 1
-            test "${#markdowns[@]}" -eq 1
-            test "${#producers[@]}" -eq 1
-            identity="${identities[0]}"
-            producer="${producers[0]}"
-            jq --arg identity_sha256 "$(sha256sum "${identity}" | awk '{print $1}')" '. + {identity_sha256: $identity_sha256}' "${identity}" >> payload-identities.ndjson
-            jq --arg producer_build_sha256 "$(sha256sum "${producer}" | awk '{print $1}')" '. + {producer_build_sha256: $producer_build_sha256}' "${producer}" >> producer-builds.ndjson
-          done
-'''
+              replacement = '\n'.join([
+                  '          for directory in payload-identities/ripr-final-native-payload-*; do',
+                  '            test -d "${directory}"',
+                  '            mapfile -t identities < <(find "${directory}" -type f -name payload-identity.json -print)',
+                  '            mapfile -t markdowns < <(find "${directory}" -type f -name payload-identity.md -print)',
+                  '            mapfile -t producers < <(find "${directory}" -type f -name producer-build.json -print)',
+                  '            test "${#identities[@]}" -eq 1',
+                  '            test "${#markdowns[@]}" -eq 1',
+                  '            test "${#producers[@]}" -eq 1',
+                  '            identity="${identities[0]}"',
+                  '            producer="${producers[0]}"',
+                  '            jq --arg identity_sha256 "$(sha256sum "${identity}" | awk \'{print $1}\')" \'. + {identity_sha256: $identity_sha256}\' "${identity}" >> payload-identities.ndjson',
+                  '            jq --arg producer_build_sha256 "$(sha256sum "${producer}" | awk \'{print $1}\')" \'. + {producer_build_sha256: $producer_build_sha256}\' "${producer}" >> producer-builds.ndjson',
+                  '          done',
+                  '',
+              ])
               text = text[:start] + replacement + text[end:]
           elif recursive_identity not in text:
               raise SystemExit('payload identity aggregation loop not found')
