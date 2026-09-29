@@ -141,3 +141,35 @@ fn helper_in_production_scope_is_not_an_assertion_helper() -> Result<(), Box<dyn
     assert!(!calls(test).contains(&"gate"), "{:?}", calls(test));
     Ok(())
 }
+
+#[test]
+fn commented_out_helper_assertion_is_not_credited() -> Result<(), Box<dyn Error>> {
+    let index = index_for(&format!(
+        "{GATE}#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    fn check(x: u32) {{\n        let _ = gate(x);\n        // assert_eq!(gate(x), false);\n    }}\n\n    #[test]\n    fn boundary() {{\n        check(10);\n    }}\n}}\n"
+    ))?;
+
+    let test = test_named(&index, "boundary")?;
+
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    Ok(())
+}
+
+#[test]
+fn credited_helper_calls_stay_out_of_the_test_body_calls() -> Result<(), Box<dyn Error>> {
+    // The helper's `gate(x)` names the helper's parameter; the test's own
+    // `let x = 10` must not bind it.
+    let index = index_for(&format!(
+        "{GATE}#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    fn check(x: u32, want: bool) {{\n        assert_eq!(gate(x), want);\n    }}\n\n    #[test]\n    fn boundary() {{\n        let x = 10;\n        check(x + 5, true);\n    }}\n}}\n"
+    ))?;
+
+    let test = test_named(&index, "boundary")?;
+
+    assert!(calls(test).contains(&"gate"), "premise: {:?}", calls(test));
+    let body_calls = test
+        .body_calls()
+        .map(|call| call.name.as_str())
+        .collect::<Vec<_>>();
+    assert!(body_calls.contains(&"check"), "{body_calls:?}");
+    assert!(!body_calls.contains(&"gate"), "{body_calls:?}");
+    Ok(())
+}

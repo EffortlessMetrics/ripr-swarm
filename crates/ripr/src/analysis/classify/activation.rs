@@ -68,7 +68,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
     let parameters = owner_fn.map(function_parameters).unwrap_or_default();
     let mut facts = Vec::new();
 
-    for call in &test.calls {
+    for call in test.body_calls() {
         if !owner_name.is_empty() && call.name != owner_name {
             continue;
         }
@@ -1060,7 +1060,7 @@ fn owner_call_parameter_values(
         return rows;
     }
     for test in related_tests {
-        for call in &test.calls {
+        for call in test.body_calls() {
             if call.name != owner_name {
                 continue;
             }
@@ -2254,6 +2254,22 @@ mod tests {
     }
 
     #[test]
+    fn owner_call_outside_the_test_span_binds_no_test_value() {
+        // A credited helper's `score(amount)` (#4574) sits on the helper's
+        // line; the test's `let amount = 10` binds a different variable.
+        let mut test = test_with_body_call(
+            "fn score_boundary() {\n    let amount = 10;\n    check(amount + 5);\n}",
+            3,
+            "score(amount)",
+        );
+        test.calls[0].line = 3;
+        let activation = boundary_activation(&test);
+
+        assert!(owner_input_values(&activation).is_empty());
+        assert!(!has_observed_boundary_equality(&activation));
+    }
+
+    #[test]
     fn rstest_case_parameter_owner_argument_is_an_owner_input() {
         // `#[case(10, false)] fn t(#[case] amount: i32, ..) { score(amount) }`:
         // each case row's value flows into the owner (#4601).
@@ -2278,6 +2294,10 @@ mod tests {
         for body in [
             "fn score_boundary(#[case] mut amount: i32) {\n    amount += 1;\n    assert!(score(amount));\n}",
             "fn score_boundary(#[case] amount: i32) {\n    let amount = amount + 1;\n    assert!(score(amount));\n}",
+            "fn score_boundary(#[case] amount: i32) {\n    let (amount, _) = (amount + 5, 0);\n    assert!(score(amount));\n}",
+            "fn score_boundary(#[case] amount: i32) {\n    for amount in [amount + 5] {\n        assert!(score(amount));\n    }\n}",
+            "fn score_boundary(#[case] amount: i32) {\n    if let Some(amount) = Some(amount + 5) {\n        assert!(score(amount));\n    }\n}",
+            "fn score_boundary(#[case] amount: i32) {\n    let run = |amount: i32| score(amount);\n    assert!(run(amount + 5));\n    assert!(score(amount));\n}",
         ] {
             let mut test = test_with_body_call(body, 12, "assert!(score(amount));");
             test.attrs = vec!["#[rstest]".to_string(), "#[case(10)]".to_string()];

@@ -23,15 +23,21 @@
 //! - the test calls it as a direct free function (`check(..)`, not
 //!   `self.check(..)` or `path::check(..)`), and neither a nested `fn` nor
 //!   a `let` binding in the test shadows the name;
-//! - one hop only: the helper's calls and assertions are added with their
-//!   own line numbers; helpers the helper calls are not followed.
+//! - one hop: the helper's calls and parser-backed assertions are added
+//!   with the helper's own line numbers; the assertions of helpers the
+//!   helper calls are not followed.
+//!
+//! The credited calls sit outside the test's line span. Value resolution
+//! reads only [`TestFact::body_calls`], because a helper call's arguments
+//! name the helper's parameters, which the test's `let` bindings and case
+//! rows do not bind. Relation and reach read every call.
 //!
 //! Anything else (cross-file helpers, ambiguous names, production callees,
 //! the lexical fallback) contributes nothing, so a test only ever gains
 //! evidence the helper body really contains.
 
 use super::{FunctionFact, FunctionSourceRole, RustIndex, TestFact};
-use crate::analysis::extract::extract_assertions;
+use crate::analysis::syntax::parser_oracles_for_function;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -68,11 +74,15 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
             if !is_direct_call_site(&call.text, &call.name) || test_shadows(test, &call.name) {
                 continue;
             }
+            // Parser-backed oracles only, as for ordinary tests: a
+            // commented-out `assert_eq!` must not count.
+            let Some(assertions) = parser_oracles_for_function(&helper.body, helper.start_line)
+            else {
+                continue;
+            };
             credited_helpers.push(&helper.name);
             credited.calls.extend(helper.calls.iter().cloned());
-            credited
-                .assertions
-                .extend(extract_assertions(&helper.body, helper.start_line));
+            credited.assertions.extend(assertions);
         }
         if !credited_helpers.is_empty() {
             widened.insert(

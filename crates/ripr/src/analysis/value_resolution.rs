@@ -1416,8 +1416,10 @@ fn extract_rstest_case_params(test: &TestSummary) -> (Vec<Vec<String>>, Vec<FnPa
         return (Vec::new(), Vec::new());
     }
     // rstest binds case values positionally to the `#[case]` parameters
-    // only; the others are fixtures. Without any `#[case]` marker (the
-    // legacy `#[rstest(a, b, case(..))]` spelling) every parameter counts.
+    // only; the others are fixtures. Without any `#[case]` marker every
+    // parameter counts, as before #4601. (Rows written inside the legacy
+    // `#[rstest(a, case(..))]` attribute and named `#[case::name(..)]`
+    // rows are not parsed, so they bind nothing.)
     let params = extract_fn_params(&test.body);
     let params = if params.iter().any(|param| param.is_case) {
         params.into_iter().filter(|param| param.is_case).collect()
@@ -1430,8 +1432,9 @@ fn extract_rstest_case_params(test: &TestSummary) -> (Vec<Vec<String>>, Vec<FnPa
 /// The values rstest `#[case(..)]` rows bind to the test parameter
 /// `ident`, one per row, for the check-path activation stage (which can
 /// promote a finding to `exposed`). Fails closed to no values when the
-/// parameter is `mut` or any `let` in the body declares the same name,
-/// since either may rebind it before the owner call.
+/// parameter is `mut` or anything in the body may rebind the name before
+/// the owner call: a `let` (simple or pattern), a `for`, `if let` or
+/// `while let` binding, a closure parameter or a match arm.
 pub(crate) fn test_case_bound_literals(test: &TestSummary, ident: &str) -> Vec<String> {
     let cleaned = strip_comments_and_strings(&test.body);
     let rebound = find_all(&cleaned, "let ").into_iter().any(|start| {
@@ -1439,7 +1442,9 @@ pub(crate) fn test_case_bound_literals(test: &TestSummary, ident: &str) -> Vec<S
         let stmt = &after_let[..top_level_semicolon(after_let).unwrap_or(after_let.len())];
         let lhs = &stmt[..first_single_eq(stmt).unwrap_or(stmt.len())];
         let_binding_ident(lhs).is_some_and(|(name, _)| name == ident)
-    });
+    }) || !non_simple_let_shadowing_lines(&cleaned, ident, test.start_line)
+        .is_empty()
+        || !non_let_shadowing_lines(&cleaned, ident, test.start_line).is_empty();
     if rebound {
         return Vec::new();
     }
