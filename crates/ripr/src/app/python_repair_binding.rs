@@ -1786,6 +1786,7 @@ mod tests {
             .map_err(|error| format!("producer packet fixture is invalid: {error}"))?;
         let packet_sha256 = sha256_hex(packet);
         let before_snapshot_sha256 = sha256_hex(b"identical before snapshot bytes");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/boundary_gap");
         let row = sample_row()?;
         let verified = verify_row_binding(as_object(&row, "selection row")?, "att-test-1")?;
         let target = crate::edit_cage::CagePathRule::exact(&verified.target_path)?;
@@ -1797,7 +1798,7 @@ mod tests {
             ignored_build_output: None,
             untracked_build_lockfile: None,
         };
-        let render = || render_record(Path::new("."), RecordIdentity {
+        let render = || render_record(&root, RecordIdentity {
             seam_id: "identical-seam",
             repository_head: &verified.head,
             phase: "prepare",
