@@ -3184,7 +3184,7 @@ mod tests {
         // never emit it, so its presence discriminates the routing. The
         // caller's own `run git ... failed` wrapper must survive so the
         // fail-closed admission error family is unchanged. The deadline
-        // plumbing is proven adapter-level by
+        // plumbing is established adapter-level by
         // `git_paths_supplies_the_promised_bounded_deadline`; the
         // terminate-and-reap behavior with a named timeout error is owned
         // by `git.rs`'s re-exec harness tests.
