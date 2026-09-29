@@ -15,6 +15,7 @@ Support-tier impact:
 
 - None. This inventory classifies existing parser-accepted command paths. It
   does not rename, remove, execute, or support-promote any command.
+  [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md)
 
 Policy impact:
 

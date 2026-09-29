@@ -257,6 +257,26 @@ const fn nested(
     row(id, path, class, dispatch, owners, discovery)
 }
 
+const fn compat_alias(
+    id: &'static str,
+    path: &'static str,
+    canonical: &'static str,
+    dispatch: CommandDispatch,
+) -> CommandCatalogEntry {
+    CommandCatalogEntry {
+        id,
+        path,
+        aliases: &[],
+        class: CommandClass::Compatibility,
+        dispatch,
+        parser_owner: TOP.parser,
+        dispatch_owner: TOP.dispatch,
+        help_owner: TOP.help,
+        discovery: DiscoveryPosture::CompatibilityAlias,
+        relation: CommandRelation::AliasOf(canonical),
+    }
+}
+
 const CATALOG: &[CommandCatalogEntry] = &[
     public_top("cmd:help", "help", CommandDispatch::Help),
     public_top("cmd:init", "init", CommandDispatch::Init),
@@ -447,18 +467,12 @@ const CATALOG: &[CommandCatalogEntry] = &[
         DiscoveryPosture::OrdinaryPublic,
     ),
     public_top("cmd:first-pr", "first-pr", CommandDispatch::FirstPr),
-    CommandCatalogEntry {
-        id: "cmd:compat.start-here",
-        path: "start-here",
-        aliases: &[],
-        class: CommandClass::Compatibility,
-        dispatch: CommandDispatch::FirstPr,
-        parser_owner: PARSER_TOP,
-        dispatch_owner: DISPATCH_TOP,
-        help_owner: HELP_TOP,
-        discovery: DiscoveryPosture::CompatibilityAlias,
-        relation: CommandRelation::AliasOf("first-pr"),
-    },
+    compat_alias(
+        "cmd:compat.start-here",
+        "start-here",
+        "first-pr",
+        CommandDispatch::FirstPr,
+    ),
     public_top(
         "cmd:first-action",
         "first-action",
