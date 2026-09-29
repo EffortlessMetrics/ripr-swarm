@@ -15,6 +15,7 @@ use crate::cli::parse::{
 use crate::cli::suggest::unknown_argument;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
 use crate::output;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 fn repo_scope_diff_bound_warning(
@@ -238,6 +239,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     let mut git_timeout_explicitly_provided = false;
     let mut candidate_tree: Option<String> = None;
     let mut candidate_base: Option<String> = None;
+    let mut quiet = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -319,6 +321,9 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                 let value = expect_value(args, i, "--git-timeout")?;
                 input.git_timeout = parse_git_timeout(value)?;
                 git_timeout_explicitly_provided = true;
+            }
+            "--quiet" => {
+                quiet = true;
             }
             "--help" | "-h" => {
                 help::print_check_help();
@@ -597,6 +602,15 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     if !format.is_repo_scope() && !format.is_repo_seam_inventory() {
         disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
     }
+    let progress = (!quiet).then(|| {
+        crate::cli::progress::CliProgressSink::for_stderr(
+            std::io::stderr().is_terminal(),
+            crate::cli::progress::ProgressPolicy::STANDARD,
+        )
+    });
+    let progress_sink = progress
+        .as_ref()
+        .map(|sink| sink as &dyn crate::app::AnalysisProgressSink);
     let output_result = if format.is_repo_seam_inventory() {
         // Repo seam-driven formats do not consume legacy repo `Findings`,
         // so skip `run_repo_analysis` and let `render_check` drive the
@@ -604,11 +618,11 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         // `CheckOutput` carries only the fields these renderers read.
         Ok(app::repo_seam_inventory_input(input))
     } else if format.is_repo_scope() {
-        app::check_workspace_repo_with_config(input, &config)
+        app::check_workspace_repo_with_config_and_progress(input, &config, progress_sink)
     } else if worktree_explicitly_provided {
-        app::check_workspace_worktree_with_config(input, &config)
+        app::check_workspace_worktree_with_config_and_progress(input, &config, progress_sink)
     } else {
-        app::check_workspace_with_config(input, &config)
+        app::check_workspace_with_config_and_progress(input, &config, progress_sink)
     };
     let mut output = match output_result {
         Ok(output) => output,
@@ -1310,6 +1324,11 @@ mod tests {
             .ok_or("invalid git timeout should fail closed")?;
         assert!(error.contains("--git-timeout requires a non-negative integer"));
         Ok(())
+    }
+
+    #[test]
+    fn quiet_is_accepted_without_running_analysis() {
+        assert_eq!(check(&args(&["--quiet", "--help"])), Ok(()));
     }
 
     #[test]

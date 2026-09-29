@@ -9617,3 +9617,46 @@ outputs = [
 metrics = [
   "lsp_saved_edit_sequence_honesty",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0181"
+name = "CLI analysis progress on stderr"
+spec = "docs/specs/RIPR-SPEC-0181-cli-analysis-progress-stderr.md"
+tests = [
+  "crates/ripr/src/app/progress.rs::tests::check_progress_reports_real_boundaries_without_invented_totals",
+  "crates/ripr/src/app/progress.rs::tests::check_progress_failure_has_one_terminal_and_no_false_completion",
+  "crates/ripr/src/app/progress.rs::tests::progress_sink_panic_cannot_change_analysis_result",
+  "crates/ripr/src/app/progress.rs::tests::omitting_the_sink_removes_stage_evidence",
+  "crates/ripr/src/app/progress.rs::tests::cancelled_run_has_a_single_non_success_terminal",
+  "crates/ripr/src/cli/progress.rs::tests::non_tty_stage_lines_are_newline_delimited_and_path_free",
+  "crates/ripr/src/cli/progress.rs::tests::unknown_totals_never_render_as_percentage_or_eta",
+  "crates/ripr/src/cli/progress.rs::tests::tty_short_run_does_not_flash_completed",
+  "crates/ripr/src/cli/progress.rs::tests::tty_and_non_tty_share_stage_tokens",
+  "crates/ripr/src/cli/progress.rs::tests::failure_terminal_never_emits_completed",
+  "crates/ripr/src/cli/progress.rs::tests::rendering_failure_is_isolated",
+  "crates/ripr/src/cli/progress.rs::tests::heartbeat_is_throttled_and_bounded",
+  "crates/ripr/src/cli/progress.rs::tests::unsafe_constructed_lines_are_rejected",
+  "crates/ripr/tests/cli_progress.rs::check_json_stdout_parses_while_progress_stays_on_stderr",
+  "crates/ripr/tests/cli_progress.rs::check_quiet_keeps_json_stdout_byte_identical_and_drops_progress",
+  "crates/ripr/tests/cli_progress.rs::check_sarif_stdout_is_unchanged_by_progress",
+  "crates/ripr/tests/cli_progress.rs::check_progress_failure_emits_failed_not_completed",
+  "crates/ripr/tests/cli_progress.rs::check_help_does_not_spray_progress",
+]
+fixtures = [
+]
+code = [
+  "crates/ripr/src/app/progress.rs",
+  "crates/ripr/src/app/check.rs",
+  "crates/ripr/src/cli/progress.rs",
+  "crates/ripr/src/cli/commands/check.rs",
+  "crates/ripr/src/cli/help/core.rs",
+]
+outputs = [
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/QUICKSTART.md",
+  "docs/COMMAND_HIERARCHY.md",
+]
+metrics = [
+  "cli_progress_stage_events",
+  "cli_progress_heartbeats",
+]

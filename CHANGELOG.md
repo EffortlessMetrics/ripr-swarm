@@ -18,6 +18,10 @@ are scoped or reviewed.
   cached answer cannot satisfy a speed target, and a fast elapsed time cannot
   hide a redundant full rescan or duplicate diagnostic publication. The
   historical 2s/10s/30s figures remain proposals, not gates.
+- CLI: `ripr check` projects producer-owned analysis stages and throttled
+  heartbeats onto stderr (`ripr progress: <stage> [<scope>]`) without changing
+  JSON, SARIF, or other machine stdout. Unknown totals stay unknown; `--quiet`
+  suppresses the stream. This does not make analysis faster (#4810).
 
 ### Fixed
 

@@ -15,6 +15,7 @@ mod explain;
 pub(crate) mod impacted_evidence;
 mod navigation;
 pub mod pr_evidence;
+mod progress;
 pub use pr_evidence::reject_pr_evidence_error_packet;
 pub(crate) mod feedback;
 /// Shared PR-evidence summary projection used by the `ripr` binary and the
@@ -48,6 +49,10 @@ pub use check::{
     check_workspace_repo_with_config, check_workspace_with_config,
     check_workspace_worktree_with_config,
 };
+pub(crate) use check::{
+    check_workspace_repo_with_config_and_progress, check_workspace_with_config_and_progress,
+    check_workspace_worktree_with_config_and_progress,
+};
 pub(crate) use context::collect_context_from_artifact;
 pub use context::collect_context_with_config;
 pub use context::{collect_context, collect_context_with_input};
@@ -60,6 +65,9 @@ pub(crate) use explain::{
     explain_finding_with_config_and_navigation_mode,
 };
 pub(crate) use navigation::{FindingNavigation, finding_navigation};
+pub(crate) use progress::{
+    AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,
+};
 
 use crate::analysis::{AnalysisMode, PreviewLanguageAdvisory};
 use crate::config::RiprConfig;

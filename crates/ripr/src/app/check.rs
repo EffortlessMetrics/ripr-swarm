@@ -1,3 +1,6 @@
+use super::progress::{
+    AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage, ProgressRun,
+};
 use super::{CheckInput, CheckOutput};
 use crate::analysis::{
     AnalysisResult, run_analysis_with_oracle_policy_and_generated_file_patterns,
@@ -37,14 +40,32 @@ pub fn check_workspace_with_config(
     input: CheckInput,
     config: &RiprConfig,
 ) -> Result<CheckOutput, String> {
-    run_check(input, config, AnalysisMode::Diff)
+    check_workspace_with_config_and_progress(input, config, None)
+}
+
+/// Run a diff check while observing producer-owned progress boundaries.
+pub(crate) fn check_workspace_with_config_and_progress(
+    input: CheckInput,
+    config: &RiprConfig,
+    sink: Option<&dyn AnalysisProgressSink>,
+) -> Result<CheckOutput, String> {
+    run_check(input, config, AnalysisMode::Diff, sink)
 }
 
 pub fn check_workspace_worktree_with_config(
     input: CheckInput,
     config: &RiprConfig,
 ) -> Result<CheckOutput, String> {
-    run_check(input, config, AnalysisMode::Worktree)
+    check_workspace_worktree_with_config_and_progress(input, config, None)
+}
+
+/// Run a worktree check while observing producer-owned progress boundaries.
+pub(crate) fn check_workspace_worktree_with_config_and_progress(
+    input: CheckInput,
+    config: &RiprConfig,
+    sink: Option<&dyn AnalysisProgressSink>,
+) -> Result<CheckOutput, String> {
+    run_check(input, config, AnalysisMode::Worktree, sink)
 }
 
 /// Runs the repo-baseline static exposure analysis for a workspace. This
@@ -65,7 +86,16 @@ pub fn check_workspace_repo_with_config(
     input: CheckInput,
     config: &RiprConfig,
 ) -> Result<CheckOutput, String> {
-    run_check(input, config, AnalysisMode::Repo)
+    check_workspace_repo_with_config_and_progress(input, config, None)
+}
+
+/// Run a repo check while observing producer-owned progress boundaries.
+pub(crate) fn check_workspace_repo_with_config_and_progress(
+    input: CheckInput,
+    config: &RiprConfig,
+    sink: Option<&dyn AnalysisProgressSink>,
+) -> Result<CheckOutput, String> {
+    run_check(input, config, AnalysisMode::Repo, sink)
 }
 
 /// Build a minimal [`CheckOutput`] for repo seam-driven rendering.
@@ -109,7 +139,15 @@ fn run_check(
     mut input: CheckInput,
     config: &RiprConfig,
     mode: AnalysisMode,
+    sink: Option<&dyn AnalysisProgressSink>,
 ) -> Result<CheckOutput, String> {
+    let scope = match mode {
+        AnalysisMode::Diff => AnalysisProgressScope::Diff,
+        AnalysisMode::Worktree => AnalysisProgressScope::Worktree,
+        AnalysisMode::Repo => AnalysisProgressScope::Repo,
+    };
+    let mut progress = ProgressRun::new(sink, scope);
+    progress.emit(AnalysisProgressStage::LoadingInput);
     // Immutable Git candidate subjects (#3237 / #3276): bind-and-validate
     // only in this build. Validate first, before any subprocess or diff
     // acquisition, so a subject input can never fall through to worktree
@@ -167,6 +205,7 @@ fn run_check(
         eprintln!("ripr: mode = {:?}", mode);
     }
 
+    progress.emit(AnalysisProgressStage::Analyzing);
     let analysis = match mode {
         AnalysisMode::Diff => run_analysis_with_oracle_policy_and_generated_file_patterns(
             &options,
@@ -196,11 +235,13 @@ fn run_check(
         eprintln!("ripr: analysis complete — {probe_count} probes, {finding_count} findings");
     }
 
+    progress.emit(AnalysisProgressStage::BuildingOutput);
     let suppression_policy = input.suppression_policy.clone();
     let mut output = output_builder::check_output_from_analysis(input, analysis);
     if let Some(policy) = suppression_policy {
         apply_suppression_policy(&mut output, &policy)?;
     }
+    progress.complete();
     Ok(output)
 }
 
