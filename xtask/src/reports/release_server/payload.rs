@@ -96,7 +96,7 @@ pub(crate) struct NativeRuntimeEvidenceIdentity {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct PayloadBuildContext {
+struct PayloadRepositoryContext {
     product: String,
     version: String,
     target: String,
@@ -104,9 +104,14 @@ struct PayloadBuildContext {
     source: PayloadSourceIdentity,
     cargo_lock_sha256: String,
     selected_features: Vec<String>,
+    native_runtime_evidence: NativeRuntimeEvidenceIdentity,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PayloadBuildContext {
+    repository: PayloadRepositoryContext,
     toolchain: PayloadToolchainIdentity,
     build_environment: PayloadBuildEnvironmentIdentity,
-    native_runtime_evidence: NativeRuntimeEvidenceIdentity,
 }
 
 #[derive(Clone, Debug)]
@@ -161,7 +166,7 @@ pub(crate) fn stage_final_native_payload(
     })?;
 
     let files = payload_file_identities(&payload_dir, executable)?;
-    let identity = identity_from_context(&context, files);
+    let identity = identity_from_context(&context, files)?;
     write_identity_json(&identity_json, &identity)?;
     fs::write(
         &identity_markdown,
@@ -169,8 +174,9 @@ pub(crate) fn stage_final_native_payload(
     )
     .map_err(|err| format!("failed to write {}: {err}", identity_markdown.display()))?;
 
-    let verified = verify_final_native_payload(&payload_dir, &identity_json)?;
-    if verified != identity {
+    let strict = verify_staged_final_native_payload(&payload_dir, &identity_json, &context)?;
+    let portable = verify_final_native_payload(&payload_dir, &identity_json)?;
+    if strict != identity || portable != identity {
         return Err("final native payload changed while its identity was written".to_string());
     }
 
@@ -191,19 +197,33 @@ pub(crate) fn verify_final_native_payload(
 
     let contract = load_distribution_contract()?;
     let target_contract = select_target(&contract, &identity.target, &identity.executable, None)?;
-    let context = current_payload_context(
+    let context = current_payload_repository_context(
         &contract,
         target_contract,
         &identity.version,
         &identity.executable,
     )?;
-    validate_identity_context(&identity, &context)?;
+    validate_identity_repository_context(&identity, &context)?;
+    verify_identity_projection(identity_path, &identity)?;
     verify_payload_files(payload_dir, &identity)?;
     Ok(identity)
 }
 
 pub(crate) fn payload_identity_sha256(staged: &StagedFinalNativePayload) -> Result<String, String> {
     sha256_file(&staged.identity_json)
+}
+
+fn verify_staged_final_native_payload(
+    payload_dir: &Path,
+    identity_path: &Path,
+    context: &PayloadBuildContext,
+) -> Result<FinalNativePayloadIdentity, String> {
+    let identity = read_identity_json(identity_path)?;
+    validate_identity_shape(&identity)?;
+    validate_identity_context(&identity, context)?;
+    verify_identity_projection(identity_path, &identity)?;
+    verify_payload_files(payload_dir, &identity)?;
+    Ok(identity)
 }
 
 fn payload_root(version: &str, target: &str) -> Result<PathBuf, String> {
@@ -248,6 +268,24 @@ fn current_payload_context(
     version: &str,
     executable: &str,
 ) -> Result<PayloadBuildContext, String> {
+    Ok(PayloadBuildContext {
+        repository: current_payload_repository_context(
+            contract, target, version, executable,
+        )?,
+        toolchain: PayloadToolchainIdentity {
+            rustc_verbose_version: checked_output("rustc", &["-vV"], "rustc identity")?,
+            cargo_verbose_version: checked_output("cargo", &["-vV"], "cargo identity")?,
+        },
+        build_environment: current_build_environment(),
+    })
+}
+
+fn current_payload_repository_context(
+    contract: &DistributionContract,
+    target: &TargetContract,
+    version: &str,
+    executable: &str,
+) -> Result<PayloadRepositoryContext, String> {
     let workspace_version = workspace_version()?;
     if version != workspace_version {
         return Err(format!(
@@ -259,7 +297,7 @@ fn current_payload_context(
     let mut selected_features = contract.product.features.clone();
     selected_features.sort();
     selected_features.dedup();
-    Ok(PayloadBuildContext {
+    Ok(PayloadRepositoryContext {
         product: contract.product.name.clone(),
         version: version.to_string(),
         target: target.rust_target.clone(),
@@ -270,11 +308,6 @@ fn current_payload_context(
         },
         cargo_lock_sha256: sha256_file(Path::new("Cargo.lock"))?,
         selected_features,
-        toolchain: PayloadToolchainIdentity {
-            rustc_verbose_version: checked_output("rustc", &["-vV"], "rustc identity")?,
-            cargo_verbose_version: checked_output("cargo", &["-vV"], "cargo identity")?,
-        },
-        build_environment: current_build_environment(),
         native_runtime_evidence: NativeRuntimeEvidenceIdentity {
             state: target.compatibility_state.clone(),
             source: format!(
@@ -372,24 +405,25 @@ fn nonempty_env(name: &str) -> Option<String> {
 fn identity_from_context(
     context: &PayloadBuildContext,
     files: Vec<PayloadFileIdentity>,
-) -> FinalNativePayloadIdentity {
-    let payload_aggregate_sha256 = aggregate_payload_digest(&files);
-    FinalNativePayloadIdentity {
+) -> Result<FinalNativePayloadIdentity, String> {
+    let payload_aggregate_sha256 = aggregate_payload_digest(&files)?;
+    let repository = &context.repository;
+    Ok(FinalNativePayloadIdentity {
         schema_version: PAYLOAD_SCHEMA_VERSION,
         kind: PAYLOAD_KIND.to_string(),
-        product: context.product.clone(),
-        version: context.version.clone(),
-        target: context.target.clone(),
-        executable: context.executable.clone(),
-        source: context.source.clone(),
-        cargo_lock_sha256: context.cargo_lock_sha256.clone(),
-        selected_features: context.selected_features.clone(),
+        product: repository.product.clone(),
+        version: repository.version.clone(),
+        target: repository.target.clone(),
+        executable: repository.executable.clone(),
+        source: repository.source.clone(),
+        cargo_lock_sha256: repository.cargo_lock_sha256.clone(),
+        selected_features: repository.selected_features.clone(),
         toolchain: context.toolchain.clone(),
         build_environment: context.build_environment.clone(),
         files,
         payload_aggregate_sha256,
-        native_runtime_evidence: context.native_runtime_evidence.clone(),
-    }
+        native_runtime_evidence: repository.native_runtime_evidence.clone(),
+    })
 }
 
 fn payload_file_identities(
@@ -464,7 +498,7 @@ fn verify_payload_files(
             ));
         }
     }
-    let aggregate = aggregate_payload_digest(&actual);
+    let aggregate = aggregate_payload_digest(&actual)?;
     if aggregate != identity.payload_aggregate_sha256 {
         return Err(format!(
             "payload aggregate SHA-256 mismatch: expected {}, got {aggregate}",
@@ -602,10 +636,34 @@ fn validate_identity_shape(identity: &FinalNativePayloadIdentity) -> Result<(), 
     }
 }
 
+fn validate_identity_repository_context(
+    identity: &FinalNativePayloadIdentity,
+    context: &PayloadRepositoryContext,
+) -> Result<(), String> {
+    finish_context_validation(repository_context_violations(identity, context))
+}
+
 fn validate_identity_context(
     identity: &FinalNativePayloadIdentity,
     context: &PayloadBuildContext,
 ) -> Result<(), String> {
+    let mut violations = repository_context_violations(identity, &context.repository);
+    if identity.toolchain != context.toolchain {
+        violations.push("toolchain identity is stale".to_string());
+    }
+    if identity.build_environment != context.build_environment {
+        violations.push(format!(
+            "build_environment identity is stale: expected {:?}, got {:?}",
+            context.build_environment, identity.build_environment
+        ));
+    }
+    finish_context_validation(violations)
+}
+
+fn repository_context_violations(
+    identity: &FinalNativePayloadIdentity,
+    context: &PayloadRepositoryContext,
+) -> Vec<String> {
     let mut violations = Vec::new();
     compare_field(
         "product",
@@ -644,21 +702,16 @@ fn validate_identity_context(
             context.selected_features, identity.selected_features
         ));
     }
-    if identity.toolchain != context.toolchain {
-        violations.push("toolchain identity is stale".to_string());
-    }
-    if identity.build_environment != context.build_environment {
-        violations.push(format!(
-            "build_environment identity is stale: expected {:?}, got {:?}",
-            context.build_environment, identity.build_environment
-        ));
-    }
     if identity.native_runtime_evidence != context.native_runtime_evidence {
         violations.push(format!(
             "native_runtime_evidence is stale: expected {:?}, got {:?}",
             context.native_runtime_evidence, identity.native_runtime_evidence
         ));
     }
+    violations
+}
+
+fn finish_context_validation(violations: Vec<String>) -> Result<(), String> {
     if violations.is_empty() {
         Ok(())
     } else {
@@ -677,20 +730,23 @@ fn compare_field(field: &str, actual: &str, expected: &str, violations: &mut Vec
     }
 }
 
-fn aggregate_payload_digest(files: &[PayloadFileIdentity]) -> String {
+fn aggregate_payload_digest(files: &[PayloadFileIdentity]) -> Result<String, String> {
     let mut hasher = Sha256::new();
     for file in files {
-        hash_field(&mut hasher, file.path.as_bytes());
-        hash_field(&mut hasher, file.role.as_str().as_bytes());
-        hash_field(&mut hasher, file.size_bytes.to_string().as_bytes());
-        hash_field(&mut hasher, file.sha256.as_bytes());
+        hash_field(&mut hasher, file.path.as_bytes())?;
+        hash_field(&mut hasher, file.role.as_str().as_bytes())?;
+        hash_field(&mut hasher, file.size_bytes.to_string().as_bytes())?;
+        hash_field(&mut hasher, file.sha256.as_bytes())?;
     }
-    hex_lower(&hasher.finalize())
+    Ok(hex_lower(&hasher.finalize()))
 }
 
-fn hash_field(hasher: &mut Sha256, value: &[u8]) {
-    hasher.update(value.len().to_le_bytes());
+fn hash_field(hasher: &mut Sha256, value: &[u8]) -> Result<(), String> {
+    let length = u64::try_from(value.len())
+        .map_err(|_| "payload digest field length exceeds u64".to_string())?;
+    hasher.update(length.to_le_bytes());
     hasher.update(value);
+    Ok(())
 }
 
 fn role_for_path(path: &str, executable: &str) -> Result<PayloadFileRole, String> {
@@ -742,7 +798,34 @@ fn write_identity_json(path: &Path, identity: &FinalNativePayloadIdentity) -> Re
 fn read_identity_json(path: &Path) -> Result<FinalNativePayloadIdentity, String> {
     let text = fs::read_to_string(path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
-    serde_json::from_str(&text).map_err(|err| format!("failed to parse {}: {err}", path.display()))
+    let identity: FinalNativePayloadIdentity = serde_json::from_str(&text)
+        .map_err(|err| format!("failed to parse {}: {err}", path.display()))?;
+    let rendered = serde_json::to_string_pretty(&identity)
+        .map_err(|err| format!("failed to render final native payload identity: {err}"))?;
+    if text != format!("{rendered}\n") {
+        return Err(format!(
+            "{} is not the canonical final native payload identity encoding",
+            path.display()
+        ));
+    }
+    Ok(identity)
+}
+
+fn verify_identity_projection(
+    identity_path: &Path,
+    identity: &FinalNativePayloadIdentity,
+) -> Result<(), String> {
+    let markdown_path = identity_path.with_file_name(IDENTITY_MARKDOWN);
+    let actual = fs::read_to_string(&markdown_path)
+        .map_err(|err| format!("failed to read {}: {err}", markdown_path.display()))?;
+    let expected = render_payload_identity_markdown(identity);
+    if actual != expected {
+        return Err(format!(
+            "{} does not match the machine-readable payload identity",
+            markdown_path.display()
+        ));
+    }
+    Ok(())
 }
 
 fn render_payload_identity_markdown(identity: &FinalNativePayloadIdentity) -> String {
@@ -822,21 +905,26 @@ fn is_lower_hex(value: &str, length: usize) -> bool {
 mod tests {
     use super::*;
 
+    const FIXTURE_PAYLOAD_SHA256: &str =
+        "2921e07a67068c43b7b0c9d703b99baeff8a76bbfc2a928438418d346d11ba46";
+
     #[test]
     fn payload_identity_is_deterministic_and_verifies() -> Result<(), String> {
         let root = unique_temp_dir("deterministic")?;
         let payload = root.join("payload");
         write_fixture_payload(&payload)?;
         let context = fixture_context();
-        let first = identity_from_context(&context, payload_file_identities(&payload, "ripr")?);
-        let second = identity_from_context(&context, payload_file_identities(&payload, "ripr")?);
+        let first = identity_from_context(&context, payload_file_identities(&payload, "ripr")?)?;
+        let second = identity_from_context(&context, payload_file_identities(&payload, "ripr")?)?;
         assert_eq!(first, second);
+        assert_eq!(first.payload_aggregate_sha256, FIXTURE_PAYLOAD_SHA256);
         assert_eq!(
             serde_json::to_string_pretty(&first).map_err(|err| err.to_string())?,
             serde_json::to_string_pretty(&second).map_err(|err| err.to_string())?
         );
         validate_identity_shape(&first)?;
         validate_identity_context(&first, &context)?;
+        validate_identity_repository_context(&first, &context.repository)?;
         verify_payload_files(&payload, &first)?;
         fs::remove_dir_all(root).map_err(|err| err.to_string())?;
         Ok(())
@@ -848,7 +936,7 @@ mod tests {
         let payload = root.join("payload");
         write_fixture_payload(&payload)?;
         let context = fixture_context();
-        let identity = identity_from_context(&context, payload_file_identities(&payload, "ripr")?);
+        let identity = identity_from_context(&context, payload_file_identities(&payload, "ripr")?)?;
 
         fs::write(payload.join("ripr"), b"changed executable").map_err(|err| err.to_string())?;
         let error = require_error(
@@ -876,7 +964,7 @@ mod tests {
         let identity = identity_from_context(
             &fixture_context(),
             payload_file_identities(&payload, "ripr")?,
-        );
+        )?;
         let mut value = serde_json::to_value(identity).map_err(|err| err.to_string())?;
         value
             .as_object_mut()
@@ -895,43 +983,75 @@ mod tests {
     }
 
     #[test]
-    fn context_validator_rejects_stale_identity_dimensions() -> Result<(), String> {
+    fn repository_context_validator_rejects_stale_identity_dimensions() -> Result<(), String> {
         let root = unique_temp_dir("stale-context")?;
         let payload = root.join("payload");
         write_fixture_payload(&payload)?;
         let context = fixture_context();
-        let identity = identity_from_context(&context, payload_file_identities(&payload, "ripr")?);
+        let identity = identity_from_context(&context, payload_file_identities(&payload, "ripr")?)?;
 
         let mut stale = identity.clone();
         stale.version = "9.9.9".to_string();
         let _ = require_error(
-            validate_identity_context(&stale, &context),
+            validate_identity_repository_context(&stale, &context.repository),
             "stale version identity",
         )?;
         let mut stale = identity.clone();
         stale.target = "other-target".to_string();
         let _ = require_error(
-            validate_identity_context(&stale, &context),
+            validate_identity_repository_context(&stale, &context.repository),
             "stale target identity",
         )?;
         let mut stale = identity.clone();
         stale.selected_features = vec!["lang-rust".to_string()];
         let _ = require_error(
-            validate_identity_context(&stale, &context),
+            validate_identity_repository_context(&stale, &context.repository),
             "stale feature identity",
         )?;
         let mut stale = identity.clone();
         stale.cargo_lock_sha256 = "f".repeat(64);
         let _ = require_error(
-            validate_identity_context(&stale, &context),
+            validate_identity_repository_context(&stale, &context.repository),
             "stale Cargo.lock identity",
         )?;
-        let mut stale = identity;
+        let mut stale = identity.clone();
         stale.source.commit_sha = "b".repeat(40);
         let _ = require_error(
-            validate_identity_context(&stale, &context),
+            validate_identity_repository_context(&stale, &context.repository),
             "stale source identity",
         )?;
+        let mut stale = identity;
+        stale.native_runtime_evidence.source =
+            "EffortlessMetrics/ripr-swarm#9999".to_string();
+        let _ = require_error(
+            validate_identity_repository_context(&stale, &context.repository),
+            "stale runtime-evidence owner",
+        )?;
+        fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn portable_context_ignores_verifier_toolchain_and_runner() -> Result<(), String> {
+        let root = unique_temp_dir("portable-context")?;
+        let payload = root.join("payload");
+        write_fixture_payload(&payload)?;
+        let context = fixture_context();
+        let identity = identity_from_context(&context, payload_file_identities(&payload, "ripr")?)?;
+        let mut verifier = context.clone();
+        verifier.toolchain.rustc_verbose_version = "rustc 1.96.0".to_string();
+        verifier.toolchain.cargo_verbose_version = "cargo 1.96.0".to_string();
+        verifier.build_environment.os = "macOS".to_string();
+        verifier.build_environment.arch = "ARM64".to_string();
+        verifier.build_environment.runner_image = Some("macos15@20260929.1".to_string());
+
+        validate_identity_repository_context(&identity, &verifier.repository)?;
+        let error = require_error(
+            validate_identity_context(&identity, &verifier),
+            "strict producer-context verification",
+        )?;
+        assert!(error.contains("toolchain identity is stale"));
+        assert!(error.contains("build_environment identity is stale"));
         fs::remove_dir_all(root).map_err(|err| err.to_string())?;
         Ok(())
     }
@@ -945,20 +1065,26 @@ mod tests {
 
     fn fixture_context() -> PayloadBuildContext {
         PayloadBuildContext {
-            product: "ripr".to_string(),
-            version: "0.11.0".to_string(),
-            target: "x86_64-unknown-linux-gnu".to_string(),
-            executable: "ripr".to_string(),
-            source: PayloadSourceIdentity {
-                commit_sha: "a".repeat(40),
-                tree_sha: "b".repeat(40),
+            repository: PayloadRepositoryContext {
+                product: "ripr".to_string(),
+                version: "0.11.0".to_string(),
+                target: "x86_64-unknown-linux-gnu".to_string(),
+                executable: "ripr".to_string(),
+                source: PayloadSourceIdentity {
+                    commit_sha: "a".repeat(40),
+                    tree_sha: "b".repeat(40),
+                },
+                cargo_lock_sha256: "c".repeat(64),
+                selected_features: vec![
+                    "lang-python".to_string(),
+                    "lang-rust".to_string(),
+                    "lang-typescript".to_string(),
+                ],
+                native_runtime_evidence: NativeRuntimeEvidenceIdentity {
+                    state: "unqualified".to_string(),
+                    source: "EffortlessMetrics/ripr-swarm#4489".to_string(),
+                },
             },
-            cargo_lock_sha256: "c".repeat(64),
-            selected_features: vec![
-                "lang-python".to_string(),
-                "lang-rust".to_string(),
-                "lang-typescript".to_string(),
-            ],
             toolchain: PayloadToolchainIdentity {
                 rustc_verbose_version: "rustc 1.95.0\nhost: x86_64-unknown-linux-gnu".to_string(),
                 cargo_verbose_version: "cargo 1.95.0\nhost: x86_64-unknown-linux-gnu".to_string(),
@@ -968,10 +1094,6 @@ mod tests {
                 arch: "X64".to_string(),
                 ci_provider: "github-actions".to_string(),
                 runner_image: Some("ubuntu22@20260901.1".to_string()),
-            },
-            native_runtime_evidence: NativeRuntimeEvidenceIdentity {
-                state: "unqualified".to_string(),
-                source: "EffortlessMetrics/ripr-swarm#4489".to_string(),
             },
         }
     }
