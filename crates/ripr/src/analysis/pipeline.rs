@@ -1675,6 +1675,10 @@ mod tests {
         // keeps the fail-closed `unsupported_input` outcome.
         let run = |path: &str| -> Result<AnalysisOutcomeKind, String> {
             let root = temp_root("analysis-outcome-conflict-scope")?;
+            write(
+                root.join("src/lib.rs").as_path(),
+                "pub fn value() -> u32 { 1 }\n",
+            )?;
             let diff = format!(
                 "diff --git a/{path} b/{path}\n\
                  --- a/{path}\n\

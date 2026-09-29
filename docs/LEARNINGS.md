@@ -17,6 +17,12 @@ as a silent substitute for the missing worktree file in this lane.
 review-comments must list the dropped path the same way; `0/0` scoped
 production files without that disclosure is the same false-clean.
 
+Presence is not `root.join(diff_path)` alone. Git diffs keep the
+repository-relative path while `--root` is often a crate subdirectory;
+treat a suffix as the same file only when the stripped prefix is a
+trailing component sequence of `--root`. A sibling crate's `src/lib.rs`
+must not satisfy another crate's missing path.
+
 ## 2026-09-16: Parallel-build test flakes are shared-state mechanisms (#3742)
 
 A rotating family of suite failures under parallel cargo builds (observed

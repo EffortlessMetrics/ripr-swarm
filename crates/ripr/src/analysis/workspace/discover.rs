@@ -45,10 +45,50 @@ fn worktree_contains_regular_source_file(root: &Path, relative: &Path) -> bool {
     {
         return false;
     }
-    match std::fs::metadata(root.join(relative)) {
-        Ok(meta) => meta.is_file(),
-        Err(_) => false,
+    if is_regular_file(&root.join(relative)) {
+        return true;
     }
+    // Git diffs keep the repository-relative path. `--root` is often a
+    // crate subdirectory, so `root.join(diff_path)` misses a file that
+    // is on disk as the matching suffix (`src/lib.rs` under
+    // `examples/sample` while the diff names
+    // `crates/ripr/examples/sample/src/lib.rs`). Accept a suffix only
+    // when the stripped prefix is a trailing component sequence of
+    // `root`; a sibling crate's `src/lib.rs` must not count.
+    let normalized = super::classify::normalize_path(relative);
+    let root_norm = super::classify::normalize_path(root);
+    for (prefix, suffix) in path_prefix_suffix_pairs(&normalized) {
+        if !root_ends_with_prefix(&root_norm, prefix) {
+            continue;
+        }
+        if is_regular_file(&root.join(suffix)) {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_regular_file(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|meta| meta.is_file())
+}
+
+fn path_prefix_suffix_pairs(normalized: &str) -> impl Iterator<Item = (&str, &str)> {
+    let bytes = normalized.as_bytes();
+    (0..normalized.len()).filter_map(move |idx| {
+        if idx == 0 || bytes.get(idx) != Some(&b'/') {
+            return None;
+        }
+        let prefix = normalized.get(..idx)?;
+        let suffix = normalized.get(idx + 1..)?;
+        if prefix.is_empty() || suffix.is_empty() {
+            return None;
+        }
+        Some((prefix, suffix))
+    })
+}
+
+fn root_ends_with_prefix(root_norm: &str, prefix: &str) -> bool {
+    root_norm == prefix || root_norm.ends_with(&format!("/{prefix}"))
 }
 
 pub fn discover_rust_files(root: &Path) -> Result<Vec<PathBuf>, String> {
@@ -264,6 +304,43 @@ mod tests {
             ],
         );
         assert_eq!(absent, vec![PathBuf::from("src/missing.rs")]);
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #4586: a repo-relative diff path against a crate subdirectory
+    /// root is the same on-disk file, not an absent worktree file.
+    /// A sibling crate prefix must not borrow this crate's `src/lib.rs`.
+    #[test]
+    fn repo_relative_diff_path_under_crate_root_is_present()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-absent-worktree-prefix-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        let crate_root = dir.join("crates/ripr/examples/sample");
+        fs::create_dir_all(crate_root.join("src"))?;
+        fs::write(crate_root.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n")?;
+
+        let absent = changed_source_files_absent_from_worktree(
+            &crate_root,
+            [
+                Path::new("crates/ripr/examples/sample/src/lib.rs"),
+                Path::new("crates/other/src/lib.rs"),
+                Path::new("crates/ripr/examples/sample/src/missing.rs"),
+            ],
+        );
+        assert_eq!(
+            absent,
+            vec![
+                PathBuf::from("crates/other/src/lib.rs"),
+                PathBuf::from("crates/ripr/examples/sample/src/missing.rs"),
+            ]
+        );
 
         let _ = fs::remove_dir_all(&dir);
         Ok(())
