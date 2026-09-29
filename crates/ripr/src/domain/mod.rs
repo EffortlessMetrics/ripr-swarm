@@ -55,9 +55,11 @@ pub use git_candidate::{
     GitCandidateBase, GitCandidateDiffSemantics, GitCandidateSubject, GitCandidateSubjectError,
     GitHashFormat, GitObjectId, GitTreeish,
 };
+#[cfg(test)]
+pub(crate) use intervention_study::example_preregistered_study;
 pub(crate) use intervention_study::{
     InterventionStudyError, RIPR_INTERVENTION_STUDY_SCHEMA_VERSION, RiprInterventionStudyV1,
-    codes as intervention_study_codes, example_preregistered_study,
+    codes as intervention_study_codes,
 };
 pub(crate) use language::PERL_FACT_EXPORTER;
 #[cfg(feature = "lang-perl")]

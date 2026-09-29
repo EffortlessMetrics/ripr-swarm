@@ -833,6 +833,7 @@ fn require_git_sha(field: &str, value: &str) -> Result<(), InterventionStudyErro
 }
 
 /// Example IV01 preregistration used by tests and the committed fixture.
+#[cfg(test)]
 pub(crate) fn example_preregistered_study() -> RiprInterventionStudyV1 {
     let dummy_digest = format!("{SHA256_PREFIX}{}", "0".repeat(SHA256_HEX_LENGTH));
     RiprInterventionStudyV1 {
@@ -1025,6 +1026,7 @@ pub(crate) fn example_preregistered_study() -> RiprInterventionStudyV1 {
     }
 }
 
+#[cfg(test)]
 fn empty_overlay() -> BudgetOverlay {
     BudgetOverlay {
         additional_wall_clock_ms: 0,
@@ -1034,6 +1036,7 @@ fn empty_overlay() -> BudgetOverlay {
     }
 }
 
+#[cfg(test)]
 fn required_outcome_axes() -> Vec<OutcomeAxis> {
     [
         (

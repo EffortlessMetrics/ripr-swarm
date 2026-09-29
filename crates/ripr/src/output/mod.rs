@@ -80,6 +80,35 @@ pub(crate) mod workflow_escape;
 // continue to own serialization. Optimized binary retention is not claimed.
 const _: usize = schemas::AGENT_ARTIFACT_SCHEMAS.len();
 
+// #4649 owns preregistration only: no CLI or runner consumes these projections
+// yet (#4652). Keep parser, seal, and renderers compile-checked so a later
+// consumer cannot drop them without a type error.
+const _: fn(
+    &str,
+) -> Result<
+    crate::domain::RiprInterventionStudyV1,
+    crate::domain::InterventionStudyError,
+> = intervention_study::parse_study_json;
+const _: fn(
+    crate::domain::RiprInterventionStudyV1,
+) -> Result<
+    crate::domain::RiprInterventionStudyV1,
+    crate::domain::InterventionStudyError,
+> = intervention_study::seal;
+const _: fn(
+    &crate::domain::RiprInterventionStudyV1,
+) -> Result<String, crate::domain::InterventionStudyError> = intervention_study::render_study_json;
+const _: fn(
+    &crate::domain::RiprInterventionStudyV1,
+) -> Result<String, crate::domain::InterventionStudyError> =
+    intervention_study::render_study_markdown;
+const _: fn(
+    &crate::domain::RiprInterventionStudyV1,
+    &crate::domain::RiprInterventionStudyV1,
+) -> Result<(), crate::domain::InterventionStudyError> =
+    crate::domain::RiprInterventionStudyV1::validate_successor;
+const _: &str = crate::domain::RIPR_INTERVENTION_STUDY_SCHEMA_VERSION;
+
 #[cfg(test)]
 pub(crate) mod test_support {
     use std::path::{Path, PathBuf};

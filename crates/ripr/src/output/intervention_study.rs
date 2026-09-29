@@ -7,8 +7,7 @@
 use sha2::{Digest, Sha256};
 
 use crate::domain::{
-    InterventionStudyError, RIPR_INTERVENTION_STUDY_SCHEMA_VERSION, RiprInterventionStudyV1,
-    intervention_study_codes as codes,
+    InterventionStudyError, RiprInterventionStudyV1, intervention_study_codes as codes,
 };
 use crate::output::json;
 
@@ -222,7 +221,10 @@ fn push_list(markdown: &mut String, label: &str, values: &[String]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{example_preregistered_study, intervention_study_codes as codes};
+    use crate::domain::{
+        RIPR_INTERVENTION_STUDY_SCHEMA_VERSION, example_preregistered_study,
+        intervention_study_codes as codes,
+    };
     use crate::output::test_support::repo_root;
     use serde_json::{Value, json};
     use std::path::Path;
