@@ -15,6 +15,8 @@ pub(crate) use version::pep440_version;
 pub(crate) const CONTRACT_PATH: &str = "policy/distribution.toml";
 const WORKSPACE_MANIFEST_PATH: &str = "Cargo.toml";
 const CRATE_MANIFEST_PATH: &str = "crates/ripr/Cargo.toml";
+const LICENSE_APACHE_PATH: &str = "LICENSE-APACHE";
+const LICENSE_MIT_PATH: &str = "LICENSE-MIT";
 const SERVER_ARCHIVE_WORKFLOW_PATH: &str = ".github/workflows/server-archive-qualification.yml";
 const SERVER_ARCHIVE_WORKFLOW_TEXT: &str =
     include_str!("../../../../.github/workflows/server-archive-qualification.yml");
@@ -43,6 +45,7 @@ pub(crate) fn check_distribution_contract() -> Result<(), String> {
             "Keep the Cargo workspace version as the sole product version source and use the tested SemVer-to-PEP-440 mapping for Python metadata.",
             "Add or remove a target only with its exact Rust target, executable, archive, wheel family, npm package, os/cpu/libc metadata, and qualification owner.",
             "Keep packaging/npm/launcher/package.json synchronized with the product version and exact target map; do not use version ranges or lifecycle install scripts.",
+            "Keep npm package license copies byte-identical to the repository notices.",
             "Leave compatibility_state = \"unqualified\" until #4489 records the measured native compatibility floor; a tag family is not compatibility proof.",
         ],
         rerun_command: "cargo xtask check-release-targets",
@@ -63,6 +66,33 @@ pub(crate) fn check_distribution_contract() -> Result<(), String> {
     let launcher_bin_text = read_required(npm_launcher::BIN_PATH, &mut violations);
     let launcher_library_text = read_required(npm_launcher::LIBRARY_PATH, &mut violations);
     let launcher_test_text = read_required(npm_launcher::TEST_PATH, &mut violations);
+    let root_apache_text = read_required(LICENSE_APACHE_PATH, &mut violations);
+    let root_mit_text = read_required(LICENSE_MIT_PATH, &mut violations);
+    let launcher_apache_text = read_required(npm_launcher::LICENSE_APACHE_PATH, &mut violations);
+    let launcher_mit_text = read_required(npm_launcher::LICENSE_MIT_PATH, &mut violations);
+
+    if let (Some(root_text), Some(package_text)) =
+        (root_apache_text.as_deref(), launcher_apache_text.as_deref())
+    {
+        npm_launcher::validate_license_copy(
+            LICENSE_APACHE_PATH,
+            root_text,
+            npm_launcher::LICENSE_APACHE_PATH,
+            package_text,
+            &mut violations,
+        );
+    }
+    if let (Some(root_text), Some(package_text)) =
+        (root_mit_text.as_deref(), launcher_mit_text.as_deref())
+    {
+        npm_launcher::validate_license_copy(
+            LICENSE_MIT_PATH,
+            root_text,
+            npm_launcher::LICENSE_MIT_PATH,
+            package_text,
+            &mut violations,
+        );
+    }
 
     if let (
         Some(contract),
