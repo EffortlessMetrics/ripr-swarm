@@ -21,7 +21,8 @@ owner name that is not itself the parser-backed direct owner-result. A grouped
 nested-`super` import is the production owner only when the resolved module
 path uniquely matches this seam's owner; do not whitelist every `super::`
 prefix. The same spelling from another module, an unresolved import, or two
-cfg-ambiguous same-name owners stay non-ready. A
+cfg-ambiguous same-name owners stay non-ready. A leading `::` path selects
+the extern prelude and is not this seam's owner. A
 DirectOwnerCall related test that failed target admission stays `Missing`;
 ranking must not fall through to a Proposed InlineUnit or Integration target
 just because the `field_value` fact is now present. Advisory related observers

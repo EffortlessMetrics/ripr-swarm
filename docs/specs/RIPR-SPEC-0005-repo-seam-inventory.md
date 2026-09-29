@@ -211,7 +211,8 @@ local binding of that name unless that binding is itself the parser-backed
 direct owner-result. A grouped nested-`super` import (`use super::diagnostics::{owner}`)
 is the production owner only when the resolved module path uniquely matches
 this seam's owner file; the same local name from a different module, an
-unresolved import, or two cfg-ambiguous same-name owners stay non-ready. Do
+unresolved import, or two cfg-ambiguous same-name owners stay non-ready. A
+leading `::` path is the extern prelude, not a local module. Do
 not treat every `super::` prefix as local. Exact owner-result
 field equality stays
 already-gripped and must not grow a missing fact. A name-related or
@@ -293,7 +294,8 @@ against fixture repos.
   mutable field borrow, assertion-message-only field credit, assertion-local
   shadow, and same-name local or imported callees stay non-ready. A grouped
   nested-`super` import of the unique owner completes the route; a foreign
-  module or cfg-ambiguous same-name pair does not. A
+  module, cfg-ambiguous same-name pair, or leading `::` extern-prelude import
+  does not. A
   refused DirectOwnerCall related test does not fall through to a Proposed
   target; an advisory related observer does not block an independently
   admitted proposal.

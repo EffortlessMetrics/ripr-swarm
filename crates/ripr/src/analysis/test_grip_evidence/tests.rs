@@ -13945,7 +13945,14 @@ fn classified_from_files(
     production_path: &Path,
     field: &str,
 ) -> Result<ConstructorFieldCase, String> {
-    let index = index_from_files(files)?;
+    classified_from_index(index_from_files(files)?, production_path, field)
+}
+
+fn classified_from_index(
+    index: FixtureIndex,
+    production_path: &Path,
+    field: &str,
+) -> Result<ConstructorFieldCase, String> {
     let seams = inventory_seams_from_index(&[production_path.to_path_buf()], &index);
     let seam = seams
         .iter()
@@ -13966,6 +13973,100 @@ fn classified_from_files(
         index,
         seam,
         classified,
+    })
+}
+
+const ADAPTER_DIAGNOSTICS_PRODUCTION: &str = r#"
+pub struct DiagnosticRefreshPlan {
+    pub suppressed_payload_bytes: usize,
+    pub published_payload_bytes: usize,
+}
+
+pub fn diagnostic_refresh_plan(value: usize) -> DiagnosticRefreshPlan {
+    DiagnosticRefreshPlan {
+        suppressed_payload_bytes: value,
+        published_payload_bytes: 0,
+    }
+}
+"#;
+
+fn adapter_diagnostics_import_case(import: &str) -> Result<ConstructorFieldCase, String> {
+    let adapter = format!(
+        "mod diagnostics;\n{import}\n\n#[test]\nfn observes_plan() {{\n    let plan = diagnostic_refresh_plan(7);\n    assert!(plan.suppressed_payload_bytes > 0);\n}}\n"
+    );
+    let files = [
+        (PathBuf::from("src/lib.rs"), "mod adapter;\n"),
+        (PathBuf::from("src/adapter.rs"), adapter.as_str()),
+        (
+            PathBuf::from("src/adapter/diagnostics.rs"),
+            ADAPTER_DIAGNOSTICS_PRODUCTION,
+        ),
+        (
+            PathBuf::from("diagnostics/src/lib.rs"),
+            ADAPTER_DIAGNOSTICS_PRODUCTION,
+        ),
+    ];
+    classified_from_index(
+        index_from_edition2021_diagnostics_workspace(&files)?,
+        Path::new("src/adapter/diagnostics.rs"),
+        "suppressed_payload_bytes",
+    )
+}
+
+fn index_from_edition2021_diagnostics_workspace(
+    files: &[(PathBuf, &str)],
+) -> Result<FixtureIndex, String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let adapter = RaRustSyntaxAdapter;
+    let mut index = RustIndex::default();
+    for (path, source) in files {
+        let facts = adapter.summarize_file(path, source)?;
+        index.tests.extend(facts.tests.iter().cloned());
+        index.functions.extend(facts.functions.iter().cloned());
+        index.files.insert(path.clone(), facts);
+    }
+    let fixture_root = claim_index_fixture_root(stamp)?;
+    fs::write(
+        fixture_root.join("Cargo.toml"),
+        concat!(
+            "[package]\n",
+            "name = \"memory-fixture\"\n",
+            "version = \"0.1.0\"\n",
+            "edition = \"2021\"\n",
+            "\n",
+            "[dependencies]\n",
+            "diagnostics = { path = \"diagnostics\" }\n",
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    fs::create_dir_all(fixture_root.join("diagnostics")).map_err(|error| error.to_string())?;
+    fs::write(
+        fixture_root.join("diagnostics/Cargo.toml"),
+        concat!(
+            "[package]\n",
+            "name = \"diagnostics\"\n",
+            "version = \"0.1.0\"\n",
+            "edition = \"2021\"\n",
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    for (path, source) in files {
+        let full = fixture_root.join(path);
+        if let Some(parent) = full.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        fs::write(full, source).map_err(|error| error.to_string())?;
+    }
+    index.workspace_authority = Some(WorkspaceRootAuthority::from_index(
+        &fixture_root,
+        &index.files,
+    ));
+    Ok(FixtureIndex {
+        index,
+        _fixture_root: fixture_root,
     })
 }
 
@@ -15989,6 +16090,22 @@ pub fn diagnostic_refresh_plan(suppressed: usize, published: usize) -> Diagnosti
         GROUPED_NESTED_SUPER_OWNER_IMPORT,
     )?;
     route_must_stay_unready(&case, "cfg-ambiguous same-name production owners")
+}
+
+#[test]
+fn self_nested_owner_import_completes_canonical_route() -> Result<(), String> {
+    let case =
+        adapter_diagnostics_import_case("use self::diagnostics::{diagnostic_refresh_plan};")?;
+    route_must_be_ready(&case)
+}
+
+#[test]
+fn extern_prelude_owner_import_stays_non_ready() -> Result<(), String> {
+    let case = adapter_diagnostics_import_case("use ::diagnostics::{diagnostic_refresh_plan};")?;
+    route_must_stay_unready(
+        &case,
+        "leading :: extern-prelude import of a same-name dependency crate",
+    )
 }
 
 #[test]

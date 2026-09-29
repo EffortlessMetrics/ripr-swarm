@@ -6,7 +6,8 @@
 //! that same binding's constructed field. Presence of a nearby test or
 //! field name never manufactures activation. A grouped nested-`super`
 //! import counts as that owner only when the resolved module uniquely
-//! matches this seam's owner; `super::` itself is not a whitelist.
+//! matches this seam's owner; `super::` itself is not a whitelist, and a
+//! leading `::` extern-prelude path is not a local module.
 
 use super::record_field_name;
 use super::related_tests::call_text_contains_named_call;
@@ -288,12 +289,21 @@ fn use_tree_binds_owner_name(tree: Option<&ast::UseTree>, owner_name: &str) -> b
 
 fn use_tree_path_text(tree: &ast::UseTree) -> Option<String> {
     tree.path().map(|path| {
-        path.syntax()
+        let mut text: String = path
+            .syntax()
             .text()
             .to_string()
             .chars()
             .filter(|character| !character.is_whitespace())
-            .collect()
+            .collect();
+        let leading_extern = path
+            .syntax()
+            .first_child_or_token()
+            .is_some_and(|element| element.kind() == ra_ap_syntax::SyntaxKind::COLON2);
+        if leading_extern && !text.starts_with("::") {
+            text.insert_str(0, "::");
+        }
+        text
     })
 }
 
@@ -411,6 +421,10 @@ fn import_resolves_to_unique_owner(
 }
 
 fn resolve_use_module_path(item_path: &str, current_module: &str) -> Option<String> {
+    // Rust 2018+ `::ident` selects the extern prelude, not a local module.
+    if item_path.starts_with("::") {
+        return None;
+    }
     let mut segments: Vec<String> = current_module
         .split('/')
         .filter(|segment| !segment.is_empty())

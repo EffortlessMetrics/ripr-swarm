@@ -52,7 +52,8 @@ are scoped or reviewed.
   callees, and local callee bindings of the owner name stay non-ready.
   A grouped nested-`super` import of the unique production owner completes
   the route; the same spelling from another module and cfg-ambiguous
-  same-name owners stay non-ready.
+  same-name owners stay non-ready. A leading `::` extern-prelude import is
+  not a local owner even when a same-named dependency crate exists.
   A DirectOwnerCall related test that failed target admission stays missing
   rather than falling through to a proposed new-test target; advisory related
   observers do not block an independently admitted proposal (#1981).
