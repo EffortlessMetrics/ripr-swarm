@@ -42,20 +42,13 @@ are scoped or reviewed.
 
 ### Fixed
 
-- A diff stream truncated after a valid file header no longer reports
-  `no_changed_lines (analysis complete)`. When a file section parsed its
-  textual header but closed without a validated hunk body, `ripr check --diff`
-  now produces a typed incomplete outcome (`unsupported_input`) carrying a
-  `malformed_diff` limitation that names the exact evidence ("N file
-  section(s) parsed a header but no hunk body; the diff appears truncated"),
-  plus a stderr disclosure. The evidence is per-section, so a complete hunk
-  in one file does not mask a later truncated section, a valid hunkless
-  gitlink or binary section does not suppress truncation detection elsewhere,
-  and only validated body lines count as parsed hunks. A CI diff producer
-  dying mid-stream is therefore visible in the machine-readable outcome
-  instead of reading as a green empty result. Genuinely empty input stays
-  `no_scope` complete, and unparseable garbage keeps its existing
-  `unsupported_input` contract (#4375).
+- Rust: a predicate probe no longer reads `exposed` when a boundary input
+  comes from a test that asserts nothing and a discriminating oracle comes
+  from a different test. `exposed` requires one test that both feeds a
+  boundary input to the owner and holds a discriminating oracle on that
+  call's result. Otherwise the finding stays at most `weakly_exposed` and
+  names `same_test_pairing_missing`. `assert_eq!(gate(10), true)` stays
+  `exposed` (#4828).
 - An unusable cache directory no longer prints one `repo file fact cache entry
   ignored` line per source file. With `RIPR_CACHE_DIR` pointing at a file,
   `ripr check` on this repository printed 723 identical-shape lines before the
@@ -1717,6 +1710,20 @@ are scoped or reviewed.
   ranges, disclose incomplete analysis instead of reporting a complete result.
   File and piped input retain earlier changes as advisory evidence and carry
   the typed malformed-diff recovery route (#4375).
+- A diff stream truncated after a valid file header no longer reports
+  `no_changed_lines (analysis complete)`. When a file section parsed its
+  textual header but closed without a validated hunk body, `ripr check --diff`
+  now produces a typed incomplete outcome (`unsupported_input`) carrying a
+  `malformed_diff` limitation that names the exact evidence ("N file
+  section(s) parsed a header but no hunk body; the diff appears truncated"),
+  plus a stderr disclosure. The evidence is per-section, so a complete hunk
+  in one file does not mask a later truncated section, a valid hunkless
+  gitlink or binary section does not suppress truncation detection elsewhere,
+  and only validated body lines count as parsed hunks. A CI diff producer
+  dying mid-stream is therefore visible in the machine-readable outcome
+  instead of reading as a green empty result. Genuinely empty input stays
+  `no_scope` complete, and unparseable garbage keeps its existing
+  `unsupported_input` contract (#4375).
 
 ### Added
 
