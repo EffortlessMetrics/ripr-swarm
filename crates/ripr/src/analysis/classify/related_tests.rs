@@ -1198,38 +1198,85 @@ fn owner_crate_imports_type_name(
     })
 }
 
-/// Whether a `use` statement in `stripped` source names `type_name` as a
-/// whole word, or ends in a glob, through a path whose first segment is
-/// not `crate`, `self` or `super`.
+/// Whether a `use` statement in `stripped` source could bring a type named
+/// `type_name` in from another crate: a statement not rooted at `crate`,
+/// `self` or `super` that names the type as a whole word, or a glob whose
+/// root is not local. A glob root is local when it is `std`, `core` or
+/// `alloc`, a `mod` declared in the same file, or a name this file imports
+/// through a local or standard-library path (`use core::num;` then
+/// `use num::*;` in tracing-core, #4558 re-walk). A local module's own file
+/// is scanned separately, so its re-exports are still seen.
 fn imports_type_name_from_another_crate(stripped: &str, type_name: &str) -> bool {
-    let is_ident_byte = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let statements = use_statement_paths(stripped);
+    let is_local_root =
+        |root: &str| matches!(root, "crate" | "self" | "super" | "std" | "core" | "alloc");
+    let root_is_local = |root: &str| {
+        is_local_root(root)
+            || declares_module(stripped, root)
+            || statements.iter().any(|path| {
+                is_local_root(path_root(path))
+                    && path
+                        .split(|character: char| !is_ident_char(character))
+                        .any(|word| word == root)
+            })
+    };
+    statements.iter().any(|path| {
+        if matches!(path_root(path), "crate" | "self" | "super") {
+            return false;
+        }
+        let names_type = path
+            .split(|character: char| !is_ident_char(character))
+            .any(|word| word == type_name);
+        names_type || (path.contains('*') && !root_is_local(path_root(path)))
+    })
+}
+
+fn is_ident_char(character: char) -> bool {
+    character.is_ascii_alphanumeric() || character == '_'
+}
+
+/// The trimmed path of every `use` statement in `stripped` source, from the
+/// keyword to the terminating `;`.
+fn use_statement_paths(stripped: &str) -> Vec<&str> {
     let bytes = stripped.as_bytes();
+    let mut paths = Vec::new();
     let mut search_from = 0usize;
     while let Some(relative) = stripped[search_from..].find("use ") {
         let at = search_from + relative;
         search_from = at + 4;
-        if at > 0 && bytes.get(at - 1).is_some_and(|byte| is_ident_byte(*byte)) {
+        if at > 0
+            && bytes
+                .get(at - 1)
+                .is_some_and(|byte| is_ident_char(char::from(*byte)))
+        {
             continue;
         }
         let rest = &stripped[at + 4..];
-        let statement = rest.split(';').next().unwrap_or(rest);
-        let path = statement.trim_start();
-        let local_root = [
-            "crate::", "self::", "super::", "crate::{", "self::{", "super::{",
-        ]
-        .iter()
-        .any(|root| path.starts_with(root));
-        if local_root {
-            continue;
-        }
-        let names_type = statement
-            .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
-            .any(|word| word == type_name);
-        if names_type || statement.contains('*') {
-            return true;
-        }
+        paths.push(rest.split(';').next().unwrap_or(rest).trim());
     }
-    false
+    paths
+}
+
+/// The first path segment of a `use` path, without a leading `::`.
+fn path_root(path: &str) -> &str {
+    let path = path.strip_prefix("::").unwrap_or(path).trim_start();
+    let end = path
+        .find(|character: char| !is_ident_char(character))
+        .unwrap_or(path.len());
+    &path[..end]
+}
+
+/// Whether `stripped` source declares `mod name` (inline or out-of-line).
+fn declares_module(stripped: &str, name: &str) -> bool {
+    let mut words = stripped
+        .split(|character: char| !is_ident_char(character))
+        .filter(|word| !word.is_empty());
+    let mut previous_is_mod = false;
+    words.any(|word| {
+        let found = previous_is_mod && word == name;
+        previous_is_mod = word == "mod";
+        found
+    })
 }
 
 /// Whether `text` invokes the owner through the dependency's declared name,
@@ -3997,6 +4044,29 @@ fn crate_c_score_test() {
         );
     }
 
+    /// #4558 re-walk: globs rooted at the standard library, a module the
+    /// file declares, or a name imported through a local or standard path
+    /// cannot bring in another crate's type (tracing-core's
+    /// `use core::{num}` then `use num::*;`).
+    #[test]
+    fn type_path_call_admits_past_local_and_standard_globs() {
+        let owner = impl_method("crates/crate_a/src/metadata.rs", "LevelFilter", "current");
+        let body = "use crate_a::LevelFilter; LevelFilter::current()";
+        for source in [
+            "use core::{\n    fmt,\n    num,\n};\nfn f() { use num::*; }\n",
+            "mod inner;\nuse inner::*;\n",
+            "use std::collections::*;\n",
+        ] {
+            let mut index = level_filter_index(body, Vec::new());
+            with_source(&mut index, "crates/crate_a/src/field.rs", source);
+            assert_eq!(
+                level_filter_related(&index, &owner),
+                vec![RelationReason::DirectOwnerCall],
+                "{source}: must relate"
+            );
+        }
+    }
+
     fn with_source(index: &mut RustIndex, file: &str, source: &str) {
         index.files.insert(
             PathBuf::from(file),
@@ -4019,6 +4089,8 @@ fn crate_c_score_test() {
             "pub use external::LevelFilter;\n",
             "pub use external::filter::{Directive, LevelFilter as LevelFilter};\n",
             "pub use external::*;\n",
+            "use ::external::*;\n",
+            "use external::num;\nuse num::*;\n",
         ] {
             let mut index = level_filter_index(body, Vec::new());
             with_source(&mut index, "crates/crate_a/src/other.rs", source);
@@ -4027,7 +4099,8 @@ fn crate_c_score_test() {
                 "{source}: must not relate"
             );
         }
-        let quoted = "use crate_a::LevelFilter; assert_eq!(other.current(), \"LevelFilter::current()\")";
+        let quoted =
+            "use crate_a::LevelFilter; assert_eq!(other.current(), \"LevelFilter::current()\")";
         let index = level_filter_index(quoted, Vec::new());
         assert!(level_filter_related(&index, &owner).is_empty());
     }
