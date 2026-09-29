@@ -131,6 +131,13 @@ pub(crate) struct TypeScriptScopeBinding {
     /// tests), is only declared, or anything else in the file could rebind
     /// the name or the class.
     pub(crate) constructed_by: Option<String>,
+    /// `true` when the innermost binding of `name` is a file-level
+    /// declaration. Such a name cannot shadow an import (redeclaring an
+    /// imported name is a syntax error); it is the owner itself in a
+    /// same-file test. Any other level (a `describe` body or parameter, a
+    /// loop header, a hook write, a test callback parameter) shadows an
+    /// import or owner of the same name for the test.
+    pub(crate) file_level: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -200,10 +207,11 @@ pub(crate) enum TypeScriptRelationKind {
     ModuleValueReference,
     ReceiverOwnerCall,
     ClassMethodCall,
-    /// Test imports a name from an intermediate file that re-exports it from
-    /// the owner file via a single `export { N } from './owner'` hop.
-    /// The import chain is explicit in-source; only ONE hop is followed
-    /// (fail-closed on deeper transitive chains).
+    /// Test imports a name from a barrel whose explicit in-source
+    /// `export { N } from` / `export * from` chain (at most
+    /// `MAX_REEXPORT_HOPS` hops, directory specifiers resolved to `index`)
+    /// lands on the owner's own export. Deeper, cyclic or ambiguous chains
+    /// fail closed.
     ReExportChainFollowed,
     SameFileProximity,
     DescribeName,
