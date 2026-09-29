@@ -33,6 +33,18 @@ are scoped or reviewed.
   error no longer cites an internal campaign (#4534).
 - `ripr check` refuses two output selections that disagree, such as
   `--json --format human`. Before, the last one silently won (#4535).
+- Commands ripr prints now run. For a missing agent receipt, `ripr reports
+  index` suggests `ripr agent status`, which names the repair attempt's
+  next step, instead of an `agent receipt` call missing its required
+  flags. It no longer suggests the repository-internal `cargo xtask
+  check-pr` and `cargo xtask pr-summary`. Invalid-receipt
+  guidance names `--seam-id`, and Perl receipt commands use the canonical
+  `ripr receipt write` form instead of a `--verify-cmd` flag `outcome` never
+  had. Help screens and guides that contradicted the CLI were corrected,
+  including the `first-pr` cost disclosure, which described an analysis the
+  command never runs, and `docs/CONFIGURATION.md`'s claim that `context`
+  accepts `--format`. A test now fails when a public guide passes a flag
+  that its command's help does not list (#4573).
 - LSP: a request whose method starts with `$/` and that ripr does not handle
   now gets a `-32601` method-not-found error, as the LSP spec requires. It got
   no response at all, so a client that sent one waited on it forever.
@@ -46,6 +58,13 @@ are scoped or reviewed.
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from
   8.6 s to 6.6 s with byte-identical JSON.
+- `ripr review-comments --gap-ledger` now renders repair cards for gaps from
+  `ripr reports gap-ledger --check-output`, such as Python repair gaps. Those
+  ledger rows carry no seam ID, and every one was suppressed as
+  `missing_seam_identity` even though the ledger marked it eligible for a PR
+  comment, so the documented route produced no cards. A gap-ledger card is
+  keyed by its gap record and now omits `seam_id` when the row has none; the
+  schema requires `seam_id` only on diff-scoped cards (#4524).
 - LSP: the server now asks clients for `textDocument/didSave`. It advertised
   only the numeric full-sync kind, which under the LSP spec does not request
   save notifications, so a strictly conforming editor could save without ripr
@@ -358,6 +377,11 @@ are scoped or reviewed.
   (the top packet), as RIPR-SPEC-0077 specifies. A `gap_id` that
   `actionable-gaps.json` does not hold no longer gets that report's first
   packet: the gap ledger is tried, then a status packet naming the gap.
+
+- Rust cache entries now reject same-key semantic payload edits before serving
+  facts or classified evidence. File-fact, full/compact classified, shard and
+  corpus-fingerprint generations cold-recompute once; checksums do not
+  authenticate writers able to recompute them (#4382).
 
 ### Added
 
