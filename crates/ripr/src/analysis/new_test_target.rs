@@ -198,21 +198,27 @@ fn owning_package(
                 .get("autotests")
                 .and_then(toml::Value::as_bool)
                 .unwrap_or(true);
-            let lib_name = value
-                .get("lib")
-                .and_then(toml::Value::as_table)
+            let explicit_lib = value.get("lib").and_then(toml::Value::as_table);
+            let autolib = package
+                .get("autolib")
+                .and_then(toml::Value::as_bool)
+                .unwrap_or(true);
+            let lib_name = explicit_lib
                 .and_then(|lib| lib.get("name"))
                 .and_then(toml::Value::as_str)
                 .map(ToOwned::to_owned)
                 .unwrap_or_else(|| package_name.replace('-', "_"));
-            let lib_path = value
-                .get("lib")
-                .and_then(toml::Value::as_table)
+            let lib_path = explicit_lib
                 .and_then(|lib| lib.get("path"))
                 .and_then(toml::Value::as_str)
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("src/lib.rs"));
-            let has_library_target = root.join(&directory).join(&lib_path).is_file();
+            let lib_source = root.join(&directory).join(&lib_path);
+            let has_library_target = if explicit_lib.is_some() || autolib {
+                lib_source.is_file()
+            } else {
+                false
+            };
             let tests_dir = root.join(&directory).join("tests");
             let has_established_tests_layout = tests_dir.is_dir()
                 && std::fs::read_dir(&tests_dir)
@@ -329,7 +335,7 @@ fn proposed_integration_file(
         } else {
             package.package_dir.join(&relative)
         };
-        if !root.join(&workspace_relative).exists() {
+        if leaf_is_absent(&root.join(&workspace_relative))? {
             return Ok(normalize_relative(&workspace_relative));
         }
     }
@@ -379,8 +385,9 @@ fn is_root_contained_new_test_file(root: &Path, relative: &Path) -> bool {
         return false;
     }
     let full = root.join(relative);
-    if full.exists() {
-        return false;
+    match leaf_is_absent(&full) {
+        Ok(true) => {}
+        Ok(false) | Err(_) => return false,
     }
     let Some(parent) = full.parent() else {
         return false;
@@ -391,6 +398,17 @@ fn is_root_contained_new_test_file(root: &Path, relative: &Path) -> bool {
     parent
         .canonicalize()
         .is_ok_and(|canonical| canonical.starts_with(&canonical_root))
+}
+
+/// No-follow occupancy: only `NotFound` is a genuinely new leaf.
+/// `exists`/`try_exists` follow a dangling symlink and would treat it as
+/// free. Any other IO error fails closed.
+fn leaf_is_absent(path: &Path) -> Result<bool, NewTestProposalBlocker> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(_) => Err(NewTestProposalBlocker::PathUnsafe),
+    }
 }
 
 fn is_relative_without_parent(path: &Path) -> bool {

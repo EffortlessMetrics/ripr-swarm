@@ -1,8 +1,14 @@
 use crate::analysis::ClassifiedSeam;
-use crate::analysis::new_test_target::{NewTestKind, NewTestProposalProvenance};
-use crate::analysis::repair_route::{RepairTargetSelection, repair_packet_eligibility};
+use crate::analysis::facts::build_index;
+use crate::analysis::new_test_target::{
+    NewTestKind, NewTestProposalProvenance, admit_new_integration_test,
+};
+use crate::analysis::repair_route::{
+    RepairRouteReadiness, RepairTargetSelection, repair_packet_eligibility,
+};
 use crate::analysis::seam_inventory::inventory_classified_seams_at;
 use crate::analysis::seams::SeamKind;
+use crate::analysis::workspace::discover_rust_files;
 use crate::app::repair_attempt::edit_cage_policy_from_packet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -633,17 +639,33 @@ fn explicit_lib_under_autolib_false_still_earns_integration_proposal() -> Result
 /// Negative: a dangling leaf at every safe candidate is occupancy, not
 /// absence. `exists`/`try_exists` follow the link and would treat the
 /// path as free; no-follow metadata must refuse it.
+///
+/// Inventory cannot read a dangling `tests/*.rs` leaf, so the seam is
+/// established first; the production producer then re-admits against
+/// that index after the leaves are occupied.
 #[cfg(unix)]
 #[test]
 fn dangling_proposed_file_symlink_is_not_a_new_safe_target() -> Result<(), String> {
     let root = claim_root("dangling-symlink")?;
     write_ordinary_package(&root.0, "pricing", None)?;
-    dangling_symlink(&root.0, "tests/discounted_total.rs")?;
-    dangling_symlink(&root.0, "tests/discounted_total_boundary.rs")?;
-
     let classified = inventory_classified_seams_at(&root.0)?;
     let entry = boundary_entry(&classified)?;
-    let readiness = repair_packet_eligibility(entry).readiness;
+    let before =
+        proposed_file_display(&repair_packet_eligibility(entry).readiness.target_selection)?;
+    if !before.ends_with("tests/discounted_total.rs") {
+        return Err(format!(
+            "fixture did not propose the first candidate: {before}"
+        ));
+    }
+
+    let readiness = readiness_after_occupying_proposed_leaves(
+        &root.0,
+        entry,
+        &[
+            "tests/discounted_total.rs",
+            "tests/discounted_total_boundary.rs",
+        ],
+    )?;
 
     if let RepairTargetSelection::Proposed(proposal) = &readiness.target_selection {
         return Err(format!(
@@ -674,11 +696,10 @@ fn dangling_proposed_file_symlink_is_not_a_new_safe_target() -> Result<(), Strin
 fn dangling_first_candidate_skips_to_a_free_boundary_file() -> Result<(), String> {
     let root = claim_root("dangling-first")?;
     write_ordinary_package(&root.0, "pricing", None)?;
-    dangling_symlink(&root.0, "tests/discounted_total.rs")?;
-
     let classified = inventory_classified_seams_at(&root.0)?;
     let entry = boundary_entry(&classified)?;
-    let readiness = repair_packet_eligibility(entry).readiness;
+    let readiness =
+        readiness_after_occupying_proposed_leaves(&root.0, entry, &["tests/discounted_total.rs"])?;
     let file = proposed_file_display(&readiness.target_selection)?;
     if file.ends_with("tests/discounted_total.rs") {
         return Err(format!(
@@ -697,6 +718,22 @@ fn dangling_first_candidate_skips_to_a_free_boundary_file() -> Result<(), String
         ));
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn readiness_after_occupying_proposed_leaves(
+    root: &Path,
+    entry: &ClassifiedSeam,
+    occupied: &[&str],
+) -> Result<RepairRouteReadiness, String> {
+    let files = discover_rust_files(root)?;
+    let index = build_index(root, &files)?;
+    for relative in occupied {
+        dangling_symlink(root, relative)?;
+    }
+    let mut occupied_entry = entry.clone();
+    occupied_entry.evidence.new_test_target = Some(admit_new_integration_test(&entry.seam, &index));
+    Ok(repair_packet_eligibility(&occupied_entry).readiness)
 }
 
 #[cfg(unix)]
