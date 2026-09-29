@@ -228,6 +228,10 @@ id = "RIPR-SPEC-0005"
 name = "repo seam inventory and test grip"
 spec = "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
 tests = [
+  "crates/ripr/tests/agent_command_journey.rs::standalone_packet_next_commands_stay_in_selected_root_from_foreign_cwd",
+  "crates/ripr/tests/agent_command_journey.rs::prepared_packet_next_commands_stay_in_selected_root_from_foreign_cwd",
+  "crates/ripr/tests/agent_command_journey.rs::prepared_packet_continuation_cannot_resume_a_later_attempt_for_the_same_seam",
+  "crates/ripr/src/output/agent_seam_packets.rs::tests::prepared_packet_continuation_preserves_required_python_authorization",
   "crates/ripr/src/analysis/seams.rs::tests::seam_id_is_deterministic_for_identical_inputs",
   "crates/ripr/src/analysis/seams.rs::tests::seam_id_differs_when_any_canonical_field_differs",
   "crates/ripr/src/analysis/seams.rs::tests::seam_ids_do_not_depend_on_construction_order",
@@ -244,6 +248,16 @@ tests = [
   "crates/ripr/src/analysis/seam_inventory.rs::tests::given_error_path_shape_when_repo_inventory_runs_then_error_variant_seam_is_emitted",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::given_field_construction_shape_when_repo_inventory_runs_then_field_construction_seam_is_emitted",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::seam_inventory_omits_seams_with_no_owner_function",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::given_generated_rust_conventions_when_repo_inventory_runs_then_those_files_are_not_seams",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::given_near_miss_rust_names_when_repo_inventory_runs_then_hand_written_files_stay_seams",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::given_generator_header_only_ffi_when_repo_inventory_runs_then_file_stays_a_seam",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::given_configured_generated_pattern_when_repo_inventory_runs_then_matching_file_is_not_a_seam",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::given_only_generated_file_bytes_change_when_cache_key_is_rebuilt_then_identity_is_stable",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::given_generated_bindings_with_inline_test_when_classified_inventory_runs_then_grip_does_not_credit_them",
+  "crates/ripr/src/analysis/generated_rust_corpus.rs::tests::partition_drops_conventional_generated_rust_and_keeps_near_misses",
+  "crates/ripr/src/analysis/generated_rust_corpus.rs::tests::partition_applies_configured_generated_file_patterns",
+  "crates/ripr/src/output/repo_exposure.rs::tests::json_discloses_generated_rust_skip_without_changing_run_status",
+  "crates/ripr/src/agent/artifact.rs::tests::repo_exposure_input_identity_tracks_generated_file_patterns",
   "crates/ripr/src/analysis/rust_index.rs::tests::classifies_field_whole_object_side_effect_and_custom_helper_oracles",
   "crates/ripr/src/analysis/rust_index.rs::tests::parser_adapter_extracts_custom_helper_and_side_effect_oracles",
   "crates/ripr/src/output/repo_seams.rs::tests::json_carries_schema_version_and_repo_scope",
@@ -450,6 +464,9 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/seams.rs",
+  "crates/ripr/src/analysis/generated_rust_corpus.rs",
+  "crates/ripr/src/config.rs",
+  "crates/ripr/src/agent/artifact.rs",
   "crates/ripr/src/analysis/seam_inventory.rs",
   "crates/ripr/src/analysis/test_grip_evidence.rs",
   "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
@@ -598,6 +615,9 @@ tests = [
   "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::configured_seam_severity_can_disable_a_class",
   "crates/ripr/tests/cli_smoke.rs::doctor_reports_missing_config_defaults",
   "crates/ripr/tests/cli_smoke.rs::doctor_reports_loaded_config_path",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::doctor_enable_tip_keeps_already_enabled_languages",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::doctor_enable_tip_maps_javascript_to_the_typescript_entry",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::doctor_first_command_has_no_enable_step_for_rust_only",
   "crates/ripr/tests/cli_smoke.rs::doctor_reports_malformed_config_error",
   "crates/ripr/src/cli/commands.rs::tests::doctor_core_report_fails_closed_for_invalid_config",
   "crates/ripr/src/cli/commands.rs::tests::doctor_core_report_fails_closed_for_missing_root",
@@ -750,6 +770,7 @@ tests = [
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_json_and_markdown_are_structured",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_from_repo_exposure_json_parses_static_evidence",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_from_typescript_packet_json_matches_canonical_gap_ids",
+  "crates/ripr/src/output/outcome/mod.rs::tests::typescript_gap_closed_without_a_packet_reads_as_moved_not_removed",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_typescript_preview_fixture_matches_expected_receipts",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_prefers_evidence_record_movement",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_records_no_movement_reason",
@@ -1092,8 +1113,8 @@ id = "RIPR-SPEC-0012"
 name = "PR test guidance annotations"
 spec = "docs/specs/RIPR-SPEC-0012-pr-test-guidance.md"
 tests = [
-  "crates/ripr/src/cli/commands.rs::review_comments_canonical_deadline_cancellation_records_timeout",
-  "crates/ripr/src/cli/commands.rs::review_comments_source_error_wins_over_later_clock_expiry",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_canonical_deadline_cancellation_records_timeout",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_source_error_wins_over_later_clock_expiry",
   "crates/ripr/src/analysis/seam_inventory.rs::scoped_evidence_rejects_deadline_after_the_final_seam",
   "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs::owned_deadline_stops_context_test_loops_without_completing_context",
   "crates/ripr/src/analysis/cancellation.rs::owned_budget_expires_and_default_token_has_no_deadline",
@@ -1110,21 +1131,21 @@ tests = [
   "crates/ripr/src/output/review_comments.rs::review_comments_suppresses_when_recommended_test_changed",
   "crates/ripr/src/output/review_comments.rs::review_comments_markdown_names_static_boundaries",
   "crates/ripr/src/output/review_comments.rs::review_comments_gap_ledger_renders_only_eligible_repair_cards",
-  "crates/ripr/src/cli/commands.rs::review_comments_writes_json_and_markdown_from_loaded_diff",
-  "crates/ripr/src/cli/commands.rs::review_comments_scopes_diff_fast_path_to_changed_files_and_immediate_callers",
-  "crates/ripr/src/cli/commands.rs::review_comments_skips_evidence_outside_changed_lines_once_they_fill_the_review_slots",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_writes_json_and_markdown_from_loaded_diff",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_scopes_diff_fast_path_to_changed_files_and_immediate_callers",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_skips_evidence_outside_changed_lines_once_they_fill_the_review_slots",
   "crates/ripr/src/analysis/seam_inventory.rs::staged_scope_evidence_skips_the_rest_only_when_the_first_stage_is_sufficient",
   "crates/ripr/src/app/annotations.rs::tests::render_missing_comments_file_is_optional_state",
   "crates/ripr/src/app/annotations.rs::tests::render_valid_comments_file_emits_annotations",
   "crates/ripr/src/app/annotations.rs::tests::render_directory_as_comments_path_is_an_explicit_error",
   "crates/ripr/src/app/annotations.rs::tests::render_invalid_utf8_is_an_explicit_error",
   "crates/ripr/src/app/annotations.rs::tests::production_loader_has_no_exists_pre_check",
-  "crates/ripr/src/cli/commands.rs::review_comments_gap_ledger_writes_repair_cards_without_loading_diff",
-  "crates/ripr/src/cli/commands.rs::review_comments_parses_required_revisions_and_out",
-  "crates/ripr/src/cli/commands.rs::review_comments_requires_base_and_head",
-  "crates/ripr/src/cli/commands.rs::review_comments_rejects_empty_values_and_unknown_args",
-  "crates/ripr/src/cli/commands.rs::review_comments_rejects_missing_root_before_loading_diff",
-  "crates/ripr/src/cli/commands.rs::review_comments_returns_diff_loader_errors",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_gap_ledger_writes_repair_cards_without_loading_diff",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_parses_required_revisions_and_out",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_requires_base_and_head",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_rejects_empty_values_and_unknown_args",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_rejects_missing_root_before_loading_diff",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_returns_diff_loader_errors",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
   "crates/ripr/src/output/review_comments.rs::review_comments_pr_guidance_fixtures_pin_required_cases"
 ]
@@ -1135,6 +1156,7 @@ fixtures = [
 code = [
   "crates/ripr/src/app/annotations.rs",
   "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/review_comments.rs",
   "crates/ripr/src/cli/command.rs",
   "crates/ripr/src/cli/help.rs",
   "crates/ripr/src/analysis/seam_inventory.rs",
@@ -2268,6 +2290,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/bounded_read.rs::tests::no_follow_open_rejects_fifo_without_waiting_for_writer",
   "crates/ripr/src/analysis/language/typescript/mod.rs",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::analyze_diff_credits_cross_extension_related_test_oracle_for_mts_sources",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::tests::classify_probe_shape_reads_a_returned_ternary_as_its_condition_boundary",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::tests::classify_probe_shape_reads_a_returned_comparison_as_its_boundary",
   "crates/ripr/src/analysis/language/typescript/ambient_declaration_tests.rs::declaration_file_change_produces_no_probe_but_is_counted",
   "crates/ripr/src/analysis/language/typescript/ambient_declaration_tests.rs::declare_line_in_source_file_is_ignored_but_runtime_line_is_probed",
   "crates/ripr/src/analysis/language/typescript/ambient_declaration_tests.rs::only_parsed_ambient_declarations_are_skipped",
@@ -2328,6 +2352,7 @@ tests = [
   "crates/ripr/src/output/typescript_preview_card.rs::tests::typescript_preview_card_names_static_limit",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::check_output_typescript_repair_packet_becomes_agent_packet_gap_record",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_from_typescript_packet_json_matches_canonical_gap_ids",
+  "crates/ripr/src/output/outcome/mod.rs::tests::typescript_gap_closed_without_a_packet_reads_as_moved_not_removed",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_typescript_preview_fixture_matches_expected_receipts",
   "crates/ripr/src/output/json/mod.rs::tests::finding_json_projects_typescript_preview_actionability",
   "crates/ripr/src/output/human.rs::tests::render_finding_includes_preview_actionability_without_raw_string_spam",
@@ -2355,6 +2380,8 @@ fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/typescript_boundary_gap",
   "fixtures/typescript_strong_oracle",
+  "fixtures/ts_return_ternary_boundary",
+  "fixtures/ts_return_comparison_boundary",
   "fixtures/typescript_return_value_shape",
   "fixtures/typescript_mocked_module_limit",
   "fixtures/typescript_awaited_promise_reject",
@@ -2482,6 +2509,7 @@ spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
   "crates/ripr/src/analysis/language/python.rs",
   "crates/ripr/src/analysis/language/python/tests.rs::classify_click_output_change_as_repairable_cli_gap",
+  "crates/ripr/src/analysis/language/python/tests.rs::classify_probe_shape_reads_a_returned_comparison_as_its_boundary",
   "crates/ripr/src/analysis/language/python/tests.rs::classify_exception_match_assertion_as_exposed",
   "crates/ripr/src/analysis/language/python/tests.rs::classify_field_assertion_as_exposed",
   "crates/ripr/src/analysis/language/python/tests.rs::classify_change_never_restates_changed_expression_as_discriminator",
@@ -2553,6 +2581,7 @@ fixtures = [
   "fixtures/python_unittest_oracle_shapes",
   "fixtures/python_mock_assert_called",
   "fixtures/python_broad_boolean_assertion",
+  "fixtures/python_return_comparison_boundary",
   "fixtures/python_return_value_shape",
   "fixtures/python_error_path_shape",
   "fixtures/python_field_assignment_shape",
@@ -3779,7 +3808,7 @@ tests = [
   "crates/ripr/src/output/gate.rs::tests::gate_acknowledgeable_blocks_safe_gap_ledger_candidate",
   "crates/ripr/src/output/gate.rs::tests::gate_gap_ledger_static_unknown_only_stays_report_only",
   "crates/ripr/src/output/review_comments.rs::review_comments_gap_ledger_renders_only_eligible_repair_cards",
-  "crates/ripr/src/cli/commands.rs::review_comments_gap_ledger_writes_repair_cards_without_loading_diff",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_gap_ledger_writes_repair_cards_without_loading_diff",
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::inline_comment_body_prefers_gap_repair_card",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::gap_record_packet_carries_shared_repair_route_and_stop_conditions",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::gap_record_queue_marks_receipt_closed_python_packets_stale",
@@ -3814,6 +3843,7 @@ code = [
   "crates/ripr/src/output/gap_decision_ledger.rs",
   "crates/ripr/src/output/mod.rs",
   "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/review_comments.rs",
   "crates/ripr/src/cli/help.rs",
   "crates/ripr/src/output/first_useful_action.rs",
   "crates/ripr/src/output/pr_evidence_ledger.rs",
@@ -4975,18 +5005,25 @@ tests = [
   "xtask/src/main.rs::tests::evidence_quality_scorecard_summarizes_cross_language_oracle_route_quality",
   "crates/ripr/src/lsp/tests.rs::gap_code_actions_suppress_repair_actions_for_cross_language_target_unresolved",
   "crates/ripr/src/lsp/gap_artifacts.rs::tests::actionable_gaps_report_rejects_cross_language_target_unresolved_packet",
+  "crates/ripr/src/analysis/language/rust/oracles.rs::tests::pyo3_binding_attrs_are_ffi_on_the_function_or_its_impl",
+  "crates/ripr/src/analysis/language/rust/oracles.rs::tests::cross_language_limit_replaces_the_co_located_test_step_on_no_static_path",
+  "crates/ripr/src/analysis/language/rust/oracles.rs::tests::ffi_attr_matches_the_parsed_path_not_the_attribute_text",
+  "crates/ripr/src/analysis/syntax/ra.rs::tests::impl_block_attrs_are_kept_apart_from_the_method_attrs",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/typescript-bun-ub-calibration",
   "fixtures/cross-language-oracle-graph-corpus",
   "fixtures/bun-ub-cross-language-dogfood",
+  "fixtures/rust_pyo3_cross_language_limit",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/mod.rs",
   "crates/ripr/src/output/typescript_preview_card.rs",
   "crates/ripr/src/output/review_comments.rs",
   "crates/ripr/src/lsp/gap_artifacts.rs",
+  "crates/ripr/src/analysis/language/rust/oracles.rs",
+  "crates/ripr/src/analysis/syntax/ra.rs",
   "xtask/src/command.rs",
   "xtask/src/dispatch.rs",
   "xtask/src/main.rs",
@@ -5000,6 +5037,8 @@ outputs = [
   "docs/specs/README.md",
   "docs/OUTPUT_SCHEMA.md",
   "docs/BUN_UB_TYPESCRIPT_PREVIEW_RUNBOOK.md",
+  "fixtures/rust_pyo3_cross_language_limit/expected/check.json",
+  "fixtures/rust_pyo3_cross_language_limit/expected/human.txt",
   "fixtures/README.md",
   "docs/IMPLEMENTATION_CAMPAIGNS.md",
   "docs/IMPLEMENTATION_PLAN.md",
@@ -5291,7 +5330,7 @@ tests = [
   "crates/ripr/src/output/review_comments.rs::tests::working_set_card_reports_no_oracle_without_related_tests",
   "crates/ripr/src/output/review_comments.rs::tests::working_set_card_projects_first_related_test_oracle_when_no_strong",
   "crates/ripr/src/output/review_comments.rs::tests::review_comments_gap_ledger_renders_only_eligible_repair_cards",
-  "crates/ripr/src/cli/commands.rs::tests::review_comments_gap_ledger_writes_repair_cards_without_loading_diff",
+  "crates/ripr/src/cli/commands/review_comments.rs::tests::review_comments_gap_ledger_writes_repair_cards_without_loading_diff",
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::tests::inline_comment_publish_plan_uses_spec0068_inline_cap_token"
 ]
 fixtures = [
@@ -5304,7 +5343,8 @@ code = [
   "crates/ripr/src/output/review_comments.rs",
   "crates/ripr/src/output/evidence_record.rs",
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs",
-  "crates/ripr/src/cli/commands.rs"
+  "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/review_comments.rs"
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0068-pr-review-card-use-case.md",
@@ -5476,11 +5516,13 @@ tests = [
   "crates/ripr/src/analysis/seam_cache.rs::tests::complete_run_stores_none_limit_info_in_envelope",
   "crates/ripr/src/analysis/seam_cache.rs::tests::capped_cold_then_warm_cache_hit_returns_same_limit_info",
   "crates/ripr/tests/cli_smoke.rs::check_repo_exposure_json_limit_source_configured_when_env_set",
-  "crates/ripr/tests/cli_smoke.rs::check_repo_exposure_json_cache_roundtrip_preserves_seam_limit_applied"
+  "crates/ripr/tests/cli_smoke.rs::check_repo_exposure_json_cache_roundtrip_preserves_seam_limit_applied",
+  "crates/ripr/src/output/repo_exposure.rs::tests::json_discloses_generated_rust_skip_without_changing_run_status"
 ]
 fixtures = []
 code = [
   "crates/ripr/src/analysis/mod.rs",
+  "crates/ripr/src/analysis/generated_rust_corpus.rs",
   "crates/ripr/src/analysis/seam_inventory.rs",
   "crates/ripr/src/analysis/seam_cache.rs",
   "crates/ripr/src/analysis/mod.rs",
@@ -5700,7 +5742,10 @@ tests = [
   "crates/ripr/src/analysis/pipeline.rs::tests::not_enabled_typescript_advisory_keeps_raw_routed_count",
   "crates/ripr/src/analysis/pipeline.rs::tests::enabled_python_advisory_excludes_detectable_excluded_paths",
   "crates/ripr/src/app/tests/preview_analyzed_outcome.rs::excluded_only_typescript_diff_discloses_skipped_scope_in_human_and_json",
-  "crates/ripr/src/app/tests/preview_analyzed_outcome.rs::mixed_typescript_diff_counts_only_accepted_files_and_discloses_the_skipped"
+  "crates/ripr/src/app/tests/preview_analyzed_outcome.rs::mixed_typescript_diff_counts_only_accepted_files_and_discloses_the_skipped",
+  "crates/ripr/src/analysis/pipeline.rs::tests::typescript_advisory_counts_javascript_family_files",
+  "crates/ripr/src/analysis/pipeline.rs::tests::repo_typescript_advisory_counts_javascript_after_exclusion",
+  "crates/ripr/src/output/human.rs::tests::typescript_advisory_names_javascript_and_mixed_files"
 ]
 fixtures = []
 code = [
@@ -5771,7 +5816,7 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::check_diff_stdin_from_a_pipe_stays_silent_about_terminal_disclosure",
   "crates/ripr/tests/cli_smoke.rs::stdin_probe_stalled_child_returns_bounded_timeout",
   "crates/ripr/tests/cli_smoke.rs::stdin_probe_early_exit_returns_write_error",
-  "crates/ripr/src/cli/commands.rs::tests::review_comments_diff_uses_the_pinned_range_authority",
+  "crates/ripr/src/cli/commands/review_comments.rs::tests::review_comments_diff_uses_the_pinned_range_authority",
   "crates/ripr/src/output/first_pr.rs::tests::shallow_range_without_merge_base_points_at_unshallow",
   "crates/ripr/src/output/first_pr.rs::tests::unrelated_git_range_writes_recovery_packet",
   "crates/ripr/src/analysis/diff/parse.rs::tests::symlink_sections_record_no_changed_source_lines",
@@ -6024,6 +6069,7 @@ tests = [
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::check_output_typescript_repair_packet_becomes_agent_packet_gap_record",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::check_output_typescript_fixture_synthesizes_receipt_write_for_packet",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_from_typescript_packet_json_matches_canonical_gap_ids",
+  "crates/ripr/src/output/outcome/mod.rs::tests::typescript_gap_closed_without_a_packet_reads_as_moved_not_removed",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_typescript_preview_fixture_matches_expected_receipts",
   # §8 producer-owned repair-packet authority (issue #2028) — consumer routing nets
   "crates/ripr/src/lsp/tests.rs::seam_code_actions_fail_closed_for_cross_language_target_unresolved",
@@ -6309,6 +6355,13 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::return_value_whole_object_without_token_still_emits_observation_unverified",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::match_arm_sibling_qualifier_does_not_clear_observation_unverified",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::match_arm_variant_token_match_keeps_discriminate_yes",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::mutating_collection_a_while_asserting_b_stays_unverified",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::asserting_affected_collection_retains_confirmation_in_either_order",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::sibling_effect_whole_object_without_collection_identity_still_confirms",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::direct_collection_push_completes_effect_target_and_rejects_wrong_observer",
+  "crates/ripr/src/analysis/classify/flow.rs::tests::direct_collection_state_write_requires_complete_witness",
+  "crates/ripr/src/analysis/classify/flow.rs::tests::cache_insert_call_deletion_keeps_legacy_syntax_propagation",
+  "crates/ripr/src/analysis/test_grip_evidence.rs::tests::direct_collection_mutation_discriminates_actual_observer_not_sibling_collection",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_test_cannot_supply_the_oracle_for_reach_from_another_test"
 ]
 fixtures = [
@@ -7132,6 +7185,14 @@ id = "RIPR-SPEC-0147"
 name = "typed analysis outcome projection"
 spec = "docs/specs/RIPR-SPEC-0147-analysis-outcome-projection.md"
 tests = [
+  "crates/ripr/src/analysis/diff/parse/stream/tests.rs::unfinished_declared_hunks_are_malformed_at_eof_and_boundaries",
+  "crates/ripr/src/analysis/diff/parse/stream/tests.rs::declared_hunk_counts_reject_excess_body_and_invalid_numbers",
+  "crates/ripr/src/analysis/diff/parse/stream/tests.rs::declared_ranges_reject_line_zero_and_unusable_end_coordinates",
+  "crates/ripr/src/analysis/diff/parse/stream/tests.rs::excess_body_counter_overflow_keeps_only_usable_advisory_coordinates",
+  "crates/ripr/src/analysis/diff/parse/stream/tests.rs::malformed_hunk_counts_are_not_duplicated_by_later_boundaries",
+  "crates/ripr/src/analysis/diff/parse.rs::tests::parser_rejects_hunk_whose_declared_range_overflows",
+  "crates/ripr/src/analysis/diff/parse/stream/tests.rs::complete_declared_hunks_preserve_ordinary_and_quarantined_controls",
+  "crates/ripr/tests/cli_smoke.rs::truncated_declared_hunk_is_incomplete_through_file_and_stdin",
   "crates/ripr/src/analysis/pipeline.rs::tests::diff_pipeline_projects_parser_limitation_and_distinguishes_complete_zero",
   "crates/ripr/src/output/json/mod.rs::tests::typed_incomplete_outcome_matches_human_and_json_projection",
   "crates/ripr/src/output/gate/tests.rs::tests::gate_fails_closed_on_typed_incomplete_analysis_outcome",
@@ -7426,6 +7487,7 @@ tests = [
   "crates/ripr/src/agent/artifact.rs::tests::repo_exposure_revision_movement_keeps_input_identity_and_moves_snapshot",
   "crates/ripr/src/agent/artifact.rs::tests::repo_exposure_input_identity_tracks_every_semantic_input",
   "crates/ripr/src/agent/artifact.rs::tests::repo_exposure_input_identity_ignores_unconsumed_config_fields",
+  "crates/ripr/src/agent/artifact.rs::tests::repo_exposure_input_identity_tracks_generated_file_patterns",
   "crates/ripr/src/agent/artifact.rs::tests::repo_exposure_identity_is_byte_stable_across_equivalent_reruns",
   "crates/ripr/src/agent/artifact.rs::tests::repo_exposure_root_bound_identity_is_not_portable_across_checkout_roots",
   "crates/ripr/src/agent/artifact.rs::tests::repo_exposure_validation_rejects_unsupported_input_identity_version",
@@ -8833,6 +8895,20 @@ tests = [
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::context_tests::exclusion_patterns_exclude_directory_prefixes",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::context_tests::explicit_literal_member_beats_parent_prefix_exclusion",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::context_tests::glob_discovered_member_yields_to_parent_prefix_exclusion",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_skips_src_file_no_module_declares",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_limits_only_orphans_the_layout_rule_would_seed",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_skips_orphan_beside_declared_root_outside_src",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_seeds_external_root_module_with_its_package_tests",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_keeps_every_package_sharing_an_external_root_in_scope",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_skips_children_of_a_replaced_default_lib_root",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_follows_path_include_and_nested_module_edges",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_keeps_layout_rule_when_module_tree_is_unknown",
+  "crates/ripr/src/analysis/syntax/module_tree.rs::tests::scan_reports_default_path_include_and_nested_inline_edges",
+  "crates/ripr/src/analysis/syntax/module_tree.rs::tests::scan_is_incomplete_for_edges_it_cannot_resolve",
+  "crates/ripr/src/analysis/syntax/module_tree.rs::tests::scan_ignores_non_item_text_and_resolves_raw_identifiers",
+  "crates/ripr/src/analysis/workspace/module_graph.rs::tests::walk_follows_mod_rs_bin_roots_and_evidence_roots",
+  "crates/ripr/src/analysis/workspace/module_graph.rs::tests::another_packages_path_edge_and_unknown_macros_block_the_orphan_verdict",
+  "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::partition_drops_anchors_no_module_tree_reaches",
 ]
 fixtures = [
   "crates/ripr/tests/data/source-role-corpus",
@@ -8840,6 +8916,8 @@ fixtures = [
 code = [
   "crates/ripr/src/analysis/workspace/source_role.rs",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs",
+  "crates/ripr/src/analysis/workspace/module_graph.rs",
+  "crates/ripr/src/analysis/syntax/module_tree.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs",
   "crates/ripr/src/analysis/seam_inventory.rs",
   "crates/ripr/src/analysis/source_role_corpus.rs",
@@ -9297,11 +9375,17 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_limited_graph_when_cross_crate_test_calls_ambiguous_owner_then_stays_filtered",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_unavailable_graph_when_cross_crate_test_calls_ambiguous_owner_then_stays_filtered",
   "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::forward_dependency_declarations_keep_section_and_declared_name",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_imported_from_owner_crate_admits_across_crates",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_fails_closed_without_owner_identity",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_refuses_foreign_type_names_and_quoted_paths",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_admits_past_local_and_standard_globs",
+  "crates/ripr/src/analysis/syntax/ra.rs::tests::impl_context_names_the_self_type_only_for_plain_named_impls",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/analysis/classify/related_tests.rs",
   "crates/ripr/src/analysis/classifier.rs",
+  "crates/ripr/src/analysis/syntax/ra.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs",
   "crates/ripr/src/analysis/workspace/path_dependencies.rs",
 ]
@@ -9485,7 +9569,8 @@ tests = [
   "crates/ripr/tests/python_repair_attempt.rs::failed_apply_record_publication_stays_retryable",
   "crates/ripr/tests/python_repair_attempt.rs::cage_escape_production_and_generated_edits_fail_closed_and_are_retained",
   "crates/ripr/tests/python_repair_attempt.rs::tampered_retained_binding_fails_closed",
-  "crates/ripr/tests/python_repair_attempt.rs::deterministic_preparation_is_byte_identical",
+  "crates/ripr/tests/python_repair_attempt.rs::distinct_prepared_attempts_bind_their_exact_packet_inputs",
+  "crates/ripr/src/app/python_repair_binding.rs::tests::identical_record_inputs_serialize_identically",
   "crates/ripr/tests/python_repair_attempt.rs::driver_claims_no_verification_movement_or_closure",
   "crates/ripr/tests/python_repair_attempt.rs::states_remain_distinct_across_one_repository",
   "crates/ripr/tests/python_repair_attempt.rs::verification_phase_records_execution_and_movement_separately",
@@ -9720,4 +9805,225 @@ outputs = [
 ]
 metrics = [
   "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0182"
+name = "Governed identity registry and compatibility map"
+spec = "docs/specs/RIPR-SPEC-0182-governed-identity-registry.md"
+tests = [
+  "crates/ripr/src/domain/identity/tests.rs::production_registry_covers_required_taxonomy_and_is_internally_consistent",
+  "crates/ripr/src/domain/identity/tests.rs::missing_taxonomy_identity_fails_the_registry_check",
+  "crates/ripr/src/domain/identity/tests.rs::contradictory_duplicate_owners_fail_the_registry_check",
+  "crates/ripr/src/domain/identity/tests.rs::same_surface_field_cannot_have_two_canonical_owners",
+  "crates/ripr/src/domain/identity/tests.rs::same_field_name_on_different_surfaces_can_keep_distinct_meanings",
+  "crates/ripr/src/domain/identity/tests.rs::repair_attempt_id_cannot_be_registered_as_a_snapshot_or_analysis_attempt_alias",
+  "crates/ripr/src/domain/identity/tests.rs::completed_snapshot_cannot_own_agent_snapshot_id",
+  "crates/ripr/src/domain/identity/tests.rs::production_catalog_keeps_agent_snapshot_id_as_analysis_attempt_not_completed_snapshot",
+  "crates/ripr/src/domain/identity/tests.rs::continuation_wire_names_are_one_authority_with_an_alias",
+  "crates/ripr/src/domain/identity/tests.rs::portable_identities_reject_scheduler_timestamp_pid_client_and_display_inputs",
+  "crates/ripr/src/domain/identity/tests.rs::equivalent_checkout_roots_preserve_portable_identities_and_keep_containment_separate",
+  "crates/ripr/src/domain/identity/tests.rs::alias_without_removal_generation_fails",
+  "crates/ripr/src/domain/identity/tests.rs::unknown_governed_field_has_no_disposition",
+  "crates/ripr/src/domain/identity/tests.rs::reordered_registry_entries_render_byte_stable_json_and_markdown",
+  "crates/ripr/src/domain/identity/tests.rs::one_sided_parent_child_edge_fails_the_registry_check",
+  "crates/ripr/src/domain/identity/tests.rs::adjacent_field_cannot_also_be_canonical_on_the_same_surface",
+  "crates/ripr/src/domain/identity/tests.rs::serialization_on_an_ungoverned_surface_fails_closed",
+  "crates/ripr/src/domain/identity/tests.rs::truncated_surface_suffix_does_not_inherit_a_disposition",
+  "crates/ripr/src/domain/identity/tests.rs::checkout_prefixed_surface_still_matches_the_registered_path",
+  "crates/ripr/src/domain/identity/tests.rs::same_surface_field_cannot_be_canonical_and_component",
+  "crates/ripr/src/domain/identity/tests.rs::missing_serialized_sibling_fails_the_registry_check",
+  "xtask/src/identity_registry.rs::tests::unknown_field_has_no_disposition",
+  "xtask/src/identity_registry.rs::tests::same_attempt_id_name_keeps_repair_and_feedback_dispositions_apart",
+  "xtask/src/identity_registry.rs::tests::scanner_reports_unknown_and_zero_field_surfaces",
+]
+fixtures = [
+]
+code = [
+  "crates/ripr/src/domain/identity/mod.rs",
+  "crates/ripr/src/domain/identity/catalog.rs",
+  "crates/ripr/src/domain/identity/fields.rs",
+  "crates/ripr/src/domain/identity/invariants.rs",
+  "xtask/src/identity_registry.rs",
+]
+outputs = [
+  "docs/identity/REGISTRY.md",
+  "docs/identity/registry.v1.json",
+]
+metrics = [
+  "identity_registry_kinds",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0183"
+name = "Executed-control obligation and result contract"
+spec = "docs/specs/RIPR-SPEC-0183-executed-control-obligation.md"
+tests = [
+  "crates/ripr/src/domain/executed_control.rs::tests::executed_removal_control_fails_before_and_passes_after_the_repair",
+  "crates/ripr/src/domain/executed_control.rs::tests::ordinary_positive_test_cannot_silently_satisfy_the_obligation",
+  "crates/ripr/src/domain/executed_control.rs::tests::prose_claim_without_artifact_cannot_pass",
+  "crates/ripr/src/domain/executed_control.rs::tests::control_run_on_another_head_cannot_pass",
+  "crates/ripr/src/domain/executed_control.rs::tests::command_success_without_named_wrong_implementation_cannot_pass",
+  "crates/ripr/src/domain/executed_control.rs::tests::unavailable_instrument_with_declared_substitute_is_explicit_and_satisfying",
+  "crates/ripr/src/domain/executed_control.rs::tests::unavailable_instrument_without_substitute_stays_explicit_and_non_satisfying",
+  "crates/ripr/src/domain/executed_control.rs::tests::duplicated_obligation_ids_are_rejected",
+  "crates/ripr/src/domain/executed_control.rs::tests::result_for_unknown_obligation_is_rejected",
+  "crates/ripr/src/domain/executed_control.rs::tests::issue_3858_documentation_fixture_stays_not_proven",
+  "crates/ripr/src/domain/executed_control.rs::tests::foreign_source_identity_cannot_satisfy",
+  "crates/ripr/src/domain/executed_control.rs::tests::unexecuted_substitute_cannot_satisfy",
+  "crates/ripr/src/domain/executed_control.rs::tests::passed_result_requires_an_artifact_backed_acceptable_form",
+  "crates/ripr/src/domain/executed_control.rs::tests::same_head_pass_and_fail_are_rejected",
+  "crates/ripr/src/output/executed_control.rs::tests::json_and_human_projections_agree_on_satisfaction_and_are_deterministic",
+  "crates/ripr/src/output/executed_control.rs::tests::json_and_markdown_projections_reject_the_same_invalid_packet",
+  "crates/ripr/src/output/executed_control.rs::tests::human_projection_keeps_issue_3858_not_proven",
+  "crates/ripr/src/output/executed_control.rs::tests::corpus_covers_required_negative_and_documentation_cases",
+]
+fixtures = [
+  "fixtures/executed-control-contract",
+]
+code = [
+  "crates/ripr/src/domain/executed_control.rs",
+  "crates/ripr/src/output/executed_control.rs",
+  "schemas/ripr/executed-control.schema.json",
+]
+outputs = [
+  "docs/OUTPUT_SCHEMA.md",
+  "schemas/ripr/executed-control.schema.json",
+]
+metrics = [
+  "executed_control_obligation_vocabulary_closed",
+  "executed_control_pass_requires_executed_evidence",
+  "executed_control_projections_deterministic",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0184"
+name = "typed public command catalog and parser/alias parity"
+spec = "docs/specs/RIPR-SPEC-0184-public-command-catalog.md"
+tests = [
+  "crates/ripr/src/cli/command_catalog.rs::tests::production_catalog_is_well_formed",
+  "crates/ripr/src/cli/command_catalog.rs::tests::catalog_lookup_is_pure_static_data",
+  "crates/ripr/src/cli/command_catalog.rs::tests::reordered_source_rows_are_byte_stable_when_normalized",
+  "crates/ripr/src/cli/command_catalog.rs::tests::typo_suggestions_derive_from_the_catalog",
+  "crates/ripr/src/cli/command_catalog.rs::tests::catalog_retains_the_pre_c1_known_command_surface",
+  "crates/ripr/src/cli/command_catalog.rs::tests::public_inventory_excludes_compatibility_and_advanced",
+  "crates/ripr/src/cli/command_catalog.rs::tests::nested_and_top_level_same_spelling_keep_distinct_identities",
+  "crates/ripr/src/cli/command_catalog.rs::tests::start_here_parses_to_first_pr",
+  "crates/ripr/src/cli/command_catalog.rs::tests::every_catalog_top_level_spelling_is_accepted_by_the_parser",
+  "crates/ripr/src/cli/command_catalog.rs::tests::two_way_top_level_parity_matches_parser_and_catalog",
+  "crates/ripr/src/cli/command_catalog.rs::tests::parser_only_and_catalog_only_paths_fail_closed",
+  "crates/ripr/src/cli/command_catalog.rs::tests::duplicate_alias_and_cycle_fail_closed",
+  "crates/ripr/src/cli/command_catalog.rs::tests::internal_and_retired_rows_cannot_leak_into_public_or_typo_surfaces",
+  "crates/ripr/src/cli/command_catalog.rs::tests::nested_parser_families_have_two_way_parity_with_the_catalog",
+  "crates/ripr/src/cli/command.rs::tests::known_commands_covers_every_parser_spelling",
+  "crates/ripr/src/cli/help.rs::tests::help_all_documents_every_public_command",
+  "crates/ripr/tests/cli_help_hierarchy.rs::default_help_keeps_the_task_roles_distinct",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/cli/command_catalog.rs",
+  "crates/ripr/src/cli/command.rs",
+  "crates/ripr/src/cli/help.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0184-public-command-catalog.md",
+  "docs/COMMAND_HIERARCHY.md",
+]
+metrics = [
+  "public_command_catalog_entries",
+  "public_command_catalog_two_way_violations",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0185"
+name = "CLI analysis progress on stderr"
+spec = "docs/specs/RIPR-SPEC-0185-cli-analysis-progress-stderr.md"
+tests = [
+  "crates/ripr/src/app/progress.rs::tests::check_progress_reports_real_boundaries_without_invented_totals",
+  "crates/ripr/src/app/progress.rs::tests::missing_diff_fails_after_loading_input_without_false_completion",
+  "crates/ripr/src/app/progress.rs::tests::progress_sink_panic_cannot_change_analysis_result",
+  "crates/ripr/src/app/progress.rs::tests::no_sink_path_stays_available",
+  "crates/ripr/src/app/progress.rs::tests::cancelled_token_through_check_emits_cancelled_not_completed",
+  "crates/ripr/src/cli/progress.rs::tests::non_tty_stage_lines_are_newline_delimited_and_path_free",
+  "crates/ripr/src/cli/progress.rs::tests::unknown_totals_never_render_as_percentage_or_eta",
+  "crates/ripr/src/cli/progress.rs::tests::tty_short_run_does_not_flash_completed",
+  "crates/ripr/src/cli/progress.rs::tests::tty_short_failure_still_projects_failed",
+  "crates/ripr/src/cli/progress.rs::tests::tty_and_non_tty_share_stage_tokens",
+  "crates/ripr/src/cli/progress.rs::tests::failure_terminal_never_emits_completed",
+  "crates/ripr/src/cli/progress.rs::tests::cancelled_terminal_never_emits_completed",
+  "crates/ripr/src/cli/progress.rs::tests::projection_tokens_cover_the_closed_producer_vocabulary",
+  "crates/ripr/src/cli/progress.rs::tests::rendering_failure_is_isolated",
+  "crates/ripr/src/cli/progress.rs::tests::heartbeat_is_throttled_and_bounded",
+  "crates/ripr/src/cli/progress.rs::tests::tty_suppressed_stage_becomes_visible_once_min_visible_elapses",
+  "crates/ripr/src/cli/progress.rs::tests::tty_overwrite_clears_a_longer_previous_line",
+  "crates/ripr/src/cli/progress.rs::tests::tty_overwrite_pads_to_the_longest_prior_line",
+  "crates/ripr/src/cli/progress.rs::tests::held_completed_waits_for_command_commit",
+  "crates/ripr/src/cli/progress.rs::tests::drop_without_commit_converts_held_completed_to_failed",
+  "crates/ripr/src/cli/progress.rs::tests::unsafe_constructed_lines_are_rejected",
+  "crates/ripr/src/cli/help.rs::tests::check_help_mentions_repo_badge_formats_and_examples",
+  "crates/ripr/tests/cli_progress.rs::check_json_stdout_parses_while_progress_stays_on_stderr",
+  "crates/ripr/tests/cli_progress.rs::check_quiet_keeps_json_stdout_byte_identical_and_drops_progress",
+  "crates/ripr/tests/cli_progress.rs::check_sarif_stdout_is_unchanged_by_progress",
+  "crates/ripr/tests/cli_progress.rs::check_github_stdout_is_unchanged_by_progress",
+  "crates/ripr/tests/cli_progress.rs::check_markdown_stdout_is_unchanged_by_progress",
+  "crates/ripr/tests/cli_progress.rs::check_worktree_projects_worktree_scope_on_stderr",
+  "crates/ripr/tests/cli_progress.rs::check_progress_failure_emits_failed_not_completed",
+  "crates/ripr/tests/cli_progress.rs::check_quiet_failure_keeps_errors_and_drops_progress",
+  "crates/ripr/tests/cli_progress.rs::check_unwritable_artifact_projects_failed_not_completed",
+  "crates/ripr/tests/cli_progress.rs::check_help_does_not_spray_progress",
+]
+fixtures = [
+]
+code = [
+  "crates/ripr/src/app/progress.rs",
+  "crates/ripr/src/app/check.rs",
+  "crates/ripr/src/cli/progress.rs",
+  "crates/ripr/src/cli/commands/check.rs",
+  "crates/ripr/src/cli/help/core.rs",
+]
+outputs = [
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/QUICKSTART.md",
+  "docs/COMMAND_HIERARCHY.md",
+]
+metrics = [
+  "cli_progress_stage_events",
+  "cli_progress_heartbeats",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0186"
+name = "Same-test pairing for boundary-class probes"
+spec = "docs/specs/RIPR-SPEC-0186-same-test-boundary-oracle-pairing.md"
+tests = [
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::split_tests_do_not_pair",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::same_call_assert_eq_pairs",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::same_test_split_calls_do_not_pair",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::let_bound_boundary_call_asserted_later_pairs",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::typed_let_bound_boundary_call_asserted_later_pairs",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::let_binding_name_requires_keyword_boundary_and_allows_type_ascription",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::two_parameter_equal_args_in_assert_eq_pair",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::weak_assertion_on_boundary_call_does_not_pair",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::activation_equality_fact_pairs_when_call_args_are_not_probe_literals",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::same_line_split_calls_do_not_pair",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::irrelevant_argument_does_not_pair",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::shadowed_boundary_binding_does_not_pair",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::short_let_bound_name_pairs"
+]
+fixtures = [
+  "fixtures/split_test_boundary_oracle",
+  "fixtures/strong_boundary_oracle"
+]
+code = [
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs",
+  "crates/ripr/src/analysis/classifier/evidence.rs",
+  "crates/ripr/src/analysis/classify/decision.rs"
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0186-same-test-boundary-oracle-pairing.md",
+  "fixtures/split_test_boundary_oracle/expected/check.json",
+  "fixtures/split_test_boundary_oracle/expected/human.txt"
+]
+metrics = [
+  "same_test_boundary_oracle_pairing",
 ]

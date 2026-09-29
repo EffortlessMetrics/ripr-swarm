@@ -1969,6 +1969,8 @@ fn check_suppression_policy_rejects_unsupported_formats() -> Result<(), String> 
 
 const SMOKE_PR_GUIDANCE_JSON: &str = r#"{
   "schema_version": "0.1",
+  "tool": "ripr",
+  "status": "advisory",
   "summary": {"unchanged_tests": true},
   "comments": [],
   "summary_only": [],
@@ -3129,6 +3131,7 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     let repair = run_ripr(&[
         "agent",
         "repair",
+        "--json",
         "--root",
         &root_path,
         "--seam-id",
@@ -4549,6 +4552,7 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     let before = run_ripr(&[
         "agent",
         "repair",
+        "--json",
         "--root",
         &root_arg,
         "--seam-id",
@@ -4607,6 +4611,7 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     let after = run_ripr(&[
         "agent",
         "repair",
+        "--json",
         "--root",
         &root_arg,
         "--seam-id",
@@ -4689,6 +4694,7 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     let replay = run_ripr(&[
         "agent",
         "repair",
+        "--json",
         "--root",
         &root_arg,
         "--seam-id",
@@ -4900,7 +4906,7 @@ fn built_repair_fixture(label: &str) -> Result<PathBuf, Box<dyn std::error::Erro
 
 fn run_repair_phase(root: &Path, selector: &[&str], phase: &str) -> Result<Output, std::io::Error> {
     let root_arg = root.display().to_string();
-    let mut args = vec!["agent", "repair", "--root", root_arg.as_str()];
+    let mut args = vec!["agent", "repair", "--json", "--root", root_arg.as_str()];
     args.extend_from_slice(selector);
     args.extend(["--phase", phase]);
     run_command(env!("CARGO_BIN_EXE_ripr"), None, &args)
@@ -5149,6 +5155,80 @@ fn agent_repair_names_build_ignore_drift_without_redirect_blame()
     Ok(())
 }
 
+/// Without `--json`, each phase prints a short summary whose file paths
+/// resolve against `--root`, so a caller running from another directory can
+/// open them.
+#[test]
+fn agent_repair_default_stdout_is_a_summary_naming_root_resolved_files()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = built_repair_fixture("agent-repair-default-stdout")?;
+    let elsewhere = std::env::temp_dir();
+    let root_arg = root.display().to_string();
+    let bin = env!("CARGO_BIN_EXE_ripr");
+
+    let before = run_command(
+        bin,
+        Some(&elsewhere),
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            BOUNDARY_GAP_SEAM_ID,
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_success(&before);
+    let stdout = String::from_utf8_lossy(&before.stdout);
+    assert!(!stdout.trim_start().starts_with('{'), "{stdout}");
+    let packet = root.join("target/ripr/workflow/agent-packet.json");
+    assert!(
+        stdout.contains(&packet.display().to_string()),
+        "before summary must name the root-resolved packet:\n{stdout}"
+    );
+    assert!(stdout.contains("Next, after the test edit: "), "{stdout}");
+    let (attempt_id, _) = sole_repair_attempt(&root)?;
+
+    add_boundary_test(&root)?;
+    let after = run_command(
+        bin,
+        Some(&elsewhere),
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--phase",
+            "after",
+        ],
+    )?;
+    assert_success(&after);
+    let stdout = String::from_utf8_lossy(&after.stdout);
+    assert!(!stdout.trim_start().starts_with('{'), "{stdout}");
+    assert!(
+        stdout.contains(&format!(
+            "Result for seam `{BOUNDARY_GAP_SEAM_ID}`: weak -> exposed (weakly_gripped -> strongly_gripped, improved)"
+        )),
+        "{stdout}"
+    );
+    for artifact in [
+        "target/ripr/reports/agent-receipt.json",
+        "target/ripr/workflow/agent-verify.json",
+    ] {
+        assert!(
+            stdout.contains(&root.join(artifact).display().to_string()),
+            "after summary must name the root-resolved {artifact}:\n{stdout}"
+        );
+    }
+
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
 #[test]
 fn agent_repair_admits_cargo_build_output_and_unchanged_untracked_lockfile()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -5271,7 +5351,7 @@ fn run_repair_phase_redirected(
     stderr: &Path,
 ) -> Result<Output, std::io::Error> {
     let root_arg = root.display().to_string();
-    let mut args = vec!["agent", "repair", "--root", root_arg.as_str()];
+    let mut args = vec!["agent", "repair", "--json", "--root", root_arg.as_str()];
     args.extend_from_slice(selector);
     args.extend(["--phase", phase]);
     spawn_command(
@@ -8960,11 +9040,32 @@ fn doctor_recommends_worktree_check_on_dirty_worktree() -> Result<(), String> {
     let clean = run_ripr(&["doctor", "--root", &root_str]);
     assert_success(&clean);
     let clean_out = String::from_utf8_lossy(&clean.stdout);
-    assert!(
-        clean_out
-            .lines()
-            .any(|line| line.trim_end() == "- Recommended first command: ripr check"),
+    assert_eq!(
+        recommended_first_command_line(&clean_out),
+        Some(first_command_at(&root_str, "").as_str()),
         "clean worktree must recommend the diff-first command directly:\n{clean_out}"
+    );
+    // A relative `--root` is bound to doctor's directory (#4890), so the
+    // printed command still names this repository after a `cd`.
+    let parent = root
+        .parent()
+        .ok_or_else(|| format!("{} has no parent", root.display()))?;
+    let name = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("{} has no UTF-8 name", root.display()))?;
+    let relative = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(parent),
+        &["doctor", "--root", name],
+    )
+    .map_err(|err| err.to_string())?;
+    assert_success(&relative);
+    let relative_out = String::from_utf8_lossy(&relative.stdout);
+    assert_eq!(
+        recommended_first_command_line(&relative_out),
+        Some(first_command_at(&root_str, "").as_str()),
+        "a relative --root must print the bound root:\n{relative_out}"
     );
     // The base is resolved, not asserted: `origin/main` does not exist in a
     // repository whose default branch is not `main`, and this fixture has no
@@ -8983,18 +9084,18 @@ fn doctor_recommends_worktree_check_on_dirty_worktree() -> Result<(), String> {
     let dirty = run_ripr(&["doctor", "--root", &root_str]);
     assert_success(&dirty);
     let dirty_out = String::from_utf8_lossy(&dirty.stdout);
-    assert!(
-        dirty_out.contains("Recommended first command: ripr check --base HEAD --worktree"),
+    assert_eq!(
+        recommended_first_command_line(&dirty_out),
+        Some(first_command_at(&root_str, " --base HEAD --worktree").as_str()),
         "dirty worktree must recommend the worktree command:\n{dirty_out}"
     );
     assert!(
         dirty_out.contains("staged and unstaged tracked edits"),
         "dirty worktree must disclose the tracked-edit scope:\n{dirty_out}"
     );
-    assert!(
-        !dirty_out
-            .lines()
-            .any(|line| line.trim_end() == "- Recommended first command: ripr check"),
+    assert_ne!(
+        recommended_first_command_line(&dirty_out),
+        Some(first_command_at(&root_str, "").as_str()),
         "dirty worktree must NOT give the unconditional clean recommendation:\n{dirty_out}"
     );
 
@@ -9013,6 +9114,28 @@ fn recommended_first_command_line(stdout: &str) -> Option<&str> {
         line.trim_end()
             .strip_prefix("- Recommended first command: ")
     })
+}
+
+/// Doctor's recommended command after `doctor --root <root>` run from another
+/// directory: `ripr check` defaults to `.`, so the root is named, quoted the
+/// way `agent::loop_commands::shell_arg` quotes it. `root` is absolute; on
+/// Windows command paths render with `/` separators.
+fn first_command_at(root: &str, flags: &str) -> String {
+    let root = if cfg!(windows) {
+        root.replace('\\', "/")
+    } else {
+        root.to_string()
+    };
+    let quoted = if !root.is_empty()
+        && root
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '/' | '_' | '-' | ':'))
+    {
+        root.to_string()
+    } else {
+        format!("'{}'", root.replace('\'', r"'\''"))
+    };
+    format!("ripr check --root {quoted}{flags}")
 }
 
 #[test]
@@ -9144,7 +9267,7 @@ fn doctor_without_git_names_the_fix_and_recommends_the_diff_route() -> Result<()
     );
     assert_eq!(
         recommended_first_command_line(&stdout),
-        Some("ripr check --diff PATH"),
+        Some(first_command_at(&root, " --diff PATH").as_str()),
         "doctor must not recommend a git-backed check:\n{stdout}"
     );
     assert!(
@@ -9190,7 +9313,7 @@ fn doctor_without_git_does_not_recommend_worktree_on_a_dirty_tree() -> Result<()
     assert_success(&with_git);
     assert_eq!(
         recommended_first_command_line(&String::from_utf8_lossy(&with_git.stdout)),
-        Some("ripr check --base HEAD --worktree"),
+        Some(first_command_at(&root_str, " --base HEAD --worktree").as_str()),
         "control: dirty tree with git still recommends --worktree:\n{}",
         String::from_utf8_lossy(&with_git.stdout)
     );
@@ -9200,7 +9323,7 @@ fn doctor_without_git_does_not_recommend_worktree_on_a_dirty_tree() -> Result<()
     let stdout = String::from_utf8_lossy(&without_git.stdout);
     assert_eq!(
         recommended_first_command_line(&stdout),
-        Some("ripr check --diff PATH"),
+        Some(first_command_at(&root_str, " --diff PATH").as_str()),
         "dirty tree cannot win over a missing git binary:\n{stdout}"
     );
     assert!(
@@ -11235,7 +11358,7 @@ fn python_check_safe_action(
         .find(|line| line.starts_with("  Safe next action:"))
         .ok_or_else(|| format!("check printed no safe next action:\n{stdout}"))?;
     assert!(
-        stdout.contains("State: preview_limited"),
+        stdout.contains("State: preview language, advisory only (preview_limited)"),
         "expected preview_limited triage:\n{stdout}"
     );
     Ok(line.to_string())
@@ -15352,6 +15475,7 @@ fn repair_route_before(root: &Path) -> Result<String, Box<dyn std::error::Error>
     let before = run_ripr(&[
         "agent",
         "repair",
+        "--json",
         "--root",
         &root_arg,
         "--seam-id",
@@ -15599,6 +15723,7 @@ fn agent_status_restarts_a_failed_attempt_and_completes_a_finished_one()
     let after = run_ripr(&[
         "agent",
         "repair",
+        "--json",
         "--root",
         &root_arg,
         "--attempt",
@@ -15639,6 +15764,7 @@ fn agent_status_restarts_a_failed_attempt_and_completes_a_finished_one()
     let after = run_ripr(&[
         "agent",
         "repair",
+        "--json",
         "--root",
         &root_arg,
         "--attempt",
@@ -15694,6 +15820,7 @@ fn repair_route_after(root: &Path, attempt_id: &str) -> std::process::Output {
     run_ripr(&[
         "agent",
         "repair",
+        "--json",
         "--root",
         &root_arg,
         "--attempt",
@@ -16663,6 +16790,7 @@ fn agent_status_retains_an_earlier_attempt_outcome_after_a_later_finish()
     let second_before = run_ripr(&[
         "agent",
         "repair",
+        "--json",
         "--root",
         &root_arg,
         "--seam-id",
@@ -18014,6 +18142,191 @@ index 1111111..2222222 100644\n\
 +fn changed() {}\n\
  fn existing() {}\n";
 
+struct DeclaredHunkScratch(PathBuf);
+
+impl Drop for DeclaredHunkScratch {
+    fn drop(&mut self) {
+        ignore_remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn truncated_declared_hunk_is_incomplete_through_file_and_stdin()
+-> Result<(), Box<dyn std::error::Error>> {
+    let scratch = unique_temp_workspace("declared-hunk-completeness");
+    std::fs::create_dir(&scratch)?;
+    let _cleanup = DeclaredHunkScratch(scratch.clone());
+    let root = workspace_root().join("fixtures/boundary_gap/input");
+    let root_arg = root.display().to_string();
+    let prefix = concat!(
+        "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n",
+        " pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n",
+        "-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n",
+    );
+    let complete = format!("{prefix}         amount - 10\n     }} else {{\n         amount\n");
+    for (label, input, expected_complete) in [
+        ("partial", prefix, false),
+        ("complete", complete.as_str(), true),
+    ] {
+        let path = scratch.join(format!("{label}.patch"));
+        std::fs::write(&path, input)?;
+        let path_arg = path.display().to_string();
+        let file_output = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            None,
+            &["check", "--root", &root_arg, "--diff", &path_arg, "--json"],
+        )?;
+        let stdin_output = run_ripr_with_stdin(
+            &["check", "--root", &root_arg, "--diff", "-", "--json"],
+            input.as_bytes(),
+        )?;
+        for (channel, output) in [("file", file_output), ("stdin", stdin_output)] {
+            if !output.status.success() {
+                return Err(format!(
+                    "{label}/{channel}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                )
+                .into());
+            }
+            let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+            if report
+                .pointer("/analysis_outcome/analysis_complete")
+                .and_then(serde_json::Value::as_bool)
+                != Some(expected_complete)
+            {
+                return Err(format!("{label}/{channel}: wrong completeness: {report}").into());
+            }
+            let outcome = report
+                .pointer("/analysis_outcome/outcome")
+                .ok_or("missing typed outcome")?;
+            if outcome
+                .pointer("/counts/changed_file_count")
+                .and_then(serde_json::Value::as_u64)
+                != Some(1)
+                || outcome
+                    .pointer("/counts/probe_count")
+                    .and_then(serde_json::Value::as_u64)
+                    .is_none_or(|count| count == 0)
+            {
+                return Err(
+                    "declared-hunk journey must analyze one file and nonzero probes".into(),
+                );
+            }
+            let limitations = outcome
+                .get("limitations")
+                .and_then(serde_json::Value::as_array)
+                .ok_or("missing typed limitations")?;
+            let malformed = limitations.iter().any(|item| {
+                item.get("kind").and_then(serde_json::Value::as_str) == Some("malformed_diff")
+                    && item
+                        .get("producer_stage")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("diff_parse")
+                    && item
+                        .pointer("/recovery/kind")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("retry")
+            });
+            if malformed == expected_complete {
+                return Err(format!(
+                    "{label}/{channel}: wrong declared-span limitation: {outcome}"
+                )
+                .into());
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn truncated_unsupported_file_hunk_is_incomplete_through_file_and_stdin()
+-> Result<(), Box<dyn std::error::Error>> {
+    let scratch = unique_temp_workspace("declared-hunk-unsupported-language");
+    std::fs::create_dir(&scratch)?;
+    let _cleanup = DeclaredHunkScratch(scratch.clone());
+    let root = workspace_root().join("fixtures/boundary_gap/input");
+    let root_arg = root.display().to_string();
+    for (label, input, complete) in [
+        (
+            "partial",
+            "--- a/README.md\n+++ b/README.md\n@@ -0,0 +1,2 @@\n+retained\n",
+            false,
+        ),
+        (
+            "complete",
+            "--- a/README.md\n+++ b/README.md\n@@ -0,0 +1,1 @@\n+retained\n",
+            true,
+        ),
+    ] {
+        let path = scratch.join(format!("{label}.patch"));
+        std::fs::write(&path, input)?;
+        let path_arg = path.display().to_string();
+        let file = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            None,
+            &["check", "--root", &root_arg, "--diff", &path_arg, "--json"],
+        )?;
+        let stdin = run_ripr_with_stdin(
+            &["check", "--root", &root_arg, "--diff", "-", "--json"],
+            input.as_bytes(),
+        )?;
+        for (channel, output) in [("file", file), ("stdin", stdin)] {
+            if !output.status.success() {
+                return Err(format!(
+                    "{label}/{channel}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                )
+                .into());
+            }
+            let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+            let outcome = report
+                .pointer("/analysis_outcome/outcome")
+                .ok_or("missing typed outcome")?;
+            if outcome
+                .pointer("/counts/changed_file_count")
+                .and_then(serde_json::Value::as_u64)
+                != Some(1)
+                || outcome
+                    .pointer("/counts/probe_count")
+                    .and_then(serde_json::Value::as_u64)
+                    != Some(0)
+            {
+                return Err(
+                    "unsupported-language control must retain one file and zero probes".into(),
+                );
+            }
+            let malformed = outcome
+                .get("limitations")
+                .and_then(serde_json::Value::as_array)
+                .ok_or("missing typed limitations")?
+                .iter()
+                .any(|item| {
+                    item.get("kind").and_then(serde_json::Value::as_str) == Some("malformed_diff")
+                        && item
+                            .get("producer_stage")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("diff_parse")
+                        && item
+                            .pointer("/recovery/kind")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("retry")
+                });
+            if report
+                .pointer("/analysis_outcome/analysis_complete")
+                .and_then(serde_json::Value::as_bool)
+                != Some(complete)
+                || malformed == complete
+            {
+                return Err(format!(
+                    "{label}/{channel}: unsupported language hid malformed input: {report}"
+                )
+                .into());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// #4319 end-to-end silence guarantee for the attached-terminal stdin
 /// disclosure at the cli boundary (`cli::parse::disclose_attached_terminal_stdin_read`):
 /// the note may be emitted only when the child's stdin is an attached
@@ -18690,4 +19003,78 @@ fn doctor_probes_language_runtimes_outside_the_checkout() -> Result<(), String> 
         });
     ignore_remove_dir_all(&workspace);
     result
+}
+
+/// An unusable cache directory fails every file-fact lookup the same way.
+/// The build reports that once, not once per source file (#4888).
+#[test]
+fn unusable_cache_directory_is_reported_once_per_build() -> Result<(), Box<dyn std::error::Error>> {
+    let workspace = unique_temp_workspace("unusable-cache-dir");
+    std::fs::create_dir_all(&workspace)?;
+    let not_a_directory = workspace.join("cache-is-a-file");
+    std::fs::write(&not_a_directory, "not a directory\n")?;
+    let fixture = workspace_root().join("fixtures/boundary_gap");
+    let fixture_input = fixture.join("input").to_string_lossy().into_owned();
+    let diff = fixture.join("diff.patch").to_string_lossy().into_owned();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &workspace,
+        &[
+            "check",
+            "--root",
+            &fixture_input,
+            "--diff",
+            &diff,
+            "--format",
+            "json",
+        ],
+        &[("RIPR_CACHE_DIR", &not_a_directory.to_string_lossy())],
+    )?;
+    assert_success(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let cache_lines: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("repo file fact cache entr"))
+        .collect();
+    assert_eq!(
+        cache_lines.len(),
+        1,
+        "expected one cache warning line, got {cache_lines:#?}"
+    );
+    // The fixture has more than one source file, so a per-file warning
+    // would have printed several lines; the one line names the count.
+    assert!(
+        cache_lines[0].contains("entries ignored; first: ("),
+        "the warning must name the count and the first reason: {}",
+        cache_lines[0]
+    );
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+/// docs/EXIT_CODES.md: a reader that closes stdout early gets a quiet exit 2
+/// (#4728). The reader closes before ripr writes anything, so the JSON write
+/// always meets the closed pipe.
+#[test]
+fn check_json_into_closed_stdout_exits_two_quietly() -> Result<(), std::io::Error> {
+    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample");
+    let mut child = probe_command(env!("CARGO_BIN_EXE_ripr"))
+        .args(["check", "--root"])
+        .arg(&sample)
+        .arg("--diff")
+        .arg(sample.join("example.diff"))
+        .args(["--format", "json"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    drop(child.stdout.take());
+    let output = child.wait_with_output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "stderr: {stderr}");
+    assert!(
+        !stderr.contains("stdout failed") && !stderr.contains("Broken pipe"),
+        "a closed reader must not produce an error report: {stderr}"
+    );
+    Ok(())
 }

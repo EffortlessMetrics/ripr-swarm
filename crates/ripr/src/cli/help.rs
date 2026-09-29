@@ -377,7 +377,7 @@ mod tests {
         print_rerun_help, print_review_comments_help, print_swarm_help, print_swarm_ingest_help,
         print_swarm_queue_help, print_zero_help,
     };
-    use crate::cli::command::KNOWN_COMMANDS;
+    use crate::cli::command::known_commands;
 
     /// The exhaustive reference owns the full inventory. This assertion used to
     /// target the default screen, which is why that screen had grown to 91
@@ -490,16 +490,15 @@ mod tests {
         // `help` documents itself in the header and `More:` lines rather than as
         // a catalog entry.
         let documented_elsewhere = ["help"];
-        let missing: Vec<&str> = KNOWN_COMMANDS
-            .iter()
-            .copied()
+        let missing: Vec<&str> = known_commands()
+            .into_iter()
             .filter(|command| !documented_elsewhere.contains(command))
             .filter(|command| !HELP_ALL.contains(&format!("ripr {command}")))
             .collect();
         assert!(
             missing.is_empty(),
             "ripr help --all omits reachable command(s): {missing:?}; \
-             every KNOWN_COMMANDS entry must appear in the full reference"
+             every catalog-derived known command must appear in the full reference"
         );
     }
 
@@ -519,6 +518,12 @@ mod tests {
         assert!(CHECK_HELP.contains("needs test-efficiency"));
         assert!(CHECK_HELP.contains("docs/BADGE_ADOPTION.md"));
         assert!(CHECK_HELP.contains("--mode ready --json"));
+        assert!(CHECK_HELP.contains("--quiet"));
+        assert!(CHECK_HELP.contains("ripr progress:"));
+        assert!(CHECK_HELP.contains("percentage or ETA"));
+        assert!(CHECK_HELP.contains("does not mean analysis is faster"));
+        assert!(CHECK_HELP.contains("json, sarif, github"));
+        assert!(!CHECK_HELP.contains("json, sarif, markdown"));
         assert!(DIFF_HELP.contains("Usage: ripr diff"));
         assert!(DIFF_HELP.contains("full-repo-limited"));
     }
@@ -849,6 +854,7 @@ mod tests {
     const AGENT_PARSER_RS: &str = include_str!("agent.rs");
     const CLI_COMMANDS_RS: &str = include_str!("commands.rs");
     const CHECK_PARSER_RS: &str = include_str!("commands/check.rs");
+    const REVIEW_COMMENTS_PARSER_RS: &str = include_str!("commands/review_comments.rs");
     const CONTEXT_PARSER_RS: &str = include_str!("commands/context.rs");
     const CONFIG_PARSER_RS: &str = include_str!("commands/config.rs");
     const DOCTOR_PARSER_RS: &str = include_str!("commands/doctor.rs");
@@ -1111,7 +1117,7 @@ mod tests {
         ("rerun", RERUN_PARSER_RS, &["parse_options"]),
         (
             "review-comments",
-            CLI_COMMANDS_RS,
+            REVIEW_COMMENTS_PARSER_RS,
             &["parse_review_comments_options"],
         ),
         ("swarm ingest", SWARM_INGEST_PARSER_RS, &["parse_options"]),
@@ -1384,7 +1390,8 @@ mod tests {
     /// `*_requires_values_for_value_flags`, `*_rejects_unknown_argument`, and
     /// `*_suggests_the_nearest_flag_for_a_typo` in `commands/context.rs`,
     /// `commands/check.rs`, `commands/doctor.rs`, `commands/pilot.rs`,
-    /// `commands/config.rs`, `commands/receipt.rs`, `commands.rs`, and
+    /// `commands/config.rs`, `commands/receipt.rs`, `commands/review_comments.rs`,
+    /// `commands.rs`, and
     /// `agent.rs`. The suggestion scoping tests in `suggest.rs` pin which of
     /// those flags belong to which sibling of a shared help body. Tightening
     /// this scanner to scrutinee position without a real Rust parser would
@@ -1565,7 +1572,7 @@ mod tests {
             (
                 "check",
                 CHECK_HELP,
-                &["--base", "--diff", "--mode", "--json"],
+                &["--base", "--diff", "--mode", "--json", "--quiet"],
             ),
             (
                 "explain",

@@ -561,8 +561,10 @@ mod tests {
             literals: vec![],
             source_role: FunctionSourceRole::Production,
             attrs: vec![],
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         }
     }
 
