@@ -330,7 +330,14 @@ namespace writer (`exec`, `globals`, `vars`, `locals`, `setattr`,
 `sys.modules`, `__dict__`), a non-literal value, a parameter or local binding
 of the same name in the owner, a nested `def`/`class`/`lambda` in the owner,
 or a related test file that assigns the attribute (`pricing.DISCOUNT_THRESHOLD
-= 5`). When no strong related call binds a literal
+= 5`). A call inside a `@pytest.mark.parametrize` test whose argument is a
+parametrize argname (`bulk_discount(quantity)`) expands into one call per
+generated case, binding each case's literal argvalue (#4559). Cases are
+recorded only when statically certain: string or list/tuple argnames, a
+list/tuple argvalues literal with rows of the right arity (`pytest.param(...)`
+unwrapped), stacked decorators as a product of at most 256 cases. Argvalues
+named by a variable, `indirect=`, starred rows, and an argname the test body
+rebinds leave the call unresolved. When no strong related call binds a literal
 argument (test locals, `*args`, a construct-call passing a dict), static
 evidence cannot see the activating input either way: the oracle verdict stands
 and an `exposed` finding carries a `boundary_activation_unresolved` evidence

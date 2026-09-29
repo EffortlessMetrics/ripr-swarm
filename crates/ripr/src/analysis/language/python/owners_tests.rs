@@ -2,6 +2,7 @@ use super::module_constants::{
     PythonModuleConstant, constants_visible_in_function, python_test_rebinding,
 };
 #[cfg(test)]
+use super::parametrize::parametrize_cases;
 use super::source_facts::extract_source_facts;
 use super::source_utils::{
     line_for_range_end, line_for_range_start, normalized_path, text_for_range,
@@ -265,6 +266,7 @@ pub(super) fn collect_tests_from_statements(
                     decorators: decorator_names(&function.decorator_list),
                     fixtures: fixture_parameter_names(&function.args, framework),
                     parametrized: is_parametrized(&function.decorator_list),
+                    parametrize: parametrize_cases(source, &function.decorator_list),
                     framework,
                     assertions: collect_assertions_from_statements(&function.body, source),
                     constant_rebinding: python_test_rebinding(
@@ -291,6 +293,7 @@ pub(super) fn collect_tests_from_statements(
                     decorators: decorator_names(&function.decorator_list),
                     fixtures: fixture_parameter_names(&function.args, framework),
                     parametrized: is_parametrized(&function.decorator_list),
+                    parametrize: parametrize_cases(source, &function.decorator_list),
                     framework,
                     assertions: collect_assertions_from_statements(&function.body, source),
                     constant_rebinding: python_test_rebinding(

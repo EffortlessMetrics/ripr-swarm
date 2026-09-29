@@ -419,3 +419,78 @@ fn predicate_boundary_follows_import_alias_calls() -> Result<(), String> {
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
+
+/// #4559: a parametrized test whose cases never sit on the changed boundary
+/// is not `exposed`. Before the fix `bulk_discount(quantity)` bound nothing,
+/// activation stayed unresolved and the exact oracle credited `exposed`,
+/// while the `>` -> `>=` mutant survives both cases.
+#[test]
+fn parametrize_cases_off_boundary_are_weakly_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        DISCOUNT_SOURCE,
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity, rate\", [(50, 0.0), pytest.param(150, 0.15, id=\"bulk\")])\ndef test_bulk_discount(quantity, rate):\n    assert bulk_discount(quantity) == rate\n",
+        2,
+        "    if quantity > 100:",
+        "    if quantity >= 100:",
+    )?;
+    assert_owner(&finding, "bulk_discount");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert_eq!(
+        missing_boundary(&finding, "quantity == 100"),
+        Some(
+            "No strong related test call places quantity equal to 100; observed quantity values: 150, 50"
+        )
+    );
+    assert!(observed(&finding, "quantity = 50"), "{finding:?}");
+    assert!(observed(&finding, "quantity = 150"), "{finding:?}");
+    Ok(())
+}
+
+/// Positive control for #4559: one case on the boundary keeps `exposed`, also
+/// through a stacked decorator (the cases are the product).
+#[test]
+fn parametrize_case_on_boundary_stays_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        DISCOUNT_SOURCE,
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity, rate\", [(50, 0.0), (100, 0.15)])\n@pytest.mark.parametrize(\"unused\", [\"a\", \"b\"])\ndef test_bulk_discount(quantity, rate, unused):\n    assert bulk_discount(quantity) == rate\n",
+        2,
+        "    if quantity > 100:",
+        "    if quantity >= 100:",
+    )?;
+    assert_owner(&finding, "bulk_discount");
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(observed(&finding, "quantity == 100"), "{finding:?}");
+    assert!(finding.activation.missing_discriminators.is_empty());
+    Ok(())
+}
+
+/// Shapes whose cases are not statically certain keep the pre-#4559
+/// unresolved verdict: argvalues named by a variable, `indirect=`, and an
+/// argname the test body rebinds before the call.
+#[test]
+fn uncertain_parametrize_cases_stay_unresolved() -> Result<(), String> {
+    for tests in [
+        "import pytest\nfrom src.subject import bulk_discount\n\nCASES = [(50, 0.0)]\n\n@pytest.mark.parametrize(\"quantity, rate\", CASES)\ndef test_bulk_discount(quantity, rate):\n    assert bulk_discount(quantity) == rate\n",
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50], indirect=True)\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n",
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50])\ndef test_bulk_discount(quantity):\n    quantity = quantity * 2\n    assert bulk_discount(quantity) == 0.0\n",
+    ] {
+        let finding = classify_case(
+            DISCOUNT_SOURCE,
+            tests,
+            2,
+            "    if quantity > 100:",
+            "    if quantity >= 100:",
+        )?;
+        assert_owner(&finding, "bulk_discount");
+        assert_eq!(finding.class, ExposureClass::Exposed, "{tests}");
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("boundary_activation_unresolved: ")),
+            "{tests}: {:?}",
+            finding.evidence
+        );
+    }
+    Ok(())
+}

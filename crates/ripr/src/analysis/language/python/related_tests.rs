@@ -913,8 +913,13 @@ fn test_references_owner_module(test: &PythonTest, owner: &PythonOwner) -> bool 
 /// nested `def`/`class`. Such a local shadows the imported owner, so bare uses
 /// of `name` are not owner references.
 fn test_binds_local(test: &PythonTest, name: &str) -> bool {
-    test.fixtures.iter().any(|fixture| fixture == name)
-        || assignment_count(&test.body_text, name) > 0
+    test.fixtures.iter().any(|fixture| fixture == name) || test_body_binds_local(test, name)
+}
+
+/// Whether the test BODY binds `name` (every [`test_binds_local`] form except
+/// a parameter), so a parameter of that name no longer holds its argument.
+pub(super) fn test_body_binds_local(test: &PythonTest, name: &str) -> bool {
+    assignment_count(&test.body_text, name) > 0
         || walrus_binds(&test.body_text, name)
         || ["def ", "class ", "for ", "as "]
             .into_iter()

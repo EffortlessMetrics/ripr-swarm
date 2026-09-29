@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Python: a parametrized test whose cases never reach a changed comparison
+  boundary no longer makes the finding `exposed`. `sign(x)` under
+  `@pytest.mark.parametrize("x", [5, -3])` bound no literal input, so a
+  `x > 0` -> `x >= 0` change kept the oracle's `exposed` verdict although the
+  mutant survives both cases. Each statically certain parametrize case now
+  binds its literal argvalue, so the finding is `weakly_exposed` and names
+  `x == 0` as the missing boundary (#4559).
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from
