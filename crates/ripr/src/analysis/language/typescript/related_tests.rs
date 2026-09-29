@@ -745,6 +745,15 @@ pub(crate) fn owner_call_relation(
         if local_identifier_declared_in_test_body(&test.body_text, local) {
             return false;
         }
+        // An enclosing `describe`/`beforeEach` binding of the local name
+        // shadows the import for every test in that scope.
+        if test
+            .scope_bindings
+            .iter()
+            .any(|binding| &binding.name == local)
+        {
+            return false;
+        }
         reexport_index.resolve_to_owner(
             &test.file,
             &import.source,

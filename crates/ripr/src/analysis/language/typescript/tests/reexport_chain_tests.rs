@@ -277,3 +277,17 @@ fn shadowed_barrel_import_does_not_credit() -> Result<(), String> {
     assert!(related.is_empty(), "a body-local shadow: {related:?}");
     Ok(())
 }
+
+#[test]
+fn describe_scoped_shadow_of_barrel_import_does_not_credit() -> Result<(), String> {
+    let files = [
+        ("src/utils.ts", UTILS),
+        ("src/index.ts", "export * from \"./utils\";\n"),
+    ];
+    // The shadow lives in the enclosing `describe`, not the test body, so
+    // only the scope-binding guard can refuse the credit.
+    let test = "import { withoutBase } from \"../src/index\";\ndescribe(\"s\", () => {\n  const withoutBase = (a: string, b: string) => a;\n  test(\"shadow\", () => {\n    expect(withoutBase(\"/a/b\", \"/a\")).toBe(\"/a/b\");\n  });\n});\n";
+    let related = related_through_barrel(&files, "src/utils.ts", "withoutBase", test)?;
+    assert!(related.is_empty(), "a describe-scoped shadow: {related:?}");
+    Ok(())
+}
