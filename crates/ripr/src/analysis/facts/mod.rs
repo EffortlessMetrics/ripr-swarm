@@ -5,6 +5,7 @@ mod includes;
 mod model;
 mod parameterized_tests;
 mod role_composition;
+mod test_helpers;
 mod test_styles;
 
 use std::path::{Path, PathBuf};
@@ -38,6 +39,9 @@ pub fn build_index_with_test_harnesses(
     // overwrite a registered subject's role (#3532). The workspace root
     // anchors the Cargo target metadata validation (#3608).
     harness_registry::apply_registrations(&mut index, root, registrations);
+    // Helper crediting reads final roles, so it runs after every role
+    // authority.
+    test_helpers::credit_same_file_assertion_helpers(&mut index);
     Ok(index)
 }
 
@@ -57,6 +61,7 @@ pub(crate) fn build_index_from_loaded_files_with_cache_and_test_harnesses(
     // is recomputed after cache retrieval, so a manifest edit re-validates
     // immediately.
     harness_registry::apply_registrations(&mut cached.index, root, registrations);
+    test_helpers::credit_same_file_assertion_helpers(&mut cached.index);
     Ok(cached)
 }
 
