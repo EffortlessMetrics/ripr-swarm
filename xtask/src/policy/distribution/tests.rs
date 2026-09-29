@@ -46,8 +46,7 @@ fn duplicate_target_and_wrong_payload_are_rejected() -> Result<(), String> {
             .any(|violation| violation.contains("duplicate target"))
     );
     assert!(violations.iter().any(|violation| {
-        violation.contains("field npm_package")
-            && violation.contains("ripr-win32-x64-msvc")
+        violation.contains("field npm_package") && violation.contains("ripr-win32-x64-msvc")
     }));
     Ok(())
 }
