@@ -13,6 +13,8 @@ The diff changes the error variant `try_parse` returns for input containing
 `is_err()`, which both variants satisfy. `malformedsource_variant_is_distinct`
 never calls `try_parse`; it is related only because its name contains the
 changed token `MalformedSource`, and it compares the variant with itself.
+`try_parse_variant_is_distinct` does the same and is related only because its
+name contains the owner's name.
 These assertions are intentional analyzed fixture input, governed by the
 existing `fixtures/**` source-input policy.
 
@@ -29,8 +31,8 @@ The public diff analysis examines the changed return on `src/lib.rs:9`.
 ## Then
 
 Both findings stay below `exposed`. Reach comes from the direct owner call;
-the name-proximity test's exact assertion stays listed as a related test but
-cannot supply the credited oracle, because that test never runs the changed
+the two name-only tests' exact assertions stay listed as related tests but
+cannot supply the credited oracle, because neither test runs the changed
 code.
 
 The honesty corpus independently prohibits `exposed` even if a golden is

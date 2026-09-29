@@ -12,8 +12,9 @@ are scoped or reviewed.
 ### Fixed
 
 - Rust: a test related to a finding only because its name shares a word with
-  the changed code no longer supplies the finding's discriminator when another
-  related test actually calls the changed code. Before, a test that pinned
+  the changed code or names the changed function no longer supplies the
+  finding's discriminator when another related test actually calls the
+  changed code. Before, a test that pinned
   `ParseError::MalformedSource == ParseError::MalformedSource` without calling
   the changed `try_parse` turned a mutation no test catches into `exposed`
   (#4486). Its assertions still appear among the related tests. On a 14-file

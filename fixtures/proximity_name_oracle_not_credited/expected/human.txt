@@ -18,9 +18,9 @@ Start here:
   Related test: tests/variants.rs:4 malformedsource_variant_is_distinct
   Next step: Assert the exact error variant or payload instead of only is_err().
   Evidence:
-    - reach yes: Related tests appear to reach try_parse: malformedsource_variant_is_distinct, rejects_at_sign
+    - reach yes: Related tests appear to reach try_parse: malformedsource_variant_is_distinct, rejects_at_sign, try_parse_variant_is_distinct
     - infection yes: Reachable tests can plausibly activate this changed behavior
-    - 8 more evidence line(s) hidden
+    - 9 more evidence line(s) hidden
 
 Next: drill into the top finding:
   ripr explain --root fixtures/proximity_name_oracle_not_credited/input --diff fixtures/proximity_name_oracle_not_credited/diff.patch --mode fast probe:src_lib.rs:error_path:e01f0ca9

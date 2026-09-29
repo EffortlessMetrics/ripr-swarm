@@ -306,14 +306,21 @@ fn analyze_related_assertions(
     let mut observation_unverified = false;
     // When any related test is tied to the owner by more than a shared name,
     // reach comes from that test. A test related only because its name or
-    // path contains a changed token may never run the changed code, so its
+    // path contains a changed token or the owner's name, with no captured
+    // call, helper chain or assertion affinity (`WeakTokenSubstring`,
+    // `OwnerNamedTest`), may never run the changed code, so its
     // assertions stay visible but cannot supply the credited oracle: a test
     // named `malformedsource_variant_is_distinct` that pins
     // `ParseError::MalformedSource == ParseError::MalformedSource` observes
     // nothing the changed `try_parse` does (#4486). Same-file and same-module
     // tests keep crediting: they commonly exercise a private helper through
     // the module's own entry point, which the relation cannot see.
-    let name_only = |reason: RelationReason| reason == RelationReason::WeakTokenSubstring;
+    let name_only = |reason: RelationReason| {
+        matches!(
+            reason,
+            RelationReason::WeakTokenSubstring | RelationReason::OwnerNamedTest
+        )
+    };
     let reach_bearing_related = related_tests.iter().any(|(_, reason)| !name_only(*reason));
 
     for (test, reason) in related_tests {
@@ -2109,21 +2116,26 @@ mod tests {
         );
         let proximity_test = test_with_assertions("compute_score_named", vec![confirmed_exact]);
         let owner_test = test_with_assertions("calls_owner", vec![weak]);
-        for related in [
-            vec![
-                (&proximity_test, RelationReason::WeakTokenSubstring),
-                (&owner_test, RelationReason::DirectOwnerCall),
-            ],
-            vec![
-                (&owner_test, RelationReason::DirectOwnerCall),
-                (&proximity_test, RelationReason::WeakTokenSubstring),
-            ],
+        for name_only in [
+            RelationReason::WeakTokenSubstring,
+            RelationReason::OwnerNamedTest,
         ] {
-            let (_, discriminate, _) = reveal_evidence(&probe, &related);
-            if discriminate.state == StageState::Yes {
-                return Err(format!(
-                    "name-only test supplied the oracle for reach from another test: {discriminate:?}"
-                ));
+            for related in [
+                vec![
+                    (&proximity_test, name_only),
+                    (&owner_test, RelationReason::DirectOwnerCall),
+                ],
+                vec![
+                    (&owner_test, RelationReason::DirectOwnerCall),
+                    (&proximity_test, name_only),
+                ],
+            ] {
+                let (_, discriminate, _) = reveal_evidence(&probe, &related);
+                if discriminate.state == StageState::Yes {
+                    return Err(format!(
+                        "{name_only:?} test supplied the oracle for reach from another test: {discriminate:?}"
+                    ));
+                }
             }
         }
         // A same-file or same-module test commonly reaches a private helper
