@@ -16522,7 +16522,9 @@ ambiguous node is a named limitation: `state: "limited"`, an empty `seams`
 array, exit 0, and `limitation.kind` `changed_test_unresolved` (no parsed test
 matches the file or node), `changed_test_owner_unresolved` (the selected tests
 call no production owner ripr resolves), or `changed_test_owner_ambiguous`
-(two production functions share a called name). Without a node, all parsed
+(two production functions share a called name). The index is built before the
+selector resolves, so `cache` still reports the file-fact work that ran and
+the `input_fingerprint`. Without a node, all parsed
 tests in the file participate. The report returns only seams owned by uniquely resolved
 functions directly called from the selected test scope.
 

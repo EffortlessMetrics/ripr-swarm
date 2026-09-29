@@ -506,12 +506,16 @@ fn rerun_changed_test(
             kind,
             message,
             selected_test_count,
+            cache,
         }) => {
-            return Ok(limited_report(
-                selector(selected_test_count, Vec::new()),
-                kind,
-                message,
-            ));
+            // The index (and its file-fact cache) already ran; disclose that
+            // work instead of reporting a cache that never ran.
+            let mut report =
+                limited_report(selector(selected_test_count, Vec::new()), kind, message);
+            report.cache = cache_from(&cache.file_fact_cache, []);
+            report.cache.input_fingerprint =
+                Some(input_fingerprint_for(root, &cache.workspace_cache_key));
+            return Ok(report);
         }
         Err(TargetedTestInventoryError::Analysis(message)) => return Err(message),
     };
@@ -2308,21 +2312,40 @@ mod tests {
             ("tests/pricing.rs", None, "changed_test_owner_ambiguous", 1),
         ];
         let mut failures = Vec::new();
+        let mut warm_hits = Vec::new();
         for (file, node, expected_kind, expected_selected) in cases {
             let report = rerun_changed_test(&root, &config, Path::new(file), node)?;
             let kind = report.limitation.as_ref().map(|limitation| limitation.kind);
+            // The index ran before the selector failed, so the cache block
+            // must report that work, not `not_run` with zeroed counters.
+            let cache = &report.cache;
             if report.state != "limited"
                 || kind != Some(expected_kind)
                 || !report.seams.is_empty()
                 || report.selector.selected_test_count != expected_selected
+                || cache.reuse_state == "not_run"
+                || cache.hits + cache.misses == 0
+                || cache.input_fingerprint.is_none()
             {
                 failures.push(format!(
-                    "{file} {node:?}: state={} kind={kind:?} seams={} selected={}",
+                    "{file} {node:?}: state={} kind={kind:?} seams={} selected={} cache={}/{} hits={} misses={} fingerprint={:?}",
                     report.state,
                     report.seams.len(),
-                    report.selector.selected_test_count
+                    report.selector.selected_test_count,
+                    cache.reuse_state,
+                    cache.file_fact_status,
+                    cache.hits,
+                    cache.misses,
+                    cache.input_fingerprint
                 ));
             }
+            warm_hits.push(cache.hits);
+        }
+        // Later selectors reuse the file facts the first run stored.
+        if warm_hits.last().is_none_or(|hits| *hits == 0) {
+            failures.push(format!(
+                "warm selector runs reused no file facts: {warm_hits:?}"
+            ));
         }
         let _ = std::fs::remove_dir_all(&root);
         if failures.is_empty() {

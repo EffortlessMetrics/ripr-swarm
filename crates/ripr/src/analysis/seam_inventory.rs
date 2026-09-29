@@ -799,8 +799,18 @@ pub(crate) enum TargetedTestInventoryError {
         kind: &'static str,
         message: String,
         selected_test_count: usize,
+        /// The index was already built when the selector failed, so the
+        /// report still discloses the cache work that ran.
+        cache: Box<TargetedSelectorCacheEvidence>,
     },
     Analysis(String),
+}
+
+/// File-fact cache work completed before a changed-test selector failed.
+#[derive(Clone, Debug)]
+pub(crate) struct TargetedSelectorCacheEvidence {
+    pub(crate) file_fact_cache: FileFactCacheStats,
+    pub(crate) workspace_cache_key: super::seam_cache::RepoSeamCacheKey,
 }
 
 impl From<String> for TargetedTestInventoryError {
@@ -837,6 +847,16 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         harness_registrations(config),
     )?;
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
+    let selector_limitation =
+        |kind, message, selected_test_count| TargetedTestInventoryError::Selector {
+            kind,
+            message,
+            selected_test_count,
+            cache: Box::new(TargetedSelectorCacheEvidence {
+                file_fact_cache: cached.file_fact_cache.clone(),
+                workspace_cache_key: workspace_cache_key.clone(),
+            }),
+        };
 
     let selected_tests = cached
         .index
@@ -846,15 +866,15 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         .filter(|test| test_node.is_none_or(|node| test.name == node))
         .collect::<Vec<_>>();
     if selected_tests.is_empty() {
-        return Err(TargetedTestInventoryError::Selector {
-            kind: CHANGED_TEST_UNRESOLVED,
-            message: format!(
+        return Err(selector_limitation(
+            CHANGED_TEST_UNRESOLVED,
+            format!(
                 "targeted rerun changed test `{}{}` did not resolve to a parsed test",
                 changed_test,
                 test_node.map_or(String::new(), |node| format!("::{node}"))
             ),
-            selected_test_count: 0,
-        });
+            0,
+        ));
     }
 
     let direct_call_names = selected_tests
@@ -869,13 +889,13 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         .map(str::to_string)
         .collect::<BTreeSet<_>>();
     if direct_call_names.is_empty() {
-        return Err(TargetedTestInventoryError::Selector {
-            kind: CHANGED_TEST_OWNER_UNRESOLVED,
-            message: format!(
+        return Err(selector_limitation(
+            CHANGED_TEST_OWNER_UNRESOLVED,
+            format!(
                 "targeted rerun changed test `{changed_test}` has no direct owner-call selector"
             ),
-            selected_test_count: selected_tests.len(),
-        });
+            selected_tests.len(),
+        ));
     }
 
     let candidate_functions = cached
@@ -891,13 +911,13 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         .map(|function| function.name.clone())
         .collect::<BTreeSet<_>>();
     if matched_call_names.is_empty() {
-        return Err(TargetedTestInventoryError::Selector {
-            kind: CHANGED_TEST_OWNER_UNRESOLVED,
-            message: format!(
+        return Err(selector_limitation(
+            CHANGED_TEST_OWNER_UNRESOLVED,
+            format!(
                 "targeted rerun changed test `{changed_test}` did not resolve a direct production owner"
             ),
-            selected_test_count: selected_tests.len(),
-        });
+            selected_tests.len(),
+        ));
     }
     for call_name in &matched_call_names {
         let matching_owners = candidate_functions
@@ -905,13 +925,13 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
             .filter(|function| function.name == *call_name)
             .count();
         if matching_owners > 1 {
-            return Err(TargetedTestInventoryError::Selector {
-                kind: CHANGED_TEST_OWNER_AMBIGUOUS,
-                message: format!(
+            return Err(selector_limitation(
+                CHANGED_TEST_OWNER_AMBIGUOUS,
+                format!(
                     "targeted rerun changed test `{changed_test}` has ambiguous direct production owner `{call_name}`"
                 ),
-                selected_test_count: selected_tests.len(),
-            });
+                selected_tests.len(),
+            ));
         }
     }
     let production_files = candidate_functions
@@ -5081,6 +5101,7 @@ fn surcharge_total_case() { assert_eq!(surcharge_total(50), 55); }
                 kind: CHANGED_TEST_OWNER_AMBIGUOUS,
                 message,
                 selected_test_count: 1,
+                ..
             }) if message.contains("ambiguous direct production owner `same_name`") => Ok(()),
             Err(TargetedTestInventoryError::Selector { kind, message, .. }) => {
                 Err(format!("unexpected ambiguity limitation {kind}: {message}"))
