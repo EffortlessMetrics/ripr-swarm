@@ -1537,6 +1537,82 @@ fn check_from_a_subcrate_discloses_workspace_root_and_honors_explicit_root() -> 
 }
 
 #[test]
+fn check_from_a_package_source_dir_analyzes_the_crate_root() -> Result<(), String> {
+    let bin = env!("CARGO_BIN_EXE_ripr");
+    let root = unique_external_workspace("check-package-subdir")?;
+    std::fs::create_dir_all(&root).map_err(|error| format!("create fixture: {error}"))?;
+    let outcome = check_package_subdir_runs(bin, &root);
+    std::fs::remove_dir_all(&root).map_err(|error| format!("remove fixture: {error}"))?;
+    let (from_root, from_src, expected_root) = outcome?;
+    assert_success(&from_root);
+    assert_success(&from_src);
+
+    let findings = |output: &std::process::Output| -> Result<u64, String> {
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("parse check json: {error}"))?;
+        json.pointer("/summary/findings")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| "summary.findings missing".to_string())
+    };
+    let root_findings = findings(&from_root)?;
+    assert!(
+        root_findings > 0,
+        "fixture must produce a finding from the root"
+    );
+    assert_eq!(
+        findings(&from_src)?,
+        root_findings,
+        "a run from src/ must analyze the crate, not scope the diff away (#4610)"
+    );
+    let stderr = String::from_utf8_lossy(&from_src.stderr);
+    let disclosure = format!(
+        "ripr: resolved workspace root to {} (nearest Cargo.toml)",
+        expected_root.display()
+    );
+    assert!(stderr.contains(&disclosure), "stderr:\n{stderr}");
+    Ok(())
+}
+
+/// Commit the boundary_gap crate, change its boundary, and run
+/// `check --base HEAD~1` once from the crate root and once from `src/`.
+fn check_package_subdir_runs(
+    bin: &str,
+    root: &Path,
+) -> Result<(std::process::Output, std::process::Output, PathBuf), String> {
+    init_producer_fixture_repo(root).map_err(|error| format!("init fixture repo: {error}"))?;
+    let lib = root.join("src/lib.rs");
+    let source = std::fs::read_to_string(&lib).map_err(|error| format!("read lib: {error}"))?;
+    let changed = source.replacen(">= discount_threshold", "> discount_threshold", 1);
+    assert_ne!(changed, source, "fixture boundary must be present");
+    std::fs::write(&lib, changed).map_err(|error| format!("write lib: {error}"))?;
+    let commit = run_command(
+        "git",
+        Some(root),
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-qam",
+            "change boundary",
+        ],
+    )
+    .map_err(|error| format!("commit change: {error}"))?;
+    assert!(commit.status.success(), "change commit failed: {commit:?}");
+
+    let args = ["check", "--base", "HEAD~1", "--format", "json"];
+    let from_root =
+        run_command(bin, Some(root), &args).map_err(|error| format!("run root check: {error}"))?;
+    let from_src = run_command(bin, Some(&root.join("src")), &args)
+        .map_err(|error| format!("run subdir check: {error}"))?;
+    let expected_root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize fixture root: {error}"))?;
+    Ok((from_root, from_src, expected_root))
+}
+
+#[test]
 fn check_from_a_directory_without_a_workspace_does_not_disclose_resolution() -> Result<(), String> {
     let bin = env!("CARGO_BIN_EXE_ripr");
     let root = unique_external_workspace("check-no-workspace")?;
@@ -17901,5 +17977,168 @@ fn check_rejects_invalid_ripr_git_timeout_env() -> Result<(), String> {
         }
     }
     ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+/// Run `ripr` with `stdin` wired to an arbitrary source (for example
+/// `/dev/zero`) under a deadline. Before #4480 an unbounded input read never
+/// returned, so the deadline turns that hang into a failed assertion instead
+/// of a stuck test run.
+#[cfg(unix)]
+fn run_ripr_with_deadline(
+    args: &[&str],
+    stdin: Stdio,
+    budget: std::time::Duration,
+) -> Result<Output, std::io::Error> {
+    use std::io::Read as _;
+    let mut command = probe_command(env!("CARGO_BIN_EXE_ripr"));
+    command
+        .args(args)
+        .stdin(stdin)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let deadline = std::time::Instant::now() + budget;
+    let mut child = ripr::process_owner::OwnedProcess::spawn(command)?;
+    let drain = |pipe: Option<Box<dyn std::io::Read + Send>>| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let result = match pipe {
+                Some(mut pipe) => pipe.read_to_end(&mut bytes).map(|_| bytes),
+                None => Ok(bytes),
+            };
+            let _ = tx.send(result);
+        });
+        rx
+    };
+    let stdout = drain(
+        child
+            .stdout_pipe()
+            .take()
+            .map(|pipe| Box::new(pipe) as Box<dyn std::io::Read + Send>),
+    );
+    let stderr = drain(
+        child
+            .stderr_pipe()
+            .take()
+            .map(|pipe| Box::new(pipe) as Box<dyn std::io::Read + Send>),
+    );
+    let receive = |rx: &std::sync::mpsc::Receiver<Result<Vec<u8>, std::io::Error>>| {
+        rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::TimedOut, err))?
+    };
+    let result = (|| {
+        let status = loop {
+            if let Some(status) = child.try_wait()? {
+                break status;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "ripr did not finish before the deadline; an input read is unbounded",
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        Ok(Output {
+            status,
+            stdout: receive(&stdout)?,
+            stderr: receive(&stderr)?,
+        })
+    })();
+    child.terminate_tree().map_err(std::io::Error::other)?;
+    result
+}
+
+/// Budget for a bounded read of an endless input: reading the 256 MiB cap
+/// from `/dev/zero` takes well under a second, so a generous deadline still
+/// separates "refused at the cap" from "reads forever".
+#[cfg(unix)]
+const ENDLESS_INPUT_BUDGET: std::time::Duration = std::time::Duration::from_secs(90);
+
+#[cfg(unix)]
+fn assert_input_limit_refusal(output: &Output, subject: &str) {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "{subject} must fail as a usage/input error (exit 2):\n{stderr}"
+    );
+    assert!(
+        stderr.contains("268435456 byte input limit (256 MiB)"),
+        "{subject} must name the input limit:\n{stderr}"
+    );
+}
+
+/// #4480: `ripr check --diff /dev/zero` read forever. The real CLI `check`
+/// path must refuse it at the shared input cap with exit 2.
+#[cfg(unix)]
+#[test]
+fn check_diff_from_endless_device_is_refused_at_input_limit() -> Result<(), std::io::Error> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/boundary_gap/input");
+    let output = run_ripr_with_deadline(
+        &[
+            "check",
+            "--root",
+            &root.display().to_string(),
+            "--diff",
+            "/dev/zero",
+            "--json",
+        ],
+        Stdio::null(),
+        ENDLESS_INPUT_BUDGET,
+    )?;
+    assert_input_limit_refusal(&output, "check --diff /dev/zero");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("failed to read diff file /dev/zero"),
+        "the refusal must name the diff path:\n{stderr}"
+    );
+    Ok(())
+}
+
+/// #4480: `--diff -` reads stdin; an endless producer must hit the same cap.
+#[cfg(unix)]
+#[test]
+fn check_diff_stdin_from_endless_stream_is_refused_at_input_limit() -> Result<(), std::io::Error> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/boundary_gap/input");
+    let output = run_ripr_with_deadline(
+        &[
+            "check",
+            "--root",
+            &root.display().to_string(),
+            "--diff",
+            "-",
+            "--json",
+        ],
+        Stdio::from(std::fs::File::open("/dev/zero")?),
+        ENDLESS_INPUT_BUDGET,
+    )?;
+    assert_input_limit_refusal(&output, "check --diff - < /dev/zero");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("failed to read diff from stdin"),
+        "the refusal must name stdin:\n{stderr}"
+    );
+    Ok(())
+}
+
+/// #4480: `ripr outcome --before /dev/zero --after /dev/zero` read forever;
+/// the JSON artifact flags share the same bounded reader.
+#[cfg(unix)]
+#[test]
+fn outcome_artifacts_from_endless_device_are_refused_at_input_limit() -> Result<(), std::io::Error>
+{
+    let output = run_ripr_with_deadline(
+        &["outcome", "--before", "/dev/zero", "--after", "/dev/zero"],
+        Stdio::null(),
+        ENDLESS_INPUT_BUDGET,
+    )?;
+    assert_input_limit_refusal(&output, "outcome --before /dev/zero");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("read /dev/zero failed"),
+        "the refusal must name the artifact path:\n{stderr}"
+    );
     Ok(())
 }
