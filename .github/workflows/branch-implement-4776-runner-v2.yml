@@ -1,0 +1,77 @@
+name: Run npm bump-version implementation v2
+
+on:
+  push:
+    branches:
+      - build/4776-npm-bump-version
+    paths:
+      - .github/workflows/branch-implement-4776-runner-v2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    if: ${{ github.repository == 'EffortlessMetrics/ripr-swarm' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: build/4776-npm-bump-version
+
+      - name: Apply and repair the implementation script
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          workflow = Path(".github/workflows/branch-implement-4776-v2.yml").read_text(encoding="utf-8")
+          start_marker = "          python3 - <<'PY'\n"
+          end_marker = "\n          PY\n"
+          start = workflow.index(start_marker) + len(start_marker)
+          end = workflow.index(end_marker, start)
+          script = dedent(workflow[start:end])
+          script = script.replace(
+              'replace_once(fixture_read_anchor, fixture_read_new, "fixture assertions")\n',
+              '',
+          )
+          exec(compile(script, "branch-implement-4776-v2", "exec"), {})
+
+          path = Path("xtask/src/version.rs")
+          text = path.read_text(encoding="utf-8")
+          test_start = text.index("#[cfg(test)]\nmod tests")
+          before = text[:test_start]
+          tests = text[test_start:]
+          tests = tests.replace(
+              "root.join(NPM_LAUNCHER_MANIFEST)",
+              "root.join(super::NPM_LAUNCHER_MANIFEST)",
+          )
+          path.write_text(before + tests, encoding="utf-8")
+          PY
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.95.0
+          components: rustfmt
+
+      - name: Format and test the transaction
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          cargo test -p xtask --locked version:: -- --nocapture
+          cargo xtask check-release-targets
+
+      - name: Commit source changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add xtask/src/version.rs xtask/src/policy/distribution/mod.rs
+          git diff --cached --check
+          git commit -m "build(distribution): bump npm launcher versions atomically (#4776)"
+          git push origin HEAD:build/4776-npm-bump-version
