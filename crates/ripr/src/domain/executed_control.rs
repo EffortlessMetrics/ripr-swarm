@@ -1024,6 +1024,21 @@ pub(crate) mod tests {
         }
     }
 
+    fn require_valid(packet: ExecutedControlPacketV1) -> Result<PacketEvaluation, String> {
+        packet
+            .validate()
+            .map_err(|error| format!("unexpected validation error: {error}"))
+    }
+
+    fn require_invalid(
+        packet: ExecutedControlPacketV1,
+    ) -> Result<ExecutedControlValidationError, String> {
+        match packet.validate() {
+            Err(error) => Ok(error),
+            Ok(_) => Err("expected validation to fail".to_string()),
+        }
+    }
+
     fn issue_3858_obligation() -> ExecutedControlObligationV1 {
         ExecutedControlObligationV1 {
             obligation_id: "issue:3858:eager-file-count-removal-control".to_string(),
@@ -1041,83 +1056,79 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn executed_removal_control_fails_before_and_passes_after_the_repair() {
+    fn executed_removal_control_fails_before_and_passes_after_the_repair() -> Result<(), String> {
         let obligation = sample_obligation();
-        let evaluation = packet(
+        let evaluation = require_valid(packet(
             vec![obligation.clone()],
             vec![
                 failed_before_result(&obligation),
                 passing_result(&obligation),
             ],
-        )
-        .validate()
-        .expect("valid fail-before/pass-after packet");
+        ))?;
         assert_eq!(evaluation.satisfactions.len(), 1);
         assert!(evaluation.satisfactions[0].satisfies);
         assert_eq!(evaluation.satisfactions[0].state, Some(ResultState::Passed));
+        Ok(())
     }
 
     #[test]
-    fn ordinary_positive_test_cannot_silently_satisfy_the_obligation() {
+    fn ordinary_positive_test_cannot_silently_satisfy_the_obligation() -> Result<(), String> {
         let obligation = sample_obligation();
         let mut result = passing_result(&obligation);
         result.offered_evidence_kind = OfferedEvidenceKind::OrdinaryPositiveTest;
         result.observed_outcome = ObservedOutcome::OrdinaryPositiveTestsPassed;
-        let error = packet(vec![obligation], vec![result])
-            .validate()
-            .expect_err("ordinary positive test must not satisfy");
+        let error = require_invalid(packet(vec![obligation], vec![result]))?;
         assert!(matches!(
             error,
             ExecutedControlValidationError::OrdinaryPositiveTestCannotSatisfy(_)
         ));
+        Ok(())
     }
 
     #[test]
-    fn prose_claim_without_artifact_cannot_pass() {
+    fn prose_claim_without_artifact_cannot_pass() -> Result<(), String> {
         let obligation = sample_obligation();
         let mut result = passing_result(&obligation);
         result.offered_evidence_kind = OfferedEvidenceKind::ReviewProse;
         result.observed_outcome = ObservedOutcome::ReviewArgumentOnly;
         result.artifact = None;
-        let error = packet(vec![obligation], vec![result])
-            .validate()
-            .expect_err("review prose must not satisfy");
+        let error = require_invalid(packet(vec![obligation], vec![result]))?;
         assert!(matches!(
             error,
             ExecutedControlValidationError::ReviewProseCannotSatisfy(_)
         ));
+        Ok(())
     }
 
     #[test]
-    fn control_run_on_another_head_cannot_pass() {
+    fn control_run_on_another_head_cannot_pass() -> Result<(), String> {
         let obligation = sample_obligation();
         let mut result = passing_result(&obligation);
         result.head = HEAD_OTHER.to_string();
-        let error = packet(vec![obligation], vec![result])
-            .validate()
-            .expect_err("other-head result must not pass");
+        let error = require_invalid(packet(vec![obligation], vec![result]))?;
         assert!(matches!(
             error,
             ExecutedControlValidationError::HeadMismatch { .. }
         ));
+        Ok(())
     }
 
     #[test]
-    fn command_success_without_named_wrong_implementation_cannot_pass() {
+    fn command_success_without_named_wrong_implementation_cannot_pass() -> Result<(), String> {
         let obligation = sample_obligation();
         let mut result = passing_result(&obligation);
         result.observed_outcome = ObservedOutcome::CommandSucceededWithoutExercisingSubject;
-        let error = packet(vec![obligation], vec![result])
-            .validate()
-            .expect_err("unexercised subject must not pass");
+        let error = require_invalid(packet(vec![obligation], vec![result]))?;
         assert!(matches!(
             error,
             ExecutedControlValidationError::WrongImplementationNotExercised(_)
         ));
+        Ok(())
     }
 
     #[test]
-    fn unavailable_instrument_with_declared_substitute_is_explicit_and_satisfying() {
+    fn unavailable_instrument_with_declared_substitute_is_explicit_and_satisfying()
+    -> Result<(), String> {
         let mut obligation = sample_obligation();
         obligation
             .acceptable_evidence_forms
@@ -1140,18 +1151,18 @@ pub(crate) mod tests {
             ),
             ..passing_result(&obligation)
         };
-        let evaluation = packet(vec![obligation], vec![result])
-            .validate()
-            .expect("declared substitute is valid");
+        let evaluation = require_valid(packet(vec![obligation], vec![result]))?;
         assert!(evaluation.satisfactions[0].satisfies);
         assert_eq!(
             evaluation.satisfactions[0].state,
             Some(ResultState::Substituted)
         );
+        Ok(())
     }
 
     #[test]
-    fn unavailable_instrument_without_substitute_stays_explicit_and_non_satisfying() {
+    fn unavailable_instrument_without_substitute_stays_explicit_and_non_satisfying()
+    -> Result<(), String> {
         let obligation = sample_obligation();
         let result = ExecutedControlResultV1 {
             offered_evidence_kind: OfferedEvidenceKind::ExecutedDiscriminatingControl,
@@ -1162,79 +1173,74 @@ pub(crate) mod tests {
             limitation: Some("eager-variant instrument was not available".to_string()),
             ..passing_result(&obligation)
         };
-        let evaluation = packet(vec![obligation], vec![result])
-            .validate()
-            .expect("instrument failure is a valid non-green state");
+        let evaluation = require_valid(packet(vec![obligation], vec![result]))?;
         assert!(!evaluation.satisfactions[0].satisfies);
         assert_eq!(
             evaluation.satisfactions[0].state,
             Some(ResultState::InstrumentFailure)
         );
+        Ok(())
     }
 
     #[test]
-    fn inferred_substitute_without_declaration_is_rejected() {
+    fn inferred_substitute_without_declaration_is_rejected() -> Result<(), String> {
         let obligation = sample_obligation();
         let mut result = passing_result(&obligation);
         result.state = ResultState::Substituted;
         result.offered_evidence_kind = OfferedEvidenceKind::DeclaredSubstitute;
         result.substitute_id = Some("invented-after-the-fact".to_string());
-        let error = packet(vec![obligation], vec![result])
-            .validate()
-            .expect_err("undeclared substitute must not satisfy");
+        let error = require_invalid(packet(vec![obligation], vec![result]))?;
         assert!(matches!(
             error,
             ExecutedControlValidationError::SubstituteNotDeclared(_)
         ));
+        Ok(())
     }
 
     #[test]
-    fn duplicated_obligation_ids_are_rejected() {
+    fn duplicated_obligation_ids_are_rejected() -> Result<(), String> {
         let obligation = sample_obligation();
-        let error = packet(
+        let error = require_invalid(packet(
             vec![obligation.clone(), obligation.clone()],
             vec![passing_result(&obligation)],
-        )
-        .validate()
-        .expect_err("duplicate obligation ids");
+        ))?;
         assert!(matches!(
             error,
             ExecutedControlValidationError::DuplicateObligationId(_)
         ));
+        Ok(())
     }
 
     #[test]
-    fn result_for_unknown_obligation_is_rejected() {
+    fn result_for_unknown_obligation_is_rejected() -> Result<(), String> {
         let obligation = sample_obligation();
         let mut result = passing_result(&obligation);
         result.obligation_id = "claim:unknown".to_string();
-        let error = packet(vec![obligation], vec![result])
-            .validate()
-            .expect_err("unknown obligation");
+        let error = require_invalid(packet(vec![obligation], vec![result]))?;
         assert!(matches!(
             error,
             ExecutedControlValidationError::UnknownObligation(_)
         ));
+        Ok(())
     }
 
     #[test]
-    fn stale_obligation_digest_cannot_pass() {
+    fn stale_obligation_digest_cannot_pass() -> Result<(), String> {
         let obligation = sample_obligation();
         let mut result = passing_result(&obligation);
         result.obligation_digest = Some(
             "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".to_string(),
         );
-        let error = packet(vec![obligation], vec![result])
-            .validate()
-            .expect_err("stale digest");
+        let error = require_invalid(packet(vec![obligation], vec![result]))?;
         assert!(matches!(
             error,
             ExecutedControlValidationError::ObligationDigestMismatch { .. }
         ));
+        Ok(())
     }
 
     #[test]
-    fn issue_3858_documentation_fixture_stays_not_proven() {
+    fn issue_3858_documentation_fixture_stays_not_proven() -> Result<(), String> {
         let obligation = issue_3858_obligation();
         let result = ExecutedControlResultV1 {
             offered_evidence_kind: OfferedEvidenceKind::ReviewProse,
@@ -1248,14 +1254,13 @@ pub(crate) mod tests {
             ),
             ..passing_result(&obligation)
         };
-        let evaluation = packet(vec![obligation], vec![result])
-            .validate()
-            .expect("not_proven documentation fixture is valid");
+        let evaluation = require_valid(packet(vec![obligation], vec![result]))?;
         assert!(!evaluation.satisfactions[0].satisfies);
         assert_eq!(
             evaluation.satisfactions[0].state,
             Some(ResultState::NotProven)
         );
+        Ok(())
     }
 
     #[test]
@@ -1298,26 +1303,24 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn missing_result_is_non_satisfying_not_an_inferred_pass() {
-        let evaluation = packet(vec![sample_obligation()], Vec::new())
-            .validate()
-            .expect("packet without results remains valid");
+    fn missing_result_is_non_satisfying_not_an_inferred_pass() -> Result<(), String> {
+        let evaluation = require_valid(packet(vec![sample_obligation()], Vec::new()))?;
         assert!(!evaluation.satisfactions[0].satisfies);
         assert_eq!(evaluation.satisfactions[0].state, None);
+        Ok(())
     }
 
     #[test]
-    fn structural_discrimination_claim_cannot_pass() {
+    fn structural_discrimination_claim_cannot_pass() -> Result<(), String> {
         let obligation = sample_obligation();
         let mut result = passing_result(&obligation);
         result.offered_evidence_kind = OfferedEvidenceKind::StructuralDiscriminationClaim;
         result.observed_outcome = ObservedOutcome::StructuralDiscriminationOnly;
-        let error = packet(vec![obligation], vec![result])
-            .validate()
-            .expect_err("structural claim must not satisfy");
+        let error = require_invalid(packet(vec![obligation], vec![result]))?;
         assert!(matches!(
             error,
             ExecutedControlValidationError::StructuralClaimCannotSatisfy(_)
         ));
+        Ok(())
     }
 }

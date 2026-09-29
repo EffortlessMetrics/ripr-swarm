@@ -372,7 +372,8 @@ mod tests {
     }
 
     #[test]
-    fn json_and_human_projections_agree_on_satisfaction_and_are_deterministic() {
+    fn json_and_human_projections_agree_on_satisfaction_and_are_deterministic() -> Result<(), String>
+    {
         let obligation = sample_obligation();
         let mut first = packet(
             vec![obligation.clone()],
@@ -382,11 +383,11 @@ mod tests {
         second.results.reverse();
         first.canonicalize();
         second.canonicalize();
-        let json_left = render_packet_json(&first).expect("json");
-        let json_right = render_packet_json(&second).expect("json");
+        let json_left = render_packet_json(&first)?;
+        let json_right = render_packet_json(&second)?;
         assert_eq!(json_left, json_right);
-        let human_left = render_packet_markdown(&first).expect("human");
-        let human_right = render_packet_markdown(&second).expect("human");
+        let human_left = render_packet_markdown(&first)?;
+        let human_right = render_packet_markdown(&second)?;
         assert_eq!(human_left, human_right);
         assert!(human_left.contains("state=`passed`"));
         assert!(human_left.contains("state=`failed`"));
@@ -394,20 +395,22 @@ mod tests {
         assert!(!human_left.contains("killed")); // ripr-allow: static-language: test guard verifying projection does not emit forbidden mutation-testing term
         assert!(!human_left.contains("survived")); // ripr-allow: static-language: test guard verifying projection does not emit forbidden mutation-testing term
         assert!(!human_left.contains("adequate")); // ripr-allow: static-language: test guard verifying projection does not emit forbidden mutation-testing term
+        Ok(())
     }
 
     #[test]
-    fn human_projection_keeps_issue_3858_not_proven() {
+    fn human_projection_keeps_issue_3858_not_proven() -> Result<(), String> {
         let packet = issue_3858_packet();
-        let human = render_packet_markdown(&packet).expect("human");
+        let human = render_packet_markdown(&packet)?;
         assert!(human.contains("issue:3858:eager-file-count-removal-control"));
         assert!(human.contains("state=`not_proven`"));
         assert!(human.contains("does_not_satisfy"));
         assert!(!human.contains("state=`passed`"));
         assert!(human.contains("must not be rewritten as passed"));
-        let json = render_packet_json(&packet).expect("json");
+        let json = render_packet_json(&packet)?;
         assert!(json.contains("\"state\": \"not_proven\""));
         assert!(!json.contains("\"state\": \"passed\""));
+        Ok(())
     }
 
     fn corpus_document() -> Result<Value, String> {
