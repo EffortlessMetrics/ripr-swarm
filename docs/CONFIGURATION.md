@@ -951,7 +951,7 @@ instead of publishing phantom preview diagnostics.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `resolve_tsconfig_paths` | boolean | `false` | Resolve TypeScript path aliases from `tsconfig.json` or `jsconfig.json` during owner-to-test discovery. |
+| `resolve_tsconfig_paths` | boolean | `false` | Resolve TypeScript path aliases from `tsconfig.json` or `jsconfig.json` during owner-to-test discovery. Imports of an in-workspace package by its own name (`@scope/pkg/sub`) resolve through that package's `package.json` without this setting. |
 
 ### `[perl]`
 
