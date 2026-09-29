@@ -22,6 +22,11 @@ are scoped or reviewed.
   focused test with the missing discriminator next to the nearest related
   test", matching the new test `pilot` names, where it used to say "extend
   the nearest related test".
+- LSP: the server now asks clients for `textDocument/didSave`. It advertised
+  only the numeric full-sync kind, which under the LSP spec does not request
+  save notifications, so a strictly conforming editor could save without ripr
+  re-analyzing. The capability is now the options form with `save: true`,
+  which the VS Code extension's compatibility check already accepts.
 - LSP: opening a second repository in the same Helix session no longer stops
   ripr for the first. Helix adds the new repository as a workspace folder to
   the running server, which made the folder set ambiguous and stopped
@@ -264,6 +269,13 @@ are scoped or reviewed.
   closed (exit 2) naming the variable and the value, like `--git-timeout` and
   the `RIPR_PARTIAL_*_BUDGET` overrides. It used to keep the default deadline
   silently (#4374).
+- Python: a function a package re-exports from its `__init__.py` is now
+  related to tests that call it through the package. On humanize
+  (`import humanize`, `humanize.naturaldelta(...)`) and more-itertools
+  (`import more_itertools as mi`, `mi.one(...)` via `from .more import *`)
+  every changed line read `no_static_path` although mutating those lines
+  fails the projects' own tests. Renamed re-exports, `_private` names under a
+  star import, and names a declared `__all__` omits are not followed.
 
 ### Added
 
