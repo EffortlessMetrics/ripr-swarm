@@ -259,3 +259,26 @@ fn check_quiet_failure_keeps_errors_and_drops_progress() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn check_unwritable_artifact_projects_failed_not_completed() -> Result<(), String> {
+    let dir = workspace_root().join("target/ripr/progress-artifact-dir");
+    std::fs::create_dir_all(&dir).map_err(|error| format!("create artifact dir: {error}"))?;
+    let dir_arg = dir.display().to_string();
+    let output = run_check(&["--format", "json", "--write-artifact", dir_arg.as_str()])?;
+    assert!(
+        !output.status.success(),
+        "writing an artifact onto a directory must fail the command: {}",
+        stderr_text(&output)
+    );
+    let stderr = stderr_text(&output);
+    assert!(
+        stderr.contains("ripr progress: failed [diff]"),
+        "post-analysis artifact failure must project failed: {stderr}"
+    );
+    assert!(
+        !stderr.contains("ripr progress: completed"),
+        "post-analysis artifact failure must not project completed: {stderr}"
+    );
+    Ok(())
+}

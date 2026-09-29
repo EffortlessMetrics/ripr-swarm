@@ -728,6 +728,9 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         &config,
         navigation.as_ref(),
     )?)?;
+    if let Some(sink) = &progress {
+        sink.commit_success();
+    }
     Ok(())
 }
 

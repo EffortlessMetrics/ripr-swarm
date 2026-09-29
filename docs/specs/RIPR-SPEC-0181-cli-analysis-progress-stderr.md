@@ -52,8 +52,10 @@ second stage vocabulary.
    `ripr progress: <stage> [<scope>]` and, while a stage stays active,
    `ripr progress: <stage> still active after <elapsed class>`.
 3. Non-TTY / CI lines are newline-delimited and contain no ANSI or carriage
-   returns. A TTY may reuse one line and stays silent below a 250ms
-   minimum-duration threshold.
+   returns. A TTY may reuse one line, pads overwrites to the longest prior
+   progress line, and stays silent below a 250ms minimum-duration threshold.
+   A TTY stage that remains active past that threshold becomes visible even
+   if the producer event arrived during the silence window.
 4. Heartbeats repeat only the current producer stage, start after 2s, repeat
    every 2s, and stop after 16 lines for that run.
 5. JSON, SARIF, GitHub annotations, and other machine stdout formats remain
@@ -64,7 +66,8 @@ second stage vocabulary.
 7. Unknown totals never render as a percentage or ETA. Absolute paths,
    source text, and environment values never enter progress lines.
 8. A sink or rendering failure cannot turn successful analysis into failure.
-   A non-success command never projects `completed`.
+   The CLI holds producer `completed` until artifact writing and stdout
+   succeed; a later command failure projects `failed` and never `completed`.
 9. Removing the producer sink makes the CLI discriminator lose its stage
    evidence. This slice does not add analyzer stages, LSP mapping, or a
    speed claim.
@@ -122,6 +125,11 @@ second stage vocabulary.
 - `crates/ripr/src/cli/progress.rs::tests::projection_tokens_cover_the_closed_producer_vocabulary`
 - `crates/ripr/src/cli/progress.rs::tests::rendering_failure_is_isolated`
 - `crates/ripr/src/cli/progress.rs::tests::heartbeat_is_throttled_and_bounded`
+- `crates/ripr/src/cli/progress.rs::tests::tty_suppressed_stage_becomes_visible_once_min_visible_elapses`
+- `crates/ripr/src/cli/progress.rs::tests::tty_overwrite_clears_a_longer_previous_line`
+- `crates/ripr/src/cli/progress.rs::tests::tty_overwrite_pads_to_the_longest_prior_line`
+- `crates/ripr/src/cli/progress.rs::tests::held_completed_waits_for_command_commit`
+- `crates/ripr/src/cli/progress.rs::tests::drop_without_commit_converts_held_completed_to_failed`
 - `crates/ripr/src/cli/progress.rs::tests::unsafe_constructed_lines_are_rejected`
 - `crates/ripr/src/cli/help.rs::tests::check_help_mentions_repo_badge_formats_and_examples`
 - `crates/ripr/tests/cli_progress.rs::check_json_stdout_parses_while_progress_stays_on_stderr`
@@ -132,6 +140,7 @@ second stage vocabulary.
 - `crates/ripr/tests/cli_progress.rs::check_worktree_projects_worktree_scope_on_stderr`
 - `crates/ripr/tests/cli_progress.rs::check_progress_failure_emits_failed_not_completed`
 - `crates/ripr/tests/cli_progress.rs::check_quiet_failure_keeps_errors_and_drops_progress`
+- `crates/ripr/tests/cli_progress.rs::check_unwritable_artifact_projects_failed_not_completed`
 - `crates/ripr/tests/cli_progress.rs::check_help_does_not_spray_progress`
 
 ## Implementation Mapping

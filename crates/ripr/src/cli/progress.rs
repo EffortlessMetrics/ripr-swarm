@@ -108,6 +108,18 @@ pub(crate) fn format_heartbeat_line(stage: AnalysisProgressStage, class: &str) -
     )
 }
 
+/// TTY in-place overwrite: pad to the longest line shown so far so a shorter
+/// successor cannot leave a stale suffix after CR.
+pub(crate) fn tty_overwrite(line: &str, previous_width: usize) -> (String, usize) {
+    let width = line.chars().count().max(previous_width);
+    let mut rendered = String::from('\r');
+    rendered.push_str(line);
+    if let Some(pad) = width.checked_sub(line.chars().count()) {
+        rendered.push_str(&" ".repeat(pad));
+    }
+    (rendered, width)
+}
+
 /// Fail closed: a projected line may only carry closed tokens and elapsed
 /// classes. Absolute paths, percents, ETAs, and source text are rejected.
 pub(crate) fn progress_line_is_safe(line: &str) -> bool {
@@ -135,6 +147,7 @@ struct Projection {
     tty: bool,
     policy: ProgressPolicy,
     current_stage: Option<AnalysisProgressStage>,
+    current_scope: Option<AnalysisProgressScope>,
     terminal: bool,
     visible: bool,
     started: Instant,
@@ -142,6 +155,9 @@ struct Projection {
     last_heartbeat: Option<Instant>,
     heartbeat_count: u32,
     in_place: bool,
+    tty_width: usize,
+    hold_success: bool,
+    pending_success: Option<AnalysisProgressEvent>,
 }
 
 struct SinkInner {
@@ -156,7 +172,24 @@ pub(crate) struct CliProgressSink {
 
 impl CliProgressSink {
     pub(crate) fn for_stderr(tty: bool, policy: ProgressPolicy) -> Self {
-        Self::with_writer(Box::new(io::stderr()), tty, policy)
+        let sink = Self::with_writer(Box::new(io::stderr()), tty, policy);
+        sink.hold_success_terminal();
+        sink
+    }
+
+    /// CLI command success is later than producer `completed`. Hold that
+    /// terminal until [`Self::commit_success`] so a later artifact/stdout
+    /// failure can still project `failed`.
+    pub(crate) fn hold_success_terminal(&self) {
+        Self::lock_state(&self.inner).hold_success = true;
+    }
+
+    pub(crate) fn commit_success(&self) {
+        let mut projection = Self::lock_state(&self.inner);
+        let Some(event) = projection.pending_success.take() else {
+            return;
+        };
+        Self::project_terminal(&mut projection, event);
     }
 
     pub(crate) fn with_writer(
@@ -172,6 +205,7 @@ impl CliProgressSink {
                     tty,
                     policy,
                     current_stage: None,
+                    current_scope: None,
                     terminal: false,
                     visible: !tty,
                     started: now,
@@ -179,6 +213,9 @@ impl CliProgressSink {
                     last_heartbeat: None,
                     heartbeat_count: 0,
                     in_place: false,
+                    tty_width: 0,
+                    hold_success: false,
+                    pending_success: None,
                 }),
                 stop: Arc::new(AtomicBool::new(false)),
                 heartbeat: Mutex::new(None),
@@ -199,7 +236,9 @@ impl CliProgressSink {
         }
         let rendered = if projection.tty {
             projection.in_place = true;
-            format!("\r{line:<48}")
+            let (owned, width) = tty_overwrite(line, projection.tty_width);
+            projection.tty_width = width;
+            owned
         } else {
             let mut owned = line.to_string();
             owned.push('\n');
@@ -231,20 +270,14 @@ impl CliProgressSink {
             projection.last_heartbeat = None;
         }
         projection.current_stage = Some(event.stage);
+        projection.current_scope = Some(event.scope);
 
         if stage_is_terminal(event.stage) {
-            projection.terminal = true;
-            let too_short = projection.tty
-                && stage_is_success_terminal(event.stage)
-                && now.duration_since(projection.started) < projection.policy.min_visible;
-            if too_short {
-                Self::finish_in_place(&mut projection);
+            if projection.hold_success && stage_is_success_terminal(event.stage) {
+                projection.pending_success = Some(event);
                 return;
             }
-            projection.visible = true;
-            let line = format_stage_line(event.stage, event.scope);
-            Self::write_line(&mut projection, &line);
-            Self::finish_in_place(&mut projection);
+            Self::project_terminal(&mut projection, event);
             return;
         }
 
@@ -257,9 +290,40 @@ impl CliProgressSink {
         Self::write_line(&mut projection, &line);
     }
 
+    fn project_terminal(projection: &mut Projection, event: AnalysisProgressEvent) {
+        projection.terminal = true;
+        let too_short = projection.tty
+            && stage_is_success_terminal(event.stage)
+            && Instant::now().duration_since(projection.started) < projection.policy.min_visible;
+        if too_short {
+            Self::finish_in_place(projection);
+            return;
+        }
+        projection.visible = true;
+        let line = format_stage_line(event.stage, event.scope);
+        Self::write_line(projection, &line);
+        Self::finish_in_place(projection);
+    }
+
+    fn project_held_failure(projection: &mut Projection) {
+        let Some(event) = projection.pending_success.take() else {
+            return;
+        };
+        Self::project_terminal(
+            projection,
+            AnalysisProgressEvent {
+                stage: AnalysisProgressStage::Failed,
+                scope: event.scope,
+                completed_units: None,
+                total_units: None,
+                elapsed_ms: event.elapsed_ms,
+            },
+        );
+    }
+
     fn heartbeat_tick(inner: &SinkInner) {
         let mut projection = Self::lock_state(inner);
-        if projection.terminal || !projection.visible {
+        if projection.terminal || projection.pending_success.is_some() {
             return;
         }
         if projection.heartbeat_count >= projection.policy.max_heartbeats {
@@ -272,6 +336,17 @@ impl CliProgressSink {
             return;
         }
         let now = Instant::now();
+        if !projection.visible {
+            if now.duration_since(projection.started) < projection.policy.min_visible {
+                return;
+            }
+            let Some(scope) = projection.current_scope else {
+                return;
+            };
+            projection.visible = true;
+            let line = format_stage_line(stage, scope);
+            Self::write_line(&mut projection, &line);
+        }
         let stage_age = now.duration_since(projection.stage_started);
         if stage_age < projection.policy.first_heartbeat {
             return;
@@ -337,6 +412,7 @@ impl Drop for CliProgressSink {
     fn drop(&mut self) {
         self.stop_heartbeat();
         let mut projection = Self::lock_state(&self.inner);
+        Self::project_held_failure(&mut projection);
         Self::finish_in_place(&mut projection);
     }
 }
@@ -387,6 +463,27 @@ mod tests {
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
+    }
+
+    fn tty_visible_line(text: &str) -> String {
+        let body = text.strip_suffix('\n').unwrap_or(text);
+        let last = body.rsplit('\n').next().unwrap_or("");
+        let mut line = Vec::<u8>::new();
+        let mut col = 0usize;
+        for byte in last.bytes() {
+            match byte {
+                b'\r' => col = 0,
+                other => {
+                    if col < line.len() {
+                        line[col] = other;
+                    } else {
+                        line.push(other);
+                    }
+                    col = col.saturating_add(1);
+                }
+            }
+        }
+        String::from_utf8_lossy(&line).trim_end().to_owned()
     }
 
     fn event(stage: AnalysisProgressStage) -> AnalysisProgressEvent {
@@ -507,6 +604,143 @@ mod tests {
         assert!(text.contains("ripr progress: failed [diff]"));
         assert!(!text.contains("completed"));
         assert_eq!(text.matches("ripr progress: failed").count(), 1);
+    }
+
+    #[test]
+    fn tty_suppressed_stage_becomes_visible_once_min_visible_elapses() {
+        let buffer = Buffer::new();
+        let policy = ProgressPolicy {
+            min_visible: Duration::from_millis(40),
+            first_heartbeat: Duration::from_secs(2),
+            heartbeat_every: Duration::from_millis(40),
+            max_heartbeats: 2,
+        };
+        let sink = CliProgressSink::with_writer(Box::new(buffer.clone()), true, policy);
+        sink.emit(event(AnalysisProgressStage::Analyzing));
+        assert!(
+            !buffer.text().contains("ripr progress:"),
+            "TTY must stay silent before min_visible: {}",
+            buffer.text()
+        );
+        thread::sleep(Duration::from_millis(50));
+        CliProgressSink::heartbeat_tick(&sink.inner);
+        let revealed = buffer.text();
+        assert!(
+            revealed.contains("analyzing"),
+            "active TTY stage must appear after min_visible: {revealed}"
+        );
+        assert!(
+            !revealed.contains("still active"),
+            "heartbeat must wait for first_heartbeat: {revealed}"
+        );
+        thread::sleep(Duration::from_secs(2));
+        CliProgressSink::heartbeat_tick(&sink.inner);
+        let beating = buffer.text();
+        assert!(
+            beating.contains("still active after"),
+            "blocked TTY stage must heartbeat after first_heartbeat: {beating}"
+        );
+        sink.emit(event(AnalysisProgressStage::Completed));
+    }
+
+    #[test]
+    fn tty_overwrite_clears_a_longer_previous_line() {
+        let buffer = Buffer::new();
+        let policy = ProgressPolicy {
+            min_visible: Duration::ZERO,
+            first_heartbeat: Duration::from_secs(30),
+            heartbeat_every: Duration::from_secs(30),
+            max_heartbeats: 1,
+        };
+        let sink = CliProgressSink::with_writer(Box::new(buffer.clone()), true, policy);
+        sink.emit(event(AnalysisProgressStage::BuildingOutput));
+        {
+            let mut projection = CliProgressSink::lock_state(&sink.inner);
+            let long = format_heartbeat_line(AnalysisProgressStage::BuildingOutput, "10m");
+            assert!(
+                long.chars().count()
+                    > format_stage_line(
+                        AnalysisProgressStage::Completed,
+                        AnalysisProgressScope::Diff
+                    )
+                    .chars()
+                    .count(),
+                "control requires a longer heartbeat than completed: {long}"
+            );
+            CliProgressSink::write_line(&mut projection, &long);
+        }
+        sink.emit(event(AnalysisProgressStage::Completed));
+        drop(sink);
+        let visible = tty_visible_line(&buffer.text());
+        assert!(
+            visible.contains("completed"),
+            "TTY successor must show completed: {visible:?}"
+        );
+        assert!(
+            !visible.contains("still active"),
+            "longer heartbeat suffix must not remain: {visible:?}"
+        );
+        assert!(
+            !visible.contains("10m"),
+            "elapsed class from the prior line must not remain: {visible:?}"
+        );
+    }
+
+    #[test]
+    fn held_completed_waits_for_command_commit() {
+        let buffer = Buffer::new();
+        let sink = CliProgressSink::with_writer(Box::new(buffer.clone()), false, non_tty_policy());
+        sink.hold_success_terminal();
+        sink.emit(event(AnalysisProgressStage::Analyzing));
+        sink.emit(event(AnalysisProgressStage::Completed));
+        let held = buffer.text();
+        assert!(
+            held.contains("analyzing"),
+            "non-terminal stages still project while success is held: {held}"
+        );
+        assert!(
+            !held.contains("completed"),
+            "producer completed must not render before command commit: {held}"
+        );
+        sink.commit_success();
+        let committed = buffer.text();
+        assert!(
+            committed.contains("ripr progress: completed [diff]"),
+            "commit must project completed: {committed}"
+        );
+        assert!(!committed.contains("failed"));
+    }
+
+    #[test]
+    fn drop_without_commit_converts_held_completed_to_failed() {
+        let buffer = Buffer::new();
+        let sink = CliProgressSink::with_writer(Box::new(buffer.clone()), false, non_tty_policy());
+        sink.hold_success_terminal();
+        sink.emit(event(AnalysisProgressStage::Analyzing));
+        sink.emit(event(AnalysisProgressStage::Completed));
+        drop(sink);
+        let text = buffer.text();
+        assert!(
+            text.contains("ripr progress: failed [diff]"),
+            "Drop must fail-close a held success terminal: {text}"
+        );
+        assert!(!text.contains("completed"));
+    }
+
+    #[test]
+    fn tty_overwrite_pads_to_the_longest_prior_line() {
+        let long = format_heartbeat_line(AnalysisProgressStage::BuildingOutput, "10m");
+        let short = format_stage_line(
+            AnalysisProgressStage::Completed,
+            AnalysisProgressScope::Diff,
+        );
+        let (first, width) = tty_overwrite(&long, 0);
+        let (second, _) = tty_overwrite(&short, width);
+        let visible = tty_visible_line(&format!("{first}{second}"));
+        assert!(visible.contains("completed"));
+        assert!(!visible.contains("still active"));
+        assert!(!visible.contains("10m"));
+        assert_eq!(width, long.chars().count());
     }
 
     #[test]
