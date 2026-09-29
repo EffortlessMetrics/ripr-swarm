@@ -1,0 +1,82 @@
+name: Repair final npm launcher helper anchor
+
+on:
+  push:
+    branches:
+      - feat/4710-npm-launcher-core
+    paths:
+      - .github/workflows/branch-repair-4716-anchor.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: ${{ github.repository == 'EffortlessMetrics/ripr-swarm' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: feat/4710-npm-launcher-core
+
+      - name: Patch the helper and source guard directly
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          helper = Path('.github/workflows/branch-repair-4716-final.yml')
+          text = helper.read_text(encoding='utf-8')
+          label = '    "signal source guards",\n)\n'
+          label_pos = text.find(label)
+          if label_pos < 0:
+              raise SystemExit('signal source guard helper label not found')
+          start = text.rfind('replace_once(\n', 0, label_pos)
+          if start < 0:
+              raise SystemExit('signal source guard helper call start not found')
+          text = text[:start] + text[label_pos + len(label):]
+          helper.write_text(text, encoding='utf-8')
+
+          source = Path('xtask/src/policy/distribution/npm_launcher.rs')
+          rust = source.read_text(encoding='utf-8')
+          old = '''        (
+              "process.exitCode = signalExitCode",
+              "a consumed child signal must still produce a nonzero launcher exit",
+          ),
+          '''
+          new = '''        (
+              "process.exitCode = signalExitCode",
+              "a consumed child signal must still produce a nonzero launcher exit",
+          ),
+          (
+              "SIGNALS_TO_OBSERVE",
+              "terminal process-group signals must be observed without duplicate forwarding",
+          ),
+          (
+              "const effectiveSignal = signal || receivedSignal",
+              "the first observed termination signal must survive a graceful child exit",
+          ),
+          '''
+          if new not in rust:
+              if rust.count(old) != 1:
+                  raise SystemExit(f'source guard anchor count={rust.count(old)}')
+              rust = rust.replace(old, new, 1)
+              source.write_text(rust, encoding='utf-8')
+          PY
+
+      - name: Push the repaired helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/branch-repair-4716-anchor.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            .github/workflows/branch-repair-4716-final.yml \
+            .github/workflows/branch-repair-4716-anchor.yml \
+            xtask/src/policy/distribution/npm_launcher.rs
+          git diff --cached --check
+          git commit -m "ci(npm): align final launcher repair helper"
+          git push origin HEAD:feat/4710-npm-launcher-core
