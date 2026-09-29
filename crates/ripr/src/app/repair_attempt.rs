@@ -2169,6 +2169,7 @@ fn git_paths(root: &Path, args: &[&str]) -> Result<Vec<String>, String> {
     // validator rather than admitting a rewritten path.
     let output = Command::new("git")
         .current_dir(root)
+        .args(crate::git::UNTRUSTED_REPOSITORY_CONFIG)
         .args(args)
         .output()
         .map_err(|error| format!("run git {} failed: {error}", args.join(" ")))?;

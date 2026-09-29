@@ -603,6 +603,7 @@ enum WorkingTreeProbe {
 
 fn working_tree_probe(root: &Path) -> WorkingTreeProbe {
     let result = Command::new("git")
+        .args(crate::git::UNTRUSTED_REPOSITORY_CONFIG)
         .args(["status", "--porcelain", "--", "."])
         .current_dir(root)
         .output();

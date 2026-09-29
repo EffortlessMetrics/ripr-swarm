@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Security: ripr's git calls pass `-c core.fsmonitor=false`, so a
+  repository's own `core.fsmonitor` program (reachable from an extracted
+  archive or a planted nested repository) does not run on `git status`
+  (#4744).
+- Security: `[perl].cache_dir` must be a repository-relative path without
+  `..`. An absolute or escaping value is now a config error instead of a
+  directory ripr creates and writes outside the checkout (#4745).
 - Security: `ripr doctor` probes every language runtime (`node`, `bun`,
   `pnpm`, `python3`, `pytest`) outside the checkout, as it already did for
   `yarn`. Run inside it, pnpm fetched and ran the release a project's
