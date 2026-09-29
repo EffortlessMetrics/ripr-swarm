@@ -94,10 +94,11 @@ lang-perl = []
 
 [dev-dependencies]
 proptest = "1"
+rmcp = { version = "=3.5.0", default-features = false, features = ["client", "transport-async-rw"] }
 serial_test = "4"
 # Dev-only: deterministic initialize-delivery witnesses (#3802) pause tokio
 # time and drive the service layers (tower Service) directly.
-tokio = { version = "1", features = ["test-util"] }
+tokio = { version = "1", features = ["test-util", "process"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }
 
 [lints]

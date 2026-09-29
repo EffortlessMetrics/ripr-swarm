@@ -214,6 +214,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn framing_retains_a_partial_message_when_receive_is_cancelled() -> Result<(), String> {
+        use std::future::{Future, poll_fn};
+        use std::task::Poll;
+
+        // SDK receive runs inside select!, so cancellation can happen after
+        // consuming a prefix but before the delimiter arrives. Poll once to
+        // that exact Pending boundary; no wall-clock timing or spawned actor
+        // decides whether the cancellation actually reached the partial read.
+        let (mut writer, reader) = tokio::io::duplex(64);
+        writer
+            .write_all(b"{\"split\":")
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut reader = BufReader::new(reader);
+        {
+            let mut receiving = Box::pin(read_frame(&mut reader));
+            poll_fn(|context| match receiving.as_mut().poll(context) {
+                Poll::Pending => Poll::Ready(Ok(())),
+                Poll::Ready(_) => Poll::Ready(Err(
+                    "partial-read control unexpectedly completed before its delimiter".to_string(),
+                )),
+            })
+            .await?;
+        }
+        writer
+            .write_all(b"true}\n")
+            .await
+            .map_err(|error| error.to_string())?;
+        let completed =
+            tokio::time::timeout(std::time::Duration::from_secs(5), read_frame(&mut reader))
+                .await
+                .map_err(|_| {
+                    "cancelled receive did not complete after its delimiter".to_string()
+                })??;
+        match completed {
+            FrameRead::Frame(value) if value.as_slice() == b"{\"split\":true}" => Ok(()),
+            _ => Err("cancelled receive discarded the consumed prefix".to_string()),
+        }
+    }
+
+    #[tokio::test]
     async fn oversized_frame_is_discarded_without_allocating_past_the_cap() -> Result<(), String> {
         let mut input = vec![b'x'; super::MAX_MESSAGE_BYTES + 1];
         input.push(b'\n');
