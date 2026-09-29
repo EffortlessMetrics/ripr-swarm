@@ -88,7 +88,7 @@ use no_behavior::{
     is_annotation_only_def_change, is_annotation_only_var_change,
 };
 use no_behavior::{
-    is_python_no_behavior_line, is_structural_def_header_line, is_structural_def_header_text,
+    is_python_no_behavior_line, is_structural_def_header_text, multi_line_def_header_span,
 };
 use oracles::collect_assertions_from_statements;
 #[cfg(test)]
@@ -643,6 +643,8 @@ impl PythonAdapter {
                 .and_then(|source| reconstruct_old_source(source, changed))
                 .map(|source| extract_source_facts(&changed.path, &source).docstring_line_ranges)
                 .unwrap_or_default();
+            // Header span per owner, computed once per changed file.
+            let mut header_spans: BTreeMap<usize, Option<(usize, usize)>> = BTreeMap::new();
             for added in &changed.added_lines {
                 // Pair the in-place removed line (same new-side position) so the
                 // classifier can credit the changed-sink token on the DELTA only.
@@ -686,8 +688,13 @@ impl PythonAdapter {
                                 added.line,
                                 &all_owners,
                             ))
-                            .is_some_and(|(source, owner)| {
-                                is_structural_def_header_line(source, owner.start_line, added.line)
+                            .and_then(|(source, owner)| {
+                                *header_spans.entry(owner.start_line).or_insert_with(|| {
+                                    multi_line_def_header_span(source, owner.start_line)
+                                })
+                            })
+                            .is_some_and(|(def_line, header_end)| {
+                                (def_line..=header_end).contains(&added.line)
                             }),
                 };
                 if let Some(finding) = classify_change_with_context(

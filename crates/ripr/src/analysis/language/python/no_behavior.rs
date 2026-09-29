@@ -169,6 +169,7 @@ pub(super) fn is_annotation_only_def_change(old_line: &str, new_line: &str) -> b
 /// `*,`, `def __setitem__(`, `):`, `) -> bool:`. Such a line has no runtime
 /// behavior of its own for a test to discriminate; a parameter default
 /// (`key=None,`) or any call or expression keeps its probe.
+#[cfg(test)]
 pub(super) fn is_structural_def_header_line(
     source: &str,
     owner_start_line: usize,
@@ -186,7 +187,7 @@ pub(super) fn is_structural_def_header_line(
     (def_line..=header_end).contains(&line)
 }
 
-/// Text-only half of [`is_structural_def_header_line`]; also used to require
+/// Text-only half of `is_structural_def_header_line`; also used to require
 /// that a paired old line was structural too.
 pub(super) fn is_structural_def_header_text(text: &str) -> bool {
     let trimmed = text.trim();
@@ -242,7 +243,10 @@ fn is_inert_annotation(annotation: &str) -> bool {
 /// ends on the first line whose brackets balance; if that line does not end
 /// in `:` (comments aside) the shape is not understood and there is no span,
 /// so a span never reaches into the body.
-fn multi_line_def_header_span(source: &str, owner_start_line: usize) -> Option<(usize, usize)> {
+pub(super) fn multi_line_def_header_span(
+    source: &str,
+    owner_start_line: usize,
+) -> Option<(usize, usize)> {
     let first = owner_start_line.checked_sub(1)?;
     let mut lines = source.lines().enumerate().skip(first);
     let (def_index, def_text) = lines.by_ref().take(64).find(|(_, text)| {

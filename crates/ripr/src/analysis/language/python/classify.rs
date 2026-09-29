@@ -69,7 +69,7 @@ pub(super) struct PythonNoBehaviorContext {
     /// owner's span carries at least one other added behavior line.
     pub(super) opens_owner_with_added_body: bool,
     /// The changed line only names parameters or opens/closes a multi-line
-    /// `def` header (`no_behavior::is_structural_def_header_line`).
+    /// `def` header (`no_behavior::multi_line_def_header_span`).
     pub(super) structural_def_header_line: bool,
 }
 
