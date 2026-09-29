@@ -1035,7 +1035,7 @@ mod tests {
     }
 
     #[test]
-    fn analyzes_simple_predicate_gap() {
+    fn analyzes_simple_predicate_gap() -> Result<(), String> {
         let root = temp_dir("simple");
         fs::create_dir_all(root.join("src")).unwrap();
         fs::create_dir_all(root.join("tests")).unwrap();
@@ -1091,8 +1091,7 @@ index 0000000..1111111 100644
             open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
-        })
-        .unwrap();
+        })?;
         assert!(!out.findings.is_empty());
         assert!(
             out.findings
@@ -1115,12 +1114,12 @@ index 0000000..1111111 100644
             open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
-        })
-        .unwrap();
+        })?;
         assert!(instant.findings.iter().any(|finding| {
             finding.class == crate::domain::ExposureClass::NoStaticPath
                 && finding.related_tests.is_empty()
         }));
+        Ok(())
     }
 
     #[test]
