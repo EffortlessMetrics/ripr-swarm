@@ -22,12 +22,12 @@ pub(crate) use probes::{changed_let_binding, mask_rust_comments_and_strings};
 
 use super::super::probes as analysis_probes;
 use super::super::{
-    classifier, classify, diff::ChangedFile, rust_index, workspace, AnalysisMode, AnalysisOptions,
+    AnalysisMode, AnalysisOptions, classifier, classify, diff::ChangedFile, rust_index, workspace,
 };
-use super::{route, LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult};
+use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 use crate::analysis::cancellation;
 use crate::analysis::committed_source::{self, CommittedSourceRead};
-use crate::analysis::diagnostic_origin::{origins_for_rust_findings, OriginBuildContext};
+use crate::analysis::diagnostic_origin::{OriginBuildContext, origins_for_rust_findings};
 use crate::analysis::facts::RustIndex;
 use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
 use crate::config::OraclePolicy;
@@ -1776,6 +1776,11 @@ impl RustAdapter {
 #[cfg(test)]
 mod tests {
     use super::{
+        DIFF_CHANGED_RUST_LINE_LIMIT, DIFF_INDEX_FILE_LIMIT, GeneratedRustSources,
+        PARTIAL_DIFF_FILE_BUDGET_DEFAULT, PARTIAL_DIFF_FILE_BUDGET_ENV,
+        PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_LINE_BUDGET_DEFAULT,
+        PARTIAL_DIFF_LINE_BUDGET_ENV, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffBudgets,
+        PartialDiffScope, PartialDiffStopReason, REPO_INDEX_FILE_LIMIT_ENV, RustAdapter,
         apply_probe_and_oracle_limits, changed_rust_line_count,
         diff_changed_rust_line_limit_from_env, diff_identity_from_changed_files,
         diff_index_file_limit_from_env, enforce_changed_rust_line_limit,
@@ -1784,17 +1789,13 @@ mod tests {
         partial_diff_budgets_from_env, partition_canonical_form,
         replace_witnessed_no_path_infection_summary, repo_index_file_limit_from_env,
         select_partial_diff_partition, select_partial_diff_partition_with_identity, sha256_hex,
-        transitive_reach_limit_kind, GeneratedRustSources, PartialDiffBudgets, PartialDiffScope,
-        PartialDiffStopReason, RustAdapter, DIFF_CHANGED_RUST_LINE_LIMIT, DIFF_INDEX_FILE_LIMIT,
-        PARTIAL_DIFF_FILE_BUDGET_DEFAULT, PARTIAL_DIFF_FILE_BUDGET_ENV,
-        PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_LINE_BUDGET_DEFAULT,
-        PARTIAL_DIFF_LINE_BUDGET_ENV, PARTIAL_DIFF_SELECTION_VERSION, REPO_INDEX_FILE_LIMIT_ENV,
+        transitive_reach_limit_kind,
     };
     use crate::analysis::cancellation;
     use crate::analysis::diff::{ChangedFile, ChangedLine};
     use crate::analysis::facts::{FunctionSourceRole, FunctionSummary, RustIndex, TestFact};
     use crate::analysis::language::{LanguageAdapter, LanguageId};
-    use crate::analysis::{diff, AnalysisMode, AnalysisOptions};
+    use crate::analysis::{AnalysisMode, AnalysisOptions, diff};
     use crate::config::OraclePolicy;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, OracleKind,
@@ -2015,8 +2016,8 @@ mod tests {
     /// dependencies, so a forward walk from `a` reaches nothing and `b`'s
     /// test never enters the index.
     #[test]
-    fn draft_diff_scope_reaches_path_dependent_tests_through_the_dependency_edge(
-    ) -> Result<(), String> {
+    fn draft_diff_scope_reaches_path_dependent_tests_through_the_dependency_edge()
+    -> Result<(), String> {
         let root = temp_root("path-dep-scope-reach")?;
         write_path_dep_workspace(&root, true)?;
         let changed_files = changed_a_lib_diff();
@@ -2169,8 +2170,8 @@ mod tests {
     }
 
     #[test]
-    fn diff_analysis_skips_inline_cfg_test_helpers_but_keeps_production_controls(
-    ) -> Result<(), String> {
+    fn diff_analysis_skips_inline_cfg_test_helpers_but_keeps_production_controls()
+    -> Result<(), String> {
         let root = temp_root("inline-cfg-test-second-role")?;
         write(
             &root.join("Cargo.toml"),
@@ -2708,10 +2709,12 @@ fn absent_delimiter_boundary_returns_head() {
                 .map(StaticLimitKind::as_str),
             Some("rust_value_propagation_unresolved")
         );
-        assert!(finding
-            .evidence
-            .iter()
-            .any(|line| line.contains("analysis/rust-value-propagation")));
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("analysis/rust-value-propagation"))
+        );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }
@@ -3246,10 +3249,12 @@ fn absent_delimiter_boundary_returns_head() {
             "rust-only enabled set",
         )?;
         assert_eq!(scope.selected_files.len(), 2);
-        assert!(scope
-            .selected_files
-            .iter()
-            .all(|path| path.ends_with(".rs")));
+        assert!(
+            scope
+                .selected_files
+                .iter()
+                .all(|path| path.ends_with(".rs"))
+        );
         assert_eq!(scope.uninspected_files_lower_bound, 4);
         Ok(())
     }
@@ -3985,10 +3990,14 @@ fn absent_delimiter_boundary_returns_head() {
             removed("vendor/gone/.cargo-checksum.json"),
             removed("vendor/gone/src/lib.rs"),
         ];
-        assert!(GeneratedRustSources::for_diff(&root, &[], &diff)
-            .contains(Path::new("vendor/gone/src/lib.rs")));
-        assert!(!GeneratedRustSources::for_repo(&root, &[])
-            .contains(Path::new("vendor/gone/src/lib.rs")));
+        assert!(
+            GeneratedRustSources::for_diff(&root, &[], &diff)
+                .contains(Path::new("vendor/gone/src/lib.rs"))
+        );
+        assert!(
+            !GeneratedRustSources::for_repo(&root, &[])
+                .contains(Path::new("vendor/gone/src/lib.rs"))
+        );
         let _ = fs::remove_dir_all(&root);
         Ok(())
     }
@@ -3998,7 +4007,7 @@ fn absent_delimiter_boundary_returns_head() {
     /// working tree must not change which committed files are analyzed.
     #[test]
     fn generator_header_reads_the_committed_source_overlay() -> Result<(), String> {
-        use crate::analysis::committed_source::{with_overlay, CommittedSourceOverlay};
+        use crate::analysis::committed_source::{CommittedSourceOverlay, with_overlay};
         use std::sync::Arc;
 
         let root = temp_root("generated-rust-overlay")?;
@@ -5279,8 +5288,8 @@ fn absent_delimiter_boundary_returns_head() {
     }
 
     #[test]
-    fn diff_analysis_misdeclared_harness_target_keeps_seeding_and_records_the_conflict(
-    ) -> Result<(), String> {
+    fn diff_analysis_misdeclared_harness_target_keeps_seeding_and_records_the_conflict()
+    -> Result<(), String> {
         // #3608: a `custom_harness` registration whose target does not
         // match any Cargo `[[test]]` target keeps seeding production
         // seams (no file-wide evidence role on an unverified premise) and
