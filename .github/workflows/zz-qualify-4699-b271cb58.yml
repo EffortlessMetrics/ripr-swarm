@@ -1,0 +1,17 @@
+name: Qualify PR 4699 exact candidate once
+
+on:
+  push:
+    branches:
+      - ops/qualify-4699-b271cb58
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    uses: ./.github/workflows/server-archive-qualification.yml
+    with:
+      candidate_sha: b271cb586ce3a257fc2c0b37425fbc93dd9c932a
+      candidate_tag: ""
+      version: 0.11.0
