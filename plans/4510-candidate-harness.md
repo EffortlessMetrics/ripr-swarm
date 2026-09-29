@@ -31,7 +31,8 @@ qualification mode never falls back to legacy. Do not gate the fifteen ambient
 Controller root owns actual release policy, registry and registered artifact
 bytes. Candidate source root owns actual Git HEAD/tree/ref, manifests/lock and
 package inputs. The source commit precedes the control packet; controller HEAD
-must not equal the pin. Separate worktrees of one repository are valid. Retain
+need not equal the pin; candidate identity is checked independently. Separate
+worktrees of one repository are valid. Retain
 and independently revalidate both domains. Source-promotion's different-repo
 common-directory condition is not this contract. No production pin/ref or
 checkout selection is created by this implementation.
