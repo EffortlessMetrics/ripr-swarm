@@ -9,6 +9,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static WORKSPACE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 fn run_ripr(root: &Path, args: &[&str]) -> Result<Output, String> {
     let bin = env!("CARGO_BIN_EXE_ripr");
@@ -29,8 +32,10 @@ fn nested_parens(depth: usize) -> String {
 }
 
 fn write_workspace(deep: &str) -> Result<PathBuf, String> {
+    // Unique per call: tests run in parallel and two sources may share a length.
+    let call = WORKSPACE_COUNTER.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!(
-        "ripr-py-nest-{}-{}",
+        "ripr-py-nest-{}-{call}-{}",
         std::process::id(),
         deep.len()
     ));
@@ -171,4 +176,29 @@ fn unchanged_deep_elif_chain_is_a_named_limit_not_an_abort() -> Result<(), Strin
         source.push_str(&format!("    elif x == {arm}:\n        return {arm}\n"));
     }
     assert_tree_budget_disclosed("elif", &source)
+}
+
+#[test]
+fn unchanged_deep_parameterized_lambda_chain_is_a_named_limit_not_an_abort() -> Result<(), String> {
+    assert_tree_budget_disclosed(
+        "lambda",
+        &format!("value = {}0\n", "lambda a, b: ".repeat(50_000)),
+    )
+}
+
+#[test]
+fn unchanged_deep_fstring_field_is_a_named_limit_not_an_abort() -> Result<(), String> {
+    assert_tree_budget_disclosed(
+        "f-string",
+        &format!("value = f\"{{x{}}}\"\n", " + 1".repeat(60_000)),
+    )
+}
+
+#[test]
+fn unchanged_deep_cr_only_elif_chain_is_a_named_limit_not_an_abort() -> Result<(), String> {
+    let mut source = String::from("def f(x):\r    if x == 0:\r        return 0\r");
+    for arm in 1..12_000 {
+        source.push_str(&format!("    elif x == {arm}:\r        return {arm}\r"));
+    }
+    assert_tree_budget_disclosed("CR elif", &source)
 }

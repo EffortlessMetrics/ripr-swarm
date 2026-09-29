@@ -18,6 +18,9 @@
 //! own `Drop` recurse per level, so a long enough chain aborts the process
 //! after the parse succeeds. The tree estimate refuses such a file before it
 //! is parsed, so neither the walker nor the drop ever sees the deep tree.
+//! f-string replacement fields are estimated as code, because the parser
+//! re-parses each field into a full expression, and a bare `\r` ends a line
+//! just as `\n` and `\r\n` do.
 
 pub(in crate::analysis::language::python) const MAX_PYTHON_PARSE_NESTING_DEPTH: usize = 128;
 
@@ -61,9 +64,27 @@ enum ScanMode {
         quote: u8,
         triple: bool,
         raw: bool,
+        format: bool,
         escaped: bool,
+        field: Option<Field>,
     },
 }
+
+/// An open f-string replacement field.
+#[derive(Clone, Copy)]
+struct Field {
+    /// First byte after the opening `{`.
+    start: usize,
+    /// Open `{` inside the field, counting the opening one.
+    braces: usize,
+    /// Quote of a string literal open inside the field.
+    quote: Option<u8>,
+}
+
+/// f-strings nested inside replacement fields deeper than this are refused
+/// rather than scanned by further recursion. Python's own quote rules keep
+/// real code to a handful of levels.
+const MAX_FSTRING_FIELD_NESTING: usize = 8;
 
 /// Lexical estimate of how deep the parsed AST will be.
 ///
@@ -92,6 +113,10 @@ struct Segment {
     /// The previous significant token ended an operand, so a following
     /// `-`/`+`/`*` is binary rather than prefix.
     after_operand: bool,
+    /// `lambda` parameter lists still open (awaiting their `:`). Their `,`
+    /// and `=` separate parameters, not sibling operands, so the lambda's
+    /// prefix depth must survive them.
+    lambda_params: usize,
 }
 
 impl Segment {
@@ -116,6 +141,10 @@ impl Segment {
     }
 
     fn separator(&mut self) {
+        if self.lambda_params > 0 {
+            self.after_operand = false;
+            return;
+        }
         *self = Self {
             siblings: self.deepest(),
             ..Self::default()
@@ -216,7 +245,11 @@ impl TreeEstimate {
 
     fn word(&mut self, word: &[u8]) {
         match word {
-            b"not" | b"lambda" | b"await" => self.current.prefix(),
+            b"not" | b"await" => self.current.prefix(),
+            b"lambda" => {
+                self.current.prefix();
+                self.current.lambda_params += 1;
+            }
             b"if" => self.current.binary(),
             b"else" => {
                 self.current.max_operand = self.current.max_operand.max(self.current.operand);
@@ -230,16 +263,31 @@ impl TreeEstimate {
 }
 
 fn scan_nesting(source: &str, bracket_budget: usize, tree_budget: usize) -> Option<Exceeded> {
-    let bytes = source.as_bytes();
+    scan_bytes(source.as_bytes(), bracket_budget, tree_budget, 0)
+}
+
+/// Scan `bytes` as module code, or, when `field_nesting > 0`, as the text of
+/// an f-string replacement field `field_nesting` levels deep. A field is
+/// parsed like the inside of a bracket: line ends do not end its expression.
+fn scan_bytes(
+    bytes: &[u8],
+    bracket_budget: usize,
+    tree_budget: usize,
+    field_nesting: usize,
+) -> Option<Exceeded> {
     let mut index = 0usize;
     let mut mode = ScanMode::Code;
     let mut depth = 0usize;
     let mut tree = TreeEstimate::new();
+    if field_nesting > 0 {
+        tree.line_start = false;
+        tree.open();
+    }
     while index < bytes.len() {
         let byte = bytes[index];
         match mode {
             ScanMode::Comment => {
-                if byte == b'\n' {
+                if byte == b'\n' || (byte == b'\r' && bytes.get(index + 1) != Some(&b'\n')) {
                     mode = ScanMode::Code;
                     tree.logical_line_end();
                 }
@@ -249,17 +297,23 @@ fn scan_nesting(source: &str, bracket_budget: usize, tree_budget: usize) -> Opti
                 quote,
                 triple,
                 raw,
+                format,
                 escaped,
+                field,
             } => {
                 if note_bracket(byte, &mut depth, bracket_budget) {
                     return Some(Exceeded::Brackets);
                 }
+                // `\{` in an f-string still opens a replacement field.
+                let escaped = escaped && !(format && byte == b'{');
                 if !raw && escaped {
                     mode = ScanMode::String {
                         quote,
                         triple,
                         raw,
+                        format,
                         escaped: false,
+                        field,
                     };
                     index += 1;
                     continue;
@@ -269,28 +323,62 @@ fn scan_nesting(source: &str, bracket_budget: usize, tree_budget: usize) -> Opti
                         quote,
                         triple,
                         raw,
+                        format,
                         escaped: true,
+                        field,
                     };
                     index += 1;
                     continue;
                 }
                 if byte == quote && raw_quote_can_terminate(bytes, index, raw) {
-                    if triple {
-                        if index + 2 < bytes.len()
-                            && bytes[index + 1] == quote
-                            && bytes[index + 2] == quote
+                    let closing = if triple { 3 } else { 1 };
+                    if bytes
+                        .get(index..index + closing)
+                        .is_some_and(|run| run.iter().all(|&next| next == quote))
+                    {
+                        // A field left open by the closing quote is still
+                        // scanned, so it cannot hide an operator chain.
+                        if let Some(open) = field
+                            && field_exceeds(
+                                bytes,
+                                open.start,
+                                index,
+                                &tree,
+                                tree_budget,
+                                field_nesting,
+                            )
                         {
-                            mode = ScanMode::Code;
-                            index += 3;
-                            continue;
+                            return Some(Exceeded::Tree);
                         }
-                    } else {
                         mode = ScanMode::Code;
-                        index += 1;
+                        index += closing;
                         continue;
                     }
                 }
-                index += 1;
+                let mut step = 1;
+                let mut field = field;
+                if format {
+                    match fstring_byte(bytes, index, field) {
+                        FieldStep::Literal(consumed) => step = consumed,
+                        FieldStep::Open(next) => field = next,
+                        FieldStep::Closed(start) => {
+                            if field_exceeds(bytes, start, index, &tree, tree_budget, field_nesting)
+                            {
+                                return Some(Exceeded::Tree);
+                            }
+                            field = None;
+                        }
+                    }
+                }
+                mode = ScanMode::String {
+                    quote,
+                    triple,
+                    raw,
+                    format,
+                    escaped: false,
+                    field,
+                };
+                index += step;
             }
             ScanMode::Code => {
                 if tree.line_start {
@@ -326,11 +414,14 @@ fn scan_nesting(source: &str, bracket_budget: usize, tree_budget: usize) -> Opti
                     let triple = index + 2 < bytes.len()
                         && bytes[index + 1] == byte
                         && bytes[index + 2] == byte;
+                    let (raw, format) = string_prefix(bytes, index);
                     mode = ScanMode::String {
                         quote: byte,
                         triple,
-                        raw: prefix_is_raw(bytes, index),
+                        raw,
+                        format,
                         escaped: false,
+                        field: None,
                     };
                     tree.operand();
                     index += if triple { 3 } else { 1 };
@@ -355,6 +446,68 @@ fn scan_nesting(source: &str, bracket_budget: usize, tree_budget: usize) -> Opti
     None
 }
 
+enum FieldStep {
+    /// Literal f-string text; the number of bytes consumed (`{{` and `}}`
+    /// are one literal brace each).
+    Literal(usize),
+    /// Still inside (or just entered) a replacement field.
+    Open(Option<Field>),
+    /// The field starting at this byte just closed at the current `}`.
+    Closed(usize),
+}
+
+/// Track replacement fields through one f-string byte. String literals
+/// inside a field are skipped so their braces do not close the field early.
+fn fstring_byte(bytes: &[u8], index: usize, field: Option<Field>) -> FieldStep {
+    let byte = bytes[index];
+    let Some(mut open) = field else {
+        return match byte {
+            b'{' | b'}' if bytes.get(index + 1) == Some(&byte) => FieldStep::Literal(2),
+            b'{' => FieldStep::Open(Some(Field {
+                start: index + 1,
+                braces: 1,
+                quote: None,
+            })),
+            _ => FieldStep::Literal(1),
+        };
+    };
+    match (open.quote, byte) {
+        (Some(inner), _) if byte == inner => open.quote = None,
+        (Some(_), _) => {}
+        (None, b'\'' | b'"') => open.quote = Some(byte),
+        (None, b'{') => open.braces += 1,
+        (None, b'}') if open.braces == 1 => return FieldStep::Closed(open.start),
+        (None, b'}') => open.braces -= 1,
+        (None, _) => {}
+    }
+    FieldStep::Open(Some(open))
+}
+
+/// Estimate one replacement field `bytes[start..end]` as code nested inside
+/// the f-string's own position in the tree.
+fn field_exceeds(
+    bytes: &[u8],
+    start: usize,
+    end: usize,
+    tree: &TreeEstimate,
+    tree_budget: usize,
+    field_nesting: usize,
+) -> bool {
+    if field_nesting >= MAX_FSTRING_FIELD_NESTING {
+        return true;
+    }
+    let Some(text) = bytes.get(start..end) else {
+        return false;
+    };
+    // Brackets in the field were already counted by the string scan.
+    scan_bytes(
+        text,
+        usize::MAX,
+        tree_budget.saturating_sub(tree.depth()),
+        field_nesting + 1,
+    ) == Some(Exceeded::Tree)
+}
+
 /// Apply one non-identifier code byte to the tree estimate and return how
 /// many bytes it consumed.
 fn tree_token(tree: &mut TreeEstimate, bytes: &[u8], index: usize) -> usize {
@@ -363,6 +516,11 @@ fn tree_token(tree: &mut TreeEstimate, bytes: &[u8], index: usize) -> usize {
         b'(' | b'[' | b'{' => tree.open(),
         b')' | b']' | b'}' => tree.close(),
         b',' | b';' | b'=' | b'!' => tree.current.separator(),
+        b':' if tree.current.lambda_params > 0 => {
+            // Ends the innermost open lambda parameter list.
+            tree.current.lambda_params -= 1;
+            tree.current.after_operand = false;
+        }
         b'<' | b'>' => {
             if bytes.get(index + 1) == Some(&byte) {
                 // `<<` / `>>` are binary operators.
@@ -382,12 +540,16 @@ fn tree_token(tree: &mut TreeEstimate, bytes: &[u8], index: usize) -> usize {
         b'.' if tree.current.after_operand => tree.current.operand += 1,
         b'0'..=b'9' => tree.operand(),
         b'\n' if !line_is_continued(bytes, index) => tree.logical_line_end(),
+        // A bare `\r` ends a line; in `\r\n` the `\n` does.
+        b'\r' if bytes.get(index + 1) != Some(&b'\n') && !line_is_continued(bytes, index) => {
+            tree.logical_line_end();
+        }
         _ => {}
     }
     1
 }
 
-/// A backslash before the newline (optionally before `\r\n`) joins lines.
+/// A backslash before the line end (`\n`, bare `\r`, or `\r\n`) joins lines.
 fn line_is_continued(bytes: &[u8], newline: usize) -> bool {
     newline > 0 && bytes[newline - 1] == b'\\'
         || newline > 1 && bytes[newline - 1] == b'\r' && bytes[newline - 2] == b'\\'
@@ -453,7 +615,9 @@ fn raw_quote_can_terminate(bytes: &[u8], index: usize, raw: bool) -> bool {
     slashes.is_multiple_of(2)
 }
 
-fn prefix_is_raw(bytes: &[u8], quote_index: usize) -> bool {
+/// Whether a string's prefix makes it raw and whether it makes it an
+/// f-string. Letters glued to a longer identifier are not a prefix.
+fn string_prefix(bytes: &[u8], quote_index: usize) -> (bool, bool) {
     let mut start = quote_index;
     while start > 0
         && matches!(
@@ -466,12 +630,14 @@ fn prefix_is_raw(bytes: &[u8], quote_index: usize) -> bool {
     if start > 0 {
         let previous = bytes[start - 1];
         if previous.is_ascii_alphanumeric() || previous == b'_' || !previous.is_ascii() {
-            return false;
+            return (false, false);
         }
     }
-    bytes[start..quote_index]
-        .iter()
-        .any(|byte| matches!(byte, b'r' | b'R'))
+    let prefix = &bytes[start..quote_index];
+    (
+        prefix.iter().any(|byte| matches!(byte, b'r' | b'R')),
+        prefix.iter().any(|byte| matches!(byte, b'f' | b'F')),
+    )
 }
 
 #[cfg(test)]
@@ -571,6 +737,63 @@ mod tests {
             "continued lines",
             &format!("x = 1{}\n", " \\\n + 1".repeat(OVERFLOWING_CHAIN)),
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn parameterized_lambda_chains_keep_their_depth_across_parameters() -> Result<(), String> {
+        assert_degrades(
+            "lambda with parameters",
+            &format!("x = {}0\n", "lambda a, b: ".repeat(OVERFLOWING_CHAIN)),
+        )?;
+        assert_degrades(
+            "lambda with defaults",
+            &format!(
+                "x = {}0\n",
+                "lambda a=1, *b, c=d < e, **f: ".repeat(OVERFLOWING_CHAIN)
+            ),
+        )?;
+        let under = format!("x = {}0\n", "lambda a, b=1: ".repeat(200));
+        assert_parses("lambda chain under budget", &under)?;
+        let sibling_lambdas = format!("fs = [{}]\n", "lambda a, b: a + b, ".repeat(5_000));
+        assert_parses("sibling lambdas in a list", &sibling_lambdas)?;
+        Ok(())
+    }
+
+    #[test]
+    fn fstring_replacement_fields_are_estimated_as_code() -> Result<(), String> {
+        assert_degrades(
+            "f-string binary field",
+            &format!("s = f\"{{x{}}}\"\n", " + 1".repeat(OVERFLOWING_CHAIN)),
+        )?;
+        assert_degrades(
+            "raw f-string unary field",
+            &format!("s = rf'{{{}x}}'\n", "not ".repeat(OVERFLOWING_CHAIN)),
+        )?;
+        assert_degrades(
+            "triple-quoted f-string field after an escape",
+            &format!(
+                "s = f\"\"\"\\{{x{}}}\"\"\"\n",
+                " - 1".repeat(OVERFLOWING_CHAIN)
+            ),
+        )?;
+        let flat = format!("s = f\"{}\"\n", "{a + b:>10} {{c + d}} ".repeat(5_000));
+        assert_parses("many shallow fields and literal braces", &flat)?;
+        let literal = format!("s = \"{{x{}}}\"\n", " + 1".repeat(5_000));
+        assert_parses("braces in a plain string are not fields", &literal)?;
+        Ok(())
+    }
+
+    #[test]
+    fn carriage_return_only_line_ends_end_logical_lines() -> Result<(), String> {
+        let cr_elif = elif_chain(OVERFLOWING_CHAIN).replace('\n', "\r");
+        assert_degrades("CR elif chain", &cr_elif)?;
+        let cr_comment = format!("# header\rx = 1{}\r", " + 1".repeat(OVERFLOWING_CHAIN));
+        assert_degrades("chain after a CR-terminated comment", &cr_comment)?;
+        let cr_lines = "x = y + 1 - 2 * 3 / 4 % 5 @ z | w & v ^ u << 1 >> 2\r".repeat(2_000);
+        assert_parses("CR sequential statements", &cr_lines)?;
+        let crlf_lines = "# note\r\nx = a + b\r\n".repeat(2_000);
+        assert_parses("CRLF statements and comments", &crlf_lines)?;
         Ok(())
     }
 
