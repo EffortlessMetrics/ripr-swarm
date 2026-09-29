@@ -1,4 +1,3 @@
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -42,12 +41,12 @@ pub fn load_diff_with_effective_base(
             // looks like a silent hang, so the CLI adapters disclose the read
             // before dispatching here; the loader itself stays silent so
             // library callers never receive CLI-branded stderr text.
-            let mut buffer = String::new();
-            std::io::stdin()
-                .read_to_string(&mut buffer)
+            // #4480: stdin is bounded by the shared CLI input cap, so a
+            // producer that never closes the pipe cannot grow memory forever.
+            let text = crate::bounded_input::read_reader_to_string(std::io::stdin().lock())
                 .map_err(|err| format!("failed to read diff from stdin: {err}"))?;
             return Ok(LoadedDiff {
-                text: buffer,
+                text,
                 effective_base: None,
             });
         }
@@ -61,7 +60,9 @@ pub fn load_diff_with_effective_base(
                 diff_file.display()
             ));
         }
-        let text = std::fs::read_to_string(diff_file)
+        // #4480: bounded, so `--diff /dev/zero` or a multi-GB log fails with
+        // the input limit instead of reading until memory is exhausted.
+        let text = crate::bounded_input::read_to_string(diff_file)
             .map_err(|err| format!("failed to read diff file {}: {err}", diff_file.display()))?;
         return Ok(LoadedDiff {
             text,
@@ -169,6 +170,15 @@ pub fn resolve_effective_base(
             .map_err(|err| not_a_work_tree(root, git_timeout).unwrap_or(err));
     };
 
+    // No revision starts with `-`, and `git diff` would parse one as an option
+    // (`--output=<path>...HEAD` writes a file) if the probe below cannot run.
+    // The LSP takes this value from its client's settings.
+    if explicit.starts_with('-') {
+        return Err(format!(
+            "the base `{explicit}` starts with `-`, which no Git revision does (the analysis \
+             did not run). Pass `--base <ref>` for a ref this repository has."
+        ));
+    }
     let commit = format!("{explicit}^{{commit}}");
     match git_ref_output(root, &commit, git_timeout) {
         Some(output) if !output.status.success() => Err(not_a_work_tree(root, git_timeout)
@@ -453,7 +463,7 @@ pub fn resolve_base_commit(
     base: Option<&str>,
     git_timeout: Option<Duration>,
 ) -> Option<String> {
-    let base = base?;
+    let base = base.filter(|base| !base.starts_with('-'))?;
     let commit = format!("{base}^{{commit}}");
     let output = git_ref_output(root, &commit, git_timeout)?;
     if !output.status.success() {
@@ -594,6 +604,7 @@ enum WorkingTreeProbe {
 
 fn working_tree_probe(root: &Path) -> WorkingTreeProbe {
     let result = Command::new("git")
+        .args(crate::git::UNTRUSTED_REPOSITORY_CONFIG)
         .args(["status", "--porcelain", "--", "."])
         .current_dir(root)
         .output();
@@ -760,6 +771,13 @@ fn run_git_diff_bytes(
     // decode distinct and the C-quoted parser form applies. ASCII-only
     // paths are unaffected, so existing fixtures and goldens see no
     // change.
+    // The range is the one caller-derived argument; one starting with `-`
+    // would be parsed as a diff option, so refuse it at the sink.
+    if range.starts_with('-') {
+        return Err(format!(
+            "refusing to diff `{range}`: a revision range cannot start with `-`"
+        ));
+    }
     let mut args: Vec<&str> = vec!["-c", "core.quotePath=true", "diff"];
     args.extend_from_slice(extra_args);
     // Analysis consumes source-coordinate patches, not human diff views.
@@ -1345,6 +1363,30 @@ mod tests {
         );
 
         ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn option_shaped_base_never_reaches_git_diff() -> std::io::Result<()> {
+        let dir = unique_fixture_root("option-shaped-base")?;
+        init_git_repo(&dir, "main")?;
+        fs::write(dir.join("lib.rs"), "fn a() {}\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-q", "-m", "init"])?;
+        let planted = dir.join("planted");
+        let base = format!("--output={}", planted.display());
+        // The sink: `git diff --output=<path>...HEAD` would create the file.
+        let sink = run_git_diff_bytes(&dir, &format!("{base}...HEAD"), &[], "0", None);
+        // The LSP settings path and the CLI path both refuse it before git.
+        let resolved = resolve_effective_base(&dir, Some(&base), None);
+        let identity = resolve_base_commit(&dir, Some(&base), None);
+        let planted_exists = planted.exists() || dir.join("planted...HEAD").exists();
+        ignore_remove_dir_all(&dir);
+        assert!(sink.is_err(), "an option-shaped range must be refused");
+        assert!(!planted_exists, "git diff must not write an --output file");
+        let err = resolved.expect_err("an option-shaped base must be refused");
+        assert!(err.contains("starts with `-`"), "{err}");
+        assert!(identity.is_none());
         Ok(())
     }
 

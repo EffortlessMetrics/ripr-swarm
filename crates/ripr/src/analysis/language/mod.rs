@@ -22,8 +22,6 @@
 
 mod adapter;
 mod id;
-#[cfg(any(feature = "lang-typescript", feature = "lang-python"))]
-mod line_index;
 #[cfg(feature = "lang-perl")]
 mod perl;
 #[cfg(feature = "lang-python")]
@@ -35,8 +33,6 @@ mod typescript;
 
 pub(crate) use adapter::{LanguageAdapter, LanguageDiffResult, LanguageRepoResult};
 pub(crate) use id::LanguageId;
-#[cfg(any(feature = "lang-typescript", feature = "lang-python"))]
-pub(crate) use line_index::IndexedSource;
 #[cfg(feature = "lang-perl")]
 pub(crate) use perl::PerlAdapter;
 #[cfg(feature = "lang-python")]

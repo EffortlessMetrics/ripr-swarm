@@ -12,7 +12,7 @@ pub(crate) use super::super::{
 // `probes` is a private module of `crate::analysis`; import it so submodules
 // can call `probes::expected_sinks` / `probes::required_oracles` via `super::probes`.
 pub(crate) use super::{
-    IndexedSource, LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route,
+    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route,
 };
 pub(super) use crate::analysis::probes;
 pub(crate) use crate::analysis_outcome::{
@@ -45,6 +45,8 @@ mod actionability;
 mod annotation_only;
 #[cfg(test)]
 mod annotation_only_tests;
+#[cfg(test)]
+mod assertion_library_tests;
 mod boundary_input;
 #[cfg(test)]
 mod boundary_input_tests;
@@ -52,6 +54,8 @@ mod bounded_read;
 mod bun_bridge;
 mod classifier;
 mod discovery;
+#[cfg(test)]
+mod line_index_tests;
 mod module_entries;
 #[cfg(test)]
 mod new_declaration_tests;
@@ -135,6 +139,9 @@ impl LanguageAdapter for TypeScriptAdapter {
         _oracle_policy: &OraclePolicy,
         changed_files: &[ChangedFile],
     ) -> Result<LanguageDiffResult, String> {
+        // Directory-module resolution (#4546) is memoized for this run only
+        // (#4638 review); the scope drops the cache when the run returns.
+        let _directory_modules = DirectoryModuleCacheScope::open();
         // Phase 1: discover and index every accepted file in the workspace
         // so we can find related tests for any owner regardless of whether
         // the test file itself changed in this diff.
