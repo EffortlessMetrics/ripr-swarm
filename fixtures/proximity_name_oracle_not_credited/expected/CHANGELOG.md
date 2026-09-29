@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — proximity_name_oracle_not_credited (3)
+
+Reason:
+RIPR-SPEC-0094: re-bless after main's #4520 renamed the human exposure line to lead with the one-word gap name; classification unchanged
+
+Command:
+`cargo xtask goldens bless proximity_name_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
