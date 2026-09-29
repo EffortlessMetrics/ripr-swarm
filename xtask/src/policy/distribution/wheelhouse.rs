@@ -162,19 +162,16 @@ pub(crate) fn evaluate_wheelhouse(
         if seen.insert(id.clone(), index).is_some() {
             reasons.push(format!("duplicate row `{id}`"));
         }
-        if row.os != policy.admitted_os || row.arch != policy.admitted_arch {
-            if row.status == WheelhouseRowStatus::Passed {
-                reasons.push(format!(
-                    "row `{id}` is outside the admitted {os}/{arch} matrix and cannot pass",
-                    os = policy.admitted_os,
-                    arch = policy.admitted_arch
-                ));
-            }
+        if (row.os != policy.admitted_os || row.arch != policy.admitted_arch)
+            && row.status == WheelhouseRowStatus::Passed
+        {
+            reasons.push(format!(
+                "row `{id}` is outside the admitted {os}/{arch} matrix and cannot pass",
+                os = policy.admitted_os,
+                arch = policy.admitted_arch
+            ));
         }
-        if !policy
-            .required_clients
-            .iter()
-            .any(|client| client == &row.client)
+        if !policy.required_clients.contains(&row.client)
             && row.status == WheelhouseRowStatus::Passed
         {
             reasons.push(format!(
@@ -998,7 +995,7 @@ mod tests {
     #[test]
     fn workflow_is_read_only_dispatch_only_and_non_publishing() {
         let lines = workflow_lines();
-        assert!(lines.iter().any(|line| *line == "workflow_dispatch:"));
+        assert!(lines.contains(&"workflow_dispatch:"));
         assert!(!lines.iter().any(|line| line.starts_with("pull_request:")));
         assert!(!lines.iter().any(|line| line.starts_with("push:")));
         assert_eq!(
@@ -1015,8 +1012,8 @@ mod tests {
                 .iter()
                 .any(|line| line.contains("persist-credentials: false"))
         );
-        assert!(lines.iter().any(|line| *line == "if-no-files-found: error"));
-        assert!(lines.iter().any(|line| *line == "retention-days: 5"));
+        assert!(lines.contains(&"if-no-files-found: error"));
+        assert!(lines.contains(&"retention-days: 5"));
         assert!(
             WORKFLOW_TEXT
                 .contains("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")
