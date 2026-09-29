@@ -158,6 +158,7 @@ fn owner_from_function(
         dynamic_route_decorators,
         parameters: function_parameters(context.source, args),
         reexport_modules: Vec::new(),
+        ambiguous_src_modules: Vec::new(),
         module_constants: constants_visible_in_function(
             context.module_constants,
             args,
@@ -217,6 +218,7 @@ fn owner_from_class(
         dynamic_route_decorators: collect_dynamic_route_decorators(context.source, decorators),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
         class_path: String::new(),
     }
@@ -242,6 +244,7 @@ pub(super) fn module_owner(
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
         class_path: String::new(),
     }
