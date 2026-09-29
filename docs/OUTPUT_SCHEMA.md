@@ -12108,8 +12108,9 @@ Field contract:
   `selected.static_recheck_command` is present only when `receipt_command`
   is a `ripr receipt write` command, the root uses the check-output gap
   ledger route (Python or TypeScript preview, no `Cargo.toml`), and the check
-  report (`inputs.check_output`, else `target/ripr/reports/check.json`) exists.
-  It is `ripr check --root <root> --base <base> --worktree --json >
+  report the gap ledger was built from exists: the ledger's `inputs.records`
+  when its `inputs.source_kind` is `check_output`, which must match a supplied
+  `--check-output`. A default report that merely exists is never used. It is `ripr check --root <root> --base <base> --worktree --json >
   <check>.after.json && ripr outcome --before <check> --after
   <check>.after.json`: the receipt records only the verify status it is
   given, and this command shows whether the gap's static evidence moved. It is
