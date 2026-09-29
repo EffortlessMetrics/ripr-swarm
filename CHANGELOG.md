@@ -21,6 +21,14 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr check` is faster on large repositories, with byte-identical JSON on
+  12 real commits of tokio, vite, Django and ripr. TypeScript test selection
+  walked the directory tree for `package.json` twice per owner and test;
+  a vite commit went from 6.7 s to 3.2 s. Rust classification no longer
+  reparses the owner's file per probe unless the file could admit the
+  derived tuple slice, and computes each related test's value facts once
+  per owner instead of once per probe; a ripr commit went
+  from 11.1 s to 8.1 s.
 - Security: Rust source discovery skips symlinked `.rs` entries, as the
   Python and TypeScript readers already did. A cloned repository or pull
   request that committed `src/zero.rs -> /dev/zero` made `ripr check` read
@@ -59,6 +67,18 @@ are scoped or reviewed.
 - Security: a base ref starting with `-` is refused before `git diff` runs,
   including from LSP `baseRef` settings, so it can never be parsed as a diff
   option such as `--output` (#4730).
+- Rust: a test related to a finding only because its name shares a word with
+  the changed code or names the changed function no longer supplies the
+  finding's discriminator when another related test actually calls the
+  changed code. Before, a test that pinned
+  `ParseError::MalformedSource == ParseError::MalformedSource` without calling
+  the changed `try_parse` turned a mutation no test catches into `exposed`
+  (#4486). Its assertions still appear among the related tests. On a 14-file
+  diff of ripr itself, 7 of 40 `exposed` findings moved to `weakly_exposed`;
+  each had credited an assertion from an unrelated module, such as an LSP
+  transport test for a change in `reach.rs`. Same-file and same-module tests
+  still credit, since they commonly reach private helpers through the
+  module's own entry point.
 - Security: `ripr pilot` and other commands that write to default paths
   inside the analyzed repository no longer write through a symlink committed
   there. A cloned repository could commit
@@ -1236,6 +1256,24 @@ are scoped or reviewed.
   ([#3999](https://github.com/EffortlessMetrics/ripr-swarm/issues/3999),
   [#4000](https://github.com/EffortlessMetrics/ripr-swarm/issues/4000),
   [#4287](https://github.com/EffortlessMetrics/ripr-swarm/pull/4287)).
+- On the Python and TypeScript preview route, `ripr first-pr` now shows how to
+  see whether the gap moved after the test edit. A `ripr receipt write`
+  receipt records only the verify status it is given and re-checks nothing,
+  so when the check report the gap came from is on disk, a `Static re-check
+  after verify` line follows the receipt:
+  `ripr check ... --worktree --json > .../check.after.json && ripr outcome
+  --before .../check.json --after .../check.after.json`, with a `Receipt
+  boundary` line saying the receipt does not re-check the gap and static
+  movement is not a runtime or mutation result. The stale-evidence refresh
+  that first-pr prints after a test edit now passes `--worktree` too: without
+  it, `ripr check` read the files as committed at HEAD, missed the uncommitted
+  test edit, and first-pr selected the gap the edit had just closed again.
+- `ripr check --worktree` now starts its diff at the merge base of `--base`
+  and `HEAD`, as the committed `<base>...HEAD` diff does. It ran
+  `git diff <base>` against the base tip, so once the base gained commits
+  after the branch forked, those commits showed up, reversed, as branch
+  changes. With no merge base (a shallow clone) it still diffs from the base
+  tip.
 - `ripr check`, `ripr pilot` and `ripr agent repair` now name one gap with the
   same word. The changed line `check` reports as `weakly_exposed` and the
   seam `pilot` reports as `weakly_gripped` both read `weak` first, for
@@ -1276,6 +1314,17 @@ are scoped or reviewed.
   attempt's result; that file is now a compatibility copy of the latest
   finish, and `ripr agent status` reads the attempt's own receipt first
   (#4636).
+- Cached analysis is no longer shared between different builds of the same
+  version. The file-fact and classified-seam caches under
+  `target/ripr/cache` keyed on the package version alone, so a `0.11.0`
+  binary built from one commit served facts and classifications that a
+  `0.11.0` binary from another commit had written, including across an
+  upgrade from a release candidate to the final release. The key now names
+  the build commit; a build with uncommitted changes or no commit record also
+  names a digest of its crate sources and lockfile. Entries from other builds
+  become misses and are recomputed. A `ripr check` artifact from another
+  build of the same version is refused for reuse, and the `analyzer_version`
+  in a targeted-rerun input fingerprint carries the same build identity.
 
 ### Added
 

@@ -534,7 +534,7 @@ Envelope (`schema_version = "ripr-check-artifact-v1"`):
 {
   "schema_version": "ripr-check-artifact-v1",
   "tool": "ripr",
-  "analyzer_version": "0.10.0",
+  "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
   "identity": {
     "diff_source": { "diff_file": { "path": "/abs/path/to/example.diff" } },
     "diff_bytes_hash": "fnv1a64:0123456789abcdef",
@@ -12114,6 +12114,18 @@ Field contract:
   receipt writer's default for its `--gap` when it has no `--out`), else a
   path the ledger record names, else the default path the synthesized command is
   built with, so the printed path and the printed command never disagree.
+  `selected.static_recheck_command` is present only when `receipt_command`
+  is a `ripr receipt write` command, the root uses the check-output gap
+  ledger route (Python or TypeScript preview, no `Cargo.toml`), and the check
+  report the gap ledger was built from exists: the ledger's `inputs.records`
+  when its `inputs.source_kind` is `check_output`, which must match a supplied
+  `--check-output`. A default report that merely exists is never used. It is `ripr check --root <root> --base <base> --worktree --json >
+  <check>.after.json && ripr outcome --before <check> --after
+  <check>.after.json`: the receipt records only the verify status it is
+  given, and this command shows whether the gap's static evidence moved. It is
+  not runtime or mutation evidence. The `stale_artifact` refresh on that route
+  also passes `--worktree`, because the edit that made the evidence stale is
+  usually uncommitted.
   A missing
   receipt is not failure, merge approval, mutation proof, or runtime adequacy.
   `selected.receipt_state` uses the canonical receipt lifecycle vocabulary:
@@ -16495,7 +16507,7 @@ targeted-rerun receipt shape:
     "invalidation_status": "not_available",
     "input_fingerprint": {
       "schema_version": "1.17",
-      "analyzer_version": "0.11.0",
+      "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
       "cfg_features_hash": "…",
@@ -16577,11 +16589,18 @@ targeted-rerun receipt shape:
 }
 ```
 
+`input_fingerprint.analyzer_version` names the build, not only the package
+version: `<version>+<commit>` for a clean build, with `-dirty+src:<digest>`
+appended for a build with uncommitted source changes, or `<version>+unknown+src:<digest>`
+when no commit is recorded. Two builds of one version therefore report
+`input_changed:analyzer_version` against each other's receipts.
+
 `cache.schema_version` and `cache.input_fingerprint.schema_version` version
 the file-fact cache and its input identity, not this report. They move
 whenever cache identity changes, so a consumer dispatches on the top-level
 `schema_version` and treats the nested values as opaque. Nested
-`analyzer_version` is the producing `ripr` package version and also moves.
+`analyzer_version` is the producing build identity described above and also
+moves.
 
 For a changed-test selector, `selector.kind` is `changed_test`. `changed_test`
 names the repository-relative parsed test file and may append
