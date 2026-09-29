@@ -205,10 +205,11 @@ pub(crate) enum TypeScriptRelationKind {
     ModuleValueReference,
     ReceiverOwnerCall,
     ClassMethodCall,
-    /// Test imports a name from an intermediate file that re-exports it from
-    /// the owner file via a single `export { N } from './owner'` hop.
-    /// The import chain is explicit in-source; only ONE hop is followed
-    /// (fail-closed on deeper transitive chains).
+    /// Test imports a name from a barrel whose explicit in-source
+    /// `export { N } from` / `export * from` chain (at most
+    /// `MAX_REEXPORT_HOPS` hops, directory specifiers resolved to `index`)
+    /// lands on the owner's own export. Deeper, cyclic or ambiguous chains
+    /// fail closed.
     ReExportChainFollowed,
     /// Test calls an exported name of the owner's module whose code reaches
     /// the owner through a bounded same-module call graph: an exported

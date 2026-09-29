@@ -14598,6 +14598,7 @@ fn undercredit_4103_star_barrel_import_is_credited() {
     let index = ReExportIndex::from_parts(
         Vec::new(),
         vec![("src/index".to_string(), "src/utils".to_string())],
+        vec![("src/utils".to_string(), "slugify".to_string())],
     );
     let tests = extract_tests(
         Path::new("tests/slug.test.ts"),
@@ -14623,6 +14624,7 @@ fn undercredit_4103_star_barrel_other_name_is_not_credited() {
     let index = ReExportIndex::from_parts(
         Vec::new(),
         vec![("src/index".to_string(), "src/utils".to_string())],
+        vec![("src/utils".to_string(), "slugify".to_string())],
     );
     let tests = extract_tests(
         Path::new("tests/slug.test.ts"),
@@ -14650,6 +14652,7 @@ fn undercredit_4103_default_as_reexport_is_credited() {
             ("src/index".to_string(), "formatPrice".to_string()),
             ("default".to_string(), "src/defaulted".to_string()),
         )],
+        Vec::new(),
         Vec::new(),
     );
     let tests = extract_tests(
@@ -14682,6 +14685,7 @@ fn undercredit_4103_default_as_reexport_non_default_owner_is_not_credited() {
             ("src/index".to_string(), "formatPrice".to_string()),
             ("default".to_string(), "src/defaulted".to_string()),
         )],
+        Vec::new(),
         Vec::new(),
     );
     let tests = extract_tests(
@@ -14720,4 +14724,5 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
 
 mod mock_form_tests;
 mod module_entry_tests;
+mod reexport_chain_tests;
 mod scope_receiver_tests;
