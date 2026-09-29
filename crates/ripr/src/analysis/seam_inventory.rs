@@ -5258,4 +5258,297 @@ fn surcharge_total_case() { assert_eq!(surcharge_total(50), 55); }
             Ok(_) => Err("ambiguous direct owner must fail closed".to_string()),
         }
     }
+
+    const GENERATED_SKIP_PREDICATE: &str = concat!(
+        "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n",
+        "    if amount >= threshold { amount - 10 } else { amount }\n",
+        "}\n",
+    );
+
+    fn write_predicate_file(root: &Path, relative: &str) -> Result<(), String> {
+        write_file(&root.join(relative), GENERATED_SKIP_PREDICATE)
+    }
+
+    fn inventoried_files(seams: &[RepoSeam]) -> BTreeSet<String> {
+        seams
+            .iter()
+            .map(|seam| seam.file().to_string_lossy().replace('\\', "/"))
+            .collect()
+    }
+
+    fn classified_files(classified: &[ClassifiedSeam]) -> BTreeSet<String> {
+        classified
+            .iter()
+            .map(|entry| entry.seam.file().to_string_lossy().replace('\\', "/"))
+            .collect()
+    }
+
+    fn require_hand_written_and_no_generated(
+        files: &BTreeSet<String>,
+        hand_written: &str,
+        generated: &[&str],
+    ) -> Result<(), String> {
+        if !files.contains(hand_written) {
+            return Err(format!(
+                "hand-written {hand_written} must still produce seams, got {files:?}"
+            ));
+        }
+        let leaked: Vec<&str> = generated
+            .iter()
+            .copied()
+            .filter(|path| files.contains(*path))
+            .collect();
+        if !leaked.is_empty() {
+            return Err(format!(
+                "generated Rust skipped by `ripr check` must not become seams, leaked {leaked:?} from {files:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn given_generated_rust_conventions_when_repo_inventory_runs_then_those_files_are_not_seams()
+    -> Result<(), String> {
+        let root = make_tempdir("generated-conventions")?;
+        write_predicate_file(&root, "src/lib.rs")?;
+        write_predicate_file(&root, "src/bindings.rs")?;
+        write_predicate_file(&root, "src/schema.rs")?;
+        write_predicate_file(&root, "src/generated.rs")?;
+        write_predicate_file(&root, "src/model.gen.rs")?;
+        write_predicate_file(&root, "src/model_generated.rs")?;
+        write_predicate_file(&root, "src/generated_model.rs")?;
+        write_predicate_file(&root, "src/gen/model.rs")?;
+        write_predicate_file(&root, "src/generated/model.rs")?;
+        write_predicate_file(&root, "src/out/model.rs")?;
+
+        let seams = inventory_seams_at_with_config(&root, &RiprConfig::default())?;
+        let files = inventoried_files(&seams);
+        require_hand_written_and_no_generated(
+            &files,
+            "src/lib.rs",
+            &[
+                "src/bindings.rs",
+                "src/schema.rs",
+                "src/generated.rs",
+                "src/model.gen.rs",
+                "src/model_generated.rs",
+                "src/generated_model.rs",
+                "src/gen/model.rs",
+                "src/generated/model.rs",
+                "src/out/model.rs",
+            ],
+        )?;
+
+        let classified = inventory_classified_seams_at(&root)?;
+        if classified.is_empty() {
+            return Err("classified inventory must still see src/lib.rs".into());
+        }
+        require_hand_written_and_no_generated(
+            &classified_files(&classified),
+            "src/lib.rs",
+            &[
+                "src/bindings.rs",
+                "src/schema.rs",
+                "src/generated.rs",
+                "src/model.gen.rs",
+                "src/model_generated.rs",
+                "src/generated_model.rs",
+                "src/gen/model.rs",
+                "src/generated/model.rs",
+                "src/out/model.rs",
+            ],
+        )?;
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn given_near_miss_rust_names_when_repo_inventory_runs_then_hand_written_files_stay_seams()
+    -> Result<(), String> {
+        let root = make_tempdir("generated-near-miss")?;
+        write_predicate_file(&root, "src/lib.rs")?;
+        write_predicate_file(&root, "src/bind.rs")?;
+        write_predicate_file(&root, "src/engine.rs")?;
+        write_predicate_file(&root, "src/ffi.rs")?;
+        write_predicate_file(&root, "src/out_of_band.rs")?;
+
+        let files = inventoried_files(&inventory_seams_at_with_config(
+            &root,
+            &RiprConfig::default(),
+        )?);
+        for expected in [
+            "src/lib.rs",
+            "src/bind.rs",
+            "src/engine.rs",
+            "src/ffi.rs",
+            "src/out_of_band.rs",
+        ] {
+            if !files.contains(expected) {
+                return Err(format!(
+                    "near-miss {expected} is not a generated convention and must stay a seam, got {files:?}"
+                ));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn given_generator_header_only_ffi_when_repo_inventory_runs_then_file_stays_a_seam()
+    -> Result<(), String> {
+        // #4756's header/vendor predicate is not on this main. Aligning with
+        // `ripr check` must not invent that skip here.
+        let root = make_tempdir("generated-header-not-absorbed")?;
+        write_predicate_file(&root, "src/lib.rs")?;
+        write_file(
+            &root.join("src/ffi.rs"),
+            concat!(
+                "// @generated by bindgen\n",
+                "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n",
+                "    if amount >= threshold { amount - 10 } else { amount }\n",
+                "}\n",
+            ),
+        )?;
+        let files = inventoried_files(&inventory_seams_at_with_config(
+            &root,
+            &RiprConfig::default(),
+        )?);
+        if !files.contains("src/ffi.rs") {
+            return Err(format!(
+                "header-only src/ffi.rs must stay inventoried until #4756 lands, got {files:?}"
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn given_configured_generated_pattern_when_repo_inventory_runs_then_matching_file_is_not_a_seam()
+    -> Result<(), String> {
+        let root = make_tempdir("generated-configured-pattern")?;
+        write_predicate_file(&root, "src/lib.rs")?;
+        write_predicate_file(&root, "src/ffi.rs")?;
+        let config = crate::config::tests_only_parse(
+            "[languages.rust]\ngenerated_file_patterns = [\"src/ffi.rs\"]\n",
+        )
+        .map_err(|error| format!("fixture config parses: {error}"))?;
+
+        let default_files = inventoried_files(&inventory_seams_at_with_config(
+            &root,
+            &RiprConfig::default(),
+        )?);
+        if !default_files.contains("src/ffi.rs") {
+            return Err(format!(
+                "src/ffi.rs must remain a seam without a matching pattern, got {default_files:?}"
+            ));
+        }
+
+        let configured_files =
+            inventoried_files(&inventory_seams_at_with_config(&root, &config)?);
+        require_hand_written_and_no_generated(
+            &configured_files,
+            "src/lib.rs",
+            &["src/ffi.rs"],
+        )?;
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn given_only_generated_file_bytes_change_when_cache_key_is_rebuilt_then_identity_is_stable()
+    -> Result<(), String> {
+        let root = make_tempdir("generated-cache-identity")?;
+        write_predicate_file(&root, "src/lib.rs")?;
+        write_predicate_file(&root, "src/bindings.rs")?;
+        let before = workspace_cache_key_at_with_config(&root, &RiprConfig::default())?;
+
+        write_file(
+            &root.join("src/bindings.rs"),
+            concat!(
+                "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n",
+                "    if amount >= threshold { amount - 11 } else { amount }\n",
+                "}\n",
+            ),
+        )?;
+        let after_generated = workspace_cache_key_at_with_config(&root, &RiprConfig::default())?;
+        if after_generated.files_content_hash != before.files_content_hash {
+            return Err(
+                "editing a generated Rust file that check skips must not change the inventory cache identity"
+                    .into(),
+            );
+        }
+
+        write_file(
+            &root.join("src/lib.rs"),
+            concat!(
+                "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n",
+                "    if amount >= threshold { amount - 12 } else { amount }\n",
+                "}\n",
+            ),
+        )?;
+        let after_hand_written = workspace_cache_key_at_with_config(&root, &RiprConfig::default())?;
+        if after_hand_written.files_content_hash == before.files_content_hash {
+            return Err(
+                "editing a hand-written production file must still change the inventory cache identity"
+                    .into(),
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn given_generated_bindings_with_inline_test_when_classified_inventory_runs_then_grip_does_not_credit_them()
+    -> Result<(), String> {
+        let root = make_tempdir("generated-no-false-grip")?;
+        write_predicate_file(&root, "src/lib.rs")?;
+        write_file(
+            &root.join("src/bindings.rs"),
+            concat!(
+                "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n",
+                "    if amount >= threshold { amount - 10 } else { amount }\n",
+                "}\n",
+                "#[cfg(test)]\n",
+                "mod tests {\n",
+                "    #[test]\n",
+                "    fn discounted_total_boundary() {\n",
+                "        assert_eq!(super::discounted_total(100, 100), 90);\n",
+                "    }\n",
+                "}\n",
+            ),
+        )?;
+        write_file(
+            &root.join("tests/pricing.rs"),
+            concat!(
+                "#[test]\n",
+                "fn discounted_total_runs() {\n",
+                "    let _ = discounted_total(1, 1);\n",
+                "}\n",
+            ),
+        )?;
+
+        let classified = inventory_classified_seams_at(&root)?;
+        require_hand_written_and_no_generated(
+            &classified_files(&classified),
+            "src/lib.rs",
+            &["src/bindings.rs"],
+        )?;
+        let credited_generated = classified.iter().any(|entry| {
+            entry.evidence.related_tests.iter().any(|related| {
+                related
+                    .file
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .ends_with("bindings.rs")
+                    || related.test_name.contains("discounted_total_boundary")
+            })
+        });
+        if credited_generated {
+            return Err(
+                "generated src/bindings.rs must not supply related-test grip after the skip".into(),
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
 }
