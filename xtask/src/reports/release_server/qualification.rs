@@ -10,8 +10,7 @@ const ROW_SCHEMA_VERSION: u32 = 1;
 const ROW_KIND: &str = "ripr_server_archive_target_execution";
 const RECEIPT_SCHEMA_VERSION: u32 = 1;
 const RECEIPT_KIND: &str = "ripr_server_archive_terminal_qualification";
-pub(crate) const TERMINAL_RECEIPT_JSON: &str =
-    "server-archive-terminal-qualification-receipt.json";
+pub(crate) const TERMINAL_RECEIPT_JSON: &str = "server-archive-terminal-qualification-receipt.json";
 pub(crate) const TERMINAL_RECEIPT_MARKDOWN: &str =
     "server-archive-terminal-qualification-receipt.md";
 
@@ -251,11 +250,7 @@ fn classify_terminal_receipt(
             .count(),
     };
     let upstream = TerminalUpstreamResults {
-        verify_candidate: normalize_upstream_result(
-            "verify-candidate",
-            verify_result,
-            &mut errors,
-        ),
+        verify_candidate: normalize_upstream_result("verify-candidate", verify_result, &mut errors),
         build: normalize_upstream_result("build", build_result, &mut errors),
         manifest: normalize_upstream_result("manifest", manifest_result, &mut errors),
     };
