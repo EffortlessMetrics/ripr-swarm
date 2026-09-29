@@ -25,7 +25,7 @@ are scoped or reviewed.
   finding stays `no_static_path`. (#4550)
 - TypeScript: `[typescript] resolve_tsconfig_paths` now reads
   `tsconfig.json` and `jsconfig.json` the way `tsc` does, with `//` and
-  `/* */` comments and trailing commas. Before, any comment (and
+  `/* */` comments, trailing commas and a leading byte-order mark. Before, any comment (and
   `tsc --init` output is mostly comments) made alias resolution give up, and
   the finding told users to rewrite the file as strict JSON. Malformed
   files, including an unclosed block comment, still resolve no aliases and

@@ -520,7 +520,11 @@ fn parse_alias_map(root: &Path, text: &str) -> Result<TsAliasMap, TsAliasMapBloc
 /// Fails closed on an unterminated block comment or string literal; the
 /// caller reports that as an unparseable config. Everything else is left
 /// for the strict parser to accept or reject.
+///
+/// A leading UTF-8 byte-order mark is dropped (`tsc` accepts one, and editors
+/// on Windows write it; #4638 review): the strict parser rejects it.
 fn strip_jsonc(text: &str) -> Result<String, &'static str> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut out = String::with_capacity(text.len());
     // Byte offset in `out` of a comma seen since the last significant
     // token; dropped if the next significant character closes a container.
@@ -1056,6 +1060,31 @@ mod tests {
             resolved.to_string_lossy().replace('\\', "/"),
             "src/owner.ts"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn strip_jsonc_drops_leading_byte_order_mark() -> Result<(), String> {
+        let out = strip_jsonc("\u{feff}{ // bom\n \"a\": 1, }")?;
+        let value: serde_json::Value = serde_json::from_str(&out).map_err(|e| e.to_string())?;
+        assert_eq!(value, serde_json::json!({ "a": 1 }));
+        // Only a LEADING mark is dropped; one inside a string is content.
+        let inner = strip_jsonc("{ \"a\": \"\u{feff}x\" }")?;
+        assert!(inner.contains('\u{feff}'));
+        Ok(())
+    }
+
+    #[test]
+    fn bom_prefixed_tsconfig_resolves_aliases() -> Result<(), String> {
+        let root = temp_dir("bom");
+        write(
+            &root,
+            "tsconfig.json",
+            "\u{feff}{\"compilerOptions\":{\"baseUrl\":\".\",\"paths\":{\"@calc\":[\"src/calc\"]}}}",
+        );
+        write(&root, "src/calc.ts", "export const calc = 1;\n");
+        let map = load_alias_map(&root).ok_or("a BOM-prefixed tsconfig must parse")?;
+        assert!(map.resolve("@calc").is_some());
         Ok(())
     }
 
