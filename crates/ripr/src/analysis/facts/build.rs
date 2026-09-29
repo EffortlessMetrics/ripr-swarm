@@ -259,9 +259,9 @@ fn manifest_package_names(root: &Path) -> std::collections::BTreeSet<String> {
 /// Source text of one Rust file as the index reads it.
 ///
 /// rustc drops a leading UTF-8 byte-order mark before lexing, so the index
-/// does too: left in place, the parser saw a stray `U+FEFF` token and an item
-/// on line 1 lost its owner. The mark has no newline, so line numbers are
-/// unchanged.
+/// does too: left in place, the stray `U+FEFF` was a parse error, the whole
+/// file fell to lexical fallback, and an item on line 1 lost its owner. The
+/// mark has no newline, so line numbers are unchanged.
 ///
 /// Bytes that are not UTF-8 do not abort the run: rustc rejects such a file,
 /// so one stray fixture used to fail every `ripr check` in the workspace. The
