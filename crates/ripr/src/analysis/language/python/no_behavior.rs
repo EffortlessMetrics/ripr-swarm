@@ -167,6 +167,106 @@ pub(super) fn is_annotation_only_def_change(old_line: &str, new_line: &str) -> b
 /// a header alone, carrying no behavior of its own. Fails closed on a one-line
 /// `def f(x): return x` (the synthesized body does not parse), a multi-line
 /// header, and any parameter default (a default value is runtime behavior).
+/// Whether `line` (1-based) sits inside the multi-line `def` header that
+/// starts at or after `owner_start_line` in `source`, and its text only names
+/// parameters or opens/closes the header: `self,`, `key: int,`, `*args,`,
+/// `*,`, `def __setitem__(`, `):`, `) -> bool:`. Such a line has no runtime
+/// behavior of its own for a test to discriminate; a parameter default
+/// (`key=None,`) or any call or expression keeps its probe.
+pub(super) fn is_structural_def_header_line(
+    source: &str,
+    owner_start_line: usize,
+    line: usize,
+) -> bool {
+    let Some(text) = source.lines().nth(line.wrapping_sub(1)) else {
+        return false;
+    };
+    if !is_structural_def_header_text(text) {
+        return false;
+    }
+    let Some((def_line, header_end)) = multi_line_def_header_span(source, owner_start_line) else {
+        return false;
+    };
+    (def_line..=header_end).contains(&line)
+}
+
+/// Text-only half of [`is_structural_def_header_line`]; also used to require
+/// that a paired old line was structural too.
+pub(super) fn is_structural_def_header_text(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || trimmed.contains('#') {
+        return false;
+    }
+    if matches!(trimmed, "*" | "*," | "/" | "/,") {
+        return true;
+    }
+    if let Some(rest) = trimmed.strip_prefix(')') {
+        let rest = rest.trim();
+        if matches!(rest, "" | ":" | ",") {
+            return true;
+        }
+        return rest
+            .strip_prefix("->")
+            .and_then(|ret| ret.trim().strip_suffix(':'))
+            .is_some_and(|ret| is_inert_annotation(ret.trim()));
+    }
+    let header = trimmed.strip_prefix("async ").unwrap_or(trimmed);
+    if let Some(name) = header
+        .strip_prefix("def ")
+        .and_then(|rest| rest.trim().strip_suffix('('))
+    {
+        return is_simple_python_identifier(name.trim());
+    }
+    let param = trimmed.strip_suffix(',').unwrap_or(trimmed).trim();
+    let param = param
+        .strip_prefix("**")
+        .or_else(|| param.strip_prefix('*'))
+        .unwrap_or(param);
+    match param.split_once(':') {
+        Some((name, annotation)) => {
+            is_simple_python_identifier(name.trim()) && is_inert_annotation(annotation.trim())
+        }
+        None => is_simple_python_identifier(param),
+    }
+}
+
+/// A plain type expression: names, attributes, subscripts, `|` unions,
+/// `None`, and string forward references. No call, default, or operator that
+/// could run code when Python evaluates the annotation.
+fn is_inert_annotation(annotation: &str) -> bool {
+    !annotation.is_empty()
+        && annotation.chars().all(|ch| {
+            ch.is_ascii_alphanumeric()
+                || matches!(ch, '_' | '.' | '[' | ']' | ',' | ' ' | '|' | '"' | '\'')
+        })
+}
+
+/// The 1-based `(def line, header end line)` of the first `def` at or after
+/// `owner_start_line` when its header spans more than one line.
+fn multi_line_def_header_span(source: &str, owner_start_line: usize) -> Option<(usize, usize)> {
+    let lines: Vec<&str> = source.lines().collect();
+    let first = owner_start_line.checked_sub(1)?;
+    let def_index = (first..lines.len().min(first + 64)).find(|&index| {
+        let trimmed = lines[index].trim_start();
+        trimmed.starts_with("def ") || trimmed.starts_with("async def ")
+    })?;
+    let mut depth: i32 = 0;
+    for (index, text) in lines.iter().enumerate().skip(def_index).take(256) {
+        for ch in text.chars() {
+            match ch {
+                '#' => break,
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                _ => {}
+            }
+        }
+        if depth <= 0 && text.trim_end().ends_with(':') {
+            return (index > def_index).then_some((def_index + 1, index + 1));
+        }
+    }
+    None
+}
+
 pub(super) fn is_new_def_header_without_defaults(line: &str) -> bool {
     def_signature_skeleton(line).is_some_and(|(_, _, _, _, params, _, _)| {
         params.iter().all(|(_, default)| default.is_none())

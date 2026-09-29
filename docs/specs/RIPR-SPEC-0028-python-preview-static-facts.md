@@ -242,6 +242,13 @@ line: the body lines carry its behavior. A header with a default value, a
 changed header, a one-line `def f(x): return x`, and a multi-line header keep
 their probe.
 
+In diff mode the adapter must not emit a probe for a line of a multi-line
+`def` header that only names parameters or opens or closes the header
+(`self,`, `key: int,`, `*args,`, `*,`, `def name(`, `):`, `) -> bool:`),
+when the paired old line, if any, has the same shape. A parameter default, an
+annotation with a call, a trailing comment, and a `)` that closes a call in a
+body keep their probe.
+
 When the adapter cannot classify, it emits one of the `static_limit_kind`
 values defined in RIPR-SPEC-0026:
 

@@ -82,12 +82,12 @@ use discriminators::{
     python_return_dict_field_discriminator, python_string_literal_value, split_python_assignment,
     top_level_python_segments,
 };
-use no_behavior::is_python_no_behavior_line;
 #[cfg(test)]
 use no_behavior::{
     analyze_call_args, changed_default_value_params, free_function_call_arglists,
     is_annotation_only_def_change, is_annotation_only_var_change,
 };
+use no_behavior::{is_python_no_behavior_line, is_structural_def_header_line};
 use oracles::collect_assertions_from_statements;
 #[cfg(test)]
 use probe_shape::{
@@ -675,6 +675,17 @@ impl PythonAdapter {
                                     && !is_python_no_behavior_line(&other.text)
                             })
                     }),
+                    structural_def_header_line: workspace_read
+                        .sources
+                        .get(&changed.path)
+                        .zip(owner_for_changed_line(
+                            &changed.path,
+                            added.line,
+                            &all_owners,
+                        ))
+                        .is_some_and(|(source, owner)| {
+                            is_structural_def_header_line(source, owner.start_line, added.line)
+                        }),
                 };
                 if let Some(finding) = classify_change_with_context(
                     &changed.path,

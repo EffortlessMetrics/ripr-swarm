@@ -5172,6 +5172,54 @@ fn unbound_dunder_owner_is_a_dynamic_dispatch_limit_not_no_static_path() -> Resu
 }
 
 #[test]
+fn structural_lines_of_a_multi_line_def_header_carry_no_behavior() {
+    use super::no_behavior::{is_structural_def_header_line, is_structural_def_header_text};
+    // cachetools c0fdf6a reflowed `TLRUCache.__setitem__`'s signature.
+    let source = "class TLRUCache:\n    def __setitem__(\n        self,\n        key,\n        value: int | None,\n        cache_setitem=Cache.__setitem__,\n        *,\n        **kwargs,\n    ) -> None:\n        self.data[key] = value\n";
+    let structural = |line| is_structural_def_header_line(source, 2, line);
+    for line in [2, 3, 4, 5, 7, 8, 9] {
+        assert!(structural(line), "line {line} only shapes the header");
+    }
+    assert!(!structural(6), "a parameter default is behavior");
+    assert!(!structural(10), "the body is behavior");
+
+    // Outside a multi-line header the same text is not structural: a
+    // one-line header, or a `)` closing a call in a body.
+    let body_paren =
+        "def f(value):\n    total = compute(\n        value,\n    )\n    return total\n";
+    assert!(!is_structural_def_header_line(body_paren, 1, 3));
+    assert!(!is_structural_def_header_line(body_paren, 1, 4));
+
+    // Annotations that call code, and trailing comments, fail closed.
+    assert!(!is_structural_def_header_text("    value: make_type(),"));
+    assert!(!is_structural_def_header_text("    value,  # was key"));
+    assert!(!is_structural_def_header_text("    ) -> build():"));
+}
+
+#[test]
+fn diff_mode_emits_no_probe_for_structural_def_header_lines() -> Result<(), String> {
+    let file = Path::new("src/cache.py");
+    let source = "class Cache:\n    def __setitem__(\n        self,\n        key,\n        value,\n    ):\n        self.data[key] = value\n";
+    let owners = extract_owners(file, source);
+    let context = |line| PythonNoBehaviorContext {
+        structural_def_header_line: super::no_behavior::is_structural_def_header_line(
+            source, 2, line,
+        ),
+        ..PythonNoBehaviorContext::default()
+    };
+    let classify = |line: usize, text: &str, old: Option<&str>| {
+        classify_change_with_context(file, line, text, old, &owners, &[], context(line))
+    };
+    assert!(classify(3, "        self,", None).is_none());
+    assert!(classify(6, "    ):", None).is_none());
+    // `key=None,` -> `key,` removes a default: behavior, keeps its probe.
+    assert!(classify(4, "        key,", Some("        key=None,")).is_some());
+    // The body line keeps its probe.
+    assert!(classify(7, "        self.data[key] = value", None).is_some());
+    Ok(())
+}
+
+#[test]
 fn a_def_or_class_header_is_not_a_call_of_that_name() -> Result<(), String> {
     let owners = extract_owners(
         Path::new("src/pricing.py"),
