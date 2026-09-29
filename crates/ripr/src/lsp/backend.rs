@@ -6137,7 +6137,7 @@ fn top_limitation_dto(
                         scope.uninspected_changed_lines_lower_bound,
                     )
                 } else {
-                    "every changed file was selected, but the budget was exceeded, so the \
+                    "every changed file ripr's language adapters read was selected, but the budget was exceeded, so the \
                      result stays partial"
                         .to_string()
                 };
@@ -6515,7 +6515,7 @@ mod top_limitation_selection_tests {
         let why = value["why_not_actionable"].as_str().unwrap_or_default();
         assert!(!why.contains("at least 0"), "{why}");
         assert!(
-            why.contains("every changed file was selected, but the budget was exceeded"),
+            why.contains("every changed file ripr's language adapters read was selected, but the budget was exceeded"),
             "{why}"
         );
         assert!(

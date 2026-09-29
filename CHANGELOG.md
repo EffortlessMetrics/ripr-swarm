@@ -28,8 +28,9 @@ are scoped or reviewed.
   RIPR_PARTIAL_DIFF_LINE_BUDGET"; they now name the stopping budget and its
   size first, then the other budget the next file may also need, matching
   the human output. The LSP message and the recovery detail no longer say
-  "at least 0 changed line(s)" when every changed file was selected, and the
-  VS Code next step no longer points only at the file budget.
+  "at least 0 changed line(s)" when every changed file ripr's language
+  adapters read was selected, and the VS Code next step no longer points only
+  at the file budget.
 
 - `ripr check` is faster on large repositories, with byte-identical JSON on
   12 real commits of tokio, vite, Django and ripr. TypeScript test selection

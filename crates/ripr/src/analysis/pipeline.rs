@@ -1399,7 +1399,7 @@ fn partial_scope_limitation(scope: &PartialDiffScope) -> Result<AnalysisLimitati
         )
     } else {
         format!(
-            "The run analyzed {} changed line(s); every changed file was selected, but the budget was exceeded, so the result stays partial.",
+            "The run analyzed {} changed line(s); every changed file ripr's language adapters read was selected, but the budget was exceeded, so the result stays partial.",
             scope.selected_changed_lines
         )
     })
@@ -3446,7 +3446,7 @@ index 0000000..1111111 100644
         let detail = first_file.bounded_detail.as_deref().unwrap_or_default();
         assert!(!detail.contains("at least 0"), "{detail}");
         assert!(
-            detail.contains("every changed file was selected"),
+            detail.contains("every changed file ripr's language adapters read was selected"),
             "{detail}"
         );
         Ok(())
