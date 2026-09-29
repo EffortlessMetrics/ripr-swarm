@@ -39,6 +39,13 @@ are scoped or reviewed.
   `rust_lexical_test_index_partial` and the outcome is
   `partial_with_limitations`. An unused nightly-syntax test file in the same
   crate does not make the run partial (#4775).
+- Direct collection StateWrite (`items.push(...)` on a passed identifier)
+  now binds the affected collection through the existing propagation
+  witness. Asserting a different collection, the return value, a callee-name
+  string, or an unrelated mock no longer confirms that effect; asserting the
+  actual collection retains discrimination. Return, error, and field
+  direct-sink behavior is unchanged
+  ([#4575](https://github.com/EffortlessMetrics/ripr-swarm/issues/4575)).
 - `ripr doctor` and `ripr first-pr --check` treat a start-here packet written
   by another ripr version, or with no `ripr_version`, as stale evidence and
   print the refresh command instead of trusting it after an upgrade (#4757).
@@ -102,6 +109,12 @@ are scoped or reviewed.
   Python and TypeScript readers already did. A cloned repository or pull
   request that committed `src/zero.rs -> /dev/zero` made `ripr check` read
   until it ran out of memory (#4751).
+- TypeScript: a changed condition in `return total > 100 ? total * 0.9 : total`
+  is now a predicate boundary on `total == 100`, as it is for Python's
+  conditional expression and for the `if` form. The line was read as a
+  returned value, so any exact assertion such as
+  `expect(discount(500)).toBe(450)` made a `>=` to `>` change read `exposed`
+  with "no repair to make", although 500 takes the discount either way.
 - Rust findings now list the related tests that call the changed owner before
   tests matched only by a weak name token, as RIPR-SPEC-0021 already required.
   On `tokio-rs/bytes` the "Related tests appear to reach" line quoted
@@ -648,6 +661,11 @@ are scoped or reviewed.
   one), and a loop variable or `describe` parameter that reuses an imported
   owner's name shadows it.
 
+- Explicit per-seam agent packets bind their `packet.next` commands and
+  artifact paths to the selected root. Prepared repair packets advertise the
+  exact published attempt's after-phase continuation instead of an incompatible
+  manual receipt recipe; standalone packets include the outcome producer needed by receipts
+  (#4000).
 - Python pytest verify commands now run as `python -m pytest path::node`
   instead of bare `pytest path::node`. `-m` puts the repository root on
   `sys.path`, so a flat-layout package such as `pricing/__init__.py` imports
@@ -1533,6 +1551,10 @@ are scoped or reviewed.
   `[lsp] seam_diagnostics = false`, honored by the 0.10 extension, applies
   again instead of being overridden by the extension's default
   ([#4717](https://github.com/EffortlessMetrics/ripr-swarm/issues/4717)).
+- `ripr doctor --root DIR` run from another directory now recommends
+  `ripr check --root DIR ...`. It printed `ripr check`, which analyzes the
+  current directory rather than the one doctor diagnosed
+  ([#4890](https://github.com/EffortlessMetrics/ripr-swarm/issues/4890)).
 
 ### Added
 
