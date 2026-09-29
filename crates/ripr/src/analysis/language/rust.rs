@@ -1925,7 +1925,7 @@ fn unreached_module_limitations<'a>(
             } else {
                 display.clone()
             };
-            AnalysisLimitation::new(
+            let limitation = AnalysisLimitation::new(
                 AnalysisLimitationKind::LanguageScopeUnsupported,
                 AnalysisStage::LanguageAdapter,
                 AnalysisRecovery::new(
@@ -1937,14 +1937,19 @@ fn unreached_module_limitations<'a>(
                          if it is dead code."
                     ),
                 )?,
-            )
-            .with_path(&display)?
-            .with_affected_items(1)?
-            .with_detail(
-                "No Cargo target's module tree reaches this changed Rust file: no `mod`, \
+            );
+            // A path the portable form rejects drops the field, never the run;
+            // the recovery text still names the file.
+            limitation
+                .clone()
+                .with_path(&display)
+                .unwrap_or(limitation)
+                .with_affected_items(1)?
+                .with_detail(
+                    "No Cargo target's module tree reaches this changed Rust file: no `mod`, \
                  `#[path]` or `include!` names it, so rustc does not compile it and its \
                  change seeds no finding.",
-            )
+                )
         })
         .collect()
 }
@@ -5144,10 +5149,13 @@ let _ = (result, note, raw);"##,
         )?;
         write(
             &root.join("shared/lib.rs"),
-            "mod helper;\npub use helper::discount;\n",
+            "mod helper;\npub use helper::discount;\n#[path = \"../other/redirected.rs\"]\npub mod redirected;\n",
         )?;
         write(&root.join("shared/helper.rs"), DISCOUNT_SOURCE)?;
         write(&root.join("shared/stray.rs"), DISCOUNT_SOURCE)?;
+        // A `#[path]` edge from the external root may leave its directory
+        // entirely; that file is declared by `pkg` too.
+        write(&root.join("other/redirected.rs"), DISCOUNT_SOURCE)?;
         write(
             &root.join("pkg/tests/t.rs"),
             "#[test]\nfn discount_applies() {\n    assert_eq!(pkg::discount(150), 140);\n}\n",
@@ -5157,6 +5165,7 @@ let _ = (result, note, raw);"##,
             predicate_change_diff("shared/helper.rs"),
             predicate_change_diff("shared/stray.rs")
         );
+        let diff = format!("{diff}{}", predicate_change_diff("other/redirected.rs"));
 
         let result = module_graph_diff(&root, &diff)?;
 
@@ -5184,14 +5193,22 @@ let _ = (result, note, raw);"##,
                 .any(|file| file == "shared/stray.rs"),
             "an undeclared file beside the external root must not seed"
         );
+        assert!(
+            finding_files(&root, &result)
+                .iter()
+                .any(|file| file == "other/redirected.rs"),
+            "a `#[path]` module outside the external root's directory must seed: {:?}",
+            finding_files(&root, &result)
+        );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }
 
     #[test]
     fn diff_analysis_follows_path_include_and_nested_module_edges() -> Result<(), String> {
-        // #4435: `#[path]`, literal `include!` and an out-of-line module
-        // nested in an inline one are all module-tree evidence.
+        // #4435: `#[path]`, literal `include!`, an out-of-line module nested
+        // in an inline one, and a raw-identifier module (`mod r#type;` loads
+        // `type.rs`) are all module-tree evidence.
         let root = temp_root("module-graph-edges")?;
         write(
             &root.join("Cargo.toml"),
@@ -5201,16 +5218,19 @@ let _ = (result, note, raw);"##,
             &root.join("src/lib.rs"),
             "#[path = \"elsewhere/placed.rs\"]\npub mod placed;\n\
              pub mod outer { pub mod inner; }\n\
+             pub mod r#type;\n\
              include!(\"fragment.rs\");\n",
         )?;
         write(&root.join("src/elsewhere/placed.rs"), DISCOUNT_SOURCE)?;
         write(&root.join("src/outer/inner.rs"), DISCOUNT_SOURCE)?;
         write(&root.join("src/fragment.rs"), DISCOUNT_SOURCE)?;
+        write(&root.join("src/type.rs"), DISCOUNT_SOURCE)?;
         let diff = format!(
-            "{}{}{}",
+            "{}{}{}{}",
             predicate_change_diff("src/elsewhere/placed.rs"),
             predicate_change_diff("src/outer/inner.rs"),
-            predicate_change_diff("src/fragment.rs")
+            predicate_change_diff("src/fragment.rs"),
+            predicate_change_diff("src/type.rs")
         );
 
         let result = module_graph_diff(&root, &diff)?;
@@ -5220,6 +5240,7 @@ let _ = (result, note, raw);"##,
             "src/elsewhere/placed.rs",
             "src/outer/inner.rs",
             "src/fragment.rs",
+            "src/type.rs",
         ] {
             assert!(
                 files.iter().any(|file| file == expected),

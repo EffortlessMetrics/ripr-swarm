@@ -41,8 +41,11 @@ use crate::analysis::syntax::{RustModuleTreeEdge, RustModuleTreeScan, rust_modul
 /// incomplete.
 const MAX_WALK_FILES: usize = 20_000;
 
+/// Queue length up to which the walk picks the entry nearest its target.
+const DIRECTED_QUEUE_LIMIT: usize = 512;
+
 /// How a reached file anchors its own default `mod name;` children.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum ChildAnchor {
     /// Crate roots and `mod.rs` files: children live beside the file.
     Directory,
@@ -78,8 +81,10 @@ struct PackageWalk {
     /// The evidence roots, queued once the production phase is exhausted.
     evidence_roots: Option<Vec<PathBuf>>,
     phase: Origin,
-    /// Entries already expanded in the current phase.
-    visited: BTreeSet<PathBuf>,
+    /// Entries already expanded in the current phase. The anchor is part of
+    /// the key: a file reached both as `mod foo;` and through `#[path]`
+    /// resolves its children under both directories.
+    visited: BTreeSet<(PathBuf, ChildAnchor)>,
     /// Every reached file with the first phase that reached it.
     reached: BTreeMap<PathBuf, Origin>,
     production_roots: BTreeSet<PathBuf>,
@@ -106,7 +111,8 @@ where
 {
     let mut external_packages = BTreeMap::new();
     let mut walks: BTreeMap<PathBuf, Option<PackageWalk>> = BTreeMap::new();
-    let mut external_declarers: Option<Vec<(PathBuf, PathBuf)>> = None;
+    let mut external_declarers: Option<BTreeSet<PathBuf>> = None;
+    let mut escaping_targets: Option<Option<BTreeSet<PathBuf>>> = None;
     for candidate in candidates {
         if candidate.extension().and_then(|ext| ext.to_str()) != Some("rs") {
             continue;
@@ -119,30 +125,31 @@ where
         if let Some(walk) = owner.and_then(|dir| {
             walks
                 .entry(dir.clone())
-                .or_insert_with(|| PackageWalk::new(&dir))
+                .or_insert_with(|| PackageWalk::new(workspace_root, &dir))
                 .as_mut()
         }) {
-            if walk.find(workspace_root, &anchored).is_some() {
-                continue;
+            match walk.find(workspace_root, &anchored) {
+                Some(Origin::Production) => continue,
+                // Compiled from a test root: never an orphan, but an external
+                // root may still reach it as production.
+                Some(Origin::Evidence) => {}
+                None => owner_proves_unreached = walk.proves_unreached(),
             }
-            owner_proves_unreached = walk.proves_unreached();
         }
 
         // A package whose production root sits outside its own directory
-        // resolves that root's modules there, so its walk can reach a file
-        // no layout or owning manifest attributes to it.
+        // can reach a file no layout or owning manifest attributes to it:
+        // below the root's directory, or anywhere through `#[path]` and
+        // `include!`. Such packages are rare, so each one is asked.
         let declarers = external_declarers
             .get_or_insert_with(|| external_root_declarers(workspace_root))
-            .iter()
-            .filter(|(_, module_dir)| anchored.starts_with(module_dir))
-            .map(|(package_dir, _)| package_dir.clone())
-            .collect::<BTreeSet<_>>();
+            .clone();
         let mut declarers_prove_unreached = true;
         let mut declaring_package = None;
         for package_dir in declarers {
             let Some(walk) = walks
                 .entry(package_dir.clone())
-                .or_insert_with(|| PackageWalk::new(&package_dir))
+                .or_insert_with(|| PackageWalk::new(workspace_root, &package_dir))
                 .as_mut()
             else {
                 declarers_prove_unreached = false;
@@ -163,11 +170,56 @@ where
                 external_packages.insert(relative.clone(), prefix);
             }
             context.declared_production_sources.insert(relative);
-        } else if owner_proves_unreached && declarers_prove_unreached {
+        } else if owner_proves_unreached
+            && declarers_prove_unreached
+            && escaping_targets
+                .get_or_insert_with(|| escaping_edge_targets(workspace_root))
+                .as_ref()
+                .is_some_and(|targets| !targets.contains(&anchored))
+        {
             context.module_graph_orphans.insert(relative);
         }
     }
     external_packages
+}
+
+/// Every `#[path]` and `include!` target named anywhere in the workspace,
+/// anchored and lexically resolved, or `None` when some file that spells one
+/// cannot be scanned completely.
+///
+/// A package's own walk never sees another package reaching into it
+/// (`#[path = "../../b/src/proto.rs"]` in crate `a`, or a build script that
+/// `include!`s a sibling's source), so an orphan verdict also requires that
+/// no such edge names the file. Only files whose text spells `path` or
+/// `include` are parsed; this runs once, and only when an orphan verdict is
+/// about to be recorded.
+fn escaping_edge_targets(workspace_root: &Path) -> Option<BTreeSet<PathBuf>> {
+    let mut targets = BTreeSet::new();
+    for relative in super::discover_rust_files(workspace_root).ok()? {
+        let file = lexical(&normalize(&workspace_root.join(&relative)));
+        let source = match read_source(workspace_root, &file) {
+            SourceRead::Text(source) => source,
+            SourceRead::Absent => continue,
+            SourceRead::Unreadable => return None,
+        };
+        if !source.contains("path") && !source.contains("include") {
+            continue;
+        }
+        let scan = rust_module_tree_scan(&source);
+        let directory = file.parent().map(Path::to_path_buf).unwrap_or_default();
+        for edge in &scan.edges {
+            if let RustModuleTreeEdge::Path(target) | RustModuleTreeEdge::Include(target) = edge {
+                targets.insert(lexical(&directory.join(target)));
+            }
+        }
+        // An incomplete scan that could hide such an edge leaves every
+        // verdict unknown. Default-only declarations cannot leave their
+        // own package, so they never matter here.
+        if !scan.complete && (source.contains("#[path") || source.contains("include!")) {
+            return None;
+        }
+    }
+    Some(targets)
 }
 
 /// Workspace-relative package root prefix of an anchored package directory.
@@ -184,33 +236,34 @@ fn package_prefix(workspace_root: &Path, package_dir: &Path) -> Option<String> {
     })
 }
 
-/// `(package dir, root module dir)` for every package manifest in the
-/// workspace whose `[lib]` or `[[bin]]` path leaves its own directory.
-fn external_root_declarers(workspace_root: &Path) -> Vec<(PathBuf, PathBuf)> {
-    let mut declarers = Vec::new();
+/// Every package in the workspace whose `[lib]` or `[[bin]]` path leaves
+/// its own directory.
+fn external_root_declarers(workspace_root: &Path) -> BTreeSet<PathBuf> {
+    let mut declarers = BTreeSet::new();
     for prefix in crate::analysis::seam_cache::workspace_manifest_dir_prefixes(workspace_root) {
         let package_dir = lexical(&normalize(&workspace_root.join(&prefix)));
-        let Some((_, manifest)) = read_manifest(&package_dir) else {
+        let Some((_, manifest)) = read_manifest(workspace_root, &package_dir) else {
             continue;
         };
-        for root in production_roots(&manifest, &package_dir) {
-            if root.starts_with(&package_dir) {
-                continue;
-            }
-            if let Some(module_dir) = root.parent() {
-                declarers.push((package_dir.clone(), module_dir.to_path_buf()));
-            }
+        if production_roots(&manifest, &package_dir)
+            .iter()
+            .any(|root| !root.starts_with(&package_dir))
+        {
+            declarers.insert(package_dir);
         }
     }
-    declarers.sort();
-    declarers.dedup();
     declarers
 }
 
 /// The package manifest text and its parsed value, or `None` for a missing,
 /// invalid or virtual (workspace-only) manifest, which compiles nothing.
-fn read_manifest(package_dir: &Path) -> Option<(String, toml::Value)> {
-    let text = std::fs::read_to_string(package_dir.join("Cargo.toml")).ok()?;
+/// Read through the same committed-source view as the module files, so a
+/// dirty manifest cannot describe a different crate than the sources walked.
+fn read_manifest(workspace_root: &Path, package_dir: &Path) -> Option<(String, toml::Value)> {
+    let SourceRead::Text(text) = read_source(workspace_root, &package_dir.join("Cargo.toml"))
+    else {
+        return None;
+    };
     let value = toml::from_str::<toml::Value>(&text).ok()?;
     value.get("package")?;
     Some((text, value))
@@ -280,8 +333,8 @@ fn autodiscovered(dir: &Path) -> Vec<PathBuf> {
 impl PackageWalk {
     /// A walk over the package in `package_dir`, or `None` when the
     /// directory holds no package manifest.
-    fn new(package_dir: &Path) -> Option<Self> {
-        let (manifest_text, manifest) = read_manifest(package_dir)?;
+    fn new(workspace_root: &Path, package_dir: &Path) -> Option<Self> {
+        let (manifest_text, manifest) = read_manifest(workspace_root, package_dir)?;
         let production_roots = production_roots(&manifest, package_dir);
         let evidence_roots = evidence_roots(&manifest, &manifest_text, package_dir);
         Some(Self {
@@ -322,13 +375,18 @@ impl PackageWalk {
     /// Expands one pending entry, preferring the one nearest `target`.
     /// Returns false once both phases are exhausted.
     fn step(&mut self, workspace_root: &Path, target: &Path) -> bool {
-        let Some(position) = self
-            .queue
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, (file, _))| shared_prefix_len(file, target))
-            .map(|(position, _)| position)
-        else {
+        // The directed pick scans the queue, so past a bound the walk falls
+        // back to plain depth-first order and stays linear.
+        let position = if self.queue.len() <= DIRECTED_QUEUE_LIMIT {
+            self.queue
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, (file, _))| shared_prefix_len(file, target))
+                .map(|(position, _)| position)
+        } else {
+            self.queue.len().checked_sub(1)
+        };
+        let Some(position) = position else {
             return match self.evidence_roots.take() {
                 Some(roots) => {
                     self.phase = Origin::Evidence;
@@ -343,7 +401,7 @@ impl PackageWalk {
             };
         };
         let (file, anchor) = self.queue.swap_remove(position);
-        if !self.visited.insert(file.clone()) {
+        if !self.visited.insert((file.clone(), anchor)) {
             return true;
         }
         if !self.scans.contains_key(&file) {
@@ -523,6 +581,63 @@ mod tests {
     }
 
     #[test]
+    fn walk_expands_a_file_under_every_anchor_that_reaches_it() -> Result<(), String> {
+        // `foo.rs` is both `mod foo;` (children under `src/foo/`) and a
+        // `#[path]` module (children beside it): rustc compiles both.
+        let root = fixture(
+            "two-anchors",
+            &[
+                ("Cargo.toml", MANIFEST),
+                (
+                    "src/lib.rs",
+                    "mod foo;\n#[path = \"foo.rs\"]\nmod foo_again;\n",
+                ),
+                ("src/foo.rs", "mod bar;\n"),
+                ("src/foo/bar.rs", ""),
+                ("src/bar.rs", ""),
+            ],
+        )?;
+        let context = evidence_for(&root, &["src/foo/bar.rs", "src/bar.rs"]);
+        assert!(context.module_graph_orphans.is_empty(), "{context:?}");
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn another_packages_path_edge_and_unknown_macros_block_the_orphan_verdict() -> Result<(), String>
+    {
+        // Crate `a` compiles `b/src/proto.rs` through `#[path]`; `b` never
+        // declares it. `c` calls a dependency's item macro, which may
+        // expand to `mod generated;`. Neither file is an orphan; `b`'s
+        // undeclared `stray.rs` still is.
+        let root = fixture(
+            "cross-package",
+            &[
+                ("a/Cargo.toml", MANIFEST),
+                (
+                    "a/src/lib.rs",
+                    "#[path = \"../../b/src/proto.rs\"]\nmod proto;\n",
+                ),
+                ("b/Cargo.toml", MANIFEST),
+                ("b/src/lib.rs", ""),
+                ("b/src/proto.rs", ""),
+                ("b/src/stray.rs", ""),
+                ("c/Cargo.toml", MANIFEST),
+                ("c/src/lib.rs", "decl::declare_mod!(generated);\n"),
+                ("c/src/generated.rs", ""),
+            ],
+        )?;
+        let context = evidence_for(
+            &root,
+            &["b/src/proto.rs", "b/src/stray.rs", "c/src/generated.rs"],
+        );
+        assert_eq!(
+            context.module_graph_orphans,
+            BTreeSet::from([PathBuf::from("b/src/stray.rs")])
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
     fn walk_proves_nothing_without_a_readable_production_root() -> Result<(), String> {
         // No `src/lib.rs`, `src/main.rs` or declared root: the tree is
         // unknown, so a loose `src/` file keeps the layout rule.
@@ -549,6 +664,55 @@ mod tests {
         )?;
         let context = evidence_for(&root, &["src/orphan.rs", "loose/src/orphan.rs"]);
         assert!(context.module_graph_orphans.is_empty());
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn walk_reads_the_committed_manifest_under_the_overlay() -> Result<(), String> {
+        // Devin review on #4556: a committed-history run reads `HEAD` source,
+        // so the root inventory must come from the `HEAD` manifest too. On
+        // disk the lib root moved to `src/new.rs`; at `HEAD` it is
+        // `src/old.rs`, which therefore is compiled and must not be an orphan.
+        let root = fixture(
+            "dirty-manifest",
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname='tree'\nversion='0.1.0'\nedition='2021'\n[lib]\npath='src/new.rs'\n",
+                ),
+                ("src/new.rs", ""),
+                ("src/old.rs", ""),
+            ],
+        )?;
+        let worktree = evidence_for(&root, &["src/old.rs"]);
+        assert!(
+            worktree
+                .module_graph_orphans
+                .contains(Path::new("src/old.rs")),
+            "fixture control: the working-tree manifest leaves `src/old.rs` unreached"
+        );
+        let overlay = crate::analysis::committed_source::CommittedSourceOverlay::from_entries(
+            &root,
+            [
+                (
+                    "Cargo.toml",
+                    Some(
+                        b"[package]\nname='tree'\nversion='0.1.0'\nedition='2021'\n[lib]\npath='src/old.rs'\n"
+                            .as_slice(),
+                    ),
+                ),
+                ("src/new.rs", None),
+            ],
+        );
+        let committed = crate::analysis::committed_source::with_overlay(
+            Some(std::sync::Arc::new(overlay)),
+            || evidence_for(&root, &["src/old.rs"]),
+        );
+        assert!(
+            committed.module_graph_orphans.is_empty(),
+            "the `HEAD` manifest compiles `src/old.rs`: {:?}",
+            committed.module_graph_orphans
+        );
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
     }
 }

@@ -15,8 +15,10 @@
 //! - a `#[path]` on an inline module, or on an out-of-line declaration
 //!   nested in one (the directory rules there differ and are not modeled);
 //! - an out-of-line `mod name;` outside the item tree (inside a function);
-//! - a `mod` keyword inside a macro token tree (`cfg_if!`, `macro_rules!`),
-//!   where declarations only exist after expansion;
+//! - a `mod` keyword or an `include` inside a macro token tree (`cfg_if!`,
+//!   `macro_rules!`), where edges only exist after expansion;
+//! - any other item-position macro call (a dependency's macro can expand to
+//!   `mod name;`), except std's `thread_local!` and `compile_error!`;
 //! - a non-literal `include!`, except the generated-code shape that names
 //!   `OUT_DIR`, which includes build output rather than a source file.
 //!
@@ -31,6 +33,10 @@ use std::path::PathBuf;
 
 use super::ra::{include_literal_path, path_target_from_attributes};
 use crate::analysis::facts::ModulePathTarget;
+
+/// Std item-position macros whose expansion cannot declare a module.
+/// Compared after any `std::`/`core::` prefix is dropped.
+const ITEM_MACROS_WITHOUT_MODULES: [&str; 2] = ["thread_local", "compile_error"];
 
 /// One out-of-line module-tree edge declared by a Rust file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,7 +92,8 @@ pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
         match path_target {
             ModulePathTarget::Default => scan.edges.push(RustModuleTreeEdge::Default {
                 inline,
-                name: name.text().to_string(),
+                // `mod r#type;` resolves to `type.rs`.
+                name: name.text().trim_start_matches("r#").to_string(),
             }),
             ModulePathTarget::Literal(path) if inline.is_empty() => {
                 scan.edges
@@ -99,7 +106,26 @@ pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
         let Some(path) = macro_call.path() else {
             continue;
         };
-        if path.syntax().text() != "include" {
+        let callee = path.syntax().text().to_string();
+        let callee = callee.trim_start_matches("::");
+        let callee = callee
+            .strip_prefix("std::")
+            .or_else(|| callee.strip_prefix("core::"))
+            .unwrap_or(callee);
+        if callee != "include" {
+            // An item-position macro from any crate can expand to `mod x;`
+            // without spelling `mod` here, so its expansion is unknown.
+            // Std's item macros that cannot declare modules are the only
+            // exception.
+            let item_position = macro_call.syntax().parent().is_some_and(|parent| {
+                matches!(
+                    parent.kind(),
+                    SyntaxKind::SOURCE_FILE | SyntaxKind::ITEM_LIST
+                )
+            });
+            if item_position && !ITEM_MACROS_WITHOUT_MODULES.contains(&callee) {
+                scan.complete = false;
+            }
             continue;
         }
         // The node spans the call's attributes too; the expression starts at
@@ -113,12 +139,17 @@ pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
             None => scan.complete = false,
         }
     }
-    // Declarations inside a token tree only exist after macro expansion.
+    // Declarations and includes inside a token tree only exist after macro
+    // expansion (`cfg_if! { ... include!("unix.rs"); }`).
     if tree.syntax().descendants_with_tokens().any(|element| {
-        element.kind() == SyntaxKind::MOD_KW
-            && element
-                .parent()
-                .is_some_and(|parent| parent.kind() == SyntaxKind::TOKEN_TREE)
+        let in_token_tree = element
+            .parent()
+            .is_some_and(|parent| parent.kind() == SyntaxKind::TOKEN_TREE);
+        in_token_tree
+            && (element.kind() == SyntaxKind::MOD_KW
+                || element.as_token().is_some_and(|token| {
+                    token.kind() == SyntaxKind::IDENT && token.text() == "include"
+                }))
     }) {
         scan.complete = false;
     }
@@ -139,7 +170,7 @@ fn enclosing_inline_modules(module: &ast::Module) -> Option<Vec<String>> {
             SyntaxKind::ITEM_LIST => {}
             SyntaxKind::MODULE => {
                 let inline = ast::Module::cast(ancestor)?;
-                names.push(inline.name()?.text().to_string());
+                names.push(inline.name()?.text().trim_start_matches("r#").to_string());
             }
             _ => return None,
         }
@@ -193,6 +224,9 @@ mod tests {
             "cfg_if::cfg_if! { if #[cfg(unix)] { mod unix; } }\n",
             "macro_rules! declare { ($name:ident) => { mod $name; }; }\n",
             "include!(concat!(\"frag\", \".rs\"));\n",
+            "decl::declare_mod!(generated);\n",
+            "cfg_if::cfg_if! { if #[cfg(unix)] { include!(\"unix.rs\"); } }\n",
+            "mod outer { lazy_static::lazy_static! { static ref X: u8 = 1; } }\n",
             "mod broken\n",
         ] {
             assert!(
@@ -203,13 +237,24 @@ mod tests {
     }
 
     #[test]
-    fn scan_ignores_mod_text_in_comments_strings_and_similar_macros() {
+    fn scan_ignores_non_item_text_and_resolves_raw_identifiers() {
         let scan = rust_module_tree_scan(
             "// mod commented;\n\
              const TEXT: &str = \"mod quoted;\";\n\
-             fn f() { let _ = preinclude!(\"x.rs\"); }\n",
+             fn f() { let _ = preinclude!(\"x.rs\"); println!(\"in a body\"); }\n\
+             thread_local! { static COUNT: u8 = 0; }\n\
+             mod r#type;\n\
+             mod r#async { mod r#match; }\n\
+             std::include!(\"frag.rs\");\n",
         );
         assert!(scan.complete, "{scan:?}");
-        assert!(scan.edges.is_empty(), "{scan:?}");
+        assert_eq!(
+            scan.edges,
+            vec![
+                default(&[], "type"),
+                default(&["async"], "match"),
+                RustModuleTreeEdge::Include(PathBuf::from("frag.rs")),
+            ]
+        );
     }
 }
