@@ -1,6 +1,7 @@
 "use strict";
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { createRequire } = require("node:module");
 const { spawn } = require("node:child_process");
@@ -299,6 +300,11 @@ function runNative(executablePath, argv, options = {}) {
   });
 }
 
+function signalExitCode(signal) {
+  const signalNumber = os.constants.signals[signal];
+  return typeof signalNumber === "number" ? 128 + signalNumber : 1;
+}
+
 async function launch(options = {}) {
   const launcherRoot = options.launcherRoot || path.resolve(__dirname, "..");
   const resolved = resolveNativeExecutable({
@@ -315,6 +321,7 @@ async function launch(options = {}) {
     forwardSignals: options.forwardSignals,
   });
   if (result.signal) {
+    process.exitCode = signalExitCode(result.signal);
     process.kill(process.pid, result.signal);
     return;
   }
@@ -332,6 +339,7 @@ module.exports = {
   resolveNativeExecutable,
   runNative,
   selectPlatform,
+  signalExitCode,
   validateLauncherManifest,
   validateRelativeExecutable,
 };
