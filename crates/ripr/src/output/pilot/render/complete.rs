@@ -192,6 +192,11 @@ pub(crate) fn render_pilot_summary_md(
             out.push_str(
                 "Pilot ranks Rust seams and found none in this repository. This is not a clean result for the languages listed under Languages Outside The Rust Seam Scan.\n\n",
             );
+        } else if let Some(unanalyzed) = unanalyzed_only(context) {
+            out.push_str(&format!(
+                "None: {UNANALYZED_ONLY_VERDICT} Found: {}.\n\n",
+                unanalyzed_label(unanalyzed)
+            ));
         } else {
             out.push_str("No actionable seam was ranked by the default pilot policy.\n\n");
         }
@@ -324,6 +329,11 @@ pub(crate) fn render_pilot_summary_md(
                 "Analyze the changed code in the languages outside the Rust seam scan with the diff-first check:\n\n",
             );
             commands
+        }
+        (None, None) if unanalyzed_only(context).is_some() => {
+            out.push_str(NO_ANALYZED_LANGUAGE_COMMAND);
+            out.push('\n');
+            return out;
         }
         (None, None) => {
             match top.first() {
@@ -458,6 +468,13 @@ pub(crate) fn render_pilot_terminal(
             "  none: pilot ranks Rust seams and found none here; see the languages below\n\n",
         );
         false
+    } else if let Some(unanalyzed) = unanalyzed_only(context) {
+        out.push_str("Top recommendation:\n");
+        out.push_str(&format!(
+            "  none: {UNANALYZED_ONLY_VERDICT}\n  found: {}\n\n",
+            unanalyzed_label(unanalyzed)
+        ));
+        false
     } else {
         out.push_str("Top recommendation:\n");
         out.push_str("  none ranked by the default pilot policy\n\n");
@@ -537,6 +554,11 @@ pub(crate) fn render_pilot_terminal(
         }
         return out;
     }
+    if unanalyzed_only(context).is_some() {
+        out.push_str(NO_ANALYZED_LANGUAGE_COMMAND);
+        out.push('\n');
+        return out;
+    }
     if let Some(entry) = top.first().filter(|_| no_repair_target) {
         out.push_str(&format!(
             "Next, by hand: {}, then compare against this run:\n",
@@ -554,6 +576,28 @@ pub(crate) fn render_pilot_terminal(
 /// this binary, so no runnable command exists.
 const NO_LANGUAGE_ROUTE_COMMAND: &str =
     "No follow-up command applies: this ripr binary cannot analyze the languages listed above.";
+
+/// Why an empty ranking is a non-claim when pilot found only source in
+/// languages no ripr adapter reads.
+const UNANALYZED_ONLY_VERDICT: &str = "this repository's source is in languages ripr does not analyze, so the empty ranking is not a clean result. ripr analyzes Rust, plus TypeScript/JavaScript and Python as previews.";
+
+/// Closing line for [`UNANALYZED_ONLY_VERDICT`]: no ripr command applies.
+const NO_ANALYZED_LANGUAGE_COMMAND: &str =
+    "No follow-up command applies: review changes in these languages with their own tests.";
+
+fn unanalyzed_only<'a>(context: PilotSummaryContext<'a>) -> Option<&'a [(&'static str, usize)]> {
+    context
+        .language_routes
+        .and_then(PilotLanguageRoutes::unanalyzed_only)
+}
+
+fn unanalyzed_label(unanalyzed: &[(&'static str, usize)]) -> String {
+    unanalyzed
+        .iter()
+        .map(|(language, count)| format!("{language} ({})", file_count_label(*count)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 /// Routes the human output must show: present only when pilot's Rust seam
 /// scan produced no seams, so output for Rust seams stays unchanged.
@@ -645,6 +689,18 @@ fn push_language_routes_json(out: &mut String, routes: Option<&PilotLanguageRout
         out.push_str("      }");
     }
     if !routes.routes.is_empty() {
+        out.push_str("\n    ");
+    }
+    out.push_str("],\n");
+    out.push_str("    \"unanalyzed_languages\": [");
+    for (idx, (language, count)) in routes.unanalyzed.iter().enumerate() {
+        out.push_str(if idx == 0 { "\n" } else { ",\n" });
+        out.push_str(&format!(
+            "      {{ \"language\": \"{}\", \"file_count\": {count} }}",
+            json_escape(language)
+        ));
+    }
+    if !routes.unanalyzed.is_empty() {
         out.push_str("\n    ");
     }
     out.push_str("]\n");

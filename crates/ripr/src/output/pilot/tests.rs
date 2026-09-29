@@ -1204,6 +1204,62 @@ fn pilot_terminal_route_label_has_one_shape_for_every_language() {
 }
 
 #[test]
+fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Result<(), String> {
+    use super::language_routes::PilotLanguageRoutesState;
+    use crate::domain::LanguageId;
+
+    // A Go repository: no Rust seams, no routed language. Pilot said
+    // "complete", "none ranked", and offered a test-then-compare loop.
+    let artifacts = pilot_artifacts();
+    let root = Path::new(".");
+    let go_only = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], &[])
+        .with_unanalyzed(vec![("Go", 2)]);
+    assert_eq!(go_only.state, PilotLanguageRoutesState::UnanalyzedOnly);
+    let context = PilotSummaryContext {
+        language_routes: Some(&go_only),
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        !terminal.contains("none ranked by the default pilot policy"),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains("languages ripr does not analyze"),
+        "{terminal}"
+    );
+    assert!(terminal.contains("found: Go (2 files)"), "{terminal}");
+    assert!(!terminal.contains("ripr outcome --before"), "{terminal}");
+    assert!(
+        terminal.ends_with("No follow-up command applies: review changes in these languages with their own tests.\n"),
+        "{terminal}"
+    );
+    let md = render_pilot_summary_md(&[], context);
+    assert!(md.contains("Found: Go (2 files)."), "{md}");
+    assert!(!md.contains("ripr outcome --before"), "{md}");
+    let json = render_pilot_summary_json(&[], context);
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert_eq!(parsed["language_routes"]["state"], "unanalyzed_only");
+    assert_eq!(
+        parsed["language_routes"]["unanalyzed_languages"][0]["language"],
+        "Go"
+    );
+    assert_eq!(
+        parsed["language_routes"]["unanalyzed_languages"][0]["file_count"],
+        2
+    );
+
+    // Rust seams present: the ranking stands and the Go files stay a JSON
+    // note, so Rust users' output is unchanged.
+    let with_rust = PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], &[])
+        .with_unanalyzed(vec![("Go", 2)]);
+    assert_eq!(with_rust.state, PilotLanguageRoutesState::NotDetected);
+    assert!(with_rust.unanalyzed_only().is_none());
+    Ok(())
+}
+
+#[test]
 fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), String> {
     use crate::domain::LanguageId;
 

@@ -68,9 +68,102 @@ pub(crate) fn route(path: &Path) -> Option<LanguageId> {
     }
 }
 
+/// Programming-language source extensions no ripr adapter reads, with the
+/// language name shown to users. A changed file with one of these carries
+/// behavior ripr did not analyze, unlike documentation or configuration, so
+/// the pipeline records it as a typed limitation instead of calling an empty
+/// result correct. Matching is exact and case-sensitive, like [`route`].
+const UNANALYZED_SOURCE_LANGUAGES: &[(&str, &str)] = &[
+    ("go", "Go"),
+    ("java", "Java"),
+    ("kt", "Kotlin"),
+    ("kts", "Kotlin"),
+    ("scala", "Scala"),
+    ("groovy", "Groovy"),
+    ("c", "C"),
+    ("h", "C"),
+    ("cc", "C++"),
+    ("cpp", "C++"),
+    ("cxx", "C++"),
+    ("hh", "C++"),
+    ("hpp", "C++"),
+    ("hxx", "C++"),
+    ("cs", "C#"),
+    ("fs", "F#"),
+    ("swift", "Swift"),
+    ("m", "Objective-C"),
+    ("mm", "Objective-C"),
+    ("rb", "Ruby"),
+    ("php", "PHP"),
+    ("lua", "Lua"),
+    ("ex", "Elixir"),
+    ("exs", "Elixir"),
+    ("erl", "Erlang"),
+    ("hs", "Haskell"),
+    ("ml", "OCaml"),
+    ("clj", "Clojure"),
+    ("dart", "Dart"),
+    ("zig", "Zig"),
+    ("jl", "Julia"),
+    ("sol", "Solidity"),
+    ("sh", "Shell"),
+    ("bash", "Shell"),
+    ("zsh", "Shell"),
+    ("ps1", "PowerShell"),
+    ("psm1", "PowerShell"),
+    ("vue", "Vue"),
+    ("svelte", "Svelte"),
+];
+
+/// The language name of a source file that no ripr adapter reads, or `None`
+/// for routed sources ([`route`]) and for non-source files such as
+/// documentation, configuration and data.
+pub(crate) fn unanalyzed_source_language(path: &Path) -> Option<&'static str> {
+    if route(path).is_some() {
+        return None;
+    }
+    let ext = path.extension()?.to_str()?;
+    UNANALYZED_SOURCE_LANGUAGES
+        .iter()
+        .find(|(known, _)| *known == ext)
+        .map(|(_, language)| *language)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unanalyzed_source_language_names_code_no_adapter_reads() {
+        let cases = [
+            ("pkg/calc.go", Some("Go")),
+            ("src/main/java/ex/Calc.java", Some("Java")),
+            ("calc.c", Some("C")),
+            ("include/calc.h", Some("C")),
+            ("src/calc.cpp", Some("C++")),
+            ("scripts/build.sh", Some("Shell")),
+            ("web/App.vue", Some("Vue")),
+            // Routed sources belong to an adapter, not to this list.
+            ("src/lib.rs", None),
+            ("web/app.ts", None),
+            ("calc.py", None),
+            ("lib/My/App.pm", None),
+            // Documentation, configuration and data are not source.
+            ("README.md", None),
+            ("go.mod", None),
+            ("pom.xml", None),
+            ("Makefile", None),
+            ("Cargo.toml", None),
+            ("data.json", None),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(
+                unanalyzed_source_language(Path::new(path)),
+                expected,
+                "{path}"
+            );
+        }
+    }
 
     #[test]
     fn route_rust_and_preview_languages_by_extension() {

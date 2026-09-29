@@ -508,6 +508,11 @@ fn report_detected_languages(root: &Path) {
     let detected = detect_languages(root);
     if detected.is_empty() {
         println!("- Detected languages: none detected");
+        if let Some(line) = unanalyzed_languages_line(
+            &crate::analysis::workspace_unanalyzed_source_languages(root),
+        ) {
+            println!("{line}");
+        }
         return;
     }
     let entries: Vec<String> = detected
@@ -523,6 +528,23 @@ fn report_detected_languages(root: &Path) {
         })
         .collect();
     println!("- Detected languages: {}", entries.join(", "));
+}
+
+/// Names source ripr cannot analyze when no supported language was found,
+/// so a Go or Java repository is told why `ripr check` will find nothing
+/// instead of being sent there as the recommended first command.
+fn unanalyzed_languages_line(unanalyzed: &[(&'static str, usize)]) -> Option<String> {
+    if unanalyzed.is_empty() {
+        return None;
+    }
+    let found = unanalyzed
+        .iter()
+        .map(|(language, count)| format!("{language} ({count} file(s))"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "~ Unanalyzed languages: {found}; ripr analyzes Rust, plus TypeScript/JavaScript and Python as previews, so changes to this source are reported as not analyzed, never as clean"
+    ))
 }
 
 /// When a preview language is detected in `root` but is not yet enabled in
@@ -1422,6 +1444,17 @@ mod tests {
             std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         }
         Ok(())
+    }
+
+    #[test]
+    fn unanalyzed_languages_line_names_go_as_not_analyzed() {
+        assert_eq!(unanalyzed_languages_line(&[]), None);
+        let line = unanalyzed_languages_line(&[("Go", 2), ("Shell", 1)]).unwrap_or_default();
+        assert!(
+            line.starts_with("~ Unanalyzed languages: Go (2 file(s)), Shell (1 file(s));"),
+            "{line}"
+        );
+        assert!(line.contains("never as clean"), "{line}");
     }
 
     #[test]

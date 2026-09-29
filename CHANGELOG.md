@@ -11,6 +11,17 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Changes in languages ripr does not analyze (Go, Java, C, C++, shell and
+  others) are no longer called non-source files. A Go-only diff reported
+  `no_behavioral_candidates (analysis complete)` and said the empty result was
+  correct; a Rust + Go diff reported only the Rust half, as a complete
+  analysis. Both now report `partial_with_limitations` with a
+  `language_scope_unsupported` limitation naming the language and paths
+  (#4720). `--format github` no longer prints "No static exposure findings
+  found" for an incomplete analysis; it leads with a warning naming the
+  outcome and each limitation (#4721). In a repository written only in such
+  languages, `ripr pilot` names them instead of an empty "none ranked"
+  result with a test-then-compare loop, and `ripr doctor` lists them.
 - TypeScript: a change inside a module-private helper now relates to tests
   that call an exported function reaching it in the same module, including a
   value a same-module factory built. unjs/defu tests call `defu(...)`, built
