@@ -145,7 +145,7 @@ mod tests {
     use super::*;
     use crate::analysis::cancellation::{self, AnalysisAbortKind, AnalysisCancellationToken};
     use crate::app::check::check_with_progress;
-    use crate::app::{CheckInput, Mode, OutputFormat};
+    use crate::app::{CheckInput, CheckOutput, Mode, OutputFormat};
     use crate::config::RiprConfig;
     use std::path::PathBuf;
     use std::sync::Mutex;
