@@ -307,26 +307,51 @@ fn render_suppression_policy_block(out: &mut String, output: &CheckOutput) {
 
 /// Emit the `limited_partial_scope` run-state disclosure (RIPR-PROP-0019,
 /// #1999). The partial result must never be presented as complete: the block
-/// names the exact selected partition, the lower-bound uninspected scope, the
-/// stop reason, gate ineligibility, and the only continuation route (raising
-/// the explicit budget overrides).
+/// names the budget that stopped the run with its effective size, the
+/// findings produced before the stop, the exact selected partition, the
+/// lower-bound uninspected scope (never a bare "at least 0"), the stop
+/// reason, gate ineligibility, and the only continuation route (raising the
+/// named budget override).
 fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
     let Some(scope) = &output.partial_scope else {
         return;
     };
+    let budget_env = scope.stop_reason.budget_env();
+    let budget = scope.stopping_budget();
+    let stopped_at = match scope.stop_reason {
+        crate::analysis::PartialDiffStopReason::FileBudget => {
+            format!("the file budget of {budget} changed file(s) ({budget_env}={budget})")
+        }
+        crate::analysis::PartialDiffStopReason::LineBudget => {
+            format!("the line budget of {budget} changed line(s) ({budget_env}={budget})")
+        }
+        crate::analysis::PartialDiffStopReason::LineBudgetExceededOnFirstFile => format!(
+            "the line budget of {budget} changed line(s) ({budget_env}={budget}); \
+             the first selected file alone exceeded it and was analyzed whole"
+        ),
+    };
     out.push_str(&format!(
-        "Partial scope: run state {} — analyzed {} changed file(s) ({} changed line(s)) of the diff; \
-         stop reason: {}.\n",
+        "Partial scope: run state {} — analysis stopped at {stopped_at}; \
+         analyzed {} changed file(s) ({} changed line(s)) of the diff; stop reason: {}.\n",
         scope.run_status,
         scope.selected_files.len(),
         scope.selected_changed_lines,
         scope.stop_reason.as_str(),
     ));
-    out.push_str(&format!(
-        "  NOT inspected: at least {} changed file(s) and at least {} changed line(s); \
-         the uninspected scope may contain additional findings.\n",
-        scope.uninspected_files_lower_bound, scope.uninspected_changed_lines_lower_bound,
-    ));
+    let found = output.findings.len();
+    if scope.has_known_uninspected_scope() {
+        out.push_str(&format!(
+            "  Found {found} finding(s) before stopping. NOT inspected: at least {} changed file(s) \
+             and at least {} changed line(s); more findings may exist beyond the budget.\n",
+            scope.uninspected_files_lower_bound, scope.uninspected_changed_lines_lower_bound,
+        ));
+    } else {
+        out.push_str(&format!(
+            "  Found {found} finding(s) before stopping. Every changed file ripr's language \
+             adapters read was selected, but the budget was exceeded, so this result stays \
+             partial and is not a complete-scope claim.\n",
+        ));
+    }
     for file in &scope.selected_files {
         // Paths come from the diff text: a crafted filename with control
         // bytes could forge report lines or emit terminal escape sequences.
@@ -342,9 +367,16 @@ fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
          (gate_eligibility: {}).\n",
         crate::analysis::PartialDiffScope::GATE_ELIGIBILITY,
     ));
+    // RIPR-PROP-0019 decision 6: raising the explicit overrides is the only
+    // continuation route; the budget has no off switch (zero is rejected).
+    // Both budgets are named: the next file can hit both, and the selector
+    // then reports only the file budget.
+    let (other_env, other_budget) = scope.other_budget();
     out.push_str(&format!(
-        "  {}\n  partition_identity: {}\n\n",
-        crate::analysis::PartialDiffScope::CONTINUATION_DISCLOSURE,
+        "  To widen the analyzed partition, raise {budget_env} above {budget} and re-run; the \
+         next file may also need {other_env} above {other_budget}. Overrides above the \
+         analysis-cost limit are clamped, the budget cannot be switched off, and named \
+         partition continuation is not available.\n  partition_identity: {}\n\n",
         scope.partition_identity,
     ));
 }
@@ -919,8 +951,160 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains("\nHidden:\n"));
-        assert!(rendered.contains("2 lower-priority finding(s) omitted"));
+        // #4395(b): unlabeled Rust-only remainder stays the count line with
+        // no invented language or preview identity.
+        assert!(
+            rendered.contains("  2 lower-priority finding(s) omitted from default human output.\n")
+        );
+        assert!(!rendered.contains("preview"));
         assert!(!rendered.contains("More:"));
+    }
+
+    /// #4395(b): mixed-repo remainder must name the omitted preview-language
+    /// identity. Ranking still selects the Rust gap; the Hidden line is how
+    /// a reader learns the omitted finding was Python preview.
+    #[test]
+    fn hidden_line_names_omitted_preview_language_identity() {
+        let mut rust = sample_finding();
+        rust.id = "rust-gap".to_string();
+        rust.language = Some(LanguageId::Rust);
+        rust.language_status = Some(LanguageStatus::Stable);
+        rust.probe.location = SourceLocation::new("src/lib.rs", 4, 1);
+
+        let mut python = sample_finding();
+        python.id = "python-preview-gap".to_string();
+        python.language = Some(LanguageId::Python);
+        python.language_status = Some(LanguageStatus::Preview);
+        python.probe.location = SourceLocation::new("src/margin.py", 2, 1);
+        python.recommended_next_step = Some("Add a Python preview assertion.".to_string());
+
+        let rendered = render(&bounded_output_with_findings(vec![rust, python]));
+
+        assert!(rendered.contains("State: top_gap"));
+        assert!(rendered.contains("File: src/lib.rs:4"));
+        assert!(!rendered.contains("File: src/margin.py:2"));
+        assert!(
+            rendered.contains(
+                "  1 lower-priority finding(s) omitted from default human output (Python preview: 1).\n"
+            ),
+            "Hidden line must name omitted Python preview identity; got:\n{rendered}"
+        );
+    }
+
+    /// #4395(b): labeled Rust-only remainder must stay byte-identical to the
+    /// count line. Adding identity for every omitted Rust finding would churn
+    /// the default human surface without answering the mixed-repo question.
+    #[test]
+    fn hidden_line_stays_count_only_when_omitted_findings_are_labeled_rust() {
+        let mut findings = Vec::new();
+        for index in 0..3 {
+            let mut finding = sample_finding();
+            finding.id = format!("rust-{index}");
+            finding.language = Some(LanguageId::Rust);
+            finding.language_status = Some(LanguageStatus::Stable);
+            finding.probe.location = SourceLocation::new(format!("src/f{index}.rs"), 1, 1);
+            findings.push(finding);
+        }
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        assert!(
+            rendered.contains("  2 lower-priority finding(s) omitted from default human output.\n")
+        );
+        assert!(
+            !rendered.contains("Rust:"),
+            "Rust-only Hidden line must not grow a language breakdown; got:\n{rendered}"
+        );
+        assert!(!rendered.contains("preview"));
+    }
+
+    /// #4395(b): when every omitted finding is preview, name that language
+    /// even if Start here is already `preview_limited`.
+    #[test]
+    fn hidden_line_names_preview_identity_when_all_omitted_findings_are_preview() {
+        let mut findings = Vec::new();
+        for index in 0..3 {
+            let mut finding = sample_finding();
+            finding.id = format!("python-{index}");
+            finding.language = Some(LanguageId::Python);
+            finding.language_status = Some(LanguageStatus::Preview);
+            finding.probe.location = SourceLocation::new(format!("src/f{index}.py"), 1, 1);
+            findings.push(finding);
+        }
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        assert!(rendered.contains("State: preview_limited"));
+        assert!(
+            rendered.contains(
+                "  2 lower-priority finding(s) omitted from default human output (Python preview: 2).\n"
+            ),
+            "preview-only remainder must still name Python preview identity; got:\n{rendered}"
+        );
+    }
+
+    /// #4395(b): preview status without a language id must not invent a
+    /// language name. The count line still warns that omitted findings may
+    /// include preview-language evidence.
+    #[test]
+    fn hidden_line_hedges_unlabeled_preview_omitted_findings() {
+        let mut selected = sample_finding();
+        selected.id = "rust-selected".to_string();
+        selected.language = Some(LanguageId::Rust);
+        selected.probe.location = SourceLocation::new("src/lib.rs", 1, 1);
+
+        let mut omitted = sample_finding();
+        omitted.id = "unlabeled-preview".to_string();
+        omitted.language = None;
+        omitted.language_status = Some(LanguageStatus::Preview);
+        omitted.probe.location = SourceLocation::new("src/unknown.py", 1, 1);
+
+        let rendered = render(&bounded_output_with_findings(vec![selected, omitted]));
+
+        assert!(
+            rendered.contains(
+                "  1 lower-priority finding(s) omitted from default human output (preview-language: 1).\n"
+            ),
+            "unlabeled preview remainder must not invent a language; got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("Python preview"),
+            "unlabeled preview must not be credited as Python; got:\n{rendered}"
+        );
+    }
+
+    /// #4395(b): two preview languages in the omitted set are counted
+    /// separately. Token coincidence on one language name must not hide the
+    /// other.
+    #[test]
+    fn hidden_line_counts_each_omitted_preview_language() {
+        let mut rust = sample_finding();
+        rust.id = "rust-gap".to_string();
+        rust.language = Some(LanguageId::Rust);
+        rust.probe.location = SourceLocation::new("src/lib.rs", 1, 1);
+
+        let mut python = sample_finding();
+        python.id = "python-gap".to_string();
+        python.language = Some(LanguageId::Python);
+        python.language_status = Some(LanguageStatus::Preview);
+        python.probe.location = SourceLocation::new("src/a.py", 1, 1);
+
+        let mut typescript = sample_finding();
+        typescript.id = "ts-gap".to_string();
+        typescript.language = Some(LanguageId::TypeScript);
+        typescript.language_status = Some(LanguageStatus::Preview);
+        typescript.probe.location = SourceLocation::new("src/a.ts", 1, 1);
+
+        let rendered = render(&bounded_output_with_findings(vec![
+            rust, python, typescript,
+        ]));
+
+        assert!(
+            rendered.contains(
+                "  2 lower-priority finding(s) omitted from default human output (TypeScript preview: 1, Python preview: 1).\n"
+            ),
+            "each omitted preview language must appear with its own count; got:\n{rendered}"
+        );
     }
 
     /// #2103: a Rust-only run emits no per-language breakdown line, so
@@ -1724,6 +1908,12 @@ mod tests {
         assert!(rendered.contains("State: top_gap"));
         assert!(rendered.contains("File: src/stable.rs:10"));
         assert!(!rendered.contains("File: src/preview.ts:1"));
+        assert!(
+            rendered.contains(
+                "  1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).\n"
+            ),
+            "stable-over-preview ranking still omits the preview finding; Hidden must name it; got:\n{rendered}"
+        );
     }
 
     #[test]
@@ -1939,6 +2129,125 @@ mod tests {
             !super::render_bounded_with_config(&full, &crate::config::RiprConfig::default())
                 .contains("limited_partial_scope")
         );
+        Ok(())
+    }
+
+    /// A partial-scope report whose scope record has the shape the real
+    /// selector produces for `stop_reason` (pinned against the selector by
+    /// `analysis::language::rust::tests::partial_stop_reason_shapes_match_the_human_disclosure_fixtures`).
+    fn partial_scope_output(
+        stop_reason: crate::analysis::PartialDiffStopReason,
+        uninspected_files: usize,
+        uninspected_lines: usize,
+    ) -> CheckOutput {
+        use crate::analysis::PartialDiffStopReason;
+        // file_budget 1 / line_budget 40: a file-budget stop selected one
+        // 30-line file; a line-budget stop (file budget 7) selected 35 lines
+        // and the next file would overshoot; a first-file stop selected one
+        // 60-line file alone.
+        let (file_budget, selected_changed_lines) = match stop_reason {
+            PartialDiffStopReason::FileBudget => (1, 30),
+            PartialDiffStopReason::LineBudget => (7, 35),
+            PartialDiffStopReason::LineBudgetExceededOnFirstFile => (7, 60),
+        };
+        CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary::default(),
+            findings: vec![sample_finding()],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: Some(crate::analysis::PartialDiffScope {
+                run_status: crate::analysis::PartialDiffScope::RUN_STATUS.to_string(),
+                diff_identity: "sha256:abc".to_string(),
+                file_budget,
+                line_budget: 40,
+                budget_disclosures: Vec::new(),
+                selected_files: vec!["src/a.rs".to_string()],
+                selected_changed_lines,
+                uninspected_files_lower_bound: uninspected_files,
+                uninspected_changed_lines_lower_bound: uninspected_lines,
+                stop_reason,
+                partition_identity: "c".repeat(64),
+            }),
+        }
+    }
+
+    #[test]
+    fn partial_scope_names_stopping_budget_size_finding_count_and_override() -> Result<(), String> {
+        use crate::analysis::PartialDiffStopReason;
+        let cases = [
+            (
+                PartialDiffStopReason::FileBudget,
+                3,
+                90,
+                vec![
+                    "analysis stopped at the file budget of 1 changed file(s) \
+                     (RIPR_PARTIAL_DIFF_FILE_BUDGET=1)",
+                    "Found 1 finding(s) before stopping.",
+                    "NOT inspected: at least 3 changed file(s) and at least 90 changed line(s); \
+                     more findings may exist beyond the budget.",
+                    "raise RIPR_PARTIAL_DIFF_FILE_BUDGET above 1 and re-run",
+                    "may also need RIPR_PARTIAL_DIFF_LINE_BUDGET above 40",
+                ],
+            ),
+            (
+                PartialDiffStopReason::LineBudget,
+                2,
+                30,
+                vec![
+                    "analysis stopped at the line budget of 40 changed line(s) \
+                     (RIPR_PARTIAL_DIFF_LINE_BUDGET=40)",
+                    "Found 1 finding(s) before stopping.",
+                    "more findings may exist beyond the budget.",
+                    "raise RIPR_PARTIAL_DIFF_LINE_BUDGET above 40 and re-run",
+                    "may also need RIPR_PARTIAL_DIFF_FILE_BUDGET above 7",
+                ],
+            ),
+            (
+                PartialDiffStopReason::LineBudgetExceededOnFirstFile,
+                0,
+                0,
+                vec![
+                    "analysis stopped at the line budget of 40 changed line(s) \
+                     (RIPR_PARTIAL_DIFF_LINE_BUDGET=40); the first selected file alone exceeded \
+                     it and was analyzed whole",
+                    "Found 1 finding(s) before stopping.",
+                    "Every changed file ripr's language adapters read was selected",
+                    "this result stays partial and is not a complete-scope claim",
+                    "raise RIPR_PARTIAL_DIFF_LINE_BUDGET above 40 and re-run",
+                    "may also need RIPR_PARTIAL_DIFF_FILE_BUDGET above 7",
+                ],
+            ),
+        ];
+        for (stop_reason, files, lines, needles) in cases {
+            let output = partial_scope_output(stop_reason, files, lines);
+            for rendered in [
+                super::render_bounded_with_config(&output, &crate::config::RiprConfig::default()),
+                super::render_full_with_config(&output, &crate::config::RiprConfig::default()),
+            ] {
+                for needle in &needles {
+                    if !rendered.contains(needle) {
+                        return Err(format!(
+                            "{stop_reason:?}: partial disclosure missing `{needle}` in:\n{rendered}"
+                        ));
+                    }
+                }
+                if rendered.contains("at least 0") {
+                    return Err(format!(
+                        "{stop_reason:?}: `at least 0` printed as a count in:\n{rendered}"
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -2583,6 +2892,32 @@ mod tests {
             discriminator_evidence_line(&finding),
             "discriminator yes: Strong oracle found"
         );
+    }
+
+    fn bounded_output_with_findings(findings: Vec<Finding>) -> CheckOutput {
+        let count = findings.len();
+        CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: count,
+                findings: count,
+                weakly_exposed: count,
+                ..Summary::default()
+            },
+            findings,
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        }
     }
 
     fn sample_finding() -> Finding {
