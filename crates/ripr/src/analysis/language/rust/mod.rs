@@ -973,6 +973,14 @@ impl RustAdapter {
             rust_index::validated_file_wide_harness_targets(&options.root, &options.test_harnesses);
         // #4435: a changed file seeds only when a Cargo target's module
         // tree reaches it. The walk covers the changed files' packages only.
+        // Only a file the layout rule would seed loses anything to an
+        // orphan verdict; an unreached fixture or `tests/data` file was
+        // evidence before and stays silent, so it earns no limitation.
+        let layout_seeded_rust_paths = changed_rust_paths
+            .iter()
+            .filter(|path| workspace::seeds_diff_probes(path, &source_role_context))
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
         let external_module_packages = workspace::apply_module_graph_evidence(
             &options.root,
             &mut source_role_context,
@@ -1243,11 +1251,10 @@ impl RustAdapter {
                     is_generated_rust_file_with_patterns(&file.path, generated_file_patterns)
                 })
                 .count(),
-            limitations: unreached_module_limitations(
-                changed_rust_paths
-                    .iter()
-                    .filter(|path| source_role_context.module_graph_orphans.contains(*path)),
-            )?,
+            limitations: unreached_module_limitations(changed_rust_paths.iter().filter(|path| {
+                layout_seeded_rust_paths.contains(*path)
+                    && source_role_context.module_graph_orphans.contains(*path)
+            }))?,
         })
     }
 }
@@ -4180,6 +4187,36 @@ fn absent_delimiter_boundary_returns_head() {
             !files.iter().any(|file| file == "src/unused.rs"),
             "an undeclared src file must not seed: {files:?}"
         );
+        assert_eq!(orphan_limitation_paths(&result), vec!["src/unused.rs"]);
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_limits_only_orphans_the_layout_rule_would_seed() -> Result<(), String> {
+        // #4802 review: an unreached fixture or `tests/data` source was
+        // evidence under the layout rule and never seeded, so the module
+        // tree takes nothing from it and it earns no limitation. The
+        // undeclared `src` file is the control that still does.
+        let root = temp_root("module-graph-evidence-orphans")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        write(&root.join("src/unused.rs"), DISCOUNT_SOURCE)?;
+        write(&root.join("fixtures/case/input.rs"), DISCOUNT_SOURCE)?;
+        write(&root.join("tests/data/sample.rs"), DISCOUNT_SOURCE)?;
+        let diff = format!(
+            "{}{}{}",
+            predicate_change_diff("src/unused.rs"),
+            predicate_change_diff("fixtures/case/input.rs"),
+            predicate_change_diff("tests/data/sample.rs")
+        );
+
+        let result = module_graph_diff(&root, &diff)?;
+
         assert_eq!(orphan_limitation_paths(&result), vec!["src/unused.rs"]);
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())

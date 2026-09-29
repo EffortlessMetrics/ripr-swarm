@@ -100,8 +100,9 @@ file seeds only when a Cargo target's module tree reaches it through
 root (a declared `[lib] path` replaces `src/lib.rs`). The modules of an
 external root (`[lib] path = "../shared/lib.rs"`) seed, and every member
 package that compiles that root keeps its tests in Draft scope. A changed
-file no target reaches seeds nothing and records one
-`language_scope_unsupported` limitation naming it, but only when every
+file no target reaches seeds nothing; when the layout rule would have
+seeded it, the run records one `language_scope_unsupported` limitation
+naming it, but only when every
 Rust file in the workspace scans completely: a macro call other than a
 std macro that cannot emit items (at item level, inside a body, or nested
 in a std macro's arguments), a declaration inside a macro token tree, a
@@ -224,8 +225,9 @@ The #3532 harness registry joined the same identity as FindingAffecting
   regression tests remain green.
 - Module-tree seeding (#4435): an undeclared `src` file and an undeclared
   file beside a non-`src` library root seed nothing while their declared
-  siblings seed; a module only a replaced default `src/lib.rs` declares
-  seeds nothing; an external root's module seeds and relates the tests of
+  siblings seed, and only such files, never an unreached fixture or
+  `tests/data` source, record the limitation; a module only a replaced
+  default `src/lib.rs` declares seeds nothing; an external root's module seeds and relates the tests of
   every declaring package; `#[path]`, `include!`, nested inline and
   raw-identifier edges seed; an unknown tree (`cfg_if!`) keeps seeding;
   the LSP partition drops the same anchors. Each walk regression pairs a
