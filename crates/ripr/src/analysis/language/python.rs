@@ -742,6 +742,7 @@ impl PythonAdapter {
             partial_scope: None,
             skipped_files,
             limitations,
+            rust_diagnostic_origins: Default::default(),
         })
     }
 
@@ -774,6 +775,7 @@ impl PythonAdapter {
             production_files,
             skipped_files,
             partial_reason,
+            rust_diagnostic_origins: Default::default(),
         })
     }
 }

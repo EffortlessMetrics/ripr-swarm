@@ -7146,6 +7146,7 @@ fn diagnostic_for_finding_measures_saved_prefix_in_negotiated_encoding() -> Resu
             crate::config::LspDiagnosticProfile::Full,
             None,
             encoding,
+            &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
         )?;
         let diagnostic = grouped
             .values()
@@ -19399,6 +19400,7 @@ fn profile_status(
             profile,
             None,
             &PositionEncodingKind::UTF16,
+            &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
         )?;
         let published = grouped.get(&uri).cloned().unwrap_or_default();
         let published_count = published.len();

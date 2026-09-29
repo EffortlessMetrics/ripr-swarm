@@ -15,13 +15,14 @@ use super::super::{
 };
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 use crate::analysis::cancellation;
+use crate::analysis::diagnostic_origin::{OriginBuildContext, origins_for_rust_findings};
 use crate::analysis::facts::{FunctionSummary, RustIndex};
 use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
 use crate::config::OraclePolicy;
 use crate::domain::{
     ExposureClass, Finding, Probe, SourceCurrentness, StaticLimitKind, StopReason,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// Default ceiling on the number of Rust files a diff-scoped analysis will
@@ -1658,6 +1659,7 @@ impl RustAdapter {
         let mut related_test_candidate_index = None;
 
         let mut findings = Vec::new();
+        let mut parser_spans = BTreeMap::new();
         let mut changed_rust_files = 0usize;
         let mut candidate_lines = BTreeSet::new();
 
@@ -1749,7 +1751,12 @@ impl RustAdapter {
             // exits the classify loop promptly.
             cancellation::checkpoint()?;
             let probes = probes::probes_for_file_with_relations(&options.root, changed, &index);
-            for (probe, binding_relation) in probes {
+            for seeded in probes {
+                if let Some(span) = seeded.parser_span {
+                    parser_spans.insert(seeded.probe.id.0.clone(), span);
+                }
+                let probe = seeded.probe;
+                let binding_relation = seeded.binding_relation;
                 candidate_lines.insert((probe.location.file.clone(), probe.location.line));
                 cancellation::checkpoint()?;
                 let related_test_candidate_index = related_test_candidate_index
@@ -1802,6 +1809,16 @@ impl RustAdapter {
             }
         }
 
+        let rust_diagnostic_origins = origins_for_rust_findings(
+            &findings,
+            &OriginBuildContext {
+                root: &options.root,
+                loaded_files: &loaded_files,
+                index: &index,
+                parser_spans: &parser_spans,
+            },
+        );
+
         Ok(LanguageDiffResult {
             findings,
             harness_projections: super::super::harness_projection::projections_from_index(
@@ -1820,6 +1837,7 @@ impl RustAdapter {
                 })
                 .count(),
             limitations: Vec::new(),
+            rust_diagnostic_origins,
         })
     }
 }
@@ -1944,6 +1962,7 @@ impl RustAdapter {
         let mut related_test_candidate_index = None;
 
         let mut findings = Vec::new();
+        let mut parser_spans = BTreeMap::new();
 
         // #2972: one path-dependency edge context per repo pass. Repo mode
         // indexes the whole workspace, so the admit precondition holds by
@@ -1960,8 +1979,12 @@ impl RustAdapter {
         };
 
         for path in &production_files {
-            let probes = probes::probes_for_repo_file(&options.root, path, &index);
-            for probe in probes {
+            let probes = probes::probes_for_repo_file_seeded(&options.root, path, &index);
+            for seeded in probes {
+                if let Some(span) = seeded.parser_span {
+                    parser_spans.insert(seeded.probe.id.0.clone(), span);
+                }
+                let probe = seeded.probe;
                 let related_test_candidate_index = related_test_candidate_index
                     .get_or_insert_with(|| classify::RelatedTestCandidateIndex::new(&index));
                 let mut finding = classifier::classify_probe_with_candidate_index(
@@ -1991,6 +2014,16 @@ impl RustAdapter {
             }
         }
 
+        let rust_diagnostic_origins = origins_for_rust_findings(
+            &findings,
+            &OriginBuildContext {
+                root: &options.root,
+                loaded_files: &loaded_rust_files,
+                index: &index,
+                parser_spans: &parser_spans,
+            },
+        );
+
         Ok(LanguageRepoResult {
             findings,
             harness_projections: super::super::harness_projection::projections_from_index(
@@ -2000,6 +2033,7 @@ impl RustAdapter {
             production_files: production_files.len(),
             skipped_files,
             partial_reason: None,
+            rust_diagnostic_origins,
         })
     }
 }

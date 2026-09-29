@@ -44,7 +44,20 @@ pub fn check_workspace_worktree_with_config(
     input: CheckInput,
     config: &RiprConfig,
 ) -> Result<CheckOutput, String> {
-    run_check(input, config, AnalysisMode::Worktree)
+    Ok(check_workspace_worktree_with_origins(input, config)?.0)
+}
+
+pub(crate) fn check_workspace_worktree_with_origins(
+    input: CheckInput,
+    config: &RiprConfig,
+) -> Result<
+    (
+        CheckOutput,
+        crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
+    ),
+    String,
+> {
+    run_check_with_origins(input, config, AnalysisMode::Worktree)
 }
 
 /// Runs the repo-baseline static exposure analysis for a workspace. This
@@ -65,7 +78,20 @@ pub fn check_workspace_repo_with_config(
     input: CheckInput,
     config: &RiprConfig,
 ) -> Result<CheckOutput, String> {
-    run_check(input, config, AnalysisMode::Repo)
+    Ok(check_workspace_repo_with_origins(input, config)?.0)
+}
+
+pub(crate) fn check_workspace_repo_with_origins(
+    input: CheckInput,
+    config: &RiprConfig,
+) -> Result<
+    (
+        CheckOutput,
+        crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
+    ),
+    String,
+> {
+    run_check_with_origins(input, config, AnalysisMode::Repo)
 }
 
 /// Build a minimal [`CheckOutput`] for repo seam-driven rendering.
@@ -94,6 +120,7 @@ pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
             // No analysis ran, so no loader chose a base (#3940).
             effective_base: None,
             uncommitted_source_paths: Vec::new(),
+            rust_diagnostic_origins: Default::default(),
         },
     )
 }
@@ -106,10 +133,24 @@ enum AnalysisMode {
 }
 
 fn run_check(
-    mut input: CheckInput,
+    input: CheckInput,
     config: &RiprConfig,
     mode: AnalysisMode,
 ) -> Result<CheckOutput, String> {
+    Ok(run_check_with_origins(input, config, mode)?.0)
+}
+
+fn run_check_with_origins(
+    mut input: CheckInput,
+    config: &RiprConfig,
+    mode: AnalysisMode,
+) -> Result<
+    (
+        CheckOutput,
+        crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
+    ),
+    String,
+> {
     // Immutable Git candidate subjects (#3237 / #3276): bind-and-validate
     // only in this build. Validate first, before any subprocess or diff
     // acquisition, so a subject input can never fall through to worktree
@@ -197,11 +238,12 @@ fn run_check(
     }
 
     let suppression_policy = input.suppression_policy.clone();
+    let origins = analysis.rust_diagnostic_origins.clone();
     let mut output = output_builder::check_output_from_analysis(input, analysis);
     if let Some(policy) = suppression_policy {
         apply_suppression_policy(&mut output, &policy)?;
     }
-    Ok(output)
+    Ok((output, origins))
 }
 
 /// Applies an explicit `--suppression-policy` file to check findings (#1441).
@@ -740,6 +782,7 @@ mod tests {
             partial_scope: None,
             effective_base,
             uncommitted_source_paths: Vec::new(),
+            rust_diagnostic_origins: Default::default(),
         }
     }
 

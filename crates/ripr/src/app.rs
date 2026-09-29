@@ -43,6 +43,9 @@ pub(crate) const PERL_FACT_PACKET_SCHEMA: &str = "ripr-perl-facts-v1";
 /// route and emitted by the agent seam packet renderer.
 pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = "0.4";
 pub(crate) use crate::analysis::repair_route::repair_route_readiness;
+#[cfg(test)]
+pub(crate) use check::check_workspace_repo_with_origins;
+pub(crate) use check::check_workspace_worktree_with_origins;
 pub(crate) use check::is_managed_perl_producer;
 pub use check::{
     check_workspace_repo_with_config, check_workspace_with_config,
