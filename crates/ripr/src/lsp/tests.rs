@@ -359,6 +359,45 @@ where
     Ok((begin, creates))
 }
 
+/// Read `count` `client/registerCapability` requests, answering each so the
+/// server's registration round trip completes, and return every
+/// registration they carried.
+async fn read_and_answer_registrations<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    count: usize,
+) -> Result<Vec<serde_json::Value>, String>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut registrations = Vec::new();
+    for _ in 0..count {
+        let request = tokio::time::timeout(
+            Duration::from_secs(10),
+            read_lsp_request(reader, "client/registerCapability"),
+        )
+        .await
+        .map_err(|_elapsed| "a watcher registration never arrived".to_string())??;
+        let id = request
+            .get("id")
+            .cloned()
+            .ok_or_else(|| "registration request carried no id".to_string())?;
+        write_lsp_message(
+            writer,
+            serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null}),
+        )
+        .await?;
+        registrations.extend(
+            request["params"]["registrations"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default(),
+        );
+    }
+    Ok(registrations)
+}
+
 #[test]
 fn watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire()
 -> Result<(), String> {
@@ -407,36 +446,28 @@ fn watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire()
         )
         .await?;
 
-        // #4896: the registration anchors the two diagnostics inputs at the
-        // workspace root, because VS Code matches bare string globs against
-        // absolute paths.
-        let registration = tokio::time::timeout(
-            Duration::from_secs(10),
-            read_lsp_request(&mut client_read, "client/registerCapability"),
-        )
-        .await
-        .map_err(|_elapsed| "no watcher registration arrived".to_string())??;
-        let watchers = registration["params"]["registrations"][0]["registerOptions"]["watchers"]
-            .as_array()
-            .cloned()
-            .ok_or_else(|| format!("registration carried no watchers: {registration}"))?;
-        for relative in ["target/ripr/reports/gap-decision-ledger.json", ".git/HEAD"] {
-            let expected = serde_json::json!({
-                "globPattern": {"baseUri": root_uri.as_str(), "pattern": relative}
-            });
-            if !watchers.contains(&expected) {
-                return Err(format!("missing root-anchored {relative}: {watchers:?}"));
-            }
+        // #4896: the diagnostics inputs register separately from the
+        // config/graph watchers, anchored at the workspace root, because
+        // VS Code matches bare string globs against absolute paths.
+        let registrations =
+            read_and_answer_registrations(&mut client_read, &mut client_write, 2).await?;
+        let diagnostics = registrations
+            .iter()
+            .find(|registration| registration["id"] == "ripr-diagnostics-input-watch")
+            .ok_or_else(|| format!("no diagnostics-input registration: {registrations:?}"))?;
+        let expected = ["target/ripr/reports/gap-decision-ledger.json", ".git/HEAD"]
+            .iter()
+            .map(|relative| {
+                serde_json::json!({
+                    "globPattern": {"baseUri": root_uri.as_str(), "pattern": relative}
+                })
+            })
+            .collect::<Vec<_>>();
+        if diagnostics["registerOptions"]["watchers"] != serde_json::json!(expected) {
+            return Err(format!(
+                "diagnostics watchers not root-anchored: {diagnostics}"
+            ));
         }
-        let registration_id = registration
-            .get("id")
-            .cloned()
-            .ok_or_else(|| "registration request carried no id".to_string())?;
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({"jsonrpc": "2.0", "id": registration_id, "result": null}),
-        )
-        .await?;
 
         let watched_event = |path: PathBuf| -> Result<serde_json::Value, String> {
             let uri = file_uri_for_path(&path)?;
@@ -8390,6 +8421,16 @@ fn initialize_discloses_bounded_client_feature_profile_in_workspace_status() -> 
             work_done_progress: Some(true),
             ..tower_lsp_server::ls_types::WindowClientCapabilities::default()
         });
+        params.capabilities.workspace =
+            Some(tower_lsp_server::ls_types::WorkspaceClientCapabilities {
+                did_change_watched_files: Some(
+                    tower_lsp_server::ls_types::DidChangeWatchedFilesClientCapabilities {
+                        dynamic_registration: Some(true),
+                        relative_pattern_support: Some(true),
+                    },
+                ),
+                ..tower_lsp_server::ls_types::WorkspaceClientCapabilities::default()
+            });
         params.capabilities.experimental = Some(serde_json::json!({
             "riprEditor": {
                 "version": "0.10.0",
@@ -8416,6 +8457,10 @@ fn initialize_discloses_bounded_client_feature_profile_in_workspace_status() -> 
         assert_eq!(features["pull_diagnostics"], true);
         assert_eq!(features["work_done_progress"], true);
         assert_eq!(features["configuration_mode"], "initialization_only");
+        assert_eq!(features["watched_files_dynamic_registration"], true);
+        // #4896: whether diagnostics-input watchers anchor at the root is
+        // decided by this negotiated value, so status must disclose it.
+        assert_eq!(features["watched_files_relative_pattern_support"], true);
         assert_eq!(features["ripr_editor"]["version"], "0.10.0");
         assert_eq!(features["ripr_editor"]["guarded_test_edit"], true);
         assert_eq!(features["ripr_editor"]["command_count"], 1);
@@ -8471,6 +8516,8 @@ fn receipt_status_discloses_bounded_client_feature_profile() -> Result<(), Strin
             serde_json::json!(["status_notifications"])
         );
         assert_eq!(features["ripr_editor"], serde_json::Value::Null);
+        assert_eq!(features["watched_files_dynamic_registration"], false);
+        assert_eq!(features["watched_files_relative_pattern_support"], false);
         Ok(())
     })
 }
@@ -9930,6 +9977,98 @@ fn status_candidate_roots(status: &serde_json::Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[test]
+fn workspace_folder_transitions_root_switch_reanchors_diagnostics_input_watchers()
+-> Result<(), String> {
+    // #4896: the diagnostics-input watchers are anchored at one root, so a
+    // root switch must release the old registration and anchor a new one
+    // at the new root; otherwise the new root's ledger and branch changes
+    // never refresh diagnostics.
+    run_workspace_folder_transitions_exchange(
+        "diagnostics-input watcher re-anchoring did not complete",
+        async {
+            let root_a = unique_lsp_test_root("wft-watch-reanchor-a")?;
+            let root_b = unique_lsp_test_root("wft-watch-reanchor-b")?;
+            let root_a_uri = file_uri_for_path(root_a.path())?;
+            let root_b_uri = file_uri_for_path(root_b.path())?;
+            let mut client = WorkspaceFolderTransitionsClient::spawn();
+            client
+                .initialize_with_capabilities(
+                    serde_json::json!([workspace_folder_json(&root_a_uri)]),
+                    serde_json::json!({"workspace": {"didChangeWatchedFiles": {
+                        "dynamicRegistration": true,
+                        "relativePatternSupport": true
+                    }}}),
+                )
+                .await?;
+            let registrations =
+                read_and_answer_registrations(&mut client.reader, &mut client.writer, 2).await?;
+            let base_of = |registrations: &[serde_json::Value]| {
+                registrations
+                    .iter()
+                    .find(|registration| registration["id"] == "ripr-diagnostics-input-watch")
+                    .and_then(|registration| {
+                        registration["registerOptions"]["watchers"][0]["globPattern"]["baseUri"]
+                            .as_str()
+                            .map(str::to_string)
+                    })
+            };
+            if base_of(&registrations).as_deref() != Some(root_a_uri.as_str()) {
+                return Err(format!(
+                    "diagnostics watchers must start anchored at root A: {registrations:?}"
+                ));
+            }
+
+            let request = client
+                .send_folder_event(
+                    serde_json::json!([workspace_folder_json(&root_b_uri)]),
+                    serde_json::json!([workspace_folder_json(&root_a_uri)]),
+                )
+                .await?;
+            client
+                .answer_workspace_folders(
+                    &request,
+                    serde_json::json!([workspace_folder_json(&root_b_uri)]),
+                )
+                .await?;
+
+            let unregistration = tokio::time::timeout(
+                Duration::from_secs(10),
+                read_lsp_request(&mut client.reader, "client/unregisterCapability"),
+            )
+            .await
+            .map_err(|_elapsed| "root switch left the root-A watchers registered".to_string())??;
+            if unregistration["params"]["unregisterations"]
+                != serde_json::json!([{
+                    "id": "ripr-diagnostics-input-watch",
+                    "method": "workspace/didChangeWatchedFiles"
+                }])
+            {
+                return Err(format!(
+                    "root switch must release only the diagnostics watchers: {unregistration}"
+                ));
+            }
+            write_lsp_message(
+                &mut client.writer,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": unregistration["id"].clone(),
+                    "result": null
+                }),
+            )
+            .await?;
+            let registrations =
+                read_and_answer_registrations(&mut client.reader, &mut client.writer, 1).await?;
+            if base_of(&registrations).as_deref() != Some(root_b_uri.as_str()) {
+                return Err(format!(
+                    "diagnostics watchers must re-anchor at root B: {registrations:?}"
+                ));
+            }
+            client.finish().await
+        },
+    )
 }
 
 #[test]

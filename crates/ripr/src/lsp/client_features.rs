@@ -417,6 +417,7 @@ impl ClientFeatureProfile {
             "workspace_folders": self.workspace_folders,
             "code_lens_refresh": self.code_lens_refresh,
             "watched_files_dynamic_registration": self.watched_files_dynamic_registration,
+            "watched_files_relative_pattern_support": self.watched_files_relative_pattern_support,
             "configuration_mode": self.configuration_mode.as_str(),
             "ripr_editor": ripr_editor,
             "ripr_agent": ripr_agent,

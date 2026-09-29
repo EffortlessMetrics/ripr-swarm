@@ -95,10 +95,10 @@ use tower_lsp_server::ls_types::{
     DocumentDiagnosticReport, DocumentDiagnosticReportResult, ExecuteCommandParams, FileEvent,
     Hover, HoverParams, InitializeParams, InitializeResult, InitializedParams, LSPAny,
     LogTraceParams, MessageType, Registration, RelatedFullDocumentDiagnosticReport,
-    RelatedUnchangedDocumentDiagnosticReport, TraceValue, UnchangedDocumentDiagnosticReport, Uri,
-    WorkspaceDiagnosticParams, WorkspaceDiagnosticReport, WorkspaceDiagnosticReportResult,
-    WorkspaceDocumentDiagnosticReport, WorkspaceFullDocumentDiagnosticReport,
-    WorkspaceUnchangedDocumentDiagnosticReport,
+    RelatedUnchangedDocumentDiagnosticReport, TraceValue, UnchangedDocumentDiagnosticReport,
+    Unregistration, Uri, WorkspaceDiagnosticParams, WorkspaceDiagnosticReport,
+    WorkspaceDiagnosticReportResult, WorkspaceDocumentDiagnosticReport,
+    WorkspaceFullDocumentDiagnosticReport, WorkspaceUnchangedDocumentDiagnosticReport,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
@@ -159,6 +159,11 @@ pub(super) struct Backend {
     last_lens_view_identity: Mutex<Option<LensViewIdentity>>,
     dynamic_file_watch_registration: Mutex<bool>,
     watched_files_relative_pattern_support: AtomicBool,
+    /// The diagnostics-input watcher registration (#4896). Those watchers
+    /// are anchored at one root, so they are re-registered on every root
+    /// transition; the async lock serializes concurrent transitions across
+    /// the client round trips.
+    diagnostics_input_watch: AsyncMutex<DiagnosticsInputWatch>,
     /// The degradation signature covered by the last `window/logMessage`
     /// component warning (#1997, RIPR-SPEC-0141). Compared per committed
     /// snapshot: a byte-identical repeated degradation warns once, a new
@@ -174,6 +179,20 @@ pub(super) struct Backend {
     workspace_revision: Mutex<u64>,
     refresh_idle: Notify,
     pub(super) progress: Arc<AnalysisProgressTracker>,
+}
+
+/// Registration id of the root-anchored diagnostics-input watchers (#4896).
+const DIAGNOSTICS_INPUT_WATCH_ID: &str = "ripr-diagnostics-input-watch";
+
+#[derive(Default)]
+struct DiagnosticsInputWatch {
+    /// Set by `initialized`: the client rejects server->client requests
+    /// before it, so initialize-time root transitions must not register.
+    armed: bool,
+    /// The effective root the registration was last synchronized with.
+    synced_root: Option<PathBuf>,
+    /// Whether the client currently holds the registration.
+    registered: bool,
 }
 
 #[derive(Default)]
@@ -243,6 +262,7 @@ impl Backend {
             last_lens_view_identity: Mutex::new(None),
             dynamic_file_watch_registration: Mutex::new(false),
             watched_files_relative_pattern_support: AtomicBool::new(false),
+            diagnostics_input_watch: AsyncMutex::new(DiagnosticsInputWatch::default()),
             last_component_degradation: Mutex::new(None),
             initialize_failure_disclosure_omitted: AtomicBool::new(false),
             refresh_scheduler: RefreshScheduler::default(),
@@ -1040,6 +1060,84 @@ impl Backend {
             .and_then(|authority| authority.effective_root.clone())
     }
 
+    /// Re-anchor the diagnostics-input watchers (#4896) at the current
+    /// effective root: a registration left on a previous root would miss
+    /// the new root's ledger and branch changes. Callers must not hold the
+    /// root transition guard.
+    async fn sync_diagnostics_input_watch(&self) {
+        let supports_dynamic_registration = self
+            .dynamic_file_watch_registration
+            .lock()
+            .map(|value| *value)
+            .unwrap_or(false);
+        if !supports_dynamic_registration {
+            return;
+        }
+        let mut watch = self.diagnostics_input_watch.lock().await;
+        let root = self.effective_root();
+        if !watch.armed || watch.synced_root == root {
+            return;
+        }
+        if watch.registered {
+            watch.registered = false;
+            let unregistration = Unregistration {
+                id: DIAGNOSTICS_INPUT_WATCH_ID.to_string(),
+                method: "workspace/didChangeWatchedFiles".to_string(),
+            };
+            if let Err(error) = self
+                .client
+                .unregister_capability(vec![unregistration])
+                .await
+            {
+                self.client
+                    .log_message(
+                        MessageType::WARNING,
+                        format!(
+                            "ripr could not release previous-root diagnostics watchers: {error}"
+                        ),
+                    )
+                    .await;
+            }
+        }
+        watch.synced_root = root.clone();
+        let Some(root) = root else {
+            return;
+        };
+        let relative_pattern_support = self
+            .watched_files_relative_pattern_support
+            .load(Ordering::SeqCst);
+        let watchers = match diagnostics_input_watchers(&root, relative_pattern_support) {
+            Ok(watchers) => watchers,
+            Err(reason) => {
+                self.client
+                    .log_message(
+                        MessageType::INFO,
+                        format!(
+                            "ripr does not watch the gap ledger or .git/HEAD: {reason}; refresh manually after those change"
+                        ),
+                    )
+                    .await;
+                return;
+            }
+        };
+        let registration = Registration {
+            id: DIAGNOSTICS_INPUT_WATCH_ID.to_string(),
+            method: "workspace/didChangeWatchedFiles".to_string(),
+            register_options: Some(serde_json::json!({ "watchers": watchers })),
+        };
+        match self.client.register_capability(vec![registration]).await {
+            Ok(()) => watch.registered = true,
+            Err(error) => {
+                self.client
+                    .log_message(
+                        MessageType::WARNING,
+                        format!("ripr diagnostics input watching unavailable: {error}"),
+                    )
+                    .await;
+            }
+        }
+    }
+
     fn refresh_request_is_current(&self, request: &RefreshRequest) -> bool {
         if !self
             .refresh_scheduler
@@ -1818,6 +1916,10 @@ impl Backend {
         let (schedule_deferred_pull, lens_view_cleared) = self
             .apply_workspace_root_authority_locked(authority, expected_folder_set_epoch)
             .await;
+        // After the transition guard is released, like the requests below:
+        // the client round trip must not hold the guard. It reads the
+        // effective root afresh, so a newer transition is never undone.
+        self.sync_diagnostics_input_watch().await;
         if lens_view_cleared {
             // Sent after the transition guard is released, same discipline as
             // the deferred configuration pull: a cleared analysis state means
@@ -2972,12 +3074,10 @@ pub(super) fn workspace_input_path_is_relevant(root: &Path, path: &Path) -> bool
     workspace_input_kind(root, path).is_some()
 }
 
-/// Dynamic watcher registrations for every workspace input. With
-/// `diagnostics_input_base` (the root URI, when the client supports
-/// `RelativePattern`), the diagnostics inputs register as relative patterns
-/// anchored at the root: VS Code matches a plain string glob against the
-/// absolute path, so a bare `.git/HEAD` string never fires there.
-fn workspace_input_watchers(diagnostics_input_base: Option<&Uri>) -> Vec<LSPAny> {
+/// Dynamic watcher registrations for the configuration and graph inputs.
+/// The root-anchored diagnostics inputs register separately
+/// (`diagnostics_input_watchers`) because they follow root transitions.
+fn workspace_input_watchers() -> Vec<LSPAny> {
     std::iter::once(CONFIG_FILE_NAME)
         .chain(["Cargo.toml", "Cargo.lock"])
         .chain(PYTHON_PROJECT_MARKERS.iter().copied())
@@ -2991,17 +3091,44 @@ fn workspace_input_watchers(diagnostics_input_base: Option<&Uri>) -> Vec<LSPAny>
             // path's config comparison stays the semantic authority.
             serde_json::json!({"globPattern": format!("{dir}/**/*.py")})
         }))
-        .chain(DIAGNOSTICS_INPUT_PATHS.iter().map(|relative| {
-            // Root-scoped glob with no `**`: exactly the root ledger and
-            // root `.git/HEAD`, never nested copies.
-            match diagnostics_input_base {
-                Some(base) => serde_json::json!({
-                    "globPattern": {"baseUri": base.as_str(), "pattern": *relative}
-                }),
-                None => serde_json::json!({"globPattern": *relative}),
-            }
-        }))
         .collect()
+}
+
+/// Watchers for the diagnostics inputs of `root` (#4896): exactly the root
+/// ledger and root `.git/HEAD`, never nested copies. Clients such as VS Code
+/// match a string glob against the absolute path, so a bare relative string
+/// never fires; the patterns are a `RelativePattern` anchored at the root
+/// when the client supports it, otherwise absolute string globs. Returns
+/// `Err` when no reliable pattern exists; `workspace_input_kind` stays the
+/// semantic authority over which events count.
+fn diagnostics_input_watchers(
+    root: &Path,
+    relative_pattern_support: bool,
+) -> Result<Vec<LSPAny>, String> {
+    if relative_pattern_support {
+        let base = file_uri_for_path(root)?;
+        return Ok(DIAGNOSTICS_INPUT_PATHS
+            .iter()
+            .map(|relative| {
+                serde_json::json!({
+                    "globPattern": {"baseUri": base.as_str(), "pattern": *relative}
+                })
+            })
+            .collect());
+    }
+    let absolute = root.to_string_lossy().replace('\\', "/");
+    // Glob syntax has no portable escape, so a root containing
+    // metacharacters would match other paths or none at all.
+    if absolute.contains(['*', '?', '[', ']', '{', '}']) {
+        return Err(format!(
+            "workspace root {absolute} contains glob metacharacters"
+        ));
+    }
+    let absolute = absolute.trim_end_matches('/');
+    Ok(DIAGNOSTICS_INPUT_PATHS
+        .iter()
+        .map(|relative| serde_json::json!({"globPattern": format!("{absolute}/{relative}")}))
+        .collect())
 }
 
 #[cfg(test)]
@@ -3186,7 +3313,7 @@ mod workspace_input_tests {
 
     #[test]
     fn dynamic_watchers_cover_the_canonical_python_input_set() {
-        let actual = workspace_input_watchers(None)
+        let actual = workspace_input_watchers()
             .into_iter()
             .filter_map(|watcher| {
                 watcher
@@ -3204,53 +3331,69 @@ mod workspace_input_tests {
                     .iter()
                     .map(|dir| format!("{dir}/**/*.py")),
             )
-            .chain([
-                "target/ripr/reports/gap-decision-ledger.json".to_string(),
-                ".git/HEAD".to_string(),
-            ])
             .collect::<BTreeSet<_>>();
 
+        // The diagnostics inputs follow root transitions, so they are never
+        // part of this once-per-session registration.
         assert_eq!(actual, expected);
     }
 
     #[test]
-    fn dynamic_watchers_scope_diagnostics_inputs_to_the_root() -> Result<(), String> {
+    fn dynamic_watchers_anchor_diagnostics_inputs_at_the_root() -> Result<(), String> {
         let expected = ["target/ripr/reports/gap-decision-ledger.json", ".git/HEAD"];
-        let is_diagnostics_input = |pattern: &str| {
-            pattern.ends_with("gap-decision-ledger.json") || pattern.ends_with("HEAD")
+        let root = std::env::temp_dir().join("ripr-workspace-input-root");
+        let globs = |relative_pattern_support| {
+            diagnostics_input_watchers(&root, relative_pattern_support).map(|watchers| {
+                watchers
+                    .into_iter()
+                    .filter_map(|watcher| watcher.get("globPattern").cloned())
+                    .collect::<Vec<_>>()
+            })
         };
 
-        // Without RelativePattern support: bare root-relative strings.
-        let plain = workspace_input_watchers(None)
-            .into_iter()
-            .filter_map(|watcher| watcher.get("globPattern").cloned())
-            .collect::<Vec<_>>();
-        for relative in expected {
-            assert!(
-                plain.iter().any(|glob| glob.as_str() == Some(relative)),
-                "missing root-scoped watcher {relative}: {plain:?}"
-            );
-        }
-        for glob in plain.iter().filter_map(|glob| glob.as_str()) {
-            if is_diagnostics_input(glob) {
-                assert!(!glob.contains("**"), "{glob} must not be workspace-wide");
-            }
-        }
-
-        // With RelativePattern support: anchored at the root URI, because
-        // VS Code matches a bare string glob against the absolute path.
-        let root = std::env::temp_dir().join("ripr-workspace-input-root");
+        // With RelativePattern support: anchored at the root URI.
         let base = file_uri_for_path(&root).map_err(|err| format!("root URI failed: {err}"))?;
-        let anchored = workspace_input_watchers(Some(&base))
-            .into_iter()
-            .filter_map(|watcher| watcher.get("globPattern").cloned())
-            .filter(|glob| glob.is_object())
-            .collect::<Vec<_>>();
         let expected_anchored = expected
             .iter()
             .map(|relative| serde_json::json!({"baseUri": base.as_str(), "pattern": relative}))
             .collect::<Vec<_>>();
-        assert_eq!(anchored, expected_anchored);
+        assert_eq!(globs(true)?, expected_anchored);
+
+        // Without it: absolute string globs, because VS Code matches a
+        // string glob against the absolute path and a bare relative string
+        // never fires.
+        let absolute = root.to_string_lossy().replace('\\', "/");
+        let expected_absolute = expected
+            .iter()
+            .map(|relative| serde_json::json!(format!("{absolute}/{relative}")))
+            .collect::<Vec<_>>();
+        let plain = globs(false)?;
+        assert_eq!(plain, expected_absolute);
+        for glob in plain.iter().filter_map(|glob| glob.as_str()) {
+            assert!(!glob.contains('*'), "{glob} must not be workspace-wide");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn dynamic_watchers_skip_absolute_diagnostics_globs_for_metacharacter_roots()
+    -> Result<(), String> {
+        for name in ["a*b", "a?b", "a[b]", "a{b,c}"] {
+            let root = std::env::temp_dir().join(name);
+            if diagnostics_input_watchers(&root, false).is_ok() {
+                return Err(format!(
+                    "{} has no reliable string glob and must not register",
+                    root.display()
+                ));
+            }
+            // A RelativePattern base is a URI, not a glob, so it still works.
+            if diagnostics_input_watchers(&root, true)?.len() != DIAGNOSTICS_INPUT_PATHS.len() {
+                return Err(format!(
+                    "{} must still anchor a RelativePattern",
+                    root.display()
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -4097,17 +4240,11 @@ impl LanguageServer for Backend {
             .map(|value| *value)
             .unwrap_or(false);
         if supports_dynamic_registration {
-            let diagnostics_input_base = self
-                .watched_files_relative_pattern_support
-                .load(Ordering::SeqCst)
-                .then(|| self.effective_root())
-                .flatten()
-                .and_then(|root| file_uri_for_path(&root).ok());
             let registration = Registration {
                 id: "ripr-config-file-watch".to_string(),
                 method: "workspace/didChangeWatchedFiles".to_string(),
                 register_options: Some(serde_json::json!({
-                    "watchers": workspace_input_watchers(diagnostics_input_base.as_ref())
+                    "watchers": workspace_input_watchers()
                 })),
             };
             if let Err(error) = self.client.register_capability(vec![registration]).await {
@@ -4119,6 +4256,8 @@ impl LanguageServer for Backend {
                     .await;
             }
         }
+        self.diagnostics_input_watch.lock().await.armed = true;
+        self.sync_diagnostics_input_watch().await;
         // First configuration pull (#2031). This runs in `initialized`, not
         // `initialize`: tower-lsp-server rejects client requests with -32002
         // before the session is initialized.
