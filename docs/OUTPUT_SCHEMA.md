@@ -69,6 +69,7 @@ records that distinction.
 | Published schema | Current version | Version owner and rationale |
 | --- | --- | --- |
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
+| `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
 | `schemas/ripr/gate-decision.schema.json` | `0.1` | `crates/ripr/src/output/gate.rs`; gate decision envelope |
 | `schemas/ripr/pr-evidence.schema.json` | `0.1` | `crates/ripr/src/app/pr_evidence.rs` (installed `ripr pr-evidence`) and `xtask/src/reports/pr_evidence.rs` (xtask compatibility); PR evidence envelope |
 | `schemas/ripr/repair-assurance.schema.json` | `1` | `crates/ripr/src/domain/verification_result.rs`; reserved assurance vocabulary and execution result |
@@ -82,6 +83,52 @@ records that distinction.
 
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
+
+## Executed-control packet (`executed_control_packet`, schema `1`)
+
+This is a repository-owned contract for acceptance items that require an
+**executed discriminating control**. It is not a GitHub client, merge gate, or
+mutation-testing engine. Human Markdown and machine JSON derive from the same
+packet. `passed` is not inferred from ordinary tests or review prose.
+
+Fields:
+
+- `schema_version` — `1`
+- `kind` — `executed_control_packet`, `executed_control_obligation`, or
+  `executed_control_result`
+- `source_identity` — repository identity bound by the packet
+- `obligation_id` / `owning_claim` — stable claim keys, not issue-body prose
+- `control_class` — `removed_guard`, `wrong_implementation`, or `named_mutation`
+- `intended_wrong_implementation` — the named wrong implementation or removed
+  guard
+- `required_execution_subject` — `command_or_instrument_id`,
+  `named_wrong_implementation`, and `required_head`
+- `expected_discriminating_outcome` — `fails_before_passes_after` or
+  `rejects_wrong_implementation`
+- `acceptable_evidence_forms` — `retained_artifact`, `bounded_log_commitment`,
+  `declared_substitute`
+- `permitted_substitute` — explicit substitute, or `null`; never inferred
+- `requiredness` — `required` or `advisory`
+- `invalidators` — `source_head_moved`, `control_contract_changed`,
+  `artifact_missing`, `command_identity_changed`
+- `offered_evidence_kind` — `executed_discriminating_control`,
+  `ordinary_positive_test`, `review_prose`,
+  `structural_discrimination_claim`, or `declared_substitute`
+- `observed_outcome` — including `failed_before_passed_after`,
+  `rejected_wrong_implementation`,
+  `command_succeeded_without_exercising_subject`, and `not_executed`
+- `state` — `passed`, `failed`, `not_run`, `not_proven`, `substituted`,
+  `instrument_failure`
+- `artifact` — logical id plus `sha256:` digest; machine paths are not identity
+- `obligation_digest` — digest of the obligation contract; a stale digest
+  cannot satisfy a moved implementation
+
+`passed` requires `offered_evidence_kind` `executed_discriminating_control`
+plus retained artifact identity, matching packet `source_identity`, and an
+artifact-backed form listed on the obligation. JSON and Markdown both reject
+invalid packets. #3858 / #4063 is documented as `not_proven` and must not be
+rewritten as `passed`. Closeout enforcement is a later slice.
+
 
 `ripr doctor --json` top-level `status` and `runtime_probes[].status` are
 `pass` or `fail`. The `profile` is `analysis` by default or `source-build`
@@ -179,6 +226,12 @@ notice) per step and drops the rest silently. Disclosure notices therefore lead
 the stream: the unannotated-denominator notice (suppressed or not-current
 findings) and, when any level exceeds 10, a notice naming how many annotations
 of that level were emitted. Per-finding annotations follow.
+
+When the producer-owned `analysis_outcome` is not complete (for example
+`unsupported_input` or `partial_with_limitations`), the stream starts with a
+`ripr analysis incomplete` warning naming the outcome kind and each limitation
+with its recovery, and the clean `No static exposure findings found` notice is
+not printed.
 
 `ripr check --format human` is the bounded default terminal surface. It prints
 header and summary counts, then one `Start here:` triage block with a closed
@@ -14144,6 +14197,38 @@ Field contract:
   packet and is `null` for a repo-wide envelope containing multiple seams.
   These commands are advisory handoff instructions and do not execute a test,
   approve a patch, or authorize a merge.
+  Compound recipes use Bash-style quoting, directory creation, and redirects,
+  consistent with the structured workflow's `command_shell: "bash"`; they do
+  not establish PowerShell recipe compatibility. Read the structured workflow
+  for its shell contract before executing commands.
+  Explicit standalone per-seam CLI `agent packet` binds these `next` commands,
+  including directory creation, to the selected repository root.
+  Its optional `next.analysis_outcome_command` writes the static outcome
+  consumed by the receipt, between the after snapshot and verify steps.
+  Portable bulk/check-format wrappers omit this additive field and retain
+  their repository-local recipe; they are not a complete foreign-CWD receipt
+  workflow. GapRecord and editor routes are unchanged. Static receipt
+  completeness does not establish project-test execution.
+  The standalone manual recipe assumes a fresh workflow without retained
+  durable repair attempts. Resume a matching awaiting attempt through its
+  published exact `--attempt` selector. If none is awaiting for the selected
+  seam, begin a fresh durable Before route and preserve the retained attempts.
+  The receipt validator retains its existing attempt binding and can refuse an
+  incompatible manual recipe.
+  Per-packet canonical/evidence receipt commands and portable bulk output are
+  outside this `packet.next` root-binding claim (#4000 remains open).
+  A packet emitted by `agent repair --phase before` instead sets the manual
+  snapshot, outcome, verify, and receipt fields to `null` and advertises
+  `next.repair_after_command`. This selected-root command resumes the existing
+  durable repair route after the permitted focused edit, including the edit
+  cage, outcome, verify, after verdict, and receipt. The command pins the exact
+  `--attempt` identity also published in the manifest and stderr. A retained
+  packet for a finished attempt refuses that attempt instead of selecting a
+  later awaiting attempt for the same seam. Explicit legacy seam selection
+  still refuses multiple awaiting attempts. Trust-bound Python
+  continuations retain the required explicit authorization placeholders;
+  rendering the command does not grant authorization. Packet bytes remain
+  unchanged after publication.
 
 The packet is the agent's work order: it names the seam, the missing
 discriminator, the oracle shape, and either a producer-backed assertion
@@ -16644,7 +16729,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.11",
+    "schema_version": "1.12",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -16655,7 +16740,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.17",
+      "schema_version": "1.18",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
@@ -16798,7 +16883,9 @@ matching-record index and do not hide other current scopes. The overall result
 is `limited` only when no current scope resolves. Missing, root-mismatched, or
 otherwise unresolved selectors emit `state: "limited"`, an empty `seams` array,
 and a named `limitation` such as `canonical_gap_unresolved` or
-`stale_gap_ledger`. They never fall back to an unrelated workspace scan.
+`stale_gap_ledger`. They never fall back to an unrelated workspace scan. A
+`--gap-ledger` that cannot be read or parsed is not a limitation: the command
+exits 2 without a report, as it does for an unreadable `--changed-test`.
 
 Both selectors reuse valid file facts but recompute the selected evidence. A
 `canonical_gap_id` is domain-supplied and nullable; it is never derived from a
