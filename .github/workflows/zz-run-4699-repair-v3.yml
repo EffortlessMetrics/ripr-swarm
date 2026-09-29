@@ -63,11 +63,14 @@ jobs:
           text, count = pattern.subn(r'\1\n              220,\2', text, count=1)
           if count != 1:
               raise SystemExit('download invariant replacement call not found once')
-          old_marker = "required_marker = '            \"release_assets_created: false\",\\\\n'"
-          new_marker = "required_marker = '            \"release_assets_created: false\",\\n'"
-          if text.count(old_marker) != 1:
-              raise SystemExit('escaped release-assets marker was not found once')
-          text = text.replace(old_marker, new_marker, 1)
+          text, count = re.subn(
+              r'''(?m)^required_marker\s*=.*$''',
+              '''required_marker = '            "release_assets_created: false",' + chr(10)''',
+              text,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit('release-assets marker assignment was not found once')
           path.write_text(text, encoding='utf-8')
           PY
           grep -F 'span: int = 120' /tmp/repair.sh
