@@ -4225,10 +4225,19 @@ mod tests {
                 "{not_enabled}"
             );
         }
-        // A TypeScript-only diff gets no JavaScript gloss.
+        // A TypeScript-only diff counts TypeScript files and gets no
+        // JavaScript gloss. The adapter name itself says
+        // "TypeScript/JavaScript" in every build.
+        let typescript_not_enabled = render_one(advisory(1, 0, false));
         assert!(
-            !render_one(advisory(1, 0, false)).contains("JavaScript"),
-            "TypeScript-only notes must not mention JavaScript"
+            typescript_not_enabled.contains("Note: this diff contains 1 TypeScript file."),
+            "{typescript_not_enabled}"
         );
+        for forbidden in ["JavaScript file.", "enables the adapter for JavaScript"] {
+            assert!(
+                !typescript_not_enabled.contains(forbidden),
+                "TypeScript-only note must not render `{forbidden}`:\n{typescript_not_enabled}"
+            );
+        }
     }
 }
