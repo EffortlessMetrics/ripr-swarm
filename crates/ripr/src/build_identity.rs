@@ -31,16 +31,17 @@ fn render_version_line(version: &str, commit: Option<&str>, dirty: bool) -> Stri
     }
 }
 
+const SOURCE_DIGEST: &str = env!("RIPR_BUILD_SOURCE_DIGEST");
+
 /// The analysis-code identity that persisted caches key on.
 ///
 /// The package version alone is not enough: every build between two
 /// releases carries the same version, so a cache written by one build would
 /// be served to another whose extraction or classification differs. A clean
 /// build is identified by its commit. A dirty or commit-less build has no
-/// source identity, so it adds the executable's size and modification time;
-/// a rebuild then misses instead of reusing the previous binary's entries.
-/// When even that is unreadable, the identity is unique to this process and
-/// nothing persisted is reused.
+/// commit that describes its code, so it is identified by the digest
+/// `build.rs` takes of its sources. Without that digest the identity is
+/// unique to this process and nothing persisted is reused.
 pub(crate) fn cache_identity() -> &'static str {
     static IDENTITY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     IDENTITY.get_or_init(|| {
@@ -48,39 +49,24 @@ pub(crate) fn cache_identity() -> &'static str {
             env!("CARGO_PKG_VERSION"),
             commit(),
             commit_dirty(),
-            executable_stamp,
+            (!SOURCE_DIGEST.is_empty()).then_some(SOURCE_DIGEST),
         )
     })
-}
-
-fn executable_stamp() -> Option<String> {
-    let metadata = std::fs::metadata(std::env::current_exe().ok()?).ok()?;
-    let modified = metadata
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?;
-    Some(format!(
-        "{}:{}.{:09}",
-        metadata.len(),
-        modified.as_secs(),
-        modified.subsec_nanos()
-    ))
 }
 
 fn render_cache_identity(
     version: &str,
     commit: Option<&str>,
     dirty: bool,
-    executable_stamp: impl FnOnce() -> Option<String>,
+    source_digest: Option<&str>,
 ) -> String {
     let source = match commit {
         Some(commit) if !dirty => return format!("{version}+{commit}"),
         Some(commit) => format!("{commit}-dirty"),
         None => "unknown".to_string(),
     };
-    match executable_stamp() {
-        Some(stamp) => format!("{version}+{source}+exe:{stamp}"),
+    match source_digest {
+        Some(digest) => format!("{version}+{source}+src:{digest}"),
         None => {
             let nanos = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -124,33 +110,31 @@ mod tests {
     }
     #[test]
     fn cache_identity_binds_the_build_not_only_the_version() {
-        let unused = || Some("unused".to_string());
         assert_eq!(
-            render_cache_identity("0.11.0", Some(SHA), false, unused),
+            render_cache_identity("0.11.0", Some(SHA), false, Some("ignored")),
             format!("0.11.0+{SHA}")
         );
         assert_ne!(
-            render_cache_identity("0.11.0", Some(SHA), false, unused),
-            render_cache_identity("0.11.0", Some(OTHER_SHA), false, unused),
+            render_cache_identity("0.11.0", Some(SHA), false, None),
+            render_cache_identity("0.11.0", Some(OTHER_SHA), false, None),
             "two clean builds of one version must not share cache entries"
         );
-        let stamp = || Some("123:45.000000006".to_string());
         assert_eq!(
-            render_cache_identity("0.11.0", Some(SHA), true, stamp),
-            format!("0.11.0+{SHA}-dirty+exe:123:45.000000006")
+            render_cache_identity("0.11.0", Some(SHA), true, Some("00000000000000aa")),
+            format!("0.11.0+{SHA}-dirty+src:00000000000000aa")
         );
         assert_eq!(
-            render_cache_identity("0.11.0", None, false, stamp),
-            "0.11.0+unknown+exe:123:45.000000006"
+            render_cache_identity("0.11.0", None, false, Some("00000000000000aa")),
+            "0.11.0+unknown+src:00000000000000aa"
         );
-        let rebuilt = || Some("124:46.000000000".to_string());
+        // Two dirty builds of one commit share entries only when their
+        // sources match; an executable's size or timestamp plays no part.
         assert_ne!(
-            render_cache_identity("0.11.0", Some(SHA), true, stamp),
-            render_cache_identity("0.11.0", Some(SHA), true, rebuilt),
-            "a dirty rebuild must not reuse the previous binary's entries"
+            render_cache_identity("0.11.0", Some(SHA), true, Some("00000000000000aa")),
+            render_cache_identity("0.11.0", Some(SHA), true, Some("00000000000000bb")),
+            "a dirty build with other sources must not reuse the previous build's entries"
         );
-        let unreadable = || None;
-        let first = render_cache_identity("0.11.0", None, false, unreadable);
+        let first = render_cache_identity("0.11.0", None, false, None);
         assert!(
             first.starts_with(&format!("0.11.0+unknown+process:{}:", std::process::id())),
             "{first}"
@@ -166,5 +150,16 @@ mod tests {
         let identity = cache_identity();
         assert!(identity.starts_with(concat!(env!("CARGO_PKG_VERSION"), "+")));
         assert_eq!(identity, cache_identity());
+        // build.rs records a digest exactly when no clean commit describes
+        // this build.
+        let described_by_commit = commit().is_some() && !commit_dirty();
+        assert_eq!(SOURCE_DIGEST.is_empty(), described_by_commit);
+        if !described_by_commit {
+            assert!(
+                SOURCE_DIGEST.len() == 16
+                    && SOURCE_DIGEST.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                "malformed source digest {SOURCE_DIGEST:?}"
+            );
+        }
     }
 }

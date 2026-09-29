@@ -517,7 +517,7 @@ Envelope (`schema_version = "ripr-check-artifact-v1"`):
 {
   "schema_version": "ripr-check-artifact-v1",
   "tool": "ripr",
-  "analyzer_version": "0.10.0",
+  "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
   "identity": {
     "diff_source": { "diff_file": { "path": "/abs/path/to/example.diff" } },
     "diff_bytes_hash": "fnv1a64:0123456789abcdef",
@@ -16427,7 +16427,7 @@ targeted-rerun receipt shape:
     "invalidation_status": "not_available",
     "input_fingerprint": {
       "schema_version": "0.3",
-      "analyzer_version": "0.10.0",
+      "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
       "cfg_features_hash": "…",
@@ -16508,6 +16508,12 @@ targeted-rerun receipt shape:
   "authority_boundary": "static evidence only; no before snapshot was supplied, so gap movement is not inferred"
 }
 ```
+
+`input_fingerprint.analyzer_version` names the build, not only the package
+version: `<version>+<commit>` for a clean build, with `-dirty+src:<digest>`
+appended for a build with uncommitted source changes, or `<version>+unknown+src:<digest>`
+when no commit is recorded. Two builds of one version therefore report
+`input_changed:analyzer_version` against each other's receipts.
 
 For a changed-test selector, `selector.kind` is `changed_test`. `changed_test`
 names the repository-relative parsed test file and may append

@@ -18,8 +18,10 @@ are scoped or reviewed.
   `0.11.0` binary from another commit had written, including across an
   upgrade from a release candidate to the final release. The key now names
   the build commit; a build with uncommitted changes or no commit record also
-  names its executable's size and timestamp. Entries from other builds become
-  misses and are recomputed.
+  names a digest of its crate sources and lockfile. Entries from other builds
+  become misses and are recomputed. A `ripr check` artifact from another
+  build of the same version is refused for reuse, and the `analyzer_version`
+  in a targeted-rerun input fingerprint carries the same build identity.
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from

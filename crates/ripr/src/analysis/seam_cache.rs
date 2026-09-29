@@ -1618,8 +1618,11 @@ impl RepoFileFactCache {
 
     /// Snapshot paths with valid cached envelopes before a build starts. The
     /// caller uses this set for O(1) miss attribution and deliberately does not
-    /// observe entries created during the same build.
+    /// observe entries created during the same build. Only entries this build
+    /// could have served count: a miss against another build's entry means
+    /// the build changed, not the file's content.
     pub(crate) fn known_file_paths(&self) -> HashSet<PathBuf> {
+        let identity = crate::build_identity::cache_identity();
         let mut paths = HashSet::new();
         let Ok(entries) = std::fs::read_dir(&self.dir) else {
             return paths;
@@ -1632,7 +1635,10 @@ impl RepoFileFactCache {
             let Ok(bytes) = std::fs::read(path) else {
                 continue;
             };
-            if let Ok(envelope) = codec::decode_file_facts(&bytes) {
+            if let Ok(envelope) = codec::decode_file_facts(&bytes)
+                && envelope.file_fact_cache_schema_version == FILE_FACT_CACHE_SCHEMA_VERSION
+                && envelope.analyzer_version == identity
+            {
                 paths.insert(envelope.file_path);
             }
         }
@@ -6468,6 +6474,14 @@ mod generation_transition_tests {
                     ));
                 }
             }
+            // That miss is a build change, not a content change: another
+            // build's entry must not mark the file as previously cached.
+            assert!(
+                !cache.known_file_paths().contains(file),
+                "an entry from build {analyzer_version} was attributed as this file's earlier content"
+            );
+            cache.store_file_facts(&current_key, &facts)?;
+            assert!(cache.known_file_paths().contains(file));
             super::ignore_remove_dir_all(&dir);
         }
         Ok(())
