@@ -82,7 +82,9 @@ pub(crate) struct NewTestTargetProposal {
     pub(crate) file: PathBuf,
     pub(crate) owner: String,
     pub(crate) provenance: NewTestProposalProvenance,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// After-edit verification and cage surface. Not part of the reserved
+    /// 4-field public proposal identity.
+    #[serde(skip)]
     pub(crate) details: Option<NewTestTargetDetails>,
 }
 

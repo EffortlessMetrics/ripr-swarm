@@ -18,10 +18,6 @@ use super::test_grip_evidence::{RelatedTestGrip, TestGripEvidence, TestTargetEvi
 use crate::analysis::canonical_gap::canonical_gap_identity;
 use crate::domain::{OracleKind, OracleStrength, RelationReason, StageState};
 
-#[expect(
-    unused_imports,
-    reason = "re-export producer-owned proposal types for repair-route consumers"
-)]
 pub(crate) use super::new_test_target::{
     NewTestKind, NewTestProposalProvenance, NewTestTargetProposal,
 };
