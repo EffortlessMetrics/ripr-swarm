@@ -18,6 +18,9 @@ tests = [
   "crates/ripr/src/analysis/facts/build.rs::tests::cached_build_matches_uncached_index_for_same_sources",
   "crates/ripr/src/analysis/seam_cache.rs::tests::given_file_content_changes_when_file_facts_load_then_miss_is_returned",
   "crates/ripr/src/analysis/seam_cache.rs::tests::workspace_manifest_and_lockfile_changes_change_cache_identity",
+  "crates/ripr/src/analysis/seam_cache.rs::generation_transition_tests::file_facts_written_by_another_build_of_this_version_are_a_miss",
+  "crates/ripr/src/analysis/seam_cache.rs::generation_transition_tests::classified_seams_written_by_another_build_of_this_version_are_a_miss",
+  "crates/ripr/src/build_identity.rs::tests::cache_identity_binds_the_build_not_only_the_version",
   "crates/ripr/src/analysis/classify/flow.rs",
   "crates/ripr/src/analysis/classifier.rs",
   "crates/ripr/src/analysis/probes/lexical.rs",
@@ -2513,6 +2516,8 @@ tests = [
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_python_output_fixture_matches_expected_receipts",
   "crates/ripr/src/output/first_pr.rs::tests::python_preview_gap_ledger_is_selected_for_start_here",
   "crates/ripr/src/output/first_pr.rs::tests::python_check_output_materializes_gap_ledger_for_start_here",
+  "crates/ripr/src/output/first_pr.rs::tests::python_top_gap_names_the_static_recheck_after_verify",
+  "crates/ripr/src/analysis/diff/load.rs::tests::worktree_load_starts_at_the_merge_base_when_the_base_moved_on",
   "crates/ripr/src/output/github.rs::tests::render_includes_python_repair_card_guidance",
   "crates/ripr/src/output/sarif.rs::tests::sarif_projects_python_repair_card_properties",
   "xtask/src/main.rs::tests::dogfood_language_preview_scenarios_cover_projection_boundaries",
@@ -6271,11 +6276,13 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::call_deletion_whole_object_observer_without_token_clears_observation_unverified",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::return_value_whole_object_without_token_still_emits_observation_unverified",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::match_arm_sibling_qualifier_does_not_clear_observation_unverified",
-  "crates/ripr/src/analysis/classify/reveal.rs::tests::match_arm_variant_token_match_keeps_discriminate_yes"
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::match_arm_variant_token_match_keeps_discriminate_yes",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_test_cannot_supply_the_oracle_for_reach_from_another_test"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/oracle_confirmation_mixed",
+  "fixtures/proximity_name_oracle_not_credited",
   "fixtures/observation_unverified_return_value",
   "fixtures/observation_verified_return_value",
   "fixtures/observation_unverified_field_construction",
@@ -6294,6 +6301,8 @@ outputs = [
   "fixtures/oracle_confirmation_mixed/expected/check.json",
   "fixtures/oracle_confirmation_mixed/expected/human.txt",
   "fixtures/oracle_confirmation_mixed/expected/human-full.txt",
+  "fixtures/proximity_name_oracle_not_credited/expected/check.json",
+  "fixtures/proximity_name_oracle_not_credited/expected/human.txt",
   "fixtures/observation_unverified_return_value/expected/check.json",
   "fixtures/observation_unverified_return_value/expected/human.txt",
   "fixtures/observation_verified_return_value/expected/check.json",
