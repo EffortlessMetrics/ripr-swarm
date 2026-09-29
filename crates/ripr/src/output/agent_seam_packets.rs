@@ -39,7 +39,8 @@ use crate::app::analysis_outcome_artifact::analysis_outcome_projection;
 use crate::app::causal_projection::CausalDeltaArtifact;
 use crate::domain::CommandRole;
 use crate::output::evidence_record::{
-    CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE, evidence_record_for, evidence_record_json_value,
+    CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE, evidence_record_json_value,
+    evidence_record_with_verify_command, workflow_snapshot_verify_command,
 };
 use crate::output::first_pr::STATIC_EVIDENCE_BOUNDARY;
 use crate::output::gap_decision_ledger::{GapRecord, GapRepairRoute, projection_eligible};
@@ -2324,7 +2325,16 @@ fn push_packet_json(
             out.push_str(&format!("      \"{}\": {},\n", key, value));
         }
     }
-    let evidence_record = evidence_record_json_value(&evidence_record_for(entry, canonical_gap));
+    // #4379: this document's own `next` block writes the workflow snapshot
+    // family, so the embedded record's verify specs must read that family —
+    // not the editor pilot family, whose snapshots nothing here produces.
+    // An orchestrator following the typed spec would otherwise verify against
+    // snapshots that were never written.
+    let evidence_record = evidence_record_json_value(&evidence_record_with_verify_command(
+        entry,
+        canonical_gap,
+        &workflow_snapshot_verify_command(),
+    ));
     out.push_str("      \"evidence_record\": ");
     out.push_str(&evidence_record.to_string());
     out.push_str(",\n");
@@ -3981,6 +3991,68 @@ mod tests {
                 "\"recommended_test\": {\"name\": \"discounted_total_boundary_discriminator\"",
             ),
             "top-level packet fields should remain present: {json}"
+        );
+        Ok(())
+    }
+
+    /// One document, one snapshot family (#4379). The `next` block writes the
+    /// workflow snapshots, so the embedded evidence record's verify specs —
+    /// display, canonical command, and typed spec — must read that same
+    /// family, and no pilot snapshot path may remain anywhere in the
+    /// document: an orchestrator following the typed spec would otherwise
+    /// verify against snapshots nothing here produces.
+    #[test]
+    fn packet_evidence_record_verify_reads_the_snapshots_the_document_writes() -> Result<(), String>
+    {
+        let json = render_agent_seam_packets_json(&[weakly_gripped_classified()], None);
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|err| format!("agent packet JSON should parse: {err}"))?;
+
+        let next = value
+            .get("next")
+            .ok_or_else(|| format!("missing next block in: {json}"))?;
+        let before = next["before_snapshot_command"]
+            .as_str()
+            .ok_or_else(|| format!("before_snapshot_command must be a string: {next}"))?;
+        assert!(
+            before.contains(WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT),
+            "the document's own repair loop must write the workflow family: {before}"
+        );
+
+        let record = value
+            .get("packets")
+            .and_then(|packets| packets.as_array())
+            .and_then(|packets| packets.first())
+            .and_then(|packet| packet.get("evidence_record"))
+            .ok_or_else(|| format!("missing packet evidence_record in: {json}"))?;
+        let workflow = workflow_snapshot_verify_command();
+        let verify = record["recommendation"]["verify_command"]
+            .as_str()
+            .ok_or_else(|| format!("actionable record must carry a verify command: {record}"))?;
+        assert_eq!(
+            verify, workflow,
+            "embedded record verify must read the family the document writes"
+        );
+        let canonical = record["canonical_item"]["verify_command"]
+            .as_str()
+            .ok_or_else(|| format!("canonical verify command missing: {record}"))?;
+        assert_eq!(canonical, workflow);
+        let args = record["canonical_item"]["command_specs"]["verify"]["args"]
+            .as_array()
+            .ok_or_else(|| format!("verify command spec missing: {record}"))?;
+        for family_path in [
+            WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+            WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+        ] {
+            assert!(
+                args.iter().any(|arg| arg == family_path),
+                "verify spec args must read {family_path}: {args:?}"
+            );
+        }
+
+        assert!(
+            !json.contains("target/ripr/pilot/"),
+            "document must not name the pilot snapshot family anywhere: {json}"
         );
         Ok(())
     }
