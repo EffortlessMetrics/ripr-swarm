@@ -186,9 +186,35 @@ validates that rolling packet against the retained subjects:
 - Unauthorized real-repository production-quiet replay stays named as an unmet
   row rather than invented.
 
-The CLI still accepts only `check`, `replay`, and `packet`. There is no
-`report` command. Bounded real ledger replay remains outside the routine PR
-path.
+## Analyzer feedback ledger
+
+`feedback-ledger.json` is the #4796 sidecar over the same frozen #3806
+judgments. It does not replace the seed, packets, rolling observation, or
+independent judgments, and it does not absorb #4795 calibration.
+
+`cargo xtask rust-judged-panel check` also validates that ledger:
+
+- Every terminal judged case has one failure-direction disposition derived
+  from immutable labels. Human notes cannot strengthen inconclusive or
+  accepted-limitation rows.
+- Confirmed analyzer defects stay `replay_only` with a named
+  materialization/authorization boundary unless a producer-path fixture can
+  retain the exact mechanism. Fixture ids must not be the case id, and
+  `expected_class` shortcuts are rejected.
+- A merged repair without original-case replay remains
+  `repaired_pending_replay`. Wrong-target rows cannot close on a nearby
+  observer identity.
+- Runtime calibration is recorded as `not_run` until #4795 lands. Those
+  results cannot set the static class.
+- Owner search receipts are recorded. The ledger does not create, assign,
+  close, or label GitHub objects.
+
+`cargo xtask rust-judged-panel feedback [--out] [--check]` derives JSON and
+Markdown from one DTO. There is still no accuracy `report` command and no
+overall analyzer score.
+
+The CLI now accepts `check`, `replay`, `packet`, and `feedback`. Bounded real
+ledger replay remains outside the routine PR path.
 
 ## Item contract
 

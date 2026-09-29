@@ -9,6 +9,16 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Added
+
+- `cargo xtask rust-judged-panel feedback` and `check` now retain one
+  checked feedback ledger over the frozen #3806 Rust judgments. Every
+  terminal case gets a disposition; confirmed defects stay replay-only
+  unless a producer-path fixture can keep the exact mechanism; JSON and
+  Markdown reports carry denominators without an overall analyzer score,
+  analyzer repair, #4795 calibration, GitHub mutation, or #3164 closure
+  (#4796).
+
 ### Fixed
 
 - Security: Rust source discovery skips symlinked `.rs` entries, as the

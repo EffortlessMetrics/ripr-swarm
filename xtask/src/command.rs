@@ -378,6 +378,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "rust-judged-panel check",
         "rust-judged-panel replay [--out target/ripr/<path>]",
         "rust-judged-panel packet [--host-current target/ripr/<path>/current.json]",
+        "rust-judged-panel feedback [--out <dir>] [--check]",
         "check-rust-judged-panel",
         "check-release-challenge-selection",
         "check-release-challenge-judgments",
@@ -748,7 +749,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "stdout only",
             false,
             false,
-            "Validates the governed Rust judged-panel seed, portable packets, and rolling production-quiet/actionability observation.",
+            "Validates the governed Rust judged-panel seed, portable packets, rolling production-quiet/actionability observation, and the #4796 feedback ledger.",
         ),
         command_entry(
             "rust-judged-panel replay [--out target/ripr/<path>]",
@@ -767,12 +768,20 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Projects one validated complete host run into three bounded portable semantic packets; it does not build or execute RIPR.",
         ),
         command_entry(
+            "rust-judged-panel feedback [--out <dir>] [--check]",
+            "report_only",
+            "target/ripr/rust-judged-panel/feedback/",
+            false,
+            false,
+            "Derives deterministic JSON/Markdown from the retained #4796 feedback ledger; --check restages nothing and never writes the honesty corpus, repairs the analyzer, or mutates GitHub.",
+        ),
+        command_entry(
             "check-rust-judged-panel",
             "non_mutating_check",
             "stdout only",
             false,
             true,
-            "Precommit alias for the same Rust judged-panel semantic validator, including rolling production-quiet and canonical actionability observation.",
+            "Precommit alias for the same Rust judged-panel semantic validator, including rolling observation and the #4796 feedback ledger.",
         ),
         command_entry(
             "check-release-challenge-selection",
