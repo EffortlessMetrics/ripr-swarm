@@ -4,7 +4,9 @@ use std::path::{Component, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::policy::distribution::{DistributionContract, TargetContract, load_distribution_contract};
+use crate::policy::distribution::{
+    DistributionContract, TargetContract, load_distribution_contract,
+};
 use crate::run::run_output_owned;
 
 use super::{hex_lower, normalize_release_version, release_server_readme, sha256_file};
@@ -188,12 +190,7 @@ pub(crate) fn verify_final_native_payload(
     validate_identity_shape(&identity)?;
 
     let contract = load_distribution_contract()?;
-    let target_contract = select_target(
-        &contract,
-        &identity.target,
-        &identity.executable,
-        None,
-    )?;
+    let target_contract = select_target(&contract, &identity.target, &identity.executable, None)?;
     let context = current_payload_context(
         &contract,
         target_contract,
@@ -280,7 +277,10 @@ fn current_payload_context(
         build_environment: current_build_environment(),
         native_runtime_evidence: NativeRuntimeEvidenceIdentity {
             state: target.compatibility_state.clone(),
-            source: format!("EffortlessMetrics/ripr-swarm#{}", target.qualification_issue),
+            source: format!(
+                "EffortlessMetrics/ripr-swarm#{}",
+                target.qualification_issue
+            ),
         },
     })
 }
@@ -327,7 +327,10 @@ fn git_rev_parse(revision: &str) -> Result<String, String> {
 }
 
 fn checked_output(program: &str, args: &[&str], label: &str) -> Result<String, String> {
-    let owned = args.iter().map(|arg| (*arg).to_string()).collect::<Vec<_>>();
+    let owned = args
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect::<Vec<_>>();
     let output = run_output_owned(program, &owned)?;
     let output = output.replace("\r\n", "\n").trim().to_string();
     if output.is_empty() && program != "git" {
@@ -398,7 +401,12 @@ fn payload_file_identities(
         .map_err(|err| format!("failed to read {}: {err}", payload_dir.display()))?
     {
         let path = entry
-            .map_err(|err| format!("failed to read entry under {}: {err}", payload_dir.display()))?
+            .map_err(|err| {
+                format!(
+                    "failed to read entry under {}: {err}",
+                    payload_dir.display()
+                )
+            })?
             .path();
         let metadata = fs::symlink_metadata(&path)
             .map_err(|err| format!("failed to stat {}: {err}", path.display()))?;
@@ -475,10 +483,16 @@ fn validate_identity_shape(identity: &FinalNativePayloadIdentity) -> Result<(), 
         ));
     }
     if identity.kind != PAYLOAD_KIND {
-        violations.push(format!("kind must be `{PAYLOAD_KIND}`, got `{}`", identity.kind));
+        violations.push(format!(
+            "kind must be `{PAYLOAD_KIND}`, got `{}`",
+            identity.kind
+        ));
     }
     if identity.product != "ripr" {
-        violations.push(format!("product must be `ripr`, got `{}`", identity.product));
+        violations.push(format!(
+            "product must be `ripr`, got `{}`",
+            identity.product
+        ));
     }
     if let Err(error) = validate_component("version", &identity.version) {
         violations.push(error);
@@ -490,13 +504,15 @@ fn validate_identity_shape(identity: &FinalNativePayloadIdentity) -> Result<(), 
         violations.push(error);
     }
     if !is_lower_hex(&identity.source.commit_sha, 40) {
-        violations.push("source.commit_sha must be 40 lowercase hexadecimal characters".to_string());
+        violations
+            .push("source.commit_sha must be 40 lowercase hexadecimal characters".to_string());
     }
     if !is_lower_hex(&identity.source.tree_sha, 40) {
         violations.push("source.tree_sha must be 40 lowercase hexadecimal characters".to_string());
     }
     if !is_lower_hex(&identity.cargo_lock_sha256, 64) {
-        violations.push("cargo_lock_sha256 must be 64 lowercase hexadecimal characters".to_string());
+        violations
+            .push("cargo_lock_sha256 must be 64 lowercase hexadecimal characters".to_string());
     }
     if !is_lower_hex(&identity.payload_aggregate_sha256, 64) {
         violations.push(
@@ -553,7 +569,9 @@ fn validate_identity_shape(identity: &FinalNativePayloadIdentity) -> Result<(), 
         "README-server.txt",
     ] {
         if !identity.files.iter().any(|file| file.path == required) {
-            violations.push(format!("files are missing required payload entry `{required}`"));
+            violations.push(format!(
+                "files are missing required payload entry `{required}`"
+            ));
         }
     }
     if identity.toolchain.rustc_verbose_version.trim().is_empty() {
@@ -589,8 +607,18 @@ fn validate_identity_context(
     context: &PayloadBuildContext,
 ) -> Result<(), String> {
     let mut violations = Vec::new();
-    compare_field("product", &identity.product, &context.product, &mut violations);
-    compare_field("version", &identity.version, &context.version, &mut violations);
+    compare_field(
+        "product",
+        &identity.product,
+        &context.product,
+        &mut violations,
+    );
+    compare_field(
+        "version",
+        &identity.version,
+        &context.version,
+        &mut violations,
+    );
     compare_field("target", &identity.target, &context.target, &mut violations);
     compare_field(
         "executable",
@@ -704,10 +732,7 @@ fn copy_payload_file(source: &Path, destination: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn write_identity_json(
-    path: &Path,
-    identity: &FinalNativePayloadIdentity,
-) -> Result<(), String> {
+fn write_identity_json(path: &Path, identity: &FinalNativePayloadIdentity) -> Result<(), String> {
     let rendered = serde_json::to_string_pretty(identity)
         .map_err(|err| format!("failed to render final native payload identity: {err}"))?;
     fs::write(path, format!("{rendered}\n"))
@@ -717,8 +742,7 @@ fn write_identity_json(
 fn read_identity_json(path: &Path) -> Result<FinalNativePayloadIdentity, String> {
     let text = fs::read_to_string(path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
-    serde_json::from_str(&text)
-        .map_err(|err| format!("failed to parse {}: {err}", path.display()))
+    serde_json::from_str(&text).map_err(|err| format!("failed to parse {}: {err}", path.display()))
 }
 
 fn render_payload_identity_markdown(identity: &FinalNativePayloadIdentity) -> String {
@@ -827,12 +851,18 @@ mod tests {
         let identity = identity_from_context(&context, payload_file_identities(&payload, "ripr")?);
 
         fs::write(payload.join("ripr"), b"changed executable").map_err(|err| err.to_string())?;
-        let error = verify_payload_files(&payload, &identity).expect_err("mutation must fail");
+        let error = require_error(
+            verify_payload_files(&payload, &identity),
+            "mutated payload verification",
+        )?;
         assert!(error.contains("payload file identity mismatch"));
 
         write_fixture_payload(&payload)?;
         fs::remove_file(payload.join("README-server.txt")).map_err(|err| err.to_string())?;
-        let error = verify_payload_files(&payload, &identity).expect_err("missing notice must fail");
+        let error = require_error(
+            verify_payload_files(&payload, &identity),
+            "missing notice verification",
+        )?;
         assert!(error.contains("payload inventory mismatch"));
         fs::remove_dir_all(root).map_err(|err| err.to_string())?;
         Ok(())
@@ -855,7 +885,11 @@ mod tests {
                 "absolute_build_path".to_string(),
                 serde_json::Value::String("/tmp/secret".to_string()),
             );
-        assert!(serde_json::from_value::<FinalNativePayloadIdentity>(value).is_err());
+        let _ = require_error(
+            serde_json::from_value::<FinalNativePayloadIdentity>(value)
+                .map_err(|err| err.to_string()),
+            "identity with unknown field",
+        )?;
         fs::remove_dir_all(root).map_err(|err| err.to_string())?;
         Ok(())
     }
@@ -870,21 +904,43 @@ mod tests {
 
         let mut stale = identity.clone();
         stale.version = "9.9.9".to_string();
-        assert!(validate_identity_context(&stale, &context).is_err());
+        let _ = require_error(
+            validate_identity_context(&stale, &context),
+            "stale version identity",
+        )?;
         let mut stale = identity.clone();
         stale.target = "other-target".to_string();
-        assert!(validate_identity_context(&stale, &context).is_err());
+        let _ = require_error(
+            validate_identity_context(&stale, &context),
+            "stale target identity",
+        )?;
         let mut stale = identity.clone();
         stale.selected_features = vec!["lang-rust".to_string()];
-        assert!(validate_identity_context(&stale, &context).is_err());
+        let _ = require_error(
+            validate_identity_context(&stale, &context),
+            "stale feature identity",
+        )?;
         let mut stale = identity.clone();
         stale.cargo_lock_sha256 = "f".repeat(64);
-        assert!(validate_identity_context(&stale, &context).is_err());
+        let _ = require_error(
+            validate_identity_context(&stale, &context),
+            "stale Cargo.lock identity",
+        )?;
         let mut stale = identity;
         stale.source.commit_sha = "b".repeat(40);
-        assert!(validate_identity_context(&stale, &context).is_err());
+        let _ = require_error(
+            validate_identity_context(&stale, &context),
+            "stale source identity",
+        )?;
         fs::remove_dir_all(root).map_err(|err| err.to_string())?;
         Ok(())
+    }
+
+    fn require_error<T>(result: Result<T, String>, label: &str) -> Result<String, String> {
+        let Err(error) = result else {
+            return Err(format!("{label} unexpectedly succeeded"));
+        };
+        Ok(error)
     }
 
     fn fixture_context() -> PayloadBuildContext {
@@ -924,8 +980,7 @@ mod tests {
         fs::create_dir_all(payload).map_err(|err| err.to_string())?;
         fs::write(payload.join("ripr"), b"binary").map_err(|err| err.to_string())?;
         fs::write(payload.join("LICENSE-MIT"), b"MIT").map_err(|err| err.to_string())?;
-        fs::write(payload.join("LICENSE-APACHE"), b"Apache")
-            .map_err(|err| err.to_string())?;
+        fs::write(payload.join("LICENSE-APACHE"), b"Apache").map_err(|err| err.to_string())?;
         fs::write(payload.join("README-server.txt"), b"ripr server 0.11.0\n")
             .map_err(|err| err.to_string())?;
         Ok(())
