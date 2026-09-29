@@ -240,8 +240,7 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
         None => render_start_here_packet(&root, options),
     };
     let out_dir = resolve_path(output_root, &options.out_dir);
-    fs::create_dir_all(&out_dir)
-        .map_err(|err| format!("failed to create {}: {err}", out_dir.display()))?;
+    crate::output::file_write::create_output_dir(&out_dir, "--out-dir")?;
     let json_path = out_dir.join(START_HERE_JSON);
     let markdown_path = out_dir.join(START_HERE_MD);
     let json_text = serde_json::to_string_pretty(&packet)
@@ -583,7 +582,7 @@ fn materialize_check_output_gap_ledger(
             check_output_path.display()
         )
     })?;
-    let report = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(
+    let mut report = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(
         crate::output::gap_decision_ledger::GapDecisionLedgerInput {
             root: options.root.clone(),
             generated_at: "first-pr-check-output".to_string(),
@@ -593,6 +592,10 @@ fn materialize_check_output_gap_ledger(
             records_json: Ok(contents),
         },
     );
+    crate::output::gap_decision_ledger::stamp_gap_decision_ledger_source_subject(
+        &mut report,
+        root,
+    )?;
     let json = crate::output::gap_decision_ledger::render_gap_decision_ledger_json(&report)?;
     let markdown = crate::output::gap_decision_ledger::render_gap_decision_ledger_markdown(&report);
     let gap_ledger_path = resolve_path(root, &options.gap_ledger);
@@ -688,6 +691,28 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
     if !root.join("Cargo.toml").is_file() {
         if detect_python_project(root) || detect_typescript_project(root) {
             return None;
+        }
+        // A Go or Java repository is the right root; sending it to `--root`
+        // and doctor loops. Name the languages ripr cannot analyze instead.
+        // Rust or preview source below the root (a nested crate) means the
+        // root really is wrong, so that case keeps `wrong_root`.
+        let analyzable_below = !crate::analysis::workspace_rust_files(root).is_empty()
+            || !crate::analysis::workspace_preview_language_files(root).is_empty();
+        let unanalyzed = crate::analysis::workspace_unanalyzed_source_languages(root);
+        if !analyzable_below && !unanalyzed.is_empty() {
+            let found = unanalyzed
+                .iter()
+                .map(|(language, count)| format!("{language} ({count} file(s))"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Some(Selection::no_action(
+                "no_action",
+                format!(
+                    "The first-pr root `{}` has {found} source and no Rust, Python or TypeScript project. ripr does not analyze these languages, so there is no gap to assign; review their changes with their own tests.",
+                    options.root
+                ),
+                0,
+            ));
         }
         return Some(Selection::blocked(
             "wrong_root",
@@ -3596,6 +3621,52 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_language_root_is_no_action_not_wrong_root() -> Result<(), String> {
+        // A Go repository is the right root: sending it to `--root` and
+        // doctor was a loop with no exit.
+        let repo = temp_repo("first-pr-go-root")?;
+        let go_root = repo.join("go-service");
+        fs::create_dir_all(go_root.join("pkg"))
+            .map_err(|err| format!("mkdir {}: {err}", go_root.display()))?;
+        fs::write(go_root.join("go.mod"), "module example.com/svc\n")
+            .map_err(|err| format!("write go.mod: {err}"))?;
+        fs::write(go_root.join("pkg/calc.go"), "package pkg\n")
+            .map_err(|err| format!("write calc.go: {err}"))?;
+        let options = FirstPrOptions {
+            root: "go-service".to_string(),
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "no_action", "{packet}");
+        assert_eq!(
+            packet["selected"]["output_state"], "no_actionable_gap",
+            "{packet}"
+        );
+        let text = packet.to_string();
+        assert!(text.contains("Go (1 file(s))"), "{text}");
+        assert!(!text.contains("Pass the repository root"), "{text}");
+
+        // A nested Cargo crate below the Go root means `--root` should point
+        // at that crate, so the recovery stays `wrong_root`.
+        let nested = go_root.join("rust-core");
+        fs::create_dir_all(nested.join("src"))
+            .map_err(|err| format!("mkdir {}: {err}", nested.display()))?;
+        fs::write(
+            nested.join("Cargo.toml"),
+            "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|err| format!("write nested Cargo.toml: {err}"))?;
+        fs::write(nested.join("src/lib.rs"), "pub fn f() -> i32 { 1 }\n")
+            .map_err(|err| format!("write nested lib.rs: {err}"))?;
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "blocked", "{packet}");
+        assert_eq!(packet["selected"]["state"], "wrong_root", "{packet}");
+        cleanup(&repo)
+    }
+
+    #[test]
     fn non_cargo_root_writes_workspace_recovery_packet_to_invocation_root() -> Result<(), String> {
         let repo = temp_repo("first-pr-not-cargo-root")?;
         let non_workspace = repo.join("not-workspace");
@@ -5843,5 +5914,64 @@ mod tests {
             .and_then(Path::parent)
             .map(Path::to_path_buf)
             .ok_or_else(|| "failed to resolve fixture repo root".to_string())
+    }
+
+    fn first_pr_args(root: &str, out: &str) -> Vec<String> {
+        vec![
+            "--root".to_string(),
+            root.to_string(),
+            "--base".to_string(),
+            "HEAD".to_string(),
+            "--out-dir".to_string(),
+            out.to_string(),
+        ]
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unwritable_out_dir_names_out_dir_not_out() -> Result<(), String> {
+        use crate::testing::unwritable_output::OutputDirFixture;
+
+        let env = OutputDirFixture::unwritable("first-pr-ro", "reports")?;
+        let root = OutputDirFixture::path_arg(&env.root)?;
+        let out = OutputDirFixture::path_arg(&env.target)?;
+        let error = match first_pr(&first_pr_args(root, out)) {
+            Err(error) => error,
+            Ok(()) => {
+                return Err(
+                    "unwritable --out-dir must fail while creating the output directory"
+                        .to_string(),
+                );
+            }
+        };
+        assert!(error.contains(&format!("create {out} failed:")), "{error}");
+        assert!(
+            error.contains("write elsewhere with --out-dir PATH"),
+            "first-pr must name --out-dir PATH, got {error}"
+        );
+        assert!(
+            !error.contains("write elsewhere with --out PATH"),
+            "first-pr must not name pilot's flag, got {error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn occupying_file_out_dir_does_not_name_the_relocate_flag() -> Result<(), String> {
+        use crate::testing::unwritable_output::OutputDirFixture;
+
+        let env = OutputDirFixture::occupying_file("first-pr-file", "reports")?;
+        let root = OutputDirFixture::path_arg(&env.root)?;
+        let out = OutputDirFixture::path_arg(&env.target)?;
+        let error = match first_pr(&first_pr_args(root, out)) {
+            Err(error) => error,
+            Ok(()) => return Err("file occupying --out-dir must fail".to_string()),
+        };
+        assert!(error.contains(&format!("create {out} failed:")), "{error}");
+        assert!(
+            !error.contains("write elsewhere"),
+            "a file occupying --out-dir is not a not-writable tree: {error}"
+        );
+        Ok(())
     }
 }
