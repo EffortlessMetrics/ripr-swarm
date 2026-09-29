@@ -389,7 +389,7 @@ Updated:
 ## Pending — python_metaclass_limit (7)
 
 Reason:
-RIPR-SPEC-0122: the analysis outcome and state lines lead with plain words; the id stays in parentheses
+RIPR-SPEC-0046 RIPR-SPEC-0047: check JSON now carries a top-level source_subject stamp with the analysis-time content digests of the files a derived gap ledger names (#4544); no finding, classification, or human output changed.
 
 Command:
 `cargo xtask goldens bless python_metaclass_limit --reason "..."`
