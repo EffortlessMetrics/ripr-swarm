@@ -4,49 +4,39 @@
 //! the workspace it was computed from. Nothing about a line number says which
 //! revision it belongs to, so after a branch switch, edit, or commit an editor
 //! consumer could place branch A's gap at `anchor.file:anchor.line` on branch
-//! B's file and present it as current. The producer therefore stamps the
-//! artifact with a `source_subject`: the content digest of every workspace
-//! file its records make claims about. Consumers recompute those digests from
-//! the current workspace; a mismatch, a deleted file, or a missing stamp means
-//! the artifact no longer describes the files in front of the reader.
+//! B's file and present it as current.
 //!
-//! The stamp shape is shared by the Rust ledger writer, the xtask
-//! actionable-gaps writer (which writes the same shape), and the LSP
-//! validator in `lsp::gap_artifacts`, which is the only consumer authority.
+//! The stamp is taken where the analysis runs, not where a derived report is
+//! written: `ripr check --format json` and `--format repo-exposure-json` add a
+//! `source_subject` with the content digest of every file their gap-bearing
+//! output names, read in the analysis run. The gap ledger writer and the xtask
+//! actionable-gaps writer only copy digests from that input stamp
+//! ([`derive_source_subject`]); they never hash the workspace, so a report
+//! written after a checkout or an edit cannot vouch for records computed
+//! before it. The LSP validator in `lsp::gap_artifacts` recomputes the
+//! digests from the current workspace and is the only consumer authority.
 
-use serde::{Deserialize, Serialize};
+mod shared;
+
+pub(crate) use shared::{
+    GapSourceSubject, GapSourceSubjectFile, SOURCE_SUBJECT_DIGEST_ALGORITHM,
+    actionable_packet_named_paths, actionable_packet_subject_paths, derive_source_subject,
+    subject_relative_path,
+};
+
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::io::ErrorKind;
-use std::path::{Component, Path};
-
-/// The only digest algorithm a `source_subject` stamp may declare.
-pub(crate) const SOURCE_SUBJECT_DIGEST_ALGORITHM: &str = "sha256";
-
-/// Artifact-level source-state identity: one entry per workspace file the
-/// artifact's records name, sorted by path.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub(crate) struct GapSourceSubject {
-    pub(crate) digest_algorithm: String,
-    pub(crate) files: Vec<GapSourceSubjectFile>,
-}
-
-/// One stamped workspace file. `digest` is `sha256:<hex>` of the file bytes
-/// when the artifact was written, or `null` when the named file was absent.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub(crate) struct GapSourceSubjectFile {
-    pub(crate) path: String,
-    pub(crate) digest: Option<String>,
-}
+use std::path::Path;
 
 /// The result of comparing a stamp with the current workspace.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SourceSubjectCheck {
     /// Every stamped file still has its stamped content.
     Current,
-    /// A stamped file changed, was deleted, or appeared since the artifact was
-    /// written. Carries the repo-relative path of the first differing file.
+    /// A stamped file changed, was deleted, or appeared since the analysis
+    /// read it. Carries the repo-relative path of the first differing file.
     Stale(String),
     /// The artifact cannot be matched to the current workspace: the stamp is
     /// missing, malformed, uses an unknown digest, omits a file the records
@@ -63,80 +53,76 @@ pub(crate) fn source_file_digest(root: &Path, relative: &str) -> Result<Option<S
     }
 }
 
-/// Normalize a record path to the repo-relative spelling the stamp uses. A
-/// `path::test_name` selector keeps its file part. Absolute paths inside
-/// `root` are made relative; anything outside the workspace, traversing, or
-/// blank yields `None`.
-pub(crate) fn subject_relative_path(root: &Path, raw: &str) -> Option<String> {
-    let file = raw.split_once("::").map_or(raw, |(file, _)| file).trim();
-    if file.is_empty() || file.contains('\n') || file.contains('\r') {
-        return None;
-    }
-    let normalized = file.replace('\\', "/");
-    let path = Path::new(&normalized);
-    let relative = if path.is_absolute() {
-        path.strip_prefix(root).ok()?.to_path_buf()
-    } else {
-        path.to_path_buf()
-    };
-    let mut parts = Vec::new();
-    for component in relative.components() {
-        match component {
-            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
-        }
-    }
-    if parts.is_empty() {
-        return None;
-    }
-    Some(parts.join("/"))
-}
-
 /// Files a gap decision ledger record makes claims about: the anchor the
 /// diagnostic is placed on and the repair route's target and related test.
 pub(crate) fn gap_record_subject_paths(root: &Path, record: &Value) -> BTreeSet<String> {
-    subject_paths(
-        root,
-        record,
-        &[
-            &["anchor", "file"],
-            &["repair_route", "target_file"],
-            &["repair_route", "related_test"],
-        ],
-    )
+    [
+        &["anchor", "file"][..],
+        &["repair_route", "target_file"][..],
+        &["repair_route", "related_test"][..],
+    ]
+    .iter()
+    .filter_map(|path| {
+        path.iter()
+            .try_fold(record, |value, key| value.get(*key))
+            .and_then(Value::as_str)
+    })
+    .filter_map(|raw| subject_relative_path(root, raw))
+    .collect()
 }
 
-/// Files an actionable-gaps packet anchors its claim on: the changed source
-/// file, the primary anchor file the editor places the gap on, and the related
-/// test file whose missing discriminator the packet describes.
-pub(crate) fn actionable_packet_subject_paths(root: &Path, packet: &Value) -> BTreeSet<String> {
-    subject_paths(
-        root,
-        packet,
-        &[
-            &["source_file"],
-            &["primary_anchor", "file"],
-            &["related_test_or_observer", "file"],
-        ],
-    )
-}
-
-fn subject_paths(root: &Path, value: &Value, fields: &[&[&str]]) -> BTreeSet<String> {
-    fields
-        .iter()
-        .filter_map(|path| {
-            let mut current = value;
-            for key in *path {
-                current = current.get(*key)?;
+/// Every workspace file an analysis output value names under a path-bearing
+/// key (`file`, `path`, `source_file`, `target_file`, `target_test`,
+/// `related_test`, `test`, `related_test_or_observer`), at any depth. Used by
+/// the repo-exposure producer so its stamp covers whatever a derived ledger
+/// record or actionable-gaps packet later names from the same evidence.
+pub(crate) fn named_files_in_value(root: &Path, value: &Value, files: &mut BTreeSet<String>) {
+    const PATH_KEYS: [&str; 8] = [
+        "file",
+        "path",
+        "source_file",
+        "target_file",
+        "target_test",
+        "related_test",
+        "test",
+        "related_test_or_observer",
+    ];
+    match value {
+        Value::Object(object) => {
+            for (key, child) in object {
+                if PATH_KEYS.contains(&key.as_str()) {
+                    collect_path_strings(root, child, files);
+                }
+                named_files_in_value(root, child, files);
             }
-            current.as_str()
-        })
-        .filter_map(|raw| subject_relative_path(root, raw))
-        .collect()
+        }
+        Value::Array(values) => {
+            for child in values {
+                named_files_in_value(root, child, files);
+            }
+        }
+        Value::String(_) | Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
+}
+
+fn collect_path_strings(root: &Path, value: &Value, files: &mut BTreeSet<String>) {
+    match value {
+        Value::String(raw) => {
+            if let Some(path) = subject_relative_path(root, raw) {
+                files.insert(path);
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                collect_path_strings(root, child, files);
+            }
+        }
+        Value::Object(_) | Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
 }
 
 /// Stamp the given repo-relative files with their current content digests.
+/// Only analysis producers call this, in the run that read the files.
 pub(crate) fn stamp_source_subject(
     root: &Path,
     paths: &BTreeSet<String>,
@@ -154,6 +140,35 @@ pub(crate) fn stamp_source_subject(
         digest_algorithm: SOURCE_SUBJECT_DIGEST_ALGORITHM.to_string(),
         files,
     })
+}
+
+/// Append a top-level `"source_subject"` member to a rendered JSON object
+/// document, keeping the document's own formatting. Returns the document
+/// unchanged when there is nothing to stamp or a file cannot be read, so a
+/// derived report falls back to `unverifiable_subject` instead of carrying a
+/// partial stamp.
+pub(crate) fn append_source_subject_member(
+    rendered: String,
+    root: &Path,
+    paths: &BTreeSet<String>,
+) -> String {
+    if paths.is_empty() {
+        return rendered;
+    }
+    let Ok(stamp) = stamp_source_subject(root, paths) else {
+        return rendered;
+    };
+    let Ok(stamp) = serde_json::to_string(&stamp) else {
+        return rendered;
+    };
+    let trimmed = rendered.trim_end();
+    let Some(body) = trimmed.strip_suffix('}') else {
+        return rendered;
+    };
+    let body = body.trim_end();
+    let separator = if body.ends_with('{') { "" } else { "," };
+    let newline = if rendered.ends_with('\n') { "\n" } else { "" };
+    format!("{body}{separator}\n  \"source_subject\": {stamp}\n}}{newline}")
 }
 
 /// Compare an artifact's `source_subject` with the current workspace.
@@ -193,9 +208,6 @@ pub(crate) fn check_source_subject(
     SourceSubjectCheck::Current
 }
 
-/// Test support: stamp a hand-built ledger or actionable-gaps value against
-/// `root` exactly as the producers do, so fixtures that exercise other
-/// validation rules carry a current `source_subject`.
 #[cfg(test)]
 pub(crate) fn with_source_subject_for_test(root: &Path, mut artifact: Value) -> Value {
     let mut paths = BTreeSet::new();
@@ -370,5 +382,165 @@ mod tests {
             actionable_packet_subject_paths(root, &packet),
             BTreeSet::from(["src/lib.rs".to_string(), "src/pricing.rs".to_string()])
         );
+    }
+
+    #[test]
+    fn packet_subject_paths_cover_every_related_test_or_observer_shape() {
+        let root = Path::new("/repo");
+        for (shape, observer) in [
+            ("string", json!("tests/observer.rs::observes")),
+            (
+                "object",
+                json!({"file": "tests/observer.rs", "test": "observes"}),
+            ),
+            (
+                "array",
+                json!([
+                    "not a path",
+                    {"related_test": "tests/observer.rs::observes"},
+                    ["tests/nested.rs::deeper"]
+                ]),
+            ),
+        ] {
+            let packet = json!({
+                "source_file": "src/pricing.rs",
+                "target_test": "tests/pricing.rs::discount_threshold",
+                "target_file": "tests/pricing_extra.rs",
+                "related_test_or_observer": observer
+            });
+            let paths = actionable_packet_subject_paths(root, &packet);
+            assert!(paths.contains("tests/observer.rs"), "{shape}: {paths:?}");
+            assert!(paths.contains("src/pricing.rs"), "{shape}: {paths:?}");
+            assert!(paths.contains("tests/pricing.rs"), "{shape}: {paths:?}");
+            assert!(
+                paths.contains("tests/pricing_extra.rs"),
+                "{shape}: {paths:?}"
+            );
+            assert_eq!(
+                shape == "array",
+                paths.contains("tests/nested.rs"),
+                "{shape}"
+            );
+        }
+    }
+
+    #[test]
+    fn absolute_paths_resolve_against_a_relative_root() -> Result<(), String> {
+        // `cargo test` runs in the crate directory, which holds `src/lib.rs`.
+        let cwd = std::env::current_dir().map_err(|err| err.to_string())?;
+        let absolute = cwd.join("src/lib.rs").display().to_string();
+        assert_eq!(
+            subject_relative_path(Path::new("."), &absolute).as_deref(),
+            Some("src/lib.rs")
+        );
+        assert_eq!(
+            subject_relative_path(Path::new("src/.."), &absolute).as_deref(),
+            Some("src/lib.rs")
+        );
+        assert_eq!(
+            subject_relative_path(Path::new("src"), &absolute).as_deref(),
+            Some("lib.rs")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn derive_copies_digests_and_never_hashes() -> Result<(), String> {
+        let input = json!({
+            "digest_algorithm": "sha256",
+            "files": [
+                {"path": "src/lib.rs", "digest": "sha256:aa"},
+                {"path": "tests/it.rs", "digest": null},
+                {"path": "src/unused.rs", "digest": "sha256:bb"}
+            ]
+        });
+        let required = BTreeSet::from(["src/lib.rs".to_string(), "tests/it.rs".to_string()]);
+        // `/nonexistent` cannot be read, so a copied digest cannot come from hashing.
+        let root = Path::new("/nonexistent-ripr-root");
+        let derived = derive_source_subject(Some(&input), root, root, &required)?;
+        assert_eq!(
+            serde_json::to_value(&derived).map_err(|err| err.to_string())?,
+            json!({
+                "digest_algorithm": "sha256",
+                "files": [
+                    {"path": "src/lib.rs", "digest": "sha256:aa"},
+                    {"path": "tests/it.rs", "digest": null}
+                ]
+            })
+        );
+        // An input produced under a parent root is rebased onto the output root.
+        let rebased = derive_source_subject(
+            Some(&json!({
+                "digest_algorithm": "sha256",
+                "files": [{"path": "crate/src/lib.rs", "digest": "sha256:cc"}]
+            })),
+            Path::new("/nonexistent-ripr-root"),
+            Path::new("/nonexistent-ripr-root/crate"),
+            &BTreeSet::from(["src/lib.rs".to_string()]),
+        )?;
+        assert_eq!(rebased.files[0].digest.as_deref(), Some("sha256:cc"));
+
+        for (stamp, reason) in [
+            (None, "input_source_subject_missing"),
+            (Some(json!({"files": 1})), "input_source_subject_malformed"),
+            (
+                Some(json!({"digest_algorithm": "md5", "files": []})),
+                "input_source_subject_unsupported_digest",
+            ),
+            (
+                Some(json!({"digest_algorithm": "sha256", "files": [
+                    {"path": "src/lib.rs", "digest": "sha256:aa"}
+                ]})),
+                "input_source_subject_incomplete",
+            ),
+        ] {
+            assert_eq!(
+                derive_source_subject(stamp.as_ref(), root, root, &required),
+                Err(reason)
+            );
+        }
+        assert_eq!(
+            derive_source_subject(None, root, root, &BTreeSet::new()).map(|s| s.files.len()),
+            Ok(0)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn append_source_subject_member_stamps_named_files_or_leaves_the_document() -> Result<(), String>
+    {
+        let root = temp_root("append")?;
+        std::fs::write(root.join("src/lib.rs"), "abc\n").map_err(|err| err.to_string())?;
+        let paths = BTreeSet::from(["src/lib.rs".to_string()]);
+        let rendered = "{\n  \"schema_version\": \"0.1\"\n}\n".to_string();
+        let stamped = append_source_subject_member(rendered.clone(), &root, &paths);
+        let value: Value = serde_json::from_str(&stamped).map_err(|err| err.to_string())?;
+        assert_eq!(value["schema_version"], json!("0.1"));
+        assert_eq!(value["source_subject"], stamp_value(&root, &paths)?);
+        assert!(stamped.ends_with("}\n"));
+        assert_eq!(
+            append_source_subject_member(rendered.clone(), &root, &BTreeSet::new()),
+            rendered
+        );
+        assert_eq!(
+            append_source_subject_member("[]".to_string(), &root, &paths),
+            "[]"
+        );
+
+        let mut named = BTreeSet::new();
+        named_files_in_value(
+            &root,
+            &json!({
+                "file": "src/lib.rs",
+                "evidence": [{"related_test": "tests/it.rs::case", "name": "src/ignored.rs"}],
+                "related_tests": [{"test": "not a path"}]
+            }),
+            &mut named,
+        );
+        assert_eq!(
+            named,
+            BTreeSet::from(["src/lib.rs".to_string(), "tests/it.rs".to_string()])
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
     }
 }

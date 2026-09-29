@@ -371,3 +371,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_unittest_oracle_shapes (6)
+
+Reason:
+RIPR-SPEC-0046 RIPR-SPEC-0047: check JSON now carries a top-level source_subject stamp with the analysis-time content digests of the files a derived gap ledger names (#4544); no finding, classification, or human output changed.
+
+Command:
+`cargo xtask goldens bless python_unittest_oracle_shapes --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

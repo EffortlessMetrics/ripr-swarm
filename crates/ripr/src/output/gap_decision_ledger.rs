@@ -52,9 +52,16 @@ pub(crate) struct GapDecisionLedgerReport {
     inputs: GapDecisionLedgerInputs,
     summary: GapDecisionLedgerSummary,
     analysis_outcome: Option<Value>,
-    /// Content digests of the workspace files the records name (#4544).
-    /// `None` until a writer stamps the report for its selected root.
+    /// The analysis input's `source_subject` stamp and root, kept so a writer
+    /// can derive the ledger stamp from them (#4544). Never rendered.
+    input_source_subject: Option<Value>,
+    input_root: Option<String>,
+    /// Content digests the analysis saw for the files the records name,
+    /// copied from the input stamp. `None` until a writer derives it.
     source_subject: Option<GapSourceSubject>,
+    /// Why the writer could not derive a stamp (for example the input carried
+    /// none). Editor consumers then report `unverifiable_subject`.
+    source_subject_unavailable: Option<&'static str>,
     records: Vec<GapRecord>,
     warnings: Vec<String>,
     limits: Vec<String>,
@@ -417,23 +424,24 @@ pub(crate) fn build_gap_decision_ledger_report(
 ) -> GapDecisionLedgerReport {
     let mut warnings = Vec::new();
     let mut analysis_outcome = None;
-    let mut source_subject = None;
+    let mut input_source_subject = None;
+    let mut input_root = None;
     let mut records = match input.records_json {
         Ok(contents) => {
             let source_value = serde_json::from_str::<Value>(&contents).ok();
             analysis_outcome = source_value
                 .as_ref()
                 .and_then(|value| value.get("analysis_outcome").cloned());
-            // #4544: re-rendering an earlier ledger keeps the stamp taken when
-            // its records were computed; restamping now would vouch for them
-            // against files they were never compared with.
-            if input.source_kind == GapDecisionLedgerSourceKind::Records {
-                source_subject = source_value
-                    .as_ref()
-                    .and_then(|value| value.get("source_subject"))
-                    .and_then(|stamp| {
-                        serde_json::from_value::<GapSourceSubject>(stamp.clone()).ok()
-                    });
+            // #4544: the ledger's stamp is derived from the stamp the analysis
+            // output (or an earlier ledger) carries, never from the workspace
+            // as it is when this ledger is written.
+            if let Some(value) = source_value.as_ref() {
+                input_source_subject = value.get("source_subject").cloned();
+                input_root = value
+                    .get("root")
+                    .or_else(|| value.pointer("/artifact/repository/root"))
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned);
             }
             match parse_gap_decision_source(input.source_kind, &contents) {
                 Ok(records) => records,
@@ -485,7 +493,10 @@ pub(crate) fn build_gap_decision_ledger_report(
         },
         summary,
         analysis_outcome,
-        source_subject,
+        input_source_subject,
+        input_root,
+        source_subject: None,
+        source_subject_unavailable: None,
         records,
         warnings,
         limits: vec![
@@ -518,6 +529,8 @@ pub(crate) fn render_gap_decision_ledger_json(
         analysis_outcome: Option<&'a Value>,
         #[serde(skip_serializing_if = "Option::is_none")]
         source_subject: Option<&'a GapSourceSubject>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_subject_unavailable: Option<&'a str>,
         records: &'a [Value],
         warnings: &'a [String],
         limits: &'a [String],
@@ -534,6 +547,7 @@ pub(crate) fn render_gap_decision_ledger_json(
         summary: &report.summary,
         analysis_outcome: report.analysis_outcome.as_ref(),
         source_subject: report.source_subject.as_ref(),
+        source_subject_unavailable: report.source_subject_unavailable,
         records: &records,
         warnings: &report.warnings,
         limits: &report.limits,
@@ -541,27 +555,60 @@ pub(crate) fn render_gap_decision_ledger_json(
     .map_err(|err| format!("serialize gap decision ledger JSON failed: {err}"))
 }
 
-/// Stamp the ledger with the content digests of every workspace file its
-/// records name, read from `root` (#4544). Editor consumers compare the stamp
-/// with the current workspace so a ledger computed for other file contents is
-/// disclosed as stale instead of being projected at its old lines. A stamp
-/// carried over from a re-rendered ledger is kept.
+/// Derive the ledger's `source_subject` for the selected `root` (#4544).
+/// Every file a record names must appear in the analysis input's stamp, whose
+/// digest is copied; nothing is hashed here. So a ledger written after a
+/// checkout or an edit still describes the bytes the analysis saw, and the
+/// editor discloses it as stale. When the input carries no usable stamp, or
+/// omits a named file, the ledger gets no stamp and records why in
+/// `source_subject_unavailable`; editors then report `unverifiable_subject`.
 pub(crate) fn stamp_gap_decision_ledger_source_subject(
     report: &mut GapDecisionLedgerReport,
     root: &Path,
 ) -> Result<(), String> {
-    if report.source_subject.is_some() {
-        return Ok(());
-    }
-    let mut paths = BTreeSet::new();
+    let mut required = BTreeSet::new();
     for record in &report.records {
+        required.extend(gap_source_subject::gap_record_subject_paths(
+            root,
+            &gap_record_json_value(record)?,
+        ));
+    }
+    let input_root = report.input_root.as_deref().map_or(root, Path::new);
+    match gap_source_subject::derive_source_subject(
+        report.input_source_subject.as_ref(),
+        input_root,
+        root,
+        &required,
+    ) {
+        Ok(subject) => {
+            report.source_subject = Some(subject);
+            report.source_subject_unavailable = None;
+        }
+        Err(reason) => {
+            report.source_subject = None;
+            report.source_subject_unavailable = Some(reason);
+        }
+    }
+    Ok(())
+}
+
+/// Every workspace file a ledger derived from this analysis output would
+/// name, spelled relative to `root`. The `ripr check` JSON producer stamps
+/// exactly these files so the ledger writer can copy their digests.
+pub(crate) fn check_output_subject_paths(
+    contents: &str,
+    root: &Path,
+) -> Result<BTreeSet<String>, String> {
+    let mut records = gap_records_from_check_output_json(contents)?;
+    attach_check_output_preview_receipt_routes(&mut records, &root.to_string_lossy());
+    let mut paths = BTreeSet::new();
+    for record in &records {
         paths.extend(gap_source_subject::gap_record_subject_paths(
             root,
             &gap_record_json_value(record)?,
         ));
     }
-    report.source_subject = Some(gap_source_subject::stamp_source_subject(root, &paths)?);
-    Ok(())
+    Ok(paths)
 }
 
 fn gap_record_json_value(record: &GapRecord) -> Result<Value, String> {

@@ -958,20 +958,11 @@ fn actionable_packet_guidance_is_missing(value: &str) -> bool {
     )
 }
 
+/// The files a packet names are defined once, in the shared source-subject
+/// contract, so path safety, the stamp check, and the xtask stamp writer all
+/// read the same shapes (#4544).
 fn actionable_packet_related_paths(packet: &Value) -> Vec<String> {
-    let observer = packet.get("related_test_or_observer");
-    let primary_anchor = packet.get("primary_anchor");
-    string_values(&[
-        path_value(Some(packet), &["source_file"]),
-        path_value(Some(packet), &["target_test"]),
-        path_value(Some(packet), &["target_file"]),
-        path_value(primary_anchor, &["file"]),
-        path_value(observer, &["file"]),
-        path_value(observer, &["path"]),
-        path_value(observer, &["related_test"]),
-        path_value(observer, &["test"]),
-        path_value(observer, &["target_file"]),
-    ])
+    gap_source_subject::actionable_packet_named_paths(packet)
 }
 
 fn actionable_packet_related_target_file(value: &Value) -> Option<String> {
@@ -3066,18 +3057,16 @@ mod tests {
                 .map_err(|err| err.to_string())?;
             fs::write(root.join("tests/pricing.rs"), "#[test]\nfn t() {}\n")
                 .map_err(|err| err.to_string())?;
+            // Rust-only so the test holds in the `--no-default-features
+            // --features lang-rust` lane as well as the default build.
             let context = GapArtifactValidationContext {
                 root: &root,
-                enabled_languages: &[LanguageId::Rust, LanguageId::Python],
+                enabled_languages: &[LanguageId::Rust],
             };
             let stamp = |artifact: Value| {
                 crate::output::gap_source_subject::with_source_subject_for_test(&root, artifact)
             };
-            let mut ledger = unstamped_preview_gap_ledger();
-            ledger["records"][0]["anchor"] = json!({"file": "src/pricing.rs", "line": 1});
-            ledger["records"][0]["repair_route"]["target_file"] = json!("tests/pricing.rs");
-            ledger["records"][0]["repair_route"]["related_test"] = json!("tests/pricing.rs::t");
-            let ledger = stamp(ledger);
+            let ledger = stamp(unstamped_rust_gap_ledger());
             let actionable = stamp(unstamped_actionable_gaps_report());
             for artifact in [&ledger, &actionable] {
                 validate_gap_artifact(artifact, &context)
@@ -3108,7 +3097,7 @@ mod tests {
             }
 
             for artifact in [
-                unstamped_preview_gap_ledger(),
+                unstamped_rust_gap_ledger(),
                 unstamped_actionable_gaps_report(),
             ] {
                 assert_eq!(
@@ -3129,6 +3118,94 @@ mod tests {
                     "source_subject_incomplete"
                 ))
             );
+            Ok(())
+        })();
+        fs::remove_dir_all(&root).map_err(|err| format!("remove {}: {err}", root.display()))?;
+        result
+    }
+
+    /// A Rust gap ledger whose record names `src/pricing.rs` and
+    /// `tests/pricing.rs`, valid without any preview-language adapter.
+    fn unstamped_rust_gap_ledger() -> Value {
+        let mut ledger = unstamped_preview_gap_ledger();
+        let record = &mut ledger["records"][0];
+        record["gap_id"] = json!("gap:rust:pricing");
+        record["canonical_gap_id"] = json!("gap:rust:pricing");
+        record["language"] = json!("rust");
+        record["language_status"] = json!("stable");
+        if let Some(object) = record.as_object_mut() {
+            object.remove("static_limit_kind");
+        }
+        record["anchor"] = json!({"file": "src/pricing.rs", "line": 1});
+        record["repair_route"]["target_file"] = json!("tests/pricing.rs");
+        record["repair_route"]["related_test"] = json!("tests/pricing.rs::t");
+        ledger
+    }
+
+    /// #4544: every file an actionable packet names is part of its subject,
+    /// whatever shape `related_test_or_observer` takes, and `target_test` /
+    /// `target_file` count too. Editing any of them makes the report stale.
+    #[test]
+    fn source_subject_covers_every_packet_related_test_shape() -> Result<(), String> {
+        let root = temp_root("source-subject-packet-shapes")?;
+        let result = (|| {
+            fs::create_dir_all(root.join("tests")).map_err(|err| err.to_string())?;
+            for file in [
+                "tests/observer.rs",
+                "tests/target_test.rs",
+                "tests/target_file.rs",
+            ] {
+                fs::write(root.join(file), "#[test]\nfn t() {}\n")
+                    .map_err(|err| err.to_string())?;
+            }
+            let context = GapArtifactValidationContext {
+                root: &root,
+                enabled_languages: &[LanguageId::Rust],
+            };
+            for (shape, observer) in [
+                ("string", json!("tests/observer.rs::t")),
+                ("object", json!({"file": "tests/observer.rs", "name": "t"})),
+                (
+                    "array",
+                    json!(["observer name", {"file": "tests/observer.rs", "name": "t"}]),
+                ),
+            ] {
+                let mut report = unstamped_actionable_gaps_report();
+                report["packets"][0]["related_test_or_observer"] = observer;
+                report["packets"][0]["target_test"] = json!("tests/target_test.rs::t");
+                report["packets"][0]["target_file"] = json!("tests/target_file.rs");
+                let report =
+                    crate::output::gap_source_subject::with_source_subject_for_test(&root, report);
+                validate_gap_artifact(&report, &context)
+                    .map_err(|err| format!("{shape}: current report rejected: {err:?}"))?;
+                for file in [
+                    "tests/observer.rs",
+                    "tests/target_test.rs",
+                    "tests/target_file.rs",
+                ] {
+                    fs::write(root.join(file), "#[test]\nfn t() { assert!(true) }\n")
+                        .map_err(|err| err.to_string())?;
+                    assert_eq!(
+                        validate_gap_artifact(&report, &context),
+                        Err(GapArtifactRejection::StaleSubject(file.to_string())),
+                        "{shape}: {file}"
+                    );
+                    fs::write(root.join(file), "#[test]\nfn t() {}\n")
+                        .map_err(|err| err.to_string())?;
+                }
+                // A stamp that drops the observer file cannot vouch for it.
+                let mut partial = report.clone();
+                if let Some(files) = partial["source_subject"]["files"].as_array_mut() {
+                    files.retain(|file| file["path"] != json!("tests/observer.rs"));
+                }
+                assert_eq!(
+                    validate_gap_artifact(&partial, &context),
+                    Err(GapArtifactRejection::UnverifiableSubject(
+                        "source_subject_incomplete"
+                    )),
+                    "{shape}"
+                );
+            }
             Ok(())
         })();
         fs::remove_dir_all(&root).map_err(|err| format!("remove {}: {err}", root.display()))?;
