@@ -64,8 +64,11 @@ invent a second owner, treat a compatibility alias as authority, or collapse
 4. Compatibility aliases have an explicit removal generation. They grant no
    authority beyond the canonical field.
 5. Compile-time consumers look up `identity_field_disposition(surface, field)`
-   without parsing prose. Unknown governed `*_id` / `*_identity` fields have
-   no disposition and fail `cargo xtask check-identity-registry`.
+   without parsing prose. Lookup matches the registered surface path exactly,
+   or an observed path that ends with a separator plus that registered path.
+   A truncated suffix does not inherit a disposition. Unknown governed
+   `*_id` / `*_identity` fields have no disposition and fail
+   `cargo xtask check-identity-registry`.
 6. Agent protocol `snapshot_id` remains the refresh-generation
    `AnalysisAttemptId`. It is not `#1602` `CompletedAnalysisSnapshotId`.
 7. `RepairAttemptId` cannot be registered as a parent, child, or field alias of
@@ -90,7 +93,9 @@ invent a second owner, treat a compatibility alias as authority, or collapse
   one-sided parent/child edge, adjacent field also canonical, ungoverned
   serialization surface.
 - Same field name on different surfaces keeps distinct meanings (`attempt_id`
-  on repair vs feedback; `receipt_id` on feedback vs repair).
+  on repair vs feedback; `receipt_id` on feedback vs repair). Truncated
+  surface suffixes do not inherit a disposition. The same surface field cannot
+  have two owners across canonical, component, alias, or adjacent claims.
 - `continuation_id` / `continuation_identity` are one authority with an alias.
 - Agent `snapshot_id` disposition is `AnalysisAttemptId`; check
   `snapshot_identity` is `CompletedAnalysisSnapshotId`.
@@ -143,8 +148,13 @@ invent a second owner, treat a compatibility alias as authority, or collapse
 - `crates/ripr/src/domain/identity/tests.rs::one_sided_parent_child_edge_fails_the_registry_check`
 - `crates/ripr/src/domain/identity/tests.rs::adjacent_field_cannot_also_be_canonical_on_the_same_surface`
 - `crates/ripr/src/domain/identity/tests.rs::serialization_on_an_ungoverned_surface_fails_closed`
+- `crates/ripr/src/domain/identity/tests.rs::truncated_surface_suffix_does_not_inherit_a_disposition`
+- `crates/ripr/src/domain/identity/tests.rs::checkout_prefixed_surface_still_matches_the_registered_path`
+- `crates/ripr/src/domain/identity/tests.rs::same_surface_field_cannot_be_canonical_and_component`
+- `crates/ripr/src/domain/identity/tests.rs::missing_serialized_sibling_fails_the_registry_check`
 - `xtask/src/identity_registry.rs::tests::unknown_field_has_no_disposition`
 - `xtask/src/identity_registry.rs::tests::same_attempt_id_name_keeps_repair_and_feedback_dispositions_apart`
+- `xtask/src/identity_registry.rs::tests::scanner_reports_unknown_and_zero_field_surfaces`
 
 ## Implementation Mapping
 

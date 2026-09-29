@@ -11,13 +11,12 @@ pub(crate) fn registry_violations(
     require_taxonomy(records, &mut violations);
     require_sibling_kinds(records, &mut violations);
     require_unique_kinds(records, &mut violations);
-    require_unique_canonical_owners(records, &mut violations);
+    require_unique_field_dispositions(records, adjacent, &mut violations);
     require_parent_child_consistency(records, &mut violations);
     require_repair_attempt_separation(records, &mut violations);
     require_snapshot_id_is_not_completed_snapshot(records, &mut violations);
     require_portable_inputs(records, &mut violations);
     require_alias_generations(records, &mut violations);
-    require_adjacent_not_canonical(records, adjacent, &mut violations);
     violations.sort();
     violations.dedup();
     violations
@@ -63,33 +62,62 @@ fn require_unique_kinds(records: &[IdentityRecord], violations: &mut Vec<String>
     }
 }
 
-fn require_unique_canonical_owners(records: &[IdentityRecord], violations: &mut Vec<String>) {
+fn require_unique_field_dispositions(
+    records: &[IdentityRecord],
+    adjacent: &[AdjacentField],
+    violations: &mut Vec<String>,
+) {
+    let mut claims = Vec::new();
     for record in records {
         for field in record.serialization {
-            if field.role != FieldRole::Canonical {
-                continue;
-            }
-            for other in records {
-                if other.kind == record.kind {
-                    continue;
-                }
-                for other_field in other.serialization {
-                    if other_field.name == field.name
-                        && other_field.surface == field.surface
-                        && other_field.role == FieldRole::Canonical
-                    {
-                        violations.push(format!(
-                            "field `{name}` on `{surface}` has contradictory canonical owners `{left}` and `{right}`",
-                            name = field.name,
-                            surface = field.surface,
-                            left = record.kind.as_str(),
-                            right = other.kind.as_str()
-                        ));
-                    }
-                }
-            }
+            claims.push(FieldClaim {
+                name: field.name,
+                surface: field.surface,
+                owner: record.kind.as_str(),
+            });
         }
     }
+    for entry in adjacent {
+        for surface in entry.surfaces {
+            claims.push(FieldClaim {
+                name: entry.name,
+                surface,
+                owner: "adjacent",
+            });
+        }
+    }
+    for (index, claim) in claims.iter().enumerate() {
+        for other in claims.iter().skip(index + 1) {
+            if claim.name != other.name || claim.surface != other.surface {
+                continue;
+            }
+            violations.push(duplicate_field_message(claim, other));
+        }
+    }
+}
+
+struct FieldClaim {
+    name: &'static str,
+    surface: &'static str,
+    owner: &'static str,
+}
+
+fn duplicate_field_message(left: &FieldClaim, right: &FieldClaim) -> String {
+    if left.owner == "adjacent" || right.owner == "adjacent" {
+        return format!(
+            "adjacent field `{}` on `{}` cannot also be a registered identity field",
+            left.name, left.surface
+        );
+    }
+    let (first, second) = if left.owner <= right.owner {
+        (left.owner, right.owner)
+    } else {
+        (right.owner, left.owner)
+    };
+    format!(
+        "field `{}` on `{}` has contradictory owners `{first}` and `{second}`",
+        left.name, left.surface
+    )
 }
 
 fn require_repair_attempt_separation(records: &[IdentityRecord], violations: &mut Vec<String>) {
@@ -172,29 +200,6 @@ fn require_alias_generations(records: &[IdentityRecord], violations: &mut Vec<St
                     field.surface,
                     record.kind.as_str()
                 ));
-            }
-        }
-    }
-}
-
-fn require_adjacent_not_canonical(
-    records: &[IdentityRecord],
-    adjacent: &[AdjacentField],
-    violations: &mut Vec<String>,
-) {
-    for entry in adjacent {
-        for surface in entry.surfaces {
-            for record in records {
-                if record.serialization.iter().any(|field| {
-                    field.name == entry.name
-                        && field.surface == *surface
-                        && field.role == FieldRole::Canonical
-                }) {
-                    violations.push(format!(
-                        "adjacent field `{}` on `{surface}` cannot also be a canonical identity field",
-                        entry.name
-                    ));
-                }
             }
         }
     }

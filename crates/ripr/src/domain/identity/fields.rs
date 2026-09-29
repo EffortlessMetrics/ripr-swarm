@@ -40,5 +40,13 @@ pub(crate) fn production_disposition(
 }
 
 fn surface_matches(registered: &str, observed: &str) -> bool {
-    registered == observed || observed.ends_with(registered) || registered.ends_with(observed)
+    if registered == observed {
+        return true;
+    }
+    // Observed may be an absolute or checkout-prefixed path. A truncated
+    // suffix must not inherit a disposition (`schema.json` is not
+    // `check.schema.json`).
+    observed
+        .strip_suffix(registered)
+        .is_some_and(|prefix| prefix.ends_with('/') || prefix.ends_with('\\'))
 }

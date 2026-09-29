@@ -238,6 +238,8 @@ fn push_escaped(body: &mut String, value: &str) {
             '"' => body.push_str("\\\""),
             '\\' => body.push_str("\\\\"),
             '\n' => body.push_str("\\n"),
+            '\r' => body.push_str("\\r"),
+            '\t' => body.push_str("\\t"),
             other => body.push(other),
         }
     }

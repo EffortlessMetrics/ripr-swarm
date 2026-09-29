@@ -93,21 +93,26 @@ fn unknown_field_violations() -> Result<Vec<String>, String> {
     let mut violations = Vec::new();
     for surface in GOVERNED_IDENTITY_SURFACES {
         let fields = identity_shaped_fields(Path::new(surface))?;
-        if fields.is_empty() {
-            violations.push(format!(
-                "governed identity surface `{surface}` produced zero identity-shaped fields"
-            ));
-            continue;
-        }
-        for field in fields {
-            if identity_field_disposition(surface, &field).is_none() {
-                violations.push(format!(
-                    "unknown governed identity field `{field}` on `{surface}` has no registry disposition"
-                ));
-            }
-        }
+        violations.extend(surface_field_violations(surface, &fields));
     }
     Ok(violations)
+}
+
+fn surface_field_violations(surface: &str, fields: &BTreeSet<String>) -> Vec<String> {
+    if fields.is_empty() {
+        return vec![format!(
+            "governed identity surface `{surface}` produced zero identity-shaped fields"
+        )];
+    }
+    let mut violations = Vec::new();
+    for field in fields {
+        if identity_field_disposition(surface, field).is_none() {
+            violations.push(format!(
+                "unknown governed identity field `{field}` on `{surface}` has no registry disposition"
+            ));
+        }
+    }
+    violations
 }
 
 fn identity_shaped_fields(path: &Path) -> Result<BTreeSet<String>, String> {
@@ -186,7 +191,10 @@ fn is_identity_shaped_field(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_rust_string_fields, collect_schema_fields, is_identity_shaped_field};
+    use super::{
+        collect_rust_string_fields, collect_schema_fields, is_identity_shaped_field,
+        surface_field_violations,
+    };
     use ripr::domain::{
         GOVERNED_IDENTITY_SURFACES, identity_field_disposition, identity_registry_canonical_json,
         identity_registry_markdown, identity_registry_violations,
@@ -293,5 +301,43 @@ mod tests {
             identity_field_disposition("crates/ripr/src/output/feedback.rs", "attempt_id"),
             Some("adjacent")
         );
+    }
+
+    #[test]
+    fn scanner_reports_unknown_and_zero_field_surfaces() {
+        let mut unknown = std::collections::BTreeSet::new();
+        unknown.insert("brand_new_widget_id".to_string());
+        let unknown_violations =
+            surface_field_violations("schemas/ripr/ripr-agent-success.schema.json", &unknown);
+        assert!(
+            unknown_violations.iter().any(|violation| {
+                violation.contains("brand_new_widget_id") && violation.contains("unknown")
+            }),
+            "{unknown_violations:?}"
+        );
+
+        let empty = std::collections::BTreeSet::new();
+        let empty_violations =
+            surface_field_violations("schemas/ripr/ripr-agent-success.schema.json", &empty);
+        assert!(
+            empty_violations
+                .iter()
+                .any(|violation| violation.contains("zero identity-shaped fields")),
+            "{empty_violations:?}"
+        );
+    }
+
+    #[test]
+    fn rust_scanner_keeps_identity_literals_after_escaped_quotes() {
+        let source = r#"
+            let _ = "not_an_identifier";
+            let escaped = "pre\"fix";
+            payload.insert("receipt_id", value);
+        "#;
+        let fields = collect_rust_string_fields(source);
+        assert!(fields.contains("receipt_id"));
+        assert!(!fields.contains("not_an_identifier"));
+        assert!(!fields.contains(r#"pre\"fix"#));
+        assert!(!fields.contains("pre\\"));
     }
 }

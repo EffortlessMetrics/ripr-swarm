@@ -9640,14 +9640,20 @@ tests = [
   "crates/ripr/src/domain/identity/tests.rs::one_sided_parent_child_edge_fails_the_registry_check",
   "crates/ripr/src/domain/identity/tests.rs::adjacent_field_cannot_also_be_canonical_on_the_same_surface",
   "crates/ripr/src/domain/identity/tests.rs::serialization_on_an_ungoverned_surface_fails_closed",
+  "crates/ripr/src/domain/identity/tests.rs::truncated_surface_suffix_does_not_inherit_a_disposition",
+  "crates/ripr/src/domain/identity/tests.rs::checkout_prefixed_surface_still_matches_the_registered_path",
+  "crates/ripr/src/domain/identity/tests.rs::same_surface_field_cannot_be_canonical_and_component",
+  "crates/ripr/src/domain/identity/tests.rs::missing_serialized_sibling_fails_the_registry_check",
   "xtask/src/identity_registry.rs::tests::unknown_field_has_no_disposition",
   "xtask/src/identity_registry.rs::tests::same_attempt_id_name_keeps_repair_and_feedback_dispositions_apart",
+  "xtask/src/identity_registry.rs::tests::scanner_reports_unknown_and_zero_field_surfaces",
 ]
 fixtures = [
 ]
 code = [
   "crates/ripr/src/domain/identity/mod.rs",
   "crates/ripr/src/domain/identity/catalog.rs",
+  "crates/ripr/src/domain/identity/fields.rs",
   "crates/ripr/src/domain/identity/invariants.rs",
   "xtask/src/identity_registry.rs",
 ]

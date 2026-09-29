@@ -117,7 +117,7 @@ fn same_surface_field_cannot_have_two_canonical_owners() {
         violations
             .iter()
             .any(|violation| violation.contains("snapshot_id")
-                && violation.contains("contradictory canonical owners")),
+                && violation.contains("contradictory owners")),
         "{violations:?}"
     );
 }
@@ -449,7 +449,8 @@ fn adjacent_field_cannot_also_be_canonical_on_the_same_surface() {
     let violations = registry_violations(&records, &adjacent);
     assert!(
         violations.iter().any(|violation| {
-            violation.contains("diff_identity") && violation.contains("cannot also be a canonical")
+            violation.contains("diff_identity")
+                && violation.contains("cannot also be a registered identity field")
         }),
         "{violations:?}"
     );
@@ -520,14 +521,14 @@ fn private_visibility_is_recorded_without_becoming_a_second_owner() {
 
 #[test]
 fn json_escapes_quotes_and_newlines_and_stays_byte_stable() {
-    const INVALIDATION: &str = "say \"hello\" and a\nnewline";
+    const INVALIDATION: &str = "say \"hello\" and a\nnewline\tand\rcarriage";
     let mut command = blank(IdentityKind::CommandId);
     command.invalidation = INVALIDATION;
     let records = with_taxonomy(&[command]);
     let first = render_canonical_json(&records, &[]);
     let second = render_canonical_json(&records, &[]);
     assert_eq!(first, second);
-    assert!(first.contains("say \\\"hello\\\" and a\\nnewline"));
+    assert!(first.contains("say \\\"hello\\\" and a\\nnewline\\tand\\rcarriage"));
 }
 
 #[test]
@@ -595,4 +596,82 @@ fn markdown_omits_private_canonical_fields() -> Result<(), String> {
     assert!(json.contains("\"visibility\": \"private\""));
     assert!(json.contains("document_id"));
     Ok(())
+}
+
+#[test]
+fn truncated_surface_suffix_does_not_inherit_a_disposition() {
+    assert_eq!(
+        identity_field_disposition("schema.json", "snapshot_id"),
+        None,
+        "a truncated suffix must not steal a longer registered schema path"
+    );
+    assert_eq!(
+        identity_field_disposition("error.schema.json", "snapshot_id"),
+        None,
+        "ripr-agent-error.schema.json must not match a bare error.schema.json suffix"
+    );
+    assert_eq!(
+        identity_field_disposition("action_contract.rs", "action_id"),
+        None,
+        "a basename must not inherit the governed action_contract.rs surface"
+    );
+}
+
+#[test]
+fn checkout_prefixed_surface_still_matches_the_registered_path() {
+    assert_eq!(
+        identity_field_disposition(
+            "/workspace/crates/ripr/src/lsp/action_contract.rs",
+            "action_id"
+        ),
+        Some("ActionId")
+    );
+    assert_eq!(
+        identity_field_disposition(
+            "C:\\workspace\\schemas/ripr/ripr-agent-success.schema.json",
+            "snapshot_id"
+        ),
+        Some("AnalysisAttemptId")
+    );
+}
+
+#[test]
+fn same_surface_field_cannot_be_canonical_and_component() {
+    const CANONICAL: &[super::record::SerializationField] = &[test_field(
+        "snapshot_id",
+        FieldRole::Canonical,
+        AGENT_SUCCESS,
+    )];
+    const COMPONENT: &[super::record::SerializationField] = &[test_field(
+        "snapshot_id",
+        FieldRole::Component,
+        AGENT_SUCCESS,
+    )];
+    let mut attempt = blank(IdentityKind::AnalysisAttemptId);
+    attempt.serialization = CANONICAL;
+    let mut feedback = blank(IdentityKind::FeedbackReceiptId);
+    feedback.serialization = COMPONENT;
+    let records = with_taxonomy(&[attempt, feedback]);
+    let violations = registry_violations(&records, &[]);
+    assert!(
+        violations.iter().any(|violation| {
+            violation.contains("snapshot_id")
+                && violation.contains("contradictory owners")
+                && violation.contains("AnalysisAttemptId")
+                && violation.contains("FeedbackReceiptId")
+        }),
+        "{violations:?}"
+    );
+}
+
+#[test]
+fn missing_serialized_sibling_fails_the_registry_check() {
+    let records = with_taxonomy(&[]);
+    let violations = registry_violations(&records, &[]);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| { violation.contains("FindingId") && violation.contains("missing") }),
+        "{violations:?}"
+    );
 }
