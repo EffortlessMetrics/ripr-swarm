@@ -11,7 +11,6 @@
 //! actionability flip is fail-closed and every ineligible state carries a
 //! typed reason.
 
-use super::new_test_target::NewTestTargetAdmission;
 use super::seam_classification::ClassifiedSeam;
 use super::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind};
 use super::test_grip_evidence::{RelatedTestGrip, TestGripEvidence, TestTargetEvidence};
@@ -19,7 +18,7 @@ use crate::analysis::canonical_gap::canonical_gap_identity;
 use crate::domain::{OracleKind, OracleStrength, RelationReason, StageState};
 
 pub(crate) use super::new_test_target::{
-    NewTestKind, NewTestProposalProvenance, NewTestTargetProposal,
+    NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
 };
 
 pub(crate) const REPAIR_ROUTE_AUTHORITY_BOUNDARY: &str =

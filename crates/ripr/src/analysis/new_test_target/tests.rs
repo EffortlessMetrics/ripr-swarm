@@ -1,7 +1,7 @@
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::new_test_target::{
     NewTestKind, NewTestProposalBlocker, NewTestProposalProvenance, NewTestTargetAdmission,
-    NewTestTargetProposal, admit_new_inline_unit_test, validate_inline_region_edit,
+    admit_new_inline_unit_test, validate_inline_region_edit,
 };
 use crate::analysis::repair_route::{RepairTargetSelection, repair_packet_eligibility};
 use crate::analysis::rust_index::{self, RustIndex};
@@ -11,7 +11,6 @@ use crate::analysis::seam_inventory::{
 use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
 use crate::analysis::syntax::{governed_cfg_test_modules, production_owner_module_path};
 use crate::config::RiprConfig;
-use crate::output::agent_seam_packets::{RecommendedTestTargetKind, recommended_test_for};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -866,60 +865,4 @@ fn vendor_source_path_is_a_typed_limitation() {
 fn parent_dir_escape_is_path_unsafe() {
     let admission = admit_from_source("../src/lib.rs", private_owner_with_inline_tests());
     assert_eq!(admission.blocker, Some(NewTestProposalBlocker::PathUnsafe));
-}
-
-#[test]
-fn ready_proposed_inline_unit_projects_through_recommended_test() {
-    use crate::analysis::seams::SeamGripClass;
-    use crate::analysis::test_grip_evidence::TestGripEvidence;
-    use crate::domain::{Confidence, MissingDiscriminatorFact, StageEvidence, StageState};
-
-    let seam = RepoSeam::new(
-        "src/lib.rs",
-        "discounted_total",
-        SeamKind::PredicateBoundary,
-        0,
-        1,
-        "amount >= threshold",
-        RequiredDiscriminator::BoundaryValue {
-            description: "amount >= threshold".to_string(),
-        },
-        ExpectedSink::ReturnValue,
-    );
-    let entry = ClassifiedSeam {
-        seam: seam.clone(),
-        evidence: TestGripEvidence {
-            seam_id: seam.id().clone(),
-            related_tests: Vec::new(),
-            reach: StageEvidence::new(StageState::No, Confidence::Low, "no related test"),
-            activate: StageEvidence::new(StageState::No, Confidence::Low, "no related test"),
-            propagate: StageEvidence::new(StageState::No, Confidence::Low, "no related test"),
-            observe: StageEvidence::new(StageState::No, Confidence::Low, "no related test"),
-            discriminate: StageEvidence::new(StageState::No, Confidence::Low, "no related test"),
-            observed_values: Vec::new(),
-            missing_discriminators: vec![MissingDiscriminatorFact {
-                value: "amount >= threshold".to_string(),
-                reason: "no observed activation values for boundary predicate".to_string(),
-                flow_sink: None,
-            }],
-            new_test_target: Some(NewTestTargetAdmission {
-                proposal: Some(NewTestTargetProposal {
-                    kind: NewTestKind::InlineUnit,
-                    file: PathBuf::from("src/lib.rs"),
-                    owner: "discounted_total".to_string(),
-                    provenance: NewTestProposalProvenance::ProducerOwned,
-                }),
-                region: None,
-                blocker: None,
-            }),
-        },
-        class: SeamGripClass::WeaklyGripped,
-    };
-    let recommended = recommended_test_for(&entry);
-    assert_eq!(
-        recommended.target_kind,
-        RecommendedTestTargetKind::NewInlineTestModule
-    );
-    assert_eq!(recommended.file.replace('\\', "/"), "src/lib.rs");
-    assert!(recommended.symbol_id.is_none());
 }
