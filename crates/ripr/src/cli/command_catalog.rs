@@ -1,6 +1,6 @@
 //! Typed public command catalog for RIPR CLI identity and alias parity.
 //!
-//! RIPR-SPEC-0183 / issue #4822 (command-discovery C1). This catalog owns
+//! RIPR-SPEC-0184 / issue #4822 (command-discovery C1). This catalog owns
 //! canonical command paths, aliases, and public/compatibility/advanced/internal
 //! classification. Parser generation is not required: `CliCommand::from_parts`
 //! keeps help/version dispatch, then resolves top-level spellings through this

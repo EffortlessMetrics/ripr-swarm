@@ -76,7 +76,7 @@ impl CliCommand {
             }
             Some("--version" | "-V") => Ok(Self::Version),
             // Top-level command identity and aliases are owned by the catalog
-            // (RIPR-SPEC-0183). Help/version stay here because they are flag
+            // (RIPR-SPEC-0184). Help/version stay here because they are flag
             // spellings and `help <command>` rewrites, not catalog rows.
             Some(command) => match crate::cli::command_catalog::resolve_top_level(command) {
                 Some(entry) => Ok(cli_command_from_dispatch(entry.dispatch, command_args)),

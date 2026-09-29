@@ -1,4 +1,4 @@
-# RIPR-SPEC-0183: Typed public command catalog and parser/alias parity
+# RIPR-SPEC-0184: Typed public command catalog and parser/alias parity
 
 Status: proposed
 
