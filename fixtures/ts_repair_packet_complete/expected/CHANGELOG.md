@@ -407,6 +407,7 @@ Updated:
 
 Reason:
 RIPR-SPEC-0122: Next step counts its label against the line budget and wraps instead of overflowing; fixture_opaque gloss states the heuristic (#4323 review)
+RIPR-SPEC-0122: bounded human check output leads the exposure line with the plain word the summary uses (weak, no path, unknown) before the schema value
 
 Command:
 `cargo xtask goldens bless ts_repair_packet_complete --reason "..."`
