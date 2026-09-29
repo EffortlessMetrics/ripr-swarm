@@ -1,0 +1,738 @@
+name: Repair npm launcher review findings v2
+
+on:
+  push:
+    branches:
+      - feat/4710-npm-launcher-core
+    paths:
+      - .github/workflows/branch-repair-4716-review-v2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.repository == 'EffortlessMetrics/ripr-swarm'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: feat/4710-npm-launcher-core
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.95.0
+        with:
+          toolchain: 1.95.0
+          components: rustfmt
+
+      - name: Apply reviewed repairs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one anchor, found {count}")
+              return text.replace(old, new, 1)
+
+          launcher_path = Path("packaging/npm/launcher/lib/launcher.cjs")
+          launcher = launcher_path.read_text()
+          launcher = replace_once(
+              launcher,
+              'const DISALLOWED_LIFECYCLE_SCRIPTS = ["preinstall", "install", "postinstall", "prepare"];',
+              'const DISALLOWED_LIFECYCLE_SCRIPTS = ["preinstall", "install", "postinstall", "preprepare", "prepare", "postprepare"];',
+              "launcher lifecycle list",
+          )
+          launcher = replace_once(
+              launcher,
+              'const SIGNALS_TO_FORWARD = ["SIGINT", "SIGTERM", "SIGHUP"];\n',
+              '',
+              "launcher signal constant",
+          )
+          start = launcher.find("  const forwarded = new Map();\n")
+          end = launcher.find("  return new Promise((resolve, reject) => {", start)
+          if start < 0 or end < 0 or end <= start:
+              raise SystemExit("manual signal forwarding block: cannot locate bounded block")
+          launcher = launcher[:start] + launcher[end:]
+          if launcher.count("      cleanup();\n") != 2:
+              raise SystemExit("launcher cleanup calls: expected two anchors")
+          launcher = launcher.replace("      cleanup();\n", "")
+          launcher = replace_once(
+              launcher,
+              "    forwardSignals: options.forwardSignals,\n",
+              "",
+              "launch forwarding option",
+          )
+          launcher_path.write_text(launcher)
+
+          test_path = Path("packaging/npm/launcher/test/launcher.test.cjs")
+          tests = test_path.read_text()
+          tests = replace_once(
+              tests,
+              'const { EventEmitter } = require("node:events");',
+              'const { EventEmitter, once } = require("node:events");',
+              "events imports",
+          )
+          tests = replace_once(
+              tests,
+              'const { spawnSync } = require("node:child_process");',
+              'const { spawn, spawnSync } = require("node:child_process");',
+              "child process imports",
+          )
+          tests = replace_once(
+              tests,
+              '''  const withInstall = launcherManifest({ scripts: { ...manifest.scripts, install: "curl example.invalid" } });
+            assert.throws(() => launcher.validateLauncherManifest(withInstall), { code: "install_script_forbidden" });
+
+          ''',
+              '''  for (const scriptName of ["preinstall", "install", "postinstall", "preprepare", "prepare", "postprepare"]) {
+            const withLifecycleHook = launcherManifest({
+              scripts: { ...manifest.scripts, [scriptName]: "node should-not-run.cjs" },
+            });
+            assert.throws(() => launcher.validateLauncherManifest(withLifecycleHook), {
+              code: "install_script_forbidden",
+            });
+          }
+
+          ''',
+              "Node lifecycle controls",
+          )
+          tests = replace_once(
+              tests,
+              'test("launch sets a nonzero exit code before forwarding a child signal", async () => {',
+              'test("launch sets a nonzero exit code before re-raising a child signal", async () => {',
+              "signal projection test title",
+          )
+          signal_test = r'''
+          test(
+            "terminal signal reaches wrapper and native child exactly once",
+            { skip: process.platform === "win32", timeout: 5000 },
+            async () => {
+              const fixture = nativeFixture();
+              const marker = path.join(fixture.root, "signal-count.txt");
+              const script = path.join(fixture.root, "signal-probe.cjs");
+              fs.writeFileSync(
+                script,
+                [
+                  'const fs = require("node:fs");',
+                  "let signals = 0;",
+                  'process.on("SIGTERM", () => {',
+                  "  signals += 1;",
+                  "  fs.writeFileSync(process.env.RIPR_SIGNAL_MARKER, String(signals));",
+                  "  setTimeout(() => process.exit(0), 100);",
+                  "});",
+                  'process.stdout.write("ready\\n");',
+                  "setInterval(() => {}, 1000);",
+                  "",
+                ].join("\n"),
+              );
+              const bin = path.join(fixture.launcherRoot, "bin", "ripr.cjs");
+              const wrapper = spawn(process.execPath, [bin, script], {
+                cwd: fixture.root,
+                env: { ...process.env, RIPR_SIGNAL_MARKER: marker },
+                detached: true,
+                stdio: ["ignore", "pipe", "pipe"],
+              });
+              wrapper.stdout.setEncoding("utf8");
+              wrapper.stderr.setEncoding("utf8");
+              let stderr = "";
+              wrapper.stderr.on("data", (chunk) => {
+                stderr += chunk;
+              });
+              try {
+                const ready = once(wrapper.stdout, "data").then(([chunk]) => String(chunk));
+                const earlyExit = once(wrapper, "exit").then(([code, signal]) => {
+                  throw new Error(`wrapper exited before child readiness: code=${code} signal=${signal} stderr=${stderr}`);
+                });
+                assert.match(await Promise.race([ready, earlyExit]), /ready/);
+
+                const exit = once(wrapper, "exit");
+                process.kill(-wrapper.pid, "SIGTERM");
+                const [code, signal] = await exit;
+                assert.equal(code, null, stderr);
+                assert.equal(signal, "SIGTERM", stderr);
+
+                for (let attempt = 0; attempt < 100 && !fs.existsSync(marker); attempt += 1) {
+                  await new Promise((resolve) => setTimeout(resolve, 20));
+                }
+                assert.equal(fs.readFileSync(marker, "utf8"), "1");
+
+                let groupExited = false;
+                for (let attempt = 0; attempt < 100; attempt += 1) {
+                  try {
+                    process.kill(-wrapper.pid, 0);
+                  } catch (error) {
+                    if (error.code === "ESRCH") {
+                      groupExited = true;
+                      break;
+                    }
+                    throw error;
+                  }
+                  await new Promise((resolve) => setTimeout(resolve, 20));
+                }
+                assert.equal(groupExited, true, "launcher process group must terminate after SIGTERM");
+              } finally {
+                try {
+                  process.kill(-wrapper.pid, "SIGKILL");
+                } catch (error) {
+                  if (error.code !== "ESRCH") {
+                    throw error;
+                  }
+                }
+                cleanup(fixture.root);
+              }
+            },
+          );
+
+          '''
+          tests = replace_once(
+              tests,
+              'test("runs a real synthetic executable and preserves argv, cwd, env, stdout, stderr, and exit status", () => {',
+              signal_test + 'test("runs a real synthetic executable and preserves argv, cwd, env, stdout, stderr, and exit status", () => {',
+              "runtime terminal-signal proof insertion",
+          )
+          test_path.write_text(tests)
+
+          package_path = Path("packaging/npm/launcher/package.json")
+          package = package_path.read_text()
+          package = replace_once(
+              package,
+              '"test": "node --test test/*.test.cjs"',
+              '"test": "node --test --test-reporter=tap test/*.test.cjs"',
+              "npm test command",
+          )
+          package_path.write_text(package)
+
+          workflow_path = Path(".github/workflows/npm-launcher.yml")
+          workflow = workflow_path.read_text()
+          workflow = replace_once(
+              workflow,
+              '''      - name: Test launcher
+                run: npm test
+
+          ''',
+              '''      - name: Test launcher and require executed controls
+                shell: bash
+                run: |
+                  set -euo pipefail
+                  report="${RUNNER_TEMP}/npm-launcher.tap"
+                  npm test | tee "${report}"
+                  node - "${report}" <<'NODE'
+                  const fs = require("node:fs");
+                  const report = fs.readFileSync(process.argv[2], "utf8");
+                  const executed = new Set(
+                    [...report.matchAll(/^\\s*ok \\d+ - (.+)$/gm)].map((match) => match[1].trim()),
+                  );
+                  const required = [
+                    "validates the exact five-target contract",
+                    "rejects lifecycle scripts, version ranges, and dependency drift",
+                    "rejects missing, wrong-version, wrong-target, traversal, symlink, directory, and non-executable payloads",
+                    "spawns an absolute executable with literal argv, inherited stdio, cwd, env, and no shell",
+                    "launch sets a nonzero exit code before re-raising a child signal",
+                    "terminal signal reaches wrapper and native child exactly once",
+                    "source bin missing-package failure never falls back to PATH or writes stdout",
+                    "npm package contents are explicit and exclude tests and build residue",
+                    "the launcher bin remains executable in the checkout and packed package",
+                  ];
+                  for (const name of required) {
+                    if (!executed.has(name)) {
+                      throw new Error(`required launcher control did not execute and pass: ${name}`);
+                    }
+                  }
+                  const fail = report.match(/^# fail (\\d+)$/m);
+                  const skipped = report.match(/^# skipped (\\d+)$/m);
+                  if (!fail || Number(fail[1]) !== 0) {
+                    throw new Error(`launcher TAP report has failures:\n${report}`);
+                  }
+                  if (!skipped || Number(skipped[1]) !== 0) {
+                    throw new Error(`launcher TAP report has skipped controls:\n${report}`);
+                  }
+                  NODE
+
+          ''',
+              "npm workflow executed-control gate",
+          )
+          workflow_path.write_text(workflow)
+
+          policy_path = Path("xtask/src/policy/distribution/npm_launcher.rs")
+          policy = policy_path.read_text()
+          policy = replace_once(
+              policy,
+              'const FORBIDDEN_LIFECYCLE_SCRIPTS: &[&str] = &["preinstall", "install", "postinstall", "prepare"];',
+              '''const FORBIDDEN_LIFECYCLE_SCRIPTS: &[&str] = &[
+              "preinstall",
+              "install",
+              "postinstall",
+              "preprepare",
+              "prepare",
+              "postprepare",
+          ];''',
+              "Rust lifecycle list",
+          )
+          policy = replace_once(
+              policy,
+              '''    for script in FORBIDDEN_LIFECYCLE_SCRIPTS {
+                  if manifest.scripts.contains_key(*script) {
+                      violations.push(format!(
+                          "{path}: scripts.{script} is forbidden; installation cannot depend on npm lifecycle scripts"
+                      ));
+                  }
+              }
+
+          ''',
+              '''    for script in FORBIDDEN_LIFECYCLE_SCRIPTS {
+                  if manifest.scripts.contains_key(*script) {
+                      violations.push(format!(
+                          "{path}: scripts.{script} is forbidden; installation cannot depend on npm lifecycle scripts"
+                      ));
+                  }
+              }
+              check_equal(
+                  path,
+                  "scripts.test",
+                  manifest
+                      .scripts
+                      .get("test")
+                      .map(String::as_str)
+                      .unwrap_or_default(),
+                  "node --test --test-reporter=tap test/*.test.cjs",
+                  violations,
+              );
+
+          ''',
+              "Rust test command contract",
+          )
+          policy = replace_once(
+              policy,
+              "    test_path: &str,\n    test_text: &str,",
+              "    _test_path: &str,\n    _test_text: &str,",
+              "unused static-test inputs",
+          )
+          required_start = policy.find("    for required_test in [\n")
+          if required_start < 0:
+              raise SystemExit("static required-test token gate: start not found")
+          required_end = policy.find("    }\n}\n\nfn expected_platform", required_start)
+          if required_end < 0:
+              raise SystemExit("static required-test token gate: end not found")
+          policy = policy[:required_start] + '''    for forbidden in ["SIGNALS_TO_FORWARD", "process.on(signal"] {
+              if library_text.contains(forbidden) {
+                  violations.push(format!(
+                      "{library_path}: launcher must not manually forward terminal signals and deliver them twice; found `{forbidden}`"
+                  ));
+              }
+          }
+          ''' + policy[required_end + len("    }\n"):]
+          policy_path.write_text(policy)
+
+          rust_tests_path = Path("xtask/src/policy/distribution/tests.rs")
+          rust_tests = rust_tests_path.read_text()
+          old_lifecycle = '''    let with_install = NPM_MANIFEST_TEXT.replace(
+              "\\\"test\\\": \\\"node --test test/*.test.cjs\\\"",
+              "\\\"test\\\": \\\"node --test test/*.test.cjs\\\",\\n    \\\"install\\\": \\\"curl example.invalid\\\"",
+          );
+              let violations = evaluated(CONTRACT_TEXT, WORKSPACE_TEXT, CRATE_TEXT, &with_install)?;
+              assert!(
+                  violations
+                      .iter()
+                      .any(|violation| violation.contains("scripts.install is forbidden"))
+              );
+          '''
+          new_lifecycle = '''    for script in [
+              "preinstall",
+              "install",
+              "postinstall",
+              "preprepare",
+              "prepare",
+              "postprepare",
+          ] {
+              let anchor = "\\\"test\\\": \\\"node --test --test-reporter=tap test/*.test.cjs\\\"";
+              let replacement = format!(
+                  "{anchor},\\n    \\\"{script}\\\": \\\"node should-not-run.cjs\\\""
+              );
+              let mutated = NPM_MANIFEST_TEXT.replace(anchor, &replacement);
+              let violations = evaluated(CONTRACT_TEXT, WORKSPACE_TEXT, CRATE_TEXT, &mutated)?;
+              assert!(
+                  violations.iter().any(|violation| {
+                      violation.contains(&format!("scripts.{script} is forbidden"))
+                  }),
+                  "{script}: {violations:#?}"
+              );
+          }
+          '''
+          rust_tests = replace_once(
+              rust_tests,
+              old_lifecycle,
+              new_lifecycle,
+              "Rust lifecycle controls",
+          )
+          old_source_test = '''#[test]
+          fn npm_launcher_source_guards_reject_removed_safety_rails() -> Result<(), String> {
+              let contract = parsed_contract(CONTRACT_TEXT)?;
+              let mut violations = Vec::new();
+              npm_launcher::validate_launcher_sources(
+                  npm_launcher::BIN_PATH,
+                  NPM_BIN_TEXT,
+                  npm_launcher::LIBRARY_PATH,
+                  &NPM_LIBRARY_TEXT
+                      .replace("shell: false", "shell: true")
+                      .replace("process.exitCode = signalExitCode", "process.exitCode = 0"),
+                  npm_launcher::TEST_PATH,
+                  &NPM_TEST_TEXT
+                      .replace("PATH-FALLBACK", "removed-control")
+                      .replace("RIPR_UNKNOWN_SIGNAL", "removed-signal-control"),
+                  &mut violations,
+              );
+              assert!(
+                  violations
+                      .iter()
+                      .any(|violation| violation.contains("shell interpolation"))
+              );
+              assert!(
+                  violations
+                      .iter()
+                      .any(|violation| violation.contains("PATH-FALLBACK"))
+              );
+              assert!(
+                  violations
+                      .iter()
+                      .any(|violation| violation.contains("signalExitCode"))
+              );
+              assert!(
+                  violations
+                      .iter()
+                      .any(|violation| violation.contains("RIPR_UNKNOWN_SIGNAL"))
+              );
+              assert!(!contract.npm.install_scripts);
+              Ok(())
+          }
+          '''
+          new_source_test = '''#[test]
+          fn npm_launcher_source_guards_reject_removed_safety_rails() -> Result<(), String> {
+              let contract = parsed_contract(CONTRACT_TEXT)?;
+              let mutated_library = format!(
+                  "{}\\nconst SIGNALS_TO_FORWARD = [];\\n",
+                  NPM_LIBRARY_TEXT
+                      .replace("shell: false", "shell: true")
+                      .replace("process.exitCode = signalExitCode", "process.exitCode = 0")
+              );
+              let mut violations = Vec::new();
+              npm_launcher::validate_launcher_sources(
+                  npm_launcher::BIN_PATH,
+                  NPM_BIN_TEXT,
+                  npm_launcher::LIBRARY_PATH,
+                  &mutated_library,
+                  npm_launcher::TEST_PATH,
+                  NPM_TEST_TEXT,
+                  &mut violations,
+              );
+              assert!(
+                  violations
+                      .iter()
+                      .any(|violation| violation.contains("shell interpolation"))
+              );
+              assert!(
+                  violations
+                      .iter()
+                      .any(|violation| violation.contains("signalExitCode"))
+              );
+              assert!(
+                  violations
+                      .iter()
+                      .any(|violation| violation.contains("deliver them twice"))
+              );
+              assert!(!contract.npm.install_scripts);
+              Ok(())
+          }
+          '''
+          rust_tests = replace_once(
+              rust_tests,
+              old_source_test,
+              new_source_test,
+              "Rust source-guard test",
+          )
+          rust_tests_path.write_text(rust_tests)
+
+          spec_path = Path("docs/specs/RIPR-SPEC-0181-script-free-npm-launcher.md")
+          if spec_path.exists():
+              raise SystemExit(f"unexpected existing spec: {spec_path}")
+          spec_path.write_text('''# RIPR-SPEC-0181: Script-free npm launcher contract
+
+          Status: proposed
+
+          Owner: product / distribution
+
+          Created: 2026-09-29
+
+          Linked proposal:
+
+          Linked ADRs:
+
+          Linked plan:
+
+          Linked issues:
+
+          - #4491 (npm launcher and native package capability)
+          - #4710 (source launcher implementation slice)
+
+          Linked PRs:
+
+          Support-tier impact:
+
+          - None. This contract does not claim a published npm package, measured native
+            compatibility, or support for any public platform.
+
+          Policy impact:
+
+          - Adds a dependency-free CommonJS launcher and a read-only, path-filtered Node
+            qualification workflow.
+          - Keeps runtime network, lifecycle installation scripts, shell parsing,
+            compiler fallback, and ambient executable substitution forbidden.
+
+          ## Problem
+
+          npm users need the same native `ripr` executable rather than a JavaScript
+          reimplementation or an install-time downloader. The launcher must not silently
+          select a stale, wrong-target, or unrelated executable, and its wrapper behavior
+          must not alter command arguments, standard streams, working directory, exit
+          status, or terminal interruption semantics.
+
+          ## Behavior
+
+          1. `@effortlessmetrics/ripr` exposes one `ripr` command and declares the exact
+             five platform packages and versions from `policy/distribution.toml`.
+          2. The launcher resolves the selected package relative to itself, verifies its
+             package name, version, product, schema, Rust target, executable path, regular
+             file status, package-root confinement, and Unix executable mode, then spawns
+             one absolute executable with literal argv, inherited cwd/environment/stdio,
+             and `shell: false`.
+          3. Linux admission is explicit for glibc. Musl, unknown libc, unregistered
+             platforms, missing optional packages, identity drift, path escape, symlinks,
+             directories, and non-executable payloads fail closed with bounded stderr
+             recovery and no protocol-stdout output.
+          4. The package defines no `preinstall`, `install`, `postinstall`, `preprepare`,
+             `prepare`, or `postprepare` hook. It does not download, compile, query a
+             registry at runtime, or fall back to an ambient `ripr` on `PATH`.
+          5. On POSIX, the launcher and native child remain in the caller's foreground
+             process group. It does not manually duplicate terminal signals. A child that
+             terminates by signal makes the wrapper set a conventional nonzero status
+             before re-raising that signal. Native Windows process-tree qualification
+             remains outside this contract.
+          6. The dedicated Node workflow consumes TAP output and requires the named
+             behavioral controls to have executed and passed; strings left in test source
+             are not evidence that a control ran.
+
+          ## Required Evidence
+
+          - Dependency-free Node tests cover the exact target map, libc selection,
+            package identity, path confinement, literal argv, inherited process context,
+            standard streams, numeric exit status, spawn failure, piped stdin, missing
+            package recovery, package contents, and executable mode.
+          - A detached POSIX process-group control sends one terminal signal to the
+            wrapper group and requires the wrapper to terminate by that signal, the native
+            child to observe it exactly once, and the full group to exit.
+          - Lifecycle controls mutate each forbidden hook independently.
+          - The workflow rejects a run where any required named control is absent,
+            failing, or skipped.
+          - `cargo xtask check-release-targets` rejects package/version/target/script,
+            source-boundary, and notice drift.
+
+          ## Non-Goals
+
+          - No native npm payload production, local or public registry installation,
+            publication, organization mutation, credentials, OIDC, tag, or release.
+          - No compatibility-floor or public-platform support claim.
+          - No pnpm, Yarn, Bun, PnP, or native Windows descendant-process claim.
+          - No PyPI, editor-extension, analyzer, or Rust CLI behavior change.
+
+          ## Acceptance Examples
+
+          - Given a launcher and native package at different versions, when resolution is
+            attempted, then the launcher fails before starting an executable and names the
+            required package version.
+          - Given a `preprepare` or `postprepare` hook, when either validator reads the
+            package manifest, then it rejects the manifest as install-time execution.
+          - Given a terminal `SIGTERM` sent to the POSIX wrapper process group, when the
+            child handles the signal, then it observes one delivery and no launcher-owned
+            process remains.
+          - Given a required negative control removed from execution while its text remains
+            elsewhere, when the Node workflow reads TAP, then the workflow fails because
+            the named test did not execute and pass.
+
+          ## Test Mapping
+
+          - `packaging/npm/launcher/test/launcher.test.cjs`: target, resolution, process,
+            signal, PATH-fallback, and package-inventory controls.
+          - `packaging/npm/launcher/test/negative-paths.test.cjs`: metadata, launch-error,
+            traversal, and piped-stdin controls.
+          - `packaging/npm/launcher/test/exit-status.test.cjs`: zero-exit preservation.
+          - `packaging/npm/launcher/test/package-mode.test.cjs`: checkout and packed
+            executable-mode controls.
+          - `xtask/src/policy/distribution/tests.rs`: contract and source-policy mutation
+            controls.
+
+          ## Implementation Mapping
+
+          - `packaging/npm/launcher/bin/ripr.cjs`: public executable entry point.
+          - `packaging/npm/launcher/lib/launcher.cjs`: platform selection, package and
+            executable validation, process launch, and child-result projection.
+          - `packaging/npm/launcher/package.json`: package identity, target map, files,
+            scripts, and exact optional dependencies.
+          - `xtask/src/policy/distribution/npm_launcher.rs`: repository-owned package and
+            source guardrails.
+          - `.github/workflows/npm-launcher.yml`: executed Node control gate.
+
+          ## Metrics
+
+          - `npm_launcher_contract_controls`: every required named launcher control
+            executes and passes with zero failed or skipped tests on each owned Node lane.
+          '''.replace("          ", ""))
+
+          readme_path = Path("docs/specs/README.md")
+          readme = readme_path.read_text()
+          lines = readme.splitlines()
+          matches = [index for index, line in enumerate(lines) if "[RIPR-SPEC-0180]" in line]
+          if len(matches) != 1:
+              raise SystemExit(f"spec index: expected one RIPR-SPEC-0180 row, found {len(matches)}")
+          lines.insert(
+              matches[0] + 1,
+              "| [RIPR-SPEC-0181](RIPR-SPEC-0181-script-free-npm-launcher.md) | proposed | Script-free npm launcher contract |",
+          )
+          readme_path.write_text("\n".join(lines) + "\n")
+
+          traceability_path = Path(".ripr/traceability.toml")
+          traceability = traceability_path.read_text()
+          if 'id = "RIPR-SPEC-0181"' in traceability:
+              raise SystemExit("traceability already contains RIPR-SPEC-0181")
+          traceability += '''
+
+          [[behavior]]
+          id = "RIPR-SPEC-0181"
+          name = "Script-free npm launcher contract"
+          spec = "docs/specs/RIPR-SPEC-0181-script-free-npm-launcher.md"
+          tests = [
+            "packaging/npm/launcher/test/launcher.test.cjs",
+            "packaging/npm/launcher/test/negative-paths.test.cjs",
+            "packaging/npm/launcher/test/exit-status.test.cjs",
+            "packaging/npm/launcher/test/package-mode.test.cjs",
+            "xtask/src/policy/distribution/tests.rs",
+          ]
+          fixtures = [
+          ]
+          code = [
+            "packaging/npm/launcher/bin/ripr.cjs",
+            "packaging/npm/launcher/lib/launcher.cjs",
+            "packaging/npm/launcher/package.json",
+            "xtask/src/policy/distribution/npm_launcher.rs",
+            ".github/workflows/npm-launcher.yml",
+          ]
+          outputs = [
+            "packaging/npm/launcher/README.md",
+          ]
+          metrics = [
+            "npm_launcher_contract_controls",
+          ]
+          '''.replace("          ", "")
+          traceability_path.write_text(traceability)
+
+          slice_path = Path(".allow/spec-system/slices/ripr.slice.script-free-npm-launcher.v1.toml")
+          if slice_path.exists():
+              raise SystemExit(f"unexpected existing slice: {slice_path}")
+          slice_path.write_text('''schema_version = "2.0"
+          id = "ripr.slice.script-free-npm-launcher.v1"
+          generation = 1
+
+          source_issue = "issue:4710"
+          design_reference = "RIPR-SPEC-0181"
+          change_class = "behavior_change"
+
+          claim_boundary = """
+          Adds the source-owned, dependency-free npm launcher contract for
+          @effortlessmetrics/ripr. It selects and validates one exact registered native
+          package, preserves literal process semantics, rejects install-time execution and
+          fallback behavior, and binds CI to executed named controls. It does not build a
+          real native npm payload, qualify compatibility, install from a registry, or
+          authorize publication.
+          """
+
+          non_goals = [
+            "native npm payload generation or final-payload parity",
+            "local or public registry installation and publication",
+            "npm organization, credentials, OIDC, tag, or release mutation",
+            "native Windows descendant-process qualification",
+            "alternate package-manager or PnP support",
+            "PyPI, editor, analyzer, or Rust CLI behavior changes",
+          ]
+
+          return_conditions = [
+            "Return to root if the launcher can execute a version, target, or path not admitted by policy/distribution.toml.",
+            "Return to root if a required control can disappear while the npm launcher workflow remains green.",
+          ]
+
+          owned_seams = [
+            "seam:ripr:packaging:npm-launcher",
+            "seam:ripr:ci:npm-launcher-controls",
+          ]
+
+          shared_seams = [
+            "seam:ripr:policy:distribution-contract",
+            "seam:ripr:release:product-version",
+          ]
+
+          forbidden_seams = [
+            "seam:ripr:publication:registry-write",
+            "seam:ripr:release:support-tier",
+          ]
+
+          [[requirement_delta]]
+          requirement_id = "RIPR-SPEC-0181"
+          requirement_generation = 1
+
+          [implementation_claim]
+          status = "implemented"
+
+          [evidence]
+          state = "outstanding"
+
+          [support_claim]
+          state = "unchanged"
+          '''.replace("          ", ""))
+
+          Path(".github/workflows/branch-repair-4716-review-v2.yml").unlink()
+          PY
+
+      - name: Validate repaired launcher and traceability
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix packaging/npm/launcher test
+          npm --prefix packaging/npm/launcher pack --dry-run --json --ignore-scripts >/dev/null
+          cargo fmt --check
+          cargo test -p xtask policy::distribution -- --nocapture
+          cargo xtask check-release-targets
+          cargo xtask check-spec-format
+          cargo xtask check-spec-numbering
+          cargo xtask check-traceability
+          git diff --check
+
+      - name: Commit repaired candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Steven Zimmerman, CPA"
+          git config user.email "15812269+EffortlessSteven@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No repair changes were produced" >&2
+            exit 1
+          fi
+          git commit -m "fix(npm): close launcher review gaps"
+          git push origin HEAD:feat/4710-npm-launcher-core
