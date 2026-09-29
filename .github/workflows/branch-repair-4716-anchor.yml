@@ -32,11 +32,13 @@ jobs:
           label_pos = text.find('"signal source guards"')
           if label_pos < 0:
               raise SystemExit('signal source guard helper label not found')
-          start = text.rfind('replace_once(', 0, label_pos)
-          end = text.find('\n)', label_pos)
+          start = text.rfind('          replace_once(', 0, label_pos)
+          end = text.find('\n          )', label_pos)
           if start < 0 or end < 0:
-              raise SystemExit('signal source guard helper call bounds not found')
-          text = text[:start] + text[end + 2:]
+              raise SystemExit(
+                  f'signal source guard helper call bounds not found: start={start} end={end}'
+              )
+          text = text[:start] + text[end + len('\n          )'):]
           helper.write_text(text, encoding='utf-8')
 
           source = Path('xtask/src/policy/distribution/npm_launcher.rs')
