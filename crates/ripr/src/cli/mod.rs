@@ -112,7 +112,7 @@ fn lock_before_repair_attempt(root: &Path) -> Result<File, String> {
     std::fs::create_dir_all(&directory)
         .map_err(|error| format!("create {} failed: {error}", directory.display()))?;
     let lock_path = directory.join(".before.lock");
-    let lock = File::create(&lock_path)
+    let lock = crate::output::file_write::create(&lock_path)
         .map_err(|error| format!("create {} failed: {error}", lock_path.display()))?;
     if let Err(error) = lock.try_lock() {
         if matches!(error, std::fs::TryLockError::WouldBlock) {

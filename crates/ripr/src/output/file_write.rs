@@ -11,10 +11,17 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     {
         fs::create_dir_all(parent)?;
     }
-    // Never truncate during acquisition: validate the opened object first.
-    let mut file = open(path, false)?;
-    file.set_len(0)?;
+    let mut file = create(path)?;
     file.write_all(bytes)
+}
+
+/// Open `path` for a fresh write without following a leaf symlink. Parent
+/// directories must already exist.
+pub(crate) fn create(path: &Path) -> io::Result<File> {
+    // Never truncate during acquisition: validate the opened object first.
+    let file = open(path, false)?;
+    file.set_len(0)?;
+    Ok(file)
 }
 
 pub(crate) fn create_exclusive(path: &Path) -> io::Result<File> {
