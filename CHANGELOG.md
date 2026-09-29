@@ -87,7 +87,10 @@ are scoped or reviewed.
   enabled. In a mixed Python and TypeScript repository the enable tip now
   keeps the languages already enabled (`["rust", "python", "typescript"]`)
   instead of offering `["rust", "typescript"]`, which switched Python off and
-  made the next doctor run suggest the opposite edit.
+  made the next doctor run suggest the opposite edit. In a JavaScript-only
+  repository the tip offered `["rust", "javascript"]`, which configuration
+  loading rejects; it now offers the `typescript` entry, which analyzes
+  JavaScript.
 - Rust: the bounded transitive-reach walk behind `no_static_path` disclosures
   now follows every function sharing a callee's name. It followed only the
   first one indexed, so jiter's `decode_to_tape`, reached through one of two

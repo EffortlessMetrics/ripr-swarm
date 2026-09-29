@@ -240,8 +240,10 @@ fn print_doctor_start_here_guidance(root: &Path, report: &output::doctor::Doctor
 }
 
 fn enable_before_first_command_line(root: &Path) -> Option<String> {
-    let (_, missing) = preview_languages_to_enable(root)?;
-    let names = missing
+    // Name the config entries here: this line says what to write in
+    // ripr.toml, while the Tip names the detected source.
+    let names = preview_languages_to_enable(root)?
+        .missing
         .iter()
         .map(|id| id.as_str())
         .collect::<Vec<_>>()
@@ -630,7 +632,12 @@ fn suggest_preview_language_enablement(root: &Path) {
 /// Returns an empty vec when there is nothing to suggest. Separated from the
 /// printing logic so it can be covered by unit tests without stdout capture.
 fn preview_language_enable_suggestions(root: &Path) -> Vec<String> {
-    let Some((enabled, missing)) = preview_languages_to_enable(root) else {
+    let Some(PreviewEnablement {
+        enabled,
+        missing,
+        labels,
+    }) = preview_languages_to_enable(root)
+    else {
         return Vec::new();
     };
     // One snippet for every missing language, built on the languages already
@@ -643,30 +650,42 @@ fn preview_language_enable_suggestions(root: &Path) -> Vec<String> {
             target.push(id.as_str());
         }
     }
-    let names = missing
-        .iter()
-        .map(|id| id.as_str())
-        .collect::<Vec<_>>()
-        .join(" and ");
+    let names = labels.join(" and ");
     let quoted = target
         .iter()
         .map(|name| format!("\"{name}\""))
         .collect::<Vec<_>>()
         .join(", ");
+    let javascript_note = if labels.iter().any(|label| label == "javascript") {
+        " (the `typescript` entry also analyzes JavaScript)"
+    } else {
+        ""
+    };
     vec![format!(
-        "- Tip: {names} files detected but not enabled, so `ripr check` does not analyze them. To analyze them, set in ripr.toml:\n\n  [languages]\n  enabled = [{quoted}]"
+        "- Tip: {names} files detected but not enabled, so `ripr check` does not analyze them. To analyze them, set in ripr.toml{javascript_note}:\n\n  [languages]\n  enabled = [{quoted}]"
     )]
 }
 
 /// The enabled languages and the detected, compiled-in preview languages that
 /// are not enabled. `None` when there is nothing to suggest or the config
 /// cannot be loaded (fail closed: no tip).
-fn preview_languages_to_enable(root: &Path) -> Option<(Vec<LanguageId>, Vec<LanguageId>)> {
+fn preview_languages_to_enable(root: &Path) -> Option<PreviewEnablement> {
     let detected = detect_languages(root);
-    let preview_detected: Vec<LanguageId> = detected
-        .into_iter()
+    // JavaScript is analyzed by the TypeScript adapter and has no config
+    // entry of its own (`parse_languages_enabled` accepts only `typescript`),
+    // so a detected JavaScript source maps to the `typescript` entry. Using
+    // the scanner id would print `"javascript"`, which config loading rejects.
+    let mut preview_detected: Vec<LanguageId> = Vec::new();
+    for id in detected
+        .iter()
+        .copied()
         .filter(|id| matches!(language_status(*id), LanguageStatus::Preview))
-        .collect();
+    {
+        let entry = config_entry(id);
+        if !preview_detected.contains(&entry) {
+            preview_detected.push(entry);
+        }
+    }
     if preview_detected.is_empty() {
         return None;
     }
@@ -692,7 +711,43 @@ fn preview_languages_to_enable(root: &Path) -> Option<(Vec<LanguageId>, Vec<Lang
     if missing.is_empty() {
         return None;
     }
-    Some((enabled, missing))
+    let labels = missing
+        .iter()
+        .map(|id| {
+            let javascript_only = *id == LanguageId::TypeScript
+                && !detected.contains(&LanguageId::TypeScript)
+                && detected.contains(&LanguageId::JavaScript);
+            if javascript_only {
+                "javascript".to_string()
+            } else {
+                id.as_str().to_string()
+            }
+        })
+        .collect();
+    Some(PreviewEnablement {
+        enabled,
+        missing,
+        labels,
+    })
+}
+
+/// The `[languages].enabled` entries a doctor tip may add, and how to name
+/// them to the user.
+struct PreviewEnablement {
+    /// Languages already enabled in `ripr.toml` (or the default).
+    enabled: Vec<LanguageId>,
+    /// Config entries to add, each a value `parse_languages_enabled` accepts.
+    missing: Vec<LanguageId>,
+    /// One user-facing name per `missing` entry, naming the detected source.
+    labels: Vec<String>,
+}
+
+/// The `[languages].enabled` entry that turns on analysis of `id`.
+fn config_entry(id: LanguageId) -> LanguageId {
+    match id {
+        LanguageId::JavaScript => LanguageId::TypeScript,
+        other => other,
+    }
 }
 
 /// Detect test-framework markers per detected language.
@@ -2404,6 +2459,52 @@ mod tests {
                 "- Before that: enable typescript in ripr.toml (see the Tip above); until then `ripr check` skips those files"
             )
         );
+        Ok(())
+    }
+
+    /// JavaScript has no `[languages].enabled` entry of its own: the
+    /// TypeScript adapter analyzes it. A JavaScript-only root must get a
+    /// snippet that config loading accepts, and JavaScript with `typescript`
+    /// already enabled needs no tip at all.
+    #[test]
+    fn doctor_enable_tip_maps_javascript_to_the_typescript_entry() -> Result<(), String> {
+        let dir = unique_command_test_dir("suggest-javascript-only");
+        std::fs::create_dir_all(dir.join("src")).map_err(|err| format!("create dir: {err}"))?;
+        std::fs::write(dir.join("src/index.js"), "export const x = 1;\n")
+            .map_err(|err| format!("write js: {err}"))?;
+        let suggestions = preview_language_enable_suggestions(&dir);
+        let before = enable_before_first_command_line(&dir);
+        assert_eq!(suggestions.len(), 1, "one tip: {suggestions:?}");
+        assert!(
+            suggestions[0].starts_with("- Tip: javascript files detected")
+                && suggestions[0].contains(r#"enabled = ["rust", "typescript"]"#)
+                && !suggestions[0].contains(r#""javascript""#),
+            "the snippet must name the typescript entry; got:\n{}",
+            suggestions[0]
+        );
+        assert_eq!(
+            before.as_deref(),
+            Some(
+                "- Before that: enable typescript in ripr.toml (see the Tip above); until then `ripr check` skips those files"
+            )
+        );
+        // The printed snippet must load, and after it the tip goes away.
+        std::fs::write(
+            dir.join("ripr.toml"),
+            "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+        )
+        .map_err(|err| format!("write ripr.toml: {err}"))?;
+        let loaded = load_for_root(&dir).map(|config| config.languages().enabled().to_vec());
+        let after = preview_language_enable_suggestions(&dir);
+        let after_before = enable_before_first_command_line(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            loaded,
+            Ok(vec![LanguageId::Rust, LanguageId::TypeScript]),
+            "the suggested snippet must load"
+        );
+        assert!(after.is_empty(), "typescript covers javascript: {after:?}");
+        assert_eq!(after_before, None);
         Ok(())
     }
 

@@ -161,6 +161,18 @@ then doctor reports the config path or default state and never prints the
 config source text.
 ```
 
+### Doctor enable tip produces a loadable configuration
+
+```text
+Given a workspace with detected preview-language source that is not enabled,
+when ripr doctor runs,
+then doctor prints one `[languages] enabled` snippet that keeps every language
+already enabled, names only values `languages.enabled` accepts (JavaScript
+maps to `typescript`), and names the enable step beside the recommended first
+command;
+and a workspace with no detected-but-disabled preview language gets neither.
+```
+
 ### Doctor separates analysis readiness from source-build prerequisites
 
 ```text
