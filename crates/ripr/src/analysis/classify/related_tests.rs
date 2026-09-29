@@ -3487,7 +3487,9 @@ fn crate_c_score_test() {
         let alphabet = ["a", "b", "_", "é"];
         let mut strings = vec![String::new()];
         let mut level = vec![String::new()];
-        for _ in 0..5 {
+        // Six characters reach `ba_a_a` / `a_a`: the only whole-word match
+        // overlaps a rejected one, which a non-overlapping search misses.
+        for _ in 0..6 {
             level = level
                 .iter()
                 .flat_map(|text| alphabet.iter().map(move |letter| format!("{text}{letter}")))
@@ -3509,7 +3511,7 @@ fn crate_c_score_test() {
                 checked += 1;
             }
         }
-        assert!(checked > 100_000, "only {checked} pairs checked");
+        assert!(checked > 300_000, "only {checked} pairs checked");
     }
 
     #[test]
