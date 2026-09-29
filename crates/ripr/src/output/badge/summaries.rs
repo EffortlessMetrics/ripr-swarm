@@ -96,7 +96,7 @@ pub fn ripr_badge_summary_with_suppressions(
     today: &str,
     policy: BadgePolicy,
 ) -> BadgeSummary {
-    let mut candidates: Vec<CheckSuppressionCandidate> = Vec::new();
+    let mut gap_findings = Vec::new();
     let mut unknowns = 0usize;
     let mut unique_tests: BTreeSet<(String, String, usize)> = BTreeSet::new();
 
@@ -119,11 +119,7 @@ pub fn ripr_badge_summary_with_suppressions(
             ExposureClass::WeaklyExposed
             | ExposureClass::ReachableUnrevealed
             | ExposureClass::NoStaticPath => {
-                candidates.push(CheckSuppressionCandidate::for_finding(
-                    &output.root,
-                    finding,
-                    suppressions,
-                ));
+                gap_findings.push(finding);
             }
             ExposureClass::InfectionUnknown
             | ExposureClass::PropagationUnknown
@@ -141,6 +137,8 @@ pub fn ripr_badge_summary_with_suppressions(
         }
     }
 
+    let candidates =
+        CheckSuppressionCandidate::for_findings(&output.root, gap_findings, suppressions);
     let (suppressed_findings, warnings) =
         apply_check_suppressions(&candidates, suppressions, today);
     let suppressed = suppressed_findings.len();

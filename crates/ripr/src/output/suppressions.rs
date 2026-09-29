@@ -734,27 +734,54 @@ pub struct CheckSuppressionCandidate {
 }
 
 impl CheckSuppressionCandidate {
-    /// Builds the matcher candidate for one finding. The 0.10 id is only
-    /// derived (one source read per finding) when some entry selects by
-    /// `finding_id`, the only case its warning can use.
-    pub(crate) fn for_finding(
+    /// Builds the matcher candidates for `findings`. The 0.10 id (#4736) is
+    /// only derived when an exposure-gap `finding_id` selector matches no
+    /// current finding, the only case its warning uses, and each source file
+    /// is then read once.
+    pub(crate) fn for_findings<'a>(
         root: &Path,
-        finding: &crate::domain::Finding,
+        findings: impl IntoIterator<Item = &'a crate::domain::Finding>,
         entries: &[SuppressionEntry],
-    ) -> Self {
-        let wants_legacy = entries
+    ) -> Vec<Self> {
+        let findings: Vec<&crate::domain::Finding> = findings.into_iter().collect();
+        let current: std::collections::HashSet<&str> =
+            findings.iter().map(|finding| finding.id.as_str()).collect();
+        let wants_legacy = entries.iter().any(|entry| {
+            entry.kind == SuppressionKind::ExposureGap
+                && entry
+                    .finding_id
+                    .as_deref()
+                    .is_some_and(|id| !current.contains(id))
+        });
+        let mut sources: std::collections::HashMap<&Path, Option<String>> =
+            std::collections::HashMap::new();
+        findings
             .iter()
-            .any(|entry| entry.kind == SuppressionKind::ExposureGap && entry.finding_id.is_some());
-        Self {
-            finding_id: finding.id.clone(),
-            path: root_relative_finding_path(root, &finding.probe.location.file),
-            class: finding.class.as_str().to_string(),
-            legacy_finding_id: if wants_legacy && finding.id == finding.probe.id.0 {
-                crate::analysis::legacy_whole_line_diff_probe_id(root, &finding.probe)
-            } else {
-                None
-            },
-        }
+            .map(|finding| {
+                let file = finding.probe.location.file.as_path();
+                let legacy_finding_id = if wants_legacy && finding.id == finding.probe.id.0 {
+                    sources
+                        .entry(file)
+                        .or_insert_with(|| std::fs::read_to_string(file).ok())
+                        .as_deref()
+                        .and_then(|source| {
+                            crate::analysis::legacy_whole_line_diff_probe_id(
+                                root,
+                                &finding.probe,
+                                source,
+                            )
+                        })
+                } else {
+                    None
+                };
+                Self {
+                    finding_id: finding.id.clone(),
+                    path: root_relative_finding_path(root, file),
+                    class: finding.class.as_str().to_string(),
+                    legacy_finding_id,
+                }
+            })
+            .collect()
     }
 }
 

@@ -91,16 +91,31 @@ pub(crate) fn diff_probe_id(
 /// whole trimmed changed line instead of the parser-canonical expression
 /// (#4736). Used only to name the replacement for a stale suppression; it
 /// never matches or suppresses anything by itself.
+/// `source` is the current text of `probe.location.file`; the caller reads
+/// it once per file.
 pub(crate) fn legacy_whole_line_diff_probe_id(
     root: &Path,
     probe: &crate::domain::Probe,
+    source: &str,
 ) -> Option<String> {
     let relative = probe.location.file.strip_prefix(root).ok()?;
     if relative.extension().and_then(|ext| ext.to_str()) != Some("rs") {
         return None;
     }
-    let source = std::fs::read_to_string(&probe.location.file).ok()?;
     let line = source.lines().nth(probe.location.line.checked_sub(1)?)?;
+    // 0.10 suffixed repeated ids (`.2`, `.3`) in diff order. When the same
+    // line text appears more than once in the file, which occurrence got the
+    // bare id cannot be recovered from one finding, so name nothing rather
+    // than risk naming the wrong replacement.
+    let normalized = normalize_expression(line);
+    if source
+        .lines()
+        .filter(|other| normalize_expression(other) == normalized)
+        .nth(1)
+        .is_some()
+    {
+        return None;
+    }
     let id = diff_probe_id(relative, &probe.family, probe.owner.as_ref(), line, 1).0;
     (id != probe.id.0).then_some(id)
 }
@@ -166,6 +181,10 @@ mod tests {
 
     /// #4736: pins the exact id ripr 0.10.0 printed for the boundary_gap
     /// change, so a 0.10 suppression selector can be named and replaced.
+    fn read_fixture(path: &Path) -> String {
+        std::fs::read_to_string(path).unwrap_or_default()
+    }
+
     #[test]
     fn legacy_whole_line_id_reproduces_the_ripr_0_10_boundary_gap_id() -> Result<(), String> {
         let root =
@@ -196,7 +215,7 @@ mod tests {
             expected_sinks: vec![],
             required_oracles: vec![],
         };
-        let legacy = legacy_whole_line_diff_probe_id(&root, &probe);
+        let legacy = legacy_whole_line_diff_probe_id(&root, &probe, &read_fixture(&file));
         let mut unchanged = probe.clone();
         unchanged.id = diff_probe_id(
             Path::new("src/lib.rs"),
@@ -205,8 +224,18 @@ mod tests {
             "if amount >= discount_threshold {",
             1,
         );
-        let same_as_legacy = legacy_whole_line_diff_probe_id(&root, &unchanged);
+        let same_as_legacy =
+            legacy_whole_line_diff_probe_id(&root, &unchanged, &read_fixture(&file));
+        // The same line twice: 0.10 gave one occurrence a `.2` suffix, and
+        // which one cannot be recovered from a single finding.
+        let repeated = std::fs::write(
+            &file,
+            "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\npub fn other(amount: i32, discount_threshold: i32) -> bool {\n    if amount >= discount_threshold {\n        return true;\n    }\n    false\n}\n",
+        );
+        let ambiguous = legacy_whole_line_diff_probe_id(&root, &probe, &read_fixture(&file));
         let _ = std::fs::remove_dir_all(&root);
+        repeated.map_err(|e| format!("rewrite fixture failed: {e}"))?;
+        assert_eq!(ambiguous, None);
         written.map_err(|e| format!("write fixture failed: {e}"))?;
 
         assert_eq!(probe.id.0, "probe:src_lib.rs:predicate:c80557eb");

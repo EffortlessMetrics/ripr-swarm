@@ -492,10 +492,11 @@ fn missing_current_head_error(value: &serde_json::Value, path: &Path) -> String 
         "receipt at {} is malformed: missing required field `current_head`; receipts written by \
          ripr 0.10 or earlier do not record the repository HEAD and cannot be checked. After \
          re-running the verify command, rewrite it at the current HEAD: ripr receipt write \
-         --gap {} --verify-command {} --status <passed|failed|not_run|unknown>",
+         --gap {} --verify-command {} --status <passed|failed|not_run|unknown> --out {}",
         path.display(),
         shell_arg(gap),
-        shell_arg(verify_command)
+        shell_arg(verify_command),
+        shell_arg(&path.display().to_string())
     )
 }
 
@@ -525,7 +526,10 @@ fn resolve_check_path_from(opts: &ReceiptCheckOptions, base: &Path) -> Result<Pa
         (Some(p), _) => Ok(p.clone()),
         (None, Some(gap)) => {
             let current = receipt_default_path(gap);
-            if base.join(&current).exists() {
+            // `symlink_metadata`, not `exists`: a dangling link at the current
+            // path is still the current receipt, and reading it must report
+            // that failure rather than fall back to an older file.
+            if std::fs::symlink_metadata(base.join(&current)).is_ok() {
                 return Ok(current);
             }
             // #4737: a receipt written by ripr 0.10 sits at the raw gap-id
@@ -951,6 +955,9 @@ mod tests {
             "written_at": "2026-06-11T00:00:00Z"
         });
         std::fs::write(&path, json.to_string()).map_err(|e| format!("write json failed: {e}"))?;
+        // The rewrite targets the file that was checked, so following it
+        // repairs an explicit `--path` receipt instead of writing elsewhere.
+        let out_arg = format!("--out {}", shell_arg(&path.display().to_string()));
 
         let result = check_receipt(&ReceiptCheckOptions {
             gap: None,
@@ -968,7 +975,8 @@ mod tests {
                     && err.contains("ripr 0.10 or earlier")
                     && err.contains(
                         "ripr receipt write --gap gap:test:aabbccdd --verify-command 'cargo test' --status <passed|failed|not_run|unknown>",
-                    ) =>
+                    )
+                    && err.ends_with(&out_arg) =>
             {
                 Ok(())
             }
@@ -1348,6 +1356,37 @@ mod tests {
         assert_eq!(nothing?, encoded);
         assert_eq!(only_legacy?, legacy);
         assert_eq!(both?, encoded);
+        Ok(())
+    }
+
+    /// A dangling link at the current encoded path is still the current
+    /// receipt: the check must report it, not fall back to a 0.10 file.
+    #[cfg(unix)]
+    #[test]
+    fn receipt_check_keeps_a_dangling_current_path_over_the_0_10_name() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!(
+            "ripr-receipt-dangling-current-{}",
+            std::process::id()
+        ));
+        let receipts = base.join(RECEIPT_DEFAULT_DIRECTORY);
+        std::fs::create_dir_all(&receipts).map_err(|e| format!("create dir failed: {e}"))?;
+        let gap = "gap:4b5fdc1a2a157b0d";
+        let opts = ReceiptCheckOptions {
+            gap: Some(gap.to_string()),
+            path: None,
+            ledger: None,
+            json: false,
+        };
+        let encoded = receipt_default_path(gap);
+        let legacy = PathBuf::from(RECEIPT_DEFAULT_DIRECTORY).join("gap:4b5fdc1a2a157b0d.json");
+        let legacy_written = std::fs::write(base.join(&legacy), "{}");
+        let linked = std::os::unix::fs::symlink(base.join("missing-target"), base.join(&encoded));
+        let resolved = resolve_check_path_from(&opts, &base);
+        let _ = std::fs::remove_dir_all(&base);
+
+        legacy_written.map_err(|e| format!("write legacy failed: {e}"))?;
+        linked.map_err(|e| format!("symlink failed: {e}"))?;
+        assert_eq!(resolved?, encoded);
         Ok(())
     }
 

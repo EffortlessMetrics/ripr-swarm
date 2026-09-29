@@ -1258,7 +1258,10 @@ are scoped or reviewed.
   that installs ripr unpinned or pins another version. The 0.10 template's
   unpinned install runs the newest release against 0.10's steps, whose
   agent-loop step now fails on every run; regenerate it with
-  `ripr init --ci github --force`
+  `ripr init --ci github --force`, which now replaces only the workflow and
+  leaves an existing `ripr.toml` unchanged (before, it also reset the config
+  to the generated defaults). `ripr doctor --json` reports the same finding
+  as an advisory `generated_workflow` check
   ([#4738](https://github.com/EffortlessMetrics/ripr-swarm/issues/4738)).
 - VS Code: `ripr.seamDiagnostics` and `ripr.diagnosticProfile` are forwarded
   to the server only when a settings layer sets them, so `ripr.toml`
