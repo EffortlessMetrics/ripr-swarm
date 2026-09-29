@@ -9,6 +9,13 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Added
+
+- Python same-class method owners that tests reach only through construction
+  or another method on that class now keep `no_static_path` but name
+  `static_limit_kind: python_transitive_reach_unresolved` (RIPR-SPEC-0180,
+  #4765). This is a named limitation, not a related-test or coverage claim.
+
 ### Fixed
 
 - Security: Rust source discovery skips symlinked `.rs` entries, as the

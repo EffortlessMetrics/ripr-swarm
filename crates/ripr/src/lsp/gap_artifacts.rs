@@ -2842,6 +2842,29 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-python")]
+    fn validation_accepts_python_transitive_reach_static_limit_kind() -> Result<(), String> {
+        let mut artifact = preview_gap_ledger();
+        artifact["records"][0]["static_limit_kind"] = json!("python_transitive_reach_unresolved");
+
+        validate_gap_artifact(&artifact, &context(&[LanguageId::Rust, LanguageId::Python]))
+            .map_err(|err| format!("{err:?}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn validation_accepts_wrapper_error_binding_static_limit_kind() -> Result<(), String> {
+        let mut artifact = preview_gap_ledger();
+        artifact["records"][0]["language"] = json!("rust");
+        artifact["records"][0]["language_status"] = json!("stable");
+        artifact["records"][0]["static_limit_kind"] = json!("wrapper_error_binding_unresolved");
+
+        validate_gap_artifact(&artifact, &context(&[LanguageId::Rust]))
+            .map_err(|err| format!("{err:?}"))?;
+        Ok(())
+    }
+
+    #[test]
     fn evidence_record_validates_text_static_limits_without_parsing_action_semantics()
     -> Result<(), String> {
         let artifact = json!({

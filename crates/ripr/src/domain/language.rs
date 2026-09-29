@@ -638,6 +638,10 @@ mod tests {
             "rust_subprocess_binary_reach_unresolved"
         );
         assert_eq!(
+            StaticLimitKind::WrapperErrorBindingUnresolved.as_str(),
+            "wrapper_error_binding_unresolved"
+        );
+        assert_eq!(
             StaticLimitKind::RustMacroReachUnresolved.as_str(),
             "rust_macro_reach_unresolved"
         );
@@ -675,6 +679,7 @@ mod tests {
             StaticLimitKind::RustMacroWrappedAssertionUnresolved,
             StaticLimitKind::RustValuePropagationUnresolved,
             StaticLimitKind::RustSubprocessBinaryReachUnresolved,
+            StaticLimitKind::WrapperErrorBindingUnresolved,
             StaticLimitKind::PythonTransitiveReachUnresolved,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
