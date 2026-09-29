@@ -52,13 +52,13 @@ pub(crate) fn validate_row(row: &FeedbackRow) -> Vec<String> {
                 ));
             }
         }
-        "open" | "candidate_in_review" => {
-            if !merged.is_empty() && !row.repair.original_case_replay {
-                violations.push(format!(
-                    "{}: merged repair without original-case replay must be repaired_pending_replay",
-                    row.case_id
-                ));
-            }
+        "open" | "candidate_in_review"
+            if !merged.is_empty() && !row.repair.original_case_replay =>
+        {
+            violations.push(format!(
+                "{}: merged repair without original-case replay must be repaired_pending_replay",
+                row.case_id
+            ));
         }
         _ => {}
     }

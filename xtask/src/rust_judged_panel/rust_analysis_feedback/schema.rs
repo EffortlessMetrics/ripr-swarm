@@ -203,6 +203,9 @@ pub(crate) fn validate_calibration(meta: &CalibrationMeta) -> Vec<String> {
     if meta.authority != "EffortlessMetrics/ripr-swarm#4795" {
         violations.push("calibration.authority: expected EffortlessMetrics/ripr-swarm#4795".into());
     }
+    if meta.reason.trim().is_empty() {
+        violations.push("calibration.reason: required when calibration is not absorbed".into());
+    }
     if meta.status == "recorded" {
         violations.push(
             "calibration.status: recorded runtime results belong to #4795 and cannot land here"
@@ -385,19 +388,18 @@ fn validate_reduction(row: &FeedbackRow, derived: &str) -> Vec<String> {
                 ));
             }
         }
-        "replay_only" | "unreduced" => {
+        "replay_only" | "unreduced"
             if row
                 .reduction
                 .materialization_boundary
                 .as_deref()
                 .unwrap_or("")
-                .is_empty()
-            {
-                violations.push(format!(
-                    "{}: replay-only/unreduced rows need a named materialization/authorization boundary",
-                    row.case_id
-                ));
-            }
+                .is_empty() =>
+        {
+            violations.push(format!(
+                "{}: replay-only/unreduced rows need a named materialization/authorization boundary",
+                row.case_id
+            ));
         }
         _ => {}
     }

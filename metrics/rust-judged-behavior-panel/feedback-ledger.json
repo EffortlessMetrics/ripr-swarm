@@ -18,7 +18,7 @@
   },
   "limits": [
     "Every row is a disposition over the frozen #3806 packet. Independent judgments are not rewritten.",
-    "Runtime calibration stays owned by #4795. This ledger records not_run rather than inventing caught/survived outcomes.",
+    "Runtime calibration stays owned by #4795. This ledger records not_run rather than inventing runtime calibration outcomes.",
     "Confirmed real-repository and historical-commit families stay replay-only: reducing them here would replace the exact judged identity or cross the proposed_unauthorized materialization boundary.",
     "The ledger records issue/PR search receipts. It does not create, assign, close, or label GitHub objects.",
     "Parent #3164 is not closed, scored, or support-promoted by this sidecar.",

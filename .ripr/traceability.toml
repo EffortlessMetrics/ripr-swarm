@@ -9602,8 +9602,8 @@ code = [
   "xtask/src/rust_judged_panel/rust_analysis_feedback/report.rs",
 ]
 outputs = [
-  "target/ripr/rust-judged-panel/feedback/feedback.json",
-  "target/ripr/rust-judged-panel/feedback/feedback.md",
+  "metrics/rust-judged-behavior-panel/feedback-ledger.json",
+  "metrics/rust-judged-behavior-panel/README.md",
 ]
 metrics = [
   "rust_judged_panel_feedback_rows",
