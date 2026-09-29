@@ -402,7 +402,8 @@ fn diff_source_at_write(input: &CheckInput, worktree: bool) -> Result<DiffSource
 }
 
 /// Re-resolve a recorded diff source to its exact bytes: a recorded `--diff`
-/// path is re-read; a recorded base/head pair or worktree diff is
+/// path is re-read with the same lossy UTF-8 decode the git and `--diff`
+/// loaders use (#4584); a recorded base/head pair or worktree diff is
 /// re-resolved through git. Missing or unresolvable sources fail closed.
 fn resolve_diff_text(
     source: &DiffSourceIdentity,
@@ -410,9 +411,11 @@ fn resolve_diff_text(
     git_timeout: Option<std::time::Duration>,
 ) -> Result<String, String> {
     match source {
-        DiffSourceIdentity::DiffFile { path } => std::fs::read_to_string(path).map_err(|err| {
-            format!("recorded diff file {path} no longer exists or is unreadable: {err}")
-        }),
+        DiffSourceIdentity::DiffFile { path } => std::fs::read(path)
+            .map_err(|err| {
+                format!("recorded diff file {path} no longer exists or is unreadable: {err}")
+            })
+            .map(|bytes| crate::analysis::decode_supplied_diff_bytes(&bytes)),
         DiffSourceIdentity::BaseHead { base, .. } => {
             crate::analysis::load_diff(root, base.as_deref(), None, git_timeout)
                 .map_err(|err| format!("recorded base/head diff could not be re-resolved: {err}"))

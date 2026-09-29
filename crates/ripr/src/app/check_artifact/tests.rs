@@ -1073,3 +1073,41 @@ fn source_currentness_wire_vocabulary_and_legacy_back_compat() -> Result<(), Str
     );
     Ok(())
 }
+
+#[test]
+fn recorded_diff_file_with_latin1_hunk_re_reads_like_the_git_route() -> Result<(), String> {
+    // #4584: `resolve_diff_text` re-read `--diff FILE` via `read_to_string`,
+    // so a Latin-1 hunk that the git route already accepted refused artifact
+    // identity. Decode with the same lossy UTF-8 the loader uses.
+    let dir = unique_temp_dir("recorded-latin1")?;
+    let result = (|| {
+        let diff_path = dir.join("change.diff");
+        std::fs::write(
+            &diff_path,
+            b"diff --git a/notes.txt b/notes.txt\n--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n-caf\xe9\n+caf\xe9s\n",
+        )
+        .map_err(|err| format!("write latin-1 diff: {err}"))?;
+
+        let text = resolve_diff_text(
+            &DiffSourceIdentity::DiffFile {
+                path: diff_path.to_string_lossy().into_owned(),
+            },
+            Path::new("."),
+            None,
+        )?;
+        let expected = String::from_utf8_lossy(
+            b"diff --git a/notes.txt b/notes.txt\n--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n-caf\xe9\n+caf\xe9s\n",
+        );
+        if text != expected.as_ref() {
+            return Err(format!(
+                "recorded-diff re-read must match git-route lossy decode, got {text:?}"
+            ));
+        }
+        if !text.contains("-caf\u{fffd}\n+caf\u{fffd}s\n") {
+            return Err(format!("Latin-1 hunk missing U+FFFD: {text}"));
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&dir);
+    result
+}

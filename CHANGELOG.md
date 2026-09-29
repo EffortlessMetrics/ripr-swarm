@@ -11,6 +11,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `--diff FILE` and `--diff -` now accept a diff that contains non-UTF-8
+  bytes, such as a Latin-1 hunk, using the same lossy UTF-8 decode the git
+  `--base` route already used. One such file no longer refuses the whole
+  input (`stream did not contain valid UTF-8`). Recorded-diff re-read for
+  check artifacts uses the same decode. Paths stay git C-quoting's job
+  (#4584).
 - LSP: a request whose method starts with `$/` and that ripr does not handle
   now gets a `-32601` method-not-found error, as the LSP spec requires. It got
   no response at all, so a client that sent one waited on it forever.

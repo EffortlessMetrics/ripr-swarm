@@ -21,6 +21,26 @@ pub struct LoadedDiff {
     pub effective_base: Option<String>,
 }
 
+/// Decode a supplied `--diff` file or stdin payload the same way
+/// [`run_git_diff_with_unified`] decodes git stdout. A diff carries the raw
+/// bytes of every changed file, so one Latin-1 line used to refuse the whole
+/// `--diff` input that `ripr check --base` already accepted (#4584).
+///
+/// Path identity stays distinct: the git route pins `core.quotePath=true`,
+/// so non-UTF-8 path bytes arrive C-quoted (#3601/#3609). This helper does
+/// not reinterpret headers.
+pub(crate) fn decode_supplied_diff_bytes(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn decode_supplied_diff_reader(source: &str, mut reader: impl Read) -> Result<String, String> {
+    let mut buffer = Vec::new();
+    reader
+        .read_to_end(&mut buffer)
+        .map_err(|err| format!("failed to read {source}: {err}"))?;
+    Ok(decode_supplied_diff_bytes(&buffer))
+}
+
 pub fn load_diff(
     root: &Path,
     base: Option<&str>,
@@ -42,12 +62,9 @@ pub fn load_diff_with_effective_base(
             // looks like a silent hang, so the CLI adapters disclose the read
             // before dispatching here; the loader itself stays silent so
             // library callers never receive CLI-branded stderr text.
-            let mut buffer = String::new();
-            std::io::stdin()
-                .read_to_string(&mut buffer)
-                .map_err(|err| format!("failed to read diff from stdin: {err}"))?;
+            let text = decode_supplied_diff_reader("diff from stdin", std::io::stdin())?;
             return Ok(LoadedDiff {
-                text: buffer,
+                text,
                 effective_base: None,
             });
         }
@@ -61,8 +78,9 @@ pub fn load_diff_with_effective_base(
                 diff_file.display()
             ));
         }
-        let text = std::fs::read_to_string(diff_file)
-            .map_err(|err| format!("failed to read diff file {}: {err}", diff_file.display()))?;
+        let text = std::fs::read(diff_file)
+            .map_err(|err| format!("failed to read diff file {}: {err}", diff_file.display()))
+            .map(|bytes| decode_supplied_diff_bytes(&bytes))?;
         return Ok(LoadedDiff {
             text,
             effective_base: None,
@@ -862,6 +880,149 @@ mod tests {
             "the OS error text must not stand in for the cause: {message}"
         );
         Ok(())
+    }
+
+    /// Unified diff whose hunk payload is Latin-1 (`café`) while file headers
+    /// stay ASCII. `--base` accepts this because git stdout is decoded
+    /// lossily; `--diff FILE` / `--diff -` used to refuse the whole input.
+    fn latin1_hunk_diff() -> Vec<u8> {
+        b"diff --git a/notes.txt b/notes.txt\n\
+--- a/notes.txt\n\
++++ b/notes.txt\n\
+@@ -1 +1 @@\n\
+-caf\xe9\n\
++caf\xe9s\n\
+diff --git a/src/lib.rs b/src/lib.rs\n\
+--- a/src/lib.rs\n\
++++ b/src/lib.rs\n\
+@@ -1 +1 @@\n\
+-fn a() -> bool { 1 > 0 }\n\
++fn a() -> bool { 1 >= 0 }\n"
+            .to_vec()
+    }
+
+    #[test]
+    fn diff_file_with_latin1_hunk_loads_like_the_git_route() -> std::io::Result<()> {
+        // #4584: one Latin-1 line used to refuse the whole `--diff` file
+        // ("stream did not contain valid UTF-8") that the git-run route
+        // decodes with `String::from_utf8_lossy`.
+        let dir = unique_fixture_root("load-diff-non-utf8")?;
+        ignore_remove_dir_all(&dir);
+        fs::create_dir_all(&dir)?;
+        let diff_path = dir.join("change.diff");
+        fs::write(&diff_path, latin1_hunk_diff())?;
+
+        let result = load_diff(&dir, None, Some(&diff_path), None);
+        ignore_remove_dir_all(&dir);
+        let text = result.map_err(std::io::Error::other)?;
+        assert_eq!(
+            text,
+            String::from_utf8_lossy(&latin1_hunk_diff()).as_ref(),
+            "supplied-diff decode must match the git-route lossy decode"
+        );
+        assert!(
+            text.contains("-caf\u{fffd}\n+caf\u{fffd}s\n"),
+            "Latin-1 bytes must survive as U+FFFD, not abort: {text}"
+        );
+        let files = super::super::parse::parse_unified_diff(&text);
+        let rust = files
+            .iter()
+            .find(|file| file.path == std::path::Path::new("src/lib.rs"))
+            .ok_or_else(|| std::io::Error::other("utf-8 rust file missing from parsed diff"))?;
+        assert_eq!(rust.added_lines[0].text, "fn a() -> bool { 1 >= 0 }");
+        Ok(())
+    }
+
+    #[test]
+    fn diff_file_with_valid_utf8_cafe_is_unchanged() -> std::io::Result<()> {
+        // Discriminating control: lossy decode must not rewrite valid UTF-8.
+        let dir = unique_fixture_root("load-diff-utf8-cafe")?;
+        ignore_remove_dir_all(&dir);
+        fs::create_dir_all(&dir)?;
+        let diff_path = dir.join("change.diff");
+        let utf8 = "diff --git a/notes.txt b/notes.txt\n\
+--- a/notes.txt\n\
++++ b/notes.txt\n\
+@@ -1 +1 @@\n\
+-café\n\
++cafés\n";
+        fs::write(&diff_path, utf8)?;
+
+        let result = load_diff(&dir, None, Some(&diff_path), None);
+        ignore_remove_dir_all(&dir);
+        assert_eq!(result.as_deref(), Ok(utf8));
+        Ok(())
+    }
+
+    #[test]
+    fn cquoted_path_with_latin1_hunk_keeps_ascii_path_and_lossy_payload() -> std::io::Result<()> {
+        // Path identity stays git C-quoting (#3601/#3609). A quoted header is
+        // ASCII, so only the hunk payload needs the git-route lossy decode.
+        let dir = unique_fixture_root("load-diff-cquote-latin1")?;
+        ignore_remove_dir_all(&dir);
+        fs::create_dir_all(&dir)?;
+        let diff_path = dir.join("change.diff");
+        let quoted = b"diff --git \"a/src/p_\\377.rs\" \"b/src/p_\\377.rs\"\n\
+--- \"a/src/p_\\377.rs\"\n\
++++ \"b/src/p_\\377.rs\"\n\
+@@ -1 +1 @@\n\
+-caf\xe9\n\
++ok\n";
+        fs::write(&diff_path, quoted)?;
+
+        let result = load_diff(&dir, None, Some(&diff_path), None);
+        ignore_remove_dir_all(&dir);
+        let text = result.map_err(std::io::Error::other)?;
+        assert!(
+            text.contains("diff --git \"a/src/p_\\377.rs\" \"b/src/p_\\377.rs\""),
+            "C-quoted path bytes must stay ASCII: {text}"
+        );
+        assert!(
+            text.contains("-caf\u{fffd}\n+ok\n"),
+            "hunk payload must still decode lossily: {text}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stdin_reader_with_latin1_hunk_decodes_like_the_git_route() -> std::io::Result<()> {
+        let text = decode_supplied_diff_reader(
+            "diff from stdin",
+            std::io::Cursor::new(latin1_hunk_diff()),
+        )
+        .map_err(std::io::Error::other)?;
+        assert_eq!(text, String::from_utf8_lossy(&latin1_hunk_diff()).as_ref());
+        assert!(text.contains("-caf\u{fffd}\n+caf\u{fffd}s\n"), "{text}");
+        Ok(())
+    }
+
+    #[test]
+    fn stdin_reader_io_error_keeps_the_stdin_prefix() -> std::io::Result<()> {
+        struct Boom;
+        impl Read for Boom {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("boom"))
+            }
+        }
+        let Err(message) = decode_supplied_diff_reader("diff from stdin", Boom) else {
+            return Err(std::io::Error::other("stdin IO failure must surface"));
+        };
+        assert!(
+            message.starts_with("failed to read diff from stdin:"),
+            "{message}"
+        );
+        assert!(message.contains("boom"), "{message}");
+        Ok(())
+    }
+
+    #[test]
+    fn truncated_utf8_sequence_decodes_lossily_like_git() {
+        // A cut-off 2-byte sequence is another non-UTF-8 shape the git route
+        // already accepts; `--diff` must not refuse it either.
+        let bytes = b"+caf\xc3\n";
+        let text = decode_supplied_diff_bytes(bytes);
+        assert_eq!(text, String::from_utf8_lossy(bytes).as_ref());
+        assert!(text.contains('\u{fffd}'));
     }
 
     #[test]
