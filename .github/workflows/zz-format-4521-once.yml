@@ -37,36 +37,44 @@ jobs:
           workflow = Path('.github/workflows/server-archive-qualification.yml')
           text = workflow.read_text()
 
-          old_assembly = '''          for directory in payload-identities/ripr-final-native-payload-*; do
-            test -d "${directory}"
-            identity="${directory}/payload-identity.json"
-            producer="${directory}/producer-build.json"
-            test -f "${identity}"
-            test -f "${directory}/payload-identity.md"
-            test -f "${producer}"
-            jq --arg identity_sha256 "$(sha256sum "${identity}" | awk '{print $1}')" '. + {identity_sha256: $identity_sha256}' "${identity}" >> payload-identities.ndjson
-            jq --arg producer_build_sha256 "$(sha256sum "${producer}" | awk '{print $1}')" '. + {producer_build_sha256: $producer_build_sha256}' "${producer}" >> producer-builds.ndjson
-          done
-          '''
-          new_assembly = '''          for directory in payload-identities/ripr-final-native-payload-*; do
-            test -d "${directory}"
-            mapfile -t identities < <(find "${directory}" -type f -name payload-identity.json -print)
-            mapfile -t markdowns < <(find "${directory}" -type f -name payload-identity.md -print)
-            mapfile -t producers < <(find "${directory}" -type f -name producer-build.json -print)
-            test "${#identities[@]}" -eq 1
-            test "${#markdowns[@]}" -eq 1
-            test "${#producers[@]}" -eq 1
-            identity="${identities[0]}"
-            producer="${producers[0]}"
-            jq --arg identity_sha256 "$(sha256sum "${identity}" | awk '{print $1}')" '. + {identity_sha256: $identity_sha256}' "${identity}" >> payload-identities.ndjson
-            jq --arg producer_build_sha256 "$(sha256sum "${producer}" | awk '{print $1}')" '. + {producer_build_sha256: $producer_build_sha256}' "${producer}" >> producer-builds.ndjson
-          done
-          '''
-          if old_assembly not in text:
-              raise SystemExit('payload identity assembly block not found')
-          text = text.replace(old_assembly, new_assembly, 1)
-          text = text.replace('toolchain: stable', 'toolchain: 1.95.0')
-          text = text.replace(' # stable\n', ' # v1\n')
+          loop_start = '          for directory in payload-identities/ripr-final-native-payload-*; do\n'
+          direct_identity = '            identity="${directory}/payload-identity.json"\n'
+          recursive_identity = '            mapfile -t identities < <(find "${directory}" -type f -name payload-identity.json -print)\n'
+          if direct_identity in text:
+              start = text.index(loop_start)
+              end = text.index('          done\n', start) + len('          done\n')
+              current = text[start:end]
+              for required in (
+                  direct_identity.strip(),
+                  'producer="${directory}/producer-build.json"',
+                  'test -f "${directory}/payload-identity.md"',
+              ):
+                  if required not in current:
+                      raise SystemExit(f'unexpected payload assembly loop; missing {required!r}')
+              new_assembly = '\n'.join([
+                  '          for directory in payload-identities/ripr-final-native-payload-*; do',
+                  '            test -d "${directory}"',
+                  '            mapfile -t identities < <(find "${directory}" -type f -name payload-identity.json -print)',
+                  '            mapfile -t markdowns < <(find "${directory}" -type f -name payload-identity.md -print)',
+                  '            mapfile -t producers < <(find "${directory}" -type f -name producer-build.json -print)',
+                  '            test "${#identities[@]}" -eq 1',
+                  '            test "${#markdowns[@]}" -eq 1',
+                  '            test "${#producers[@]}" -eq 1',
+                  '            identity="${identities[0]}"',
+                  '            producer="${producers[0]}"',
+                  '            jq --arg identity_sha256 "$(sha256sum "${identity}" | awk \'{print $1}\')" \'. + {identity_sha256: $identity_sha256}\' "${identity}" >> payload-identities.ndjson',
+                  '            jq --arg producer_build_sha256 "$(sha256sum "${producer}" | awk \'{print $1}\')" \'. + {producer_build_sha256: $producer_build_sha256}\' "${producer}" >> producer-builds.ndjson',
+                  '          done',
+                  '',
+              ])
+              text = text[:start] + new_assembly + text[end:]
+          elif recursive_identity not in text:
+              raise SystemExit('payload identity assembly loop not found')
+
+          if 'toolchain: stable' in text:
+              text = text.replace('toolchain: stable', 'toolchain: 1.95.0')
+          if ' # stable\n' in text:
+              text = text.replace(' # stable\n', ' # v1\n')
           text = text.replace(
               'Native runtime compatibility remains unqualified under issue #4489',
               'Native runtime compatibility remains unqualified under EffortlessMetrics/ripr-swarm#4489',
@@ -76,9 +84,12 @@ jobs:
           allowlist = Path('policy/workflow_allowlist.txt')
           policy = allowlist.read_text()
           old = '.github/workflows/server-archive-qualification.yml|82|'
-          if old not in policy:
+          new = '.github/workflows/server-archive-qualification.yml|89|'
+          if old in policy:
+              policy = policy.replace(old, new, 1)
+          elif new not in policy:
               raise SystemExit('qualification workflow budget entry not found')
-          allowlist.write_text(policy.replace(old, '.github/workflows/server-archive-qualification.yml|89|', 1))
+          allowlist.write_text(policy)
           PY
           git rm -f --ignore-unmatch \
             .github/workflows/zz-format-4521-once.yml \
