@@ -3086,7 +3086,7 @@ fn agent_packet_expands_one_brief_seam_by_id() -> Result<(), Box<dyn std::error:
     assert_success(&packet);
 
     let packet_stdout = String::from_utf8_lossy(&packet.stdout);
-    assert!(packet_stdout.contains(r#""schema_version": "0.4""#));
+    assert!(packet_stdout.contains(r#""schema_version": "0.5""#));
     assert!(packet_stdout.contains(r#""analysis_outcome_status": "not_applicable""#));
     assert!(packet_stdout.contains(r#""packets_total": 1"#));
     assert!(packet_stdout.contains(&format!(r#""seam_id": "{seam_id}""#)));

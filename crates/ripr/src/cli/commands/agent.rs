@@ -1654,6 +1654,13 @@ fn before_phase_summary(packet: &str, packet_path: &str) -> Option<String> {
             "  edit one test file: {test_file}; leave production code unchanged"
         )),
     }
+    // #4330: state the terminality, not just the preference. The cage kills
+    // the attempt when any other file changes, so the narration that names
+    // the one test file must also name what violating it costs.
+    lines.push(format!(
+        "  {}",
+        crate::output::agent_seam_packets::EDIT_CAGE_TERMINALITY_WARNING
+    ));
     if let Some(assertion) = text("/suggested_assertions/0") {
         lines.push(format!("  assertion shape: {assertion}"));
     }

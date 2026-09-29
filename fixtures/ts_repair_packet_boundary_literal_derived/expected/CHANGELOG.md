@@ -49,3 +49,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_literal_derived (5)
+
+Reason:
+RIPR-SPEC-0005: agent seam packet schema 0.4 to 0.5 (#4330) — packets state the edit cage (allowed_edit_surface, forbidden_files, must_not_change) and next.before_snapshot_command drops the POSIX-only mkdir prefix
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_literal_derived --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
