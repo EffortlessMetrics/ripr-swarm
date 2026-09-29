@@ -523,7 +523,11 @@ pub struct AnalysisOptions {
 /// present in the diff or repo — regardless of whether the adapter is
 /// `enabled` in `ripr.toml` and regardless of whether any findings were
 /// emitted. The count and sample paths come from real path routing
-/// (`analysis::language::route`); they are never fabricated.
+/// (`analysis::language::route`); they are never fabricated. Files refused by
+/// the language's detectable excluded-path authority (#3743/#3672) are not
+/// counted: the adapter skips them before counting and they can produce no
+/// probe, so a file the product refuses to inspect never sits in the
+/// denominator (#4372).
 ///
 /// The `enabled` flag distinguishes the two honesty cases per
 /// RIPR-SPEC-0082:
@@ -539,7 +543,8 @@ pub struct AnalysisOptions {
 pub struct PreviewLanguageAdvisory {
     /// Stable language wire string (e.g. `"typescript"`, `"python"`).
     pub language: String,
-    /// Number of files routed to this preview adapter.
+    /// Number of files routed to this preview adapter that survive the
+    /// language's detectable excluded-path authority (#4372).
     pub file_count: usize,
     /// Up to three sample file paths (normalized, forward-slash).
     pub sample_paths: Vec<String>,

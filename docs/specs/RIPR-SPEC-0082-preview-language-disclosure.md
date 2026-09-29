@@ -22,6 +22,7 @@ Linked issues:
 
 - #1111 — Silent "No probes found" honesty gap for preview-language content
 - #2304 — Docs/config-only diffs produced an unexplained empty result
+- #4372 — Preview advisory counted #3743-excluded files as analyzed
 
 Linked PRs:
 
@@ -78,6 +79,14 @@ same path router (`analysis::language::route`) that dispatches to adapters.
 **Detection does not require the adapter to be enabled** — it is pure path /
 extension matching. The count is real, never fabricated.
 
+A changed path refused by its language's detectable excluded-path authority
+(#3743 TypeScript, #3672 Python) is not part of the count or the sample paths
+(#4372): the adapter's diff loop skips such files BEFORE counting and they can
+produce no probe, so an advisory that presented them as analyzed would put a
+file the product deliberately refuses to inspect into the report denominator.
+The diff-mode outcome count `changed_file_count` applies the same authority, so
+the note count and the JSON count cannot disagree about the denominator.
+
 A `PreviewLanguageAdvisory` is produced for each preview language. TypeScript,
 JavaScript, and Python are disclosed only when their adapters are compiled in
 (`LanguageId::is_available`). Perl is disclosed by extension even when its
@@ -86,7 +95,8 @@ changes. The remaining non-analyzable files (`.md`, `.yaml`, etc.) never
 trigger an advisory. Each advisory carries:
 
 - `language`: stable wire string (e.g. `"typescript"`, `"python"`)
-- `file_count`: number of files in scope that routed to this adapter
+- `file_count`: number of files in scope that routed to this adapter and
+  survive the language's detectable excluded-path authority (#4372)
 - `sample_paths`: up to three normalized file paths (forward-slash)
 - `enabled`: whether this preview adapter was configured and available for
   this analysis
@@ -235,13 +245,21 @@ enabled adapter with a matching non-success `language_runs` entry carries
    preview-language `Note:` line and NO `preview_languages` JSON field. The
    separate docs-only stderr disclosure (#2304, example 7) applies instead.
 6. Count in `Note:` matches `file_count` in advisory, matches files routed by
-   `analysis::language::route` to that adapter.
+   `analysis::language::route` to that adapter and not refused by the
+   language's detectable excluded-path authority.
 7. Diff contains only non-source files (`.md`, `.toml`, extensionless), zero
    probes (#2304) → a one-line stderr disclosure names the changed-file count
    and observed extensions and states that the empty result is correct
    because ripr cannot analyze non-source files. It is not a Finding, not a
    `preview_languages` block, changes no JSON schema or golden, and the exit
    code stays 0. Any source-routed file, or an empty diff, suppresses it.
+8. Excluded-path case (#4372): diff changes `src/discount.ts` and
+   `vendor/lib.ts` with TypeScript enabled → the note reads
+   `Note: 1 TypeScript file analyzed under preview support`, JSON
+   `preview_languages[0].file_count == 1` with `sample_paths ==
+   ["src/discount.ts"]`, and the outcome `counts.changed_file_count == 1`.
+   A `*.generated.*` changed file behaves the same. A regular changed `.ts`
+   file still counts (control for both).
 
 ## Test Mapping
 
@@ -258,6 +276,11 @@ enabled adapter with a matching non-success `language_runs` entry carries
   Perl failure plus enabled-success and disabled renderer agreement controls.
 - `crates/ripr/src/output/diff_report.rs::tests::diff_report_includes_preview_languages_when_ts_files_in_scope`
 - `crates/ripr/src/output/diff_report.rs::tests::diff_report_omits_preview_languages_for_pure_rust_scope`
+- `crates/ripr/src/analysis/pipeline.rs::tests::preview_advisories_count_post_exclusion_files_only`
+- `crates/ripr/src/analysis/pipeline.rs::tests::preview_advisories_still_count_regular_source_files`
+- `crates/ripr/src/analysis/pipeline.rs::tests::python_preview_advisories_count_post_exclusion_files_only`
+- `crates/ripr/src/analysis/pipeline.rs::tests::excluded_preview_path_wrapper_routes_each_language_authority`
+- `crates/ripr/src/analysis/pipeline.rs::tests::diff_pipeline_advisory_and_changed_file_count_agree_post_exclusion`
 - `crates/ripr/src/analysis/pipeline.rs::tests::non_source_disclosure_message_names_count_and_extensions`
 - `crates/ripr/src/analysis/pipeline.rs::tests::non_source_disclosure_message_silent_for_source_or_empty_diffs`
 
@@ -267,8 +290,10 @@ enabled adapter with a matching non-success `language_runs` entry carries
   `enabled` flag), shared `analyzed()` / `non_success_run()` authority, and
   `AnalysisResult::preview_language_advisories` field.
 - `crates/ripr/src/analysis/pipeline.rs` — `is_preview_language()`,
-  `detect_preview_advisories()` (diff), `detect_repo_preview_advisories()`
-  (repo); detection runs after the language loop, independent of enablement.
+  `is_excluded_preview_language_path()` (the shared per-language
+  excluded-path authority wrapper, #4372), `detect_preview_advisories()`
+  (diff), `detect_repo_preview_advisories()` (repo); detection runs after the
+  language loop, independent of enablement.
   Also `non_source_disclosure_message()` (#2304): the pure docs-only stderr
   disclosure decision (count + extension summary), emitted only when the
   pipeline produced zero findings and no changed file routes to a source

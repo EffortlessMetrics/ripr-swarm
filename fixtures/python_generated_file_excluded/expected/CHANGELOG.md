@@ -107,3 +107,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_generated_file_excluded (4)
+
+Reason:
+RIPR-SPEC-0082 (#4372): the preview advisory and the outcome changed_file_count now count only files that survive the language excluded-path authority (#3743/#3672). The prior golden pinned the bug: the changed generated file src/schema_pb2.py was presented as 1 Python file analyzed with changed_file_count 1 although the adapter refuses it before counting and it produced no probe. New shape: Counts: 0 changed file(s), no preview note, no preview_languages block.
+
+Command:
+`cargo xtask goldens bless python_generated_file_excluded --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
