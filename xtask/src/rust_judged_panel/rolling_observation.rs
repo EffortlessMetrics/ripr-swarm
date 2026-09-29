@@ -978,11 +978,11 @@ mod tests {
             "{violations:?}"
         );
         assert_eq!(
-            coverage_stratum(&quiet_test_only()).ok().as_deref(),
+            coverage_stratum(&quiet_test_only()).ok(),
             Some(STRATUM_TEST_ONLY_QUIET)
         );
         assert_eq!(
-            coverage_stratum(&quiet_production()).ok().as_deref(),
+            coverage_stratum(&quiet_production()).ok(),
             Some(STRATUM_PRODUCTION_QUIET)
         );
     }
@@ -1112,11 +1112,11 @@ mod tests {
         });
         assert_eq!(observed.class.as_deref(), Some("no_findings"));
         assert_eq!(
-            coverage_stratum(&quiet_test_only()).ok().as_deref(),
+            coverage_stratum(&quiet_test_only()).ok(),
             Some(STRATUM_TEST_ONLY_QUIET)
         );
         assert_ne!(
-            coverage_stratum(&quiet_test_only()).ok().as_deref(),
+            coverage_stratum(&quiet_test_only()).ok(),
             Some(STRATUM_PRODUCTION_QUIET)
         );
     }
