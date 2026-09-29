@@ -64,6 +64,21 @@ impl DoctorFirstCommand {
             Self::DefaultCheck => Self::DEFAULT_LINE,
         }
     }
+
+    /// `command_line` for the diagnosed `root`. `ripr check` defaults to
+    /// `.`, so a doctor run with `--root` from another directory must name
+    /// the root, or the recommended command analyzes the caller's directory.
+    pub(crate) fn command_line_for_root(self, root: &Path) -> String {
+        let line = self.command_line();
+        if root == Path::new(".") {
+            return line.to_string();
+        }
+        let flags = line.strip_prefix("ripr check").unwrap_or_default();
+        format!(
+            "ripr check --root {}{flags}",
+            crate::agent::loop_commands::shell_arg(&root.display().to_string())
+        )
+    }
 }
 
 /// Fail closed: only an explicit passing `tool_git` check means git can run.
@@ -2514,6 +2529,22 @@ mod tests {
         assert_eq!(
             DoctorFirstCommand::SavedDiff.command_line(),
             DoctorFirstCommand::SAVED_DIFF_LINE
+        );
+        assert_eq!(
+            DoctorFirstCommand::DefaultCheck.command_line_for_root(Path::new(".")),
+            "ripr check"
+        );
+        assert_eq!(
+            DoctorFirstCommand::SavedDiff.command_line_for_root(Path::new("/work/app")),
+            "ripr check --root /work/app --diff PATH"
+        );
+        assert_eq!(
+            DoctorFirstCommand::Worktree.command_line_for_root(Path::new("/work/my app")),
+            "ripr check --root '/work/my app' --base HEAD --worktree"
+        );
+        assert_eq!(
+            DoctorFirstCommand::DefaultCheck.command_line_for_root(Path::new("../app")),
+            "ripr check --root ../app"
         );
 
         let mut missing_git = DoctorReport::new(".");
