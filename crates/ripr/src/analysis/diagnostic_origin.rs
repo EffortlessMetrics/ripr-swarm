@@ -1101,6 +1101,7 @@ mod tests {
             };
             assert_eq!(origin_b_span, start_b_units);
         }
+        let prefix_b = format!("{prefix_a}{PREDICATE}{between}");
         assert_eq!(
             origin_a.utf8.start,
             encoding_width(prefix_a, Encoding::Utf8)
@@ -1112,6 +1113,18 @@ mod tests {
         assert_eq!(
             origin_a.utf32.start,
             encoding_width(prefix_a, Encoding::Utf32)
+        );
+        assert_eq!(
+            origin_b.utf8.start,
+            encoding_width(&prefix_b, Encoding::Utf8)
+        );
+        assert_eq!(
+            origin_b.utf16.start,
+            encoding_width(&prefix_b, Encoding::Utf16)
+        );
+        assert_eq!(
+            origin_b.utf32.start,
+            encoding_width(&prefix_b, Encoding::Utf32)
         );
         assert_ne!(origin_a.utf8.start, origin_a.utf16.start);
         assert_ne!(origin_a.utf16.start, origin_a.utf32.start);
