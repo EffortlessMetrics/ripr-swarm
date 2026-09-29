@@ -105,9 +105,27 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
+## Pending — ts_repair_packet_boundary_constant_first (8)
+
+Reason:
+RIPR-SPEC-0122: digest Next step wraps instead of cutting the remedy; stop reasons carry a gloss; boxed-wrapper limitation text has no whitespace runs (#4323)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_constant_first --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
 ## Pending — ts_repair_packet_boundary_constant_first (9)
 
 Reason:
+RIPR-SPEC-0122: digest Next step wraps instead of cutting the remedy (#4323, main merge)
+## Pending — ts_repair_packet_boundary_constant_first (9)
+
+Reason:
+RIPR-SPEC-0046 RIPR-SPEC-0047: check JSON now carries a top-level source_subject stamp with the analysis-time content digests of the files a derived gap ledger names (#4544); no finding, classification, or human output changed.
 RIPR-SPEC-0122: bounded human check output leads the exposure line with the plain word the summary uses (weak, no path, unknown) before the schema value
 
 Command:

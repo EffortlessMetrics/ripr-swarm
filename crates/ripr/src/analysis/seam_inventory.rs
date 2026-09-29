@@ -5040,6 +5040,7 @@ pub fn check_b(x: i32) -> bool { x < 0 }
                     discriminate: stage(StageState::Unknown),
                     observed_values: Vec::new(),
                     missing_discriminators: Vec::new(),
+                    new_test_target: None,
                 },
                 class: SeamGripClass::Ungripped,
             }
@@ -5107,6 +5108,7 @@ pub fn check_b(x: i32) -> bool { x < 0 }
                     discriminate: stage(StageState::Unknown),
                     observed_values: Vec::new(),
                     missing_discriminators: Vec::new(),
+                    new_test_target: None,
                 },
                 class: SeamGripClass::Ungripped,
             }
