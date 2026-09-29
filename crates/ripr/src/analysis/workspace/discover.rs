@@ -11,6 +11,46 @@ const DEFAULT_IGNORED_DIRS: &[&str] = &[
     "node_modules",
 ];
 
+/// Changed source files that are not regular files in the working tree.
+///
+/// Sparse checkout and local deletes drop these from disk walks, so the
+/// owner never enters the index. Callers must disclose that as a named
+/// limitation instead of classifying the missing owner as
+/// `no_static_path` (#4586). Non-source paths (docs, manifests) are
+/// ignored: they are not analysis subjects.
+pub(crate) fn changed_source_files_absent_from_worktree<'a>(
+    root: &Path,
+    changed_paths: impl IntoIterator<Item = &'a Path>,
+) -> Vec<PathBuf> {
+    let mut absent = Vec::new();
+    for path in changed_paths {
+        if route(path).is_none() {
+            continue;
+        }
+        if worktree_contains_regular_source_file(root, path) {
+            continue;
+        }
+        absent.push(PathBuf::from(super::classify::normalize_path(path)));
+    }
+    absent.sort();
+    absent.dedup();
+    absent
+}
+
+fn worktree_contains_regular_source_file(root: &Path, relative: &Path) -> bool {
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return false;
+    }
+    match std::fs::metadata(root.join(relative)) {
+        Ok(meta) => meta.is_file(),
+        Err(_) => false,
+    }
+}
+
 pub fn discover_rust_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut out = Vec::new();
     let adapter = RustAdapter;
@@ -200,6 +240,31 @@ mod tests {
             result,
             vec![(LanguageId::Perl, PathBuf::from("lib/My/App.pm"))]
         );
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #4586: a changed source path that is not a regular file on disk
+    /// is named; docs and a present sibling stay out of the list.
+    #[test]
+    fn absent_worktree_source_is_named_and_present_or_nonsource_paths_are_not()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = std::env::temp_dir().join(format!("ripr-absent-worktree-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src"))?;
+        fs::write(dir.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n")?;
+        fs::write(dir.join("README.md"), "docs\n")?;
+
+        let absent = changed_source_files_absent_from_worktree(
+            &dir,
+            [
+                Path::new("src/lib.rs"),
+                Path::new("src/missing.rs"),
+                Path::new("README.md"),
+            ],
+        );
+        assert_eq!(absent, vec![PathBuf::from("src/missing.rs")]);
+
         let _ = fs::remove_dir_all(&dir);
         Ok(())
     }

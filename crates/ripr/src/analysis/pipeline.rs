@@ -1536,6 +1536,68 @@ mod tests {
         Ok(())
     }
 
+    /// #4586: a changed Rust file that is not on disk turns the outcome
+    /// partial. The probe is withheld, so the run is not a complete
+    /// `no_static_path` result.
+    #[test]
+    fn changed_file_absent_from_worktree_is_a_partial_limitation() -> Result<(), String> {
+        let root = temp_root("absent-worktree-outcome")?;
+        write(
+            root.join("Cargo.toml").as_path(),
+            "[package]\nname='pricing'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write(
+            root.join("tests/t.rs").as_path(),
+            "#[test]\nfn high_total_gets_discount() {\n    assert_eq!(pricing::discount(200), 20);\n}\n",
+        )?;
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &[],
+            "diff --git a/src/lib.rs b/src/lib.rs\n\
+             --- a/src/lib.rs\n\
+             +++ b/src/lib.rs\n\
+             @@ -1,3 +1,3 @@\n\
+              pub fn discount(total: i32) -> i32 {\n\
+             -    if total > 100 { total / 10 } else { 0 }\n\
+             +    if total >= 100 { total / 10 } else { 0 }\n\
+              }\n",
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "absent worktree file must carry an analysis outcome".to_string())?;
+        assert_eq!(outcome.kind, AnalysisOutcomeKind::PartialWithLimitations);
+        assert!(
+            !result
+                .findings
+                .iter()
+                .any(|finding| finding.class == crate::domain::ExposureClass::NoStaticPath),
+            "absent owner must not be classified no_static_path: {:?}",
+            result.findings
+        );
+        let limitation = outcome
+            .limitations
+            .iter()
+            .find(|limitation| {
+                limitation.kind == AnalysisLimitationKind::ChangedFileAbsentFromWorktree
+            })
+            .ok_or_else(|| {
+                format!(
+                    "expected changed_file_absent_from_worktree, got {:?}",
+                    outcome.limitations
+                )
+            })?;
+        assert_eq!(limitation.path.as_deref(), Some("src/lib.rs"));
+        assert!(
+            limitation.recovery.detail.contains("sparse checkout")
+                && limitation.recovery.detail.contains("Check out"),
+            "recovery must name checkout / sparse checkout: {}",
+            limitation.recovery.detail
+        );
+        Ok(())
+    }
+
     #[test]
     fn malformed_diff_yields_zero_changed_files() {
         // #2425: a non-diff text file must parse to zero changed files. The

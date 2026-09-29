@@ -61,6 +61,7 @@ impl AnalysisLimitationKind {
             Self::DiffScopeOversized => "diff_scope_oversized",
             Self::LanguageAdapterUnavailable => "language_adapter_unavailable",
             Self::LanguageScopeUnsupported => "language_scope_unsupported",
+            Self::ChangedFileAbsentFromWorktree => "changed_file_absent_from_worktree",
             Self::ProducerTimeout => "producer_timeout",
             Self::ProducerFailure => "producer_failure",
         }
@@ -114,6 +115,7 @@ pub(crate) enum AnalysisLimitationKind {
     DiffScopeOversized,
     LanguageAdapterUnavailable,
     LanguageScopeUnsupported,
+    ChangedFileAbsentFromWorktree,
     ProducerTimeout,
     ProducerFailure,
 }
@@ -642,6 +644,10 @@ mod tests {
             (
                 AnalysisLimitationKind::LanguageScopeUnsupported,
                 "language_scope_unsupported",
+            ),
+            (
+                AnalysisLimitationKind::ChangedFileAbsentFromWorktree,
+                "changed_file_absent_from_worktree",
             ),
             (AnalysisLimitationKind::ProducerTimeout, "producer_timeout"),
             (AnalysisLimitationKind::ProducerFailure, "producer_failure"),

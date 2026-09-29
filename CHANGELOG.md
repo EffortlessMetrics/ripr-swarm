@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- A changed source file that is not in the working tree (sparse checkout
+  or a local delete) is now a named `changed_file_absent_from_worktree`
+  limitation and a partial analysis outcome. Before, `ripr check` treated
+  the missing owner as a clean `no_static_path`, and `ripr review-comments`
+  reported `scoped production files: 0/0` with no disclosure. Probes for
+  that file are withheld. The repair is to check the file out or disable
+  sparse checkout for it.
 - LSP: a request whose method starts with `$/` and that ripr does not handle
   now gets a `-32601` method-not-found error, as the LSP spec requires. It got
   no response at all, so a client that sent one waited on it forever.

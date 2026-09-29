@@ -1144,6 +1144,9 @@ fn analysis_scope_json(scope: &ReviewCommentsAnalysisScope) -> Value {
     if scope.unevaluated_seams > 0 {
         value["unevaluated_seams"] = json!(scope.unevaluated_seams);
     }
+    if !scope.absent_changed_files.is_empty() {
+        value["absent_changed_files"] = json!(scope.absent_changed_files);
+    }
     value
 }
 
@@ -1457,6 +1460,24 @@ fn push_analysis_scope_summary(lines: &mut Vec<String>, value: Option<&Value>) {
         lines.push(format!(
             "- scoped seams not evaluated: {unevaluated} (changed-line seams filled every review slot)"
         ));
+    }
+    if let Some(absent) = scope
+        .get("absent_changed_files")
+        .and_then(Value::as_array)
+        .filter(|files| !files.is_empty())
+    {
+        let listed = absent
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!(
+            "- limitation: `changed_file_absent_from_worktree`; dropped file(s): {listed}"
+        ));
+        lines.push(
+            "- repair: check out the missing file, or disable sparse checkout for it, then re-run"
+                .to_string(),
+        );
     }
     if let (Some(limitation), Some(route)) = (
         scope.get("limitation").and_then(Value::as_str),
