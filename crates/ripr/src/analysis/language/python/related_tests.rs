@@ -459,8 +459,8 @@ fn imports_owner_module(import: &PythonImport, owner: &PythonOwner) -> bool {
 }
 
 /// Whether dotted `module` names the owner's module or a package above it.
-/// Only the owner's own module paths count (repository root, or below
-/// `src`): a trailing part of one (`collections` for
+/// Only the owner's own module paths count (repository root, below `src`,
+/// or below a root `lib`): a trailing part of one (`collections` for
 /// `src/mylib/collections.py`, `util.cache` for `src/pkg/util/cache.py`)
 /// can name an unrelated module, such as the standard library's. A bare `src`
 /// layout root is not a package. Empty never matches.
@@ -775,7 +775,10 @@ pub(super) fn owner_module_paths(file: &Path) -> Vec<String> {
     // itself (`src.py` / `src/__init__.py` is a module named `src`).
     let directory_count = parts.len().saturating_sub(1);
     for (idx, part) in parts.iter().enumerate().take(directory_count) {
-        if *part == "src" {
+        // `src/` is a layout root at any depth (`packages/x/src/pkg`); `lib/`
+        // only at the repository root, since a nested `lib` is usually a
+        // package of its own (`pkg/lib/util.py` is `pkg.lib.util`).
+        if *part == "src" || (idx == 0 && *part == "lib") {
             let below = parts.get(idx + 1..).unwrap_or_default().join(".");
             if !below.is_empty() && !paths.contains(&below) {
                 paths.push(below);

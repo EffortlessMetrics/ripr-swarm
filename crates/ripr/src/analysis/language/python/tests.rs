@@ -5635,3 +5635,31 @@ fn private_descriptor_dunder_reached_through_its_package_is_a_limit() -> Result<
     assert_eq!(classify(&other_package)?.class, ExposureClass::NoStaticPath);
     Ok(())
 }
+
+#[test]
+fn a_root_lib_directory_is_an_import_root() -> Result<(), String> {
+    let paths = |file: &str| super::related_tests::owner_module_paths(Path::new(file));
+    assert_eq!(
+        paths("lib/pkg/cache.py"),
+        vec!["lib.pkg.cache", "pkg.cache"]
+    );
+    // A nested `lib` is a package of its own, not a layout root.
+    assert_eq!(paths("pkg/lib/util.py"), vec!["pkg.lib.util"]);
+    // `lib.py` at the root is a module named `lib`.
+    assert_eq!(paths("lib.py"), vec!["lib"]);
+
+    let owners = extract_owners(
+        Path::new("lib/pkg/cache.py"),
+        "class Cache:\n    def __init__(self, size):\n        self.size = size\n",
+    );
+    let init = flat_owner(&owners, "Cache.__init__")?;
+    let tests = extract_tests(
+        Path::new("tests/test_cache.py"),
+        "from pkg.cache import Cache\n\n\ndef test_size():\n    assert Cache(2).size == 2\n",
+    );
+    assert_eq!(
+        candidate_relations(init, &tests),
+        vec![("test_size".to_string(), "constructor_call")]
+    );
+    Ok(())
+}
