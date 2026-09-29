@@ -1,0 +1,804 @@
+name: Repair npm launcher review findings
+
+on:
+  push:
+    branches:
+      - feat/4710-npm-launcher-core
+    paths:
+      - .github/workflows/branch-repair-4716-final.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: ${{ github.repository == 'EffortlessMetrics/ripr-swarm' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: feat/4710-npm-launcher-core
+
+      - name: Apply launcher, policy, and traceability repairs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str, label: str) -> None:
+              file = Path(path)
+              text = file.read_text(encoding="utf-8")
+              if new in text:
+                  return
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: {label} anchor count={count}")
+              file.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          launcher_path = "packaging/npm/launcher/lib/launcher.cjs"
+          replace_once(
+              launcher_path,
+              'const DISALLOWED_LIFECYCLE_SCRIPTS = ["preinstall", "install", "postinstall", "prepare"];\nconst SIGNALS_TO_FORWARD = ["SIGINT", "SIGTERM", "SIGHUP"];',
+              '''const DISALLOWED_LIFECYCLE_SCRIPTS = [
+            "preinstall",
+            "install",
+            "postinstall",
+            "preprepare",
+            "prepare",
+            "postprepare",
+          ];
+          const SIGNALS_TO_FORWARD = ["SIGTERM"];
+          const SIGNALS_TO_OBSERVE = ["SIGINT", "SIGHUP"];''',
+              "signal and lifecycle constants",
+          )
+          replace_once(
+              launcher_path,
+              '''  const forwarded = new Map();
+            if (options.forwardSignals !== false && process.platform !== "win32") {
+              for (const signal of SIGNALS_TO_FORWARD) {
+                const handler = () => {
+                  if (!child.killed) {
+                    child.kill(signal);
+                  }
+                };
+                forwarded.set(signal, handler);
+                process.on(signal, handler);
+              }
+            }
+            const cleanup = () => {
+              for (const [signal, handler] of forwarded) {
+                process.removeListener(signal, handler);
+              }
+            };
+          ''',
+              '''  const signalHandlers = new Map();
+            let receivedSignal = null;
+            const rememberSignal = (signal) => {
+              if (receivedSignal === null) {
+                receivedSignal = signal;
+              }
+            };
+            if (options.forwardSignals !== false && process.platform !== "win32") {
+              for (const signal of SIGNALS_TO_FORWARD) {
+                const handler = () => {
+                  rememberSignal(signal);
+                  if (!child.killed) {
+                    child.kill(signal);
+                  }
+                };
+                signalHandlers.set(signal, handler);
+                process.on(signal, handler);
+              }
+              for (const signal of SIGNALS_TO_OBSERVE) {
+                const handler = () => {
+                  rememberSignal(signal);
+                };
+                signalHandlers.set(signal, handler);
+                process.on(signal, handler);
+              }
+            }
+            const cleanup = () => {
+              for (const [signal, handler] of signalHandlers) {
+                process.removeListener(signal, handler);
+              }
+            };
+          ''',
+              "signal handler block",
+          )
+          replace_once(
+              launcher_path,
+              '''    child.once("exit", (code, signal) => {
+                cleanup();
+                if (signal) {
+                  resolve({ code: null, signal });
+                } else {
+                  resolve({ code: typeof code === "number" ? code : 1, signal: null });
+                }
+              });
+          ''',
+              '''    child.once("exit", (code, signal) => {
+                cleanup();
+                const effectiveSignal = signal || receivedSignal;
+                if (effectiveSignal) {
+                  resolve({ code: null, signal: effectiveSignal });
+                } else {
+                  resolve({ code: typeof code === "number" ? code : 1, signal: null });
+                }
+              });
+          ''',
+              "effective signal projection",
+          )
+
+          package_path = "packaging/npm/launcher/package.json"
+          replace_once(
+              package_path,
+              '    "test": "node --test test/*.test.cjs",',
+              '    "test": "node test/run-tests.test.cjs",',
+              "guarded test script",
+          )
+
+          test_path = "packaging/npm/launcher/test/launcher.test.cjs"
+          replace_once(
+              test_path,
+              'const { spawnSync } = require("node:child_process");',
+              'const { spawn, spawnSync } = require("node:child_process");',
+              "spawn import",
+          )
+          replace_once(
+              test_path,
+              '''function cleanup(root) {
+            fs.rmSync(root, { recursive: true, force: true });
+          }
+          ''',
+              '''function cleanup(root) {
+            fs.rmSync(root, { recursive: true, force: true });
+          }
+
+          function delay(milliseconds) {
+            return new Promise((resolve) => setTimeout(resolve, milliseconds));
+          }
+
+          async function waitForFile(filePath, timeoutMilliseconds = 5000) {
+            const deadline = Date.now() + timeoutMilliseconds;
+            while (Date.now() < deadline) {
+              if (fs.existsSync(filePath)) {
+                return fs.readFileSync(filePath, "utf8");
+              }
+              await delay(20);
+            }
+            throw new Error(`timed out waiting for ${filePath}`);
+          }
+
+          function waitForExit(child, timeoutMilliseconds = 10000) {
+            return new Promise((resolve, reject) => {
+              const stdout = [];
+              const stderr = [];
+              child.stdout?.on("data", (chunk) => stdout.push(chunk));
+              child.stderr?.on("data", (chunk) => stderr.push(chunk));
+              const timer = setTimeout(() => {
+                reject(new Error(`timed out waiting for launcher process ${child.pid}`));
+              }, timeoutMilliseconds);
+              child.once("error", (error) => {
+                clearTimeout(timer);
+                reject(error);
+              });
+              child.once("exit", (code, signal) => {
+                clearTimeout(timer);
+                resolve({
+                  code,
+                  signal,
+                  stdout: Buffer.concat(stdout).toString("utf8"),
+                  stderr: Buffer.concat(stderr).toString("utf8"),
+                });
+              });
+            });
+          }
+
+          function signalProbe(root) {
+            const script = path.join(root, "signal-probe.cjs");
+            fs.writeFileSync(
+              script,
+              `"use strict";\nconst fs = require("node:fs");\nconst signal = process.env.RIPR_SIGNAL_NAME;\nconst ready = process.env.RIPR_SIGNAL_READY;\nconst receipt = process.env.RIPR_SIGNAL_RECEIPT;\nlet count = 0;\nprocess.on(signal, () => {\n  count += 1;\n  fs.writeFileSync(receipt, JSON.stringify({ signal, count, pid: process.pid }));\n  if (count === 1) {\n    setTimeout(() => process.exit(0), 150);\n  }\n});\nfs.writeFileSync(ready, String(process.pid));\nsetInterval(() => {}, 1000);\n`,
+            );
+            return script;
+          }
+
+          function spawnSignalLauncher(fixture, signalName) {
+            const ready = path.join(fixture.root, `${signalName}-ready.txt`);
+            const receipt = path.join(fixture.root, `${signalName}-receipt.json`);
+            const bin = path.join(fixture.launcherRoot, "bin", "ripr.cjs");
+            const child = spawn(process.execPath, [bin, signalProbe(fixture.root)], {
+              cwd: fixture.root,
+              detached: true,
+              env: {
+                ...process.env,
+                RIPR_SIGNAL_NAME: signalName,
+                RIPR_SIGNAL_READY: ready,
+                RIPR_SIGNAL_RECEIPT: receipt,
+              },
+              stdio: ["ignore", "pipe", "pipe"],
+            });
+            return { child, ready, receipt };
+          }
+
+          function killProcessGroup(pid, signal = "SIGKILL") {
+            try {
+              process.kill(-pid, signal);
+            } catch (error) {
+              if (error.code !== "ESRCH") {
+                throw error;
+              }
+            }
+          }
+
+          async function assertProcessGone(pid, timeoutMilliseconds = 3000) {
+            const deadline = Date.now() + timeoutMilliseconds;
+            while (Date.now() < deadline) {
+              try {
+                process.kill(pid, 0);
+              } catch (error) {
+                if (error.code === "ESRCH") {
+                  return;
+                }
+                throw error;
+              }
+              await delay(20);
+            }
+            throw new Error(`process ${pid} remained alive after launcher termination`);
+          }
+          ''',
+              "signal test helpers",
+          )
+          replace_once(
+              test_path,
+              '''test("rejects lifecycle scripts, version ranges, and dependency drift", () => {
+            const withInstall = launcherManifest({ scripts: { ...manifest.scripts, install: "curl example.invalid" } });
+            assert.throws(() => launcher.validateLauncherManifest(withInstall), { code: "install_script_forbidden" });
+
+            const ranged = launcherManifest({
+              optionalDependencies: { ...manifest.optionalDependencies, [platformRow().package]: "^0.11.0" },
+            });
+            assert.throws(() => launcher.validateLauncherManifest(ranged), { code: "native_dependency_version_mismatch" });
+
+            const extra = launcherManifest({
+              optionalDependencies: { ...manifest.optionalDependencies, "@effortlessmetrics/ripr-extra": manifest.version },
+            });
+            assert.throws(() => launcher.validateLauncherManifest(extra), { code: "native_dependency_set_mismatch" });
+          });
+          ''',
+              '''test("rejects lifecycle scripts, version ranges, and dependency drift", () => {
+            for (const scriptName of [
+              "preinstall",
+              "install",
+              "postinstall",
+              "preprepare",
+              "prepare",
+              "postprepare",
+            ]) {
+              const mutated = launcherManifest({
+                scripts: { ...manifest.scripts, [scriptName]: "curl example.invalid" },
+              });
+              assert.throws(() => launcher.validateLauncherManifest(mutated), {
+                code: "install_script_forbidden",
+              });
+            }
+
+            const ranged = launcherManifest({
+              optionalDependencies: { ...manifest.optionalDependencies, [platformRow().package]: "^0.11.0" },
+            });
+            assert.throws(() => launcher.validateLauncherManifest(ranged), { code: "native_dependency_version_mismatch" });
+
+            const extra = launcherManifest({
+              optionalDependencies: { ...manifest.optionalDependencies, "@effortlessmetrics/ripr-extra": manifest.version },
+            });
+            assert.throws(() => launcher.validateLauncherManifest(extra), { code: "native_dependency_set_mismatch" });
+          });
+          ''',
+              "lifecycle controls",
+          )
+
+          signal_tests_anchor = '''test("runs a real synthetic executable and preserves argv, cwd, env, stdout, stderr, and exit status", () => {
+          '''
+          signal_tests = '''test(
+            "forwards direct SIGTERM to native child exactly once and re-emits signal",
+            { skip: process.platform === "win32", timeout: 15000 },
+            async () => {
+              const fixture = nativeFixture();
+              const { child, ready, receipt } = spawnSignalLauncher(fixture, "SIGTERM");
+              let nativePid;
+              try {
+                nativePid = Number.parseInt(await waitForFile(ready), 10);
+                assert.ok(Number.isInteger(nativePid));
+                process.kill(child.pid, "SIGTERM");
+                const exit = await waitForExit(child);
+                await waitForFile(receipt);
+                await delay(250);
+                const signalReceipt = JSON.parse(fs.readFileSync(receipt, "utf8"));
+                assert.deepEqual(signalReceipt, { signal: "SIGTERM", count: 1, pid: nativePid });
+                assert.equal(exit.signal, "SIGTERM");
+                assert.equal(exit.stdout, "");
+                assert.equal(exit.stderr, "");
+                await assertProcessGone(nativePid);
+              } finally {
+                killProcessGroup(child.pid);
+                cleanup(fixture.root);
+              }
+            },
+          );
+
+          test(
+            "observes terminal SIGINT without forwarding a duplicate to the native child",
+            { skip: process.platform === "win32", timeout: 15000 },
+            async () => {
+              const fixture = nativeFixture();
+              const { child, ready, receipt } = spawnSignalLauncher(fixture, "SIGINT");
+              let nativePid;
+              try {
+                nativePid = Number.parseInt(await waitForFile(ready), 10);
+                assert.ok(Number.isInteger(nativePid));
+                process.kill(-child.pid, "SIGINT");
+                const exit = await waitForExit(child);
+                await waitForFile(receipt);
+                await delay(250);
+                const signalReceipt = JSON.parse(fs.readFileSync(receipt, "utf8"));
+                assert.deepEqual(signalReceipt, { signal: "SIGINT", count: 1, pid: nativePid });
+                assert.equal(exit.signal, "SIGINT");
+                assert.equal(exit.stdout, "");
+                assert.equal(exit.stderr, "");
+                await assertProcessGone(nativePid);
+              } finally {
+                killProcessGroup(child.pid);
+                cleanup(fixture.root);
+              }
+            },
+          );
+
+          test("runs a real synthetic executable and preserves argv, cwd, env, stdout, stderr, and exit status", () => {
+          '''
+          replace_once(test_path, signal_tests_anchor, signal_tests, "real signal controls")
+
+          rust_path = "xtask/src/policy/distribution/npm_launcher.rs"
+          replace_once(
+              rust_path,
+              'pub(super) const TEST_PATH: &str = "packaging/npm/launcher/test/launcher.test.cjs";\n',
+              'pub(super) const TEST_PATH: &str = "packaging/npm/launcher/test/launcher.test.cjs";\npub(super) const TEST_RUNNER_PATH: &str = "packaging/npm/launcher/test/run-tests.test.cjs";\npub(super) const TEST_RUNNER_TEXT: &str = include_str!("../../../../packaging/npm/launcher/test/run-tests.test.cjs");\n',
+              "test runner constants",
+          )
+          replace_once(
+              rust_path,
+              'const FORBIDDEN_LIFECYCLE_SCRIPTS: &[&str] = &["preinstall", "install", "postinstall", "prepare"];',
+              '''const FORBIDDEN_LIFECYCLE_SCRIPTS: &[&str] = &[
+              "preinstall",
+              "install",
+              "postinstall",
+              "preprepare",
+              "prepare",
+              "postprepare",
+          ];''',
+              "Rust lifecycle list",
+          )
+          replace_once(
+              rust_path,
+              '''    for script in FORBIDDEN_LIFECYCLE_SCRIPTS {
+                  if manifest.scripts.contains_key(*script) {
+                      violations.push(format!(
+                          "{path}: scripts.{script} is forbidden; installation cannot depend on npm lifecycle scripts"
+                      ));
+                  }
+              }
+
+              if manifest.ripr.schema_version != 1 {
+          ''',
+              '''    for script in FORBIDDEN_LIFECYCLE_SCRIPTS {
+                  if manifest.scripts.contains_key(*script) {
+                      violations.push(format!(
+                          "{path}: scripts.{script} is forbidden; installation cannot depend on npm lifecycle scripts"
+                      ));
+                  }
+              }
+              check_equal(
+                  path,
+                  "scripts.test",
+                  manifest
+                      .scripts
+                      .get("test")
+                      .map(String::as_str)
+                      .unwrap_or_default(),
+                  "node test/run-tests.test.cjs",
+                  violations,
+              );
+
+              if manifest.ripr.schema_version != 1 {
+          ''',
+              "guarded runner manifest requirement",
+          )
+          replace_once(
+              rust_path,
+              '''        (
+                  "process.exitCode = signalExitCode",
+                  "a consumed child signal must still produce a nonzero launcher exit",
+              ),
+          ''',
+              '''        (
+                  "process.exitCode = signalExitCode",
+                  "a consumed child signal must still produce a nonzero launcher exit",
+              ),
+              (
+                  "SIGNALS_TO_OBSERVE",
+                  "terminal process-group signals must be observed without duplicate forwarding",
+              ),
+              (
+                  "const effectiveSignal = signal || receivedSignal",
+                  "the first observed termination signal must survive a graceful child exit",
+              ),
+          ''',
+              "signal source guards",
+          )
+          old_required = '''    for required_test in [
+                  "native_dependency_version_mismatch",
+                  "native_executable_symlink",
+                  "native_executable_not_executable",
+                  "PATH-FALLBACK",
+                  "RIPR_UNKNOWN_SIGNAL",
+                  "npm package contents are explicit",
+              ] {
+                  if !test_text.contains(required_test) {
+                      violations.push(format!(
+                          "{test_path}: launcher negative proof is missing `{required_test}`"
+                      ));
+                  }
+              }
+          }
+          '''
+          new_required = '''    validate_test_runner(
+                  TEST_RUNNER_PATH,
+                  TEST_RUNNER_TEXT,
+                  test_path,
+                  test_text,
+                  violations,
+              );
+          }
+
+          const REQUIRED_EXECUTED_TESTS: &[&str] = &[
+              "rejects lifecycle scripts, version ranges, and dependency drift",
+              "rejects missing, wrong-version, wrong-target, traversal, symlink, directory, and non-executable payloads",
+              "forwards direct SIGTERM to native child exactly once and re-emits signal",
+              "observes terminal SIGINT without forwarding a duplicate to the native child",
+              "source bin missing-package failure never falls back to PATH or writes stdout",
+              "npm package contents are explicit and exclude tests and build residue",
+          ];
+
+          pub(super) fn validate_test_runner(
+              runner_path: &str,
+              runner_text: &str,
+              test_path: &str,
+              test_text: &str,
+              violations: &mut Vec<String>,
+          ) {
+              for (needle, explanation) in [
+                  ("--test-reporter=tap", "runner must consume a machine-readable test report"),
+                  ("result.status !== 0", "runner must propagate the Node test process failure"),
+                  ("missing.length > 0", "runner must fail when a required named control did not pass"),
+                  ("SKIP|TODO", "runner must not count skipped or todo controls as passed"),
+              ] {
+                  if !runner_text.contains(needle) {
+                      violations.push(format!("{runner_path}: {explanation}; missing `{needle}`"));
+                  }
+              }
+              for required_test in REQUIRED_EXECUTED_TESTS {
+                  let quoted = format!("\\\"{required_test}\\\"");
+                  if !runner_text.contains(&quoted) {
+                      violations.push(format!(
+                          "{runner_path}: required executed-control admission is missing `{required_test}`"
+                      ));
+                  }
+                  let registration = format!("test(\\n  \\\"{required_test}\\\"");
+                  let simple_registration = format!("test(\\\"{required_test}\\\"");
+                  if !test_text.contains(&registration) && !test_text.contains(&simple_registration) {
+                      violations.push(format!(
+                          "{test_path}: required launcher control is not registered as a Node test: `{required_test}`"
+                      ));
+                  }
+              }
+          }
+          '''
+          replace_once(rust_path, old_required, new_required, "executed control validation")
+
+          rust_tests_path = "xtask/src/policy/distribution/tests.rs"
+          replace_once(
+              rust_tests_path,
+              '"\\\"test\\\": \\\"node --test test/*.test.cjs\\\"",\n        "\\\"test\\\": \\\"node --test test/*.test.cjs\\\",\\n    \\\"install\\\": \\\"curl example.invalid\\\"",',
+              '"\\\"test\\\": \\\"node test/run-tests.test.cjs\\\"",\n        "\\\"test\\\": \\\"node test/run-tests.test.cjs\\\",\\n    \\\"install\\\": \\\"curl example.invalid\\\"",',
+              "Rust manifest fixture anchor",
+          )
+          old_source_test = '''#[test]
+          fn npm_launcher_source_guards_reject_removed_safety_rails() -> Result<(), String> {
+              let contract = parsed_contract(CONTRACT_TEXT)?;
+              let mut violations = Vec::new();
+              npm_launcher::validate_launcher_sources(
+                  npm_launcher::BIN_PATH,
+                  NPM_BIN_TEXT,
+                  npm_launcher::LIBRARY_PATH,
+                  &NPM_LIBRARY_TEXT
+                      .replace("shell: false", "shell: true")
+                      .replace("process.exitCode = signalExitCode", "process.exitCode = 0"),
+                  npm_launcher::TEST_PATH,
+                  &NPM_TEST_TEXT
+                      .replace("PATH-FALLBACK", "removed-control")
+                      .replace("RIPR_UNKNOWN_SIGNAL", "removed-signal-control"),
+                  &mut violations,
+              );
+              assert!(
+                  violations
+                      .iter()
+                      .any(|violation| violation.contains("shell interpolation"))
+              );
+              assert!(
+                  violations
+                      .iter()
+                      .any(|violation| violation.contains("PATH-FALLBACK"))
+              );
+              assert!(
+                  violations
+                      .iter()
+                      .any(|violation| violation.contains("signalExitCode"))
+              );
+              assert!(
+                  violations
+                      .iter()
+                      .any(|violation| violation.contains("RIPR_UNKNOWN_SIGNAL"))
+              );
+              assert!(!contract.npm.install_scripts);
+              Ok(())
+          }
+          '''
+          new_source_test = '''#[test]
+          fn npm_launcher_source_guards_reject_removed_safety_rails() -> Result<(), String> {
+              let contract = parsed_contract(CONTRACT_TEXT)?;
+              let mut violations = Vec::new();
+              npm_launcher::validate_launcher_sources(
+                  npm_launcher::BIN_PATH,
+                  NPM_BIN_TEXT,
+                  npm_launcher::LIBRARY_PATH,
+                  &NPM_LIBRARY_TEXT
+                      .replace("shell: false", "shell: true")
+                      .replace("process.exitCode = signalExitCode", "process.exitCode = 0")
+                      .replace("SIGNALS_TO_OBSERVE", "removed-observer")
+                      .replace(
+                          "const effectiveSignal = signal || receivedSignal",
+                          "const effectiveSignal = signal",
+                      ),
+                  npm_launcher::TEST_PATH,
+                  NPM_TEST_TEXT,
+                  &mut violations,
+              );
+              assert!(
+                  violations
+                      .iter()
+                      .any(|violation| violation.contains("shell interpolation"))
+              );
+              assert!(
+                  violations
+                      .iter()
+                      .any(|violation| violation.contains("signalExitCode"))
+              );
+              assert!(
+                  violations
+                      .iter()
+                      .any(|violation| violation.contains("terminal process-group signals"))
+              );
+              assert!(
+                  violations
+                      .iter()
+                      .any(|violation| violation.contains("first observed termination signal"))
+              );
+              assert!(!contract.npm.install_scripts);
+              Ok(())
+          }
+
+          #[test]
+          fn npm_launcher_guarded_runner_rejects_missing_or_nonexecuted_controls() {
+              let mut violations = Vec::new();
+              npm_launcher::validate_test_runner(
+                  npm_launcher::TEST_RUNNER_PATH,
+                  &npm_launcher::TEST_RUNNER_TEXT.replace(
+                      "source bin missing-package failure never falls back to PATH or writes stdout",
+                      "removed required control",
+                  ),
+                  npm_launcher::TEST_PATH,
+                  &NPM_TEST_TEXT.replace(
+                      "test(\\\"npm package contents are explicit and exclude tests and build residue\\\"",
+                      "test(\\\"removed package inventory control\\\"",
+                  ),
+                  &mut violations,
+              );
+              assert!(violations.iter().any(|violation| {
+                  violation.contains("required executed-control admission")
+                      && violation.contains("source bin missing-package")
+              }));
+              assert!(violations.iter().any(|violation| {
+                  violation.contains("not registered as a Node test")
+                      && violation.contains("npm package contents are explicit")
+              }));
+          }
+          '''
+          replace_once(rust_tests_path, old_source_test, new_source_test, "Rust source guard tests")
+
+          # Add explicit controls for the two lifecycle hooks missed by the first review.
+          tests_file = Path(rust_tests_path)
+          tests_text = tests_file.read_text(encoding="utf-8")
+          lifecycle_anchor = '''    let violations = evaluated(CONTRACT_TEXT, WORKSPACE_TEXT, CRATE_TEXT, &with_install)?;
+              assert!(
+                  violations
+                      .iter()
+                      .any(|violation| violation.contains("scripts.install is forbidden"))
+              );
+              Ok(())
+          }
+          '''
+          lifecycle_new = '''    let violations = evaluated(CONTRACT_TEXT, WORKSPACE_TEXT, CRATE_TEXT, &with_install)?;
+              assert!(
+                  violations
+                      .iter()
+                      .any(|violation| violation.contains("scripts.install is forbidden"))
+              );
+              for script in ["preprepare", "postprepare"] {
+                  let mutated = NPM_MANIFEST_TEXT.replace(
+                      "\\\"test\\\": \\\"node test/run-tests.test.cjs\\\"",
+                      &format!(
+                          "\\\"test\\\": \\\"node test/run-tests.test.cjs\\\",\\n    \\\"{script}\\\": \\\"echo forbidden\\\""
+                      ),
+                  );
+                  let violations = evaluated(CONTRACT_TEXT, WORKSPACE_TEXT, CRATE_TEXT, &mutated)?;
+                  assert!(violations.iter().any(|violation| {
+                      violation.contains(&format!("scripts.{script} is forbidden"))
+                  }));
+              }
+              Ok(())
+          }
+          '''
+          if lifecycle_new not in tests_text:
+              if tests_text.count(lifecycle_anchor) != 1:
+                  raise SystemExit(
+                      f"{rust_tests_path}: lifecycle assertion anchor count={tests_text.count(lifecycle_anchor)}"
+                  )
+              tests_file.write_text(tests_text.replace(lifecycle_anchor, lifecycle_new, 1), encoding="utf-8")
+
+          # Register the accepted behavior spec and traceability.
+          specs_index = Path("docs/specs/README.md")
+          index_text = specs_index.read_text(encoding="utf-8").rstrip()
+          index_row = "| [RIPR-SPEC-0181](RIPR-SPEC-0181-npm-native-launcher-boundary.md) | accepted | Deterministic script-free npm launcher: exact native package selection, lifecycle denial, literal process launch, non-duplicating POSIX signals, and executed named controls (#4491/#4710) |"
+          if "RIPR-SPEC-0181" not in index_text:
+              specs_index.write_text(index_text + "\n" + index_row + "\n", encoding="utf-8")
+
+          traceability = Path(".ripr/traceability.toml")
+          trace_text = traceability.read_text(encoding="utf-8").rstrip()
+          trace_entry = '''
+
+          [[behavior]]
+          id = "RIPR-SPEC-0181"
+          name = "npm native launcher boundary"
+          spec = "docs/specs/RIPR-SPEC-0181-npm-native-launcher-boundary.md"
+          tests = [
+            "packaging/npm/launcher/test/run-tests.test.cjs",
+            "packaging/npm/launcher/test/launcher.test.cjs::rejects lifecycle scripts, version ranges, and dependency drift",
+            "packaging/npm/launcher/test/launcher.test.cjs::rejects missing, wrong-version, wrong-target, traversal, symlink, directory, and non-executable payloads",
+            "packaging/npm/launcher/test/launcher.test.cjs::forwards direct SIGTERM to native child exactly once and re-emits signal",
+            "packaging/npm/launcher/test/launcher.test.cjs::observes terminal SIGINT without forwarding a duplicate to the native child",
+            "packaging/npm/launcher/test/launcher.test.cjs::source bin missing-package failure never falls back to PATH or writes stdout",
+            "packaging/npm/launcher/test/launcher.test.cjs::npm package contents are explicit and exclude tests and build residue",
+            "xtask/src/policy/distribution/tests.rs"
+          ]
+          code = [
+            "packaging/npm/launcher/package.json",
+            "packaging/npm/launcher/bin/ripr.cjs",
+            "packaging/npm/launcher/lib/launcher.cjs",
+            "xtask/src/policy/distribution/npm_launcher.rs"
+          ]
+          outputs = [
+            "packaging/npm/launcher/README.md",
+            "docs/PYPI_NPM_DISTRIBUTION.md"
+          ]
+          metrics = [
+            "npm_launcher_required_control_pass_rate",
+            "npm_launcher_package_inventory_drift_count",
+            "npm_launcher_signal_delivery_regression_count"
+          ]
+          '''.strip()
+          if 'id = "RIPR-SPEC-0181"' not in trace_text:
+              traceability.write_text(trace_text + "\n\n" + trace_entry + "\n", encoding="utf-8")
+
+          artifacts = Path("policy/doc-artifacts.toml")
+          artifact_text = artifacts.read_text(encoding="utf-8").rstrip()
+          artifact_entry = '''
+
+          [[artifact]]
+          id = "RIPR-SPEC-0181"
+          kind = "spec"
+          path = "docs/specs/RIPR-SPEC-0181-npm-native-launcher-boundary.md"
+          status = "accepted"
+          owner = "product-swarm"
+          standalone_reason = "Source-package and process-boundary contract for the script-free npm launcher: exact target packages, lifecycle denial, executable confinement, literal spawn semantics, non-duplicating POSIX signal handling, and dynamically admitted named controls; no registry or support-tier claim."
+          '''.strip()
+          if 'id = "RIPR-SPEC-0181"' not in artifact_text:
+              artifacts.write_text(artifact_text + "\n\n" + artifact_entry + "\n", encoding="utf-8")
+
+          testing = Path("docs/TESTING.md")
+          testing_text = testing.read_text(encoding="utf-8").rstrip()
+          testing_section = '''
+
+          ## npm launcher contract
+
+          The npm launcher uses a guarded Node runner rather than relying on a
+          wildcard test command alone:
+
+          ```bash
+          cd packaging/npm/launcher
+          npm test
+          npm pack --dry-run --json --ignore-scripts
+          ```
+
+          `npm test` executes `test/run-tests.test.cjs`, which runs the Node test
+          suite through the TAP reporter and fails unless the required package,
+          negative, PATH-fallback, package-inventory, and POSIX signal controls
+          actually execute and pass. A matching string in an unused comment is not
+          sufficient. The POSIX signal controls are skipped on Windows; Windows
+          descendant-process qualification remains separate.
+
+          Repository conformance is checked with:
+
+          ```bash
+          cargo test -p xtask --locked policy::distribution::tests -- --nocapture
+          cargo xtask check-release-targets
+          cargo xtask check-traceability
+          ```
+          '''.strip()
+          if "## npm launcher contract" not in testing_text:
+              testing.write_text(testing_text + "\n\n" + testing_section + "\n", encoding="utf-8")
+          PY
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.16.0'
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.95.0
+          components: rustfmt,clippy
+
+      - name: Validate focused package and policy proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix packaging/npm/launcher test
+          npm --prefix packaging/npm/launcher pack --dry-run --json --ignore-scripts >/tmp/npm-pack.json
+          cargo fmt --all -- --check
+          cargo test -p xtask --locked policy::distribution::tests -- --nocapture
+          cargo xtask check-release-targets
+          cargo xtask check-traceability
+
+      - name: Commit repairs and remove helper workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/branch-repair-4716-final.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            packaging/npm/launcher/package.json \
+            packaging/npm/launcher/lib/launcher.cjs \
+            packaging/npm/launcher/test/launcher.test.cjs \
+            packaging/npm/launcher/test/run-tests.test.cjs \
+            xtask/src/policy/distribution/npm_launcher.rs \
+            xtask/src/policy/distribution/tests.rs \
+            docs/specs/RIPR-SPEC-0181-npm-native-launcher-boundary.md \
+            docs/specs/README.md \
+            docs/TESTING.md \
+            .ripr/traceability.toml \
+            policy/doc-artifacts.toml \
+            .github/workflows/branch-repair-4716-final.yml
+          git diff --cached --check
+          git commit -m "fix(npm): close launcher process and proof gaps (#4710)"
+          git push origin HEAD:feat/4710-npm-launcher-core
