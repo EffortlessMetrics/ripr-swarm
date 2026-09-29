@@ -2065,7 +2065,77 @@ const DIRECTORY_MODULE_EXTENSIONS: [&str; 8] =
 /// that is absolute, escapes the workspace root, or does not resolve to a
 /// supported source file also yields `None`: the specifier stays unresolved
 /// rather than being credited to a guessed module (fail-closed).
+///
+/// Memoized per analysis run by [`DirectoryModuleCacheScope`] (#4638
+/// review): the owners x tests x imports loop asks the same question for
+/// the same `(root, module)` many times, and each uncached answer costs
+/// several filesystem probes.
 fn resolve_directory_module(root: &Path, module: &str) -> Option<String> {
+    let key = (root.to_path_buf(), module.to_string());
+    let cached = DIRECTORY_MODULE_CACHE.with(|cache| {
+        cache
+            .try_borrow()
+            .ok()
+            .and_then(|cache| cache.as_ref().and_then(|map| map.get(&key).cloned()))
+    });
+    if let Some(resolved) = cached {
+        return resolved;
+    }
+    let resolved = resolve_directory_module_uncached(root, module);
+    DIRECTORY_MODULE_CACHE.with(|cache| {
+        if let Ok(mut cache) = cache.try_borrow_mut()
+            && let Some(map) = cache.as_mut()
+        {
+            map.insert(key, resolved.clone());
+        }
+    });
+    resolved
+}
+
+/// Directory-module answers keyed by `(workspace root, module)`, alive only
+/// while a [`DirectoryModuleCacheScope`] is open on this thread. Outside a
+/// scope nothing is cached, so no answer outlives the run that computed it
+/// (an LSP session sees filesystem changes on its next run).
+type DirectoryModuleCache = HashMap<(PathBuf, String), Option<String>>;
+
+thread_local! {
+    static DIRECTORY_MODULE_CACHE: std::cell::RefCell<Option<DirectoryModuleCache>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// One analysis run's directory-module memo: opening it installs a fresh,
+/// empty cache on this thread; dropping it restores whatever was there
+/// before (normally nothing). The cache is an explicit per-run scope rather
+/// than a parameter because `workspace_root` reaches the resolver through
+/// ~30 signatures in the related-test and classifier walks.
+pub(crate) struct DirectoryModuleCacheScope {
+    previous: Option<DirectoryModuleCache>,
+}
+
+impl DirectoryModuleCacheScope {
+    pub(crate) fn open() -> Self {
+        let previous = DIRECTORY_MODULE_CACHE.with(|cache| {
+            cache
+                .try_borrow_mut()
+                .ok()
+                .and_then(|mut cache| cache.replace(HashMap::new()))
+        });
+        Self { previous }
+    }
+}
+
+impl Drop for DirectoryModuleCacheScope {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        DIRECTORY_MODULE_CACHE.with(|cache| {
+            if let Ok(mut cache) = cache.try_borrow_mut() {
+                *cache = previous;
+            }
+        });
+    }
+}
+
+fn resolve_directory_module_uncached(root: &Path, module: &str) -> Option<String> {
     let directory = if module.is_empty() {
         root.to_path_buf()
     } else {

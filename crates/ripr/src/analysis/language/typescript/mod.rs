@@ -135,6 +135,9 @@ impl LanguageAdapter for TypeScriptAdapter {
         _oracle_policy: &OraclePolicy,
         changed_files: &[ChangedFile],
     ) -> Result<LanguageDiffResult, String> {
+        // Directory-module resolution (#4546) is memoized for this run only
+        // (#4638 review); the scope drops the cache when the run returns.
+        let _directory_modules = DirectoryModuleCacheScope::open();
         // Phase 1: discover and index every accepted file in the workspace
         // so we can find related tests for any owner regardless of whether
         // the test file itself changed in this diff.

@@ -219,3 +219,40 @@ fn unresolved_parent_directory_require_is_disclosed_as_relative_not_alias() -> R
     );
     Ok(())
 }
+
+/// Directory resolution is memoized for one run (#4638 review): inside a
+/// `DirectoryModuleCacheScope` a repeated question is answered from the
+/// cache (the removed `index.js` is not re-probed), while outside any scope,
+/// and in a later scope, the filesystem is consulted again — no answer leaks
+/// across runs.
+#[test]
+fn directory_resolution_is_memoized_per_run_only() -> Result<(), String> {
+    let root = with_tree(
+        "dir-memo",
+        &[
+            ("index.js", "exports.f = () => 1;\n"),
+            ("test/a.test.js", ""),
+        ],
+    )?;
+    let (first, cached) = {
+        let _run = DirectoryModuleCacheScope::open();
+        let first = resolve(&root, "test/a.test.js", "..");
+        std::fs::remove_file(root.join("index.js")).map_err(|error| error.to_string())?;
+        (first, resolve(&root, "test/a.test.js", ".."))
+    };
+    let unscoped = resolve(&root, "test/a.test.js", "..");
+    let next_run = {
+        let _run = DirectoryModuleCacheScope::open();
+        resolve(&root, "test/a.test.js", "..")
+    };
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(first.as_deref(), Some("index"));
+    assert_eq!(
+        cached.as_deref(),
+        Some("index"),
+        "same-run answer is memoized"
+    );
+    assert_eq!(unscoped.as_deref(), Some(""), "no scope, no cache");
+    assert_eq!(next_run.as_deref(), Some(""), "a new run re-probes");
+    Ok(())
+}
