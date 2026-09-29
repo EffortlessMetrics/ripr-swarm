@@ -1854,7 +1854,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "non_mutating_check",
             "target/ripr/reports/python-wheelhouse-qualification.{json,md}",
             false,
-            false,
+            true,
             "Fail-closed local-wheelhouse aggregate for pip/uv rows: missing, skipped, zero-subject, mismatched, PATH/Cargo, or planted-binary rows cannot pass. Dispatch-only; never publishes.",
         ),
         command_entry(

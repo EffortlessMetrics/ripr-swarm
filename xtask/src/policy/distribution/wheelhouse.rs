@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) const POLICY_PATH: &str = "policy/python-wheelhouse-qualification.toml";
 pub(crate) const WORKFLOW_PATH: &str = ".github/workflows/python-wheelhouse-qualification.yml";
+#[cfg(test)]
 const WORKFLOW_TEXT: &str =
     include_str!("../../../../.github/workflows/python-wheelhouse-qualification.yml");
 const POLICY_TEXT: &str = include_str!("../../../../policy/python-wheelhouse-qualification.toml");
