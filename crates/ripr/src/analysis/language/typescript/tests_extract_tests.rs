@@ -263,3 +263,137 @@ test("chained mock registration", () => {
         tests[0].mocks_in_file
     );
 }
+
+/// mocha BDD `context` / `specify` and the TDD / Vitest / `node:test` `suite`
+/// register tests exactly like `describe` / `it` (#4548).
+#[test]
+fn recognizes_mocha_context_specify_and_suite_roots() {
+    let tests = extract_tests(
+        Path::new("test/pricing.spec.js"),
+        r#"
+describe("pricing", function () {
+    context("with a coupon", function () {
+        specify("applies the discount", function () {
+            expect(applyDiscount(100, 100)).toBe(90);
+        });
+    });
+});
+suite("totals", function () {
+    test("adds", function () {
+        expect(add(1, 2)).toBe(3);
+    });
+    suite.only("focused", function () {
+        specify.only("normalizes", function () {
+            expect(normalize("x")).toBe("x");
+        });
+    });
+});
+"#,
+    );
+
+    let names: Vec<&str> = tests.iter().map(|test| test.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec![
+            "pricing with a coupon applies the discount",
+            "totals adds",
+            "totals focused normalizes",
+        ]
+    );
+    assert!(tests.iter().all(|test| test.assertions.len() == 1));
+}
+
+/// `node:test` / Vitest options objects sit between the title and the
+/// callback; the callback (and its receiver) is argument 2. A trailing
+/// timeout after the callback keeps argument 1 as the body (#4548).
+#[test]
+fn reads_callback_after_options_object_and_before_timeout() {
+    let source = r#"
+describe("pricing", { concurrency: 1 }, () => {
+    it("discounts", { timeout: 50 }, (t) => {
+        t.is(applyDiscount(100, 100), 90);
+    });
+});
+test("adds", () => {
+    expect(add(1, 2)).toBe(3);
+}, 5000);
+"#;
+    let tests = extract_tests(Path::new("test/pricing.test.mjs"), source);
+
+    assert_eq!(tests.len(), 2, "{tests:?}");
+    assert_eq!(tests[0].name, "pricing discounts");
+    // The `t` receiver comes from the callback after the options object.
+    assert_eq!(tests[0].assertions.len(), 1, "{:?}", tests[0].assertions);
+    assert_eq!(tests[0].assertions[0].matcher, "is");
+    assert_eq!(tests[1].name, "adds");
+    assert_eq!(tests[1].assertions.len(), 1);
+    assert!(
+        detect_partial_test_extraction(Path::new("test/pricing.test.mjs"), source, &tests)
+            .is_none(),
+        "tests inside an options-object describe are extracted, not dropped"
+    );
+}
+
+/// A `describe` whose title is not a string literal still has its body
+/// walked; it is named by its bounded source text (#4548).
+#[test]
+fn walks_describe_with_non_literal_title() {
+    let source = r#"
+describe(Div.name, () => {
+    it("renders", () => {
+        expect(render(Div)).toBe("<div></div>");
+    });
+});
+describe(`${label} suite`, () => {
+    test("formats", () => {
+        expect(format(1)).toBe("1");
+    });
+});
+"#;
+    let tests = extract_tests(Path::new("test/div.test.ts"), source);
+
+    let names: Vec<&str> = tests.iter().map(|test| test.name.as_str()).collect();
+    assert_eq!(names, vec!["Div.name renders", "`${label} suite` formats"]);
+    assert_eq!(tests[0].describe_names, vec!["Div.name".to_string()]);
+    assert!(
+        detect_partial_test_extraction(Path::new("test/div.test.ts"), source, &tests).is_none(),
+        "tests inside a non-literal describe are extracted, not dropped"
+    );
+}
+
+/// Negative: skipped mocha spellings stay uncredited and are not reported as
+/// dropped registrations.
+#[test]
+fn keeps_skipped_mocha_and_suite_forms_uncredited() {
+    let source = r#"
+context.skip("skipped context", function () {
+    specify("nested", function () {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+xcontext("x context", function () {
+    it("nested", function () {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+specify.skip("skipped specify", function () {
+    expect(applyDiscount(100, 100)).toBe(90);
+});
+xit("x it", function () {
+    expect(applyDiscount(100, 100)).toBe(90);
+});
+suite.skip("skipped suite", function () {
+    test("nested", function () {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+describe.skip("skipped with options", { timeout: 5 }, () => {
+    it("nested", () => {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+"#;
+    let tests = extract_tests(Path::new("test/pricing.spec.js"), source);
+
+    assert!(tests.is_empty(), "{tests:?}");
+}

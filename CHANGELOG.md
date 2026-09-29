@@ -44,6 +44,13 @@ are scoped or reviewed.
   functions and arrows, `module.exports = function ...`, and function
   properties of `module.exports = { ... }` are now owners that `require()`
   tests relate to; non-function values and computed keys still produce none.
+- TypeScript/JavaScript preview: mocha, `node:test` and Vitest suites written
+  with `context`, `suite` or `specify`, with an options object before the
+  callback (`it(name, { timeout }, fn)`), or with a `describe` title that is
+  not a string literal (`describe(Div.name, fn)`) were skipped, so their tests
+  were never related to the code they cover. These forms are now walked like
+  `describe` / `it`; `.skip`, `xit` and `xcontext` stay uncredited, and
+  `test(name, fn, timeout)` is unchanged (#4548).
 - TypeScript/JavaScript preview: tests that assert with `node:assert` or
   chai now count as oracles. `assert.strictEqual(charset('text/html'),
   'UTF-8')` in a mocha suite was read as an `unknown` oracle, and ripr

@@ -118,6 +118,16 @@ Test discovery:
 
 - `test(...)`, `it(...)`, and `describe(...)` blocks, including nested
   `describe` for hierarchical naming
+- mocha BDD `specify(...)` and `context(...)`, and the mocha TDD / Vitest /
+  `node:test` `suite(...)`, as test and describe roots with the same active
+  modifiers (`.only`, `.concurrent`, `.sequential`); `.skip`, `xit`, and
+  `xcontext` register nothing (#4548)
+- an options object between the title and the callback
+  (`it(name, { timeout }, fn)`, `describe(name, { concurrency }, fn)`); a
+  trailing timeout (`test(name, fn, 5000)`) keeps argument 1 as the callback
+- a `describe` / `context` / `suite` whose title is not a string literal
+  (`describe(Div.name, fn)`, a template literal): its body is walked and the
+  suite is named by its bounded single-line source text
 - Jest/Vitest `test.each`, `it.each`, and table-driven variants when
   syntactically identifiable
 - top-level `expect(...)` calls when paired with a `test`/`it` block

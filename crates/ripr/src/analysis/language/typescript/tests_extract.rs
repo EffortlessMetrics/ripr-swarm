@@ -9,11 +9,37 @@ enum TestDeclarationRoot {
 }
 
 impl TestDeclarationRoot {
+    /// Jest/Vitest `test` / `it` / `describe`, plus mocha's BDD `specify` /
+    /// `context` and the TDD / Vitest / `node:test` `suite` (#4548). The
+    /// skipped spellings (`xit`, `xcontext`, `.skip`) are deliberately not
+    /// matched: they register no running test.
     fn matches_identifier(self, name: &str) -> bool {
         match self {
-            Self::Test => matches!(name, "test" | "it"),
-            Self::Describe => name == "describe",
+            Self::Test => matches!(name, "test" | "it" | "specify"),
+            Self::Describe => matches!(name, "describe" | "context" | "suite"),
         }
+    }
+}
+
+/// Index of the callback argument of a `test` / `describe` registration.
+/// `node:test` and Vitest accept an options object before the callback
+/// (`it(name, { timeout }, fn)`); otherwise the callback is argument 1, which
+/// keeps `test(name, fn, timeout)` working (#4548).
+fn declaration_callback_index(call: &oxc_ast::ast::CallExpression<'_>) -> usize {
+    let is_function = |argument: Option<&oxc_ast::ast::Argument<'_>>| {
+        matches!(
+            argument,
+            Some(
+                oxc_ast::ast::Argument::ArrowFunctionExpression(_)
+                    | oxc_ast::ast::Argument::FunctionExpression(_)
+            )
+        )
+    };
+    match call.arguments.get(1) {
+        Some(oxc_ast::ast::Argument::ObjectExpression(_)) if is_function(call.arguments.get(2)) => {
+            2
+        }
+        _ => 1,
     }
 }
 
@@ -623,11 +649,11 @@ pub(crate) fn collect_tests_from_statements(
         if let Some(span) = name_literal_span(stmt) {
             scope.names.push(span);
         }
-        if let Some((describe_name, body)) = describe_body_from_statement(stmt) {
+        if let Some((describe_name, body)) = describe_body_from_statement(stmt, source) {
             // `describe.each(...)('x', (cart) => ...)` binds its parameters
             // for every test inside.
             scope.levels.push(
-                statement_callback_parameter_names(stmt, 1)
+                statement_callback_parameter_names(stmt)
                     .into_iter()
                     .map(|name| (name, ScopeValue::Other, Phase::Declaration))
                     .collect(),
@@ -649,7 +675,7 @@ pub(crate) fn collect_tests_from_statements(
             test.imports_in_file = imports.to_vec();
             // Test callback parameters (`it.each` rows, Vitest fixtures)
             // shadow every enclosing binding of the same name.
-            let parameters = statement_callback_parameter_names(stmt, 1)
+            let parameters = statement_callback_parameter_names(stmt)
                 .into_iter()
                 .map(|name| (name, ScopeValue::Other, Phase::Declaration))
                 .collect();
@@ -1261,9 +1287,10 @@ fn destructuring_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
     ranges
 }
 
-/// Parameter names of the callback at `index` in a statement's call
-/// (`describe.each(...)('x', (row) => ...)`, `it('x', ({ fixture }) => ...)`).
-fn statement_callback_parameter_names(stmt: &Statement<'_>, index: usize) -> Vec<String> {
+/// Parameter names of the registration callback in a statement's call
+/// (`describe.each(...)('x', (row) => ...)`, `it('x', ({ fixture }) => ...)`,
+/// `it('x', { timeout }, (t) => ...)`).
+fn statement_callback_parameter_names(stmt: &Statement<'_>) -> Vec<String> {
     let Statement::ExpressionStatement(expr_stmt) = stmt else {
         return Vec::new();
     };
@@ -1271,7 +1298,7 @@ fn statement_callback_parameter_names(stmt: &Statement<'_>, index: usize) -> Vec
         return Vec::new();
     };
     call.arguments
-        .get(index)
+        .get(declaration_callback_index(call))
         .map(argument_parameter_names)
         .unwrap_or_default()
 }
@@ -1319,8 +1346,13 @@ fn argument_parameter_names(argument: &oxc_ast::ast::Argument<'_>) -> Vec<String
         .collect()
 }
 
+/// The name and body of an active `describe` / `context` / `suite` statement.
+/// A title that is not a string literal (`describe(Div.name, fn)`, a template
+/// literal) is named by its bounded, single-line source text so the body is
+/// still walked (#4548).
 pub(crate) fn describe_body_from_statement<'a>(
     stmt: &'a Statement<'a>,
+    source: &str,
 ) -> Option<(String, &'a oxc_allocator::Vec<'a, Statement<'a>>)> {
     let Statement::ExpressionStatement(expr_stmt) = stmt else {
         return None;
@@ -1333,8 +1365,22 @@ pub(crate) fn describe_body_from_statement<'a>(
     {
         return None;
     }
-    let name = string_argument(call.arguments.first()?)?;
-    let body = function_body_statements_from_argument(call.arguments.get(1)?)?;
+    let title = call.arguments.first()?;
+    let name = match string_argument(title) {
+        Some(name) => name,
+        None if function_body_statements_from_argument(title).is_some()
+            || matches!(title, oxc_ast::ast::Argument::SpreadElement(_)) =>
+        {
+            return None;
+        }
+        None => {
+            let span = title.span();
+            snippet_for_span(source, span.start as usize, span.end as usize)
+        }
+    };
+    let body = function_body_statements_from_argument(
+        call.arguments.get(declaration_callback_index(call))?,
+    )?;
     Some((name, body))
 }
 
@@ -1380,7 +1426,7 @@ pub(crate) fn test_name_and_assertions_from_call(
     }
 
     let name = string_argument(call.arguments.first()?)?;
-    let callback = call.arguments.get(1)?;
+    let callback = call.arguments.get(declaration_callback_index(call))?;
     let receiver = test_callback_receiver_name(callback);
     let assertions = function_body_statements_from_argument(callback)
         .map(|statements| {
@@ -1499,7 +1545,7 @@ pub(crate) fn qualified_test_name(describe_stack: &[String], name: &str) -> Stri
 ///   the extractor's identifier/member callee check never recognizes it).
 /// - `it(...)` / `test(...)` calls nested inside loop, callback, or other
 ///   non-`describe` bodies — `collect_tests_from_statements` recurses only into
-///   `describe(...)` bodies.
+///   active `describe(...)` / `context(...)` / `suite(...)` bodies.
 ///
 /// Returns `None` for a fully extracted file (the negative control contract):
 /// every test-shaped call at a position the extractor visits carries a string
