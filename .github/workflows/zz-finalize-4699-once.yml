@@ -1,4 +1,4 @@
-name: Finalize native payload candidate once
+name: Integrate main into native payload candidate once
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  finalize:
+  integrate:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     steps:
@@ -19,13 +19,7 @@ jobs:
           ref: feat/4521-final-native-payload
           fetch-depth: 0
 
-      - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # v1
-        with:
-          toolchain: 1.95.0
-          components: rustfmt
-
-      - name: Integrate main and prepare final candidate
+      - name: Merge current main and push
         shell: bash
         run: |
           set -euo pipefail
@@ -33,52 +27,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin main
           git merge --no-edit origin/main
-
-          test -f .repair-export/server-archive-qualification.yml
-          cp .repair-export/server-archive-qualification.yml \
-            .github/workflows/server-archive-qualification.yml
-
-          cp policy/workflow_allowlist.txt \
-            "${RUNNER_TEMP}/workflow_allowlist.before-finalize.txt"
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path("policy/workflow_allowlist.txt")
-          text = path.read_text(encoding="utf-8")
-          old = ".github/workflows/server-archive-qualification.yml|82|Exact measured largest run block after preserving curl transport status, bounded rate-limit tokens, response digests, and strict public ruleset shape diagnostics; credential-free, artifact-only qualification delegates packaging and manifest generation to Rust xtask commands."
-          new = ".github/workflows/server-archive-qualification.yml|89|Exact measured largest run block retains ruleset diagnostics plus five-target producer, payload-identity, archive-readback, and receipt-v3 aggregation; credential-free qualification delegates payload and archive construction to Rust xtask commands."
-          if old in text:
-              text = text.replace(old, new, 1)
-          elif new not in text:
-              raise SystemExit("qualification workflow budget row not found")
-          path.write_text(text, encoding="utf-8")
-          PY
-
-          git rm -f --ignore-unmatch \
-            .github/workflows/zz-finalize-4699-once.yml \
-            .github/workflows/zz-export-4699-repair.yml \
-            .repair-export/server-archive-qualification.yml
-          rmdir .repair-export 2>/dev/null || true
-
-      - name: Validate exact integrated tree
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo +1.95.0 fmt --all
-          cargo +1.95.0 fmt --all --check
-          cargo +1.95.0 xtask check-workflows
-          cargo +1.95.0 xtask check-release-targets
-          cargo +1.95.0 test -p xtask release_server -- --nocapture
           git diff --check
-
-      - name: Commit and push final candidate
-        shell: bash
-        run: |
-          set -euo pipefail
-          cp "${RUNNER_TEMP}/workflow_allowlist.before-finalize.txt" \
-            policy/workflow_allowlist.txt
-          git add -A
-          if ! git diff --cached --quiet; then
-            git commit -m "build(distribution): finalize native payload candidate"
-          fi
           git push origin HEAD:feat/4521-final-native-payload
