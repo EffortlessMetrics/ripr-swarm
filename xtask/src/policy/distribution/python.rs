@@ -168,12 +168,7 @@ pub(super) fn validate_python_adapter(
         &mut violations,
     );
 
-    for unsupported in [
-        "compatibility",
-        "manylinux",
-        "module-name",
-        "python-source",
-    ] {
+    for unsupported in ["compatibility", "manylinux", "module-name", "python-source"] {
         if value_at(&value, &["tool", "maturin", unsupported]).is_some() {
             violations.push(format!(
                 "{}: tool.maturin.{unsupported} must remain absent; #4489 owns compatibility claims and this adapter is a native binary, not a Python module",
@@ -213,9 +208,7 @@ fn validate_package_readme(path: &str, text: &str, violations: &mut Vec<String>)
         "does not mean that a public PyPI release exists",
     ] {
         if !normalized.contains(required) {
-            violations.push(format!(
-                "{path}: package README must contain `{required}`"
-            ));
+            violations.push(format!("{path}: package README must contain `{required}`"));
         }
     }
 
