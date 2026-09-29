@@ -278,9 +278,7 @@ fn find_ident_at(text: &str, name: &str) -> Option<usize> {
     }
     let mut from = 0usize;
     while from < text.len() {
-        let Some(rel) = text.get(from..).and_then(|rest| rest.find(name)) else {
-            return None;
-        };
+        let rel = text.get(from..).and_then(|rest| rest.find(name))?;
         let abs = from + rel;
         let before_ok = abs == 0 || {
             let before = text.as_bytes()[abs - 1];
@@ -302,9 +300,7 @@ fn find_ident_at(text: &str, name: &str) -> Option<usize> {
 fn find_marker(text: &str, marker: &str) -> Option<usize> {
     let mut from = 0usize;
     while from < text.len() {
-        let Some(rel) = text.get(from..).and_then(|rest| rest.find(marker)) else {
-            return None;
-        };
+        let rel = text.get(from..).and_then(|rest| rest.find(marker))?;
         let abs = from + rel;
         let before_ok = abs == 0 || {
             let before = text.as_bytes()[abs - 1];
