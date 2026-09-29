@@ -146,7 +146,7 @@ fn public_library_with_established_tests_layout_earns_integration_proposal() -> 
             proposal.provenance
         ));
     }
-    if proposal.owner.contains("discounted_total") == false {
+    if !proposal.owner.contains("discounted_total") {
         return Err(format!(
             "proposal owner missed the public item: {}",
             proposal.owner

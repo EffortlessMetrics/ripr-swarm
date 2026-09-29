@@ -8,11 +8,6 @@
 use crate::analysis::facts::{FunctionSourceRole, RustIndex};
 use crate::analysis::rust_index::{self, FunctionSummary};
 use crate::analysis::seams::{RepoSeam, SeamKind};
-use crate::domain::{
-    CancellationPolicy, CommandAuthorityBoundary, CommandCostClass, CommandExecutionMode,
-    CommandPlatform, CommandRole, CommandSpec, EnvironmentPolicy, ExpectedResultParser,
-    NetworkPolicy, StdinPolicy,
-};
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
@@ -82,50 +77,6 @@ pub(crate) struct NewTestTargetProposal {
     pub(crate) file: PathBuf,
     pub(crate) owner: String,
     pub(crate) provenance: NewTestProposalProvenance,
-    /// After-edit verification and cage surface. Not part of the reserved
-    /// 4-field public proposal identity.
-    #[serde(skip)]
-    pub(crate) details: Option<NewTestTargetDetails>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub(crate) struct NewTestTargetDetails {
-    pub(crate) package_name: String,
-    pub(crate) package_identity: String,
-    pub(crate) library_crate_name: String,
-    pub(crate) import_path: String,
-    pub(crate) visibility_basis: NewTestVisibilityBasis,
-    pub(crate) discovery_basis: NewTestDiscoveryBasis,
-    pub(crate) planned_verification: PlannedNewTestVerification,
-    pub(crate) allowed_edit_surface: Vec<PathBuf>,
-    pub(crate) must_not_change: Vec<PathBuf>,
-    pub(crate) workspace_identity: String,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum NewTestVisibilityBasis {
-    PublicLibraryItem,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum NewTestDiscoveryBasis {
-    EstablishedAutotestsLayout,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub(crate) struct PlannedNewTestVerification {
-    pub(crate) status: PlannedVerificationStatus,
-    pub(crate) package_name: String,
-    pub(crate) cargo_test_target: String,
-    pub(crate) command: CommandSpec,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum PlannedVerificationStatus {
-    AfterEditUnexecuted,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -204,50 +155,17 @@ fn try_admit_new_integration_test(
         return Err(NewTestProposalBlocker::PathUnsafe);
     }
 
-    let import_path = format!("{}::{}", package.library_crate_name, owner_fn.name);
-    let command = after_edit_verify_command(&package.package_name, &proposed)?;
-    let cargo_test_target = proposed
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .filter(|stem| !stem.is_empty())
-        .ok_or(NewTestProposalBlocker::PathUnsafe)?
-        .to_string();
-
     Ok(NewTestTargetProposal {
         kind: NewTestKind::Integration,
-        file: proposed.clone(),
-        owner: import_path.clone(),
+        file: proposed,
+        owner: format!("{}::{}", package.library_crate_name, owner_fn.name),
         provenance: NewTestProposalProvenance::ProducerOwned,
-        details: Some(NewTestTargetDetails {
-            package_name: package.package_name.clone(),
-            package_identity: package.identity,
-            library_crate_name: package.library_crate_name,
-            import_path,
-            visibility_basis: NewTestVisibilityBasis::PublicLibraryItem,
-            discovery_basis: NewTestDiscoveryBasis::EstablishedAutotestsLayout,
-            planned_verification: PlannedNewTestVerification {
-                status: PlannedVerificationStatus::AfterEditUnexecuted,
-                package_name: package.package_name.clone(),
-                cargo_test_target,
-                command,
-            },
-            allowed_edit_surface: vec![proposed],
-            must_not_change: vec![
-                seam.file().to_path_buf(),
-                package.manifest_relative,
-                PathBuf::from("Cargo.toml"),
-            ],
-            workspace_identity: authority.workspace_identity.clone(),
-        }),
     })
 }
 
 struct PackageFacts {
     package_dir: PathBuf,
-    package_name: String,
     library_crate_name: String,
-    identity: String,
-    manifest_relative: PathBuf,
     autotests: bool,
     has_library_target: bool,
     has_established_tests_layout: bool,
@@ -263,10 +181,10 @@ fn owning_package(
         let manifest = root.join(&relative_manifest);
         if manifest.is_file() {
             let text = std::fs::read_to_string(&manifest)
-                .map_err(|_| NewTestProposalBlocker::LibraryTargetUnresolved)?;
+                .map_err(|_read| NewTestProposalBlocker::LibraryTargetUnresolved)?;
             let value = text
                 .parse::<toml::Table>()
-                .map_err(|_| NewTestProposalBlocker::LibraryTargetUnresolved)?;
+                .map_err(|_parse| NewTestProposalBlocker::LibraryTargetUnresolved)?;
             let Some(package) = value.get("package").and_then(toml::Value::as_table) else {
                 cursor = directory.parent().map(Path::to_path_buf);
                 continue;
@@ -305,17 +223,9 @@ fn owning_package(
                         })
                     })
                     .unwrap_or(false);
-            let identity = format!(
-                "{}:{}",
-                relative_manifest.to_string_lossy().replace('\\', "/"),
-                crate::analysis::facts::source_digest(text.as_bytes())
-            );
             return Ok(PackageFacts {
                 package_dir: directory,
-                package_name,
                 library_crate_name: lib_name.replace('-', "_"),
-                identity,
-                manifest_relative: relative_manifest,
                 autotests,
                 has_library_target,
                 has_established_tests_layout,
@@ -491,53 +401,4 @@ fn is_relative_without_parent(path: &Path) -> bool {
 
 fn normalize_relative(path: &Path) -> PathBuf {
     PathBuf::from(path.to_string_lossy().replace('\\', "/"))
-}
-
-fn after_edit_verify_command(
-    package_name: &str,
-    proposed: &Path,
-) -> Result<CommandSpec, NewTestProposalBlocker> {
-    let target = proposed
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .filter(|stem| !stem.is_empty())
-        .ok_or(NewTestProposalBlocker::PathUnsafe)?;
-    let args = vec![
-        "test".to_string(),
-        "-p".to_string(),
-        package_name.to_string(),
-        "--test".to_string(),
-        target.to_string(),
-    ];
-    let display = format!("after edit (unexecuted): cargo test -p {package_name} --test {target}");
-    let spec = CommandSpec {
-        schema_version: CommandSpec::SCHEMA_VERSION.to_string(),
-        command_id: format!("ripr:proposed-integration-test:after-edit:{package_name}:{target}"),
-        role: CommandRole::Verify,
-        execution_mode: CommandExecutionMode::Direct,
-        program: "cargo".to_string(),
-        args,
-        cwd: ".".to_string(),
-        env_set: Vec::new(),
-        env_passthrough: Vec::new(),
-        environment_policy: EnvironmentPolicy::Clean,
-        stdin: StdinPolicy::Null,
-        timeout_ms: 120_000,
-        cancellation: CancellationPolicy::Allowed,
-        network_policy: NetworkPolicy::Forbidden,
-        expected_result_parser: ExpectedResultParser::ExitCode,
-        expected_exit_codes: vec![0],
-        expected_writes: Vec::new(),
-        cost_class: CommandCostClass::CompileOrTest,
-        platforms: vec![
-            CommandPlatform::Linux,
-            CommandPlatform::Macos,
-            CommandPlatform::Windows,
-        ],
-        display,
-        authority_boundary: CommandAuthorityBoundary::VerificationRouteOnly,
-    };
-    spec.validate()
-        .map_err(|_| NewTestProposalBlocker::PathUnsafe)?;
-    Ok(spec)
 }

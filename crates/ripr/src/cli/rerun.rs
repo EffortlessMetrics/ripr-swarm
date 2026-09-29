@@ -3518,7 +3518,6 @@ mod tests {
                 file: "tests/example.rs".into(),
                 owner: "pricing::discounted_total".to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
-                details: None,
             }),
             test_target: None,
             proposed_oracle: Some(OracleKind::ExactValue),
