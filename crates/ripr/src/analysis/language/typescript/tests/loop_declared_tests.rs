@@ -190,7 +190,7 @@ fn loops_not_known_to_run_are_not_walked() {
     // by a loop variable, and a counted loop with a non-literal bound. A test
     // registered inside would be credited without existing.
     let file = Path::new("test/url.test.ts");
-    let source = "import { it, expect } from 'vitest';\nimport { withBase } from '../src/url';\nimport { imported } from './cases';\nconst empty = [];\nlet mutable = [{ input: 'a' }];\nconst outer = [{ input: 'a' }];\nfor (const c of empty) {\n  it('empty const', () => {\n    expect(withBase(c.input, '/')).toBe('/a');\n  });\n}\nfor (const c of mutable) {\n  it('let binding', () => {\n    expect(withBase(c.input, '/')).toBe('/a');\n  });\n}\nimported.forEach((c) => it('imported', () => {\n  expect(withBase(c.input, '/')).toBe('/a');\n}));\ndescribe.each([[[]]])('param %s', (param) => {\n  for (const c of param) {\n    it('parameter', () => {\n      expect(withBase(c.input, '/')).toBe('/a');\n    });\n  }\n});\nfor (const outer of [[]]) {\n  for (const c of outer) {\n    it('shadowed const', () => {\n      expect(withBase(c.input, '/')).toBe('/a');\n    });\n  }\n}\nfor (let i = 0; i < n; i++) {\n  it('counted', () => {\n    expect(withBase(String(i), '/')).toBe('/0');\n  });\n}\n";
+    let source = "import { it, expect } from 'vitest';\nimport { withBase } from '../src/url';\nimport { imported } from './cases';\nconst empty = [];\nlet mutable = [{ input: 'a' }];\nconst outer = [{ input: 'a' }];\nfor (const c of empty) {\n  it('empty const', () => {\n    expect(withBase(c.input, '/')).toBe('/a');\n  });\n}\nfor (const c of mutable) {\n  it('let binding', () => {\n    expect(withBase(c.input, '/')).toBe('/a');\n  });\n}\nimported.forEach((c) => it('imported', () => {\n  expect(withBase(c.input, '/')).toBe('/a');\n}));\ndescribe.each([[[]]])('param %s', (param) => {\n  for (const c of param) {\n    it('parameter', () => {\n      expect(withBase(c.input, '/')).toBe('/a');\n    });\n  }\n});\nfor (const outer of [[]]) {\n  for (const c of outer) {\n    it('shadowed const', () => {\n      expect(withBase(c.input, '/')).toBe('/a');\n    });\n  }\n}\nfor (let i = 0; i < n; i++) {\n  it('counted', () => {\n    expect(withBase(String(i), '/')).toBe('/0');\n  });\n}\nfor (let i = 0; false; i++) {\n  it('never', () => {\n    expect(withBase(String(i), '/')).toBe('/0');\n  });\n}\nfor (let i = 3; i < 1; i++) {\n  it('inverted', () => {\n    expect(withBase(String(i), '/')).toBe('/0');\n  });\n}\n";
     let tests = extract_tests(file, source);
     assert!(tests.is_empty(), "got {tests:?}");
     assert!(
@@ -245,6 +245,23 @@ fn zero_iteration_loop_does_not_expose_the_owner() -> Result<(), String> {
     // `rows` is empty, so no test registers at runtime.
     let source = "import { it, expect } from 'vitest';\nimport { withBase } from '../src/url';\nconst rows = [];\nfor (const row of rows) {\n  it('checks', () => {\n    expect(withBase('a', '/')).toBe('/a');\n  });\n}\n";
     let finding = with_base_finding("zero-iteration", source)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_binding_named_like_the_runner_api_is_not_a_registration() -> Result<(), String> {
+    // Inside the callback `test` is the parameter, not the runner, so its
+    // call registers nothing and must not expose the owner.
+    let source = "import { test, expect } from 'vitest';\nimport { withBase } from '../src/url';\n[() => {}].forEach((test) => test('not registered', () => {\n  expect(withBase('a', '/')).toBe('/a');\n}));\nfor (const it of [() => {}]) {\n  it('not registered either', () => {\n    expect(withBase('a', '/')).toBe('/a');\n  });\n}\n";
+    let tests = extract_tests(Path::new("test/url.test.ts"), source);
+    assert!(tests.is_empty(), "got {tests:?}");
+    let finding = with_base_finding("runner-api-shadow", source)?;
     assert_ne!(
         finding.class,
         ExposureClass::Exposed,

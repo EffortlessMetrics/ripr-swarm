@@ -1540,15 +1540,32 @@ fn loop_body_from_statement<'a>(
             }
             let callback = call.arguments.first()?;
             let body = function_body_statements_from_argument(callback)?;
-            return Some((argument_parameter_names(callback), body.as_slice()));
+            let bindings = argument_parameter_names(callback);
+            if binds_registration_api(&bindings) {
+                return None;
+            }
+            return Some((bindings, body.as_slice()));
         }
         _ => return None,
     };
+    if binds_registration_api(&bindings) {
+        return None;
+    }
     let body = match body {
         Statement::BlockStatement(block) => block.body.as_slice(),
         single => std::slice::from_ref(single),
     };
     Some((bindings, body))
+}
+
+/// A loop variable or callback parameter named `test`, `it` or `describe`
+/// shadows the runner API inside the body, so a `test(...)` there is not a
+/// registration; such a loop is not walked.
+fn binds_registration_api(bindings: &[String]) -> bool {
+    bindings.iter().any(|name| {
+        TestDeclarationRoot::Test.matches_identifier(name)
+            || TestDeclarationRoot::Describe.matches_identifier(name)
+    })
 }
 
 fn for_left_bindings(left: &oxc_ast::ast::ForStatementLeft<'_>) -> Option<Vec<String>> {
