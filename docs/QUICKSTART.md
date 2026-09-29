@@ -150,9 +150,9 @@ ripr init --ci github
 ```
 
 Review the generated files before committing them. The workflow installs the
-ripr version that generated it, so generate it with a released `ripr`: a
-development build names a version crates.io does not publish yet, and the
-install step fails. On a PR, read the job summary
+ripr version that generated it, so generate it with a released `ripr`: an
+unreleased development build names a version crates.io does not publish yet,
+and the install step fails. On a PR, read the job summary
 first, then open the linked artifacts for the evidence and suggested test.
 The generated workflow is non-blocking by default; a policy gate is a separate,
 explicit adoption decision.
@@ -213,7 +213,7 @@ reference is [Repair attempt identity](REPAIR_ATTEMPT.md).
 
 When pilot's top recommendation is a Python repair card, it prints a different
 route under `Next, in order:`: `ripr first-pr` (run any regeneration command it
-prints), the focused test edit, the card's `pytest` command, and the receipt
+prints), the focused test edit, the card's verify command, and the receipt
 command `first-pr` named. Run those as printed. A trust-bound Python repair
 through `ripr agent repair` is a separate governed route that needs a selection
 manifest and adds a `verify` phase; see
