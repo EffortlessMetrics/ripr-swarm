@@ -423,9 +423,18 @@ const PR_EVIDENCE_GIT_DEADLINE: Duration = Duration::from_mins(1);
 /// spawn goes through the shared `crate::git` deadline and process-owner
 /// authority (#4363).
 fn run_git_output_bytes(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    let output =
-        crate::git::run_git_output_with_deadline(repo, args, Some(PR_EVIDENCE_GIT_DEADLINE))
-            .map_err(|err| format!("failed to run git {args:?}: {err}"))?;
+    run_git_output_bytes_within(repo, args, PR_EVIDENCE_GIT_DEADLINE)
+}
+
+/// [`run_git_output_bytes`] with the deadline as a parameter, so a test can
+/// prove the deadline reaches the git runner.
+fn run_git_output_bytes_within(
+    repo: &Path,
+    args: &[&str],
+    deadline: Duration,
+) -> Result<Vec<u8>, String> {
+    let output = crate::git::run_git_output_with_deadline(repo, args, Some(deadline))
+        .map_err(|err| format!("failed to run git {args:?}: {err}"))?;
     if output.status.success() {
         Ok(output.stdout)
     } else {
@@ -1071,6 +1080,27 @@ mod tests {
             base_explicit: true,
             head: "HEAD".to_string(),
             check: false,
+        }
+    }
+
+    #[test]
+    fn run_git_output_bytes_forwards_its_deadline_to_git() -> Result<(), String> {
+        // #4363: a zero deadline is refused before spawn with the named
+        // timeout error. Dropping the deadline would instead report the
+        // missing root as a spawn failure, which this rejects.
+        let missing = std::env::temp_dir().join(format!(
+            "ripr-pr-evidence-deadline-missing-{}",
+            std::process::id()
+        ));
+        let bounded =
+            run_git_output_bytes_within(&missing, &["rev-parse", "HEAD"], Duration::from_mins(1));
+        match bounded {
+            Err(err) if !crate::git::is_git_invocation_timeout(&err) => {}
+            other => return Err(format!("control: expected a spawn failure, got {other:?}")),
+        }
+        match run_git_output_bytes_within(&missing, &["rev-parse", "HEAD"], Duration::ZERO) {
+            Err(err) if err.contains(crate::git::GIT_INVOCATION_TIMEOUT_PREFIX) => Ok(()),
+            other => Err(format!("zero deadline must be refused, got {other:?}")),
         }
     }
 

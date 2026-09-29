@@ -408,12 +408,15 @@ const RECEIPT_HEAD_GIT_DEADLINE: std::time::Duration = std::time::Duration::from
 /// only) rather than hard-erroring. The spawn goes through the shared
 /// `crate::git` deadline and process-owner authority (#4363).
 fn resolve_git_head(root: &Path) -> Option<String> {
-    let output = crate::git::run_git_output_with_deadline(
-        root,
-        &["rev-parse", "HEAD"],
-        Some(RECEIPT_HEAD_GIT_DEADLINE),
-    )
-    .ok()?;
+    resolve_git_head_within(root, RECEIPT_HEAD_GIT_DEADLINE)
+}
+
+/// [`resolve_git_head`] with the deadline as a parameter, so a test can
+/// prove the deadline reaches the git runner.
+fn resolve_git_head_within(root: &Path, deadline: std::time::Duration) -> Option<String> {
+    let output =
+        crate::git::run_git_output_with_deadline(root, &["rev-parse", "HEAD"], Some(deadline))
+            .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -1353,6 +1356,24 @@ mod tests {
         let head = resolve_git_head(&dir)
             .ok_or_else(|| "resolve_git_head returned None for a fresh repo".to_string())?;
         Ok((dir, head))
+    }
+
+    #[test]
+    fn resolve_git_head_forwards_its_deadline_to_git() -> Result<(), String> {
+        // #4363: a zero deadline is refused before spawn, so the probe must
+        // fail open even on a repo where HEAD resolves. Dropping the
+        // deadline (passing `None`) would return the head and fail here.
+        let (dir, head) = temp_git_repo()?;
+        let bounded = resolve_git_head_within(&dir, std::time::Duration::from_mins(1));
+        let refused = resolve_git_head_within(&dir, std::time::Duration::ZERO);
+        let _ = std::fs::remove_dir_all(&dir);
+        if bounded.as_deref() != Some(head.as_str()) {
+            return Err(format!("control: expected {head}, got {bounded:?}"));
+        }
+        if refused.is_some() {
+            return Err(format!("zero deadline must fail open, got {refused:?}"));
+        }
+        Ok(())
     }
 
     #[test]

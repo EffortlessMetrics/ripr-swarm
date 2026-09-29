@@ -624,12 +624,23 @@ const PR_EVIDENCE_DIFF_DEADLINE: Duration = Duration::from_mins(5);
 /// diff runs under [`PR_EVIDENCE_DIFF_DEADLINE`] (#4363), so a hung git ends
 /// in the named `git_invocation_timeout` error instead of pinning the packet.
 pub fn load_pr_evidence_diff_range(root: &Path, base: &str, head: &str) -> Result<String, String> {
+    load_pr_evidence_diff_range_within(root, base, head, PR_EVIDENCE_DIFF_DEADLINE)
+}
+
+/// [`load_pr_evidence_diff_range`] with the deadline as a parameter, so a
+/// test can prove the deadline reaches the git runner.
+fn load_pr_evidence_diff_range_within(
+    root: &Path,
+    base: &str,
+    head: &str,
+    deadline: Duration,
+) -> Result<String, String> {
     let bytes = run_git_diff_bytes(
         root,
         &format!("{base}...{head}"),
         &["--binary"],
         "3",
-        Some(PR_EVIDENCE_DIFF_DEADLINE),
+        Some(deadline),
     )?;
     String::from_utf8(bytes).map_err(|err| format!("packet diff is not valid UTF-8: {err}"))
 }
@@ -972,6 +983,26 @@ mod tests {
     use super::*;
     use std::fs;
     use std::process::Command;
+
+    #[test]
+    fn pr_evidence_diff_range_forwards_its_deadline_to_git() -> Result<(), String> {
+        // #4363: a zero deadline is refused before spawn with the named
+        // timeout error. Dropping the deadline would instead report the
+        // missing root as a spawn failure, which this rejects.
+        let missing = std::env::temp_dir().join(format!(
+            "ripr-pr-evidence-diff-deadline-missing-{}",
+            std::process::id()
+        ));
+        match load_pr_evidence_diff_range_within(&missing, "HEAD~1", "HEAD", Duration::from_mins(5))
+        {
+            Err(err) if !crate::git::is_git_invocation_timeout(&err) => {}
+            other => return Err(format!("control: expected a spawn failure, got {other:?}")),
+        }
+        match load_pr_evidence_diff_range_within(&missing, "HEAD~1", "HEAD", Duration::ZERO) {
+            Err(err) if crate::git::is_git_invocation_timeout(&err) => Ok(()),
+            other => Err(format!("zero deadline must be refused, got {other:?}")),
+        }
+    }
 
     /// Best-effort temp-dir teardown. The `io::Result` is matched with `if let`
     /// so a `#[must_use]` cleanup failure is an explicit ignore.
