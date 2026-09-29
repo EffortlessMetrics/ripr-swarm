@@ -5,13 +5,12 @@
 //! boundary call from one test and an exact oracle from another is a false
 //! `exposed` (#4828): `>=` → `>` still passes both tests.
 
-use super::super::rust_index::{
-    FunctionSummary, OracleFact, TestSummary, extract_call_facts, extract_identifier_tokens,
-    extract_literals,
-};
+use super::super::facts::CallFact;
+use super::super::rust_index::{FunctionSummary, OracleFact, TestSummary, extract_literals};
 use super::activation::{
     call_arguments, comparison_operands, function_parameters, owner_argument_values,
 };
+use super::text::delimited_contents_at;
 use crate::domain::*;
 
 /// Token carried in the discriminate summary when a predicate would otherwise
@@ -83,19 +82,30 @@ fn assertion_observes_boundary_owner_call(
     assertion: &OracleFact,
     activation: &ActivationEvidence,
 ) -> bool {
-    extract_call_facts(&assertion.text, assertion.line)
+    let subject = assertion_subject(&assertion.text);
+    if owner_call_argument_lists(&subject, &owner.name)
         .iter()
-        .any(|call| owner_call_activates_boundary(probe, owner, test, call, activation))
+        .any(|arguments| argument_list_activates_boundary(probe, owner, test, arguments))
+    {
+        return true;
+    }
+    // Line-level activation cannot tell two same-name calls apart. Use it
+    // only when the assertion text names the owner once.
+    owner_call_count(&assertion.text, &owner.name) == 1
+        && activation_marks_boundary_call(
+            activation,
+            &CallFact {
+                line: assertion.line,
+                name: owner.name.clone(),
+                text: assertion.text.clone(),
+            },
+        )
 }
 
 fn assertion_observes_bound_name(assertion: &OracleFact, bound_names: &[String]) -> bool {
-    if bound_names.is_empty() {
-        return false;
-    }
-    let tokens = extract_identifier_tokens(&assertion.text);
     bound_names
         .iter()
-        .any(|name| tokens.iter().any(|token| token == name))
+        .any(|name| contains_ident(&assertion.text, name))
 }
 
 fn boundary_bound_locals(
@@ -104,32 +114,29 @@ fn boundary_bound_locals(
     test: &TestSummary,
     activation: &ActivationEvidence,
 ) -> Vec<String> {
-    let mut names = Vec::new();
-    for call in &test.calls {
-        if !owner_call_activates_boundary(probe, owner, test, call, activation) {
-            continue;
-        }
-        if let Some(name) = let_binding_name_for_call(test, call) {
-            names.push(name);
-        }
-    }
-    names.sort();
-    names.dedup();
-    names
-}
-
-fn let_binding_name_for_call(
-    test: &TestSummary,
-    call: &super::super::facts::CallFact,
-) -> Option<String> {
+    // Last binding of a name wins so `let got = gate(10); let got = gate(100)`
+    // does not keep the shadowed boundary result.
+    let mut last: Vec<(String, bool)> = Vec::new();
     for (offset, line) in test.body.lines().enumerate() {
-        let line_number = test.start_line + offset;
-        if line_number != call.line {
+        let Some(name) = let_binding_name(line) else {
             continue;
+        };
+        let line_number = test.start_line + offset;
+        let call = CallFact {
+            line: line_number,
+            name: owner.name.clone(),
+            text: line.trim().to_string(),
+        };
+        let is_boundary = owner_call_activates_boundary(probe, owner, test, &call, activation);
+        if let Some(existing) = last.iter_mut().find(|(bound, _)| bound == &name) {
+            existing.1 = is_boundary;
+        } else {
+            last.push((name, is_boundary));
         }
-        return let_binding_name(line);
     }
-    None
+    last.into_iter()
+        .filter_map(|(name, is_boundary)| is_boundary.then_some(name))
+        .collect()
 }
 
 fn let_binding_name(line: &str) -> Option<String> {
@@ -161,30 +168,31 @@ fn owner_call_activates_boundary(
     probe: &Probe,
     owner: &FunctionSummary,
     test: &TestSummary,
-    call: &super::super::facts::CallFact,
+    call: &CallFact,
     activation: &ActivationEvidence,
 ) -> bool {
     if call.name != owner.name {
         return false;
     }
-    if activation_marks_boundary_call(activation, call) {
+    if let Some(arguments) = call_arguments(&call.text, &call.name)
+        && argument_list_activates_boundary(probe, owner, test, &arguments)
+    {
         return true;
     }
-    let Some(arguments) = call_arguments(&call.text, &call.name) else {
-        return false;
-    };
+    owner_call_count(&call.text, &owner.name) == 1
+        && activation_marks_boundary_call(activation, call)
+}
+
+fn argument_list_activates_boundary(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    arguments: &[String],
+) -> bool {
     let arg_values: Vec<Vec<String>> = arguments
         .iter()
         .map(|argument| owner_argument_values(test, argument))
         .collect();
-    let probe_literals = extract_literals(&probe.expression);
-    if arg_values
-        .iter()
-        .flatten()
-        .any(|value| probe_literals.iter().any(|literal| literal == value))
-    {
-        return true;
-    }
     let Some((left, right)) = comparison_operands(&probe.expression) else {
         return false;
     };
@@ -220,6 +228,96 @@ fn owner_call_activates_boundary(
     false
 }
 
+fn assertion_subject(text: &str) -> String {
+    for marker in ["assert_eq!(", "assert_ne!(", "assert_matches!(", "assert!("] {
+        if let Some(index) = find_marker(text, marker)
+            && let Some(open) = index.checked_add(marker.len().saturating_sub(1))
+            && let Some(inner) = delimited_contents_at(text, open)
+        {
+            return inner;
+        }
+    }
+    text.to_string()
+}
+
+fn owner_call_argument_lists(text: &str, name: &str) -> Vec<Vec<String>> {
+    let needle = format!("{name}(");
+    let mut lists = Vec::new();
+    let mut from = 0usize;
+    while from < text.len() {
+        let Some(rel) = text.get(from..).and_then(|rest| rest.find(&needle)) else {
+            break;
+        };
+        let abs = from + rel;
+        if abs > 0 {
+            let before = text.as_bytes()[abs - 1];
+            if before.is_ascii_alphanumeric() || before == b'_' {
+                from = abs + 1;
+                continue;
+            }
+        }
+        if let Some(arguments) = call_arguments(text.get(abs..).unwrap_or(""), name) {
+            lists.push(arguments);
+        }
+        from = abs + needle.len();
+    }
+    lists
+}
+
+fn owner_call_count(text: &str, name: &str) -> usize {
+    owner_call_argument_lists(text, name).len()
+}
+
+fn contains_ident(text: &str, name: &str) -> bool {
+    find_ident_at(text, name).is_some()
+}
+
+fn find_ident_at(text: &str, name: &str) -> Option<usize> {
+    if name.is_empty() {
+        return None;
+    }
+    let mut from = 0usize;
+    while from < text.len() {
+        let Some(rel) = text.get(from..).and_then(|rest| rest.find(name)) else {
+            return None;
+        };
+        let abs = from + rel;
+        let before_ok = abs == 0 || {
+            let before = text.as_bytes()[abs - 1];
+            !(before.is_ascii_alphanumeric() || before == b'_')
+        };
+        let end = abs + name.len();
+        let after_ok = end >= text.len() || {
+            let after = text.as_bytes()[end];
+            !(after.is_ascii_alphanumeric() || after == b'_')
+        };
+        if before_ok && after_ok {
+            return Some(abs);
+        }
+        from = abs + 1;
+    }
+    None
+}
+
+fn find_marker(text: &str, marker: &str) -> Option<usize> {
+    let mut from = 0usize;
+    while from < text.len() {
+        let Some(rel) = text.get(from..).and_then(|rest| rest.find(marker)) else {
+            return None;
+        };
+        let abs = from + rel;
+        let before_ok = abs == 0 || {
+            let before = text.as_bytes()[abs - 1];
+            !(before.is_ascii_alphanumeric() || before == b'_')
+        };
+        if before_ok {
+            return Some(abs);
+        }
+        from = abs + 1;
+    }
+    None
+}
+
 fn parameter_index(parameters: &[String], operand: &str) -> Option<usize> {
     parameters.iter().position(|parameter| parameter == operand)
 }
@@ -230,10 +328,7 @@ fn values_overlap(left: &[String], right: &[String]) -> bool {
 
 /// Infection already recorded that this owner-call line sits on the boundary
 /// (`left == right` from named constants, helper hops, or local bindings).
-fn activation_marks_boundary_call(
-    activation: &ActivationEvidence,
-    call: &super::super::facts::CallFact,
-) -> bool {
+fn activation_marks_boundary_call(activation: &ActivationEvidence, call: &CallFact) -> bool {
     activation.observed_values.iter().any(|fact| {
         fact.line == call.line
             && fact.value.contains(" == ")
@@ -245,7 +340,7 @@ fn activation_marks_boundary_call(
 mod tests {
     use super::*;
     use crate::analysis::facts::FunctionSourceRole;
-    use crate::analysis::rust_index::{CallFact, LiteralFact, OracleFact};
+    use crate::analysis::rust_index::{CallFact, LiteralFact, OracleFact, extract_identifier_tokens};
     use std::path::PathBuf;
 
     #[test]
@@ -324,6 +419,121 @@ mod tests {
                 &ActivationEvidence::default(),
             ),
             "boundary call and far oracle in the same test still need the oracle on the boundary call"
+        );
+    }
+
+    #[test]
+    fn same_line_split_calls_do_not_pair() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let mixed = test_summary(
+            "mixed",
+            "let _ = gate(10); assert_eq!(gate(100), true);",
+            vec![
+                call("gate", "let _ = gate(10); assert_eq!(gate(100), true);"),
+                call("gate", "let _ = gate(10); assert_eq!(gate(100), true);"),
+            ],
+            vec![exact("let _ = gate(10); assert_eq!(gate(100), true);")],
+            &["10", "100"],
+        );
+        assert!(
+            !has_same_test_boundary_oracle_pairing(
+                &probe,
+                Some(&owner),
+                &[&mixed],
+                &ActivationEvidence::default(),
+            ),
+            "a same-line unasserted boundary call plus a far exact oracle must not pair"
+        );
+    }
+
+    #[test]
+    fn irrelevant_argument_does_not_pair() {
+        let probe = predicate_probe("input >= 10");
+        let owner = FunctionSummary {
+            id: SymbolId("src/lib.rs::gate".to_string()),
+            name: "gate".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 3,
+            body: "pub fn gate(input: u32, marker: u32) -> bool { input >= 10 }".to_string(),
+            calls: vec![],
+            returns: vec![],
+            literals: vec![],
+            source_role: FunctionSourceRole::Production,
+            attrs: vec![],
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        };
+        let far = test_summary(
+            "far",
+            "assert_eq!(gate(100, 10), true);",
+            vec![call("gate", "assert_eq!(gate(100, 10), true);")],
+            vec![exact("assert_eq!(gate(100, 10), true);")],
+            &["100", "10"],
+        );
+        assert!(
+            !has_same_test_boundary_oracle_pairing(
+                &probe,
+                Some(&owner),
+                &[&far],
+                &ActivationEvidence::default(),
+            ),
+            "a boundary literal in an unused argument must not pair"
+        );
+    }
+
+    #[test]
+    fn shadowed_boundary_binding_does_not_pair() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let mut shadowed = test_summary(
+            "shadowed",
+            "let got = gate(10);\nlet got = gate(100);\nassert_eq!(got, true);",
+            vec![
+                call("gate", "let got = gate(10);"),
+                call("gate", "let got = gate(100);"),
+            ],
+            vec![exact("assert_eq!(got, true);")],
+            &["10", "100"],
+        );
+        shadowed.calls[0].line = 1;
+        shadowed.calls[1].line = 2;
+        shadowed.assertions[0].line = 3;
+        shadowed.end_line = 4;
+        assert!(
+            !has_same_test_boundary_oracle_pairing(
+                &probe,
+                Some(&owner),
+                &[&shadowed],
+                &ActivationEvidence::default(),
+            ),
+            "asserting a binding that later shadows the boundary result must not pair"
+        );
+    }
+
+    #[test]
+    fn short_let_bound_name_pairs() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let mut bound = test_summary(
+            "bound",
+            "let x = gate(10);\nassert_eq!(x, true);",
+            vec![call("gate", "let x = gate(10);")],
+            vec![exact("assert_eq!(x, true);")],
+            &["10"],
+        );
+        bound.calls[0].line = 1;
+        bound.assertions[0].line = 2;
+        bound.end_line = 3;
+        assert!(
+            has_same_test_boundary_oracle_pairing(
+                &probe,
+                Some(&owner),
+                &[&bound],
+                &ActivationEvidence::default(),
+            ),
+            "let x = gate(10); assert_eq!(x, true) must pair"
         );
     }
 

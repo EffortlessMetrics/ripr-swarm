@@ -80,8 +80,9 @@ relation are out of scope.
   `same_test_pairing_missing` in the discriminate summary.
 - A control where one test does both (`assert_eq!(gate(10), true)`, and
   `fixtures/strong_boundary_oracle`) stays `exposed`.
-- Unit tests cover split tests, same-call pairing, same-test split calls, and
-  let-bound pairing.
+- Unit tests cover split tests, same-call pairing, same-test split calls,
+  same-line split calls, unused-argument literals, shadowed bindings, and
+  let-bound pairing including short names.
 - Golden drift is reviewed row by row: every downgrade names the missing
   same-test pairing, and no finding gains a class.
 - An honesty-corpus case independently prohibits `exposed` on the split
