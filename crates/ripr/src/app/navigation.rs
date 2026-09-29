@@ -26,6 +26,45 @@ impl FindingNavigation {
     }
 }
 
+/// The drill-in guidance the human surfaces print (#4321). The block must
+/// never vanish silently: when sibling commands cannot honestly replay the
+/// run, the surfaces say why and name the route instead of dropping it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum FindingDrillIn {
+    /// Copy-pasteable `ripr explain` / `ripr context` commands that preserve
+    /// this run's input identity.
+    Commands(FindingNavigation),
+    /// `--worktree` without `--write-artifact` (#4321): no artifact exists
+    /// for a `--from` replay, and a committed-history replay would analyze a
+    /// different diff, so the surfaces explain the artifact route and name
+    /// `--write-artifact` instead of printing commands that would answer a
+    /// different question.
+    WorktreeReplayNeedsArtifact,
+}
+
+impl FindingDrillIn {
+    /// The one-line replay route printed in place of drill-in commands on a
+    /// `--worktree` run without `--write-artifact` (#4321). The bounded
+    /// digest names its selected finding; the full form points at the ids it
+    /// prints with every finding.
+    pub(crate) fn worktree_replay_note(top_finding_id: Option<&str>) -> String {
+        match top_finding_id {
+            Some(id) => format!(
+                "Next: this worktree run has no artifact to replay — rerun with \
+                 --write-artifact, then `ripr explain --from <artifact> {id}` drills into the \
+                 top finding; a committed-history replay would not match this analysis."
+            ),
+            None => concat!(
+                "Next: this worktree run has no artifact to replay — rerun with ",
+                "--write-artifact, then `ripr explain --from <artifact> <finding id>`; a ",
+                "committed-history replay would not match this analysis. Finding ids print ",
+                "above.",
+            )
+            .to_string(),
+        }
+    }
+}
+
 /// Build sibling commands that preserve the input identity needed to replay a
 /// finding. An artifact is authoritative for its diff source; otherwise the
 /// explicit diff or base is carried forward.

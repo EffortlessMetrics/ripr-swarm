@@ -64,7 +64,7 @@ pub(crate) use explain::{
     explain_finding_from_artifact_with_navigation_mode,
     explain_finding_with_config_and_navigation_mode,
 };
-pub(crate) use navigation::{FindingNavigation, finding_navigation};
+pub(crate) use navigation::{FindingDrillIn, FindingNavigation, finding_navigation};
 pub(crate) use progress::{
     AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,
 };
@@ -286,9 +286,9 @@ pub(crate) fn render_check_with_config_and_navigation(
     output: &CheckOutput,
     format: &OutputFormat,
     config: &RiprConfig,
-    navigation: Option<&FindingNavigation>,
+    drill_in: Option<&FindingDrillIn>,
 ) -> Result<String, String> {
-    output::render::render_check_with_config_and_navigation(output, format, config, navigation)
+    output::render::render_check_with_config_and_navigation(output, format, config, drill_in)
 }
 
 #[cfg(test)]

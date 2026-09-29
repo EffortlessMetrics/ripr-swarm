@@ -4,7 +4,7 @@ use super::{
 };
 use crate::analysis;
 use crate::app::causal_projection::CausalDeltaArtifact;
-use crate::app::{CheckOutput, FindingNavigation};
+use crate::app::{CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
 use crate::output::repo_exposure::TsFullRepoGuidance;
 use std::collections::BTreeMap;
@@ -171,14 +171,14 @@ pub(crate) fn render_check_with_config_and_navigation(
     output: &CheckOutput,
     format: &OutputFormat,
     config: &RiprConfig,
-    navigation: Option<&FindingNavigation>,
+    drill_in: Option<&FindingDrillIn>,
 ) -> Result<String, String> {
     match format {
         OutputFormat::Human => Ok(human::render_bounded_with_config_and_navigation(
-            output, config, navigation,
+            output, config, drill_in,
         )),
         OutputFormat::HumanFull => Ok(human::render_full_with_config_and_navigation(
-            output, config, navigation,
+            output, config, drill_in,
         )),
         _ => render_check_with_config(output, format, config),
     }
