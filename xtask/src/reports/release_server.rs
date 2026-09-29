@@ -1,5 +1,6 @@
 mod payload;
 mod producer;
+mod qualification;
 
 use std::fs;
 use std::io::Read;
@@ -10,6 +11,34 @@ use sha2::{Digest, Sha256};
 use crate::{command_success_owned, run_owned};
 
 pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
+    if let Some(rows_dir) = optional_release_arg(args, "terminal-receipt-dir") {
+        let out_dir = required_release_arg(args, "out-dir", "TERMINAL_RECEIPT_OUT_DIR")?;
+        let candidate_sha = required_release_arg(args, "candidate-sha", "CANDIDATE_SHA")?;
+        let version = required_release_arg(args, "version", "QUALIFICATION_VERSION")?;
+        let verify_result = required_release_arg(args, "verify-result", "VERIFY_RESULT")?;
+        let build_result = required_release_arg(args, "build-result", "BUILD_RESULT")?;
+        let manifest_result = required_release_arg(args, "manifest-result", "MANIFEST_RESULT")?;
+        let receipt = qualification::write_terminal_receipt(
+            Path::new(&rows_dir),
+            Path::new(&out_dir),
+            &candidate_sha,
+            &version,
+            &verify_result,
+            &build_result,
+            &manifest_result,
+        )?;
+        eprintln!(
+            "wrote terminal qualification receipt: status={} selected={} executed={} failed={} cancelled={} not_run={}",
+            receipt.status,
+            receipt.execution.selected,
+            receipt.execution.executed,
+            receipt.execution.failed,
+            receipt.execution.cancelled,
+            receipt.execution.not_run
+        );
+        return Ok(());
+    }
+
     if let Some(payload_dir) = optional_release_arg(args, "verify-payload-dir") {
         let identity_path = required_release_arg(args, "payload-identity", "PAYLOAD_IDENTITY")?;
         let identity = payload::verify_final_native_payload(
