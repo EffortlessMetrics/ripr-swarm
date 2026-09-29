@@ -577,8 +577,13 @@ fn parser_symbol_id(path: &Path, function: &ast::Fn, name: &str) -> SymbolId {
 /// file root make it a free function.
 fn function_impl_context(function: &ast::Fn) -> FunctionImplContext {
     for ancestor in function.syntax().ancestors().skip(1) {
-        if ast::Fn::can_cast(ancestor.kind()) {
-            // A function-local `fn` item is not nameable through a type.
+        if ast::Fn::can_cast(ancestor.kind())
+            || ast::BlockExpr::can_cast(ancestor.kind())
+            || ast::Const::can_cast(ancestor.kind())
+            || ast::Static::can_cast(ancestor.kind())
+        {
+            // A `fn` item local to a function, block, const or static
+            // initializer is not nameable through a type.
             return FunctionImplContext::Free;
         }
         if ast::Trait::can_cast(ancestor.kind()) {
@@ -1428,6 +1433,7 @@ mod tests {
             "impl Tr for &LevelFilter { fn by_ref() {} }\n",
             "trait Tr { fn defaulted() {} }\n",
             "mod nested { pub fn in_module() {} }\n",
+            "impl LevelFilter { const C: () = { fn in_const() {} }; }\n",
         );
         let facts = summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
         let context = |name: &str| {
@@ -1445,6 +1451,7 @@ mod tests {
         assert_eq!(context("current"), Some(FunctionImplContext::Free));
         assert_eq!(context("in_module"), Some(FunctionImplContext::Free));
         assert_eq!(context("local"), Some(FunctionImplContext::Free));
+        assert_eq!(context("in_const"), Some(FunctionImplContext::Free));
         assert_eq!(context("inherent"), named("LevelFilter"));
         assert_eq!(context("fmt_like"), named("LevelFilter"));
         assert_eq!(context("generic_args"), named("Wrapper"));
