@@ -271,7 +271,7 @@ fn python_guidance_rejects_unsafe_install_command_variants() {
         let violations =
             python_guidance::validate_package_readme_commands(PYTHON_README_PATH, &readme);
         assert!(
-            has_violation(&violations, "selects unrelated PyPI distribution `ripr`"),
+            has_violation(&violations, "selects unrelated PyPI distribution"),
             "accepted unsafe command `{command}`: {violations:#?}"
         );
     }
