@@ -3,6 +3,21 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-09-29: Whole-object equality is not an effect observer of a different collection (#4575)
+
+A SideEffect `items.push(...)` on a passed collection can be confirmed by
+`assert_eq!(items, expected)` and must stay unverified for `assert_eq!(other, expected)`
+or `assert_eq!(other, items)`. Kind-matching `WholeObjectEquality` / token
+coincidence on the expected side is not identity with the mutated receiver.
+
+Pin this as a should-stay-`weakly_exposed` control for the sibling collection.
+Do not generalize that rule to every effect family: mock/snapshot/whole-object
+observers for `persist_audit(record)` and `notifier.send(...)` remain on the
+existing Part C path. `cache.insert` is a delivered CallDeletion fixture, not
+this family's `push` admission; sharing the `insert` method name must not
+rewrite that golden. Reuse `PropagationWitnessV1`; do not mint a second
+witness DTO.
+
 ## 2026-09-29: Missing git and a missing cwd share `NotFound` (#4735)
 
 Spawning `git` with `current_dir` yields `ErrorKind::NotFound` both when the
@@ -70,6 +85,29 @@ Lesson: classify first by shared-state mechanism, then fix one mechanism per
 slice with a discriminating control. New family members get their own
 investigation per the escalation rule (same operation green in isolation and
 red only under concurrency = structural).
+
+## 2026-09-29: Unchanged lexical-fallback test files and complete runs (#4775)
+
+#2698 discloses lexical fallback on the repo/seam-inventory path (stderr).
+Diff-scoped `ripr check` did not. An unchanged test file with a nightly-only
+construct (`Some(y if y > 0)`, `Err(!)`, or any other reference-parser
+refusal) was indexed lexically; compact `#[test] fn p() { ... }` registrations
+then vanished from related-test discovery. The changed production owner read
+`no_static_path` while `analysis_outcome` stayed complete.
+
+#4722/#4773 cover *changed* files as `producer_failure`. This lane is the
+unchanged test-file follow-up. The TypeScript analog is #4261: do not mark
+every run in a nightly-feature crate partial merely because some unused test
+file failed extraction. Emit `rust_lexical_test_index_partial` only when a
+classified owner actually consulted that file.
+
+Lesson: stderr disclosure on a different analysis mode is not a machine
+limitation. Related-test dropout is a completeness fact, not a classification
+vocabulary change. Owner-call scans must mask comments and strings so a
+comment mentioning the owner cannot make the crate partial. A `fn owner()`
+declaration, a same-named call in another crate, and a long repository path
+are not reasons to abort analysis or mark an unused nightly file as
+consulted; a turbofish `owner::<T>(...)` and `#[ test ]` still are.
 
 ## 2026-07-29: Property tests and lexical fallback disclosure
 

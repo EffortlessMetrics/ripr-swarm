@@ -53,6 +53,21 @@ top-level `fixtures/` tree so repo-scoped public signals describe the published
 `ripr` package, not its harness. Passing a fixture workspace itself as `--root`
 still analyzes that fixture normally.
 
+Generated Rust that `ripr check` already skips is also outside the seam
+surface. Inventory applies the same `is_generated_rust_file_with_patterns`
+predicate (`bindings.rs`, `schema.rs`, `generated.rs`, `*.gen.rs`,
+`*_generated.rs`, `generated_*`, `gen/`, `generated/`, `out/`, plus
+`[languages.rust] generated_file_patterns`). Those files do not emit seams,
+do not supply test-grip evidence, and are excluded from the corpus fingerprint
+so an edit there does not bust the inventory cache. Repo-exposure discloses
+the skip as `generated_rust_source_skipped` without changing `run_status` to a
+truncated scan. Because those patterns change the seam population, they are
+consumed config for the repo-exposure artifact input identity: a before/after
+pair that differs only in `generated_file_patterns` is not comparable.
+Header-generated files that only `ripr check` will skip after
+a later generated-source predicate land remain inventoried until that
+predicate exists on this trunk.
+
 ### Stable Seam ID Rules
 
 Seam IDs must be stable across runs and across input file walk reorderings.
@@ -276,6 +291,22 @@ types.
 7. `lsp/seam-evidence-hover-v1`: hover renders evidence path with cited tests.
 8. `context/agent-seam-packets-v1`: agent packets carry seam + grip + missing
 discriminator.
+
+Explicit per-seam CLI `packet.next` instructions bind commands and artifact
+writes to the selected repository root. Standalone packets include the static outcome
+producer before verify and receipt. Prepared repair packets instead advertise
+the durable after-phase continuation and leave incompatible manual steps null;
+the existing edit cage and authorization checks remain authoritative. The
+prepared command pins the published exact attempt selector; a finished attempt
+cannot resume a later attempt for the same seam. Explicit seam-based continuation
+still refuses ambiguous awaiting attempts. Portable bulk packets retain their local
+compatibility recipe. The standalone manual recipe assumes no retained durable
+workflow. Resume a matching awaiting attempt by its published exact selector;
+otherwise begin a fresh durable Before route for the selected seam, preserving
+retained attempts and receipt binding.
+Per-packet canonical/evidence commands remain outside this bounded claim.
+See `docs/OUTPUT_SCHEMA.md` for the additive fields and
+static evidence boundaries (#4000).
 
 ## Metrics
 

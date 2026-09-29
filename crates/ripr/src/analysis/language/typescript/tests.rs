@@ -4949,6 +4949,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         "build/out.js",
         "coverage/report.ts",
         "src/client.generated.ts",
+        "public/js/app.min.js",
     ] {
         let path = root.join(rel);
         let parent = path
@@ -4986,6 +4987,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         "build/out.js",
         "coverage/report.ts",
         "src/client.generated.ts",
+        "public/js/app.min.js",
     ]
     .into_iter()
     .map(|path| ChangedFile {
@@ -5017,7 +5019,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
             .file
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.contains(".generated."))
+            .is_some_and(|name| name.contains(".generated.") || name.ends_with(".min.js"))
     });
     if excluded_finding {
         return Err(format!(
@@ -5383,6 +5385,85 @@ fn classify_probe_shape_recognises_return_value() {
     let (family, delta) = classify_probe_shape("    return amount - 10;");
     assert_eq!(family, ProbeFamily::ReturnValue);
     assert_eq!(delta, DeltaKind::Value);
+}
+
+#[test]
+fn classify_probe_shape_reads_a_returned_ternary_as_its_condition_boundary() {
+    // A `>=` -> `>` change in the condition is witnessed only at
+    // `total == 100`; as `return_value`, any exact oracle such as
+    // `expect(discount(500)).toBe(450)` read it as exposed.
+    let line = "    return total > 100 ? total * 0.9 : total;";
+    assert_eq!(
+        classify_probe_shape(line),
+        (ProbeFamily::Predicate, DeltaKind::Control)
+    );
+    assert_eq!(
+        typescript_boundary_discriminator(line).as_deref(),
+        Some("total == 100")
+    );
+    // Only the condition is the boundary: a comparison in an arm does not
+    // select the branch.
+    let arm = "    return ready ? amount >= LIMIT : false;";
+    assert_eq!(classify_probe_shape(arm).0, ProbeFamily::Predicate);
+    assert_eq!(typescript_boundary_discriminator(arm), None);
+    // A quoted ` ? ` in the condition and a quoted ` : ` in an arm do not
+    // move the split.
+    let quoted = "    return kind === 'a ? b' ? 1 : 0;";
+    assert_eq!(classify_probe_shape(quoted).0, ProbeFamily::Predicate);
+    // The split must hand the same condition to the boundary reader as the
+    // `if` form does.
+    assert_eq!(
+        typescript_boundary_discriminator(quoted),
+        typescript_boundary_discriminator("    if (kind === 'a ? b') {")
+    );
+    let quoted_arm = "    return total > 100 ? 'x : y' : 'z';";
+    assert_eq!(
+        typescript_boundary_discriminator(quoted_arm).as_deref(),
+        Some("total == 100")
+    );
+    // `??`, `?.`, and a `?` inside a string are not conditionals.
+    for line in [
+        "    return total ?? 0;",
+        "    return order?.total;",
+        "    return \"a ? b : c\";",
+        "    return ok ? value",
+        "    return ok ? 'x : y'",
+    ] {
+        assert_eq!(
+            classify_probe_shape(line),
+            (ProbeFamily::ReturnValue, DeltaKind::Value),
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn classify_probe_shape_reads_a_returned_comparison_as_its_boundary() {
+    // `expect(isLarge(500)).toBe(true)` holds before and after `>=` -> `>`.
+    let line = "    return total > 100;";
+    assert_eq!(
+        classify_probe_shape(line),
+        (ProbeFamily::Predicate, DeltaKind::Control)
+    );
+    assert_eq!(
+        typescript_boundary_discriminator(line).as_deref(),
+        Some("total == 100")
+    );
+    // Equality, computed operands, arrows and compound conditions stay
+    // return values.
+    for line in [
+        "    return total === 100;",
+        "    return items.length() > 0;",
+        "    return total + 1 > limit;",
+        "    return (x) => x > 1;",
+        "    return total > 100 && ready;",
+    ] {
+        assert_eq!(
+            classify_probe_shape(line),
+            (ProbeFamily::ReturnValue, DeltaKind::Value),
+            "{line}"
+        );
+    }
 }
 
 #[test]
