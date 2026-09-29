@@ -36,6 +36,7 @@ mod receipt_command;
 mod swarm_command;
 
 pub(super) use agent::agent;
+pub(super) use agent::run_before_repair_with_identity;
 pub(super) use context::context;
 // Flag-documenting help bodies live beside their parsers so `cli::help`
 // suggestions mine the same text `--help` prints.
@@ -3904,6 +3905,7 @@ mod tests {
             crate::output::repo_exposure::render_repo_exposure_json_with_context(
                 &classified,
                 limit_info.as_ref(),
+                None,
                 None,
                 None,
                 &context,

@@ -932,7 +932,14 @@ standalone_reason = "Issue #4804 records the governed identity registry: one che
 [[artifact]]
 id = "RIPR-SPEC-0183"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0183-portable-native-consumer-packet.md"
+path = "docs/specs/RIPR-SPEC-0183-executed-control-obligation.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #4641 records the executed-control obligation/result contract: one closed vocabulary, validator, and bounded projection that distinguishes executed discriminating controls from ordinary tests and review prose, without live GitHub inspection, merge enforcement, or historical audit."
+[[artifact]]
+id = "RIPR-SPEC-0184"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0184-portable-native-consumer-packet.md"
 status = "proposed"
 owner = "agent/portable-consumer"
 standalone_reason = "Issue #4713 records the portable native ripr consumer packet: a stdlib Python 3.11+ adapter verifies a mounted payload, launches only the packet-relative executable, fail-closes digest/PATH/timeout/output controls, and projects a consumption receipt without rewriting product meaning, publication, or support promotion."

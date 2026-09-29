@@ -6,7 +6,7 @@ use super::language::PythonAdapter;
 use super::language::TypeScriptAdapter;
 use super::language::{
     LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, PartialDiffScope,
-    RustAdapter, route, unanalyzed_source_language,
+    RustAdapter, is_script_language, route, unanalyzed_source_language,
 };
 use super::{
     AnalysisOptions, AnalysisResult, LanguageRun, LanguageRunStatus, PreviewLanguageAdvisory, diff,
@@ -375,7 +375,8 @@ fn rust_excluded_by_config_limitation(
 }
 
 /// The typed limitation for changed source files in languages no ripr adapter
-/// reads (Go, Java, C, shell, ...). `None` when the diff has none. Without it
+/// reads (Go, Java, C, ...). Shell and PowerShell scripts count only when
+/// the diff changed no analyzable source (see [`is_script_language`]). `None` when the diff has none. Without it
 /// a Go-only diff read as `no_behavioral_candidates (analysis complete)` and a
 /// Rust + Go diff reported only the Rust half as a complete analysis.
 fn unanalyzed_source_language_limitation(
@@ -384,8 +385,15 @@ fn unanalyzed_source_language_limitation(
     const MAX_NAMED_PATHS: usize = 3;
     let mut by_language = std::collections::BTreeMap::<&str, usize>::new();
     let mut paths = Vec::new();
+    // Scripts do not downgrade a run that analyzed other source; they are
+    // named by `unanalyzed_script_disclosure_message` instead. A diff with no
+    // analyzable source keeps them as a limitation, so a script-only run is
+    // never reported complete.
+    let analyzed_other_source = changed_files.iter().any(|file| route(&file.path).is_some());
     for file in changed_files {
-        if let Some(language) = unanalyzed_source_language(&file.path) {
+        if let Some(language) = unanalyzed_source_language(&file.path)
+            .filter(|language| !(analyzed_other_source && is_script_language(language)))
+        {
             *by_language.entry(language).or_default() += 1;
             paths.push(file.path.to_string_lossy().replace('\\', "/"));
         }
@@ -457,6 +465,52 @@ fn submodule_disclosure_message(submodule_file_count: usize) -> Option<String> {
              ripr does not analyze submodule contents."
         )
     })
+}
+
+/// Names changed shell or PowerShell scripts. They were not analyzed; beside
+/// analyzed source they do not make the run partial, so this stderr line is
+/// where they are listed.
+fn unanalyzed_script_disclosure_message(changed_files: &[diff::ChangedFile]) -> Option<String> {
+    const MAX_NAMED_PATHS: usize = 3;
+    let mut languages = std::collections::BTreeSet::new();
+    let mut paths = Vec::new();
+    for file in changed_files {
+        if let Some(language) =
+            unanalyzed_source_language(&file.path).filter(|language| is_script_language(language))
+        {
+            languages.insert(language);
+            paths.push(file.path.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    if paths.is_empty() {
+        return None;
+    }
+    let mut listed = paths[..paths.len().min(MAX_NAMED_PATHS)].join(", ");
+    if paths.len() > MAX_NAMED_PATHS {
+        listed.push_str(&format!(" and {} more", paths.len() - MAX_NAMED_PATHS));
+    }
+    let languages = languages.into_iter().collect::<Vec<_>>().join(", ");
+    Some(format!(
+        "ripr: {} changed script file(s) ({languages}) were not analyzed: {listed}; \
+         review them with their own checks.",
+        paths.len()
+    ))
+}
+
+/// The stderr lines that name unanalyzed changes: the non-source disclosure
+/// when its guard held, otherwise the script listing. The non-source line
+/// already names any changed script, so each script is named exactly once,
+/// including when a rename or submodule change suppressed that line.
+fn unanalyzed_disclosures(
+    non_source: Option<String>,
+    changed_files: &[diff::ChangedFile],
+) -> Vec<String> {
+    match non_source {
+        Some(message) => vec![message],
+        None => unanalyzed_script_disclosure_message(changed_files)
+            .into_iter()
+            .collect(),
+    }
 }
 
 fn emit_submodule_disclosure(submodule_file_count: usize, mut emit: impl FnMut(&str)) {
@@ -568,16 +622,16 @@ fn run_pipeline_for_diff_text(
             // configure nothing, so "the configured predicate" pointed at a
             // setting that did not exist while a hand-written `schema.rs`
             // or `gen/` module went unanalyzed.
+            let generated_sources = super::language::GeneratedRustSources::for_diff(
+                &options.root,
+                generated_file_patterns,
+                &analysis_changed_files,
+            );
             let skipped = analysis_changed_files
                 .iter()
                 .map(|file| file.path.as_path())
                 .filter(|path| route(path) == Some(LanguageId::Rust))
-                .filter(|path| {
-                    super::language::is_generated_rust_file_with_patterns(
-                        path,
-                        generated_file_patterns,
-                    )
-                })
+                .filter(|path| generated_sources.contains(path))
                 .map(|path| path.to_string_lossy().replace('\\', "/"))
                 .collect::<Vec<_>>();
             let listed = bounded_path_listing(&skipped);
@@ -588,18 +642,19 @@ fn run_pipeline_for_diff_text(
                     AnalysisRecovery::new(
                         AnalysisRecoveryKind::Retry,
                         format!(
-                            "Not analyzed as generated code: {listed}. ripr treats `gen/`, \
-                             `generated/` and `out/` directories and `generated.rs`, `schema.rs`, \
-                             `bindings.rs`, `*.gen.rs`, `*_generated.rs` and `generated_*` files, \
-                             plus `[languages.rust] generated_file_patterns`, as generated; if one of these \
-                             is hand-written, its changes stay outside this analysis."
+                            "Not analyzed as generated or vendored code: {listed}. ripr skips `gen/`, \
+                             `generated/`, `out/`, `generated.rs`, `schema.rs`, `bindings.rs`, \
+                             `*.gen.rs`, `*_generated.rs`, `generated_*`, files headed \
+                             `@generated` or `DO NOT EDIT`, `cargo vendor` crates and \
+                             `generated_file_patterns`; a hand-written match stays unanalyzed."
                         ),
                     )?,
                 )
                 .with_affected_items(result.skipped_files as u64)?
                 .with_detail(format!(
-                    "{} generated Rust file(s) were intentionally skipped by the generated-file \
-                     conventions or configured patterns: {listed}",
+                    "{} generated or vendored Rust file(s) were intentionally skipped by the \
+                     generated-file conventions, generator headers, `cargo vendor` crates or \
+                     configured patterns: {listed}",
                     result.skipped_files
                 ))?,
             );
@@ -756,17 +811,18 @@ fn run_pipeline_for_diff_text(
     // PRs): an empty result with zero probes is not a "clean" result in that
     // case — the user needs to know ripr saw no analyzable source files
     // (#1888, #2304).
-    if findings.is_empty()
+    let non_source_message = (findings.is_empty()
         && rust_changed_files == 0
         && submodule_file_count == 0
         && renamed_file_count == 0
         && changed_files_by_language
             .iter()
-            .all(|(_, count)| *count == 0)
-        && let Some(message) = non_source_disclosure_message(&changed_files)
-    {
-        // Emit as stderr disclosure — this is not a Finding (no probe was
-        // generated), but the user needs to know why the result is empty.
+            .all(|(_, count)| *count == 0))
+    .then(|| non_source_disclosure_message(&changed_files))
+    .flatten();
+    // Emit as stderr disclosures — these are not Findings (no probe was
+    // generated), but the user needs to know what was not analyzed.
+    for message in unanalyzed_disclosures(non_source_message, &changed_files) {
         eprintln!("{message}");
     }
 
@@ -841,21 +897,7 @@ fn run_pipeline_for_diff_text(
 
     limitations.extend(limitations_from_language_runs(&language_runs)?);
     if let Some(scope) = &partial_scope {
-        limitations.push(
-            AnalysisLimitation::new(
-                AnalysisLimitationKind::DiffScopeOversized,
-                AnalysisStage::AnalysisPipeline,
-                AnalysisRecovery::new(
-                    AnalysisRecoveryKind::IncreaseConfiguredLimit,
-                    "Raise RIPR_PARTIAL_DIFF_FILE_BUDGET and/or RIPR_PARTIAL_DIFF_LINE_BUDGET, then re-run the analysis.",
-                )?,
-            )
-            .with_affected_items(scope.uninspected_changed_lines_lower_bound.max(1) as u64)?
-            .with_detail(format!(
-                "The run analyzed {} changed line(s) and left at least {} changed line(s) outside the selected partition.",
-                scope.selected_changed_lines, scope.uninspected_changed_lines_lower_bound
-            ))?,
-        );
+        limitations.push(partial_scope_limitation(scope)?);
     }
 
     let changed_line_count = changed_files
@@ -1044,7 +1086,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
                     language: LanguageId::Rust.as_str().to_string(),
                     status: LanguageRunStatus::Partial,
                     reason: Some(format!(
-                        "{} generated Rust file(s) skipped from static analysis by the configured generated-file predicate",
+                        "{} generated or vendored Rust file(s) skipped from static analysis by the generated-file conventions, generator headers, `cargo vendor` crates or configured patterns",
                         result.skipped_files
                     )),
                 });
@@ -1148,15 +1190,29 @@ fn detect_repo_preview_advisories(
             continue;
         }
         let file_count = files.len();
+        let javascript_file_count = files
+            .iter()
+            .filter(|path| is_javascript_family_path(std::path::Path::new(path)))
+            .count();
         let sample_paths: Vec<String> = files.into_iter().take(3).collect();
         advisories.push(PreviewLanguageAdvisory {
             language: language.as_str().to_string(),
             file_count,
             sample_paths,
+            javascript_file_count,
             enabled: analyzed_only,
         });
     }
     advisories
+}
+
+/// Whether a routed path is a JavaScript-family source (`.js`, `.jsx`,
+/// `.mjs`, `.cjs`), using the router's own exact extension lists.
+fn is_javascript_family_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .and_then(super::language::ts_js_source_kind)
+        == Some(super::language::TsJsSourceKind::JavaScript)
 }
 
 /// Languages that route through a compiled preview adapter, in stable order.
@@ -1190,7 +1246,8 @@ fn detect_preview_advisories<'a, I>(
 where
     I: Iterator<Item = &'a diff::ChangedFile>,
 {
-    let mut counts: Vec<(LanguageId, usize, Vec<String>)> = Vec::new();
+    // `(language, file count, JavaScript-family count, sample paths)`.
+    let mut counts: Vec<(LanguageId, usize, usize, Vec<String>)> = Vec::new();
     for changed in paths {
         let Some(language) = super::language::route(&changed.path) else {
             continue;
@@ -1211,26 +1268,29 @@ where
             continue;
         }
         let normalized = changed.path.to_string_lossy().replace('\\', "/");
-        match counts.iter_mut().find(|(lang, _, _)| *lang == language) {
-            Some((_, count, samples)) => {
+        let javascript = usize::from(is_javascript_family_path(&changed.path));
+        match counts.iter_mut().find(|(lang, _, _, _)| *lang == language) {
+            Some((_, count, javascript_count, samples)) => {
                 *count += 1;
+                *javascript_count += javascript;
                 if samples.len() < 3 {
                     samples.push(normalized);
                 }
             }
-            None => counts.push((language, 1, vec![normalized])),
+            None => counts.push((language, 1, javascript, vec![normalized])),
         }
     }
 
     let mut advisories: Vec<PreviewLanguageAdvisory> = Vec::new();
     for language in PREVIEW_LANGUAGE_ORDER {
-        if let Some((_, file_count, sample_paths)) =
-            counts.iter().find(|(lang, _, _)| lang == language)
+        if let Some((_, file_count, javascript_file_count, sample_paths)) =
+            counts.iter().find(|(lang, _, _, _)| lang == language)
         {
             advisories.push(PreviewLanguageAdvisory {
                 language: language.as_str().to_string(),
                 file_count: *file_count,
                 sample_paths: sample_paths.clone(),
+                javascript_file_count: *javascript_file_count,
                 enabled: enabled.contains(language) && language.is_available(),
             });
         }
@@ -1474,6 +1534,33 @@ fn rebase_finding_paths_to_repository(
     for finding in &mut result.findings {
         finding.probe.location.file = rebase(&finding.probe.location.file);
     }
+}
+
+/// The analysis-outcome limitation for a `limited_partial_scope` run. Its
+/// recovery shares the widen wording of the human, JSON and LSP surfaces, and
+/// its detail never claims "at least 0" uninspected lines when every changed
+/// file was selected.
+fn partial_scope_limitation(scope: &PartialDiffScope) -> Result<AnalysisLimitation, String> {
+    AnalysisLimitation::new(
+        AnalysisLimitationKind::DiffScopeOversized,
+        AnalysisStage::AnalysisPipeline,
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::IncreaseConfiguredLimit,
+            format!("To widen the analyzed partition, {}.", scope.widen_instruction()),
+        )?,
+    )
+    .with_affected_items(scope.uninspected_changed_lines_lower_bound.max(1) as u64)?
+    .with_detail(if scope.has_known_uninspected_scope() {
+        format!(
+            "The run analyzed {} changed line(s) and left at least {} changed line(s) outside the selected partition.",
+            scope.selected_changed_lines, scope.uninspected_changed_lines_lower_bound
+        )
+    } else {
+        format!(
+            "The run analyzed {} changed line(s); every changed file ripr's language adapters read was selected, but the budget was exceeded, so the result stays partial.",
+            scope.selected_changed_lines
+        )
+    })
 }
 
 #[cfg(test)]
@@ -1794,8 +1881,120 @@ mod tests {
             .collect::<Vec<_>>();
         let limitation = unanalyzed_source_language_limitation(&files)?
             .ok_or_else(|| "every file is unanalyzed source".to_string())?;
+        // No analyzable source beside them, so scripts count too.
         assert_eq!(limitation.affected_items, Some(files.len() as u64));
         assert!(limitation.recovery.detail.contains("more language(s)"));
+        Ok(())
+    }
+
+    const SAMPLE_SHELL_DIFF: &str = "diff --git a/scripts/ci.sh b/scripts/ci.sh\n--- a/scripts/ci.sh\n+++ b/scripts/ci.sh\n@@ -1,1 +1,1 @@\n-cargo test\n+cargo test --locked\n";
+
+    #[test]
+    fn rust_and_shell_script_diff_stays_complete_and_names_the_script() -> Result<(), String> {
+        // A CI script beside Rust is listed as not analyzed but does not
+        // downgrade an otherwise complete analysis.
+        let root = temp_root("outcome-rust-and-shell")?;
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &[],
+            &format!("{SAMPLE_RUST_DIFF}{SAMPLE_SHELL_DIFF}"),
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "outcome must be projected".to_string())?;
+        assert_eq!(
+            outcome.counts.changed_file_count, 2,
+            "fixture parses Rust and shell"
+        );
+        assert!(outcome.kind.is_complete(), "{outcome:?}");
+        assert!(
+            unanalyzed_language_limitation(&outcome).is_none(),
+            "{outcome:?}"
+        );
+        let files = vec![changed_file("src/lib.rs"), changed_file("scripts/ci.sh")];
+        let message = unanalyzed_script_disclosure_message(&files)
+            .ok_or_else(|| "the script must be named".to_string())?;
+        assert!(
+            message.contains("(Shell)") && message.contains("scripts/ci.sh"),
+            "{message}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn go_beside_a_script_is_still_partial_and_counts_only_go() -> Result<(), String> {
+        let files = vec![
+            changed_file("src/lib.rs"),
+            changed_file("pkg/calc.go"),
+            changed_file("scripts/ci.sh"),
+            changed_file("tools/Build.PS1"),
+        ];
+        let limitation = unanalyzed_source_language_limitation(&files)?
+            .ok_or_else(|| "Go must still be a limitation".to_string())?;
+        assert_eq!(limitation.affected_items, Some(1));
+        let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+        assert!(detail.contains("Go: 1"), "{detail}");
+        assert!(
+            !detail.contains("ci.sh") && !detail.contains("Shell"),
+            "{detail}"
+        );
+        let message = unanalyzed_script_disclosure_message(&files).unwrap_or_default();
+        assert!(message.contains("2 changed script file(s)"), "{message}");
+        // Scripts with no analyzable source beside them stay a limitation.
+        let scripts = vec![changed_file("scripts/ci.sh")];
+        let limitation = unanalyzed_source_language_limitation(&scripts)?
+            .ok_or_else(|| "a script-only diff must stay a limitation".to_string())?;
+        assert_eq!(limitation.affected_items, Some(1));
+        Ok(())
+    }
+
+    #[test]
+    fn script_only_diff_stays_incomplete_and_is_disclosed_once() -> Result<(), String> {
+        // Review finding: with nothing else analyzed, a script-only diff
+        // must not read as a complete analysis.
+        let root = temp_root("outcome-shell-only")?;
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &[],
+            SAMPLE_SHELL_DIFF,
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "outcome must be projected".to_string())?;
+        assert_eq!(
+            outcome.counts.changed_file_count, 1,
+            "fixture parses one script"
+        );
+        assert_eq!(outcome.kind, AnalysisOutcomeKind::PartialWithLimitations);
+        assert!(unanalyzed_language_limitation(&outcome).is_some());
+        let files = vec![changed_file("scripts/ci.sh")];
+        let message = non_source_disclosure_message(&files)
+            .ok_or_else(|| "a script-only diff must disclose".to_string())?;
+        assert!(
+            message.contains("(Shell)") && message.contains("not a clean pass"),
+            "{message}"
+        );
+        // The non-source line already names the script, so it is named once.
+        let lines = unanalyzed_disclosures(Some(message.clone()), &files);
+        assert_eq!(lines, vec![message]);
+        Ok(())
+    }
+
+    #[test]
+    fn script_beside_a_rename_or_submodule_is_still_named() -> Result<(), String> {
+        // Review finding: an edited script rename (or a script beside a
+        // submodule bump) suppresses the non-source line; the script must
+        // still be named instead of reading as analyzed.
+        let files = vec![changed_file("scripts/test.sh")];
+        let lines = unanalyzed_disclosures(None, &files);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("scripts/test.sh"), "{lines:?}");
+        // Nothing to name: no line.
+        assert!(unanalyzed_disclosures(None, &[changed_file("README.md")]).is_empty());
         Ok(())
     }
 
@@ -2163,6 +2362,128 @@ mod tests {
     }
 
     #[test]
+    fn cargo_vendor_and_generator_header_changes_are_skipped_before_the_line_limit()
+    -> Result<(), String> {
+        let root = temp_root("analysis-outcome-vendored-skip")?;
+        let vendored = root.join("vendor/fakedep");
+        std::fs::create_dir_all(vendored.join("src")).map_err(|err| err.to_string())?;
+        std::fs::write(vendored.join(".cargo-checksum.json"), "{}")
+            .map_err(|err| err.to_string())?;
+        std::fs::create_dir_all(root.join("src/pb")).map_err(|err| err.to_string())?;
+        std::fs::write(
+            root.join("src/pb/shop.v1.rs"),
+            "// This file is @generated by prost-build.\npub fn big() -> bool { true }\n",
+        )
+        .map_err(|err| err.to_string())?;
+        // A `cargo vendor` bump larger than the changed-Rust-line guard.
+        let mut diff = String::from(
+            "diff --git a/vendor/fakedep/src/lib.rs b/vendor/fakedep/src/lib.rs\n\
+             --- /dev/null\n\
+             +++ b/vendor/fakedep/src/lib.rs\n\
+             @@ -0,0 +1,2500 @@\n",
+        );
+        for index in 0..2500 {
+            diff.push_str(&format!(
+                "+pub fn f{index}(x: u32) -> u32 {{ x + {index} }}\n"
+            ));
+        }
+        diff.push_str(
+            "diff --git a/src/pb/shop.v1.rs b/src/pb/shop.v1.rs\n\
+             --- /dev/null\n\
+             +++ b/src/pb/shop.v1.rs\n\
+             @@ -0,0 +1,2 @@\n\
+             +// This file is @generated by prost-build.\n\
+             +pub fn big() -> bool { true }\n",
+        );
+        let result = run_pipeline_for_diff_text(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
+                include_unchanged_tests: false,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &[],
+            &diff,
+        )?;
+        assert!(
+            result.findings.is_empty(),
+            "skipped sources yield no findings"
+        );
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "vendored skip must carry an analysis outcome".to_string())?;
+        assert_eq!(outcome.kind, AnalysisOutcomeKind::PartialWithLimitations);
+        assert!(outcome.limitations.iter().any(|limitation| {
+            limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+                && limitation
+                    .recovery
+                    .detail
+                    .contains("vendor/fakedep/src/lib.rs")
+                && limitation.recovery.detail.contains("src/pb/shop.v1.rs")
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn repo_mode_counts_cargo_vendor_crates_as_a_partial_rust_run() -> Result<(), String> {
+        let root = temp_root("repo-vendored-skip")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub fn a() -> u32 { 1 }\n")?;
+        write(&root.join("vendor/dep/.cargo-checksum.json"), "{}")?;
+        write(
+            &root.join("vendor/dep/src/lib.rs"),
+            "pub fn b() -> u32 { 2 }\n",
+        )?;
+        let result = run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
+                include_unchanged_tests: false,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &[],
+        )?;
+        let rust_run = result
+            .language_runs
+            .iter()
+            .find(|run| run.language == "rust")
+            .ok_or_else(|| "a vendored skip must record the Rust run".to_string())?;
+        assert_eq!(rust_run.status, LanguageRunStatus::Partial);
+        assert!(
+            rust_run
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.starts_with("1 generated or vendored Rust file(s)")),
+            "{:?}",
+            rust_run.reason
+        );
+        Ok(())
+    }
+
+    #[test]
     fn deletion_disclosure_names_deleted_files_and_non_claim() -> Result<(), String> {
         let message = deletion_disclosure_message(2)
             .ok_or_else(|| "deleted files must produce a disclosure".to_string())?;
@@ -2455,6 +2776,76 @@ mod tests {
         assert!(outcome.limitations.is_empty());
         assert!(complete_zero.findings.is_empty());
 
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    /// #4775: an unchanged test file that the reference parser refuses is
+    /// indexed lexically; compact `#[test] fn` registrations drop out, so the
+    /// changed owner's discriminating test vanishes. The pipeline must project
+    /// `partial_with_limitations` instead of a complete `no_static_path` run.
+    #[test]
+    fn unchanged_lexical_test_file_projects_a_partial_outcome() -> Result<(), String> {
+        let root = temp_root("unchanged-lexical-test-grip")?;
+        write(
+            root.join("Cargo.toml").as_path(),
+            "[package]\nname='demo'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write(
+            root.join("src/lib.rs").as_path(),
+            "pub fn price(total: u32, d: u32) -> u32 {\n    if total >= 100 { total - d } else { total }\n}\n",
+        )?;
+        write(
+            root.join("tests/price.rs").as_path(),
+            "use demo::price;\n#[test] fn p() { assert_eq!(price(200, 10), 190); }\nfn refuse_reference_parser(\n",
+        )?;
+        let options = AnalysisOptions {
+            root: root.clone(),
+            base: None,
+            diff_file: None,
+            mode: AnalysisMode::Draft,
+            resolved_subject_identity: None,
+            include_unchanged_tests: true,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+        };
+        let result = run_pipeline_for_diff_text(
+            &options,
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &[],
+            "diff --git a/src/lib.rs b/src/lib.rs\n\
+             new file mode 100644\n\
+             --- /dev/null\n\
+             +++ b/src/lib.rs\n\
+             @@ -0,0 +1,3 @@\n\
+             +pub fn price(total: u32, d: u32) -> u32 {\n\
+             +    if total >= 100 { total - d } else { total }\n\
+             +}\n",
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "diff analysis must project an outcome".to_string())?;
+        assert_eq!(
+            outcome.kind,
+            AnalysisOutcomeKind::PartialWithLimitations,
+            "silently complete no_static_path is the #4775 defect"
+        );
+        assert!(
+            outcome.limitations.iter().any(|limitation| {
+                limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+                    && limitation
+                        .bounded_detail
+                        .as_deref()
+                        .is_some_and(|detail| detail.contains("rust_lexical_test_index_partial"))
+            }),
+            "expected rust_lexical_test_index_partial, got {:?}",
+            outcome.limitations
+        );
         let _ = fs::remove_dir_all(root);
         Ok(())
     }
@@ -3115,6 +3506,28 @@ index 0000000..1111111 100644
         Ok(())
     }
 
+    /// #4555 (repo scope): the workspace-walk advisory counts JavaScript
+    /// files after the #4372 exclusion filter, so an excluded `dist/` bundle
+    /// is in neither count when enabled and in both when not enabled.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn repo_typescript_advisory_counts_javascript_after_exclusion() -> Result<(), String> {
+        let root = temp_root("issue-4555-ts-repo-javascript-count")?;
+        for path in ["src/a.js", "src/b.mts", "dist/x.js"] {
+            write(&root.join(path), "export const limit = 1;\n")?;
+        }
+        let counts = |enabled: &[LanguageId]| -> Vec<(usize, usize)> {
+            detect_repo_preview_advisories(&root, enabled)
+                .into_iter()
+                .map(|advisory| (advisory.file_count, advisory.javascript_file_count))
+                .collect()
+        };
+        assert_eq!(counts(&[LanguageId::TypeScript]), vec![(2, 1)]);
+        assert_eq!(counts(&[LanguageId::Rust]), vec![(3, 2)]);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     /// #4372 negative control: with TypeScript NOT enabled, the not-enabled
     /// disclosure still reports every routed TypeScript file, excluded or
     /// not — it discloses presence, not analysis.
@@ -3154,6 +3567,44 @@ index 0000000..1111111 100644
                     == AnalysisLimitationKind::LanguageScopeUnsupported),
             "a not-enabled adapter must not emit a preview skip limitation"
         );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #4555: the advisory counts the JavaScript half of the TS/JS family so
+    /// prose can call a JavaScript-only diff JavaScript; `.mts` and `.d.ts`
+    /// stay TypeScript, `.mjs`/`.cjs`/`.jsx` count as JavaScript.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn typescript_advisory_counts_javascript_family_files() -> Result<(), String> {
+        let root = temp_root("issue-4555-ts-advisory-javascript-count")?;
+        let diff_file = root.join("ts.diff");
+        write(
+            &diff_file,
+            &added_file_diff(&[
+                "src/a.js",
+                "src/b.mjs",
+                "src/c.cjs",
+                "src/d.jsx",
+                "src/e.mts",
+                "src/f.ts",
+                "src/g.d.ts",
+            ]),
+        )?;
+
+        let result = run_diff_pipeline_with_oracle_policy(
+            &excluded_path_advisory_options(&root, diff_file),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+        )?;
+
+        let advisory = result
+            .preview_language_advisories
+            .iter()
+            .find(|advisory| advisory.language == "typescript")
+            .ok_or_else(|| "expected a TypeScript advisory".to_string())?;
+        assert_eq!(advisory.file_count, 7);
+        assert_eq!(advisory.javascript_file_count, 4);
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
@@ -3665,6 +4116,59 @@ index 0000000..1111111 100644
                 .iter()
                 .any(|finding| finding.language == Some(crate::domain::LanguageId::Python)),
             "findings from the analyzed files must survive the partial disclosure"
+        );
+        Ok(())
+    }
+
+    fn partial_scope(
+        stop_reason: super::super::language::PartialDiffStopReason,
+        uninspected_lines: usize,
+    ) -> PartialDiffScope {
+        PartialDiffScope {
+            run_status: PartialDiffScope::RUN_STATUS.to_string(),
+            diff_identity: "sha256:diff".to_string(),
+            file_budget: 3,
+            line_budget: 50,
+            budget_disclosures: Vec::new(),
+            selected_files: vec!["src/lib.rs".to_string()],
+            selected_changed_lines: 70,
+            uninspected_files_lower_bound: usize::from(uninspected_lines > 0),
+            uninspected_changed_lines_lower_bound: uninspected_lines,
+            stop_reason,
+            next_file_changed_lines: (uninspected_lines > 0).then_some(uninspected_lines),
+            partition_identity: "sha256:partition".to_string(),
+        }
+    }
+
+    #[test]
+    fn partial_scope_limitation_names_the_stopping_budget_first() -> Result<(), String> {
+        use super::super::language::PartialDiffStopReason;
+
+        let limitation =
+            partial_scope_limitation(&partial_scope(PartialDiffStopReason::LineBudget, 9))?;
+        assert_eq!(limitation.kind, AnalysisLimitationKind::DiffScopeOversized);
+        assert_eq!(
+            limitation.recovery.detail,
+            "To widen the analyzed partition, raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 79, then \
+             re-run."
+        );
+        assert_eq!(
+            limitation.bounded_detail.as_deref(),
+            Some(
+                "The run analyzed 70 changed line(s) and left at least 9 changed line(s) outside \
+                 the selected partition."
+            )
+        );
+
+        let first_file = partial_scope_limitation(&partial_scope(
+            PartialDiffStopReason::LineBudgetExceededOnFirstFile,
+            0,
+        ))?;
+        let detail = first_file.bounded_detail.as_deref().unwrap_or_default();
+        assert!(!detail.contains("at least 0"), "{detail}");
+        assert!(
+            detail.contains("every changed file ripr's language adapters read was selected"),
+            "{detail}"
         );
         Ok(())
     }
