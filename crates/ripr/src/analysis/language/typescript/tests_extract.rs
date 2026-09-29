@@ -1481,15 +1481,9 @@ fn title_argument(
         oxc_ast::ast::Argument::TemplateLiteral(template) if template.single_quasi().is_some() => {
             template.single_quasi().map(|quasi| quasi.to_string())
         }
-        _ => {
-            // 1-indexed line of the registration. Computed titles are rare, so
-            // a direct newline count here costs less than threading the
-            // indexed `SourceText` through the `&str` describe path.
-            let line = source
-                .get(..registration_start)
-                .map_or(1, |prefix| prefix.matches('\n').count() + 1);
-            Some(computed_title(line))
-        }
+        _ => Some(computed_title(
+            SourceText::new(source).line_for_offset(registration_start),
+        )),
     }
 }
 

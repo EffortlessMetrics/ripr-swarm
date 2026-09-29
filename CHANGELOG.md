@@ -11,6 +11,11 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Default human `Hidden:` output names the language and preview status of
+  omitted findings (`Python preview: 1`) so a mixed-repo remainder is not a
+  bare count. Rust-only remainder stays the count line. (#4395)
+- `docs/CONFIGURATION.md` no longer groups Python with opt-in TypeScript and
+  JavaScript; Python preview is marker-auto when no `ripr.toml` exists. (#4395)
 - TypeScript: a change inside a module-private helper now relates to tests
   that call an exported function reaching it in the same module, including a
   value a same-module factory built. unjs/defu tests call `defu(...)`, built
@@ -152,6 +157,14 @@ are scoped or reviewed.
   value does not.
 - Rust: the one-line signature of a new function whose body is added too is no
   longer probed; it only repeated the body's findings.
+- `ripr check` run from a crate subdirectory such as `src/` now analyzes the
+  crate. In a repository whose `Cargo.toml` has no `[workspace]` table, the
+  root stayed the subdirectory, the diff fell outside it, and the JSON reported
+  `analysis_complete: true` with no findings. The implicit root now walks up to
+  the nearest `Cargo.toml`, or to the git top level when there is none, and
+  says so on stderr. The walk stops at the git top level, so a `[workspace]` in
+  an enclosing repository no longer claims a nested one. `ripr cache` resolves
+  the same root (#4610).
 - `review-comments` observes its cooperative analysis budget during canonical
   inventory and rejects cancelled evidence before classification. Git diff
   discovery consumes the remaining budget; deadline cancellation records a
