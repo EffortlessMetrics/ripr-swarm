@@ -67,9 +67,10 @@ async fn completed_saved_analysis_keeps_consumed_a_when_disk_and_buffer_become_b
         let (generation, produced) = witness
             .await
             .map_err(|_| "actual producer did not reach preparation barrier".to_string())?;
-        if produced.findings.is_empty()
+        if produced.root != root.path()
+            || produced.findings.is_empty()
             || !produced.findings.iter().any(|finding| {
-                finding.probe.location.file == Path::new("src/lib.rs")
+                finding.probe.location.file == path
                     && finding.probe.expression.contains("flag")
                     && finding
                         .probe
@@ -95,7 +96,8 @@ async fn completed_saved_analysis_keeps_consumed_a_when_disk_and_buffer_become_b
                 .collect::<Vec<_>>();
             let detail = serde_json::json!({
                 "root": produced.root,
-                "expected_path": "src/lib.rs",
+                "expected_root": root.path(),
+                "expected_path": path,
                 "expected_owner_contains": "gate_state",
                 "expected_expression_contains": "flag",
                 "findings_count": produced.findings.len(),
