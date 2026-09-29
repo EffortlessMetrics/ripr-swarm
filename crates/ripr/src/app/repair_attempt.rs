@@ -1855,6 +1855,9 @@ pub(crate) fn replace_file_atomically(path: &Path, bytes: &[u8]) -> Result<(), S
     let nonce = ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed);
     let temporary = path.with_extension(format!("tmp-{}-{nonce}", std::process::id()));
     let write_result = (|| -> Result<(), String> {
+        // An interrupted run can leave this name behind (pids and the counter
+        // repeat across processes); removing a planted link removes only it.
+        let _ = std::fs::remove_file(&temporary);
         let mut file = crate::output::file_write::create_exclusive(&temporary)
             .map_err(|error| format!("create {} failed: {error}", temporary.display()))?;
         file.write_all(bytes)
@@ -2266,6 +2269,9 @@ fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let nonce = ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed);
     let temporary = path.with_extension(format!("tmp-{}-{nonce}", std::process::id()));
     let write_result = (|| -> Result<(), String> {
+        // An interrupted run can leave this name behind (pids and the counter
+        // repeat across processes); removing a planted link removes only it.
+        let _ = std::fs::remove_file(&temporary);
         let mut file = crate::output::file_write::create_exclusive(&temporary)
             .map_err(|error| format!("create {} failed: {error}", temporary.display()))?;
         file.write_all(bytes)

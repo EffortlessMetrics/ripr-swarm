@@ -29,14 +29,17 @@ pub(crate) fn repository_toolchain_path_pin(root: &Path) -> Option<PathBuf> {
 fn nearest_toolchain_path_pin(root: &Path) -> Option<PathBuf> {
     let start = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     for directory in start.ancestors() {
-        for name in TOOLCHAIN_FILE_NAMES {
-            let file = directory.join(name);
-            if !file.is_file() {
-                continue;
-            }
-            // rustup stops at the nearest file; only that one decides.
-            return names_toolchain_path(&file).then_some(file);
+        let files: Vec<PathBuf> = TOOLCHAIN_FILE_NAMES
+            .iter()
+            .map(|name| directory.join(name))
+            .filter(|file| file.is_file())
+            .collect();
+        if files.is_empty() {
+            continue;
         }
+        // rustup stops at the nearest directory with a toolchain file. When
+        // both names exist there it picks one of them, so either pin counts.
+        return files.into_iter().find(|file| names_toolchain_path(file));
     }
     None
 }
@@ -103,10 +106,22 @@ mod tests {
             let legacy_channel = nearest_toolchain_path_pin(&member);
             std::fs::write(member.join("rust-toolchain"), "/opt/evil\n")?;
             let legacy_path = nearest_toolchain_path_pin(&member);
-            Ok::<_, std::io::Error>((pinned_from_member, shadowed, legacy_channel, legacy_path))
+            // A channel `.toml` beside a path-pinned legacy file still pins.
+            std::fs::write(
+                member.join("rust-toolchain.toml"),
+                "[toolchain]\nchannel = \"stable\"\n",
+            )?;
+            let both_files = nearest_toolchain_path_pin(&member);
+            Ok::<_, std::io::Error>((
+                pinned_from_member,
+                shadowed,
+                legacy_channel,
+                legacy_path,
+                both_files,
+            ))
         })();
         let _ = std::fs::remove_dir_all(&dir);
-        let (pinned, shadowed, legacy_channel, legacy_path) = result?;
+        let (pinned, shadowed, legacy_channel, legacy_path, both_files) = result?;
         assert!(
             pinned.is_some_and(|file| file.ends_with("rust-toolchain.toml")),
             "a path pin above the root must be found"
@@ -114,6 +129,10 @@ mod tests {
         assert!(
             legacy_path.is_some(),
             "a legacy path-shaped file fails closed"
+        );
+        assert!(
+            both_files.is_some_and(|file| file.ends_with("rust-toolchain")),
+            "a path pin in either same-directory file counts"
         );
         assert!(shadowed.is_none(), "the nearest file decides");
         assert!(

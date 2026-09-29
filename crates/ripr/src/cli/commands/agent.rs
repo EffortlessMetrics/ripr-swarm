@@ -1237,6 +1237,9 @@ fn write_agent_repo_exposure_snapshot(root: &Path, path: &Path) -> Result<(), St
     }
     let temporary_path = path.with_extension(format!("json.tmp-{}", std::process::id()));
     let write_result = (|| -> Result<(), String> {
+        // An interrupted run can leave this pid-named file; removing a planted link
+        // removes only the link.
+        let _ = std::fs::remove_file(&temporary_path);
         let file = output::file_write::create_exclusive(&temporary_path)
             .map_err(|err| format!("create {} failed: {err}", temporary_path.display()))?;
         let mut writer = BufWriter::new(file);
