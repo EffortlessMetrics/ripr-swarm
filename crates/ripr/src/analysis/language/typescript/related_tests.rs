@@ -1,6 +1,6 @@
 //! Related test candidate discovery for the TypeScript preview adapter.
 
-use super::tsconfig::TsAliasMap;
+use super::tsconfig::{TsAliasMap, TsOutDirMap, load_out_dir_map};
 use super::*;
 use std::collections::{HashMap, HashSet};
 
@@ -514,12 +514,22 @@ fn push_declaration_export_names(declaration: &Declaration<'_>, names: &mut Vec<
 /// does NOT perform full `PackageDiscovery`. It is used only for the
 /// package-local ownership filter.
 pub(crate) fn package_root_for_file_path(file: &Path, workspace_root: &Path) -> Option<PathBuf> {
+    package_root_for_dir(&file_parent_dir(file, workspace_root)?, workspace_root)
+}
+
+/// The directory `package_root_for_file_path` starts its walk from; `None`
+/// when the file has no parent.
+fn file_parent_dir(file: &Path, workspace_root: &Path) -> Option<PathBuf> {
     let absolute_file = if file.is_absolute() {
         file.to_path_buf()
     } else {
         workspace_root.join(file)
     };
-    let start = absolute_file.parent()?;
+    absolute_file.parent().map(Path::to_path_buf)
+}
+
+/// The walk behind `package_root_for_file_path`, from the file's directory.
+fn package_root_for_dir(start: &Path, workspace_root: &Path) -> Option<PathBuf> {
     let mut current = start.to_path_buf();
     loop {
         if current.join("package.json").is_file() {
@@ -547,6 +557,49 @@ pub(crate) fn package_root_for_file_path(file: &Path, workspace_root: &Path) -> 
     None
 }
 
+/// `same_package_root` for one owner file against many test files. The
+/// owner's root is resolved once and each test directory's root at most
+/// once, instead of two filesystem walks per test: an owner is checked
+/// against every test in the workspace, and those walks were ~64% of a
+/// `ripr check` on a vite commit. Answers match `same_package_root` as long
+/// as no `package.json` appears or disappears while the scope lives.
+pub(crate) struct OwnerPackageScope<'r> {
+    workspace_root: &'r Path,
+    owner_package: Option<PathBuf>,
+    package_by_dir: std::cell::RefCell<std::collections::BTreeMap<PathBuf, Option<PathBuf>>>,
+}
+
+impl<'r> OwnerPackageScope<'r> {
+    pub(crate) fn new(owner_file: &Path, workspace_root: &'r Path) -> Self {
+        Self {
+            workspace_root,
+            owner_package: package_root_for_file_path(owner_file, workspace_root),
+            package_by_dir: std::cell::RefCell::default(),
+        }
+    }
+
+    /// `same_package_root(owner_file, test_file, workspace_root)`.
+    pub(crate) fn contains(&self, test_file: &Path) -> bool {
+        let Some(owner_package) = &self.owner_package else {
+            return true;
+        };
+        let Some(dir) = file_parent_dir(test_file, self.workspace_root) else {
+            return true;
+        };
+        if let Some(test_package) = self.package_by_dir.borrow().get(&dir) {
+            return test_package
+                .as_ref()
+                .is_none_or(|test| test == owner_package);
+        }
+        let test_package = package_root_for_dir(&dir, self.workspace_root);
+        let same = test_package
+            .as_ref()
+            .is_none_or(|test| test == owner_package);
+        self.package_by_dir.borrow_mut().insert(dir, test_package);
+        same
+    }
+}
+
 /// Return `true` when `owner_file` and `test_file` both resolve to the same
 /// package root under `workspace_root`, or when either file's package root
 /// cannot be determined (fail-open: preserve existing behaviour when no
@@ -555,6 +608,7 @@ pub(crate) fn package_root_for_file_path(file: &Path, workspace_root: &Path) -> 
 /// A cross-package candidate is one where the owner lives in
 /// `packages/a/` and the test lives in `packages/b/`.  Such a candidate
 /// MUST NOT be selected as an owned relation.
+#[cfg(test)]
 pub(crate) fn same_package_root(
     owner_file: &Path,
     test_file: &Path,
@@ -592,13 +646,15 @@ pub(crate) fn related_test_candidates<'a>(
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
 ) -> Vec<TypeScriptRelatedCandidate<'a>> {
+    let package_scope = workspace_root.map(|root| OwnerPackageScope::new(&owner.file, root));
+    let in_owner_package = |test: &&TypeScriptTest| {
+        package_scope
+            .as_ref()
+            .is_none_or(|scope| scope.contains(&test.file))
+    };
     let mut candidates: Vec<TypeScriptRelatedCandidate<'a>> = all_tests
         .iter()
-        .filter(|test| {
-            workspace_root
-                .map(|root| same_package_root(&owner.file, &test.file, root))
-                .unwrap_or(true)
-        })
+        .filter(in_owner_package)
         .filter_map(|test| {
             owner_call_relation(test, owner, reexport_index, alias_map, workspace_root)
                 .map(|relation| TypeScriptRelatedCandidate { test, relation })
@@ -609,11 +665,7 @@ pub(crate) fn related_test_candidates<'a>(
     if candidates.is_empty() && !owner.module_entries.is_empty() {
         candidates = all_tests
             .iter()
-            .filter(|test| {
-                workspace_root
-                    .map(|root| same_package_root(&owner.file, &test.file, root))
-                    .unwrap_or(true)
-            })
+            .filter(in_owner_package)
             .filter(|test| {
                 module_entry_relation(test, owner, reexport_index, alias_map, workspace_root)
             })
@@ -626,11 +678,7 @@ pub(crate) fn related_test_candidates<'a>(
     if candidates.is_empty() {
         candidates = all_tests
             .iter()
-            .filter(|test| {
-                workspace_root
-                    .map(|root| same_package_root(&owner.file, &test.file, root))
-                    .unwrap_or(true)
-            })
+            .filter(in_owner_package)
             .filter_map(|test| {
                 heuristic_relation(test, owner, alias_map, workspace_root)
                     .map(|relation| TypeScriptRelatedCandidate { test, relation })
@@ -2118,6 +2166,21 @@ pub(crate) fn normalized_relative_import_module(
         {
             return Some(resolved);
         }
+        // A relative import of `tsc` build output whose target does not
+        // exist maps back to its TypeScript source through the root
+        // tsconfig.json `outDir`/`rootDir` (#4551). Any entry at the join
+        // wins and keeps the lexical module: a real emitted file, a
+        // directory, or a symlink to something else (#4800 review).
+        if let Some(root) = workspace_root
+            && !escaped_root
+            && let Some(out_dir_map) = out_dir_map_for(root)
+            && out_dir_map.contains(&joined)
+            && std::fs::symlink_metadata(root.join(&joined)).is_err()
+            && !file_module_exists(root, &module)
+            && let Some(source_module) = out_dir_map.source_module_for(root, &joined)
+        {
+            return Some(source_module);
+        }
         return Some(module);
     }
 
@@ -2154,53 +2217,84 @@ const DIRECTORY_MODULE_EXTENSIONS: [&str; 8] =
 /// several filesystem probes.
 fn resolve_directory_module(root: &Path, module: &str) -> Option<String> {
     let key = (root.to_path_buf(), module.to_string());
-    let cached = DIRECTORY_MODULE_CACHE.with(|cache| {
-        cache
-            .try_borrow()
-            .ok()
-            .and_then(|cache| cache.as_ref().and_then(|map| map.get(&key).cloned()))
+    let cached = RUN_RESOLVER_CACHE.with(|cache| {
+        cache.try_borrow().ok().and_then(|cache| {
+            cache
+                .as_ref()
+                .and_then(|cache| cache.directory_modules.get(&key).cloned())
+        })
     });
     if let Some(resolved) = cached {
         return resolved;
     }
     let resolved = resolve_directory_module_uncached(root, module);
-    DIRECTORY_MODULE_CACHE.with(|cache| {
+    RUN_RESOLVER_CACHE.with(|cache| {
         if let Ok(mut cache) = cache.try_borrow_mut()
-            && let Some(map) = cache.as_mut()
+            && let Some(cache) = cache.as_mut()
         {
-            map.insert(key, resolved.clone());
+            cache.directory_modules.insert(key, resolved.clone());
         }
     });
     resolved
 }
 
-/// Directory-module answers keyed by `(workspace root, module)`, alive only
-/// while a [`DirectoryModuleCacheScope`] is open on this thread. Outside a
-/// scope nothing is cached, so no answer outlives the run that computed it
+/// The root tsconfig.json `outDir` mapping (#4551), read once per analysis
+/// run while a [`DirectoryModuleCacheScope`] is open and on every call
+/// outside one, so a config edit is seen by the next run (#4800 review).
+fn out_dir_map_for(root: &Path) -> Option<TsOutDirMap> {
+    let cached = RUN_RESOLVER_CACHE.with(|cache| {
+        cache.try_borrow().ok().and_then(|cache| {
+            cache
+                .as_ref()
+                .and_then(|cache| cache.out_dir_maps.get(root).cloned())
+        })
+    });
+    if let Some(map) = cached {
+        return map;
+    }
+    let map = load_out_dir_map(root);
+    RUN_RESOLVER_CACHE.with(|cache| {
+        if let Ok(mut cache) = cache.try_borrow_mut()
+            && let Some(cache) = cache.as_mut()
+        {
+            cache.out_dir_maps.insert(root.to_path_buf(), map.clone());
+        }
+    });
+    map
+}
+
+/// Per-run resolver answers, alive only while a [`DirectoryModuleCacheScope`]
+/// is open on this thread: directory-module answers keyed by
+/// `(workspace root, module)` and the outDir mapping keyed by root. Outside
+/// a scope nothing is cached, so no answer outlives the run that computed it
 /// (an LSP session sees filesystem changes on its next run).
-type DirectoryModuleCache = HashMap<(PathBuf, String), Option<String>>;
+#[derive(Default)]
+struct RunResolverCache {
+    directory_modules: HashMap<(PathBuf, String), Option<String>>,
+    out_dir_maps: HashMap<PathBuf, Option<TsOutDirMap>>,
+}
 
 thread_local! {
-    static DIRECTORY_MODULE_CACHE: std::cell::RefCell<Option<DirectoryModuleCache>> =
+    static RUN_RESOLVER_CACHE: std::cell::RefCell<Option<RunResolverCache>> =
         const { std::cell::RefCell::new(None) };
 }
 
-/// One analysis run's directory-module memo: opening it installs a fresh,
-/// empty cache on this thread; dropping it restores whatever was there
-/// before (normally nothing). The cache is an explicit per-run scope rather
-/// than a parameter because `workspace_root` reaches the resolver through
-/// ~30 signatures in the related-test and classifier walks.
+/// One analysis run's resolver memo: opening it installs a fresh, empty
+/// cache on this thread; dropping it restores whatever was there before
+/// (normally nothing). The cache is an explicit per-run scope rather than a
+/// parameter because `workspace_root` reaches the resolver through ~30
+/// signatures in the related-test and classifier walks.
 pub(crate) struct DirectoryModuleCacheScope {
-    previous: Option<DirectoryModuleCache>,
+    previous: Option<RunResolverCache>,
 }
 
 impl DirectoryModuleCacheScope {
     pub(crate) fn open() -> Self {
-        let previous = DIRECTORY_MODULE_CACHE.with(|cache| {
+        let previous = RUN_RESOLVER_CACHE.with(|cache| {
             cache
                 .try_borrow_mut()
                 .ok()
-                .and_then(|mut cache| cache.replace(HashMap::new()))
+                .and_then(|mut cache| cache.replace(RunResolverCache::default()))
         });
         Self { previous }
     }
@@ -2209,7 +2303,7 @@ impl DirectoryModuleCacheScope {
 impl Drop for DirectoryModuleCacheScope {
     fn drop(&mut self) {
         let previous = self.previous.take();
-        DIRECTORY_MODULE_CACHE.with(|cache| {
+        RUN_RESOLVER_CACHE.with(|cache| {
             if let Ok(mut cache) = cache.try_borrow_mut() {
                 *cache = previous;
             }
