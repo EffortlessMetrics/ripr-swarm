@@ -8725,6 +8725,56 @@ fn doctor_omits_perl_preview_when_no_perl_markers() -> Result<(), String> {
 }
 
 #[test]
+fn doctor_outside_git_or_on_a_missing_root_recommends_a_command_that_can_run() -> Result<(), String>
+{
+    // #4531: doctor named the non-Git root, then recommended `ripr check`
+    // (which cannot run there) after a raw `git status` failure on stderr.
+    // A missing root also blamed cargo and rustc for the failed spawn.
+    let outside = unique_external_workspace("doctor-outside-git")?;
+    std::fs::create_dir_all(outside.join("src")).map_err(|err| err.to_string())?;
+    std::fs::write(
+        outside.join("Cargo.toml"),
+        "[package]\nname = \"outside\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| err.to_string())?;
+    let root = outside.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let result = if !stdout.contains(&format!(
+        "- Recommended first command: fix the Git check above, or scan without Git history: `ripr check --root {root} --format repo-exposure-md`"
+    )) || stdout.contains("- Recommended first command: ripr check\n")
+        || stderr.contains("working-tree change probe failed")
+    {
+        Err(format!(
+            "a non-Git root must get a runnable first command and no raw probe failure\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        ))
+    } else {
+        Ok(())
+    };
+    ignore_remove_dir_all(&outside);
+    result?;
+
+    let missing = unique_external_workspace("doctor-missing-root")?;
+    let root = missing.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    assert_failure(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stdout.contains("- cargo check skipped: the root directory does not exist")
+        || !stdout.contains("- rustc check skipped: the root directory does not exist")
+        || stdout.contains("not available")
+        || !stdout.contains("- Recommended first command: none yet;")
+        || stderr.contains("working-tree change probe failed")
+    {
+        return Err(format!(
+            "a missing root must not blame the tools\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn doctor_recommends_worktree_check_on_dirty_worktree() -> Result<(), String> {
     // First-run honesty: doctor must not route a user with uncommitted edits to
     // `ripr check --base origin/main`, which analyzes committed history only and

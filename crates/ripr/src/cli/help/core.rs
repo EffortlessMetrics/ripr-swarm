@@ -373,7 +373,8 @@ First-run diagnosis (printed automatically):
     oracle visibility (fail-closed), large-repo scan bounds, and advisory
     nature of preview-language evidence.
   - Recommended first command: ripr check (no base: the loader resolves this
-    repository's own default branch)
+    repository's own default branch); outside a Git work tree it names the
+    repository-free scan, and for a missing root it asks for `--root`
 
 Start-here next step:
   - open `target/ripr/reports/start-here.md` first when it exists

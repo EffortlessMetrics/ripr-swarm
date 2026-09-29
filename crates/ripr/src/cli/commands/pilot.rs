@@ -92,6 +92,9 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     }
 
     let config = load_for_root(&options.root)?;
+    // Refuse an invalid RIPR_PILOT_SEAM_BUDGET (#4529) before the analysis
+    // it would bound, not after it.
+    analysis::pilot_seam_budget()?;
     let mut input = CheckInput {
         root: options.root.clone(),
         mode: options.mode.clone(),
@@ -173,7 +176,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // classified slice for the two pilot artifacts so they stay under a
     // manageable size.  `limit_info` carries whichever cap fired (pilot
     // budget wins when both fire; inventory limit is the outer bound).
-    let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified);
+    let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified)?;
     let pilot_budget_truncated = pilot_budget_info.is_some();
     let limit_info = pilot_budget_info.or(inventory_limit_info);
     let (causal_projection, causal_projection_warning) =

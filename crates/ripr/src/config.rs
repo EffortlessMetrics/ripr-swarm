@@ -301,8 +301,48 @@ pub(crate) fn apply_to_check_input(
 }
 
 fn parse_config(text: &str) -> Result<RiprConfig, String> {
-    let raw: RawConfig = toml::from_str(text).map_err(|err| format!("invalid ripr.toml: {err}"))?;
+    let raw: RawConfig = toml::from_str(text).map_err(|err| {
+        let err = err.to_string();
+        match misplaced_key_hint(&err) {
+            Some(hint) => format!("invalid ripr.toml: {err}{hint}"),
+            None => format!("invalid ripr.toml: {err}"),
+        }
+    })?;
     RiprConfig::from_raw(raw)
+}
+
+/// Keys that belong to exactly one table, so a key found anywhere else was
+/// put in the wrong table rather than misspelled (#4534). Keys shared by two
+/// tables (the `[severity.findings]`/`[severity.seams]` classes) stay out:
+/// naming one table would be a guess.
+const KEY_HOME_TABLES: &[(&str, &str)] = &[
+    ("mode", "analysis"),
+    ("include_unchanged_tests", "analysis"),
+    ("production_like_targets", "analysis"),
+    ("test_harnesses", "analysis"),
+    ("snapshot_strength", "oracles"),
+    ("mock_expectation_strength", "oracles"),
+    ("broad_error_strength", "oracles"),
+    ("seam_diagnostics", "lsp"),
+    ("diagnostic_profile", "lsp"),
+    ("max_related_tests", "reports"),
+    ("enabled", "languages"),
+    ("generated_file_patterns", "languages.rust"),
+    ("resolve_tsconfig_paths", "typescript"),
+    ("bun_ub", "profiles"),
+    ("findings", "severity"),
+    ("seams", "severity"),
+];
+
+/// The table an unknown-field key belongs in, when serde rejected a real key
+/// that sits in the wrong table (for example a top-level `mode`).
+fn misplaced_key_hint(error: &str) -> Option<String> {
+    let (_, rest) = error.split_once("unknown field `")?;
+    let (key, _) = rest.split_once('`')?;
+    let (_, table) = KEY_HOME_TABLES.iter().find(|(known, _)| *known == key)?;
+    Some(format!(
+        "\n`{key}` is a valid key, but it belongs under [{table}]"
+    ))
 }
 
 #[cfg(test)]
@@ -334,13 +374,16 @@ impl RiprConfig {
         }
         if let Some(oracles) = raw.oracles {
             if let Some(strength) = oracles.snapshot_strength {
-                config.oracles.snapshot_strength = parse_oracle_strength(&strength)?;
+                config.oracles.snapshot_strength =
+                    parse_oracle_strength("oracles.snapshot_strength", &strength)?;
             }
             if let Some(strength) = oracles.mock_expectation_strength {
-                config.oracles.mock_expectation_strength = parse_oracle_strength(&strength)?;
+                config.oracles.mock_expectation_strength =
+                    parse_oracle_strength("oracles.mock_expectation_strength", &strength)?;
             }
             if let Some(strength) = oracles.broad_error_strength {
-                config.oracles.broad_error_strength = parse_oracle_strength(&strength)?;
+                config.oracles.broad_error_strength =
+                    parse_oracle_strength("oracles.broad_error_strength", &strength)?;
             }
         }
         if let Some(severity) = raw.severity {
@@ -408,7 +451,7 @@ fn parse_languages_enabled(values: &[String]) -> Result<Vec<LanguageId>, String>
             "perl" => LanguageId::Perl,
             other => {
                 return Err(format!(
-                    "languages.enabled lists unknown language `{other}`; valid values are rust, typescript, python, perl (Perl consumes externally-produced fact packets; use --perl-facts <path> or a configured managed [perl].producer — see Campaign 31 #1379)"
+                    "languages.enabled lists unknown language `{other}`; valid values are rust, typescript, python, perl (Perl consumes externally-produced fact packets; use --perl-facts <path> or a configured managed [perl].producer)"
                 ));
             }
         };
@@ -790,7 +833,7 @@ fn parse_mode_value(value: &str) -> Result<Mode, String> {
     }
 }
 
-fn parse_oracle_strength(value: &str) -> Result<OracleStrength, String> {
+fn parse_oracle_strength(field: &str, value: &str) -> Result<OracleStrength, String> {
     match value {
         "strong" => Ok(OracleStrength::Strong),
         "medium" => Ok(OracleStrength::Medium),
@@ -799,7 +842,7 @@ fn parse_oracle_strength(value: &str) -> Result<OracleStrength, String> {
         "none" => Ok(OracleStrength::None),
         "unknown" => Ok(OracleStrength::Unknown),
         _ => Err(format!(
-            "oracle strength `{value}` is not supported; expected strong, medium, weak, smoke, none, or unknown"
+            "{field} `{value}` is not supported; expected strong, medium, weak, smoke, none, or unknown"
         )),
     }
 }

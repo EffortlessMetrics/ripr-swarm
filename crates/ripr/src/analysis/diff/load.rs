@@ -204,7 +204,9 @@ pub fn resolve_effective_base(
 /// directory is not a repository any more than it may assert a ref is absent.
 /// `--is-inside-work-tree` prints `true` only inside a work tree, so a run that
 /// printed anything else — or failed, which is what it does outside a
-/// repository — is the case this names.
+/// repository — is the case this names. A repository Git refuses because
+/// another user owns it fails the same way, so that refusal is named with its
+/// `safe.directory` repair instead (#4530).
 fn not_a_work_tree(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
     let output = crate::git::run_git_output_with_deadline(
         root,
@@ -214,6 +216,11 @@ fn not_a_work_tree(root: &Path, git_timeout: Option<Duration>) -> Option<String>
     .ok()?;
     if output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true" {
         return None;
+    }
+    if let Some(message) =
+        crate::git::dubious_ownership_message(root, &output.stderr, " (the analysis did not run)")
+    {
+        return Some(message);
     }
     Some(format!(
         "`{}` is not inside a Git work tree (the analysis did not run). ripr diffs \

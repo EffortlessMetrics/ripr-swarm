@@ -93,7 +93,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
         ok &= report_doctor_core_check(&report, &format!("tool_{tool}"));
     }
 
-    print_doctor_start_here_guidance(&root);
+    print_doctor_start_here_guidance(&root, &report);
 
     if ok && report.status == output::doctor::DoctorStatus::Pass {
         println!("✓ doctor checks passed");
@@ -150,7 +150,7 @@ fn report_doctor_core_check(report: &output::doctor::DoctorReport, name: &str) -
     check.status != output::doctor::DoctorCheckStatus::Fail
 }
 
-fn print_doctor_start_here_guidance(root: &Path) {
+fn print_doctor_start_here_guidance(root: &Path, report: &output::doctor::DoctorReport) {
     // First-run honesty: name the packet only as present when it exists.
     // An unconditional path reads as an existing artifact on a fresh
     // workspace where `ripr first-pr` has never run (RIPR-SPEC-0051 names
@@ -190,7 +190,24 @@ fn print_doctor_start_here_guidance(root: &Path) {
     // Route them to the command that actually covers their edits instead of the
     // one that looks clean while ignoring them. Reuses the same helper as the
     // check-time disclosure (reuse, don't fork).
-    if analysis::working_tree_has_tracked_changes(root) {
+    // A missing root or a root Git will not read (#4531) cannot run the
+    // diff-scoped first command, and probing its working tree only prints a
+    // raw git failure for a problem the checks above already name.
+    let passed = |name: &str| {
+        report.checks.iter().any(|check| {
+            check.name == name && check.status == output::doctor::DoctorCheckStatus::Pass
+        })
+    };
+    if !passed("root_directory") {
+        println!(
+            "- Recommended first command: none yet; pass `--root <path>` naming your repository directory"
+        );
+    } else if !passed("git_repository") {
+        println!(
+            "- Recommended first command: fix the Git check above, or scan without Git history: `ripr check --root {} --format repo-exposure-md`",
+            root.display()
+        );
+    } else if analysis::working_tree_has_tracked_changes(root) {
         println!("- Recommended first command: ripr check --base HEAD --worktree");
         println!(
             "- Scope note: `--worktree` analyzes staged and unstaged tracked edits; untracked files remain out of scope until staged or supplied through `--diff`."

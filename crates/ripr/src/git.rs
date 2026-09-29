@@ -172,6 +172,36 @@ impl SpawnSite {
     }
 }
 
+/// The repair for Git's refusal of a repository another user owns
+/// (`safe.directory`, #4530), or `None` when `stderr` is not that refusal.
+///
+/// Git answers every command in such a repository with `detected dubious
+/// ownership`, so a caller that reads only the exit status mistakes it for
+/// "not a repository" and sends the user somewhere the repository already is.
+/// The path comes from Git's own message when present: it is the top-level
+/// directory Git wants trusted, which can differ from the analyzed root.
+/// `outcome` follows the ownership clause, for callers that must say what
+/// did not happen (for example " (the analysis did not run)").
+pub(crate) fn dubious_ownership_message(
+    root: &Path,
+    stderr: &[u8],
+    outcome: &str,
+) -> Option<String> {
+    let stderr = String::from_utf8_lossy(stderr);
+    let line = stderr
+        .lines()
+        .find(|line| line.contains("detected dubious ownership in repository"))?;
+    let repository = line
+        .split_once(" at '")
+        .and_then(|(_, rest)| rest.strip_suffix('\''))
+        .map_or_else(|| root.display().to_string(), str::to_string);
+    Some(format!(
+        "Git refuses the repository at `{repository}` because another user owns it{outcome}. \
+         If you trust it, run `git config --global --add safe.directory {repository}` and \
+         retry."
+    ))
+}
+
 /// The remedy leads so it survives the LSP's 240-character client bound
 /// (`lsp::component_outcome::bounded_message`) behind the caller prefixes;
 /// the limit and the original error follow for the CLI, which prints all of
@@ -669,6 +699,32 @@ mod tests {
         AnalysisAbortKind, AnalysisCancellationToken, is_cancellation_error, with_token,
     };
     use serial_test::serial;
+
+    #[test]
+    fn dubious_ownership_names_the_safe_directory_repair() -> Result<(), String> {
+        // #4530: Git's own refusal text, as 2.43 prints it.
+        let stderr = b"fatal: detected dubious ownership in repository at '/srv/repo'\n\
+To add an exception for this directory, call:\n\n\tgit config --global --add safe.directory /srv/repo\n";
+        let message =
+            dubious_ownership_message(Path::new("sub"), stderr, " (the analysis did not run)")
+                .ok_or("the refusal must be recognized")?;
+        if !message.starts_with(
+            "Git refuses the repository at `/srv/repo` because another user owns it (the analysis did not run).",
+        ) || !message.contains("git config --global --add safe.directory /srv/repo")
+        {
+            return Err(format!("expected Git's path and the repair, got {message}"));
+        }
+        if dubious_ownership_message(
+            Path::new("sub"),
+            b"fatal: not a git repository (or any of the parent directories): .git\n",
+            "",
+        )
+        .is_some()
+        {
+            return Err("an ordinary non-repository must not read as an ownership refusal".into());
+        }
+        Ok(())
+    }
 
     /// Drive letter kept apart from its separator so the local-context gate
     /// does not read these synthetic roots as a committed machine path.

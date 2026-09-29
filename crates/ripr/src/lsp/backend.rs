@@ -1557,11 +1557,24 @@ impl Backend {
     /// window is recorded on the backend instead of being dropped silently,
     /// and the committed failure is re-disclosed by the next status
     /// publication.
-    async fn deliver_initialize_failure_disclosures(&self, warning: String) {
+    ///
+    /// `generic_client` adds a `window/showMessage` warning for clients
+    /// without the `riprEditor` integration (#4532): they render neither the
+    /// log nor `ripr/analysisStatus`, so without it analysis stops with
+    /// nothing on screen saying why. The client profile is not stored yet at
+    /// initialize, so the caller passes it from the negotiated profile.
+    async fn deliver_initialize_failure_disclosures(&self, warning: String, generic_client: bool) {
         self.initialize_failure_disclosure_omitted
             .store(false, Ordering::Release);
         let delivery = tokio::time::timeout(INITIALIZE_FAILURE_DISCLOSURE_BUDGET, async {
-            self.client.log_message(MessageType::WARNING, warning).await;
+            self.client
+                .log_message(MessageType::WARNING, warning.clone())
+                .await;
+            if generic_client {
+                self.client
+                    .show_message(MessageType::WARNING, warning)
+                    .await;
+            }
             self.publish_analysis_status().await;
         })
         .await;
@@ -2115,9 +2128,38 @@ impl Backend {
                     RefreshReason::ConfigReload.as_str(),
                 )
                 .await;
+                // #4532: a reload that breaks ripr.toml pauses analysis; say
+                // so where the user looks, once per distinct error, not on
+                // every save that leaves the same error in place.
+                let repeated = self
+                    .configuration_failure()
+                    .is_some_and(|failure| failure.message == bounded_failure_message(&error));
+                let warning = format!("ripr config load failed; analysis is paused: {error}");
                 self.set_configuration_failure(error);
                 self.publish_analysis_status().await;
+                if !repeated {
+                    self.disclose_configuration_reload_failure(warning).await;
+                }
             }
+        }
+    }
+
+    /// Log a config reload failure and, for clients without the `riprEditor`
+    /// integration, show it (#4532). The VS Code extension renders the
+    /// failure from `ripr/analysisStatus`.
+    async fn disclose_configuration_reload_failure(&self, warning: String) {
+        self.client
+            .log_message(MessageType::WARNING, warning.clone())
+            .await;
+        let generic_client = self
+            .client_features
+            .lock()
+            .map(|features| features.ripr_editor.is_none())
+            .unwrap_or(true);
+        if generic_client {
+            self.client
+                .show_message(MessageType::WARNING, warning)
+                .await;
         }
     }
 
@@ -4053,7 +4095,8 @@ impl LanguageServer for Backend {
             // bounded disclosure window, never the failure itself.
             let warning = format!("ripr config load failed; analysis is paused: {error}");
             self.set_configuration_failure(error);
-            self.deliver_initialize_failure_disclosures(warning).await;
+            self.deliver_initialize_failure_disclosures(warning, profile.ripr_editor.is_none())
+                .await;
         }
         // The profile store lands after the root application and config
         // failure handling because applying a workspace-root authority
@@ -4080,6 +4123,7 @@ impl LanguageServer for Backend {
             );
             self.deliver_initialize_failure_disclosures(
                 "ripr client feature profile could not be stored; analysis is paused".to_string(),
+                profile.ripr_editor.is_none(),
             )
             .await;
         }

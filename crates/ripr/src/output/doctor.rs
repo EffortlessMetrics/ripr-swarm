@@ -540,7 +540,14 @@ pub(crate) fn rust_toolchain_scope(
 /// different state from git running and reporting no work tree, and only the
 /// second one has a repair the user can act on. `rev-parse` exiting nonzero
 /// is git answering, so that arm reports `false` rather than the unknown.
-fn is_inside_work_tree(root: &Path) -> Option<bool> {
+enum WorkTreeProbe {
+    Inside,
+    Outside,
+    /// Git refused the repository for its owner (#4530); carries the repair.
+    Refused(String),
+}
+
+fn work_tree_probe(root: &Path) -> Option<WorkTreeProbe> {
     let output = crate::git::run_git_output_with_deadline(
         root,
         &["rev-parse", "--is-inside-work-tree"],
@@ -548,9 +555,18 @@ fn is_inside_work_tree(root: &Path) -> Option<bool> {
     )
     .ok()?;
     if !output.status.success() {
-        return Some(false);
+        return Some(
+            crate::git::dubious_ownership_message(root, &output.stderr, "")
+                .map_or(WorkTreeProbe::Outside, WorkTreeProbe::Refused),
+        );
     }
-    Some(String::from_utf8_lossy(&output.stdout).trim() == "true")
+    Some(
+        if String::from_utf8_lossy(&output.stdout).trim() == "true" {
+            WorkTreeProbe::Inside
+        } else {
+            WorkTreeProbe::Outside
+        },
+    )
 }
 
 /// Evaluate the doctor core checks and also return the raw config load
@@ -627,13 +643,20 @@ fn evaluate_doctor_core_with_probe_for_profile(
             Some(format!("no Cargo.toml found at {}", human_path(root))),
         );
     }
-    match is_inside_work_tree(root) {
-        Some(true) => report.add_check(
+    match root.is_dir().then(|| work_tree_probe(root)).flatten() {
+        None if !root.is_dir() => report.add_skipped_check(
+            "git_repository",
+            "Git work tree check skipped: the root directory does not exist".to_string(),
+        ),
+        Some(WorkTreeProbe::Inside) => report.add_check(
             "git_repository",
             DoctorStatus::Pass,
             Some(format!("inside a Git work tree at {}", human_path(root))),
         ),
-        Some(false) => report.add_check(
+        Some(WorkTreeProbe::Refused(message)) => {
+            report.add_check("git_repository", DoctorStatus::Fail, Some(message));
+        }
+        Some(WorkTreeProbe::Outside) => report.add_check(
             "git_repository",
             DoctorStatus::Fail,
             Some(format!(
@@ -676,6 +699,14 @@ fn evaluate_doctor_core_with_probe_for_profile(
                 if RUST_TOOLCHAIN_TOOLS.contains(&tool) && profile == DoctorProfile::Analysis =>
             {
                 report.add_skipped_check(&name, format!("{tool} check skipped: {reason}"));
+            }
+            // The toolchain is probed in the selected root; a missing root
+            // fails the spawn and would read as a missing tool (#4531).
+            _ if RUST_TOOLCHAIN_TOOLS.contains(&tool) && !root.is_dir() => {
+                report.add_skipped_check(
+                    &name,
+                    format!("{tool} check skipped: the root directory does not exist"),
+                );
             }
             _ => {
                 let (status, evidence) = probe_tool(tool, root);
@@ -1730,6 +1761,38 @@ mod tests {
         })
         .report;
         (report, probed)
+    }
+
+    #[test]
+    fn a_missing_root_skips_root_bound_probes_instead_of_blaming_the_tools() -> Result<(), String> {
+        // #4531: cargo and rustc are probed with the root as their working
+        // directory, so a missing root failed the spawn and read as a
+        // missing tool; the Git work tree probe failed the same way.
+        let root = std::env::temp_dir().join(format!(
+            "ripr-doctor-missing-root-{}-does-not-exist",
+            std::process::id()
+        ));
+        let (report, probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::Rust]);
+        if probed != ["git"] {
+            return Err(format!(
+                "only git may be probed for a missing root: {probed:?}"
+            ));
+        }
+        if check(&report, "root_directory")?.status != DoctorCheckStatus::Fail {
+            return Err("the missing root itself must still fail doctor".to_string());
+        }
+        for name in ["tool_cargo", "tool_rustc", "git_repository"] {
+            let found = check(&report, name)?;
+            if found.status != DoctorCheckStatus::Skipped
+                || !found
+                    .evidence
+                    .as_deref()
+                    .is_some_and(|text| text.ends_with("the root directory does not exist"))
+            {
+                return Err(format!("{name} must be skipped with the reason: {found:?}"));
+            }
+        }
+        Ok(())
     }
 
     fn check<'a>(report: &'a DoctorReport, name: &str) -> Result<&'a DoctorCheck, String> {

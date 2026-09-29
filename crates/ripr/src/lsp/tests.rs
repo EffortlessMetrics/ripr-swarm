@@ -9987,6 +9987,91 @@ fn workspace_folder_transitions_rejected_event_warns_a_generic_client() -> Resul
     })
 }
 
+/// Initialize with one folder and return the `window/showMessage` texts the
+/// server sent before its initialize response (#4532).
+async fn initialize_show_messages(
+    client: &mut WorkspaceFolderTransitionsClient,
+    folders: serde_json::Value,
+    capabilities: serde_json::Value,
+) -> Result<Vec<String>, String> {
+    let id = client.request_id();
+    write_lsp_message(
+        &mut client.writer,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "initialize",
+            "params": {
+                "processId": null,
+                "workspaceFolders": folders,
+                "initializationOptions": { "checkMode": "instant" },
+                "capabilities": capabilities
+            }
+        }),
+    )
+    .await?;
+    let mut shown = Vec::new();
+    loop {
+        let message = read_lsp_message(&mut client.reader).await?;
+        if message.get("id").and_then(serde_json::Value::as_u64) == Some(id) {
+            return Ok(shown);
+        }
+        if message.get("method").and_then(serde_json::Value::as_str) == Some("window/showMessage") {
+            shown.push(
+                message["params"]["message"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            );
+        }
+    }
+}
+
+#[test]
+fn invalid_repo_config_at_initialize_is_shown_to_a_generic_client_only() -> Result<(), String> {
+    // #4532: a generic editor renders neither the log nor
+    // `ripr/analysisStatus`, so the paused analysis must reach it on the
+    // standard channel. The VS Code integration renders the status itself.
+    run_workspace_folder_transitions_exchange("config failure disclosure did not complete", async {
+        let root = unique_lsp_test_root("config-failure-shown")?;
+        std::fs::write(root.path().join("Cargo.toml"), "[package]\nname = \"x\"\n")
+            .map_err(|err| format!("write Cargo.toml failed: {err}"))?;
+        std::fs::write(
+            root.path().join("ripr.toml"),
+            "[analysis]\nmode = \"turbo\"\n",
+        )
+        .map_err(|err| format!("write ripr.toml failed: {err}"))?;
+        let uri = file_uri_for_path(root.path())?;
+        let folders = serde_json::json!([workspace_folder_json(&uri)]);
+
+        let mut generic = WorkspaceFolderTransitionsClient::spawn();
+        let shown =
+            initialize_show_messages(&mut generic, folders.clone(), serde_json::json!({})).await?;
+        if !shown.iter().any(|text| {
+            text.starts_with("ripr config load failed; analysis is paused")
+                && text.contains("analysis.mode `turbo`")
+        }) {
+            return Err(format!(
+                "a generic client must be shown the config failure: {shown:?}"
+            ));
+        }
+
+        let mut integrated = WorkspaceFolderTransitionsClient::spawn();
+        let shown = initialize_show_messages(
+            &mut integrated,
+            folders,
+            serde_json::json!({"experimental": {"riprEditor": {"version": "0.1", "commands": []}}}),
+        )
+        .await?;
+        if shown.iter().any(|text| text.contains("config load failed")) {
+            return Err(format!(
+                "the riprEditor integration renders the failure from its status: {shown:?}"
+            ));
+        }
+        Ok(())
+    })
+}
+
 #[test]
 fn workspace_folder_transitions_duplicate_and_contradictory_events_rejected_typed()
 -> Result<(), String> {
