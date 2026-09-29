@@ -1120,6 +1120,12 @@ are scoped or reviewed.
   that first-pr prints after a test edit now passes `--worktree` too: without
   it, `ripr check` read the files as committed at HEAD, missed the uncommitted
   test edit, and first-pr selected the gap the edit had just closed again.
+- `ripr check --worktree` now starts its diff at the merge base of `--base`
+  and `HEAD`, as the committed `<base>...HEAD` diff does. It ran
+  `git diff <base>` against the base tip, so once the base gained commits
+  after the branch forked, those commits showed up, reversed, as branch
+  changes. With no merge base (a shallow clone) it still diffs from the base
+  tip.
 
 
 ### Added
