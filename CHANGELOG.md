@@ -11,6 +11,17 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Rust: a changed `?` error path no longer reads `exposed` because a
+  success-value assertion shares a variable name with it. ripgrep's
+  `rdr.read(buf)?` was credited to a test asserting `rdr.bstr()`, and the
+  `?` → `unwrap_or(0)` mutant survives the suite. An `error_path` probe is now
+  confirmed only by an assertion that observes an error. A deleted call on a
+  binding the changed function introduces (regex `dfa.accels.validate()?`,
+  whose deletion survives the suite) is no longer confirmed by a test's
+  same-named local; field, method and parameter names still confirm. Both
+  read `weakly_exposed` now.
+- Rust: a `pub(crate) struct Name<'a> {` line is no longer probed as a call
+  deletion and reported `no_static_path`.
 - TypeScript: a change inside a module-private helper now relates to tests
   that call an exported function reaching it in the same module, including a
   value a same-module factory built. unjs/defu tests call `defu(...)`, built
