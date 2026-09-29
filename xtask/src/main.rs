@@ -5856,6 +5856,136 @@ fn routed_rust_workflow_contract_violations(
     routed_rust_workflow_contract_violations_with_reusable(workflow, None, settings, lane_whitelist)
 }
 
+/// How Routed Rust Small treats one GitHub event after reading the workflow YAML.
+///
+/// The workflow file is the authority. This classifier inspects `on.pull_request.types`
+/// and the route-job `if:` so a missing filter cannot be hidden behind a hardcoded
+/// desired policy (#4380).
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RoutedRustEventRoute {
+    LaunchFullGate,
+    IgnoreWithoutRequiredResult,
+    WorkflowNotTriggered,
+}
+
+const ROUTED_RUST_PROOF_ACTIONS_SNIPPET: &str =
+    r#"contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)"#;
+const ROUTED_RUST_FULL_CI_LABELED_SNIPPET: &str =
+    "github.event.action == 'labeled' && github.event.label.name == 'full-ci'";
+const ROUTED_RUST_IGNORED_LABEL_RESULT_NAME: &str = "Ripr Rust Small Ignored Label Event";
+const ROUTED_RUST_REQUIRED_RESULT_NAME: &str = "Ripr Rust Small Result";
+const ROUTED_RUST_SYNCHRONIZE_CANCEL_SNIPPET: &str = "cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}";
+
+fn routed_rust_pull_request_types(workflow: &str) -> Option<Vec<String>> {
+    workflow.lines().map(str::trim).find_map(|line| {
+        line.strip_prefix("types:")
+            .map(str::trim)
+            .filter(|rest| rest.starts_with('['))
+            .map(|rest| {
+                rest.trim_start_matches('[')
+                    .trim_end_matches(']')
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned)
+                    .collect()
+            })
+    })
+}
+
+fn routed_rust_job_has_proof_event_if(workflow: &str, job: &str) -> bool {
+    routed_rust_job_block_any(workflow, job, |line| {
+        line.contains(ROUTED_RUST_PROOF_ACTIONS_SNIPPET)
+    }) && routed_rust_job_block_any(workflow, job, |line| {
+        line.contains(ROUTED_RUST_FULL_CI_LABELED_SNIPPET)
+    })
+}
+
+#[cfg(test)]
+fn routed_rust_proof_event(event_name: &str, action: Option<&str>, label: Option<&str>) -> bool {
+    if event_name != "pull_request" {
+        return true;
+    }
+    match action {
+        Some("opened" | "synchronize" | "reopened") => true,
+        Some("labeled") if label == Some("full-ci") => true,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+fn routed_rust_event_route(
+    workflow: &str,
+    event_name: &str,
+    action: Option<&str>,
+    label: Option<&str>,
+) -> RoutedRustEventRoute {
+    if event_name == "pull_request" {
+        let action = action.unwrap_or("");
+        if let Some(types) = routed_rust_pull_request_types(workflow)
+            && !types.iter().any(|value| value == action)
+        {
+            return RoutedRustEventRoute::WorkflowNotTriggered;
+        }
+        if !routed_rust_proof_event(event_name, Some(action), label) {
+            if routed_rust_job_has_proof_event_if(workflow, "route") {
+                return RoutedRustEventRoute::IgnoreWithoutRequiredResult;
+            }
+            return RoutedRustEventRoute::LaunchFullGate;
+        }
+    }
+    RoutedRustEventRoute::LaunchFullGate
+}
+
+fn routed_rust_label_event_contract_violations(workflow: &str) -> Vec<String> {
+    let Some(types) = routed_rust_pull_request_types(workflow) else {
+        return Vec::new();
+    };
+    let mut violations = Vec::new();
+    for required in ["opened", "synchronize", "reopened", "labeled"] {
+        if !types.iter().any(|value| value == required) {
+            violations.push(format!(
+                ".github/workflows/routed-rust.yml pull_request types must keep `{required}` so ordinary proof events still launch the required Rust or docs gate"
+            ));
+        }
+    }
+    if types.iter().any(|value| value == "unlabeled") {
+        violations.push(
+            ".github/workflows/routed-rust.yml must not subscribe to unlabeled pull_request events; an unrelated label removal must not launch a full Rust gate (#4380)".to_string(),
+        );
+    }
+    if !workflow.contains(ROUTED_RUST_SYNCHRONIZE_CANCEL_SNIPPET) {
+        violations.push(
+            ".github/workflows/routed-rust.yml must keep synchronize-only cancel-in-progress; do not flip cancellation globally for label events (#4380)".to_string(),
+        );
+    }
+    for job in ["route", "detect-docs-only"] {
+        if !routed_rust_job_has_proof_event_if(workflow, job) {
+            violations.push(format!(
+                ".github/workflows/routed-rust.yml job `{job}` must launch only on opened/synchronize/reopened or full-ci labeled events"
+            ));
+        }
+    }
+    if !routed_rust_job_block_any(workflow, "result", |line| {
+        line.contains(ROUTED_RUST_IGNORED_LABEL_RESULT_NAME)
+            && line.contains(ROUTED_RUST_REQUIRED_RESULT_NAME)
+    }) {
+        violations.push(
+            ".github/workflows/routed-rust.yml result job must post `Ripr Rust Small Ignored Label Event` instead of the required result on unrelated labeled events".to_string(),
+        );
+    }
+    if !routed_rust_job_block_any(workflow, "result", |line| {
+        line.contains(r#"[ "$EVENT_ACTION" = "unlabeled" ]"#)
+            && line.contains(r#"[ "$LABEL_NAME" != "full-ci" ]"#)
+    }) {
+        violations.push(
+            ".github/workflows/routed-rust.yml result job must short-circuit unlabeled and non-full-ci labeled events without manufacturing a required green result".to_string(),
+        );
+    }
+    violations
+}
+
 fn routed_rust_workflow_contract_violations_with_reusable(
     workflow: &str,
     reusable_workflow: Option<&str>,
@@ -5914,7 +6044,7 @@ fn routed_rust_workflow_contract_violations_with_reusable(
         ("CX43 capacity label", "rust-medium"),
         ("CPX42 capacity label", "rust-16gb"),
         ("CX53 capacity label", "rust-large"),
-        ("normalized result job", "name: Ripr Rust Small Result"),
+        ("normalized result job", "Ripr Rust Small Result"),
         (
             "CX43 conditional implementation job",
             "if: needs.route.outputs.router_target == 'cx43'",
@@ -6205,6 +6335,8 @@ fn routed_rust_workflow_contract_violations_with_reusable(
             );
         }
     }
+
+    violations.extend(routed_rust_label_event_contract_violations(workflow));
 
     violations.sort();
     violations.dedup();
